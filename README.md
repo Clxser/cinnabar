@@ -1,0 +1,151 @@
+# Cinnabar
+
+> An independent, unofficial client compatible with Minecraft: Bedrock Edition. Not approved by
+> or associated with Mojang or Microsoft. Minecraft is a trademark of Microsoft Corporation.
+
+A Bedrock client written in Rust (Bevy/wgpu), targeting vanilla parity with the release pinned
+in `assets/bedrock-target.json`. A small Go core handles Microsoft sign-in and upstream
+networking.
+
+<img width="2534" height="1446" alt="Cinnabar in game" src="https://github.com/user-attachments/assets/836cb337-3876-4b31-a97e-9cfb25227b11" />
+
+## Download
+
+Download the [latest release](https://github.com/bedrock-mc/cinnabar/releases/latest) for macOS,
+Windows or Linux, or install it with one command:
+
+macOS (Apple silicon or Intel):
+
+```sh
+curl -fsSL https://github.com/bedrock-mc/cinnabar/releases/latest/download/install.sh | bash
+```
+
+Windows (x64, PowerShell):
+
+```powershell
+irm https://github.com/bedrock-mc/cinnabar/releases/latest/download/install.ps1 | iex
+```
+
+Linux (x86_64):
+
+```sh
+curl -fsSL https://github.com/bedrock-mc/cinnabar/releases/latest/download/install.sh | bash
+```
+
+The scripts verify the release checksum before installing. macOS installs to `~/Applications`;
+Linux installs the `cinnabar` command to `~/.local/bin` and adds a desktop entry; Windows runs the
+MSI installer. First launch fetches the vanilla resource pack after you accept the Minecraft EULA.
+The release notes cover unsigned builds. Maintainers can publish a release from the
+[Release workflow](https://github.com/bedrock-mc/cinnabar/actions/workflows/release.yml), choosing
+`patch`, `minor` or `major`; see [packaging](packaging/README.md).
+
+## Play
+
+```sh
+make play
+```
+
+This downloads and compiles the vanilla assets on first run (and whenever they're stale), builds
+the Go core, and opens the launcher menu. The first sign-in prints a Microsoft device code; the
+token is cached in `.local/auth/`, which holds private credentials, so never share or commit it.
+
+To join one server directly without the menu, run the core and client in two terminals:
+
+```sh
+make core UPSTREAM=zeqa.net:19132
+make client
+```
+
+`make help` lists every target. On Debian/Ubuntu, install `libwayland-dev` first; Linux picks
+Wayland or X11 automatically.
+
+## How it fits together
+
+```text
+bedrock-client (Rust)  ── local socket ──  bedrock-core (Go, gophertunnel)
+                                             ├─ go-raknet ──── servers and BDS
+                                             └─ go-nethernet ─ Realms and friend worlds
+```
+
+Rust never implements Xbox authentication, encryption, RakNet or NetherNet; the core owns those
+and relays packets over a local stream.
+
+| Library | Used for |
+| --- | --- |
+| [protocolgen](https://github.com/bedrock-mc/protocolgen) | Generates the Bedrock packet definitions behind `crates/protocol`. |
+| [Axolotl Stack](https://github.com/axolotl-stack/axolotl-stack) | Valentine (packet codec) and Jolyne (client transport), vendored in `crates/protocol/vendor`. |
+| [gophertunnel](https://github.com/Sandertv/gophertunnel) | Bedrock login, encryption, resource packs and the packet relay. |
+| [go-raknet](https://github.com/Sandertv/go-raknet) | RakNet transport to servers, plus server-list pings. |
+| [go-nethernet](https://github.com/df-mc/go-nethernet) | WebRTC transport for Realms and friend worlds. |
+| [go-xsapi](https://github.com/df-mc/go-xsapi) | Xbox Live identity, friends, presence and signaling. |
+| [go-playfab](https://github.com/df-mc/go-playfab) | PlayFab sign-in and the menu catalog (featured servers, marketplace). |
+| [dragonfly](https://github.com/df-mc/dragonfly) | The built-in local-world server in `tools/localserver`. |
+
+Mojang assets are never committed or embedded. `make assets` fetches Mojang's official
+`bedrock-samples` pack (EULA-gated) and compiles it into carriers under the ignored `.local/`.
+
+## Workspace
+
+| Crate | What it does |
+| --- | --- |
+| `app` | The `bedrock-client` binary: Bevy app, networking glue, gameplay, menus and HUD. |
+| `crates/asset-compiler` | `assetc`, which compiles the vanilla pack into the runtime carriers. |
+| `crates/assets` | Readers for pack sources and compiled carriers. |
+| `crates/bridge` | The local stream between the client and the Go core. |
+| `crates/client-world` | Client game state: actors, items, block entities and the packet stream. |
+| `crates/input` | Device-independent input actions. |
+| `crates/json-ui` | Parser, resolver and layout engine for vanilla JSON-UI. |
+| `crates/meshing` | CPU geometry for chunks, liquids, biomes and clouds. |
+| `crates/protocol` | Bedrock packet definitions and codec. |
+| `crates/render` | Chunk and entity rendering on Bevy/wgpu. |
+| `crates/resource-pack` | Admission and decryption of server resource packs. |
+| `crates/sim` | Deterministic Bedrock movement simulation. |
+| `crates/ui` | Renderer-independent UI primitives and text layout. |
+| `crates/world` | Palette-native chunk and world model. |
+| `tools/architecture` | Architecture gate: line limits, dependency rules, markers. |
+| `tools/jsonui-editor` | Browser JSON-UI editor on the client's own engine, live at <https://bedrock-mc.github.io/cinnabar/>. |
+| `tools/jsonui-mcp` | The same editor core as an MCP server: resolve, validate, lay out, render and export packs. |
+| `tools/devtool` | `verify-affected`, which tests only what a change touches. |
+| `tools/dist` | Stages distributable bundles. |
+| `tools/phase2-evidence`, `tools/visualcoverage` | Frozen evidence replays from earlier milestones. |
+
+| Go package (`core/`) | What it does |
+| --- | --- |
+| `cmd/bedrock-core` | The core binary. |
+| `proxy` | Upstream session, resource-pack download and packet relay. |
+| `authflow`, `authcache` | Microsoft device sign-in and token cache. |
+| `catalog`, `store`, `launcher`, `control` | Menu data: featured servers, Realms, friends, marketplace. |
+| `localworld` | Local worlds on BDS (a container on macOS). |
+| `packcache` | On-disk cache of server packs. |
+| `update` | Signed update checks. |
+
+## JSON-UI editor
+
+[bedrock-mc.github.io/cinnabar](https://bedrock-mc.github.io/cinnabar/) previews and edits pack UI
+exactly as Cinnabar renders it; open your own vanilla or server pack, nothing is bundled or
+uploaded. Paste into the empty editor to start a scratch file; the Export tab packages edits as
+`.mcpack`, `.zip` or `.mcaddon`, by default an overlay of only the changed controls.
+`make jsonui-editor` builds it locally. For AI agents, `cargo build -p jsonui-mcp` gives a
+stdio MCP server:
+
+```json
+{ "mcpServers": { "jsonui": {
+  "command": "/path/to/cinnabar/target/debug/jsonui-mcp",
+  "args": ["--font", "/path/to/cinnabar/.local/assets/compiled/ui-monocraft-v1.mcbefont"]
+} } }
+```
+
+## Development
+
+Before pushing, run what CI runs:
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo run -p architecture -- check --root . --policy tools/architecture/policy.toml
+cargo test --workspace --locked
+go test ./core/...
+```
+
+`cargo run -p devtool --locked -- verify-affected --base origin/main` runs only the affected
+packages. Contributor and agent rules live in `AGENTS.md` and `docs/agents/`.
