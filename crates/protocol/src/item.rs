@@ -1,0 +1,969 @@
+use std::{collections::HashSet, sync::Arc};
+
+use bytes::{Buf, Bytes, BytesMut};
+use sha2::{Digest, Sha256};
+use thiserror::Error;
+use valentine::bedrock::{
+    codec::{BedrockCodec, BedrockSized, Nbt},
+    version::v1_26_51::{
+        ActorRuntimeId, AnimateEntityPacket, AnimatePacket,
+        EnumsAnimatePacketPayloadAction as AnimatePacketAction,
+        EnumsItemVersion as ItemDataItemVersion, ItemRegistryPacket, MobEquipmentPacket,
+    },
+};
+
+use crate::inventory::{InventoryPacketError, VerifiedNetworkItemStack};
+
+mod components;
+mod display;
+mod icons;
+mod registry_capacity;
+
+pub use components::{ItemComponents, item_components};
+pub use display::{
+    ItemBook, ItemDisplay, MAX_BOOK_PAGES, item_book, item_bundle_id, item_display,
+    item_has_enchantment_list,
+};
+pub use icons::item_icon_keys;
+
+/// The single item shape 1.26.40 puts on the wire.
+///
+/// Protocol 1001 modelled three separate item encodings (`Item`, `ItemNew`,
+/// `ItemV4`) plus a `ShieldItemId`-discriminated extra-data union, because the
+/// prismarine schema described each call site independently. BDS has one
+/// descriptor whose trailing user data is an opaque length-prefixed buffer, so
+/// the shield ID is no longer needed to decode an item.
+type ItemStackDescriptor =
+    valentine::bedrock::version::v1_26_51::CerealizerNetworkItemStackDescriptorSerializedData;
+
+/// Number of hotbar slots on the vanilla survival hotbar.
+pub const HOTBAR_SLOT_COUNT: u8 = 9;
+
+/// Builds the vanilla outbound packet announcing a local hotbar-slot selection.
+///
+/// The vanilla Bedrock client owns hotbar-slot selection locally and notifies the server with a
+/// `MobEquipment` packet against the inventory window (`PlayerHotbar` is server->client and is not
+/// what a client sends). The selected stack must be the exact known player-inventory value: this
+/// boundary verifies its retained bytes and shape before converting it to the vendor wire type.
+/// `runtime_id` must be the local player's StartGame-assigned runtime id — servers reject a
+/// foreign runtime id on this packet.
+pub fn select_hotbar_slot_packet(
+    runtime_id: u64,
+    slot: u8,
+    stack: &NetworkItemStack,
+) -> Result<crate::Packet, InventoryPacketError> {
+    if slot >= HOTBAR_SLOT_COUNT {
+        return Err(InventoryPacketError::InvalidSelectedSlot(i32::from(slot)));
+    }
+    let verified = VerifiedNetworkItemStack::try_new(stack.clone(), stack.nbt_digest)?;
+    let item = verified.into_vendor_item(0)?;
+    Ok(MobEquipmentPacket {
+        target_runtime_id: ActorRuntimeId {
+            actor_runtime_id: runtime_id,
+        },
+        item,
+        slot,
+        selected_slot: slot,
+        // The inventory container. 1.26.40 carries the raw ID rather than a
+        // named WindowId enum.
+        container_id: 0,
+    }
+    .into())
+}
+
+pub const MAX_ITEM_REGISTRY_ENTRIES: usize = 16_384;
+pub const MAX_ITEM_EXTRA_BYTES: usize = 64 * 1024;
+pub const MAX_ANIMATE_ENTITY_IDS: usize = 256;
+pub const MAX_ACTION_IDENTIFIER_BYTES: usize = 256;
+pub const MAX_ANIMATION_IDENTIFIER_BYTES: usize = 256;
+
+#[derive(Debug, Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ActorHandedness {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkItemStack {
+    pub network_id: i32,
+    pub metadata: u32,
+    pub stack_network_id: i32,
+    pub count: u16,
+    pub nbt_digest: [u8; 32],
+    pub block_runtime_id: i32,
+    pub extra_data: Arc<[u8]>,
+}
+
+impl Default for NetworkItemStack {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl NetworkItemStack {
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            network_id: 0,
+            metadata: 0,
+            stack_network_id: -1,
+            count: 0,
+            nbt_digest: Sha256::digest([]).into(),
+            block_runtime_id: 0,
+            extra_data: Arc::from([]),
+        }
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.network_id == 0 || self.count == 0
+    }
+}
+
+/// Reads the vanilla `Damage` integer from a stack's retained extra data.
+///
+/// The extra blob is the validated wire encoding of the item user data; it is
+/// decoded through the same generated types that produced it and the fixed
+/// little-endian NBT is walked only at the root level, where the vanilla
+/// client stores durability damage. Anything malformed or absent reads as
+/// `None` — presentation simply skips the durability bar.
+#[must_use]
+pub fn item_stack_damage(stack: &NetworkItemStack) -> Option<u32> {
+    item_extra_damage(&stack.extra_data)
+}
+
+/// [`item_stack_damage`] over a stack's raw extra data.
+#[must_use]
+pub fn item_extra_damage(extra_data: &[u8]) -> Option<u32> {
+    root_damage_tag(&decode_extra_nbt(extra_data)?)
+}
+
+/// Whether a stack's extra data carries a true root `Unbreakable` byte.
+#[must_use]
+pub fn item_extra_unbreakable(extra_data: &[u8]) -> bool {
+    decode_extra_nbt(extra_data).is_some_and(|nbt| {
+        let mut cursor = &nbt[..];
+        root_tag(&mut cursor, 1, b"Unbreakable")
+            .is_some_and(|mut value| read_u8(&mut value).is_some_and(|byte| byte != 0))
+    })
+}
+
+/// Reads one enchantment's level from the root `ench` list of a stack's extra data.
+///
+/// Each entry is a compound of short `id` and short `lvl`; malformed data reads as `None`.
+#[must_use]
+pub fn item_enchantment_level(extra_data: &[u8], enchantment_id: i16) -> Option<u8> {
+    let nbt = decode_extra_nbt(extra_data)?;
+    let mut cursor = &nbt[..];
+    let mut list = root_tag(&mut cursor, 9, b"ench")?;
+    if read_u8(&mut list)? != 10 {
+        return None;
+    }
+    let count = usize::try_from(read_i32_le(&mut list)?).ok()?;
+    for _ in 0..count {
+        let (mut id, mut level) = (None, None);
+        loop {
+            let tag = read_u8(&mut list)?;
+            if tag == 0 {
+                break;
+            }
+            let name_len = usize::from(read_u16_le(&mut list)?);
+            let name = list.get(..name_len)?;
+            list = list.get(name_len..)?;
+            if tag == 2 && (name == b"id" || name == b"lvl") {
+                let value = i16::from_le_bytes(list.get(..2)?.try_into().ok()?);
+                *if name == b"id" { &mut id } else { &mut level } = Some(value);
+            }
+            skip_le_payload(&mut list, tag, 1)?;
+        }
+        if id == Some(enchantment_id) {
+            return level.and_then(|level| u8::try_from(level).ok());
+        }
+    }
+    None
+}
+
+/// Reads the root `customColor` int (dyed leather RGB) from a stack's extra data, masked to 24 bits.
+#[must_use]
+pub fn item_custom_color(extra_data: &[u8]) -> Option<u32> {
+    let nbt = decode_extra_nbt(extra_data)?;
+    let mut cursor = &nbt[..];
+    let mut payload = root_tag(&mut cursor, 3, b"customColor")?;
+    Some(read_i32_le(&mut payload)? as u32 & 0x00ff_ffff)
+}
+
+/// Reads the `Name` of the root `chargedItem` compound a loaded crossbow carries; `None` when the
+/// stack is not charged or the compound names no projectile.
+#[must_use]
+pub fn item_charged_projectile(extra_data: &[u8]) -> Option<std::sync::Arc<str>> {
+    let nbt = decode_extra_nbt(extra_data)?;
+    let mut cursor = &nbt[..];
+    let mut payload = root_tag(&mut cursor, 10, b"chargedItem")?;
+    loop {
+        let entry = read_u8(&mut payload)?;
+        if entry == 0 {
+            return None;
+        }
+        let name_len = usize::from(read_u16_le(&mut payload)?);
+        let name = payload.get(..name_len)?;
+        payload = payload.get(name_len..)?;
+        if entry == 8 && name == b"Name" {
+            let len = usize::from(read_u16_le(&mut payload)?);
+            let value = std::str::from_utf8(payload.get(..len)?).ok()?;
+            return Some(std::sync::Arc::from(value));
+        }
+        skip_le_payload(&mut payload, entry, 1)?;
+    }
+}
+
+/// Positions `cursor` at the payload of the named root tag of type `tag`.
+fn root_tag<'a>(cursor: &mut &'a [u8], tag: u8, wanted: &[u8]) -> Option<&'a [u8]> {
+    if read_u8(cursor)? != 10 {
+        return None;
+    }
+    skip_le_string(cursor)?;
+    loop {
+        let entry = read_u8(cursor)?;
+        if entry == 0 {
+            return None;
+        }
+        let name_len = usize::from(read_u16_le(cursor)?);
+        let name = cursor.get(..name_len)?;
+        *cursor = cursor.get(name_len..)?;
+        if entry == tag && name == wanted {
+            return Some(cursor);
+        }
+        skip_le_payload(cursor, entry, 0)?;
+    }
+}
+
+/// Extracts the root NBT compound from an item's user-data buffer.
+///
+/// 1.26.40 hands the buffer over verbatim instead of modelling its interior, so
+/// the leading header is read here. gophertunnel's `Writer.itemUserData`
+/// (`minecraft/protocol/writer.go`) writes an `int16` that is `-1` when a
+/// compound follows and `0` when none does; when it is `-1` a `uint8` version of
+/// `1` follows and then the compound in *fixed* little-endian NBT. The
+/// `canPlaceOn` / `canBreak` lists and the shield blocking tick trail the
+/// compound, which is why only the root level is walked.
+fn decode_extra_nbt(extra: &[u8]) -> Option<Bytes> {
+    const HEADER_LEN: usize = 3;
+    let header = extra.get(..HEADER_LEN)?;
+    let marker = i16::from_le_bytes([header[0], header[1]]);
+    if marker != -1 || header[2] != 1 {
+        return None;
+    }
+    Some(Bytes::copy_from_slice(&extra[HEADER_LEN..]))
+}
+
+/// Walks one fixed little-endian NBT compound root for an integer `Damage`.
+fn root_damage_tag(nbt: &[u8]) -> Option<u32> {
+    let mut cursor = nbt;
+    if read_u8(&mut cursor)? != 10 {
+        return None;
+    }
+    skip_le_string(&mut cursor)?;
+    loop {
+        let tag = read_u8(&mut cursor)?;
+        if tag == 0 {
+            return None;
+        }
+        let name_len = usize::from(read_u16_le(&mut cursor)?);
+        let name = cursor.get(..name_len)?;
+        let is_damage = tag == 3 && name == b"Damage";
+        cursor = cursor.get(name_len..)?;
+        if is_damage {
+            let value = i32::from_le_bytes(cursor.get(..4)?.try_into().ok()?);
+            return u32::try_from(value).ok();
+        }
+        skip_le_payload(&mut cursor, tag, 0)?;
+    }
+}
+
+fn read_u8(cursor: &mut &[u8]) -> Option<u8> {
+    let value = *cursor.first()?;
+    *cursor = cursor.get(1..)?;
+    Some(value)
+}
+
+fn read_u16_le(cursor: &mut &[u8]) -> Option<u16> {
+    let value = u16::from_le_bytes(cursor.get(..2)?.try_into().ok()?);
+    *cursor = cursor.get(2..)?;
+    Some(value)
+}
+
+fn read_i32_le(cursor: &mut &[u8]) -> Option<i32> {
+    let value = i32::from_le_bytes(cursor.get(..4)?.try_into().ok()?);
+    *cursor = cursor.get(4..)?;
+    Some(value)
+}
+
+fn skip_le_string(cursor: &mut &[u8]) -> Option<()> {
+    let length = usize::from(read_u16_le(cursor)?);
+    *cursor = cursor.get(length..)?;
+    Some(())
+}
+
+const MAX_ITEM_NBT_WALK_DEPTH: u8 = 16;
+
+fn skip_le_payload(cursor: &mut &[u8], tag: u8, depth: u8) -> Option<()> {
+    if depth > MAX_ITEM_NBT_WALK_DEPTH {
+        return None;
+    }
+    match tag {
+        1 => *cursor = cursor.get(1..)?,
+        2 => *cursor = cursor.get(2..)?,
+        3 | 5 => *cursor = cursor.get(4..)?,
+        4 | 6 => *cursor = cursor.get(8..)?,
+        7 => {
+            let length = usize::try_from(read_i32_le(cursor)?).ok()?;
+            *cursor = cursor.get(length..)?;
+        }
+        8 => skip_le_string(cursor)?,
+        9 => {
+            let element = read_u8(cursor)?;
+            let count = usize::try_from(read_i32_le(cursor)?).ok()?;
+            for _ in 0..count {
+                skip_le_payload(cursor, element, depth.checked_add(1)?)?;
+            }
+        }
+        10 => loop {
+            let entry = read_u8(cursor)?;
+            if entry == 0 {
+                break;
+            }
+            skip_le_string(cursor)?;
+            skip_le_payload(cursor, entry, depth.checked_add(1)?)?;
+        },
+        11 => {
+            let count = usize::try_from(read_i32_le(cursor)?).ok()?;
+            *cursor = cursor.get(count.checked_mul(4)?..)?;
+        }
+        12 => {
+            let count = usize::try_from(read_i32_le(cursor)?).ok()?;
+            *cursor = cursor.get(count.checked_mul(8)?..)?;
+        }
+        _ => return None,
+    }
+    Some(())
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum ItemRegistryVersion {
+    Legacy,
+    DataDriven,
+    None,
+    Unknown(i32),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItemRegistryEntry {
+    pub identifier: Arc<str>,
+    pub network_id: i32,
+    pub component_based: bool,
+    pub version: ItemRegistryVersion,
+    pub component_digest: [u8; 32],
+    /// Exact positive stack capacity retained from the negotiated component path.
+    ///
+    /// This is evidence only: it neither supplies a fallback nor binds a later
+    /// inventory decision to the registry or session generation.
+    pub negotiated_max_stack_size: Option<u8>,
+    /// Whether the component payload is the exact canonical empty compound.
+    pub canonical_empty_component_data: bool,
+    /// Item tags a component-based entry declares for itself.
+    pub item_tags: Arc<[Arc<str>]>,
+}
+
+/// Returns the retail-positive item registry for the pinned Bedrock protocol.
+///
+/// The compact table contains only entries referenced by the default creative
+/// inventory. Numeric network IDs come from the matching ItemRegistry packet;
+/// omitted entries remain unsupported gaps and are never renumbered.
+#[must_use]
+pub fn vanilla_item_registry() -> Arc<[ItemRegistryEntry]> {
+    const RETAIL_ITEMS: &str = include_str!("../data/retail_items_1_26_50.tsv");
+
+    let mut entries = Vec::with_capacity(RETAIL_ITEMS.lines().count());
+    for line in RETAIL_ITEMS.lines() {
+        let (network_id, identifier) = line
+            .split_once('\t')
+            .expect("retail item row must contain an ID and identifier");
+        let network_id = network_id
+            .parse::<i32>()
+            .expect("retail item ID must be an i32");
+        entries.push(ItemRegistryEntry {
+            identifier: Arc::from(identifier),
+            network_id,
+            component_based: false,
+            version: ItemRegistryVersion::Legacy,
+            component_digest: [0; 32],
+            negotiated_max_stack_size: None,
+            canonical_empty_component_data: true,
+            item_tags: std::sync::Arc::from([]),
+        });
+    }
+    Arc::from(entries)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItemRegistryEvent {
+    pub entries: Arc<[ItemRegistryEntry]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EquipmentEvent {
+    pub actor_runtime_id: u64,
+    pub stack: NetworkItemStack,
+    pub inventory_slot: i32,
+    pub selected_slot: u8,
+    pub window_id: u8,
+    pub handedness: Option<ActorHandedness>,
+}
+
+/// One MobArmorEquipment update: the actor's five authoritative armor stacks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArmorEquipmentEvent {
+    pub actor_runtime_id: u64,
+    pub helmet: NetworkItemStack,
+    pub chestplate: NetworkItemStack,
+    pub leggings: NetworkItemStack,
+    pub boots: NetworkItemStack,
+    pub body: NetworkItemStack,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActorActionKind {
+    SwingArm,
+    Wake,
+    CriticalHit,
+    MagicCriticalHit,
+    RowRight,
+    RowLeft,
+    Custom {
+        animation: Arc<str>,
+        controller: Arc<str>,
+    },
+    Ignored {
+        action_id: u8,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActorActionEvent {
+    pub actor_runtime_ids: Arc<[u64]>,
+    pub kind: ActorActionKind,
+    pub data: f32,
+    pub swing_source: Option<Arc<str>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ItemActorEvent {
+    Registry(ItemRegistryEvent),
+    Action(ActorActionEvent),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ItemPacketError {
+    #[error("item registry has {count} entries, exceeding {max}")]
+    TooManyRegistryEntries { count: usize, max: usize },
+    #[error("item identifier has {bytes} UTF-8 bytes, exceeding {max}")]
+    ItemIdentifierTooLong { bytes: usize, max: usize },
+    #[error("item registry contains duplicate identifier or network ID")]
+    DuplicateRegistryEntry,
+    #[error("item network ID {0} is invalid")]
+    InvalidItemNetworkId(i32),
+    #[error("non-empty item network ID has an empty stack count")]
+    InvalidItemCount,
+    #[error("item stack network ID {0} is invalid")]
+    InvalidStackNetworkId(i32),
+    #[error("item stack-ID presence marker is contradictory")]
+    ContradictoryStackId,
+    #[error("item extra data has {bytes} bytes, exceeding {max}")]
+    ItemExtraTooLarge { bytes: usize, max: usize },
+    #[error("item extra string has {bytes} UTF-8 bytes, exceeding {max}")]
+    ItemExtraStringTooLarge { bytes: usize, max: usize },
+    #[error("item NBT has unsupported version {0}; expected version 1")]
+    UnsupportedItemNbtVersion(u8),
+    #[error("item NBT is malformed")]
+    InvalidItemNbt,
+    #[error("item packet has malformed or truncated canonical wire data")]
+    MalformedWire,
+    #[error("failed to encode validated item data")]
+    ItemEncodingFailed,
+    #[error("actor runtime ID {0} is invalid")]
+    InvalidRuntimeId(i64),
+    #[error("equipment container ID {0} is unknown")]
+    UnknownEquipmentContainer(u8),
+    #[error("animation target count {count} is outside 1..={max}")]
+    InvalidAnimationTargetCount { count: usize, max: usize },
+    #[error("animation target runtime ID {0} occurs more than once")]
+    DuplicateAnimationTarget(u64),
+    #[error("{field} has {bytes} UTF-8 bytes, exceeding {max}")]
+    ActionTextTooLong {
+        field: &'static str,
+        bytes: usize,
+        max: usize,
+    },
+    #[error("action has non-finite {0}")]
+    NonFiniteActionField(&'static str),
+}
+
+/// Normalises the one item descriptor 1.26.40 uses everywhere.
+///
+/// Protocol 1001 needed a normaliser per encoding (`Item`, `ItemNew`) because
+/// the schema modelled them separately, and the "contradictory stack id" checks
+/// existed to reject prismarine shapes that could describe a present item and an
+/// absent one at once. BDS has a single descriptor whose optional net ID is a
+/// plain `Option`, so those contradictions are no longer representable and the
+/// two normalisers collapse into this one.
+///
+/// gophertunnel's `Reader.ItemInstance` (`minecraft/protocol/reader.go`) reads
+/// every field unconditionally rather than short-circuiting on a zero ID, so an
+/// empty stack is still a fully-formed descriptor and is recognised by its ID
+/// alone.
+pub(crate) fn normalize_item(
+    item: ItemStackDescriptor,
+) -> Result<NetworkItemStack, ItemPacketError> {
+    validate_item_user_data(&item.user_data_buffer)?;
+    if item.id == 0 {
+        return Ok(NetworkItemStack::empty());
+    }
+    // An absent net ID is the "no stack tracking" case, which the app models as
+    // -1. gophertunnel leaves StackNetworkID at 0 when the bool is unset; the
+    // distinction is preserved here rather than collapsing the two.
+    let stack_network_id = match item.net_id_variant {
+        None => -1,
+        Some(stack_id) if stack_id > 0 => stack_id,
+        Some(_) => return Err(ItemPacketError::ContradictoryStackId),
+    };
+    make_stack(
+        i32::from(item.id),
+        i32::from_ne_bytes(item.auxvalue.to_ne_bytes()),
+        stack_network_id,
+        item.stacksize,
+        i32::from_ne_bytes(item.block_runtime_id.to_ne_bytes()),
+        item.user_data_buffer,
+    )
+}
+
+fn make_stack(
+    network_id: i32,
+    metadata: i32,
+    stack_network_id: i32,
+    count: u16,
+    block_runtime_id: i32,
+    extra: Vec<u8>,
+) -> Result<NetworkItemStack, ItemPacketError> {
+    if network_id == 0 {
+        return Err(ItemPacketError::InvalidItemNetworkId(network_id));
+    }
+    if count == 0 {
+        return Err(ItemPacketError::InvalidItemCount);
+    }
+    if stack_network_id == 0 || stack_network_id < -1 {
+        return Err(ItemPacketError::InvalidStackNetworkId(stack_network_id));
+    }
+    let metadata = u32::from_ne_bytes(metadata.to_ne_bytes());
+    if extra.len() > MAX_ITEM_EXTRA_BYTES {
+        return Err(ItemPacketError::ItemExtraTooLarge {
+            bytes: extra.len(),
+            max: MAX_ITEM_EXTRA_BYTES,
+        });
+    }
+    Ok(NetworkItemStack {
+        network_id,
+        metadata,
+        stack_network_id,
+        count,
+        nbt_digest: Sha256::digest(&extra).into(),
+        block_runtime_id,
+        extra_data: Arc::from(extra),
+    })
+}
+
+fn encode_extra<T>(value: &T) -> Result<Vec<u8>, ItemPacketError>
+where
+    T: BedrockCodec<Args = ()> + BedrockSized,
+{
+    let encoded_size = value.encoded_size();
+    if encoded_size > MAX_ITEM_EXTRA_BYTES {
+        return Err(ItemPacketError::ItemExtraTooLarge {
+            bytes: encoded_size,
+            max: MAX_ITEM_EXTRA_BYTES,
+        });
+    }
+    let mut bytes = BytesMut::with_capacity(encoded_size);
+    value
+        .encode(&mut bytes)
+        .map_err(|_| ItemPacketError::ItemEncodingFailed)?;
+    if bytes.len() > MAX_ITEM_EXTRA_BYTES {
+        return Err(ItemPacketError::ItemExtraTooLarge {
+            bytes: bytes.len(),
+            max: MAX_ITEM_EXTRA_BYTES,
+        });
+    }
+    Ok(bytes.to_vec())
+}
+
+/// Bounds an item's user-data buffer and checks the compound it may carry.
+///
+/// The generated 1.26.40 decoder hands this over as opaque bytes, so the header
+/// is interpreted here exactly as gophertunnel's `Writer.itemUserData` writes it
+/// (`minecraft/protocol/writer.go`): an `int16` of `-1` introduces a `uint8`
+/// version and a fixed little-endian compound, and `0` means no compound.
+/// Anything else is malformed. The trailing `canPlaceOn` / `canBreak` lists and
+/// the shield blocking tick are not re-validated: they are carried through
+/// verbatim and never re-encoded field-by-field, which is what made the
+/// protocol-1001 per-string length checks necessary.
+fn validate_item_user_data(extra: &[u8]) -> Result<(), ItemPacketError> {
+    if extra.len() > MAX_ITEM_EXTRA_BYTES {
+        return Err(ItemPacketError::ItemExtraTooLarge {
+            bytes: extra.len(),
+            max: MAX_ITEM_EXTRA_BYTES,
+        });
+    }
+    if extra.is_empty() {
+        return Ok(());
+    }
+    let header = extra.get(..2).ok_or(ItemPacketError::InvalidItemNbt)?;
+    match i16::from_le_bytes([header[0], header[1]]) {
+        0 => Ok(()),
+        -1 => {
+            let version = *extra.get(2).ok_or(ItemPacketError::InvalidItemNbt)?;
+            if version != 1 {
+                return Err(ItemPacketError::UnsupportedItemNbtVersion(version));
+            }
+            // Only the compound is validated. The canPlaceOn/canBreak lists and
+            // the shield blocking tick follow it in the same buffer, so unlike
+            // the standalone NBT checks trailing bytes here are expected.
+            let mut bytes = Bytes::copy_from_slice(&extra[3..]);
+            Nbt::decode_little_endian(&mut bytes).map_err(|_| ItemPacketError::InvalidItemNbt)?;
+            Ok(())
+        }
+        _ => Err(ItemPacketError::InvalidItemNbt),
+    }
+}
+
+fn validate_registry_nbt(nbt: &Nbt) -> Result<(), ItemPacketError> {
+    let mut bytes = nbt.0.clone();
+    Nbt::decode(&mut bytes, ()).map_err(|_| ItemPacketError::InvalidItemNbt)?;
+    if bytes.has_remaining() {
+        return Err(ItemPacketError::InvalidItemNbt);
+    }
+    Ok(())
+}
+
+pub(crate) fn normalize_item_registry(
+    packet: ItemRegistryPacket,
+) -> Result<ItemActorEvent, ItemPacketError> {
+    if packet.item_data.len() > MAX_ITEM_REGISTRY_ENTRIES {
+        return Err(ItemPacketError::TooManyRegistryEntries {
+            count: packet.item_data.len(),
+            max: MAX_ITEM_REGISTRY_ENTRIES,
+        });
+    }
+    let mut identifiers = HashSet::with_capacity(packet.item_data.len());
+    let mut network_ids = HashSet::with_capacity(packet.item_data.len());
+    let mut entries = Vec::with_capacity(packet.item_data.len());
+    for item in packet.item_data {
+        if item.item_name.len() > MAX_ACTION_IDENTIFIER_BYTES {
+            return Err(ItemPacketError::ItemIdentifierTooLong {
+                bytes: item.item_name.len(),
+                max: MAX_ACTION_IDENTIFIER_BYTES,
+            });
+        }
+        let network_id = i32::from(item.item_id);
+        if !identifiers.insert(item.item_name.clone()) || !network_ids.insert(network_id) {
+            return Err(ItemPacketError::DuplicateRegistryEntry);
+        }
+        validate_registry_nbt(&item.item_component_data)?;
+        let component_bytes = encode_extra(&item.item_component_data)?;
+        let version = match item.item_version {
+            ItemDataItemVersion::Legacy => ItemRegistryVersion::Legacy,
+            ItemDataItemVersion::Datadriven => ItemRegistryVersion::DataDriven,
+            ItemDataItemVersion::None => ItemRegistryVersion::None,
+            ItemDataItemVersion::Unknown(value) => ItemRegistryVersion::Unknown(value),
+        };
+        let canonical_empty_component_data =
+            component_bytes == registry_capacity::CANONICAL_EMPTY_COMPONENT_DATA;
+        let negotiated_max_stack_size = if matches!(version, ItemRegistryVersion::Unknown(_)) {
+            None
+        } else {
+            registry_capacity::negotiated_max_stack_size(&component_bytes)
+        };
+        entries.push(ItemRegistryEntry {
+            identifier: Arc::from(item.item_name),
+            network_id,
+            component_based: item.is_component_based,
+            version,
+            component_digest: Sha256::digest(&component_bytes).into(),
+            negotiated_max_stack_size,
+            canonical_empty_component_data,
+            item_tags: if item.is_component_based {
+                registry_capacity::declared_item_tags(&component_bytes).into()
+            } else {
+                Arc::from([])
+            },
+        });
+    }
+    Ok(ItemActorEvent::Registry(ItemRegistryEvent {
+        entries: Arc::from(entries),
+    }))
+}
+
+pub(crate) fn normalize_equipment(
+    packet: MobEquipmentPacket,
+) -> Result<EquipmentEvent, ItemPacketError> {
+    let actor_runtime_id = runtime_id_signed(packet.target_runtime_id.actor_runtime_id)?;
+    normalize_equipment_parts(
+        actor_runtime_id,
+        normalize_item(packet.item)?,
+        packet.slot,
+        packet.selected_slot,
+        packet.container_id,
+    )
+}
+
+pub(crate) fn normalize_empty_equipment(
+    actor_runtime_id: u64,
+    inventory_slot: u8,
+    selected_slot: u8,
+    container_id: u8,
+) -> Result<EquipmentEvent, ItemPacketError> {
+    if actor_runtime_id == 0 {
+        return Err(ItemPacketError::InvalidRuntimeId(0));
+    }
+    normalize_equipment_parts(
+        actor_runtime_id,
+        NetworkItemStack::empty(),
+        inventory_slot,
+        selected_slot,
+        container_id,
+    )
+}
+
+fn normalize_equipment_parts(
+    actor_runtime_id: u64,
+    stack: NetworkItemStack,
+    inventory_slot: u8,
+    selected_slot: u8,
+    container_id: u8,
+) -> Result<EquipmentEvent, ItemPacketError> {
+    // Handedness comes from the window, not the slot. Servers send non-hotbar
+    // or sentinel slot values (e.g. 0xFF) that the client never reads, so the
+    // raw slots are retained verbatim rather than rejected.
+    let (window_id, handedness) = window_id(container_id)?;
+    Ok(EquipmentEvent {
+        actor_runtime_id,
+        stack,
+        inventory_slot: i32::from(inventory_slot),
+        selected_slot,
+        window_id,
+        handedness,
+    })
+}
+
+pub(crate) fn normalize_animate(packet: AnimatePacket) -> Result<ItemActorEvent, ItemPacketError> {
+    if !packet.data.is_finite() {
+        return Err(ItemPacketError::NonFiniteActionField("data"));
+    }
+    if let Some(source) = &packet.swing_source {
+        validate_text("swing source", source, MAX_ACTION_IDENTIFIER_BYTES)?;
+    }
+    let kind = match packet.action {
+        AnimatePacketAction::Swing => ActorActionKind::SwingArm,
+        AnimatePacketAction::Wakeup => ActorActionKind::Wake,
+        AnimatePacketAction::Criticalhit => ActorActionKind::CriticalHit,
+        AnimatePacketAction::Magiccriticalhit => ActorActionKind::MagicCriticalHit,
+        AnimatePacketAction::Unknown(128u8) => ActorActionKind::RowRight,
+        AnimatePacketAction::Unknown(129u8) => ActorActionKind::RowLeft,
+        AnimatePacketAction::Noaction => ActorActionKind::Ignored { action_id: 0 },
+        AnimatePacketAction::Unknown(action_id) => ActorActionKind::Ignored { action_id },
+    };
+    Ok(ItemActorEvent::Action(ActorActionEvent {
+        actor_runtime_ids: Arc::from([runtime_id_signed(
+            packet.target_actor_runtime_id.actor_runtime_id,
+        )?]),
+        kind,
+        data: packet.data,
+        swing_source: packet.swing_source.map(Arc::from),
+    }))
+}
+
+pub(crate) fn normalize_animate_entity(
+    packet: AnimateEntityPacket,
+) -> Result<ItemActorEvent, ItemPacketError> {
+    if packet.m_runtime_ids.is_empty() || packet.m_runtime_ids.len() > MAX_ANIMATE_ENTITY_IDS {
+        return Err(ItemPacketError::InvalidAnimationTargetCount {
+            count: packet.m_runtime_ids.len(),
+            max: MAX_ANIMATE_ENTITY_IDS,
+        });
+    }
+    validate_text(
+        "animation",
+        &packet.m_animation,
+        MAX_ANIMATION_IDENTIFIER_BYTES,
+    )?;
+    validate_text(
+        "controller",
+        &packet.m_controller,
+        MAX_ACTION_IDENTIFIER_BYTES,
+    )?;
+    validate_text(
+        "next state",
+        &packet.m_next_state,
+        MAX_ACTION_IDENTIFIER_BYTES,
+    )?;
+    validate_text(
+        "stop condition",
+        &packet.m_stop_expression,
+        MAX_ACTION_IDENTIFIER_BYTES,
+    )?;
+    if !packet.m_blend_out_time.is_finite() {
+        return Err(ItemPacketError::NonFiniteActionField("blend_out_time"));
+    }
+    let mut seen = HashSet::with_capacity(packet.m_runtime_ids.len());
+    let actor_runtime_ids = packet
+        .m_runtime_ids
+        .into_iter()
+        .map(|id| runtime_id_signed(id.actor_runtime_id))
+        .map(|result| {
+            let id = result?;
+            if !seen.insert(id) {
+                return Err(ItemPacketError::DuplicateAnimationTarget(id));
+            }
+            Ok(id)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ItemActorEvent::Action(ActorActionEvent {
+        actor_runtime_ids: Arc::from(actor_runtime_ids),
+        kind: ActorActionKind::Custom {
+            animation: Arc::from(packet.m_animation),
+            controller: Arc::from(packet.m_controller),
+        },
+        data: packet.m_blend_out_time,
+        swing_source: None,
+    }))
+}
+
+fn runtime_id_signed(value: u64) -> Result<u64, ItemPacketError> {
+    if value == 0 {
+        return Err(ItemPacketError::InvalidRuntimeId(
+            i64::try_from(value).unwrap_or(i64::MAX),
+        ));
+    }
+    Ok(value)
+}
+
+fn validate_text(field: &'static str, text: &str, max: usize) -> Result<(), ItemPacketError> {
+    if text.len() > max {
+        return Err(ItemPacketError::ActionTextTooLong {
+            field,
+            bytes: text.len(),
+            max,
+        });
+    }
+    Ok(())
+}
+
+/// Maps a raw container ID to its wire value and the hand it implies.
+///
+/// Protocol 1001 modelled this as a named `WindowId` enum, so every container
+/// had to be enumerated just to get the wire number back. 1.26.40 carries a raw
+/// `u8` (gophertunnel's `MobEquipment.WindowID`), so only the three recognized
+/// hand containers need naming.
+fn window_id(container_id: u8) -> Result<(u8, Option<ActorHandedness>), ItemPacketError> {
+    const INVENTORY: u8 = 0;
+    // The offhand container ID, matching gophertunnel's ContainerIDOffhand.
+    const OFFHAND: u8 = 119;
+    const HOTBAR: u8 = 122;
+
+    let handedness = match container_id {
+        INVENTORY | HOTBAR => ActorHandedness::Right,
+        OFFHAND => ActorHandedness::Left,
+        _ => return Err(ItemPacketError::UnknownEquipmentContainer(container_id)),
+    };
+    Ok((container_id, Some(handedness)))
+}
+
+#[cfg(test)]
+mod hotbar_tests {
+    use valentine::bedrock::context::BedrockSession;
+    use valentine::bedrock::version::v1_26_51::McpePacketData;
+
+    use super::*;
+    use crate::InventoryPacketError;
+
+    /// Builds one non-empty stack with retained bytes suitable for round-trip tests.
+    fn selected_stack() -> NetworkItemStack {
+        let extra_data: Arc<[u8]> = Arc::from([0_u8, 0, 0, 0, 0, 0, 0, 0]);
+        NetworkItemStack {
+            network_id: 7,
+            metadata: 3,
+            stack_network_id: 13,
+            count: 4,
+            nbt_digest: Sha256::digest(&extra_data).into(),
+            block_runtime_id: 92,
+            extra_data,
+        }
+    }
+
+    #[test]
+    fn selected_stack_survives_mob_equipment_encode_decode_and_normalize() {
+        let expected = selected_stack();
+        let packet = select_hotbar_slot_packet(4242, 3, &expected).unwrap();
+        let session = BedrockSession { shield_item_id: 0 };
+        let encoded = crate::encode(&packet, &session).unwrap();
+        let mut decoded = crate::decode_batch(encoded, &session).unwrap();
+        let McpePacketData::MobEquipmentPacket(packet) = decoded.remove(0).data else {
+            panic!("hotbar selection must build a MobEquipment packet, not PlayerHotbar");
+        };
+        assert_eq!(packet.target_runtime_id.actor_runtime_id, 4242);
+        assert_eq!(packet.slot, 3);
+        assert_eq!(packet.selected_slot, 3);
+        assert_eq!(packet.container_id, 0);
+        assert_eq!(packet.item.user_data_buffer, expected.extra_data.as_ref());
+        assert_eq!(normalize_equipment(*packet).unwrap().stack, expected);
+    }
+
+    #[test]
+    fn known_empty_hotbar_slot_encodes_the_canonical_empty_descriptor() {
+        let McpePacketData::MobEquipmentPacket(packet) =
+            select_hotbar_slot_packet(1, 2, &NetworkItemStack::empty())
+                .unwrap()
+                .data
+        else {
+            panic!("hotbar selection must build a MobEquipment packet");
+        };
+        assert_eq!(packet.item, ItemStackDescriptor::default());
+    }
+
+    #[test]
+    fn invalid_hotbar_slot_fails_instead_of_clamping() {
+        assert_eq!(
+            select_hotbar_slot_packet(1, HOTBAR_SLOT_COUNT, &NetworkItemStack::empty())
+                .unwrap_err(),
+            InventoryPacketError::InvalidSelectedSlot(i32::from(HOTBAR_SLOT_COUNT))
+        );
+    }
+
+    #[test]
+    fn invalid_hotbar_stack_digest_fails_instead_of_sending_air() {
+        let mut stack = selected_stack();
+        stack.nbt_digest = [0; 32];
+        assert_eq!(
+            select_hotbar_slot_packet(1, 0, &stack).unwrap_err(),
+            InventoryPacketError::DigestMismatch
+        );
+    }
+
+    #[test]
+    fn invalid_hotbar_stack_shape_fails_instead_of_sending_air() {
+        let mut stack = selected_stack();
+        stack.network_id = i32::from(i16::MAX) + 1;
+        assert_eq!(
+            select_hotbar_slot_packet(1, 0, &stack).unwrap_err(),
+            InventoryPacketError::InvalidItemNetworkId(stack.network_id)
+        );
+    }
+}

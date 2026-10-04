@@ -1,0 +1,512 @@
+use std::{collections::VecDeque, sync::Arc};
+
+pub const MAX_TOASTS: usize = 32;
+pub const MAX_TOAST_RETAINED_BYTES: usize = 262_144;
+pub const DEFAULT_TITLE_FADE_IN_TICKS: u32 = 10;
+pub const DEFAULT_TITLE_STAY_TICKS: u32 = 70;
+pub const DEFAULT_TITLE_FADE_OUT_TICKS: u32 = 20;
+
+/// A server toast's slide in, time on screen (the notification-duration
+/// option's default, slide-in included) and slide out, from 26.30's
+/// `ToastMessage` defaults and `ToastManager`.
+pub const TOAST_SLIDE_IN_MILLIS: u64 = 500;
+pub const TOAST_DISPLAY_MILLIS: u64 = 3_000;
+pub const TOAST_SLIDE_OUT_MILLIS: u64 = 400;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BoundedStat {
+    current: u16,
+    maximum: u16,
+    scale: u16,
+}
+
+impl BoundedStat {
+    pub const fn new(current: u16, maximum: u16) -> Option<Self> {
+        if maximum == 0 || current > maximum {
+            return None;
+        }
+        Some(Self {
+            current,
+            maximum,
+            scale: 1,
+        })
+    }
+
+    pub const fn new_scaled(current: u16, maximum: u16, scale: u16) -> Option<Self> {
+        if scale == 0 || maximum == 0 || current > maximum {
+            return None;
+        }
+        Some(Self {
+            current,
+            maximum,
+            scale,
+        })
+    }
+
+    pub const fn current(self) -> u16 {
+        self.current
+    }
+
+    pub const fn maximum(self) -> u16 {
+        self.maximum
+    }
+
+    pub const fn scale(self) -> u16 {
+        self.scale
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TitleDurations {
+    pub fade_in_ticks: u32,
+    pub stay_ticks: u32,
+    pub fade_out_ticks: u32,
+}
+
+impl Default for TitleDurations {
+    fn default() -> Self {
+        Self {
+            fade_in_ticks: DEFAULT_TITLE_FADE_IN_TICKS,
+            stay_ticks: DEFAULT_TITLE_STAY_TICKS,
+            fade_out_ticks: DEFAULT_TITLE_FADE_OUT_TICKS,
+        }
+    }
+}
+
+impl TitleDurations {
+    pub fn from_wire(fade_in: i32, stay: i32, fade_out: i32) -> Option<Self> {
+        Some(Self {
+            fade_in_ticks: u32::try_from(fade_in).ok()?,
+            stay_ticks: u32::try_from(stay).ok()?,
+            fade_out_ticks: u32::try_from(fade_out).ok()?,
+        })
+    }
+
+    pub const fn total_millis(self) -> u64 {
+        (self.fade_in_ticks as u64 + self.stay_ticks as u64 + self.fade_out_ticks as u64) * 50
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TimedText {
+    pub text: Arc<str>,
+    pub fifo_sequence: u64,
+    pub started_millis: u64,
+    pub expires_millis: u64,
+    pub fade_in_millis: u64,
+    pub fade_out_millis: u64,
+}
+
+impl TimedText {
+    pub fn new(
+        text: Arc<str>,
+        fifo_sequence: u64,
+        started_millis: u64,
+        durations: TitleDurations,
+    ) -> Self {
+        Self {
+            text,
+            fifo_sequence,
+            started_millis,
+            expires_millis: started_millis.saturating_add(durations.total_millis()),
+            fade_in_millis: u64::from(durations.fade_in_ticks) * 50,
+            fade_out_millis: u64::from(durations.fade_out_ticks) * 50,
+        }
+    }
+
+    pub const fn visible_at(&self, now_millis: u64) -> bool {
+        now_millis < self.expires_millis
+    }
+
+    /// Opacity in `0..=255`: ramps up over the fade-in, holds, ramps down over the fade-out.
+    pub fn alpha_at(&self, now_millis: u64) -> u8 {
+        if !self.visible_at(now_millis) {
+            return 0;
+        }
+        let elapsed = now_millis.saturating_sub(self.started_millis);
+        let remaining = self.expires_millis - now_millis;
+        let mut alpha = 255.0_f32;
+        if elapsed < self.fade_in_millis {
+            alpha = alpha.min(255.0 * elapsed as f32 / self.fade_in_millis as f32);
+        }
+        if remaining < self.fade_out_millis {
+            alpha = alpha.min(255.0 * remaining as f32 / self.fade_out_millis as f32);
+        }
+        alpha as u8
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Toast {
+    pub title: Arc<str>,
+    pub message: Arc<str>,
+    pub fifo_sequence: u64,
+    pub received_millis: u64,
+    /// When it reaches the screen: toasts show one at a time, in order.
+    pub started_millis: u64,
+    pub expires_millis: u64,
+}
+
+impl Toast {
+    pub fn new(
+        title: Arc<str>,
+        message: Arc<str>,
+        fifo_sequence: u64,
+        received_millis: u64,
+    ) -> Self {
+        Self {
+            title,
+            message,
+            fifo_sequence,
+            received_millis,
+            started_millis: received_millis,
+            expires_millis: received_millis
+                .saturating_add(TOAST_DISPLAY_MILLIS + TOAST_SLIDE_OUT_MILLIS),
+        }
+    }
+
+    pub const fn visible_at(&self, now_millis: u64) -> bool {
+        self.started_millis <= now_millis && now_millis < self.expires_millis
+    }
+
+    /// How far it has slid onto the screen, `0.0..=1.0`.
+    pub fn slide(&self, now_millis: u64) -> f32 {
+        let shown = now_millis.saturating_sub(self.started_millis);
+        let left = self.expires_millis.saturating_sub(now_millis);
+        let fraction = |part: u64, whole: u64| (part as f32 / whole as f32).min(1.0);
+        fraction(shown, TOAST_SLIDE_IN_MILLIS).min(fraction(left, TOAST_SLIDE_OUT_MILLIS))
+    }
+
+    fn retained_bytes(&self) -> usize {
+        self.title.len() + self.message.len()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HudPlayerStatus {
+    LoginSuccess,
+    FailedClient,
+    FailedSpawn,
+    PlayerSpawn,
+    UnsupportedEdition,
+    FailedServerFull,
+    FailedEditorVanillaMismatch,
+    FailedVanillaEditorMismatch,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HudViewRole {
+    Health,
+    Hunger,
+    Armor,
+    Air,
+    Title,
+    Subtitle,
+    ActionBar,
+    ToastTitle,
+    ToastMessage,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HudViewNode {
+    pub role: HudViewRole,
+    pub source_sequence: u64,
+    pub text: Arc<str>,
+}
+
+/// Local player experience state for the HUD XP bar: an integer level and the 0.0..=1.0 progress
+/// toward the next level.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HudExperience {
+    pub level: u32,
+    pub progress: f32,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct HudStore {
+    health: Option<BoundedStat>,
+    hunger: Option<BoundedStat>,
+    armor: Option<BoundedStat>,
+    air: Option<BoundedStat>,
+    absorption: Option<BoundedStat>,
+    experience: Option<HudExperience>,
+    title: Option<TimedText>,
+    subtitle: Option<TimedText>,
+    actionbar: Option<TimedText>,
+    durations: TitleDurations,
+    toasts: VecDeque<Toast>,
+    toast_retained_bytes: usize,
+    player_status: Option<HudPlayerStatus>,
+}
+
+impl HudStore {
+    pub const fn health(&self) -> Option<BoundedStat> {
+        self.health
+    }
+
+    pub const fn hunger(&self) -> Option<BoundedStat> {
+        self.hunger
+    }
+
+    pub const fn armor(&self) -> Option<BoundedStat> {
+        self.armor
+    }
+
+    pub const fn air(&self) -> Option<BoundedStat> {
+        self.air
+    }
+
+    pub const fn absorption(&self) -> Option<BoundedStat> {
+        self.absorption
+    }
+
+    pub fn set_air(&mut self, air: Option<BoundedStat>) {
+        self.air = air;
+    }
+
+    pub fn set_absorption(&mut self, absorption: Option<BoundedStat>) {
+        self.absorption = absorption;
+    }
+
+    pub const fn experience(&self) -> Option<HudExperience> {
+        self.experience
+    }
+
+    /// Sets the local player's experience bar state, clamping progress to 0.0..=1.0.
+    pub fn set_experience(&mut self, level: u32, progress: f32) {
+        let progress = if progress.is_finite() {
+            progress.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        self.experience = Some(HudExperience { level, progress });
+    }
+
+    pub const fn title(&self) -> Option<&TimedText> {
+        self.title.as_ref()
+    }
+
+    pub const fn subtitle(&self) -> Option<&TimedText> {
+        self.subtitle.as_ref()
+    }
+
+    pub const fn actionbar(&self) -> Option<&TimedText> {
+        self.actionbar.as_ref()
+    }
+
+    pub fn toasts(&self) -> &VecDeque<Toast> {
+        &self.toasts
+    }
+
+    pub const fn player_status(&self) -> Option<HudPlayerStatus> {
+        self.player_status
+    }
+
+    pub const fn durations(&self) -> TitleDurations {
+        self.durations
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    pub fn set_stats(
+        &mut self,
+        health: Option<BoundedStat>,
+        hunger: Option<BoundedStat>,
+        armor: Option<BoundedStat>,
+        air: Option<BoundedStat>,
+    ) {
+        self.health = health;
+        self.hunger = hunger;
+        self.armor = armor;
+        self.air = air;
+    }
+
+    pub fn set_health(&mut self, health: Option<BoundedStat>) {
+        self.health = health;
+    }
+
+    pub fn set_durations(&mut self, durations: TitleDurations) {
+        self.durations = durations;
+    }
+
+    pub fn set_title(&mut self, text: Arc<str>, fifo_sequence: u64, now_millis: u64) {
+        self.title = Some(TimedText::new(
+            text,
+            fifo_sequence,
+            now_millis,
+            self.durations,
+        ));
+    }
+
+    pub fn set_subtitle(&mut self, text: Arc<str>, fifo_sequence: u64, now_millis: u64) {
+        self.subtitle = Some(TimedText::new(
+            text,
+            fifo_sequence,
+            now_millis,
+            self.durations,
+        ));
+    }
+
+    pub fn set_actionbar(&mut self, text: Arc<str>, fifo_sequence: u64, now_millis: u64) {
+        self.actionbar = Some(TimedText::new(
+            text,
+            fifo_sequence,
+            now_millis,
+            self.durations,
+        ));
+    }
+
+    pub fn clear_titles(&mut self) {
+        self.title = None;
+        self.subtitle = None;
+        self.actionbar = None;
+    }
+
+    pub fn reset_titles(&mut self) {
+        self.clear_titles();
+        self.durations = TitleDurations::default();
+    }
+
+    pub fn set_player_status(&mut self, status: HudPlayerStatus) {
+        self.player_status = Some(status);
+    }
+
+    pub fn push_toast(&mut self, mut toast: Toast) -> usize {
+        // It waits for the toast ahead of it, keeping its own duration.
+        if let Some(ahead) = self.toasts.back()
+            && ahead.expires_millis > toast.started_millis
+        {
+            let duration = toast.expires_millis.saturating_sub(toast.started_millis);
+            toast.started_millis = ahead.expires_millis;
+            toast.expires_millis = ahead.expires_millis.saturating_add(duration);
+        }
+        let bytes = toast.retained_bytes();
+        if bytes > MAX_TOAST_RETAINED_BYTES {
+            return 0;
+        }
+        let mut evicted = 0;
+        while self.toasts.len() >= MAX_TOASTS
+            || self.toast_retained_bytes + bytes > MAX_TOAST_RETAINED_BYTES
+        {
+            let Some(removed) = self.toasts.pop_front() else {
+                break;
+            };
+            self.toast_retained_bytes = self
+                .toast_retained_bytes
+                .saturating_sub(removed.retained_bytes());
+            evicted += 1;
+        }
+        self.toast_retained_bytes += bytes;
+        self.toasts.push_back(toast);
+        evicted
+    }
+
+    pub fn expire(&mut self, now_millis: u64) {
+        if self
+            .title
+            .as_ref()
+            .is_some_and(|value| !value.visible_at(now_millis))
+        {
+            self.title = None;
+        }
+        if self
+            .subtitle
+            .as_ref()
+            .is_some_and(|value| !value.visible_at(now_millis))
+        {
+            self.subtitle = None;
+        }
+        if self
+            .actionbar
+            .as_ref()
+            .is_some_and(|value| !value.visible_at(now_millis))
+        {
+            self.actionbar = None;
+        }
+        // Toasts show one after another, so expiry is monotone from the front.
+        while let Some(front) = self.toasts.front() {
+            if now_millis < front.expires_millis {
+                break;
+            }
+            let removed = self.toasts.pop_front().expect("front checked above");
+            self.toast_retained_bytes = self
+                .toast_retained_bytes
+                .saturating_sub(removed.retained_bytes());
+        }
+    }
+
+    pub fn view_nodes(&self, now_millis: u64) -> Box<[HudViewNode]> {
+        let mut nodes = Vec::with_capacity(7 + self.toasts.len() * 2);
+        for (role, value) in [
+            (HudViewRole::Health, self.health),
+            (HudViewRole::Hunger, self.hunger),
+            (HudViewRole::Armor, self.armor),
+            (HudViewRole::Air, self.air),
+        ] {
+            if let Some(value) = value {
+                nodes.push(HudViewNode {
+                    role,
+                    source_sequence: 0,
+                    text: Arc::from(format!(
+                        "{}/{}",
+                        format_stat_value(value.current(), value.scale()),
+                        format_stat_value(value.maximum(), value.scale())
+                    )),
+                });
+            }
+        }
+        for (role, value) in [
+            (HudViewRole::Title, self.title.as_ref()),
+            (HudViewRole::Subtitle, self.subtitle.as_ref()),
+            (HudViewRole::ActionBar, self.actionbar.as_ref()),
+        ] {
+            if let Some(value) = value.filter(|value| value.visible_at(now_millis)) {
+                nodes.push(HudViewNode {
+                    role,
+                    source_sequence: value.fifo_sequence,
+                    text: Arc::clone(&value.text),
+                });
+            }
+        }
+        for toast in &self.toasts {
+            if !toast.visible_at(now_millis) {
+                continue;
+            }
+            nodes.push(HudViewNode {
+                role: HudViewRole::ToastTitle,
+                source_sequence: toast.fifo_sequence,
+                text: Arc::clone(&toast.title),
+            });
+            nodes.push(HudViewNode {
+                role: HudViewRole::ToastMessage,
+                source_sequence: toast.fifo_sequence,
+                text: Arc::clone(&toast.message),
+            });
+        }
+        nodes.into_boxed_slice()
+    }
+}
+
+/// Formats a scaled stat with up to five decimal places, trimming trailing zeroes.
+fn format_stat_value(value: u16, scale: u16) -> String {
+    let whole = value / scale;
+    let mut remainder = u32::from(value % scale);
+    if remainder == 0 {
+        return whole.to_string();
+    }
+    let mut fraction = String::new();
+    for _ in 0..5 {
+        remainder *= 10;
+        fraction.push(char::from(b'0' + (remainder / u32::from(scale)) as u8));
+        remainder %= u32::from(scale);
+        if remainder == 0 {
+            break;
+        }
+    }
+    while fraction.ends_with('0') {
+        fraction.pop();
+    }
+    format!("{whole}.{fraction}")
+}

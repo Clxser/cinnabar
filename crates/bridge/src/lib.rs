@@ -1,0 +1,98 @@
+//! Local stream bridge between the Rust client and Go core.
+
+mod account;
+mod endpoint;
+mod error;
+mod framed;
+mod status;
+mod store;
+mod worlds;
+
+use std::path::Path;
+
+pub use account::{
+    Account, Artwork, AuthState, ConnectProgress, ConnectStage, ConnectTarget, Events,
+    FeaturedGame, FeaturedServer, Friend, Gathering, Home, Inbox, LiveEvent, Message,
+    MessageButton, MessageEvent, MessageImage, Profile, ProfileAchievement, ProfileAchievements,
+    ProfileStatistics, Realm, ServerDisconnect, ServerPing, account_status, connect_target, home,
+    list_featured_servers, list_friends, list_gatherings, list_realms, ping_servers, poll_events,
+    profile, report_message_event, sign_out,
+};
+pub use error::BridgeError;
+pub use framed::FramedStream;
+pub use status::{
+    Lifecycle, PackAcquisition, PackAdmission, PackApplication, PackDownstreamOutcome, PackOffer,
+    StatusV1, TransferPending, read_status, report_pack_application,
+};
+pub use store::{
+    ConfirmedPurchase, PendingPurchase, PurchaseOutcome, PurchaseStatus, StoreBalance,
+    StoreEntitlements, StoreImage, StoreOffer, StoreOfferDetail, StorePage, StorePrice,
+    StoreRating, StoreRow, StoreRowMore, StoreSearch, StoreSearchResults, store_balance,
+    store_entitlements, store_home, store_image, store_offer, store_purchase, store_row_more,
+    store_search,
+};
+pub use worlds::{
+    Backend, CODE_EULA_REQUIRED, Difficulty, GameMode, Generator, NewWorld, Prefs, PrefsUpdate,
+    Setup, SetupState, UnavailableReason, World, WorldState, WorldStatus, WorldUpdate,
+    accept_bds_eula, close_world, create_world, delete_world, list_worlds, local_worlds_prefs,
+    open_world, open_world_with, set_world_paused, update_world, world_status,
+};
+
+/// Returns the platform endpoint used for the logical socket directory.
+#[must_use]
+pub fn endpoint_path(socket_dir: &Path) -> std::path::PathBuf {
+    endpoint::endpoint_path(socket_dir, endpoint::EndpointKind::Game)
+}
+
+/// Returns the platform control endpoint used for the logical socket directory.
+#[must_use]
+pub fn control_endpoint_path(socket_dir: &Path) -> std::path::PathBuf {
+    endpoint::endpoint_path(socket_dir, endpoint::EndpointKind::Control)
+}
+
+/// Largest payload accepted by the local bridge framing protocol.
+pub const MAX_FRAME_LEN: usize = 64 * 1024 * 1024;
+
+/// Connects to the local Go core endpoint published in `socket_dir`.
+pub async fn connect(socket_dir: &Path) -> anyhow::Result<FramedStream> {
+    let stream = endpoint::connect(socket_dir, endpoint::EndpointKind::Game).await?;
+    Ok(FramedStream::new(stream))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use bytes::Bytes;
+    use futures::{Sink, Stream};
+
+    use super::{BridgeError, FramedStream, connect};
+
+    fn assert_transport<T>()
+    where
+        T: Stream<Item = Result<Bytes, BridgeError>>
+            + Sink<Bytes, Error = BridgeError>
+            + Unpin
+            + Send,
+    {
+    }
+
+    #[test]
+    fn public_transport_contract_is_stable() {
+        assert_transport::<FramedStream>();
+        let _ = connect;
+    }
+
+    #[tokio::test]
+    async fn connect_preserves_bridge_error_in_anyhow_result() {
+        let error = match connect(Path::new("")).await {
+            Ok(_) => panic!("empty socket directory must fail"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error.downcast_ref::<BridgeError>(),
+            Some(BridgeError::InvalidEndpoint { .. })
+        ));
+    }
+}
