@@ -1,0 +1,76 @@
+[workspace]
+members = [
+    "app",
+    "crates/asset-compiler",
+    "crates/assets",
+    "crates/bridge",
+    "crates/client-world",
+    "crates/chunk-pipeline",
+    "crates/pack-compiler",
+    "crates/experience-sdk",
+    "crates/experience-runtime",
+    "examples/experiences/probe",
+    "crates/input",
+    "crates/json-ui",
+    "crates/meshing",
+    "crates/mod-api",
+    "crates/mod-host",
+    "examples/mods/hello",
+    "examples/mods/time-changer",
+    "crates/protocol",
+    "crates/resource-pack",
+    "crates/server-experience",
+    "crates/render",
+    "crates/render-api",
+    "crates/inventory",
+    "crates/sim",
+    "crates/ui",
+    "crates/world",
+    "tools/visualcoverage",
+    "tools/architecture",
+    "tools/devtool",
+    "tools/dist",
+    "tools/phase2-evidence",
+    "tools/jsonui-editor",
+    "tools/jsonui-mcp",
+    "tools/cxb",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93.1"
+
+[workspace.dependencies]
+bevy = { version = "=0.18.1", default-features = false }
+tokio = "1.52"
+tokio-util = "0.7"
+bytes = "1"
+futures = "0.3"
+anyhow = "1"
+thiserror = "2"
+rayon = "1.11"
+sha2 = "=0.10.9"
+uuid = { version = "1", features = ["v4"] }
+wasmtime = { version = "=36.0.16", default-features = false, features = ["component-model", "cranelift", "runtime", "std", "wat"] }
+wit-bindgen = "=0.57.1"
+wit-component = "=0.247.0"
+
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+
+# `make play`: release speed with parallel codegen and incremental rebuilds; shipped builds use release.
+[profile.play]
+inherits = "release"
+codegen-units = 16
+lto = false
+incremental = true
