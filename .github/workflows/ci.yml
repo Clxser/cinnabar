@@ -1,0 +1,224 @@
+name: CI
+
+# Pull requests and main; ci-cache.yml keeps dev's Rust caches warm for pull requests.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Verification needs assertions, but not large debug-symbol artifacts.
+env:
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+
+jobs:
+  desktop-compile-readiness:
+    name: Desktop compile readiness (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
+          - macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.93.1
+        with:
+          components: clippy
+      - name: Cache Rust dependencies and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Shared with ci-cache.yml, which saves on dev so every pull request starts warm.
+          shared-key: desktop
+          cache-on-failure: true
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.26.x
+      - name: Install Linux desktop development libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwayland-dev libxkbcommon-dev libasound2-dev
+      - name: Build release desktop client
+        run: cargo build --release -p bedrock-client --locked
+      - name: Build release Go core on Windows
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: go build -trimpath -o "$env:RUNNER_TEMP\bedrock-core.exe" ./core/cmd/bedrock-core
+      - name: Build release Go core on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: go build -trimpath -o "$RUNNER_TEMP/bedrock-core" ./core/cmd/bedrock-core
+      - name: Test Rust bridge
+        run: cargo test -p bridge --locked
+      - name: Test Go local transport and credential storage
+        run: go test ./core/internal/streamnet ./core/internal/lockfile ./core/authcache
+      - name: Test Rust workspace on macOS
+        if: runner.os == 'macOS'
+        run: cargo test --workspace --locked --no-fail-fast
+      - name: Lint Rust workspace on macOS
+        if: runner.os == 'macOS'
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test Go core on macOS
+        if: runner.os == 'macOS'
+        run: go test ./core/...
+      - name: Vet Go core on macOS
+        if: runner.os == 'macOS'
+        run: go vet ./core/...
+
+  windows-acceptance:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.26.x
+      - name: Test hermetic vanilla asset acquisition on Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\tests\vanilla-assets.ps1
+      - name: Test Windows PowerShell 5.1 acceptance harness and dry-run contract
+        shell: powershell
+        run: .\scripts\tests\acceptance.Tests.ps1
+      - uses: dtolnay/rust-toolchain@1.93.1
+        with:
+          components: clippy
+      - name: Cache Rust dependencies and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Shared with ci-cache.yml, which saves on dev so every pull request starts warm.
+          shared-key: windows-acceptance
+          cache-on-failure: true
+      - name: Test Rust workspace on Windows
+        run: cargo test --workspace --locked --no-fail-fast
+      - name: Lint Rust workspace on Windows
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test and vet Go core on Windows
+        shell: powershell
+        run: |
+          go test ./core/...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go vet ./core/...
+      - name: Test and vet protocol registry tools on Windows
+        shell: powershell
+        run: |
+          go -C tools/registrygen test ./... -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go -C tools/registrygen vet ./...
+      - name: Test and vet local server Experiences on Windows
+        working-directory: tools/localserver
+        env:
+          GOWORK: "off"
+        shell: powershell
+        run: |
+          go test ./... -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go vet ./...
+
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.93.1
+        with:
+          components: rustfmt, clippy
+      - name: Cache Rust dependencies and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Shared with ci-cache.yml, which saves on dev so every pull request starts warm.
+          shared-key: verify
+          cache-on-failure: true
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.26.x
+      - name: Install Linux desktop development libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwayland-dev libasound2-dev
+      - name: Test manual release preparation
+        env:
+          PYTHONDONTWRITEBYTECODE: 1
+        run: python3 -m unittest discover -s packaging/tests -p 'test_*.py'
+      - name: Test DMG retry and cleanup
+        run: bash packaging/tests/make-dmg.sh
+      - name: Test MSI payload extraction
+        shell: pwsh
+        run: ./packaging/tests/extract-msi.Tests.ps1
+      - name: Verify Linux window backends
+        shell: bash
+        run: |
+          cargo tree -e features -p bedrock-client --target x86_64-unknown-linux-gnu --locked | grep -F 'bevy feature "wayland"'
+          cargo tree -e features -p bedrock-client --target x86_64-unknown-linux-gnu --locked | grep -F 'bevy feature "x11"'
+      - name: Enforce architecture boundaries
+        run: cargo run -p architecture --locked -- check --root . --policy tools/architecture/policy.toml
+      - run: cargo fmt --check
+      - run: cargo test --workspace --locked --no-fail-fast
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Lint off-by-default features
+        run: |
+          cargo clippy -p render --features enhanced --all-targets --locked -- -D warnings
+          cargo clippy -p bedrock-client --features enhanced,local-mods --locked -- -D warnings
+      - run: bash scripts/tests/acceptance_test.sh
+      # The Windows job above exercises the vanilla-asset fetchers through
+      # Windows PowerShell 5.1, where its bash deep legs are conditionally
+      # skipped because hosted Git Bash usually lacks unzip. Run the same
+      # hermetic fixture suite where real Info-ZIP unzip exists so the
+      # production bash extractor's bounded-extraction contracts (including
+      # pre-extraction link-entry rejection) are exercised in CI.
+      - name: Test hermetic vanilla asset acquisition on Linux (bash extractor bounds)
+        shell: pwsh
+        run: |
+          if (-not (Get-Command unzip -ErrorAction SilentlyContinue)) {
+            sudo apt-get update
+            sudo apt-get install --yes unzip
+          }
+          ./scripts/tests/vanilla-assets.ps1
+      - run: go test ./core/...
+      - run: go vet ./core/...
+      - name: Test and vet protocol registry tools
+        run: |
+          go -C tools/registrygen test ./... -count=1
+          go -C tools/registrygen vet ./...
+      - name: Test and vet pinned chunk fixture generator
+        working-directory: tools/chunkfix
+        env:
+          GOWORK: "off"
+        run: |
+          go test ./... -count=1
+          go vet ./...
+      - name: Test and vet local server Experiences
+        working-directory: tools/localserver
+        env:
+          GOWORK: "off"
+        run: |
+          go test ./... -count=1
+          go vet ./...
+      - name: Test and vet pinned bedsim movement trace generator
+        working-directory: tools/bedsimtrace
+        env:
+          GOWORK: "off"
+        run: |
+          go test ./... -count=1
+          go vet ./...
+
+  macos-physics-bootstrap:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.26.x
+      - name: Test hermetic vanilla asset acquisition on macOS (bash extractor bounds)
+        shell: pwsh
+        run: ./scripts/tests/vanilla-assets.ps1
+      - name: Install and verify the manifest-owned physics carrier through Make
+        run: make physics-assets

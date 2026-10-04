@@ -1,0 +1,432 @@
+name: Package
+
+# main pushes refresh `nightly`; manual runs and v* tags publish stable releases.
+# Signing and the update manifest are optional: missing secrets yield unsigned artifacts.
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Cinnabar app version (independent of the Minecraft protocol)
+        required: true
+        default: current
+        type: choice
+        options: [current, patch, minor, major, custom]
+      version:
+        description: Custom app version X.Y.Z (only for custom)
+        type: string
+      branch:
+        description: Branch to release (blank uses the selected workflow branch)
+        type: string
+
+concurrency:
+  group: ${{ (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')) && 'package-release' || format('package-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: source
+
+env:
+  CINNABAR_UPDATE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/latest/download/update-stable.json
+  UPDATE_TRUSTED_KEYS: ${{ vars.UPDATE_TRUSTED_KEYS }}
+  CARGO_TERM_COLOR: always
+  CINNABAR_SOURCE_ROOT: ${{ github.workspace }}/source
+
+jobs:
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      channel: ${{ steps.release.outputs.channel }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      ref: ${{ steps.release.outputs.ref }}
+      commit: ${{ steps.release.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && (inputs.branch || github.ref_name) || github.sha }}
+          path: source
+      - name: Check out release tooling from the workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tools
+          persist-credentials: false
+      - name: Resolve the version, tag, and build commit
+        id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BUMP: ${{ inputs.bump || 'current' }}
+          CUSTOM_VERSION: ${{ inputs.version }}
+          TARGET_BRANCH: ${{ inputs.branch || github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 "$GITHUB_WORKSPACE/release-tools/packaging/prepare-release.py"
+
+  macos:
+    name: macOS ${{ matrix.arch }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: arm64, runner: macos-15 }
+          - { arch: x86_64, runner: macos-15-intel }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+          persist-credentials: false
+          path: source
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tools
+          persist-credentials: false
+      - name: Resolve the downloadable artifact name
+        run: python3 "$GITHUB_WORKSPACE/release-tools/packaging/release-downloads.py" env macos "${{ matrix.arch }}" >> "$GITHUB_ENV"
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: package-${{ matrix.arch }}
+          workspaces: source -> target
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: source/core/go.mod
+          cache-dependency-path: |
+            source/core/go.sum
+            source/tools/localserver/go.sum
+            source/go.work.sum
+      - name: Install icon renderer
+        run: brew install librsvg
+      - name: Detect signing credentials
+        id: signing
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+        run: |
+          if [[ -n "$MACOS_CERT_P12_BASE64" && -n "$CODESIGN_IDENTITY" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No macOS signing secrets; building an ad-hoc signed, unnotarized DMG"
+          fi
+      - name: Import signing certificate
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/build.keychain-db"
+          security create-keychain -p "$MACOS_CERT_PASSWORD" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$MACOS_CERT_PASSWORD" "$keychain"
+          echo "$MACOS_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$MACOS_CERT_PASSWORD" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain-db
+      - name: Package, sign, notarize
+        env:
+          # Empty selects sign-notarize.sh's ad-hoc path.
+          CODESIGN_IDENTITY: ${{ steps.signing.outputs.enabled == 'true' && secrets.CODESIGN_IDENTITY || '' }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          make package-binaries
+          bash scripts/fetch-ui-font.sh
+          tools="$GITHUB_WORKSPACE/release-tools/packaging/macos"
+          bash "$tools/build-app.sh"
+          bash "$tools/sign-notarize.sh" .local/dist/macos-release/Cinnabar.app
+          version="${{ needs.prepare.outputs.version }}"
+          bash "$tools/make-dmg.sh" .local/dist/macos-release/Cinnabar.app ".local/dist/macos-release/Cinnabar-$version.dmg"
+          bash "$tools/sign-notarize.sh" ".local/dist/macos-release/Cinnabar-$version.dmg"
+      - name: Name the artifact by architecture
+        run: mv .local/dist/macos-release/Cinnabar-*.dmg "$RUNNER_TEMP/$RELEASE_ASSET"
+      - name: Check the DMG against the payload allowlist
+        run: |
+          mount="$RUNNER_TEMP/dmg"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$RUNNER_TEMP/$RELEASE_ASSET"
+          status=0
+          bash "$GITHUB_WORKSPACE/release-tools/packaging/check-payload.sh" macos "$mount" || status=$?
+          hdiutil detach "$mount"
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: ${{ runner.temp }}/${{ env.RELEASE_ASSET }}
+          if-no-files-found: error
+
+  windows:
+    needs: prepare
+    runs-on: windows-2025
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+          persist-credentials: false
+          path: source
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tools
+          persist-credentials: false
+      - name: Resolve the downloadable artifact name
+        run: python "$GITHUB_WORKSPACE/release-tools/packaging/release-downloads.py" env windows x86_64 >> "$GITHUB_ENV"
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: package
+          workspaces: source -> target
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: source/core/go.mod
+          cache-dependency-path: |
+            source/core/go.sum
+            source/tools/localserver/go.sum
+            source/go.work.sum
+      - name: Install WiX, ImageMagick and make
+        shell: pwsh
+        run: |
+          # The .wxs uses <Files>, which needs WiX 5.
+          dotnet tool install --global wix --version 5.0.2
+          & "$env:USERPROFILE\.dotnet\tools\wix.exe" extension add -g WixToolset.BootstrapperApplications.wixext/5.0.2
+          choco install imagemagick --no-progress -y
+          if (-not (Get-Command make -ErrorAction SilentlyContinue)) { choco install make --no-progress -y }
+          $magick = Get-ChildItem "$env:ProgramFiles\ImageMagick*" -Directory | Select-Object -First 1
+          if (-not $magick) { throw "ImageMagick install directory not found" }
+          Add-Content $env:GITHUB_PATH $magick.FullName
+          Add-Content $env:GITHUB_PATH "$env:USERPROFILE\.dotnet\tools"
+          Add-Content $env:GITHUB_PATH "$env:ProgramData\chocolatey\bin"
+      - name: Package and sign
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          make package-binaries
+          bash scripts/fetch-ui-font.sh
+          pwsh -NoProfile -File "$GITHUB_WORKSPACE/release-tools/packaging/windows/build-installer.ps1" -Root "$CINNABAR_SOURCE_ROOT"
+          mv .local/dist/windows-release/Cinnabar-*-x64.msi "$RUNNER_TEMP/$AUXILIARY_ASSET"
+          mv .local/dist/windows-release/Cinnabar-*-x64-setup.exe "$RUNNER_TEMP/$RELEASE_ASSET"
+      - name: Extract the MSI
+        shell: pwsh
+        run: |
+          $image = Join-Path $env:RUNNER_TEMP "msi-image"
+          $msi = Join-Path $env:RUNNER_TEMP $env:AUXILIARY_ASSET
+          & "$env:GITHUB_WORKSPACE/release-tools/packaging/windows/extract-msi.ps1" -Msi $msi -Out $image
+      - name: Check the MSI against the payload allowlist
+        run: bash "$GITHUB_WORKSPACE/release-tools/packaging/check-payload.sh" windows "$(cygpath -u "$RUNNER_TEMP")/msi-image"
+      - name: Check the setup embeds the verified MSI
+        shell: pwsh
+        run: |
+          & "$env:GITHUB_WORKSPACE/release-tools/packaging/windows/check-setup.ps1" -Setup (Join-Path $env:RUNNER_TEMP $env:RELEASE_ASSET) `
+            -Msi (Join-Path $env:RUNNER_TEMP $env:AUXILIARY_ASSET) -Out "$env:RUNNER_TEMP/setup-image"
+      - name: Smoke test the setup engine without installing
+        shell: pwsh
+        run: |
+          $setup = Join-Path $env:RUNNER_TEMP $env:RELEASE_ASSET
+          $layout = Join-Path $env:RUNNER_TEMP "setup-layout"
+          $log = Join-Path $env:RUNNER_TEMP "setup-layout.log"
+          $process = Start-Process -FilePath $setup -ArgumentList @('/layout', ('"' + $layout + '"'),
+            '/quiet', '/norestart', '/log', ('"' + $log + '"')) -WindowStyle Hidden -Wait -PassThru
+          if ($process.ExitCode -ne 0) { Get-Content $log; throw "Setup layout failed: $($process.ExitCode)" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: |
+            ${{ runner.temp }}/${{ env.AUXILIARY_ASSET }}
+            ${{ runner.temp }}/${{ env.RELEASE_ASSET }}
+          if-no-files-found: error
+
+  linux:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      # Runs AppImages without FUSE.
+      APPIMAGE_EXTRACT_AND_RUN: 1
+      APPIMAGETOOL_URL: https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+      APPIMAGETOOL_SHA256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+      APPIMAGE_RUNTIME_URL: https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+      APPIMAGE_RUNTIME_SHA256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+          persist-credentials: false
+          path: source
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tools
+          persist-credentials: false
+      - name: Resolve the downloadable artifact name
+        run: python3 "$GITHUB_WORKSPACE/release-tools/packaging/release-downloads.py" env linux x86_64 >> "$GITHUB_ENV"
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: package
+          workspaces: source -> target
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: source/core/go.mod
+          cache-dependency-path: |
+            source/core/go.sum
+            source/tools/localserver/go.sum
+            source/go.work.sum
+      - name: Install build and packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwayland-dev libxkbcommon-dev libasound2-dev librsvg2-bin
+          fetch() {
+            curl --fail --location --silent --show-error --output "$1" "$2"
+            echo "$3  $1" | sha256sum --check --strict
+          }
+          fetch "$RUNNER_TEMP/appimagetool" "$APPIMAGETOOL_URL" "$APPIMAGETOOL_SHA256"
+          fetch "$RUNNER_TEMP/appimage-runtime" "$APPIMAGE_RUNTIME_URL" "$APPIMAGE_RUNTIME_SHA256"
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          echo "APPIMAGETOOL=$RUNNER_TEMP/appimagetool" >> "$GITHUB_ENV"
+          echo "APPIMAGE_RUNTIME=$RUNNER_TEMP/appimage-runtime" >> "$GITHUB_ENV"
+      - name: Package
+        run: |
+          make package-binaries
+          bash scripts/fetch-ui-font.sh
+          bash "$GITHUB_WORKSPACE/release-tools/packaging/linux/build-appimage.sh"
+          mv .local/dist/linux-release/Cinnabar-*-x86_64.AppImage "$RUNNER_TEMP/$RELEASE_ASSET"
+      - name: Check the AppImage against the payload allowlist
+        run: |
+          cd "$RUNNER_TEMP"
+          "./$RELEASE_ASSET" --appimage-extract > /dev/null
+          bash "$GITHUB_WORKSPACE/release-tools/packaging/check-payload.sh" linux "$RUNNER_TEMP/squashfs-root"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: ${{ runner.temp }}/${{ env.RELEASE_ASSET }}
+          if-no-files-found: error
+
+  release:
+    name: Publish
+    needs: [prepare, macos, windows, linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MACOS_SIGNED: ${{ secrets.MACOS_CERT_P12_BASE64 != '' && secrets.CODESIGN_IDENTITY != '' }}
+      WINDOWS_SIGNED: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.ref }}
+          path: source
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tools
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          path: source/dist
+          merge-multiple: true
+      - name: Resolve release metadata names
+        run: python3 "$GITHUB_WORKSPACE/release-tools/packaging/release-downloads.py" env >> "$GITHUB_ENV"
+      - name: Add the standalone Linux installer
+        run: python3 "$GITHUB_WORKSPACE/release-tools/packaging/release-downloads.py" install-script --output "dist/$INSTALL_SCRIPT"
+      - name: Verify all downloads and checksum the nightly release
+        if: needs.prepare.outputs.channel == 'nightly'
+        run: python3 "$GITHUB_WORKSPACE/release-tools/packaging/release-downloads.py" checksums dist
+      - name: Publish the nightly prerelease
+        if: needs.prepare.outputs.channel == 'nightly'
+        run: |
+          previous="$(git rev-parse -q --verify 'refs/tags/nightly^{commit}' || true)"
+          bash "$GITHUB_WORKSPACE/release-tools/packaging/release-notes.sh" nightly "$previous" > "$RUNNER_TEMP/notes.md"
+          title="Nightly $(date -u +%Y-%m-%d) ($(git rev-parse --short HEAD))"
+          if gh release view nightly > /dev/null 2>&1; then
+            gh release upload nightly dist/* --clobber
+            gh release view nightly --json assets --jq '.assets[].name' | while IFS= read -r name; do
+              [[ -e "dist/$name" ]] || gh release delete-asset nightly "$name" --yes
+            done
+          else
+            gh release create nightly dist/* --prerelease --latest=false --target "$RELEASE_COMMIT" \
+              --title "$title" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+          git tag -f nightly "$RELEASE_COMMIT"
+          git push -f origin refs/tags/nightly
+          gh release edit nightly --title "$title" --notes-file "$RUNNER_TEMP/notes.md" \
+            --prerelease --latest=false --draft=false
+      - uses: actions/setup-go@v6
+        if: needs.prepare.outputs.channel == 'stable'
+        with:
+          go-version-file: source/core/go.mod
+          cache-dependency-path: source/core/go.sum
+      - name: Sign the update manifest
+        if: needs.prepare.outputs.channel == 'stable'
+        env:
+          CINNABAR_UPDATE_SIGNING_KEY: ${{ secrets.CINNABAR_UPDATE_SIGNING_KEY }}
+        run: |
+          if [[ -z "$CINNABAR_UPDATE_SIGNING_KEY" ]]; then
+            echo "::warning::CINNABAR_UPDATE_SIGNING_KEY is unset; releasing without update-stable.json"
+            exit 0
+          fi
+          base="${{ github.server_url }}/${{ github.repository }}/releases/download/$RELEASE_TAG"
+          args=()
+          while IFS= read -r spec; do
+            args+=(-artifact "$spec")
+          done < <(python3 "$GITHUB_WORKSPACE/release-tools/packaging/release-downloads.py" update-artifacts "$base" "$GITHUB_WORKSPACE/source/dist")
+          go -C core run ./cmd/release-manifest sign -version "$RELEASE_VERSION" -channel stable "${args[@]}" \
+            > "$RUNNER_TEMP/$UPDATE_MANIFEST"
+          mv "$RUNNER_TEMP/$UPDATE_MANIFEST" "dist/$UPDATE_MANIFEST"
+      - name: Verify all downloads and checksum the stable release
+        if: needs.prepare.outputs.channel == 'stable'
+        run: python3 "$GITHUB_WORKSPACE/release-tools/packaging/release-downloads.py" checksums dist
+      - name: Publish the stable release
+        if: needs.prepare.outputs.channel == 'stable'
+        run: |
+          bash "$GITHUB_WORKSPACE/release-tools/packaging/release-notes.sh" release > "$RUNNER_TEMP/notes.md"
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            # Keep a replacement private until every artifact and checksum agrees.
+            gh release edit "$RELEASE_TAG" --draft=true
+            if [[ ! -e "dist/$UPDATE_MANIFEST" ]]; then
+              gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | while IFS= read -r name; do
+                [[ "$name" != "$UPDATE_MANIFEST" ]] || gh release delete-asset "$RELEASE_TAG" "$name" --yes
+              done
+            fi
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+            gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | while IFS= read -r name; do
+              [[ -e "dist/$name" ]] || gh release delete-asset "$RELEASE_TAG" "$name" --yes
+            done
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" \
+              --notes-file "$RUNNER_TEMP/notes.md" --draft=false --prerelease=false
+          else
+            gh release create "$RELEASE_TAG" dist/* --verify-tag --target "$RELEASE_COMMIT" \
+              --title "$RELEASE_TAG" --generate-notes --notes-file "$RUNNER_TEMP/notes.md"
+          fi
