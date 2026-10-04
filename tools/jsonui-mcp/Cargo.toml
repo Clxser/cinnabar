@@ -1,0 +1,17 @@
+[package]
+name = "jsonui-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "jsonui-mcp"
+path = "src/main.rs"
+
+[dependencies]
+image.workspace = true
+json-ui = { path = "../../crates/json-ui" }
+jsonui-editor = { path = "../jsonui-editor" }
+serde_json = "1"
+uuid.workspace = true
