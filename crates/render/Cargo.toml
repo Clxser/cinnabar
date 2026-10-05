@@ -1,0 +1,37 @@
+[package]
+name = "render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+publication-test-support = []
+# Compiles the hard-disabled Enhanced renderer.
+enhanced = []
+
+[dependencies]
+mod-api = { path = "../mod-api" }
+assets = { path = "../assets" }
+bevy.workspace = true
+bytemuck = { version = "1", features = ["derive"] }
+render-api = { path = "../render-api" }
+render-model = { path = "../render-model" }
+meshing = { path = "../meshing" }
+particles = { path = "../particles" }
+rayon.workspace = true
+serde_json = "1"
+sha2.workspace = true
+world = { path = "../world" }
+wgpu.workspace = true
+
+# ARM hardware dispatch keeps identical digests and falls back on CPUs without SHA2.
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
+[dev-dependencies]
+pack-compiler = { path = "../pack-compiler" }
+image.workspace = true
+naga = { version = "27.0.3", features = ["wgsl-in", "wgsl-out"] }
+naga_oil = "0.20"
+tempfile = "3"
