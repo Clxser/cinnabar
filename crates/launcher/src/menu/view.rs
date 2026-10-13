@@ -569,7 +569,6 @@ pub struct MenuView {
     pub settings_slider_selected: Option<u16>,
     pub key_remap: Option<u16>,
     pub settings_advanced_graphics: bool,
-    pub graphics_detection_running: bool,
     pub language_choices: std::sync::Arc<[(String, String)]>,
     pub feeds: MenuFeeds,
     /// The open local world is hosted for Xbox friends, so the pause screen offers invites.
@@ -812,7 +811,6 @@ impl MenuView {
             settings_slider_selected: None,
             key_remap: None,
             settings_advanced_graphics: false,
-            graphics_detection_running: false,
             language_choices: Default::default(),
             feeds: Default::default(),
             hosting: false,

@@ -188,7 +188,6 @@ pub struct MenuRuntime {
     settings_retry_at: Option<std::time::Instant>,
     settings_apply: bool,
     pub(crate) graphics_detection_requested: bool,
-    pub(crate) graphics_detection_running: bool,
     /// In-memory option overrides (index, persisted value) that saves never write.
     session_overrides: Vec<(usize, i32)>,
     /// A developer controller is driving: hotkey toggles stay in memory.

@@ -5,37 +5,34 @@ use std::{collections::HashMap, sync::Arc};
 use ui::UiVisual;
 
 #[test]
-fn detection_and_cancellation_share_an_accessible_action_in_both_states() {
-    for running in [false, true] {
-        let mut view = MenuView::new(true, "Player".into());
-        view.graphics_detection_running = running;
-        let (_, hits, _) = paint(HashMap::new(), |canvas| {
-            canvas.capture_focus = true;
-            let mut content = Content {
-                canvas,
-                view: &view,
-                span: [100.0, 900.0],
-                column_width: 800.0,
-                y: 100.0,
-                translate: &|_| None,
-                nested: false,
-            };
-            draw(&mut content).unwrap();
-            assert!(
-                content
-                    .canvas
-                    .focus_targets
-                    .iter()
-                    .any(|target| target.action == MenuAction::SettingsDetectGraphics)
-            );
-        });
-        assert_eq!(
-            hits.iter()
-                .filter(|(action, _)| *action == MenuAction::SettingsDetectGraphics)
-                .count(),
-            1
+fn instant_detection_has_one_accessible_action() {
+    let view = MenuView::new(true, "Player".into());
+    let (_, hits, _) = paint(HashMap::new(), |canvas| {
+        canvas.capture_focus = true;
+        let mut content = Content {
+            canvas,
+            view: &view,
+            span: [100.0, 900.0],
+            column_width: 800.0,
+            y: 100.0,
+            translate: &|_| None,
+            nested: false,
+        };
+        draw(&mut content).unwrap();
+        assert!(
+            content
+                .canvas
+                .focus_targets
+                .iter()
+                .any(|target| target.action == MenuAction::SettingsDetectGraphics)
         );
-    }
+    });
+    assert_eq!(
+        hits.iter()
+            .filter(|(action, _)| *action == MenuAction::SettingsDetectGraphics)
+            .count(),
+        1
+    );
 }
 
 #[test]

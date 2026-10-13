@@ -67,7 +67,6 @@ impl FramePacingRuntime {
         limit: FrameRateLimit,
         display: DisplayTiming,
         focused: bool,
-        benchmark_running: bool,
     ) -> FramePacing {
         let activity = if self.ignore_window_state {
             WindowActivity::Focused
@@ -79,7 +78,7 @@ impl FramePacingRuntime {
             WindowActivity::Unfocused
         };
         let requested = frame_rate_target(intent, limit, display);
-        let ordinary = (!self.suspended && !benchmark_running)
+        let ordinary = (!self.suspended)
             .then(|| effective_frame_rate(requested, activity))
             .flatten();
         let rate = match (ordinary, self.required_limit) {
@@ -140,7 +139,6 @@ pub(crate) fn update_frame_pacing(
             .0
             .with_vrr_preference(settings.user_settings_update().1.video.vrr),
         focused,
-        presentation.benchmark_running(),
     );
     if *pacing != next {
         *pacing = next;

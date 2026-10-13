@@ -18,8 +18,7 @@ fn graphics_detection_controls_and_toast_render_at_desktop_and_small_sizes() {
             .iter()
             .find_map(|(name, index)| (*name == "video_forced_index").then_some(*index))
             .unwrap();
-        for (running, name) in [(false, "detect"), (true, "cancel")] {
-            view.graphics_detection_running = running;
+        {
             presentation.set_menu_view(Some(view.clone()));
             presentation
                 .build(
@@ -44,9 +43,8 @@ fn graphics_detection_controls_and_toast_render_at_desktop_and_small_sizes() {
                     .visible_menu_actions()
                     .any(|action| action == MenuAction::SettingsDetectGraphics)
             );
-            super::snapshot::write(&input, &format!("graphics-{name}-{}", size[0]));
+            super::snapshot::write(&input, &format!("graphics-detect-{}", size[0]));
         }
-        view.graphics_detection_running = false;
         runtime.push_client_toast(TUNED_MESSAGE, 2_000);
         presentation.set_menu_view(Some(view));
         let input = presentation

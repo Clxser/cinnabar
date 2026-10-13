@@ -21,7 +21,7 @@ use super::*;
 use render_scene::ChunkUploadPriority;
 
 /// A render plugin on the first adapter of `backends`; `None` when none is present.
-pub(in crate::chunk) fn render_plugin(
+pub(super) fn render_plugin(
     backends: wgpu::Backends,
     required_features: WgpuFeatures,
 ) -> Option<RenderPlugin> {

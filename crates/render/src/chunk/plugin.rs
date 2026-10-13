@@ -189,7 +189,6 @@ impl Plugin for ChunkRenderPlugin {
             crate::runtime_profile_trace::install_surface_trace(render_app);
         }
         install_chunk_commands(render_app);
-        super::graphics_benchmark::install(app);
         transparent::gamma_pass::install(app);
         let render_app = app.sub_app_mut(RenderApp);
         render_app.edit_schedule(Render, configure_chunk_publication);

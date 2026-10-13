@@ -9,11 +9,10 @@ impl Plugin for ClientShellPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<menu::MenuClipboard>()
             .init_resource::<menu::settings_options::graphics_detection::Detection>()
-            .init_resource::<render_scene::graphics_benchmark::GraphicsBenchmark>()
             .init_resource::<client_state::ScreenFocus>()
             .init_resource::<client_state::GameplayScreenControls>()
             .add_plugins(crate::local_worlds::LocalWorldsPlugin)
-            .add_systems(Startup, settings_runtime::initialize_render_distance)
+            .add_systems(Startup, settings_runtime::initialize_hardware)
             .add_systems(
                 Update,
                 (

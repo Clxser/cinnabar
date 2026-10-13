@@ -1,8 +1,8 @@
 //! Installed power-source information used only when choosing automatic graphics defaults.
 
-/// Reports battery operation; missing platform data conservatively takes the battery tier.
-pub fn on_battery() -> bool {
-    read_on_battery().unwrap_or(true)
+/// Reports battery or AC operation, retaining unknown platform data as absent.
+pub fn on_battery() -> Option<bool> {
+    read_on_battery()
 }
 
 /// Reads the macOS power source without starting a shell or requesting user input.
@@ -61,7 +61,7 @@ fn read_on_battery() -> Option<bool> {
     Some(battery)
 }
 
-/// Uses a conservative tier on platforms without a native power-source reader.
+/// Leaves power unknown on platforms without a native reader.
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 fn read_on_battery() -> Option<bool> {
     None

@@ -1,115 +1,121 @@
-//! Automatic recommendations never take ownership of manually edited settings.
+//! Hardware recommendations never take ownership of manually edited settings.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::{SETTINGS_OPTIONS, SettingsOptions, video_presets::VideoPreset};
 
-/// Increment when measurements or score mapping change, invalidating old results.
-pub const BENCHMARK_VERSION: u32 = 2;
-/// The interactive benchmark stops accepting work at this deadline.
-pub const BENCHMARK_LIMIT: std::time::Duration = std::time::Duration::from_millis(2_500);
-pub const TUNED_MESSAGE: &str =
-    "Graphics settings tuned for this device — change in Video settings.";
+mod tiers;
+pub use tiers::TIERS;
 
-/// Measurements from a single core and the terrain pipeline at the window resolution.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub struct Scores {
-    /// Nanoseconds at the 99th percentile, keyed by the measured MSAA sample count.
-    pub gpu_p99_ns: BTreeMap<u32, u64>,
-    pub sections_per_second: u32,
-    pub duration_ms: u32,
+/// Increment when hardware thresholds change, invalidating cached tiers.
+const TABLE_VERSION: u32 = 1;
+pub const TUNED_MESSAGE: &str = "Graphics defaults detected — your edits are kept.";
+const CACHE_CAPACITY: usize = 4;
+
+/// The selected adapter's memory and execution model.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum DeviceType {
+    Integrated,
+    Discrete,
+    Virtual,
+    Cpu,
+    #[default]
+    Unknown,
 }
 
-/// One row supplies all admission thresholds for an existing preset.
-pub struct Tier {
-    pub preset: VideoPreset,
-    pub gpu_budget_ns: u64,
-    pub sections_per_second: u32,
-    pub terrain_budget_bytes: usize,
+/// Adapter and driver facts that identify a cached hardware recommendation.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct AdapterIdentity {
+    pub vendor: u32,
+    pub device: u32,
+    pub name: String,
+    pub device_type: DeviceType,
+    pub backend: String,
+    pub driver: String,
+    pub driver_info: String,
+    pub driver_build: String,
 }
 
-/// Reserve at least 6.6 ms of the 16.7 ms frame for other render and simulation work.
-/// Higher tiers reserve more time for clouds and post-processing. CPU thresholds
-/// represent 1, 2 and 4 lit section rebuilds per 60 Hz frame on a single core.
-/// These synthetic admission thresholds require hardware validation; they cannot
-/// promise frame pacing in every server world or resource pack.
-pub const TIERS: [Tier; VideoPreset::ALL.len()] = [
-    Tier {
-        preset: VideoPreset::Performance,
-        gpu_budget_ns: 10_000_000,
-        sections_per_second: 60,
-        terrain_budget_bytes: assets::texture::policy::MIN_TERRAIN_BYTES,
-    },
-    Tier {
-        preset: VideoPreset::Balanced,
-        gpu_budget_ns: 7_000_000,
-        sections_per_second: 120,
-        terrain_budget_bytes: assets::texture::policy::MIN_TERRAIN_BYTES * 4,
-    },
-    Tier {
-        preset: VideoPreset::Quality,
-        gpu_budget_ns: 4_000_000,
-        sections_per_second: 240,
-        terrain_budget_bytes: assets::texture::policy::MIN_TERRAIN_BYTES * 8,
-    },
-];
-
-/// Measures only sample counts consumed by the preset table, sharing their admission budgets.
-pub fn sample_budgets(settings: &SettingsOptions) -> BTreeMap<u32, u64> {
-    let mut budgets: BTreeMap<u32, u64> = BTreeMap::new();
-    for tier in &TIERS {
-        let samples = settings
-            .video_preset_values(tier.preset)
-            .find(|(name, _)| *name == "msaa")
-            .expect("presets include MSAA")
-            .1 as u32;
-        budgets
-            .entry(samples)
-            .and_modify(|budget| *budget = (*budget).max(tier.gpu_budget_ns))
-            .or_insert(tier.gpu_budget_ns);
+impl AdapterIdentity {
+    /// Invalidates the cache on adapter, backend, driver or tier-table changes.
+    pub fn cache_key(&self) -> String {
+        let identity = serde_json::to_vec(&(TABLE_VERSION, self))
+            .expect("adapter identity contains only serializable values");
+        format!("{:x}", Sha256::digest(identity))
     }
-    budgets
 }
 
-/// A measured preset with distance bounded by the existing device recommendation.
+/// Installed hardware read once at startup; zero counts and absent memory mean unknown.
+#[derive(Clone, Debug, Default)]
+pub struct HardwareFacts {
+    pub adapter: AdapterIdentity,
+    /// Dedicated VRAM or the platform-reported integrated GPU memory share.
+    pub graphics_memory_bytes: Option<u64>,
+    pub physical_memory_bytes: u64,
+    pub logical_cores: u32,
+    pub physical_cores: u32,
+    pub on_battery: Option<bool>,
+}
+
+impl HardwareFacts {
+    /// Selects the highest hardware tier without baking power state into the cache.
+    pub fn tier(&self) -> VideoPreset {
+        match self.adapter.device_type {
+            DeviceType::Cpu | DeviceType::Virtual => return VideoPreset::Performance,
+            DeviceType::Unknown => return VideoPreset::Balanced,
+            DeviceType::Integrated | DeviceType::Discrete => {}
+        }
+        let Some(graphics_bytes) = self.graphics_memory_bytes.filter(|bytes| *bytes > 0) else {
+            return VideoPreset::Balanced;
+        };
+        if self.physical_memory_bytes == 0 || self.logical_cores == 0 || self.physical_cores == 0 {
+            return VideoPreset::Balanced;
+        }
+        let memory_tier = resource_pack::subpacks::device_memory_tier(self.physical_memory_bytes);
+        TIERS
+            .iter()
+            .rev()
+            .find(|tier| {
+                let minimum_graphics = match self.adapter.device_type {
+                    DeviceType::Integrated => tier.integrated_memory_bytes,
+                    _ => tier.discrete_memory_bytes,
+                };
+                graphics_bytes >= minimum_graphics
+                    && memory_tier >= tier.memory_tier
+                    && self.logical_cores >= tier.logical_cores
+                    && self.physical_cores >= tier.physical_cores
+            })
+            .expect("the Performance tier admits all known hardware")
+            .preset
+    }
+}
+
+/// A preset with distance bounded by the existing device recommendation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Recommendation {
     pub preset: VideoPreset,
     pub render_distance: u8,
 }
 
-/// Selects the highest admitted tier, then steps down once on battery power.
+/// Lowers one tier on battery, then applies the existing device distance limits.
 pub fn recommend(
     settings: &SettingsOptions,
-    scores: &Scores,
-    terrain_budget_bytes: usize,
+    tier: VideoPreset,
     on_battery: bool,
 ) -> Recommendation {
-    let mut selected = 0;
-    let mut admitted = false;
-    for (index, tier) in TIERS.iter().enumerate() {
-        let samples = settings
-            .video_preset_values(tier.preset)
-            .find(|(name, _)| *name == "msaa")
-            .expect("presets include MSAA")
-            .1 as u32;
-        if scores
-            .gpu_p99_ns
-            .get(&samples)
-            .is_some_and(|&ns| ns > 0 && ns <= tier.gpu_budget_ns)
-            && scores.sections_per_second >= tier.sections_per_second
-            && terrain_budget_bytes >= tier.terrain_budget_bytes
-        {
-            selected = index;
-            admitted = true;
-        }
-    }
-    if on_battery {
-        selected = selected.saturating_sub(1);
-    }
-    let preset = TIERS[selected].preset;
+    let index = TIERS
+        .iter()
+        .position(|row| row.preset == tier)
+        .expect("every preset has a tier");
+    let preset = TIERS[if on_battery {
+        index.saturating_sub(1)
+    } else {
+        index
+    }]
+    .preset;
     let defaults = settings.render_distance_defaults();
     let distance = settings
         .video_preset_values(preset)
@@ -118,29 +124,32 @@ pub fn recommend(
         .1 as u8;
     Recommendation {
         preset,
-        render_distance: if admitted {
-            distance
-        } else {
-            ui::MIN_RENDER_DISTANCE_CHUNKS
-        }
-        .min(defaults.recommended)
-        .min(defaults.native_maximum),
+        render_distance: distance
+            .min(defaults.recommended)
+            .min(defaults.native_maximum),
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-struct CachedScores {
+struct CachedTier {
     key: String,
-    scores: Scores,
+    preset: VideoPreset,
 }
 
-/// Persisted defaults, protected choices and a bounded cache of device measurements.
+/// Persisted defaults, protected choices and a bounded cache of hardware tiers.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub(super) struct Preferences {
     automatic: BTreeMap<String, i32>,
     protected: BTreeSet<String>,
-    cache: Vec<CachedScores>,
+    // Old measurement caches are ignored without discarding saved user settings.
+    #[serde(rename = "hardware_cache")]
+    cache: Vec<CachedTier>,
+}
+
+/// Accepts only the hexadecimal digest used by adapter identities.
+fn valid_key(key: &str) -> bool {
+    key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 impl Preferences {
@@ -156,7 +165,7 @@ impl Preferences {
         VideoPreset::controls(name) && self.protected.insert(name.to_owned())
     }
 
-    /// Rejects unknown options, invalid measurements and oversized cache records.
+    /// Rejects unknown options, invalid values and oversized cache records.
     pub(super) fn validated(mut self) -> Self {
         self.automatic.retain(|name, value| {
             VideoPreset::controls(name)
@@ -167,40 +176,25 @@ impl Preferences {
                 })
         });
         self.protected.retain(|name| VideoPreset::controls(name));
-        self.cache
-            .retain(|entry| entry.key.len() == 64 && entry.scores.valid());
-        self.cache.truncate(4);
+        self.cache.retain(|entry| valid_key(&entry.key));
+        self.cache.truncate(CACHE_CAPACITY);
         self
     }
 }
 
-impl Scores {
-    /// Accepts only completed, finite-size runs with supported timestamp samples.
-    fn valid(&self) -> bool {
-        self.sections_per_second > 0
-            && self.duration_ms > 0
-            && self.duration_ms <= BENCHMARK_LIMIT.as_millis() as u32 + 500
-            && !self.gpu_p99_ns.is_empty()
-            && self
-                .gpu_p99_ns
-                .iter()
-                .all(|(samples, ns)| ui::ANTI_ALIASING_SAMPLE_COUNTS.contains(samples) && *ns > 0)
-    }
-}
-
 impl SettingsOptions {
-    /// Returns scores only for exactly the same adapter, driver and workload identity.
-    pub fn graphics_scores(&self, key: &str) -> Option<&Scores> {
+    /// Returns a tier only for the same adapter, driver and table version.
+    pub fn graphics_tier(&self, key: &str) -> Option<VideoPreset> {
         self.graphics_detection
             .cache
             .iter()
             .find(|entry| entry.key == key)
-            .map(|entry| &entry.scores)
+            .map(|entry| entry.preset)
     }
 
-    /// Saves completed measurements, keeping at most four adapter identities.
-    pub fn cache_graphics_scores(&mut self, key: String, scores: Scores) -> bool {
-        if key.len() != 64 || !scores.valid() {
+    /// Saves a hardware tier, keeping at most four adapter identities.
+    pub fn cache_graphics_tier(&mut self, key: String, preset: VideoPreset) -> bool {
+        if !valid_key(&key) {
             return false;
         }
         self.graphics_detection
@@ -208,8 +202,8 @@ impl SettingsOptions {
             .retain(|entry| entry.key != key);
         self.graphics_detection
             .cache
-            .insert(0, CachedScores { key, scores });
-        self.graphics_detection.cache.truncate(4);
+            .insert(0, CachedTier { key, preset });
+        self.graphics_detection.cache.truncate(CACHE_CAPACITY);
         true
     }
 

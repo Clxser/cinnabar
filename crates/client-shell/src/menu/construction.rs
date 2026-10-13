@@ -163,7 +163,6 @@ impl MenuRuntime {
             settings_retry_at: None,
             settings_apply: true,
             graphics_detection_requested: false,
-            graphics_detection_running: false,
             session_overrides: Vec::new(),
             transient_toggles: false,
             language_choices,

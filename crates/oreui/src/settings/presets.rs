@@ -65,11 +65,7 @@ pub(super) fn draw(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
         content,
         "Automatic graphics settings",
         "Tune untouched settings for this device. Your edits are kept.",
-        if content.view.graphics_detection_running {
-            "Cancel detection"
-        } else {
-            "Detect best settings"
-        },
+        "Detect best settings",
         Some(MenuAction::SettingsDetectGraphics),
     )?;
     Ok(())

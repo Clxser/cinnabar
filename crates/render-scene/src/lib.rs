@@ -11,7 +11,6 @@ pub mod enhanced;
 pub mod entity_shadow;
 pub mod formats;
 pub mod gpu_times;
-pub mod graphics_benchmark;
 pub mod hand_rig;
 pub mod lighting;
 pub mod lightning;

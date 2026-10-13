@@ -17,8 +17,6 @@ pub(crate) struct PresentModeRuntime {
     locked: bool,
     /// A hidden developer surface never reaches a display, so it never waits for one.
     hidden_surface: bool,
-    /// Menu measurements temporarily avoid display backpressure without editing preferences.
-    benchmark_running: bool,
     observed_settings_generation: u64,
     /// Window that adopted the driver remedy; kept until the preference or window changes,
     /// since the render world withdraws its recommendation once Immediate is requested.
@@ -52,7 +50,6 @@ impl PresentModeRuntime {
             policy: PresentModePolicy::new(preference),
             locked: force_vsync || no_vsync || attributable_evidence,
             hidden_surface,
-            benchmark_running: false,
             observed_settings_generation: 0,
             remedy_adopted: None,
             launch_limit: None,
@@ -79,11 +76,6 @@ impl PresentModeRuntime {
         self.limit
     }
 
-    /// Whether the menu is measuring the device with ordinary pacing lifted.
-    pub(crate) const fn benchmark_running(&self) -> bool {
-        self.benchmark_running
-    }
-
     #[must_use]
     pub(crate) fn policy(&self) -> PresentModePolicy {
         self.policy.clone()
@@ -101,8 +93,6 @@ impl PresentModeRuntime {
     pub(crate) fn intent(&self) -> PresentationIntent {
         if self.hidden_surface {
             PresentationIntent::Unpaced
-        } else if self.benchmark_running {
-            PresentationIntent::LowLatency
         } else {
             self.policy.preference().intent()
         }
@@ -116,9 +106,7 @@ impl PresentModeRuntime {
     }
 
     fn remedy_eligible(&self) -> bool {
-        !self.hidden_surface
-            && !self.benchmark_running
-            && self.policy.preference() == PresentModePreference::Auto
+        !self.hidden_surface && self.policy.preference() == PresentModePreference::Auto
     }
 
     fn selected_mode(&self) -> PresentModeKind {
@@ -148,11 +136,9 @@ impl PresentModeRuntime {
 /// Applies the VSync setting and keeps the window on the policy's present mode.
 pub(crate) fn apply_present_mode(
     settings: Res<RuntimeSettings>,
-    benchmark: Option<Res<render_scene::graphics_benchmark::GraphicsBenchmark>>,
     mut runtime: ResMut<PresentModeRuntime>,
     mut windows: Query<(Entity, &mut Window), With<PrimaryWindow>>,
 ) {
-    runtime.benchmark_running = benchmark.is_some_and(|benchmark| benchmark.is_running());
     let Ok((entity, mut window)) = windows.single_mut() else {
         return;
     };

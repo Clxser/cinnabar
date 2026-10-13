@@ -1,6 +1,6 @@
 use super::*;
 
-/// Supplies a device whose distance ceiling is independent of the scores.
+/// Supplies ordinary memory-based render-distance limits.
 fn settings() -> SettingsOptions {
     let mut settings = SettingsOptions::default();
     settings.set_render_distance_device(ui::RenderDistanceDevice {
@@ -11,66 +11,133 @@ fn settings() -> SettingsOptions {
     settings
 }
 
-/// Creates completed measurements at a table row's exact admission thresholds.
-fn scores(tier: &Tier) -> Scores {
-    Scores {
-        gpu_p99_ns: ui::ANTI_ALIASING_SAMPLE_COUNTS
-            .into_iter()
-            .map(|samples| (samples, tier.gpu_budget_ns))
-            .collect(),
-        sections_per_second: tier.sections_per_second,
-        duration_ms: 800,
+/// Supplies known hardware at a table row's exact admission thresholds.
+fn facts(row: &tiers::Tier, device_type: DeviceType) -> HardwareFacts {
+    let memory = (1..=64)
+        .map(|gib| (gib << 30) + 1)
+        .find(|bytes| resource_pack::subpacks::device_memory_tier(*bytes) >= row.memory_tier)
+        .unwrap();
+    HardwareFacts {
+        adapter: AdapterIdentity {
+            device_type,
+            ..Default::default()
+        },
+        graphics_memory_bytes: Some(
+            match device_type {
+                DeviceType::Integrated => row.integrated_memory_bytes,
+                _ => row.discrete_memory_bytes,
+            }
+            .max(1),
+        ),
+        physical_memory_bytes: memory,
+        logical_cores: row.logical_cores.max(1),
+        physical_cores: row.physical_cores.max(1),
+        on_battery: Some(false),
     }
 }
 
 #[test]
-fn each_table_row_admits_its_existing_preset_at_the_boundary() {
-    let settings = settings();
-    for (index, tier) in TIERS.iter().enumerate() {
-        assert_eq!(
-            tier.preset,
-            VideoPreset::ALL[index],
-            "table covers preset ordering"
-        );
-        let selected = recommend(&settings, &scores(tier), tier.terrain_budget_bytes, false);
-        assert_eq!(selected.preset, tier.preset);
-        assert!(selected.render_distance <= settings.render_distance_defaults().recommended);
-        assert!(selected.render_distance <= settings.render_distance_defaults().native_maximum);
-        let battery = recommend(&settings, &scores(tier), tier.terrain_budget_bytes, true);
-        assert_eq!(battery.preset, TIERS[index.saturating_sub(1)].preset);
+fn table_covers_every_preset_once_and_thresholds_are_monotonic() {
+    assert_eq!(
+        TIERS.iter().map(|row| row.preset).collect::<Vec<_>>(),
+        VideoPreset::ALL
+    );
+    for rows in TIERS.windows(2) {
+        assert!(rows[0].memory_tier <= rows[1].memory_tier);
+        assert!(rows[0].logical_cores <= rows[1].logical_cores);
+        assert!(rows[0].physical_cores <= rows[1].physical_cores);
+        assert!(rows[0].discrete_memory_bytes <= rows[1].discrete_memory_bytes);
+        assert!(rows[0].integrated_memory_bytes <= rows[1].integrated_memory_bytes);
+    }
+    for row in &TIERS {
+        assert!(settings().video_preset_values(row.preset).next().is_some());
+        for device in [DeviceType::Discrete, DeviceType::Integrated] {
+            assert_eq!(facts(row, device).tier(), row.preset);
+        }
     }
 }
 
 #[test]
-fn cpu_gpu_and_memory_independently_bound_quality() {
+fn ram_gpu_memory_and_both_core_counts_independently_bound_each_tier() {
+    for (index, row) in TIERS.iter().enumerate().skip(1) {
+        for device in [DeviceType::Discrete, DeviceType::Integrated] {
+            let hardware = facts(row, device);
+            for lower in [
+                HardwareFacts {
+                    graphics_memory_bytes: hardware.graphics_memory_bytes.map(|bytes| bytes - 1),
+                    ..hardware.clone()
+                },
+                HardwareFacts {
+                    physical_memory_bytes: hardware.physical_memory_bytes - 1,
+                    ..hardware.clone()
+                },
+                HardwareFacts {
+                    logical_cores: hardware.logical_cores - 1,
+                    ..hardware.clone()
+                },
+                HardwareFacts {
+                    physical_cores: hardware.physical_cores - 1,
+                    ..hardware.clone()
+                },
+            ] {
+                assert_eq!(lower.tier(), TIERS[index - 1].preset);
+            }
+        }
+    }
+}
+
+#[test]
+fn battery_lowers_one_tier_without_exceeding_device_distance_defaults() {
     let settings = settings();
-    let tier = &TIERS[2];
-    let mut measured = scores(tier);
-    measured.sections_per_second -= 1;
-    assert_eq!(
-        recommend(&settings, &measured, tier.terrain_budget_bytes, false).preset,
-        VideoPreset::Balanced
-    );
-    measured = scores(tier);
-    measured.gpu_p99_ns.values_mut().for_each(|ns| *ns += 1);
-    assert_eq!(
-        recommend(&settings, &measured, tier.terrain_budget_bytes, false).preset,
-        VideoPreset::Balanced
-    );
-    assert_eq!(
-        recommend(
-            &settings,
-            &scores(tier),
-            tier.terrain_budget_bytes - 1,
-            false
-        )
-        .preset,
-        VideoPreset::Balanced
-    );
-    assert_eq!(
-        recommend(&settings, &Scores::default(), 0, false).preset,
-        VideoPreset::Performance
-    );
+    for (index, row) in TIERS.iter().enumerate() {
+        for battery in [false, true] {
+            let selected = recommend(&settings, row.preset, battery);
+            assert_eq!(
+                selected.preset,
+                TIERS[if battery {
+                    index.saturating_sub(1)
+                } else {
+                    index
+                }]
+                .preset
+            );
+            assert!(selected.render_distance <= settings.render_distance_defaults().recommended);
+            assert!(selected.render_distance <= settings.render_distance_defaults().native_maximum);
+        }
+    }
+}
+
+#[test]
+fn unknown_hardware_uses_balanced_and_software_devices_use_performance() {
+    assert_eq!(HardwareFacts::default().tier(), VideoPreset::Balanced);
+    let hardware = facts(&TIERS[2], DeviceType::Discrete);
+    for unknown in [
+        HardwareFacts {
+            graphics_memory_bytes: None,
+            ..hardware.clone()
+        },
+        HardwareFacts {
+            graphics_memory_bytes: Some(0),
+            ..hardware.clone()
+        },
+        HardwareFacts {
+            physical_memory_bytes: 0,
+            ..hardware.clone()
+        },
+        HardwareFacts {
+            logical_cores: 0,
+            ..hardware.clone()
+        },
+        HardwareFacts {
+            physical_cores: 0,
+            ..hardware.clone()
+        },
+    ] {
+        assert_eq!(unknown.tier(), VideoPreset::Balanced);
+    }
+    for device in [DeviceType::Cpu, DeviceType::Virtual] {
+        assert_eq!(facts(&TIERS[2], device).tier(), VideoPreset::Performance);
+    }
 }
 
 #[test]
@@ -138,20 +205,94 @@ fn manual_preset_selection_protects_its_defaults_from_detection() {
 }
 
 #[test]
-fn cache_round_trips_rejects_partial_runs_and_evicts_old_adapters() {
+fn cache_round_trips_and_evicts_old_adapters() {
     let mut settings = settings();
-    for index in 0..5 {
-        assert!(settings.cache_graphics_scores(format!("{index:064x}"), scores(&TIERS[2])));
+    for index in 0..=CACHE_CAPACITY {
+        assert!(settings.cache_graphics_tier(format!("{index:064x}"), VideoPreset::Quality));
     }
     let loaded = SettingsOptions::decode(&serde_json::to_vec(&settings).unwrap()).unwrap();
-    assert!(loaded.graphics_scores(&format!("{:064x}", 0)).is_none());
+    assert!(loaded.graphics_tier(&format!("{:064x}", 0)).is_none());
     assert_eq!(
-        loaded.graphics_scores(&format!("{:064x}", 4)),
-        Some(&scores(&TIERS[2]))
+        loaded.graphics_tier(&format!("{CACHE_CAPACITY:064x}")),
+        Some(VideoPreset::Quality)
     );
-    assert!(loaded.graphics_scores(&format!("{:064x}", 5)).is_none());
-    assert!(!settings.cache_graphics_scores(format!("{:064x}", 5), Scores::default()));
-    let mut partial = scores(&TIERS[2]);
-    partial.gpu_p99_ns.clear();
-    assert!(!settings.cache_graphics_scores(format!("{:064x}", 5), partial));
+    assert!(!settings.cache_graphics_tier("x".repeat(64), VideoPreset::Balanced));
+    assert!(!settings.cache_graphics_tier("short".into(), VideoPreset::Balanced));
+}
+
+#[test]
+fn old_measurement_cache_does_not_discard_user_values() {
+    let settings = SettingsOptions::decode(
+        br#"{
+        "values": {"render_distance": 7},
+        "graphics_detection": {"cache": [{"key": "old", "scores": {}}]}
+    }"#,
+    )
+    .unwrap();
+    assert_eq!(settings.value("render_distance"), 7);
+    assert!(settings.graphics_detection.cache.is_empty());
+}
+
+#[test]
+fn changed_adapter_or_driver_recomputes_defaults_and_preserves_edits() {
+    let mut settings = settings();
+    let mut hardware = facts(&TIERS[1], DeviceType::Discrete);
+    let key = hardware.adapter.cache_key();
+    settings.cache_graphics_tier(key.clone(), hardware.tier());
+    settings.apply_graphics_recommendation(recommend(&settings, hardware.tier(), false));
+    let clouds = SETTINGS_OPTIONS
+        .iter()
+        .position(|option| option.name == "render_clouds")
+        .unwrap();
+    settings.set(clouds, 0);
+    for identity in [
+        AdapterIdentity {
+            driver_info: "new driver".into(),
+            ..hardware.adapter.clone()
+        },
+        AdapterIdentity {
+            driver_build: "new OS build".into(),
+            ..hardware.adapter.clone()
+        },
+        AdapterIdentity {
+            device: 1,
+            ..hardware.adapter.clone()
+        },
+        AdapterIdentity {
+            vendor: 1,
+            ..hardware.adapter.clone()
+        },
+        AdapterIdentity {
+            backend: "new backend".into(),
+            ..hardware.adapter.clone()
+        },
+    ] {
+        assert_ne!(identity.cache_key(), key);
+    }
+    hardware.adapter.driver_info = "new driver".into();
+    hardware.graphics_memory_bytes = Some(TIERS[2].discrete_memory_bytes);
+    hardware.physical_memory_bytes = 32 << 30;
+    hardware.logical_cores = TIERS[2].logical_cores;
+    hardware.physical_cores = TIERS[2].physical_cores;
+    let loaded = SettingsOptions::decode(&serde_json::to_vec(&settings).unwrap()).unwrap();
+    let mut loaded = loaded;
+    assert!(
+        loaded
+            .graphics_tier(&hardware.adapter.cache_key())
+            .is_none()
+    );
+    let tier = loaded
+        .graphics_tier(&hardware.adapter.cache_key())
+        .unwrap_or_else(|| hardware.tier());
+    assert_eq!(tier, VideoPreset::Quality);
+    loaded.apply_graphics_recommendation(recommend(&loaded, tier, false));
+    assert_eq!(loaded.value("render_clouds"), 0);
+    assert_eq!(
+        loaded.value("msaa"),
+        loaded
+            .video_preset_values(VideoPreset::Quality)
+            .find(|(name, _)| *name == "msaa")
+            .unwrap()
+            .1
+    );
 }

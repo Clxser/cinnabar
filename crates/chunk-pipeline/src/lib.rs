@@ -1,7 +1,6 @@
 //! Bounded terrain scheduling and publication for an ordered client world.
 
 mod culling;
-pub mod graphics_workload;
 mod stream;
 
 pub use culling::{CaveVisibilityScratch, CaveVisibilityWork, CaveVisibleSet};

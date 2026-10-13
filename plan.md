@@ -8611,18 +8611,15 @@ and the native comparison.
 
 ## Automatic graphics defaults
 
-First-launch device tuning measures a fixed terrain scene with the production
-terrain pipeline and single-core light solving and meshing. Recommendations reuse
-the Video presets, device distance limits and terrain texture memory budgets.
-Explicit edits remain protected across reruns and device changes. Video settings
-offer detection and cancellation, and completed scores are cached per device and
-driver. The benchmark has a 2.5-second deadline and retains settings if it cannot
-finish. Measurements run only over the launcher. They temporarily lift ordinary
-frame caps and display pacing, then restore the current preferences when the run
-ends. GPU submissions adapt to measured pass cost so menu frames can continue.
+Startup hardware facts choose Performance, Balanced or Quality through a small
+threshold table. Detection reuses the existing memory tiers, Video presets and
+render-distance defaults. Battery power lowers the choice by one tier; unknown
+hardware uses Balanced. Defaults are cached by adapter and driver, and explicit
+edits remain protected across launches and device changes. Video settings can
+reapply detection instantly, with a completion toast.
 
-Hardware calibration for 60 fps at the 1% low and the owner’s visual review remain
-incomplete. Synthetic thresholds do not close a frame-pacing or parity gate.
+The owner's visual review remains incomplete. Hardware thresholds do not close a
+frame-pacing or parity gate.
 
 ## Outline label sizing and alignment
 
