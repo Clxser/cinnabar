@@ -121,10 +121,10 @@ pub fn drive(
     time: Option<Res<Time<Real>>>,
 ) {
     let now = Instant::now();
-    if let (Some(ui), Some(time)) = (ui.as_mut(), time.as_deref()) {
-        if let Some(notice) = state.notice.take() {
-            ui.push_client_toast(notice, time.elapsed().as_millis() as u64);
-        }
+    if let (Some(ui), Some(time)) = (ui.as_mut(), time.as_deref())
+        && let Some(notice) = state.notice.take()
+    {
+        ui.push_client_toast(notice, time.elapsed().as_millis() as u64);
     }
     let explicit = std::mem::take(&mut menu.graphics_detection_requested);
     if explicit && state.run.take().is_some() {
@@ -167,9 +167,9 @@ pub fn drive(
                 }
             }
         }
-        if run.cpu_score.is_some() && run.gpu_score.is_some() {
-            let cpu = run.cpu_score.expect("completed CPU score");
-            let gpu = run.gpu_score.take().expect("completed GPU score");
+        if let Some(cpu) = run.cpu_score
+            && let Some(gpu) = run.gpu_score.take()
+        {
             let scores = Scores {
                 sections_per_second: cpu,
                 gpu_p99_ns: gpu,

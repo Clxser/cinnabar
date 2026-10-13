@@ -241,7 +241,7 @@ impl Run {
             .slice(..)
             .get_mapped_range()
             .map_err(|_| "GPU timestamp range is unavailable")?;
-        for pair in data.chunks_exact(16) {
+        for pair in data.as_chunks::<16>().0 {
             let begin = u64::from_le_bytes(pair[..8].try_into().expect("timestamp word"));
             let end = u64::from_le_bytes(pair[8..].try_into().expect("timestamp word"));
             let ns = end
