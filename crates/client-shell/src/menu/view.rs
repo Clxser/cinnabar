@@ -92,7 +92,6 @@ impl MenuRuntime {
             settings_advanced_graphics: self.settings_advanced_graphics,
             graphics_detection_running: self.graphics_detection_running,
             feeds: self.presented_feeds(),
-            store: self.store_snapshot.clone(),
             hosting: self.hosting_world(),
             invite: self.invite_view(),
             realm_membership: self.realm_membership.state.clone(),
