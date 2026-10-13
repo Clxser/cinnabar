@@ -90,6 +90,7 @@ impl MenuRuntime {
             language_choices: std::sync::Arc::clone(&self.language_choices),
             key_remap: self.key_remap,
             settings_advanced_graphics: self.settings_advanced_graphics,
+            graphics_detection_running: self.graphics_detection_running,
             feeds: self.presented_feeds(),
             store: self.store_snapshot.clone(),
             hosting: self.hosting_world(),

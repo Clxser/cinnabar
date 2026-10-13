@@ -4,6 +4,8 @@
 //! layout rules. It has no dependencies and must not acquire game state or GPU types.
 
 mod actor_lighting;
+mod benchmark;
+pub use benchmark::BenchmarkCancellation;
 mod frame_rate_limit;
 mod legacy_combat;
 mod pose_generation;

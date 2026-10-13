@@ -8594,3 +8594,16 @@ natively too. Until that comparison exists, the counted fallback to the
 base visual is the intended semantic, locked by the connection permutation
 regression. Incomplete: mask compilation, neighbor rule, meshing selection,
 and the native comparison.
+
+## Automatic graphics defaults
+
+First-launch device tuning measures a fixed terrain scene with the production
+terrain pipeline and single-core light solving and meshing. Recommendations reuse
+the Video presets, device distance limits and terrain texture memory budgets.
+Explicit edits remain protected across reruns and device changes. Video settings
+offer detection and cancellation, and completed scores are cached per device and
+driver. The benchmark has a 2.5-second deadline and retains settings if it cannot
+finish.
+
+Hardware calibration for 60 fps at the 1% low and the owner’s visual review remain
+incomplete. Synthetic thresholds do not close a frame-pacing or parity gate.

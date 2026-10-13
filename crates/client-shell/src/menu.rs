@@ -191,6 +191,8 @@ pub struct MenuRuntime {
     /// Failed writes wait until this deadline while retaining the newest edits.
     settings_retry_at: Option<std::time::Instant>,
     settings_apply: bool,
+    pub(crate) graphics_detection_requested: bool,
+    pub(crate) graphics_detection_running: bool,
     /// In-memory option overrides (index, persisted value) that saves never write.
     session_overrides: Vec<(usize, i32)>,
     /// A developer controller is driving: hotkey toggles stay in memory.
@@ -752,6 +754,7 @@ impl MenuRuntime {
             | MenuAction::SettingsSection(_)
             | MenuAction::SettingsOption(..)
             | MenuAction::SettingsVideoPreset(_)
+            | MenuAction::SettingsDetectGraphics
             | MenuAction::SettingsLanguage(_)
             | MenuAction::SettingsDropdown(_)
             | MenuAction::SettingsResetBindings(_)

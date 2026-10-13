@@ -6,6 +6,7 @@ mod chunk;
 mod classifier;
 pub mod occlusion;
 mod output_memory;
+pub mod synthetic_terrain;
 pub use output_memory::{MeshOutputBounds, mesh_output_byte_len};
 pub mod cloud;
 pub mod cloud_viewport;
