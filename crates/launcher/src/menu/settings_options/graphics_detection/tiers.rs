@@ -3,6 +3,7 @@
 use super::VideoPreset;
 
 /// A row bounds RAM, core counts and the selected GPU's reported memory.
+#[derive(serde::Serialize)]
 pub struct Tier {
     pub preset: VideoPreset,
     /// Uses the shared resource-pack memory scale rather than a second RAM scale.

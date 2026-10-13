@@ -10,8 +10,6 @@ use super::{SETTINGS_OPTIONS, SettingsOptions, video_presets::VideoPreset};
 mod tiers;
 pub use tiers::TIERS;
 
-/// Increment when hardware thresholds change, invalidating cached tiers.
-const TABLE_VERSION: u32 = 1;
 pub const TUNED_MESSAGE: &str = "Graphics defaults detected — your edits are kept.";
 const CACHE_CAPACITY: usize = 4;
 
@@ -40,9 +38,9 @@ pub struct AdapterIdentity {
 }
 
 impl AdapterIdentity {
-    /// Invalidates the cache on adapter, backend, driver or tier-table changes.
+    /// Hashes the adapter, driver and current thresholds so policy changes invalidate the cache.
     pub fn cache_key(&self) -> String {
-        let identity = serde_json::to_vec(&(TABLE_VERSION, self))
+        let identity = serde_json::to_vec(&(self, TIERS))
             .expect("adapter identity contains only serializable values");
         format!("{:x}", Sha256::digest(identity))
     }
@@ -183,7 +181,7 @@ impl Preferences {
 }
 
 impl SettingsOptions {
-    /// Returns a tier only for the same adapter, driver and table version.
+    /// Returns a tier only for the same adapter, driver and hardware thresholds.
     pub fn graphics_tier(&self, key: &str) -> Option<VideoPreset> {
         self.graphics_detection
             .cache
