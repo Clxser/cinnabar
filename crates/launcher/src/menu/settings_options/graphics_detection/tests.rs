@@ -32,7 +32,6 @@ fn facts(row: &tiers::Tier, device_type: DeviceType) -> HardwareFacts {
         physical_memory_bytes: memory,
         logical_cores: row.logical_cores.max(1),
         physical_cores: row.physical_cores.max(1),
-        on_battery: Some(false),
     }
 }
 
@@ -87,23 +86,13 @@ fn ram_gpu_memory_and_both_core_counts_independently_bound_each_tier() {
 }
 
 #[test]
-fn battery_lowers_one_tier_without_exceeding_device_distance_defaults() {
+fn recommendations_preserve_the_hardware_tier_and_cap_distance_to_device_defaults() {
     let settings = settings();
-    for (index, row) in TIERS.iter().enumerate() {
-        for battery in [false, true] {
-            let selected = recommend(&settings, row.preset, battery);
-            assert_eq!(
-                selected.preset,
-                TIERS[if battery {
-                    index.saturating_sub(1)
-                } else {
-                    index
-                }]
-                .preset
-            );
-            assert!(selected.render_distance <= settings.render_distance_defaults().recommended);
-            assert!(selected.render_distance <= settings.render_distance_defaults().native_maximum);
-        }
+    for preset in VideoPreset::ALL {
+        let selected = recommend(&settings, preset);
+        assert_eq!(selected.preset, preset);
+        assert!(selected.render_distance <= settings.render_distance_defaults().recommended);
+        assert!(selected.render_distance <= settings.render_distance_defaults().native_maximum);
     }
 }
 
@@ -239,7 +228,7 @@ fn changed_adapter_or_driver_recomputes_defaults_and_preserves_edits() {
     let mut hardware = facts(&TIERS[1], DeviceType::Discrete);
     let key = hardware.adapter.cache_key();
     settings.cache_graphics_tier(key.clone(), hardware.tier());
-    settings.apply_graphics_recommendation(recommend(&settings, hardware.tier(), false));
+    settings.apply_graphics_recommendation(recommend(&settings, hardware.tier()));
     let clouds = SETTINGS_OPTIONS
         .iter()
         .position(|option| option.name == "render_clouds")
@@ -285,7 +274,7 @@ fn changed_adapter_or_driver_recomputes_defaults_and_preserves_edits() {
         .graphics_tier(&hardware.adapter.cache_key())
         .unwrap_or_else(|| hardware.tier());
     assert_eq!(tier, VideoPreset::Quality);
-    loaded.apply_graphics_recommendation(recommend(&loaded, tier, false));
+    loaded.apply_graphics_recommendation(recommend(&loaded, tier));
     assert_eq!(loaded.value("render_clouds"), 0);
     assert_eq!(
         loaded.value("msaa"),

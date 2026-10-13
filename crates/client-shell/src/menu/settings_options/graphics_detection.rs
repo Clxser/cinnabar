@@ -25,11 +25,7 @@ impl MenuRuntime {
             .then(|| self.settings_options.graphics_tier(&key))
             .flatten();
         let tier = cached.unwrap_or_else(|| facts.tier());
-        let recommendation = graphics_detection::recommend(
-            &self.settings_options,
-            tier,
-            facts.on_battery.unwrap_or(false),
-        );
+        let recommendation = graphics_detection::recommend(&self.settings_options, tier);
         let settings = Arc::make_mut(&mut self.settings_options);
         if cached.is_none() {
             settings.cache_graphics_tier(key, tier);

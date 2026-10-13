@@ -15,7 +15,6 @@ fn hardware() -> HardwareFacts {
         physical_memory_bytes: 32 << 30,
         logical_cores: graphics_detection::TIERS[2].logical_cores,
         physical_cores: graphics_detection::TIERS[2].physical_cores,
-        on_battery: Some(false),
     }
 }
 
@@ -52,7 +51,7 @@ fn startup_applies_once_and_explicit_detection_finishes_in_the_same_update() {
     app.world_mut()
         .resource_mut::<GraphicsHardware>()
         .0
-        .on_battery = Some(true);
+        .graphics_memory_bytes = Some(graphics_detection::TIERS[1].discrete_memory_bytes);
     app.update();
     assert_eq!(
         *app.world().resource::<MenuRuntime>().settings_options,
@@ -76,6 +75,33 @@ fn startup_applies_once_and_explicit_detection_finishes_in_the_same_update() {
         app.world().resource::<Detection>().notice,
         Some(graphics_detection::TUNED_MESSAGE)
     );
+}
+
+#[test]
+fn cached_and_explicit_detection_replace_lower_defaults_with_the_hardware_tier() {
+    let hardware = hardware();
+    let key = hardware.adapter.cache_key();
+    let tier = hardware.tier();
+    for explicit in [false, true] {
+        let mut menu = menu();
+        let lower = graphics_detection::recommend(&menu.settings_options, VideoPreset::Balanced);
+        let settings = Arc::make_mut(&mut menu.settings_options);
+        settings.cache_graphics_tier(key.clone(), tier);
+        settings.apply_graphics_recommendation(lower);
+
+        assert!(menu.detect_graphics(&hardware, explicit));
+        assert_eq!(menu.settings_options.graphics_tier(&key), Some(tier));
+        let expected = graphics_detection::recommend(&menu.settings_options, tier);
+        for (name, value) in menu.settings_options.video_preset_values(tier) {
+            let expected = if name == "render_distance" {
+                i32::from(expected.render_distance)
+            } else {
+                value
+            };
+            assert_eq!(menu.settings_options.value(name), expected, "{name}");
+        }
+        assert!(menu.settings_apply);
+    }
 }
 
 #[test]

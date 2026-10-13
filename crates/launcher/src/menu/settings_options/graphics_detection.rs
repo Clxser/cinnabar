@@ -55,11 +55,10 @@ pub struct HardwareFacts {
     pub physical_memory_bytes: u64,
     pub logical_cores: u32,
     pub physical_cores: u32,
-    pub on_battery: Option<bool>,
 }
 
 impl HardwareFacts {
-    /// Selects the highest hardware tier without baking power state into the cache.
+    /// Selects the highest tier admitted by the installed CPU, GPU and memory.
     pub fn tier(&self) -> VideoPreset {
         match self.adapter.device_type {
             DeviceType::Cpu | DeviceType::Virtual => return VideoPreset::Performance,
@@ -98,22 +97,8 @@ pub struct Recommendation {
     pub render_distance: u8,
 }
 
-/// Lowers one tier on battery, then applies the existing device distance limits.
-pub fn recommend(
-    settings: &SettingsOptions,
-    tier: VideoPreset,
-    on_battery: bool,
-) -> Recommendation {
-    let index = TIERS
-        .iter()
-        .position(|row| row.preset == tier)
-        .expect("every preset has a tier");
-    let preset = TIERS[if on_battery {
-        index.saturating_sub(1)
-    } else {
-        index
-    }]
-    .preset;
+/// Applies the hardware preset with the existing device distance limits.
+pub fn recommend(settings: &SettingsOptions, preset: VideoPreset) -> Recommendation {
     let defaults = settings.render_distance_defaults();
     let distance = settings
         .video_preset_values(preset)

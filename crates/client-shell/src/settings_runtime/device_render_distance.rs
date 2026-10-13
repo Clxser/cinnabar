@@ -47,7 +47,7 @@ pub fn initialize_hardware(
                 backend: format!("{:?}", info.backend),
                 driver: info.driver,
                 driver_info: info.driver_info,
-                driver_build: launcher_host::power::graphics_driver_build(),
+                driver_build: graphics_driver_build(),
             }
         })
         .unwrap_or_default();
@@ -68,8 +68,23 @@ pub fn initialize_hardware(
         physical_memory_bytes: memory,
         logical_cores: cores.logical,
         physical_cores: cores.physical,
-        on_battery: launcher_host::power::on_battery(),
     }));
+}
+
+/// Includes the macOS build because Metal drivers ship with the operating system.
+fn graphics_driver_build() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        return std::process::Command::new("/usr/bin/sw_vers")
+            .arg("-buildVersion")
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+            .unwrap_or_default();
+    }
+    #[cfg(not(target_os = "macos"))]
+    String::new()
 }
 
 /// Reads dedicated VRAM or the integrated share from the selected backend.

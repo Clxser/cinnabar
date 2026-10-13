@@ -8613,8 +8613,8 @@ and the native comparison.
 
 Startup hardware facts choose Performance, Balanced or Quality through a small
 threshold table. Detection reuses the existing memory tiers, Video presets and
-render-distance defaults. Battery power lowers the choice by one tier; unknown
-hardware uses Balanced. Defaults are cached by adapter and driver, and explicit
+render-distance defaults. The tier depends only on hardware; unknown hardware
+uses Balanced. Defaults are cached by adapter and driver, and explicit
 edits remain protected across launches and device changes. Video settings can
 reapply detection instantly, with a completion toast.
 
