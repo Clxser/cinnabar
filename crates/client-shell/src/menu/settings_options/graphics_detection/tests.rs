@@ -1,4 +1,91 @@
 use super::*;
+use launcher::menu::{MenuAction, MenuScreen};
+
+/// Opens a visible pause, settings or death screen over a direct-connect world.
+fn world_menu(screen: MenuScreen) -> MenuRuntime {
+    let mut menu = MenuRuntime::new(false, 2, "Graphics test".into());
+    menu.show_world();
+    if screen == MenuScreen::Death {
+        menu.open_death();
+    } else {
+        menu.open_pause();
+        if screen == MenuScreen::Settings {
+            menu.activate(MenuAction::Navigate(screen));
+        }
+    }
+    assert!(menu.is_visible());
+    menu
+}
+
+#[test]
+fn visible_world_menus_do_not_admit_automatic_or_requested_measurements() {
+    let mut launcher = MenuRuntime::new(true, 2, "Graphics test".into());
+    assert!(benchmark_allowed(&launcher));
+    launcher.activate(MenuAction::Navigate(MenuScreen::Settings));
+    assert!(benchmark_allowed(&launcher));
+    for screen in [MenuScreen::Pause, MenuScreen::Settings, MenuScreen::Death] {
+        let mut menu = world_menu(screen);
+        assert!(!benchmark_allowed(&menu), "{screen:?}");
+        menu.activate(MenuAction::SettingsDetectGraphics);
+        assert!(!benchmark_allowed(&menu), "requested over {screen:?}");
+    }
+}
+
+#[test]
+fn entering_a_world_menu_cancels_before_ready_results_are_applied_or_cached() {
+    for screen in [MenuScreen::Pause, MenuScreen::Settings, MenuScreen::Death] {
+        for explicit in [false, true] {
+            let mut app = App::new();
+            let mut menu = world_menu(screen);
+            menu.graphics_detection_running = true;
+            let settings = menu.settings_options.clone();
+            let cancellation = BenchmarkCancellation::default();
+            let (_sender, cpu) = crossbeam_channel::bounded(1);
+            let key = format!("{:064x}", 1);
+            let mailbox = GraphicsBenchmark::default();
+            mailbox.request(Request {
+                id: 1,
+                resolution: [1280, 720],
+                sample_budgets_ns: graphics_detection::sample_budgets(&settings),
+                memory_budget_bytes: assets::texture::policy::MAX_TERRAIN_BYTES,
+                cancellation: cancellation.clone(),
+            });
+            assert!(mailbox.take_request().is_some());
+            mailbox.respond(render_scene::graphics_benchmark::Response {
+                id: 1,
+                result: Ok(BTreeMap::from([(1, 1_000_000)])),
+            });
+            app.insert_resource(menu)
+                .insert_resource(mailbox)
+                .insert_resource(Detection {
+                    initialized: explicit,
+                    next_id: 1,
+                    notice: None,
+                    run: Some(Run {
+                        id: 1,
+                        key: key.clone(),
+                        started: Instant::now(),
+                        cancellation: cancellation.clone(),
+                        cpu,
+                        cpu_score: Some(1_000),
+                        gpu_score: None,
+                        on_battery: false,
+                        memory_budget: assets::texture::policy::MAX_TERRAIN_BYTES,
+                        explicit,
+                    }),
+                })
+                .add_systems(Update, drive);
+            app.update();
+            assert!(cancellation.is_cancelled(), "{screen:?}, {explicit}");
+            assert!(!app.world().resource::<GraphicsBenchmark>().is_running());
+            assert!(app.world().resource::<Detection>().run.is_none());
+            let menu = app.world().resource::<MenuRuntime>();
+            assert!(!menu.graphics_detection_running);
+            assert_eq!(*menu.settings_options, *settings);
+            assert!(menu.settings_options.graphics_scores(&key).is_none());
+        }
+    }
+}
 
 #[test]
 fn driver_resolution_and_workload_inputs_invalidate_the_cache() {

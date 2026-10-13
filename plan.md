@@ -8617,7 +8617,9 @@ the Video presets, device distance limits and terrain texture memory budgets.
 Explicit edits remain protected across reruns and device changes. Video settings
 offer detection and cancellation, and completed scores are cached per device and
 driver. The benchmark has a 2.5-second deadline and retains settings if it cannot
-finish.
+finish. Measurements run only over the launcher. They temporarily lift ordinary
+frame caps and display pacing, then restore the current preferences when the run
+ends. GPU submissions adapt to measured pass cost so menu frames can continue.
 
 Hardware calibration for 60 fps at the 1% low and the owner’s visual review remain
 incomplete. Synthetic thresholds do not close a frame-pacing or parity gate.

@@ -19,7 +19,9 @@ use std::{
     },
 };
 
-const BATCH: u32 = 8;
+const MAX_BATCH: u32 = 8;
+// Leave most of a 60 Hz frame available for the menu and its presentation work.
+const GPU_BATCH_BUDGET_NS: u64 = 6_000_000;
 const WARMUP: usize = 4;
 const SAMPLES: usize = 100;
 
@@ -36,6 +38,7 @@ struct Run {
     resolve: wgpu::Buffer,
     readback: wgpu::Buffer,
     mapped: Arc<AtomicU8>,
+    submitted: u32,
     timings: Vec<u64>,
     results: BTreeMap<u32, u64>,
 }
@@ -43,6 +46,15 @@ struct Run {
 struct Targets {
     color: wgpu::TextureView,
     depth: wgpu::TextureView,
+}
+
+/// Fits work to the slowest observed pass, probing unknown pipelines with one pass.
+fn batch_size(timings: &[u64]) -> u32 {
+    let remaining = SAMPLES + WARMUP - timings.len();
+    let cost = timings.iter().copied().max().unwrap_or(GPU_BATCH_BUDGET_NS);
+    (GPU_BATCH_BUDGET_NS / cost.max(1))
+        .clamp(1, u64::from(MAX_BATCH))
+        .min(remaining as u64) as u32
 }
 
 /// Checks attachment memory before allocating any offscreen textures.
@@ -129,12 +141,12 @@ impl Run {
         let queries = raw.create_query_set(&wgpu::QuerySetDescriptor {
             label: Some("graphics benchmark timestamps"),
             ty: wgpu::QueryType::Timestamp,
-            count: BATCH * 2,
+            count: MAX_BATCH * 2,
         });
         let make = |usage| {
             raw.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("graphics benchmark timestamp readback"),
-                size: u64::from(BATCH) * 16,
+                size: u64::from(MAX_BATCH) * 16,
                 usage,
                 mapped_at_creation: false,
             })
@@ -149,12 +161,13 @@ impl Run {
             resolve: make(wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC),
             readback: make(wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST),
             mapped: Arc::new(AtomicU8::new(0)),
+            submitted: 0,
             timings: Vec::new(),
             results: BTreeMap::new(),
         })
     }
 
-    /// Submits at most eight fixed frames, then lets the next device poll finish the readback.
+    /// Submits a GPU-budgeted batch, then lets the frame's device poll finish the readback.
     fn submit(
         &mut self,
         device: &RenderDevice,
@@ -171,6 +184,7 @@ impl Run {
             }
             return Ok(false);
         };
+        let count = batch_size(&self.timings);
         let targets = self
             .targets
             .get_or_insert_with(|| targets(device.wgpu_device(), &self.request, samples));
@@ -180,7 +194,7 @@ impl Run {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("graphics benchmark terrain frames"),
                 });
-        for sample in 0..BATCH {
+        for sample in 0..count {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("graphics benchmark terrain frame"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -221,13 +235,15 @@ impl Run {
                 );
             }
         }
-        encoder.resolve_query_set(&self.queries, 0..BATCH * 2, &self.resolve, 0);
-        encoder.copy_buffer_to_buffer(&self.resolve, 0, &self.readback, 0, u64::from(BATCH) * 16);
+        let bytes = u64::from(count) * 16;
+        encoder.resolve_query_set(&self.queries, 0..count * 2, &self.resolve, 0);
+        encoder.copy_buffer_to_buffer(&self.resolve, 0, &self.readback, 0, bytes);
         queue.submit([encoder.finish()]);
+        self.submitted = count;
         self.mapped.store(1, Ordering::Release);
         let mapped = Arc::clone(&self.mapped);
         self.readback
-            .slice(..)
+            .slice(0..bytes)
             .map_async(wgpu::MapMode::Read, move |result| {
                 mapped.store(if result.is_ok() { 2 } else { 3 }, Ordering::Release);
             });
@@ -238,7 +254,7 @@ impl Run {
     fn collect(&mut self, period: f32) -> Result<bool, &'static str> {
         let data = self
             .readback
-            .slice(..)
+            .slice(0..u64::from(self.submitted) * 16)
             .get_mapped_range()
             .map_err(|_| "GPU timestamp range is unavailable")?;
         for pair in data.as_chunks::<16>().0 {
@@ -315,7 +331,14 @@ pub(super) fn drive(
     }
     let result = match run.mapped.load(Ordering::Acquire) {
         0 => run.submit(&device, &queue, &cache).map(|_| false),
-        2 => run.collect(queue.get_timestamp_period()),
+        2 => run
+            .collect(queue.get_timestamp_period())
+            .and_then(|complete| {
+                if !complete && !run.request.cancellation.is_cancelled() {
+                    run.submit(&device, &queue, &cache)?;
+                }
+                Ok(complete)
+            }),
         3 => Err("GPU timestamp readback failed"),
         _ => return,
     };
@@ -341,6 +364,36 @@ pub(super) fn drive(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batches_leave_room_for_menu_frames_on_slow_gpus() {
+        assert_eq!(batch_size(&[]), 1, "unknown pipelines start with one pass");
+        for cost in [1_000_000, 2_000_000, 5_000_000, GPU_BATCH_BUDGET_NS] {
+            let count = batch_size(&[cost]);
+            assert!(u64::from(count) * cost <= GPU_BATCH_BUDGET_NS);
+        }
+        assert_eq!(batch_size(&[5_000_000]), 1);
+        assert_eq!(batch_size(&[GPU_BATCH_BUDGET_NS * 2]), 1);
+        assert_eq!(batch_size(&[100_000, 5_000_000, 100_000]), 1);
+    }
+
+    #[test]
+    fn batches_read_only_the_samples_still_needed() {
+        let mut timings = Vec::new();
+        while timings.len() < WARMUP + SAMPLES {
+            let count = batch_size(&timings);
+            assert!((1..=MAX_BATCH).contains(&count));
+            assert!(count as usize <= WARMUP + SAMPLES - timings.len());
+            timings.extend(std::iter::repeat_n(100_000, count as usize));
+        }
+        assert_eq!(timings.len(), WARMUP + SAMPLES);
+        assert_eq!(batch_size(&timings), 0);
+        assert_eq!(
+            batch_size(&[]),
+            1,
+            "each new sample count gets a fresh probe"
+        );
+    }
 
     #[test]
     fn benchmark_targets_stay_inside_the_existing_memory_budget() {

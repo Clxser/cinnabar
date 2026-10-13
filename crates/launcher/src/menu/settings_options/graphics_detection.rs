@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{SETTINGS_OPTIONS, SettingsOptions, video_presets::VideoPreset};
 
-/// Increment when the workload or score mapping changes, invalidating old measurements.
-pub const BENCHMARK_VERSION: u32 = 1;
+/// Increment when measurements or score mapping change, invalidating old results.
+pub const BENCHMARK_VERSION: u32 = 2;
 /// The interactive benchmark stops accepting work at this deadline.
 pub const BENCHMARK_LIMIT: std::time::Duration = std::time::Duration::from_millis(2_500);
 pub const TUNED_MESSAGE: &str =

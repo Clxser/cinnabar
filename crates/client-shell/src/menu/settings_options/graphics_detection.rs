@@ -110,6 +110,11 @@ impl MenuRuntime {
     }
 }
 
+/// Allows measurements only in the launcher, away from joins and live worlds.
+fn benchmark_allowed(menu: &MenuRuntime) -> bool {
+    !menu.is_connecting() && !menu.over_world()
+}
+
 /// Starts after adapter selection, polls asynchronous results, and expires cancelled runs.
 pub fn drive(
     mut state: ResMut<Detection>,
@@ -132,7 +137,7 @@ pub fn drive(
         return;
     }
     // Leave a session join responsive, and never benchmark over live gameplay.
-    if state.run.is_some() && (menu.is_connecting() || !menu.is_visible()) {
+    if !benchmark_allowed(&menu) {
         state.run = None;
         menu.graphics_detection_running = false;
         return;
@@ -202,11 +207,7 @@ pub fn drive(
     let Ok(window) = windows.single() else {
         return;
     };
-    if window.resolution.physical_width() == 0
-        || window.resolution.physical_height() == 0
-        || menu.is_connecting()
-        || !menu.is_visible()
-    {
+    if window.resolution.physical_width() == 0 || window.resolution.physical_height() == 0 {
         return;
     }
     let resolution = [
