@@ -1,11 +1,10 @@
-use bridge::FrameQueue;
-
 use super::PlaySession;
+use crate::packet_relay::BatchWriter;
 use crate::{Packet, ProtocolError};
 
 /// The write half of a play session: frames whole batches without borrowing the session.
 pub struct PlayOutbound {
-    frames: FrameQueue,
+    writer: BatchWriter,
     finish_loading: Vec<Packet>,
 }
 
@@ -13,7 +12,7 @@ impl PlaySession {
     /// Detaches the write half; batches it sends share the session's own send FIFO.
     pub fn outbound(&mut self) -> Result<PlayOutbound, ProtocolError> {
         Ok(PlayOutbound {
-            frames: self.transport.frame_queue(),
+            writer: self.transport.batch_writer(),
             finish_loading: self.take_finish_loading_packets(),
         })
     }
@@ -32,7 +31,7 @@ impl PlayOutbound {
         let Some(frame) = crate::session_transport::batch_frame(&packets) else {
             return Ok(());
         };
-        self.frames
+        self.writer
             .send(frame)
             .await
             .map_err(|error| ProtocolError::Bridge(error.into()))

@@ -1,7 +1,7 @@
 //! Joins through the core's session endpoint: the core makes the only login and acquires the packs,
 //! and this client continues from StartGame with its own spawn sequence.
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use crate::session_wire::{ConnectRequest, CoreMessage, HandoffPackReceiver, SessionHandoff};
 use bridge::{BridgeError, FramedReader};
@@ -16,11 +16,12 @@ use crate::{
     ClientBlobCache, ClientSkin, GameData, PROTOCOL_VERSION, ProtocolError, ResourcePackArchive,
     ResourcePackHandoff, ServerTransferEvent,
 };
+use crate::{PacketRelay, packet_relay};
 
 impl LoginSequence {
     /// Joins whatever the core has selected: a pending server transfer, the chosen server or the
     /// open local world, using the caller's persisted login ID. The owner calls
-    /// `finish_loading` after presenting the world.
+    /// `finish_loading` after presenting the world. A `relay` sees every batch of the session.
     pub async fn connect_session(
         socket_dir: &Path,
         display_name: &str,
@@ -28,6 +29,7 @@ impl LoginSequence {
         cache: Option<ClientBlobCache>,
         skin: Option<ClientSkin>,
         settings: &LoginSettings,
+        relay: Option<Arc<dyn PacketRelay>>,
     ) -> Result<(PlaySession, GameData), ProtocolError> {
         let (mut reader, frames) = bridge::connect_session(socket_dir)
             .await
@@ -49,10 +51,18 @@ impl LoginSequence {
             .map_err(bridge_error)?;
         let (handoff, archives) =
             receive_handoff(&mut reader, settings.resource_pack_cache_dir.as_deref()).await?;
-        let packs = resource_pack_handoff(&handoff, archives)?;
+        let mut packs = resource_pack_handoff(&handoff, archives)?;
         // A blob cache serves only a session whose upstream login advertised one.
         let cache = cache.filter(|_| handoff.client_cache);
         let mut transport = SessionTransport::new(reader, frames, &handoff.startup);
+        if let Some(relay) = relay {
+            let client_data = request.client_data.to_string();
+            let identity = handoff.identity.clone();
+            let added =
+                packet_relay::start(Arc::clone(&relay), identity, client_data, &handoff.startup);
+            packs = packs.with_relay_packs(added.await);
+            transport.set_relay(relay);
+        }
         let spawned = super::startup::await_spawn(&mut transport).await?;
         let runtime_id = spawned.runtime_id;
         let terrain_before_spawn = spawned.terrain_before_spawn;

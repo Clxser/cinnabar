@@ -227,6 +227,7 @@ async fn check_handed_off_packs(cached: bool) {
         Some(ClientBlobCache::default()),
         None,
         &settings,
+        None,
     );
     let (joined, mut core) = tokio::join!(join, core);
     let (mut session, game_data) = joined.expect("join");
@@ -317,12 +318,78 @@ async fn a_startup_longer_than_one_batch_still_joins() {
             crate::ClientRandomId::new(-7).unwrap(),
             None,
             None,
-            &settings
+            &settings,
+            None,
         ),
         core
     );
     let (_, game_data) = joined.expect("a long startup joins");
     assert_eq!(game_data.world.local_player_runtime_id, RUNTIME_ID);
+}
+
+/// A relay starts from the identity, the Connect's client data and the startup packets as one
+/// body, adds its packs to the handoff, and sees the client's own spawn sequence.
+#[tokio::test]
+async fn a_relay_starts_with_the_session_and_adds_its_packs() {
+    use crate::packet_relay::tests::FakeRelay;
+    let dir = SocketDir::new("relay");
+    let settings = LoginSettings::default();
+    let listener = listen(dir.path());
+    let startup = [
+        crate::Packet::new(SetTime {
+            time: wire::ZigZag32(4),
+        }),
+        start_game(),
+    ];
+    let core = async {
+        let mut core = FakeCore::accept(&listener).await;
+        core.receive().await;
+        core.send(handoff_frame(
+            serde_json::json!({"identity": identity("Fixture"), "client_cache": false, "packs_required": false, "packs": []}),
+            &startup,
+        ))
+        .await;
+        core.receive_packets().await;
+        core.send(batch_frame(&spawn_prerequisites())).await;
+        core
+    };
+    let relay = Arc::new(FakeRelay::default());
+    relay.state().packs = vec![(b"pack".to_vec(), true)];
+    let (joined, _core) = tokio::join!(
+        LoginSequence::connect_session(
+            dir.path(),
+            "Fixture",
+            crate::ClientRandomId::new(-7).unwrap(),
+            None,
+            None,
+            &settings,
+            Some(relay.clone()),
+        ),
+        core
+    );
+    let (mut session, _) = joined.expect("a relayed session joins");
+    let mut handoff = session.take_resource_pack_handoff();
+    let packs = handoff.take_relay_packs();
+    assert_eq!(packs.len(), 1);
+    assert_eq!(
+        (packs[0].archive.as_slice(), packs[0].above_server),
+        (&b"pack"[..], true)
+    );
+    let state = relay.state();
+    let (identity, client_data, body) = state.started.as_ref().expect("the relay started");
+    assert_eq!(identity.display_name, "Fixture");
+    let client_data: serde_json::Value = serde_json::from_str(client_data).unwrap();
+    assert_eq!(client_data["ThirdPartyName"], "Fixture");
+    let expected = batch_frame(&startup);
+    assert_eq!(
+        &body[..],
+        &expected[1..],
+        "the startup arrives as one batch body"
+    );
+    assert!(
+        !state.outbound.is_empty() && !state.inbound.is_empty(),
+        "the relay sees the spawn sequence both ways"
+    );
 }
 
 /// A join the core could not make ends with the server's disconnect screen text.
@@ -348,7 +415,8 @@ async fn a_disconnect_before_the_handoff_is_a_server_disconnect() {
             crate::ClientRandomId::new(-7).unwrap(),
             None,
             None,
-            &settings
+            &settings,
+            None,
         ),
         core
     );
@@ -384,7 +452,8 @@ async fn a_transfer_before_the_handoff_is_a_server_transfer() {
             crate::ClientRandomId::new(-7).unwrap(),
             None,
             None,
-            &settings
+            &settings,
+            None,
         ),
         core
     );
@@ -427,6 +496,7 @@ async fn invalid_cached_archive_is_reported_as_a_join_error() {
         None,
         None,
         &settings,
+        None,
     );
     let (result, _core) = tokio::join!(join, core);
     match result {

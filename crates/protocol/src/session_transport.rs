@@ -6,11 +6,12 @@ use std::sync::Mutex;
 use std::task::{Context, Poll, ready};
 
 use crate::codec::SessionFailure;
+use crate::packet_relay::{BatchWriter, PacketRelay, RelayLink, put_entry};
 use crate::raw_packet::{MAX_RAW_BATCH_PACKETS, RawPacket, decode_batch_body};
 use crate::session_wire::{CoreMessage, SessionDisconnect, SessionTransfer};
 use crate::{Packet, ProtocolError, SessionError};
 use bridge::{BridgeError, FrameQueue, FramedReader};
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
 use futures::StreamExt;
 
 /// A server may batch a whole pack transfer, or a large item registry, into one batch,
@@ -48,7 +49,8 @@ pub(crate) enum Terminal {
 /// poll until flushed, strictly in order, so cancellation neither loses nor repeats it.
 pub(crate) struct SessionTransport {
     reader: FramedReader,
-    frames: FrameQueue,
+    writer: BatchWriter,
+    relay: Option<RelayLink>,
     startup: VecDeque<Bytes>, // startup batch bodies, read before any core frame
     received: VecDeque<RawPacket>, // packets split from a batch but not yet read
     ended: bool,              // a terminal message was delivered
@@ -78,7 +80,8 @@ impl SessionTransport {
     pub(crate) fn new(reader: FramedReader, frames: FrameQueue, startup: &[Bytes]) -> Self {
         Self {
             reader,
-            frames,
+            writer: BatchWriter::direct(frames),
+            relay: None,
             startup: startup_batches(startup).into(),
             received: VecDeque::new(),
             ended: false,
@@ -86,9 +89,16 @@ impl SessionTransport {
         }
     }
 
-    /// The FIFO this transport's own sends share with detached outbound batches.
-    pub(crate) fn frame_queue(&self) -> FrameQueue {
-        self.frames.clone()
+    /// Passes every later batch through `relay` and starts its timed work on this runtime.
+    pub(crate) fn set_relay(&mut self, relay: std::sync::Arc<dyn PacketRelay>) {
+        let (link, writer) = RelayLink::start(relay, self.writer.queue());
+        self.relay = Some(link);
+        self.writer = writer;
+    }
+
+    /// The writer this transport's own sends share with detached outbound batches.
+    pub(crate) fn batch_writer(&self) -> BatchWriter {
+        self.writer.clone()
     }
 
     /// Returns the next packet or terminal message; cancelling the wait loses nothing.
@@ -105,14 +115,29 @@ impl SessionTransport {
             if self.ended {
                 return Err(SessionFailure::ConnectionClosed.into());
             }
-            let frame = match self.reader.next().await {
+            let next = match &mut self.relay {
+                None => self.reader.next().await,
+                Some(relay) => tokio::select! {
+                    biased;
+                    next = self.reader.next() => next,
+                    Some(body) = relay.injected.recv() => {
+                        self.receive_relayed(body);
+                        continue;
+                    }
+                },
+            };
+            let frame = match next {
                 Some(Ok(frame)) => frame,
                 Some(Err(error)) => return Err(SessionFailure::Transport(error).into()),
                 None => return Err(SessionFailure::ConnectionClosed.into()),
             };
             if let Some(body) = crate::session_wire::batch_frame_body(&frame) {
-                self.received
-                    .extend(decode_batch_body(body, MAX_SESSION_BATCH_BYTES)?);
+                match self.relay.as_ref().and_then(|relay| relay.inbound(&body)) {
+                    Some(replaced) => self.receive_relayed(replaced),
+                    None => self
+                        .received
+                        .extend(decode_batch_body(body, MAX_SESSION_BATCH_BYTES)?),
+                }
                 continue;
             }
             let terminal = match crate::session_wire::decode_core_message(frame)
@@ -134,6 +159,15 @@ impl SessionTransport {
         }
     }
 
+    /// Queues a body the relay produced; one that does not decode is the relay's fault, so it is
+    /// dropped with a warning instead of ending the session. An empty body adds nothing.
+    fn receive_relayed(&mut self, body: Bytes) {
+        match decode_batch_body(body, MAX_SESSION_BATCH_BYTES) {
+            Ok(packets) => self.received.extend(packets),
+            Err(error) => tracing::warn!(%error, "dropping a relayed batch that does not decode"),
+        }
+    }
+
     /// Puts `packets` back ahead of every unread packet, in their order.
     pub(crate) fn prepend(&mut self, packets: Vec<RawPacket>) {
         let mut restored = VecDeque::from(packets);
@@ -150,9 +184,9 @@ impl SessionTransport {
         let Some(frame) = batch_frame(packets) else {
             return Ok(());
         };
-        let frames = self.frames.clone();
+        let writer = self.writer.clone();
         self.sending.push_back(InFlightSend {
-            write: Mutex::new(Box::pin(async move { frames.send(frame).await })),
+            write: Mutex::new(Box::pin(async move { writer.send(frame).await })),
         });
         self.drain_send().await
     }
@@ -206,13 +240,7 @@ fn startup_batches(packets: &[Bytes]) -> Vec<Bytes> {
             batches.push(std::mem::take(&mut batch).freeze());
             count = 0;
         }
-        let mut length = length;
-        while length >= 0x80 {
-            batch.put_u8(length as u8 | 0x80);
-            length >>= 7;
-        }
-        batch.put_u8(length as u8);
-        batch.extend_from_slice(packet);
+        put_entry(&mut batch, packet);
         count += 1;
     }
     if count != 0 {

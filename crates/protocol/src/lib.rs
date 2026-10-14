@@ -21,6 +21,8 @@ mod login;
 mod movement;
 mod nbt_tree;
 mod packet;
+mod packet_relay;
+pub use packet_relay::{PacketRelay, RELAY_TICK, RelayOutput, RelayPack};
 mod particle;
 mod permissions;
 mod primitive_shapes;
