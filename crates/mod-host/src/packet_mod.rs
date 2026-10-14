@@ -156,6 +156,14 @@ impl PacketMod {
         .map(Option::flatten)
     }
 
+    /// Initial server bodies initialize world registries under the join deadline, before play.
+    pub fn on_startup_batch(&mut self, batch: &[u8]) -> Result<Option<Vec<u8>>> {
+        self.call("startup-batch", PACKET_MOD_START_DEADLINE, |guest| {
+            guest.on_batch(Direction::FromServer, batch)
+        })
+        .map(Option::flatten)
+    }
+
     /// Runs the mod's timed work and returns what it sends now; nothing once inactive.
     pub fn tick(&mut self) -> Result<Outbound> {
         let deadline = self.call_deadline;

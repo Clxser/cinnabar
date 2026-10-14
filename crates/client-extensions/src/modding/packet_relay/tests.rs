@@ -41,6 +41,7 @@ fn a_selected_packet_mod_relays_each_session() {
         let packs = relay.start(&identity(), "{}", &[1]);
         assert_eq!(packs.len(), 2);
         assert_eq!(packs[0].archive, b"Steve");
+        assert_eq!(relay.inbound_startup(&[1]), Some(vec![1]));
         assert_eq!(relay.inbound(&[0]), None);
         assert_eq!(relay.inbound(&[1]), Some(vec![1]));
         assert_eq!(relay.outbound(&[1]), Some(vec![0]));

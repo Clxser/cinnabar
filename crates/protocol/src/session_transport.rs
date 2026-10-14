@@ -108,8 +108,7 @@ impl SessionTransport {
                 return Ok(Inbound::Packet(packet));
             }
             if let Some(batch) = self.startup.pop_front() {
-                self.received
-                    .extend(decode_batch_body(batch, MAX_SESSION_BATCH_BYTES)?);
+                self.receive_server_batch(batch, true)?;
                 continue;
             }
             if self.ended {
@@ -132,12 +131,7 @@ impl SessionTransport {
                 None => return Err(SessionFailure::ConnectionClosed.into()),
             };
             if let Some(body) = crate::session_wire::batch_frame_body(&frame) {
-                match self.relay.as_ref().and_then(|relay| relay.inbound(&body)) {
-                    Some(replaced) => self.receive_relayed(replaced),
-                    None => self
-                        .received
-                        .extend(decode_batch_body(body, MAX_SESSION_BATCH_BYTES)?),
-                }
+                self.receive_server_batch(body, false)?;
                 continue;
             }
             let terminal = match crate::session_wire::decode_core_message(frame)
@@ -166,6 +160,21 @@ impl SessionTransport {
             Ok(packets) => self.received.extend(packets),
             Err(error) => tracing::warn!(%error, "dropping a relayed batch that does not decode"),
         }
+    }
+
+    /// Startup and live server bodies share the same relay before packet decoding.
+    fn receive_server_batch(&mut self, body: Bytes, startup: bool) -> Result<(), SessionError> {
+        let replaced = self
+            .relay
+            .as_ref()
+            .and_then(|relay| relay.inbound(&body, startup));
+        match replaced {
+            Some(replaced) => self.receive_relayed(replaced),
+            None => self
+                .received
+                .extend(decode_batch_body(body, MAX_SESSION_BATCH_BYTES)?),
+        }
+        Ok(())
     }
 
     /// Puts `packets` back ahead of every unread packet, in their order.

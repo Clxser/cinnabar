@@ -969,6 +969,8 @@ the compiled source will start in a fresh instance when you next join a server.
 Reloading changes the next session; disabling or revoking a grant immediately
 revokes existing instances. Compilation and instance work run off the frame
 thread, and failed or trapped mods fall back to ordinary packet forwarding.
+Initial server packets, including StartGame, pass through the mod before spawn
+under the join deadline. Later batches and ticks retain the shorter play deadline.
 
 Developer launches can select a reactor with `CINNABAR_PACKET_MOD`, with
 the packet grant and `CINNABAR_PACKET_MOD_WASI=1` for WASI, or select a packet

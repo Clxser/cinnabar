@@ -50,7 +50,6 @@ use startup::bind_direct_session_directory;
 
 use crate::runtime::telemetry::AcceptanceRuntimeConfig;
 use client_presentation::{
-    actor_publication::publish_actor_render_frame,
     camera::FlyCameraUpdateSet,
     local_player::{LocalPlayerFrameSet, publish_interaction_origin},
 };
@@ -77,7 +76,6 @@ use {
         present_mode::{PresentModeRuntime, apply_present_mode},
         runtime::{
             network::{
-                advance_actor_frame, prepare_actor_render_frame, publish_entity_shadows,
                 receive_network_events,
                 session::{NetworkConfig, spawn_network},
             },
@@ -146,42 +144,8 @@ mod authority;
 mod executor;
 pub(crate) use authority::{configure_client_authority_systems, configure_client_frame_schedule};
 
-/// Registers the production actor observation and publication boundaries.
-pub(crate) fn configure_actor_render_systems(app: &mut App) {
-    app.init_resource::<crate::block_entities::SpawnerDisplayPublisher>()
-        .init_resource::<client_presentation::actor_publication::ActorFrameState>()
-        .add_systems(
-            Update,
-            (
-                advance_actor_frame,
-                crate::runtime::network::publish_local_actor_damage,
-            )
-                .chain()
-                .in_set(ClientFrameSet::ActorPreparation),
-        )
-        // Picks in Interaction and NetworkSend read this frame's remote actor positions.
-        .add_systems(
-            Update,
-            crate::runtime::network::advance_actor_motion
-                .after(ClientFrameSet::Camera)
-                .before(ClientFrameSet::Interaction),
-        )
-        .add_systems(
-            Update,
-            (
-                prepare_actor_render_frame,
-                crate::block_entities::prepare_spawner_actors,
-            )
-                .chain()
-                .in_set(ClientFrameSet::ActorFinalization),
-        )
-        .add_systems(
-            Update,
-            (publish_actor_render_frame, publish_entity_shadows)
-                .chain()
-                .in_set(ClientFrameSet::ActorPublication),
-        );
-}
+mod actor_setup;
+pub(crate) use actor_setup::configure_actor_render_systems;
 
 pub(crate) fn configure_client_production_frame_systems(app: &mut App) {
     #[cfg(not(feature = "acceptance"))]

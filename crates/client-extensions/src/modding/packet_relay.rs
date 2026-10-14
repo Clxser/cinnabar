@@ -166,6 +166,7 @@ enum Request {
     },
     Batch {
         direction: Direction,
+        startup: bool,
         body: Vec<u8>,
         reply: SyncSender<Option<Vec<u8>>>,
     },
@@ -203,11 +204,12 @@ impl PacketModRelay {
         answer.recv().unwrap_or(fallback)
     }
 
-    fn batch(&self, direction: Direction, body: &[u8]) -> Option<Vec<u8>> {
+    fn batch(&self, direction: Direction, body: &[u8], startup: bool) -> Option<Vec<u8>> {
         let body = body.to_vec();
         self.ask(
             |reply| Request::Batch {
                 direction,
+                startup,
                 body,
                 reply,
             },
@@ -241,11 +243,15 @@ impl PacketRelay for PacketModRelay {
     }
 
     fn inbound(&self, body: &[u8]) -> Option<Vec<u8>> {
-        self.batch(Direction::FromServer, body)
+        self.batch(Direction::FromServer, body, false)
+    }
+
+    fn inbound_startup(&self, body: &[u8]) -> Option<Vec<u8>> {
+        self.batch(Direction::FromServer, body, true)
     }
 
     fn outbound(&self, body: &[u8]) -> Option<Vec<u8>> {
-        self.batch(Direction::FromClient, body)
+        self.batch(Direction::FromClient, body, false)
     }
 
     fn tick(&self) -> RelayOutput {
@@ -299,12 +305,19 @@ fn serve(
             }
             Request::Batch {
                 direction,
+                startup,
                 body,
                 reply,
             } => {
-                let replaced = instance
-                    .as_mut()
-                    .and_then(|instance| instance.on_batch(direction, &body).ok().flatten());
+                let replaced = instance.as_mut().and_then(|instance| {
+                    if startup {
+                        instance.on_startup_batch(&body)
+                    } else {
+                        instance.on_batch(direction, &body)
+                    }
+                    .ok()
+                    .flatten()
+                });
                 let _ = reply.send(replaced.filter(|_| authority.load(Ordering::Acquire)));
             }
             Request::Tick { reply } => {

@@ -21,6 +21,7 @@ pub(crate) struct FakeState {
     pub(crate) started: Option<(SessionIdentity, String, Vec<u8>)>,
     pub(crate) packs: Vec<(Vec<u8>, bool)>,
     pub(crate) inbound: Vec<Vec<u8>>,
+    pub(crate) startup_inbound: Vec<Vec<u8>>,
     pub(crate) inbound_replies: VecDeque<Option<Vec<u8>>>,
     pub(crate) outbound: Vec<Vec<u8>>,
     pub(crate) outbound_replies: VecDeque<Option<Vec<u8>>>,
@@ -52,6 +53,11 @@ impl PacketRelay for FakeRelay {
             })
             .collect()
     }
+    fn inbound_startup(&self, body: &[u8]) -> Option<Vec<u8>> {
+        self.state().startup_inbound.push(body.to_vec());
+        self.inbound(body)
+    }
+
     fn inbound(&self, body: &[u8]) -> Option<Vec<u8>> {
         let mut state = self.state();
         state.inbound.push(body.to_vec());

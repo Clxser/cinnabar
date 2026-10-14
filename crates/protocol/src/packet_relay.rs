@@ -18,13 +18,18 @@ const INJECTED_CAPACITY: usize = 64;
 pub trait PacketRelay: Send + Sync {
     /// Begins the session from its identity, the Connect's client data JSON and the startup
     /// packets through StartGame as one body; returns resource packs to add. Runs off the async
-    /// runtime, once.
+    /// runtime, once. These packets subsequently pass through `inbound_startup` in wire order so startup
+    /// state and any replacements use the same handler as later server traffic.
     fn start(
         &self,
         identity: &SessionIdentity,
         client_data: &str,
         startup: &[u8],
     ) -> Vec<RelayPack>;
+    /// Initial server bodies may initialize registries; the packet host gives them its join budget.
+    fn inbound_startup(&self, body: &[u8]) -> Option<Vec<u8>> {
+        self.inbound(body)
+    }
     /// A server batch body: `None` forwards it, a replacement takes its place and an empty one
     /// drops it.
     fn inbound(&self, body: &[u8]) -> Option<Vec<u8>>;
@@ -132,8 +137,13 @@ impl RelayLink {
     }
 
     /// Lets the relay replace a server batch body; `None` keeps the original.
-    pub(crate) fn inbound(&self, body: &[u8]) -> Option<Bytes> {
-        self.relay.inbound(body).map(Bytes::from)
+    pub(crate) fn inbound(&self, body: &[u8], startup: bool) -> Option<Bytes> {
+        if startup {
+            self.relay.inbound_startup(body)
+        } else {
+            self.relay.inbound(body)
+        }
+        .map(Bytes::from)
     }
 }
 

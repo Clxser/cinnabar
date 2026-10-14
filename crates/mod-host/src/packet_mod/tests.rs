@@ -127,6 +127,28 @@ fn batches_pass_through_get_replaced_or_dropped() {
 }
 
 #[test]
+fn startup_uses_the_join_budget_and_play_retains_its_strict_budget() {
+    for (form, bytes) in programs(false) {
+        let mut guest = instance(&bytes, false);
+        guest.call_deadline = Duration::ZERO;
+        assert_eq!(
+            guest.on_startup_batch(&[1]).unwrap(),
+            Some(vec![1]),
+            "{form}"
+        );
+        assert!(guest.is_active(), "{form}: startup should remain admitted");
+        assert!(
+            guest.on_batch(Direction::FromServer, &[1]).is_err(),
+            "{form}"
+        );
+        assert!(
+            !guest.is_active(),
+            "{form}: play still enforces its deadline"
+        );
+    }
+}
+
+#[test]
 fn failures_quarantine_into_passthrough() {
     for (form, bytes) in programs(false) {
         // Trap, guest refusal, memory past the limit, and a returned list out of bounds.

@@ -386,6 +386,12 @@ async fn a_relay_starts_with_the_session_and_adds_its_packs() {
         &expected[1..],
         "the startup arrives as one batch body"
     );
+    assert_eq!(
+        state.inbound.first().map(Vec::as_slice),
+        Some(&expected[1..]),
+        "startup must pass through the inbound handler before the spawn sequence"
+    );
+    assert_eq!(state.startup_inbound, vec![body.clone()]);
     assert!(
         !state.outbound.is_empty() && !state.inbound.is_empty(),
         "the relay sees the spawn sequence both ways"
