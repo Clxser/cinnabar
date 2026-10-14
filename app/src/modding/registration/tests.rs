@@ -58,7 +58,7 @@ fn candidate(root: &std::path::Path, name: &str, text: &str) -> Box<Candidate> {
 }
 
 /// Provides frame publication with real bounded channels and no coordinator thread.
-fn world() -> (World, Receiver<Message>, Receiver<ModHost>) {
+fn world() -> (World, Receiver<Message>, Receiver<Retired>) {
     let (_, updates) = bounded(1);
     let (messages, incoming) = bounded(8);
     let (retired, retiring) = bounded(mod_api::MAX_LOADED_MODS * 2);
@@ -664,4 +664,61 @@ fn failed_admission_acknowledges_an_absent_host_without_retrying() {
     assert!(installed.is_empty());
     assert_eq!(statuses[0].state, "error");
     assert!(messages.try_recv().is_err());
+}
+
+/// A binary reactor exercises the same source kind and canonical exports as a Go build.
+fn packet_bytes() -> Vec<u8> {
+    let fixture = include_str!("../../../../crates/mod-host/src/packet_mod/tests/guest.wat")
+        .replace("$IMPORTS", "")
+        .replace("$START", "");
+    wat::parse_str(fixture).unwrap()
+}
+
+#[test]
+fn packet_candidates_survive_source_removal_and_revoke_on_disable() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut world, messages, _) = world();
+    let path = root.path().join("packet.wasm");
+    fs::write(&path, packet_bytes()).unwrap();
+    let entry = Entry {
+        component: path.clone(),
+        enabled: true,
+        grants: mod_host::ModGrants {
+            packets: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let candidate =
+        Box::new(build_candidate(source::source_snapshot(entry.clone()).unwrap()).unwrap());
+    fs::remove_file(&path).unwrap();
+    apply(&mut world, vec![entry.clone()], vec![change(candidate)]);
+    assert!(
+        !world.contains_resource::<ModRuntime>(),
+        "packet guests do not enter the frame host"
+    );
+    let relay = world
+        .resource::<crate::modding::packets::PacketMods>()
+        .session_relay()
+        .unwrap();
+    let identity = protocol::session_wire::SessionIdentity {
+        display_name: "Steve".into(),
+        xuid: "1".into(),
+        uuid: "u".into(),
+    };
+    assert_eq!(relay.start(&identity, "{}", &[1]).len(), 2);
+    assert_eq!(relay.outbound(&[1]), Some(vec![0]));
+    assert!(
+        matches!(messages.try_recv().unwrap(), Message::Acknowledge { statuses, .. } if statuses[0].state == "next-join")
+    );
+    let mut disabled = entry;
+    disabled.enabled = false;
+    apply(&mut world, vec![disabled], Vec::new());
+    assert_eq!(relay.outbound(&[1]), None);
+    assert!(
+        world
+            .resource::<crate::modding::packets::PacketMods>()
+            .session_relay()
+            .is_none()
+    );
 }

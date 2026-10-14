@@ -15,12 +15,13 @@ mod worker;
 use super::{ModRuntime, RELOAD_INTERVAL, VisualTimeOverride, interaction::ModInteraction};
 use assets::RuntimeFontCatalog;
 use bevy::prelude::*;
-use candidate::{Candidate, build_candidate_with_settings};
+use candidate::{Candidate, Runtime as CandidateRuntime, build_candidate_with_settings};
 use client_extensions::modding::multi::ModHosts;
 use client_shell::ui_resources::UiPresentationResource;
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use mod_host::ModHost;
-use schema::{Entry, Registration, VERSION};
+pub(super) use schema::Entry;
+use schema::{Registration, VERSION};
 use std::{
     collections::BTreeMap,
     path::PathBuf,
@@ -59,7 +60,7 @@ impl HostMetadata {
 #[derive(Clone)]
 pub(super) struct RegisteredHost {
     pub(super) entry: Entry,
-    identity: [u8; 32],
+    pub(super) identity: [u8; 32],
 }
 
 struct SourceSnapshot {
@@ -134,6 +135,46 @@ struct SettingsSnapshot {
     json: String,
 }
 
+/// Off-frame disposal owns both frame guests and compiled packet programs.
+pub(super) enum Retired {
+    Frame(ModHost),
+    Packet(Arc<mod_host::packet_mod::CompiledPacketMod>),
+}
+
+impl Retired {
+    /// Releases executable resources on the loader worker.
+    fn dispose(self) {
+        match self {
+            Self::Frame(host) => drop(host),
+            Self::Packet(program) => drop(program),
+        }
+    }
+}
+
+impl From<ModHost> for Retired {
+    fn from(host: ModHost) -> Self {
+        Self::Frame(host)
+    }
+}
+
+impl Candidate {
+    /// Returns the settings-owning frame guest when this is a frame candidate.
+    fn frame_host(&self) -> Option<&ModHost> {
+        match &self.runtime {
+            CandidateRuntime::Frame(prepared) => Some(&prepared.host),
+            CandidateRuntime::Packet(_) => None,
+        }
+    }
+
+    /// Moves executable resources into the registration worker's retirement lane.
+    fn retire(self, watcher: &Watcher) {
+        match self.runtime {
+            CandidateRuntime::Frame(prepared) => watcher.retire(prepared.host),
+            CandidateRuntime::Packet(program) => watcher.retire(Retired::Packet(program)),
+        }
+    }
+}
+
 enum Message {
     Acknowledge {
         generation: u64,
@@ -160,14 +201,14 @@ enum Message {
 pub(super) struct Watcher {
     updates: Receiver<Update>,
     messages: Sender<Message>,
-    retired: Sender<ModHost>,
+    retired: Sender<Retired>,
     latest: Arc<AtomicU64>,
     desired: Arc<Mutex<Desired>>,
     alive: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
     pending: Mutex<Option<Update>>,
     acknowledgments: Mutex<Vec<Message>>,
-    fallback_retired: Mutex<Vec<ModHost>>,
+    fallback_retired: Mutex<Vec<Retired>>,
     settings: Arc<Mutex<BTreeMap<PathBuf, SettingsSnapshot>>>,
     companions: Arc<Mutex<Vec<PathBuf>>>,
 }
@@ -274,7 +315,8 @@ impl Watcher {
         }
     }
     /// Moves disposal to the loader so dropping an instance never joins a writer on-frame.
-    fn retire(&self, host: ModHost) {
+    pub(super) fn retire(&self, host: impl Into<Retired>) {
+        let host = host.into();
         if let Err(error) = self.retired.try_send(host) {
             self.fallback_retired
                 .lock()

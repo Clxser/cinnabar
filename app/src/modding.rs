@@ -35,6 +35,7 @@ mod admission;
 mod environment_loader;
 mod hud_editor;
 mod library;
+pub(crate) mod packets;
 mod registration;
 
 /// Every loaded mod's presentation cues committed this frame, in load order.
@@ -204,6 +205,12 @@ fn configure_set(app: &mut App, mods: Vec<(std::path::PathBuf, ModGrants)>) {
 /// Loads components and packages in order, each with its own grants; one failing to load
 /// leaves the rest.
 fn configure_entries(app: &mut App, mods: Vec<(multi::ModSource, ModGrants)>) {
+    if let Some(selection) = multi::packet_mod_entry(&mods) {
+        app.world_mut().init_resource::<packets::PacketMods>();
+        app.world_mut()
+            .resource_mut::<packets::PacketMods>()
+            .select_environment(selection);
+    }
     install(app, multi::load_entries(mods));
 }
 

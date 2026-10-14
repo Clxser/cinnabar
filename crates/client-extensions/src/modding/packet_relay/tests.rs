@@ -75,3 +75,43 @@ fn a_failing_packet_mod_passes_everything_through() {
     loader.select(None);
     assert!(loader.session_relay().is_none());
 }
+
+#[test]
+fn clearing_or_replacing_the_selection_revokes_existing_sessions() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = guest(directory.path());
+    let selected = selection(path.clone());
+    let program = Arc::new(CompiledPacketMod::load(&path, &selected.grants, None).unwrap());
+    let loader = PacketModLoader::default();
+    loader.select_prepared(selected.clone(), Arc::clone(&program));
+    let old = loader.session_relay().unwrap();
+    old.start(&identity(), "{}", &[1]);
+    assert_eq!(old.outbound(&[1]), Some(vec![0]));
+    loader.select_prepared(selected, program);
+    assert_eq!(
+        old.outbound(&[1]),
+        None,
+        "a replaced source cannot keep acting in its previous session"
+    );
+    let fresh = loader.session_relay().unwrap();
+    fresh.start(&identity(), "{}", &[1]);
+    assert_eq!(fresh.outbound(&[1]), Some(vec![0]));
+    loader.select(None);
+    assert_eq!(fresh.outbound(&[1]), None);
+    assert!(fresh.tick().to_client.is_empty());
+    assert!(loader.session_relay().is_none());
+}
+
+#[test]
+fn a_session_created_before_reselection_never_starts_the_replacement() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = guest(directory.path());
+    let selected = selection(path.clone());
+    let program = Arc::new(CompiledPacketMod::load(&path, &selected.grants, None).unwrap());
+    let loader = PacketModLoader::default();
+    loader.select_prepared(selected.clone(), Arc::clone(&program));
+    let stale = loader.session_relay().unwrap();
+    loader.select_prepared(selected, program);
+    assert!(stale.start(&identity(), "{}", &[1]).is_empty());
+    assert_eq!(stale.outbound(&[1]), None);
+}

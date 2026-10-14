@@ -1,6 +1,6 @@
 //! A component's own requests and Mods-library metadata, read by parsing its sections only.
 
-use crate::{MAX_COMPONENT_SOURCE_BYTES, ModGrants, local_files};
+use crate::{ModGrants, SourceKind, read_source};
 use anyhow::{Result, anyhow, ensure};
 use std::{io::Cursor, path::Path, sync::Arc};
 use ui::mod_metadata::ModMetadata;
@@ -28,7 +28,7 @@ pub struct Declarations {
 /// Reads a component's declarations in one bounded read, without instantiating or granting it.
 /// Only an unreadable file or malformed module framing is an error.
 pub fn declarations(path: &Path) -> Result<Declarations> {
-    let bytes = local_files::read(path, MAX_COMPONENT_SOURCE_BYTES)?;
+    let bytes = read_source(path)?;
     let mut metadata = ModMetadata::default();
     // Developer text fixtures do not contain binary custom sections.
     if !bytes.starts_with(b"\0asm") {
@@ -40,8 +40,15 @@ pub fn declarations(path: &Path) -> Result<Declarations> {
     let mut depth = 0usize;
     let mut grants = Vec::new();
     let mut icons = Vec::new();
+    let mut needs_wasi = false;
     for payload in Parser::new(0).parse_all(&bytes) {
         let section = match payload? {
+            Payload::ImportSection(imports) if depth == 0 => {
+                for import in imports.into_imports() {
+                    needs_wasi |= import?.module == "wasi_snapshot_preview1";
+                }
+                continue;
+            }
             Payload::ModuleSection { .. } | Payload::ComponentSection { .. } => {
                 depth += 1;
                 continue;
@@ -91,6 +98,11 @@ pub fn declarations(path: &Path) -> Result<Declarations> {
         metadata.icon = valid_icon(icon).then(|| Arc::from(*icon));
     }
     let requested = match grants.as_slice() {
+        [] if SourceKind::of(&bytes) == SourceKind::Packet => Ok(Some(ModGrants {
+            packets: true,
+            wasi: needs_wasi,
+            ..Default::default()
+        })),
         [] => Ok(None),
         [data] => requested(data).map(Some),
         _ => Err(anyhow!("duplicate requested grants section")),

@@ -10,6 +10,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Condvar, Mutex, PoisonError,
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, Sender, SyncSender},
     },
     thread,
@@ -18,7 +19,7 @@ use std::{
 
 /// How long a starting session waits for the selected packet mod to finish compiling before
 /// it continues without it.
-pub const PACKET_MOD_READY_WAIT: Duration = Duration::from_secs(20);
+pub const PACKET_MOD_READY_WAIT: Duration = mod_host::packet_mod::PACKET_MOD_LOAD_DEADLINE;
 
 /// Where the packet mod comes from and the authority it runs with.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,6 +46,7 @@ struct LoaderState {
     selection: Option<PacketModSelection>,
     compiled: Option<Result<Arc<CompiledPacketMod>, String>>,
     generation: u64,
+    authority: Arc<AtomicBool>,
 }
 
 impl PacketModLoader {
@@ -65,9 +67,12 @@ impl PacketModLoader {
         if state.selection == selection {
             return;
         }
+        state.authority.store(false, Ordering::Release);
+        state.authority = Arc::new(AtomicBool::new(selection.is_some()));
         state.generation += 1;
         state.selection.clone_from(&selection);
         state.compiled = None;
+        self.inner.ready.notify_all();
         let Some(selection) = selection else {
             return;
         };
@@ -102,20 +107,41 @@ impl PacketModLoader {
 
     /// A relay for one new session, or `None` when no packet mod is selected.
     pub fn session_relay(&self) -> Option<Arc<dyn PacketRelay>> {
-        self.state().selection.as_ref()?;
-        Some(Arc::new(PacketModRelay::spawn(self.clone())))
+        let state = self.state();
+        state.selection.as_ref()?;
+        Some(Arc::new(PacketModRelay::spawn(
+            self.clone(),
+            state.generation,
+            Arc::clone(&state.authority),
+        )))
+    }
+
+    /// Publishes an already compiled source snapshot; no file is reopened on the frame thread.
+    pub fn select_prepared(&self, selection: PacketModSelection, compiled: Arc<CompiledPacketMod>) {
+        let mut state = self.state();
+        state.authority.store(false, Ordering::Release);
+        state.authority = Arc::new(AtomicBool::new(true));
+        state.generation += 1;
+        state.selection = Some(selection);
+        state.compiled = Some(Ok(compiled));
+        self.inner.ready.notify_all();
     }
 
     /// Waits up to `wait` for the selected packet mod's compiled code.
-    fn compiled(&self, wait: Duration) -> Option<Arc<CompiledPacketMod>> {
+    fn compiled(&self, wait: Duration, generation: u64) -> Option<Arc<CompiledPacketMod>> {
         let state = self.state();
         let (state, _) = self
             .inner
             .ready
             .wait_timeout_while(state, wait, |state| {
-                state.selection.is_some() && state.compiled.is_none()
+                state.generation == generation
+                    && state.selection.is_some()
+                    && state.compiled.is_none()
             })
             .unwrap_or_else(PoisonError::into_inner);
+        if state.generation != generation {
+            return None;
+        }
         match &state.compiled {
             Some(Ok(compiled)) => Some(Arc::clone(compiled)),
             _ => None,
@@ -157,11 +183,11 @@ struct PacketModRelay {
 
 impl PacketModRelay {
     /// Starts the instance thread; it instantiates the packet mod when the session starts.
-    fn spawn(loader: PacketModLoader) -> Self {
+    fn spawn(loader: PacketModLoader, generation: u64, authority: Arc<AtomicBool>) -> Self {
         let (requests, receive) = mpsc::channel();
         if let Err(error) = thread::Builder::new()
             .name("packet-mod".into())
-            .spawn(move || serve(&loader, receive))
+            .spawn(move || serve(&loader, receive, generation, &authority))
         {
             tracing::warn!(%error, "packet mod thread unavailable; packets pass through");
         }
@@ -232,9 +258,19 @@ impl PacketRelay for PacketModRelay {
 }
 
 /// Answers the session's requests in order until it stops or goes away.
-fn serve(loader: &PacketModLoader, requests: Receiver<Request>) {
+fn serve(
+    loader: &PacketModLoader,
+    requests: Receiver<Request>,
+    generation: u64,
+    authority: &AtomicBool,
+) {
     let mut instance: Option<PacketMod> = None;
     for request in requests {
+        if !authority.load(Ordering::Acquire) {
+            if let Some(mut old) = instance.take() {
+                old.stop();
+            }
+        }
         match request {
             Request::Start {
                 identity,
@@ -242,7 +278,10 @@ fn serve(loader: &PacketModLoader, requests: Receiver<Request>) {
                 startup,
                 reply,
             } => {
-                instance = start(loader);
+                instance = authority
+                    .load(Ordering::Acquire)
+                    .then(|| start(loader, generation))
+                    .flatten();
                 let packs = instance.as_mut().map_or_else(Vec::new, |instance| {
                     instance
                         .start(&identity, &client_data, &startup)
@@ -250,6 +289,7 @@ fn serve(loader: &PacketModLoader, requests: Receiver<Request>) {
                 });
                 let packs = packs
                     .into_iter()
+                    .filter(|_| authority.load(Ordering::Acquire))
                     .map(|pack| RelayPack {
                         archive: pack.archive,
                         above_server: pack.above_server,
@@ -265,7 +305,7 @@ fn serve(loader: &PacketModLoader, requests: Receiver<Request>) {
                 let replaced = instance
                     .as_mut()
                     .and_then(|instance| instance.on_batch(direction, &body).ok().flatten());
-                let _ = reply.send(replaced);
+                let _ = reply.send(replaced.filter(|_| authority.load(Ordering::Acquire)));
             }
             Request::Tick { reply } => {
                 let output = instance
@@ -275,7 +315,11 @@ fn serve(loader: &PacketModLoader, requests: Receiver<Request>) {
                         to_client: outbound.to_client,
                         to_server: outbound.to_server,
                     });
-                let _ = reply.send(output);
+                let _ = reply.send(if authority.load(Ordering::Acquire) {
+                    output
+                } else {
+                    RelayOutput::default()
+                });
             }
             Request::Stop => break,
         }
@@ -287,8 +331,8 @@ fn serve(loader: &PacketModLoader, requests: Receiver<Request>) {
 
 /// Instantiates the selected packet mod for this session, or explains why the session runs
 /// without it.
-fn start(loader: &PacketModLoader) -> Option<PacketMod> {
-    let Some(compiled) = loader.compiled(PACKET_MOD_READY_WAIT) else {
+fn start(loader: &PacketModLoader, generation: u64) -> Option<PacketMod> {
+    let Some(compiled) = loader.compiled(PACKET_MOD_READY_WAIT, generation) else {
         tracing::warn!("packet mod not ready; this session runs without it");
         return None;
     };

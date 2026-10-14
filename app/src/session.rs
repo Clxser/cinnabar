@@ -286,6 +286,7 @@ pub(crate) struct SessionResources<'w> {
     ui_catalog: Option<Res<'w, crate::runtime::network::PackUiCatalog>>,
     input: Option<Res<'w, client_state::SemanticInputSnapshot>>,
     far_terrain: Option<ResMut<'w, crate::far_terrain::FarTerrain>>,
+    packet_mods: Option<Res<'w, crate::modding::packets::PacketMods>>,
 }
 
 impl SessionResources<'_> {
@@ -485,6 +486,10 @@ fn poll_join(
                 client_random_id,
                 session.actor_artwork.as_deref().map(|artwork| &artwork.0),
                 session.ui_catalog.as_deref(),
+                session
+                    .packet_mods
+                    .as_ref()
+                    .and_then(|mods| mods.session_relay()),
             ) {
                 if owned_core {
                     let directory = controller.directory.take();
@@ -537,18 +542,24 @@ fn start_network(
     client_random_id: protocol::ClientRandomId,
     actor_artwork: Option<&render_model::ActorArtworkPages>,
     ui_catalog: Option<&crate::runtime::network::PackUiCatalog>,
+    packet_relay: Option<std::sync::Arc<dyn protocol::PacketRelay>>,
 ) -> Result<(), String> {
-    let replacement = crate::runtime::network::session::spawn_network(NetworkConfig {
-        session_generation: simulation_clock::identity::SessionGeneration::new(session_generation),
-        socket_dir,
-        display_name: menu.display_name().to_owned(),
-        client_random_id,
-        client_blob_cache: cache.cache(),
-        player_skin: menu.player_skin().clone(),
-        login_settings,
-        actor_artwork: actor_artwork.cloned(),
-        ui_catalog: ui_catalog.map(|base| base.0.clone()),
-    })
+    let replacement = crate::runtime::network::session::spawn_network(
+        NetworkConfig {
+            session_generation: simulation_clock::identity::SessionGeneration::new(
+                session_generation,
+            ),
+            socket_dir,
+            display_name: menu.display_name().to_owned(),
+            client_random_id,
+            client_blob_cache: cache.cache(),
+            player_skin: menu.player_skin().clone(),
+            login_settings,
+            actor_artwork: actor_artwork.cloned(),
+            ui_catalog: ui_catalog.map(|base| base.0.clone()),
+        },
+        packet_relay,
+    )
     .map_err(|error| error.to_string())?;
     commands.insert_resource(
         client_interaction::movement::MovementTicker::with_epoch_publisher(

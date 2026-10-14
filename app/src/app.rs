@@ -633,18 +633,22 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         args.language.as_deref(),
     );
     crate::runtime::network::await_overlay_texture_device();
+    let packet_mods = crate::modding::packets::from_environment();
     let network = if connection_requested {
-        match spawn_network(NetworkConfig {
-            session_generation: simulation_clock::identity::SessionGeneration::new(1),
-            socket_dir,
-            display_name: args.display_name.clone(),
-            client_random_id: client_random_id.expect("connection requested"),
-            client_blob_cache: client_blob_cache.cache(),
-            player_skin: local_player_skin.clone(),
-            login_settings: crate::session::login_settings(&menu, None),
-            actor_artwork: Some(actor_artwork.clone()),
-            ui_catalog: Some(ui_catalog.0.clone()),
-        })
+        match spawn_network(
+            NetworkConfig {
+                session_generation: simulation_clock::identity::SessionGeneration::new(1),
+                socket_dir,
+                display_name: args.display_name.clone(),
+                client_random_id: client_random_id.expect("connection requested"),
+                client_blob_cache: client_blob_cache.cache(),
+                player_skin: local_player_skin.clone(),
+                login_settings: crate::session::login_settings(&menu, None),
+                actor_artwork: Some(actor_artwork.clone()),
+                ui_catalog: Some(ui_catalog.0.clone()),
+            },
+            packet_mods.session_relay(),
+        )
         .context("spawn Bedrock network worker")
         {
             Ok(network) => network,
@@ -696,6 +700,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     #[cfg(feature = "developer-control")]
     let primary_window = crate::developer_control::primary_window(primary_window);
     let mut app = App::new();
+    app.insert_resource(packet_mods);
     configure_client_frame_schedule(&mut app);
     let renderer = RendererSetup {
         data_root: renderer_data_root,
