@@ -17,6 +17,7 @@ pub mod local_files;
 pub mod module_observations;
 mod outputs;
 pub mod package;
+pub mod packet_mod;
 mod runtime;
 mod screens;
 pub mod server;

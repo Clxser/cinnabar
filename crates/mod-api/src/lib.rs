@@ -161,6 +161,24 @@ pub mod player_mod {
     });
 }
 
+/// The `packet-mod` world: a trusted mod that relays every session packet.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "wit-bindgen flattens the start identity into canonical ABI parameters"
+)]
+pub mod packet_mod {
+    wit_bindgen::generate!({
+        path: [
+            "../experience-sdk/wit/client/deps/server-experience",
+            "../experience-sdk/wit/session",
+            "wit",
+        ],
+        world: "cinnabar:extension/packet-mod@0.1.0",
+        pub_export_macro: true,
+        export_macro_name: "export_packet_mod",
+    });
+}
+
 /// Maximum bytes in a stable selected world or server identity.
 pub const MAX_WORLD_IDENTITY_BYTES: usize = 256;
 
