@@ -1,6 +1,8 @@
 package main
 
 import (
+	"strings"
+
 	"github.com/df-mc/dragonfly/server/cmd"
 	"github.com/df-mc/dragonfly/server/item"
 	"github.com/df-mc/dragonfly/server/player"
@@ -10,6 +12,27 @@ import (
 // init registers a deterministic inventory and equipment fixture for HUD comparisons.
 func init() {
 	cmd.Register(cmd.New("hudfixture", "Fills inventory and armour for HUD checks", nil, hudFixture{}))
+	cmd.Register(cmd.New("glyphfixture", "Shows original bitmap spacing probes", nil, glyphFixture{}))
+}
+
+type glyphFixture struct{}
+
+// Run publishes fixed strings so the same original glyph page can be measured in both clients.
+func (glyphFixture) Run(src cmd.Source, o *cmd.Output, _ *world.Tx) {
+	p, ok := src.(*player.Player)
+	if !ok {
+		o.Error("Only players can use this fixture")
+		return
+	}
+	for _, probe := range []struct {
+		Name  string
+		Glyph rune
+	}{
+		{"Solid left", '\ue100'}, {"Solid inset", '\ue101'}, {"Blank anchor", '\ue102'},
+		{"Solid full", '\ue103'}, {"Inset anchor", '\ue104'},
+	} {
+		p.Message(probe.Name + ": A" + strings.Repeat(string(probe.Glyph), 9) + "Z")
+	}
 }
 
 type hudFixture struct {
