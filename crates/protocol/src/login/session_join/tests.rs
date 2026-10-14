@@ -333,7 +333,10 @@ async fn a_startup_longer_than_one_batch_still_joins() {
 async fn a_relay_starts_with_the_session_and_adds_its_packs() {
     use crate::packet_relay::tests::FakeRelay;
     let dir = SocketDir::new("relay");
-    let settings = LoginSettings::default();
+    let settings = LoginSettings {
+        server_address: "donutsmp.net:19132".into(),
+        ..Default::default()
+    };
     let listener = listen(dir.path());
     let startup = [
         crate::Packet::new(SetTime {
@@ -380,6 +383,7 @@ async fn a_relay_starts_with_the_session_and_adds_its_packs() {
     assert_eq!(identity.display_name, "Fixture");
     let client_data: serde_json::Value = serde_json::from_str(client_data).unwrap();
     assert_eq!(client_data["ThirdPartyName"], "Fixture");
+    assert_eq!(client_data["ServerAddress"], "donutsmp.net:19132");
     let expected = batch_frame(&startup);
     assert_eq!(
         &body[..],

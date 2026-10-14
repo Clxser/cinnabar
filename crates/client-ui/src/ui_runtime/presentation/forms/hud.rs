@@ -12,7 +12,7 @@ use ui_engine::{
     engine::screen::{CustomRenderer, PaintFrame},
     text_metrics::TextMetrics,
 };
-use ui_screens::hud::HudInput;
+use ui_screens::{hud::HudInput, text::bounded_text};
 
 use super::super::{
     HudFrame, UiPresentationError, UiPresentationRuntime, bounded_visible_text, hud_layout,
@@ -268,9 +268,11 @@ fn hud_model(
         let total = title.expires_millis.saturating_sub(title.started_millis);
         HudTitle {
             creation_id: title.fifo_sequence,
-            title: bounded_visible_text(&title.text).to_owned(),
+            title: bounded_text(&title.text, protocol::MAX_UI_TEXT_BYTES).to_owned(),
             subtitle: visible(runtime.hud().subtitle(), now)
-                .map(|subtitle| bounded_visible_text(&subtitle.text).to_owned())
+                .map(|subtitle| {
+                    bounded_text(&subtitle.text, protocol::MAX_UI_TEXT_BYTES).to_owned()
+                })
                 .unwrap_or_default(),
             fade_in: seconds(fade_in),
             stay: seconds(total.saturating_sub(fade_in + fade_out)),
@@ -280,7 +282,8 @@ fn hud_model(
         }
     });
     let timed = |text: &TimedText| Timed {
-        text: bounded_visible_text(&text.text).to_owned(),
+        // Pack bindings may extract fields outside the short visible-label budget.
+        text: bounded_text(&text.text, protocol::MAX_UI_TEXT_BYTES).to_owned(),
         born: seconds(text.started_millis),
     };
     let item_name = runtime
@@ -338,6 +341,12 @@ fn hud_model(
             .any(|effect| effect.visible_at_tick(now_tick)),
         spectator: !mode_allows_hotbar,
         title,
+        title_text: Some(
+            bounded_text(runtime.hud().title_text(), protocol::MAX_UI_TEXT_BYTES).to_owned(),
+        ),
+        subtitle_text: Some(
+            bounded_text(runtime.hud().subtitle_text(), protocol::MAX_UI_TEXT_BYTES).to_owned(),
+        ),
         actionbar: visible(runtime.hud().actionbar(), now).map(timed),
         tip: visible(runtime.hud().tip(), now).map(timed),
         item_name,

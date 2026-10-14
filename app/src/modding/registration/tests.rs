@@ -68,6 +68,7 @@ fn world() -> (World, Receiver<Message>, Receiver<Retired>) {
         messages,
         retired,
         latest: Arc::new(AtomicU64::new(0)),
+        applied: AtomicU64::new(0),
         desired: Arc::new(Mutex::new(Desired::default())),
         alive: Arc::new(AtomicBool::new(true)),
         thread: None,
@@ -720,5 +721,54 @@ fn packet_candidates_survive_source_removal_and_revoke_on_disable() {
             .resource::<crate::modding::packets::PacketMods>()
             .session_relay()
             .is_none()
+    );
+}
+
+#[test]
+fn joins_wait_for_initial_observation_and_finish_after_admission() {
+    let (mut world, _, _) = world();
+    assert!(world.resource::<Watcher>().preparing());
+    apply(&mut world, Vec::new(), Vec::new());
+    assert!(!world.resource::<Watcher>().preparing());
+
+    let root = tempfile::tempdir().unwrap();
+    let entry = Entry {
+        component: root.path().join("packet.wasm"),
+        enabled: true,
+        grants: mod_host::ModGrants {
+            packets: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    fs::write(&entry.component, packet_bytes()).unwrap();
+    let candidate =
+        Box::new(build_candidate(source::source_snapshot(entry.clone()).unwrap()).unwrap());
+    let watcher = world.resource::<Watcher>();
+    watcher.desired.lock().unwrap().generation += 1;
+    assert!(
+        watcher.preparing(),
+        "a newer selection is still being prepared"
+    );
+    apply(&mut world, vec![entry.clone()], vec![change(candidate)]);
+    assert!(!world.resource::<Watcher>().preparing());
+    assert!(
+        world
+            .resource::<crate::modding::packets::PacketMods>()
+            .session_relay()
+            .is_some()
+    );
+
+    apply(
+        &mut world,
+        vec![entry.clone()],
+        vec![Change {
+            entry,
+            result: Err("bad source".into()),
+        }],
+    );
+    assert!(
+        !world.resource::<Watcher>().preparing(),
+        "an admission error ends the wait too"
     );
 }

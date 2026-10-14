@@ -36,7 +36,7 @@ mod environment_loader;
 mod hud_editor;
 mod library;
 pub(crate) mod packets;
-mod registration;
+pub(crate) mod registration;
 
 /// Every loaded mod's presentation cues committed this frame, in load order.
 #[derive(Resource, Default)]

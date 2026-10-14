@@ -198,11 +198,12 @@ enum Message {
 }
 
 #[derive(Resource)]
-pub(super) struct Watcher {
+pub(crate) struct Watcher {
     updates: Receiver<Update>,
     messages: Sender<Message>,
     retired: Sender<Retired>,
     latest: Arc<AtomicU64>,
+    applied: AtomicU64,
     desired: Arc<Mutex<Desired>>,
     alive: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -213,6 +214,14 @@ pub(super) struct Watcher {
     companions: Arc<Mutex<Vec<PathBuf>>>,
 }
 impl Watcher {
+    /// Keeps new sessions pending until the observed mod selection has finished admission.
+    pub(crate) fn preparing(&self) -> bool {
+        if !self.alive.load(Ordering::Acquire) {
+            return false;
+        }
+        let desired = self.desired.lock().expect("mod desired list");
+        desired.registration.is_none() || self.applied.load(Ordering::Acquire) != desired.generation
+    }
     /// Gives the library a fence that waits off-frame for final settings writes.
     pub(super) fn removal_client(&self) -> removal::Client {
         removal::Client::new(
@@ -256,6 +265,7 @@ impl Watcher {
             messages,
             retired,
             latest,
+            applied: AtomicU64::new(0),
             desired,
             alive,
             thread: Some(thread),

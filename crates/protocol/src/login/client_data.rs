@@ -71,6 +71,8 @@ impl ClientRandomId {
 /// The player's own settings a login reports, as vanilla's client takes them at join.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoginSettings {
+    /// The selected server address reported by the client at this join.
+    pub server_address: String,
     /// The active UI language, in the `en_US` form of its lang file.
     pub language_code: String,
     /// The input the player is using now.
@@ -90,6 +92,7 @@ pub struct LoginSettings {
 impl Default for LoginSettings {
     fn default() -> Self {
         Self {
+            server_address: String::new(),
             language_code: "en_US".to_owned(),
             input_mode: PlayerInputMode::Mouse,
             gui_scale_offset: 0,
@@ -159,7 +162,7 @@ pub(crate) fn login_client_data(
         "PlatformType": 0,
         "PlayFabId": "",
         "SelfSignedId": identity.to_string(),
-        "ServerAddress": "",
+        "ServerAddress": settings.server_address,
         "ThirdPartyName": display_name,
         "ThirdPartyNameOnly": false,
         "UIProfile": 0,

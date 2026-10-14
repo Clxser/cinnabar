@@ -272,10 +272,10 @@ fn serve(
 ) {
     let mut instance: Option<PacketMod> = None;
     for request in requests {
-        if !authority.load(Ordering::Acquire) {
-            if let Some(mut old) = instance.take() {
-                old.stop();
-            }
+        if !authority.load(Ordering::Acquire)
+            && let Some(mut old) = instance.take()
+        {
+            old.stop();
         }
         match request {
             Request::Start {

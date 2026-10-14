@@ -607,7 +607,11 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
                 client_random_id: client_random_id.expect("connection requested"),
                 client_blob_cache: client_blob_cache.cache(),
                 player_skin: local_player_skin.clone(),
-                login_settings: crate::session::login_settings(&menu, None),
+                login_settings: {
+                    let mut settings = crate::session::login_settings(&menu, None);
+                    settings.server_address = args.address.clone().unwrap_or_default();
+                    settings
+                },
                 actor_artwork: Some(actor_artwork.clone()),
                 ui_catalog: Some(ui_catalog.0.clone()),
             },

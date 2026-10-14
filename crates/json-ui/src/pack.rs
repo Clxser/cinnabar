@@ -213,8 +213,22 @@ fn merge_into(
             return;
         }
     };
-    if base.is_some() {
-        existing.base = base;
+    if let Some(base) = base {
+        if existing.base.as_deref() != Some(base.as_str()) {
+            // A new inheritance target supplies a new definition, rather than retaining
+            // the previous target's local type, factory and bindings.
+            let key = format!("{}@{base}", existing.name);
+            *existing = RawControl::from_entry(
+                &existing.owner_ns,
+                &key,
+                &Value::Object(body.clone()),
+                diagnostics,
+            );
+            if let Some(Value::Array(items)) = body.get("modifications") {
+                apply_modifications(existing, items, diagnostics);
+            }
+            return;
+        }
     }
     for (property, value) in body {
         match property.as_str() {

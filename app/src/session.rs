@@ -287,6 +287,7 @@ pub(crate) struct SessionResources<'w> {
     input: Option<Res<'w, client_state::SemanticInputSnapshot>>,
     far_terrain: Option<ResMut<'w, crate::far_terrain::FarTerrain>>,
     packet_mods: Option<Res<'w, crate::modding::packets::PacketMods>>,
+    mod_registration: Option<Res<'w, crate::modding::registration::Watcher>>,
 }
 
 impl SessionResources<'_> {
@@ -435,6 +436,14 @@ fn poll_join(
     if controller.join.is_none() {
         return;
     }
+    // The join must capture admitted mods, including on a cold cache or a transfer.
+    if session
+        .mod_registration
+        .as_ref()
+        .is_some_and(|watcher| watcher.preparing())
+    {
+        return;
+    }
     let client_random_id = match controller.poll_client_random_id() {
         Ok(Some(id)) => id,
         Ok(None) => return,
@@ -446,6 +455,7 @@ fn poll_join(
         }
     };
     let attempt = controller.join.take().expect("pending join");
+    let server_address = attempt.address.clone();
     use client_session::connection::JoinPoll;
     match attempt.poll(controller.generation, controller.connecting, || {
         controller.core.exited()
@@ -475,7 +485,8 @@ fn poll_join(
             if let Some(directory) = directory {
                 controller.bind_directory(directory);
             }
-            let login_settings = login_settings(menu, session.input.as_deref());
+            let mut login_settings = login_settings(menu, session.input.as_deref());
+            login_settings.server_address = server_address;
             if let Err(error) = start_network(
                 commands,
                 menu,
@@ -513,6 +524,7 @@ pub(crate) fn login_settings(
     input: Option<&client_state::SemanticInputSnapshot>,
 ) -> protocol::LoginSettings {
     protocol::LoginSettings {
+        server_address: String::new(),
         language_code: pack_runtime::pack_language::active_language_code(),
         input_mode: input
             .and_then(|input| input.snapshot())

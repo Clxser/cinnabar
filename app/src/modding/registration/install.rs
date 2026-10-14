@@ -390,6 +390,10 @@ pub(super) fn apply(world: &mut World, update: Update) {
     world
         .resource::<Watcher>()
         .remember_companions(world.get_resource::<ModRuntime>());
+    world
+        .resource::<Watcher>()
+        .applied
+        .store(update.generation, Ordering::Release);
     world.resource::<Watcher>().send(Message::Acknowledge {
         generation: update.generation,
         request_id: update.registration.request_id,
