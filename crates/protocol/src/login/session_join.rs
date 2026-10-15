@@ -64,6 +64,7 @@ impl LoginSequence {
             transport.set_relay(relay);
         }
         let spawned = super::startup::await_spawn(&mut transport).await?;
+        transport.finish_startup();
         let runtime_id = spawned.runtime_id;
         let terrain_before_spawn = spawned.terrain_before_spawn;
         let game_data = tokio::task::spawn_blocking(move || {

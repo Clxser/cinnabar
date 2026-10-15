@@ -91,6 +91,7 @@ pub(crate) fn body(times: &[i32]) -> Vec<u8> {
 async fn relayed_pair(name: &str, relay: &Arc<FakeRelay>) -> Pair {
     let mut pair = pair(name, &[]).await;
     pair.transport.set_relay(relay.clone());
+    pair.transport.finish_startup();
     pair
 }
 

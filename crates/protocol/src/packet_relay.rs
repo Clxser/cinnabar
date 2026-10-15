@@ -26,7 +26,7 @@ pub trait PacketRelay: Send + Sync {
         client_data: &str,
         startup: &[u8],
     ) -> Vec<RelayPack>;
-    /// Initial server bodies may initialize registries; the packet host gives them its join budget.
+    /// Server bodies through spawn may initialize registries; the host gives them its join budget.
     fn inbound_startup(&self, body: &[u8]) -> Option<Vec<u8>> {
         self.inbound(body)
     }

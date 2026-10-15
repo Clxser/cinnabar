@@ -53,6 +53,7 @@ pub(crate) struct SessionTransport {
     relay: Option<RelayLink>,
     startup: VecDeque<Bytes>, // startup batch bodies, read before any core frame
     received: VecDeque<RawPacket>, // packets split from a batch but not yet read
+    joining: bool,            // server batches retain the startup budget until spawn completes
     ended: bool,              // a terminal message was delivered
     sending: VecDeque<InFlightSend>,
 }
@@ -84,6 +85,7 @@ impl SessionTransport {
             relay: None,
             startup: startup_batches(startup).into(),
             received: VecDeque::new(),
+            joining: true,
             ended: false,
             sending: VecDeque::new(),
         }
@@ -94,6 +96,11 @@ impl SessionTransport {
         let (link, writer) = RelayLink::start(relay, self.writer.queue());
         self.relay = Some(link);
         self.writer = writer;
+    }
+
+    /// Switches later server batches to the play budget after the login owner observes spawn.
+    pub(crate) fn finish_startup(&mut self) {
+        self.joining = false;
     }
 
     /// The writer this transport's own sends share with detached outbound batches.
@@ -108,7 +115,7 @@ impl SessionTransport {
                 return Ok(Inbound::Packet(packet));
             }
             if let Some(batch) = self.startup.pop_front() {
-                self.receive_server_batch(batch, true)?;
+                self.receive_server_batch(batch)?;
                 continue;
             }
             if self.ended {
@@ -131,7 +138,7 @@ impl SessionTransport {
                 None => return Err(SessionFailure::ConnectionClosed.into()),
             };
             if let Some(body) = crate::session_wire::batch_frame_body(&frame) {
-                self.receive_server_batch(body, false)?;
+                self.receive_server_batch(body)?;
                 continue;
             }
             let terminal = match crate::session_wire::decode_core_message(frame)
@@ -163,11 +170,11 @@ impl SessionTransport {
     }
 
     /// Startup and live server bodies share the same relay before packet decoding.
-    fn receive_server_batch(&mut self, body: Bytes, startup: bool) -> Result<(), SessionError> {
+    fn receive_server_batch(&mut self, body: Bytes) -> Result<(), SessionError> {
         let replaced = self
             .relay
             .as_ref()
-            .and_then(|relay| relay.inbound(&body, startup));
+            .and_then(|relay| relay.inbound(&body, self.joining));
         match replaced {
             Some(replaced) => self.receive_relayed(replaced),
             None => self

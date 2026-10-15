@@ -358,7 +358,7 @@ async fn a_relay_starts_with_the_session_and_adds_its_packs() {
     };
     let relay = Arc::new(FakeRelay::default());
     relay.state().packs = vec![(b"pack".to_vec(), true)];
-    let (joined, _core) = tokio::join!(
+    let (joined, mut core) = tokio::join!(
         LoginSequence::connect_session(
             dir.path(),
             "Fixture",
@@ -395,11 +395,35 @@ async fn a_relay_starts_with_the_session_and_adds_its_packs() {
         Some(&expected[1..]),
         "startup must pass through the inbound handler before the spawn sequence"
     );
-    assert_eq!(state.startup_inbound, vec![body.clone()]);
+    let spawn_batch = batch_frame(&spawn_prerequisites());
+    assert_eq!(
+        state.startup_inbound,
+        vec![body.clone(), spawn_batch[1..].to_vec()],
+        "registry and spawn packets after the handoff still belong to login"
+    );
     assert!(
         !state.outbound.is_empty() && !state.inbound.is_empty(),
         "the relay sees the spawn sequence both ways"
     );
+    drop(state);
+
+    let live = [crate::Packet::new(SetTime {
+        time: wire::ZigZag32(99),
+    })];
+    core.send(batch_frame(&live)).await;
+    loop {
+        let packet = session.recv().await.expect("live packet after login");
+        if matches!(&*packet.data, packets::Packet::SetTime(value) if value.time.0 == 99) {
+            break;
+        }
+    }
+    let state = relay.state();
+    assert_eq!(
+        state.startup_inbound.len(),
+        2,
+        "play does not keep the startup budget"
+    );
+    assert_eq!(state.inbound.last().unwrap(), &batch_frame(&live)[1..]);
 }
 
 /// A join the core could not make ends with the server's disconnect screen text.
