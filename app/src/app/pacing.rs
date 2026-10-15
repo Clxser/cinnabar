@@ -7,7 +7,7 @@ use client_shell::menu::MenuRuntime;
 pub(super) fn selected_mode(
     args: &crate::args::ClientArgs,
     settings: &launcher::menu::settings_options::SettingsOptions,
-) -> render::ReflexMode {
+) -> reflex::Mode {
     if args.reflex_mode_explicit {
         args.reflex_mode
     } else {
@@ -16,7 +16,7 @@ pub(super) fn selected_mode(
 }
 
 /// Installs pacing, display-refresh observation and the live Reflex settings row.
-pub(super) fn install(app: &mut App, mode: render::ReflexMode, cli_override: bool) {
+pub(super) fn install(app: &mut App, mode: reflex::Mode, cli_override: bool) {
     app.insert_resource(ReflexCliOverride(cli_override))
         .add_plugins(render::InputPacingPlugin::default().with_reflex_mode(mode))
         .add_systems(Update, sync_reflex_menu_capability)
