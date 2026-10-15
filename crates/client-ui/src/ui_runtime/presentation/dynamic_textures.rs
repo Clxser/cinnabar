@@ -260,6 +260,12 @@ pub(super) fn rebuild(runtime: &mut UiPresentationRuntime) {
             .as_ref()
             .map_or_else(super::mod_panel_font::blank_page, |font| font.page.clone()),
     );
+    dynamic.push(
+        runtime
+            .studio_preview_page
+            .clone()
+            .unwrap_or_else(|| runtime.blank_dynamic_page.clone()),
+    );
     // Unused art pages keep their old pixels; nothing references them.
     let art_pages = previous
         .len()
@@ -282,7 +288,10 @@ pub(super) fn rebuild(runtime: &mut UiPresentationRuntime) {
     // Equal per-page identities preserve old immutable payload ownership.
     for (offset, page) in dynamic.iter_mut().enumerate() {
         let old = &previous[first_dynamic + offset];
-        if old.identity() == page.identity() {
+        if old.identity() == page.identity()
+            && old.dimensions() == page.dimensions()
+            && old.format() == page.format()
+        {
             *page = old.clone();
         }
     }
@@ -306,6 +315,65 @@ pub(super) fn rebuild(runtime: &mut UiPresentationRuntime) {
             }
         }
         Err(reason) => warn_rebuild_failed(&reason),
+    }
+}
+
+impl UiPresentationRuntime {
+    /// Accepts an immutable worker-prepared preview page; rebuilding never copies or hashes frame pixels here.
+    pub fn set_studio_preview_page(&mut self, page: Option<UiTexturePage>) -> bool {
+        if page.is_none() && self.studio_preview_page.is_none() {
+            return true;
+        }
+        if page
+            .as_ref()
+            .zip(self.studio_preview_page.as_ref())
+            .is_some_and(|(next, old)| {
+                next.identity() == old.identity()
+                    && next.dimensions() == old.dimensions()
+                    && next.format() == old.format()
+            })
+            && self.studio_preview_icon().is_some()
+        {
+            return true;
+        }
+        if page.as_ref().is_some_and(|page| {
+            let [width, height] = page.dimensions();
+            width > render_model::UI_STUDIO_PREVIEW_MAX_SIZE[0]
+                || height > render_model::UI_STUDIO_PREVIEW_MAX_SIZE[1]
+                || page.format() != render_model::UiTextureFormat::Rgba8
+        }) {
+            return false;
+        }
+        self.studio_preview_page = page;
+        rebuild(self);
+        self.studio_preview_page.is_none() || self.studio_preview_icon().is_some()
+    }
+
+    /// The dedicated native slot is resolved from the current carrier layout, never from a fixed page ID.
+    pub fn studio_preview_icon(&self) -> Option<IconRef> {
+        let page = self.studio_preview_page.as_ref()?;
+        let index = self.textures.dynamic_start() + render_model::UI_STUDIO_PREVIEW_PAGE_OFFSET;
+        let resident = self.textures.pages().get(index)?;
+        if resident.identity() != page.identity()
+            || resident.dimensions() != page.dimensions()
+            || resident.format() != page.format()
+        {
+            return None;
+        }
+        let [width, height] = page.dimensions();
+        Some(IconRef {
+            page: u16::try_from(
+                self.textures.dynamic_start() + render_model::UI_STUDIO_PREVIEW_PAGE_OFFSET,
+            )
+            .ok()?,
+            uv: [
+                0,
+                0,
+                u16::try_from(width).ok()?,
+                u16::try_from(height).ok()?,
+            ],
+            glint: false,
+        })
     }
 }
 

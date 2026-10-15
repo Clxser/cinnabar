@@ -67,7 +67,7 @@ impl EncodeOptions {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        hide_console(&mut probe);
+        crate::media_process::hide_console(&mut probe);
         let supported = probe.spawn().is_ok_and(|mut child| {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
             loop {
@@ -207,16 +207,4 @@ pub(super) fn arguments(
     );
     args.push(output.display().to_string());
     args
-}
-
-/// FFmpeg helpers stay behind the native app on Windows.
-pub(super) fn hide_console(command: &mut Command) {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    #[cfg(not(windows))]
-    let _ = command;
 }

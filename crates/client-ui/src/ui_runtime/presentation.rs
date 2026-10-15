@@ -118,6 +118,7 @@ pub struct UiPresentationRuntime {
     texture_session: Option<u64>,
     item_glint: item_glint::ItemGlintTextures,
     blank_dynamic_page: render_model::UiTexturePage,
+    studio_preview_page: Option<render_model::UiTexturePage>,
     solid_texture_page: u16,
     hud_textures: Option<HudTexturePages>,
     icon_catalog: Option<Arc<RuntimeIconCatalog>>,

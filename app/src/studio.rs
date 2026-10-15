@@ -27,6 +27,7 @@ mod audio;
 mod environment;
 mod frames;
 mod observations;
+mod preview;
 mod terrain;
 
 #[derive(Resource, Default)]
@@ -65,6 +66,12 @@ struct Active {
 
 /// Installs a normal feature, independent of developer-control and its fixed-clock recording mode.
 pub(crate) fn configure(app: &mut App) {
+    app.init_resource::<preview::NativePreview>().add_systems(
+        Update,
+        preview::update
+            .in_set(client_state::ClientFrameSet::UiPreparation)
+            .before(crate::ui_runtime::presentation::prepare_ui_runtime),
+    );
     app.init_resource::<NativeCapture>().add_systems(
         Last,
         (update, terrain::observe).chain().before(FrameCaptureSet),

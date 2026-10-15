@@ -9317,7 +9317,8 @@ Current implementation, not yet built or exercised:
   enumeration. The main-screen Recording Studio entry and native library/editor
   connect these services to project create/open/save, undo/redo, split/delete,
   speed changes, titles, frame stepping and pointer scrubbing. The preview viewport
-  is not connected to recorded scene playback; this UI remains unverified.
+  is now connected to raster media in source, but not native 3D scene playback;
+  this UI remains unverified.
 - Native capture controls now arm recording from the launcher and start/stop or
   bookmark from pause/studio. Startup and finalization use workers; the live path
   bounds GPU readbacks, queued video bytes and mixed-audio storage independently.
@@ -9367,6 +9368,17 @@ Current implementation, not yet built or exercised:
   interrupted playback to their common duration. Camera capture now checkpoints
   its actual pose at the shared scene interval. These source paths are unverified
   and are not yet connected to the native editor viewport or audio playback.
+- Raster media preview now connects saved timeline sampling to the native editor's
+  image surface. A bounded worker owns local FFmpeg decoding, pixel composition
+  and hashing; forward requests coalesce without cancelling every frame, while
+  new seeks/documents cancel obsolete work. Native UI pages reuse a dedicated
+  bounded slot outside server/mod texture ranges. Crops, opacity, ordered tracks,
+  black gaps and grouped crossfades have source implementations; ordinary opaque
+  single-source frames share decoded storage. This provisional raster path uses
+  point crop sampling, lacks source-identity/frame-accuracy acceptance, and does
+  not yet render titles, audio, cameras, global effects or native replay scenes.
+  Missing camera/effect composition is disclosed in the preview. No build, test
+  or rendered acceptance was performed; this does not close the Studio gate.
 
 Required work remains open:
 

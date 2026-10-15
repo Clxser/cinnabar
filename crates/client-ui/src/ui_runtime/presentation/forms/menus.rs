@@ -73,6 +73,14 @@ impl UiPresentationRuntime {
             return Ok(Vec::new());
         };
         self.begin_menu_caret(Arc::make_mut(&mut view));
+        if view.screen == launcher::menu::MenuScreen::RecordingStudio {
+            let studio = Arc::make_mut(&mut Arc::make_mut(&mut view).studio);
+            studio.preview_icon = studio
+                .preview
+                .ready
+                .then(|| self.studio_preview_icon())
+                .flatten();
+        }
         if view.screen == launcher::menu::MenuScreen::Death {
             Arc::make_mut(&mut view).death_reason = runtime.death_reason().to_owned();
         }

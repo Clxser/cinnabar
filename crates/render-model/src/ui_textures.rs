@@ -13,7 +13,7 @@ use crate::ui::{
 /// Buckets bind independently; page count and byte limits bound their residency.
 pub const MAX_UI_TEXTURE_BUCKETS: usize = MAX_UI_TEXTURE_LAYERS as usize;
 /// Replaceable pages after static UI: models, session glyphs, server UI, then a local font.
-pub const MAX_UI_DYNAMIC_PAGES: usize = UI_LOCAL_FONT_PAGE_OFFSET + 1;
+pub const MAX_UI_DYNAMIC_PAGES: usize = UI_STUDIO_PREVIEW_PAGE_OFFSET + 1;
 /// Side length shared by general dynamic UI pages outside original-resolution model slots.
 pub const UI_DYNAMIC_PAGE_SIDE: u32 = 256;
 /// Fixed dynamic slot carrying the original player skin, not a projected thumbnail.
@@ -26,6 +26,9 @@ pub const UI_MODEL_ATLAS_SIDE: u32 = 512;
 /// Dedicated bounded local-font slot, outside the server glyph and UI allocations.
 pub const UI_LOCAL_FONT_PAGE_OFFSET: usize = 34;
 pub const UI_LOCAL_FONT_PAGE_SIDE: u32 = 512;
+/// One native creator preview slot, outside all server and mod-owned image ranges.
+pub const UI_STUDIO_PREVIEW_PAGE_OFFSET: usize = UI_LOCAL_FONT_PAGE_OFFSET + 1;
+pub const UI_STUDIO_PREVIEW_MAX_SIZE: [u32; 2] = [960, 540];
 /// Replaceable full-resolution pages after the small ones, for menu artwork.
 pub const MAX_UI_ART_PAGES: usize = 2;
 pub const UI_ART_PAGE_SIDE: u32 = 1024;
@@ -44,7 +47,9 @@ pub const MAX_UI_NATIVE_TEXTURE_GROWTH_BYTES: usize = (render_api::MAX_STANDARD_
         * UI_DYNAMIC_PAGE_SIDE as usize
         * UI_DYNAMIC_PAGE_SIDE as usize)
     * UiTextureFormat::Rgba8.bytes_per_texel()
-    + MAX_UI_NATIVE_SHEET_BYTES;
+    + MAX_UI_NATIVE_SHEET_BYTES
+    + (UI_STUDIO_PREVIEW_MAX_SIZE[0] as usize * UI_STUDIO_PREVIEW_MAX_SIZE[1] as usize)
+        * UiTextureFormat::Rgba8.bytes_per_texel();
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Pixels {
@@ -463,7 +468,10 @@ fn fixed_budget_bytes(pages: &[UiTexturePage], dynamic_start: usize) -> usize {
         .iter()
         .enumerate()
         .map(|(index, page)| {
-            if index >= dynamic_start && is_resizable_slot(index - dynamic_start) {
+            if index >= dynamic_start && index - dynamic_start == UI_STUDIO_PREVIEW_PAGE_OFFSET {
+                // The entire creator surface has its own allowance, including its idle blank page.
+                0
+            } else if index >= dynamic_start && is_resizable_slot(index - dynamic_start) {
                 blank
             } else {
                 page.pixels().len()
@@ -475,12 +483,19 @@ fn fixed_budget_bytes(pages: &[UiTexturePage], dynamic_start: usize) -> usize {
 /// Original sources can resize within reserved capacity without changing logical slots.
 fn is_resizable_slot(offset: usize) -> bool {
     (UI_PLAYER_SKIN_PAGE_OFFSET..=UI_SESSION_ICON_PAGE_OFFSET).contains(&offset)
+        || offset == UI_STUDIO_PREVIEW_PAGE_OFFSET
         || (UI_NATIVE_SHEET_PAGE_OFFSET..UI_NATIVE_SHEET_PAGE_OFFSET + MAX_UI_NATIVE_SHEET_PAGES)
             .contains(&offset)
 }
 
 /// Accepts only the dimensions supported by each reserved dynamic page's producer.
 fn valid_dynamic_dimensions(offset: usize, [width, height]: [u32; 2]) -> bool {
+    if offset == UI_STUDIO_PREVIEW_PAGE_OFFSET {
+        return width > 0
+            && height > 0
+            && width <= UI_STUDIO_PREVIEW_MAX_SIZE[0]
+            && height <= UI_STUDIO_PREVIEW_MAX_SIZE[1];
+    }
     if (UI_NATIVE_SHEET_PAGE_OFFSET..UI_NATIVE_SHEET_PAGE_OFFSET + MAX_UI_NATIVE_SHEET_PAGES)
         .contains(&offset)
     {

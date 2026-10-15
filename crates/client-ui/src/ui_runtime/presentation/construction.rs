@@ -48,6 +48,7 @@ impl UiPresentationRuntime {
             mod_panel_font: None,
             font,
             blank_dynamic_page: textures.pages()[textures.dynamic_start()].clone(),
+            studio_preview_page: None,
             textures,
             texture_session: None,
             item_glint: Default::default(),

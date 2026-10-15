@@ -138,6 +138,8 @@ pub struct VisualSample {
     pub time: MediaTime,
     pub track: u16,
     pub framing: Framing,
+    /// Dissolve members add premultiplied contributions before their group is composited over lower tracks.
+    pub mix: Option<Id>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -212,6 +214,7 @@ impl CompiledTimeline {
                         time: source_time,
                         track: clip.track,
                         framing: clip.framing,
+                        mix: None,
                     });
                 }
             }
@@ -340,6 +343,7 @@ impl CompiledTimeline {
                 },
                 track: clip.track,
                 framing,
+                mix: Some(transition.id),
             });
         }
         Ok(())

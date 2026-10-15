@@ -55,10 +55,27 @@ pub(super) fn draw(
     canvas.fill(viewport, [16, 20, 24, 255])?;
     let caption = if project.sources.is_empty() {
         "Add a recording to begin your edit."
+    } else if let Some(error) = &view.studio.preview.error {
+        error.as_str()
+    } else if view.studio.preview.loading {
+        "Loading preview..."
     } else {
-        "Replay preview"
+        "Select a playable recording to preview."
     };
-    canvas.text_centred(caption, viewport, BODY, TEXT_DIMMEST, false)?;
+    if let Some(icon) = view.studio.preview_icon {
+        canvas.fitted_media(icon, viewport)?;
+    } else {
+        canvas.text_centred(caption, viewport, BODY, TEXT_DIMMEST, false)?;
+    }
+    if let Some(notice) = &view.studio.preview.notice {
+        canvas.text_line(
+            notice,
+            [viewport[0] + pad, viewport[3] - canvas.r(2.8)],
+            (viewport[2] - viewport[0] - pad * 2.0).max(0.0),
+            CAPTION,
+            TEXT_DIMMER,
+        )?;
+    }
     let button_width = canvas.r(7.2);
     let center = (preview[0] + preview[2]) * 0.5;
     control(

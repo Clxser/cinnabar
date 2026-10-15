@@ -66,6 +66,8 @@ pub struct Snapshot {
     pub discard: Option<DiscardIntent>,
     pub error: Option<String>,
     pub notice: Option<String>,
+    pub preview: recording_studio::preview::PreviewStatus,
+    pub preview_icon: Option<ui::IconRef>,
 }
 
 impl PartialEq for Snapshot {
@@ -92,6 +94,8 @@ impl PartialEq for Snapshot {
             discard,
             error,
             notice,
+            preview,
+            preview_icon,
         } = self;
         let Self {
             capture: b_capture,
@@ -114,8 +118,12 @@ impl PartialEq for Snapshot {
             discard: b_discard,
             error: b_error,
             notice: b_notice,
+            preview: b_preview,
+            preview_icon: b_preview_icon,
         } = other;
         capture == b_capture
+            && preview == b_preview
+            && preview_icon == b_preview_icon
             && (Arc::ptr_eq(library, b_library) || library.is_empty() && b_library.is_empty())
             && match (project, b_project) {
                 (Some(a), Some(b)) => Arc::ptr_eq(a, b),

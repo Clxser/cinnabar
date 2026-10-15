@@ -372,7 +372,7 @@ impl Recorder {
         command
             .args(mux_arguments(&summary.path, audio, &staged))
             .stdin(Stdio::null());
-        options::hide_console(&mut command);
+        crate::media_process::hide_console(&mut command);
         let status = command
             .status()
             .map_err(|error| format!("start ffmpeg to mux audio: {error}"))?;
@@ -437,7 +437,7 @@ fn encode(
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
-    options::hide_console(&mut command);
+    crate::media_process::hide_console(&mut command);
     let mut child = command
         .spawn()
         .map_err(|error| format!("start ffmpeg: {error}"))?;

@@ -4,6 +4,32 @@ use super::{Bounds, Canvas, PaintError, Rgba, UiVisual};
 use crate::images::OreUiSprite;
 
 impl Canvas<'_> {
+    /// Fits an admitted native media page without stretching its aspect ratio or sampling outside its frame.
+    pub(in super::super) fn fitted_media(
+        &mut self,
+        icon: ui::IconRef,
+        bounds: Bounds,
+    ) -> Result<(), PaintError> {
+        let width = f32::from(icon.uv[2].saturating_sub(icon.uv[0]));
+        let height = f32::from(icon.uv[3].saturating_sub(icon.uv[1]));
+        if width == 0.0 || height == 0.0 {
+            return Ok(());
+        }
+        let scale = ((bounds[2] - bounds[0]) / width).min((bounds[3] - bounds[1]) / height);
+        let x = (bounds[0] + bounds[2] - width * scale) * 0.5;
+        let y = (bounds[1] + bounds[3] - height * scale) * 0.5;
+        self.push(
+            [x, y, x + width * scale, y + height * scale],
+            UiVisual::StyledSprite {
+                texture_page: icon.page,
+                uv: icon.uv.map(f32::from),
+                color: [255; 4],
+                style: ui::UI_STYLE_BILINEAR,
+            },
+        )?;
+        Ok(())
+    }
+
     fn native_sprite(&self, key: &str) -> Option<(u16, OreUiSprite)> {
         let originals = self.originals?;
         let key = originals

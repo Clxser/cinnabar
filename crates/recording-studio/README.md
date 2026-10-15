@@ -105,8 +105,30 @@ Opening a package still makes ordinary video/audio
 clips and editable highlights. The editor does not yet render this terrain track or
 allow changing the recorded camera; a raster video alone remains a POV recording.
 
-The full scene schema, native replay renderer, preview composition, media
+## Media preview
+
+The native editor now requests raster frames from one bounded background worker.
+It coalesces forward requests and cancels older seeks/documents, retaining no
+unbounded scrub backlog. FFmpeg decodes local video and images through a one-frame
+handoff; owned subprocesses stop on cancellation or editor closure. Adjacent video
+requests retain their decoder, and metadata edits can retain unchanged media.
+The frame/input thread does no process waiting, decoding, composition or pixel
+hashing. Missing FFmpeg and failed media appear as preview errors.
+
+The current raster compositor handles up to eight simultaneous sources, authored
+crops, opacity, ordered tracks, black gaps and grouped dissolves in linear light.
+An unchanged opaque single-source frame shares its decoded pixels directly. A
+dedicated native UI slot preserves aspect ratio and ordinary menu/modal ordering;
+it is outside server and mod texture ranges. The page remains allocated while a
+seek is loading, avoiding repeated texture-plan changes during a drag.
+
+This is an unverified source implementation. Crop filtering, source frame accuracy,
+content-identity validation, audio, titles, camera changes and global effects still
+need completion and acceptance. Missing camera/effect composition is disclosed in
+the preview. Native 3D replay rendering remains unconnected to this media surface.
+
+The full scene schema, native replay renderer, complete preview composition, media
 import/recovery, camera/effect inspectors, recording options, export and linked
 automatic-effect retiming are still being implemented. The feature has not been
-built or exercised; the current preview is an unconnected viewport, not verified
-replay playback. These pieces do not complete the feature.
+built or exercised; media preview is connected in source, while replay viewport
+rendering is not. These pieces do not complete the feature.
