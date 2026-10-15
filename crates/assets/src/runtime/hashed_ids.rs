@@ -53,6 +53,11 @@ impl HashedIds {
     pub(super) const fn len(&self) -> usize {
         self.sorted.len()
     }
+
+    /// Charges both canonical entries and the allocator-sized lookup table when snapshots pin them.
+    pub(super) fn retained_bytes(&self) -> usize {
+        std::mem::size_of_val(&*self.sorted) + std::mem::size_of_val(&*self.slots)
+    }
 }
 
 impl PartialEq for HashedIds {

@@ -9286,3 +9286,95 @@ projection or pipeline states use conservative full replay.
 Incomplete validation: the focused segment/lifetime and shader pixel fixtures
 are written but unrun. Matched crosshair, enchanted-item, resize and model-depth
 captures and measured renderer work remain outstanding; no speedup is claimed.
+
+## Native Recording Studio (in progress)
+
+Scope: an integrated main-screen studio for recording and editing gameplay,
+PvP highlights and cinematics. The editor needs replay camera modes and custom
+follows, an editable multi-track timeline, event-driven automatic effects, media
+and audio import, titles, transitions, project persistence and finished video
+export. Agent/MCP editing is a later stage and does not replace these native flows.
+
+Current implementation, not yet built or exercised:
+
+- A Bevy-free project owner admits bounded metadata and cross-references. Rational
+  frame rates and integer media time drive preview and export plans. Transactional
+  edit commands, bounded undo/redo, camera rigs, effect curves, audio fades, titles,
+  markers and transitions retain immutable source media.
+- Combat analysis retains evidence confidence. Correlation between an attack
+  attempt and a server hurt/death observation is labelled estimated, rather than
+  reported as confirmed attacker attribution. Automatic effects remain ordinary
+  editable commands; draft limits report omitted events.
+- Recording storage uses a bounded worker queue, streaming compression, multipart
+  checkpoints, append-only segment commits, integrity checks, a disk quota and
+  observable completion/errors. Seek readers restore a staging scene from the
+  nearest committed checkpoint and support cancellation. This is the container;
+  the native scene adapter and periodic checkpoint policy are not installed yet.
+- Asynchronous project storage uses exclusive staging and atomic publication,
+  revision-tagged completions, portable media references and bounded library
+  enumeration. The main-screen Recording Studio entry and native library/editor
+  connect these services to project create/open/save, undo/redo, split/delete,
+  speed changes, titles, frame stepping and pointer scrubbing. The preview viewport
+  is not connected to recorded scene playback; this UI remains unverified.
+- Native capture controls now arm recording from the launcher and start/stop or
+  bookmark from pause/studio. Startup and finalization use workers; the live path
+  bounds GPU readbacks, queued video bytes and mixed-audio storage independently.
+  A passive audio tap preserves speaker playback. NVIDIA encoding is probed before
+  the capture clock starts, with an Auto software fallback; long WAV tracks use
+  RF64 and live MP4 output uses recoverable fragments. These paths are unrun.
+- The live POV-video schema retains actual camera metadata and admitted
+  attack/server hurt/death observations. Completed takes open as video, linked game
+  audio and reversible automatic highlight markers/effects, with estimates and
+  omitted observations reported. Linked audio follows visual edits; generated
+  effects do not yet follow subsequent clip retiming.
+- A separate native terrain track now captures a prepared-mesh baseline, changed
+  publications and unloads alongside POV media. Its worker freezes exact runtime
+  material/model/texture tables, per-layer UV metadata, mip chains and biome tints
+  into hash-addressed local objects. Periodic checkpoints reuse object references;
+  seek restoration validates a staging scene with explicit memory limits. Live
+  admission shares immutable geometry, bounds pinned bytes, and stops on worker
+  failure instead of silently dropping world changes. Cancellation reaches large
+  asset reads; capture manifests retain per-track completion and failure details.
+  This source is unverified.
+  Terrain alone does not establish complete 3D replay: actor appearance, an
+  isolated renderer and camera preview remain unconnected.
+- A prepared environment track now records atmosphere channels, classic lightmap
+  inputs, fullbright state and the texture animation clock at the take's frame
+  rate. Immutable sky textures, fog/biome profiles and optional dimension skyboxes
+  freeze independently of the install with bounded pinning and object validation.
+  Reference-only state checkpoints bound seek history. Native startup, sampling,
+  stop/error reporting and per-track manifest completion are connected in source.
+  This does not implement biome-aware lighting for a moved replay camera, live
+  replay composition or shader-mode restoration; these paths remain unverified.
+- A prepared actor track now retains GPU instances, previous/current bone poses,
+  exact draw identities, geometry spans, skin residency and artwork/glint rasters.
+  Native start/sample/stop and manifest status are connected in source. Immutable
+  epochs share bounded leases and hash-addressed objects; dynamic poses remain
+  journal records. Restore validates geometry, pose and raster cross-references.
+  This provisional source covers the original camera's culled draws and lacks its
+  hidden first-person body. Unculled received-world coverage, pose interpolation
+  and renderer publication remain incomplete; this does not close a replay gate.
+
+Required work remains open:
+
+- Complete recording options and the native OreUI library/editor, including full
+  keyboard/pointer timeline gestures, inspectors, accessible focus,
+  loading/error/recovery states and confirmation before discarding dirty edits.
+- Complete and validate capture of received terrain, actors and appearance,
+  lighting/weather/time, camera, audio and committed gameplay evidence. Scene schemas,
+  session/dimension boundaries, periodic checkpoints and asset identities must
+  support independent offline playback without sending live network input.
+- Incremental replay playback, scrubbing, seek cancellation and temporal resets;
+  player/free/path/follow/orbit camera preview; preview/export composition parity.
+- Linked track edits, audio/video/image import and relinking, waveform/thumbnail
+  caches, speed ramps, editable automatic camera/effect proposals and audio mixing.
+- Finish the shared preview/export compositor, hardware/software export,
+  progress/cancellation, completed-file publication and interrupted-media recovery.
+  Validate capture limits for disk quota, long sessions, resize and shutdown.
+- Owning-crate regressions and rendered/runtime acceptance for recording, seeking,
+  editing, saving/reopening, automatic PvP edits, cinematics and exported video.
+  Performance and long-recording resource bounds need measured validation. Builds,
+  tests and game launches remain unrun under the current user instruction.
+
+This feature is incomplete. Domain APIs and storage code alone do not establish a
+working Recording Studio, replay visual parity or a performance acceptance result.

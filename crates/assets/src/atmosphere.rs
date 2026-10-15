@@ -3,6 +3,9 @@ use sha2::{Digest, Sha256};
 
 use crate::AssetError;
 
+#[path = "atmosphere/recording.rs"]
+mod recording;
+
 pub const ATMOSPHERE_BLOB_MAGIC: [u8; 8] = *b"MCBEATM2";
 pub const ATMOSPHERE_BLOB_VERSION: u32 = 2;
 const HEADER_BYTES: usize = 128;

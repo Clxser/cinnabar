@@ -489,6 +489,29 @@ impl PackedQuad {
     const POSITION_MASK: u32 = 0x1f;
     const EXTENT_MASK: u32 = 0x0f;
 
+    /// Admits a recorded GPU quad without allowing reserved faces, bits or out-of-chunk geometry.
+    pub fn try_from_words(words: [u32; 2]) -> Option<Self> {
+        if words[0] >> 26 != 0 || (words[0] >> Self::FACE_SHIFT) & 7 >= Face::ALL.len() as u32 {
+            return None;
+        }
+        let quad = Self {
+            geometry: words[0],
+            material_id: words[1],
+        };
+        let origin = quad.origin();
+        if origin.iter().any(|&axis| usize::from(axis) >= SIDE) {
+            return None;
+        }
+        let (horizontal, vertical) = match quad.face() {
+            Face::NegativeX | Face::PositiveX => (2, 1),
+            Face::NegativeY | Face::PositiveY => (0, 2),
+            Face::NegativeZ | Face::PositiveZ => (0, 1),
+        };
+        (usize::from(origin[horizontal]) + usize::from(quad.width()) <= SIDE
+            && usize::from(origin[vertical]) + usize::from(quad.height()) <= SIDE)
+            .then_some(quad)
+    }
+
     /// Origin coordinates must lie inside the sub-chunk and extents in `1..=16`.
     #[must_use]
     pub fn new(origin: [u8; 3], face: Face, width: u8, height: u8, material_id: u32) -> Self {

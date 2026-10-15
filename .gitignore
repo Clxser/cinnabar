@@ -8,6 +8,12 @@
 /reports/
 *.log
 
+# Local creator projects and recorded scenes contain user media and world data.
+*.cinstudio
+*.cinreplay/
+*.cinasset
+.cinnabar-studio-*.saving
+
 
 # Go build artifacts; the architecture check forbids committed binaries.
 *.exe

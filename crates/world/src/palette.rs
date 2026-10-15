@@ -10,6 +10,11 @@ pub const SUB_CHUNK_SIDE: usize = 16;
 
 pub(crate) const SUPPORTED_BITS: [u8; 9] = [0, 1, 2, 3, 4, 5, 6, 8, 16];
 
+/// Whether an encoded palette uses one of this owner's supported packed index widths.
+pub fn supports_palette_bits(bits: u8) -> bool {
+    SUPPORTED_BITS.contains(&bits)
+}
+
 /// Storage widths that carry packed index words.
 pub(crate) const PACKED_BITS: [u8; 8] = [1, 2, 3, 4, 5, 6, 8, 16];
 

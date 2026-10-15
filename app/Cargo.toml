@@ -116,6 +116,8 @@ rayon.workspace = true
 render = { path = "../crates/render" }
 render-api = { path = "../crates/render-api" }
 render-model = { path = "../crates/render-model" }
+recording-studio = { path = "../crates/recording-studio" }
+recording-scene = { path = "../crates/recording-scene" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 semantic-input = { path = "../crates/input" }
 sim = { path = "../crates/sim" }

@@ -719,6 +719,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         screenshots_dir,
         debug_overlay: args.dev_debug_overlay,
     });
+    crate::studio::configure(&mut app);
     // Account feeds also serve Profile in direct-address and external-socket runs.
     app.init_resource::<client_shell::menu::LauncherCoreSlot>();
     app.add_plugins(render::PresentModePolicyPlugin::new(present_mode_policy));

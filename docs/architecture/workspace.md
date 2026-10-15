@@ -127,6 +127,8 @@ the prepared visual data to the GPU.
 | `crates/ui-screens` | `ui-screens` | Vanilla JSON-UI screen families, HUD renderers and menu bindings; draw them with typed borrowed inputs. | `ui-engine` paints; `client-ui` owns runtime state; domain crates apply commands. |
 | `crates/oreui` | `oreui` | OreUI theme, controls and screens drawn in our own code; use its screen and artwork APIs. | `ui` supplies primitives; `launcher` supplies menu models; `client-ui` routes runtime actions. |
 | `crates/mod-ui` | `mod-ui` | Mod and Experience presentation, consent chrome, panels and HUD editor; draw surfaces from borrowed host inputs. | `ui-engine` paints; `mod-host` owns guest execution; `client-extensions` owns runtime integration. |
+| `crates/recording-studio` | `recording-studio` | Bevy-free recording projects, reversible timeline commands, camera rigs, evidence-based automatic edits, bounded local storage and worker-owned video/audio file encoding; supply media time and immutable scene payloads. | Client adapters own scene capture and playback; `client-audio` owns the passive mixed-output tap; `oreui` presents controls; `render` owns frame submission. |
+| `crates/recording-scene` | `recording-scene` | Renderer-independent terrain, environment and prepared-actor records, bounded admission and immutable asset references for replay cameras. | `assets` freezes runtime materials and sky inputs; `meshing`, `render-api` and `render-model` own typed draw contracts; app adapters capture prepared state. |
 
 ### Rendering contracts and backend
 
@@ -175,7 +177,7 @@ the SDK for their own host contract; they do not import client runtime authority
 | --- | --- | --- | --- |
 | `crates/diagnostics` | `diagnostics` | Runtime metrics, logging and shared diagnostic markers; use its bounded logs and observation contracts. | `acceptance` evaluates evidence; subsystem owners produce observations. |
 | `crates/acceptance` | `acceptance` | Optional acceptance evidence over committed runtime observations; use its control and witness adapters. | `diagnostics` owns marker contracts; world and render owners publish committed observations. |
-| `crates/developer-control` | `developer-control` | Authenticated loopback control protocol, client/server and recording primitives; use it to drive developer builds. | `app` applies commands; `cinnabar-mcp` exposes them as tools. |
+| `crates/developer-control` | `developer-control` | Authenticated loopback control protocol and client/server transport; use it to drive developer builds. | `app` applies commands; `recording-studio` owns shared media encoding; `cinnabar-mcp` exposes developer commands as tools. |
 | `crates/test-time` | `test-time` | Test-only manual clocks and bounded eventual waits; use these instead of sleeping in tests. | Domain owners accept caller time; edge owners read real clocks. |
 | `crates/test-alloc` | `test-alloc` | Per-thread allocation request counting for tests, benchmarks and opt-in runtime diagnostics; optional process totals compose with the chosen allocator. | Owning crates define allocation contracts for their own hot paths. |
 | `tools/architecture` | `architecture` | Repository gate for boundaries, ownership docs, source limits and declarations; run its `check` command. | `policy.toml` defines rules; `workspace-declarations` shares metadata with `devtool`. |

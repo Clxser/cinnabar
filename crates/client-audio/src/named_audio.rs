@@ -7,7 +7,9 @@ use assets::RuntimeAudioPcm;
 use bevy::prelude::{MessageReader, NonSendMut, ResMut, Resource};
 use std::sync::Arc;
 mod backend;
-pub use backend::{AudioDevice, CAPTURE_CHANNELS, CaptureMixer};
+pub use backend::{
+    AudioDevice, CAPTURE_CHANNELS, CaptureMixer, LiveAudioBlock, LiveAudioTap, TAP_BLOCK_SAMPLES,
+};
 use backend::{CancelablePcm, PermitPool, VOICE_LIMIT, VoiceControl};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -422,6 +422,7 @@ impl MenuRuntime {
                 let mut actions = nav();
                 actions[4] = MenuAction::OpenAccounts;
                 actions.push(MenuAction::Navigate(MenuScreen::DressingRoom));
+                actions.push(MenuAction::Navigate(MenuScreen::RecordingStudio));
                 actions.extend((0..self.friends.len().min(1)).map(MenuAction::PlayFriend));
                 actions.extend((0..self.realms.len().min(1)).map(MenuAction::PlayRealm));
                 actions.extend((0..self.featured.len().min(2)).map(MenuAction::PlayFeatured));
@@ -561,6 +562,8 @@ impl MenuRuntime {
                 let mut actions = vec![
                     MenuAction::PauseResume,
                     MenuAction::PauseSettings,
+                    MenuAction::Navigate(MenuScreen::RecordingStudio),
+                    MenuAction::Studio(launcher::menu::studio::Action::ToggleRecording),
                     MenuAction::Navigate(MenuScreen::DressingRoom),
                     MenuAction::PauseDisconnect,
                 ];
@@ -619,6 +622,7 @@ impl MenuRuntime {
             }
             MenuScreen::Friends => vec![MenuAction::Navigate(MenuScreen::Home)],
             MenuScreen::Invite => self.invite_focus_actions(),
+            MenuScreen::RecordingStudio => self.studio.focus_actions(),
         }
     }
 }

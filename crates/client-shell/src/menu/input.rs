@@ -4,6 +4,7 @@ pub(super) mod command_macros;
 pub mod context;
 mod death;
 pub(super) mod fields;
+mod keyboard;
 mod preview;
 mod remapping;
 mod server_list;
@@ -392,9 +393,13 @@ pub fn drive_menu_input(
     } = context;
     if let Some(time) = time {
         menu.advance_death_controls(time.delta_secs_f64());
+        let studio_visible =
+            menu.is_visible() && menu.screen() == launcher::menu::MenuScreen::RecordingStudio;
+        menu.studio.tick(time.delta_secs_f64(), studio_visible);
     }
     menu.settings_slider_hovered = None;
     if consent.is_some_and(|consent| consent.0) {
+        menu.studio.cancel_pointer();
         presentation.cancel_menu_player_preview_input();
         presentation.cancel_menu_server_list_input();
         gui_scale_drag.preview_touch = None;
@@ -475,6 +480,7 @@ pub fn drive_menu_input(
     if driven.is_none()
         && (!window.focused || focus.as_ref().is_some_and(|focus| !focus.available()))
     {
+        menu.studio.cancel_pointer();
         presentation.cancel_menu_player_preview_input();
         presentation.cancel_menu_server_list_input();
         gui_scale_drag.preview_touch = None;
@@ -520,6 +526,7 @@ pub fn drive_menu_input(
         }
     }
     if !menu.is_visible() {
+        menu.studio.cancel_pointer();
         presentation.cancel_menu_player_preview_input();
         presentation.cancel_menu_server_list_input();
         gui_scale_drag.preview_touch = None;
@@ -616,15 +623,27 @@ pub fn drive_menu_input(
     let pointer_pressed = mouse_buttons.pressed(MouseButton::Left) || gui_scale_drag.left_held;
     let pointer_just_pressed =
         mouse_buttons.just_pressed(MouseButton::Left) || (pointer_pressed && !menu.pointer_down);
-    let server_list_owns_pointer = server_list::drive(
-        &mut presentation,
-        &mut menu,
-        pointer,
-        pointer_pressed,
-        pointer_just_pressed,
-        &touches,
-        &mut gui_scale_drag.server_list_touch,
-    );
+    let studio_owns_pointer = if menu.screen() == launcher::menu::MenuScreen::RecordingStudio {
+        let hovered = menu.hovered;
+        menu.studio.pointer(
+            hovered,
+            cursor_position.map(|position| position.x),
+            pointer_pressed,
+            pointer_just_pressed,
+        )
+    } else {
+        false
+    };
+    let server_list_owns_pointer = studio_owns_pointer
+        || server_list::drive(
+            &mut presentation,
+            &mut menu,
+            pointer,
+            pointer_pressed,
+            pointer_just_pressed,
+            &touches,
+            &mut gui_scale_drag.server_list_touch,
+        );
     let preview_owns_pointer =
         if menu.dialog.is_some() || (menu.is_connecting() && menu.feeds.server_trust.is_some()) {
             gui_scale_drag.preview_touch = None;
@@ -889,84 +908,13 @@ pub fn drive_menu_input(
             menu.go_back_from_input();
         }
     }
-    for input in keyboard_messages.read() {
-        modifiers.observe(input);
-        if input.state != ButtonState::Pressed {
-            continue;
-        }
-        if matches!(
-            input.key_code,
-            KeyCode::ArrowLeft
-                | KeyCode::ArrowRight
-                | KeyCode::ArrowUp
-                | KeyCode::ArrowDown
-                | KeyCode::Tab
-        ) {
-            menu.input_mode = MenuInputMode::Keyboard;
-        }
-        // Caret and deletion keys come first: Backspace and Delete carry control
-        // text that the shortcut guard below would otherwise swallow.
-        if menu.edit_key(input.key_code, modifiers.shift(), modifiers.shortcut()) {
-            continue;
-        }
-        if modifiers.shortcut() && menu.has_focused_field() {
-            match input.key_code {
-                KeyCode::KeyA => {
-                    menu.select_all_text();
-                    continue;
-                }
-                KeyCode::KeyC => {
-                    if let Some(text) = menu.selected_text() {
-                        clipboard.write_text(text.to_owned());
-                    }
-                    continue;
-                }
-                KeyCode::KeyV => {
-                    let maximum = menu.remaining_text_capacity();
-                    if let Some(text) = clipboard.read_text_bounded(maximum) {
-                        menu.edit_text(&text);
-                    }
-                    continue;
-                }
-                _ => {}
-            }
-            if input.text.is_some() {
-                continue;
-            }
-        }
-        match input.key_code {
-            // A held key's repeats keep moving focus and typing but never go back or activate.
-            KeyCode::Escape | KeyCode::Backspace | KeyCode::Enter | KeyCode::NumpadEnter
-                if input.repeat => {}
-            KeyCode::Space if input.repeat && !menu.has_focused_field() => {}
-            KeyCode::Escape => menu.go_back_from_input(),
-            KeyCode::Backspace if native_settings => menu.go_back_from_input(),
-            KeyCode::ArrowUp => {
-                menu.move_directional_focus(launcher::menu::view::SettingsFocusAxis::Vertical, -1)
-            }
-            KeyCode::ArrowLeft => menu.move_horizontal_focus(-1),
-            KeyCode::ArrowDown => {
-                menu.move_directional_focus(launcher::menu::view::SettingsFocusAxis::Vertical, 1)
-            }
-            KeyCode::ArrowRight => menu.move_horizontal_focus(1),
-            KeyCode::Tab => menu.move_focus(if modifiers.shift() { -1 } else { 1 }),
-            KeyCode::Enter | KeyCode::NumpadEnter if menu.field == Some(MenuField::SkinName) => {
-                menu.activate(launcher::menu::MenuAction::DressingRoom(
-                    launcher::dressing_room::Action::SaveRename,
-                ));
-            }
-            KeyCode::Enter | KeyCode::NumpadEnter => menu.activate_focused(),
-            KeyCode::Space if native_settings && !menu.has_focused_field() => {
-                menu.activate_focused()
-            }
-            _ if menu.has_focused_field() && !modifiers.shortcut() => {
-                if let Some(text) = input.text.as_deref() {
-                    menu.edit_text(text);
-                }
-            }
-            _ => {}
-        }
-    }
+    keyboard::drive(
+        &mut menu,
+        &mut keyboard_messages,
+        &mut modifiers,
+        &mut clipboard,
+        native_settings,
+    );
     if (!menu.is_visible()
         || (!gameplay_pending && menu.gameplay_return_pending())
         || (!respawn_pending && menu.death_loading)

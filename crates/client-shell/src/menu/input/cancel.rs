@@ -5,6 +5,18 @@ use super::*;
 impl MenuRuntime {
     /// A selected vanilla edit box consumes cancel before the screen handles it.
     pub(super) fn go_back_from_input(&mut self) {
+        if self.screen == launcher::menu::MenuScreen::RecordingStudio {
+            if self.studio.view.discard.is_some() {
+                self.studio
+                    .activate(launcher::menu::studio::Action::CancelDiscard);
+                return;
+            }
+            if self.studio.view.loading {
+                self.studio
+                    .activate(launcher::menu::studio::Action::CancelOpen);
+                return;
+            }
+        }
         if self.sign_in_focus().is_some() || self.join_request_prompted() {
             self.go_back();
             return;

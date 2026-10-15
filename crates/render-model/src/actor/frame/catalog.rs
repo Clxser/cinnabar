@@ -45,6 +45,41 @@ impl Default for ActorRigVertexSegments {
 }
 
 impl ActorRigVertexSegments {
+    /// Admits independent frozen GPU pages without trusting their stored addresses or native padding.
+    pub fn from_recorded_pages(
+        epoch: u64,
+        segments: Arc<[Arc<[ActorRigVertex]>]>,
+        offsets: Arc<[usize]>,
+        len: usize,
+    ) -> Option<Self> {
+        if segments.len() != offsets.len()
+            || len.checked_mul(std::mem::size_of::<ActorRigVertex>())?
+                > crate::actor_catalog_budget_bytes(u32::MAX)
+        {
+            return None;
+        }
+        let mut ranges = Vec::with_capacity(segments.len());
+        for (segment, &offset) in segments.iter().zip(offsets.iter()) {
+            let end = offset.checked_add(segment.len())?;
+            if end > len {
+                return None;
+            }
+            if !segment.is_empty() {
+                ranges.push((offset, end));
+            }
+        }
+        ranges.sort_unstable();
+        if ranges.windows(2).any(|pair| pair[0].1 > pair[1].0) {
+            return None;
+        }
+        Some(Self {
+            epoch,
+            segments,
+            offsets,
+            len,
+        })
+    }
+
     /// Starts an independent catalog containing one page.
     #[cfg(any(test, feature = "test-support"))]
     #[must_use]
@@ -90,9 +125,11 @@ impl ActorRigVertexSegments {
             .iter()
             .zip(self.offsets.iter())
             .find_map(|(segment, &offset)| {
-                start
-                    .checked_sub(offset)
-                    .and_then(|start| segment.get(start..start + span.vertex_count as usize))
+                start.checked_sub(offset).and_then(|start| {
+                    start
+                        .checked_add(span.vertex_count as usize)
+                        .and_then(|end| segment.get(start..end))
+                })
             })
     }
 }

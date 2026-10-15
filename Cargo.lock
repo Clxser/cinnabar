@@ -2156,6 +2156,8 @@ dependencies = [
  "protocol-ids",
  "raw-window-handle",
  "rayon",
+ "recording-scene",
+ "recording-studio",
  "render",
  "render-api",
  "render-model",
@@ -2498,6 +2500,7 @@ dependencies = [
  "pack-runtime",
  "player-state",
  "protocol",
+ "recording-studio",
  "render-api",
  "render-model",
  "render-scene",
@@ -3180,6 +3183,7 @@ name = "developer-control"
 version = "0.1.20"
 dependencies = [
  "crossbeam-channel",
+ "recording-studio",
  "serde",
  "serde_json",
  "test-time",
@@ -4669,6 +4673,7 @@ dependencies = [
  "assets",
  "bridge",
  "json-ui",
+ "recording-studio",
  "render-api",
  "resource-pack",
  "semantic-input",
@@ -5826,6 +5831,7 @@ dependencies = [
  "image",
  "launcher",
  "protocol",
+ "recording-studio",
  "render-api",
  "render-model",
  "resource-pack",
@@ -6480,6 +6486,37 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
+]
+
+[[package]]
+name = "recording-scene"
+version = "0.1.20"
+dependencies = [
+ "assets",
+ "bytemuck",
+ "crossbeam-channel",
+ "flate2",
+ "meshing",
+ "recording-studio",
+ "render-api",
+ "render-model",
+ "serde",
+ "serde_json",
+ "world",
+]
+
+[[package]]
+name = "recording-studio"
+version = "0.1.20"
+dependencies = [
+ "crossbeam-channel",
+ "flate2",
+ "glam",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

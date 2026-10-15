@@ -169,50 +169,15 @@ impl RuntimeAssets {
             }
             Ok(layers)
         };
-        let mut flat_layers = 0usize;
         for shard in &overlay.textures {
-            let layers = shard_layers(shard)?;
-            validate_texture(shard)?;
-            flat_layers += layers;
+            shard_layers(shard)?;
+            crate::texture::validate_texture_array(shard)?;
         }
-        let layer_bases = || {
-            overlay
-                .textures
-                .iter()
-                .flat_map(|shard| std::iter::repeat_n(shard.mips[0].size, shard.layers as usize))
-        };
-        if !overlay.texture_source_sizes.is_empty()
-            && (overlay.texture_source_sizes.len() != flat_layers
-                || overlay
-                    .texture_source_sizes
-                    .iter()
-                    .zip(layer_bases())
-                    .any(|(size, base)| {
-                        size.iter()
-                            .any(|&axis| !axis.is_power_of_two() || u32::from(axis) > base)
-                    }))
-        {
-            return Err(invalid("overlay source pixel dimensions are invalid"));
-        }
-        if !overlay.texture_source_grids.is_empty()
-            && (overlay.texture_source_grids.len() != flat_layers
-                || overlay.texture_source_sizes.len() != flat_layers
-                || overlay
-                    .texture_source_grids
-                    .iter()
-                    .zip(&overlay.texture_source_sizes)
-                    .zip(layer_bases())
-                    .any(|((&grid, size), base)| {
-                        u32::from(grid) > crate::TERRAIN_QUAD_SHIFT_MASK
-                            || size.iter().any(|&axis| {
-                                u32::from(axis)
-                                    .checked_mul(1u32 << grid)
-                                    .is_none_or(|full| full > base)
-                            })
-                    }))
-        {
-            return Err(invalid("overlay source UV grids are invalid"));
-        }
+        validate_source_metadata(
+            overlay.textures.iter(),
+            &overlay.texture_source_sizes,
+            &overlay.texture_source_grids,
+        )?;
         let material_base = offset(self.materials.len())?;
         let template_base = offset(self.model_templates.len())?;
         let quad_base = offset(self.model_quads.len())?;
@@ -549,29 +514,6 @@ impl RuntimeAssets {
     }
 }
 
-/// Mips must halve from a square power-of-two base down to 1x1 with exact
-/// layer-major byte lengths, as the chunk renderer uploads them unchecked.
-fn validate_texture(texture: &TextureArray) -> Result<(), AssetError> {
-    let base = texture.mips.first().map_or(0, |mip| mip.size);
-    if texture.layers == 0 || !base.is_power_of_two() || base > MAX_TILE_SIZE {
-        return Err(invalid("overlay texture page has an invalid base size"));
-    }
-    let mut size = base;
-    for (level, mip) in texture.mips.iter().enumerate() {
-        let expected = (size as usize)
-            .checked_mul(size as usize * 4)
-            .and_then(|bytes| bytes.checked_mul(texture.layers as usize));
-        if size == 0 || mip.size != size || Some(mip.rgba8.len()) != expected {
-            return Err(invalid(format!("overlay texture mip {level} is malformed")));
-        }
-        size /= 2;
-    }
-    if size != 0 {
-        return Err(invalid("overlay texture page lacks a complete mip chain"));
-    }
-    Ok(())
-}
-
 fn offset(len: usize) -> Result<u32, AssetError> {
     u32::try_from(len).map_err(|_| invalid("overlay base table is too large"))
 }
@@ -587,3 +529,50 @@ mod tests;
 
 #[cfg(test)]
 mod fallback_tests;
+
+/// Checks the shared runtime UV-source metadata used by both overlays and frozen recordings.
+pub(super) fn validate_source_metadata<'a>(
+    textures: impl Iterator<Item = &'a TextureArray> + Clone,
+    sizes: &[[u16; 2]],
+    grids: &[u8],
+) -> Result<(), AssetError> {
+    let flat_layers = textures
+        .clone()
+        .try_fold(0_usize, |total, texture| {
+            total.checked_add(texture.layers as usize)
+        })
+        .ok_or_else(|| invalid("runtime texture layer count overflow"))?;
+    let layer_bases = || {
+        textures
+            .clone()
+            .flat_map(|shard| std::iter::repeat_n(shard.mips[0].size, shard.layers as usize))
+    };
+    if !sizes.is_empty()
+        && (sizes.len() != flat_layers
+            || sizes.iter().zip(layer_bases()).any(|(size, base)| {
+                size.iter()
+                    .any(|&axis| !axis.is_power_of_two() || u32::from(axis) > base)
+            }))
+    {
+        return Err(invalid("overlay source pixel dimensions are invalid"));
+    }
+    if !grids.is_empty()
+        && (grids.len() != flat_layers
+            || sizes.len() != flat_layers
+            || grids
+                .iter()
+                .zip(sizes)
+                .zip(layer_bases())
+                .any(|((&grid, size), base)| {
+                    u32::from(grid) > crate::TERRAIN_QUAD_SHIFT_MASK
+                        || size.iter().any(|&axis| {
+                            u32::from(axis)
+                                .checked_mul(1u32 << grid)
+                                .is_none_or(|full| full > base)
+                        })
+                }))
+    {
+        return Err(invalid("overlay source UV grids are invalid"));
+    }
+    Ok(())
+}

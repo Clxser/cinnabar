@@ -8,7 +8,8 @@ mod world_thumbnail;
 #[cfg(all(test, feature = "developer-control"))]
 pub(crate) use screenshot::configure_frame_capture;
 #[cfg(feature = "developer-control")]
-pub(crate) use screenshot::{FrameCapture, FrameCaptureSet, write_png};
+pub(crate) use screenshot::write_png;
+pub(crate) use screenshot::{FrameCapture, FrameCaptureSet};
 
 use std::path::PathBuf;
 

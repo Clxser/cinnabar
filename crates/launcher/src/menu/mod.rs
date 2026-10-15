@@ -18,6 +18,7 @@ pub mod settings_sections;
 pub mod settings_storage;
 pub mod settings_support;
 pub mod sign_in;
+pub mod studio;
 pub mod updates;
 pub mod view;
 pub mod worlds_tab;
@@ -44,6 +45,7 @@ pub enum MenuScreen {
     Profile,
     DressingRoom,
     Settings,
+    RecordingStudio,
     AddServer,
     Pause,
     Death,
@@ -183,6 +185,7 @@ pub enum MenuAction {
     /// A press on the Settings Mods tab.
     Mods(crate::mods::Action),
     DressingRoom(crate::dressing_room::Action),
+    Studio(studio::Action),
     /// Answers the join's server trust prompt: "Trust and Join" (true) or "Don't Trust".
     ServerTrust(bool),
     /// A press on the pause screen's invite button or the invite screen.
@@ -225,6 +228,7 @@ pub fn menu_reference(screen: MenuScreen) -> Option<&'static str> {
         MenuScreen::Settings => Reference::SettingsScreenControlsAndSettings.as_str(),
         MenuScreen::Invite => Reference::InviteInviteScreen.as_str(),
         MenuScreen::Profile
+        | MenuScreen::RecordingStudio
         | MenuScreen::DressingRoom
         | MenuScreen::Inbox
         | MenuScreen::Friends => return None,

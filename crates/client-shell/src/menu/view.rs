@@ -71,6 +71,7 @@ impl MenuRuntime {
             connecting: self.is_connecting(),
             settings_section: self.settings_section,
             dressing_room: self.dressing_room.clone(),
+            studio: self.studio.view.clone(),
             player_skin: Some(self.player_skin.standard_skin()),
             player_skin_model: self.player_skin.model(),
             disconnect_message: self.disconnect_message.clone(),

@@ -35,6 +35,7 @@ launcher = { path = "../launcher" }
 launcher-host = { path = "../launcher-host" }
 pack-runtime = { path = "../pack-runtime" }
 protocol = { path = "../protocol" }
+recording-studio = { path = "../recording-studio" }
 render-scene = { path = "../render-scene" }
 render-api = { path = "../render-api" }
 render-model = { path = "../render-model" }

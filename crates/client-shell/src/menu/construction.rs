@@ -151,6 +151,7 @@ impl MenuRuntime {
             auth_attempted: false,
             auth_restart_requested: false,
             account_core: None,
+            studio: studio::Studio::new(layout.user_data_root.join("studio")),
             layout,
             player_skin,
             dressing_room: initial.dressing_room,

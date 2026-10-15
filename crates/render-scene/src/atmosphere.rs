@@ -14,6 +14,8 @@ use crate::AtmosphereViewInputs;
 
 #[path = "atmosphere/liquid_distance.rs"]
 mod liquid_distance;
+#[path = "atmosphere/snapshot.rs"]
+mod snapshot;
 
 pub const CLOUD_TEXTURE_WORLD_PERIOD: f64 = meshing::CLOUD_WORLD_PERIOD as f64;
 /// Vanilla samples the cloud texture 0.03 blocks ahead per 1.5 ticks.
@@ -85,6 +87,13 @@ pub struct AtmosphereTextureAssets {
 }
 
 impl AtmosphereTextureAssets {
+    /// Lends immutable optional skyboxes to scene capture without cloning their pixel allocations.
+    pub fn shared_skyboxes(
+        &self,
+    ) -> Option<Arc<[assets::PackSkybox; assets::SkyboxDimension::ALL.len()]>> {
+        self.skyboxes.as_ref().map(Arc::clone)
+    }
+
     #[must_use]
     pub fn new(runtime: Arc<RuntimeAtmosphereAssets>, identity: [u8; 32]) -> Self {
         Self {

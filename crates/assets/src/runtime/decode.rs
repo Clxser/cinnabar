@@ -1,4 +1,5 @@
 use super::RuntimeAssets;
+use crate::blob::WorldBlobMode;
 mod topology;
 use crate::model::{
     MODEL_QUAD_FLAG_TWO_SIDED, covered_grass_variant_is_valid, model_template_flags_are_valid,
@@ -8,16 +9,15 @@ use crate::{
     ANIMATION_FLAG_BLEND, Animation, AssetError, BLOB_MAGIC, BLOB_VERSION, BiomeRule, BlockFlags,
     BlockVisual, CompiledBiomeAssets, ContributorRole, DIAGNOSTIC_MATERIAL, LightProperties,
     MATERIAL_FLAG_ALPHA_BLEND, MATERIAL_FLAG_ALPHA_CUTOUT, MAX_ANIMATION_FRAMES, MAX_ANIMATIONS,
-    MAX_BIOME_NAME_BYTES, MAX_BIOME_NAMES_BYTES, MAX_BIOME_RULES, MAX_CARRIER_TEXTURE_PAGES,
-    MAX_MATERIALS, MAX_MODEL_QUADS, MAX_MODEL_TEMPLATES, MAX_TEXTURE_LAYERS, MIP_COUNT,
-    MODEL_TEMPLATE_FLAG_BUBBLE_COLUMN, MODEL_TEMPLATE_FLAG_COMPOUND_NEXT,
-    MODEL_TEMPLATE_FLAG_FENCE_NETHER, MODEL_TEMPLATE_FLAG_FENCE_WOOD, MODEL_TEMPLATE_FLAG_FIRE,
-    MODEL_TEMPLATE_FLAG_GATE_AXIS_X, MODEL_TEMPLATE_FLAG_GATE_AXIS_Z, MODEL_TEMPLATE_FLAG_KELP,
-    MODEL_TEMPLATE_FLAG_LILY_PAD, MODEL_TEMPLATE_FLAG_PANE, MODEL_TEMPLATE_FLAG_SNOW_LAYER,
-    MODEL_TEMPLATE_FLAG_STAIR, MODEL_TEMPLATE_FLAG_TRANSPARENT_CUBE, Material, ModelQuad,
-    ModelTemplate, NO_ANIMATION, NO_MODEL_TEMPLATE, TILE_SIZE, TINT_MAP_BYTES, TINT_MAP_COUNT,
-    TINT_MAP_SIZE, TextureArray, TextureMip, TexturePage, TextureRef, TintSource, VisualKind,
-    VisualSupport,
+    MAX_BIOME_NAME_BYTES, MAX_BIOME_NAMES_BYTES, MAX_BIOME_RULES, MAX_MATERIALS, MAX_MODEL_QUADS,
+    MAX_MODEL_TEMPLATES, MAX_TEXTURE_LAYERS, MIP_COUNT, MODEL_TEMPLATE_FLAG_BUBBLE_COLUMN,
+    MODEL_TEMPLATE_FLAG_COMPOUND_NEXT, MODEL_TEMPLATE_FLAG_FENCE_NETHER,
+    MODEL_TEMPLATE_FLAG_FENCE_WOOD, MODEL_TEMPLATE_FLAG_FIRE, MODEL_TEMPLATE_FLAG_GATE_AXIS_X,
+    MODEL_TEMPLATE_FLAG_GATE_AXIS_Z, MODEL_TEMPLATE_FLAG_KELP, MODEL_TEMPLATE_FLAG_LILY_PAD,
+    MODEL_TEMPLATE_FLAG_PANE, MODEL_TEMPLATE_FLAG_SNOW_LAYER, MODEL_TEMPLATE_FLAG_STAIR,
+    MODEL_TEMPLATE_FLAG_TRANSPARENT_CUBE, Material, ModelQuad, ModelTemplate, NO_ANIMATION,
+    NO_MODEL_TEMPLATE, TILE_SIZE, TINT_MAP_BYTES, TINT_MAP_COUNT, TINT_MAP_SIZE, TextureArray,
+    TextureMip, TexturePage, TextureRef, TintSource, VisualKind, VisualSupport,
     biome::{BIOME_RULE_FLAGS_MASK, validate_biome_assets},
     blob::{
         ANIMATION_BYTES, BIOME_RULE_BYTES, FRAME_BYTES, HASH_BYTES, HASH_ENTRY_BYTES, HEADER_BYTES,
@@ -40,9 +40,17 @@ impl RuntimeAssets {
 
     /// [`Self::decode`], also returning the SHA-256 of the whole carrier from its envelope check.
     pub fn decode_sealed(bytes: &[u8]) -> Result<(Self, [u8; 32]), AssetError> {
-        let header = Header::decode(bytes)?;
+        Self::decode_with_mode(bytes, WorldBlobMode::Carrier)
+    }
+
+    /// Recording envelopes may retain runtime overlay pages while ordinary startup carriers keep their original limit.
+    pub(super) fn decode_with_mode(
+        bytes: &[u8],
+        mode: WorldBlobMode,
+    ) -> Result<(Self, [u8; 32]), AssetError> {
+        let header = Header::decode(bytes, mode)?;
         let provenance = decode_provenance(bytes)?;
-        header.validate_layout(bytes)?;
+        header.validate_layout(bytes, mode.maximum_pages())?;
         let sections = header.sections(bytes);
         let identity = crate::encoding::sealed_identity(bytes, header.offsets[12])
             .ok_or_else(|| invalid("compiled asset SHA-256 mismatch"))?;
@@ -51,6 +59,7 @@ impl RuntimeAssets {
             sections[8],
             header.page_count,
             header.offsets[8],
+            mode,
         )?;
         validate_fixed(&header, &sections, &page_meta)?;
         let materials = decode_materials(sections[2])?;
@@ -115,7 +124,7 @@ struct Header {
     offsets: [usize; 13],
 }
 impl Header {
-    fn decode(bytes: &[u8]) -> Result<Self, AssetError> {
+    fn decode(bytes: &[u8], mode: WorldBlobMode) -> Result<Self, AssetError> {
         if bytes.len() < HEADER_BYTES + HASH_BYTES {
             return Err(invalid("truncated world asset blob"));
         }
@@ -123,8 +132,8 @@ impl Header {
             return Err(invalid("invalid world asset magic"));
         }
         if u32_at(bytes, 8) != BLOB_VERSION
-            || u32_at(bytes, 12) != TILE_SIZE
-            || u32_at(bytes, 16) != MIP_COUNT
+            || u32_at(bytes, 12) != mode.texture_header()[0]
+            || u32_at(bytes, 16) != mode.texture_header()[1]
         {
             return Err(invalid("unsupported world asset header"));
         }
@@ -144,7 +153,7 @@ impl Header {
             offsets,
         })
     }
-    fn validate_layout(&self, bytes: &[u8]) -> Result<(), AssetError> {
+    fn validate_layout(&self, bytes: &[u8], maximum_pages: usize) -> Result<(), AssetError> {
         for (name, value, max) in [
             ("visual", self.counts[0], MAX_VISUALS),
             ("hash", self.counts[1], MAX_VISUALS),
@@ -153,7 +162,7 @@ impl Header {
             ("quad", self.counts[4], MAX_MODEL_QUADS),
             ("animation", self.counts[5], MAX_ANIMATIONS),
             ("frame", self.counts[6], MAX_ANIMATION_FRAMES),
-            ("page", self.page_count, MAX_CARRIER_TEXTURE_PAGES),
+            ("page", self.page_count, maximum_pages),
             ("biome", self.biome_count, MAX_BIOME_RULES),
         ] {
             if value > max {
@@ -218,19 +227,29 @@ struct PageMeta {
     layers: usize,
     relative_offset: usize,
     length: usize,
+    base: u32,
+    mip_count: u32,
 }
 fn validate_pages(
     records: &[u8],
     payload: &[u8],
     count: usize,
     payload_offset: usize,
+    mode: WorldBlobMode,
 ) -> Result<Box<[PageMeta]>, AssetError> {
     let mut metas = Vec::with_capacity(count);
     let mut expected = payload_offset;
     for (index, record) in records.as_chunks::<PAGE_BYTES>().0.iter().enumerate() {
+        let mip_count = u32_at(record, 8);
+        let base = match mode {
+            WorldBlobMode::Carrier => TILE_SIZE,
+            WorldBlobMode::Recording => u32_at(record, 12),
+        };
         if u32_at(record, 0) as usize != index
-            || u32_at(record, 8) != MIP_COUNT
-            || u32_at(record, 12) != 0
+            || !base.is_power_of_two()
+            || base > crate::texture::MAX_TILE_SIZE
+            || mip_count != base.ilog2() + 1
+            || mode == WorldBlobMode::Carrier && (mip_count != MIP_COUNT || u32_at(record, 12) != 0)
         {
             return Err(invalid("texture page descriptor is noncanonical"));
         }
@@ -242,7 +261,7 @@ fn validate_pages(
             .map_err(|_| invalid("page offset exceeds platform"))?;
         let length = usize::try_from(u64_at(record, 24))
             .map_err(|_| invalid("page length exceeds platform"))?;
-        let expected_length = texture_byte_length(layers)?;
+        let expected_length = texture_byte_length(layers, base, mip_count)?;
         if length != expected_length {
             return Err(invalid("texture page payload length is invalid"));
         }
@@ -264,6 +283,8 @@ fn validate_pages(
             layers,
             relative_offset,
             length,
+            base,
+            mip_count,
         });
     }
     let covered = metas.iter().try_fold(0usize, |total, meta| {
@@ -800,9 +821,9 @@ fn decode_pages(payload: &[u8], metas: &[PageMeta]) -> Result<Box<[TexturePage]>
         .map(|m| {
             let data = &payload[m.relative_offset..m.relative_offset + m.length];
             let mut cursor = 0;
-            let mut mips = Vec::with_capacity(MIP_COUNT as usize);
-            for level in 0..MIP_COUNT {
-                let side = TILE_SIZE >> level;
+            let mut mips = Vec::with_capacity(m.mip_count as usize);
+            for level in 0..m.mip_count {
+                let side = m.base >> level;
                 let length = side as usize * side as usize * 4 * m.layers;
                 mips.push(TextureMip {
                     size: side,
@@ -906,10 +927,10 @@ fn decode_biomes(
     Ok(result)
 }
 
-fn texture_byte_length(layers: usize) -> Result<usize, AssetError> {
+fn texture_byte_length(layers: usize, base: u32, mip_count: u32) -> Result<usize, AssetError> {
     let mut total = 0;
-    for level in 0..MIP_COUNT {
-        let side = (TILE_SIZE >> level) as usize;
+    for level in 0..mip_count {
+        let side = (base >> level) as usize;
         total = checked_add(
             total,
             checked_mul(checked_mul(side, side, "mip")?, 4 * layers, "mip")?,

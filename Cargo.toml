@@ -48,6 +48,8 @@ members = [
     "crates/protocol",
     "crates/protocol-ids",
     "crates/resource-pack",
+    "crates/recording-studio",
+    "crates/recording-scene",
     "crates/server-experience",
     "crates/render",
     "crates/render-api",

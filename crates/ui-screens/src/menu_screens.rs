@@ -194,6 +194,7 @@ pub fn screen_data(
                 context = super::invite_screen::context(view, context);
             }
             MenuScreen::Profile
+            | MenuScreen::RecordingStudio
             | MenuScreen::DressingRoom
             | MenuScreen::Inbox
             | MenuScreen::Friends => return None,

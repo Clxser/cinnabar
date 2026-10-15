@@ -39,6 +39,7 @@ mod session;
 pub mod session_audio;
 #[cfg(test)]
 mod session_cleanup_tests;
+mod studio;
 mod survival_mining;
 mod thread_budget;
 #[cfg(feature = "tracy")]

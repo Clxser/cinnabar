@@ -350,3 +350,43 @@ mod tests {
         );
     }
 }
+
+/// Mips must halve from a square power-of-two base down to 1x1 with exact
+/// layer-major byte lengths, as the chunk renderer uploads them unchecked.
+pub fn validate_texture_array(texture: &TextureArray) -> Result<(), AssetError> {
+    let base = texture.mips.first().map_or(0, |mip| mip.size);
+    if texture.layers == 0
+        || texture.layers as usize > crate::MAX_TEXTURE_LAYERS
+        || !base.is_power_of_two()
+        || base > MAX_TILE_SIZE
+    {
+        return Err(invalid_texture_array(
+            "overlay texture page has an invalid base size",
+        ));
+    }
+    let mut size = base;
+    for (level, mip) in texture.mips.iter().enumerate() {
+        let expected = (size as usize)
+            .checked_mul(size as usize * 4)
+            .and_then(|bytes| bytes.checked_mul(texture.layers as usize));
+        if size == 0 || mip.size != size || Some(mip.rgba8.len()) != expected {
+            return Err(invalid_texture_array(format!(
+                "overlay texture mip {level} is malformed"
+            )));
+        }
+        size /= 2;
+    }
+    if size != 0 {
+        return Err(invalid_texture_array(
+            "overlay texture page lacks a complete mip chain",
+        ));
+    }
+    Ok(())
+}
+
+/// Reports invalid runtime array layouts at the texture owner.
+fn invalid_texture_array(detail: impl Into<Box<str>>) -> AssetError {
+    AssetError::InvalidCompiledAssets {
+        detail: detail.into(),
+    }
+}

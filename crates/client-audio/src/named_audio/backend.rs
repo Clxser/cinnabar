@@ -10,6 +10,8 @@ use std::{
     time::Duration,
 };
 mod priority;
+mod tap;
+pub use tap::{LiveAudioBlock, LiveAudioTap, TAP_BLOCK_SAMPLES};
 
 pub(super) const VOICE_LIMIT: usize = 16;
 /// Captured audio is interleaved stereo.
@@ -154,7 +156,8 @@ const MIXER_RATE: u32 = 48_000;
 /// The default output, opened on its own thread; dropping the release sender lets that thread
 /// drop the stream it opened.
 struct Output {
-    handle: OutputStreamHandle,
+    mixer: Arc<rodio::dynamic_mixer::DynamicMixerController<f32>>,
+    tap: Arc<tap::SharedTap>,
     _release: Sender<()>,
 }
 
@@ -204,8 +207,23 @@ impl AudioDevice {
         match opening.try_recv() {
             Ok(Some(((handle, sample_rate), release))) => {
                 self.sample_rate = sample_rate;
+                let (mixer, source) =
+                    rodio::dynamic_mixer::mixer::<f32>(CAPTURE_CHANNELS, sample_rate);
+                // Keep the common hardware source alive between finite game voices.
+                mixer.add(rodio::source::Zero::<f32>::new(
+                    CAPTURE_CHANNELS,
+                    sample_rate,
+                ));
+                let tap = tap::SharedTap::new(sample_rate);
+                if let Err(error) = handle.play_raw(priority::CallbackSource::new(
+                    tap::Tapped::new(source, Arc::clone(&tap)),
+                )) {
+                    eprintln!("named audio disabled: output mixer submission failed: {error}");
+                    return;
+                }
                 self.output = Some(Output {
-                    handle,
+                    mixer,
+                    tap,
                     _release: release,
                 });
             }
@@ -283,6 +301,16 @@ impl AudioDevice {
     pub fn stop_capture(&mut self) {
         self.capture = None;
     }
+
+    /// Copies the actual hardware mix without redirecting or replaying audible game sources.
+    /// None means hardware is unavailable, a fixed-clock capture owns audio, or a tap is draining.
+    pub fn start_live_capture(&mut self) -> Option<LiveAudioTap> {
+        if self.capture.is_some() {
+            return None;
+        }
+        self.resolve();
+        self.output.as_ref()?.tap.begin()
+    }
     /// Plays an already-stereo f32 source; false when the device is unavailable or rejects it.
     pub fn play_source(&mut self, source: impl Source<Item = f32> + Send + 'static) -> bool {
         if let Some(controller) = &self.capture {
@@ -295,16 +323,10 @@ impl AudioDevice {
             return true;
         }
         self.resolve();
-        let Some(Output { handle, .. }) = &self.output else {
+        let Some(Output { mixer, .. }) = &self.output else {
             return false;
         };
-        if handle
-            .play_raw(priority::CallbackSource::new(source))
-            .is_err()
-        {
-            self.output = None;
-            return false;
-        }
+        mixer.add(source);
         true
     }
     pub(super) fn submit(&mut self, source: CancelablePcm) -> bool {
@@ -318,19 +340,10 @@ impl AudioDevice {
             return true;
         }
         self.resolve();
-        let Some(Output { handle, .. }) = &self.output else {
+        let Some(Output { mixer, .. }) = &self.output else {
             return false;
         };
-        if handle
-            .play_raw(priority::CallbackSource::new(
-                source.convert_samples::<f32>(),
-            ))
-            .is_err()
-        {
-            // The rejected owned source drops normally. No permit is manually freed.
-            self.output = None;
-            return false;
-        }
+        mixer.add(source.convert_samples::<f32>());
         true
     }
 }

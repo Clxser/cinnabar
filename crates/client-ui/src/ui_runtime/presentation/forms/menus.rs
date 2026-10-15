@@ -162,7 +162,9 @@ impl UiPresentationRuntime {
         if self.engine.is_none()
             && !matches!(
                 view.screen,
-                launcher::menu::MenuScreen::DressingRoom | launcher::menu::MenuScreen::Death
+                launcher::menu::MenuScreen::DressingRoom
+                    | launcher::menu::MenuScreen::Death
+                    | launcher::menu::MenuScreen::RecordingStudio
             )
         {
             return Ok(None);

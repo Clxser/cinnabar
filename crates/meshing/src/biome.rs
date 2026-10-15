@@ -2,6 +2,9 @@ use std::sync::Arc;
 
 use world::{BLOCKS_PER_SUB_CHUNK, BiomeStorage};
 
+#[path = "biome/restore.rs"]
+mod restore;
+
 const HEADER_WORDS: usize = 1;
 const BITS_MASK: u32 = 0xff;
 const PALETTE_LEN_SHIFT: u32 = 8;

@@ -6,6 +6,7 @@ pub mod actor;
 mod chunk_metrics;
 pub mod dropped_item;
 mod entity_shadow;
+pub mod environment_snapshot;
 pub mod equipment;
 mod font_atlas;
 pub mod font_shading;

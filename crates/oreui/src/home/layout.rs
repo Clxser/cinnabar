@@ -20,7 +20,7 @@ pub(super) struct Layout {
 
 /// The action group's height in rem, including the wardrobe and update notice when shown.
 pub(super) fn action_group_height(compact: bool, update_ready: bool) -> f32 {
-    let actions = if compact { 30.0 } else { 24.0 };
+    let actions = if compact { 35.6 } else { 29.6 };
     actions
         + if update_ready {
             UPDATE_NOTICE_HEIGHT
