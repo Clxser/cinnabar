@@ -15,7 +15,7 @@ mod reader;
 mod task;
 mod writer;
 
-pub use reader::{RecordingReader, Recovery, ReplayRecord};
+pub use reader::{RecordingCursor, RecordingReader, Recovery, ReplayRecord};
 pub use task::{Recording, RecordingProgress, RecordingState, RecordingTask};
 
 pub const RECORDING_EXTENSION: &str = "cinreplay";
@@ -23,6 +23,8 @@ pub const RECORDING_VERSION: u32 = 1;
 pub const MAX_RECORD_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_SEGMENTS: usize = 65_536;
 pub const MAX_CHECKPOINT_BYTES: u64 = 512 * 1024 * 1024;
+/// Native capture owners share this seek interval while retaining independently versioned payloads.
+pub const SCENE_CHECKPOINT_INTERVAL: MediaTime = MediaTime(5_000_000);
 const MAX_METADATA_BYTES: usize = 64 * 1024;
 const METADATA_FILE: &str = "recording.json";
 const INDEX_FILE: &str = "index.bin";

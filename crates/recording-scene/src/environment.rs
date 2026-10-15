@@ -9,7 +9,7 @@ use std::{
 use assets::{PackSkybox, RuntimeAtmosphereAssets, SkyboxDimension};
 use recording_studio::{
     MediaTime,
-    archive::{ArchiveError, RecordKind, RecordingReader},
+    archive::{ArchiveError, RecordKind, RecordingCursor, RecordingReader, ReplayRecord},
     object_store::{AssetId, AssetReader},
 };
 use render_model::environment_snapshot::{AtmosphereSnapshot, LightmapSnapshot};
@@ -45,6 +45,7 @@ impl EnvironmentState {
     }
 }
 
+#[derive(Clone)]
 pub struct FrozenEnvironment {
     /// Includes runtime overrides and skyboxes, so replay GPU resources cannot reuse a stale base identity.
     pub assets_identity: AssetId,
@@ -112,9 +113,10 @@ fn read_frame(input: &mut dyn Read) -> Result<(AssetId, EnvironmentState), Archi
 }
 
 pub struct EnvironmentRecording {
-    reader: RecordingReader,
+    cursor: RecordingCursor,
     store: AssetReader,
     assets: Option<(AssetId, Arc<sky_assets::LoadedAssets>)>,
+    current: Option<FrozenEnvironment>,
 }
 
 impl EnvironmentRecording {
@@ -128,9 +130,10 @@ impl EnvironmentRecording {
             ));
         }
         Ok(Self {
-            reader,
+            cursor: reader.into_cursor(),
             store: AssetReader::new(&root),
             assets: None,
+            current: None,
         })
     }
 
@@ -141,28 +144,81 @@ impl EnvironmentRecording {
         cancelled: impl Fn() -> bool,
     ) -> Result<FrozenEnvironment, ArchiveError> {
         let mut latest = None;
-        self.reader.visit_to(at, &cancelled, |record| {
-            match record.kind {
-                RecordKind::CheckpointStart => latest = None,
-                RecordKind::CheckpointEnd => {}
-                RecordKind::CheckpointPart | RecordKind::Scene => {
-                    latest = Some(read_frame(&mut &record.payload[..])?)
-                }
-                _ => {
-                    return Err(ArchiveError::Invalid(
-                        "unexpected record in environment track",
-                    ));
-                }
+        let result = self
+            .cursor
+            .seek(at, &cancelled, |record| latest_state(record, &mut latest))
+            .and_then(|()| {
+                latest.ok_or(ArchiveError::Invalid(
+                    "environment track has no prepared frame",
+                ))
+            })
+            .and_then(|(id, state)| self.load_state(id, state, &cancelled));
+        match result {
+            Ok(frame) => {
+                self.current = Some(frame.clone());
+                Ok(frame)
             }
-            Ok(())
-        })?;
-        let (id, state) = latest.ok_or(ArchiveError::Invalid(
-            "environment track has no prepared frame",
-        ))?;
+            Err(error) => {
+                self.cursor.invalidate();
+                Err(error)
+            }
+        }
+    }
+
+    /// Keeps the last prepared state while consuming only newly crossed journal records.
+    pub fn advance_to(
+        &mut self,
+        at: MediaTime,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<&FrozenEnvironment, ArchiveError> {
+        let mut latest = None;
+        let result = self
+            .cursor
+            .advance_to(at, &cancelled, |record| latest_state(record, &mut latest))
+            .and_then(|()| {
+                latest
+                    .map(|(id, state)| self.load_state(id, state, &cancelled))
+                    .transpose()
+            });
+        match result {
+            Ok(Some(frame)) => self.current = Some(frame),
+            Ok(None) => {}
+            Err(error) => {
+                self.cursor.invalidate();
+                return Err(error);
+            }
+        }
+        self.current.as_ref().ok_or(ArchiveError::Invalid(
+            "environment playback needs a successful seek",
+        ))
+    }
+
+    /// A failed sibling track prevents further publication until the whole scene seeks again.
+    pub fn invalidate(&mut self) {
+        self.cursor.invalidate();
+    }
+
+    /// Interrupted tracks expose only the duration represented by committed segments.
+    pub fn duration(&self) -> MediaTime {
+        self.cursor.reader().duration()
+    }
+
+    /// Track metadata stays available for cross-track take admission without reopening files.
+    pub fn info(&self) -> &recording_studio::archive::RecordingInfo {
+        self.cursor.reader().info()
+    }
+
+    /// Frozen sky objects stay cached while state samples change at the recording cadence.
+    fn load_state(
+        &mut self,
+        id: AssetId,
+        state: EnvironmentState,
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<FrozenEnvironment, ArchiveError> {
         let assets = match &self.assets {
             Some((current, assets)) if *current == id => Arc::clone(assets),
             _ => {
-                let assets = Arc::new(sky_assets::load(&self.store, id, &cancelled)?);
+                let assets = Arc::new(sky_assets::load(&self.store, id, cancelled)?);
                 self.assets = Some((id, Arc::clone(&assets)));
                 assets
             }
@@ -177,6 +233,26 @@ impl EnvironmentRecording {
             skyboxes: assets.skyboxes.as_ref().map(Arc::clone),
         })
     }
+}
+
+/// Admits the small typed state while preserving checkpoint framing and rejecting unrelated records.
+fn latest_state(
+    record: ReplayRecord<'_>,
+    latest: &mut Option<(AssetId, EnvironmentState)>,
+) -> Result<(), ArchiveError> {
+    match record.kind {
+        RecordKind::CheckpointStart => *latest = None,
+        RecordKind::CheckpointEnd => {}
+        RecordKind::CheckpointPart | RecordKind::Scene => {
+            *latest = Some(read_frame(&mut &record.payload[..])?)
+        }
+        _ => {
+            return Err(ArchiveError::Invalid(
+                "unexpected record in environment track",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Keeps scene codec errors separate from live rendering or startup carrier failures.

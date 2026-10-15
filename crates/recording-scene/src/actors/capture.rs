@@ -12,7 +12,7 @@ use recording_studio::{
     MediaTime,
     archive::{
         ArchiveError, RecordInput, RecordKind, Recording, RecordingConfig, RecordingInfo,
-        RecordingState,
+        RecordingState, SCENE_CHECKPOINT_INTERVAL,
     },
     object_store::{AssetId, AssetWriter},
 };
@@ -23,7 +23,6 @@ use render_model::{
 use super::{ACTOR_DIRECTORY, ACTOR_TRACK_SCHEMA, ActorSample, appearance, geometry, pose};
 
 const MAX_PINNED_BYTES: usize = geometry::MAX_BYTES + appearance::MAX_BYTES;
-const CHECKPOINT_MICROS: u64 = 5_000_000;
 
 struct Charge {
     budget: Arc<AtomicUsize>,
@@ -153,7 +152,7 @@ impl ActorCapture {
             .ok_or("Recorded actor sample size overflowed.")?;
         let checkpoint = self
             .last_checkpoint
-            .is_none_or(|old| at.0.saturating_sub(old.0) >= CHECKPOINT_MICROS);
+            .is_none_or(|old| at.0.saturating_sub(old.0) >= SCENE_CHECKPOINT_INTERVAL.0);
         let recording = self
             .recording
             .as_mut()

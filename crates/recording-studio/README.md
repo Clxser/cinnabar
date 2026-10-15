@@ -57,6 +57,19 @@ durable commits.
 builds a staging scene on a worker. The adapter publishes it only after successful
 validation; cancellation or corruption discards the draft.
 
+`RecordingCursor` retains a verified segment and one lookahead header for forward
+playback. Each record crosses the visitor once; seeking explicitly resets the
+cursor. Complete framing and checksum validation precede the first callback from
+each segment. Small segments remain in bounded memory; large checkpoints use an
+anonymous, delete-on-close scratch file. Cancellation reaches compressed reads,
+decoded copies and visitor traversal. A failed operation requires a fresh seek.
+
+POV captures periodically checkpoint their settings and actual camera pose using
+the same interval as native scene tracks. `CameraRecording` restores the recorded
+view without borrowing the live camera or inventing one for a missing sample.
+Initial settings-only checkpoints from earlier captures remain readable. Camera
+interpolation between samples and cut/teleport handling still need implementation.
+
 `object_store` owns bounded, SHA-256-addressed immutable assets. Object publication
 uses exclusive staging; readers verify the whole digest and reject trailing bytes
 before returning decoded state. Native terrain serialization lives in the separate,
@@ -85,12 +98,14 @@ The current live adapter writes a POV video package, explicitly identified by
 with a separate native terrain journal alongside it. Terrain capture shares prepared
 geometry, records changes and unloads, and freezes exact local runtime render assets
 on a bounded worker. A separate environment track retains prepared sky/weather,
-lighting and texture-animation inputs plus frozen sky assets. Track completion
-and failure are saved independently of POV completion. Opening a package still makes ordinary video/audio
+lighting and texture-animation inputs plus frozen sky assets. A prepared actor
+track retains rig poses, skins and artwork with explicit original-view coverage.
+Track completion and failure are saved independently of POV completion.
+Opening a package still makes ordinary video/audio
 clips and editable highlights. The editor does not yet render this terrain track or
 allow changing the recorded camera; a raster video alone remains a POV recording.
 
-The full scene schema, incremental replay renderer, preview composition, media
+The full scene schema, native replay renderer, preview composition, media
 import/recovery, camera/effect inspectors, recording options, export and linked
 automatic-effect retiming are still being implemented. The feature has not been
 built or exercised; the current preview is an unconnected viewport, not verified

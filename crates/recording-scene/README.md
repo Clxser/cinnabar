@@ -36,7 +36,13 @@ cancelled or invalid data discards the draft. The parent capture manifest record
 each track's schema, local directory and completion status. An incomplete track
 stays distinguishable from a finished POV video when the take is reopened.
 
-This seek operation is not an incremental playback loop. Full received-world actor coverage,
+`TerrainPlayback` reuses the source index and object cache for forward playback.
+Its successful patches contain only changed bindings and unloads. Later redundant
+terrain checkpoints do not clear the current scene; seeks return a replacement
+patch. Failed or cancelled drafts are invalidated before another frame can use them.
+The renderer must retain its last published state until it admits the next patch.
+
+Full received-world actor coverage,
 block entities, particles, an isolated replay viewport,
 camera switching and preview/export composition still need implementation. Terrain
 capture alone is not a complete world replay. No build or runtime acceptance has
@@ -76,3 +82,16 @@ explicitly `OriginalView`; this does not establish unrestricted replay cameras.
 Unculled actor preparation, pose interpolation and native replay publication remain
 incomplete. Appearance pinning is capped at 512 MiB; capture stops with an error if
 that limit is exceeded. Aggregate take budgets and performance remain unverified.
+
+## Coordinated playback
+
+`ScenePlayback` admits terrain, environment, actors and the original-view camera
+as one frame on a worker. It rejects mixed take metadata and bounds interrupted
+playback to the common committed duration. Forward playback retains each cursor;
+actor seeks decode only the final crossed pose. Geometry, rasters and sky objects
+reuse checksum-admitted epochs. A failed track invalidates every cursor, and a
+successful seek explicitly marks temporal histories for reset.
+
+This is source playback, not a connected native editor preview. The isolated GPU
+viewport, audio synchronization, camera/pose interpolation and complete received-
+world actor coverage remain incomplete. This source has not been built or tested.

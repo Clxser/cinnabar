@@ -9,6 +9,7 @@ pub mod capture;
 pub mod environment;
 pub mod journal;
 pub mod palette;
+pub mod playback;
 pub mod scene;
 pub mod terrain;
 

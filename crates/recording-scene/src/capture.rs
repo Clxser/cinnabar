@@ -14,7 +14,7 @@ use crossbeam_channel::{self as mpsc, Receiver, Sender as SyncSender, TryRecvErr
 use assets::RuntimeAssets;
 use recording_studio::{
     MediaTime,
-    archive::{RecordingConfig, RecordingInfo, RecordingState},
+    archive::{RecordingConfig, RecordingInfo, RecordingState, SCENE_CHECKPOINT_INTERVAL},
     object_store::MAX_ASSET_BYTES,
 };
 
@@ -28,7 +28,6 @@ use crate::{
 const QUEUED_BATCHES: usize = 256;
 const MAX_PINNED_BYTES: usize = MAX_ASSET_BYTES as usize + 512 * 1024 * 1024;
 const JOURNAL_DISK_BYTES: u64 = 64 * 1024 * 1024;
-const CHECKPOINT_MICROS: u64 = 5_000_000;
 
 struct Shared {
     pinned: AtomicUsize,
@@ -332,7 +331,7 @@ fn run(
             journal.end_baseline().map_err(|error| error.to_string())?;
             baseline = true;
         }
-        if batch.at.0.saturating_sub(checkpoint.0) >= CHECKPOINT_MICROS {
+        if batch.at.0.saturating_sub(checkpoint.0) >= SCENE_CHECKPOINT_INTERVAL.0 {
             journal
                 .checkpoint(batch.at)
                 .map_err(|error| error.to_string())?;

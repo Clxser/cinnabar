@@ -1,21 +1,22 @@
 //! Checkpoint-based seeking over bounded, individually verified compressed segments.
 
 use std::{
-    fs::{self, File},
-    io::{self as std_io, Read},
+    fs, io as std_io,
     path::{Path, PathBuf},
 };
 
-use flate2::read::ZlibDecoder;
-use sha2::{Digest, Sha256};
-
 use super::{
-    ArchiveError, COMPLETE_FILE, Completion, INDEX_FILE, MAX_METADATA_BYTES, MAX_RECORD_BYTES,
-    MAX_SEGMENTS, RecordKind, RecordingInfo, Segment,
-    format::{self, INDEX_ENTRY_BYTES, INDEX_MAGIC, RECORD_HEADER_BYTES},
+    ArchiveError, COMPLETE_FILE, Completion, INDEX_FILE, MAX_METADATA_BYTES, MAX_SEGMENTS,
+    RecordKind, RecordingInfo, Segment,
+    format::{self, INDEX_ENTRY_BYTES, INDEX_MAGIC},
     io,
 };
 use crate::MediaTime;
+
+mod cursor;
+mod segment;
+pub use cursor::RecordingCursor;
+use segment::VerifiedSegment;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Recovery {
@@ -134,6 +135,11 @@ impl RecordingReader {
         self.recovery
     }
 
+    /// Moves the validated index into a worker-owned cursor for incremental forward playback.
+    pub fn into_cursor(self) -> RecordingCursor {
+        RecordingCursor::new(self)
+    }
+
     /// The checkpoint preceding a seek is found with binary search, independently of recording length.
     pub fn checkpoint_at(&self, at: MediaTime) -> Result<MediaTime, ArchiveError> {
         let index = self.checkpoint_index(at)?;
@@ -158,7 +164,11 @@ impl RecordingReader {
             if cancelled() {
                 return Err(ArchiveError::Cancelled);
             }
-            self.visit_segment(segment, at, &cancelled, &mut payload, &mut visit)?;
+            let mut verified = VerifiedSegment::load(&self.root, *segment, &cancelled)?;
+            verified.visit_to(at, &cancelled, &mut payload, &mut visit)?;
+        }
+        if cancelled() {
+            return Err(ArchiveError::Cancelled);
         }
         Ok(())
     }
@@ -177,122 +187,5 @@ impl RecordingReader {
             .ok_or(ArchiveError::Invalid(
                 "seek has no completed world checkpoint",
             ))
-    }
-
-    /// Bounded record buffers and streamed checksum validation prevent compressed allocation bombs.
-    fn visit_segment(
-        &self,
-        segment: &Segment,
-        at: MediaTime,
-        cancelled: &impl Fn() -> bool,
-        payload: &mut Vec<u8>,
-        visit: &mut impl FnMut(ReplayRecord<'_>) -> Result<(), ArchiveError>,
-    ) -> Result<(), ArchiveError> {
-        let path = format::segment_path(&self.root, segment.index, false);
-        let metadata = fs::symlink_metadata(&path).map_err(|error| io(&path, error))?;
-        if !metadata.is_file() || metadata.len() != segment.stored_bytes {
-            return Err(ArchiveError::Integrity(segment.index));
-        }
-        let file = File::open(&path).map_err(|error| io(&path, error))?;
-        let mut decoded = ZlibDecoder::new(HashReader {
-            file,
-            digest: Sha256::new(),
-            bytes: 0,
-        });
-        let mut previous = segment.start;
-        let mut raw_bytes = 0u64;
-        for index in 0..segment.records {
-            if cancelled() {
-                return Err(ArchiveError::Cancelled);
-            }
-            let mut header = [0; RECORD_HEADER_BYTES];
-            decoded
-                .read_exact(&mut header)
-                .map_err(|error| io(&path, error))?;
-            let kind = RecordKind::try_from(header[0])?;
-            let time = MediaTime(u64::from_le_bytes(
-                header[1..9].try_into().expect("fixed timestamp"),
-            ));
-            let sequence = u64::from_le_bytes(header[9..17].try_into().expect("fixed sequence"));
-            let length =
-                u32::from_le_bytes(header[17..21].try_into().expect("fixed length")) as usize;
-            raw_bytes += RECORD_HEADER_BYTES as u64 + length as u64;
-            let expected_kind = if segment.checkpoint {
-                Some(if index == 0 {
-                    RecordKind::CheckpointStart
-                } else if index == segment.records - 1 {
-                    RecordKind::CheckpointEnd
-                } else {
-                    RecordKind::CheckpointPart
-                })
-            } else {
-                None
-            };
-            if length > MAX_RECORD_BYTES
-                || raw_bytes > segment.raw_bytes
-                || sequence != segment.first_sequence + u64::from(index)
-                || time < previous
-                || time > segment.end
-                || index == 0 && time != segment.start
-                || index == segment.records - 1 && time != segment.end
-                || expected_kind.is_some_and(|expected| kind != expected)
-                || !segment.checkpoint
-                    && matches!(
-                        kind,
-                        RecordKind::CheckpointStart
-                            | RecordKind::CheckpointPart
-                            | RecordKind::CheckpointEnd
-                    )
-                || matches!(
-                    kind,
-                    RecordKind::CheckpointStart | RecordKind::CheckpointEnd
-                ) && length != 0
-            {
-                return Err(ArchiveError::Integrity(segment.index));
-            }
-            payload.resize(length, 0);
-            decoded
-                .read_exact(payload)
-                .map_err(|error| io(&path, error))?;
-            if time <= at {
-                visit(ReplayRecord {
-                    sequence,
-                    at: time,
-                    kind,
-                    payload,
-                })?;
-            }
-            previous = time;
-        }
-        let mut trailing = [0];
-        if decoded
-            .read(&mut trailing)
-            .map_err(|error| io(&path, error))?
-            != 0
-            || decoded.total_in() != segment.stored_bytes
-            || decoded.total_out() != segment.raw_bytes
-            || raw_bytes != segment.raw_bytes
-            || decoded.get_ref().bytes != segment.stored_bytes
-            || <[u8; 32]>::from(decoded.get_ref().digest.clone().finalize()) != segment.sha256
-        {
-            return Err(ArchiveError::Integrity(segment.index));
-        }
-        Ok(())
-    }
-}
-
-struct HashReader {
-    file: File,
-    digest: Sha256,
-    bytes: u64,
-}
-
-impl Read for HashReader {
-    /// Hashes stored bytes as the decoder consumes the file, without a second disk pass.
-    fn read(&mut self, out: &mut [u8]) -> std_io::Result<usize> {
-        let count = self.file.read(out)?;
-        self.digest.update(&out[..count]);
-        self.bytes += count as u64;
-        Ok(count)
     }
 }

@@ -9309,7 +9309,9 @@ Current implementation, not yet built or exercised:
   checkpoints, append-only segment commits, integrity checks, a disk quota and
   observable completion/errors. Seek readers restore a staging scene from the
   nearest committed checkpoint and support cancellation. This is the container;
-  the native scene adapter and periodic checkpoint policy are not installed yet.
+  native prepared-scene adapters and a shared periodic checkpoint policy are now
+  present in source. Full received-world coverage and native playback rendering
+  remain incomplete.
 - Asynchronous project storage uses exclusive staging and atomic publication,
   revision-tagged completions, portable media references and bounded library
   enumeration. The main-screen Recording Studio entry and native library/editor
@@ -9354,6 +9356,17 @@ Current implementation, not yet built or exercised:
   This provisional source covers the original camera's culled draws and lacks its
   hidden first-person body. Unculled received-world coverage, pose interpolation
   and renderer publication remain incomplete; this does not close a replay gate.
+- Incremental source cursors now retain verified segments and advance only newly
+  crossed records. Large checkpoints spill into bounded delete-on-close scratch
+  storage instead of growing the playback heap. Whole-segment checksum/framing
+  admission precedes callbacks; failed/cancelled operations require a fresh seek.
+  Terrain playback emits changed bindings and avoids rebuilding redundant later
+  checkpoints. Actor seeks decode only the last crossed pose; immutable asset
+  caches remain shared. A coordinator admits terrain, environment, actor and
+  original-view camera tracks together, rejects mixed take metadata and limits
+  interrupted playback to their common duration. Camera capture now checkpoints
+  its actual pose at the shared scene interval. These source paths are unverified
+  and are not yet connected to the native editor viewport or audio playback.
 
 Required work remains open:
 

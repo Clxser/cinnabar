@@ -9,7 +9,7 @@ use super::*;
 use crate::{
     archive::{
         ArchiveError, RecordInput, RecordKind, Recording, RecordingConfig, RecordingInfo,
-        RecordingState,
+        RecordingState, SCENE_CHECKPOINT_INTERVAL,
     },
     automation::{CombatDetector, GameplayEvent, GameplayEventKind, Highlight},
     camera::CameraPose,
@@ -28,6 +28,7 @@ pub struct CaptureSession {
     observations: Vec<Highlight>,
     omitted: u64,
     scene_tracks: Vec<CaptureTrack>,
+    camera_checkpoint: MediaTime,
 }
 
 pub struct CaptureSummary {
@@ -75,9 +76,13 @@ impl CaptureSession {
             (RecordKind::CheckpointStart, Arc::<[u8]>::from([])),
             (
                 RecordKind::CheckpointPart,
-                serde_json::to_vec(&settings)
-                    .map_err(|error| error.to_string())?
-                    .into(),
+                serde_json::to_vec(&PovCheckpoint {
+                    version: POV_CHECKPOINT_VERSION,
+                    settings,
+                    camera: None,
+                })
+                .map_err(|error| error.to_string())?
+                .into(),
             ),
             (RecordKind::CheckpointEnd, Arc::<[u8]>::from([])),
         ] {
@@ -113,6 +118,7 @@ impl CaptureSession {
             omitted: 0,
             info,
             scene_tracks: Vec::new(),
+            camera_checkpoint: MediaTime::ZERO,
         })
     }
 
@@ -147,6 +153,37 @@ impl CaptureSession {
     /// Records actual camera metadata; the POV package deliberately does not claim 3D reconstruction.
     pub fn camera(&mut self, at: MediaTime, pose: CameraPose) -> Result<(), String> {
         pose.validate().map_err(|error| error.to_string())?;
+        if at.0.saturating_sub(self.camera_checkpoint.0) >= SCENE_CHECKPOINT_INTERVAL.0 {
+            let journal = self.journal.as_mut().ok_or("Recording is finishing.")?;
+            journal
+                .push(RecordInput {
+                    at,
+                    kind: RecordKind::CheckpointStart,
+                    payload: Arc::from([]),
+                })
+                .map_err(|error| error.to_string())?;
+            self.encoded(
+                at,
+                RecordKind::CheckpointPart,
+                std::mem::size_of::<PovCheckpoint>(),
+                PovCheckpoint {
+                    version: POV_CHECKPOINT_VERSION,
+                    settings: self.settings,
+                    camera: Some(pose),
+                },
+            )?;
+            self.journal
+                .as_mut()
+                .ok_or("Recording is finishing.")?
+                .push(RecordInput {
+                    at,
+                    kind: RecordKind::CheckpointEnd,
+                    payload: Arc::from([]),
+                })
+                .map_err(|error| error.to_string())?;
+            self.camera_checkpoint = at;
+            return Ok(());
+        }
         self.encoded(
             at,
             RecordKind::Camera,

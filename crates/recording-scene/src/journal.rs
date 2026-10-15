@@ -29,6 +29,9 @@ use crate::{
 pub const TERRAIN_DIRECTORY: &str = "terrain.cinreplay";
 const IDENTITY_CACHE: usize = 8;
 
+mod restore;
+pub(crate) use restore::apply_record;
+
 pub struct JournalPalette {
     id: AssetId,
     assets: Arc<RuntimeAssets>,
@@ -253,6 +256,11 @@ pub struct TerrainRecording {
 }
 
 impl TerrainRecording {
+    /// Transfers the validated source and object cache into an incremental worker-owned player.
+    pub fn into_playback(self, maximum_bytes: usize) -> crate::playback::TerrainPlayback {
+        crate::playback::TerrainPlayback::new(self.reader, self.loader, maximum_bytes)
+    }
+
     /// Opens the native terrain schema explicitly; a raster-only recording is not a free-camera scene.
     pub fn open(parent: &Path) -> Result<Self, ArchiveError> {
         let root = parent.join(TERRAIN_DIRECTORY);
@@ -279,38 +287,7 @@ impl TerrainRecording {
         let mut scene = TerrainScene::new(maximum_bytes);
         let loader = &mut self.loader;
         self.reader.visit_to(at, &cancelled, |record| {
-            match record.kind {
-                RecordKind::CheckpointStart => scene.clear(),
-                RecordKind::CheckpointEnd => {}
-                RecordKind::CheckpointPart | RecordKind::Scene => {
-                    if record.payload.len() > MAX_LINK_BYTES {
-                        return Err(ArchiveError::Invalid(
-                            "terrain change exceeds its byte limit",
-                        ));
-                    }
-                    let change: TerrainRecord = serde_json::from_slice(record.payload)?;
-                    match change {
-                        TerrainRecord::Upsert { chunk } => {
-                            scene.upsert(loader.load_cancellable(chunk, &cancelled)?)?
-                        }
-                        TerrainRecord::Remove { key } if record.kind == RecordKind::Scene => {
-                            key.origin()?;
-                            scene.remove(key);
-                        }
-                        TerrainRecord::Remove { .. } => {
-                            return Err(ArchiveError::Invalid(
-                                "terrain checkpoint contains an unload",
-                            ));
-                        }
-                    }
-                }
-                _ => {
-                    return Err(ArchiveError::Invalid(
-                        "unexpected record in native terrain track",
-                    ));
-                }
-            }
-            Ok(())
+            apply_record(record, &mut scene, loader, &cancelled).map(|_| ())
         })?;
         if cancelled() {
             return Err(ArchiveError::Cancelled);

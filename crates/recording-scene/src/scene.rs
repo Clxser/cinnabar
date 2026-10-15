@@ -122,6 +122,10 @@ impl TerrainScene {
     pub fn chunks(&self) -> impl ExactSizeIterator<Item = &SceneChunk> {
         self.chunks.values()
     }
+    /// Looks up an already admitted binding without scanning the recorded world.
+    pub fn chunk(&self, key: ChunkId) -> Option<&SceneChunk> {
+        self.chunks.get(&key)
+    }
     pub const fn resident_bytes(&self) -> usize {
         self.resident_bytes
     }

@@ -13,7 +13,7 @@ use recording_studio::{
     MediaTime,
     archive::{
         ArchiveError, RecordInput, RecordKind, Recording, RecordingConfig, RecordingInfo,
-        RecordingState,
+        RecordingState, SCENE_CHECKPOINT_INTERVAL,
     },
     object_store::{AssetId, AssetWriter},
 };
@@ -25,7 +25,6 @@ use super::{
 
 const MAX_PINNED_BYTES: usize = 256 * 1024 * 1024;
 const JOURNAL_BYTES: u64 = 32 * 1024 * 1024;
-const CHECKPOINT_MICROS: u64 = 5_000_000;
 
 struct Charge {
     budget: Arc<AtomicUsize>,
@@ -126,7 +125,7 @@ impl EnvironmentCapture {
         }
         let checkpoint = self
             .last_checkpoint
-            .is_none_or(|old| at.0.saturating_sub(old.0) >= CHECKPOINT_MICROS);
+            .is_none_or(|old| at.0.saturating_sub(old.0) >= SCENE_CHECKPOINT_INTERVAL.0);
         let recording = self
             .recording
             .as_mut()

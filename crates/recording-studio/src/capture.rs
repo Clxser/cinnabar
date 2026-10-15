@@ -12,9 +12,21 @@ use crate::{
 };
 
 mod manifest;
+mod playback;
 mod session;
 pub use manifest::{CaptureManifest, CaptureTrack};
+pub use playback::{CameraRecording, RecordedView};
 pub use session::{CaptureSession, CaptureSummary};
+
+/// Versioned camera checkpoints bound seeks without replaying every camera sample in a long take.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PovCheckpoint {
+    version: u32,
+    settings: CaptureSettings,
+    camera: Option<crate::camera::CameraPose>,
+}
+const POV_CHECKPOINT_VERSION: u32 = 1;
 
 pub const POV_SCENE_SCHEMA: &str = "cinnabar.pov-video/1";
 pub const VIDEO_FILE: &str = "video.mp4";
