@@ -137,8 +137,8 @@ pub use dropped_item_render::DroppedItemRenderPlugin;
 pub use panorama_render::PanoramaRenderPlugin;
 pub use present_mode::{
     PresentModePolicy, PresentModePolicyPlugin, PresentModePreference, PresentModeRemedy,
-    frame_latency_for_vsync, requested_present_mode_kind, resolve_dx12_present_mode_remedy,
-    window_present_mode,
+    TRIPLE_BUFFER_QUEUED_FRAMES, frame_latency_for_vsync, requested_present_mode_kind,
+    resolve_dx12_present_mode_remedy, window_present_mode,
 };
 
 pub use runtime_profile_phases::install_main_phase_spans;

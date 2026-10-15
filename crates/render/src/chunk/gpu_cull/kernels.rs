@@ -108,6 +108,8 @@ impl CullStorage {
         }
     }
 
+    /// Writes a phase's view directly for GPU fixtures; production batches retained uploads.
+    #[cfg(test)]
     pub fn write_uniform(&self, queue: &wgpu::Queue, phase: CullPhase, uniform: &CullViewUniform) {
         queue.write_buffer(
             &self.uniforms[phase as usize],

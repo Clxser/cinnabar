@@ -1,10 +1,6 @@
 mod frame_latency;
 
-pub use frame_latency::frame_latency_for_vsync;
-
-/// Number of queued frames used by the triple-buffered presentation policy.
-pub const TRIPLE_BUFFER_QUEUED_FRAMES: std::num::NonZeroU32 =
-    frame_latency::TRIPLE_BUFFER_QUEUED_FRAMES;
+pub use frame_latency::{TRIPLE_BUFFER_QUEUED_FRAMES, frame_latency_for_vsync};
 
 use std::sync::{
     Arc,
