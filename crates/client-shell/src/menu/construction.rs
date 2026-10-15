@@ -134,6 +134,7 @@ impl MenuRuntime {
             render_mode: initial.render_mode,
             render_mode_request: None,
             vsync_override: None,
+            reflex_gpu_available: initial.reflex_gpu_available,
             display_name: initial.display_name,
             servers: loaded.servers,
             saves: ServerWriter::new(config_path.clone(), loaded.allow_writes),

@@ -524,6 +524,8 @@ pub struct MenuView {
     pub render_mode: ui::RenderMode,
     /// Session VSync forced by a launch flag; the saved toggle is shown locked to it.
     pub vsync_override: Option<bool>,
+    /// Whether the active adapter can expose NVIDIA Reflex controls.
+    pub reflex_gpu_available: bool,
     pub display_name: String,
     pub servers: Vec<SavedServer>,
     pub featured: Vec<MenuServerCard>,
@@ -782,6 +784,7 @@ impl MenuView {
             fullscreen: false,
             render_mode: ui::RenderMode::Vanilla,
             vsync_override: None,
+            reflex_gpu_available: false,
             display_name,
             servers: Vec::new(),
             featured: Vec::new(),

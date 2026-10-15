@@ -6,6 +6,22 @@ use std::{
 
 use bytemuck::{Pod, Zeroable};
 
+#[cfg(test)]
+mod incremental_tests;
+#[cfg(test)]
+thread_local! {
+    static VALIDATION_WORK: std::cell::Cell<[usize; 3]> = const { std::cell::Cell::new([0; 3]) };
+}
+
+#[cfg(test)]
+fn count_validation(kind: usize) {
+    VALIDATION_WORK.with(|work| {
+        let mut counts = work.get();
+        counts[kind] += 1;
+        work.set(counts);
+    });
+}
+
 pub const MAX_UI_VERTICES: usize = 262_144;
 pub const MAX_UI_INDICES: usize = 393_216;
 pub const MAX_UI_BATCHES: usize = 8_192;
@@ -180,6 +196,11 @@ pub struct UiRenderInput {
 
 impl UiRenderInput {
     pub fn validate(&self) -> Result<(), UiRenderRejectReason> {
+        self.validate_reusing(None)
+    }
+
+    /// Reuses checks only for immutable buffers retained from this scene's admitted input.
+    fn validate_reusing(&self, admitted: Option<&Self>) -> Result<(), UiRenderRejectReason> {
         validate_limit(self.vertices.len(), MAX_UI_VERTICES, |actual, limit| {
             UiRenderRejectReason::VertexLimitExceeded { actual, limit }
         })?;
@@ -198,35 +219,55 @@ impl UiRenderInput {
         {
             return Err(UiRenderRejectReason::InvalidSafeArea);
         }
-        if self.vertices.iter().any(|vertex| {
-            !vertex.position.iter().all(|value| value.is_finite())
-                || !vertex.clip_z.is_finite()
-                || !vertex.clip_w.is_finite()
-                || !vertex.uv.iter().all(|value| value.is_finite())
-                || !vertex.alpha_cutoff.is_finite()
-                || vertex.alpha_cutoff > 1.0
-                || !vertex.model_light.is_finite()
-                || vertex.model_light < 0.0
-                || !vertex.overlay_color.iter().all(|value| value.is_finite())
-        }) {
+        let retained_vertices =
+            admitted.is_some_and(|previous| Arc::ptr_eq(&self.vertices, &previous.vertices));
+        if !retained_vertices
+            && self.vertices.iter().any(|vertex| {
+                #[cfg(test)]
+                count_validation(0);
+                !vertex.position.iter().all(|value| value.is_finite())
+                    || !vertex.clip_z.is_finite()
+                    || !vertex.clip_w.is_finite()
+                    || !vertex.uv.iter().all(|value| value.is_finite())
+                    || !vertex.alpha_cutoff.is_finite()
+                    || vertex.alpha_cutoff > 1.0
+                    || !vertex.model_light.is_finite()
+                    || vertex.model_light < 0.0
+                    || !vertex.overlay_color.iter().all(|value| value.is_finite())
+            })
+        {
             return Err(UiRenderRejectReason::NonFiniteVertex);
         }
-        if self
-            .indices
-            .iter()
-            .any(|index| *index as usize >= self.vertices.len())
+        let retained_indices = admitted.is_some_and(|previous| {
+            self.vertices.len() == previous.vertices.len()
+                && Arc::ptr_eq(&self.indices, &previous.indices)
+        });
+        if !retained_indices
+            && self.indices.iter().any(|index| {
+                #[cfg(test)]
+                count_validation(1);
+                *index as usize >= self.vertices.len()
+            })
         {
             return Err(UiRenderRejectReason::VertexIndexOutOfBounds);
         }
         validate_draw_bytes(self)?;
         // Texture catalogs have private fields and checked constructors; no
         // raster hashing or immutable byte traversal occurs during publication.
-        validate_batches(self)?;
+        let retained_batches = admitted.is_some_and(|previous| {
+            self.viewport_size == previous.viewport_size
+                && self.indices.len() == previous.indices.len()
+                && self.textures.pages().len() == previous.textures.pages().len()
+                && Arc::ptr_eq(&self.batches, &previous.batches)
+        });
+        if !retained_batches {
+            validate_batches(self)?;
+        }
         Ok(())
     }
 
     /// Same revision, viewport and safe area over the very same buffers.
-    fn shares_buffers(&self, other: &Self) -> bool {
+    pub fn shares_buffers(&self, other: &Self) -> bool {
         self.revision == other.revision
             && self.viewport_size == other.viewport_size
             && self.safe_area == other.safe_area
@@ -290,6 +331,8 @@ pub struct UiRenderScene {
     pub input: Option<Arc<UiRenderInput>>,
     rejected_since_publish: bool,
     admitted_static_identity: Option<[u8; 32]>,
+    /// Pins the validated input independently of the public presentation field.
+    admitted_input: Option<Arc<UiRenderInput>>,
 }
 
 impl UiRenderScene {
@@ -300,42 +343,50 @@ impl UiRenderScene {
     ) -> Result<(), UiRenderReject> {
         // The UI republishes its last frame unchanged most of the time; the admitted copy
         // was already validated, so identical buffers need no per-vertex work.
-        if self
-            .input
-            .as_deref()
-            .is_some_and(|current| current.shares_buffers(&input))
+        let admitted = self.admitted_input.as_ref().filter(|admitted| {
+            self.input
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, admitted))
+        });
+        if input.revision == self.revision
+            && admitted
+                .map(AsRef::as_ref)
+                .is_some_and(|current| current.shares_buffers(&input))
         {
             return Ok(());
         }
         let revision = input.revision;
-        let result = input.validate().and_then(|()| {
-            if revision < self.revision
-                || (self.rejected_since_publish && revision == self.revision)
-            {
-                Err(UiRenderRejectReason::StaleRevision {
-                    current: self.revision,
-                    rejected: revision,
-                })
-            } else if revision == self.revision
-                && self
-                    .input
-                    .as_deref()
-                    .is_some_and(|current| current != &input)
-            {
-                Err(UiRenderRejectReason::RevisionConflict { revision })
-            } else if self
-                .admitted_static_identity
-                .is_some_and(|identity| identity != input.textures.static_identity())
-            {
-                Err(UiRenderRejectReason::TextureIdentityConflict {
-                    identity: input.textures.identity(),
-                })
-            } else {
-                Ok(())
-            }
-        });
+        let result = input
+            .validate_reusing(admitted.map(AsRef::as_ref))
+            .and_then(|()| {
+                if revision < self.revision
+                    || (self.rejected_since_publish && revision == self.revision)
+                {
+                    Err(UiRenderRejectReason::StaleRevision {
+                        current: self.revision,
+                        rejected: revision,
+                    })
+                } else if revision == self.revision
+                    && self
+                        .input
+                        .as_deref()
+                        .is_some_and(|current| current != &input)
+                {
+                    Err(UiRenderRejectReason::RevisionConflict { revision })
+                } else if self
+                    .admitted_static_identity
+                    .is_some_and(|identity| identity != input.textures.static_identity())
+                {
+                    Err(UiRenderRejectReason::TextureIdentityConflict {
+                        identity: input.textures.identity(),
+                    })
+                } else {
+                    Ok(())
+                }
+            });
         if let Err(reason) = result {
             self.input = None;
+            self.admitted_input = None;
             self.rejected_since_publish = true;
             stats.update(|snapshot| {
                 snapshot.accepted_revision = None;
@@ -356,6 +407,7 @@ impl UiRenderScene {
         self.admitted_static_identity = Some(input.textures.static_identity());
         self.rejected_since_publish = false;
         self.input = Some(Arc::new(input));
+        self.admitted_input = self.input.clone();
         stats.update(|snapshot| {
             snapshot.rejected_revision = None;
             snapshot.rejected_reason = None;
@@ -449,6 +501,8 @@ fn validate_batches(input: &UiRenderInput) -> Result<(), UiRenderRejectReason> {
     let mut previous_scope = None;
     let mut completed_scopes = std::collections::BTreeSet::new();
     for (batch_index, batch) in input.batches.iter().enumerate() {
+        #[cfg(test)]
+        count_validation(2);
         if batch.isolated_depth_scope != previous_scope {
             if let Some(scope) = previous_scope {
                 completed_scopes.insert(scope);

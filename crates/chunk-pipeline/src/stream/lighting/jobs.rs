@@ -467,6 +467,7 @@ impl WorldStream {
             light_levels_changed,
             direct_sky_changed,
             changed_faces,
+            mesh_changes,
         } = solved;
         let monotonic_faces =
             self.monotonic_light_faces(completion.key, &replacement, direct_sky.as_ref());
@@ -595,7 +596,7 @@ impl WorldStream {
         self.stats.light_mesh_invalidations = self.stats.light_mesh_invalidations.saturating_add(1);
         self.mark_changed_light_mesh_dependents(
             completion.key,
-            changed_faces,
+            mesh_changes,
             Instant::now(),
             completion.identity.urgent,
         );

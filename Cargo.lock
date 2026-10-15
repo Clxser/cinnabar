@@ -462,6 +462,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "simd-kernels",
  "tempfile",
  "test-alloc",
  "thiserror 2.0.18",
@@ -2155,6 +2156,7 @@ dependencies = [
  "protocol-ids",
  "raw-window-handle",
  "rayon",
+ "reflex",
  "render",
  "render-api",
  "render-model",
@@ -2169,6 +2171,7 @@ dependencies = [
  "server-experience",
  "sha2",
  "sim",
+ "simd-kernels",
  "simulation-clock",
  "tempfile",
  "test-alloc",
@@ -4666,6 +4669,7 @@ dependencies = [
  "assets",
  "bridge",
  "json-ui",
+ "reflex",
  "render-api",
  "resource-pack",
  "semantic-input",
@@ -5038,6 +5042,7 @@ dependencies = [
  "mimalloc",
  "pack-compiler",
  "serde_json",
+ "simd-kernels",
  "tempfile",
  "world",
 ]
@@ -6516,6 +6521,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "reflex"
+version = "0.1.20"
+
+[[package]]
 name = "regalloc2"
 version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6590,6 +6599,7 @@ dependencies = [
  "pack-compiler",
  "particles",
  "rayon",
+ "reflex",
  "render-api",
  "render-model",
  "render-scene",
@@ -6626,6 +6636,7 @@ dependencies = [
  "render-api",
  "serde_json",
  "sha2",
+ "simd-kernels",
  "simulation-clock",
  "tempfile",
  "test-alloc",
@@ -7119,6 +7130,10 @@ name = "simd-adler32"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
+
+[[package]]
+name = "simd-kernels"
+version = "0.1.20"
 
 [[package]]
 name = "simd_cesu8"
@@ -7885,6 +7900,7 @@ version = "0.1.20"
 dependencies = [
  "assets",
  "json-ui",
+ "reflex",
  "render-api",
  "semantic-input",
  "serde",
@@ -8857,7 +8873,6 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=9686723e5deb6341cf9f088515ced3c8e6fe4f29#9686723e5deb6341cf9f088515ced3c8e6fe4f29"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -9690,6 +9705,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "simd-kernels",
  "test-alloc",
  "thiserror 2.0.18",
 ]

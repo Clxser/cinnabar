@@ -48,6 +48,7 @@ members = [
     "crates/protocol",
     "crates/protocol-ids",
     "crates/resource-pack",
+    "crates/reflex",
     "crates/server-experience",
     "crates/render",
     "crates/render-api",
@@ -65,6 +66,7 @@ members = [
     "crates/client-audio",
     "crates/player-state",
     "crates/sim",
+    "crates/simd-kernels",
     "crates/ui",
     "crates/ui-engine",
     "crates/ui-screens",
@@ -113,6 +115,7 @@ bevy = { version = "=0.20.0", default-features = false, features = [
     "bevy_mesh",
     "bevy_post_process",
     "bevy_render",
+    "raw_vulkan_init",
     "bevy_shader",
     "bevy_window",
     "bevy_winit",
@@ -147,14 +150,21 @@ wit-component = "=0.247.0"
 
 
 # Preserve FIFO pacing, batched indirect validation and lazy logging on wgpu 30.0.1.
+# `wgpu-hal` is a small local patch that installs VK_NV_low_latency2's swapchain pNext and
+# exposes the device calls used by the Reflex backend.
 [patch.crates-io]
 naga = { git = "https://github.com/bedrock-mc/wgpu", rev = "9686723e5deb6341cf9f088515ced3c8e6fe4f29" }
+naga-types = { git = "https://github.com/bedrock-mc/wgpu", rev = "9686723e5deb6341cf9f088515ced3c8e6fe4f29" }
 wgpu = { git = "https://github.com/bedrock-mc/wgpu", rev = "9686723e5deb6341cf9f088515ced3c8e6fe4f29" }
 wgpu-core = { git = "https://github.com/bedrock-mc/wgpu", rev = "9686723e5deb6341cf9f088515ced3c8e6fe4f29" }
-wgpu-hal = { git = "https://github.com/bedrock-mc/wgpu", rev = "9686723e5deb6341cf9f088515ced3c8e6fe4f29" }
 wgpu-types = { git = "https://github.com/bedrock-mc/wgpu", rev = "9686723e5deb6341cf9f088515ced3c8e6fe4f29" }
 
 wgpu-naga-bridge = { git = "https://github.com/bedrock-mc/wgpu", rev = "9686723e5deb6341cf9f088515ced3c8e6fe4f29" }
+
+# The git wgpu packages depend on wgpu-hal through their own workspace. Patch that source too,
+# otherwise Cargo would keep resolving the unmodified HAL from the git checkout.
+[patch."https://github.com/bedrock-mc/wgpu"]
+wgpu-hal = { path = "third_party/wgpu-hal" }
 
 [profile.dev]
 opt-level = 1

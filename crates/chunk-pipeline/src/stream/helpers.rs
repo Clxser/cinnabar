@@ -141,8 +141,7 @@ pub(super) fn sampled_light_changed(
 }
 
 pub(super) fn light_levels_equal(left: &SubChunkLight, right: &SubChunkLight) -> bool {
-    left.channel(LightChannel::Block) == right.channel(LightChannel::Block)
-        && left.channel(LightChannel::Sky) == right.channel(LightChannel::Sky)
+    left.same_levels(right)
 }
 
 pub(super) fn is_uniform_direct_sky(light: &SubChunkLight, direct: &DirectSkyMask) -> bool {

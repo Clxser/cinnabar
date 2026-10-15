@@ -74,6 +74,7 @@ pub(crate) fn receive_network_events(
     let display_interval = profiler
         .as_deref()
         .map_or(Duration::ZERO, RuntimeStageProfiler::frame_interval);
+    let ingress_budget = client_runtime::ingress::world_ingress_drain_budget(state.time.delta());
     if let Some(stream) = state.client_world.stream.as_mut() {
         stream.set_display_interval(display_interval);
         stream.begin_frame_work();
@@ -127,6 +128,7 @@ pub(crate) fn receive_network_events(
         &mut state.client_world,
         &mut player_runtime,
         &mut state.ui_runtime,
+        ingress_budget,
         #[cfg(feature = "acceptance")]
         &mut acceptance,
         #[cfg(feature = "acceptance")]

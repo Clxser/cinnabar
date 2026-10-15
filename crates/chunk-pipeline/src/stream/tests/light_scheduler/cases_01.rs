@@ -642,7 +642,7 @@ fn changed_light_faces_scope_mesh_invalidation_to_sampling_dependents() {
 
     stream.mark_changed_light_mesh_dependents(
         source,
-        [false, true, false, true, false, false],
+        super::mesh_mask_for_faces([false, true, false, true, false, false]),
         Instant::now(),
         false,
     );
@@ -654,7 +654,7 @@ fn changed_light_faces_scope_mesh_invalidation_to_sampling_dependents() {
         .collect::<BTreeMap<_, _>>();
     stream.mark_changed_light_mesh_dependents(
         source,
-        [false, true, false, true, false, false],
+        super::mesh_mask_for_faces([false, true, false, true, false, false]),
         Instant::now(),
         false,
     );

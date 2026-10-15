@@ -60,6 +60,7 @@ pub(in crate::chunk) struct GpuCull {
     pub(super) bind_groups: Option<[wgpu::BindGroup; 2]>,
     bound_pyramid: Option<TextureViewId>,
     pub(super) prepared_view: Option<Entity>,
+    uniforms: [Option<CullViewUniform>; super::model::PHASE_COUNT],
 }
 
 impl GpuCull {
@@ -76,6 +77,7 @@ impl GpuCull {
             bind_groups: None,
             bound_pyramid: None,
             prepared_view: None,
+            uniforms: [None; super::model::PHASE_COUNT],
         }
     }
 
@@ -147,6 +149,7 @@ pub(super) fn prepare_gpu_cull(
     views: Query<CullViewComponents>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
+    staging: Option<Res<crate::upload_staging::BufferUploadStaging>>,
     profiler: Option<Res<RuntimeStageProfiler>>,
 ) {
     let _timer = profiler
@@ -197,10 +200,21 @@ pub(super) fn prepare_gpu_cull(
         .as_ref()
         .map_or([1, 1], |prepared| prepared.pyramid.depth_size);
     let input = cull_view_input(extracted, frustum, depth_size, hiz_mips);
-    for phase in CullPhase::ALL {
-        let uniform = CullViewUniform::new(&input, phase, cull.slot_count(), storage.capacity);
-        storage.write_uniform(&queue, phase, &uniform);
+    let uniforms = CullPhase::ALL
+        .map(|phase| CullViewUniform::new(&input, phase, cull.slot_count(), storage.capacity));
+    let mut writes: [crate::upload_staging::BufferWrite<'_>; super::model::PHASE_COUNT] =
+        [(&storage.uniforms[0], 0, &[]); super::model::PHASE_COUNT];
+    let mut count = 0;
+    for (index, uniform) in uniforms.iter().enumerate() {
+        if cull.uniforms[index].as_ref() != Some(uniform) {
+            writes[count] = (&storage.uniforms[index], 0, bytemuck::bytes_of(uniform));
+            count += 1;
+        }
     }
+    if count != 0 {
+        crate::upload_staging::write_batch(staging.as_deref(), &device, &queue, &writes[..count]);
+    }
+    cull.uniforms = uniforms.map(Some);
     let pyramid_id = cull.pyramid.as_ref().map(|prepared| prepared.depth);
     if cull.bind_groups.is_none() || cull.bound_pyramid != pyramid_id {
         cull.bind_groups = Some(cull.kernels.bind_groups(
@@ -227,6 +241,7 @@ fn upload_records(cull: &mut GpuCull, device: &RenderDevice, queue: &RenderQueue
         cull.draw_counts = Some(Buffer::from(storage.draw_counts.clone()));
         cull.draw_offsets = Some(Buffer::from(storage.draw_offsets.clone()));
         cull.storage = Some(storage);
+        cull.uniforms.fill(None);
         cull.bind_groups = None;
         cull.table.mark_all_dirty();
     }

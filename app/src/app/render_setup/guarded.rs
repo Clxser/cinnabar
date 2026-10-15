@@ -170,6 +170,7 @@ async fn create_renderer(
         RenderAdapterInfo::new(info),
         RenderAdapter::new(adapter),
         RenderInstance::new(instance),
+        bevy::render::renderer::raw_vulkan_init::AdditionalVulkanFeatures::default(),
     ))
 }
 

@@ -13,6 +13,7 @@ reads = [
 ]
 
 [dependencies]
+simd-kernels = { path = "../simd-kernels" }
 block-transform = { path = "../block-transform" }
 assets = { path = "../assets" }
 bytemuck = { version = "1", features = ["derive"] }

@@ -10,10 +10,10 @@ impl DroppedItemModel {
     pub fn can_cull_back_faces(&self) -> bool {
         match self {
             Self::Vacant => false,
-            Self::NativeSprite(sprite) => sprite_alpha(sprite, |alpha| matches!(alpha, 0 | 255)),
+            Self::NativeSprite(sprite) => sprite_alpha(sprite, simd_kernels::AlphaPolicy::Binary),
             // Mirrored rear artwork can remain visible at rasterized cutout boundaries even
             // when its binary mask is symmetric. Keep those rear faces available.
-            Self::Sprite(sprite) => sprite_alpha(sprite, |alpha| alpha == 255),
+            Self::Sprite(sprite) => sprite_alpha(sprite, simd_kernels::AlphaPolicy::Opaque),
             Self::Cube(cube) => {
                 cube.tints.iter().all(|color| color >> 24 == 255)
                     && cube.faces.iter().all(|pixels| opaque(pixels))
@@ -30,30 +30,21 @@ impl DroppedItemModel {
 }
 
 /// Validates a sprite's dimensions and requires each alpha to satisfy its model's culling policy.
-fn sprite_alpha(sprite: &DroppedItemSprite, allowed: impl Fn(u8) -> bool) -> bool {
+fn sprite_alpha(sprite: &DroppedItemSprite, policy: simd_kernels::AlphaPolicy) -> bool {
     sprite.width != 0
         && sprite.height != 0
         && Some(sprite.rgba8.len())
             == (sprite.width as usize)
                 .checked_mul(sprite.height as usize)
                 .and_then(|n| n.checked_mul(4))
-        && sprite
-            .rgba8
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .all(|pixel| allowed(pixel[3]))
+        && simd_kernels::rgba_alpha_matches(&sprite.rgba8, policy)
 }
 
 /// Requires opaque pixels so cutout or partial coverage cannot reveal removed faces.
 fn opaque(pixels: &[u8]) -> bool {
     !pixels.is_empty()
         && pixels.len().is_multiple_of(4)
-        && pixels
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .all(|pixel| pixel[3] == 255)
+        && simd_kernels::rgba_alpha_matches(pixels, simd_kernels::AlphaPolicy::Opaque)
 }
 
 /// Keeps each triangle's UV interior within the opaque tile, away from atlas padding.

@@ -23,15 +23,22 @@ use std::{
 };
 
 #[cfg(test)]
-use bevy::prelude::{Fixed, FixedUpdate, PreUpdate, Real, ResMut, Time, Update};
+use bevy::prelude::{Fixed, FixedUpdate, PreUpdate, Real, Time, Update};
+#[cfg(windows)]
+use bevy::render::renderer::{RenderAdapterInfo, RenderDevice};
 use bevy::{
     app::MainScheduleOrder,
     ecs::schedule::{MainThreadExecutor, ScheduleLabel},
-    prelude::{App, First, Last, Plugin, Res, Resource, World},
-    render::{Render, RenderApp, RenderSystems, pipelined_rendering::RenderExtractApp},
+    prelude::{App, First, Last, Plugin, Res, ResMut, Resource, World},
+    render::{
+        Render, RenderApp, RenderSystems,
+        extract_resource::{ExtractResource, ExtractResourcePlugin},
+        pipelined_rendering::RenderExtractApp,
+    },
 };
 use render_model::{Cadence, FrameRate};
 
+use reflex::{Mode as ReflexMode, Runtime as ReflexRuntimeHandle};
 use render_scene::{RuntimeStage, RuntimeStageProfiler};
 
 /// `0` keeps measuring input age but never delays an update for render completion.
@@ -411,14 +418,199 @@ impl InputPacer {
 /// Paces updates at the render handoff or the final frame boundary.
 #[derive(Default)]
 pub struct InputPacingPlugin {
+    reflex_mode: ReflexMode,
     #[cfg(test)]
     pacer: Option<InputPacer>,
 }
 
+/// Shared main/render-world Reflex state. The native backend is optional and unsupported
+/// adapters stay on the no-op implementation without changing frame ordering.
+#[derive(Resource, Clone)]
+pub struct ReflexState(ReflexRuntimeHandle);
+
+impl ReflexState {
+    /// Returns whether this adapter has the native capabilities required by the Video setting.
+    #[must_use]
+    pub fn gpu_targets_reflex(&self) -> bool {
+        self.0.capabilities().ready()
+    }
+
+    /// Applies a menu change without recreating the renderer or swapchain.
+    pub fn set_requested_mode(&self, mode: ReflexMode) {
+        let previous = self.0.requested_mode();
+        self.0.set_requested_mode(mode);
+        if previous != mode {
+            let capabilities = self.0.capabilities();
+            bevy::log::info!(
+                requested = ?mode,
+                effective = ?self.0.effective_mode(),
+                capabilities = ?capabilities.state,
+                low_latency2_extension = capabilities.low_latency2_extension,
+                native_swapchain_hook = capabilities.native_swapchain_hook,
+                "Reflex mode changed"
+            );
+        }
+    }
+}
+
+#[derive(Resource, Default)]
+struct ReflexBackendReady(bool);
+
+/// Travels with extracted world data, so rendering never consumes an ID from a skipped update.
+#[derive(Resource, Clone, Default, ExtractResource)]
+#[extract_app(RenderApp)]
+struct ReflexFrame(Option<reflex::FrameId>);
+
+#[cfg(windows)]
+struct VulkanReflexBackend {
+    device: wgpu::Device,
+}
+
+#[cfg(windows)]
+impl VulkanReflexBackend {
+    fn with_device(&self, action: impl FnOnce(&wgpu::hal::vulkan::Device) -> bool) -> bool {
+        // SAFETY: the render device owns the handle for the lifetime of this backend and the HAL
+        // guard is used only for the duration of the call.
+        let Some(device) = (unsafe { self.device.as_hal::<wgpu::hal::api::Vulkan>() }) else {
+            return false;
+        };
+        action(&device)
+    }
+}
+
+#[cfg(windows)]
+impl reflex::Backend for VulkanReflexBackend {
+    fn set_latency_sleep_mode(&self, mode: ReflexMode) -> Result<(), reflex::BackendError> {
+        self.with_device(|device| {
+            device.reflex_set_latency_mode(mode.is_enabled(), matches!(mode, ReflexMode::OnBoost))
+        })
+        .then_some(())
+        .ok_or(reflex::BackendError)
+    }
+
+    fn latency_sleep(&self, frame: reflex::FrameId) -> Result<(), reflex::BackendError> {
+        self.with_device(|device| device.reflex_latency_sleep(frame.get()))
+            .then_some(())
+            .ok_or(reflex::BackendError)
+    }
+
+    fn set_latency_marker(&self, frame: reflex::FrameId, marker: reflex::Marker) {
+        // Submission-end and presentation markers are emitted by the Vulkan HAL at the exact
+        // queue/present boundaries. The render schedule's cleanup hook runs after both calls, so
+        // forwarding those markers here would timestamp them too late.
+        if marker == reflex::Marker::SubmissionEnd {
+            let _ = self.with_device(|device| {
+                device.reflex_finish_frame();
+                true
+            });
+            return;
+        }
+        if matches!(
+            marker,
+            reflex::Marker::SubmissionEnd
+                | reflex::Marker::PresentationStart
+                | reflex::Marker::PresentationEnd
+        ) {
+            return;
+        }
+        if marker == reflex::Marker::SubmissionStart {
+            let _ = self.with_device(|device| {
+                device.reflex_set_active_frame(frame.get());
+                true
+            });
+            return;
+        }
+        let marker = match marker {
+            reflex::Marker::InputSample => 6,
+            reflex::Marker::SimulationStart => 0,
+            reflex::Marker::SimulationEnd => 1,
+            reflex::Marker::SubmissionStart
+            | reflex::Marker::SubmissionEnd
+            | reflex::Marker::PresentationStart
+            | reflex::Marker::PresentationEnd => unreachable!("filtered above"),
+        };
+        let _ = self.with_device(|device| {
+            device.reflex_set_latency_marker(frame.get(), marker);
+            true
+        });
+    }
+}
+
+#[cfg(windows)]
+fn initialize_reflex_backend(
+    state: Res<ReflexState>,
+    device: Res<RenderDevice>,
+    adapter: Res<RenderAdapterInfo>,
+    mut ready: ResMut<ReflexBackendReady>,
+) {
+    if ready.0 {
+        return;
+    }
+    let requested = state.0.requested_mode();
+    let info = &**adapter;
+    let capabilities = if info.backend == wgpu::Backend::Vulkan && info.vendor == 0x10de {
+        // The HAL reports this only after the raw device callback successfully enabled it.
+        let extension_enabled = unsafe {
+            device
+                .wgpu_device()
+                .as_hal::<wgpu::hal::api::Vulkan>()
+                .is_some_and(|device| device.reflex_low_latency_enabled())
+        };
+        reflex::Capabilities::detect(reflex::AdapterIdentity::nvidia_vulkan(
+            extension_enabled,
+            extension_enabled,
+        ))
+    } else {
+        reflex::Capabilities::detect(reflex::AdapterIdentity {
+            backend: if info.backend == wgpu::Backend::Vulkan {
+                reflex::BackendKind::Vulkan
+            } else {
+                reflex::BackendKind::Other
+            },
+            vendor_id: info.vendor,
+            ..reflex::AdapterIdentity::unknown()
+        })
+    };
+    if capabilities.ready() {
+        state.0.install_backend(
+            capabilities,
+            Box::new(VulkanReflexBackend {
+                device: device.wgpu_device().clone(),
+            }),
+        );
+    } else {
+        state
+            .0
+            .install_backend(capabilities, Box::<reflex::NoopBackend>::default());
+    }
+    bevy::log::info!(
+        ?requested,
+        ?capabilities.state,
+        effective = ?state.0.effective_mode(),
+        "Reflex frame pacing initialized"
+    );
+    ready.0 = true;
+}
+
+#[cfg(not(windows))]
+fn initialize_reflex_backend(mut ready: ResMut<ReflexBackendReady>) {
+    ready.0 = true;
+}
+
 impl InputPacingPlugin {
+    /// Overrides the environment-selected Reflex policy for this client session.
+    #[must_use]
+    pub fn with_reflex_mode(mut self, mode: ReflexMode) -> Self {
+        self.reflex_mode = mode;
+        self
+    }
+
     #[cfg(test)]
     pub(crate) fn with_pacer(pacer: InputPacer) -> Self {
-        Self { pacer: Some(pacer) }
+        Self {
+            reflex_mode: ReflexMode::Off,
+            pacer: Some(pacer),
+        }
     }
 
     fn pacer(&self) -> InputPacer {
@@ -436,9 +628,17 @@ impl Plugin for InputPacingPlugin {
         FrameStart::install(app);
         FrameEnd::install(app);
         let pacer = self.pacer();
+        let reflex = ReflexState(ReflexRuntimeHandle::new(
+            self.reflex_mode,
+            reflex::AdapterIdentity::unknown(),
+        ));
         app.init_resource::<FramePacing>()
+            .init_resource::<ReflexFrame>()
+            .add_plugins(ExtractResourcePlugin::<ReflexFrame>::default())
             .insert_resource(pacer.clone())
-            .add_systems(FrameStart, mark_update_start);
+            .insert_resource(reflex.clone())
+            .add_systems(FrameStart, mark_update_start)
+            .add_systems(Last, mark_simulation_end);
         frame_time::install(app);
         let inner = app
             .get_sub_app_mut(RenderExtractApp)
@@ -451,19 +651,39 @@ impl Plugin for InputPacingPlugin {
         app.sub_app_mut(RenderExtractApp)
             .set_extract(move |main, render| handoff.handoff(main, render, &mut inner));
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.insert_resource(pacer).add_systems(
-                Render,
-                (
-                    mark_render_start.before(RenderSystems::ExtractCommands),
-                    mark_render_end.in_set(RenderSystems::PostCleanup),
-                ),
-            );
+            render_app
+                .insert_resource(pacer)
+                .insert_resource(reflex)
+                .init_resource::<ReflexBackendReady>()
+                .add_systems(
+                    Render,
+                    (
+                        initialize_reflex_backend.before(mark_render_start),
+                        mark_render_start.before(RenderSystems::ExtractCommands),
+                        mark_render_end.in_set(RenderSystems::PostCleanup),
+                    ),
+                );
         }
     }
 }
 
-fn mark_update_start(pacer: Res<InputPacer>, pacing: Res<FramePacing>) {
+fn mark_update_start(
+    pacer: Res<InputPacer>,
+    pacing: Res<FramePacing>,
+    reflex: Res<ReflexState>,
+    mut extracted_frame: ResMut<ReflexFrame>,
+) {
+    let frame = reflex.0.begin_frame();
+    extracted_frame.0 = Some(frame);
+    // Reflex sleep belongs before `First`, where winit events are admitted and raw input is read.
+    reflex.0.sleep_before_input(frame);
+    reflex.0.mark_simulation_start(frame);
+    reflex.0.mark_input_sample(frame);
     pacer.update_started(*pacing);
+}
+
+fn mark_simulation_end(reflex: Res<ReflexState>) {
+    reflex.0.mark_simulation_end();
 }
 
 fn pace_unpipelined(world: &mut World) {
@@ -472,12 +692,21 @@ fn pace_unpipelined(world: &mut World) {
     }
 }
 
-fn mark_render_start(pacer: Res<InputPacer>) {
+fn mark_render_start(
+    pacer: Res<InputPacer>,
+    reflex: Res<ReflexState>,
+    frame: Option<Res<ReflexFrame>>,
+) {
     pacer.render_started();
+    if let Some(frame) = frame.and_then(|frame| frame.0) {
+        reflex.0.begin_render(frame);
+        reflex.0.mark_render_start(frame);
+    }
 }
 
-fn mark_render_end(pacer: Res<InputPacer>) {
+fn mark_render_end(pacer: Res<InputPacer>, reflex: Res<ReflexState>) {
     pacer.render_finished();
+    reflex.0.mark_render_end();
 }
 
 #[cfg(test)]

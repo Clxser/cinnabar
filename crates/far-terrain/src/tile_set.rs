@@ -1,6 +1,10 @@
 //! The selected tiles around the camera, rebuilt on workers when their columns change.
 
-use std::{collections::BTreeMap, sync::Arc, time::Instant};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+    time::Instant,
+};
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 
@@ -40,6 +44,8 @@ pub struct FarTiles {
     revision: u64,
     /// Reused each update so an idle frame allocates nothing.
     due: Vec<TileKey>,
+    /// Only missing or changed tiles can need a build; settled tiles never enter the frame scan.
+    pending: BTreeSet<TileKey>,
 }
 
 impl Default for FarTiles {
@@ -55,6 +61,7 @@ impl Default for FarTiles {
             rx,
             revision: 0,
             due: Vec::new(),
+            pending: BTreeSet::new(),
         }
     }
 }
@@ -67,6 +74,9 @@ impl FarTiles {
         }
         self.view = Some(view);
         let wanted = select_tiles(view);
+        if wanted.iter().copied().eq(self.selected.keys().copied()) {
+            return;
+        }
         let mut kept = BTreeMap::new();
         for key in wanted {
             kept.insert(key, self.selected.remove(&key).unwrap_or_default());
@@ -76,6 +86,12 @@ impl FarTiles {
                 self.retire(mesh);
             }
         }
+        self.pending.retain(|key| self.selected.contains_key(key));
+        self.pending.extend(
+            self.selected
+                .iter()
+                .filter_map(|(&key, tile)| (tile.mesh.is_none() || tile.dirty).then_some(key)),
+        );
         self.retire_covered();
         self.revision += 1;
     }
@@ -88,8 +104,10 @@ impl FarTiles {
                 let x = (column.x + dx) * COLUMN_SIDE as i32;
                 let z = (column.z + dz) * COLUMN_SIDE as i32;
                 for level in 0..LEVEL_COUNT {
-                    if let Some(tile) = self.selected.get_mut(&TileKey::containing(level, x, z)) {
+                    let key = TileKey::containing(level, x, z);
+                    if let Some(tile) = self.selected.get_mut(&key) {
                         tile.dirty = true;
+                        self.pending.insert(key);
                         break;
                     }
                 }
@@ -108,6 +126,9 @@ impl FarTiles {
             if tile.building == Some(built.token) {
                 tile.building = None;
                 tile.mesh = Some(Arc::new(built.mesh));
+                if !tile.dirty {
+                    self.pending.remove(&built.key);
+                }
                 self.revision += 1;
             }
         }
@@ -116,17 +137,19 @@ impl FarTiles {
         }
         let mut due = std::mem::take(&mut self.due);
         due.extend(
-            self.selected
+            self.pending
                 .iter()
-                .filter(|(_, tile)| {
-                    tile.building.is_none()
-                        && (tile.mesh.is_none()
-                            || tile.dirty
-                                && tile.last_build.is_none_or(|last| {
-                                    now.saturating_duration_since(last) >= TILE_REBUILD_INTERVAL
-                                }))
+                .filter(|&&key| {
+                    self.selected.get(&key).is_some_and(|tile| {
+                        tile.building.is_none()
+                            && (tile.mesh.is_none()
+                                || tile.dirty
+                                    && tile.last_build.is_none_or(|last| {
+                                        now.saturating_duration_since(last) >= TILE_REBUILD_INTERVAL
+                                    }))
+                    })
                 })
-                .map(|(key, _)| *key)
+                .copied()
                 .take(MAX_TILE_BUILDS.saturating_sub(self.in_flight)),
         );
         let mut budget = TILE_BUILD_COLUMNS_PER_UPDATE;
@@ -184,12 +207,14 @@ impl FarTiles {
     /// Forgets every tile, as when the namespace changes.
     pub fn clear(&mut self) {
         self.selected.clear();
+        self.pending.clear();
         self.retired.clear();
         self.view = None;
         self.revision += 1;
     }
 
     fn start_build(&mut self, key: TileKey, store: &mut SummaryStore, now: Instant) {
+        self.pending.remove(&key);
         // The ring of columns around the tile sets how far its edge skirts reach down.
         let [x, z] = key
             .origin()
@@ -260,3 +285,6 @@ fn overlaps(a: TileKey, b: TileKey) -> bool {
     let ([bx, bz], bw) = (b.origin(), b.width_blocks());
     ax < bx + bw && bx < ax + aw && az < bz + bw && bz < az + aw
 }
+
+#[cfg(test)]
+mod scheduling_tests;

@@ -303,7 +303,7 @@ impl WorldStream {
     pub(super) fn mark_changed_light_mesh_dependents(
         &mut self,
         source: SubChunkKey,
-        changed_faces: [bool; 6],
+        changed: world::LightChangeMask,
         now: Instant,
         urgent: bool,
     ) {
@@ -311,9 +311,7 @@ impl WorldStream {
             let dx = dependent.x - source.x;
             let dy = dependent.y - source.y;
             let dz = dependent.z - source.z;
-            let samples_changed_light = (dx == 0 || changed_faces[usize::from(dx > 0)])
-                && (dy == 0 || changed_faces[2 + usize::from(dy > 0)])
-                && (dz == 0 || changed_faces[4 + usize::from(dz > 0)]);
+            let samples_changed_light = changed.contains([dx, dy, dz]);
             if samples_changed_light
                 && self.resident.contains(&dependent)
                 && self.authority.terrain().sub_chunk(dependent).is_some()

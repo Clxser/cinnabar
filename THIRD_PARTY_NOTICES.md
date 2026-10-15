@@ -359,6 +359,15 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 <!-- END DRAGONFLY-MIT -->
 
+## Vendored wgpu-hal graphics backend
+
+- Source: https://github.com/bedrock-mc/wgpu, commit
+  `9686723e5deb6341cf9f088515ced3c8e6fe4f29`, derived from gfx-rs/wgpu.
+- Package: `wgpu-hal` 30.0.1, with Cinnabar's Vulkan latency integration.
+- License: MIT OR Apache-2.0. Both upstream license texts are retained in
+  `third_party/wgpu-hal/LICENSE.MIT` and `third_party/wgpu-hal/LICENSE.APACHE`.
+- Provenance and local modifications: `third_party/wgpu-hal/UPSTREAM.md`.
+
 ## redb persistent blob storage
 
 - Source: https://github.com/cberner/redb

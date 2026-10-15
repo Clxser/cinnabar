@@ -111,10 +111,20 @@ fn light_churn_supersedes_pending_mesh_in_place() {
     stream
         .mesh_cancellations
         .insert(key, Arc::clone(&cancelled));
-    stream.mark_changed_light_mesh_dependents(key, [true; 6], Instant::now(), false);
+    stream.mark_changed_light_mesh_dependents(
+        key,
+        world::LightChangeMask::ALL,
+        Instant::now(),
+        false,
+    );
     let successor = stream.mesh_jobs.pending[&key];
     for _ in 0..100 {
-        stream.mark_changed_light_mesh_dependents(key, [true; 6], Instant::now(), true);
+        stream.mark_changed_light_mesh_dependents(
+            key,
+            world::LightChangeMask::ALL,
+            Instant::now(),
+            true,
+        );
     }
     assert!(cancelled.load(Ordering::Acquire));
     assert_ne!(successor.revision, revision);

@@ -20,7 +20,7 @@ type FarTerrainQuery = (
     &'static FarTerrainView,
 );
 
-/// One instanced draw per visible tile; no pass at all when nothing is visible.
+/// Batches visible tile draws where supported; an empty set opens no pass.
 pub(super) fn far_terrain(
     world: &World,
     query: bevy::render::renderer::ViewQuery<FarTerrainQuery>,
@@ -64,11 +64,15 @@ pub(super) fn far_terrain(
     pass.set_render_pipeline(pipeline);
     pass.set_bind_group(0, bind_group, &[offset.offset]);
     pass.set_bind_group(1, &lightmap.bind_group, &[]);
-    for draw in &state.visible {
-        pass.draw(
-            draw.quads.start * 6..draw.quads.end * 6,
-            draw.slot..draw.slot + 1,
-        );
+    if let Some(indirect) = &state.indirect {
+        pass.multi_draw_indirect(indirect, 0, state.visible.len() as u32);
+    } else {
+        for draw in &state.visible {
+            pass.draw(
+                draw.quads.start * 6..draw.quads.end * 6,
+                draw.slot..draw.slot + 1,
+            );
+        }
     }
     Ok(())
 }

@@ -96,8 +96,8 @@ impl UiPresentationRuntime {
         {
             return Ok(true);
         }
-        let mut frame = self.hud_frame.clone();
-        frame.now_millis = now_millis;
+        self.hud_frame.now_millis = now_millis;
+        let frame = &self.hud_frame;
         let mut icons = Vec::new();
         let model = if crosshair {
             None
@@ -112,14 +112,7 @@ impl UiPresentationRuntime {
                 sidebar
             };
             let options = self.screens.chat.settings.options();
-            let mut model = hud_model(
-                player_runtime,
-                runtime,
-                &frame,
-                sidebar,
-                &mut icons,
-                options,
-            );
+            let mut model = hud_model(player_runtime, runtime, frame, sidebar, &mut icons, options);
             if self.screens.mod_ui.mod_effect_icons_hidden() {
                 model.effects_visible = false;
             }
@@ -134,7 +127,7 @@ impl UiPresentationRuntime {
         let mut paint = hud_layout::capture_hud_paint(
             player_runtime,
             runtime,
-            &frame,
+            frame,
             self.hud_textures.as_ref(),
             self.screens.chat.settings.options(),
         );

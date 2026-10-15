@@ -7,14 +7,14 @@ use bevy::log::info;
 use bevy::prelude::ResMut;
 use chunk_pipeline::WorldStream;
 use client_runtime::{
-    ingress::{WORLD_INGRESS_DRAIN_BUDGET, WorldIngressDrain},
+    ingress::{IngressDecodeBatch, WorldIngressDrain},
     inventory::{route_inventory_ingress, route_item_registry_ingress},
     network::NetworkHandle,
 };
 use client_shell::ui_resources::UiRuntimeResource;
 use client_state::PlayerRuntime;
 use protocol::WorldEvent;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 #[cfg(feature = "acceptance")]
 use {
     crate::runtime::visibility::AppMetrics,
@@ -36,11 +36,13 @@ pub(super) fn drain(
     client_world: &mut ClientWorld,
     player_runtime: &mut ResMut<PlayerRuntime>,
     ui_runtime: &mut ResMut<UiRuntimeResource>,
+    budget: Duration,
     #[cfg(feature = "acceptance")] acceptance: &mut ResMut<AcceptanceRun>,
     #[cfg(feature = "acceptance")] metrics: &AppMetrics,
     #[cfg(feature = "acceptance")] model_witness_source: &ModelWitnessFileSource,
 ) {
-    let mut drain = WorldIngressDrain::new(Instant::now() + WORLD_INGRESS_DRAIN_BUDGET);
+    let mut drain = WorldIngressDrain::new(Instant::now() + budget);
+    let mut decode_batch = IngressDecodeBatch::default();
     loop {
         let (receiver, pending) = network.world_ingress_mut();
         let Some(ingress) = drain.next(
@@ -115,7 +117,9 @@ pub(super) fn drain(
                     stream.schedule_source_capture(sequence);
                 }
                 let submitted = stream.submit_level_chunk_bytes(sequence, event, payload);
-                stream.dispatch_ingress_decode();
+                if decode_batch.submitted() {
+                    stream.dispatch_ingress_decode();
+                }
                 if let Err(error) = submitted {
                     record_fatal_error(
                         &mut client_world.fatal_error,
@@ -148,6 +152,9 @@ pub(super) fn drain(
                     );
                     continue;
                 };
+                if decode_batch.finish() {
+                    stream.dispatch_ingress_decode();
+                }
                 if let Err(error) = stream.commit_barrier(sequence) {
                     record_fatal_error(
                         &mut client_world.fatal_error,
@@ -205,12 +212,17 @@ pub(super) fn drain(
             &sequenced,
         );
         let submitted = stream.submit(sequenced.sequence.get(), sequenced.event);
-        stream.dispatch_ingress_decode();
+        if decode_batch.submitted() {
+            stream.dispatch_ingress_decode();
+        }
         if let Err(error) = submitted {
             client_world.fatal_error = Some(format!("world FIFO rejected data: {error}"));
         }
     }
     if let Some(stream) = client_world.stream.as_mut() {
+        if decode_batch.finish() {
+            stream.dispatch_ingress_decode();
+        }
         client_runtime::item_diagnostics::equipment(stream.take_equipment_notices());
     }
 }

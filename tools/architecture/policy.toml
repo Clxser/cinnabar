@@ -52,6 +52,11 @@ path = "crates/protocol/vendor/"
 ownership_record = "crates/protocol/vendor/UPSTREAM.md"
 owner = "protocol"
 
+[[vendored]]
+path = "third_party/wgpu-hal/"
+ownership_record = "third_party/wgpu-hal/UPSTREAM.md"
+owner = "render"
+
 [[crates]]
 name = "bridge"
 path = "crates/bridge"
@@ -100,13 +105,21 @@ test_support_features = ["test-support"]
 name = "world"
 path = "crates/world"
 test_support_features = ["runtime-profile", "benchmark-mimalloc"]
-allowed_dependencies = []
+allowed_dependencies = ["simd-kernels"]
 forbidden_dependencies = ["asset-compiler", "assets", "bevy", "wgpu"]
+
+# Allocation-free integer kernels with runtime CPU dispatch and scalar fallbacks.
+[[crates]]
+name = "simd-kernels"
+path = "crates/simd-kernels"
+allowed_dependencies = []
+dependency_free = true
+forbidden_dependencies = ["bevy", "wgpu"]
 
 [[crates]]
 name = "assets"
 path = "crates/assets"
-allowed_dependencies = ["env-compat", "block-transform", "protocol-ids"]
+allowed_dependencies = ["env-compat", "block-transform", "protocol-ids", "simd-kernels"]
 forbidden_dependencies = ["asset-compiler", "bevy", "clap", "image", "wgpu", "diagnostics", "pack-runtime", "render", "render-model"]
 forbidden_transitive_dependencies = ["protocol", "tokio", "bevy", "bevy_*", "wgpu"]
 test_support_features = ["test-support"]
@@ -127,7 +140,7 @@ forbidden_dependencies = ["asset-compiler", "bevy", "wgpu"]
 name = "meshing"
 path = "crates/meshing"
 test_support_features = ["benchmark-mimalloc"]
-allowed_dependencies = ["assets", "block-transform", "world"]
+allowed_dependencies = ["assets", "block-transform", "world", "simd-kernels"]
 forbidden_dependencies = ["asset-compiler", "bevy", "wgpu"]
 
 [[crates]]
@@ -229,7 +242,7 @@ test_support_features = ["test-support"]
 name = "launcher"
 path = "crates/launcher"
 test_support_features = ["test-support"]
-allowed_dependencies = ["assets", "bridge", "json-ui", "render-api", "resource-pack", "semantic-input", "ui", "update-manifest"]
+allowed_dependencies = ["assets", "bridge", "json-ui", "reflex", "render-api", "resource-pack", "semantic-input", "ui", "update-manifest"]
 forbidden_dependencies = ["protocol", "server-experience"]
 forbidden_transitive_dependencies = ["app", "cinnabar", "client-ui", "player-state", "inventory", "client-world", "world", "sim", "render", "asset-compiler", "pack-compiler", "pack-compile-input", "pack-entity-compiler", "pack-font-compiler", "bevy", "bevy_*", "wgpu*"]
 
@@ -355,7 +368,7 @@ dependency_free = true
 name = "render-model"
 path = "crates/render-model"
 test_support_features = ["test-support"]
-allowed_dependencies = ["simulation-clock", "block-transform", "mod-api", "assets", "render-api", "world"]
+allowed_dependencies = ["simulation-clock", "block-transform", "mod-api", "assets", "render-api", "world", "simd-kernels"]
 forbidden_dependencies = ["asset-compiler", "bevy", "wgpu"]
 forbidden_transitive_dependencies = ["app", "cinnabar", "render", "protocol", "client-world", "chunk-pipeline", "bevy", "bevy_*", "wgpu*"]
 
@@ -379,15 +392,21 @@ test_support_features = ["publication-test-support"]
 name = "render"
 path = "crates/render"
 test_support_features = ["publication-test-support"]
-allowed_dependencies = ["env-compat", "render-scene", "assets", "block-transform", "far-terrain", "meshing", "mod-api", "mod-render", "particles", "render-api", "render-model", "tracy-client", "world", "test-time"]
+allowed_dependencies = ["env-compat", "render-scene", "assets", "block-transform", "far-terrain", "meshing", "mod-api", "mod-render", "particles", "reflex", "render-api", "render-model", "tracy-client", "world", "test-time"]
 forbidden_dependencies = ["asset-compiler"]
 # Also reject game-state edges hidden behind another local crate or test dependency.
 forbidden_transitive_dependencies = ["client-world", "chunk-pipeline", "protocol"]
 
 [[crates]]
+name = "reflex"
+path = "crates/reflex"
+allowed_dependencies = []
+forbidden_dependencies = ["asset-compiler", "bevy", "wgpu"]
+
+[[crates]]
 name = "app"
 path = "app"
-allowed_dependencies = ["pack-json", "env-compat", "simulation-clock", "actor-animation", "render-scene", "client-shell", "client-interaction", "client-runtime", "client-extensions", "client-state", "first-run", "launcher-host", "bridge", "experience-sdk", "mod-api", "mod-render", "acceptance", "assets", "block-transform", "chunk-pipeline", "far-terrain", "client-presentation", "client-session", "client-ui", "client-world", "developer-control", "diagnostics", "gameplay", "gilrs", "inventory", "json-ui", "launcher", "libc", "meshing", "mimalloc", "mod-host", "objc2", "objc2-app-kit", "objc2-foundation", "objc2-quartz-core", "oreui", "pack-compiler", "pack-compile-input", "pack-entity-compiler", "particles", "player-state", "protocol", "raw-window-handle", "render", "render-api", "render-model", "resource-pack", "rich-presence", "semantic-input", "server-experience", "sim", "tracing-tracy", "ui", "ui-engine", "ui-screens", "mod-ui", "update-manifest", "world", "test-time", "pack-runtime", "client-audio", "protocol-ids"]
+allowed_dependencies = ["pack-json", "env-compat", "simulation-clock", "actor-animation", "render-scene", "client-shell", "client-interaction", "client-runtime", "client-extensions", "client-state", "first-run", "launcher-host", "bridge", "experience-sdk", "mod-api", "mod-render", "acceptance", "assets", "block-transform", "chunk-pipeline", "far-terrain", "client-presentation", "client-session", "client-ui", "client-world", "developer-control", "diagnostics", "gameplay", "gilrs", "inventory", "json-ui", "launcher", "libc", "meshing", "mimalloc", "mod-host", "objc2", "objc2-app-kit", "objc2-foundation", "objc2-quartz-core", "oreui", "pack-compiler", "pack-compile-input", "pack-entity-compiler", "particles", "player-state", "protocol", "raw-window-handle", "reflex", "render", "render-api", "render-model", "resource-pack", "rich-presence", "semantic-input", "server-experience", "sim", "tracing-tracy", "ui", "ui-engine", "ui-screens", "mod-ui", "update-manifest", "world", "test-time", "pack-runtime", "client-audio", "protocol-ids", "simd-kernels"]
 forbidden_dependencies = ["asset-compiler"]
 forbidden_transitive_dependencies = ["asset-compiler"]
 
@@ -480,7 +499,7 @@ forbidden_dependencies = ["bevy", "wgpu", "protocol", "world"]
 [[crates]]
 name = "ui"
 path = "crates/ui"
-allowed_dependencies = ["json-ui", "assets", "render-api", "semantic-input"]
+allowed_dependencies = ["json-ui", "assets", "reflex", "render-api", "semantic-input"]
 forbidden_dependencies = ["asset-compiler", "bevy", "wgpu"]
 
 # The portable JSON-UI engine; hosts supply reads, the clock and worker threads through its sources.

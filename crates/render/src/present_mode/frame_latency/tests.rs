@@ -24,9 +24,8 @@ impl HasDisplayHandle for TestWindow {
 }
 
 /// Creates matching main/render windows and a retained output attachment on the NOOP device.
-fn worlds(vsync: bool) -> (World, Entity, NormalizedRenderTarget) {
+fn worlds(latency: Option<NonZeroU32>) -> (World, Entity, NormalizedRenderTarget) {
     let mut main = MainWorld::default();
-    let latency = Some(frame_latency_for_vsync(vsync));
     let entity = main
         .spawn(Window {
             desired_maximum_frame_latency: latency,
@@ -90,11 +89,13 @@ fn worlds(vsync: bool) -> (World, Entity, NormalizedRenderTarget) {
     (world, render_entity, target)
 }
 
-/// Both toggle directions invalidate retained outputs even when the present mode is unchanged.
+/// Real latency changes invalidate retained outputs even when the present mode is unchanged.
 #[test]
 fn live_frame_latency_changes_release_cached_surface_outputs() {
-    for initial_vsync in [false, true] {
-        let (mut world, entity, target) = worlds(initial_vsync);
+    let triple = Some(TRIPLE_BUFFER_QUEUED_FRAMES);
+    let single = Some(NonZeroU32::MIN);
+    for (initial, next) in [(None, triple), (single, triple), (triple, single)] {
+        let (mut world, entity, target) = worlds(initial);
         world.run_system_once(extract_frame_latency).unwrap();
         world.run_system_once(recreate_surfaces).unwrap();
         assert!(
@@ -112,14 +113,11 @@ fn live_frame_latency_changes_release_cached_surface_outputs() {
             .entity_mut(main_entity)
             .get_mut::<Window>()
             .unwrap()
-            .desired_maximum_frame_latency = Some(frame_latency_for_vsync(!initial_vsync));
+            .desired_maximum_frame_latency = next;
         world.run_system_once(extract_frame_latency).unwrap();
         world.run_system_once(recreate_surfaces).unwrap();
         let extracted = world.get::<ExtractedWindow>(entity).unwrap();
-        assert_eq!(
-            extracted.desired_maximum_frame_latency,
-            Some(frame_latency_for_vsync(!initial_vsync))
-        );
+        assert_eq!(extracted.desired_maximum_frame_latency, next);
         assert!(extracted.swap_chain_texture_view.is_none());
         assert!(
             !world
@@ -128,4 +126,10 @@ fn live_frame_latency_changes_release_cached_surface_outputs() {
         );
         assert!(!world.resource::<ChangedFrameLatency>().0);
     }
+}
+
+#[test]
+fn vsync_policy_changes_keep_the_triple_buffer_hint() {
+    assert_eq!(frame_latency_for_vsync(false), TRIPLE_BUFFER_QUEUED_FRAMES);
+    assert_eq!(frame_latency_for_vsync(true), TRIPLE_BUFFER_QUEUED_FRAMES);
 }

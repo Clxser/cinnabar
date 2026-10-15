@@ -53,6 +53,7 @@ impl MenuRuntime {
             fullscreen: self.fullscreen,
             render_mode: self.render_mode,
             vsync_override: self.vsync_override,
+            reflex_gpu_available: self.reflex_gpu_available,
             display_name: self.presented_display_name(),
             servers: self.servers.clone(),
             featured: self.featured.clone(),

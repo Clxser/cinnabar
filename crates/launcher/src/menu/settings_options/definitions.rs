@@ -52,6 +52,34 @@ pub const VRR_CHOICES: &[SettingChoice] = &[
 /// Automatic uses reliable platform reports; On declares VRR enabled by the player.
 pub const VRR_OPTION: SettingDefinition = SettingId::Vrr.definition();
 
+/// NVIDIA Reflex choices shared by the persisted setting and the Video selector.
+pub const REFLEX_CHOICES: &[SettingChoice] = &[
+    SettingChoice {
+        name: "reflex_radio_off",
+        label: reflex::Mode::Off.label(),
+    },
+    SettingChoice {
+        name: "reflex_radio_on",
+        label: reflex::Mode::On.label(),
+    },
+    SettingChoice {
+        name: "reflex_radio_on_boost",
+        label: reflex::Mode::OnBoost.label(),
+    },
+];
+
+const _: () = {
+    assert!(REFLEX_CHOICES.len() == reflex::Mode::ALL.len());
+    let mut index = 0;
+    while index < reflex::Mode::ALL.len() {
+        assert!(reflex::Mode::ALL[index].index() == index as i32);
+        index += 1;
+    }
+};
+
+/// NVIDIA Reflex is available only on supported NVIDIA Vulkan adapters.
+pub const REFLEX_OPTION: SettingDefinition = SettingId::Reflex.definition();
+
 /// Ordered animation choices shared by the registry and the Video selector.
 pub const ANIMATION_CHOICES: &[SettingChoice] = &[
     SettingChoice {
@@ -413,6 +441,8 @@ settings! {
         [(SettingPanel::VideoGraphics, 2)], [SettingsGroup::Video], None, None;
     Vrr => "vrr", dropdown("Variable Refresh Rate", VRR_CHOICES, render_api::VrrPreference::Automatic as i32),
         [(SettingPanel::VideoGraphics, 3)], [SettingsGroup::Video], None, None;
+    Reflex => "reflex", dropdown("NVIDIA Reflex", REFLEX_CHOICES, reflex::Mode::Off.index()),
+        [(SettingPanel::VideoGraphics, 12)], [SettingsGroup::Video], None, None;
     FieldOfView => "field_of_view", slider("options.fov", ui::MIN_FOV_DEGREES, ui::MAX_FOV_DEGREES, ui::DEFAULT_FOV_DEGREES),
         [(SettingPanel::VideoGeneral, 0)], [SettingsGroup::Video], None, Some("options.fov.name");
     Gamma => "gamma", slider("options.gamma", 0, 100, 50),

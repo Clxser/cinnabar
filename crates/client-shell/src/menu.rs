@@ -125,6 +125,7 @@ pub struct MenuRuntime {
     render_mode: RenderMode,
     render_mode_request: Option<RenderMode>,
     vsync_override: Option<bool>,
+    reflex_gpu_available: bool,
     display_name: String,
     launcher: bool,
     servers: Vec<SavedServer>,
@@ -243,6 +244,11 @@ impl MenuRuntime {
     pub const fn with_vsync_override(mut self, vsync: Option<bool>) -> Self {
         self.vsync_override = vsync;
         self
+    }
+
+    /// Publishes whether the renderer found the GPU class targeted by NVIDIA Reflex.
+    pub fn set_reflex_gpu_available(&mut self, available: bool) {
+        self.reflex_gpu_available = available;
     }
 
     /// Consume the pending Video-section change.

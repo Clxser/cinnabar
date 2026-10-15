@@ -9,6 +9,7 @@ publish = false
 json-ui = { path = "../json-ui" }
 assets = { path = "../assets" }
 render-api = { path = "../render-api" }
+reflex = { path = "../reflex" }
 semantic-input = { path = "../input" }
 sha2.workspace = true
 serde = { version = "1", features = ["derive"] }

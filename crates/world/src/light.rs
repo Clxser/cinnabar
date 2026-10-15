@@ -5,6 +5,9 @@ use thiserror::Error;
 
 use crate::{ChunkKey, SubChunkKey};
 
+mod change_mask;
+pub use change_mask::LightChangeMask;
+
 #[cfg(test)]
 thread_local! {
     static PACKED_ALLOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -53,7 +56,7 @@ impl LightNibbleStorage {
     fn from_packed(bytes: [u8; PACKED_LIGHT_BYTES]) -> Self {
         let first = bytes[0] & 0x0f;
         let repeated = first | (first << 4);
-        let representation = if bytes.iter().all(|&byte| byte == repeated) {
+        let representation = if simd_kernels::all_equal_u8(&bytes, repeated) {
             LightNibbleRepresentation::Uniform(first)
         } else {
             LightNibbleRepresentation::Packed(allocate_packed(bytes))
@@ -161,7 +164,7 @@ impl LightNibbleStorage {
         };
         let first = bytes[0] & 0x0f;
         let repeated = first | (first << 4);
-        if bytes.iter().all(|&byte| byte == repeated) {
+        if simd_kernels::all_equal_u8(bytes.as_ref(), repeated) {
             self.representation = LightNibbleRepresentation::Uniform(first);
         }
     }
@@ -362,6 +365,12 @@ pub struct SubChunkLight {
 }
 
 impl SubChunkLight {
+    /// Compares channel values independently of the solve generation.
+    #[must_use]
+    pub fn same_levels(&self, previous: &Self) -> bool {
+        self.block == previous.block && self.sky == previous.sky
+    }
+
     /// Packs completed channels without allocating for a uniform result.
     pub(crate) fn from_packed(
         block: [u8; PACKED_LIGHT_BYTES],

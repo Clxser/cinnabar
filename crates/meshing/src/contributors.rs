@@ -655,19 +655,11 @@ fn unpacked_indices(storage: &PalettedStorage) -> Option<Box<[u16]>> {
     }
     let values_per_word = 32 / bits;
     let words = storage.packed_words();
-    if words.len() * values_per_word < voxels {
+    if words.len() < voxels.div_ceil(values_per_word) {
         return None;
     }
-    let mask = (1_u32 << bits) - 1;
-    let mut indices = Vec::with_capacity(voxels);
-    'words: for &word in words {
-        for slot in 0..values_per_word {
-            if indices.len() == voxels {
-                break 'words;
-            }
-            indices.push(((word >> (slot * bits)) & mask) as u16);
-        }
-    }
+    let mut indices = vec![0; voxels];
+    simd_kernels::unpack_indices_u16(words, bits as u8, &mut indices);
     Some(indices.into_boxed_slice())
 }
 

@@ -340,12 +340,10 @@ fn validate(
                 && texture.pixel_sha256 != <[u8; 32]>::from(Sha256::digest(&texture.rgba8)))
             || (!native_actor_texture_preserves_fractional_alpha(source)
                 && !dissolve_masks.contains(&texture.source)
-                && texture
-                    .rgba8
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .any(|pixel| !matches!(pixel[3], 0 | 255)))
+                && !simd_kernels::rgba_alpha_matches(
+                    &texture.rgba8,
+                    simd_kernels::AlphaPolicy::Binary,
+                ))
             || !seen_sources.insert(texture.source)
         {
             return Err(invalid("actor pixels or raster provenance are invalid"));

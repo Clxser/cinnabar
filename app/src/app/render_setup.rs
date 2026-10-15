@@ -86,9 +86,9 @@ mod tests {
     }
 
     #[test]
-    fn primary_window_queues_one_frame_with_vsync_and_two_without() {
+    fn primary_window_queues_two_frames_for_triple_buffering() {
         // Windows request FIFO until the surface is probed, whatever VSync choice they serve.
-        for (vsync, queued) in [(true, 1), (false, 2)] {
+        for vsync in [true, false] {
             let window = primary_window(
                 String::new(),
                 PresentMode::Fifo,
@@ -96,7 +96,7 @@ mod tests {
             );
             assert_eq!(
                 window.desired_maximum_frame_latency.map(NonZeroU32::get),
-                Some(queued)
+                Some(render::TRIPLE_BUFFER_QUEUED_FRAMES.get())
             );
             assert_eq!(window.present_mode, PresentMode::Fifo);
             assert_eq!(

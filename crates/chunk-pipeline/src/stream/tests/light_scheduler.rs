@@ -244,10 +244,34 @@ fn synthetic_light_completion(
             light_levels_changed,
             direct_sky_changed,
             changed_faces,
+            mesh_changes: if light_levels_changed {
+                mesh_mask_for_faces(changed_faces)
+            } else {
+                world::LightChangeMask::EMPTY
+            },
         }),
         queue_wait: Duration::ZERO,
         duration: Duration::from_millis(3),
     }
+}
+
+/// Fixture changes at the intersections of the named faces preserve its conservative scenario.
+fn mesh_mask_for_faces(faces: [bool; 6]) -> world::LightChangeMask {
+    let before = SubChunkLight::dark(0);
+    let mut after = before.clone();
+    for x in [0, 8, 15] {
+        for y in [0, 8, 15] {
+            for z in [0, 8, 15] {
+                let allowed = [x, y, z].into_iter().enumerate().all(|(axis, coordinate)| {
+                    coordinate == 8 || faces[axis * 2 + usize::from(coordinate == 15)]
+                });
+                if allowed {
+                    after.set(LightChannel::Block, x, y, z, 1).unwrap();
+                }
+            }
+        }
+    }
+    after.mesh_changes_since(Some(&before))
 }
 
 mod air_fixed_point;

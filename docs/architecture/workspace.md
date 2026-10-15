@@ -73,6 +73,7 @@ coordinates work that crosses these owners.
 | `crates/sim` | `sim` | Deterministic movement, collision and prediction; use its simulator with caller-supplied world queries. | `gameplay` chooses actions; `client-interaction` drives ticks; `world` supplies block state. |
 | `crates/input` | `semantic-input` | Device-independent actions, bindings and finalized input; use semantic snapshots instead of raw device events. | `client-shell` reads devices; `client-interaction` consumes actions; UI owns modal input routing. |
 | `crates/env-compat` | `env-compat` | Reads `CINNABAR_*` environment variables, accepting their pre-rename `RUST_MCBE_*` spelling with a one-time warning; use its `var` and `var_os` for those variables. | Each variable's name stays a constant with its owner, such as `diagnostics::markers`. |
+| `crates/simd-kernels` | `simd-kernels` | Dependency-free bounded integer kernels for packed indices, masks, nibble pairs and RGBA alpha; use checked slice APIs with runtime AVX2/SSE2 dispatch and scalar fallbacks. | `world`, `meshing`, `assets` and `render-model` own the data layouts; `app` selects the diagnostic override before workers start. |
 | `crates/simulation-clock` | `simulation-clock` | Shared simulation tick values and duration conversion; use its tick constants and conversion function. | Callers supply elapsed time; world and gameplay owners advance their own state. |
 | `crates/block-transform` | `block-transform` | Position-dependent block offsets and rotations; use its transforms for consistent geometry and queries. | `assets` describes blocks; `meshing` and `sim` consume their transformed shapes. |
 | `crates/actor-animation` | `actor-animation` | Actor rigs, Molang evaluation, controllers and poses; use its animation evaluation over actor observations. | `client-world` owns actor authority; `client-presentation` prepares frames. |
@@ -137,6 +138,7 @@ the prepared visual data to the GPU.
 | `crates/render-model` | `render-model` | Engine-free render data and CPU geometry for actors, equipment and text; use its frame and geometry types. | `client-presentation` prepares data; `render-scene` carries submissions; `render` owns GPU work. |
 | `crates/render-scene` | `render-scene` | Shared ECS render submission resources and frame acknowledgments; use these at the presentation/backend boundary. | `render-model` defines CPU data; `client-presentation` publishes; `render` consumes it. |
 | `crates/render` | `render` | Bevy/wgpu terrain, actor and UI rendering; install its GPU plugins and submit prepared frames. | `meshing` builds CPU terrain; `client-presentation` prepares actors; `client-ui` prepares UI. |
+| `crates/reflex` | `reflex` | Vendor-neutral frame latency modes, capability reports and native pacing markers. | `render` owns the renderer backend that can provide a pre-swapchain Vulkan latency hook. |
 
 ### Launcher and services
 

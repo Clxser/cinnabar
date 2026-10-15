@@ -110,7 +110,7 @@ impl UiPresentationRuntime {
     ) -> UiRenderInput {
         if let Some(previous) = &self.last_input {
             input.revision = previous.revision;
-            if *previous == input {
+            if previous.shares_buffers(&input) || *previous == input {
                 return previous.clone();
             }
         }

@@ -29,6 +29,31 @@ use super::SHADER;
 const QUAD_BYTES: u64 = 8;
 const TILE_RECORD_BYTES: u64 = 16;
 const MASK_HEADER_WORDS: usize = 4;
+type FarIndirectArgs = [u32; 4];
+
+/// Requires Vulkan's indirect instance offsets; other backends retain direct draws.
+pub(super) fn indirect_supported(features: wgpu::Features, backend: wgpu::Backend) -> bool {
+    backend == wgpu::Backend::Vulkan
+        && features.contains(
+            wgpu::Features::INDIRECT_FIRST_INSTANCE | wgpu::Features::MULTI_DRAW_INDIRECT_COUNT,
+        )
+}
+
+/// Non-indexed draw words preserve the direct path's vertex range and tile instance slot.
+fn indirect_args(draw: &FarDraw) -> FarIndirectArgs {
+    [
+        (draw.quads.end - draw.quads.start) * 6,
+        1,
+        draw.quads.start * 6,
+        draw.slot,
+    ]
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct CullKey {
+    clip_from_world: [f32; 16],
+    draws_revision: u64,
+}
 
 struct Resident {
     mesh: Arc<TileMesh>,
@@ -60,12 +85,14 @@ pub(crate) struct FarTerrainGpu {
     applied_tiles: Option<Arc<[Arc<TileMesh>]>>,
     applied_mask: Option<Arc<NearMask>>,
     pub(super) draws: Vec<FarDraw>,
+    draws_revision: u64,
+    indirect: bool,
     layout: BindGroupLayoutDescriptor,
     pipelines: Vec<((TextureFormat, u32), CachedRenderPipelineId)>,
 }
 
 impl FarTerrainGpu {
-    pub(super) fn new(device: &RenderDevice) -> Self {
+    pub(super) fn new(device: &RenderDevice, indirect: bool) -> Self {
         let storage = |binding| BindGroupLayoutEntry {
             binding,
             visibility: ShaderStages::VERTEX,
@@ -127,6 +154,8 @@ impl FarTerrainGpu {
             applied_tiles: None,
             applied_mask: None,
             draws: Vec::new(),
+            draws_revision: 0,
+            indirect,
             layout,
             pipelines: Vec::new(),
         }
@@ -213,18 +242,21 @@ impl FarTerrainGpu {
                 },
             );
         }
-        self.draws = tiles
-            .iter()
-            .filter(|mesh| !mesh.quads.is_empty() && self.resident.contains_key(&mesh.key))
-            .map(|mesh| {
-                let resident = &self.resident[&mesh.key];
-                FarDraw {
-                    slot: resident.slot,
-                    quads: resident.quads.clone(),
-                    bounds: tile_bounds(mesh),
-                }
-            })
-            .collect();
+        self.draws.clear();
+        self.draws.extend(
+            tiles
+                .iter()
+                .filter(|mesh| !mesh.quads.is_empty() && self.resident.contains_key(&mesh.key))
+                .map(|mesh| {
+                    let resident = &self.resident[&mesh.key];
+                    FarDraw {
+                        slot: resident.slot,
+                        quads: resident.quads.clone(),
+                        bounds: tile_bounds(mesh),
+                    }
+                }),
+        );
+        self.draws_revision = self.draws_revision.wrapping_add(1);
     }
 
     fn upload(&mut self, queue: &RenderQueue, mesh: &TileMesh, slot: u32, quads: &Range<u32>) {
@@ -489,6 +521,46 @@ pub(crate) struct FarTerrainView {
     pub(super) pipeline: CachedRenderPipelineId,
     pub(super) visible: Vec<FarDraw>,
     pub(super) bind_group: Option<(BindGroupKey, BindGroup)>,
+    cull_key: Option<CullKey>,
+    pub(super) indirect: Option<Buffer>,
+    indirect_capacity: u64,
+    uploaded_draws: Vec<FarIndirectArgs>,
+}
+
+impl FarTerrainView {
+    /// Keeps the visible draw commands resident; unchanged camera and terrain perform no upload.
+    fn upload_indirect(&mut self, device: &RenderDevice, queue: &RenderQueue) {
+        if self.uploaded_draws.len() == self.visible.len()
+            && self
+                .uploaded_draws
+                .iter()
+                .zip(&self.visible)
+                .all(|(args, draw)| *args == indirect_args(draw))
+        {
+            return;
+        }
+        self.uploaded_draws.clear();
+        self.uploaded_draws
+            .extend(self.visible.iter().map(indirect_args));
+        if self.uploaded_draws.is_empty() {
+            return;
+        }
+        let bytes = bytemuck::cast_slice(&self.uploaded_draws);
+        if self.indirect.is_none() || self.indirect_capacity < bytes.len() as u64 {
+            self.indirect_capacity = (bytes.len() as u64).next_power_of_two();
+            self.indirect = Some(device.create_buffer(&BufferDescriptor {
+                label: Some("far terrain indirect draws"),
+                size: self.indirect_capacity,
+                usage: BufferUsages::INDIRECT | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+        }
+        queue.write_buffer(
+            self.indirect.as_ref().expect("indirect buffer was ensured"),
+            0,
+            bytes,
+        );
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -519,6 +591,7 @@ pub(super) fn prepare_far_terrain_views(
     device: Res<RenderDevice>,
     cache: Res<PipelineCache>,
     view_uniforms: Res<ViewUniforms>,
+    queue: Res<RenderQueue>,
     mut gpu: ResMut<FarTerrainGpu>,
     mut views: FarViews,
 ) {
@@ -527,6 +600,7 @@ pub(super) fn prepare_far_terrain_views(
         for (.., state) in &mut views {
             if let Some(mut state) = state {
                 state.visible.clear();
+                state.cull_key = None;
             }
         }
         return;
@@ -553,6 +627,10 @@ pub(super) fn prepare_far_terrain_views(
                     pipeline,
                     visible: Vec::new(),
                     bind_group: None,
+                    cull_key: None,
+                    indirect: None,
+                    indirect_capacity: 0,
+                    uploaded_draws: Vec::new(),
                 });
                 continue;
             }
@@ -561,18 +639,28 @@ pub(super) fn prepare_far_terrain_views(
         let clip_from_world = view
             .clip_from_world
             .unwrap_or_else(|| view.clip_from_view * view.world_from_view.to_matrix().inverse());
-        let frustum = Frustum(bevy::shape::ViewFrustum::from_clip_from_world(
-            &clip_from_world,
-        ));
-        state.visible.clear();
-        state.visible.extend(
-            gpu.draws
-                .iter()
-                .filter(|draw| {
-                    frustum.intersects_obb(&draw.bounds, &Affine3A::IDENTITY, true, false)
-                })
-                .cloned(),
-        );
+        let cull_key = CullKey {
+            clip_from_world: clip_from_world.to_cols_array(),
+            draws_revision: gpu.draws_revision,
+        };
+        if state.cull_key != Some(cull_key) {
+            let frustum = Frustum(bevy::shape::ViewFrustum::from_clip_from_world(
+                &clip_from_world,
+            ));
+            state.visible.clear();
+            state.visible.extend(
+                gpu.draws
+                    .iter()
+                    .filter(|draw| {
+                        frustum.intersects_obb(&draw.bounds, &Affine3A::IDENTITY, true, false)
+                    })
+                    .cloned(),
+            );
+            state.cull_key = Some(cull_key);
+            if gpu.indirect {
+                state.upload_indirect(&device, &queue);
+            }
+        }
         if state.visible.is_empty()
             || state
                 .bind_group
@@ -614,6 +702,25 @@ pub(super) fn prepare_far_terrain_views(
 #[cfg(test)]
 mod upload_order_tests {
     use super::*;
+
+    #[test]
+    fn indirect_commands_preserve_direct_ranges_and_tile_slots() {
+        let draw = FarDraw {
+            slot: 37,
+            quads: 11..23,
+            bounds: Aabb::default(),
+        };
+        assert_eq!(indirect_args(&draw), [72, 1, 66, 37]);
+        let required =
+            wgpu::Features::INDIRECT_FIRST_INSTANCE | wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;
+        assert!(indirect_supported(required, wgpu::Backend::Vulkan));
+        assert!(!indirect_supported(required, wgpu::Backend::Metal));
+        assert!(!indirect_supported(required, wgpu::Backend::Dx12));
+        assert!(!indirect_supported(
+            wgpu::Features::empty(),
+            wgpu::Backend::Vulkan
+        ));
+    }
 
     /// A fine retained fallback, listed after the selected tiles, still outranks coarse ones.
     #[test]

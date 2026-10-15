@@ -21,6 +21,8 @@ const ALPHA_TEST_THRESHOLD: u8 = 128;
 const ALPHA_SCALE_FRACTION_BITS: u32 = 16;
 const ALPHA_SCALE_MAX: u32 = 16 << ALPHA_SCALE_FRACTION_BITS;
 const ALPHA_SCALE_SEARCH_STEPS: usize = 21;
+const ALPHA_SURVIVOR_NUMERATOR: u32 = ((ALPHA_TEST_THRESHOLD as u32) << ALPHA_SCALE_FRACTION_BITS)
+    - (1 << (ALPHA_SCALE_FRACTION_BITS - 1));
 
 /// One mip level containing every array layer in layer-major RGBA8 order.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -43,17 +45,7 @@ pub fn build_texture_mip_chain(
     base: Box<[u8]>,
     tile_size: u32,
 ) -> Result<Box<[TextureMip]>, AssetError> {
-    let has_covered = base
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .any(|pixel| pixel[3] >= ALPHA_TEST_THRESHOLD);
-    let has_uncovered = base
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .any(|pixel| pixel[3] < ALPHA_TEST_THRESHOLD);
-    let cutout_layers = if has_covered && has_uncovered {
+    let cutout_layers = if simd_kernels::mixed_alpha_coverage(&base, ALPHA_TEST_THRESHOLD) {
         BTreeSet::from([0])
     } else {
         BTreeSet::new()
@@ -155,13 +147,10 @@ fn build_texture_array(
 }
 
 fn alpha_survivors(rgba: &[u8]) -> usize {
-    rgba.as_chunks::<4>()
-        .0
-        .iter()
-        .filter(|pixel| pixel[3] >= ALPHA_TEST_THRESHOLD)
-        .count()
+    simd_kernels::count_alpha_at_least(rgba, ALPHA_TEST_THRESHOLD)
 }
 
+#[cfg(test)]
 fn scaled_alpha(alpha: u8, scale: u32) -> u8 {
     let rounding = 1 << (ALPHA_SCALE_FRACTION_BITS - 1);
     ((u32::from(alpha) * scale + rounding) >> ALPHA_SCALE_FRACTION_BITS).min(255) as u8
@@ -171,15 +160,18 @@ fn scaled_alpha(alpha: u8, scale: u32) -> u8 {
 thread_local! { static COVERAGE_PIXEL_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 
 fn scaled_survivors(rgba: &[u8], scale: u32) -> usize {
-    rgba.as_chunks::<4>()
-        .0
-        .iter()
-        .filter(|pixel| {
-            #[cfg(test)]
-            COVERAGE_PIXEL_VISITS.with(|visits| visits.set(visits.get() + 1));
-            scaled_alpha(pixel[3], scale) >= ALPHA_TEST_THRESHOLD
-        })
-        .count()
+    #[cfg(test)]
+    COVERAGE_PIXEL_VISITS.with(|visits| visits.set(visits.get() + rgba.len() / 4));
+    if scale == 0 {
+        return 0;
+    }
+    // Invert the exact rounded fixed-point comparison once, rather than multiplying each pixel.
+    let threshold = ALPHA_SURVIVOR_NUMERATOR.div_ceil(scale);
+    if threshold > u32::from(u8::MAX) {
+        0
+    } else {
+        simd_kernels::count_alpha_at_least(rgba, threshold as u8)
+    }
 }
 
 fn preserve_alpha_coverage(rgba: &mut [u8], target: usize) {
@@ -205,14 +197,10 @@ fn preserve_alpha_coverage(rgba: &mut [u8], target: usize) {
     };
     let survivor_count = scaled_survivors(rgba, candidate);
     let scale = smallest_scale_for_survivors(rgba, survivor_count, candidate);
-    for pixel in rgba.as_chunks_mut::<4>().0 {
-        pixel[3] = scaled_alpha(pixel[3], scale);
-    }
+    simd_kernels::scale_rgba_alpha(rgba, scale, ALPHA_SCALE_FRACTION_BITS);
 }
 
 fn smallest_scale_for_survivors(rgba: &[u8], survivors: usize, upper_bound: u32) -> u32 {
-    const SURVIVOR_NUMERATOR: u32 = ((ALPHA_TEST_THRESHOLD as u32) << ALPHA_SCALE_FRACTION_BITS)
-        - (1 << (ALPHA_SCALE_FRACTION_BITS - 1));
     let mut smallest = if survivors == 0 { 0 } else { upper_bound };
     let mut histogram = [0usize; 256];
     for pixel in rgba.as_chunks::<4>().0 {
@@ -226,11 +214,11 @@ fn smallest_scale_for_survivors(rgba: &[u8], survivors: usize, upper_bound: u32)
         if histogram[usize::from(alpha)] == 0 {
             continue;
         }
-        let threshold = SURVIVOR_NUMERATOR.div_ceil(u32::from(alpha));
+        let threshold = ALPHA_SURVIVOR_NUMERATOR.div_ceil(u32::from(alpha));
         if threshold > upper_bound {
             continue;
         }
-        let cutoff = SURVIVOR_NUMERATOR.div_ceil(threshold) as usize;
+        let cutoff = ALPHA_SURVIVOR_NUMERATOR.div_ceil(threshold) as usize;
         let count = suffix.get(cutoff).copied().unwrap_or(0);
         if count == survivors {
             smallest = smallest.min(threshold);
@@ -307,6 +295,45 @@ fn invalid(detail: impl Into<Box<str>>) -> AssetError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn inverted_coverage_threshold_matches_rounded_scaling_for_every_alpha() {
+        let rgba: Vec<_> = (0..=255_u8).flat_map(|alpha| [13, 37, 59, alpha]).collect();
+        for scale in [
+            0,
+            1,
+            255,
+            256,
+            257,
+            65535,
+            65536,
+            65537,
+            super::ALPHA_SCALE_MAX,
+        ] {
+            let expected = rgba
+                .chunks_exact(4)
+                .filter(|pixel| super::scaled_alpha(pixel[3], scale) >= super::ALPHA_TEST_THRESHOLD)
+                .count();
+            assert_eq!(
+                super::scaled_survivors(&rgba, scale),
+                expected,
+                "scale {scale}"
+            );
+        }
+        // Check every transition used by the fixed-point threshold inversion.
+        for alpha in 1..=255_u32 {
+            let boundary = super::ALPHA_SURVIVOR_NUMERATOR.div_ceil(alpha);
+            for scale in [boundary - 1, boundary, boundary + 1] {
+                let expected = rgba
+                    .chunks_exact(4)
+                    .filter(|pixel| {
+                        super::scaled_alpha(pixel[3], scale) >= super::ALPHA_TEST_THRESHOLD
+                    })
+                    .count();
+                assert_eq!(super::scaled_survivors(&rgba, scale), expected);
+            }
+        }
+    }
+
     #[test]
     fn review_alpha_scale_selection_does_not_rescan_for_every_pixel() {
         let rgba = [0, 0, 0, 128].repeat(4096);

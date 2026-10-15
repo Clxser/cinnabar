@@ -119,24 +119,7 @@ impl PalettedStorage {
     /// Writes every block's palette index into `out`, indexed `x << 8 | z << 4 | y`;
     /// [`u32::MAX`] marks a block whose packed word is missing from a malformed storage.
     pub fn palette_indices(&self, out: &mut [u32; BLOCKS_PER_SUB_CHUNK]) {
-        if self.bits_per_index == 0 {
-            out.fill(0);
-            return;
-        }
-        let bits = usize::from(self.bits_per_index);
-        let per_word = 32 / bits;
-        let mask = (1_u32 << self.bits_per_index) - 1;
-        for (word_index, chunk) in out.chunks_mut(per_word).enumerate() {
-            let Some(&word) = self.words.get(word_index) else {
-                for slot in &mut out[word_index * per_word..] {
-                    *slot = u32::MAX;
-                }
-                return;
-            };
-            for (slot, value) in chunk.iter_mut().enumerate() {
-                *value = (word >> (slot * bits)) & mask;
-            }
-        }
+        simd_kernels::unpack_indices(&self.words, self.bits_per_index, out);
     }
 
     pub(crate) fn palette_index(&self, linear: usize) -> Option<usize> {
@@ -156,17 +139,12 @@ impl PalettedStorage {
     }
 
     pub(crate) fn zero_indices_at_or_above(&mut self, palette_len: usize) {
-        if self.bits_per_index == 0 || palette_len >= 1_usize << self.bits_per_index {
-            return;
-        }
-        for linear in 0..BLOCKS_PER_SUB_CHUNK {
-            if self
-                .palette_index(linear)
-                .is_some_and(|index| index >= palette_len)
-            {
-                write_palette_index(&mut self.words, self.bits_per_index, linear, 0);
-            }
-        }
+        simd_kernels::sanitize_packed_indices(
+            &mut self.words,
+            self.bits_per_index,
+            palette_len,
+            BLOCKS_PER_SUB_CHUNK,
+        );
     }
 
     pub(crate) fn uniform(runtime_id: u32) -> Self {
@@ -299,6 +277,17 @@ impl PalettedStorage {
     }
 
     pub(crate) fn contains_only(&self, runtime_id: u32) -> bool {
+        if self.is_uniform() {
+            return self.uniform_runtime_id() == Some(runtime_id);
+        }
+        if self.palette.values.iter().all(|&value| value == runtime_id) {
+            return simd_kernels::max_packed_index(
+                &self.words,
+                self.bits_per_index,
+                BLOCKS_PER_SUB_CHUNK,
+            )
+            .is_some_and(|maximum| (maximum as usize) < self.palette.len());
+        }
         (0..BLOCKS_PER_SUB_CHUNK).all(|linear| {
             self.palette_index(linear)
                 .and_then(|index| self.palette.get(index))
@@ -339,6 +328,50 @@ fn write_palette_index(words: &mut [u32], bits_per_index: u8, linear: usize, ind
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bulk_indices_match_lookup_with_padding_and_missing_words() {
+        for bits in PACKED_BITS {
+            for missing in [0, 1, 7] {
+                let words = (0..word_count(bits).saturating_sub(missing))
+                    .map(|index| (index as u32).wrapping_mul(0x9e37_79b9).wrapping_add(19))
+                    .collect();
+                let storage = PalettedStorage::new(bits, words, vec![7]);
+                let mut actual = [0; BLOCKS_PER_SUB_CHUNK];
+                storage.palette_indices(&mut actual);
+                for (linear, &index) in actual.iter().enumerate() {
+                    assert_eq!(
+                        index,
+                        storage
+                            .palette_index(linear)
+                            .map_or(u32::MAX, |index| index as u32)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn uniform_value_detection_ignores_padding_but_rejects_invalid_indices() {
+        let bits = 3;
+        let mut words = vec![0xc000_0000; word_count(bits)];
+        // Only six entries in the final word belong to the section.
+        *words.last_mut().unwrap() = 0xfffc_0000;
+        let mut storage = PalettedStorage::new(bits, words, vec![7]);
+        assert!(storage.contains_only(7));
+        assert!(!storage.contains_only(8));
+        write_palette_index(&mut storage.words, bits, 100, 1);
+        assert!(!storage.contains_only(7));
+        storage.zero_indices_at_or_above(1);
+        assert!(storage.contains_only(7));
+        assert_eq!(*storage.words.last().unwrap(), 0xfffc_0000);
+        let truncated = PalettedStorage::new(
+            bits,
+            storage.words[..storage.words.len() - 1].to_vec(),
+            vec![7],
+        );
+        assert!(!truncated.contains_only(7));
+    }
 
     /// The counted single-update path must reproduce the batch path's canonical storage.
     #[test]

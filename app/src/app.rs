@@ -43,7 +43,9 @@ use {
         ChunkTextureAssets, RuntimeStageProfiler, VisibilityDiagnosticsInput,
     },
 };
+mod cpu_kernels;
 mod logging;
+mod pacing;
 pub(crate) mod session;
 mod startup;
 use startup::bind_direct_session_directory;
@@ -385,6 +387,7 @@ pub(crate) fn configure_client_runtime_frame_systems(app: &mut App) {
 
 pub fn run(args: args::ClientArgs) -> Result<()> {
     args.validate_acceptance_support(cfg!(feature = "acceptance"))?;
+    cpu_kernels::configure();
     #[cfg(feature = "enhanced-diagnostics")]
     let diagnostic_budget = crate::enhanced_diagnostics::configure(&args)?;
     #[cfg(feature = "developer-control")]
@@ -470,6 +473,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
             .server_file()
             .with_file_name(launcher::menu::settings_options::SETTINGS_FILE),
     );
+    let reflex_mode = pacing::selected_mode(&args, &saved_settings);
     let language = assets::carriers::startup::active_language(
         args.language.as_deref().or(saved_settings.language()),
     );
@@ -718,10 +722,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         .disable::<TerminalCtrlCHandlerPlugin>();
     let plugins = plugins.set(logging::plugin());
     app.add_plugins(plugins);
-    app.add_plugins(render::InputPacingPlugin::default())
-        .init_resource::<crate::present_mode::DisplayRefresh>()
-        .add_systems(First, crate::frame_pacing::track_display_refresh)
-        .add_systems(Last, crate::frame_pacing::update_frame_pacing);
+    pacing::install(&mut app, reflex_mode, args.reflex_mode_explicit);
     #[cfg(target_os = "macos")]
     crate::thread_budget::ThreadBudget::configure_render_thread(&mut app);
     #[cfg(target_os = "macos")]

@@ -2,6 +2,10 @@ mod frame_latency;
 
 pub use frame_latency::frame_latency_for_vsync;
 
+/// Number of queued frames used by the triple-buffered presentation policy.
+pub const TRIPLE_BUFFER_QUEUED_FRAMES: std::num::NonZeroU32 =
+    frame_latency::TRIPLE_BUFFER_QUEUED_FRAMES;
+
 use std::sync::{
     Arc,
     atomic::{AtomicU8, AtomicU16, Ordering},
@@ -413,9 +417,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vsync_keeps_one_frame_in_flight_and_unpaced_presentation_keeps_two() {
-        assert_eq!(frame_latency_for_vsync(true).get(), 1);
-        assert_eq!(frame_latency_for_vsync(false).get(), 2);
+    fn both_present_paths_request_two_queued_frames() {
+        assert_eq!(frame_latency_for_vsync(true), TRIPLE_BUFFER_QUEUED_FRAMES);
+        assert_eq!(frame_latency_for_vsync(false), TRIPLE_BUFFER_QUEUED_FRAMES);
     }
 
     #[test]

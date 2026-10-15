@@ -220,6 +220,12 @@ impl<'a> MutableOutput<'a> {
         );
         let mut block = [0; PACKED_LIGHT_BYTES];
         let mut sky = [0; PACKED_LIGHT_BYTES];
+        if min == origin
+            && max == BlockPos::new(origin.x + extent, origin.y + extent, origin.z + extent)
+            && self.pack_known_section(origin, &mut block, &mut sky)
+        {
+            return Some(SubChunkLight::from_packed(block, sky, self.generation));
+        }
         let mut any_known = false;
         for x in min.x..=max.x {
             for y in min.y..=max.y {
@@ -244,6 +250,47 @@ impl<'a> MutableOutput<'a> {
         }
         any_known.then(|| SubChunkLight::from_packed(block, sky, self.generation))
     }
+
+    /// Packs a complete known section in contiguous Z batches; leaves outputs untouched otherwise.
+    fn pack_known_section(
+        &self,
+        origin: BlockPos,
+        block: &mut [u8; PACKED_LIGHT_BYTES],
+        sky: &mut [u8; PACKED_LIGHT_BYTES],
+    ) -> bool {
+        let side = SUB_CHUNK_SIDE;
+        let start = self
+            .index(origin)
+            .expect("complete section is inside the solve bounds");
+        let x_stride = self.y_len * self.z_len;
+        for x in 0..side {
+            for y in 0..side {
+                let row = start + x * x_stride + y * self.z_len;
+                if self.known[row..row + side].iter().any(|&known| !known) {
+                    return false;
+                }
+            }
+        }
+        let mut pairs = [[0; 2]; SUB_CHUNK_SIDE];
+        for x in 0..side {
+            for y in (0..side).step_by(2) {
+                let low = start + x * x_stride + y * self.z_len;
+                let high = low + self.z_len;
+                simd_kernels::pack_light_pairs(
+                    &self.values[low..low + side],
+                    &self.values[high..high + side],
+                    &mut pairs,
+                );
+                let row = x << 7 | y >> 1;
+                for (z, &[block_value, sky_value]) in pairs.iter().enumerate() {
+                    let index = row | z << 3;
+                    block[index] = block_value;
+                    sky[index] = sky_value;
+                }
+            }
+        }
+        true
+    }
 }
 
 #[cfg(test)]
@@ -265,7 +312,7 @@ mod tests {
             ),
         ];
         for (min, max) in cases {
-            for pattern in 0..4 {
+            for pattern in 0..5 {
                 let bounds = LightBounds::new(-3, min, max).unwrap();
                 let volume = bounds.volume().unwrap();
                 let mut scratch = MutableOutputScratch::default();
@@ -275,6 +322,7 @@ mod tests {
                     let known = match pattern {
                         0 | 3 => true,
                         1 => index % 5 != 0 && position.x.div_euclid(16) % 2 == 0,
+                        4 => index + 1 != volume,
                         _ => false,
                     };
                     let values = if pattern == 3 {

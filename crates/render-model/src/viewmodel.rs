@@ -21,11 +21,7 @@ impl ViewmodelSkin {
     pub fn new(rgba8: Arc<[u8]>, identity: [u8; 32]) -> Option<Self> {
         (identity != [0; 32]
             && rgba8.len() == VIEWMODEL_TEXTURE_BYTES
-            && rgba8
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .all(|pixel| matches!(pixel[3], 0 | 255)))
+            && simd_kernels::rgba_alpha_matches(&rgba8, simd_kernels::AlphaPolicy::Binary))
         .then_some(Self { rgba8, identity })
     }
 }

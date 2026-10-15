@@ -136,19 +136,19 @@ impl AxisColumns {
 
     fn set(&mut self, x: usize, y: usize, z: usize) {
         self.x[y][z] |= 1 << x;
-        self.y[x][z] |= 1 << y;
-        self.z[x][y] |= 1 << z;
+        self.y[z][x] |= 1 << y;
+        self.z[y][x] |= 1 << z;
     }
 
     const fn contains(&self, x: usize, y: usize, z: usize) -> bool {
         self.x[y][z] & (1 << x) != 0
     }
 
-    const fn column(&self, face: Face, u: usize, v: usize) -> u64 {
+    const fn columns(&self, face: Face) -> &Columns {
         match face {
-            Face::NegativeX | Face::PositiveX => self.x[v][u],
-            Face::NegativeY | Face::PositiveY => self.y[u][v],
-            Face::NegativeZ | Face::PositiveZ => self.z[u][v],
+            Face::NegativeX | Face::PositiveX => &self.x,
+            Face::NegativeY | Face::PositiveY => &self.y,
+            Face::NegativeZ | Face::PositiveZ => &self.z,
         }
     }
 }
@@ -238,17 +238,17 @@ pub(crate) fn exposed_columns<'a>(
         1_u64 << (SIDE - 1)
     };
     let mut exposed = [[0_u64; SIDE]; SIDE];
+    simd_kernels::exposed_columns(
+        masks.geometry.columns(face).as_flattened(),
+        masks.occluders.columns(face).as_flattened(),
+        face.is_negative(),
+        FULL_COLUMN,
+        exposed.as_flattened_mut(),
+    );
 
     for (v, exposed_row) in exposed.iter_mut().enumerate() {
         for (u, exposed_cell) in exposed_row.iter_mut().enumerate() {
-            let geometry_column = masks.geometry.column(face, u, v);
-            let occluder_column = masks.occluders.column(face, u, v);
-            let neighbour_occluders = if face.is_negative() {
-                occluder_column << 1
-            } else {
-                occluder_column >> 1
-            };
-            let mut faces = geometry_column & !neighbour_occluders & FULL_COLUMN;
+            let mut faces = *exposed_cell;
 
             if faces & boundary_bit != 0 {
                 let neighbour = neighbour
@@ -408,3 +408,6 @@ pub(crate) const fn block_coordinate(face: Face, slice: usize, u: usize, v: usiz
         Face::NegativeZ | Face::PositiveZ => [u, v, slice],
     }
 }
+
+#[cfg(test)]
+mod simd_tests;

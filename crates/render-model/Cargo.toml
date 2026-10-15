@@ -16,6 +16,7 @@ test-support = []
 enhanced-diagnostics = []
 
 [dependencies]
+simd-kernels = { path = "../simd-kernels" }
 simulation-clock = { path = "../simulation-clock" }
 hashbrown = { version = "0.16.1", default-features = false }
 foldhash = { version = "0.2.0", default-features = false }

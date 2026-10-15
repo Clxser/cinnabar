@@ -11,6 +11,25 @@
 
 # Go build artifacts; the architecture check forbids committed binaries.
 *.exe
+*.dll
+*.pdb
+*.ilk
+*.exp
+*.dmp
+*.etl
+*.nsys-rep
+*.qdrep
+FrameView_*.csv
+PresentMon*.csv
+/captures/
+/profiles/
+
+# Local credentials and developer environment files; retain distributable templates.
+.env
+.env.*
+!.env.example
+!.env.sample
+/.auth/
 
 # Per-worktree Cargo target dirs (never commit build artifacts)
 target-*/

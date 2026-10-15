@@ -1,5 +1,6 @@
 use std::{ffi::OsString, path::PathBuf};
 
+use reflex::Mode as ReflexMode;
 use thiserror::Error;
 use ui::RenderMode;
 
@@ -32,6 +33,7 @@ Options:
   --no-vsync                   Allow tearing and disable display-rate synchronization
   --frame-cap <FPS>            Cap acceptance updates to 1-1000 FPS
   --render-mode <MODE>         vanilla or enhanced; CINNABAR_RENDER_MODE is the fallback
+  --reflex <off|on|on-boost>    NVIDIA Reflex pacing policy (default: saved Video setting)
   --gui-scale <1-4|auto>       Fix the GUI scale (default: auto, the Bedrock desktop rule)
   --dev-debug-overlay          Compatibility alias; F3 debug controls are always available
   --language <ll_CC>           UI language (default: from LC_ALL/LC_MESSAGES/LANG, else en_US)
@@ -119,6 +121,10 @@ pub struct ClientArgs {
     pub gui_scale: Option<u8>,
     /// Session-only override of the saved rendering mode.
     pub render_mode: Option<RenderMode>,
+    /// NVIDIA Reflex policy; an explicit flag or environment value overrides Video settings.
+    pub reflex_mode: ReflexMode,
+    /// Whether `--reflex` or `CINNABAR_REFLEX` explicitly selected the session policy.
+    pub reflex_mode_explicit: bool,
     /// Enables F3 debug controls; the overlay starts hidden until F3 is pressed.
     /// `--dev-debug-overlay` remains accepted for older launch commands.
     pub dev_debug_overlay: bool,
@@ -134,6 +140,7 @@ pub struct ClientArgs {
 
 impl Default for ClientArgs {
     fn default() -> Self {
+        let environment_reflex = ReflexMode::from_environment();
         Self {
             address: None,
             socket_dir: PathBuf::from(".local/run"),
@@ -152,6 +159,8 @@ impl Default for ClientArgs {
             frame_cap: None,
             gui_scale: None,
             render_mode: None,
+            reflex_mode: environment_reflex.unwrap_or_default(),
+            reflex_mode_explicit: environment_reflex.is_some(),
             dev_debug_overlay: true,
             language: None,
             full_view_teleport_gate: false,
@@ -203,6 +212,9 @@ pub enum ArgsError {
 
     #[error("--render-mode must be vanilla or enhanced, got {0:?}")]
     InvalidRenderMode(String),
+
+    #[error("--reflex must be off, on, or on-boost, got {0:?}")]
+    InvalidReflexMode(String),
 
     #[error("--language must be a code like de_DE, got {0:?}")]
     InvalidLanguage(String),
@@ -413,6 +425,14 @@ impl ClientArgs {
                         })?;
                     parsed.render_mode =
                         Some(RenderMode::parse(&value).ok_or(ArgsError::InvalidRenderMode(value))?);
+                }
+                Some("--reflex") => {
+                    let value = next_value(&mut arguments, "--reflex")?
+                        .into_string()
+                        .map_err(|_| ArgsError::InvalidUtf8 { flag: "--reflex" })?;
+                    parsed.reflex_mode = ReflexMode::parse(&value)
+                        .ok_or_else(|| ArgsError::InvalidReflexMode(value))?;
+                    parsed.reflex_mode_explicit = true;
                 }
                 _ if resource_pack::is_pack_import_path(std::path::Path::new(&argument)) => {
                     parsed.import_packs.push(PathBuf::from(argument));

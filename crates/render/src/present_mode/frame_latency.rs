@@ -19,14 +19,15 @@ use bevy::{
 #[cfg(test)]
 mod tests;
 
-/// One queued frame with display pacing, two to overlap CPU and GPU work without VSync.
+/// Two queued frames plus the one being scanned out keep the surface triple-buffered.
+///
+/// Bevy/wgpu turns this hint into a three-image swapchain where the backend permits it. Keeping
+/// the value the same for FIFO and mailbox avoids a surface rebuild when the present policy flips.
+pub const TRIPLE_BUFFER_QUEUED_FRAMES: NonZeroU32 = NonZeroU32::new(2).expect("two is nonzero");
+
 #[must_use]
-pub const fn frame_latency_for_vsync(vsync: bool) -> NonZeroU32 {
-    if vsync {
-        NonZeroU32::MIN
-    } else {
-        NonZeroU32::new(2).expect("two is nonzero")
-    }
+pub const fn frame_latency_for_vsync(_vsync: bool) -> NonZeroU32 {
+    TRIPLE_BUFFER_QUEUED_FRAMES
 }
 
 #[derive(Resource, Default)]

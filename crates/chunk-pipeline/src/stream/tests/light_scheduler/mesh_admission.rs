@@ -434,7 +434,12 @@ fn deferred_stationary_spawn_mesh() -> (WorldStream, SchedulerView, SubChunkKey,
 fn stationary_spawn_mesh_wakes_when_coalesced_light_becomes_ready() {
     let (mut stream, view, near, revision) = deferred_stationary_spawn_mesh();
     install_current_light(&mut stream, near, 0, 0, false);
-    stream.mark_changed_light_mesh_dependents(near, [false; 6], Instant::now(), false);
+    stream.mark_changed_light_mesh_dependents(
+        near,
+        world::LightChangeMask::SOURCE,
+        Instant::now(),
+        false,
+    );
     assert_eq!(stream.mesh_jobs.pending[&near].revision, revision);
     assert!(stream.mesh_jobs.scan.is_empty());
     stream
@@ -488,7 +493,12 @@ fn blocked_nearest_mesh_stays_deferred_through_unrelated_wakeups() {
     }
     stream.poll_deadline = Some(Instant::now() - Duration::from_secs(1));
     for _ in 0..4 {
-        stream.mark_changed_light_mesh_dependents(unrelated, [false; 6], Instant::now(), false);
+        stream.mark_changed_light_mesh_dependents(
+            unrelated,
+            world::LightChangeMask::SOURCE,
+            Instant::now(),
+            false,
+        );
         stream.dispatch_mesh_jobs(view.position, 1);
         if stream.mesh_jobs.in_flight.contains_key(&ready) {
             break;
@@ -549,7 +559,12 @@ fn stationary_mesh_light_wakeups_preserve_unrelated_backoff() {
         let mut dispatched = false;
         for _ in 0..4 {
             if changed {
-                stream.mark_changed_light_mesh_dependents(near, [false; 6], Instant::now(), false);
+                stream.mark_changed_light_mesh_dependents(
+                    near,
+                    world::LightChangeMask::SOURCE,
+                    Instant::now(),
+                    false,
+                );
             } else {
                 let direct = stream.lighting.direct_sky[&near].clone();
                 stream.finish_accepted_light_completion(near, 0, &direct, [false; 6], false);
@@ -619,7 +634,12 @@ fn deadline_keeps_an_unexamined_woken_mesh_for_the_next_poll() {
     }
     stream.mesh_jobs.scan.clear();
     for key in std::iter::once(blocked).chain(ready) {
-        stream.mark_changed_light_mesh_dependents(key, [false; 6], Instant::now(), false);
+        stream.mark_changed_light_mesh_dependents(
+            key,
+            world::LightChangeMask::SOURCE,
+            Instant::now(),
+            false,
+        );
     }
     assert_eq!(
         stream.dispatch_mesh_jobs(view.position, 1),

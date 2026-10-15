@@ -51,6 +51,7 @@ reports = []
 mimalloc = ["dep:mimalloc"]
 
 [dependencies]
+simd-kernels = { path = "../crates/simd-kernels" }
 protocol-ids = { path = "../crates/protocol-ids" }
 mimalloc = { workspace = true, optional = true }
 pack-json = { path = "../crates/pack-json" }
@@ -111,6 +112,7 @@ resource-pack = { path = "../crates/resource-pack" }
 server-experience = { path = "../crates/server-experience" }
 rayon.workspace = true
 render = { path = "../crates/render" }
+reflex = { path = "../crates/reflex" }
 render-api = { path = "../crates/render-api" }
 render-model = { path = "../crates/render-model" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }

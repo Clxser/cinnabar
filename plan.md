@@ -8963,3 +8963,54 @@ identities come from the pinned registry rather than numeric ranges.
 Incomplete: the additional renderers for brushable blocks, trial spawners and
 vaults remain unsupported. New logical routes are provisional, and the existing
 renderer, visual and performance acceptance gates remain open.
+
+## Native NVIDIA Reflex
+
+Windows NVIDIA Vulkan devices enable low-latency support from queried extension,
+timeline-semaphore and present-ID capabilities. Off disables native pacing and boost;
+On and On + Boost apply their matching native policy. Input waits release the shared
+frame controller, and the native timeline semaphore is reused until device shutdown.
+Render markers follow the extracted simulation ID. Queue submission attribution uses
+the advertised extension revision; other revisions retain implicit attribution.
+Swapchain retirement excludes live latency calls, and device loss stops extension calls.
+
+Incomplete: sustained join/play, surface recreation, mode changes and shutdown still
+require validation on the target NVIDIA GPU. Native crash-free operation, Boost clock
+behavior and measured latency improvements are not yet established.
+
+## CPU integer SIMD kernels
+
+Runtime AVX2/SSE2 dispatch accelerates packed palette decoding and validation,
+meshing visibility columns, known-section light packing, uniform light scans,
+RGBA alpha validation and fixed-point alpha scaling. Kernels allocate nothing,
+bound vector reads and writes by the slices, retain packed-word padding and
+handle final batches without accessing past the slices. Alpha coverage searches invert
+their rounded comparison once per pass instead of multiplying every pixel.
+`CINNABAR_SIMD=0` selects scalar kernels before worker startup for comparisons.
+
+Incomplete: compilation, the added scalar-equivalence regression tests,
+in-world output checks and measured CPU/frame-time improvements have not been
+run. These edits do not close performance or behavior acceptance gates.
+
+## CPU frame and terrain work reduction
+
+HUD projection borrows its frame instead of cloning inventory state. UI publication
+reuses validation for immutable geometry retained from a privately recorded admitted
+input, while checking changed buffers, topology bounds and viewport constraints.
+World ingress batches worker-dispatch sweeps and bounds its drain to a quarter of
+the observed frame interval, with startup and minimum allowances.
+
+Lighting workers compute exact face, edge and corner invalidation masks. Unchanged
+light values avoid remeshing, and independent face changes no longer dirty an
+unmodified shared edge. Complete geometry generations still use fence-retired GPU
+allocations; light changes that affect greedy merge decisions still rebuild geometry.
+GPU cull uniforms upload only when their values change and use the retained staging
+pool when available. GPU depth/occlusion work continues every frame.
+
+Far terrain queues only missing or changed tiles, preserves equivalent selections,
+and retains per-view visibility until the camera or tile draws change. Supported
+Vulkan devices batch far tiles with indirect draws; other backends keep direct draws.
+
+Incomplete: compilation, regression execution, rendered comparisons and before/after
+CPU, streaming, GPU and input-latency captures are pending. No FPS improvement is
+established, and these changes do not close behavior or performance acceptance gates.

@@ -44,6 +44,7 @@ pub mod npc;
 pub mod play_screen;
 pub mod player_list;
 pub mod recipe_book;
+pub mod reflex_setting;
 pub mod regions;
 pub mod settings_account;
 pub mod settings_chat;

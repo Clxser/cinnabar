@@ -117,6 +117,12 @@ fn bind_visibility(view: &MenuView, data: &mut DataSource, translate: &dyn Fn(&s
         "#advanced_graphics_options_grid_visible",
         Scalar::Bool(view.settings_advanced_graphics),
     );
+    // Reflex is a GPU feature rather than a software-only preference. Keep the row visibly
+    // disabled until the renderer has identified a supported NVIDIA Vulkan adapter.
+    data.set_global(
+        "#reflex_dropdown_enabled",
+        Scalar::Bool(view.reflex_gpu_available),
+    );
     // controls_section.json binds these captions separately from the toggle values.
     for (binding, label) in [
         ("#swap_gamepad_ab", "options.swapGamepadAB"),
@@ -159,6 +165,14 @@ fn display_value(
 pub fn action(view: &MenuView, region: &HitRegion) -> Option<MenuAction> {
     if region.pressed.as_deref() == Some("button.expand_advanced_graphics") {
         return Some(MenuAction::SettingsAdvancedGraphics);
+    }
+    if !view.reflex_gpu_available
+        && region.control_name.as_deref().is_some_and(|name| {
+            let name = name.trim_start_matches('#');
+            name == "reflex" || name.starts_with("reflex_")
+        })
+    {
+        return None;
     }
     action_values(&view.settings_options, region)
 }

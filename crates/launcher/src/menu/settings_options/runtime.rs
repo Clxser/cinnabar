@@ -48,6 +48,7 @@ impl SettingsOptions {
         settings.video.vsync = self.value(SettingId::Vsync) != 0;
         settings.video.vrr =
             render_api::VrrPreference::from_value(self.value(super::VRR_OPTION.id));
+        settings.video.reflex_mode = reflex::Mode::from_index(self.value(super::REFLEX_OPTION.id));
         settings.video.anti_aliasing_samples = self.value(SettingId::Msaa) as u32;
         settings.video.motion_blur =
             ui::MotionBlurQuality::from_index(self.value(MOTION_BLUR_OPTION.id));

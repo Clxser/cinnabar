@@ -4,6 +4,42 @@ use client_world::ingestion::{MAX_ADMITTED_HEAVY_EVENTS, MAX_DEFERRED_WORLD_EVEN
 use protocol::{LevelChunkEvent, LevelChunkMode, WorldEvent};
 use simulation_clock::identity::SessionGeneration;
 
+#[test]
+fn high_refresh_ingress_uses_a_bounded_frame_share() {
+    assert_eq!(
+        world_ingress_drain_budget(Duration::ZERO),
+        WORLD_INGRESS_DRAIN_BUDGET
+    );
+    for interval in [
+        Duration::from_micros(100),
+        Duration::from_millis(2),
+        Duration::from_millis(8),
+        Duration::from_secs(1),
+    ] {
+        assert_eq!(
+            world_ingress_drain_budget(interval),
+            (interval / WORLD_INGRESS_FRAME_SHARE)
+                .clamp(MIN_WORLD_INGRESS_DRAIN_BUDGET, WORLD_INGRESS_DRAIN_BUDGET)
+        );
+    }
+}
+
+#[test]
+fn decode_dispatch_batches_flush_every_packet_exactly_once() {
+    let mut batch = IngressDecodeBatch::default();
+    assert!(!batch.finish());
+    for index in 0..INGRESS_DECODE_BATCH_SIZE * 3 {
+        assert_eq!(
+            batch.submitted(),
+            (index + 1).is_multiple_of(INGRESS_DECODE_BATCH_SIZE)
+        );
+    }
+    assert!(!batch.finish());
+    assert!(!batch.submitted());
+    assert!(batch.finish());
+    assert!(!batch.finish());
+}
+
 /// Wraps an event in one session's ordered ingress.
 fn event(sequence: u64, event: WorldEvent) -> WorldIngress {
     WorldIngress::Event(SequencedWorldEvent {

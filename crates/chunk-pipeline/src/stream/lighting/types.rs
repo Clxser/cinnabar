@@ -410,6 +410,7 @@ pub(in crate::stream) struct SolvedLightJob {
     pub(in crate::stream) light_levels_changed: bool,
     pub(in crate::stream) direct_sky_changed: bool,
     pub(in crate::stream) changed_faces: [bool; 6],
+    pub(in crate::stream) mesh_changes: world::LightChangeMask,
 }
 
 pub(in crate::stream) struct PreparedLightJob {
@@ -741,10 +742,8 @@ fn finish_solved_light_job(
     direct_sky: Arc<DirectSkyMask>,
     used_uniform_fast_path: bool,
 ) -> SolvedLightJob {
-    let light_levels_changed = target
-        .old_light
-        .as_deref()
-        .is_none_or(|previous| !light_levels_equal(previous, &replacement));
+    let mesh_changes = replacement.mesh_changes_since(target.old_light.as_deref());
+    let light_levels_changed = !mesh_changes.is_empty();
     let direct_sky_changed = target
         .old_direct
         .as_ref()
@@ -768,6 +767,7 @@ fn finish_solved_light_job(
         light_levels_changed,
         direct_sky_changed,
         changed_faces,
+        mesh_changes,
     }
 }
 

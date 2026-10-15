@@ -6,8 +6,9 @@ use bevy::{
     core_pipeline::{Core3d, Core3dSystems},
     prelude::{App, Handle, IntoScheduleConfigs, Plugin, Resource, Shader, SystemSet, World},
     render::{
-        Render, RenderApp, RenderSystems, extract_resource::ExtractResourcePlugin,
-        renderer::RenderDevice,
+        Render, RenderApp, RenderSystems,
+        extract_resource::ExtractResourcePlugin,
+        renderer::{RenderAdapterInfo, RenderDevice},
     },
 };
 use render_scene::FarTerrainScene;
@@ -41,8 +42,12 @@ impl Plugin for FarTerrainRenderPlugin {
             return;
         };
         let device = render_app.world().resource::<RenderDevice>().clone();
+        let indirect = render_app
+            .world()
+            .get_resource::<RenderAdapterInfo>()
+            .is_some_and(|info| gpu::indirect_supported(device.features(), info.backend));
         render_app
-            .insert_resource(FarTerrainGpu::new(&device))
+            .insert_resource(FarTerrainGpu::new(&device, indirect))
             .add_systems(
                 Render,
                 (

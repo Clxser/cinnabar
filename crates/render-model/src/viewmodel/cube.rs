@@ -74,7 +74,7 @@ impl ViewmodelGeometry {
             let tile = mip
                 .rgba8
                 .get(first..first.checked_add(TILE_SIDE * TILE_SIDE * 4)?)?;
-            if !tile.as_chunks::<4>().0.iter().all(|pixel| pixel[3] == 255) {
+            if !simd_kernels::rgba_alpha_matches(tile, simd_kernels::AlphaPolicy::Opaque) {
                 return None;
             }
             tiles[index] = tile;

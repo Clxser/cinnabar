@@ -24,8 +24,7 @@ impl UiPresentationRuntime {
         let (Some(hud_textures), Some(geometry)) = (self.hud_textures.as_ref(), geometry) else {
             return Ok(());
         };
-        let mut frame = self.hud_frame.clone();
-        frame.now_millis = now_millis;
+        self.hud_frame.now_millis = now_millis;
         HudLayout::new(
             nodes,
             next_id,
@@ -35,7 +34,7 @@ impl UiPresentationRuntime {
             self.solid_texture_page,
             geometry,
         )?
-        .append(player_runtime, runtime, &frame, container)
+        .append(player_runtime, runtime, &self.hud_frame, container)
     }
 
     /// Builds the frame from its retained UI authority.
@@ -48,6 +47,7 @@ impl UiPresentationRuntime {
         dpi_scale: DpiScale,
     ) -> Result<UiRenderInput, UiPresentationError> {
         self.hud_frame.mount_equipment = runtime.screen_state().mount_equipment;
+        self.hud_frame.now_millis = now_millis;
         #[cfg(feature = "tracy")]
         let _build_span = tracing::info_span!("ui.build").entered();
         dynamic_textures::observe_session(self, runtime.session_id());
@@ -484,7 +484,9 @@ fn redraw_changed(
             render_viewport.dpi_scale,
         )
         .map_err(UiPresentationError::Adapter)?;
-        if previous.textures.as_ref() != textures.as_ref() {
+        if !Arc::ptr_eq(&previous.textures, textures)
+            && previous.textures.as_ref() != textures.as_ref()
+        {
             let mut input = patched.unwrap_or_else(|| previous.clone());
             input.textures = Arc::clone(textures);
             input
