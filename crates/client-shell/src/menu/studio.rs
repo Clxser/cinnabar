@@ -13,6 +13,7 @@ use recording_studio::{
 };
 
 mod bridge;
+mod scene;
 
 pub(super) struct Studio {
     pub view: Arc<Snapshot>,
@@ -148,6 +149,7 @@ impl Studio {
                 Action::Split,
                 Action::DeleteSelected,
                 Action::AddTitle,
+                Action::UseNativeReplay,
             ]
         };
         let mut actions: Vec<_> = actions.into_iter().map(MenuAction::Studio).collect();
@@ -291,6 +293,7 @@ impl Studio {
                 self.edit("Add title", &[Command::AddTitle { title }])?;
                 Arc::make_mut(&mut self.view).selected = Some(id);
             }
+            Action::UseNativeReplay => self.use_native_replay()?,
             Action::Zoom(direction) => {
                 let view = Arc::make_mut(&mut self.view);
                 let current = view.visible_duration.0;

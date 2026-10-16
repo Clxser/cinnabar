@@ -535,7 +535,12 @@ pub(crate) fn ui_overlay(
         let held = content.as_ref().and_then(|content| raster.holds(content));
         let animation = layered
             .iter()
-            .fold(UiDamage::Unchanged, |damage, (index, _, _)| {
+            .fold(UiDamage::Unchanged, |damage, (index, batch, _)| {
+                let damage = damage.union(
+                    world
+                        .get_resource::<super::native_preview::PreviewCopy>()
+                        .map_or(UiDamage::Unchanged, |preview| preview.damage(batch)),
+                );
                 damage.union(
                     gpu.animation_damage
                         .get(*index)

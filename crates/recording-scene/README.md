@@ -48,8 +48,8 @@ patch. Failed or cancelled drafts are invalidated before another frame can use t
 The renderer must retain its last published state until it admits the next patch.
 
 Full received-world actor coverage,
-block entities, particles, an isolated replay viewport,
-camera switching and preview/export composition still need implementation. Terrain
+block entities, particles, camera controls and complete preview/export composition
+still need implementation. Terrain
 capture alone is not a complete world replay. No build or runtime acceptance has
 been performed under the current source-edits-only instruction.
 
@@ -67,8 +67,9 @@ startup validation keeps its existing provenance and texture-size checks.
 assets on a worker, with cancellation during large reads. State checkpoints and
 asset objects remain separately bounded. Completion or failure is included in the
 parent manifest. This preserves the recorded camera's prepared inputs. Relighting
-for a different camera location, environment interpolation, shader selection and
-replay renderer publication still need implementation and runtime acceptance.
+for a different camera location, environment interpolation and shader selection
+still need implementation. Native renderer publication has source wiring and
+remains unverified.
 
 ## Prepared actors
 
@@ -84,8 +85,9 @@ Restore validates native instance/bone limits, matrix finiteness, geometry and
 raster references before returning a separate frame. These prepared draws retain
 the original camera's culling and omit its hidden first-person body. Coverage is
 explicitly `OriginalView`; this does not establish unrestricted replay cameras.
-Unculled actor preparation, pose interpolation and native replay publication remain
-incomplete. Appearance pinning is capped at 512 MiB; capture stops with an error if
+Unculled actor preparation and pose interpolation remain incomplete. Native
+publication has source wiring without rendered acceptance. Appearance pinning is
+capped at 512 MiB; capture stops with an error if
 that limit is exceeded. Aggregate take budgets and performance remain unverified.
 
 ## Coordinated playback
@@ -97,6 +99,17 @@ actor seeks decode only the final crossed pose. Geometry, rasters and sky object
 reuse checksum-admitted epochs. A failed track invalidates every cursor, and a
 successful seek explicitly marks temporal histories for reset.
 
-This is source playback, not a connected native editor preview. The isolated GPU
-viewport, audio synchronization, camera/pose interpolation and complete received-
-world actor coverage remain incomplete. This source has not been built or tested.
+The native editor can select a captured POV clip and use its 3D replay through a
+reversible edit. `render::replay` owns a separate headless scene on the shared GPU
+device. It publishes recorded terrain, prepared actors and environment without
+replacing live-world resources. Free/path shot values can supply a camera pose;
+target tracking is still missing and disclosed. Seeks replace camera view history.
+A four-target lease pool and GPU-only UI copies avoid frame readback and prevent
+reuse before display/copy completion. Device errors remain visible to the primary
+application even after the editor closes.
+
+This provisional viewport supports one unframed replay layer. Native/raster layer
+composition, replay transitions/crops, full camera controls, audio, titles, global
+effects, environment/pose interpolation, shader-mode restoration, exact recorded
+projection planes, HUD/hand and full received-world actor coverage remain
+incomplete. No build, test, rendered parity or performance acceptance has been run.

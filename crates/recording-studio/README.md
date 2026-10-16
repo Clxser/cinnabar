@@ -125,10 +125,14 @@ seek is loading, avoiding repeated texture-plan changes during a drag.
 This is an unverified source implementation. Crop filtering, source frame accuracy,
 content-identity validation, audio, titles, camera changes and global effects still
 need completion and acceptance. Missing camera/effect composition is disclosed in
-the preview. Native 3D replay rendering remains unconnected to this media surface.
+the raster preview. A selected captured clip can switch reversibly to a native
+scene source through **Use 3D replay**. The render edge owns its isolated GPU scene
+and leased image publication; this domain owner retains no device or live world.
+That provisional path currently supports a single unframed replay layer and
+discloses its original-view actor coverage and missing composition features.
 
-The full scene schema, native replay renderer, complete preview composition, media
+The full scene schema, complete native replay rendering/preview composition, media
 import/recovery, camera/effect inspectors, recording options, export and linked
 automatic-effect retiming are still being implemented. The feature has not been
-built or exercised; media preview is connected in source, while replay viewport
-rendering is not. These pieces do not complete the feature.
+built or exercised. Media preview and a limited native replay viewport are connected
+in source. These pieces do not complete the feature.

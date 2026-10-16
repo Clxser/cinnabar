@@ -66,6 +66,8 @@ struct Active {
 
 /// Installs a normal feature, independent of developer-control and its fixed-clock recording mode.
 pub(crate) fn configure(app: &mut App) {
+    app.add_plugins(render::replay::ReplayPreviewPlugin);
+    app.init_resource::<render_scene::ui_preview::UiPreviewSurface>();
     app.init_resource::<preview::NativePreview>().add_systems(
         Update,
         preview::update

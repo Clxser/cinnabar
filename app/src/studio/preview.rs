@@ -8,7 +8,11 @@ use std::sync::{
 use bevy::prelude::*;
 use client_shell::{menu::MenuRuntime, ui_resources::UiPresentationResource};
 use recording_studio::preview::{PreviewRequest, PreviewStatus, RasterPreview};
+use render::replay::ReplayRenderContext;
 use render_model::{UI_STUDIO_PREVIEW_MAX_SIZE, UiTexturePage};
+use render_scene::ui_preview::{PreviewImage, UiPreviewImage, UiPreviewSurface};
+
+mod scene;
 
 #[derive(Resource, Default)]
 pub(super) struct NativePreview {
@@ -25,8 +29,15 @@ struct Job {
 struct Completed {
     generation: u64,
     at: recording_studio::MediaTime,
-    result: Result<(UiTexturePage, Option<String>), String>,
+    result: Result<PreviewOutput, String>,
 }
+
+struct PreviewOutput {
+    page: UiTexturePage,
+    image: Option<Arc<PreviewImage>>,
+    notice: Option<String>,
+}
+
 struct Shared {
     pending: Mutex<Option<Job>>,
     changed: Condvar,
@@ -43,6 +54,8 @@ pub(super) fn update(
     mut state: ResMut<NativePreview>,
     mut menu: ResMut<MenuRuntime>,
     mut presentation: ResMut<UiPresentationResource>,
+    mut surface: ResMut<UiPreviewSurface>,
+    gpu: Option<Res<ReplayRenderContext>>,
 ) {
     let Some(request) = menu.studio_preview_request() else {
         if state.worker.is_some() || state.epoch.is_some() || state.failed.is_some() {
@@ -51,6 +64,7 @@ pub(super) fn update(
             state.requested = None;
             state.failed = None;
             presentation.set_studio_preview_page(None);
+            surface.0 = None;
             menu.set_studio_preview_status(PreviewStatus::default());
         }
         return;
@@ -81,7 +95,7 @@ pub(super) fn update(
         return;
     }
     if state.worker.is_none() {
-        match Worker::start() {
+        match Worker::start(gpu.as_deref().cloned()) {
             Ok(worker) => state.worker = Some(worker),
             Err(error) => {
                 state.failed = Some(request.epoch);
@@ -112,12 +126,20 @@ pub(super) fn update(
         .filter(|completed| completed.generation == generation)
     {
         let status = match completed.result {
-            Ok((page, notice)) => {
-                if presentation.set_studio_preview_page(Some(page)) {
+            Ok(output) => {
+                let identity = output.page.identity();
+                if presentation.set_studio_preview_page(Some(output.page)) {
+                    surface.0 = output.image.and_then(|image| {
+                        Some(UiPreviewImage {
+                            image,
+                            page: u32::from(presentation.studio_preview_icon()?.page),
+                            placeholder_identity: identity,
+                        })
+                    });
                     PreviewStatus {
                         ready: true,
                         at: completed.at,
-                        notice,
+                        notice: output.notice,
                         ..Default::default()
                     }
                 } else {
@@ -152,7 +174,7 @@ pub(super) fn update(
 
 impl Worker {
     /// A single replaceable pending request bounds drag/playback backlog without cancelling every forward frame.
-    fn start() -> Result<Self, String> {
+    fn start(context: Option<ReplayRenderContext>) -> Result<Self, String> {
         let shared = Arc::new(Shared {
             pending: Mutex::new(None),
             changed: Condvar::new(),
@@ -164,8 +186,9 @@ impl Worker {
         std::thread::Builder::new()
             .name("studio-preview".into())
             .spawn(move || {
-                let result =
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&worker)));
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    run(&worker, context)
+                }));
                 if result.is_err() {
                     let generation = worker.generation.load(Ordering::Acquire);
                     *worker
@@ -212,8 +235,9 @@ impl Drop for Worker {
 }
 
 /// All blocking waits, decoding, composition and page hashing are confined to this worker.
-fn run(shared: &Shared) {
+fn run(shared: &Shared, context: Option<ReplayRenderContext>) {
     let mut preview = RasterPreview::default();
+    let mut native = context.map(scene::NativeScene::new);
     loop {
         let job = {
             let mut pending = shared
@@ -239,13 +263,35 @@ fn run(shared: &Shared) {
         if cancelled() {
             continue;
         }
-        let result = preview
-            .render(&job.request, UI_STUDIO_PREVIEW_MAX_SIZE, &cancelled)
-            .and_then(|frame| {
-                UiTexturePage::owned(frame.size, frame.rgba8)
-                    .map(|page| (page, frame.notice))
-                    .map_err(|error| format!("Preview image admission failed: {error:?}"))
-            });
+        let wait = || {
+            let pending = shared
+                .pending
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let _ = shared
+                .changed
+                .wait_timeout(pending, std::time::Duration::from_millis(10));
+        };
+        let scene = match &mut native {
+            Some(native) => native.render(&job.request, &cancelled, &wait),
+            None => Ok(None),
+        };
+        let result = scene.and_then(|scene| {
+            if let Some(scene) = scene {
+                return Ok(scene);
+            }
+            preview
+                .render(&job.request, UI_STUDIO_PREVIEW_MAX_SIZE, &cancelled)
+                .and_then(|frame| {
+                    UiTexturePage::owned(frame.size, frame.rgba8)
+                        .map(|page| PreviewOutput {
+                            page,
+                            image: None,
+                            notice: frame.notice,
+                        })
+                        .map_err(|error| format!("Preview image admission failed: {error:?}"))
+                })
+        });
         if cancelled() {
             continue;
         }

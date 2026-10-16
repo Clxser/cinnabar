@@ -9343,8 +9343,8 @@ Current implementation, not yet built or exercised:
   and share its resident allocation charges with chunk references. Experimental
   v1 terrain tracks lack that state and remain unsupported for native playback.
   This source is unverified.
-  Terrain alone does not establish complete 3D replay: actor appearance, an
-  isolated renderer and camera preview remain unconnected.
+  Terrain alone does not establish complete 3D replay; the provisional viewport
+  below still lacks complete actor coverage and full preview composition.
 - A prepared environment track now records atmosphere channels, classic lightmap
   inputs, fullbright state and the texture animation clock at the take's frame
   rate. Immutable sky textures, fog/biome profiles and optional dimension skyboxes
@@ -9370,8 +9370,8 @@ Current implementation, not yet built or exercised:
   caches remain shared. A coordinator admits terrain, environment, actor and
   original-view camera tracks together, rejects mixed take metadata and limits
   interrupted playback to their common duration. Camera capture now checkpoints
-  its actual pose at the shared scene interval. These source paths are unverified
-  and are not yet connected to the native editor viewport or audio playback.
+  its actual pose at the shared scene interval. The provisional native viewport
+  below consumes these unverified paths; synchronized audio playback is missing.
 - Raster media preview now connects saved timeline sampling to the native editor's
   image surface. A bounded worker owns local FFmpeg decoding, pixel composition
   and hashing; forward requests coalesce without cancelling every frame, while
@@ -9383,6 +9383,20 @@ Current implementation, not yet built or exercised:
   not yet render titles, audio, cameras, global effects or native replay scenes.
   Missing camera/effect composition is disclosed in the preview. No build, test
   or rendered acceptance was performed; this does not close the Studio gate.
+- A provisional native replay viewport now consumes the coordinated scene frame
+  in an independent headless app on the main device. Prepared terrain, actors,
+  environment and animation clock stay separate from live authorities. The native
+  inspector can switch a captured POV clip to a replay reference through undoable
+  metadata commands. Source changes rebuild the context; seeks replace camera
+  view history. Native allocation/pipeline readiness precedes image publication.
+  A bounded four-target pool, GPU-only UI copies, retained-layer damage and queue
+  completion leases avoid frame readbacks and target overwrite. Shared device
+  faults retain the primary app's fatal-error path when the worker is idle/closed.
+  This remains unbuilt and unrun. It supports one unframed replay layer and
+  free/path shot values; camera inspectors and actor target tracking, unculled
+  actor coverage, HUD/hand/particles/block entities, exact projection planes,
+  shader modes, interpolation, audio, titles and complete visual composition
+  remain incomplete. This does not establish replay parity or measured efficiency.
 
 Required work remains open:
 

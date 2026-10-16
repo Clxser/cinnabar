@@ -138,7 +138,7 @@ the prepared visual data to the GPU.
 | `crates/render-api` | `render-api` | Dependency-free publication, pacing and skin-layout contracts; use these values across publication boundaries. | `render-model` owns richer CPU geometry; `render-scene` owns ECS submission resources. |
 | `crates/render-model` | `render-model` | Engine-free render data and CPU geometry for actors, equipment and text; use its frame and geometry types. | `client-presentation` prepares data; `render-scene` carries submissions; `render` owns GPU work. |
 | `crates/render-scene` | `render-scene` | Shared ECS render submission resources and frame acknowledgments; use these at the presentation/backend boundary. | `render-model` defines CPU data; `client-presentation` publishes; `render` consumes it. |
-| `crates/render` | `render` | Bevy/wgpu terrain, actor and UI rendering; install its GPU plugins and submit prepared frames. | `meshing` builds CPU terrain; `client-presentation` prepares actors; `client-ui` prepares UI. |
+| `crates/render` | `render` | Bevy/wgpu terrain, actor and UI rendering; install its GPU plugins and submit prepared frames. | `meshing` builds CPU terrain; `client-presentation` prepares actors; `client-ui` prepares UI; `recording-scene` and `recording-studio` supply frozen inputs to an isolated replay renderer. |
 
 ### Launcher and services
 

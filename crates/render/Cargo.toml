@@ -39,6 +39,8 @@ glam.workspace = true
 bytemuck = { version = "1", features = ["derive"] }
 render-api = { path = "../render-api" }
 render-model = { path = "../render-model" }
+recording-scene = { path = "../recording-scene" }
+recording-studio = { path = "../recording-studio" }
 meshing = { path = "../meshing" }
 particles = { path = "../particles" }
 rayon.workspace = true

@@ -37,6 +37,7 @@ pub mod skybox;
 pub mod startup_presentation;
 pub mod ui;
 pub mod ui_glint;
+pub mod ui_preview;
 pub mod viewmodel;
 pub mod visibility_diagnostics;
 pub mod weather;

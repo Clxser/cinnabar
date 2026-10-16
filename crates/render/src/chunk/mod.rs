@@ -91,7 +91,7 @@ use {
     },
 };
 
-mod bounds;
+pub(crate) mod bounds;
 mod constants;
 mod draw;
 #[cfg(feature = "enhanced")]
@@ -110,6 +110,7 @@ mod presentation;
 #[cfg(feature = "publication-test-support")]
 mod publication_test_support;
 mod queue;
+pub(crate) mod replay;
 
 use render_scene::chunk::texture_reload::ChunkTextureReload;
 pub(crate) mod transparent;

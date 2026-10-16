@@ -77,6 +77,7 @@ mod pipeline_warmup_app_tests;
 
 mod present_mode;
 mod primitive_shapes;
+pub mod replay;
 pub use primitive_shapes::PrimitiveShapesRenderPlugin;
 mod render_bounds;
 

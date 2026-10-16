@@ -30,6 +30,15 @@ const POV_CHECKPOINT_VERSION: u32 = 1;
 
 pub const POV_SCENE_SCHEMA: &str = "cinnabar.pov-video/1";
 pub const VIDEO_FILE: &str = "video.mp4";
+
+/// A captured POV file may have native scene tracks beside it; playback must admit them separately.
+pub fn native_replay_directory(source: &crate::model::MediaSource) -> Option<&std::path::Path> {
+    if source.kind == crate::model::MediaKind::Video && source.path.file_name()? == VIDEO_FILE {
+        source.path.parent()
+    } else {
+        None
+    }
+}
 pub const AUDIO_FILE: &str = "game.wav";
 const MANIFEST_FILE: &str = "capture.json";
 const MANIFEST_VERSION: u32 = 1;

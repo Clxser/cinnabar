@@ -227,5 +227,26 @@ fn inspector(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<(
         true,
         Variant::Secondary,
     )?;
+    y += canvas.r(6.0);
+    let native_available = selected
+        .and_then(|clip| {
+            project
+                .sources
+                .iter()
+                .find(|source| source.id == clip.source)
+        })
+        .and_then(recording_studio::capture::native_replay_directory)
+        .is_some();
+    if y + canvas.r(4.4) <= area[3] - pad {
+        control(
+            canvas,
+            view,
+            [left, y, right, y + canvas.r(4.4)],
+            "Use 3D replay",
+            Action::UseNativeReplay,
+            native_available,
+            Variant::Secondary,
+        )?;
+    }
     Ok(())
 }

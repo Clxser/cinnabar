@@ -6638,6 +6638,8 @@ dependencies = [
  "pack-compiler",
  "particles",
  "rayon",
+ "recording-scene",
+ "recording-studio",
  "render-api",
  "render-model",
  "render-scene",

@@ -30,6 +30,7 @@ pub enum Action {
     DeleteSelected,
     SetRate(PlaybackRate),
     AddTitle,
+    UseNativeReplay,
     Zoom(i8),
     Pan(i8),
     ConfirmDiscard,

@@ -61,6 +61,8 @@ pub(crate) mod harness;
 mod layer;
 #[path = "ui_render/model_depth.rs"]
 mod model_depth;
+#[path = "ui_render/native_preview.rs"]
+mod native_preview;
 #[path = "ui_render/overlay.rs"]
 pub(crate) mod overlay;
 #[path = "ui_render/pipeline.rs"]
@@ -115,6 +117,7 @@ fn install_ui_render(app: &mut App) {
         .init_resource::<UiGlintSettings>()
         .init_resource::<UiItemGlintTexture>()
         .init_resource::<UiRenderStatsResource>();
+    app.init_resource::<render_scene::ui_preview::UiPreviewSurface>();
     let Some(render_app) = app.get_sub_app(RenderApp) else {
         return;
     };
@@ -129,6 +132,7 @@ fn install_ui_render(app: &mut App) {
         ExtractResourcePlugin::<UiRenderSceneResource>::default(),
         ExtractResourcePlugin::<UiGlintSettings>::default(),
         ExtractResourcePlugin::<UiItemGlintTexture>::default(),
+        ExtractResourcePlugin::<render_scene::ui_preview::UiPreviewSurface>::default(),
     ));
     load_internal_asset!(app, UI_SHADER_HANDLE, "ui.wgsl", shader::from_wgsl);
     load_internal_asset!(
@@ -145,8 +149,10 @@ fn install_ui_render(app: &mut App) {
         .init_resource::<UiHandCoverage>()
         .init_resource::<composite::UiLayerStore>()
         .init_resource::<model_depth::UiModelDepths>()
+        .init_resource::<native_preview::PreviewCopy>()
         .add_systems(RenderStartup, resources::init_ui_gpu)
         .add_systems(Render, ui_systems());
+    crate::device_poll::install(app.sub_app_mut(RenderApp));
     profile::install(app.sub_app_mut(RenderApp));
     install_overlay_graph(app.sub_app_mut(RenderApp).world_mut());
 }
@@ -155,6 +161,10 @@ fn install_ui_render(app: &mut App) {
 fn ui_systems() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
     (
         resources::prepare_ui_resources.in_set(RenderSystems::PrepareResources),
+        native_preview::copy
+            .in_set(RenderSystems::PrepareResources)
+            .after(resources::prepare_ui_resources),
+        native_preview::retire.in_set(RenderSystems::Cleanup),
         composite::prepare_ui_layers
             .in_set(RenderSystems::PrepareResources)
             .after(bevy::render::view::prepare_view_targets)
