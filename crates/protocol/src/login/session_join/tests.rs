@@ -639,6 +639,8 @@ async fn invalid_spawn_prerequisites_are_recorded_as_failed() {
 #[tokio::test]
 async fn a_relay_starts_with_the_session_and_adds_its_packs() {
     use crate::packet_relay::tests::FakeRelay;
+    use crate::packet_tap::PacketDirection;
+    use crate::session_transport::tests::{RecordingTap, TapEvent};
     let dir = SocketDir::new("relay");
     let settings = LoginSettings {
         server_address: "donutsmp.net:19132".into(),
@@ -664,6 +666,7 @@ async fn a_relay_starts_with_the_session_and_adds_its_packs() {
         core
     };
     let relay = Arc::new(FakeRelay::default());
+    let tap = Arc::new(RecordingTap::default());
     relay.state().packs = vec![(b"pack".to_vec(), true)];
     let (joined, mut core) = tokio::join!(
         LoginSequence::connect_session(
@@ -674,7 +677,7 @@ async fn a_relay_starts_with_the_session_and_adds_its_packs() {
             None,
             &settings,
             Some(relay.clone()),
-            None,
+            Some(tap.clone()),
             keep_prepared,
         ),
         core
@@ -732,4 +735,20 @@ async fn a_relay_starts_with_the_session_and_adds_its_packs() {
         "play does not keep the startup budget"
     );
     assert_eq!(state.inbound.last().unwrap(), &batch_frame(&live)[1..]);
+    let received_times = tap
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            TapEvent::Record(PacketDirection::Clientbound, id, _)
+                if id == packets::PacketId::SetTime as u32 =>
+            {
+                Some(id)
+            }
+            _ => None,
+        })
+        .count();
+    assert_eq!(
+        received_times, 2,
+        "startup and live relay packets are each recorded once"
+    );
 }

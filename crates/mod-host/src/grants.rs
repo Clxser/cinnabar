@@ -137,10 +137,10 @@ grants! {
     #[permission("Fullbright", false)]
     pub fullbright: bool,
     /// Lets a trusted packet mod see and change every session packet, and add resource packs.
-    #[permission("Packets", true)]
+    #[permission("Session packets", true)]
     pub packets: bool,
     /// Links WASI clocks, randomness and captured output into a packet mod, never files or network.
-    #[permission("Runtime services", false)]
+    #[permission("WASI runtime", false)]
     pub wasi: bool,
 }
 
