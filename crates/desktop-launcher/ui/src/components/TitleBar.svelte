@@ -7,7 +7,7 @@
   import Nav from './Nav.svelte';
   import AccountChip from './AccountChip.svelte';
   import { store } from '../lib/store.svelte';
-  import { platform, windowAction } from '../lib/window';
+  import { windowAction } from '../lib/window';
   import { PRODUCT_NAME } from '../lib/product';
 
 </script>
@@ -24,7 +24,7 @@
       <p class="offline" role="status"><WifiOff size={14} strokeWidth={2} aria-hidden="true" />Offline</p>
     {/if}
     <AccountChip />
-    {#if platform !== 'macos'}
+    {#if store.platform !== 'macos'}
       <div class="controls">
         <button aria-label="Minimize" onclick={() => windowAction('minimize')}><Minus size={16} strokeWidth={1.5} /></button>
         <button aria-label="Maximize" onclick={() => windowAction('toggleMaximize')}><Square size={12} strokeWidth={1.5} /></button>

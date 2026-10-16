@@ -42,7 +42,13 @@ export function formatCount(n: number): string {
   return count.format(n);
 }
 
+/** Experiences join by ID with port 0 and have no address worth showing. */
+export function isExperience(port: number): boolean {
+  return port === 0;
+}
+
 /** Bedrock's default port is implied, so only non-default ports are shown. */
 export function formatAddress(address: string, port: number): string {
+  if (isExperience(port)) return 'Experience';
   return port === 19132 ? address : `${address}:${port}`;
 }

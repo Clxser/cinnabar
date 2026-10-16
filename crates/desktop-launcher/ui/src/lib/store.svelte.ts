@@ -1,5 +1,7 @@
 import { api, type Channel, type FeaturedServer, type GameState, type InstallState, type News, type UpdateState } from '../api';
 import { getAccount, signIn, type Account, type Server } from '../api/proposed';
+import type { Platform } from '../api';
+import { platform as guessedPlatform } from './window';
 
 export type Load<T> = { status: 'loading' } | { status: 'ready'; value: T } | { status: 'error' };
 export type Page = 'home' | 'servers' | 'settings';
@@ -28,6 +30,11 @@ class LauncherStore {
   game = $state<GameState>();
   news = $state<Load<News>>({ status: 'loading' });
   servers = $state<Load<Server[]>>({ status: 'loading' });
+  /** Host platform: the installer's report once loaded, the user agent before that. */
+  get platform(): Platform {
+    return this.install.status === 'ready' ? this.install.value.platform : guessedPlatform;
+  }
+
   /** Undefined while loading or when the bridge has no account support yet. */
   account = $state<Account>();
   now = $state(Date.now());
@@ -88,6 +95,13 @@ class LauncherStore {
 
   updateAndPlay = () => {
     this.playAfterInstall = true;
+    this.lastUpdateAction = 'install';
+    return api.installUpdate();
+  };
+
+  /** Starts a manual install (a downgrade) without launching afterwards. */
+  installManually = () => {
+    this.playAfterInstall = false;
     this.lastUpdateAction = 'install';
     return api.installUpdate();
   };

@@ -31,7 +31,7 @@
   {:else if store.servers.status === 'error'}
     <InlineState message={store.offline ? 'You’re offline. Servers load when you reconnect.' : 'Featured servers didn’t load.'} onretry={() => void store.reloadServers()} />
   {:else if store.servers.value.length === 0}
-    <InlineState message="No featured servers right now." />
+    <p class="first-run">Featured servers appear here after your first game signs you in.</p>
   {:else}
     <ul class:row>
       {#each store.servers.value.slice(0, limit) as server (server.id)}
@@ -79,6 +79,18 @@
     grid-auto-flow: column;
     grid-auto-columns: 1fr;
     gap: 16px;
+  }
+
+  .first-run {
+    display: flex;
+    align-items: center;
+    min-height: 120px;
+    padding: 0 24px;
+    border-radius: var(--r-lg);
+    box-shadow: inset 0 0 0 1px var(--line);
+    font: var(--t-meta);
+    font-size: 13px;
+    color: var(--ink-2);
   }
 
   .placeholder {

@@ -7,7 +7,7 @@
   import PlayButton from './PlayButton.svelte';
   import Notice from './Notice.svelte';
   import { store } from '../lib/store.svelte';
-  import { CHANNEL_LABEL, checkStatus, playModel, type PlayModel, type Stage } from '../lib/play';
+  import { CHANNEL_LABEL, checkStatus, handsOff, playModel, type PlayModel, type Stage } from '../lib/play';
 
   interface Props {
     align?: 'start' | 'center';
@@ -22,11 +22,11 @@
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const reveal = (node: Element) => slide(node, { duration: reduce ? 0 : 280, easing: cubicOut });
 
-  const STAGES: { id: Stage; label: string }[] = [
+  const STAGES: { id: Stage; label: string }[] = $derived([
     { id: 'download', label: 'Download' },
     { id: 'verify', label: 'Verify' },
-    { id: 'install', label: 'Install' },
-  ];
+    { id: 'install', label: handsOff(install) ? 'Installer' : 'Install' },
+  ]);
   const stageIndex = $derived(STAGES.findIndex((s) => s.id === model.stage));
 
   function activate() {
@@ -53,7 +53,11 @@
   {#if model.notice}
     {@const notice = model.notice}
     <div class="notice" transition:reveal>
-      <Notice tone={notice.tone} title={notice.title} action={notice.action ? { label: notice.action.label, run: () => void store.retry() } : undefined}>
+      <Notice
+        tone={notice.tone}
+        title={notice.title}
+        action={notice.action ? { label: notice.action.label, run: () => void (notice.action!.intent === 'install' ? store.installManually() : store.retry()) } : undefined}
+      >
         {notice.body}
       </Notice>
     </div>

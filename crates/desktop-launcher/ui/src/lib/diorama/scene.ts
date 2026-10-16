@@ -7,6 +7,7 @@ import {
   Color,
   DirectionalLight,
   Fog,
+  Group,
   HemisphereLight,
   Mesh,
   MeshStandardMaterial,
@@ -51,6 +52,9 @@ export interface Frame {
   y: number;
   zoom: number;
 }
+
+/** Foreground perch placement: distance toward the camera, sideways and vertical offsets. */
+const FOREGROUND = { near: 19, side: -3.4, lift: -0.6 };
 
 export interface Diorama {
   /** Fraction of the vein that glows, 0..1. */
@@ -185,12 +189,25 @@ export function createDiorama(canvas: HTMLCanvasElement, options: DioramaOptions
   pool.receiveShadow = true;
   scene.add(pool);
 
+  // The player stands on their own stone in the foreground: nearer the camera than the island, so
+  // perspective makes them the scene's figure while the island stays the backdrop.
   const player = buildPlayer(options.skin ?? mockSkin());
-  // The player stands on a front terrace beside the mercury pool, turned toward the camera.
-  const stand = [world.pool[0] - 1, world.pool[1] + 3] as const;
-  player.root.position.set(stand[0] + 0.5 - half, world.top(stand[0], stand[1]) + 1, stand[1] + 0.5 - half);
-  player.root.rotation.y = 0.75;
-  scene.add(player.root);
+  const orbit = options.orbit ?? 0.7;
+  const toCamera = new Vector3(Math.sin(orbit) * 0.96, 0.27, Math.cos(orbit) * 0.96);
+  const right = new Vector3(Math.cos(orbit), 0, -Math.sin(orbit));
+  const perch = new Mesh(buildMesh(buildRock(21), atlas), terrainMat);
+  perch.castShadow = true;
+  perch.receiveShadow = true;
+  // A small stone under the feet; the player keeps full size.
+  perch.scale.set(0.42, 0.5, 0.42);
+  perch.position.set(-0.84, 0, -0.84);
+  const foreground = new Group();
+  foreground.add(perch);
+  player.root.position.set(0, 0.5, 0);
+  player.root.rotation.y = orbit + 0.35;
+  foreground.add(player.root);
+  foreground.position.copy(toCamera.multiplyScalar(FOREGROUND.near)).addScaledVector(right, FOREGROUND.side).add(new Vector3(0, FOREGROUND.lift, 0));
+  scene.add(foreground);
 
   // Warm light pooled above the vein so nearby faces pick up its colour.
   const oreLight = new PointLight(0xff5a3c, 0, 9, 1.6);

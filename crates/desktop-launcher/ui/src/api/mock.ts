@@ -1,8 +1,8 @@
 // Synthetic data for design work and screenshots. Server names, addresses and news are invented.
-// Pick a state with `?scenario=<name>`; add `&freeze` to stop simulated progress for captures.
+// Pick a state with `?scenario=<name>`, a host with `?platform=`; `&freeze` stops simulated progress.
 import { mockSkin } from '../lib/diorama/textures';
 import type { Account, Server } from './proposed';
-import type { Api, Channel, GameState, InstallState, News, UpdateState } from './types';
+import type { Api, Channel, GameState, InstallState, News, Platform, UpdateState } from './types';
 
 const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search);
 const scenario = params.get('scenario') ?? 'idle';
@@ -13,13 +13,24 @@ const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
 const NEXT_VERSION = '0.1.22';
 const UPDATE_BYTES = 118_437_120;
 
+function hostPlatform(): Platform {
+  const forced = params.get('platform');
+  if (forced === 'macos' || forced === 'windows' || forced === 'linux') return forced;
+  const ua = typeof navigator === 'undefined' ? '' : navigator.userAgent;
+  return /Mac/.test(ua) ? 'macos' : /Windows/.test(ua) ? 'windows' : 'linux';
+}
+
+// The downgrade scenario has a newer Nightly build installed while Beta is selected.
+const downgrading = scenario === 'downgrade';
 const install: InstallState = {
-  version: '0.1.21',
-  build: '5ef4062',
+  version: downgrading ? '0.1.23' : '0.1.21',
+  build: downgrading ? 'n412' : '5ef4062',
   channel: scenario === 'nightly' ? 'nightly' : 'beta',
-  installedChannel: 'beta',
+  installedChannel: downgrading ? 'nightly' : 'beta',
   publishedChannels: ['beta', 'nightly'],
   launcherVersion: '0.1.0',
+  platform: hostPlatform(),
+  nativeApiVersion: 1,
 };
 
 const available = (required: boolean): UpdateState => ({
@@ -29,6 +40,7 @@ const available = (required: boolean): UpdateState => ({
   notesUrl: 'https://example.com/cinnabar/notes/0.1.22',
   sizeBytes: UPDATE_BYTES,
   required,
+  downgrade: false,
 });
 
 const initialUpdate: Record<string, UpdateState> = {
@@ -39,6 +51,8 @@ const initialUpdate: Record<string, UpdateState> = {
   downloading: { kind: 'downloading', version: NEXT_VERSION, receivedBytes: 50_593_792, totalBytes: UPDATE_BYTES },
   verifying: { kind: 'verifying', version: NEXT_VERSION },
   installing: { kind: 'installing', version: NEXT_VERSION },
+  handoff: { kind: 'installing', version: NEXT_VERSION },
+  downgrade: { kind: 'available', version: '0.1.21', channel: 'beta', sizeBytes: 112_400_000, required: false, downgrade: true },
   failed: {
     kind: 'failed',
     message: 'The download was interrupted (connection reset). Your installed version is unchanged.',
@@ -138,6 +152,7 @@ const servers: Server[] = [
   { id: 's5', name: 'Hollowmere', address: 'hollowmere.example', port: 19132, description: 'Story-driven adventure maps with a new chapter every Friday.', online: 412, tags: ['Adventure'], pingMs: 118 },
   { id: 's6', name: 'Brickyard Creative', address: 'build.brickyard.example', port: 19132, description: 'Plots, build battles and a monthly showcase.', online: 233, tags: ['Creative'], pingMs: 63 },
   { id: 's7', name: 'Lanternfall', address: 'lanternfall.example', port: 19140 },
+  { id: 's9', name: 'Skyward Trials', address: '8c0f3e52-6d1b-4f7a-9a21-3b5e9d7c4a10', port: 0, description: 'A parkour experience with weekly leaderboards.', online: 318, tags: ['Experience', 'Parkour'] },
   { id: 's8', name: 'Glasshouse SMP', address: 'glasshouse.example', port: 19132, description: 'Small whitelist-free survival. Be kind, build slow.', online: 57, tags: ['Survival', 'Small'], pingMs: 196 },
 ];
 
@@ -155,6 +170,8 @@ async function simulateInstall() {
   setUpdate({ kind: 'verifying', version });
   await wait(1100);
   setUpdate({ kind: 'installing', version });
+  // On Windows the real launcher hands off to the installer and quits here.
+  if (install.platform === 'windows') return;
   await wait(1400);
   install.version = version;
   install.build = '9c41d07';

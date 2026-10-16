@@ -57,7 +57,7 @@ export function buildWorld(seed = 2026): World {
   const radius = (x: number, z: number) => {
     const ang = Math.atan2(z - c, x - c);
     let rad = 6.6;
-    for (const l of lobes) rad += Math.cos(ang - l.a) * 0.45 * l.k;
+    for (const l of lobes) rad += Math.cos(ang - l.a) * 0.25 * l.k;
     return rad;
   };
 
@@ -72,7 +72,7 @@ export function buildWorld(seed = 2026): World {
       }
       // Terraced hill rising toward the back-left; stepped so each terrace reads as a ledge.
       const hill = Math.max(0, 1 - Math.hypot(x - c + 2.6, z - c + 2.8) / 7.4);
-      const h = Math.floor(1 + hill * 5.2 + (r() < 0.1 ? 1 : 0));
+      const h = Math.floor(1 + hill * 5.2);
       // Underside tapers into a hanging point.
       const depth = Math.floor(1 + Math.pow(1 - d / rad, 1.2) * 5.5 + r() * 1.2);
       tops[x]![z] = h;

@@ -1,5 +1,5 @@
-// Data the UI can show but the bridge contract does not carry yet. Each call resolves to
-// `undefined` in Tauri until the builder adds the matching command, and the UI hides what is missing.
+// Data the UI can show but the bridge contract does not carry yet. The launcher has no account
+// core, so in Tauri these resolve to nothing and the UI hides what is missing.
 import { inTauri } from './index';
 import type { FeaturedServer } from './types';
 
@@ -20,16 +20,9 @@ export interface ServerExtras {
 export type Server = FeaturedServer & ServerExtras;
 
 export async function getAccount(): Promise<Account | undefined> {
-  if (inTauri) {
-    const { invoke } = await import('@tauri-apps/api/core');
-    return invoke<Account>('get_account').catch(() => undefined);
-  }
+  if (inTauri) return undefined;
   const { mockAccount } = await import('./mock');
   return mockAccount();
 }
 
-export async function signIn(): Promise<void> {
-  if (!inTauri) return;
-  const { invoke } = await import('@tauri-apps/api/core');
-  await invoke('sign_in').catch(() => undefined);
-}
+export async function signIn(): Promise<void> {}

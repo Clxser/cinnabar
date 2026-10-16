@@ -13,10 +13,10 @@ export interface Primary {
 }
 
 export interface Notice {
-  tone: 'warn' | 'error';
+  tone: 'info' | 'warn' | 'error';
   title: string;
   body: string;
-  action?: { label: string; intent: 'retry' };
+  action?: { label: string; intent: 'retry' | 'install' };
 }
 
 export type Stage = 'download' | 'verify' | 'install';
@@ -29,6 +29,11 @@ export interface PlayModel {
 }
 
 export const CHANNEL_LABEL: Record<Channel, string> = { stable: 'Stable', beta: 'Beta', nightly: 'Nightly' };
+
+/** Whether installing hands off to the platform installer (and closes) rather than relaunching. */
+export function handsOff(install: InstallState | undefined): boolean {
+  return install?.platform === 'windows';
+}
 
 /**
  * Derives what the launchpad offers from the three live states. Game state wins over update
@@ -70,8 +75,24 @@ export function playModel(install: InstallState | undefined, installFailed: bool
     case 'verifying':
       return { primary: { label: 'Verifying', detail: `Checking ${update.version} against its signature`, intent: 'none', tone: 'busy', progress: null }, stage: 'verify' };
     case 'installing':
-      return { primary: { label: 'Installing', detail: `Replacing ${install.version} with ${update.version}`, intent: 'none', tone: 'busy', progress: null }, stage: 'install' };
+      // Windows hands the verified package to its installer and closes; elsewhere a helper swaps
+      // the files and relaunches straight into the game.
+      return handsOff(install)
+        ? { primary: { label: 'Opening installer', detail: `Cinnabar closes while ${update.version} installs`, intent: 'none', tone: 'busy', progress: null }, stage: 'install' }
+        : { primary: { label: 'Installing', detail: `Cinnabar restarts into ${update.version}`, intent: 'none', tone: 'busy', progress: null }, stage: 'install' };
     case 'available': {
+      if (update.downgrade) {
+        // Going back to an older channel release is a manual install, never the default action.
+        return {
+          primary: play,
+          notice: {
+            tone: 'info',
+            title: `${CHANNEL_LABEL[update.channel]} is behind your build`,
+            body: `You have ${CHANNEL_LABEL[install.installedChannel]} ${install.version}. Moving to ${CHANNEL_LABEL[update.channel]} ${update.version} opens the installer and closes Cinnabar.`,
+            action: { label: `Install ${update.version}`, intent: 'install' },
+          },
+        };
+      }
       const size = update.sizeBytes ? `, ${formatBytes(update.sizeBytes)}` : '';
       const primary: Primary = { label: 'Update & play', detail: `Version ${update.version}${size}`, intent: 'update', tone: 'ore' };
       if (update.required) {
@@ -122,7 +143,7 @@ export function joinBlockedReason(update: UpdateState | undefined, game: GameSta
     case 'installing':
       return 'Wait for the update to finish';
     case 'available':
-      return update.required ? 'Update Cinnabar to join' : undefined;
+      return update.required && !update.downgrade ? 'Update Cinnabar to join' : undefined;
     case 'failed':
       return update.canPlayInstalled ? undefined : 'Cinnabar can’t start until the update is fixed';
     default:

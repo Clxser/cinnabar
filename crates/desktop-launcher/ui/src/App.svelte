@@ -6,7 +6,6 @@
   import Servers from './pages/Servers.svelte';
   import Settings from './pages/Settings.svelte';
   import { store } from './lib/store.svelte';
-  import { platform } from './lib/window';
   import { playModel, veinFill } from './lib/play';
   import { fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
@@ -23,7 +22,7 @@
   const probeOrbit = q.has('orbit') ? Number(q.get('orbit')) : undefined;
 
   // The island sits right of centre and clear of the shelf, leaving the left third for launch.
-  const FRAME = { x: 0.19, y: 0.13, zoom: 0.86 };
+  const FRAME = { x: 0.2, y: 0.1, zoom: 0.94 };
 
   const install = $derived(store.install.status === 'ready' ? store.install.value : undefined);
   const refined = $derived(veinFill(playModel(install, store.install.status === 'error', store.update, store.game, store.now)));
@@ -45,7 +44,7 @@
 {#if probe}
   <div class="probe"><Diorama refined={1} paused={false} frame={probeFrame} orbit={probeOrbit} /></div>
 {:else}
-<div class="frame" data-platform={platform} class:home>
+<div class="frame" data-platform={store.platform} class:home>
   <Diorama {refined} frame={FRAME} veiled={!home} paused={!home || store.game?.kind === 'running'} />
   <div class="scrim" aria-hidden="true"></div>
   <TitleBar />

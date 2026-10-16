@@ -21,6 +21,7 @@
   const channels = $derived(CHANNEL_ORDER.filter((c) => install?.publishedChannels.includes(c)).map((c) => ({ value: c, label: CHANNEL_LABEL[c] })));
   const busy = $derived(['checking', 'downloading', 'verifying', 'installing'].includes(store.update?.kind ?? ''));
   const status = $derived(checkStatus(store.update, store.now));
+  const downgrade = $derived(store.update?.kind === 'available' && store.update.downgrade ? store.update : undefined);
 
   interface Notice {
     name: string;
@@ -62,7 +63,15 @@
             <span class="placeholder"></span>
           {/if}
         </div>
-        {#if install && install.channel !== install.installedChannel}
+        {#if install && downgrade}
+          <div class="row manual">
+            <div class="label">
+              <span class="name">Install {CHANNEL_LABEL[downgrade.channel]} {downgrade.version} by hand</span>
+              <span class="hint">It is older than your {CHANNEL_LABEL[install.installedChannel]} {install.version}. The installer opens and Cinnabar closes.</span>
+            </div>
+            <button class="button" disabled={store.game?.kind !== 'stopped'} onclick={() => void store.installManually()}>Open installer</button>
+          </div>
+        {:else if install && install.channel !== install.installedChannel}
           <p class="pending">
             Your installed build is from {CHANNEL_LABEL[install.installedChannel]}. {CHANNEL_LABEL[install.channel]} installs with the next update.
           </p>
@@ -193,6 +202,10 @@
     font: var(--t-meta);
     font-size: 13px;
     color: var(--ink-3);
+  }
+
+  .manual .name {
+    color: var(--warn);
   }
 
   .pending {
