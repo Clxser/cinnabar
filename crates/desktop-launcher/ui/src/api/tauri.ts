@@ -1,7 +1,8 @@
-// Placeholder bridge so the UI branch builds alone; the Tauri builder owns the final file.
+// The real bridge to the Rust launcher.
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { Api, GameState, UpdateState } from './types';
+import type { Api } from './api';
+import type { GameState, UpdateState } from './types';
 
 /** Subscribes synchronously and detaches once the asynchronous listener registration lands. */
 function subscribe<T>(event: string, cb: (payload: T) => void): () => void {
