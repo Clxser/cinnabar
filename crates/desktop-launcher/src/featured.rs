@@ -62,6 +62,20 @@ pub fn parse(body: &[u8]) -> Result<Vec<FeaturedServer>> {
         .into_iter()
         .filter(|server| !server.id.is_empty() && !server.address.is_empty())
         .map(|server| FeaturedServer {
+            // The API lists an experience by its bare ID; the game joins it behind the prefix.
+            address: if server.port == 0
+                && !server
+                    .address
+                    .starts_with(launcher::menu::EXPERIENCE_ADDRESS_PREFIX)
+            {
+                format!(
+                    "{}{}",
+                    launcher::menu::EXPERIENCE_ADDRESS_PREFIX,
+                    server.address
+                )
+            } else {
+                server.address.clone()
+            },
             image_url: server.image_url.filter(|url| url.starts_with("https://")),
             online: None,
             ping_ms: None,
@@ -153,9 +167,17 @@ mod tests {
             { "id": "a", "name": "A", "address": "a.example.test", "port": 19132,
               "imageUrl": "http://insecure.example.test/a.png", "tags": ["PvP"] },
             { "id": "", "name": "No id", "address": "x.example.test", "port": 1 },
+            { "id": "e", "name": "E", "address": "0b6c2f9e-0000-4000-8000-000000000001", "port": 0 },
         ]});
-        let curated = parse(&serde_json::to_vec(&body).unwrap()).unwrap();
-        assert_eq!(curated.len(), 1);
+        let mut curated = parse(&serde_json::to_vec(&body).unwrap()).unwrap();
+        assert_eq!(curated.len(), 2);
+        assert_eq!(
+            curated.pop().unwrap().address,
+            format!(
+                "{}0b6c2f9e-0000-4000-8000-000000000001",
+                launcher::menu::EXPERIENCE_ADDRESS_PREFIX
+            )
+        );
         assert_eq!(curated[0].image_url, None);
         assert!(parse(b"{").is_err());
         let root = tempfile::tempdir().unwrap();
