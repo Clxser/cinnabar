@@ -45,6 +45,11 @@ pub(super) fn poll(
     let mut input = std::mem::take(&mut packets.menu.pending);
     input.open = packets.menu.owned && presentation.mod_ui().mod_panel_open();
     input.viewport = viewport;
+    input.preview_sizes = relay
+        .map(|relay| {
+            presentation.mod_control_preview_sizes(PanelUiOwner::PacketSession(relay), session)
+        })
+        .unwrap_or_default();
     if let Some(requests) = packets
         .menu
         .retained
@@ -282,6 +287,7 @@ mod tests {
 
         let mut panel = mod_ui::test_support::sample_panel();
         panel.surface = Some(Surface {
+            previews: Default::default(),
             screen: format!("temporal.{screen}"),
             document: serde_json::json!({"namespace":"temporal",screen:{
                 "type":"screen","size":["100%","100%"],"controls":[{"moving":{

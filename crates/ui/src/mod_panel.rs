@@ -9,7 +9,8 @@ pub(crate) mod surface;
 mod update;
 pub use axis::{AxisExtent, AxisRoute};
 pub use surface::{
-    MAX_TRANSITION_SECONDS, Surface, SurfaceTransition, SurfaceValue, TransitionEasing, backdrop,
+    MAX_SURFACE_NODES, MAX_TRANSITION_SECONDS, Surface, SurfaceTransition, SurfaceValue,
+    TransitionEasing, backdrop, preview,
 };
 pub use update::{
     MAX_PANEL_BUNDLE_BYTES, MAX_PANEL_PATCH_BYTES, MAX_PANEL_SURFACES, PanelBundle, PanelPatch,

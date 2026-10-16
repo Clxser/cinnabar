@@ -10,7 +10,9 @@ use super::{
 pub(crate) fn same_shape(a: &Panel, b: &Panel) -> bool {
     same_template(a, b)
         && match (&a.surface, &b.surface) {
-            (Some(a), Some(b)) => a.screen == b.screen && a.document == b.document,
+            (Some(a), Some(b)) => {
+                a.screen == b.screen && a.document == b.document && a.previews == b.previews
+            }
             (None, None) => true,
             _ => false,
         }

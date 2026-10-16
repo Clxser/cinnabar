@@ -6,6 +6,7 @@ fn prepared_panels(title: &str) -> ([Panel; 2], Arc<prepared::PreparedPanelUi>) 
     let mut content = panel();
     content.title = title.into();
     content.surface = Some(ui::mod_panel::Surface {
+        previews: Default::default(),
         transitions: Default::default(),
         screen: "extension.screen".into(),
         document: serde_json::json!({
@@ -580,6 +581,7 @@ fn exiting_panel(exit: Option<f64>) -> Panel {
 
     let mut content = panel();
     content.surface = Some(Surface {
+        previews: Default::default(),
         screen: "extension.screen".into(),
         document: serde_json::json!({
             "namespace": "extension",

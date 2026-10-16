@@ -20,10 +20,10 @@ The optional `viewport` is the available authored GUI size before reference-size
 
 Version one starts with only these original fields, including for guests that
 reject unknown JSON fields. To accept additional facts, return optional output
-`input_extensions:["pointer_state","shift_state","hud_geometry"]`. The next
+`input_extensions:["pointer_state","shift_state","hud_geometry","control_previews"]`. The next
 input includes only those groups: `pointer_state` adds `pointer_held` and
 `pointer_cancelled`, `shift_state` adds `shift_held`, and `hud_geometry` adds its
-map. Omission retains the accepted groups; an empty array clears them. Requests
+map. `control_previews` adds the `preview_sizes` map described below. Omission retains the accepted groups; an empty array clears them. Requests
 must contain unique known groups. A new session starts with no extensions.
 Each group's field set is frozen for version one. Future input facts require a
 new opt-in group so strict decoders that accepted an existing group remain valid.
@@ -67,6 +67,42 @@ hidden, ambiguous and stale-session roots are omitted. Geometry is a completed
 frame observation and can lag one frame behind updated bindings.
 Selectors match the engine's resolved instance name. For an authored literal
 name, underscores avoid JSON-UI interpreting a leading `namespace.` qualifier.
+
+An authored surface may declare `previews`, keyed by opaque preview ID. A
+noninteractive custom node with `renderer:"cinnabar_control_preview"` and literal
+`preview_id` contains the corresponding real pack control inside its rectangle:
+
+```json
+{"previews":{"example":{"reference":"example.actual_widget","variables":{"$compact":true},"globals":{"#example_text":"First line\nSecond line"},"collections":{},"size":[0,0]}}}
+```
+
+`reference` selects a qualified control in the current composed pack catalog.
+`variables` supplies root `$` overrides; `globals` supplies independent `#`
+bindings; `collections` maps collection names to arrays of `#`-keyed row objects.
+These values never update gameplay HUD bindings or settings. `size` supplies a
+reference canvas in GUI units; zero components measure content on a bounded
+canvas. The host uses the same text, image, native HUD, item and player renderers
+as the original control, preserves aspect ratio and clips to the destination.
+Preview focus, hits and actions are discarded, leaving the enclosing menu control
+as the input target. Nested filter/backdrop composites are not replayed.
+
+At most 32 previews and 128 KiB of aggregate fixture data are retained per
+surface. Fixture strings allow newlines and up to 16 KiB; ordinary surface
+scalar limits remain unchanged. Resolution, factory prototypes and expanded
+binding are bounded to the surface node budget. Missing or rejected controls
+produce no thumbnail. Declaration changes invalidate their prepared source and
+preview cache; sessions, owners, language, font and texture changes remain
+isolated. Closed surfaces retire the cache after their exit settles.
+
+After opting into `control_previews`, input includes
+`preview_sizes:{"example":[48,28]}` for successfully measured current previews.
+Dimensions cover the emitted artwork, including overflow beyond the root's
+layout rectangle, before contain fit or parent paint transform. They use the
+same native-panel GUI basis as `hud_geometry.size`. Texture transparency is not
+sampled when measuring conservative painted bounds. Missing or stale
+measurements are omitted. Measurements are delivered only to the packet session
+that owns the currently painted declarations; another owner's previews cannot
+be observed. This group's version-one field set is frozen like the others.
 
 Trusted HUD catalogs support `cinnabar_position:[x,y]` or its
 `#cinnabar_position` vector binding. Each normalized component selects the
@@ -128,3 +164,6 @@ cargo run -p ui-snapshot -- --panel panel.json --out panel.png \
 
 The CPU snapshot path uses the production panel painter and local validated
 carriers. A headless client capture verifies the GPU glass/backdrop appearance.
+Pack-control previews require the full presentation runtime, including composed
+pack fonts and player-renderer resources; the optional reactor painter scenario
+installs these through their normal owners.

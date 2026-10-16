@@ -51,7 +51,7 @@ impl Binder<'_> {
         let window = (self.state.virtualizes(collection) && count >= VIRTUAL_GRID_CELLS)
             .then(|| self.grid_window(scope.parent_key, &resolved))
             .flatten();
-        let mut cells = Vec::with_capacity(count);
+        let mut cells = Vec::with_capacity(count.min(self.remaining_nodes()));
         for index in 0..count {
             if !self.can_create() {
                 break;

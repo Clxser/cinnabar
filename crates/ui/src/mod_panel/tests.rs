@@ -32,7 +32,8 @@ fn finite_slider_and_physical_key_are_accepted() {
 fn relative_axis_extent_bindings_require_a_declared_positive_numeric_value() {
     let mut panel = panel();
     panel.surface = Some(Surface {
-        screen:"extent.root".into(),
+        previews: Default::default(),
+screen:"extent.root".into(),
         document:serde_json::json!({"namespace":"extent","root":{
             "type":"button","size":[10,10],"button_mappings":[{
                 "from_button_id":"button.menu_select","to_button_id":"mod.drag_axis:0:x:#resize_extent","mapping_type":"pressed"
@@ -292,7 +293,8 @@ fn expanded_panels_still_reject_controls_above_the_capacity() {
 /// Supplies a small extension-authored screen with one declared button route.
 fn surface(action: &str) -> Surface {
     Surface {
-        transitions: Default::default(),
+        previews: Default::default(),
+transitions: Default::default(),
         screen: "extension.screen".into(),
         document: serde_json::json!({"namespace":"extension","screen":{
             "type":"screen","size":["100%","100%"],"controls":[{"action":{
@@ -487,7 +489,8 @@ fn bounded_large_external_catalog_rejects_one_excess_control() {
 #[test]
 fn resolved_template_routes_still_require_declared_panel_controls() {
     let mut spec = panel();
-    spec.surface=Some(Surface {transitions:Default::default(),screen:"extension.screen".into(),bindings:Default::default(),document:serde_json::json!({"namespace":"extension","button":{"type":"button","$action|default":"mod.control:0","button_mappings":[{"from_button_id":"button.menu_select","mapping_type":"pressed","to_button_id":"$action"}]},"screen":{"type":"panel","controls":[{"chosen@extension.button":{"$action":"mod.control:7"}}]}}).to_string()});
+    spec.surface=Some(Surface {previews: Default::default(),
+transitions:Default::default(),screen:"extension.screen".into(),bindings:Default::default(),document:serde_json::json!({"namespace":"extension","button":{"type":"button","$action|default":"mod.control:0","button_mappings":[{"from_button_id":"button.menu_select","mapping_type":"pressed","to_button_id":"$action"}]},"screen":{"type":"panel","controls":[{"chosen@extension.button":{"$action":"mod.control:7"}}]}}).to_string()});
     assert!(spec.validate().is_err());
     let surface = spec.surface.as_mut().unwrap();
     surface.document = surface.document.replace("mod.control:7", "mod.control:0");
@@ -497,6 +500,7 @@ fn resolved_template_routes_still_require_declared_panel_controls() {
 /// A surface whose panel carries `transform` and a bound scale over a `child` control.
 fn transformed(transform: serde_json::Value, child: &str) -> Surface {
     Surface {
+        previews: Default::default(),
         transitions: Default::default(),
         screen: "extension.screen".into(),
         document: serde_json::json!({"namespace":"extension","screen":{

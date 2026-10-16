@@ -69,6 +69,23 @@ pub(super) struct ModPanel {
 }
 
 impl ModUi {
+    /// Preview declarations of the active or exiting panel; other owners remain inaccessible.
+    pub fn control_previews(
+        &self,
+    ) -> Option<(
+        PanelUiOwner,
+        &std::collections::BTreeMap<String, ui::mod_panel::preview::ControlPreview>,
+    )> {
+        if self.mod_hud_editor_open() {
+            return None;
+        }
+        let panel = self
+            .mod_panel
+            .as_ref()
+            .filter(|panel| panel.open || panel.exiting())?;
+        Some((panel.owner, &panel.panel.surface.as_ref()?.previews))
+    }
+
     /// Drops the panel's laid-out text and pointer capture after its private font changed.
     pub fn invalidate_mod_panel_font(&mut self) {
         self.cancel_mod_hud_editor();
@@ -431,51 +448,60 @@ impl ModUi {
             tracing::warn!(%error, "personal extension panel disabled after rendering failure");
             return;
         }
-        let mut glass = GlassRenderer::new(world);
-        let mut renderers: [&mut dyn CustomRenderer; 1] = [&mut glass];
-        let paint_frame = &mut paint_frame.with_renderers(&mut renderers);
-        let language = paint_frame.language;
-        let art = ScreenArt {
-            view: Some(&panel.view),
-            ..Default::default()
-        };
-        let catalog = panel.catalog.as_ref().expect("catalog installed above");
-        let screen = panel
-            .prepared
-            .as_ref()
-            .filter(|_| panel.edit.is_none())
-            .and_then(|route| {
-                self.prepared_panel_ui
-                    .get_mut(&panel.owner)
-                    .map(|owner| owner.screen(route))
-            })
-            .unwrap_or(&mut panel.screen);
-        match renderer.draw(art, paint_frame, |env, root| {
-            screen.render_shared_with(
-                SCREEN,
-                catalog,
-                &Context::default(),
-                data,
-                (root, px, language),
-                env,
-                &panel.view,
-            )
-        }) {
-            Ok(Some(frame)) => {
-                for (key, metrics) in &frame.report.scrolls {
-                    if let Some(offset) = panel.view.scroll.get_mut(key) {
-                        *offset = metrics.offset;
+        let caller = std::mem::take(&mut paint_frame.renderers);
+        {
+            let mut glass = GlassRenderer::new(world);
+            let mut renderers: Vec<&mut dyn CustomRenderer> = caller
+                .iter_mut()
+                .map(|renderer| &mut **renderer as &mut dyn CustomRenderer)
+                .collect();
+            renderers.push(&mut glass);
+            let mut nested_frame = paint_frame.with_renderers(&mut renderers);
+            let paint_frame = &mut nested_frame;
+            let language = paint_frame.language;
+            let art = ScreenArt {
+                view: Some(&panel.view),
+                ..Default::default()
+            };
+            let catalog = panel.catalog.as_ref().expect("catalog installed above");
+            let screen = panel
+                .prepared
+                .as_ref()
+                .filter(|_| panel.edit.is_none())
+                .and_then(|route| {
+                    self.prepared_panel_ui
+                        .get_mut(&panel.owner)
+                        .map(|owner| owner.screen(route))
+                })
+                .unwrap_or(&mut panel.screen);
+            match renderer.draw(art, paint_frame, |env, root| {
+                screen.render_shared_with(
+                    SCREEN,
+                    catalog,
+                    &Context::default(),
+                    data,
+                    (root, px, language),
+                    env,
+                    &panel.view,
+                )
+            }) {
+                Ok(Some(frame)) => {
+                    for (key, metrics) in &frame.report.scrolls {
+                        if let Some(offset) = panel.view.scroll.get_mut(key) {
+                            *offset = metrics.offset;
+                        }
                     }
+                    panel.frame = Some(frame);
                 }
-                panel.frame = Some(frame);
-            }
-            result => {
-                out_of_render(panel, paint_frame, rollback);
-                if let Err(error) = result {
-                    tracing::warn!(%error, "personal extension panel disabled after rendering failure");
+                result => {
+                    out_of_render(panel, paint_frame, rollback);
+                    if let Err(error) = result {
+                        tracing::warn!(%error, "personal extension panel disabled after rendering failure");
+                    }
                 }
             }
         }
+        paint_frame.renderers = caller;
     }
 }
 

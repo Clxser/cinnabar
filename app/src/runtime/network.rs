@@ -157,7 +157,7 @@ mod block_overlay;
 mod bootstrap_timing;
 pub(crate) mod entity_pack;
 mod entity_texture_reload;
-mod glyph_sheets;
+pub(crate) mod glyph_sheets;
 mod item_icons;
 mod server_animation;
 pub(crate) use item_icons::set_vanilla_item_paths;

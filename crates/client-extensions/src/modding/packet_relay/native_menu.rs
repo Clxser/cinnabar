@@ -168,6 +168,7 @@ impl NativeMenu {
             pending.shift_held = input.shift_held;
             pending.viewport = input.viewport;
             pending.hud_geometry = input.hud_geometry;
+            pending.preview_sizes = input.preview_sizes;
             pending.events.extend(input.events);
             pending.keys.extend(input.keys);
         } else {

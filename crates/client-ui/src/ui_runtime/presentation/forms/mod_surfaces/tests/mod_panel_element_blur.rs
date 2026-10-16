@@ -27,7 +27,8 @@ fn entering_panel() -> Panel {
     };
     let mut panel = panel();
     panel.surface = Some(Surface {
-        screen: "extension.screen".into(),
+        previews: Default::default(),
+screen: "extension.screen".into(),
         document: json!({"namespace":"extension","screen":{
             "type":"screen","size":["100%","100%"],"controls":[
                 {"card":{"type":"panel","size":[100,60],"offset":[60,60],

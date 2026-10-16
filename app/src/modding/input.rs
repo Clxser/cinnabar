@@ -280,6 +280,7 @@ pub(super) fn prepare_mod_input(
             shift_held: physical.shift_held(focused),
             viewport,
             hud_geometry: Default::default(),
+            preview_sizes: Default::default(),
             events: events
                 .into_iter()
                 .take(ui::mod_panel::MAX_PANEL_EVENTS)

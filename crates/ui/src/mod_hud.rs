@@ -757,6 +757,7 @@ mod tests {
             ("button.resume_game", false),
         ] {
             hud.surface = Some(crate::mod_panel::Surface {
+                previews: Default::default(),
                 transitions: Default::default(),
                 screen: "fixture.editor".into(),
                 document: serde_json::json!({"namespace":"fixture","editor":{

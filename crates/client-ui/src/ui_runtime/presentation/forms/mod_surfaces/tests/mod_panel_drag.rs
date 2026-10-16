@@ -42,6 +42,7 @@ fn draggable() -> Panel {
         })
         .collect();
     panel.surface = Some(Surface {
+        previews: Default::default(),
         screen: "drag.root".into(),
         transitions: Default::default(),
         bindings: BTreeMap::from([("#position".into(), SurfaceValue::Vector(vec![96.0, 91.0]))]),

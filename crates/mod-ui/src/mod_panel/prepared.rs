@@ -187,5 +187,5 @@ impl PreparedRoute {
 
 /// Scalar changes never invalidate a prepared static route.
 fn same_document(a: &Surface, b: &Surface) -> bool {
-    a.screen == b.screen && a.document == b.document
+    a.screen == b.screen && a.document == b.document && a.previews == b.previews
 }

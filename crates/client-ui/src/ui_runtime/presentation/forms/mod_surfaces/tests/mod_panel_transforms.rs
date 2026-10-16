@@ -42,7 +42,8 @@ fn transformed_panel(
     };
     let mut panel = panel();
     panel.surface = Some(Surface {
-        screen: "extension.screen".into(),
+        previews: Default::default(),
+screen: "extension.screen".into(),
         document: json!({"namespace":"extension","screen":{
             "type":"screen","size":["100%","100%"],"controls":[
                 {"grown": placed([40.0, 20.0], [100.0, 80.0], json!({"type":"button",
@@ -330,6 +331,7 @@ fn menu_panel(values: [f64; 5]) -> Panel {
     let mut panel = panel();
     let names = ["#entrance", "#press", "#hover", "#chevron", "#spin"];
     panel.surface = Some(Surface {
+        previews: Default::default(),
         screen: "extension.screen".into(),
         document: json!({"namespace":"extension","screen":{
             "type":"screen","size":["100%","100%"],"controls":[

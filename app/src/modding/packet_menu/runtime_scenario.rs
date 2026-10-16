@@ -44,6 +44,8 @@ struct Step {
     #[serde(default)]
     expect_geometry: Vec<String>,
     #[serde(default)]
+    expect_preview_sizes: Vec<String>,
+    #[serde(default)]
     expect_rect_change: Vec<String>,
     #[serde(default)]
     expect_scale_grow: Vec<String>,
@@ -65,8 +67,32 @@ struct Pointer {
 }
 
 /// Collects the real pack definitions and original textures returned by guest startup.
-fn pack(packs: Vec<protocol::RelayPack>) -> ServerUiPack {
+fn pack(
+    packs: Vec<protocol::RelayPack>,
+) -> (
+    ServerUiPack,
+    Option<Arc<client_ui::ui_runtime::presentation::SessionGlyphSheets>>,
+) {
     let mut result = ServerUiPack::default();
+    let base = resource_pack::validate_handoff(protocol::ResourcePackHandoff::default());
+    let (stack, errors) = resource_pack::compose_added_packs(
+        &base,
+        packs
+            .iter()
+            .map(|pack| resource_pack::AddedPack {
+                archive: pack.archive.clone(),
+                above_server: pack.above_server,
+            })
+            .collect(),
+        8 << 30,
+    );
+    assert!(
+        errors.is_empty(),
+        "scenario packs must pass normal admission: {errors:?}"
+    );
+    let view = resource_pack::LayeredPackView::new(Arc::new(stack));
+    let glyphs = crate::runtime::network::glyph_sheets::compile_session_glyphs(&view);
+    result.view = Some(view);
     for pack in packs {
         let mut archive = zip::ZipArchive::new(Cursor::new(pack.archive)).unwrap();
         let mut layer = Vec::new();
@@ -89,7 +115,7 @@ fn pack(packs: Vec<protocol::RelayPack>) -> ServerUiPack {
         }
         result.ui_layers.push(layer);
     }
-    result
+    (result, glyphs)
 }
 
 /// Publishes opaque title fixtures through the normal UI event owner.
@@ -214,8 +240,10 @@ fn external_reactor_runs_retained_menu_and_actual_pack_hud_scenario() {
         "camera grants remain independent"
     );
     let mut presentation = UiPresentationResource(presentation);
-    presentation.set_server_ui_pack(&pack(packs));
+    let (pack, glyphs) = pack(packs);
+    presentation.set_server_ui_pack(&pack);
     let mut runtime = UiRuntime::new(1);
+    runtime.set_session_glyphs(glyphs);
     runtime.apply_hud_rules(protocol::HudRules {
         show_coordinates: Some(scenario.coordinates_visible),
         ..Default::default()
@@ -238,6 +266,11 @@ fn external_reactor_runs_retained_menu_and_actual_pack_hud_scenario() {
     let mut pointer_held = false;
     let mut report = Vec::new();
     for step in scenario.steps {
+        presentation.set_player_preview_skin(
+            Some(render_model::default_actor_skin_rgba8().as_ref()),
+            Default::default(),
+        );
+        presentation.hud_frame_mut().player_preview = presentation.player_preview_icon();
         assert!(
             !step.name.is_empty()
                 && step
@@ -327,6 +360,16 @@ fn external_reactor_runs_retained_menu_and_actual_pack_hud_scenario() {
             .cloned()
             .unwrap_or_default();
         let next = presentation.mod_hud_geometry(&requests, 1);
+        let preview_sizes = presentation
+            .mod_control_preview_sizes(PanelUiOwner::PacketSession(packets.menu.relay.unwrap()), 1);
+        for name in &step.expect_preview_sizes {
+            assert!(
+                preview_sizes.contains_key(name),
+                "{}: missing pack-control preview {name}; measured {:?}",
+                step.name,
+                preview_sizes
+            );
+        }
         for name in &step.expect_geometry {
             assert!(
                 next.contains_key(name),
@@ -387,7 +430,7 @@ fn external_reactor_runs_retained_menu_and_actual_pack_hud_scenario() {
                 step.name, scenario.size[0], scenario.size[1]
             ),
         );
-        report.push(serde_json::json!({"step":step.name,"millis":step.millis,"open":presentation.mod_ui().mod_panel_open(),"geometry":next,"edits":edits,"panel":packets.menu.retained.as_ref().map(|output|&output.output)}));
+        report.push(serde_json::json!({"step":step.name,"millis":step.millis,"open":presentation.mod_ui().mod_panel_open(),"geometry":next,"preview_sizes":preview_sizes,"edits":edits,"panel":packets.menu.retained.as_ref().map(|output|&output.output)}));
         geometry = next;
         document = next_document;
         previous_vertices = Some(frame.vertices);
