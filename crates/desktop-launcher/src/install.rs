@@ -64,7 +64,7 @@ pub fn state(current: &Build, channel: Channel) -> InstallState {
             .collect(),
         launcher_version: LAUNCHER_VERSION.to_owned(),
         platform: Platform::current(),
-        native_api_version: crate::commands::NATIVE_API_VERSION,
+        native_api_version: crate::surface::NATIVE_API_VERSION,
     }
 }
 

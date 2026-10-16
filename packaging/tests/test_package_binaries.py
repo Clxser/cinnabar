@@ -96,7 +96,9 @@ class PackageBinariesTests(unittest.TestCase):
                     ui_build = next(index for index, (tool, *args) in enumerate(calls) if tool == "pnpm" and "build" in args)
                     self.assertLess(ui_build, next(index for index, (tool, *args) in enumerate(calls) if tool == "cargo"))
                     args = builds[0]
-                    self.assertNotIn("--features", args)
+                    # Only the launcher's window is a release feature; client features stay off.
+                    features = [args[index + 1] for index, arg in enumerate(args) if arg == "--features"]
+                    self.assertEqual(features, ["desktop-launcher/linux-webview"])
                     self.assertIn("--release", args)
                     self.assertIn("--no-default-features", args)
                     runtime = [line.split() for line in (ROOT / "packaging/common/runtime-binaries.txt").read_text().splitlines()]

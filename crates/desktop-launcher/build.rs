@@ -10,6 +10,12 @@ const REQUIRE_UI: &str = "CINNABAR_REQUIRE_LAUNCHER_UI";
 const LOGO: &str = "../../packaging/icons/cinnabar.svg";
 
 fn main() {
+    println!("cargo::rustc-check-cfg=cfg(webview)");
+    let linux = env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "linux");
+    if linux && env::var_os("CARGO_FEATURE_LINUX_WEBVIEW").is_none() {
+        return;
+    }
+    println!("cargo:rustc-cfg=webview");
     let manifest =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("Cargo sets the manifest dir"));
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));

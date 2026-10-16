@@ -5,6 +5,7 @@ use crate::{
     game::{self, GameState, LaunchOptions},
     install::{self, InstallState},
     news::{self, News},
+    surface::MAIN_WINDOW,
 };
 use launcher::{desktop::GameExit, install_layout::InstallLayout};
 use std::{
@@ -16,14 +17,6 @@ use tauri_plugin_opener::OpenerExt;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use update_manifest::{build::Build, channel::Channel};
 use update_service::{Handoff, ManualPackage, Service, UpdateState};
-
-pub const UPDATE_EVENT: &str = "update-state";
-pub const GAME_EVENT: &str = "game-state";
-/// Every event the UI listens to.
-#[cfg(test)]
-pub const EVENTS: &[&str] = &[UPDATE_EVENT, GAME_EVENT];
-/// The launcher's main window label, shared with the capability file.
-pub const MAIN_WINDOW: &str = "main";
 
 /// Everything the commands share.
 pub struct Launcher {
@@ -37,10 +30,6 @@ pub struct Launcher {
 }
 
 pub type Shared = Arc<Launcher>;
-
-/// The command and event surface a web UI bundle may rely on; bump it whenever a command,
-/// event or payload changes, so a newer UI never runs against an older native launcher.
-pub const NATIVE_API_VERSION: u32 = 1;
 
 macro_rules! commands {
     ($($name:ident),+ $(,)?) => {

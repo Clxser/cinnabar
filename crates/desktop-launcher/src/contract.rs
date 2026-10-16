@@ -3,13 +3,12 @@
 //! Run with `CINNABAR_WRITE_UI_TYPES=1` to regenerate `types.ts`.
 
 use crate::{
-    commands::{COMMANDS, EVENTS},
     featured::FeaturedServer,
     game::{GameState, LastExit, LaunchOptions, ServerTarget},
     install::{InstallState, Platform},
     news::{News, NewsItem},
 };
-use std::{collections::BTreeSet, path::PathBuf};
+use std::path::PathBuf;
 use ts_rs::{Config, TS};
 use update_manifest::channel::Channel;
 use update_service::{UpdateStage, UpdateState};
@@ -91,7 +90,8 @@ fn ui_types_match_the_rust_contract() {
 }
 
 /// The quoted first argument of every `call(` in `source`.
-fn quoted_calls(source: &str, call: &str) -> BTreeSet<String> {
+#[cfg(webview)]
+fn quoted_calls(source: &str, call: &str) -> std::collections::BTreeSet<String> {
     source
         .match_indices(call)
         .filter_map(|(index, _)| {
@@ -106,8 +106,10 @@ fn quoted_calls(source: &str, call: &str) -> BTreeSet<String> {
         .collect()
 }
 
+#[cfg(webview)]
 #[test]
 fn the_bridge_invokes_every_registered_command_and_event() {
+    use crate::{commands::COMMANDS, surface::EVENTS};
     let bridge = std::fs::read_to_string(ui_file("tauri.ts")).unwrap();
     let expected = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
     assert_eq!(quoted_calls(&bridge, "invoke"), expected(COMMANDS));

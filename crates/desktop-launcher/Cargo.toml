@@ -32,10 +32,6 @@ launcher = { path = "../launcher" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Always serve the embedded UI; UI work runs in a browser against the mock API instead.
-tauri = { version = "=2.12.4", features = ["custom-protocol"] }
-tauri-plugin-opener = "=2.7.2"
-tauri-plugin-single-instance = "=2.5.4"
 tempfile = "3"
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing"] }
 tokio.workspace = true
@@ -44,6 +40,21 @@ tracing-subscriber.workspace = true
 update-installer = { path = "../update-installer" }
 update-manifest = { path = "../update-manifest" }
 update-service = { path = "../update-service" }
+
+# Always serve the embedded UI; UI work runs in a browser against the mock API instead.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tauri = { version = "=2.12.4", features = ["custom-protocol"] }
+tauri-plugin-opener = "=2.7.2"
+tauri-plugin-single-instance = "=2.5.4"
+
+# Linux needs WebKitGTK to build the window, so Linux checks without it build the Tauri-free core.
+[target.'cfg(target_os = "linux")'.dependencies]
+tauri = { version = "=2.12.4", features = ["custom-protocol"], optional = true }
+tauri-plugin-opener = { version = "=2.7.2", optional = true }
+tauri-plugin-single-instance = { version = "=2.5.4", optional = true }
+
+[features]
+linux-webview = ["dep:tauri", "dep:tauri-plugin-opener", "dep:tauri-plugin-single-instance"]
 
 [dev-dependencies]
 ts-rs = "=12.0.1"
