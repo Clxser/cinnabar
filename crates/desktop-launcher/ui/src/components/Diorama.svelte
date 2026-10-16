@@ -2,8 +2,6 @@
   import { onMount } from 'svelte';
   import type { Diorama, Frame } from '../lib/diorama/scene';
   import { MOODS, moodForHour, type Mood } from '../lib/diorama/mood';
-  // Rendered by this scene at dusk; shown when WebGL is unavailable.
-  import still from '../assets/world-still.jpg';
 
   interface Props {
     /** Fraction of the cinnabar vein that glows. */
@@ -72,7 +70,22 @@
   aria-hidden="true"
 >
   {#if failed}
-    <img src={still} alt="" />
+    <!-- Without WebGL: the island and its vein drawn in the active mood's palette. -->
+    <svg class="still" viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice">
+      <defs>
+        <radialGradient id="still-sun" cx={m.sunScreen[0]} cy={1 - m.sunScreen[1]} r="0.35">
+          <stop offset="0" stop-color={hex(m.sunGlow)} stop-opacity="0.7" />
+          <stop offset="1" stop-color={hex(m.sunGlow)} stop-opacity="0" />
+        </radialGradient>
+      </defs>
+      <rect width="160" height="90" fill="url(#still-sun)" />
+      <path
+        d="M96 34h8v-4h12v-3h10v4h8v5h6v14h-4v8h-6v6h-8v5h-12v-4h-8v-6h-6v-8h-4v-12h4z"
+        fill={hex(m.hemiGround)}
+      />
+      <path d="M96 34h8v-4h12v-3h10v4h8v5h6v3h-44z" fill={hex(m.hemiSky)} opacity="0.55" />
+      <path d="M114 31h5v12h3v10h3v14h-5v-10h-3v-10h-3z" fill={hex(m.sunGlow)} opacity="0.9" />
+    </svg>
   {:else}
     <canvas bind:this={canvas}></canvas>
   {/if}
@@ -98,16 +111,14 @@
       transform 500ms var(--ease-out);
   }
 
-  img {
+  .still {
     display: block;
     width: 100%;
     height: 100%;
-    object-fit: cover;
-    object-position: 70% 40%;
     transition: filter 500ms var(--ease-out);
   }
 
-  .veiled img {
+  .veiled .still {
     filter: blur(18px) brightness(0.55);
   }
 
