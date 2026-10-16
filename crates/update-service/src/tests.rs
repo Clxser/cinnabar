@@ -103,16 +103,10 @@ fn channel_choices_persist_and_retire_the_previous_offer() {
 }
 
 #[test]
-fn a_build_without_update_keys_reports_a_final_failure() {
+fn a_build_without_update_keys_is_unavailable_not_failed() {
     let root = tempfile::tempdir().unwrap();
     let mut service = service(root.path(), build("1.0.0", 1));
     service.keys = TrustedKeys::new();
     service.check(OffsetDateTime::UNIX_EPOCH);
-    assert!(matches!(
-        service.state(),
-        UpdateState::Failed {
-            retryable: false,
-            ..
-        }
-    ));
+    assert!(matches!(service.state(), UpdateState::Unavailable { .. }));
 }

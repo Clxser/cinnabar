@@ -20,6 +20,7 @@ use update_service::{Handoff, ManualPackage, Service, UpdateState};
 pub const UPDATE_EVENT: &str = "update-state";
 pub const GAME_EVENT: &str = "game-state";
 /// Every event the UI listens to.
+#[cfg(test)]
 pub const EVENTS: &[&str] = &[UPDATE_EVENT, GAME_EVENT];
 /// The launcher's main window label, shared with the capability file.
 pub const MAIN_WINDOW: &str = "main";
@@ -44,6 +45,7 @@ pub const NATIVE_API_VERSION: u32 = 1;
 macro_rules! commands {
     ($($name:ident),+ $(,)?) => {
         /// Every command name the UI may invoke.
+        #[cfg(test)]
         pub const COMMANDS: &[&str] = &[$(stringify!($name)),+];
 
         pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
@@ -63,6 +65,7 @@ commands!(
     get_news,
     get_featured_servers,
     open_external,
+    open_logs,
 );
 
 /// The edge clock as RFC 3339 text.
@@ -100,25 +103,30 @@ fn install_update(app: AppHandle, launcher: State<'_, Shared>) -> Result<(), Str
         return Err("Close Cinnabar before updating.".into());
     }
     let launcher = Arc::clone(&launcher);
-    std::thread::spawn(move || match launcher.updates.install(OffsetDateTime::now_utc) {
-        // The helper waits for this process to exit before it installs.
-        Ok(Handoff::Exit) => app.exit(0),
-        Ok(Handoff::Package(package)) => {
-            match app.opener().open_path(package.path.to_string_lossy(), None::<&str>) {
-                Ok(()) => {
-                    let _ = package.opened();
-                    *launcher
-                        .package
-                        .lock()
-                        .unwrap_or_else(|poison| poison.into_inner()) = Some(package);
-                    // The platform installer replaces this launcher, so it must not stay open.
-                    app.exit(0);
+    std::thread::spawn(
+        move || match launcher.updates.install(OffsetDateTime::now_utc) {
+            // The helper waits for this process to exit before it installs.
+            Ok(Handoff::Exit) => app.exit(0),
+            Ok(Handoff::Package(package)) => {
+                match app
+                    .opener()
+                    .open_path(package.path.to_string_lossy(), None::<&str>)
+                {
+                    Ok(()) => {
+                        let _ = package.opened();
+                        *launcher
+                            .package
+                            .lock()
+                            .unwrap_or_else(|poison| poison.into_inner()) = Some(package);
+                        // The platform installer replaces this launcher, so it must not stay open.
+                        app.exit(0);
+                    }
+                    Err(error) => tracing::warn!("could not open the update installer: {error}"),
                 }
-                Err(error) => tracing::warn!("could not open the update installer: {error}"),
             }
-        }
-        Err(_) => {}
-    });
+            Err(_) => {}
+        },
+    );
     Ok(())
 }
 
@@ -167,9 +175,29 @@ async fn get_news(launcher: State<'_, Shared>) -> Result<News, String> {
     })
 }
 
+/// The API's curated servers (cached offline) followed by the game's own featured list.
 #[tauri::command]
-fn get_featured_servers(launcher: State<'_, Shared>) -> Vec<FeaturedServer> {
-    featured::load(&launcher.layout.featured_servers_file())
+async fn get_featured_servers(launcher: State<'_, Shared>) -> Result<Vec<FeaturedServer>, String> {
+    let cache = launcher
+        .layout
+        .user_data_root
+        .join("launcher-featured.json");
+    let curated = match featured::fetch().await {
+        Ok(servers) => {
+            if let Err(error) = featured::save_cache(&cache, &servers) {
+                tracing::debug!("could not cache featured servers: {error:#}");
+            }
+            servers
+        }
+        Err(error) => {
+            tracing::debug!("featured servers unavailable: {error:#}");
+            featured::load_cache(&cache).unwrap_or_default()
+        }
+    };
+    Ok(featured::merge(
+        curated,
+        featured::from_game(&launcher.layout.featured_servers_file()),
+    ))
 }
 
 /// Opens only HTTPS links, in the player's browser.
@@ -183,8 +211,20 @@ fn open_external(url: String, app: AppHandle) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+/// Opens the folder holding the launcher's and the game's logs.
+#[tauri::command]
+fn open_logs(app: AppHandle, launcher: State<'_, Shared>) -> Result<(), String> {
+    app.opener()
+        .open_path(launcher.layout.log_dir().to_string_lossy(), None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
 /// Starts the game unless an update owns the installation, hiding the launcher while it runs.
-pub fn start_game(app: &AppHandle, launcher: &Shared, options: LaunchOptions) -> anyhow::Result<()> {
+pub fn start_game(
+    app: &AppHandle,
+    launcher: &Shared,
+    options: LaunchOptions,
+) -> anyhow::Result<()> {
     anyhow::ensure!(
         !matches!(
             launcher.updates.state(),

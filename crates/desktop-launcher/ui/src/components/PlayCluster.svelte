@@ -53,7 +53,7 @@
   {#if model.notice}
     {@const notice = model.notice}
     <div class="notice" transition:reveal>
-      <Notice tone={notice.tone} title={notice.title} action={notice.action ? { label: notice.action.label, run: () => void store.retry() } : undefined}>
+      <Notice tone={notice.tone} title={notice.title} action={notice.action ? { label: notice.action.label, run: () => void (notice.action?.intent === 'logs' ? store.openLogs() : store.retry()) } : undefined}>
         {notice.body}
       </Notice>
     </div>

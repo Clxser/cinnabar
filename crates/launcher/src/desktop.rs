@@ -47,6 +47,12 @@ pub struct FeaturedEntry {
     /// The server's remote HTTPS logo; empty when it has none.
     pub logo_url: String,
     pub player_count: Option<i64>,
+    /// The server's current headline, when it publishes one.
+    #[serde(default)]
+    pub motd: String,
+    /// The games it advertises.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// The snapshot's file beside the game's downloaded catalog `artwork` directory.

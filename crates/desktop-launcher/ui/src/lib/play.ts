@@ -16,7 +16,7 @@ export interface Notice {
   tone: 'warn' | 'error';
   title: string;
   body: string;
-  action?: { label: string; intent: 'retry' };
+  action?: { label: string; intent: 'retry' | 'logs' };
 }
 
 export type Stage = 'download' | 'verify' | 'install';
@@ -53,6 +53,7 @@ export function playModel(install: InstallState | undefined, installFailed: bool
         tone: 'warn',
         title: 'Cinnabar closed unexpectedly',
         body: game.lastExit.code === null ? 'The game stopped without an exit code.' : `The game stopped with exit code ${game.lastExit.code}.`,
+        action: { label: 'View log', intent: 'logs' },
       }
     : undefined;
   const installed = `Version ${install.version}`;

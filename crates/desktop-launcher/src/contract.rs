@@ -12,12 +12,14 @@ use crate::{
 use std::{collections::BTreeSet, path::PathBuf};
 use ts_rs::{Config, TS};
 use update_manifest::channel::Channel;
-use update_service::UpdateState;
+use update_service::{UpdateStage, UpdateState};
 
 const WRITE: &str = "CINNABAR_WRITE_UI_TYPES";
 
 fn ui_file(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ui/src/api").join(name)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("ui/src/api")
+        .join(name)
 }
 
 fn generated() -> String {
@@ -27,6 +29,7 @@ fn generated() -> String {
         Channel::decl(&config),
         Platform::decl(&config),
         InstallState::decl(&config),
+        UpdateStage::decl(&config),
         UpdateState::decl(&config),
         LastExit::decl(&config),
         GameState::decl(&config),
@@ -45,7 +48,30 @@ fn generated() -> String {
         text.push_str(&declaration);
         text.push_str("\n\n");
     }
-    text.push_str("export type { Api } from './api';\n");
+    // Product identity comes from the Rust owners and the repository's license file.
+    let license = include_str!("../../../LICENSE")
+        .lines()
+        .next()
+        .and_then(|heading| heading.strip_prefix("# "))
+        .expect("the license file starts with its name");
+    for (name, value) in [
+        ("PRODUCT_NAME", launcher::PRODUCT_NAME.to_owned()),
+        (
+            "SOURCE_URL",
+            format!(
+                "https://github.com/{}",
+                update_manifest::platforms::repository()
+            ),
+        ),
+        ("DISCORD_URL", launcher::DISCORD_INVITE_URL.to_owned()),
+        ("LICENSE_NAME", license.to_owned()),
+    ] {
+        text.push_str(&format!(
+            "export const {name} = {};\n",
+            serde_json::to_string(&value).unwrap()
+        ));
+    }
+    text.push_str("\nexport type { Api } from './api';\n");
     text
 }
 

@@ -19,7 +19,9 @@ const install: InstallState = {
   channel: scenario === 'nightly' ? 'nightly' : 'beta',
   installedChannel: 'beta',
   publishedChannels: ['beta', 'nightly'],
-  launcherVersion: '0.1.0',
+  launcherVersion: '0.1.21',
+  platform: 'macos',
+  nativeApiVersion: 1,
 };
 
 const available = (required: boolean): UpdateState => ({
@@ -29,6 +31,7 @@ const available = (required: boolean): UpdateState => ({
   notesUrl: 'https://example.com/cinnabar/notes/0.1.22',
   sizeBytes: UPDATE_BYTES,
   required,
+  downgrade: false,
 });
 
 const initialUpdate: Record<string, UpdateState> = {
@@ -42,18 +45,21 @@ const initialUpdate: Record<string, UpdateState> = {
   failed: {
     kind: 'failed',
     message: 'The download was interrupted (connection reset). Your installed version is unchanged.',
+    stage: 'download',
     retryable: true,
     canPlayInstalled: true,
   },
   'failed-blocking': {
     kind: 'failed',
     message: 'The installed files failed verification, so this version cannot start.',
+    stage: 'verify',
     retryable: true,
     canPlayInstalled: false,
   },
   offline: {
     kind: 'failed',
     message: 'Couldn’t reach the update server. Check your connection.',
+    stage: 'check',
     retryable: true,
     canPlayInstalled: true,
   },
@@ -207,6 +213,7 @@ export const mockApi: Api = {
   async openExternal(url: string) {
     window.open(url, '_blank', 'noopener');
   },
+  async openLogs() {},
   onUpdateState(cb) {
     updateListeners.add(cb);
     return () => updateListeners.delete(cb);

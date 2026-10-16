@@ -171,6 +171,8 @@ fn save_featured(path: &Path, featured: &[FeaturedServer]) {
                 caption: server.caption.clone(),
                 logo_url: server.logo.url.clone(),
                 player_count: server.player_count,
+                motd: server.news_title.clone(),
+                tags: server.games.iter().map(|game| game.title.clone()).collect(),
             })
             .collect(),
     };

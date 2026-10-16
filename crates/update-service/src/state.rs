@@ -48,11 +48,34 @@ pub enum UpdateState {
     Installing {
         version: String,
     },
+    /// This build cannot update itself, such as an unsigned development build; not a failure.
+    Unavailable {
+        reason: String,
+    },
     Failed {
         message: String,
+        /// The step that failed, so a retry repeats it.
+        stage: UpdateStage,
         retryable: bool,
         can_play_installed: bool,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateStage {
+    Check,
+    Download,
+    Verify,
+    Install,
+}
+
+/// Why a check produced no offer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CheckError {
+    Failed(String),
+    Unavailable(String),
 }
 
 /// One verified release the selected channel offers; the stage is re-derived at install time.
@@ -115,7 +138,7 @@ impl Machine {
     pub fn finish_check(
         &mut self,
         generation: u64,
-        outcome: Result<Option<Offer>, (String, bool)>,
+        outcome: Result<Option<Offer>, CheckError>,
         now: &str,
     ) -> bool {
         if generation != self.generation {
@@ -127,8 +150,12 @@ impl Machine {
                 self.offer = offer;
                 self.state = self.offer_state();
             }
-            Err((message, retryable)) => {
-                self.state = failed(message, retryable);
+            Err(CheckError::Failed(message)) => {
+                self.state = failed(message, UpdateStage::Check, true);
+            }
+            Err(CheckError::Unavailable(reason)) => {
+                self.offer = None;
+                self.state = UpdateState::Unavailable { reason };
             }
         }
         true
@@ -173,7 +200,13 @@ impl Machine {
         if generation != self.generation {
             return false;
         }
-        self.state = failed(message, retryable);
+        let stage = match self.state {
+            UpdateState::Verifying { .. } => UpdateStage::Verify,
+            UpdateState::Installing { .. } => UpdateStage::Install,
+            UpdateState::Checking => UpdateStage::Check,
+            _ => UpdateStage::Download,
+        };
+        self.state = failed(message, stage, retryable);
         true
     }
 
@@ -244,9 +277,10 @@ impl Machine {
     }
 }
 
-fn failed(message: String, retryable: bool) -> UpdateState {
+fn failed(message: String, stage: UpdateStage, retryable: bool) -> UpdateState {
     UpdateState::Failed {
         message,
+        stage,
         retryable,
         can_play_installed: true,
     }
@@ -321,10 +355,12 @@ mod tests {
         let generation = machine.begin_check().unwrap();
         machine.finish_check(generation, Ok(Some(offer("2.0.0"))), "t");
         let (install, _) = machine.begin_install().unwrap();
+        machine.verifying(install);
         machine.fail(install, "hash mismatch".into(), true);
         assert!(matches!(
             machine.state(),
             UpdateState::Failed {
+                stage: UpdateStage::Verify,
                 can_play_installed: true,
                 retryable: true,
                 ..
@@ -375,6 +411,24 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn a_build_that_cannot_update_is_unavailable_rather_than_failed() {
+        let mut machine = Machine::new(UpdateState::Idle { last_checked: None });
+        let generation = machine.begin_check().unwrap();
+        machine.finish_check(
+            generation,
+            Err(CheckError::Unavailable("unsigned".into())),
+            "t",
+        );
+        assert_eq!(
+            machine.state(),
+            &UpdateState::Unavailable {
+                reason: "unsigned".into()
+            }
+        );
+        assert!(machine.begin_install().is_none());
     }
 
     #[test]

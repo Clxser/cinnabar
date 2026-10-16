@@ -3,13 +3,12 @@
   "productName": "Cinnabar",
   "identifier": "app.cinnabar.client",
   "build": {
-    "frontendDist": "ui/dist",
-    "devUrl": "http://localhost:5173"
+    "frontendDist": "ui/dist"
   },
   "app": {
     "windows": [],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' https: data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; img-src 'self' https: data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost"
     }
   },
   "bundle": {

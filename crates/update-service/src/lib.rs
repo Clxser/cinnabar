@@ -11,11 +11,11 @@ mod state;
 mod tests;
 
 pub use handoff::ManualPackage;
-pub use state::UpdateState;
+pub use state::{UpdateStage, UpdateState};
 
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
-use state::{Machine, Offer};
+use state::{CheckError, Machine, Offer};
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
@@ -143,8 +143,10 @@ impl Service {
         let channel = self.channel();
         let outcome = self.find_offer(channel, now).map_err(|error| {
             tracing::debug!("update check: {error:#}");
-            let retryable = !error.is::<Unavailable>();
-            (user_message(&error), retryable)
+            match error.downcast_ref::<Unavailable>() {
+                Some(reason) => CheckError::Unavailable(reason.to_string()),
+                None => CheckError::Failed(user_message(&error)),
+            }
         });
         let checked = now
             .format(&time::format_description::well_known::Rfc3339)
@@ -453,6 +455,7 @@ fn unfinished_handoff(root: &Path, current: &Build) -> Option<UpdateState> {
                 "Cinnabar {} wasn't installed. Your current version still works.",
                 pending.version
             ),
+            stage: UpdateStage::Install,
             retryable: true,
             can_play_installed: true,
         }

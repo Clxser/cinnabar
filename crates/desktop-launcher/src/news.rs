@@ -1,15 +1,13 @@
 //! The Cinnabar API's read-only news feed, cached so the launcher still shows it offline.
 
-use anyhow::{Result, ensure};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::{path::Path, time::Duration};
+use std::path::Path;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 /// The feed route under the shared API origin.
 const ROUTE: &str = "/v1/news";
 const MAX_ITEMS: usize = 20;
-const MAX_BODY_BYTES: usize = 256 * 1024;
-const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 /// A cache older than this reads as stale even when the last fetch succeeded.
 const MAX_AGE: time::Duration = time::Duration::days(1);
 
@@ -50,11 +48,6 @@ struct Feed {
 pub struct Cached {
     fetched_at: String,
     items: Vec<NewsItem>,
-}
-
-/// The feed URL on the API origin the core and packaging share.
-pub fn url() -> String {
-    format!("{}{ROUTE}", bridge::contract::CINNABAR_API_BASE_URL)
 }
 
 /// Keeps well-formed items with HTTPS links, skipping odd ones rather than the whole feed.
@@ -111,27 +104,9 @@ pub fn save(path: &Path, items: Vec<NewsItem>, now: OffsetDateTime) -> Result<Ca
     Ok(cached)
 }
 
-/// Fetches the feed over HTTPS with a bounded body.
+/// Fetches the feed from the API.
 pub async fn fetch() -> Result<Vec<NewsItem>> {
-    let client = reqwest::Client::builder()
-        .https_only(true)
-        .timeout(FETCH_TIMEOUT)
-        .build()?;
-    let mut response = client.get(url()).send().await?;
-    ensure!(
-        response.status() == reqwest::StatusCode::OK,
-        "news request failed: {}",
-        response.status()
-    );
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
-        ensure!(
-            body.len() + chunk.len() <= MAX_BODY_BYTES,
-            "news exceeds size limit"
-        );
-        body.extend_from_slice(&chunk);
-    }
-    parse(&body)
+    parse(&crate::api::get(ROUTE).await?)
 }
 
 #[cfg(test)]
@@ -157,7 +132,10 @@ mod tests {
         ]});
         let items = parse(&serde_json::to_vec(&body).unwrap()).unwrap();
         assert_eq!(
-            items.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(),
+            items
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
             ["good"]
         );
         assert!(parse(b"{").is_err());
@@ -169,8 +147,10 @@ mod tests {
         let path = root.path().join("news.json");
         let fetched = OffsetDateTime::UNIX_EPOCH + time::Duration::days(100);
         let items = parse(
-            &serde_json::to_vec(&serde_json::json!({ "items": [item("a", "https://example.test")] }))
-                .unwrap(),
+            &serde_json::to_vec(
+                &serde_json::json!({ "items": [item("a", "https://example.test")] }),
+            )
+            .unwrap(),
         )
         .unwrap();
         save(&path, items.clone(), fetched).unwrap();
@@ -183,11 +163,5 @@ mod tests {
         assert!(present(load(&path), true, fetched - time::Duration::days(1)).stale);
         let empty = present(None, false, fetched);
         assert!(empty.stale && empty.items.is_empty() && empty.fetched_at.is_none());
-    }
-
-    #[test]
-    fn the_feed_lives_on_the_shared_api_origin() {
-        assert!(url().starts_with("https://"));
-        assert!(url().ends_with(ROUTE));
     }
 }
