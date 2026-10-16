@@ -11,6 +11,7 @@ use super::{
 
 mod camera;
 mod editor;
+mod effects;
 mod export;
 mod library;
 mod recording;

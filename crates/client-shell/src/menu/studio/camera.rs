@@ -73,13 +73,32 @@ impl Studio {
             .ok_or_else(|| "Select a camera shot on the timeline first.".into())
     }
 
-    /// Selecting a shot seeks to a valid frame if it is outside the current playhead.
+    /// Selecting a camera/effect/title clip seeks into its range when the current playhead is outside it.
     pub(super) fn select_timeline_item(&mut self, id: Id) -> Result<(), String> {
         let project = self.project()?;
-        if let Some(shot) = project.shots.iter().find(|shot| shot.id == id) {
+        let span = project
+            .shots
+            .iter()
+            .find(|shot| shot.id == id)
+            .map(|shot| shot.span)
+            .or_else(|| {
+                project
+                    .effects
+                    .iter()
+                    .find(|effect| effect.id == id)
+                    .map(|effect| effect.span)
+            })
+            .or_else(|| {
+                project
+                    .titles
+                    .iter()
+                    .find(|title| title.id == id)
+                    .map(|title| title.span)
+            });
+        if let Some(span) = span {
             let duration = project.duration();
-            let start = shot.span.start;
-            let contains = shot.span.contains(self.transport.position());
+            let start = span.start;
+            let contains = span.contains(self.transport.position());
             self.transport.pause();
             if !contains {
                 self.transport.seek(start, duration);

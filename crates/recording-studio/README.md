@@ -127,9 +127,10 @@ it is outside server and mod texture ranges. The page remains allocated while a
 seek is loading, avoiding repeated texture-plan changes during a drag.
 
 This is an unverified source implementation. Crop filtering, source frame accuracy,
-content-identity validation, audio, titles and global effects still
-need completion and acceptance. Missing camera/effect composition is disclosed in
-the raster preview. A selected captured clip can switch reversibly to a native
+content-identity validation, audio and titles still need completion and acceptance.
+The render edge now applies timeline effects through the shared GPU path below.
+Missing 3D camera composition is disclosed for ordinary video. A selected captured
+clip can switch reversibly to a native
 scene source through **Use 3D replay**. The render edge owns its isolated GPU scene
 and leased image publication; this domain owner retains no device or live world.
 That provisional path currently supports a single unframed replay layer and
@@ -161,10 +162,46 @@ in narrow layouts remain incomplete. These controls have not been run or visuall
 accepted.
 
 The full scene schema, complete native replay rendering/preview composition, media
-import/recovery, complete camera/effect inspectors, recording options, complete export composition and linked
-automatic-effect retiming are still being implemented. The feature has not been
+import/recovery, complete camera/effect inspectors, recording options, complete
+export composition and linked automatic-effect retiming are still being
+implemented. The feature has not been
 built or exercised. Media preview and a limited native replay viewport are connected
 in source. These pieces do not complete the feature.
+
+## Timeline effects
+
+The native inspector creates each supported effect and edits manual and generated
+effects through the same undoable commands. Select an effect on the timeline to
+enable/disable it, adjust its amount at the playhead, add/remove exact-time keys,
+cycle incoming easing, navigate keys (including clip-end keys), or move the effect
+one output frame. Fine adjustment uses smaller amount steps. A bounded graph
+samples the actual curve; dense timeline key markers share visible columns, while
+key navigation retains access to every key. Gameplay provenance survives edits.
+Automatic effects still do not follow subsequent visual clip retiming.
+
+Overlapping cameras, effects, audio and titles now receive separate selectable
+presentation lanes. Packing and source-name lookup are cached per project
+revision; playback does not repack them. Offscreen rows/items are culled before
+text layout. These lanes do not change compositing or camera precedence.
+
+The render edge shares original GPU shaders across preview and export for linear
+exposure, saturation, vignette, bloom, flash, letterbox and fades, including
+dip-to-black transitions. Bloom uses bounded low-resolution extraction and a
+separable blur; neutral frames retain their direct path. GPU targets, blur scratch
+and raster upload surfaces are reused. Output backpressure is checked before
+uploading pixels, and native preview needs no effect readback. The Rust uniform
+schema generates its WGSL declaration to keep binding layouts synchronized.
+Paused replay edits reuse an unchanged base image when source time and camera
+pose match, while seeks still reset temporal state. Failed scene application or
+drawing invalidates source admission before a retry.
+
+Replay zoom/shake moves the actual recorded world camera. Ordinary video instead
+uses a deterministic affine crop/translation calibrated by a shared virtual FOV;
+it cannot reveal unrecorded pixels or reproduce 3D parallax. This image motion and
+the SDR bloom/look remain provisional. Full composition, graph dragging/numeric
+entry, native crossfades/crops/layering, narrow layouts, rendered appearance,
+preview/export equality and cost acceptance remain incomplete. No shader or
+runtime validation was performed under the current no-build/no-test instruction.
 
 ## Video export
 
@@ -194,9 +231,10 @@ directories are local, ignored artifacts and normally removed on cancellation or
 failure. A supervised owned child keeps cancellation effective during blocked
 encoder/decoder pipe IO. No UI thread joins these workers.
 
-This path is provisional and unrun. Export currently rejects titles, color/post
-effects, dip-to-black, native replay layering/crops/transitions, and camera edits
-without native replay coverage. The complete edit is checked before encoding;
+This path is provisional and unrun. Export currently rejects titles, native replay
+layering/crops/crossfades, and camera shots without native replay coverage.
+Timeline effects now use the same GPU composition path as preview. The complete
+edit is checked before encoding;
 unavailable camera subjects can still fail later payload admission. Native shading
 and recorded actor-coverage limitations are displayed in the status. Export settings
 controls, destination selection, completed-file actions, interrupted-job recovery,

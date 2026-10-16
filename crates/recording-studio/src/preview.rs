@@ -70,6 +70,8 @@ pub struct RasterFrame {
     pub size: [u32; 2],
     pub rgba8: Arc<[u8]>,
     pub notice: Option<String>,
+    /// Post composition stays with the presentation edge, shared by GPU preview and export.
+    pub effects: crate::effect::EffectSample,
 }
 
 pub struct RasterPreview {
@@ -143,19 +145,11 @@ impl RasterPreview {
         if !self.plan.audio.is_empty() {
             pending.push("audio");
         }
-        if !project.shots.is_empty() {
-            pending.push("camera changes");
+        if self.plan.shot.is_some() {
+            pending.push("3D camera changes (use a replay clip)");
         }
         if !self.plan.titles.is_empty() {
             pending.push("titles");
-        }
-        if !project.effects.is_empty()
-            || project
-                .transitions
-                .iter()
-                .any(|transition| transition.kind == crate::model::TransitionKind::DipToBlack)
-        {
-            pending.push("effects");
         }
         let notice =
             (!pending.is_empty()).then(|| format!("Not previewed yet: {}.", pending.join(", ")));
@@ -227,6 +221,7 @@ impl RasterPreview {
                     size,
                     rgba8: frame.rgba8,
                     notice,
+                    effects: self.plan.effects,
                 });
             }
         }
@@ -258,6 +253,7 @@ impl RasterPreview {
             size,
             rgba8: composed.finish(&cancelled)?,
             notice,
+            effects: self.plan.effects,
         })
     }
 }

@@ -7,7 +7,7 @@ use recording_studio::{
     playback::{CompiledTimeline, FramePlan},
     preview::{PreviewRequest, RasterPreview},
 };
-use render::replay::{ReplayReadback, ReplayRenderContext};
+use render::replay::{FrameEffects, ReplayReadback, ReplayRenderContext};
 
 use super::preview::scene::NativeScene;
 
@@ -66,12 +66,14 @@ struct Frames {
     timeline: Option<CompiledTimeline>,
     plan: FramePlan,
     readback: Option<ReplayReadback>,
+    effects: Option<FrameEffects>,
 }
 
 impl Frames {
     /// No Bevy app crosses a thread boundary; its GPU scene is first constructed on frame evaluation.
     fn new(context: Option<ReplayRenderContext>) -> Self {
         Self {
+            effects: context.clone().map(FrameEffects::new),
             native: context.clone().map(NativeScene::new),
             context,
             raster: RasterPreview::default(),
@@ -120,17 +122,6 @@ impl FrameSource for Frames {
         if !self.plan.titles.is_empty() {
             return Err("Title rendering is not connected to export yet; remove titles to export this project.".into());
         }
-        let effects = self.plan.effects;
-        if effects.exposure_stops != 0.0
-            || effects.saturation_delta != 0.0
-            || effects.vignette != 0.0
-            || effects.bloom != 0.0
-            || effects.flash != 0.0
-            || effects.letterbox != 0.0
-            || effects.fade != 0.0
-        {
-            return Err("Color/effect composition is not connected to export yet; no effects were silently omitted.".into());
-        }
         let wait = || std::thread::sleep(std::time::Duration::from_millis(10));
         let native = self
             .native
@@ -158,14 +149,47 @@ impl FrameSource for Frames {
                 .frame(native.image, cancelled)?;
             return Ok(ExportFrame { size, rgba8, notice: Some("Native replay export uses Vanilla shading and the recorded actor draw coverage; HUD, hand, particles and block entities are omitted.".into()) });
         }
-        if self.plan.shot.is_some() || effects.zoom_degrees != 0.0 || effects.shake_degrees != 0.0 {
-            return Err(
-                "Camera changes and camera effects need a 3D replay source for export.".into(),
-            );
+        if self.plan.shot.is_some() {
+            return Err("Camera shots need a 3D replay source for export.".into());
         }
         let frame = self
             .raster
-            .render(request, request.project.export.size, cancelled)?;
+            .render(request, request.project.export.size, &cancelled)?;
+        if !frame.effects.neutral() {
+            let effects = self
+                .effects
+                .as_mut()
+                .ok_or("Timeline effects need an initialized graphics device.")?;
+            let started = std::time::Instant::now();
+            let image = loop {
+                cancellation.check()?;
+                if let Some(image) = effects.raster(frame.size, &frame.rgba8, frame.effects, at)? {
+                    break image;
+                }
+                if started.elapsed() >= std::time::Duration::from_secs(30) {
+                    return Err("Export effects could not acquire an output image.".into());
+                }
+                wait();
+            };
+            if self.readback.is_none() {
+                self.readback = Some(ReplayReadback::new(
+                    self.context
+                        .clone()
+                        .ok_or("The export graphics device is unavailable.")?,
+                    frame.size,
+                )?);
+            }
+            let rgba8 = self
+                .readback
+                .as_mut()
+                .expect("export readback admitted")
+                .frame(image, cancelled)?;
+            return Ok(ExportFrame {
+                size: frame.size,
+                rgba8,
+                notice: None,
+            });
+        }
         Ok(ExportFrame {
             size: frame.size,
             rgba8: frame.rgba8,

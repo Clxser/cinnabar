@@ -74,13 +74,14 @@ pub(super) fn draw(
     let right = area[2] - pad;
     let start = view.studio.visible_start;
     let duration = view.studio.visible_duration.0.max(1);
+    let ruler_bottom = ruler_top + canvas.r(2.8);
     let window = Window {
         left,
         right,
         start,
         duration,
+        vertical: [ruler_bottom, area[3] - pad],
     };
-    let ruler_bottom = ruler_top + canvas.r(2.8);
     canvas.fill([left, ruler_top, right, ruler_bottom], NEUTRAL90)?;
     for index in 0..=6 {
         let at = MediaTime(start.0.saturating_add(duration * index / 6));
@@ -109,12 +110,21 @@ pub(super) fn draw(
         .map(|clip| usize::from(clip.track) + 1)
         .max()
         .unwrap_or(1);
-    let rows = visual_tracks + 4;
+    let lanes = &view.studio.lanes;
+    let cameras_row = visual_tracks;
+    let effects_row = cameras_row + lanes.cameras.rows();
+    let audio_row = effects_row + lanes.effects.rows();
+    let titles_row = audio_row + lanes.audio.rows();
+    let rows = titles_row + lanes.titles.rows();
     let row_height = canvas.r(3.6);
     let body = [area[0] + pad, ruler_bottom, right, area[3] - pad];
     let scroll = canvas.begin_scroll("studio_timeline", body)?;
     let row_y = |row: usize| ruler_bottom - scroll.offset + row as f32 * row_height;
-    for row in 0..rows {
+    let first_row = (scroll.offset.max(0.0) / row_height).floor() as usize;
+    let last_row = ((scroll.offset.max(0.0) + body[3] - body[1]) / row_height)
+        .ceil()
+        .max(0.0) as usize;
+    for row in first_row.min(rows)..last_row.min(rows) {
         let y = row_y(row);
         canvas.fill(
             [body[0], y, right, y + row_height],
@@ -127,11 +137,14 @@ pub(super) fn draw(
         let label = if row < visual_tracks {
             if row == 0 { "Replay" } else { "Video" }
         } else {
-            match row - visual_tracks {
-                0 => "Cameras",
-                1 => "Effects",
-                2 => "Audio",
-                _ => "Titles",
+            if row < effects_row {
+                "Cameras"
+            } else if row < audio_row {
+                "Effects"
+            } else if row < titles_row {
+                "Audio"
+            } else {
+                "Titles"
             }
         };
         canvas.text_line(
@@ -144,21 +157,17 @@ pub(super) fn draw(
     }
     for clip in &project.clips {
         if let Ok(span) = clip.span() {
-            let label = project
-                .sources
-                .iter()
-                .find(|source| source.id == clip.source)
-                .map_or("Clip", |source| source.name.as_str());
+            let y = row_y(usize::from(clip.track));
+            if y + row_height <= body[1]
+                || y >= body[3]
+                || window.x(span.end) <= window.left
+                || window.x(span.start) >= window.right
+            {
+                continue;
+            }
+            let label = lanes.source_name(clip.source).unwrap_or("Clip");
             item(
-                canvas,
-                view,
-                &window,
-                clip.id,
-                span,
-                row_y(usize::from(clip.track)),
-                row_height,
-                label,
-                VIDEO,
+                canvas, view, &window, clip.id, span, y, row_height, label, VIDEO,
             )?;
         }
     }
@@ -169,7 +178,7 @@ pub(super) fn draw(
             &window,
             shot.id,
             shot.span,
-            row_y(visual_tracks),
+            row_y(cameras_row + lanes.cameras.row(shot.id).unwrap_or(0)),
             row_height,
             &shot.name,
             CAMERA,
@@ -182,11 +191,20 @@ pub(super) fn draw(
             &window,
             effect.id,
             effect.span,
-            row_y(visual_tracks + 1),
+            row_y(effects_row + lanes.effects.row(effect.id).unwrap_or(0)),
             row_height,
-            "Effect",
+            effect.kind.label(),
             EFFECT,
         )?;
+        if view.studio.selected == Some(effect.id) {
+            effect_keys(
+                canvas,
+                &window,
+                effect,
+                row_y(effects_row + lanes.effects.row(effect.id).unwrap_or(0)),
+                row_height,
+            )?;
+        }
     }
     for audio in &project.audio {
         if let Ok(span) = audio.span() {
@@ -196,7 +214,7 @@ pub(super) fn draw(
                 &window,
                 audio.id,
                 span,
-                row_y(visual_tracks + 2),
+                row_y(audio_row + lanes.audio.row(audio.id).unwrap_or(0)),
                 row_height,
                 "Audio",
                 AUDIO,
@@ -210,7 +228,7 @@ pub(super) fn draw(
             &window,
             title.id,
             title.span,
-            row_y(visual_tracks + 3),
+            row_y(titles_row + lanes.titles.row(title.id).unwrap_or(0)),
             row_height,
             &title.text,
             TITLE,
@@ -237,6 +255,7 @@ struct Window {
     right: f32,
     start: MediaTime,
     duration: u64,
+    vertical: [f32; 2],
 }
 
 impl Window {
@@ -261,6 +280,9 @@ fn item(
     label: &str,
     color: [u8; 4],
 ) -> Result<(), PaintError> {
+    if y + height <= window.vertical[0] || y >= window.vertical[1] {
+        return Ok(());
+    }
     let left = window.x(span.start).max(window.left);
     let right = window.x(span.end).min(window.right);
     if left >= right {
@@ -282,4 +304,50 @@ fn item(
         )?;
     }
     canvas.hit(MenuAction::Studio(Action::Select(id)), bounds)
+}
+
+/// Dense keys share visible marker columns; previous/next navigation still reaches every authored key.
+fn effect_keys(
+    canvas: &mut Canvas<'_>,
+    window: &Window,
+    effect: &recording_studio::effect::EffectClip,
+    y: f32,
+    height: f32,
+) -> Result<(), PaintError> {
+    if y + height <= window.vertical[0] || y >= window.vertical[1] {
+        return Ok(());
+    }
+    const MAX_MARKERS: f32 = 256.0;
+    let spacing = ((window.right - window.left) / MAX_MARKERS)
+        .max(canvas.r(0.6))
+        .max(3.0);
+    let mut next = window.left;
+    for key in &effect.amount.keys {
+        let Ok(at) = effect.span.start.checked_add(key.at) else {
+            continue;
+        };
+        let x = window.x(at);
+        if x < next || x > window.right {
+            continue;
+        }
+        let half = canvas.r(0.25).max(1.0);
+        let bounds = [
+            (x - half).max(window.left),
+            (y + height * 0.25).max(window.vertical[0]),
+            (x + half).min(window.right),
+            (y + height * 0.8).min(window.vertical[1]),
+        ];
+        if bounds[0] < bounds[2] && bounds[1] < bounds[3] {
+            canvas.fill(bounds, PLAYHEAD)?;
+            canvas.hit(
+                MenuAction::Studio(Action::SelectEffectKey {
+                    effect: effect.id,
+                    at: key.at,
+                }),
+                bounds,
+            )?;
+        }
+        next = x + spacing;
+    }
+    Ok(())
 }

@@ -33,6 +33,18 @@ pub enum Action {
     DeleteSelected,
     SetRate(PlaybackRate),
     AddTitle,
+    AddEffect(recording_studio::effect::EffectKind),
+    ToggleEffect,
+    AdjustEffect(i8),
+    AddEffectKey,
+    DeleteEffectKey,
+    CycleEffectEasing,
+    StepEffectKey(i8),
+    SelectEffectKey {
+        effect: Id,
+        at: MediaTime,
+    },
+    MoveEffect(i8),
     UseNativeReplay,
     CreateCamera(CameraRigKind),
     CycleCameraTarget(i8),
@@ -68,6 +80,7 @@ pub struct Snapshot {
     pub library_truncated: bool,
     pub show_library: bool,
     pub project: Option<Arc<Project>>,
+    pub lanes: Arc<recording_studio::lanes::TimelineLanes>,
     pub file: Option<PathBuf>,
     pub position: MediaTime,
     pub playing: bool,
@@ -99,6 +112,7 @@ impl PartialEq for Snapshot {
             library_truncated,
             show_library,
             project,
+            lanes,
             file,
             position,
             playing,
@@ -126,6 +140,7 @@ impl PartialEq for Snapshot {
             library_truncated: b_library_truncated,
             show_library: b_show_library,
             project: b_project,
+            lanes: b_lanes,
             file: b_file,
             position: b_position,
             playing: b_playing,
@@ -146,6 +161,7 @@ impl PartialEq for Snapshot {
             preview_icon: b_preview_icon,
         } = other;
         capture == b_capture
+            && (Arc::ptr_eq(lanes, b_lanes) || lanes.is_empty() && b_lanes.is_empty())
             && export == b_export
             && camera_target == b_camera_target
             && camera_fine == b_camera_fine

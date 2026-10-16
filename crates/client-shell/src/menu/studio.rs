@@ -14,6 +14,7 @@ use recording_studio::{
 
 mod bridge;
 mod camera;
+mod effects;
 mod scene;
 
 pub(super) struct Studio {
@@ -169,6 +170,7 @@ impl Studio {
             && self.editor.is_some()
         {
             actions.extend(self.camera_focus_actions());
+            actions.extend(self.effect_focus_actions());
         }
         let mut actions: Vec<_> = actions.into_iter().map(MenuAction::Studio).collect();
         if self.view.export.phase.busy()
@@ -318,6 +320,15 @@ impl Studio {
                 self.edit("Add title", &[Command::AddTitle { title }])?;
                 Arc::make_mut(&mut self.view).selected = Some(id);
             }
+            Action::AddEffect(kind) => self.add_effect(kind)?,
+            Action::ToggleEffect => self.toggle_effect()?,
+            Action::AdjustEffect(direction) => self.adjust_effect(direction)?,
+            Action::AddEffectKey => self.key_effect()?,
+            Action::DeleteEffectKey => self.delete_effect_key()?,
+            Action::CycleEffectEasing => self.cycle_effect_easing()?,
+            Action::StepEffectKey(direction) => self.step_effect_key(direction)?,
+            Action::SelectEffectKey { effect, at } => self.select_effect_key(effect, at)?,
+            Action::MoveEffect(frames) => self.move_effect(frames)?,
             Action::UseNativeReplay => self.use_native_replay()?,
             Action::CreateCamera(kind) => self.create_camera(kind)?,
             Action::CycleCameraTarget(direction) => self.cycle_camera_target(direction),
@@ -591,6 +602,19 @@ impl Studio {
     fn publish_editor(&mut self) {
         let view = Arc::make_mut(&mut self.view);
         if let Some(editor) = &self.editor {
+            if view
+                .project
+                .as_ref()
+                .is_none_or(|project| !Arc::ptr_eq(project, editor.project()))
+            {
+                match recording_studio::lanes::TimelineLanes::new(editor.project()) {
+                    Ok(lanes) => view.lanes = Arc::new(lanes),
+                    Err(error) => {
+                        view.lanes = Arc::default();
+                        view.error = Some(error.to_string());
+                    }
+                }
+            }
             view.project = Some(Arc::clone(editor.project()));
             view.dirty = editor.dirty();
             view.undo = editor.undo_label().map(str::to_owned);

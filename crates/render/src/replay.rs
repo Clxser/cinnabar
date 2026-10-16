@@ -24,7 +24,9 @@ use render_scene::{
     ui_preview::{PreviewImage, PreviewTarget},
 };
 
+mod effects;
 mod faults;
+pub use effects::FrameEffects;
 mod readback;
 pub use readback::ReplayReadback;
 mod scene;

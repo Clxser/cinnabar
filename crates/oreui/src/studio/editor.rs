@@ -194,6 +194,15 @@ fn inspector(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<(
         let height = (y - content_top + scroll.offset).max(0.0);
         return canvas.end_scroll(scroll, height);
     }
+    if let Some(effect) = project
+        .effects
+        .iter()
+        .find(|effect| Some(effect.id) == view.studio.selected)
+    {
+        y = super::effects::inspector(canvas, view, [left, y, right, area[3] - pad], effect)?;
+        let height = (y - content_top + scroll.offset).max(0.0);
+        return canvas.end_scroll(scroll, height);
+    }
     let selected = project
         .clips
         .iter()
@@ -262,6 +271,8 @@ fn inspector(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<(
     }
     y += canvas.r(6.0);
     y = super::camera::creation(canvas, view, [left, y, right, area[3] - pad])?;
+    y += canvas.r(2.0);
+    y = super::effects::creation(canvas, view, [left, y, right, area[3] - pad])?;
     let height = (y - content_top + scroll.offset).max(0.0);
     canvas.end_scroll(scroll, height)
 }

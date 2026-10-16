@@ -9420,11 +9420,31 @@ Current implementation, not yet built or exercised:
   fades and silence derive from saved audio metadata. Progress/cancellation persist
   across library/editor views. Successful encoder/mux completion and file sync
   precede no-clobber publication; temporary export material is ignored.
-  This source is unbuilt and unrun. Preflight rejects titles, color/post effects,
-  dip-to-black, native layering/crops/transitions and camera edits outside replay
+  This source is unbuilt and unrun. Preflight rejects titles,
+  native layering/crops/crossfades and camera shots outside replay
   coverage; missing subject payloads can still fail at a later frame. Full export
   composition, settings/destination controls, audio preview, source accuracy,
   interrupted recovery, playback/export acceptance and measured cost remain open.
+- Shared GPU frame effects now connect raster/native preview and export for
+  exposure, saturation, vignette, bounded separable bloom, flash, letterbox and
+  fades/dip-to-black. Replay camera effects stay in the world camera; ordinary
+  video uses provisional affine image motion. Neutral frames skip composition;
+  targets/scratch/upload storage are reused, backpressure precedes pixel uploads,
+  and native effect preview retains GPU-only image publication. Shader uniforms
+  generate their WGSL fields from the Rust definition. No shader/runtime validation
+  or measured performance acceptance has been performed.
+  Paused color edits reuse the admitted base image when source time/camera match;
+  seeks bypass that cache and failed scene application/drawing requires fresh
+  source admission.
+- Native effect authoring now adds/enables/disables effects, edits exact amount
+  keys and incoming easing, navigates/deletes keys and shifts effects through
+  ordinary undoable commands, preserving gameplay origin. A bounded curve graph
+  and decimated key markers expose authored data. Cached interval packing separates
+  overlapping camera/effect/audio/title items without changing render precedence;
+  visible-row culling and source-name lookup avoid repeated offscreen text work.
+  Title rendering/editing, synchronized audio preview, automatic-effect retiming,
+  full native visual composition, numeric/drag controls, narrow-layout interaction,
+  capture/seek/export acceptance and measured resource/frame costs remain open.
 
 Required work remains open:
 

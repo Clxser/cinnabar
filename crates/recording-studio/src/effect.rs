@@ -7,6 +7,8 @@ use crate::{Id, MediaTime, Span, StudioError, error::limit};
 pub const MAX_CURVE_KEYS: usize = 4096;
 pub const MAX_EFFECT_VALUE: f64 = 1_000_000.0;
 
+mod edit;
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Easing {
@@ -19,6 +21,28 @@ pub enum Easing {
 }
 
 impl Easing {
+    /// Native key editors use the same exhaustive names and cycle as saved curve interpolation.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Linear => "Linear",
+            Self::Smooth => "Smooth",
+            Self::EaseIn => "Ease in",
+            Self::EaseOut => "Ease out",
+            Self::Hold => "Hold",
+        }
+    }
+
+    /// Adding an interpolation mode requires choosing its place in the native cycle.
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Linear => Self::Smooth,
+            Self::Smooth => Self::EaseIn,
+            Self::EaseIn => Self::EaseOut,
+            Self::EaseOut => Self::Hold,
+            Self::Hold => Self::Linear,
+        }
+    }
+
     /// Maps bounded linear progress to a deterministic transition with exact endpoints.
     pub fn sample(self, value: f64) -> f64 {
         let t = value.clamp(0.0, 1.0);
@@ -97,18 +121,30 @@ impl Curve {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EffectKind {
-    Zoom,
-    Shake,
-    Exposure,
-    Saturation,
-    Vignette,
-    Bloom,
-    Flash,
-    Letterbox,
-    Fade,
+macro_rules! effects {
+    ($($kind:ident => ($label:literal, $initial:literal, $step:literal, $min:literal, $max:literal)),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        pub enum EffectKind { $($kind),+ }
+        impl EffectKind {
+            pub const ALL: &[Self] = &[$(Self::$kind),+];
+            pub const fn label(self) -> &'static str { match self { $(Self::$kind => $label),+ } }
+            pub const fn initial(self) -> f64 { match self { $(Self::$kind => $initial),+ } }
+            pub const fn step(self) -> f64 { match self { $(Self::$kind => $step),+ } }
+            pub fn constrain(self, value: f64) -> f64 { match self { $(Self::$kind => value.clamp($min, $max)),+ } }
+        }
+    };
+}
+effects! {
+    Zoom => ("Zoom", 8.0, 1.0, -90.0, 90.0),
+    Shake => ("Shake", 0.5, 0.1, 0.0, 8.0),
+    Exposure => ("Exposure", 0.5, 0.1, -8.0, 8.0),
+    Saturation => ("Saturation", 0.25, 0.1, -1.0, 3.0),
+    Vignette => ("Vignette", 0.3, 0.05, 0.0, 1.0),
+    Bloom => ("Bloom", 0.3, 0.1, 0.0, 4.0),
+    Flash => ("Flash", 0.5, 0.05, 0.0, 1.0),
+    Letterbox => ("Letterbox", 0.1, 0.01, 0.0, 0.4),
+    Fade => ("Fade", 0.5, 0.05, 0.0, 1.0),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -155,6 +191,31 @@ pub struct EffectSample {
 }
 
 impl EffectSample {
+    /// Render edges can retain an unchanged frame without allocating another composition target.
+    pub fn neutral(self) -> bool {
+        self == Self::default()
+    }
+
+    /// Native replay already applies these two effects to its world camera before raster composition.
+    pub fn without_camera(mut self) -> Self {
+        self.zoom_degrees = 0.0;
+        self.shake_degrees = 0.0;
+        self
+    }
+
+    /// Ordinary video uses an affine image crop/translation, with a shared virtual FOV for angle units.
+    /// This cannot reveal pixels outside the recording or synthesize the parallax of a 3D replay.
+    pub fn image_motion(self, at: MediaTime) -> [f32; 3] {
+        let base = crate::camera::CameraPose::default();
+        let pose = self.camera_pose(base, at);
+        let tangent = (base.fov.to_radians() * 0.5).tan();
+        [
+            (tangent / (pose.fov.to_radians() * 0.5).tan()) as f32,
+            (-pose.yaw.to_radians().tan() / (2.0 * tangent)) as f32,
+            (pose.pitch.to_radians().tan() / (2.0 * tangent)) as f32,
+        ]
+    }
+
     /// Applies transient camera effects after the saved rig pose, identically for recorded and custom views.
     pub fn camera_pose(
         self,
@@ -186,14 +247,14 @@ impl EffectSample {
 
     /// Bounds the final sum once, after all active tracks and transition contributions are known.
     pub fn constrain(&mut self) {
-        self.zoom_degrees = self.zoom_degrees.clamp(-90.0, 90.0);
-        self.shake_degrees = self.shake_degrees.clamp(0.0, 8.0);
-        self.exposure_stops = self.exposure_stops.clamp(-8.0, 8.0);
-        self.saturation_delta = self.saturation_delta.clamp(-1.0, 3.0);
-        self.vignette = self.vignette.clamp(0.0, 1.0);
-        self.bloom = self.bloom.clamp(0.0, 4.0);
-        self.flash = self.flash.clamp(0.0, 1.0);
-        self.letterbox = self.letterbox.clamp(0.0, 0.4);
-        self.fade = self.fade.clamp(0.0, 1.0);
+        self.zoom_degrees = EffectKind::Zoom.constrain(self.zoom_degrees);
+        self.shake_degrees = EffectKind::Shake.constrain(self.shake_degrees);
+        self.exposure_stops = EffectKind::Exposure.constrain(self.exposure_stops);
+        self.saturation_delta = EffectKind::Saturation.constrain(self.saturation_delta);
+        self.vignette = EffectKind::Vignette.constrain(self.vignette);
+        self.bloom = EffectKind::Bloom.constrain(self.bloom);
+        self.flash = EffectKind::Flash.constrain(self.flash);
+        self.letterbox = EffectKind::Letterbox.constrain(self.letterbox);
+        self.fade = EffectKind::Fade.constrain(self.fade);
     }
 }

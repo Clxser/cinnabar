@@ -10,12 +10,13 @@ use recording_scene::{
     actors::ActorCoverage, playback::ScenePlayback, scene::DEFAULT_RESIDENT_BYTES,
 };
 use recording_studio::{
-    Id,
+    Id, MediaTime,
+    camera::CameraPose,
     model::{Framing, MediaKind},
     playback::{CompiledTimeline, FramePlan},
     preview::{CameraPreview, PreviewRequest, fit_size},
 };
-use render::replay::{ReplayRenderContext, ReplayRenderer};
+use render::replay::{FrameEffects, ReplayRenderContext, ReplayRenderer};
 use render_scene::ui_preview::PreviewImage;
 
 pub(in crate::studio) struct NativeScene {
@@ -23,6 +24,7 @@ pub(in crate::studio) struct NativeScene {
     timeline: Option<CompiledTimeline>,
     plan: FramePlan,
     source: Option<Source>,
+    effects: FrameEffects,
 }
 
 pub(in crate::studio) struct NativeFrame {
@@ -39,12 +41,20 @@ struct Source {
     epoch: Option<[u64; 2]>,
     playback: ScenePlayback,
     renderer: ReplayRenderer,
+    base: Option<BaseFrame>,
+}
+
+struct BaseFrame {
+    at: MediaTime,
+    pose: CameraPose,
+    image: Arc<PreviewImage>,
 }
 
 impl NativeScene {
     /// Scene and GPU contexts are created only on the existing preview worker.
     pub(in crate::studio) fn new(context: ReplayRenderContext) -> Self {
         Self {
+            effects: FrameEffects::new(context.clone()),
             context,
             timeline: None,
             plan: FramePlan::default(),
@@ -131,6 +141,7 @@ impl NativeScene {
                 epoch: None,
                 playback,
                 renderer,
+                base: None,
             });
         }
         let source = self
@@ -169,7 +180,6 @@ impl NativeScene {
             .plan
             .camera
             .unwrap_or_else(|| self.plan.effects.camera_pose(frame.view.pose, at));
-        source.renderer.apply(&frame, pose)?;
         let mut notices = Vec::new();
         if missing_target {
             notices.push("Camera subject unavailable: showing the recorded view. Retarget or shorten the shot.");
@@ -185,22 +195,65 @@ impl NativeScene {
         if frame.targets.is_none() {
             notices.push("This take has no received-actor target track; actor tracking needs a newer recording.");
         }
-        if !self.plan.audio.is_empty()
-            || !self.plan.titles.is_empty()
-            || !request.project.effects.is_empty()
-        {
-            notices.push("Audio, titles and color effects are not previewed yet.");
+        match (!self.plan.audio.is_empty(), !self.plan.titles.is_empty()) {
+            (true, true) => notices.push("Audio and titles are not previewed yet."),
+            (true, false) => notices.push("Audio is not previewed yet."),
+            (false, true) => notices.push("Titles are not previewed yet."),
+            (false, false) => {}
         }
         let started = Instant::now();
+        let image = if let Some(base) = source
+            .base
+            .as_ref()
+            .filter(|base| !frame.temporal_reset && base.at == visual.time && base.pose == pose)
+        {
+            Arc::clone(&base.image)
+        } else {
+            source.base = None;
+            if let Err(error) = source.renderer.apply(&frame, pose) {
+                source.playback.invalidate();
+                source.epoch = None;
+                return Err(error);
+            }
+            let image = loop {
+                if cancelled() {
+                    return Err("Preview cancelled.".into());
+                }
+                match source.renderer.draw() {
+                    Ok(Some(image)) => break image,
+                    Ok(None) => {}
+                    Err(error) => {
+                        source.playback.invalidate();
+                        source.epoch = None;
+                        return Err(error);
+                    }
+                }
+                if started.elapsed() >= Duration::from_secs(30) {
+                    return Err("The native replay scene could not finish GPU preparation. Seek again to retry.".into());
+                }
+                wait();
+            };
+            source.base = Some(BaseFrame {
+                at: visual.time,
+                pose,
+                image: Arc::clone(&image),
+            });
+            image
+        };
         let image = loop {
             if cancelled() {
                 return Err("Preview cancelled.".into());
             }
-            if let Some(image) = source.renderer.draw()? {
-                break image;
+            if let Some(composed) =
+                self.effects
+                    .native(Arc::clone(&image), self.plan.effects, at)?
+            {
+                break composed;
             }
             if started.elapsed() >= Duration::from_secs(30) {
-                return Err("The native replay scene could not finish GPU preparation. Seek again to retry.".into());
+                return Err(
+                    "The effect preview could not finish. Pause playback and seek again.".into(),
+                );
             }
             wait();
         };

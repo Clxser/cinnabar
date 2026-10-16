@@ -12,6 +12,7 @@ pub mod edit;
 pub mod effect;
 pub mod error;
 pub mod export;
+pub mod lanes;
 mod media_process;
 pub mod model;
 pub mod object_store;

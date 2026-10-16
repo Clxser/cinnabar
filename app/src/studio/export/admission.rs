@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 
 use recording_studio::{
     Project,
-    effect::EffectKind,
     model::{Framing, MediaKind, TransitionKind},
 };
 
@@ -13,7 +12,6 @@ enum Channel {
     NativeVisual,
     RasterVisual,
     Shot,
-    CameraEffect,
 }
 
 #[derive(Default)]
@@ -21,7 +19,6 @@ struct Counts {
     native: i32,
     raster: i32,
     shots: i32,
-    camera_effects: i32,
 }
 
 /// Unsupported composition fails before encoding; the immutable project remains available for editing.
@@ -68,7 +65,7 @@ pub(super) fn prepare(project: &Project, has_device: bool) -> Result<(), String>
     }
     for transition in &project.transitions {
         if transition.kind == TransitionKind::DipToBlack {
-            return Err("Dip-to-black composition is not connected to export yet.".into());
+            continue;
         }
         if native_clips.contains(&transition.from) || native_clips.contains(&transition.to) {
             return Err(
@@ -79,24 +76,14 @@ pub(super) fn prepare(project: &Project, has_device: bool) -> Result<(), String>
     for shot in &project.shots {
         interval(&mut events, shot.span, Channel::Shot);
     }
-    for effect in &project.effects {
-        if !effect.enabled {
-            continue;
-        }
-        match effect.kind {
-            EffectKind::Zoom | EffectKind::Shake => {
-                interval(&mut events, effect.span, Channel::CameraEffect)
-            }
-            EffectKind::Exposure
-            | EffectKind::Saturation
-            | EffectKind::Vignette
-            | EffectKind::Bloom
-            | EffectKind::Flash
-            | EffectKind::Letterbox
-            | EffectKind::Fade => {
-                return Err("Color/effect composition is not connected to export yet; unsupported edits were not silently omitted.".into());
-            }
-        }
+    if !has_device
+        && (project.effects.iter().any(|effect| effect.enabled)
+            || project
+                .transitions
+                .iter()
+                .any(|transition| transition.kind == TransitionKind::DipToBlack))
+    {
+        return Err("Timeline effects need an initialized graphics device.".into());
     }
     events.sort_unstable_by_key(|event| event.0);
     let mut counts = Counts::default();
@@ -108,7 +95,6 @@ pub(super) fn prepare(project: &Project, has_device: bool) -> Result<(), String>
                 Channel::NativeVisual => &mut counts.native,
                 Channel::RasterVisual => &mut counts.raster,
                 Channel::Shot => &mut counts.shots,
-                Channel::CameraEffect => &mut counts.camera_effects,
             };
             *count += events[index].2;
             index += 1;
@@ -116,8 +102,10 @@ pub(super) fn prepare(project: &Project, has_device: bool) -> Result<(), String>
         if counts.native > 0 && counts.native + counts.raster > 1 {
             return Err("Combining a native replay with another visual layer is not connected to export yet.".into());
         }
-        if counts.shots + counts.camera_effects > 0 && counts.native == 0 {
-            return Err("Camera shots and camera effects need a 3D replay clip throughout their timeline range.".into());
+        if counts.shots > 0 && counts.native == 0 {
+            return Err(
+                "Camera shots need a 3D replay clip throughout their timeline range.".into(),
+            );
         }
     }
     Ok(())
