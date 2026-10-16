@@ -55,7 +55,7 @@ owner = "protocol"
 [[crates]]
 name = "recording-studio"
 path = "crates/recording-studio"
-allowed_dependencies = []
+allowed_dependencies = ["windows-sys"]
 forbidden_dependencies = ["bevy", "wgpu", "launcher", "client-world", "protocol"]
 
 [[crates]]

@@ -17,6 +17,7 @@ use crate::FrameRate;
 use crate::model::{Encoder, ExportCodec};
 use crossbeam_channel::{Receiver, Sender, TrySendError};
 
+mod executable;
 mod export;
 mod options;
 pub use export::VideoWriter;
@@ -71,22 +72,9 @@ pub struct VideoSettings {
     pub codec: ExportCodec,
 }
 
-/// Locates `ffmpeg` on PATH.
+/// Locates the configured, portable or installed FFmpeg without changing the process environment.
 pub fn find_ffmpeg() -> Result<PathBuf, String> {
-    let name = if cfg!(windows) {
-        "ffmpeg.exe"
-    } else {
-        "ffmpeg"
-    };
-    std::env::var_os("PATH")
-        .iter()
-        .flat_map(std::env::split_paths)
-        .map(|dir| dir.join(name))
-        .find(|candidate| candidate.is_file())
-        .ok_or_else(|| {
-            "FFmpeg was not found on PATH. Install FFmpeg and restart Cinnabar to record video."
-                .to_owned()
-        })
+    executable::find()
 }
 
 /// Encoder arguments for raw frames of `size` and `layout` on stdin at a constant rate.
@@ -384,9 +372,7 @@ impl Recorder {
                 summary.path.display()
             ));
         }
-        std::fs::File::open(&staged)
-            .and_then(|file| file.sync_all())
-            .map_err(|error| error.to_string())?;
+        crate::media_process::sync_output(&staged)?;
         staged
             .persist(&summary.path)
             .map_err(|error| error.to_string())?;

@@ -9455,6 +9455,15 @@ Current implementation; runtime acceptance remains incomplete:
   text editor. This is provisional source: font rendering, composition, editing,
   cancellation and resource budgets still require runtime acceptance.
 
+- Windows media finalization now opens completed encoder output with write access
+  before flushing, avoiding read-only handle failures during recording and export.
+  FFmpeg discovery also reads updated Windows installation paths without changing
+  the process environment, with portable and explicit executable-path options.
+  Native terrain-track failure retains POV video capture and reports incomplete
+  3D replay coverage; it does not establish successful terrain capture. Capture and
+  storage failures now retain diagnostics, and unfinished takes explain their
+  missing manifest. Runtime acceptance of these recovery paths remains open.
+
 Required work remains open:
 
 - Complete recording options and the native OreUI library/editor, including full

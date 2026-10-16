@@ -172,8 +172,16 @@ impl CaptureManifest {
     /// Opens only this schema's bounded metadata; arbitrary paths in a recording are never executed.
     pub fn read(directory: &Path) -> Result<Self, String> {
         let path = directory.join(MANIFEST_FILE);
-        let metadata = std::fs::symlink_metadata(&path)
-            .map_err(|error| format!("{}: {error}", path.display()))?;
+        let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                format!(
+                    "This recording did not finish saving its media manifest ({}). Its partial files have been retained; record a new take after resolving the capture error.",
+                    path.display()
+                )
+            } else {
+                format!("{}: {error}", path.display())
+            }
+        })?;
         if !metadata.is_file() || metadata.len() > MAX_MANIFEST_BYTES {
             return Err("Recording manifest is not a bounded regular file.".into());
         }

@@ -81,7 +81,7 @@ pub(super) fn observe(
         removed.clear();
         return;
     };
-    if active.stopping.is_some() {
+    if active.stopping.is_some() || active.terrain_failure.is_some() {
         removed.clear();
         return;
     }
@@ -139,8 +139,16 @@ pub(super) fn observe(
             .changes(at, Arc::clone(&terrain.palette), changes)
     })();
     if let Err(error) = result {
-        active.failure.get_or_insert(error);
-        super::stop(active, now);
+        interrupt(active, error);
+    }
+}
+
+/// Keeps the independent POV encoder alive while making failed native scene coverage explicit.
+pub(super) fn interrupt(active: &mut super::Active, error: String) {
+    if active.terrain_failure.is_none() {
+        bevy::log::warn!(error = %error, "Studio terrain recording failed; POV capture continues");
+        active.terrain_failure = Some(error);
+        active.terrain = None;
     }
 }
 

@@ -52,6 +52,7 @@ struct Active {
     session: CaptureSession,
     audio: Option<audio::AudioWorker>,
     terrain: Option<terrain::NativeTerrain>,
+    terrain_failure: Option<String>,
     environment: Option<environment::NativeEnvironment>,
     actors: Option<actors::NativeActors>,
     targets: Option<targets::NativeTargets>,
@@ -125,13 +126,20 @@ fn update(world: &mut World) {
     }
     if let Some(mut active) = state.active.take() {
         let elapsed = MediaTime::from_seconds((now - active.started).max(0.0));
-        if let Some(error) = active
-            .terrain
-            .as_mut()
-            .and_then(|terrain| terrain.capture.error())
+        if active.terrain_failure.is_none()
+            && let Some(error) = active
+                .terrain
+                .as_mut()
+                .and_then(|terrain| terrain.capture.error())
         {
-            active.failure.get_or_insert(error);
-            stop(&mut active, now);
+            terrain::interrupt(&mut active, error);
+        }
+        if state.status.message.is_none()
+            && let Some(error) = &active.terrain_failure
+        {
+            state.status.message = Some(format!(
+                "Video recording continues; native terrain replay is incomplete: {error}"
+            ));
         }
         if let Some(error) = active
             .environment
@@ -416,11 +424,13 @@ fn poll_start(
             state.status.phase = CapturePhase::Recording;
             state.status.path = Some(session.directory().to_path_buf());
             state.status.audio = audio.is_some();
+            bevy::log::info!(game_audio = state.status.audio, "Studio recording started");
             let (errors, failed) = bounded(1);
             state.active = Some(Active {
                 session,
                 audio,
                 terrain: Some(terrain),
+                terrain_failure: None,
                 environment: Some(environment),
                 actors: Some(actors),
                 targets: Some(targets),
@@ -462,6 +472,7 @@ fn stop(active: &mut Active, now: f64) {
         audio.stop(duration);
     }
     active.stopping = Some((now, duration));
+    bevy::log::info!(duration_us = duration.0, error = ?active.failure, "Studio recording stopping");
 }
 
 /// Moves every blocking finish operation away from gameplay, retaining a visible finishing state.
@@ -512,20 +523,20 @@ fn finalize(state: &mut NativeCapture, mut active: Active, duration: MediaTime) 
             } else {
                 None
             };
-            let terrain_error = if let Some(terrain) = active.terrain {
-                let error = terrain.capture.finish(duration).err();
-                let metadata = recording_studio::capture::CaptureTrack {
-                    schema: recording_scene::TERRAIN_TRACK_SCHEMA.into(),
-                    directory: recording_scene::journal::TERRAIN_DIRECTORY.into(),
-                    complete: error.is_none(),
-                    error: error
-                        .as_ref()
-                        .map(|error| error.chars().take(512).collect()),
-                };
-                active.session.scene_track(metadata).err().or(error)
-            } else {
-                None
+            let terrain_error = active.terrain_failure.or_else(|| {
+                active
+                    .terrain
+                    .and_then(|terrain| terrain.capture.finish(duration).err())
+            });
+            let terrain_metadata = recording_studio::capture::CaptureTrack {
+                schema: recording_scene::TERRAIN_TRACK_SCHEMA.into(),
+                directory: recording_scene::journal::TERRAIN_DIRECTORY.into(),
+                complete: terrain_error.is_none(),
+                error: terrain_error
+                    .as_ref()
+                    .map(|error| error.chars().take(512).collect()),
             };
+            let terrain_metadata_error = active.session.scene_track(terrain_metadata).err();
             let audio_result = active.audio.map(audio::AudioWorker::finish).transpose();
             let (audio, audio_error) = match audio_result {
                 Ok(audio) => (audio, None),
@@ -550,7 +561,7 @@ fn finalize(state: &mut NativeCapture, mut active: Active, duration: MediaTime) 
                     active
                         .failure
                         .or(audio_error)
-                        .or(terrain_error)
+                        .or(terrain_metadata_error)
                         .or(environment_error)
                         .or(actors_error)
                         .or(targets_error),
@@ -559,7 +570,10 @@ fn finalize(state: &mut NativeCapture, mut active: Active, duration: MediaTime) 
                     (Ok(_), Some(error)) => {
                         Err(format!("Recording saved with an interruption: {error}"))
                     }
-                    (Err(error), _) => Err(error),
+                    (Err(error), Some(capture_error)) => Err(format!(
+                        "Recording stopped: {capture_error}. Saving also failed: {error}"
+                    )),
+                    (Err(error), None) => Err(error),
                 }
             };
             let _ = completed.send(result);
@@ -588,10 +602,29 @@ fn poll_finish(state: &mut NativeCapture) {
     state.finishing = None;
     match result {
         Ok(summary) => {
+            bevy::log::info!(
+                frames = summary.video.frames,
+                duration_us = summary.manifest.duration.0,
+                "Studio recording saved"
+            );
             state.status.phase = CapturePhase::Complete;
             state.status.path = Some(summary.directory);
             state.status.elapsed = summary.manifest.duration;
-            state.status.message = None;
+            state.status.message = summary
+                .manifest
+                .scene_tracks
+                .iter()
+                .find(|track| !track.complete)
+                .map(|track| {
+                    format!(
+                        "Video saved; {} is incomplete: {}",
+                        track.schema,
+                        track
+                            .error
+                            .as_deref()
+                            .unwrap_or("scene capture did not finish")
+                    )
+                });
         }
         Err(error) => fail(state, error),
     }
@@ -599,6 +632,7 @@ fn poll_finish(state: &mut NativeCapture) {
 
 /// A failed optional studio operation never tears down a live network session or world.
 fn fail(state: &mut NativeCapture, message: String) {
+    bevy::log::warn!(error = %message, "Studio recording failed");
     state.armed = false;
     state.status.phase = CapturePhase::Failed;
     state.status.message = Some(message);

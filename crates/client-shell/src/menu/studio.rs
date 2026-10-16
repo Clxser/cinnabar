@@ -533,6 +533,7 @@ impl Studio {
         let value = match completed.result {
             Ok(value) => value,
             Err(error) => {
+                bevy::log::warn!(error = %error, "Studio storage operation failed");
                 Arc::make_mut(&mut self.view).error = Some(error.to_string());
                 return;
             }

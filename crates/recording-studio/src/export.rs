@@ -336,9 +336,7 @@ fn run<S: FrameSource>(
         files::check_bytes(&muxed, VIDEO_BYTE_LIMIT)?;
         staged = muxed;
     }
-    File::open(&staged)
-        .and_then(|file| file.sync_all())
-        .map_err(|error| error.to_string())?;
+    crate::media_process::sync_output(&staged)?;
     cancellation.begin_publication()?;
     update(status, |status| status.phase = ExportPhase::Publishing);
     let path = files::publish(staged, &destination)?;
