@@ -111,7 +111,7 @@ components:
 
 ## Overview
 
-The window is a world, not a page. A real-time voxel outcrop of slate and dolomite, split by a glowing cinnabar vein, floats in a sky lit for the player's local time of day. The interface floats over it: the title, one lit Play block, and a single glass shelf. Everything except the scene is quiet, exact and fast. Spectacle is spent once.
+The window is a world, not a page. A real-time voxel outcrop of slate and dolomite, split by a glowing cinnabar vein, floats in a sky lit for the player's local time of day. The player stands on a small stone in the foreground, near enough to the camera to read as the scene's figure, and turns their head toward the pointer. The interface floats over it: the title, one lit Play block, and a single glass shelf. Everything except the scene is quiet, exact and fast. Spectacle is spent once.
 
 The vein is the signature move. It is the product state made visible: it refines from dark ore to glowing cinnabar as an update downloads, and goes dark when the installed build cannot start.
 
@@ -149,7 +149,9 @@ Radii step by hierarchy: 8px for small controls, 12px for rows and tiles, 16px f
 - **Play** is the state machine. Ready is a lit block face: a top-down gradient, an inner top highlight and a hover lift with one band of light. Busy is glass with a cinnabar fill and a light sweep confined to the filled part. Running shows a live dot. Labels cross-fade and rise between states.
 - **Server cards** show typographic poster art (a hue field, a fixed-scale block lattice and the initial) whenever a server ships no image. Hover or focus reveals the MOTD, tags and Play.
 - **Segmented control**: a dark track with an ink thumb that slides, operated with arrow keys.
-- **Notice**: glass with a tone-coloured inner edge and icon. Its action is the recovery step.
+- **Notice**: glass with a tone-coloured inner edge and icon. Its action is the recovery step. The `info` tone carries deliberate choices, such as a downgrade.
+- **Update outcomes**: a downgrade never takes over Play. It is a quiet notice and a Settings row that open the platform installer. Installing names its outcome: on Windows, "Opening installer" (the launcher closes); elsewhere, "Installing" (the launcher restarts into the game).
+- **First run**: until the game has signed in once, the server list explains why it is empty and offers Play.
 
 ## Do's and Don'ts
 
