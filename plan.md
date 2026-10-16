@@ -9338,6 +9338,10 @@ Current implementation, not yet built or exercised:
   admission shares immutable geometry, bounds pinned bytes, and stops on worker
   failure instead of silently dropping world changes. Cancellation reaches large
   asset reads; capture manifests retain per-track completion and failure details.
+  Terrain schema v2 explicitly selects the active texture/tint palette, even in
+  empty scenes or geometry-free pack changes; checkpoints retain the selection
+  and share its resident allocation charges with chunk references. Experimental
+  v1 terrain tracks lack that state and remain unsupported for native playback.
   This source is unverified.
   Terrain alone does not establish complete 3D replay: actor appearance, an
   isolated renderer and camera preview remain unconnected.

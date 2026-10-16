@@ -60,7 +60,9 @@ pub(super) fn start(world: &mut World, session: &CaptureSession) -> Result<Nativ
         }
         chunks.push(terrain.upsert(entity, instance)?);
     }
-    terrain.capture.baseline(chunks)?;
+    terrain
+        .capture
+        .baseline(Arc::clone(&terrain.palette), chunks)?;
     Ok(terrain)
 }
 
@@ -132,7 +134,9 @@ pub(super) fn observe(
         }
         let at = MediaTime::from_seconds((now - active.started).max(0.0))
             .map_err(|error| error.to_string())?;
-        terrain.capture.changes(at, changes)
+        terrain
+            .capture
+            .changes(at, Arc::clone(&terrain.palette), changes)
     })();
     if let Err(error) = result {
         active.failure.get_or_insert(error);
@@ -171,7 +175,6 @@ impl NativeTerrain {
             key,
             generation: instance.generation,
             mesh: freeze_mesh(instance),
-            palette: Arc::clone(&self.palette),
         }))
     }
 }

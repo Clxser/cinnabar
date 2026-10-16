@@ -76,8 +76,15 @@ pub struct ChunkBinding {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "change", deny_unknown_fields)]
 pub enum TerrainRecord {
+    SelectPalette { palette: AssetId },
     Upsert { chunk: ChunkBinding },
     Remove { key: ChunkId },
+}
+
+#[derive(Clone)]
+pub struct ScenePalette {
+    pub id: AssetId,
+    pub palette: Arc<FrozenPalette>,
 }
 
 #[derive(Clone)]
@@ -103,6 +110,7 @@ struct Charge {
 
 pub struct TerrainScene {
     chunks: BTreeMap<ChunkId, SceneChunk>,
+    active_palette: Option<ScenePalette>,
     resources: BTreeMap<ResourceKey, Charge>,
     resident_bytes: usize,
     maximum_bytes: usize,
@@ -113,6 +121,7 @@ impl TerrainScene {
     pub fn new(maximum_bytes: usize) -> Self {
         Self {
             chunks: BTreeMap::new(),
+            active_palette: None,
             resources: BTreeMap::new(),
             resident_bytes: 0,
             maximum_bytes,
@@ -126,6 +135,35 @@ impl TerrainScene {
     pub fn chunk(&self, key: ChunkId) -> Option<&SceneChunk> {
         self.chunks.get(&key)
     }
+
+    /// The selected render palette is explicit even when no chunks are resident.
+    pub fn active_palette(&self) -> Option<&ScenePalette> {
+        self.active_palette.as_ref()
+    }
+
+    /// Retains the selected texture and tint epoch independently of any chunk using it.
+    pub fn select_palette(&mut self, palette: ScenePalette) -> Result<(), ArchiveError> {
+        if self
+            .active_palette
+            .as_ref()
+            .is_some_and(|old| old.id == palette.id)
+        {
+            return Ok(());
+        }
+        let mut changes = BTreeMap::new();
+        if let Some(old) = &self.active_palette {
+            for (key, bytes) in palette_allocations(old.id, &old.palette) {
+                changes.insert(key, (bytes, -1));
+            }
+        }
+        add_allocations(
+            &mut changes,
+            palette_allocations(palette.id, &palette.palette),
+        )?;
+        self.apply_allocations(changes, 0)?;
+        self.active_palette = Some(palette);
+        Ok(())
+    }
     pub const fn resident_bytes(&self) -> usize {
         self.resident_bytes
     }
@@ -133,6 +171,7 @@ impl TerrainScene {
     /// Clears only this draft; a renderer keeps the last admitted scene until a whole seek succeeds.
     pub fn clear(&mut self) {
         self.chunks.clear();
+        self.active_palette = None;
         self.resources.clear();
         self.resident_bytes = 0;
     }
@@ -152,16 +191,19 @@ impl TerrainScene {
                 changes.insert(key, (bytes, -1));
             }
         }
-        for (key, bytes) in allocations(&chunk) {
-            let change = changes.entry(key).or_insert((bytes, 0));
-            if change.0 != bytes {
-                return Err(ArchiveError::Invalid(
-                    "inconsistent frozen scene allocation",
-                ));
-            }
-            change.1 += 1;
-        }
+        add_allocations(&mut changes, allocations(&chunk))?;
         let new_chunk = !self.chunks.contains_key(&chunk.binding.key);
+        self.apply_allocations(changes, if new_chunk { chunk_charge() } else { 0 })?;
+        self.chunks.insert(chunk.binding.key, chunk);
+        Ok(())
+    }
+
+    /// Validates a complete reference-count transaction before changing any resident charges.
+    fn apply_allocations(
+        &mut self,
+        changes: BTreeMap<ResourceKey, (usize, isize)>,
+        additional_bytes: usize,
+    ) -> Result<(), ArchiveError> {
         let mut resident = self.resident_bytes;
         for (key, (bytes, delta)) in &changes {
             let old = self.resources.get(key);
@@ -178,11 +220,9 @@ impl TerrainScene {
                 resident = resident.checked_sub(*bytes).ok_or(ArchiveError::Quota)?;
             }
         }
-        if new_chunk {
-            resident = resident
-                .checked_add(chunk_charge())
-                .ok_or(ArchiveError::Quota)?;
-        }
+        resident = resident
+            .checked_add(additional_bytes)
+            .ok_or(ArchiveError::Quota)?;
         if resident > self.maximum_bytes {
             return Err(ArchiveError::Quota);
         }
@@ -200,7 +240,6 @@ impl TerrainScene {
             }
         }
         self.resident_bytes = resident;
-        self.chunks.insert(chunk.binding.key, chunk);
         Ok(())
     }
 
@@ -231,24 +270,51 @@ fn chunk_charge() -> usize {
 
 /// Mesh admission depends on a palette, so independently admitted copies have independent charges.
 fn allocations(chunk: &SceneChunk) -> [(ResourceKey, usize); 4] {
+    let [world, tints, palette] = palette_allocations(chunk.binding.palette, &chunk.palette);
     [
-        (
-            ResourceKey::World(chunk.palette.binding.world),
-            chunk.palette.world_bytes(),
-        ),
-        (
-            ResourceKey::Tints(chunk.palette.binding.tints),
-            std::mem::size_of_val(&*chunk.palette.tints),
-        ),
-        (
-            ResourceKey::Palette(chunk.binding.palette),
-            std::mem::size_of::<FrozenPalette>() + 8 * std::mem::size_of::<usize>(),
-        ),
+        world,
+        tints,
+        palette,
         (
             ResourceKey::Mesh(chunk.binding.mesh, chunk.binding.palette),
             chunk.mesh.retained_bytes(),
         ),
     ]
+}
+
+/// Active selection and chunk bindings share the same immutable allocation identities.
+fn palette_allocations(id: AssetId, palette: &FrozenPalette) -> [(ResourceKey, usize); 3] {
+    [
+        (
+            ResourceKey::World(palette.binding.world),
+            palette.world_bytes(),
+        ),
+        (
+            ResourceKey::Tints(palette.binding.tints),
+            std::mem::size_of_val(&*palette.tints),
+        ),
+        (
+            ResourceKey::Palette(id),
+            std::mem::size_of::<FrozenPalette>() + 8 * std::mem::size_of::<usize>(),
+        ),
+    ]
+}
+
+/// Merges incoming references without accepting conflicting sizes for one immutable identity.
+fn add_allocations(
+    changes: &mut BTreeMap<ResourceKey, (usize, isize)>,
+    allocations: impl IntoIterator<Item = (ResourceKey, usize)>,
+) -> Result<(), ArchiveError> {
+    for (key, bytes) in allocations {
+        let change = changes.entry(key).or_insert((bytes, 0));
+        if change.0 != bytes {
+            return Err(ArchiveError::Invalid(
+                "inconsistent frozen scene allocation",
+            ));
+        }
+        change.1 += 1;
+    }
+    Ok(())
 }
 
 /// Weak caches share immutable objects across checkpoints without keeping discarded scenes alive.
@@ -313,7 +379,7 @@ impl SceneLoader {
     }
 
     /// Loads exact frozen references once per material epoch, retaining no live texture-table fallback.
-    fn palette(
+    pub(crate) fn palette(
         &mut self,
         id: AssetId,
         cancelled: &impl Fn() -> bool,

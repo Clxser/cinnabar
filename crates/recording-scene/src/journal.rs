@@ -42,6 +42,7 @@ pub struct TerrainJournal {
     recording: Recording,
     objects: AssetWriter,
     chunks: BTreeMap<ChunkId, ChunkBinding>,
+    active_palette: Option<AssetId>,
     checkpoint_at: Option<MediaTime>,
     worlds: VecDeque<(Weak<RuntimeAssets>, AssetId)>,
     tints: VecDeque<(Weak<[FrozenTint]>, AssetId)>,
@@ -69,6 +70,7 @@ impl TerrainJournal {
             recording,
             objects,
             chunks: BTreeMap::new(),
+            active_palette: None,
             checkpoint_at: None,
             worlds: VecDeque::new(),
             tints: VecDeque::new(),
@@ -121,6 +123,39 @@ impl TerrainJournal {
         })
     }
 
+    /// Records global palette selection independently of geometry or current chunk count.
+    pub fn select_palette(
+        &mut self,
+        at: MediaTime,
+        palette: &JournalPalette,
+    ) -> Result<(), ArchiveError> {
+        if self
+            .checkpoint_at
+            .is_some_and(|checkpoint| checkpoint != at)
+        {
+            return Err(ArchiveError::Invalid(
+                "recorded terrain checkpoint changed time",
+            ));
+        }
+        if self.active_palette == Some(palette.id) && self.checkpoint_at.is_none() {
+            return Ok(());
+        }
+        write_record(
+            &mut self.recording,
+            at,
+            if self.checkpoint_at.is_some() {
+                RecordKind::CheckpointPart
+            } else {
+                RecordKind::Scene
+            },
+            &TerrainRecord::SelectPalette {
+                palette: palette.id,
+            },
+        )?;
+        self.active_palette = Some(palette.id);
+        Ok(())
+    }
+
     /// Streams prepared geometry and publishes its small reference only after durable object creation.
     pub fn upsert(
         &mut self,
@@ -130,6 +165,7 @@ impl TerrainJournal {
         mesh: &TerrainMesh,
         palette: &JournalPalette,
     ) -> Result<(), ArchiveError> {
+        self.require_palette()?;
         key.origin()?;
         if self.chunks.len() >= MAX_SCENE_CHUNKS && !self.chunks.contains_key(&key) {
             return Err(ArchiveError::Quota);
@@ -196,7 +232,8 @@ impl TerrainJournal {
 
     /// Starts the initial multipart baseline. No large scene clone or single giant payload is needed.
     pub fn begin_baseline(&mut self) -> Result<(), ArchiveError> {
-        if self.checkpoint_at.is_some() || !self.chunks.is_empty() {
+        if self.checkpoint_at.is_some() || !self.chunks.is_empty() || self.active_palette.is_some()
+        {
             return Err(ArchiveError::Invalid(
                 "terrain baseline was already started",
             ));
@@ -212,6 +249,7 @@ impl TerrainJournal {
 
     /// Seals the initial scene only after every admitted baseline chunk has been written.
     pub fn end_baseline(&mut self) -> Result<(), ArchiveError> {
+        self.require_palette()?;
         let at = self
             .checkpoint_at
             .ok_or(ArchiveError::Invalid("terrain baseline is not open"))?;
@@ -225,7 +263,14 @@ impl TerrainJournal {
         if self.checkpoint_at.is_some() {
             return Err(ArchiveError::Invalid("terrain baseline is still open"));
         }
+        let palette = self.require_palette()?;
         boundary(&mut self.recording, at, RecordKind::CheckpointStart)?;
+        write_record(
+            &mut self.recording,
+            at,
+            RecordKind::CheckpointPart,
+            &TerrainRecord::SelectPalette { palette },
+        )?;
         for chunk in self.chunks.values() {
             write_record(
                 &mut self.recording,
@@ -241,12 +286,20 @@ impl TerrainJournal {
 
     /// Drains journal publication on its worker. The capture finalizer waits for the returned task.
     pub fn finish(self, at: MediaTime) -> Result<RecordingTask, ArchiveError> {
+        self.require_palette()?;
         if self.checkpoint_at.is_some() {
             return Err(ArchiveError::Invalid(
                 "cannot finish an incomplete terrain baseline",
             ));
         }
         self.recording.finish(at)
+    }
+
+    /// Empty worlds still require an explicit material epoch for native replay rendering.
+    fn require_palette(&self) -> Result<AssetId, ArchiveError> {
+        self.active_palette.ok_or(ArchiveError::Invalid(
+            "recorded terrain has no selected palette",
+        ))
     }
 }
 

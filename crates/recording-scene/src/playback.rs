@@ -9,7 +9,7 @@ use recording_studio::{
 
 use crate::{
     journal::apply_record,
-    scene::{ChunkId, SceneChunk, SceneLoader, TerrainScene},
+    scene::{ChunkId, SceneChunk, SceneLoader, ScenePalette, TerrainScene},
 };
 
 mod scene;
@@ -18,6 +18,7 @@ pub use scene::{SceneFrame, ScenePlayback};
 /// A reset replaces the viewport's terrain; ordinary updates touch only changed chunk bindings.
 pub struct TerrainPatch {
     pub reset: bool,
+    pub active_palette: ScenePalette,
     pub upserts: Vec<SceneChunk>,
     pub removed: Vec<ChunkId>,
 }
@@ -71,6 +72,7 @@ impl TerrainPlayback {
         self.finish(result, &cancelled)?;
         Ok(TerrainPatch {
             reset: true,
+            active_palette: self.selected_palette()?,
             upserts: self.scene.chunks().cloned().collect(),
             removed: Vec::new(),
         })
@@ -103,6 +105,7 @@ impl TerrainPlayback {
         self.finish(result, &cancelled)?;
         let mut patch = TerrainPatch {
             reset: false,
+            active_palette: self.selected_palette()?,
             upserts: Vec::new(),
             removed: Vec::new(),
         };
@@ -122,6 +125,16 @@ impl TerrainPlayback {
         self.changed.clear();
     }
 
+    /// Successful patches always contain the explicit selected render epoch, including empty worlds.
+    fn selected_palette(&self) -> Result<ScenePalette, ArchiveError> {
+        self.scene
+            .active_palette()
+            .cloned()
+            .ok_or(ArchiveError::Invalid(
+                "terrain frame has no selected palette",
+            ))
+    }
+
     /// Error and cancellation discard private staging state while the renderer retains its last good patch.
     fn finish(
         &mut self,
@@ -130,6 +143,10 @@ impl TerrainPlayback {
     ) -> Result<(), ArchiveError> {
         let result = if cancelled() {
             Err(ArchiveError::Cancelled)
+        } else if result.is_ok() && self.scene.active_palette().is_none() {
+            Err(ArchiveError::Invalid(
+                "terrain frame has no selected palette",
+            ))
         } else {
             result
         };

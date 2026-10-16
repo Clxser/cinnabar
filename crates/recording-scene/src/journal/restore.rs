@@ -2,7 +2,9 @@
 
 use recording_studio::archive::{ArchiveError, RecordKind, ReplayRecord};
 
-use crate::scene::{ChunkId, MAX_LINK_BYTES, SceneLoader, TerrainRecord, TerrainScene};
+use crate::scene::{
+    ChunkId, MAX_LINK_BYTES, SceneLoader, ScenePalette, TerrainRecord, TerrainScene,
+};
 
 /// Applies a validated record to a private draft and reports only a binding that actually changed.
 pub(crate) fn apply_record(
@@ -13,7 +15,13 @@ pub(crate) fn apply_record(
 ) -> Result<Option<ChunkId>, ArchiveError> {
     match record.kind {
         RecordKind::CheckpointStart => scene.clear(),
-        RecordKind::CheckpointEnd => {}
+        RecordKind::CheckpointEnd => {
+            if scene.active_palette().is_none() {
+                return Err(ArchiveError::Invalid(
+                    "terrain checkpoint has no selected palette",
+                ));
+            }
+        }
         RecordKind::CheckpointPart | RecordKind::Scene => {
             if record.payload.len() > MAX_LINK_BYTES {
                 return Err(ArchiveError::Invalid(
@@ -22,7 +30,23 @@ pub(crate) fn apply_record(
             }
             let change: TerrainRecord = serde_json::from_slice(record.payload)?;
             match change {
+                TerrainRecord::SelectPalette { palette } => {
+                    if scene
+                        .active_palette()
+                        .is_none_or(|current| current.id != palette)
+                    {
+                        scene.select_palette(ScenePalette {
+                            id: palette,
+                            palette: loader.palette(palette, cancelled)?,
+                        })?;
+                    }
+                }
                 TerrainRecord::Upsert { chunk } => {
+                    if scene.active_palette().is_none() {
+                        return Err(ArchiveError::Invalid(
+                            "terrain mesh precedes palette selection",
+                        ));
+                    }
                     chunk.key.origin()?;
                     let key = chunk.key;
                     if scene.chunk(key).is_some_and(|old| old.binding == chunk) {

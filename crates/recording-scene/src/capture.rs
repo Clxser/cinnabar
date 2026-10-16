@@ -3,7 +3,7 @@
 use std::{
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Weak,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     time::Duration,
@@ -57,7 +57,6 @@ pub struct PreparedChunk {
     pub key: ChunkId,
     pub generation: u64,
     pub mesh: TerrainMesh,
-    pub palette: Arc<PreparedPalette>,
 }
 
 pub enum SceneChange {
@@ -68,6 +67,7 @@ pub enum SceneChange {
 struct Batch {
     at: MediaTime,
     baseline: bool,
+    palette: Arc<PreparedPalette>,
     changes: Vec<SceneChange>,
     _charge: Charge,
 }
@@ -78,6 +78,7 @@ pub struct TerrainCapture {
     shared: Arc<Shared>,
     terminal: Option<Result<(), String>>,
     baseline_sent: bool,
+    last_palette: Weak<PreparedPalette>,
     finishing: bool,
 }
 
@@ -105,6 +106,7 @@ impl TerrainCapture {
             shared,
             terminal: None,
             baseline_sent: false,
+            last_palette: Weak::new(),
             finishing: false,
         })
     }
@@ -134,24 +136,33 @@ impl TerrainCapture {
     }
 
     /// One coherent prepared snapshot starts at zero. Its buffers are shared with the native renderer.
-    pub fn baseline(&mut self, chunks: Vec<SceneChange>) -> Result<(), String> {
+    pub fn baseline(
+        &mut self,
+        palette: Arc<PreparedPalette>,
+        chunks: Vec<SceneChange>,
+    ) -> Result<(), String> {
         if self.baseline_sent {
             return Err("The scene baseline was already captured.".into());
         }
-        self.submit(MediaTime::ZERO, true, chunks)?;
+        self.submit(MediaTime::ZERO, true, palette, chunks)?;
         self.baseline_sent = true;
         Ok(())
     }
 
     /// Each accepted delta is ordered and bounded; a slow disk stops capture rather than stalling play.
-    pub fn changes(&mut self, at: MediaTime, changes: Vec<SceneChange>) -> Result<(), String> {
+    pub fn changes(
+        &mut self,
+        at: MediaTime,
+        palette: Arc<PreparedPalette>,
+        changes: Vec<SceneChange>,
+    ) -> Result<(), String> {
         if !self.baseline_sent {
             return Err("The recorded scene has no baseline.".into());
         }
-        if changes.is_empty() {
+        if changes.is_empty() && self.last_palette.ptr_eq(&Arc::downgrade(&palette)) {
             return Ok(());
         }
-        self.submit(at, false, changes)
+        self.submit(at, false, palette, changes)
     }
 
     /// Polls completion without a join or lock; the native UI keeps a readable failure explanation.
@@ -189,6 +200,7 @@ impl TerrainCapture {
         &mut self,
         at: MediaTime,
         baseline: bool,
+        palette: Arc<PreparedPalette>,
         changes: Vec<SceneChange>,
     ) -> Result<(), String> {
         if changes.len() > MAX_SCENE_CHUNKS {
@@ -206,12 +218,14 @@ impl TerrainCapture {
             }
         }
         let charge = reserve(&self.shared, bytes)?;
+        let identity = Arc::downgrade(&palette);
         self.sender
             .as_ref()
             .ok_or("Scene recording is finishing.")?
             .try_send(Batch {
                 at,
                 baseline,
+                palette,
                 changes,
                 _charge: charge,
             })
@@ -222,7 +236,9 @@ impl TerrainCapture {
                 mpsc::TrySendError::Disconnected(_) => {
                     "The recorded-scene worker is unavailable.".to_owned()
                 }
-            })
+            })?;
+        self.last_palette = identity;
+        Ok(())
     }
 }
 
@@ -288,35 +304,33 @@ fn run(
         } else if !baseline {
             return Err("Scene delta arrived before its baseline.".into());
         }
+        if palette
+            .as_ref()
+            .is_none_or(|(current, _)| !Arc::ptr_eq(current, &batch.palette))
+        {
+            let prepared = &batch.palette;
+            let frozen = journal
+                .palette(
+                    &prepared.assets,
+                    &prepared.tints,
+                    prepared.stream,
+                    prepared.revision,
+                )
+                .map_err(|error| error.to_string())?;
+            palette = Some((Arc::clone(prepared), frozen));
+        }
+        let selected = &palette.as_ref().expect("prepared palette").1;
+        journal
+            .select_palette(batch.at, selected)
+            .map_err(|error| error.to_string())?;
         for change in &batch.changes {
             if shared.cancelled.load(Ordering::Acquire) {
                 return Err("Scene recording was interrupted.".into());
             }
             match change {
                 SceneChange::Upsert(chunk) => {
-                    if palette
-                        .as_ref()
-                        .is_none_or(|(current, _)| !Arc::ptr_eq(current, &chunk.palette))
-                    {
-                        let prepared = &chunk.palette;
-                        let frozen = journal
-                            .palette(
-                                &prepared.assets,
-                                &prepared.tints,
-                                prepared.stream,
-                                prepared.revision,
-                            )
-                            .map_err(|error| error.to_string())?;
-                        palette = Some((Arc::clone(prepared), frozen));
-                    }
                     journal
-                        .upsert(
-                            batch.at,
-                            chunk.key,
-                            chunk.generation,
-                            &chunk.mesh,
-                            &palette.as_ref().expect("prepared palette").1,
-                        )
+                        .upsert(batch.at, chunk.key, chunk.generation, &chunk.mesh, selected)
                         .map_err(|error| error.to_string())?;
                 }
                 SceneChange::Remove(key) if !batch.baseline => journal

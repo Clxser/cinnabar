@@ -16,6 +16,10 @@ independently of the running install. Ordinary startup-carrier validation retain
 its original limits.
 
 The terrain journal lives in `terrain.cinreplay` inside its parent recording.
+Schema `cinnabar.terrain/2` records the selected material/tint palette separately
+from chunk bindings, including empty worlds and pack changes without new geometry.
+Every checkpoint retains that selection. The experimental terrain/1 schema lacks
+this state and is rejected for native playback; its parent POV video is unaffected.
 Content-addressed objects deduplicate immutable assets. A checkpoint references
 already stored objects, avoiding another terrain or texture copy. Palette identities
 use bounded weak caches; queuing charges geometry and palette allocations for their
@@ -30,7 +34,8 @@ coordination and measured startup/streaming costs remain incomplete.
 It validates object hashes, stream bounds, model references, texture layouts,
 biome indices, liquid partitions and checked world origins before returning an
 independent staging scene. Its memory ledger charges shared world, tint, palette
-and mesh allocations once. Weak caches reuse admitted objects without keeping all
+and mesh allocations once, including the active palette when no chunk references it.
+Weak caches reuse admitted objects without keeping all
 discarded scenes alive. Cancellation reaches bounded chunks of large asset reads;
 cancelled or invalid data discards the draft. The parent capture manifest records
 each track's schema, local directory and completion status. An incomplete track
