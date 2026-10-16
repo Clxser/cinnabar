@@ -1,6 +1,6 @@
 ---
 name: Cinnabar Launcher
-description: A floating cinnabar outcrop at dusk, with one lit block of a Play button.
+description: The player at the edge of a cinnabar island cluster, with one lit Play block and a dock of what's new.
 colors:
   cinnabar: "#e2483a"
   cinnabar-hi: "#f27a63"
@@ -22,45 +22,44 @@ colors:
   focus: "#ffd0c4"
 typography:
   hero:
-    fontFamily: "Archivo Variable"
-    fontSize: "64px"
-    fontWeight: 800
-    lineHeight: 0.92
-    letterSpacing: "-0.025em"
-    fontVariation: "'wdth' 125"
+    fontFamily: "Inter Variable"
+    fontSize: "26px"
+    fontWeight: 650
+    lineHeight: 1.1
+    letterSpacing: "-0.028em"
   page:
-    fontFamily: "Archivo Variable"
-    fontSize: "34px"
-    fontWeight: 800
-    lineHeight: 1
-    letterSpacing: "-0.02em"
-    fontVariation: "'wdth' 125"
-  play:
-    fontFamily: "Archivo Variable"
-    fontSize: "23px"
-    fontWeight: 800
-    lineHeight: 1.05
-    fontVariation: "'wdth' 125"
-  title:
-    fontFamily: "Archivo Variable"
-    fontSize: "19px"
+    fontFamily: "Inter Variable"
+    fontSize: "30px"
     fontWeight: 700
-    lineHeight: 1.2
+    lineHeight: 1.05
+    letterSpacing: "-0.028em"
+  play:
+    fontFamily: "Inter Variable"
+    fontSize: "20px"
+    fontWeight: 680
+    lineHeight: 1.05
+    letterSpacing: "-0.02em"
+  title:
+    fontFamily: "Inter Variable"
+    fontSize: "16px"
+    fontWeight: 620
+    lineHeight: 1.25
+    letterSpacing: "-0.012em"
   body:
-    fontFamily: "Archivo Variable"
-    fontSize: "15px"
-    fontWeight: 450
+    fontFamily: "Inter Variable"
+    fontSize: "14px"
+    fontWeight: 430
     lineHeight: 1.5
     fontFeature: "'tnum' 1"
   label:
-    fontFamily: "Archivo Variable"
+    fontFamily: "Inter Variable"
     fontSize: "13px"
-    fontWeight: 600
+    fontWeight: 560
     lineHeight: 1.3
   meta:
-    fontFamily: "Archivo Variable"
+    fontFamily: "Inter Variable"
     fontSize: "12px"
-    fontWeight: 500
+    fontWeight: 480
     lineHeight: 1.35
 rounded:
   sm: "8px"
@@ -78,14 +77,14 @@ components:
     backgroundColor: "{colors.cinnabar-fill}"
     textColor: "{colors.cinnabar-ink}"
     typography: "{typography.play}"
-    rounded: "16px"
-    height: "76px"
-    width: "360px"
+    rounded: "14px"
+    height: "62px"
+    width: "300px"
   play-busy:
     backgroundColor: "{colors.glass-strong}"
     textColor: "{colors.cinnabar-ink}"
-    rounded: "16px"
-    height: "76px"
+    rounded: "14px"
+    height: "62px"
   join:
     backgroundColor: "{colors.raise-2}"
     textColor: "{colors.ink}"
@@ -95,9 +94,10 @@ components:
   join-hover:
     backgroundColor: "{colors.cinnabar-fill}"
     textColor: "{colors.cinnabar-ink}"
-  shelf:
+  dock-card:
     backgroundColor: "{colors.glass}"
     rounded: "{rounded.lg}"
+    height: "196px"
   settings-group:
     backgroundColor: "{colors.glass-strong}"
     rounded: "{rounded.lg}"
@@ -111,9 +111,9 @@ components:
 
 ## Overview
 
-The window is a world, not a page. A real-time voxel outcrop of slate and dolomite, split by a glowing cinnabar vein, floats in a sky lit for the player's local time of day. The player stands on a small stone in the foreground, near enough to the camera to read as the scene's figure, and turns their head toward the pointer. The interface floats over it: the title, one lit Play block, and a single glass shelf. Everything except the scene is quiet, exact and fast. Spectacle is spent once.
+The window is a world, not a page. A real-time voxel outcrop of slate and dolomite, split by a glowing cinnabar vein, floats among satellite islands and cloud banks in a sky lit for the player's local time of day. The player stands on a stone in the foreground, anchored to a fixed screen position at every window size, and turns their head toward the pointer. The interface floats over it: the player's identity, one lit Play block with a rejoin beside it, and a dock of glass cards. Everything except the scene is quiet, exact and fast. Spectacle is spent once.
 
-The vein is the signature move. It is the product state made visible: it refines from dark ore to glowing cinnabar as an update downloads, and goes dark when the installed build cannot start.
+The vein is the signature move. It is the product state made visible: it refines from dark ore to glowing cinnabar as an update downloads, goes dark when the installed build cannot start, and re-ignites on the first launch of a new version, the "what's new" moment.
 
 Anti-references: ad rails and promo carousels (Lunar, Dawn), dense rails of unbuilt features, grey dashboards with one accent, flat isometric clip art.
 
@@ -127,14 +127,15 @@ Anti-references: ad rails and promo carousels (Lunar, Dawn), dense rails of unbu
 
 ## Typography
 
-One family, Archivo (OFL), carries everything. Display roles use its expanded width (`wdth` 125) at weight 800. UI roles stay at normal width. Numerals are tabular throughout. Sentence case everywhere: no all-caps labels, no eyebrows.
+One family, Inter (OFL), at normal width throughout. Its optical-size axis gives large text display cuts, and tracking tightens as size grows. Display roles sit at weight 650 to 700 rather than heavy black weights, and nothing is expanded or stretched. Numerals are tabular. Everything is sentence case: no all-caps labels, no eyebrows.
 
 ## Layout
 
-- The title bar is 56px and transparent: wordmark, three text tabs with a sliding cinnabar bar, and account at the right. On macOS the left 88px belong to the traffic lights.
-- Home is a two-row grid. The launch column floats left and vertically centred, the island is framed right of centre (`FRAME` in `App.svelte`), and one glass shelf (news, then three server cards) runs along the foot.
-- Secondary pages veil the world: it blurs, dims and stops rendering, and the content column sits over it. Settings caps at 720px, Servers at 1240px.
-- When the window is shorter than 720px or narrower than 1100px, the title shrinks and the shelf shows only the lead headline.
+- The title bar is 56px and transparent: wordmark, three text tabs with a sliding cinnabar bar, and the account chip at the right. On macOS the left 88px belong to the traffic lights. Windows and Linux get drawn window controls.
+- Home has two rows. The hero (skin head and name, or the brand mark for signed-out players; channel and version; Play; Rejoin; one status line) sits bottom-left. A 196px dock runs along the foot: what's new in the installed build, up to two news cards, then recent servers, falling back to featured servers, falling back to a compact first-run hint. Nothing renders as an empty box.
+- The camera frames the island right of centre. The player's feet are anchored just right of the launch column, on the dock's top edge.
+- Secondary pages veil the world: it blurs, dims and stops rendering. Settings caps at 720px, Servers at 1240px.
+- The window's default is 1180×720 and its minimum 900×560. At the minimum, the dock shows one news card and the scene keeps its anchors.
 
 ## Elevation & Depth
 
@@ -146,10 +147,15 @@ Radii step by hierarchy: 8px for small controls, 12px for rows and tiles, 16px f
 
 ## Components
 
+- **Hero labels**: Play, Update & play, Downloading, Verifying, Installing (or Opening installer on Windows), Starting, In game. A crash after the last session is one status line with View log, never a label change on Play.
+- **Status line**: anything that doesn't block play (check results, a failed check, a failed download that left the build intact, a crash last time) is one muted line with at most one action. Notices are reserved for a build that can't start and for a deliberate downgrade.
 - **Play** is the state machine. Ready is a lit block face: a top-down gradient, an inner top highlight and a hover lift with one band of light. Busy is glass with a cinnabar fill and a light sweep confined to the filled part. Running shows a live dot. Labels cross-fade and rise between states.
 - **Server cards** show typographic poster art (a hue field, a fixed-scale block lattice and the initial) whenever a server ships no image. Hover or focus reveals the MOTD, tags and Play.
 - **Segmented control**: a dark track with an ink thumb that slides, operated with arrow keys.
 - **Notice**: glass with a tone-coloured inner edge and icon. Its action is the recovery step. The `info` tone carries deliberate choices, such as a downgrade.
+- **Dev builds** show a small "Dev build" tag beside the version, and Settings explains why updates are off.
+- **Profile**: the account chip opens a popover with the player and a friends slot that states plainly that friends arrive with Cinnabar accounts.
+- **News cards** use the post's image or, without one, a typographic poster: the release version, or the post's tag.
 - **Update outcomes**: a downgrade never takes over Play. It is a quiet notice and a Settings row that open the platform installer. Installing names its outcome: on Windows, "Opening installer" (the launcher closes); elsewhere, "Installing" (the launcher restarts into the game).
 - **First run**: until the game has signed in once, the server list explains why it is empty and offers Play.
 
