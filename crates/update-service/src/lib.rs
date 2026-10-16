@@ -118,6 +118,15 @@ impl Service {
         Ok(())
     }
 
+    /// Shows `state` without an offer behind it, for development screenshots only.
+    #[cfg(debug_assertions)]
+    pub fn show_fixture(&self, state: UpdateState) {
+        self.mutate(|machine| {
+            machine.show(state);
+            true
+        });
+    }
+
     /// Marks the next offer as required after a server refused this build as outdated.
     pub fn require(&self) {
         self.mutate(|machine| {
@@ -170,7 +179,7 @@ impl Service {
         let root = &self.config.update_dir;
         std::fs::create_dir_all(root)?;
         let client = download::http_client()?;
-        let selected = tokio::runtime::Builder::new_current_thread()
+        let fetched = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?
             .block_on(releases::select(
@@ -180,7 +189,12 @@ impl Service {
                 false,
                 now,
                 async |channel| fetch_channel(&client, channel).await,
-            ))?;
+            ));
+        // Offline, a still-valid authenticated cache keeps the last offer visible.
+        let selected = match fetched {
+            Ok(selected) => selected,
+            Err(error) => releases::cached(root, &self.keys, check, now).ok_or(error)?,
+        };
         let manifest = &selected.manifest;
         let current = &self.config.current;
         let newer = update_manifest::select::newer_build(

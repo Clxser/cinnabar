@@ -191,7 +191,7 @@ jobs:
       - name: Install Linux desktop development libraries
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libwayland-dev libxkbcommon-dev libasound2-dev libudev-dev
+          sudo apt-get install --yes libwayland-dev libxkbcommon-dev libasound2-dev libudev-dev libwebkit2gtk-4.1-dev
       - name: Verify Linux window backends
         run: |
           cargo tree -e features -p cinnabar --target x86_64-unknown-linux-gnu --locked | grep -F 'bevy feature "wayland"'
@@ -269,7 +269,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libwayland-dev libxkbcommon-dev libasound2-dev libudev-dev
+          sudo apt-get install --yes libwayland-dev libxkbcommon-dev libasound2-dev libudev-dev libwebkit2gtk-4.1-dev
       # Builds the whole workspace, which the cache keeps fresh, and runs only affected tests.
       - name: Test affected Rust packages
         shell: bash

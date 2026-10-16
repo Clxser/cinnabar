@@ -5,9 +5,47 @@ edition.workspace = true
 rust-version.workspace = true
 publish = false
 
+[package.metadata.cinnabar]
+platform-specific = ["macos", "windows"]
+reads = [
+    "crates/desktop-launcher/ui/dist",
+    "crates/desktop-launcher/ui/src/api/types.ts",
+    "packaging/icons/cinnabar.svg",
+    "packaging/macos/build-app.sh",
+]
+
 [[bin]]
 name = "cinnabar-launcher"
 path = "src/main.rs"
+
+[build-dependencies]
+ico = "0.5"
+resvg = { version = "0.48", default-features = false }
+serde_json = "1"
+tauri-build = { version = "=2.7.3", features = [] }
+
+[dependencies]
+anyhow.workspace = true
+bridge = { path = "../bridge" }
+launcher = { path = "../launcher" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "=2.12.4", features = [] }
+tauri-plugin-opener = "=2.7.2"
+tauri-plugin-single-instance = "=2.5.4"
+tempfile = "3"
+time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing"] }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+update-installer = { path = "../update-installer" }
+update-manifest = { path = "../update-manifest" }
+update-service = { path = "../update-service" }
+
+[dev-dependencies]
+ts-rs = "=12.0.1"
+update-service = { path = "../update-service", features = ["typescript"] }
 
 [lints]
 workspace = true

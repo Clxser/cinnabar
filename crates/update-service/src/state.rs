@@ -206,6 +206,11 @@ impl Machine {
         }
     }
 
+    #[cfg(debug_assertions)]
+    pub fn show(&mut self, state: UpdateState) {
+        self.state = state;
+    }
+
     pub fn active(&self, generation: u64) -> bool {
         self.generation == generation
     }
