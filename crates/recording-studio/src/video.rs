@@ -199,7 +199,7 @@ impl FrameSink {
         }
         if self
             .queued_bytes
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |queued| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |queued| {
                 queued
                     .checked_add(bytes)
                     .filter(|&value| value <= MAX_LIVE_QUEUED_BYTES)

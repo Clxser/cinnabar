@@ -5,8 +5,8 @@ use std::sync::atomic::AtomicU64;
 use super::RuntimeAssets;
 use crate::{
     Animation, AssetError, BlockFlags, BlockVisual, LightProperties, MAX_MATERIALS,
-    MAX_TEXTURE_LAYERS, MAX_TEXTURE_PAGES, MAX_TILE_SIZE, Material, ModelQuad, ModelTemplate,
-    NO_ANIMATION, NO_MODEL_TEMPLATE, TextureArray, TexturePage, TextureRef, VisualKind,
+    MAX_TEXTURE_LAYERS, MAX_TEXTURE_PAGES, Material, ModelQuad, ModelTemplate, NO_ANIMATION,
+    NO_MODEL_TEMPLATE, TextureArray, TexturePage, TextureRef, VisualKind,
     compiled::material_flags_are_valid, compiled::visual_semantics_are_valid,
     material_keys::MaterialKeys, model::model_quad_flags_are_valid,
 };

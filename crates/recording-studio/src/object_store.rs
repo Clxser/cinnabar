@@ -206,28 +206,31 @@ impl AssetWriter {
             .suffix(".part")
             .tempfile_in(&self.reader.directory)
             .map_err(|error| file_error(&self.reader.directory, error))?;
-        let mut writer = HashWriter {
-            output: BufWriter::new(staged.as_file_mut()),
-            hash: Sha256::new(),
-            bytes: 0,
-            maximum: limit,
-            exceeded: false,
+        let (hash, bytes) = {
+            let mut writer = HashWriter {
+                output: BufWriter::new(staged.as_file_mut()),
+                hash: Sha256::new(),
+                bytes: 0,
+                maximum: limit,
+                exceeded: false,
+            };
+            let encoded = encode(&mut writer);
+            if writer.exceeded {
+                return Err(ArchiveError::Quota);
+            }
+            encoded?;
+            writer
+                .flush()
+                .map_err(|error| file_error(&self.reader.directory, error))?;
+            let HashWriter {
+                output,
+                hash,
+                bytes,
+                ..
+            } = writer;
+            drop(output);
+            (hash, bytes)
         };
-        let encoded = encode(&mut writer);
-        if writer.exceeded {
-            return Err(ArchiveError::Quota);
-        }
-        encoded?;
-        writer
-            .flush()
-            .map_err(|error| file_error(&self.reader.directory, error))?;
-        let HashWriter {
-            output,
-            hash,
-            bytes,
-            ..
-        } = writer;
-        drop(output);
         staged
             .as_file()
             .sync_all()
