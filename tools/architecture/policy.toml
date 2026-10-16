@@ -1367,6 +1367,11 @@ literal = "trim_"
 reason = "Recognizes the trim_*_matches Rust string method family."
 
 [[identifier_literal_exceptions]]
+path = "crates/update-installer/src/startup.rs"
+literal = "cinnabar"
+reason = "The packaged game executable's name from the runtime binary table, not a vanilla identifier."
+
+[[identifier_literal_exceptions]]
 path = "crates/json-ui/src/transform.rs"
 literal = "rotation"
 reason = "Field name of the Cinnabar `cinnabar_transform` surface property, not a vanilla identifier."

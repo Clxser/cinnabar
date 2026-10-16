@@ -9,8 +9,6 @@ publish = false
 platform-specific = ["macos", "windows"]
 reads = [
     "LICENSE",
-    "crates/desktop-launcher/ui/dist",
-    "crates/desktop-launcher/ui/src/api/types.ts",
     "packaging/icons/cinnabar.svg",
     "packaging/macos/build-app.sh",
 ]
