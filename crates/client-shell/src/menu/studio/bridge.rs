@@ -4,6 +4,40 @@ use super::*;
 use recording_studio::capture::{CapturePhase, CaptureRequest, CaptureStatus};
 
 impl Studio {
+    /// Export freezes the current immutable project revision while further edits remain independent.
+    fn queue_export(&mut self) -> Result<(), String> {
+        if self.export_request.is_some() || self.view.export.phase.busy() {
+            return Ok(());
+        }
+        let project = self
+            .editor
+            .as_ref()
+            .ok_or("Open a project to export.")?
+            .project();
+        if project.duration() == MediaTime::ZERO {
+            return Err("Add media before exporting.".into());
+        }
+        self.export_request = Some(recording_studio::export::ExportRequest {
+            project: Arc::clone(project),
+            source_base: self
+                .view
+                .file
+                .as_ref()
+                .and_then(|path| path.parent())
+                .map_or_else(|| self.root.clone(), PathBuf::from),
+            destination: recording_studio::export::Destination::Directory(
+                self.root.join("exports"),
+            ),
+        });
+        self.transport.pause();
+        self.export_cancel = false;
+        Arc::make_mut(&mut self.view).export = recording_studio::export::ExportStatus {
+            phase: recording_studio::export::ExportPhase::Preparing,
+            ..Default::default()
+        };
+        Ok(())
+    }
+
     /// Coalesces button repeats and never replaces a pending stop with a bookmark.
     fn queue_capture_toggle(&mut self) {
         self.capture_request = match self.view.capture.phase {
@@ -35,9 +69,29 @@ impl Studio {
 }
 
 impl crate::menu::MenuRuntime {
+    /// Export workers own their rendering state and receive one immutable project snapshot.
+    pub fn take_studio_export_request(
+        &mut self,
+    ) -> Option<recording_studio::export::ExportRequest> {
+        self.studio.export_request.take()
+    }
+
+    /// Button repeats coalesce into one cancellation intent, serviced even outside the editor.
+    pub fn take_studio_export_cancel(&mut self) -> bool {
+        std::mem::take(&mut self.studio.export_cancel)
+    }
+
+    /// Export completion never marks later metadata edits saved or replaces the active project.
+    pub fn set_studio_export_status(&mut self, status: recording_studio::export::ExportStatus) {
+        if self.studio.view.export != status {
+            Arc::make_mut(&mut self.studio.view).export = status;
+        }
+    }
+
     /// The app prepares only the visible editor, retaining immutable project metadata across the handoff.
     pub fn studio_preview_request(&self) -> Option<recording_studio::preview::PreviewRequest> {
         if !self.visible
+            || self.studio.view.export.phase.busy()
             || self.screen != launcher::menu::MenuScreen::RecordingStudio
             || self.studio.view.show_library
         {

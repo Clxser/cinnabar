@@ -9412,6 +9412,19 @@ Current implementation, not yet built or exercised:
   Target interpolation, smooth camera motion, full actor coverage, visible key and
   easing controls, narrow-layout inspector access, and runtime/render acceptance
   remain incomplete. This source has not been compiled or exercised.
+- Native Export now snapshots the current edit, evaluates each output frame on the
+  shared rational grid and supervises exact-order hardware/software encoding on a
+  worker. It connects raster composition and one isolated native replay layer,
+  reuses bounded GPU readback/CPU storage, and mixes audio in bounded blocks through
+  disk-backed stereo float scratch before AAC muxing. Trims, rate, gain, mute,
+  fades and silence derive from saved audio metadata. Progress/cancellation persist
+  across library/editor views. Successful encoder/mux completion and file sync
+  precede no-clobber publication; temporary export material is ignored.
+  This source is unbuilt and unrun. Preflight rejects titles, color/post effects,
+  dip-to-black, native layering/crops/transitions and camera edits outside replay
+  coverage; missing subject payloads can still fail at a later frame. Full export
+  composition, settings/destination controls, audio preview, source accuracy,
+  interrupted recovery, playback/export acceptance and measured cost remain open.
 
 Required work remains open:
 

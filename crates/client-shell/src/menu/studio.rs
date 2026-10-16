@@ -29,6 +29,8 @@ pub(super) struct Studio {
     replays: BTreeMap<Id, Arc<RecordingReader>>,
     scrub: Option<(i32, u32)>,
     capture_request: Option<recording_studio::capture::CaptureRequest>,
+    export_request: Option<recording_studio::export::ExportRequest>,
+    export_cancel: bool,
 }
 
 impl Studio {
@@ -51,6 +53,8 @@ impl Studio {
             replays: BTreeMap::new(),
             scrub: None,
             capture_request: None,
+            export_request: None,
+            export_cancel: false,
         }
     }
 
@@ -68,6 +72,7 @@ impl Studio {
             && !matches!(
                 action,
                 Action::CancelOpen
+                    | Action::CancelExport
                     | Action::ClearError
                     | Action::ToggleRecording
                     | Action::Bookmark
@@ -142,6 +147,11 @@ impl Studio {
             vec![
                 Action::Library,
                 Action::Save,
+                if self.view.export.phase.busy() {
+                    Action::CancelExport
+                } else {
+                    Action::Export
+                },
                 Action::Undo,
                 Action::Redo,
                 Action::TogglePlayback,
@@ -161,6 +171,11 @@ impl Studio {
             actions.extend(self.camera_focus_actions());
         }
         let mut actions: Vec<_> = actions.into_iter().map(MenuAction::Studio).collect();
+        if self.view.export.phase.busy()
+            && !actions.contains(&MenuAction::Studio(Action::CancelExport))
+        {
+            actions.push(MenuAction::Studio(Action::CancelExport));
+        }
         if self.view.discard.is_none() && !self.view.loading {
             actions.push(MenuAction::Studio(Action::ToggleRecording));
             if self.view.capture.phase == recording_studio::capture::CapturePhase::Recording {
@@ -173,6 +188,8 @@ impl Studio {
     /// Applies one action and returns a user-visible error instead of swallowing stale selections.
     fn apply_action(&mut self, action: Action) -> Result<(), String> {
         match action {
+            Action::Export => self.queue_export()?,
+            Action::CancelExport => self.export_cancel = true,
             Action::ToggleRecording => self.queue_capture_toggle(),
             Action::Bookmark => {
                 if self.capture_request.is_none()

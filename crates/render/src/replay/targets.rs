@@ -20,11 +20,12 @@ pub(super) struct Targets {
 impl Targets {
     /// Bounds both each target's extent and the maximum number of simultaneously leased allocations.
     pub(super) fn new(device: &RenderDevice, size: [u32; 2]) -> Result<Self, String> {
-        let maximum = render_model::UI_STUDIO_PREVIEW_MAX_SIZE;
-        if size.into_iter().zip(maximum).any(|(side, max)| {
-            side == 0 || side > max || side > device.limits().max_texture_dimension_2d
-        }) {
-            return Err("The native replay preview exceeds its GPU texture budget.".into());
+        recording_studio::video::frame_byte_len(size)?;
+        if size
+            .into_iter()
+            .any(|side| side > device.limits().max_texture_dimension_2d)
+        {
+            return Err("The native replay output exceeds its GPU texture budget.".into());
         }
         Ok(Self {
             size,

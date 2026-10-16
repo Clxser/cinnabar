@@ -13,6 +13,8 @@
 *.cinreplay/
 *.cinasset
 .cinnabar-studio-*.saving
+.cinnabar-export-*/
+.cinnabar-export-*.partial.mp4
 
 
 # Go build artifacts; the architecture check forbids committed binaries.

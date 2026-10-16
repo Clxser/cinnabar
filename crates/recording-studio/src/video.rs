@@ -17,7 +17,9 @@ use crate::FrameRate;
 use crate::model::{Encoder, ExportCodec};
 use crossbeam_channel::{Receiver, Sender, TrySendError};
 
+mod export;
 mod options;
+pub use export::VideoWriter;
 pub use options::{EncodeOptions, EncodingSpeed};
 
 /// Bounds out-of-order delivery and queued frames. Live capture uses nonblocking admission.

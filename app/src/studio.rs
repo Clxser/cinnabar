@@ -25,6 +25,7 @@ use crate::{hud_tools::FrameCaptureSet, runtime::world::ClientWorld};
 mod actors;
 mod audio;
 mod environment;
+mod export;
 mod frames;
 mod observations;
 mod preview;
@@ -70,6 +71,12 @@ struct Active {
 pub(crate) fn configure(app: &mut App) {
     app.add_plugins(render::replay::ReplayPreviewPlugin);
     app.init_resource::<render_scene::ui_preview::UiPreviewSurface>();
+    app.init_resource::<export::NativeExport>().add_systems(
+        Update,
+        export::update
+            .in_set(client_state::ClientFrameSet::UiPreparation)
+            .before(preview::update),
+    );
     app.init_resource::<preview::NativePreview>().add_systems(
         Update,
         preview::update

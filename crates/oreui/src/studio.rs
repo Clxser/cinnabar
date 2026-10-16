@@ -11,6 +11,7 @@ use super::{
 
 mod camera;
 mod editor;
+mod export;
 mod library;
 mod recording;
 mod timeline;
@@ -65,6 +66,7 @@ pub(super) fn draw(
         ""
     };
     let save_width = canvas.r(9.6);
+    let export_width = canvas.r(10.4);
     let library_width = canvas.r(12.0);
     let right = size[0] - pad;
     control(
@@ -76,13 +78,28 @@ pub(super) fn draw(
         studio.project.is_some() && !studio.saving && !studio.loading,
         Variant::Primary,
     )?;
+    let export_right = right - save_width - pad;
+    control(
+        canvas,
+        view,
+        [export_right - export_width, pad, export_right, header - pad],
+        "Export",
+        Action::Export,
+        studio
+            .project
+            .as_ref()
+            .is_some_and(|project| project.duration() > recording_studio::MediaTime::ZERO)
+            && !studio.loading
+            && !studio.export.phase.busy(),
+        Variant::Secondary,
+    )?;
     control(
         canvas,
         view,
         [
-            right - save_width - library_width - pad,
+            export_right - export_width - library_width - pad,
             pad,
-            right - save_width - pad,
+            export_right - export_width - pad,
             header - pad,
         ],
         if studio.show_library && studio.project.is_some() {
@@ -98,7 +115,7 @@ pub(super) fn draw(
         canvas.text_line(
             status,
             [size[0] * 0.51, pad + canvas.r(1.0)],
-            (size[0] * 0.49 - save_width - library_width - pad * 4.0).max(0.0),
+            (size[0] * 0.49 - save_width - export_width - library_width - pad * 5.0).max(0.0),
             CAPTION,
             TEXT_DIMMER,
         )?;
@@ -129,6 +146,7 @@ pub(super) fn draw(
         top += canvas.r(3.2);
     }
     top = recording::draw(canvas, view, [pad, top, size[0] - pad, size[1] - pad])?;
+    top = export::draw(canvas, view, [pad, top, size[0] - pad, size[1] - pad])?;
     let area = [pad, top, size[0] - pad, size[1] - pad];
     if studio.show_library || studio.project.is_none() {
         library::draw(canvas, view, area)?;

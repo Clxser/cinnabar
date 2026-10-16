@@ -16,16 +16,20 @@ use recording_studio::{
     preview::{CameraPreview, PreviewRequest, fit_size},
 };
 use render::replay::{ReplayRenderContext, ReplayRenderer};
-use render_model::{UI_STUDIO_PREVIEW_MAX_SIZE, UiTexturePage};
+use render_scene::ui_preview::PreviewImage;
 
-use super::PreviewOutput;
-
-pub(super) struct NativeScene {
+pub(in crate::studio) struct NativeScene {
     context: ReplayRenderContext,
     timeline: Option<CompiledTimeline>,
     plan: FramePlan,
     source: Option<Source>,
-    placeholder: Option<UiTexturePage>,
+}
+
+pub(in crate::studio) struct NativeFrame {
+    pub image: Arc<PreviewImage>,
+    pub notice: Option<String>,
+    pub camera: CameraPreview,
+    pub missing_target: bool,
 }
 
 struct Source {
@@ -39,23 +43,23 @@ struct Source {
 
 impl NativeScene {
     /// Scene and GPU contexts are created only on the existing preview worker.
-    pub(super) fn new(context: ReplayRenderContext) -> Self {
+    pub(in crate::studio) fn new(context: ReplayRenderContext) -> Self {
         Self {
             context,
             timeline: None,
             plan: FramePlan::default(),
             source: None,
-            placeholder: None,
         }
     }
 
     /// Returns `None` for a raster-only frame; mixed replay composition remains explicitly unsupported.
-    pub(super) fn render(
+    pub(in crate::studio) fn render(
         &mut self,
         request: &PreviewRequest,
+        maximum: [u32; 2],
         cancelled: &impl Fn() -> bool,
         wait: &impl Fn(),
-    ) -> Result<Option<PreviewOutput>, String> {
+    ) -> Result<Option<NativeFrame>, String> {
         if self
             .timeline
             .as_ref()
@@ -106,7 +110,7 @@ impl NativeScene {
         } else {
             request.source_base.join(&media.path)
         };
-        let size = fit_size(request.project.export.size, UI_STUDIO_PREVIEW_MAX_SIZE)?;
+        let size = fit_size(request.project.export.size, maximum)?;
         if self.source.as_ref().is_none_or(|source| {
             source.id != media.id
                 || source.path != path
@@ -200,26 +204,11 @@ impl NativeScene {
             }
             wait();
         };
-        if self
-            .placeholder
-            .as_ref()
-            .is_none_or(|page| page.dimensions() != size)
-        {
-            let bytes = recording_studio::video::frame_byte_len(size)?;
-            self.placeholder = Some(
-                UiTexturePage::owned(size, vec![0; bytes].into())
-                    .map_err(|error| format!("Replay preview page was rejected: {error:?}"))?,
-            );
-        }
-        Ok(Some(PreviewOutput {
-            page: self
-                .placeholder
-                .as_ref()
-                .expect("preview page admitted")
-                .clone(),
-            image: Some(image),
+        Ok(Some(NativeFrame {
+            image,
+            missing_target,
             notice: (!notices.is_empty()).then(|| notices.join(" ")),
-            camera: Some(CameraPreview {
+            camera: CameraPreview {
                 epoch: request.epoch,
                 source: visual.source,
                 source_time: visual.time,
@@ -229,7 +218,7 @@ impl NativeScene {
                     .targets
                     .as_ref()
                     .map_or_else(|| Arc::from([]), |frame| Arc::clone(&frame.targets)),
-            }),
+            },
         }))
     }
 }

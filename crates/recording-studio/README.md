@@ -161,7 +161,44 @@ in narrow layouts remain incomplete. These controls have not been run or visuall
 accepted.
 
 The full scene schema, complete native replay rendering/preview composition, media
-import/recovery, complete camera/effect inspectors, recording options, export and linked
+import/recovery, complete camera/effect inspectors, recording options, complete export composition and linked
 automatic-effect retiming are still being implemented. The feature has not been
 built or exercised. Media preview and a limited native replay viewport are connected
 in source. These pieces do not complete the feature.
+
+## Video export
+
+**Export** freezes the current metadata revision and writes an MP4 into the Studio
+user-data directory's `exports` folder. Further edits do not change that job. The
+native progress banner remains available in the library and editor, with Cancel
+available until final file publication begins. Export does not replace existing
+files; directory exports choose a unique `Export N.mp4` name.
+
+The export worker evaluates every planned frame on the same rational grid as
+preview. It shares the CPU/NVIDIA/Auto codec policy, reports the actual selected
+encoder, checks frame ordering and dimensions, and waits for successful encoder
+flush. Raster cuts, crops, opacity and dissolves use the preview compositor. A
+single native replay layer uses the isolated renderer and authored camera rigs at
+the requested output size, subject to the frame/device memory limits. Reusable
+GPU readback and CPU storage keep one native frame in flight. Device polling stays
+with the normal render owner; Cinnabar must keep rendering during export.
+
+Audio export decodes one source at a time into bounded blocks, sums it into
+disk-backed stereo float storage, and muxes the finished mix with the video. Clip
+trims, rational speed changes, gain, mute, fades and silent tails use the saved
+timeline. Tempo stages use FFmpeg's [atempo](https://ffmpeg.org/ffmpeg-filters.html#atempo)
+filter within its blending range. Audio boundaries quantize to the 48 kHz sample
+grid; source accuracy, tempo latency and synchronization still need acceptance.
+Scratch audio is capped at 16 GiB; video output at 64 GiB. Staging files and scratch
+directories are local, ignored artifacts and normally removed on cancellation or
+failure. A supervised owned child keeps cancellation effective during blocked
+encoder/decoder pipe IO. No UI thread joins these workers.
+
+This path is provisional and unrun. Export currently rejects titles, color/post
+effects, dip-to-black, native replay layering/crops/transitions, and camera edits
+without native replay coverage. The complete edit is checked before encoding;
+unavailable camera subjects can still fail later payload admission. Native shading
+and recorded actor-coverage limitations are displayed in the status. Export settings
+controls, destination selection, completed-file actions, interrupted-job recovery,
+full visual composition and synchronized audio preview remain incomplete. A
+finished-file path in source code does not establish an accepted export workflow.

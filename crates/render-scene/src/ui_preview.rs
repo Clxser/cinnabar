@@ -1,4 +1,4 @@
-//! GPU-only editor images. Immutable leases prevent a producer from reusing a displayed target.
+//! Leased editor/export targets. Immutable image leases prevent reuse during display or readback.
 
 use std::sync::Arc;
 
@@ -17,16 +17,16 @@ pub struct PreviewTarget {
 }
 
 impl PreviewTarget {
-    /// Admits a single encoded-sRGB render target that can be copied into a native RGBA UI page.
+    /// Admits one encoded-sRGB target; its producer bounds allocation and the UI separately admits page size.
     pub fn new(device: RenderDevice, texture: Texture) -> Option<Self> {
         let size = texture.size();
-        let maximum = render_model::UI_STUDIO_PREVIEW_MAX_SIZE;
+        let maximum = device.limits().max_texture_dimension_2d;
         (texture.dimension() == TextureDimension::D2
             && size.depth_or_array_layers == 1
             && size.width != 0
-            && size.width <= maximum[0]
+            && size.width <= maximum
             && size.height != 0
-            && size.height <= maximum[1]
+            && size.height <= maximum
             && texture.sample_count() == 1
             && texture.mip_level_count() == 1
             && texture.format() == TextureFormat::Rgba8UnormSrgb

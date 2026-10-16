@@ -16,6 +16,8 @@ pub enum Action {
     Open(usize),
     Library,
     Save,
+    Export,
+    CancelExport,
     Undo,
     Redo,
     TogglePlayback,
@@ -60,6 +62,7 @@ pub enum DiscardIntent {
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
     pub capture: recording_studio::capture::CaptureStatus,
+    pub export: recording_studio::export::ExportStatus,
     pub library: Arc<[LibraryEntry]>,
     pub library_loading: bool,
     pub library_truncated: bool,
@@ -90,6 +93,7 @@ impl PartialEq for Snapshot {
     fn eq(&self, other: &Self) -> bool {
         let Self {
             capture,
+            export,
             library,
             library_loading,
             library_truncated,
@@ -116,6 +120,7 @@ impl PartialEq for Snapshot {
         } = self;
         let Self {
             capture: b_capture,
+            export: b_export,
             library: b_library,
             library_loading: b_library_loading,
             library_truncated: b_library_truncated,
@@ -141,6 +146,7 @@ impl PartialEq for Snapshot {
             preview_icon: b_preview_icon,
         } = other;
         capture == b_capture
+            && export == b_export
             && camera_target == b_camera_target
             && camera_fine == b_camera_fine
             && preview == b_preview

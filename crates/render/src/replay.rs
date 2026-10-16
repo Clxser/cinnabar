@@ -25,6 +25,8 @@ use render_scene::{
 };
 
 mod faults;
+mod readback;
+pub use readback::ReplayReadback;
 mod scene;
 mod targets;
 

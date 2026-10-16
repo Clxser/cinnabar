@@ -12,7 +12,7 @@ use render::replay::ReplayRenderContext;
 use render_model::{UI_STUDIO_PREVIEW_MAX_SIZE, UiTexturePage};
 use render_scene::ui_preview::{PreviewImage, UiPreviewImage, UiPreviewSurface};
 
-mod scene;
+pub(super) mod scene;
 
 #[derive(Resource, Default)]
 pub(super) struct NativePreview {
@@ -240,6 +240,7 @@ impl Drop for Worker {
 fn run(shared: &Shared, context: Option<ReplayRenderContext>) {
     let mut preview = RasterPreview::default();
     let mut native = context.map(scene::NativeScene::new);
+    let mut native_page: Option<UiTexturePage> = None;
     loop {
         let job = {
             let mut pending = shared
@@ -275,12 +276,30 @@ fn run(shared: &Shared, context: Option<ReplayRenderContext>) {
                 .wait_timeout(pending, std::time::Duration::from_millis(10));
         };
         let scene = match &mut native {
-            Some(native) => native.render(&job.request, &cancelled, &wait),
+            Some(native) => {
+                native.render(&job.request, UI_STUDIO_PREVIEW_MAX_SIZE, &cancelled, &wait)
+            }
             None => Ok(None),
         };
         let result = scene.and_then(|scene| {
             if let Some(scene) = scene {
-                return Ok(scene);
+                let size = scene.image.target.size();
+                if native_page
+                    .as_ref()
+                    .is_none_or(|page| page.dimensions() != size)
+                {
+                    let bytes = recording_studio::video::frame_byte_len(size)?;
+                    native_page =
+                        Some(UiTexturePage::owned(size, vec![0; bytes].into()).map_err(
+                            |error| format!("Replay preview page was rejected: {error:?}"),
+                        )?);
+                }
+                return Ok(PreviewOutput {
+                    page: native_page.as_ref().expect("native page admitted").clone(),
+                    image: Some(scene.image),
+                    notice: scene.notice,
+                    camera: Some(scene.camera),
+                });
             }
             preview
                 .render(&job.request, UI_STUDIO_PREVIEW_MAX_SIZE, &cancelled)
