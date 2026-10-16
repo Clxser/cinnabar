@@ -1,3 +1,6 @@
+/// The client window's minimum width and height in logical pixels.
+pub const MIN_WINDOW_LOGICAL_SIZE: [f32; 2] = [180.0, 120.0];
+
 /// Rejection reason for invalid UI geometry or scale values.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GeometryError {
@@ -15,7 +18,8 @@ pub struct UiScale(f32);
 impl UiScale {
     pub const MIN: f32 = 0.5;
     pub const MAX: f32 = 4.0;
-    pub(crate) const SCALE_DENOMINATOR: i64 = 1_024;
+    /// Fixed-point denominator shared by glyph and styling scales in text layout.
+    pub const SCALE_DENOMINATOR: i64 = 1_024;
     /// The smallest nonzero scale representable by the text layout's fixed point.
     pub const DISPLAY_MIN: f32 = 1.0 / Self::SCALE_DENOMINATOR as f32;
     /// Upper bound for magnified display text (titles), beyond the user-selectable range.
@@ -32,6 +36,16 @@ impl UiScale {
 
     pub const fn get(self) -> f32 {
         self.0
+    }
+
+    /// Returns the scale rounded to the fixed-point precision used by text layout.
+    pub fn quantized(self) -> Self {
+        Self(f32::from(self.fixed_1024()) / Self::SCALE_DENOMINATOR as f32)
+    }
+
+    /// Encodes the scale at text layout's fixed-point precision.
+    pub(crate) fn fixed_1024(self) -> u16 {
+        (self.0 * Self::SCALE_DENOMINATOR as f32).round() as u16
     }
 }
 
@@ -141,6 +155,14 @@ impl UiRect {
             && point.x <= self.max.x
             && point.y >= self.min.y
             && point.y <= self.max.y
+    }
+
+    /// This rectangle moved by `by` logical px; fails only on a non-finite result.
+    pub fn translated(self, by: [f32; 2]) -> Result<Self, GeometryError> {
+        Self::new(
+            UiPoint::new(self.min.x + by[0], self.min.y + by[1])?,
+            UiPoint::new(self.max.x + by[0], self.max.y + by[1])?,
+        )
     }
 }
 

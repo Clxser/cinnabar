@@ -119,7 +119,7 @@ fn empty_definitions(names: &[&str]) -> CustomBlocks {
 
 fn face_color(overlay: &assets::BlockOverlay, block: usize, face: BlockFace) -> [u8; 4] {
     let material = overlay.materials[overlay.visuals[block].faces[face as usize] as usize];
-    let page = overlay.texture.as_ref().unwrap();
+    let page = overlay.textures.first().unwrap();
     let mip = &page.mips[0];
     let start = material.texture.layer() as usize * (mip.size * mip.size * 4) as usize;
     mip.rgba8[start..start + 4].try_into().unwrap()

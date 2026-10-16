@@ -756,7 +756,7 @@ fn compound_model_chain_meshes_every_visibility_part() {
             })
             .collect(),
         model_quads: vec![quad; 90],
-        texture: Some(base.texture_pages()[0].texture.clone()),
+        textures: vec![base.texture_pages()[0].texture.clone()],
         ..assets::BlockOverlay::default()
     };
     let assets = base.with_block_overlay(id, &overlay).unwrap();

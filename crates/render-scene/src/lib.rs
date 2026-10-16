@@ -9,6 +9,7 @@ pub mod cloud_visibility;
 pub mod dropped_item;
 pub mod enhanced;
 pub mod entity_shadow;
+pub mod far_terrain;
 pub mod formats;
 pub mod gpu_times;
 pub mod hand_rig;
@@ -24,8 +25,11 @@ pub mod particles;
 pub mod primitive_shapes;
 pub mod readiness;
 pub mod runtime_profile;
+#[cfg(any(test, feature = "alloc-stats"))]
+mod runtime_profile_alloc;
 pub mod runtime_profile_slow;
 pub mod runtime_profile_trace;
+pub mod runtime_profile_uploads;
 pub mod screen_fire;
 pub mod screen_overlay;
 pub mod screen_overlay_portal;
@@ -75,7 +79,7 @@ pub use chunk::model_witness::{
 };
 pub use chunk::queue::{ChunkRenderQueue, ChunkRenderQueueLimits};
 pub use chunk::schedule::ChunkRenderApplySet;
-pub use chunk::texture_reload::ChunkTextureReload;
+pub use chunk::texture_reload::{ChunkTexturePreparation, ChunkTextureReload};
 pub use chunk::textures::{
     AnimationFrameSample, ChunkAnimationClock, ChunkTextureAssetIdentity, ChunkTextureAssets,
     EnhancedTextureAssets, TextureArrayLimits, TextureLimitError, TextureMipUploadPlan,
@@ -98,6 +102,7 @@ pub use cloud_visibility::CloudVisibility;
 pub use dropped_item::DroppedItemScene;
 pub use enhanced::EnhancedRendering;
 pub use entity_shadow::EntityShadowScene;
+pub use far_terrain::FarTerrainScene;
 pub use gpu_times::GpuFrameTimes;
 pub use hand_rig::HandRigScene;
 pub use lighting::{WorldFullbright, WorldLighting};

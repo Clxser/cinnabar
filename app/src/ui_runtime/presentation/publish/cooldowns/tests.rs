@@ -49,7 +49,7 @@ fn hotbar_publishes_food_and_projectile_cooldowns_for_every_matching_slot() {
             local_player_unique_id: 1,
             player_position: [0.0; 3],
             world_spawn_position: [0; 3],
-            air_network_id: protocol::SEQUENTIAL_AIR_NETWORK_ID,
+            air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
             block_network_ids_are_hashes: false,
         });
         assert!(stream.seed_item_registry(protocol::ItemRegistryEvent {
@@ -75,6 +75,8 @@ fn hotbar_publishes_food_and_projectile_cooldowns_for_every_matching_slot() {
         let mut item_use = ItemUseRuntime::default();
         item_use.observe_press(true);
         let outcome = item_use.step(&UseFrame {
+            riptide_facing: Default::default(),
+            riptide: None,
             tick,
             now_millis: tick * 50,
             position: [0.0; 3],

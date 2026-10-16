@@ -208,10 +208,13 @@ impl EquipmentRuntime {
         self.session.sprites.get(index)
     }
 
+    /// Returns a session cube's alpha mode only when its artwork is admitted.
     pub(super) fn session_block_alpha(
         &self,
         identifier: &str,
     ) -> Option<render_model::HandItemAlphaMode> {
+        let sheet = *self.session.block_sheets.get(identifier)?;
+        self.session_placement(sheet)?;
         self.session.block_alpha.get(identifier).copied()
     }
 }

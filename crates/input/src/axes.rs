@@ -20,7 +20,9 @@ pub(crate) fn touch_control_strength(
         TouchControlKind::LookAxis(axis) => frame
             .touches
             .iter()
-            .filter(|contact| contact.hit_id == Some(hit_id))
+            .filter(|contact| {
+                contact.hit_id == Some(hit_id) || contact.hit_id == Some(crate::touch::LOOK_SURFACE)
+            })
             .map(|contact| touch_axis_strength(contact.delta, axis))
             .sum::<f32>()
             .clamp(0.0, MAX_LOOK_DELTA_PER_FRAME),
@@ -75,22 +77,20 @@ pub(crate) fn radial_deadzone(value: [f32; 2], deadzone: f32) -> [f32; 2] {
 
 pub(crate) fn merged_touch_movement(frame: &DeviceFrame) -> [f32; 2] {
     let mut movement = [0.0_f32; 2];
-    for contact in frame
-        .touches
-        .iter()
-        .filter(|contact| contact.hit_id.is_none())
-    {
-        if contact.position[0] <= 0.5 && contact.position[1] >= 0.5 {
-            let candidate = [
+    for contact in &frame.touches {
+        let candidate = match contact.hit_id {
+            Some(crate::touch::JOYSTICK) => contact.delta,
+            None if contact.position[0] <= 0.5 && contact.position[1] >= 0.5 => [
                 (contact.position[0] - 0.25) * 4.0,
                 (0.75 - contact.position[1]) * 4.0,
-            ];
-            if candidate[0].hypot(candidate[1]) > movement[0].hypot(movement[1]) {
-                movement = candidate;
-            }
+            ],
+            _ => continue,
+        };
+        if candidate[0].hypot(candidate[1]) > movement[0].hypot(movement[1]) {
+            movement = candidate;
         }
     }
-    clamp_vector(movement, 1.0)
+    clamp_movement_vector(movement)
 }
 
 pub(crate) fn synthesize_directions(
@@ -114,6 +114,19 @@ pub(crate) fn clamp_vector(value: [f32; 2], maximum: f32) -> [f32; 2] {
             value[0] / magnitude * maximum,
             value[1] / magnitude * maximum,
         ]
+    } else {
+        value
+    }
+}
+
+/// Bounds finite movement axes to unit length using separately rounded float products
+/// and component division. Input sampling and movement packet encoding share this rounding.
+#[must_use]
+pub fn clamp_movement_vector(value: [f32; 2]) -> [f32; 2] {
+    let squared = value[0] * value[0] + value[1] * value[1];
+    if squared > 1.0 {
+        let magnitude = squared.sqrt();
+        [value[0] / magnitude, value[1] / magnitude]
     } else {
         value
     }

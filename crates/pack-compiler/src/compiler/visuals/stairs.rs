@@ -72,7 +72,7 @@ fn stair_state(record: &RegistryRecord) -> Option<(u32, u32, Option<u32>)> {
     if orientation > 3 || half > 1 {
         return None;
     }
-    if !state.contains_key("minecraft:corner") {
+    if !state.contains_key(assets::facts::BlockProperty::MinecraftCorner.name()) {
         return Some(((orientation + 2) & 3, half, None));
     }
     let expected_mask =
@@ -85,7 +85,13 @@ fn stair_state(record: &RegistryRecord) -> Option<(u32, u32, Option<u32>)> {
     if raw_direction != u64::from(orientation) || raw_half != u64::from(half) {
         return None;
     }
-    let shape = match typed_model_state_value(&state, "minecraft:corner", "string")?.as_str()? {
+    let shape = match typed_model_state_value(
+        &state,
+        assets::facts::BlockProperty::MinecraftCorner.name(),
+        "string",
+    )?
+    .as_str()?
+    {
         "none" => 0,
         "inner_left" => 2,
         "inner_right" => 1,
@@ -93,7 +99,7 @@ fn stair_state(record: &RegistryRecord) -> Option<(u32, u32, Option<u32>)> {
         "outer_right" => 4,
         _ => return None,
     };
-    let direction = assets::StairDirection::from_raw(u32::try_from(raw_direction).ok()?)?;
+    let direction = assets::stair::StairDirection::from_raw(u32::try_from(raw_direction).ok()?)?;
     Some((direction.turns_from_north(), half, Some(shape)))
 }
 

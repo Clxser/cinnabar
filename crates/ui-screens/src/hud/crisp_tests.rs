@@ -25,7 +25,7 @@ impl RemoteSource for NoDownloads {
 
 /// Builds synthetic HUD screens and an empty carrier without installed game assets.
 fn engine() -> FormEngine {
-    let files = [
+    let mut files = [
         ("ui/_global_variables.json", "{}"),
         (
             "ui/_ui_defs.json",
@@ -51,6 +51,7 @@ fn engine() -> FormEngine {
         path: path.into(),
         bytes: text.as_bytes().into(),
     });
+    files.sort_unstable_by(|a, b| a.path.cmp(&b.path));
     let page = UiAtlasPage {
         width: 4,
         height: 4,
@@ -65,7 +66,7 @@ fn engine() -> FormEngine {
     )
     .unwrap();
     let registry = Box::leak(Box::new(ScreenRegistry::new(Context::desktop())));
-    registry.screen(json_ui::HUD_SCREEN);
+    registry.screen(json_ui::vanilla::Reference::HudHudScreen.as_str());
     FormEngine::new(
         carrier,
         catalog,
@@ -89,13 +90,62 @@ fn texture(side: u32) -> (Vec<u8>, Vec<u8>) {
 }
 
 /// Replaces the whole atlas, as a transfer or texture-only pack reload does.
-fn replace_texture(engine: &mut FormEngine, side: u32) -> Vec<u8> {
+fn replace_texture(
+    engine: &mut FormEngine,
+    side: u32,
+) -> (Vec<u8>, Option<(u16, render_model::UiTexturePage)>) {
     let (png, pixels) = texture(side);
     engine.set_server_atlas(
         ServerAtlas::new(&[(format!("{CROSSHAIR_TEXTURE}.png"), png)], None, 1),
         server_page(),
     );
-    pixels
+    engine.textures.atlas_mut().require([CROSSHAIR_TEXTURE]);
+    (pixels, publish_artwork(engine))
+}
+
+/// Publishes admitted oversized bytes through the artwork handoff that upgrades atlas previews.
+fn publish_artwork(engine: &mut FormEngine) -> Option<(u16, render_model::UiTexturePage)> {
+    let (key, bytes) = engine.textures.oversized().into_iter().next()?;
+    assert_eq!(key, CROSSHAIR_TEXTURE);
+    let image = image::load_from_memory(&bytes).unwrap().into_rgba8();
+    assert!(
+        image.width() <= ui_engine::pages::WHOLE_ART_PAGE
+            && image.height() <= ui_engine::pages::WHOLE_ART_PAGE,
+        "larger sources must use the original native-sheet path"
+    );
+    let gutter = ui_engine::pages::ART_PAGE_GUTTER;
+    let uv = [
+        gutter,
+        gutter,
+        gutter + image.width(),
+        gutter + image.height(),
+    ]
+    .map(|edge| u16::try_from(edge).unwrap());
+    let mut page = image::RgbaImage::new(
+        render_model::UI_ART_PAGE_SIDE,
+        render_model::UI_ART_PAGE_SIDE,
+    );
+    image::imageops::overlay(&mut page, &image, i64::from(gutter), i64::from(gutter));
+    let index = u16::try_from(
+        usize::from(engine.textures.server_page) - ui_engine::pages::SERVER_UI_PAGE
+            + render_model::MAX_UI_DYNAMIC_PAGES,
+    )
+    .unwrap();
+    engine
+        .textures
+        .set_full_res(std::collections::HashMap::from([(
+            key,
+            ui::IconRef {
+                page: index,
+                uv,
+                glint: false,
+            },
+        )]));
+    Some((
+        index,
+        render_model::UiTexturePage::owned([page.width(), page.height()], page.into_raw().into())
+            .unwrap(),
+    ))
 }
 
 /// Leaves room before the server atlas for all of the presentation's reserved pages.
@@ -144,24 +194,26 @@ fn paint(
         renderers: &mut [],
     };
     match screens {
-        Some(screens) => screens
-            .paint(
-                engine,
-                HudInput {
-                    crosshair,
-                    catalog: engine.catalog(),
-                    context: &context,
-                    data: Arc::new(DataSource::default()),
-                    paint: &hud,
-                    icons: &[],
-                },
-                &mut frame,
-            )
-            .unwrap(),
+        Some(screens) => {
+            screens
+                .paint(
+                    engine,
+                    HudInput {
+                        crosshair,
+                        catalog: engine.catalog(),
+                        context: &context,
+                        data: Arc::new(DataSource::default()),
+                        paint: &hud,
+                        icons: &[],
+                    },
+                    &mut frame,
+                )
+                .unwrap();
+        }
         None => {
             engine
                 .render_screen(
-                    json_ui::HUD_SCREEN,
+                    json_ui::vanilla::Reference::HudHudScreen.as_str(),
                     &DataSource::default(),
                     &context,
                     &json_ui::ViewState::default(),
@@ -179,8 +231,8 @@ fn paint(
 fn hud_pack_swaps_keep_nearest_sampling_and_source_texels() {
     let mut engine = engine();
     let mut screens = HudScreens::default();
-    for side in [16, 128, 512, 16] {
-        let pixels = replace_texture(&mut engine, side);
+    for side in [16, 128, 512, ui_engine::pages::WHOLE_ART_PAGE + 1, 16] {
+        let (pixels, artwork) = replace_texture(&mut engine, side);
         for crosshair in [false, true] {
             let nodes = paint(
                 &engine,
@@ -211,7 +263,10 @@ fn hud_pack_swaps_keep_nearest_sampling_and_source_texels() {
             };
             assert_eq!([uv[2] - uv[0], uv[3] - uv[1]], [side as f32; 2]);
             let atlas = engine.textures.lock();
-            let image = if side > ui_engine::pages::WHOLE_ART_PAGE {
+            let image = if let Some((index, image)) = &artwork {
+                assert_eq!(page, *index, "original artwork replaces its atlas preview");
+                image
+            } else if side > ui_engine::pages::WHOLE_ART_PAGE {
                 &atlas.native_pages()[0]
             } else {
                 &atlas.images()[usize::from(page - engine.textures.server_page)]
@@ -245,7 +300,7 @@ fn native_crosshair_stays_on_physical_pixels_after_pack_swaps() {
     let mut screens = HudScreens::default();
     for side in [None, Some(128), Some(16), None] {
         if let Some(side) = side {
-            replace_texture(&mut engine, side);
+            let _ = replace_texture(&mut engine, side);
         } else {
             engine.set_server_atlas(ServerAtlas::new(&[], None, 1), server_page());
         }

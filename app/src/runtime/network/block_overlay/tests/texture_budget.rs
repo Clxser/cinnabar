@@ -51,10 +51,10 @@ fn view_full_of_textures() -> LayeredPackView {
     ))
 }
 
-/// The overlay keeps pushing diagnostics only for routes its array refused, so a
-/// full texture array is distinguishable from an unusable pack.
+/// The overlay keeps pushing diagnostics only for routes its shards refused, so a
+/// full texture budget is distinguishable from an unusable pack.
 #[test]
-fn a_full_texture_array_names_the_routes_it_refused() {
+fn a_full_texture_budget_names_the_routes_it_refused() {
     let view = view_full_of_textures();
     let mut blocks = Vec::new();
     let mut items = Vec::new();
@@ -79,15 +79,21 @@ fn a_full_texture_array_names_the_routes_it_refused() {
         vanilla_blocks: Default::default(),
         skipped: 0,
     };
-    let compiled = compile_block_overlay(&view, &blocks, false, None).expect("overlay");
-    let layers = compiled.overlay.texture.as_ref().expect("array").layers;
-    assert_eq!(
-        layers,
-        u32::try_from(super::super::MAX_OVERLAY_LAYERS).unwrap()
-    );
+    // Four shards of 256 layers cannot hold the whole fixture, so the fifth
+    // shard's routes are refused and named instead of degrading silently.
+    let compiled = super::super::compile_block_overlay(&view, &blocks, false, None, 256, None)
+        .expect("overlay");
+    let layers: u32 = compiled
+        .overlay
+        .textures
+        .iter()
+        .map(|shard| shard.layers)
+        .sum();
+    assert_eq!(layers, 4 * 256);
+    assert_eq!(compiled.overlay.textures.len(), 4);
     assert!(
         compiled.gaps.saturated_textures > 0,
-        "a full array must count the routes it refused, gaps: {:?}",
+        "a full budget must count the routes it refused, gaps: {:?}",
         compiled.gaps
     );
     assert_eq!(

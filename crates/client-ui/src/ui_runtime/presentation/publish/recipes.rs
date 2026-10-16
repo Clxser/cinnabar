@@ -29,12 +29,8 @@ pub(super) fn recipe_entries(
             )
     ) && presentation::forms::recipe_book_shown(player_runtime, runtime)
     {
-        let icon = |stack: &protocol::NetworkItemStack| {
-            items
-                .identifier(stack)
-                .as_deref()
-                .and_then(|id| presentation.item_icon(id, stack.metadata))
-        };
+        // Entries resolve icons like slots do, so enchanted and foil items glint here too.
+        let icon = |stack: &protocol::NetworkItemStack| items.icon(stack, None);
         if ui_screens::furnace_book::active(player_runtime) {
             window_icons.furnace_entries = presentation::forms::furnace_book::icons(
                 player_runtime,
@@ -73,11 +69,11 @@ pub(super) fn creative_page(
             window_icons.creative[cell] = items.icon(&item.stack, None);
         }
         for (tab, id) in [
-            "minecraft:brick",
-            "minecraft:oak_sapling",
-            "minecraft:iron_sword",
-            "minecraft:stick",
-            "minecraft:compass",
+            assets::facts::UiItemIcon::Construction.identifier(),
+            assets::facts::UiItemIcon::Nature.identifier(),
+            assets::facts::UiItemIcon::Equipment.identifier(),
+            assets::facts::UiItemIcon::Items.identifier(),
+            assets::facts::UiItemIcon::Search.identifier(),
         ]
         .iter()
         .enumerate()
@@ -116,15 +112,32 @@ pub(super) fn screen_outputs(
                 }
             }
         }
-        if runtime
+        let no_server_output = runtime
             .inventory_ledger(player_runtime)
             .created_output_stack()
-            .is_none()
+            .is_none();
+        if kind == protocol::WindowKind::Anvil
+            && no_server_output
+            && let Some(stack) = runtime.anvil_output(player_runtime)
+        {
+            let icon = items.icon(&stack, None);
+            let durability = items.durability(&stack, None);
+            window_icons.recipe_output = Some(ui_screens::container_source::StationOutput {
+                stack,
+                icon,
+                durability,
+            });
+        } else if no_server_output
             && let Some(output) = runtime.predicted_screen_output(player_runtime)
         {
             let stack = output_stack(output);
             let icon = items.icon(&stack, None);
-            window_icons.recipe_output = Some((icon, stack));
+            let durability = items.durability(&stack, None);
+            window_icons.recipe_output = Some(ui_screens::container_source::StationOutput {
+                stack,
+                icon,
+                durability,
+            });
         }
     }
 }
@@ -143,11 +156,12 @@ pub(super) fn book_page(
         inventory_screen,
         InventoryScreen::Personal | InventoryScreen::Workbench
     ) {
-        window_icons.book_button = presentation.item_icon("minecraft:book", 0);
+        window_icons.book_button =
+            presentation.item_icon(assets::facts::UiItemIcon::Book.identifier(), 0);
         window_text.book_title = runtime
             .translation("recipe.book.title")
             .map(|text| text.to_string());
-        if runtime.screen_state().book_open {
+        if runtime.screen_state().book_open.unwrap_or(false) {
             let first = runtime.screen_state().book_page * presentation::screens::BOOK_CELLS;
             let page =
                 runtime.book_recipes(player_runtime, first, presentation::screens::BOOK_CELLS + 1);

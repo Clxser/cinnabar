@@ -10,7 +10,7 @@ use protocol::WindowKind;
 use crate::container_actions::{BEACON_LEVEL_FOR, LOOM_PATTERNS, STONECUTTER_CELLS, Widget};
 use crate::container_source::{ContainerFrame, ContainerSource};
 use assets::entity::mount::{MountBody, MountSlots};
-use inventory::inventory_ledger::InventoryTarget;
+use inventory::inventory_ledger::{ANVIL_TARGET_SLOT, InventoryTarget};
 use ui::IconRef;
 
 /// Beacon power buttons by collection: `(name, effect id, secondary)`.
@@ -21,14 +21,6 @@ const BEACON_POWERS: [(&str, i32, bool); 6] = [
     ("jump", 8, false),
     ("strength", 5, false),
     ("regen", 10, true),
-];
-/// The legacy `id << 16 | aux` values the beacon's payment row names.
-const BEACON_PAYMENTS: [(i64, &str); 5] = [
-    (742 << 16, "minecraft:netherite_ingot"),
-    (388 << 16, "minecraft:emerald"),
-    (264 << 16, "minecraft:diamond"),
-    (266 << 16, "minecraft:gold_ingot"),
-    (265 << 16, "minecraft:iron_ingot"),
 ];
 /// The `#item_id_aux` key the crafter's previewed result draws under; stonecutter keys are negative.
 const CRAFTER_OUTPUT_KEY: i64 = i64::MAX;
@@ -150,6 +142,7 @@ pub(crate) fn station_controls(
         WindowKind::Anvil => {
             let name = source.screen().anvil_name.to_owned();
             data.set_global("#text_box_item_name", Scalar::Text(name));
+            anvil_cost(source, data);
         }
         WindowKind::Stonecutter => data.set_collection("stones", stones(source, frame)),
         WindowKind::Beacon => beacon_buttons(data, source),
@@ -168,13 +161,10 @@ pub fn id_aux_icons(
     icon: impl Fn(&str) -> Option<IconRef>,
 ) -> Vec<(i64, IconRef)> {
     match source.player().inventory.ledger().window_kind() {
-        Some(WindowKind::Beacon) => BEACON_PAYMENTS
-            .iter()
-            .filter_map(|(key, id)| Some((*key, icon(id)?)))
-            .collect(),
+        Some(WindowKind::Beacon) => beacon_payment_icons(icon),
         Some(WindowKind::Crafter) => frame
             .recipe_output
-            .and_then(|(icon, _)| *icon)
+            .and_then(|output| output.icon)
             .map(|icon| vec![(CRAFTER_OUTPUT_KEY, icon)])
             .unwrap_or_default(),
         Some(WindowKind::Stonecutter) => frame
@@ -185,6 +175,50 @@ pub fn id_aux_icons(
             .collect(),
         _ => Vec::new(),
     }
+}
+
+/// Draws the payment roles using the renderer keys compiled with their membership.
+fn beacon_payment_icons(icon: impl Fn(&str) -> Option<IconRef>) -> Vec<(i64, IconRef)> {
+    let Ok(facts) = assets::facts::ItemFacts::builtin() else {
+        return Vec::new();
+    };
+    facts
+        .beacon_payments()
+        .filter_map(|(key, identifier)| Some((key, icon(identifier)?)))
+        .collect()
+}
+
+/// Shows predicted costs and invalid-result indicators only when no server output exists.
+fn anvil_cost(source: &dyn ContainerSource, data: &mut DataSource) {
+    let ledger = source.player().inventory.ledger();
+    let server_output = ledger.created_output_stack().is_some();
+    let cost = source.screen().anvil_cost.filter(|_| !server_output);
+    let text = cost.map_or_else(String::new, |cost| {
+        if cost.too_expensive {
+            source
+                .translation("container.repair.expensive")
+                .map_or_else(|| "Too Expensive!".to_owned(), |text| text.to_string())
+        } else {
+            let levels = cost.levels.to_string();
+            source
+                .translation("container.repair.cost")
+                .map_or_else(|| levels.clone(), |text| text.replace("%1$d", &levels))
+        }
+    });
+    let affordable = cost.is_some_and(|cost| cost.affordable);
+    let target = ledger
+        .target_stack(InventoryTarget::Craft(ANVIL_TARGET_SLOT))
+        .is_some();
+    data.set_global("#cost_text", Scalar::Text(text));
+    data.set_global("#cost_text_green", Scalar::Bool(affordable));
+    data.set_global(
+        "#cost_text_red",
+        Scalar::Bool(cost.is_some() && !affordable),
+    );
+    data.set_global(
+        "#cross_out_icon",
+        Scalar::Bool(!server_output && target && cost.is_none_or(|cost| cost.too_expensive)),
+    );
 }
 
 /// The crafter screen's disabled-slot buttons, powered arrow and previewed result.
@@ -207,7 +241,7 @@ fn crafter_controls(
     };
     data.set_global("#redstone_arrow_texture", Scalar::Text(arrow.to_owned()));
     let output = frame.recipe_output;
-    let shown = output.filter(|(icon, _)| icon.is_some());
+    let shown = output.filter(|output| output.icon.is_some());
     data.set_global(
         "#crafter_output_item",
         Scalar::Num(if shown.is_some() {
@@ -216,7 +250,7 @@ fn crafter_controls(
             0.0
         }),
     );
-    let count = output.map_or(0, |(_, stack)| stack.count);
+    let count = output.map_or(0, |output| output.stack.count);
     data.set_global(
         "#output_stack_count",
         Scalar::Text(match count {
@@ -226,7 +260,11 @@ fn crafter_controls(
         }),
     );
     let name = output
-        .and_then(|(_, stack)| frame.item_names.get(&(stack.network_id, stack.metadata)))
+        .and_then(|output| {
+            frame
+                .item_names
+                .get(&(output.stack.network_id, output.stack.metadata))
+        })
         .map_or_else(String::new, |name| name.to_string());
     data.set_global("#crafting_preview_info", Scalar::Text(name));
 }
@@ -421,8 +459,10 @@ fn loom_controls(source: &dyn ContainerSource, data: &mut DataSource) {
         .target_stack(InventoryTarget::Craft(9))
         .filter(|stack| {
             ledger
-                .negotiated_item_entry(stack.network_id)
-                .is_some_and(|entry| entry.identifier.as_ref() == "minecraft:banner")
+                .item_facts()
+                .get(stack.network_id)
+                .roles
+                .contains(assets::facts::ContainerRoles::LOOM_BANNER)
         });
     let dye = ledger
         .target_stack(InventoryTarget::Craft(10))
@@ -597,6 +637,9 @@ pub(crate) fn decorate(
 }
 
 #[cfg(test)]
+mod anvil_tests;
+
+#[cfg(test)]
 mod banner_tests {
     use std::{
         collections::{BTreeMap, BTreeSet},
@@ -610,9 +653,9 @@ mod banner_tests {
     static SCROLL: BTreeMap<String, f64> = BTreeMap::new();
 
     /// Answers only what the loom bindings read.
-    struct LoomSource {
-        player: player_state::PlayerState,
-        screen: ScreenView<'static>,
+    pub(super) struct LoomSource {
+        pub(super) player: player_state::PlayerState,
+        pub(super) screen: ScreenView<'static>,
     }
 
     impl ContainerSource for LoomSource {
@@ -658,7 +701,7 @@ mod banner_tests {
     }
 
     /// Supplies authoritative loom input slots and negotiated item identities.
-    fn loom_fixture() -> LoomSource {
+    pub(super) fn loom_fixture() -> LoomSource {
         let mut player = player_state::PlayerState::new(1);
         player
             .inventory
@@ -699,6 +742,7 @@ mod banner_tests {
             screen: ScreenView {
                 mount_equipment: Default::default(),
                 anvil_name: "",
+                anvil_cost: None,
                 recipe_choice: None,
                 beacon: (0, 0),
                 beacon_level: None,
@@ -716,6 +760,99 @@ mod banner_tests {
                 book: None,
             },
         }
+    }
+
+    #[test]
+    fn beacon_renderer_keys_match_the_pinned_screen_fixture() {
+        let Some(path) = std::env::var_os("CINNABAR_BEACON_UI_FIXTURE") else {
+            eprintln!(
+                "skipping beacon_renderer_keys_match_the_pinned_screen_fixture: missing CINNABAR_BEACON_UI_FIXTURE"
+            );
+            return;
+        };
+        let mut catalog = json_ui::Catalog::default();
+        catalog.overlay_text(
+            "ui/beacon_screen.json",
+            &std::fs::read_to_string(path).unwrap(),
+        );
+        assert!(catalog.diagnostics().is_empty());
+        let mut keys = BTreeSet::new();
+        /// Collects authored item-renderer keys through the production JSON-UI parser.
+        fn renderer_keys(control: &json_ui::RawControl, keys: &mut BTreeSet<i64>) {
+            if let Some(key) = control
+                .props
+                .get("property_bag")
+                .and_then(|bag| bag.get("#item_id_aux"))
+                .and_then(serde_json::Value::as_i64)
+            {
+                keys.insert(key);
+            }
+            for child in &control.children {
+                renderer_keys(child, keys);
+            }
+        }
+        for control in catalog.controls() {
+            renderer_keys(control, &mut keys);
+        }
+        assert!(!keys.is_empty());
+        let facts = assets::facts::ItemFacts::builtin().unwrap();
+        assert_eq!(
+            facts
+                .beacon_payments()
+                .map(|(key, _)| key)
+                .collect::<BTreeSet<_>>(),
+            keys
+        );
+    }
+
+    #[test]
+    fn beacon_payment_icons_follow_the_compiled_payment_roles() {
+        let facts = assets::facts::ItemFacts::builtin().unwrap();
+        let icons = beacon_payment_icons(|identifier| {
+            let record = facts
+                .payload()
+                .records
+                .iter()
+                .find(|record| record.identifier.as_ref() == identifier)
+                .unwrap();
+            assert!(
+                record
+                    .fact
+                    .roles
+                    .contains(assets::facts::ContainerRoles::BEACON_PAYMENT)
+            );
+            Some(IconRef {
+                page: u16::try_from(record.network_id).unwrap(),
+                uv: [0, 0, 16, 16],
+                glint: false,
+            })
+        });
+        let expected: Vec<_> = facts
+            .payload()
+            .records
+            .iter()
+            .filter(|record| {
+                record
+                    .fact
+                    .roles
+                    .contains(assets::facts::ContainerRoles::BEACON_PAYMENT)
+            })
+            .map(|record| {
+                (
+                    record.fact.beacon_payment_key.unwrap(),
+                    record.network_id as u16,
+                )
+            })
+            .collect();
+        assert!(!expected.is_empty());
+        assert_eq!(
+            icons
+                .iter()
+                .map(|(key, icon)| (*key, icon.page))
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert!(beacon_payment_icons(|_| None).is_empty());
     }
 
     #[test]

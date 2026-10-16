@@ -82,7 +82,7 @@ fn reference_frame(
         emit_submission(
             &mut builder,
             atlas,
-            (&scene.heads, &scene.mobs, scene.bed.as_ref()),
+            (&scene.heads, scene.bed.as_ref()),
             submission,
             clock,
         );
@@ -363,7 +363,7 @@ fn assert_cached_fragment_capacity(
         emit_submission(
             builder,
             atlas,
-            (&scene.heads, &scene.mobs, scene.bed.as_ref()),
+            (&scene.heads, scene.bed.as_ref()),
             &submission,
             SceneClock::default(),
         );
@@ -446,23 +446,6 @@ fn frame_cost_bench_block_entity_mixed_scene_400_chests() {
 }
 
 #[test]
-fn review_render_appended_atlas_pixels_change_identity() {
-    let mut atlas = BlockEntityAtlas::from_assets(&assets_with_chest_offset(0));
-    let original = atlas.identity();
-    let texture = super::super::mob::MobTexture {
-        name: "test/mob".into(),
-        width: 1,
-        height: 1,
-        rgba8: Arc::from([7; 4]),
-    };
-    atlas.append_textures(std::slice::from_ref(&texture));
-    assert_ne!(atlas.identity(), original);
-    let appended = atlas.identity();
-    atlas.append_textures(&[texture]);
-    assert_eq!(atlas.identity(), appended);
-}
-
-#[test]
 fn review_render_static_gateway_reuses_geometry_across_ticks() {
     let mut scene = scene();
     let gateway = BlockEntitySubmission {
@@ -482,44 +465,6 @@ fn review_render_static_gateway_reuses_geometry_across_ticks() {
     assert_eq!(scene.frame.revision, revision);
     assert!(Arc::ptr_eq(&first, &scene.frame.portal));
     assert!(scene.frame.portal_time_seconds > time);
-}
-
-#[test]
-fn review_render_atlas_snapshot_does_not_block_mob_installation() {
-    let temporary = tempfile::tempdir().unwrap();
-    for family in [
-        "entity",
-        "models/entity",
-        "animations",
-        "animation_controllers",
-        "render_controllers",
-        "textures/entity",
-    ] {
-        std::fs::create_dir_all(temporary.path().join(family)).unwrap();
-    }
-    std::fs::write(temporary.path().join("models/entity/test.geo.json"), br#"{"format_version":"1.12.0","minecraft:geometry":[{"description":{"identifier":"geometry.test","texture_width":16,"texture_height":16},"bones":[{"name":"body","cubes":[{"origin":[0,0,0],"size":[1,1,1],"uv":[0,0]}]}]}]}"#).unwrap();
-    let compiled = pack_compiler::compile_entity_assets(
-        temporary.path(),
-        include_bytes!("../../../../../assets/vanilla-source.json"),
-    )
-    .unwrap();
-    let bytes = assets::encode_entity_blob(&compiled).unwrap();
-    let entities = assets::RuntimeEntityAssets::decode(&bytes).unwrap();
-    let catalog = assets::actor::RuntimeActorCatalog::decode(
-        &assets::actor::encode_actor_catalog(&bytes, &[], &[]).unwrap(),
-        &entities,
-    )
-    .unwrap();
-    let mut scene = scene();
-    scene.update(SceneClock::default(), &[], &[chest(0, 1.0)]);
-    assert!(scene.reusable.is_some());
-    let snapshot = Arc::clone(scene.atlas().unwrap());
-    scene.install_mob_assets(&entities, &catalog);
-    assert!(
-        scene.reusable.is_none(),
-        "installation must invalidate cached models even with a retained atlas"
-    );
-    assert!(!Arc::ptr_eq(&snapshot, scene.atlas().unwrap()));
 }
 
 /// A busy lobby's per-frame scene cost through the installed carrier; prints with
@@ -717,12 +662,12 @@ fn live_chest_artwork_reload_keeps_every_cached_sign_visible() {
             .unwrap();
         let before = scene.update(SceneClock::default(), &[], &[]).clone();
         let pages = scene.atlas().unwrap().text_pages();
-        let replacement = pack_compiler::overlay_block_entity_assets(
+        let replacement = pack_entity_compiler::overlay_block_entity_assets(
             &assets_with_chest_offset(0),
             |_| true,
             |name| {
                 (name == "textures/entity/chest/normal").then(|| {
-                    pack_compiler::BlockEntityTexture {
+                    pack_entity_compiler::BlockEntityTexture {
                         width: 128,
                         height: 512,
                         rgba8: vec![64; 128 * 512 * 4].into_boxed_slice(),
@@ -825,7 +770,7 @@ fn replacement_base() -> assets::RuntimeBlockEntityAssets {
 
 /// Snapshots one mob texture with enough appended rows to exercise the GPU height limit.
 fn mob_artwork_preparer() -> BlockEntityArtworkPreparer {
-    BlockEntityArtworkPreparer::new(&[super::super::mob::MobTexture {
+    BlockEntityArtworkPreparer::new(&[super::super::artwork::StaticTexture {
         name: "mob/test".into(),
         width: 64,
         height: 64,
@@ -844,7 +789,7 @@ fn replacement_admission_reserves_mobs_and_all_text_pages() {
     let limit = MAX_ATLAS_SIDE;
     let last_admitted = limit - dynamic_height(MAX_TEXT_PAGES as u32) - 64;
     for height in [last_admitted, last_admitted + 1, 4090] {
-        let replacement = pack_compiler::overlay_block_entity_assets(
+        let replacement = pack_entity_compiler::overlay_block_entity_assets(
             &base,
             |size| preparer.accepts_size(size),
             |name| {
@@ -854,7 +799,7 @@ fn replacement_admission_reserves_mobs_and_all_text_pages() {
                 } else {
                     1024
                 };
-                Some(pack_compiler::BlockEntityTexture {
+                Some(pack_entity_compiler::BlockEntityTexture {
                     width: 1024,
                     height,
                     rgba8: vec![64; (1024 * height * 4) as usize].into_boxed_slice(),

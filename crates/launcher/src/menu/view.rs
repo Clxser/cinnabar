@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use super::{MenuAction, MenuDialog, MenuField, MenuScreen, MenuServerTab, auth::AuthState};
+use super::{
+    MenuAction, MenuDialog, MenuField, MenuList, MenuScreen, MenuServerTab, auth::AuthState,
+};
 use ui::IconRef;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -27,8 +29,12 @@ pub struct LocalWorldCard {
     pub game_mode: String,
     /// The saved world generator label.
     pub world_type: String,
+    /// The server hosting the world, so Dragonfly and BDS worlds of one name stay distinct.
+    pub server: String,
     pub date: String,
     pub size: String,
+    /// Its last captured view, once one was taken.
+    pub thumbnail: Option<crate::local_worlds::world::WorldThumbnail>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
@@ -73,10 +79,10 @@ impl MenuRealmCard {
 }
 
 /// Marks a featured address as an experience's ID, joined when selected.
-pub const EXPERIENCE_ADDRESS_PREFIX: &str = "gathering/";
+pub const EXPERIENCE_ADDRESS_PREFIX: &str = bridge::contract::GATHERING_TARGET_PREFIX;
 
 /// Marks an address as the friend world hosted by this XUID.
-pub const FRIEND_ADDRESS_PREFIX: &str = "friend_xuid/";
+pub const FRIEND_ADDRESS_PREFIX: &str = bridge::contract::FRIEND_TARGET_PREFIX;
 
 /// Whether the server at `address` can be pinged; an experience has no server until joined.
 pub fn pingable(address: &str) -> bool {
@@ -391,7 +397,6 @@ impl JoinProgress {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct MenuHome {
     pub play_art: Option<ButtonArt>,
-    pub store_art: Option<ButtonArt>,
     pub inbox_unread: u32,
     pub inbox_counts: std::collections::BTreeMap<usize, u32>,
     pub realm_invites: u32,
@@ -525,10 +530,10 @@ pub struct MenuView {
     /// Session VSync forced by a launch flag; the saved toggle is shown locked to it.
     pub vsync_override: Option<bool>,
     pub display_name: String,
-    pub servers: Vec<SavedServer>,
-    pub featured: Vec<MenuServerCard>,
-    pub realms: Vec<MenuRealmCard>,
-    pub friends: Vec<MenuFriendCard>,
+    pub servers: MenuList<SavedServer>,
+    pub featured: MenuList<MenuServerCard>,
+    pub realms: MenuList<MenuRealmCard>,
+    pub friends: MenuList<MenuFriendCard>,
     pub featured_icon: Option<IconRef>,
     pub realm_icon: Option<IconRef>,
     pub friend_icon: Option<IconRef>,
@@ -547,13 +552,15 @@ pub struct MenuView {
     pub player_skin: Option<render_api::StandardSkin>,
     pub player_skin_model: crate::dressing_room::SkinModel,
     pub global_resources: std::sync::Arc<crate::global_resources::Snapshot>,
+    pub mods: std::sync::Arc<crate::mods::Snapshot>,
+    pub minecraft_import: std::sync::Arc<crate::minecraft_import::Snapshot>,
     /// Why the last session ended, shown until acknowledged.
     pub disconnect_message: Option<String>,
     /// The failed remote destination can be retried by the current account.
     pub can_reconnect: bool,
     /// The saved server the add screen is editing.
     pub editing: Option<usize>,
-    pub local_worlds: Vec<LocalWorldCard>,
+    pub local_worlds: MenuList<LocalWorldCard>,
     /// The local-world create, edit and template screens and their modals.
     pub local: crate::local_worlds::WorldsView,
     pub settings_options: std::sync::Arc<super::settings_options::SettingsOptions>,
@@ -571,8 +578,6 @@ pub struct MenuView {
     pub settings_advanced_graphics: bool,
     pub language_choices: std::sync::Arc<[(String, String)]>,
     pub feeds: MenuFeeds,
-    /// The Marketplace's state while its screen is up.
-    pub store: Option<std::sync::Arc<crate::store::StoreSnapshot>>,
     /// The open local world is hosted for Xbox friends, so the pause screen offers invites.
     pub hosting: bool,
     /// The code invitation flow covering the Realms tab.
@@ -699,7 +704,13 @@ impl MenuView {
         option: &super::settings_options::SettingDefinition,
         choice: usize,
     ) -> bool {
-        option.name != super::settings_options::UPDATE_CHANNEL_OPTION.name
+        if option.id == super::settings_options::graphics_api::OPTION.id {
+            return super::settings_options::graphics_api::visible(
+                choice,
+                crate::graphics_backend::Platform::current(),
+            );
+        }
+        option.id != super::settings_options::UPDATE_CHANNEL_OPTION.id
             || self.updates.channel_visible(choice)
     }
 
@@ -778,10 +789,10 @@ impl MenuView {
             enhanced_quality: render_api::EnhancedQuality::default(),
             vsync_override: None,
             display_name,
-            servers: Vec::new(),
-            featured: Vec::new(),
-            realms: Vec::new(),
-            friends: Vec::new(),
+            servers: MenuList::default(),
+            featured: MenuList::default(),
+            realms: MenuList::default(),
+            friends: MenuList::default(),
             featured_icon: None,
             realm_icon: None,
             friend_icon: None,
@@ -798,10 +809,12 @@ impl MenuView {
             player_skin: None,
             player_skin_model: Default::default(),
             global_resources: Default::default(),
+            mods: Default::default(),
+            minecraft_import: Default::default(),
             disconnect_message: None,
             can_reconnect: false,
             editing: None,
-            local_worlds: Vec::new(),
+            local_worlds: MenuList::default(),
             local: Default::default(),
             settings_options: Default::default(),
             storage: Default::default(),
@@ -816,7 +829,6 @@ impl MenuView {
             settings_advanced_graphics: false,
             language_choices: Default::default(),
             feeds: Default::default(),
-            store: None,
             hosting: false,
             realm_membership: None,
             invite: None,

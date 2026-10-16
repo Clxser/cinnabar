@@ -109,7 +109,7 @@ fn sequential_budget_rejection_keeps_admitted_visuals_overrides_and_wire_ids() {
     };
     let (range, remap) = collisions.begin_session_custom_blocks(&blocks).unwrap();
     let base = base_carrier(records.len());
-    let keys = assets::MaterialKeys::from_entries([(1, "lucky")]);
+    let keys = assets::material_keys::MaterialKeys::from_entries([(1, "lucky")]);
     let compiled = Arc::new(compile_block_overlay(&view(), &blocks, false, Some(&keys)).unwrap());
     assert_eq!(compiled.overlay.visuals.len(), 1);
     assert_eq!(compiled.overlay.material_overrides.len(), 1);

@@ -74,31 +74,76 @@ pub fn prune(update_dir: &Path, now: SystemTime) {
         }
         // A clock that moved backwards leaves the copy for a later pass.
         let path = entry.path();
-        let handing_off = fs::metadata(path.join(LOCK))
+        let metadata = fs::metadata(path.join(LOCK));
+        let claimed = metadata.as_ref().is_ok_and(|metadata| metadata.len() != 0);
+        let handing_off = metadata
             .or_else(|_| entry.metadata())
             .and_then(|metadata| metadata.modified())
             .is_ok_and(|modified| {
                 now.duration_since(modified)
                     .map_or(true, |age| age < HANDOFF_WINDOW)
             });
-        if handing_off {
+        if !claimed && handing_off {
             continue;
         }
-        let lease = match File::options().write(true).open(path.join(LOCK)) {
-            Ok(lock) if lock.try_lock().is_ok() => Some(lock),
-            Ok(_) => continue,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(_) => continue,
-        };
-        // Claim the idle name while still holding its exclusive lease. A later reader cannot
-        // enter between the idle check and deletion; drop the file before Windows cleanup.
-        if let Ok(retired) = tempfile::Builder::new()
-            .prefix(&format!("{PREFIX}discard-"))
-            .tempdir_in(update_dir)
+        retire_idle_copy(&path, now);
+    }
+}
+
+/// Rechecks the handoff time under the exclusive lease, then retires the idle copy.
+fn retire_idle_copy(path: &Path, now: SystemTime) {
+    let directory_modified = fs::metadata(path).and_then(|metadata| metadata.modified());
+    let (lease, created) = match File::options()
+        .write(true)
+        .create_new(true)
+        .open(path.join(LOCK))
+    {
+        Ok(lease) => (lease, true),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => match open_lock(path) {
+            Ok(lease) => (lease, false),
+            Err(_) => return,
+        },
+        Err(_) => return,
+    };
+    if lease.try_lock().is_err() {
+        return;
+    }
+    let Ok(metadata) = lease.metadata() else {
+        return;
+    };
+    let modified = if created {
+        directory_modified
+    } else {
+        metadata.modified()
+    };
+    if metadata.len() == 0
+        && modified.is_ok_and(|modified| {
+            now.duration_since(modified)
+                .map_or(true, |age| age < HANDOFF_WINDOW)
+        })
+    {
+        return;
+    }
+    let Some(update_dir) = path.parent() else {
+        return;
+    };
+    if let Ok(retired) = tempfile::Builder::new()
+        .prefix(&format!("{PREFIX}discard-"))
+        .tempdir_in(update_dir)
+    {
+        #[cfg(windows)]
         {
-            let _ = fs::rename(&path, retired.path().join("copy"));
+            // A nonempty lease fences future readers before its handle closes. Windows
+            // cannot rename a directory containing an open file, including this lease.
+            if lease.set_len(1).is_err() {
+                return;
+            }
             drop(lease);
         }
+        let _ = fs::rename(path, retired.path().join("copy"));
+        // Unix can rename with the exclusive lease held, then close it before removal.
+        #[cfg(not(windows))]
+        drop(lease);
     }
 }
 
@@ -112,11 +157,11 @@ fn retained_directory(update_dir: &Path, prefix: &str) -> io::Result<(tempfile::
     Ok((directory, reader))
 }
 
-/// Takes a reader lease and rejects a copy claimed by pruning before that acquisition finished.
+/// Takes a reader lease and rejects a retired copy even while its Windows cleanup is blocked.
 fn hold_directory(directory: &Path) -> io::Result<File> {
     let reader = open_lock(directory)?;
     reader.lock_shared()?;
-    if !directory.is_dir() {
+    if !directory.is_dir() || reader.metadata()?.len() != 0 {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             "retained copy was already retired",

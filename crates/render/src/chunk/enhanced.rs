@@ -225,7 +225,7 @@ mod tests {
         };
         let (center, half_extents) = chunk_bounds(&allocation);
         assert!(
-            bounds.intersects_aabb(center, half_extents),
+            bounds.intersects_rotated(center, bounds.rotated_radius(half_extents)),
             "shadow cascade retains the displaced overhang"
         );
     }

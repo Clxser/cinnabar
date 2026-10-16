@@ -14,6 +14,7 @@ pub use action::{
     Action, ActionPhase, ActionSnapshot, InputContext, InputMode, MovementButtons, PerspectiveMode,
     ReleaseReason,
 };
+pub use axes::clamp_movement_vector;
 pub use binding::{
     ActionBinding, AxisDirection, BindingError, ControlSettings, DEFAULT_MOUSE_SENSITIVITY,
     InputChord, MAX_BINDINGS, ModifierChord, MouseAxis, PhysicalControl,
@@ -60,7 +61,15 @@ pub mod touch {
     pub const LOOK_DOWN: u16 = 29;
     pub const LOOK_LEFT: u16 = 30;
     pub const LOOK_RIGHT: u16 = 31;
+    /// Drags anywhere outside another control; the contact delta drives all four look axes.
+    pub const LOOK_SURFACE: u16 = 32;
+    /// The movement stick; the contact delta is its normalized deflection, positive Y forward.
+    pub const JOYSTICK: u16 = 33;
+    pub const INVENTORY: u16 = 34;
 }
+
+mod touch_controls;
+pub use touch_controls::{TouchBounds, TouchControlRegion, TouchControlState};
 
 pub mod cursor_focus;
 

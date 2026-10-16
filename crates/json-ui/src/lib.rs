@@ -1,4 +1,4 @@
-//! Clean-room parser, resolver, and layout engine for vanilla Bedrock JSON-UI.
+//! Parser, resolver, and layout engine for Bedrock JSON-UI.
 //!
 //! The pipeline reads the on-disk `ui/*.json` (tolerant JSON5), applies `@base`
 //! inheritance, substitutes `$var`/global references, evaluates `ignored` and
@@ -27,6 +27,7 @@ mod input;
 mod json5;
 mod label;
 mod layout;
+mod layout_cache_key;
 mod localize;
 mod lru;
 mod merge;
@@ -38,7 +39,10 @@ mod screens;
 mod sidecar;
 mod sprite;
 mod state;
+mod template_equivalence;
 mod tree;
+pub mod vanilla;
+pub mod vector_path;
 mod widgets;
 
 #[cfg(test)]
@@ -75,13 +79,13 @@ pub use form::{
     render_form_with,
 };
 pub use hud::{
-    BossBar, CROSSHAIR_SCREEN, HUD_SCREEN, HudModel, HudSlot, HudTitle, Sidebar, Timed, hud_clocks,
+    BossBar, HudBindings, HudChanges, HudModel, HudSlot, HudTitle, Sidebar, Timed, hud_clocks,
     hud_context, hud_data_source,
 };
 pub use input::{
     ControlSound, HitKind, HitRegion, InputComponent, InputMode, InputModeCondition, Mapping,
-    MappingScope, MappingType, focus_order, global_mapping, hit_regions, hit_test, region_rect,
-    scroll_target,
+    MappingScope, MappingType, focus_order, global_mapping, hit_regions, hit_test, press_region,
+    region_rect, scroll_target,
 };
 pub use input::{
     CustomRoute, FOCUS_OVERRIDE_STOP, FocusContainer, FocusDirection, FocusMeta, FocusMove,
@@ -92,7 +96,9 @@ pub use label::{LabelShape, TextOptions};
 pub use layout::{
     LaidOut, LayoutEnv, MeasureCache, Rect, TextMeasure, TextureSource, layout, layout_with,
 };
+pub use layout_cache_key::LayoutCacheKey;
 pub use localize::{localize_text, localize_text_prefix};
+pub use pack::{GLOBAL_VARIABLES_PATH, UI_DEFS_PATH};
 pub use predicate::{Bindings, Scalar};
 pub use resolve::Resolver;
 pub use scene::{SceneEntry, SceneStack, ScreenNav, ScreenSettings};
@@ -105,6 +111,7 @@ pub use sidecar::{
 };
 pub use sprite::nine_slice;
 pub use state::{FocusMemory, LayoutReport, ScrollMetrics, ScrollRetained, ViewState};
+pub use template_equivalence::screen_templates_unchanged;
 pub use tree::{ControlRef, Factory, Properties, ResolvedControl};
 pub use widgets::{Draggable, ScrollMotion};
 

@@ -489,6 +489,10 @@ impl UiRuntime {
             InventoryCellHit::RecipeBook(index) => {
                 self.recipe_book_click(player_runtime, index, true)
             }
+            // Shift does not stop the close button closing the screen.
+            InventoryCellHit::Widget(Widget::Close) => {
+                self.activate_widget(player_runtime, Widget::Close)
+            }
             hit => match gesture_target(hit) {
                 Some(target) => {
                     let equipment = self.screen_state().mount_equipment;
@@ -526,12 +530,37 @@ impl UiRuntime {
                     .screen_catalog(player_runtime)
                     .and_then(|catalog| catalog.repair_multi_recipe_id())
                     .unwrap_or(0);
-                let name = self.screen_state().anvil_name.trim();
-                let rename = (!name.is_empty()).then(|| std::sync::Arc::from(name));
+                let (rename, output, material_used) = if self
+                    .inventory_ledger(player_runtime)
+                    .created_output_stack()
+                    .is_some()
+                {
+                    (self.anvil_rename(player_runtime), None, 0)
+                } else {
+                    let preview = self
+                        .anvil_preview(player_runtime)
+                        .ok_or(InventoryGestureError::EmptyGesture)?;
+                    if !self.anvil_affordable(player_runtime, &preview) {
+                        return Err(InventoryGestureError::InvalidRequest);
+                    }
+                    // Clearing a custom name sends empty text, so the server clears it too.
+                    let rename = preview
+                        .outcome
+                        .custom_name
+                        .clone()
+                        .map(|name| std::sync::Arc::from(name.unwrap_or_default()));
+                    (
+                        rename,
+                        Some(preview.stack.clone()),
+                        preview.outcome.material_used,
+                    )
+                };
                 self.inventory_ledger_mut(player_runtime)
                     .begin_screen_output(&ScreenCraft::Anvil {
                         rename,
                         multi_recipe_id,
+                        output,
+                        material_used,
                     })
             }
             Some(WindowKind::Grindstone) => self
@@ -646,9 +675,16 @@ impl UiRuntime {
                 self.reader_button(player_runtime, button);
                 Ok(0)
             }
+            Widget::Close => {
+                if self.inventory_open() {
+                    self.toggle_inventory(player_runtime);
+                }
+                Ok(0)
+            }
             Widget::BookToggle => {
+                let shown = super::presentation::forms::recipe_book_shown(player_runtime, self);
                 let state = self.screen_state_mut();
-                state.book_open = !state.book_open;
+                state.book_open = Some(!shown);
                 state.book_page = 0;
                 Ok(0)
             }
@@ -666,8 +702,7 @@ impl UiRuntime {
                 let creative = player_runtime.facts.player_game_mode()
                     == Some(protocol::PlayerGameMode::Creative);
                 let state = self.screen_state_mut();
-                // The book shows when `book_open` differs from creative's default.
-                state.book_open = (layout != 1) != creative;
+                state.book_open = Some(layout != 1);
                 state.creative_wide = creative && layout == 3;
                 state.book_page = 0;
                 state.container_scroll.clear();

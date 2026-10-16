@@ -24,7 +24,7 @@ fn form_stream() -> WorldStream {
         local_player_runtime_id: 1,
         player_position: [0.0; 3],
         world_spawn_position: [0; 3],
-        air_network_id: protocol::SEQUENTIAL_AIR_NETWORK_ID,
+        air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
         block_network_ids_are_hashes: false,
     })
 }
@@ -95,6 +95,8 @@ fn sixty_four_forms_replace_ui_deltas_without_capacity_fanout() {
 #[test]
 fn sixty_four_link_and_transition_deltas_preserve_local_mount_capacity() {
     let mut stream = form_stream();
+    // Exercise capacity across bounded commit slices, independent of host speed.
+    stream.poll_budget = Duration::ZERO;
     let event = |sequence: u64| {
         let dimension = ((sequence - 1) / 2 % 2) as i32;
         if sequence.is_multiple_of(2) {
@@ -114,6 +116,10 @@ fn sixty_four_link_and_transition_deltas_preserve_local_mount_capacity() {
         stream.submit(sequence, event(sequence)).unwrap();
     }
     stream.submit(1, event(1)).unwrap();
+    test_time::eventually("all mount transitions are committed", || {
+        stream.poll([0.0; 3], 0);
+        stream.committed_sequence() == 64
+    });
     let entries = stream.take_committed_ui();
     assert_eq!(entries.len(), COMMITTED_UI_CAPACITY);
     for (index, entry) in entries.into_iter().enumerate() {
@@ -137,7 +143,7 @@ fn ui_and_block_crack_events_publish_fifo_with_committed_dimension() {
         local_player_runtime_id: 1,
         player_position: [0.0; 3],
         world_spawn_position: [0; 3],
-        air_network_id: 12_530,
+        air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
         block_network_ids_are_hashes: false,
     });
     let ui = UiEvent::Hud(HudEvent::Health { health: 17 });
@@ -203,7 +209,7 @@ fn targeted_game_mode_commits_only_the_local_unique_id_in_fifo_order() {
         local_player_unique_id: -55,
         player_position: [0.0; 3],
         world_spawn_position: [0; 3],
-        air_network_id: protocol::SEQUENTIAL_AIR_NETWORK_ID,
+        air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
         block_network_ids_are_hashes: false,
     });
     let mode = protocol::GameModeEvent {

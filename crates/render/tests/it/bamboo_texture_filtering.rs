@@ -132,6 +132,18 @@ fn bamboo_tile_edges_and_distant_mips_preserve_the_admitted_rectangle() {
                     binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[1],
                     resource: wgpu::BindingResource::TextureView(&view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[2],
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[3],
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[4],
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
             ],
             blend: None,
             write_depth: true,
@@ -207,6 +219,18 @@ fn gridded_cube_textures_repeat_per_block_with_native_mip_scale() {
                 },
                 wgpu::BindGroupEntry {
                     binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[1],
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[2],
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[3],
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[4],
                     resource: wgpu::BindingResource::TextureView(&view),
                 },
             ],

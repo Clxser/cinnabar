@@ -4,7 +4,7 @@
 
 use std::{borrow::Cow, cell::RefCell, sync::Arc};
 
-use assets::RuntimeFontCatalog;
+use assets::{FontRendering, RuntimeFontCatalog};
 use json_ui::{LabelShape, TextAlign, TextMeasure, TextOptions};
 use ui::{
     FONT_DESIGN_PIXEL_TEXELS, TextLayoutCache, TextLayoutRequest, TextLineAlign, TextShadow,
@@ -17,45 +17,92 @@ use crate::text_metrics::TextMetrics;
 /// Largest wrap width handed to the text layout (logical px), for "no wrap".
 pub const UNWRAPPED_LOGICAL: f64 = 65_536.0;
 
-/// Default bitmap labels use the font's native wrap height, independently of chat's pitch.
-/// Attached named fonts keep their existing metrics instead of inheriting bitmap geometry.
-fn label_metrics(
+/// Normal outline labels occupy twelve GUI pixels of ascent and descent.
+const OUTLINE_LABEL_HEIGHT_GUI: f32 = 12.0;
+
+/// Resolved face geometry shared by label measurement, painting and edit metadata.
+#[derive(Clone, Copy)]
+pub(super) struct LabelMetrics<'a> {
+    metrics: TextMetrics,
+    font: &'a RuntimeFontCatalog,
+    frame_scale: UiScale,
+    authored_factor: f32,
+    shadow_factor: f32,
+}
+
+/// Keeps bitmap spacing and resolves native sizes and effects in the selected face's units.
+pub(super) fn label_metrics<'a>(
     mut metrics: TextMetrics,
     default: &RuntimeFontCatalog,
-    selected: &RuntimeFontCatalog,
-) -> TextMetrics {
+    selected: &'a RuntimeFontCatalog,
+    factor: f32,
+) -> LabelMetrics<'a> {
+    let frame_scale = metrics.scale;
     if std::ptr::eq(default, selected) {
         metrics.line_height_64 = TEXT_PITCH * FONT_DESIGN_PIXEL_TEXELS * 64;
+    } else if let Some(source) = selected.line_metrics() {
+        let height = source.ascent_64 + source.descent_64;
+        let size = metrics.scale.get() * FONT_DESIGN_PIXEL_TEXELS as f32 * OUTLINE_LABEL_HEIGHT_GUI;
+        if let Ok(scale) = UiScale::new_display(size * 64.0 / height as f32) {
+            metrics.scale = scale;
+            metrics.line_height_64 = height;
+            metrics.baseline_64 = source.ascent_64;
+        }
     }
-    metrics
+    let shadow_factor = frame_scale.get() / metrics.scale.get();
+    if factor != 1.0
+        && let Ok(scale) = UiScale::new_display(metrics.scale.get() * factor)
+    {
+        metrics.scale = scale;
+    }
+    metrics.scale = metrics.scale.quantized();
+    LabelMetrics {
+        metrics,
+        font: selected,
+        frame_scale,
+        authored_factor: factor,
+        shadow_factor,
+    }
 }
 
-/// Native bitmap UI text starts one GUI pixel below the authored label top. The inset is
-/// independent of font size; painting and glyph interaction use this same origin.
+/// UI labels start one GUI pixel below the authored top, independently of
+/// font size. Painting and glyph interaction share this origin.
 pub fn label_origin(
     dest: [f32; 4],
-    font: &RuntimeFontCatalog,
-    options: &TextOptions,
+    _font: &RuntimeFontCatalog,
+    _options: &TextOptions,
     px: f32,
 ) -> [f32; 2] {
-    let selected = font.font_named(options.font_type.as_deref().unwrap_or("default"));
-    let inset = if std::ptr::eq(font, selected) {
-        px
-    } else {
-        0.0
-    };
-    [dest[0], dest[1] + inset]
+    [dest[0], dest[1] + px]
 }
 
+/// Distance-field labels retain fractional placement; pixel faces use the physical grid.
+pub(super) fn label_positioned(
+    dest: [f64; 4],
+    font: &RuntimeFontCatalog,
+    options: &TextOptions,
+    gui_scale: f32,
+    px: f32,
+) -> [f32; 4] {
+    let selected = font.font_named(options.font_type.as_deref().unwrap_or("default"));
+    if !std::ptr::eq(font, selected) && selected.rendering() == FontRendering::NativeSdf {
+        let [x, y, w, h] = dest.map(|value| value as f32 * px);
+        [x, y, x + w, y + h]
+    } else {
+        super::pixel_snap::positioned(dest, gui_scale, px)
+    }
+}
+
+/// How one label paints; the options are borrowed from the draw node for the paint.
 #[derive(Clone)]
-pub struct TextPaint {
+pub struct TextPaint<'a> {
     pub color: [u8; 4],
     pub edit: Option<super::host_edit::Feedback>,
     pub shadow: TextShadow,
     pub align: TextAlign,
     pub scale: f32,
     pub localize: bool,
-    pub options: TextOptions,
+    pub options: &'a TextOptions,
 }
 
 /// A label's text after vanilla localization. Every newline starts a line, so `\n\n` leaves a
@@ -82,26 +129,79 @@ pub fn scaled_request<'a>(
     request
 }
 
-/// A vanilla label's request: hyphen chops, `line_padding` in logical px.
-fn label_request<'a>(
-    metrics: &TextMetrics,
-    text: &'a str,
-    width: f64,
-    font: &'a RuntimeFontCatalog,
-    shape: LabelShape,
-    px: f32,
-) -> TextLayoutRequest<'a> {
-    let mut request = scaled_request(metrics, text, width_64(width), font, shape.scale as f32);
-    request.wrap = TextWrap {
-        line_padding_64: (shape.line_padding * f64::from(px) * 64.0).round() as i32,
-        chop: if shape.hide_hyphen {
-            WordChop::Bare
-        } else {
-            WordChop::Hyphen
-        },
-        ..request.wrap
-    };
-    request
+impl<'a> LabelMetrics<'a> {
+    /// Builds wrapping from the resolved face, with padding in logical pixels.
+    fn request(
+        self,
+        text: &'a str,
+        width: f64,
+        shape: LabelShape,
+        px: f32,
+    ) -> TextLayoutRequest<'a> {
+        let mut request = self.metrics.request(text, width_64(width), self.font);
+        request.wrap = TextWrap {
+            effect_scale_1024: self.effect_scale_1024(),
+            line_padding_64: (shape.line_padding * f64::from(px) * 64.0).round() as i32,
+            chop: if shape.hide_hyphen {
+                WordChop::Bare
+            } else {
+                WordChop::Hyphen
+            },
+            ..request.wrap
+        };
+        request
+    }
+
+    /// Exports the effective factor for callers measuring against the frame's base scale.
+    pub(super) fn factor(self) -> f32 {
+        self.metrics.scale.get() / self.frame_scale.get()
+    }
+
+    /// Keeps bitmap-unit styling in display units after normalizing a native glyph raster.
+    pub(super) fn effect_scale_1024(self) -> u32 {
+        if self.shadow_factor == 1.0 {
+            return 0;
+        }
+        (self.metrics.scale.get() * self.shadow_factor * UiScale::SCALE_DENOMINATOR as f32).round()
+            as u32
+    }
+
+    /// Converts bitmap-unit effects to the selected face's units without resizing them.
+    fn shadow(self, shadow: TextShadow) -> TextShadow {
+        match shadow {
+            TextShadow::None => TextShadow::None,
+            TextShadow::Offset64(offset) => {
+                TextShadow::Offset64((offset as f32 * self.shadow_factor).round() as u32)
+            }
+        }
+    }
+
+    /// Adds paint alignment and capacity using layout's quantized line geometry.
+    fn painted_request(
+        self,
+        text: &'a str,
+        dest: [f32; 4],
+        options: &TextOptions,
+        align: TextAlign,
+        px: f32,
+    ) -> TextLayoutRequest<'a> {
+        let shape = LabelShape {
+            scale: f64::from(self.authored_factor),
+            line_padding: f64::from(options.line_padding),
+            hide_hyphen: options.hide_hyphen,
+        };
+        let mut request = self.request(text, f64::from(dest[2] - dest[0]), shape, px);
+        let height_64 = ((dest[3] - dest[1]).max(0.0) * 64.0).round() as u32;
+        request.wrap.max_lines = Some(request.max_lines_in_height(height_64).unwrap_or(1).max(1));
+        request.wrap.align = match align {
+            TextAlign::Left => TextLineAlign::Left,
+            TextAlign::Center => TextLineAlign::Center,
+            TextAlign::Right => TextLineAlign::Right,
+        };
+        request.wrap.align_grid_65536 =
+            super::pixel_snap::align_grid_65536(self.authored_factor, self.metrics.gui_scale, px);
+        request
+    }
 }
 
 /// Rounded up, so text laid out at its own measured width does not wrap.
@@ -135,8 +235,8 @@ impl Measure<'_, '_> {
         let width = max_width
             .filter(|width| *width > 0.0)
             .map_or(UNWRAPPED_LOGICAL, |width| width * px);
-        let metrics = label_metrics(self.metrics, self.font, font);
-        let request = label_request(&metrics, text, width, font, shape, self.px);
+        let metrics = label_metrics(self.metrics, self.font, font, shape.scale as f32);
+        let request = metrics.request(text, width, shape, self.px);
         match self.layouts.borrow_mut().layout(request) {
             Ok(layout) => layout.size_64().map(|size| f64::from(size) / 64.0 / px),
             Err(_) => [0.0, 0.0],
@@ -145,6 +245,22 @@ impl Measure<'_, '_> {
 }
 
 impl TextMeasure for Measure<'_, '_> {
+    /// Converts the renderer's physical coverage pixel into the layout's virtual units.
+    fn physical_pixel_size(&self) -> f64 {
+        1.0 / f64::from(self.px * self.metrics.dpi_scale.get())
+    }
+
+    /// Uses the same destination snapping as the canvas, then returns virtual coordinates.
+    fn paint_rect(&self, rect: json_ui::Rect) -> json_ui::Rect {
+        let [x0, y0, x1, y1] = super::pixel_snap::snapped(
+            [rect.x, rect.y, rect.w, rect.h],
+            self.metrics.gui_scale,
+            self.px,
+        )
+        .map(|edge| f64::from(edge / self.px));
+        json_ui::Rect::new(x0, y0, x1 - x0, y1 - y0)
+    }
+
     fn extent(&self, text: &str) -> [f64; 2] {
         self.wrapped(text, UNWRAPPED_LOGICAL / f64::from(self.px))
     }
@@ -193,36 +309,8 @@ pub fn painted_label_request<'a>(
     align: TextAlign,
     px: f32,
 ) -> TextLayoutRequest<'a> {
-    let shape = LabelShape {
-        scale: f64::from(scale),
-        line_padding: f64::from(options.line_padding),
-        hide_hyphen: options.hide_hyphen,
-    };
     let selected = font.font_named(options.font_type.as_deref().unwrap_or("default"));
-    let label_metrics = label_metrics(metrics, font, selected);
-    let mut request = label_request(
-        &label_metrics,
-        text,
-        f64::from(dest[2] - dest[0]),
-        selected,
-        shape,
-        px,
-    );
-    let pitch = (request.line_height_64 as f32 * request.scale.get()
-        + request.wrap.line_padding_64 as f32)
-        / 64.0;
-    let room = ((dest[3] - dest[1]) / pitch.max(1e-3) + 0.01)
-        .floor()
-        .max(1.0);
-    request.wrap.max_lines = Some(room.min(f32::from(u16::MAX)) as u16);
-    request.wrap.align = match align {
-        TextAlign::Left => TextLineAlign::Left,
-        TextAlign::Center => TextLineAlign::Center,
-        TextAlign::Right => TextLineAlign::Right,
-    };
-    request.wrap.align_grid_65536 =
-        super::pixel_snap::align_grid_65536(scale, metrics.gui_scale, px);
-    request
+    label_metrics(metrics, font, selected, scale).painted_request(text, dest, options, align, px)
 }
 
 impl Canvas<'_> {
@@ -233,7 +321,7 @@ impl Canvas<'_> {
         text: &str,
         dest: [f32; 4],
         clip: [f32; 4],
-        style: TextPaint,
+        style: TextPaint<'_>,
     ) -> Result<(), PaintError> {
         let text = if style.localize {
             localized(text, self.translate)
@@ -243,21 +331,16 @@ impl Canvas<'_> {
         if text.is_empty() {
             return Ok(());
         }
-        let request = painted_label_request(
-            self.metrics,
-            &text,
-            dest,
-            self.font,
-            style.scale,
-            &style.options,
-            style.align,
-            self.px,
-        );
+        let selected = self
+            .font
+            .font_named(style.options.font_type.as_deref().unwrap_or("default"));
+        let metrics = label_metrics(self.metrics, self.font, selected, style.scale);
+        let request = metrics.painted_request(&text, dest, style.options, style.align, self.px);
         let Ok(layout) = self.layouts.layout(request) else {
             return Ok(());
         };
         let [width, height] = layout.size_64().map(|size| size as f32 / 64.0);
-        let [left, top] = label_origin(dest, self.font, &style.options, self.px);
+        let [left, top] = label_origin(dest, self.font, style.options, self.px);
         let parent = self.group(clip)?;
         let id = self.id();
         self.nodes.push(
@@ -274,7 +357,7 @@ impl Canvas<'_> {
             .with_visual(UiVisual::Text {
                 layout,
                 color: style.color,
-                shadow: style.shadow,
+                shadow: metrics.shadow(style.shadow),
             }),
         );
         if let Some(selection) = style.edit.and_then(|edit| edit.selection) {
@@ -299,12 +382,7 @@ impl Canvas<'_> {
                     texture_page: self.solid_page,
                     uv: [0, 0, 1, 1],
                 },
-                [
-                    dest[0] + edges[0],
-                    dest[1],
-                    dest[0] + edges[1],
-                    dest[1] + height,
-                ],
+                [dest[0] + edges[0], top, dest[0] + edges[1], top + height],
             )?;
         }
         Ok(())
@@ -384,3 +462,6 @@ pub fn active_codes(text: &str) -> String {
     }
     codes
 }
+
+#[cfg(test)]
+mod tests;

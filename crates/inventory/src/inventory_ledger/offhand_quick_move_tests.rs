@@ -1,5 +1,6 @@
 //! Offhand quick moves retain server authority and whole-item identity.
 
+use assets::facts::TOTEM_IDENTIFIER;
 use std::sync::Arc;
 
 use protocol::{
@@ -192,8 +193,13 @@ fn totem_quick_move_targets_an_open_chest_before_equipment() {
     );
 }
 
-/// Replaces the same item identity with explicit session declarations.
-fn declare(ledger: &mut PlayerInventoryLedger, components: protocol::ItemComponents, custom: bool) {
+/// Replaces the same item identity with explicit session declarations: a DataDriven custom
+/// item declaring its stack size through `item_properties`, or the stock Legacy item.
+fn declare(
+    ledger: &mut PlayerInventoryLedger,
+    mut components: protocol::ItemComponents,
+    custom: bool,
+) {
     let slots: Arc<[NetworkItemStack]> = (0..protocol::PLAYER_INVENTORY_SLOTS)
         .map(|slot| ledger.displayed_stack(slot).cloned().unwrap_or_default())
         .collect();
@@ -206,8 +212,13 @@ fn declare(ledger: &mut PlayerInventoryLedger, components: protocol::ItemCompone
         entry.identifier = Arc::from("test:charm");
     }
     entry.component_based = custom;
-    entry.version = ItemRegistryVersion::DataDriven;
+    entry.version = if custom {
+        ItemRegistryVersion::DataDriven
+    } else {
+        ItemRegistryVersion::Legacy
+    };
     entry.negotiated_max_stack_size = components.max_stack_size;
+    components.item_properties_declared |= components.max_stack_size.is_some();
     entry.components = Some(Arc::new(components));
     entry.canonical_empty_component_data = false;
     ledger.apply_registry(&ItemRegistryEvent {
@@ -283,6 +294,9 @@ fn offhand_wearable_admission_precedes_an_explicit_denial() {
         },
         true,
     );
+    let facts = ledger.item_facts().get(6);
+    assert_eq!(facts.allow_off_hand, Some(true));
+    assert!(!facts.offhand_provisional);
     ledger
         .begin_quick_move(InventoryTarget::Player(20))
         .unwrap();

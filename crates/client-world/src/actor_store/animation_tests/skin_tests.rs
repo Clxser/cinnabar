@@ -96,6 +96,21 @@ fn queued_appearance_does_not_publish_new_pixels_before_model_readiness() {
 }
 
 #[test]
+fn pending_appearance_still_counts_as_a_present_player() {
+    let mut store = profile_store(1);
+    store.advance_interpolation_ticks(1);
+    assert!(store.render_players(None).is_empty());
+    assert_eq!(
+        store
+            .present_players(None)
+            .map(|actor| actor.runtime_id)
+            .collect::<Vec<_>>(),
+        [1],
+        "world mechanisms must not wait for skin preparation"
+    );
+}
+
+#[test]
 fn delayed_first_skin_uses_an_animated_pose_without_repeating_authored_effects() {
     for pending_ticks in [0, 1] {
         let mut store = player_store();

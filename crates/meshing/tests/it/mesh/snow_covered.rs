@@ -80,6 +80,55 @@ fn covered_snow_keeps_all_five_observed_plant_families_on_every_height() {
 }
 
 #[test]
+fn covered_snow_keeps_compiled_stems_in_both_storage_orders() {
+    let fixture = compiled_snow_fixture();
+    for &stem in &fixture.stems {
+        for &snow in &fixture.covered_layers {
+            for reverse in [false, true] {
+                let mut layers = vec![
+                    packed_storage(1, &[fixture.air, snow], &[([8, 8, 8], 1)]),
+                    packed_storage(1, &[fixture.air, stem], &[([8, 8, 8], 1)]),
+                ];
+                if reverse {
+                    layers.reverse();
+                }
+                let chunk = sub_chunk(layers);
+                for mode in [NetworkIdMode::Sequential, NetworkIdMode::Hashed] {
+                    let classifier = BlockClassifier::new(fixture.air);
+                    let resolved =
+                        ContributorResolver::new(classifier, &fixture.assets, mode, &chunk)
+                            .resolve([8, 8, 8]);
+                    assert_eq!(resolved.primary_network_value(), Some(snow));
+                    assert_eq!(resolved.diagnostic_network_value(), None);
+                    let mesh = mesh_sub_chunk(
+                        &classifier,
+                        &fixture.assets,
+                        mode,
+                        &Neighbourhood::empty(),
+                        &chunk,
+                    );
+                    assert!(mesh.diagnostic_geometry().entries().is_empty());
+                    let template = fixture.assets.resolve(mode, stem).model_template().unwrap();
+                    let stem_ref = mesh
+                        .model_refs()
+                        .iter()
+                        .position(|reference| reference.words()[1] == template)
+                        .expect("covered stem retains its geometry");
+                    assert_eq!(
+                        mesh.model_draw_refs()
+                            .iter()
+                            .filter(|reference| { reference.words()[0] == stem_ref as u32 })
+                            .count(),
+                        fixture.assets.model_templates()[template as usize].quad_count as usize,
+                        "all stem quads survive: stem={stem} snow={snow} reverse={reverse} mode={mode:?}",
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn uniform_full_height_snow_still_visits_the_covered_plant_models() {
     let fixture = compiled_snow_fixture();
     for &snow in [

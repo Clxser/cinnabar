@@ -18,7 +18,9 @@ mod collision_snapshot;
 mod helpers;
 mod level_chunk;
 use self::helpers::*;
-pub use self::level_chunk::{DecodedLevelChunk, DimensionSlots, decode_column_tail};
+pub use self::level_chunk::{
+    DecodedLevelChunk, DimensionSlots, InlineDecodeWork, decode_column_tail,
+};
 
 /// Monotonic identity for the collision-relevant contents of one loaded column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -209,6 +211,17 @@ impl ChunkStore {
     #[must_use]
     pub fn sub_chunk(&self, key: SubChunkKey) -> Option<Arc<SubChunk>> {
         self.chunk(key.chunk())?.sub_chunk(key.y)
+    }
+
+    /// Borrows a resident section without cloning its `Arc`, for per-block readers that hold
+    /// the store for the whole query.
+    #[must_use]
+    pub fn sub_chunk_ref(&self, key: SubChunkKey) -> Option<&SubChunk> {
+        self.chunks
+            .get(&key.chunk())?
+            .sub_chunks
+            .get(&key.y)
+            .map(Arc::as_ref)
     }
 
     /// Returns a palette-native biome storage snapshot for a mesh worker.
@@ -416,8 +429,8 @@ impl ChunkStore {
 
     /// Atomically applies an `UpdateSubChunkBlocks`-style batch.
     ///
-    /// Every entry is validated before the stored `Arc` is replaced. Packed
-    /// words are repacked directly; no flat 4,096-block array is created.
+    /// Every entry is validated before the stored `Arc` is replaced. Storage
+    /// stays packed; no flat 4,096-block array is created.
     pub fn update_sub_chunk_blocks(
         &mut self,
         key: SubChunkKey,
@@ -431,7 +444,8 @@ impl ChunkStore {
     }
 
     /// Builds one packed replacement without mutating a store. Duplicate
-    /// coordinates use their final value and each affected layer repacks once.
+    /// coordinates use their final value. Single-cell edits defer canonical
+    /// repacking; larger batches rebuild each affected layer once.
     pub fn prepare_sub_chunk_blocks(
         key: SubChunkKey,
         previous: Option<&SubChunk>,
@@ -454,10 +468,11 @@ impl ChunkStore {
         let mut replacement = previous
             .cloned()
             .unwrap_or_else(|| SubChunk::for_block_updates(key.y));
-        replacement.apply_block_updates(updates, air_runtime_id);
+        let changed = replacement.apply_block_updates(updates, air_runtime_id);
         let replacement = (!replacement.has_no_storages()).then_some(replacement);
+        // Layer mutation proves exact inequality without forcing lazy packed words through Eq.
         let changed = match (previous, replacement.as_ref()) {
-            (Some(previous), Some(replacement)) => previous != replacement,
+            (Some(_), Some(_)) => changed,
             (None, None) => false,
             (Some(_), None) | (None, Some(_)) => true,
         };
@@ -768,12 +783,18 @@ impl ChunkStore {
             block_entities,
             block_bytes_consumed,
             bytes_consumed,
+            work: _,
         } = decoded;
         for (&y, replacement) in &mut sub_chunks {
-            if let Some(previous) = old
-                .and_then(|chunk| chunk.sub_chunks.get(&y))
-                .filter(|previous| previous.as_ref() == replacement.as_ref())
+            if let Some(previous) =
+                old.and_then(|chunk| chunk.sub_chunks.get(&y))
+                    .filter(|previous| {
+                        Arc::ptr_eq(previous, replacement) || previous.blocks_match(replacement)
+                    })
             {
+                if !Arc::ptr_eq(previous, replacement) {
+                    previous.retain_inline_identity_from(replacement);
+                }
                 *replacement = Arc::clone(previous);
             }
         }

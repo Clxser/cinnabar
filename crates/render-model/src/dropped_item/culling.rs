@@ -4,24 +4,16 @@ use std::collections::BTreeMap;
 
 impl DroppedItemModel {
     /// Whether this model has a closed, opaque surface for alpha-tested drawing.
-    /// Open templates, two-sided planes, partial alpha and padded UVs retain two-sided rendering.
+    /// Open templates, two-sided planes, legacy sprite cutouts, partial alpha and padded UVs
+    /// retain two-sided rendering.
     #[must_use]
     pub fn can_cull_back_faces(&self) -> bool {
         match self {
             Self::Vacant => false,
-            Self::NativeSprite(sprite) => binary_alpha(sprite),
-            Self::Sprite(sprite) => {
-                // The legacy rear artwork is mirrored. Its mask must enclose the same solid.
-                binary_alpha(sprite)
-                    && (0..sprite.height as usize).all(|row| {
-                        (0..sprite.width as usize).all(|column| {
-                            let offset = row * sprite.width as usize;
-                            sprite.rgba8[(offset + column) * 4 + 3]
-                                == sprite.rgba8
-                                    [(offset + sprite.width as usize - 1 - column) * 4 + 3]
-                        })
-                    })
-            }
+            Self::NativeSprite(sprite) => sprite_alpha(sprite, |alpha| matches!(alpha, 0 | 255)),
+            // Mirrored rear artwork can remain visible at rasterized cutout boundaries even
+            // when its binary mask is symmetric. Keep those rear faces available.
+            Self::Sprite(sprite) => sprite_alpha(sprite, |alpha| alpha == 255),
             Self::Cube(cube) => {
                 cube.tints.iter().all(|color| color >> 24 == 255)
                     && cube.faces.iter().all(|pixels| opaque(pixels))
@@ -37,8 +29,8 @@ impl DroppedItemModel {
     }
 }
 
-/// Checks a sprite's dimensions and rejects alpha that can expose a rear surface through coverage.
-fn binary_alpha(sprite: &DroppedItemSprite) -> bool {
+/// Validates a sprite's dimensions and requires each alpha to satisfy its model's culling policy.
+fn sprite_alpha(sprite: &DroppedItemSprite, allowed: impl Fn(u8) -> bool) -> bool {
     sprite.width != 0
         && sprite.height != 0
         && Some(sprite.rgba8.len())
@@ -50,7 +42,7 @@ fn binary_alpha(sprite: &DroppedItemSprite) -> bool {
             .as_chunks::<4>()
             .0
             .iter()
-            .all(|pixel| matches!(pixel[3], 0 | 255))
+            .all(|pixel| allowed(pixel[3]))
 }
 
 /// Requires opaque pixels so cutout or partial coverage cannot reveal removed faces.

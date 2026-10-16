@@ -10,6 +10,7 @@ use super::{
 };
 use crate::chunk::transparent::face_metric::TransparentFaceMetric;
 use crate::chunk::*;
+use crate::queue_writes::ProfiledQueue as _;
 use render_scene::{
     ChunkBiomeTints, ChunkRenderInstance, ChunkTextureAssetIdentity, ChunkTextureAssets,
     RuntimeStageProfiler, TransparentSortMetrics, TransparentWitnessEvidence,
@@ -117,7 +118,7 @@ fn write_transparent_refs(
         bytes = std::mem::size_of_val(refs),
     )
     .entered();
-    render_queue.write_buffer(
+    render_queue.profiled_write_buffer(
         &arena.transparent_ref_buffer,
         transparent_ref_offset(buffer_slot, arena.transparent_slot_refs, first_ref),
         bytemuck::cast_slice(refs),
@@ -558,7 +559,7 @@ pub(in crate::chunk) fn prepare_transparent_sorts(
             refs = identity.1
         )
         .entered();
-        render_queue.write_buffer(
+        render_queue.profiled_write_buffer(
             &arena.transparent_indirect_buffer,
             0,
             bytemuck::bytes_of(&command),

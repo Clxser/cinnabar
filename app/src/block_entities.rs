@@ -4,6 +4,7 @@
 //! The renderer carrier is optional; without it nothing is submitted and the world still
 //! renders from block states alone.
 
+mod books;
 mod containers;
 mod cracks;
 mod describe;
@@ -14,3 +15,6 @@ mod system;
 pub(crate) use system::{
     BlockEntityFont, BlockEntityRuntime, block_entity_scene, configure, load_block_entity_carrier,
 };
+
+mod spawner;
+pub(crate) use spawner::{SpawnerDisplayPublisher, prepare_spawner_actors};

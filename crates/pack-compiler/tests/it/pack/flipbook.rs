@@ -1,4 +1,5 @@
-use pack_compiler::{MAX_FLIPBOOK_FRAMES, MAX_FLIPBOOKS, read_pack};
+use assets::texture::flipbook::MAX_FLIPBOOK_FRAMES;
+use pack_compile_input::{MAX_FLIPBOOKS, read_pack};
 use {super::support::*, assets::AssetError};
 
 #[test]
@@ -32,6 +33,7 @@ fn flipbook_preserves_complete_metadata_defaults_and_order() {
     assert_eq!(&*water.frames, &[7, 2, 9]);
     assert_eq!(water.atlas_index, 4);
     assert_eq!(water.atlas_tile_variant, 6);
+    assert!(!water.all_variants);
     assert_eq!(water.replicate, 2);
     assert!(water.blend_frames);
 
@@ -42,6 +44,7 @@ fn flipbook_preserves_complete_metadata_defaults_and_order() {
     assert!(lava.frames.is_empty());
     assert_eq!(lava.atlas_index, 0);
     assert_eq!(lava.atlas_tile_variant, 0);
+    assert!(lava.all_variants);
     assert_eq!(lava.replicate, 1);
     assert!(lava.blend_frames);
 }

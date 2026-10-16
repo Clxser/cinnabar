@@ -217,7 +217,7 @@ fn list_and_record_values_are_checked_positionally_and_totally() {
 
 #[test]
 fn containers_nest_at_most_the_shared_depth() {
-    let mut field = Field::Bool;
+    let mut field = Field::Bool {};
     for level in 1..=policy::MAX_FIELD_DEPTH + 1 {
         field = if level % 2 == 0 {
             Field::Record {
@@ -258,7 +258,7 @@ fn containers_nest_at_most_the_shared_depth() {
         schema: 1,
         direction: Direction::ToClient,
         fields: vec![Field::Record {
-            fields: vec![Field::Bool; policy::MAX_CHANNEL_FIELDS + 1],
+            fields: vec![Field::Bool {}; policy::MAX_CHANNEL_FIELDS + 1],
         }],
     };
     assert!(!wide.declared());
@@ -522,5 +522,23 @@ fn old_epoch_messages_are_dropped_and_counted_while_sequences_continue() {
         assert_eq!(receiver.ingress.pop(u64::MAX, 8).unwrap().sequence, 2);
         assert!(receiver.ingress.pop(u64::MAX, 8).is_none());
         assert_eq!((receiver.ingress.stale, receiver.ingress.skipped), (2, 0));
+    }
+}
+
+#[test]
+fn boolean_fields_reject_unknown_members_at_every_depth() {
+    let field: Field = serde_json::from_str(r#"{"type":"bool"}"#).unwrap();
+    assert!(matches!(field, Field::Bool {}));
+    assert_eq!(serde_json::to_string(&field).unwrap(), r#"{"type":"bool"}"#);
+    for document in [
+        r#"{"type":"bool","extra":true}"#,
+        r#"{"type":"bool","type":"bool"}"#,
+        r#"{"type":"list","max_items":1,"item":{"type":"bool","extra":true}}"#,
+        r#"{"type":"record","fields":[{"type":"bool","extra":true}]}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<Field>(document).is_err(),
+            "{document}"
+        );
     }
 }

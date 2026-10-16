@@ -33,6 +33,15 @@ impl WorldAuthority {
     pub const fn current_dimension(&self) -> i32 {
         self.current_dimension
     }
+    /// Reads the level's default spawn, which compasses point at.
+    pub const fn world_spawn(&self) -> [i32; 3] {
+        self.world_spawn
+    }
+    /// The bed the local player sleeps in and its sleep rotation in degrees, while the server
+    /// says it sleeps. An unloaded bed reads 0 degrees, as the native rotation does.
+    pub fn local_sleeping_bed(&self) -> Option<([i32; 3], f32)> {
+        self.actor(self.local_player_runtime_id)?.sleeping_bed()
+    }
     /// Reads the committed form dimension epoch.
     pub const fn form_dimension_epoch(&self) -> u64 {
         self.form_dimension_epoch
@@ -97,6 +106,10 @@ impl WorldAuthority {
         self.block_names.clear_custom();
     }
     /// Retains the single wire-to-internal sequential palette mapping.
+    #[expect(
+        clippy::print_stderr,
+        reason = "SESSION_BLOCK_PALETTE is a stderr marker line read during live session runs"
+    )]
     pub fn set_sequential_id_remap(&mut self, remap: assets::SequentialIdRemap) {
         eprintln!(
             "SESSION_BLOCK_PALETTE session={} mode={:?} air={:#010x} wire_air={:#010x} visual_count={} block_registry_sha256={} custom_internal_ids={:?} sequential_id_remapped={}",

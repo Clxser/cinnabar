@@ -270,3 +270,49 @@ fn semantic_world_rejections_remain_skippable_before_the_next_valid_packet() {
         Ok(Some(WorldEvent::SetTime(crate::SetTimeEvent { time: 7 })))
     ));
 }
+
+#[test]
+fn world_spawn_positions_decode_and_player_respawn_points_are_dropped() {
+    use bedrock_protocol_1_26_51::{
+        enums::SpawnPositionType,
+        packets::SetSpawnPosition,
+        types::{BlockPos, DimensionType},
+    };
+    /// Decodes a spawn packet with a distinct trailing position through world raw ingress.
+    fn decode(
+        kind: SpawnPositionType,
+        trailing_position: [i32; 3],
+    ) -> Result<Option<WorldEvent>, ProtocolError> {
+        let position = |x, y, z| BlockPos {
+            x: wire::ZigZag32(x),
+            y: wire::ZigZag32(y),
+            z: wire::ZigZag32(z),
+        };
+        let packet: Packet = crate::Packet::new(SetSpawnPosition {
+            spawn_position_type: kind,
+            block_position: position(12, 64, -30),
+            dimension_type: DimensionType(0),
+            spawn_block_pos: position(
+                trailing_position[0],
+                trailing_position[1],
+                trailing_position[2],
+            ),
+        });
+        let mut batch = crate::encode(&packet).expect("encode valid witness");
+        batch.advance(1);
+        let raw = decode_packet_raw(&mut batch).expect("raw valid witness");
+        decode_world_raw_with(raw, 0, super::decode_test_raw)
+    }
+    for trailing_position in [[1, 2, 3], [i32::MIN; 3]] {
+        assert!(matches!(
+            decode(SpawnPositionType::Worldspawn, trailing_position),
+            Ok(Some(WorldEvent::WorldSpawn(crate::WorldSpawnEvent {
+                position: [12, 64, -30]
+            })))
+        ));
+        assert!(matches!(
+            decode(SpawnPositionType::Playerrespawn, trailing_position),
+            Ok(None)
+        ));
+    }
+}

@@ -1,6 +1,38 @@
 # Name-tag rendering rules
 
-## Vanilla rules
+## Current actor labels
+
+Actor nametags use Java Edition rendering as an accepted deviation. All labels share
+camera-right and camera-up, including the front-view pitch sign, with a fixed
+`1.6 / 60` blocks per font pixel. The head anchor scales the published height plus
+`0.5` blocks of clearance by the actor's Scale metadata;
+sneaking players lower it by `0.125` blocks and move the quad `0.25` blocks along
+camera-down; sleeping players lower their anchor by `1.5` blocks.
+Each line's black plate has alpha `0.25`, one pixel of side padding,
+and vertical bounds `-1 .. 8`. The existing ten-pixel multiline spacing and
+`0.125` world lift per extra line stay unchanged.
+
+Ordinary labels draw a plate and dim text through walls, then full-opacity text
+with depth testing. Each complete label is drawn back to front by camera depth
+of the final lifted plane, including cosmetic scale, before starting the next label.
+Only lines that fit the scene and atlas contribute to the lift. Viewer distance still
+controls visibility and score range. Sneaking labels draw only a depth-tested plate and dim text.
+Dim text alpha is `32 / 255`; only tested text writes depth. Labels have no depth
+bias, and sampled atlas coverage must exceed `0.1` before text alpha and cosmetic
+opacity are applied. Distance from the viewer's feet
+must be below 64 blocks, or 32 while sneaking; server limits can shorten this.
+Invisible actors, mounts carrying passengers and server hide flags suppress labels.
+The local label stays hidden by default; the existing optional own-tag style is
+limited to third person. The open font, server text and formatting, multiline
+handling, debug text and explicit debug quaternions retain their existing paths.
+Rendered-frame acceptance remains pending.
+
+## Earlier Bedrock implementation
+
+The remaining sections describe the earlier renderer and its incomplete acceptance
+work. Its facing and material choices are superseded for actor labels by the rules above.
+
+### Vanilla rules
 
 | Rule | Behaviour |
 | --- | --- |
@@ -14,17 +46,19 @@ to the HUD's minimum/maximum, a one-line plate behind multiline text, a separate
 score renderer, and collision-ray whole-tag occlusion. The merged upstream path retains the
 shared UI font-layout cache and glyph-line atlas, publishing compact font-pixel records to
 the environmental-text GPU renderer. The shader constructs homogeneous world quads for
-perspective-correct glyphs and near-plane clipping, preserving the verified native cubic
-billboard, base anchor and multiline lift rather than the upstream exact-angle/text-shift
-approximation. World tags render before first-person hands and HUD. Plates do not write depth;
+perspective-correct glyphs and near-plane clipping. Actor nametags deliberately use exact
+yaw and pitch toward the camera eye instead of vanilla's cubic angle approximation.
+Facing uses the base anchor before multiline lift, and a directly vertical eye direction
+uses zero yaw. Primitive-shape debug text retains its cubic facing.
+World tags render before first-person hands and HUD. Plates do not write depth;
 glyphs do. Sneak tags additionally test world depth, while ordinary tags use Always.
 
-## Verified geometry and constants
+### Verified geometry and constants
 
 | Rule | Behaviour |
 | --- | --- |
 | Ordinary black background | RGBA `(0, 0, 0, 0.25)` |
-| Head clearance above adjusted AABB height | `0.7` blocks |
+| Head clearance above the AABB height, both scaled | `0.7` blocks |
 | Font world scale | `1.6 * (1/60)` blocks/design pixel |
 | Line pitch | `10` design pixels |
 | Background top and horizontal padding | `-1`, `1` design pixels |
@@ -33,6 +67,18 @@ glyphs do. Sneak tags additionally test world depth, while ordinary tags use Alw
 | Billboard zero-horizontal fallback | `0.0001` |
 | Cubic acos coefficients | `0.87266463`, `-0.69813168` |
 | Below-name score distance squared | `<100` blocks squared |
+
+The tag anchor sits at the feet plus the published box height (data 54) and the clearance,
+both times the Scale data (38), so the whole offset follows the actor's size. A published zero
+height is a size, not a missing value. The client applies Scale to the published box as it does
+for collision: PocketMine-MP's `Entity::syncNetworkData` publishes its box divided by its scale,
+and GeyserMC's `ArmorStandEntity#getBoundingBoxHeight` leaves the published height unscaled
+because "the SCALE entity data handles that for us". The clearance scaling follows the user's
+observation of the vanilla client, where a falling-block text host at near-zero scale shows its
+tag at its base; no client trace fixes it yet. A falling block's network offset likewise follows
+its scaled box (`0.5` for the vanilla `0.98` box), consistent with Dragonfly's falling-block
+text entity, which sends its authored position with no offset. Without a published height,
+`1.8` (`1.5` sneaking) stands in provisionally.
 
 For each nonempty LF-separated line the native font width is halved with integer truncation.
 Every line starts at its own negative half-width. Each line gets its own plate,
@@ -63,7 +109,7 @@ Render-distance metadata is key 140 on this target (the old tracking table liste
 version's key). An empty synced player name hides its tag; a missing tag falls back to its spawn
 username, without changing its scoreboard name authority.
 
-## Material and shader witnesses
+### Material and shader witnesses
 
 The installed vanilla app defines these in `data/resource_packs/vanilla/materials/ui3D.material`,
 with shaders in `data/renderer/materials/Nametag.material.bin` and `UIText.material.bin`.
@@ -95,7 +141,7 @@ This corrects the faint linear-blended background in the inspection build. The
 near-version shaders corroborate encoded RGB output; exact current final text
 attachment dispatch, HDR and MSAA remain incomplete. A fresh live check is pending.
 
-## Acceptance and incomplete branches
+### Acceptance and incomplete branches
 
 Focused tests cover world size/rotation, multiline background/centering/lift, sneaking alpha,
 metadata overrides, score distance, homogeneous projection, safe-area/DPI independence,

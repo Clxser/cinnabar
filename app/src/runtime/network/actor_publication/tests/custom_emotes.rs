@@ -16,7 +16,8 @@ use {
     client_presentation::actor_publication::{ActorFramePartialTick, HandRigBuilder},
 };
 
-pub(super) fn fixture() -> World {
+/// Supplies the detached production actor schedule with its required resources.
+pub(crate) fn fixture() -> World {
     fixture_with_skin(false)
 }
 
@@ -32,7 +33,7 @@ fn fixture_with_skin(with_skin: bool) -> World {
         {"name":"leftLeg","parent":"root","pivot":[2,12,0],"cubes":[{"origin":[0,0,-2],"size":[4,12,4],"uv":[16,48]}]},
         {"name":"rightLeg","parent":"root","pivot":[-2,12,0],"cubes":[{"origin":[-4,0,-2],"size":[4,12,4],"uv":[0,16]}]}]}]}"#;
     let controller = br#"{"format_version":"1.8.0","render_controllers":{"controller.render.test_player":{"geometry":"Geometry.default","materials":[{"*":"Material.default"}],"textures":["Texture.default"]}}}"#;
-    let compiled = pack_compiler::compile_entity_pack(vec![
+    let compiled = pack_entity_compiler::compile_entity_pack(vec![
         ("entity/player.json".into(), entity.to_vec()),
         ("models/entity/player.geo.json".into(), geometry.to_vec()),
         ("render_controllers/player.json".into(), controller.to_vec()),
@@ -138,7 +139,21 @@ fn fixture_with_skin(with_skin: bool) -> World {
     world.insert_resource(client_state::PlayerRuntime(player_state::PlayerState::new(
         1,
     )));
+    let bytes = assets::pinned_block_registry_bytes();
+    let version = assets::active_content_registry_protocol();
+    let records = assets::read_registry_for_protocol(bytes, version).unwrap();
+    world.insert_resource(
+        client_interaction::movement::PhysicsCollisionRegistries::from_assets(
+            bytes,
+            &records,
+            include_bytes!("../../../../../../crates/assets/data/block-physics-v2193.bin"),
+            version,
+        )
+        .unwrap(),
+    );
+    world.init_resource::<crate::block_entities::SpawnerDisplayPublisher>();
     world.insert_resource(client);
+    world.init_resource::<crate::runtime::shutdown::FatalError>();
     world.insert_resource(Time::<Real>::default());
     world.insert_resource(
         render_scene::ActorRenderScene::with_runtime_entity_assets(&entities).unwrap(),
@@ -552,3 +567,11 @@ fn production_early_ui_readiness_matches_the_current_hand_source() {
 mod local_torso;
 #[path = "custom_emotes/pick_positions.rs"]
 mod pick_positions;
+
+#[test]
+fn regression_detached_actor_fixture_runs_display_preparation() {
+    let mut world = fixture();
+    world
+        .run_system_cached(crate::block_entities::prepare_spawner_actors)
+        .unwrap();
+}

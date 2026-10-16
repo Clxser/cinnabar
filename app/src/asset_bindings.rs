@@ -17,7 +17,7 @@ pub(crate) fn actor_artwork(
         render_model::install_default_player_skin(skin);
     }
     let artwork = render_model::ActorArtworkPages::new(catalog);
-    diagnostics::log_stderr!(
+    bevy::log::info!(
         "loaded neutral unlit actor artwork: bindings={}, textures={}, page budget rejections={}, rest pose fallbacks={} (pose_expression_unverified); lighting/tint/overlay parity incomplete",
         catalog.bindings().len(),
         catalog.textures().len(),
@@ -53,9 +53,15 @@ fn default_player_skin(
 
 /// Transfers decoded world sidecars to the pack consumers that own their runtime state.
 pub(crate) fn install_world_sidecars(assets: &mut LoadedAssets) {
+    crate::runtime::network::resource_packs::set_base_world_assets(std::sync::Arc::clone(
+        &assets.runtime,
+    ));
     if let Some(keys) = assets.material_keys.take() {
         pack_runtime::pack_textures::set_base_terrain_catalog(keys.aliases());
-        crate::runtime::network::set_base_material_keys(keys);
+        crate::runtime::network::set_base_material_keys(
+            keys,
+            std::sync::Arc::clone(&assets.runtime),
+        );
     }
     if let Some(refs) = assets.vanilla_entity_refs.take() {
         pack_runtime::entity_pack::set_vanilla_refs(refs);

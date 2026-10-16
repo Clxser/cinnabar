@@ -153,6 +153,22 @@ impl<'a> Canvas<'a> {
         value * self.rem
     }
 
+    /// Scales geometry and text together for one group, restoring both after drawing.
+    pub(super) fn with_scale<T>(
+        &mut self,
+        scale: f32,
+        draw: impl FnOnce(&mut Self) -> Result<T, PaintError>,
+    ) -> Result<T, PaintError> {
+        let text_scale =
+            UiScale::new_display(self.metrics.scale.get() * scale).map_err(PaintError::Geometry)?;
+        let previous = (self.rem, self.metrics.scale);
+        self.rem *= scale;
+        self.metrics.scale = text_scale;
+        let result = draw(self);
+        (self.rem, self.metrics.scale) = previous;
+        result
+    }
+
     pub(super) fn role(&self, role: Role) -> Role {
         self.appearance.role(role)
     }
@@ -653,6 +669,12 @@ impl<'a> Canvas<'a> {
     }
 
     /// A caller-supplied image (artwork, gamerpic) stretched over `b`.
+    /// Draws `icon` filling `b`, cropped around its centre to `b`'s aspect, as OreUI's
+    /// background-size cover does.
+    pub(super) fn icon_ref_cover(&mut self, icon: IconRef, b: Bounds) -> Result<(), PaintError> {
+        self.icon_ref(cover(icon, b), b)
+    }
+
     pub(super) fn icon_ref(&mut self, icon: IconRef, b: Bounds) -> Result<(), PaintError> {
         self.push(
             b,
@@ -784,4 +806,25 @@ impl<'a> Canvas<'a> {
         });
         Ok(())
     }
+}
+
+/// Crops image UVs around their center, matching OreUI `lm` background-size cover.
+fn cover(mut icon: IconRef, bounds: Bounds) -> IconRef {
+    let [left, top, right, bottom] = icon.uv;
+    let width = f32::from(right - left);
+    let height = f32::from(bottom - top);
+    let aspect = (bounds[2] - bounds[0]) / (bounds[3] - bounds[1]);
+    if width <= 0.0 || height <= 0.0 || !aspect.is_finite() || aspect <= 0.0 {
+        return icon;
+    }
+    if width / height > aspect {
+        let crop = ((width - height * aspect) * 0.5).round() as u16;
+        icon.uv[0] += crop;
+        icon.uv[2] -= crop;
+    } else {
+        let crop = ((height - width / aspect) * 0.5).round() as u16;
+        icon.uv[1] += crop;
+        icon.uv[3] -= crop;
+    }
+    icon
 }

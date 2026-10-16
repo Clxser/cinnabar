@@ -4,10 +4,12 @@ use simulation_clock::PhysicsTick;
 use simulation_clock::identity::SessionGeneration;
 
 use bevy::prelude::{
-    Entity, Quat, Res, ResMut, Resource, Single, SystemSet, Transform, Vec3, With,
+    Entity, EulerRot, Quat, Res, ResMut, Resource, Single, SystemSet, Transform, Vec3, With,
 };
 use semantic_input::PerspectiveMode;
 use sim::WorldCollisionIdentity;
+
+mod sleeping;
 
 use crate::camera::{
     CameraSettingsAuthority, FlyCamera, collision_safe_perspective_pose, collision_safe_rig_pose,
@@ -194,17 +196,51 @@ impl LocalPlayerFrameCarrier {
     }
 }
 
-/// Authoritative local eye position and view orientation.
-///
-/// Physics owns translation. Semantic look input owns rotation. Perspective
-/// and camera collision never mutate this pose.
+/// Retains the physics position, input look, and one shared sleeping presentation pose.
+/// Presentation getters can read the bed pose without changing physics or gameplay aim.
 #[derive(Resource, Debug, Clone, Copy, PartialEq)]
 pub struct LocalViewPose {
     eye_translation: Vec3,
     feet_translation: Vec3,
-    rotation: Quat,
-    freelook_rotation: Option<Quat>,
+    rotation: ViewRotation,
+    freelook_rotation: Option<ViewRotation>,
     camera_reanchor_epoch: u64,
+    sleeping: Option<sleeping::SleepingPose>,
+    sleeping_camera: bool,
+    sleeping_changed: bool,
+}
+
+/// Keeps complete yaw turns that a quaternion alone cannot represent.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ViewRotation {
+    rotation: Quat,
+    yaw: f32,
+}
+
+impl ViewRotation {
+    /// Reads continuous yaw together with the orientation's bounded pitch and roll.
+    fn angles(self) -> (f32, f32, f32) {
+        let (_, pitch, roll) = self.rotation.to_euler(EulerRot::YXZ);
+        (self.yaw, pitch, roll)
+    }
+
+    /// Stores a valid orientation, using an explicit yaw or its nearest equivalent heading.
+    fn set(&mut self, rotation: Quat, yaw: Option<f32>) {
+        let norm = rotation.length_squared();
+        if !rotation.is_finite() || !norm.is_finite() || norm <= f32::EPSILON {
+            return;
+        }
+        if yaw.is_some_and(|yaw| !yaw.is_finite()) {
+            return;
+        }
+        self.rotation = rotation.normalize();
+        self.yaw = yaw.unwrap_or_else(|| {
+            let (yaw, _, _) = self.rotation.to_euler(EulerRot::YXZ);
+            let delta = (yaw - self.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+                - std::f32::consts::PI;
+            self.yaw + delta
+        });
+    }
 }
 
 impl Default for LocalViewPose {
@@ -212,9 +248,15 @@ impl Default for LocalViewPose {
         Self {
             eye_translation: Vec3::new(0.0, 80.0, 0.0),
             feet_translation: Vec3::new(0.0, 80.0 - protocol::PLAYER_NETWORK_OFFSET, 0.0),
-            rotation: Quat::IDENTITY,
+            rotation: ViewRotation {
+                rotation: Quat::IDENTITY,
+                yaw: 0.0,
+            },
             freelook_rotation: None,
             camera_reanchor_epoch: 0,
+            sleeping: None,
+            sleeping_camera: false,
+            sleeping_changed: false,
         }
     }
 }
@@ -230,41 +272,76 @@ impl LocalViewPose {
 
     #[must_use]
     pub const fn eye_translation(self) -> Vec3 {
-        self.eye_translation
+        match self.sleeping {
+            Some(pose) => pose.eye,
+            None => self.eye_translation,
+        }
     }
 
     #[must_use]
     pub const fn feet_translation(self) -> Vec3 {
-        self.feet_translation
+        match self.sleeping {
+            Some(pose) => pose.feet,
+            None => self.feet_translation,
+        }
     }
 
     #[must_use]
     pub const fn rotation(self) -> Quat {
-        self.rotation
+        self.rotation.rotation
     }
 
-    /// Presentation can orbit independently while gameplay retains its facing.
+    /// The input heading, including freelook, before any sleeping presentation override.
+    pub fn look_rotation(self) -> Quat {
+        self.freelook_rotation.unwrap_or(self.rotation).rotation
+    }
+
+    /// Presentation pitch and continuous yaw in Minecraft degrees.
+    pub fn camera_look(self) -> [f32; 2] {
+        let (yaw, pitch, _) = if self.sleeping_camera
+            && let Some(pose) = self.sleeping
+        {
+            pose.rotation.to_euler(EulerRot::YXZ)
+        } else {
+            self.freelook_rotation.unwrap_or(self.rotation).angles()
+        };
+        [-pitch.to_degrees(), -yaw.to_degrees()]
+    }
+
+    /// The shared presentation heading; third-person orbit and gameplay keep their input heading.
     pub fn camera_rotation(self) -> Quat {
-        self.freelook_rotation.unwrap_or(self.rotation)
+        if self.sleeping_camera
+            && let Some(pose) = self.sleeping
+        {
+            return pose.rotation;
+        }
+        self.look_rotation()
     }
 
+    /// Restores the actor heading on release with the winding nearest the outgoing camera.
     pub fn set_freelook(&mut self, held: bool) {
         if held {
             self.freelook_rotation.get_or_insert(self.rotation);
-        } else {
-            self.freelook_rotation = None;
+        } else if let Some(freelook) = self.freelook_rotation.take() {
+            let turns = ((freelook.yaw - self.rotation.yaw) / std::f32::consts::TAU).round();
+            self.rotation.yaw += turns * std::f32::consts::TAU;
         }
     }
 
     pub fn set_look_rotation(&mut self, rotation: Quat) {
-        let norm = rotation.length_squared();
-        if rotation.is_finite() && norm.is_finite() && norm > f32::EPSILON {
-            if let Some(camera) = self.freelook_rotation.as_mut() {
-                *camera = rotation.normalize();
-            } else {
-                self.set_rotation(rotation);
-            }
-        }
+        self.freelook_rotation
+            .as_mut()
+            .unwrap_or(&mut self.rotation)
+            .set(rotation, None);
+    }
+
+    /// Stores the input orientation and its full yaw delta in radians for hand inertia.
+    pub fn turn_look_rotation(&mut self, rotation: Quat, yaw_delta: f32) {
+        let heading = self
+            .freelook_rotation
+            .as_mut()
+            .unwrap_or(&mut self.rotation);
+        heading.set(rotation, Some(heading.yaw + yaw_delta));
     }
 
     /// Invalidates camera presentation history without changing gameplay or network state.
@@ -292,10 +369,7 @@ impl LocalViewPose {
     }
 
     pub fn set_rotation(&mut self, rotation: Quat) {
-        let norm = rotation.length_squared();
-        if rotation.is_finite() && norm.is_finite() && norm > f32::EPSILON {
-            self.rotation = rotation.normalize();
-        }
+        self.rotation.set(rotation, None);
     }
 }
 
@@ -626,6 +700,7 @@ pub fn reset_local_player_session(
     settings.reset_perspective();
     view.reanchor_camera();
     view.set_freelook(false);
+    view.set_sleeping_presentation(None, false);
     let eye = Vec3::from_array(eye_position);
     view.set_subject_position(eye, eye - Vec3::Y * protocol::PLAYER_NETWORK_OFFSET);
     avatar.begin_session(session_generation, runtime_id);
@@ -643,6 +718,39 @@ pub struct CameraPublicationContext<'a, 'w> {
     pub clock: crate::observations::SessionObservation,
     pub physics: &'a dyn crate::observations::PhysicsObservation,
     pub receipt: ResMut<'w, crate::local_player_camera_receipt::CameraPublicationAttempt>,
+}
+
+/// Height of a bed's top above its block, where a sleeper lies.
+pub const BED_TOP_HEIGHT: f32 = 0.5625;
+
+/// The eye and feet a player sleeping in `bed` presents: lying on the bed top at the block's
+/// centre, with the eye at the sleeping actor-state offset.
+#[must_use]
+pub fn sleeping_subject_position(bed: [i32; 3]) -> (Vec3, Vec3) {
+    let feet = Vec3::new(
+        bed[0] as f32 + 0.5,
+        bed[1] as f32 + BED_TOP_HEIGHT,
+        bed[2] as f32 + 0.5,
+    );
+    (
+        feet + Vec3::Y * client_world::SLEEPING_PLAYER_NETWORK_OFFSET,
+        feet,
+    )
+}
+
+/// The view a player sleeping with `sleep_rotation` degrees looks along: from the pillow
+/// toward the foot of the bed, level, matching the sleeping animation's `270 - rotation` turn.
+///
+/// Provisional: the native first-person sleeping view is unmeasured.
+#[must_use]
+pub fn sleeping_view_rotation(sleep_rotation: f32) -> Quat {
+    let yaw = 270.0 - sleep_rotation;
+    Quat::from_euler(
+        bevy::math::EulerRot::YXZ,
+        (180.0 - yaw).to_radians(),
+        0.0,
+        0.0,
+    )
 }
 
 /// Publishes presentation from the supplied committed world and completed physics observations.
@@ -760,5 +868,27 @@ pub fn publish_local_player_frame(
         carrier.reset(LocalPlayerFrameReset::Correction);
     } else if let Some(frame) = carrier.snapshot() {
         receipt.finish(camera_proof, frame.pose_generation());
+    }
+}
+
+#[cfg(test)]
+mod sleeping_tests {
+    use bevy::math::Vec3;
+
+    use super::{sleeping_subject_position, sleeping_view_rotation};
+
+    #[test]
+    fn sleepers_lie_on_the_bed_top_and_look_toward_its_foot() {
+        let (eye, feet) = sleeping_subject_position([2, 70, -5]);
+        assert_eq!(feet, Vec3::new(2.5, 70.5625, -4.5));
+        assert!((eye.y - feet.y - client_world::SLEEPING_PLAYER_NETWORK_OFFSET).abs() < 1e-4);
+        // A south-facing bed (sleep rotation 90) puts the head south, so the view faces north.
+        let forward = sleeping_view_rotation(90.0) * Vec3::NEG_Z;
+        assert!(forward.abs_diff_eq(Vec3::NEG_Z, 1e-5), "{forward}");
+        let forward = sleeping_view_rotation(0.0) * Vec3::NEG_Z;
+        assert!(
+            forward.abs_diff_eq(Vec3::X, 1e-5),
+            "west-facing bed looks east: {forward}"
+        );
     }
 }

@@ -40,7 +40,7 @@ fn layout_fixture_assets() -> RuntimeAssets {
             variant,
             variant,
         ],
-        texture: Some(page),
+        textures: vec![page],
         ..Default::default()
     };
     base.with_block_overlay(1, &overlay).unwrap()

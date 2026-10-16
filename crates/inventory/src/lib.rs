@@ -1,6 +1,8 @@
 //! Engine-independent inventory authority, prediction, crafting and commands.
+mod anvil;
 mod crafting;
 mod crafting_authority;
+pub mod enchantments;
 mod furnace_recipes;
 mod ingress;
 pub mod inventory_ledger;
@@ -10,8 +12,11 @@ mod matching;
 mod screen_recipes;
 mod selection;
 mod session;
+mod session_items;
+pub use session_items::{SessionItemFacts, SessionItemKind};
 mod transport;
 
+pub use anvil::{ANVIL_TOO_EXPENSIVE, AnvilItem, AnvilOutcome, evaluate_anvil};
 pub use crafting::{
     CraftGridItem, CraftGridMatch, ingredient_accepts, match_crafting_grid,
     recipe_ingredient_accepts, screen_ingredient_accepts,
@@ -32,3 +37,9 @@ pub use session::{InventorySession, MAX_PENDING_INVENTORY_EVENTS};
 
 mod item_icon;
 pub use item_icon::{crossbow_animation_frame, ranged_animation_frame};
+
+mod dial;
+pub use dial::{
+    CLOCK_FRAMES, COMPASS_FRAMES, ClockReading, CompassReading, DialFrames, DialNeedle,
+    natural_dimension,
+};

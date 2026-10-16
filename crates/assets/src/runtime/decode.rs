@@ -1,4 +1,5 @@
 use super::RuntimeAssets;
+mod topology;
 use crate::model::{
     MODEL_QUAD_FLAG_TWO_SIDED, covered_grass_variant_is_valid, model_template_flags_are_valid,
     unit_cube_quad_geometry_is_valid,
@@ -7,15 +8,16 @@ use crate::{
     ANIMATION_FLAG_BLEND, Animation, AssetError, BLOB_MAGIC, BLOB_VERSION, BiomeRule, BlockFlags,
     BlockVisual, CompiledBiomeAssets, ContributorRole, DIAGNOSTIC_MATERIAL, LightProperties,
     MATERIAL_FLAG_ALPHA_BLEND, MATERIAL_FLAG_ALPHA_CUTOUT, MAX_ANIMATION_FRAMES, MAX_ANIMATIONS,
-    MAX_BIOME_NAME_BYTES, MAX_BIOME_NAMES_BYTES, MAX_BIOME_RULES, MAX_MATERIALS, MAX_MODEL_QUADS,
-    MAX_MODEL_TEMPLATES, MAX_TEXTURE_LAYERS, MAX_TEXTURE_PAGES, MODEL_TEMPLATE_FLAG_BUBBLE_COLUMN,
-    MODEL_TEMPLATE_FLAG_COMPOUND_NEXT, MODEL_TEMPLATE_FLAG_FENCE_NETHER,
-    MODEL_TEMPLATE_FLAG_FENCE_WOOD, MODEL_TEMPLATE_FLAG_FIRE, MODEL_TEMPLATE_FLAG_GATE_AXIS_X,
-    MODEL_TEMPLATE_FLAG_GATE_AXIS_Z, MODEL_TEMPLATE_FLAG_KELP, MODEL_TEMPLATE_FLAG_LILY_PAD,
-    MODEL_TEMPLATE_FLAG_PANE, MODEL_TEMPLATE_FLAG_SNOW_LAYER, MODEL_TEMPLATE_FLAG_STAIR,
-    MODEL_TEMPLATE_FLAG_TRANSPARENT_CUBE, Material, ModelQuad, ModelTemplate, NO_ANIMATION,
-    NO_MODEL_TEMPLATE, TINT_MAP_BYTES, TINT_MAP_COUNT, TINT_MAP_SIZE, TexturePage, TextureRef,
-    TintSource, VisualKind, VisualSupport,
+    MAX_BIOME_NAME_BYTES, MAX_BIOME_NAMES_BYTES, MAX_BIOME_RULES, MAX_CARRIER_TEXTURE_PAGES,
+    MAX_MATERIALS, MAX_MODEL_QUADS, MAX_MODEL_TEMPLATES, MAX_TEXTURE_LAYERS, MIP_COUNT,
+    MODEL_TEMPLATE_FLAG_BUBBLE_COLUMN, MODEL_TEMPLATE_FLAG_COMPOUND_NEXT,
+    MODEL_TEMPLATE_FLAG_FENCE_NETHER, MODEL_TEMPLATE_FLAG_FENCE_WOOD, MODEL_TEMPLATE_FLAG_FIRE,
+    MODEL_TEMPLATE_FLAG_GATE_AXIS_X, MODEL_TEMPLATE_FLAG_GATE_AXIS_Z, MODEL_TEMPLATE_FLAG_KELP,
+    MODEL_TEMPLATE_FLAG_LILY_PAD, MODEL_TEMPLATE_FLAG_PANE, MODEL_TEMPLATE_FLAG_SNOW_LAYER,
+    MODEL_TEMPLATE_FLAG_STAIR, MODEL_TEMPLATE_FLAG_TRANSPARENT_CUBE, Material, ModelQuad,
+    ModelTemplate, NO_ANIMATION, NO_MODEL_TEMPLATE, TILE_SIZE, TINT_MAP_BYTES, TINT_MAP_COUNT,
+    TINT_MAP_SIZE, TextureArray, TextureMip, TexturePage, TextureRef, TintSource, VisualKind,
+    VisualSupport,
     biome::{BIOME_RULE_FLAGS_MASK, validate_biome_assets},
     blob::{
         ANIMATION_BYTES, BIOME_RULE_BYTES, FRAME_BYTES, HASH_BYTES, HASH_ENTRY_BYTES, HEADER_BYTES,
@@ -25,9 +27,9 @@ use crate::{
     compiled::{material_flags_are_valid, visual_semantics_are_valid},
     model::model_quad_flags_are_valid,
     provenance::BlobProvenance,
-    texture::{MIP_COUNT, TILE_SIZE, TextureArray, TextureMip},
 };
 use std::sync::atomic::AtomicU64;
+use topology::runtime_connected_bases;
 
 impl RuntimeAssets {
     /// Validates the complete world-carrier envelope, its embedded source
@@ -57,7 +59,7 @@ impl RuntimeAssets {
         let assets = Self {
             visuals: decode_visuals(sections[0])?,
             light_properties: decode_light_properties(sections[0]),
-            hashed: decode_hashes(sections[1]),
+            hashed: super::hashed_ids::HashedIds::new(decode_hashes(sections[1])),
             materials,
             model_templates: decode_templates(sections[3]),
             model_random_offsets: Box::new([]),
@@ -67,10 +69,13 @@ impl RuntimeAssets {
             texture_pages: decode_pages(sections[8], &page_meta)?,
             overlay_texture_source_sizes: Box::new([]),
             overlay_texture_source_grids: Box::new([]),
+            overlay_page_layer_counts: Box::new([]),
             biomes,
             provenance,
             missing: AtomicU64::new(0),
         };
+        // Prepare numeric block-entity routes before the carrier reaches the live world.
+        let _ = crate::facts::BlockEntityFacts::pinned();
         Ok((assets, identity))
     }
 }
@@ -148,7 +153,7 @@ impl Header {
             ("quad", self.counts[4], MAX_MODEL_QUADS),
             ("animation", self.counts[5], MAX_ANIMATIONS),
             ("frame", self.counts[6], MAX_ANIMATION_FRAMES),
-            ("page", self.page_count, MAX_TEXTURE_PAGES),
+            ("page", self.page_count, MAX_CARRIER_TEXTURE_PAGES),
             ("biome", self.biome_count, MAX_BIOME_RULES),
         ] {
             if value > max {
@@ -364,17 +369,29 @@ fn validate_fixed(
                     | MODEL_TEMPLATE_FLAG_FENCE_WOOD
                     | MODEL_TEMPLATE_FLAG_FENCE_NETHER
                     | MODEL_TEMPLATE_FLAG_FIRE
-                    | MODEL_TEMPLATE_FLAG_BUBBLE_COLUMN);
+                    | MODEL_TEMPLATE_FLAG_BUBBLE_COLUMN
+                    | crate::MODEL_TEMPLATE_FLAG_DOOR);
             if connected_flag != 0 {
-                let Some(base_index) = connected_bases
-                    .iter()
-                    .position(|&(base, flag)| base == template as usize && flag == connected_flag)
-                else {
+                let group_base = if connected_flag == crate::MODEL_TEMPLATE_FLAG_DOOR {
+                    let pose = crate::door::DoorPose::from_variant(u32_at(record, 40))
+                        .ok_or_else(|| invalid("door visual has invalid selectors"))?;
+                    template
+                        .checked_sub(pose.offset())
+                        .ok_or_else(|| invalid("door visual precedes its pose group"))?
+                } else {
+                    template
+                };
+                let Some(base_index) = connected_bases.iter().position(|&(base, flag)| {
+                    base == group_base as usize && flag == connected_flag
+                }) else {
                     return Err(invalid(
                         "connected visual does not reference a topology-group base",
                     ));
                 };
-                if kind != VisualKind::Model || u32_at(record, 40) != 0 {
+                if kind != VisualKind::Model
+                    || (connected_flag != crate::MODEL_TEMPLATE_FLAG_DOOR
+                        && u32_at(record, 40) != 0)
+                {
                     return Err(invalid("connected visual has invalid kind or transform"));
                 }
                 referenced_connected_bases[base_index] = true;
@@ -633,81 +650,6 @@ fn runtime_compound_tails(bytes: &[u8]) -> Result<Vec<bool>, AssetError> {
         tails[index + 1] = true;
     }
     Ok(tails)
-}
-
-fn runtime_connected_bases(bytes: &[u8]) -> Result<Vec<(usize, u32)>, AssetError> {
-    let records = bytes
-        .as_chunks::<TEMPLATE_BYTES>()
-        .0
-        .iter()
-        .map(|record| record.as_slice())
-        .collect::<Vec<_>>();
-    let mut bases = Vec::new();
-    let mut index = 0;
-    while index < records.len() {
-        let flag = u32_at(records[index], 8);
-        if flag == MODEL_TEMPLATE_FLAG_PANE {
-            let Some(group) = records.get(index..index + 16) else {
-                return Err(invalid("pane template group is truncated"));
-            };
-            if group.iter().enumerate().any(|(mask, record)| {
-                u32_at(record, 8) != flag || u32_at(record, 4) != 6 + (mask as u32).count_ones() * 4
-            }) {
-                return Err(invalid("pane template group is noncanonical"));
-            }
-            bases.push((index, flag));
-            index += 16;
-        } else if matches!(
-            flag,
-            MODEL_TEMPLATE_FLAG_FENCE_WOOD | MODEL_TEMPLATE_FLAG_FENCE_NETHER
-        ) {
-            let Some(group) = records.get(index..index + 17) else {
-                return Err(invalid("fence template group is truncated"));
-            };
-            if group.iter().enumerate().any(|(offset, record)| {
-                let expected = if offset == 0 {
-                    6
-                } else {
-                    ((offset - 1) as u32).count_ones() * 8
-                };
-                u32_at(record, 8) != flag || u32_at(record, 4) != expected
-            }) {
-                return Err(invalid("fence template group is noncanonical"));
-            }
-            bases.push((index, flag));
-            index += 17;
-        } else if flag == MODEL_TEMPLATE_FLAG_BUBBLE_COLUMN {
-            let Some(group) =
-                records.get(index..index + crate::BUBBLE_COLUMN_TEMPLATE_COUNT as usize)
-            else {
-                return Err(invalid("bubble column template group is truncated"));
-            };
-            if group.iter().enumerate().any(|(offset, record)| {
-                u32_at(record, 8) != flag
-                    || u32_at(record, 4) != crate::bubble_column_quad_count(offset as u32)
-            }) {
-                return Err(invalid("bubble column template group is noncanonical"));
-            }
-            bases.push((index, flag));
-            index += crate::BUBBLE_COLUMN_TEMPLATE_COUNT as usize;
-        } else if flag == MODEL_TEMPLATE_FLAG_FIRE {
-            let Some(group) = records.get(index..index + crate::FIRE_TEMPLATE_COUNT as usize)
-            else {
-                return Err(invalid("fire template group is truncated"));
-            };
-            if group.iter().enumerate().any(|(offset, record)| {
-                u32_at(record, 8) != flag
-                    || u32_at(record, 4) != crate::fire_template_quad_count(offset as u32)
-            }) {
-                return Err(invalid("fire template group is noncanonical"));
-            }
-            bases.push((index, flag));
-            index += crate::FIRE_TEMPLATE_COUNT as usize;
-        } else {
-            index += 1;
-        }
-    }
-    Ok(bases)
 }
 
 fn valid_ref(reference: TextureRef, pages: &[PageMeta]) -> Result<(), AssetError> {

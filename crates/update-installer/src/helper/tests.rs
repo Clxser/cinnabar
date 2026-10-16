@@ -98,3 +98,68 @@ fn an_abandoned_manual_copy_is_pruned_without_touching_ready() {
     assert!(!directory.exists());
     assert!(root.path().join("ready").is_dir());
 }
+
+#[test]
+fn a_handoff_after_the_scan_keeps_its_full_window() {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, reader) = snapshot_directory(root.path()).unwrap();
+    let directory = directory.keep();
+    let scanned = fs::metadata(directory.join(LOCK))
+        .unwrap()
+        .modified()
+        .unwrap();
+    let handed_off = scanned + HANDOFF_WINDOW * 2;
+    assert!(handed_off.duration_since(scanned).unwrap() >= HANDOFF_WINDOW);
+
+    // The final owner finishes its handoff after the scan, before exclusive acquisition.
+    reader.set_modified(handed_off).unwrap();
+    drop(reader);
+    retire_idle_copy(&directory, handed_off);
+    assert!(directory.exists());
+    assert!(hold_snapshot(&directory).is_ok());
+    retire_idle_copy(&directory, handed_off + HANDOFF_WINDOW / 2);
+    assert!(directory.exists());
+    retire_idle_copy(&directory, handed_off + HANDOFF_WINDOW * 2);
+    assert!(!directory.exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn retired_copies_reject_new_readers_until_a_blocked_cleanup_can_finish() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let (directory, reader) = snapshot_directory(root.path()).unwrap();
+    let directory = directory.keep();
+    let package = directory.join("installer");
+    fs::write(&package, "manual package").unwrap();
+    drop(reader);
+    let blocker = File::options()
+        .read(true)
+        .share_mode(0)
+        .open(package)
+        .unwrap();
+    let later = SystemTime::now() + HANDOFF_WINDOW * 2;
+    prune(root.path(), later);
+    assert!(
+        directory.exists(),
+        "the open installer blocks directory retirement"
+    );
+    assert_eq!(
+        hold_snapshot(&directory).unwrap_err().kind(),
+        io::ErrorKind::NotFound
+    );
+
+    File::options()
+        .write(true)
+        .open(directory.join(LOCK))
+        .unwrap()
+        .set_modified(later)
+        .unwrap();
+    drop(blocker);
+    prune(root.path(), later);
+    assert!(
+        !directory.exists(),
+        "a retired copy is retried without another handoff window"
+    );
+}

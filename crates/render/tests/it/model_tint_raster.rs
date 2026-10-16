@@ -151,7 +151,11 @@ fn material_words() -> Vec<u32> {
     (0..CASE_COUNT)
         .flat_map(|index| {
             [
-                if index % 2 == 0 { 0 } else { 1 << 31 },
+                if index % 2 == 0 {
+                    0
+                } else {
+                    1 << assets::TEXTURE_PAGE_SHIFT
+                },
                 flags[index % COLUMNS] | assets::MATERIAL_FLAG_ALPHA_CUTOUT,
                 if index % 3 == 0 {
                     0
@@ -217,7 +221,7 @@ fn atlas(gpu: &Gpu) -> wgpu::TextureView {
 /// Calls the production vertex decoder with the renderer's actual indexed quad order.
 fn fixture_source(definitions: &[&str], reference: bool) -> String {
     let mut source = shader_source::standalone(include_str!("../../src/model.wesl"), definitions)
-        .replace("@group(1) @binding(0)", "@group(0) @binding(20)");
+        .replace("@group(1) @binding(0)", "@group(0) @binding(27)");
     if reference {
         let start = source
             .find("fn ordinary_world_model_gamma_colour(")
@@ -418,6 +422,18 @@ fn model_tint_pixels_match_fragment_biome_reference() {
             wgpu::BindingResource::TextureView(&atlas),
         ),
         (
+            crate::material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[2],
+            wgpu::BindingResource::TextureView(&atlas),
+        ),
+        (
+            crate::material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[3],
+            wgpu::BindingResource::TextureView(&atlas),
+        ),
+        (
+            crate::material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[4],
+            wgpu::BindingResource::TextureView(&atlas),
+        ),
+        (
             crate::material_shader::NATIVE_LEAF_SAMPLER_BINDING,
             wgpu::BindingResource::Sampler(&sampler),
         ),
@@ -433,7 +449,7 @@ fn model_tint_pixels_match_fragment_biome_reference() {
         (12, templates.as_entire_binding()),
         (13, geometry.as_entire_binding()),
         (15, atmosphere.as_entire_binding()),
-        (20, lightmap.as_entire_binding()),
+        (27, lightmap.as_entire_binding()),
     ]
     .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource });
     for definitions in [&[][..], &["NATIVE_GAMMA_BLEND"][..]] {

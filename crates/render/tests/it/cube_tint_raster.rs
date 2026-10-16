@@ -167,7 +167,7 @@ fn source(reference: bool) -> String {
         *shade = replacement.global_declarations.remove(0);
     }
     let mut source = shader_source::standalone(&module.to_string(), &[])
-        .replace("@group(1) @binding(0)", "@group(0) @binding(20)");
+        .replace("@group(1) @binding(0)", "@group(0) @binding(27)");
     source.push_str(
         &VERTEX
             .replace(
@@ -431,13 +431,25 @@ fn render_fixture(cache_admission: bool) {
         ),
         (13, streams.as_entire_binding()),
         (15, atmosphere.as_entire_binding()),
-        (20, lightmap.as_entire_binding()),
+        (27, lightmap.as_entire_binding()),
         (
             material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[0],
             wgpu::BindingResource::TextureView(&native_atlas),
         ),
         (
             material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[1],
+            wgpu::BindingResource::TextureView(&native_atlas),
+        ),
+        (
+            material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[2],
+            wgpu::BindingResource::TextureView(&native_atlas),
+        ),
+        (
+            material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[3],
+            wgpu::BindingResource::TextureView(&native_atlas),
+        ),
+        (
+            material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[4],
             wgpu::BindingResource::TextureView(&native_atlas),
         ),
         (

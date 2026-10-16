@@ -26,7 +26,7 @@ pub(super) fn view() -> LayeredPackView {
         ("textures/item_texture.json", catalog.as_bytes().to_vec()),
         ("textures/items/gem.png", png(16, 16)),
         ("textures/items/strip.png", png(16, 48)),
-        ("textures/items/huge.png", png(128, 64)),
+        ("textures/items/huge.png", png(128, 96)),
     ] {
         writer
             .start_file(path, zip::write::SimpleFileOptions::default())
@@ -44,7 +44,7 @@ pub(super) fn view() -> LayeredPackView {
     ))
 }
 
-// Keys resolve through item_texture.json; strips keep frame one and big icons shrink.
+// Keys resolve through item_texture.json; strips keep frame one and HD icons keep their pixels.
 #[test]
 fn icon_keys_resolve_to_bounded_sprites() {
     let key = |identifier: &str, key: &str| (Arc::<str>::from(identifier), Arc::<str>::from(key));
@@ -68,7 +68,7 @@ fn icon_keys_resolve_to_bounded_sprites() {
         sizes,
         [
             ("lifeboat:gem", 16, 16),
-            ("lifeboat:huge", 64, 32),
+            ("lifeboat:huge", 128, 96),
             ("lifeboat:strip", 16, 16)
         ]
     );
@@ -78,6 +78,30 @@ fn icon_keys_resolve_to_bounded_sprites() {
         .find(|icon| icon.identifier.as_ref() == "lifeboat:strip")
         .unwrap();
     assert_eq!(strip.rgba8[(15 * 16) * 4], 15, "first frame rows only");
+    let hd = icons
+        .icons
+        .iter()
+        .find(|icon| icon.identifier.as_ref() == "lifeboat:huge")
+        .unwrap();
+    assert_eq!(hd.rgba8[(95 * 128 + 127) * 4], 95);
+}
+
+#[test]
+fn hd_icon_variants_respect_the_remaining_retained_pixel_budget() {
+    let paths = std::collections::HashMap::from([(
+        "hd".to_owned(),
+        vec!["textures/items/huge".to_owned(); 3],
+    )]);
+    let bytes = 128 * 96 * 4;
+    let textures = super::resolve_key(&view(), &paths, "hd", 3, bytes * 2).unwrap();
+    assert_eq!(textures.len(), 2);
+    assert_eq!(
+        textures
+            .iter()
+            .map(|(metadata, texture)| (*metadata, texture.width, texture.height))
+            .collect::<Vec<_>>(),
+        [(0, 128, 96), (1, 128, 96)]
+    );
 }
 
 fn stack(packs: &[&[(&str, Vec<u8>)]]) -> LayeredPackView {
@@ -243,7 +267,7 @@ fn custom_block_sheet_material_flags_survive_session_icon_compilation() {
                     ..Material::unvaried()
                 },
             ],
-            texture: Some(TextureArray {
+            textures: vec![TextureArray {
                 layers: 1,
                 mips: [16, 8, 4, 2, 1]
                     .into_iter()
@@ -252,7 +276,7 @@ fn custom_block_sheet_material_flags_survive_session_icon_compilation() {
                         rgba8: vec![127; (size * size * 4) as usize].into(),
                     })
                     .collect(),
-            }),
+            }],
             ..Default::default()
         };
         let blocks = protocol::CustomBlocks {
@@ -413,7 +437,14 @@ fn review_variant_decoding_respects_remaining_capacity_and_metadata_indices() {
             "textures/items/gem".to_owned(),
         ],
     )]);
-    let resolved = super::resolve_key(&view(), &paths, "variants", 1).unwrap();
+    let resolved = super::resolve_key(
+        &view(),
+        &paths,
+        "variants",
+        1,
+        assets::texture::policy::MAX_SUBSCRIBER_BYTES,
+    )
+    .unwrap();
     assert_eq!(
         resolved
             .iter()
@@ -447,4 +478,74 @@ fn review_item_declaration_priority_survives_moves_between_files() {
             .collect::<Vec<_>>(),
         [("t:a", "upper_a"), ("t:b", "upper_b")]
     );
+}
+
+#[test]
+fn oversized_item_strips_resolve_to_valid_first_frame_icons() {
+    for (width, height) in [(8192, 64), (64, 8192)] {
+        for catalog in [true, false] {
+            let path = if catalog {
+                "textures/wide.png"
+            } else {
+                "textures/items/wide.png"
+            };
+            let mut files = vec![
+                (
+                    "textures/item_texture.json",
+                    br#"{"texture_data":{"wide":{"textures":"textures/wide"}}}"#.to_vec(),
+                ),
+                (path, png(width, height)),
+            ];
+            if catalog {
+                files.push(("textures/items/wide.png", png(16, 16)));
+            }
+            let view = stack(&[&files]);
+            let icons = compile_session_icons(
+                &view,
+                &[(Arc::from("test:wide"), Arc::from("wide"))],
+                BlockIcons::default(),
+            )
+            .unwrap();
+            let icon = icons
+                .icons
+                .iter()
+                .find(|icon| icon.identifier.as_ref() == "test:wide")
+                .unwrap();
+            assert_eq!([icon.width, icon.height], [64; 2]);
+            assert_eq!(
+                assets::texture::policy::device_policy().source_bytes(
+                    icon.width,
+                    icon.height,
+                    false
+                ),
+                Some(icon.rgba8.len())
+            );
+            for y in 0..64usize {
+                for x in 0..64usize {
+                    assert_eq!(&icon.rgba8[(y * 64 + x) * 4..][..4], &[y as u8, 0, 0, 255]);
+                }
+            }
+            let mut runtime = client_ui::ui_runtime::UiRuntime::new(1);
+            runtime.set_session_icons(Some(icons));
+            let mut presentation =
+                client_ui::ui_runtime::presentation::UiPresentationRuntime::with_hud(
+                    ui_engine::test_support::fixture_font(),
+                    client_ui::test_support::fixture_hud(),
+                )
+                .unwrap();
+            let player = player_state::PlayerState::new(1);
+            test_time::eventually("the first-frame item icon to be packed", || {
+                presentation
+                    .build(
+                        &player,
+                        &runtime,
+                        0,
+                        [800, 600],
+                        ui::DpiScale::new(1.0).unwrap(),
+                    )
+                    .unwrap();
+                presentation.item_icon("test:wide", 0).is_some()
+            });
+        }
+    }
 }

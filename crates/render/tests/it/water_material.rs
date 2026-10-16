@@ -53,7 +53,7 @@ fn water_fragment_preserves_submerged_receiver_and_native_gamma_lighting() {
             &["NATIVE_GAMMA_BLEND"]
         )
     )
-    .replace("@group(1) @binding(0)", "@group(0) @binding(20)");
+    .replace("@group(1) @binding(0)", "@group(0) @binding(27)");
     let mut failures = Vec::new();
     for (light, alpha, blend, distance, shade) in [
         ([0.82, 0.89, 0.96], 165.0 / 255.0, 0.0, 0.0, 1.0),
@@ -102,6 +102,18 @@ fn water_fragment_preserves_submerged_receiver_and_native_gamma_lighting() {
                     resource: wgpu::BindingResource::TextureView(&atlas),
                 },
                 wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[2],
+                    resource: wgpu::BindingResource::TextureView(&atlas),
+                },
+                wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[3],
+                    resource: wgpu::BindingResource::TextureView(&atlas),
+                },
+                wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[4],
+                    resource: wgpu::BindingResource::TextureView(&atlas),
+                },
+                wgpu::BindGroupEntry {
                     binding: 6,
                     resource: wgpu::BindingResource::Sampler(&sampler),
                 },
@@ -110,11 +122,11 @@ fn water_fragment_preserves_submerged_receiver_and_native_gamma_lighting() {
                     resource: atmosphere.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 20,
+                    binding: 27,
                     resource: lightmap.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 24,
+                    binding: 28,
                     resource: case.as_entire_binding(),
                 },
             ];
@@ -176,7 +188,7 @@ fn water_fragment_preserves_submerged_receiver_and_native_gamma_lighting() {
 }
 
 const WITNESS: &str = r#"
-@group(0) @binding(24) var<storage, read> witness_case: array<vec4<f32>>;
+@group(0) @binding(28) var<storage, read> witness_case: array<vec4<f32>>;
 @vertex fn witness(@builtin(vertex_index) index: u32) -> VertexOutput {
     var out: VertexOutput;
     let uv = vec2(f32((index << 1u) & 2u), f32(index & 2u));

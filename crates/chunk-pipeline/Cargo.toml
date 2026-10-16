@@ -15,6 +15,9 @@ reads = [
 tracy = []
 publication-test-support = []
 benchmark-support = []
+# Bench binaries use an uninstrumented allocator and the requested Criterion sample count.
+runtime-profile = []
+benchmark-mimalloc = ["runtime-profile"]
 
 [dependencies]
 simulation-clock = { path = "../simulation-clock" }
@@ -26,6 +29,7 @@ hashbrown = "0.16"
 meshing = { path = "../meshing" }
 client-world = { path = "../client-world" }
 actor-animation = { path = "../actor-animation" }
+far-terrain = { path = "../far-terrain" }
 rayon.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
@@ -39,6 +43,8 @@ libc = "0.2"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
 
 [dev-dependencies]
+protocol-ids = { path = "../protocol-ids" }
+mimalloc.workspace = true
 test-alloc = { path = "../test-alloc" }
 test-time = { path = "../test-time" }
 serde_json = "1"
@@ -52,6 +58,11 @@ required-features = ["benchmark-support"]
 
 [[bench]]
 name = "flight_costs"
+harness = false
+required-features = ["benchmark-support"]
+
+[[bench]]
+name = "retention_costs"
 harness = false
 required-features = ["benchmark-support"]
 

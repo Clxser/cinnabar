@@ -1,10 +1,10 @@
 use assets::{
     AssetError, BLOB_VERSION, BiomeRule, BlobProvenance, BlockFace, BlockFlags, BlockVisual,
     CompiledAssets, CompiledBiomeAssets, DIAGNOSTIC_MATERIAL, LightProperties,
-    MATERIAL_FLAG_FOLIAGE_TINT, MATERIAL_FLAGS_MASK, MAX_ANIMATION_FRAMES, MAX_ANIMATIONS,
-    MAX_MATERIALS, MAX_MODEL_QUADS, MAX_MODEL_TEMPLATES, Material, ModelQuad, ModelTemplate,
-    NO_ANIMATION, NO_MODEL_TEMPLATE, NetworkIdMode, RuntimeAssets, TINT_MAP_BYTES, TexturePage,
-    TextureRef, TintSource, VisualKind, VisualSupport,
+    MATERIAL_FLAG_FOLIAGE_TINT, MAX_ANIMATION_FRAMES, MAX_ANIMATIONS, MAX_MATERIALS,
+    MAX_MODEL_QUADS, MAX_MODEL_TEMPLATES, Material, ModelQuad, ModelTemplate, NO_ANIMATION,
+    NO_MODEL_TEMPLATE, NetworkIdMode, RuntimeAssets, TINT_MAP_BYTES, TextureArray, TextureMip,
+    TexturePage, TextureRef, TintSource, VisualKind, VisualSupport,
     blob::{HEADER_BYTES, VISUAL_BYTES},
     encode_blob,
     texture::{TextureArray, TextureMip},
@@ -538,16 +538,22 @@ fn runtime_rejects_full_face_occlusion_on_non_model_visuals() {
 }
 
 #[test]
-fn decode_rejects_material_flags_outside_supported_mask() {
-    let mut blob = valid_blob();
-    let materials_offset = read_u64(&blob, MATERIALS_OFFSET_OFFSET) as usize;
-    write_u32(
-        &mut blob,
-        materials_offset + assets::MATERIAL_BYTES + 4,
-        MATERIAL_FLAGS_MASK | (MATERIAL_FLAGS_MASK + 1),
-    );
-    reseal(&mut blob);
-    assert_rejected(&blob, "material flags outside supported mask");
+fn decode_rejects_invalid_material_flag_combinations() {
+    for flags in [
+        assets::MATERIAL_FLAG_ALPHA_BLEND | assets::MATERIAL_FLAG_ALPHA_CUTOUT,
+        assets::stem::GROWTH_MASK,
+        assets::stem::MATERIAL_FLAG | assets::MATERIAL_FLAG_GRASS_TINT,
+    ] {
+        let mut blob = valid_blob();
+        let materials_offset = read_u64(&blob, MATERIALS_OFFSET_OFFSET) as usize;
+        write_u32(
+            &mut blob,
+            materials_offset + assets::MATERIAL_BYTES + 4,
+            flags,
+        );
+        reseal(&mut blob);
+        assert_rejected(&blob, &format!("invalid material flags {flags:#x}"));
+    }
 }
 
 #[test]

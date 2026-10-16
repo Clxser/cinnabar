@@ -8,19 +8,19 @@ use json_ui::{Context, DataSource, HitKind, HitRegion, Scalar};
 use serde_json::Value;
 
 use super::{menu_caret::with_caret, play_screen};
-use launcher::menu::settings_sections::SETTINGS_SECTIONS;
-use launcher::menu::{MenuAction, MenuDialog, MenuField, MenuScreen, MenuView, auth::AuthState};
+use launcher::menu::settings_sections::{SETTINGS_SECTIONS, SettingSection};
+use launcher::menu::{MenuAction, MenuField, MenuScreen, MenuView, auth::AuthState};
 use ui_engine::engine::screen::{Translate, translated};
-
-/// The section the settings screen opens on before one is picked.
-const VIDEO_SECTION: &str = "video_forced_index";
 
 /// Lang key the vanilla start and pause controllers give the unlock-full-game text.
 const UNLOCK_FULL_GAME_TEXT: &str = "trial.pauseScreen.buyGame";
 
-/// The retail desktop context for this build's platform.
+/// The retail desktop context for this build's platform. It is built once; clones share its
+/// variables, so screens built over it compare their contexts by pointer.
 pub fn retail_context() -> Context {
-    Context::retail(cfg!(target_os = "macos"))
+    static RETAIL: std::sync::LazyLock<Context> =
+        std::sync::LazyLock::new(|| Context::retail(cfg!(target_os = "macos")));
+    RETAIL.clone()
 }
 
 /// Vanilla start screen variables for a full-game, non-edu
@@ -29,6 +29,7 @@ fn start_screen_vars(context: Context) -> Context {
     unlock_text(context)
         .with_flag("unlock_full_game_button_ignored", true)
         .with_flag("featured_world_ignored", true)
+        .with_flag("store_ignored", true)
         .with_flag("courses_ignored", true)
         .with_flag("edu_feedback_ignored", true)
         .with_flag("play_button_visible", true)
@@ -50,7 +51,7 @@ pub struct MenuScreenData {
     pub reference: &'static str,
     pub context: Context,
     pub data: DataSource,
-    /// A screen drawn over this one, which then takes all input (a Marketplace popup).
+    /// A screen drawn over this one, which then takes all input (a resource-pack dialog).
     pub overlay: Option<Box<MenuScreenData>>,
 }
 
@@ -66,13 +67,16 @@ pub(super) fn flags(data: &mut DataSource, on: &[&str]) {
 
 use launcher::menu::menu_reference;
 
-/// The vanilla screen for `view`, or `None` for states without one (the
+/// The in-session screen for `view`, or `None` for states without one (the
 /// programmatic launcher then draws them). `now_unix` is the wall-clock time in seconds.
 pub fn screen_data(
     view: &MenuView,
     translate: Translate<'_>,
     now_unix: i64,
 ) -> Option<MenuScreenData> {
+    if view.out_of_game() {
+        return None;
+    }
     let mut data = DataSource::new();
     data.set_strict(true);
     let mut context = base_context();
@@ -87,7 +91,7 @@ pub fn screen_data(
         let words = launcher::menu::disconnect::describe(error);
         data.set_global(
             "#title_text",
-            text(translated(translate, words.title, words.title)),
+            text(translated(translate, words.title.0, words.title.1)),
         );
         let body = match words.body {
             launcher::menu::disconnect::DisconnectBody::Key(key) => translated(translate, key, key),
@@ -151,12 +155,7 @@ pub fn screen_data(
                 }
                 data.set_global("#unlock_full_game_button_text", text(UNLOCK_FULL_GAME_TEXT));
                 // A non-edu client draws the retail pause content, not edu_pause's.
-                context = unlock_text(context)
-                    .with_flag("ignore_edu_pause", true)
-                    .with_var(
-                        "store_button_text",
-                        Value::String(server_store_text(translate)),
-                    );
+                context = unlock_text(context).with_flag("ignore_edu_pause", true);
             }
             MenuScreen::Home => {
                 start_screen(view, &mut data, translate, now_unix);
@@ -172,6 +171,7 @@ pub fn screen_data(
             }
             MenuScreen::Settings => {
                 settings_screen(view, &mut data, translate);
+                data.set_global("#should_show_subscription_tab", Scalar::Bool(false));
                 super::settings_defaults::bind(&mut data, &|key: &str| {
                     translated(translate, key, key)
                 });
@@ -195,7 +195,6 @@ pub fn screen_data(
                     overlay: super::global_resources::overlay(&view.global_resources),
                 });
             }
-            MenuScreen::Store => return store_screen(view, &context, translate),
             MenuScreen::Invite => {
                 super::invite_screen::bind(view, &mut data, translate);
                 context = super::invite_screen::context(view, context);
@@ -291,26 +290,6 @@ fn local_world_progress(
     }
 }
 
-/// The Marketplace screen (and popup) for the published store state.
-fn store_screen(
-    view: &MenuView,
-    context: &Context,
-    translate: Translate<'_>,
-) -> Option<MenuScreenData> {
-    let snapshot = view.store.as_deref()?;
-    let tr = |key: &str| translated(translate, key, key);
-    let screens = crate::store::screens(snapshot, context, &tr);
-    let convert = |spec: crate::store::ScreenSpec| MenuScreenData {
-        reference: spec.reference,
-        context: spec.context,
-        data: spec.data,
-        overlay: None,
-    };
-    let mut base = convert(screens.base);
-    base.overlay = screens.overlay.map(|spec| Box::new(convert(spec)));
-    Some(base)
-}
-
 fn start_screen(view: &MenuView, data: &mut DataSource, translate: Translate<'_>, now_unix: i64) {
     let gamertag = launcher::menu::profile::current_name(view).to_owned();
     data.set_global("#playername", text(gamertag.clone()));
@@ -334,8 +313,7 @@ fn start_screen(view: &MenuView, data: &mut DataSource, translate: Translate<'_>
     data.set_global("#version", text(version_label(protocol::GAME_VERSION)));
     data.set_global("#unlock_full_game_button_text", text(UNLOCK_FULL_GAME_TEXT));
     data.set_global("#edu_demo_only_ui_visible", Scalar::Bool(false));
-    // Retail Realms is enabled, so its row shows between Settings and
-    // Marketplace, as on the release client.
+    // Keep the Realms and Dressing Room entries available.
     flags(
         data,
         &[
@@ -366,150 +344,12 @@ fn start_screen(view: &MenuView, data: &mut DataSource, translate: Translate<'_>
     }
 }
 
-/// The pause store button on a third-party server, as vanilla names it: "%s Store" with the server's store name, else the generic "Server".
-fn server_store_text(translate: Translate<'_>) -> String {
-    let server = translated(translate, "menu.serverGenericName", "Server");
-    translated(translate, "menu.serverStore", "%s Store").replacen("%s", &server, 1)
-}
-
-/// The start screen's version: the release client shows `1.26.50` as `v26.50`.
+/// Formats the protocol game version for the start screen.
 fn version_label(game_version: &str) -> String {
     format!(
         "v{}",
         game_version.strip_prefix("1.").unwrap_or(game_version)
     )
-}
-
-/// The vanilla two-button popup a launcher dialog opens, and the action its
-/// left (confirm) button takes; the right button dismisses.
-pub fn dialog_model(
-    view: &MenuView,
-    dialog: MenuDialog,
-    translate: Translate<'_>,
-) -> (json_ui::FormModel, MenuAction) {
-    let (title, body, button1, button2, confirm) = match dialog {
-        MenuDialog::Accounts => (
-            "Accounts".into(),
-            String::new(),
-            "Close".into(),
-            "Close".into(),
-            MenuAction::DismissDialog,
-        ),
-        MenuDialog::SettingsResetGroup(group) => {
-            return super::settings_reset::dialog_model(group, translate);
-        }
-        MenuDialog::SettingsResetBindings(gamepad) => (
-            translated(
-                translate,
-                "controllerLayoutScreen.resetAllBindings",
-                "Reset to Default",
-            ),
-            translated(
-                translate,
-                "controllerLayoutScreen.confirmation.reset",
-                "Reset all bindings to their defaults?",
-            ),
-            translated(translate, "options.continue", "Continue"),
-            translated(translate, "controllerLayoutScreen.cancel", "Cancel"),
-            MenuAction::SettingsConfirmResetBindings(gamepad),
-        ),
-        MenuDialog::SettingsSupport(dialog) => {
-            return super::settings_support::dialog_model(dialog, translate);
-        }
-        MenuDialog::StorageDelete | MenuDialog::StorageError => {
-            return super::settings_storage::dialog_model(view, dialog, translate);
-        }
-        MenuDialog::Exit => (
-            translated(
-                translate,
-                "gui.warning.exitGameWarning",
-                "Do you want to exit Minecraft?",
-            ),
-            String::new(),
-            translated(translate, "gui.yes", "Yes"),
-            translated(translate, "gui.no", "No"),
-            MenuAction::ConfirmExit,
-        ),
-        MenuDialog::DeathQuit => (
-            translated(
-                translate,
-                "deathScreen.quit.confirmToMainMenuTitleWarning",
-                "Quit to Main Menu?",
-            ),
-            translated(
-                translate,
-                "deathScreen.quit.confirmToMainMenuWarning",
-                "Are you sure you want to exit the game to the main menu?",
-            ),
-            translated(translate, "globalPauseScreen.quit", "Quit"),
-            translated(translate, "gui.cancel", "Cancel"),
-            MenuAction::ConfirmDeathQuit,
-        ),
-        // The popup's title is one line, so the server names it and the body asks.
-        MenuDialog::RemoveSaved(index) => (
-            view.servers
-                .get(index)
-                .map(|server| server.name.clone())
-                .unwrap_or_default(),
-            translated(
-                translate,
-                "addExternalServerScreen.removeConfirmation",
-                "Are you sure you want to remove this server?",
-            ),
-            translated(
-                translate,
-                "addExternalServerScreen.removeButtonLabel",
-                "Remove",
-            ),
-            translated(translate, "gui.cancel", "Cancel"),
-            MenuAction::ConfirmRemoveSaved(index),
-        ),
-    };
-    let model = json_ui::FormModel::Modal(json_ui::ModalForm {
-        title,
-        body,
-        button1,
-        button2,
-    });
-    (model, confirm)
-}
-
-/// Vanilla's first-join question for a NetherNet server reached over plain http, in the
-/// active language or vanilla's English.
-pub fn server_trust_model(url: &str, translate: Translate<'_>) -> json_ui::FormModel {
-    let message = translated(
-        translate,
-        "permissions.servertrust.message",
-        "You are connecting to %1$s for the first time. Only trust servers you recognize.",
-    );
-    json_ui::FormModel::Modal(json_ui::ModalForm {
-        title: translated(
-            translate,
-            "permissions.servertrust.title",
-            "Trust this server?",
-        ),
-        body: message.replace("%1$s", url),
-        button1: translated(
-            translate,
-            "permissions.servertrust.button.trust",
-            "Trust and Join",
-        ),
-        button2: translated(
-            translate,
-            "permissions.servertrust.button.doNotTrust",
-            "Don't Trust",
-        ),
-    })
-}
-
-/// The host's answer to `name`'s Discord join request, with vanilla's Accept and Decline.
-pub fn join_request_model(name: &str, translate: Translate<'_>) -> json_ui::FormModel {
-    json_ui::FormModel::Modal(json_ui::ModalForm {
-        title: launcher::menu::join_requests::title(name),
-        body: String::new(),
-        button1: translated(translate, "gui.accept", "Accept"),
-        button2: translated(translate, "gui.decline", "Decline"),
-    })
 }
 
 fn add_server_screen(view: &MenuView, data: &mut DataSource, translate: Translate<'_>) {
@@ -540,7 +380,7 @@ fn add_server_screen(view: &MenuView, data: &mut DataSource, translate: Translat
 fn settings_screen(view: &MenuView, data: &mut DataSource, translate: Translate<'_>) {
     super::enhanced_setting::bind(view, data);
     let section = match view.settings_section {
-        0 => section_index(VIDEO_SECTION),
+        0 => SettingSection::Video.definition().index,
         picked => picked,
     };
     data.select_radio("navigation_tab", usize::from(section));
@@ -589,23 +429,9 @@ fn settings_screen(view: &MenuView, data: &mut DataSource, translate: Translate<
     flags(data, &["#gui_scale_visible"]);
     data.set_global("#full_screen", Scalar::Bool(view.fullscreen));
     flags(data, &["#full_screen_enabled"]);
-    let variable = SETTINGS_SECTIONS
-        .iter()
-        .find_map(|(name, index)| (*index == section).then_some(*name));
-    let title = match variable {
-        Some("accessibility_forced_index") => "options.accessibility.title",
-        Some("keyboard_and_mouse_forced_index") => "options.keyboardAndMouseSettings",
-        Some("controller_and_switch_forced_index") => "options.controllerSettings",
-        Some("general_forced_index") => "options.generalTitle",
-        Some("account_forced_index") => "options.accountTitle",
-        Some("creator_forced_index") => "options.creatorTitle",
-        Some("sound_forced_index") => "options.sounds.title",
-        Some("global_texture_pack_forced_index") => "menu.globalpacks",
-        Some("storage_management_forced_index") => "menu.storageManagement",
-        Some("language_forced_index") => "options.language",
-        Some("view_subscriptions_forced_index") => "options.viewSubscriptions",
-        _ => "options.videoTitle",
-    };
+    let title = SettingSection::from_index(section)
+        .unwrap_or(SettingSection::Video)
+        .title();
     data.set_global("#section_title", text(translated(translate, title, title)));
     data.set_global(
         "#dialog_title",
@@ -614,12 +440,15 @@ fn settings_screen(view: &MenuView, data: &mut DataSource, translate: Translate<
 }
 
 #[cfg(any(test, feature = "test-support"))]
-use launcher::menu::SETTINGS_SCREEN;
+use json_ui::vanilla::Reference;
 
 /// Supplies the production settings context for offline layout checks.
 #[cfg(any(test, feature = "test-support"))]
 pub fn settings_target() -> (&'static str, Context) {
-    (SETTINGS_SCREEN, settings_context(base_context()))
+    (
+        Reference::SettingsScreenControlsAndSettings.as_str(),
+        settings_context(base_context()),
+    )
 }
 
 /// Every launcher screen's context before its own vars.
@@ -690,13 +519,6 @@ fn settings_context(context: Context) -> Context {
         })
 }
 
-fn section_index(name: &str) -> u8 {
-    SETTINGS_SECTIONS
-        .iter()
-        .find_map(|(section, index)| (*section == name).then_some(*index))
-        .unwrap_or_default()
-}
-
 /// The menu action a pressed region means on `view`'s screen.
 pub fn action_for(view: &MenuView, region: &HitRegion) -> Option<MenuAction> {
     if view.screen == MenuScreen::Settings
@@ -710,9 +532,6 @@ pub fn action_for(view: &MenuView, region: &HitRegion) -> Option<MenuAction> {
             .or_else(|| super::enhanced_setting::action(view, region))
     {
         return Some(action);
-    }
-    if view.screen == MenuScreen::Store {
-        return crate::store::action(view.store.as_deref(), region).map(MenuAction::Store);
     }
     if view.screen == MenuScreen::Invite
         && let Some(action) = super::invite_screen::action(region)
@@ -766,7 +585,6 @@ pub fn action_for(view: &MenuView, region: &HitRegion) -> Option<MenuAction> {
         "button.friends_drawer" | "button.menu_friends" => {
             MenuAction::Navigate(MenuScreen::Friends)
         }
-        "button.menu_store" => MenuAction::Store(launcher::store::OPEN),
         "button.menu_play" => MenuAction::Navigate(MenuScreen::Play),
         "button.menu_realms" => MenuAction::Navigate(MenuScreen::Social),
         "button.menu_servers" => MenuAction::Navigate(MenuScreen::Servers),

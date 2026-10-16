@@ -1,3 +1,4 @@
+use crate::queue_writes::ProfiledQueue as _;
 use bevy::prelude::IntoScheduleConfigs;
 use bevy::{
     asset::{load_internal_asset, uuid_handle},
@@ -86,6 +87,10 @@ pub(crate) fn install(app: &mut App) {
     load_internal_asset!(app, MATERIAL_SHADER, "material.wesl", |source, path| {
         crate::shader_safety::from_wesl(crate::material_shader::source(source), path)
     });
+    const GLINT_SHADER: Handle<Shader> = uuid_handle!("37986856-18a5-4a74-a721-30d08bf0b1d6");
+    load_internal_asset!(app, GLINT_SHADER, "glint.wesl", |source, path| {
+        crate::shader_safety::from_wesl(crate::material_shader::source(source), path)
+    });
     // Terrain, models, liquids and block overlays share one projection.
     const WORLD_PROJECTION_SHADER: Handle<Shader> =
         uuid_handle!("b6411dfb-6a07-4283-ab58-3aedb7cdb856");
@@ -112,7 +117,7 @@ fn prepare(
     let inputs = (!fullbright.0).then_some(input.0);
     if let Some(mut gpu) = gpu {
         if gpu.inputs != inputs {
-            queue.write_buffer(&gpu.buffer, 0, bytemuck::cast_slice(&light_table(inputs)));
+            queue.profiled_write_buffer(&gpu.buffer, 0, bytemuck::cast_slice(&light_table(inputs)));
             gpu.inputs = inputs;
         }
         if let Some(atmosphere) = atmosphere.as_deref()

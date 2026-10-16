@@ -116,11 +116,10 @@ pub(crate) fn advance_local_physics(
         publish_physics_view(&physics, &mut view);
         return;
     }
-    let world = sim::PaletteWorld::new(
-        stream.collision_store(),
+    let world = super::collision_world(
+        stream,
         collisions.registry(stream.network_id_mode()),
-        stream.current_dimension(),
-        Default::default(),
+        &client_world.movement_colliders,
     );
     let advanced = locals.advance(
         frame,
@@ -141,7 +140,7 @@ pub(crate) fn advance_local_physics(
     publish_physics_view(&physics, &mut view);
 }
 
-/// Publishes the retained interpolated pose even while transport pauses simulation.
+/// Publishes retained physics while the shared presentation source resolves visual overrides.
 fn publish_physics_view(physics: &LocalPhysicsController, view: &mut LocalViewPose) {
     if let (Some(eye), Some(feet)) = (
         physics.render_eye_position(),

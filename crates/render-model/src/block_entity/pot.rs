@@ -4,12 +4,12 @@
 //! quads use the shared side tile plus the sherd pattern; wobble and which sherd
 //! sits on which face need native measurement.
 
-use assets::block_entity_geometry::{self as geometry, POT_BODY_HALF as BODY_HALF};
+use assets::block_entity_geometry::{self as geometry, BoxSpec, POT_BODY_HALF as BODY_HALF};
 use glam::Vec3;
 
 use super::{
     atlas::{AtlasRect, BlockEntityAtlas},
-    mesh::{BoxSpec, Facing, Layer, MeshBuilder, WHITE, model_matrix},
+    mesh::{Facing, Layer, MeshBuilder, WHITE, model_matrix},
 };
 
 /// Sherd patterns sit this far off the side tile so they never fight it, in pixels.
@@ -26,6 +26,10 @@ pub struct DecoratedPotModel {
 /// The pattern texture stem for a sherd item name; the plain brick shows no pattern.
 #[must_use]
 pub fn sherd_pattern(item: &str) -> Option<String> {
+    let facts = assets::facts::ItemFacts::builtin().ok()?;
+    if !facts.by_identifier(item)?.is_decorated_pot_ingredient() {
+        return None;
+    }
     let name = item.strip_prefix("minecraft:")?;
     let pattern = name.strip_suffix("_pottery_sherd")?;
     Some(format!("{pattern}_pottery_pattern"))
@@ -38,7 +42,11 @@ pub(super) fn emit(
     model: &DecoratedPotModel,
 ) {
     let matrix = model_matrix(block, [0.5, 0.0, 0.5], model.facing.yaw_degrees());
-    if let Some(base) = atlas.texture(geometry::POT_BASE_TEXTURE.0, geometry::POT_BASE_TEXTURE.1) {
+    if let Some(base) = builder.required_texture(
+        atlas,
+        geometry::POT_BASE_TEXTURE.0,
+        geometry::POT_BASE_TEXTURE.1,
+    ) {
         builder.cuboid(
             Layer::Solid,
             &base,
@@ -67,12 +75,21 @@ pub(super) fn emit(
             (world, uv)
         };
         for (texels, y) in geometry::POT_PLANES {
-            let (corners, uv) = plane(texels, y);
-            builder.quad(Layer::Solid, corners, uv, WHITE);
+            let (mut corners, [u0, v0, u1, v1]) = plane(texels, y);
+            let mut uvs = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
+            if y == 0.0 {
+                // The bottom faces down; keep each texel on its original corner.
+                corners.reverse();
+                uvs.reverse();
+            }
+            builder.quad_uv(Layer::Solid, corners, uvs, WHITE);
         }
     }
-    let Some(side) = atlas.texture(geometry::POT_SIDE_TEXTURE.0, geometry::POT_SIDE_TEXTURE.1)
-    else {
+    let Some(side) = builder.required_texture(
+        atlas,
+        geometry::POT_SIDE_TEXTURE.0,
+        geometry::POT_SIDE_TEXTURE.1,
+    ) else {
         return;
     };
     // Faces as outward direction, top-left first when seen from outside; index into `sherds`.
@@ -91,9 +108,9 @@ pub(super) fn emit(
             })
         };
         builder.textured_quad(Layer::Solid, world([0.0; 3]), side.rect, WHITE);
-        let pattern = model.sherds[index]
-            .as_deref()
-            .and_then(|stem| atlas.texture(&format!("textures/blocks/{stem}"), [16.0, 16.0]));
+        let pattern = model.sherds[index].as_deref().and_then(|stem| {
+            builder.required_texture(atlas, &format!("textures/blocks/{stem}"), [16.0, 16.0])
+        });
         if let Some(pattern) = pattern {
             let rect: AtlasRect = pattern.rect;
             builder.textured_quad(Layer::Solid, world(lift), rect, WHITE);
@@ -155,5 +172,29 @@ mod tests {
         let (lip_min, lip_max) = bounds(&builder.solid[36..72]);
         assert!((neck_min - 14.1).abs() < 1.0e-4 && (neck_max - 16.9).abs() < 1.0e-4);
         assert!((lip_min - 15.8).abs() < 1.0e-4 && (lip_max - 17.2).abs() < 1.0e-4);
+    }
+}
+
+#[cfg(test)]
+mod membership_tests {
+    #[test]
+    fn compiled_sherd_tag_preserves_every_retail_artwork_stem() {
+        for record in &assets::facts::ItemFacts::builtin()
+            .unwrap()
+            .payload()
+            .records
+        {
+            let old = record
+                .identifier
+                .strip_prefix("minecraft:")
+                .and_then(|name| name.strip_suffix("_pottery_sherd"))
+                .map(|stem| format!("{stem}_pottery_pattern"));
+            assert_eq!(
+                super::sherd_pattern(&record.identifier),
+                old,
+                "{}",
+                record.identifier
+            );
+        }
     }
 }

@@ -3,6 +3,11 @@
 > An independent, unofficial client compatible with Minecraft: Bedrock Edition. Not approved by
 > or associated with Mojang or Microsoft. Minecraft is a trademark of Microsoft Corporation.
 
+> [!WARNING]
+> Cinnabar is a non-vanilla client and still in development. Its movement and combat may not yet
+> match the official client exactly, so server anticheats may flag you and some servers may ban
+> you. Play on servers at your own risk.
+
 A Minecraft: Bedrock Edition client written from scratch in Rust. It plays on real servers, Realms
 and friends' worlds with vanilla behaviour, and it's built to run much faster than the official
 client.
@@ -57,6 +62,7 @@ Vanilla behaviour is the default. Everything below is extra:
 | Feature | What it does |
 | --- | --- |
 | **Performance** | Frame pacing, latency and chunk streaming built to beat vanilla. |
+| **1.12 PvP feel** | Ships with Bedrock 1.12-style combat visuals: the classic attack swing, hurt flash, enchantment glint and view bob, plus Java-style first-person hand sway and nametags. |
 | **Live resource packs** | Add, remove or reorder packs without leaving the world. |
 | **Multi-account manager** | Sign in with several Microsoft accounts and switch between them from the launcher, no signing out. |
 | **Custom skins** | Import custom-geometry (4D/5D) skins and skin packs. See [docs/custom-skins.md](docs/custom-skins.md). |
@@ -85,7 +91,7 @@ Built on these libraries:
 | [go-raknet](https://github.com/Sandertv/go-raknet) | RakNet transport to servers, plus server-list pings. |
 | [go-nethernet](https://github.com/df-mc/go-nethernet) | WebRTC transport for Realms and friend worlds. |
 | [go-xsapi](https://github.com/df-mc/go-xsapi) | Xbox Live identity, friends, presence and signaling. |
-| [go-playfab](https://github.com/df-mc/go-playfab) | PlayFab sign-in and the menu catalog (featured servers, marketplace). |
+| [go-playfab](https://github.com/df-mc/go-playfab) | PlayFab sign-in and the menu catalog (featured servers). |
 | [dragonfly](https://github.com/df-mc/dragonfly) | The built-in local-world server in `tools/localserver`. |
 
 Crate-by-crate layout: [docs/architecture/workspace.md](docs/architecture/workspace.md).

@@ -244,7 +244,7 @@ pub fn generate() -> Result<Fixtures> {
         schema: 2,
         direction: Direction::ToClient,
         fields: vec![
-            Field::Bool,
+            Field::Bool {},
             Field::Integer {
                 min: i64::MIN,
                 max: i64::MAX,
@@ -411,7 +411,7 @@ pub fn write(dir: &Path) -> Result<()> {
 fn items_channel() -> Channel {
     let flags = Field::List {
         item: Box::new(Field::Record {
-            fields: vec![Field::Bool, Field::Choice { variants: 4 }],
+            fields: vec![Field::Bool {}, Field::Choice { variants: 4 }],
         }),
         max_items: 8,
     };

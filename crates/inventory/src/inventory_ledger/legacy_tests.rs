@@ -61,6 +61,17 @@ fn ready() -> PlayerInventoryLedger {
                 canonical_empty_component_data: true,
                 item_tags: Arc::from([]),
             },
+            ItemRegistryEntry {
+                identifier: Arc::from("minecraft:shield"),
+                network_id: 8,
+                component_based: false,
+                version: ItemRegistryVersion::None,
+                components: None,
+                component_digest: [0; 32],
+                negotiated_max_stack_size: None,
+                canonical_empty_component_data: true,
+                item_tags: Arc::from([]),
+            },
         ]
         .into(),
     });
@@ -298,7 +309,7 @@ fn legacy_repeated_authority_does_not_erase_open_storage_or_predictions() {
 fn legacy_hotbar_swaps_and_fixed_surfaces_keep_wire_item_ids() {
     let mut ledger = ready();
     open(&mut ledger);
-    let mut original = stack(7, 1);
+    let mut original = stack(8, 1);
     original.stack_network_id = 91;
     ledger.apply(&InventoryEvent::Slot(InventorySlotEvent {
         identity: SlotIdentity {
@@ -309,7 +320,7 @@ fn legacy_hotbar_swaps_and_fixed_surfaces_keep_wire_item_ids() {
         storage_item: None,
     }));
     ledger
-        .begin_hotbar_swap(InventoryTarget::Armor(2), 0)
+        .begin_hotbar_swap(InventoryTarget::Armor(2), 1)
         .unwrap();
     let actions = normal(flush(&mut ledger).remove(0));
     assert_eq!(
@@ -319,7 +330,7 @@ fn legacy_hotbar_swaps_and_fixed_surfaces_keep_wire_item_ids() {
     assert_eq!(actions[0].slot, 2);
     assert_eq!(actions[0].from_item.stack_network_id, Some(91));
     assert_eq!(actions[1].to_item.stack_network_id, Some(91));
-    ledger.begin_click(0).unwrap();
+    ledger.begin_click(1).unwrap();
     normal(flush(&mut ledger).remove(0));
     ledger
         .begin_target_gesture(InventoryTarget::Offhand, CellGesture::Click)
@@ -382,5 +393,10 @@ fn legacy_later_slot_correction_preserves_the_surviving_cursor_owner() {
     let actions = normal(flush(&mut ledger).remove(0));
     assert_eq!(actions[1].to_item.count, 5);
     assert_eq!(ledger.cursor_stack().unwrap().count, 5);
+    ledger.begin_place_count(3, 1).unwrap();
+    let actions = normal(flush(&mut ledger).remove(0));
+    assert_eq!(actions[0].from_item.count, 5);
+    assert_eq!(ledger.cursor_stack().unwrap().count, 4);
+    assert_eq!(ledger.displayed_stack(3).unwrap().count, 1);
     assert!(!ledger.resync_required());
 }

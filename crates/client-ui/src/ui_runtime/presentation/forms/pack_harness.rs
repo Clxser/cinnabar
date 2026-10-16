@@ -91,6 +91,10 @@ pub fn pack_files(root: &Path) -> Vec<(String, Vec<u8>)> {
 }
 
 /// The packs `CINNABAR_FORM_PACK_DIR` lists (`:`-separated, lowest first).
+#[expect(
+    clippy::print_stderr,
+    reason = "explains on stderr why a server pack fixture test skips"
+)]
 pub fn env_pack() -> Option<ServerUiPack> {
     let dirs = std::env::var(PACK_ENV).ok()?;
     for dir in dirs.split(':').filter(|dir| !dir.is_empty()) {
@@ -249,7 +253,7 @@ pub fn render(
     let mut nodes = Vec::new();
     let mut next = 1;
     presentation
-        .append_server_form(runtime, &mut nodes, &mut next, metrics, width, height)
+        .append_server_form(runtime, None, &mut nodes, &mut next, metrics, width, height)
         .unwrap();
     presentation.sync_server_ui_pages();
     nodes
@@ -275,6 +279,10 @@ pub fn menu_nodes(presentation: &UiPresentationRuntime) -> &[UiNode] {
 }
 
 /// Every text node with its bounds and its clip parent's bounds, for diagnosis.
+#[expect(
+    clippy::print_stderr,
+    reason = "prints text-node bounds on stderr for local fixture diagnosis"
+)]
 pub fn dump(nodes: &[UiNode]) {
     for node in nodes {
         if let UiVisual::Text { layout, color, .. } = node.visual() {
@@ -759,12 +767,13 @@ fn start_screen_text_resolves_through_the_language_table() {
         .append_menu(&runtime, &mut nodes, &mut next, metrics, 1280.0, 720.0)
         .unwrap();
     let texts = drawn_texts(&nodes);
-    for label in ["Play", "Settings", "Marketplace"] {
+    for label in ["Play", "Settings"] {
         assert!(
             texts.iter().any(|text| text == label),
             "{label} in {texts:?}"
         );
     }
+    assert!(!texts.iter().any(|text| text == "Marketplace"));
     for text in &texts {
         assert!(
             !text.starts_with('$') && !text.contains("start_screen.") && text != "Unlock Full Game",

@@ -3,10 +3,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use assets::{AssetError, TextureRef, texture::TextureMip};
+use assets::{AssetError, TextureMip, TextureRef, texture::flipbook::FlipbookSource};
 
-use crate::{
-    FlipbookSource, PackSources,
+use pack_compile_input::{
+    PackSources,
     image::{build_texture_mip_chain, diagnostic_pixels, normalize_texture_tile},
 };
 
@@ -16,7 +16,7 @@ const TEXTURE_PAGE_BIT: u32 = 1 << 31;
 const TEXTURE_LAYER_MASK: u32 = 0x1fff;
 /// Physical layer budget used by offline carrier pages.
 pub(crate) const MAX_LAYERS_PER_PAGE: u32 = assets::MAX_CARRIER_TEXTURE_LAYERS as u32;
-const MAX_TEXTURE_PAGES: u32 = 2;
+const MAX_TEXTURE_PAGES: u32 = assets::MAX_CARRIER_TEXTURE_PAGES as u32;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct AnimationLimits {
@@ -464,14 +464,14 @@ fn slice_frames(image: &DecodedImage, replicate: u32) -> Result<Vec<Box<[u8]>>, 
         });
     }
     let frame_count = long_side / frame_size;
-    if frame_count as usize > crate::MAX_FLIPBOOK_FRAMES {
+    if frame_count as usize > assets::texture::flipbook::MAX_FLIPBOOK_FRAMES {
         return Err(AssetError::AnimationTextureDimensions {
             source_path: image.source_path.clone(),
             width: image.width,
             height: image.height,
             detail: format!(
                 "strip has {frame_count} frames, exceeding {}",
-                crate::MAX_FLIPBOOK_FRAMES
+                assets::texture::flipbook::MAX_FLIPBOOK_FRAMES
             )
             .into(),
         });
@@ -532,12 +532,9 @@ mod tests {
     use super::{
         AnimationLimits, DecodedImage, compile_animation_plan, texture_ref_from_linear_index,
     };
-    use crate::read_pack;
     use assets::TextureRef;
-    use assets::{
-        AssetError,
-        texture::{MIP_COUNT, TILE_SIZE},
-    };
+    use assets::{AssetError, MIP_COUNT, TILE_SIZE};
+    use pack_compile_input::read_pack;
 
     fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) {
         let path = path.as_ref();
@@ -547,7 +544,10 @@ mod tests {
         fs::write(path, contents).expect("write fixture");
     }
 
-    fn synthetic_pack(terrain: &str, flipbooks: &str) -> (TempDir, crate::PackSources) {
+    fn synthetic_pack(
+        terrain: &str,
+        flipbooks: &str,
+    ) -> (TempDir, pack_compile_input::PackSources) {
         let directory = tempfile::tempdir().expect("create pack fixture");
         write(directory.path().join("blocks.json"), "{}");
         write(
@@ -884,7 +884,7 @@ mod tests {
             (first_second_page.page(), first_second_page.layer()),
             (1, 0)
         );
-        assert_eq!(first_second_page.raw(), 1_u32 << 31);
+        assert_eq!(first_second_page.raw(), 1_u32 << assets::TEXTURE_PAGE_SHIFT);
         assert!(texture_ref_from_linear_index(4_096, limits).is_err());
     }
 

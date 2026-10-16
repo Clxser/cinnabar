@@ -2,7 +2,9 @@ use std::collections::BTreeSet;
 
 use crate::AssetError;
 
+pub mod flipbook;
 mod legacy_terrain;
+pub mod policy;
 pub use legacy_terrain::{
     build_legacy_terrain_mip_chain, legacy_terrain_mip, rebuild_legacy_terrain_mips,
 };
@@ -26,7 +28,7 @@ pub const PBR_REF_SUBSURFACE: u32 = 1 << 17;
 pub const PBR_HEIGHT_SCALE: f32 = 0.035;
 pub const PBR_TILE_SIZE: u32 = 512;
 /// Largest square layer a runtime overlay page may use.
-pub const MAX_TILE_SIZE: u32 = 256;
+pub const MAX_TILE_SIZE: u32 = crate::texture::policy::MAX_TEXTURE_SIDE;
 const ALPHA_TEST_THRESHOLD: u8 = 128;
 const ALPHA_SCALE_FRACTION_BITS: u32 = 16;
 const ALPHA_SCALE_MAX: u32 = 16 << ALPHA_SCALE_FRACTION_BITS;

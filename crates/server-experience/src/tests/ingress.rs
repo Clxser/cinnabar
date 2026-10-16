@@ -7,7 +7,7 @@ fn channel_field_count_uses_the_shared_contract_limit() {
         id: "fixture.events".into(),
         schema: policy::API_VERSION,
         direction: wire::Direction::ToClient,
-        fields: vec![wire::Field::Bool; policy::MAX_CHANNEL_FIELDS],
+        fields: vec![wire::Field::Bool {}; policy::MAX_CHANNEL_FIELDS],
     };
     let mut payload = vec![wire::Scalar::Bool(true); policy::MAX_CHANNEL_FIELDS];
     channel
@@ -17,7 +17,7 @@ fn channel_field_count_uses_the_shared_contract_limit() {
             policy::MAX_PAYLOAD_BYTES,
         )
         .unwrap();
-    channel.fields.push(wire::Field::Bool);
+    channel.fields.push(wire::Field::Bool {});
     payload.push(wire::Scalar::Bool(true));
     assert!(
         channel
@@ -57,7 +57,7 @@ fn overlapping_package_names_do_not_share_permissions_or_channel_schemas() {
         id: "a.b.events".into(),
         schema: 1,
         direction: wire::Direction::ToClient,
-        fields: vec![wire::Field::Bool],
+        fields: vec![wire::Field::Bool {}],
     };
     let capabilities = runtime::Capabilities {
         scope: grant.offer.offer.scope.clone(),

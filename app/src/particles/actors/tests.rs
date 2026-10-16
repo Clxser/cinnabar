@@ -4,6 +4,7 @@ use protocol::{
     ActorEvent, ActorKind, ActorMetadata, ActorMetadataUpdateEvent, ActorMetadataValue,
     ActorSpawnEvent, WorldEvent,
 };
+use protocol_ids::ActorDataKey;
 use std::sync::Arc;
 
 const ENTITY: &str = r#"{"format_version":"1.10.0","minecraft:client_entity":{"description":{
@@ -48,7 +49,7 @@ fn stream_with_definition(entity: &str, controller: &str, rotation: &str) -> Wor
     image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4]))
         .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
         .unwrap();
-    let compiled = pack_compiler::compile_actor_pack(vec![
+    let compiled = pack_entity_compiler::compile_actor_pack(vec![
         ("entity/test.json".into(), entity.as_bytes().to_vec()),
         ("animation_controllers/test.json".into(), controller.as_bytes().to_vec()),
         ("animations/test.json".into(), animation.into_bytes()),
@@ -69,7 +70,7 @@ fn stream_with_definition(entity: &str, controller: &str, rotation: &str) -> Wor
             local_player_runtime_id: 1,
             player_position: [0.0; 3],
             world_spawn_position: [0; 3],
-            air_network_id: protocol::SEQUENTIAL_AIR_NETWORK_ID,
+            air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
             block_network_ids_are_hashes: false,
         },
         Arc::new(assets::RuntimeAssets::diagnostic()),
@@ -313,7 +314,7 @@ fn scale(stream: &mut WorldStream, sequence: u64, value: f32) {
                 runtime_id: 42,
                 tick: sequence,
                 metadata: Arc::from([ActorMetadata {
-                    key: client_world::SCALE_METADATA_KEY,
+                    key: ActorDataKey::Scale.wire_value(),
                     value: ActorMetadataValue::Float(value),
                 }]),
                 properties: Arc::from([]),
@@ -540,7 +541,7 @@ fn bound_spell_particles_use_actor_color_at_spawn_and_after_metadata_updates() {
                     runtime_id: 42,
                     tick: sequence,
                     metadata: Arc::from([ActorMetadata {
-                        key: client_world::SPELL_COLOR_METADATA_KEY,
+                        key: ActorDataKey::DataSpellCastingColor.wire_value(),
                         value: ActorMetadataValue::Int(color),
                     }]),
                     properties: Arc::from([]),

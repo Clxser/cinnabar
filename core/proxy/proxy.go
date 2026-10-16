@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hashimthearab/rust-mcbe/core/authcache"
+	"github.com/hashimthearab/rust-mcbe/core/internal/redact"
 	"github.com/hashimthearab/rust-mcbe/core/internal/streamnet"
 	"github.com/sandertv/gophertunnel/minecraft"
 	"github.com/sandertv/gophertunnel/minecraft/device"
@@ -192,14 +193,14 @@ func connectUpstream(
 		}
 	}()
 	started := time.Now()
-	logger.Info("upstream connection starting", "target", address, "authentication", authentication)
-	upstream, err := dialFollowingTransfers(ctx, address, dial)
+	logger.Info("upstream connection starting", "target", redact.Private(address), "authentication", authentication)
+	upstream, err := dialFollowingTransfers(ctx, address, logger, dial)
 	if err != nil {
-		logger.Error("upstream connection failed", "target", address, "authentication", authentication, "error", err)
+		logger.Error("upstream connection failed", "target", redact.Private(address), "authentication", authentication, "error", redact.Error(err))
 		return nil, err
 	}
 	owned = upstream
-	logger.Info("upstream connected", "target", address, "authentication", authentication, "elapsed_ms", time.Since(started).Milliseconds())
+	logger.Info("upstream connected", "target", redact.Private(address), "authentication", authentication, "elapsed_ms", time.Since(started).Milliseconds())
 	result = upstream
 	owned = nil
 	return result, nil
@@ -217,6 +218,7 @@ func networkForAddress(target *resolvedUpstreamTarget, address string, trust min
 func dialFollowingTransfers(
 	ctx context.Context,
 	initialAddress string,
+	logger *slog.Logger,
 	dial func(context.Context, string) (upstreamSession, error),
 ) (upstreamSession, error) {
 	address := initialAddress
@@ -248,7 +250,7 @@ func dialFollowingTransfers(
 		if _, ok := seen[key]; ok {
 			return nil, fmt.Errorf("proxy: transfer cycle to %q: %w", next, err)
 		}
-		slog.Info("following pre-login server transfer", "from", address, "to", next, "hop", transfers+1)
+		logger.Info("following pre-login server transfer", "from", redact.Private(address), "to", redact.Private(next), "hop", transfers+1)
 		seen[key] = struct{}{}
 		address = next
 	}
@@ -273,6 +275,8 @@ type dialerDownstream interface {
 // transfer ceiling still bounds what those bytes can amount to.
 const maxUpstreamDecompressedBatch = 256 * 1024 * 1024
 
+// newUpstreamDialerForAdmission observes incoming pack negotiation before filtering
+// subclients and leaves payload observation to callers that need packet bodies.
 func newUpstreamDialerForAdmission(
 	downstream dialerDownstream,
 	tokenSource oauth2.TokenSource,
@@ -287,21 +291,21 @@ func newUpstreamDialerForAdmission(
 		EnableBatchReading:   true,
 		MaxDecompressedLen:   maxUpstreamDecompressedBatch,
 		FlushRate:            -1, // the relay's packet readers own flushing
+		AcceptPacketHeader: func(h packet.Header) bool {
+			// Observe even rejected subclients before body decoding or login handling.
+			if packAdmission != nil && h.PacketID == packet.IDResourcePacksInfo {
+				packAdmission.observeNegotiation()
+			}
+			// Only the primary local player is present.
+			return h.SenderSubClient == 0 && h.TargetSubClient == 0
+		},
 		// The Rust client owns the spawn sequence; the server's startup reaches it unchanged.
 		Handoff: minecraft.HandoffAtStartGame,
 		// A static opt-in, not the downstream status: the upstream login completes before it arrives.
 		EnableClientCache: enableUpstreamClientCache,
-		ErrorLog:          secretSafeResourcePackLogger(),
 		Protocol:          downstream.Proto(),
 		TokenSource:       tokenSource,
 		ResourcePackCache: resourcePackCache,
-	}
-	if packAdmission != nil {
-		dialer.PacketFunc = func(header packet.Header, _ []byte, _, _ net.Addr) {
-			if header.PacketID == packet.IDResourcePacksInfo {
-				packAdmission.observeNegotiation()
-			}
-		}
 	}
 	if tokenSource == nil {
 		identity := downstream.IdentityData()

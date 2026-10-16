@@ -1,5 +1,5 @@
 use super::*;
-use pack_compiler::{
+use pack_font_compiler::{
     CompiledFontCarrier, GlyphAdvances, OutlineFontConfig, compile_native_outline_rasters,
     compile_outline_font, compile_outline_font_with_fallback,
 };
@@ -25,6 +25,7 @@ pub(super) fn compile(
         .ok_or("missing font rasterization policy")?;
     let config = OutlineFontConfig {
         synthesize_mathematical_letters: false,
+        include_original_symbols: false,
         space_advance_64: None,
         ascii_bearing: None,
         pixel_height: required_u32(raster, "pixel_height")?,
@@ -136,7 +137,7 @@ pub(super) fn compile_pinned(
         return compile_grid(font, &bytes, face, manifest_hash);
     }
     let rasters = compile_native_outline_rasters(font, &bytes, manifest_hash)?;
-    let mut report = pack_compiler::FontCompileReport {
+    let mut report = pack_font_compiler::FontCompileReport {
         schema: assets::FONT_FACE_BUNDLE_SCHEMA,
         glyphs: 0,
         pages: 0,
@@ -176,6 +177,7 @@ fn compile_grid(
             }),
             atlas_side: 2048,
             synthesize_mathematical_letters: face.is_some(),
+            include_original_symbols: face.is_some(),
             space_advance_64: face.and_then(|face| face.space_advance_64()),
             ascii_bearing: face.and_then(|face| face.ascii_bearing),
             ..OutlineFontConfig::default()

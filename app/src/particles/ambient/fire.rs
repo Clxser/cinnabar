@@ -22,6 +22,7 @@ const NEIGHBORS: [(BlockFace, [i32; 3]); 6] = [
     (BlockFace::South, [0, 0, 1]),
 ];
 impl AmbientParticles {
+    /// Emits smoke for the fire block at `block`, which the caller identified.
     pub(super) fn try_fire(
         &mut self,
         block: [i32; 3],
@@ -30,13 +31,7 @@ impl AmbientParticles {
         collisions: &PhysicsCollisionRegistries,
         system: &mut ParticleSystem,
     ) {
-        let Some(runtime_id) = world.block_runtime_id(block) else {
-            return;
-        };
         let mode = stream.network_id_mode();
-        if collisions.block_identifier(mode, runtime_id) != Some("minecraft:fire") {
-            return;
-        }
         let mut neighbors = [BlockFlags::empty(); BlockFace::ALL.len()];
         let mut below_is_campfire = false;
         for (face, offset) in NEIGHBORS {
@@ -51,10 +46,10 @@ impl AmbientParticles {
                 neighbors[face as usize] = neighbor.flags();
             }
             if face == BlockFace::Down {
-                below_is_campfire = matches!(
-                    collisions.block_identifier(mode, id),
-                    Some("minecraft:campfire" | "minecraft:soul_campfire")
-                );
+                below_is_campfire = collisions
+                    .block_facts(mode, id)
+                    .traits
+                    .contains(assets::registry::BlockTraits::CAMPFIRE);
             }
         }
         emit_fire_smoke(

@@ -8,7 +8,7 @@ use protocol::{
     BlockAction, BlockActionKind, BlockActions, BlockItemInteraction, BlockUseRequest,
     PlayerAuthInputInteractions,
 };
-use sim::{BlockDestroyInfo, DestroyConditions, HeldTool, PaletteWorld};
+use sim::{BlockDestroyInfo, DestroyConditions, PaletteWorld};
 use simulation_clock::identity::{PositionAuthorityGeneration, SessionGeneration};
 
 /// Local effects emitted after a destroy was attached to its movement tick.
@@ -389,6 +389,26 @@ pub struct SurvivalMiningRuntime {
 }
 
 impl SurvivalMiningRuntime {
+    /// Retains block presses until a tick can carry them, excluding attacks owned by melee.
+    pub fn observe_attack_input(
+        &mut self,
+        active: bool,
+        pressed: bool,
+        held: bool,
+        actor_in_front: bool,
+    ) -> bool {
+        if !active {
+            self.latched_press = false;
+            return false;
+        }
+        if actor_in_front {
+            self.latched_press = false;
+            return pressed || held;
+        }
+        self.latched_press |= pressed;
+        held || self.latched_press
+    }
+
     /// The block and face the local player is breaking, for hit particles.
     pub fn destroying_target(&self) -> Option<([i32; 3], u8)> {
         self.machine.destroying_target()
@@ -601,12 +621,11 @@ pub fn blocked_mining_reason(
     }
 }
 
-pub fn destroys_in_creative(identifier: Option<&str>) -> bool {
-    identifier.is_none_or(|identifier| {
-        identifier != "minecraft:trident"
-            && HeldTool::from_identifier(identifier)
-                .is_none_or(|tool| tool.kind != assets::compiled::block_destroy::ToolKind::Sword)
-    })
+/// Admitted items carrying the creative no-break trait block local destroy prediction.
+pub fn destroys_in_creative(fact: &assets::facts::ItemFact) -> bool {
+    !fact
+        .traits
+        .contains(assets::facts::ItemTraits::CREATIVE_NO_BREAK)
 }
 
 /// Flight, not mere airborne movement, exempts the destroy-speed penalty (`PlayerDestroy`).

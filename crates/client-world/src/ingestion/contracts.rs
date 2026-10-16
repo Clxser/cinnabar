@@ -1,12 +1,13 @@
 //! Prepared authoritative mutations shared with the synchronous chunk coordinator.
 
-use std::{collections::BTreeSet, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use protocol::{LevelChunkEvent, SyncedBlockUpdateEvent, WorldEvent};
 use thiserror::Error;
 use world::{
     BlockEntityError, BlockEntityKey, BlockEntityNbt, DecodedBiomeColumn, DecodedBlockEntities,
-    DecodedLevelChunk, DecodedSubChunk, MutationError, PreparedSubChunkMutation, SubChunkKey,
+    DecodedLevelChunk, DecodedSubChunk, MutationError, PreparedSubChunkMutation, SubChunk,
+    SubChunkKey,
 };
 
 #[derive(Debug)]
@@ -14,6 +15,9 @@ pub enum PreparedWorldEvent {
     InlineLevelChunk {
         event: LevelChunkEvent,
         decoded: DecodedLevelChunk,
+        /// Sections whose blocks differ from the paired resident section with every cell's light
+        /// inputs unchanged; see [`light_neutral_sections`](super::light_neutral_sections).
+        light_neutral: Vec<(i32, Arc<SubChunk>)>,
         duration: Duration,
     },
     RequestLevelChunk {
@@ -24,6 +28,13 @@ pub enum PreparedWorldEvent {
     SubChunks {
         dimension: i32,
         entries: Vec<PreparedSubChunk>,
+        duration: Duration,
+    },
+    /// One entry of a partially applied [`Self::SubChunks`] batch, produced only by the ordered
+    /// commit state; applies exactly as that batch with `entries` holding only `entry`.
+    SubChunk {
+        dimension: i32,
+        entry: PreparedSubChunk,
         duration: Duration,
     },
     BlockUpdates {
@@ -50,6 +61,8 @@ pub enum PreparedWorldEvent {
 pub struct PreparedBlockMutations {
     pub mutations: Vec<PreparedSubChunkMutation>,
     pub relight: BTreeSet<SubChunkKey>,
+    /// Earlier packet replacements used only to retire changed crack targets after commit.
+    pub crack_intermediates: Vec<PreparedSubChunkMutation>,
 }
 
 #[derive(Debug)]

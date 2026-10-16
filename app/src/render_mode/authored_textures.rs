@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex, mpsc},
 };
 
-use assets::{MaterialKeys, RuntimeAssets};
+use assets::{RuntimeAssets, material_keys::MaterialKeys};
 use bevy::prelude::*;
 use bevy::render::renderer::RenderDevice;
 use render_model::ENHANCED_RENDERING_ENABLED;

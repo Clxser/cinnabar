@@ -3,12 +3,12 @@
 //! Box sizes follow the conduit textures (6x6x6 shell, 8x8x8 cage, 16x16x16 wind cube); wind
 //! frame timing, wind spin, bob and eye size need native measurement.
 
-use assets::block_entity_geometry as geometry;
+use assets::block_entity_geometry::{self as geometry, BoxSpec};
 use glam::{Mat4, Vec3};
 
 use super::{
     atlas::{AtlasRect, BlockEntityAtlas, TextureRef},
-    mesh::{BoxSpec, Layer, MeshBuilder, WHITE, model_matrix},
+    mesh::{Layer, MeshBuilder, WHITE, model_matrix},
     scene::SceneClock,
 };
 
@@ -58,7 +58,11 @@ pub(super) fn emit(
     };
     let center = model_matrix(block, [0.5, 0.0, 0.5], 0.0)
         * Mat4::from_translation(Vec3::new(0.0, ACTIVE_HEIGHT_PIXELS + bob, 0.0));
-    if let Some(shell) = atlas.texture(geometry::CONDUIT_TEXTURE.0, geometry::CONDUIT_TEXTURE.1) {
+    if let Some(shell) = builder.required_texture(
+        atlas,
+        geometry::CONDUIT_TEXTURE.0,
+        geometry::CONDUIT_TEXTURE.1,
+    ) {
         builder.cuboid(
             Layer::Solid,
             &shell,
@@ -70,7 +74,11 @@ pub(super) fn emit(
     if !model.active {
         return;
     }
-    if let Some(cage) = atlas.texture("textures/blocks/conduit_cage", [32.0, 16.0]) {
+    if let Some(cage) = builder.required_texture(
+        atlas,
+        assets::block_entity_geometry::textures::AtlasTexture::BlocksConduitCage.path(),
+        [32.0, 16.0],
+    ) {
         let spin = Mat4::from_rotation_y(
             ((clock.ticks * SPIN_DEGREES_PER_TICK) % 360.0).to_radians() as f32,
         );
@@ -84,10 +92,17 @@ pub(super) fn emit(
     }
     let frame = (clock.ticks / WIND_TICKS_PER_FRAME) as u32;
     for (strip, spin_scale) in [
-        ("textures/blocks/conduit_wind_horizontal", 1.0),
-        ("textures/blocks/conduit_wind_vertical", -1.3),
+        (
+            assets::block_entity_geometry::textures::AtlasTexture::BlocksConduitWindHorizontal
+                .path(),
+            1.0,
+        ),
+        (
+            assets::block_entity_geometry::textures::AtlasTexture::BlocksConduitWindVertical.path(),
+            -1.3,
+        ),
     ] {
-        if let Some(strip) = atlas.texture(strip, [64.0, 704.0]) {
+        if let Some(strip) = builder.required_texture(atlas, strip, [64.0, 704.0]) {
             let texture = TextureRef {
                 rect: wind_frame_rect(strip.rect, frame),
                 logical: [64.0, WIND_FRAME_ROWS],
@@ -105,11 +120,11 @@ pub(super) fn emit(
         }
     }
     let eye = if model.hunting {
-        "textures/blocks/conduit_open"
+        assets::block_entity_geometry::textures::AtlasTexture::BlocksConduitOpen.path()
     } else {
-        "textures/blocks/conduit_closed"
+        assets::block_entity_geometry::textures::AtlasTexture::BlocksConduitClosed.path()
     };
-    if let Some(eye) = atlas.texture(eye, [8.0, 8.0]) {
+    if let Some(eye) = builder.required_texture(atlas, eye, [8.0, 8.0]) {
         let facing = center * Mat4::from_rotation_y(model.viewer_yaw_degrees.to_radians());
         let corners = [
             [EYE_HALF_PIXELS, EYE_HALF_PIXELS, -3.5],

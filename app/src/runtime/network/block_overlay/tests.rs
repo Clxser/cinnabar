@@ -14,7 +14,7 @@ fn compile_block_overlay(
     view: &LayeredPackView,
     blocks: &CustomBlocks,
     hashed: bool,
-    keys: Option<&assets::MaterialKeys>,
+    keys: Option<&assets::material_keys::MaterialKeys>,
 ) -> Option<super::CompiledBlockOverlay> {
     super::compile_block_overlay(
         view,
@@ -22,18 +22,26 @@ fn compile_block_overlay(
         hashed,
         keys,
         assets::MAX_TEXTURE_LAYERS as u32,
+        None,
     )
 }
 
+mod block_items;
 mod budget;
 mod builtins;
 mod capacity;
+mod empty_geometry;
+mod flipbooks;
+mod hd_textures;
 mod legacy;
 mod lighting;
+mod partial_faces;
 mod random_offset;
 mod session;
 mod texture_budget;
+mod vanilla_terrain;
 
+mod vanilla_fallback;
 mod vines;
 
 fn png(width: u32, height: u32, pixel: impl Fn(u32, u32) -> [u8; 4]) -> Vec<u8> {
@@ -120,24 +128,24 @@ fn terrain_replacement_applies_literal_atlas_tint_once_and_keeps_alpha() {
         r##"{"texture_data":{"lucky":{"textures":[{"path":"textures/blocks/lucky","tint_color":"#ff80ff"}]}}}"##,
     );
     let catalog = super::textures::TextureCatalog::new(&view, None);
-    let image = catalog.decode("lucky").unwrap();
+    let image = catalog.decode_choice("lucky", 0, 0).unwrap();
     assert_eq!(&image.rgba8[..4], &[0, 100, 0, 255]);
 }
 
 #[test]
 fn raster_only_replacement_retains_the_base_lily_tint() {
     let view = view_with_catalog(GEOMETRY.as_bytes(), r#"{"texture_data":{}}"#);
-    let keys = assets::MaterialKeys::from_entries([(1, "pad")])
+    let keys = assets::material_keys::MaterialKeys::from_entries([(1, "pad")])
         .with_aliases([("pad", "textures/blocks/lucky")])
         .with_fixed_tints([("pad", [32, 128, 48])]);
     let catalog = super::textures::TextureCatalog::new(&view, Some(&keys));
-    let image = catalog.decode("pad").unwrap();
+    let image = catalog.decode_choice("pad", 0, 0).unwrap();
     assert_eq!(&image.rgba8[..4], &[0, 100, 0, 255]);
     let compiled =
         compile_block_overlay(&view, &CustomBlocks::default(), false, Some(&keys)).unwrap();
     assert_eq!(compiled.overlay.material_overrides.len(), 1);
     let texture = compiled.overlay.material_overrides[0].texture;
-    let page = compiled.overlay.texture.as_ref().unwrap();
+    let page = compiled.overlay.textures.first().unwrap();
     let mip = &page.mips[0];
     let start = texture.layer() as usize * (mip.size * mip.size * 4) as usize;
     assert_eq!(&mip.rgba8[start..start + 4], &[0, 100, 0, 255]);
@@ -238,9 +246,10 @@ fn compiled() -> super::CompiledBlockOverlay {
     compile_block_overlay(&view(), &blocks, false, None).expect("overlay")
 }
 
-// Full blocks become cubes on page 1; missing textures stay diagnostic and are counted.
+// Full blocks become cubes on page 1; missing textures paint their faces
+// diagnostic while the cube still renders, and are counted.
 #[test]
-fn full_block_is_a_page_one_cube_and_missing_texture_is_diagnostic() {
+fn full_block_is_a_page_one_cube_and_missing_textures_degrade_per_face() {
     let compiled = compiled();
     let overlay = &compiled.overlay;
     assert_eq!(
@@ -252,7 +261,15 @@ fn full_block_is_a_page_one_cube_and_missing_texture_is_diagnostic() {
     assert_eq!(lucky.kind, VisualKind::Cube);
     let material = overlay.materials[lucky.faces[BlockFace::Up as usize] as usize];
     assert_eq!((material.texture.page(), material.flags), (1, 0));
-    assert_eq!(overlay.visuals[5].kind, VisualKind::Diagnostic);
+    let missing = overlay.visuals[5];
+    assert_eq!(missing.kind, VisualKind::Cube);
+    assert!(
+        missing
+            .faces
+            .iter()
+            .all(|&face| face == assets::DIAGNOSTIC_MATERIAL),
+        "failed faces keep the diagnostic material instead of sinking the cube"
+    );
     assert_eq!(
         compiled.gaps,
         OverlayGaps {
@@ -261,11 +278,13 @@ fn full_block_is_a_page_one_cube_and_missing_texture_is_diagnostic() {
         },
         "rotated cubes are rendered, not skipped"
     );
-    let texture = overlay.texture.as_ref().expect("page");
-    assert_eq!(
-        texture.mips[0].size, 32,
-        "largest source keeps its resolution"
-    );
+    let tile = overlay
+        .textures
+        .iter()
+        .map(|shard| shard.mips[0].size)
+        .max()
+        .expect("page");
+    assert_eq!(tile, 32, "largest source keeps its resolution");
 }
 
 // Flipbook frames become layers in the listed order behind one animation.
@@ -277,10 +296,13 @@ fn flipbook_texture_animates_listed_frames() {
     let material = overlay.materials[generator.faces[0] as usize];
     let animation = overlay.animations[material.animation as usize];
     assert_eq!((animation.frame_count, animation.ticks_per_frame), (2, 15));
-    let texture = overlay.texture.as_ref().unwrap();
+    let first_frame = overlay.animation_frames[animation.frame_start as usize];
+    let texture = overlay
+        .textures
+        .get(first_frame.page() as usize - 1)
+        .expect("frame page");
     let layer_bytes = 32 * 32 * 4;
-    let first_frame = overlay.animation_frames[animation.frame_start as usize].layer() as usize;
-    let pixel = &texture.mips[0].rgba8[first_frame * layer_bytes..][..4];
+    let pixel = &texture.mips[0].rgba8[first_frame.layer() as usize * layer_bytes..][..4];
     assert_eq!(
         pixel,
         [0, 0, 255, 255],
@@ -342,7 +364,10 @@ fn overlay_extends_runtime_assets_after_base_ids() {
     let session = base
         .with_block_overlay(1, &compiled.overlay)
         .expect("overlay applies");
-    assert_eq!(session.texture_pages().len(), 2);
+    assert_eq!(
+        session.texture_pages().len(),
+        1 + compiled.overlay.textures.len()
+    );
     let lucky = session.resolve(NetworkIdMode::Sequential, 1);
     assert!(lucky.is_known());
     assert_eq!(lucky.kind(), VisualKind::Cube);
@@ -431,7 +456,15 @@ fn incomplete_state_identity_preserves_neighboring_custom_blocks() {
     for id in [2, 3] {
         assert_eq!(
             assets.resolve(NetworkIdMode::Sequential, id).kind(),
-            VisualKind::Diagnostic
+            VisualKind::Cube,
+            "material-free states still render their cube"
+        );
+        assert!(
+            compiled.overlay.visuals[id as usize - 1]
+                .faces
+                .iter()
+                .all(|&face| face == assets::DIAGNOSTIC_MATERIAL),
+            "their faces keep the diagnostic material"
         );
     }
 }
@@ -472,6 +505,46 @@ fn permutation_conditions_evaluate_as_block_molang() {
     assert_eq!(
         gaps.unevaluated_permutations, 3,
         "the missing state when closed, and the random roll in both states"
+    );
+}
+
+// Neighbor-dependent connection queries cannot resolve at compile time:
+// every state keeps the base visual and each evaluation is counted.
+#[test]
+fn connection_permutations_fall_back_to_the_base_visual() {
+    let arm = |direction| CustomPermutation {
+        physical: Default::default(),
+        condition: format!("q.block_state('minecraft:connection_{direction}')").into(),
+        components: turn(1),
+    };
+    let fence = block(
+        "test:fence",
+        1,
+        CustomBlockVisuals {
+            base: CustomVisualComponents {
+                geometry: Some("minecraft:geometry.full_block".into()),
+                materials: materials("lucky"),
+                ..CustomVisualComponents::default()
+            },
+            permutations: ["north", "south", "east", "west"].map(arm).into(),
+            ..CustomBlockVisuals::default()
+        },
+    );
+    let blocks = CustomBlocks {
+        blocks: vec![fence].into(),
+        vanilla_blocks: Default::default(),
+        skipped: 0,
+    };
+    let compiled = compile_block_overlay(&view(), &blocks, false, None).expect("overlay");
+    assert_eq!(
+        compiled.gaps.unevaluated_permutations, 4,
+        "one unevaluated connection per permutation"
+    );
+    assert_eq!(compiled.overlay.visuals.len(), 1);
+    assert_eq!(
+        compiled.overlay.visuals[0].kind,
+        VisualKind::Cube,
+        "unconnected states keep the base post"
     );
 }
 
@@ -636,25 +709,35 @@ fn bone_visibility_hides_bones_per_state() {
 // Flipbook framing is bounded before copies are cut and each frame is shrunk.
 #[test]
 fn flipbook_frames_are_capped_and_shrunk() {
-    use super::textures::{Flipbook, flipbook_frames, shrink_to_max};
+    use super::textures::{flipbook_frames, shrink_to_max};
+    use assets::texture::flipbook::FlipbookSource;
     use pack_runtime::pack_textures::DecodedTexture;
     let strip = DecodedTexture {
         width: 64,
         height: 64 * 8,
-        rgba8: vec![7; (64 * 64 * 8 * 4) as usize].into_boxed_slice(),
+        rgba8: (0..64 * 64 * 8)
+            .flat_map(|pixel| [(pixel / (64 * 64)) as u8; 4])
+            .collect(),
     };
-    let flipbook = Flipbook {
-        frames: None,
-        ticks_per_frame: 1,
-        blend: true,
-    };
+    let flipbook: FlipbookSource = serde_json::from_value(serde_json::json!({
+        "flipbook_texture": "textures/fixture", "atlas_tile": "fixture"
+    }))
+    .unwrap();
     let frames = flipbook_frames(&strip, &flipbook, 3, 32);
-    assert_eq!(frames.len(), 3, "frame count capped to the budget");
+    assert_eq!(
+        frames.frames.len(),
+        3,
+        "physical frame count capped to the budget"
+    );
+    assert_eq!(frames.timeline.len(), 3);
     assert!(
-        frames.iter().all(|f| f.width == 32 && f.height == 32),
+        frames
+            .frames
+            .iter()
+            .all(|f| f.width == 32 && f.height == 32),
         "frames shrunk to max side"
     );
-    assert!(flipbook_frames(&strip, &flipbook, 0, 32).is_empty());
+    assert!(flipbook_frames(&strip, &flipbook, 0, 32).frames.is_empty());
 
     let big = DecodedTexture {
         width: 256,
@@ -748,7 +831,11 @@ fn hashed_mode_emits_a_visual_and_hash_per_state() {
 // A pack redefining a vanilla terrain key repoints that key's base materials; unknown keys are ignored.
 #[test]
 fn vanilla_terrain_keys_override_base_materials() {
-    let keys = assets::MaterialKeys::from_entries([(5, "lucky"), (6, "gen"), (7, "not_in_pack")]);
+    let keys = assets::material_keys::MaterialKeys::from_entries([
+        (5, "lucky"),
+        (6, "gen"),
+        (7, "not_in_pack"),
+    ]);
     let empty = CustomBlocks::default();
     let compiled = compile_block_overlay(&view(), &empty, false, Some(&keys)).expect("overrides");
     let mut materials = compiled
@@ -771,293 +858,6 @@ fn vanilla_terrain_keys_override_base_materials() {
         "flipbook carries over"
     );
     assert!(compile_block_overlay(&view(), &empty, false, None).is_none());
-}
-
-// Block items draw their block's first state: cubes and models get thumbnails, a
-// diagnostic visual is a miss, and hashed sessions index by `hashed_states`.
-#[test]
-fn custom_block_items_draw_their_default_state() {
-    use super::super::item_icons::custom_block_icons;
-    let pair = |item: &str, block: &str| (Arc::<str>::from(item), Arc::<str>::from(block));
-    let items = [
-        pair("test:lucky", "test:lucky"),
-        pair("test:generator", "test:generator"),
-        pair("test:missing", "test:missing"),
-        pair("test:lucky_placer", "test:lucky"),
-    ];
-    let overlay = compiled().overlay;
-    let blocks = CustomBlocks {
-        blocks: vec![
-            block("test:lucky", 1, CustomBlockVisuals::default()),
-            generator(),
-            block("test:missing", 1, CustomBlockVisuals::default()),
-        ]
-        .into(),
-        vanilla_blocks: Default::default(),
-        skipped: 0,
-    };
-    let icons = custom_block_icons(&overlay, &blocks, false, &items);
-    let drawn = icons
-        .icons
-        .iter()
-        .map(|icon| icon.identifier.as_ref())
-        .collect::<Vec<_>>();
-    assert_eq!(drawn, ["test:lucky", "test:generator", "test:lucky_placer"]);
-    assert_eq!(icons.misses.len(), 1);
-    assert_eq!(icons.misses[0].0.as_ref(), "test:missing");
-    let lucky = &icons.icons[0];
-    assert_eq!((lucky.width, lucky.height), (32, 32));
-    let opaque = lucky
-        .rgba8
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .filter(|pixel| pixel[3] == 255);
-    assert!(opaque.clone().count() > 300, "a filled cube silhouette");
-    assert!(
-        opaque.clone().all(|pixel| pixel[2] == 0),
-        "lucky's red-green texels"
-    );
-    assert_eq!(icons.icons[2].rgba8, lucky.rgba8);
-
-    let hashed = CustomBlocks {
-        blocks: vec![generator()].into(),
-        vanilla_blocks: Default::default(),
-        skipped: 0,
-    };
-    let overlay = compile_block_overlay(&view(), &hashed, true, None)
-        .expect("overlay")
-        .overlay;
-    let icons = custom_block_icons(&overlay, &hashed, true, &items[1..2]);
-    assert_eq!(icons.icons.len(), 1);
-}
-
-// A full-cube block item also carries the six-face sheet vanilla block items draw as a GPU cube,
-// with 16-texel faces however large the overlay's shared tile is; model shapes carry none.
-#[test]
-fn full_cube_block_items_carry_a_sixteen_texel_face_sheet() {
-    use super::super::item_icons::custom_block_icons;
-    let pair = |item: &str, block: &str| (Arc::<str>::from(item), Arc::<str>::from(block));
-    let items = [
-        pair("test:lucky", "test:lucky"),
-        pair("test:generator", "test:generator"),
-        pair("test:lucky_placer", "test:lucky"),
-    ];
-    let compiled = compiled();
-    assert_eq!(compiled.overlay.visuals[0].support, VisualSupport::Exact);
-    assert!(
-        compiled.overlay.texture.as_ref().unwrap().mips[0].size
-            > u32::from(assets::BLOCK_ITEM_FACE_SIDE),
-        "exercise a shared atlas tile larger than the block-item face"
-    );
-    let blocks = CustomBlocks {
-        blocks: vec![
-            block("test:lucky", 1, CustomBlockVisuals::default()),
-            generator(),
-        ]
-        .into(),
-        vanilla_blocks: Default::default(),
-        skipped: 0,
-    };
-    let icons = custom_block_icons(&compiled.overlay, &blocks, false, &items);
-    let sheets = icons
-        .block_sheets
-        .iter()
-        .map(|sheet| sheet.identifier.as_ref())
-        .collect::<Vec<_>>();
-    assert_eq!(sheets, ["test:lucky", "test:lucky_placer"]);
-    let sheet = &icons.block_sheets[0];
-    let [width, height] = assets::BLOCK_ITEM_SHEET_SIZE.map(u32::from);
-    assert_eq!((sheet.width, sheet.height), (width, height));
-    let side = u32::from(assets::BLOCK_ITEM_FACE_SIDE);
-    let columns = u32::from(assets::BLOCK_ITEM_SHEET_GRID[0]);
-    for face in 0..6 {
-        for (x, y) in [(0, 0), (7, 3), (15, 15)] {
-            let (column, row) = (face % columns * side + x, face / columns * side + y);
-            let at = ((row * width + column) * 4) as usize;
-            assert_eq!(
-                &sheet.rgba8[at..at + 4],
-                &[x as u8 * 16, 200, 0, 255],
-                "face {face} texel {x},{y} is lucky's own texel"
-            );
-        }
-    }
-}
-
-#[test]
-fn cube_inputs_with_unrepresented_transforms_or_materials_keep_fallback_support() {
-    use super::super::item_icons::custom_block_icons;
-
-    let identity = CustomTransformation {
-        rotation: [0; 3],
-        scale: [1.0; 3],
-        translation: [0.0; 3],
-    };
-    let material = |render_method: Option<&str>,
-                    tint_method: Option<&str>|
-     -> Option<Box<[CustomMaterialInstance]>> {
-        Some(Box::new([CustomMaterialInstance {
-            name: "*".into(),
-            texture: "lucky".into(),
-            render_method: render_method.map(Into::into),
-            tint_method: tint_method.map(Into::into),
-            ambient_occlusion: None,
-            face_dimming: None,
-        }]))
-    };
-    for (case, transformation, materials, thumbnail) in [
-        (
-            "rotation",
-            Some(CustomTransformation {
-                rotation: [0, 1, 0],
-                ..identity
-            }),
-            material(None, None),
-            true,
-        ),
-        (
-            "scale",
-            Some(CustomTransformation {
-                scale: [0.5; 3],
-                ..identity
-            }),
-            material(None, None),
-            true,
-        ),
-        (
-            "translation",
-            Some(CustomTransformation {
-                translation: [0.25, 0.0, 0.0],
-                ..identity
-            }),
-            material(None, None),
-            true,
-        ),
-        ("blend", None, material(Some("blend"), None), true),
-        (
-            "unknown method",
-            None,
-            material(Some("unknown"), None),
-            true,
-        ),
-        (
-            "unresolved tint",
-            None,
-            material(None, Some("grass")),
-            false,
-        ),
-    ] {
-        let blocks = CustomBlocks {
-            blocks: vec![block(
-                "test:cube",
-                1,
-                CustomBlockVisuals {
-                    base: CustomVisualComponents {
-                        geometry: Some(super::FULL_BLOCK.into()),
-                        materials,
-                        transformation,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-            )]
-            .into(),
-            ..Default::default()
-        };
-        let compiled = compile_block_overlay(&view(), &blocks, false, None).unwrap();
-        assert_eq!(
-            compiled.overlay.visuals[0].support,
-            VisualSupport::VanillaFallback,
-            "{case}"
-        );
-        let icons = custom_block_icons(
-            &compiled.overlay,
-            &blocks,
-            false,
-            &[("test:cube".into(), "test:cube".into())],
-        );
-        assert_eq!(
-            icons.icons.len(),
-            usize::from(thumbnail),
-            "{case}: only an untinted fallback has a drawable thumbnail"
-        );
-        assert_eq!(icons.misses.len(), usize::from(!thumbnail), "{case}");
-        assert!(icons.block_sheets.is_empty(), "{case}");
-    }
-}
-
-// Cached packs supply scalar cube textures independently of custom visual components.
-#[test]
-fn packcache_custom_block_items_draw_when_requested() {
-    use super::super::item_icons::custom_block_icons;
-    let Some(dir) = std::env::var_os("CINNABAR_PACKCACHE_DIR") else {
-        eprintln!(
-            "skipping packcache_custom_block_items_draw_when_requested: fixture unavailable; requires CINNABAR_PACKCACHE_DIR containing offline cached packs"
-        );
-        return;
-    };
-    let mut eligible = 0usize;
-    let mut checked = 0usize;
-    for entry in std::fs::read_dir(dir).expect("packcache dir").flatten() {
-        let path = entry.path();
-        let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        let Some((_, version)) = name
-            .strip_suffix(".zip")
-            .and_then(|stem| stem.split_once('_'))
-        else {
-            continue;
-        };
-        if version.is_empty() {
-            continue;
-        }
-        let Some(view) = super::super::local_pack::local_pack_view_at(&path) else {
-            continue;
-        };
-        let custom = view
-            .merged_json_object("blocks.json", None)
-            .iter()
-            .filter_map(|(block_name, entry)| {
-                entry.get("textures")?.as_str()?;
-                block_name
-                    .contains(':')
-                    .then(|| block(block_name, 1, CustomBlockVisuals::default()))
-            })
-            .collect::<Vec<_>>();
-        if custom.is_empty() {
-            continue;
-        }
-        eligible += custom.len();
-        let blocks = CustomBlocks::from_definitions(std::iter::empty());
-        let blocks = CustomBlocks {
-            blocks: custom.into(),
-            ..blocks
-        };
-        let Some(compiled) = compile_block_overlay(&view, &blocks, false, None) else {
-            continue;
-        };
-        let items = blocks
-            .blocks
-            .iter()
-            .map(|block| (Arc::clone(&block.name), Arc::clone(&block.name)))
-            .collect::<Vec<_>>();
-        let icons = custom_block_icons(&compiled.overlay, &blocks, false, &items);
-        let textured = items.len() - compiled.gaps.missing_textures as usize;
-        assert!(
-            icons.icons.len() >= textured,
-            "{name}: {} of {textured} textured blocks drew; misses {:?}",
-            icons.icons.len(),
-            icons.misses
-        );
-        checked += icons.icons.len();
-    }
-    if eligible == 0 {
-        eprintln!(
-            "skipping packcache_custom_block_items_draw_when_requested: fixture unavailable; no admitted scalar custom block bindings in cached packs"
-        );
-        return;
-    }
-    assert!(checked > 0, "fixture must contain drawable custom blocks");
-    eprintln!("{checked} packcache custom block item icons drawn");
 }
 
 #[test]
@@ -1085,36 +885,4 @@ fn review_geometry_catalog_accepts_json_escaped_identifiers() {
     let wanted = std::collections::HashSet::from(["geometry.gen"]);
     let catalog = super::geometry_inputs::geometry_catalog(&view, &wanted);
     assert!(catalog.contains_key("geometry.gen"));
-}
-
-// Icons compile beside other subscribers but only once blocks supply their thumbnails.
-#[test]
-fn join_preparation_icons_carry_the_compiled_block_sheets() {
-    let lucky = block(
-        "test:lucky",
-        1,
-        CustomBlockVisuals {
-            base: CustomVisualComponents {
-                geometry: Some("minecraft:geometry.full_block".into()),
-                materials: materials("lucky"),
-                ..CustomVisualComponents::default()
-            },
-            ..CustomBlockVisuals::default()
-        },
-    );
-    let inputs = Arc::new(pack_runtime::PackInputs {
-        blocks: CustomBlocks {
-            blocks: vec![lucky].into(),
-            vanilla_blocks: Default::default(),
-            skipped: 0,
-        },
-        block_items: vec![("test:lucky".into(), "test:lucky".into())],
-        ..Default::default()
-    });
-    let application =
-        super::super::resource_packs::prepare_validated_application(view().shared_stack(), inputs);
-    assert!(application.block_overlay.is_some());
-    let icons = application.item_icons.expect("block item icons");
-    assert_eq!(icons.block_sheets.len(), 1);
-    assert_eq!(icons.block_sheets[0].identifier.as_ref(), "test:lucky");
 }

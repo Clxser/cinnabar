@@ -25,7 +25,11 @@ fn compiler_compiles_exact_terrestrial_cross_alias_tint_and_crop_variants() {
             "short_grass":{"textures":"textures/blocks/short_grass"},
             "fern":{"textures":"textures/blocks/fern"},
             "yellow_flower":{"textures":"textures/blocks/dandelion"},
-            "sapling":{"textures":["textures/blocks/oak","textures/blocks/spruce"]},
+            "sapling":{"textures":[
+                "textures/blocks/oak","textures/blocks/spruce",
+                "textures/blocks/birch","textures/blocks/jungle",
+                "textures/blocks/acacia","textures/blocks/dark_oak"
+            ]},
             "wheat":{"textures":[
                 "textures/blocks/wheat0","textures/blocks/wheat1",
                 "textures/blocks/wheat2","textures/blocks/wheat3",
@@ -49,6 +53,10 @@ fn compiler_compiles_exact_terrestrial_cross_alias_tint_and_crop_variants() {
         "dandelion",
         "oak",
         "spruce",
+        "birch",
+        "jungle",
+        "acacia",
+        "dark_oak",
         "wheat0",
         "wheat1",
         "wheat2",
@@ -137,19 +145,16 @@ fn compiler_compiles_exact_terrestrial_cross_alias_tint_and_crop_variants() {
             .iter()
             .map(|visual| visual.variant)
             .collect::<Vec<_>>(),
-        [0, 0, 0, 0, 0, 7, 2, 0, 1, 0]
+        [0, 0, 0, 0, 0, 7, 2, 0, 0, 0]
     );
     for (index, visual) in compiled.visuals[..records.len()].iter().enumerate() {
         let template = compiled.model_templates[visual.model_template as usize];
         assert_eq!(
             template.quad_count,
-            if matches!(
-                records[index].name.as_ref(),
-                "minecraft:wheat" | "minecraft:carrots"
-            ) {
-                4
-            } else {
-                2
+            match records[index].name.as_ref() {
+                "minecraft:wheat" | "minecraft:carrots" => 4,
+                "minecraft:melon_stem" if index == 8 => 3,
+                _ => 2,
             },
             "visual {index} has the wrong plant geometry"
         );
@@ -190,6 +195,73 @@ fn compiler_compiles_exact_terrestrial_cross_alias_tint_and_crop_variants() {
         compiled.visuals[4].model_template,
         compiled.visuals[6].model_template
     );
+}
+
+#[test]
+fn compiler_sapling_arrays_require_the_complete_selector_range() {
+    let directory = tempfile::tempdir().expect("create sapling array fixture");
+    let records = [
+        "oak_sapling",
+        "spruce_sapling",
+        "birch_sapling",
+        "jungle_sapling",
+        "acacia_sapling",
+        "dark_oak_sapling",
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, name)| {
+        model_record(
+            index as u32,
+            500 + index as u32,
+            &format!("minecraft:{name}"),
+            r#"{"age_bit":{"type":"byte","value":1}}"#,
+            ModelFamily::Cross,
+        )
+    })
+    .collect::<Vec<_>>();
+    let paths = (0..=records.len())
+        .map(|index| format!("textures/blocks/sapling_{index}"))
+        .collect::<Vec<_>>();
+    for (index, path) in paths.iter().enumerate() {
+        write_png(
+            directory.path(),
+            path,
+            TILE_SIZE,
+            TILE_SIZE,
+            &solid(TILE_SIZE, TILE_SIZE, [index as u8 + 1, 17, 31, 255]),
+        );
+    }
+    for count in [2, records.len() - 1, records.len(), records.len() + 1] {
+        write_pack(
+            directory.path(),
+            r#"{"sapling":{"textures":"sapling"}}"#,
+            &serde_json::json!({"texture_data":{"sapling":{"textures":&paths[..count]}}})
+                .to_string(),
+            "[]",
+        );
+        let compiled = compile_pack(directory.path(), &records).expect("compile sapling arrays");
+        for record in &records {
+            let visual = compiled.visuals[record.sequential_id as usize];
+            if count == records.len() {
+                assert_eq!(visual.kind, VisualKind::Cross, "{}", record.name);
+                assert_eq!(visual.variant, record.sequential_id);
+                assert_eq!(
+                    compiled.model_templates[visual.model_template as usize].quad_count,
+                    2
+                );
+            } else {
+                assert_eq!(
+                    visual.kind,
+                    VisualKind::Diagnostic,
+                    "{}: {count}",
+                    record.name
+                );
+                assert_eq!(visual.faces, [assets::DIAGNOSTIC_MATERIAL; 6]);
+                assert_eq!(visual.model_template, assets::NO_MODEL_TEMPLATE);
+            }
+        }
+    }
 }
 
 #[test]

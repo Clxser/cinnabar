@@ -164,7 +164,7 @@ fn coral_forms_resolve_artwork_and_state_selected_models() {
             assert_eq!(quads.len(), 1, "wall fan is one inclined sprite");
             let direction = state["coral_direction"]["value"].as_u64().unwrap();
             let axis = if direction < 2 { 0 } else { 2 };
-            let attachment = if direction % 2 == 0 { 3 } else { 253 };
+            let attachment = if direction.is_multiple_of(2) { 3 } else { 253 };
             let roots: Vec<_> = quads[0].positions.iter().filter(|p| p[1] == 128).collect();
             assert_eq!(roots.len(), 2);
             assert!(

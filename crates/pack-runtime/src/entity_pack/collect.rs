@@ -90,7 +90,8 @@ impl References {
 /// Every entity source of the stack as `(pack-relative path, bytes)`. Named definitions are
 /// merged into one file per family with the highest layer winning each identifier (a vanilla
 /// client keeps the last definition it loads); definitions the actors reference but the
-/// stack lacks come from `vanilla`. Only rasters the sources name are read.
+/// stack lacks come from `vanilla`. Reads named rasters, painting overrides, and shared
+/// enchantment rasters. Missing painting overrides remain tracked reload dependencies.
 pub fn collect_files(
     view: &LayeredPackView,
     vanilla: Option<&VanillaEntityRefs>,
@@ -98,20 +99,41 @@ pub fn collect_files(
 ) -> Vec<(Box<str>, Vec<u8>)> {
     let mut files = Vec::new();
     let entities = unique_entities(view);
-    let attachables = attachables::collect(view, vanilla_pack_dir);
+    let mut geometry = unshadowed_geometry(view);
+    let pack_geometry = geometry
+        .iter()
+        .flat_map(|(_, bytes)| geometry_identifiers(bytes))
+        .collect::<BTreeSet<_>>();
+    let definitions = DEFINITION_FAMILIES
+        .map(|(prefix, key, merged)| (key, merged, merged_definitions(view, prefix, key)));
+    let mut overrides = pack_geometry.clone();
+    for (_, _, definitions) in &definitions {
+        overrides.extend(definitions.keys().cloned());
+    }
+    let materials = material_definitions(view);
+    let material_document = materials.as_deref().and_then(parse_pack_json);
+    let binding_inputs = pack_entity_compiler::EquipmentBindingDependencies::load(
+        vanilla_pack_dir,
+        material_document.as_ref(),
+    )
+    .ok();
+    if let Some(inputs) = &binding_inputs {
+        overrides.extend(inputs.authored_materials().iter().cloned());
+    }
+    let attachables = attachables::collect(
+        view,
+        vanilla_pack_dir,
+        &overrides,
+        vanilla,
+        binding_inputs.as_ref(),
+    );
     let mut references = References::default();
     for (_, bytes) in entities.iter().chain(&attachables) {
         if let Ok(actor) = pack_json::parse_jsonc::<Value>(bytes) {
             references.read(&actor);
         }
     }
-    let mut geometry = unshadowed_geometry(view);
-    let pack_geometry = geometry
-        .iter()
-        .flat_map(|(_, bytes)| geometry_identifiers(bytes))
-        .collect::<BTreeSet<_>>();
-    for (prefix, key, merged) in DEFINITION_FAMILIES {
-        let mut definitions = merged_definitions(view, prefix, key);
+    for (key, merged, mut definitions) in definitions {
         if let Some(vanilla) = vanilla {
             let (source, wanted) = match key {
                 "animations" => (&vanilla.animations, &references.animations),
@@ -163,13 +185,27 @@ pub fn collect_files(
         }
     }
     files.extend(entities);
-    if let Some(materials) = material_definitions(view) {
+    if let Some(materials) = materials {
         files.push(("materials/_pack.material".into(), materials));
     }
     files.extend(attachables);
     files.extend(geometry);
-    for stem in referenced_textures(&files) {
-        if let Some(texture) = texture_file(view, vanilla_pack_dir, &stem) {
+    let mut textures = referenced_textures(&files);
+    textures.extend(assets::entity::GLINT_TEXTURE_IDENTIFIERS.map(str::to_owned));
+    let paintings = assets::painting::PAINTING_MOTIVES
+        .iter()
+        .map(|motive| motive.texture())
+        .chain(std::iter::once(assets::painting::PAINTING_ATLAS.to_owned()))
+        .filter(|stem| !textures.contains(stem))
+        .collect::<BTreeSet<_>>();
+    textures.extend(paintings.iter().cloned());
+    for stem in textures {
+        let fallback = if paintings.contains(&stem) {
+            None
+        } else {
+            vanilla_pack_dir
+        };
+        if let Some(texture) = texture_file(view, fallback, &stem) {
             files.push(texture);
         }
     }
@@ -323,7 +359,7 @@ fn unshadowed_geometry(view: &LayeredPackView) -> Vec<(Box<str>, Vec<u8>)> {
             }
         }
     }
-    pack_compiler::select_entity_geometry(files)
+    pack_entity_compiler::select_entity_geometry(files)
 }
 
 /// List modern and legacy identifiers used to fill missing geometry references.

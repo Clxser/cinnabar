@@ -1,5 +1,29 @@
 # Phases 2-5 Completion Ledger
 
+Settings mod cards now show permission summaries, explicit requested-grant consent
+and a compact customization grid. Capability metadata supplies gameplay warnings;
+batch grant edits preserve the existing registration format and enforcement.
+Owner visual approval and native cross-platform acceptance remain incomplete.
+This changes no broader parity or performance gate.
+
+Single-cell palette edits retain usage counts and patch canonical storage when existing
+indices and width stay valid. Structural changes still rebuild, and equality ignores only
+derived bookkeeping. Regression tests and benchmark fixtures have not been compiled or run;
+broader lazy compaction, output verification and measured performance remain incomplete.
+Single-cell palette edits retain bounded physical slots and live counts while preserving
+canonical palette order. Last-use removal and width shrink defer word packing until an exact
+word view is requested; snapshot-local caches and exact mutation results avoid eager equality
+materialization. Untouched decoded representations, no-ops and snapshot isolation are preserved.
+Memory admission accounts for physical storage, historical slots and possible canonical caches;
+existing process-wide capacity limits are unchanged.
+Regression tests and benchmark fixtures have not been compiled or run. Output verification,
+consumer-cadence, retained-memory and measured performance evidence remain incomplete.
+This change advances no phase completion, parity or hardware performance gate.
+
+Verified chunk blobs now persist through a bounded background store. Restart, corruption,
+miss reporting and memory pressure coverage belong to `client-runtime` and `protocol`;
+this storage change advances no rendered, live-join or broader parity completion gate.
+
 Startup carrier selection, bounded decoding, validation and fallbacks now belong to
 `assets::carriers::startup`. App adapters retain renderer and pack publication, Bevy resources,
 load timing and fatal startup handling. Carrier regressions move with their owner;
@@ -11,6 +35,11 @@ mapping and an original-art GPU fixture. This bounded geometry correction leaves
 exhaustive residual-family, world-join and hardware performance gates open.
 
 Common farmland crops now retain four lowered rows with stage-specific artwork.
+Fruit stems retain growth height, stage colour and facing-oriented connectors;
+pitcher crops retain pods and separate flower halves; torchflowers retain their
+stage artwork at the plant width. Berry bushes retain their growth-stage artwork
+and narrower sprite geometry. Exact native-client crop comparison,
+sub-unit geometry and atlas-edge UV calibration remain incomplete.
 Compiler regressions cover all eight growth states and both network-ID modes;
 full crop presentation parity and the broader phase gates remain open.
 
@@ -18,6 +47,27 @@ Trapdoor compiler regressions cover edge sprite rows, facing/top-half artwork,
 opened cap texture ownership and malformed selectors across registered poses
 with 16/32 pixel textures. Rendered/input acceptance and broader graphics parity
 remain open.
+
+Lever compiler fixtures cover separate base/handle geometry, eight mounts, both
+power states, 16/32-pixel sprite regions and neighboring controls. The mounting
+base retains the cobblestone-wall top material independently of the handle. These
+tests and the focused crate check pass, with a missing-part failure on the previous
+model. Rendered/native interaction acceptance remains incomplete.
+No completion or performance gate advances.
+
+Cape rotation limits now prevent upward flips in both player animation modes. Remote resets
+discard Java chase lag, and remote Bedrock flap uses completed tick displacement instead of
+retained packet speed. Local flap keeps per-tick velocity through catch-up frames. The Bedrock
+direction bound preserves hanging authored rotations, including yaw beyond a quarter turn.
+Flight, remote movement/reset, local catch-up and authored-rotation regressions have not been
+compiled or executed. Rendered-frame validation and the exact Bedrock flap calculation remain
+incomplete. This change closes no parity or performance gate.
+
+Far-summary extraction now has global copied-work admission, a background lane and an
+explicit shared colour-preparation dependency. Retired inboxes retain and advance deferred
+sources. Shutdown advances all retiring inboxes before waiting, and cancelled live delivery
+releases completed results while far terrain is off. Regression fixtures are written but unrun; output, transfer timing and hardware
+performance qualification remain incomplete. No phase or performance gate closes here.
 
 ## P2.5-NATIVE-BIOME
 
@@ -54,9 +104,39 @@ remain open.
 
 ## P3-MOVEMENT
 
+Riptide releases now carry a level-dependent launch and spin lifetime through fixed ticks,
+correction replay, input start/stop flags and local actor presentation. Charge and admission
+regressions cover wetness, queue rejection, captured ordinary and assisted release facing,
+snap/replay lifetime and cancellation with a discarded release. Ordinary and assisted releases retain
+release-edge eligibility before waiting for interaction sampling or facing input, including movement
+FIFO backpressure, and retain use slowdown through that tick. An accepted use keeps its facing
+fence while pending inventory gestures hide the selected stack. The first release observation
+retains its selected item, eligibility and effective action facing for the input and launch,
+without replacing later physical look outside that action fence. Release
+sprint blocking expires on the same fixed tick independently of render-frame grouping. Admitted
+launches survive a snap or replay fallback until their movement input is written, including late
+socket receipts. Cancellation replay rebuilds the pose eye and interpolation, retained aim and
+liquid attachment heights from retained eye state. Locomotion selection, travel and replay share
+the preceding spin's compact liquid probe so water sensing also gates glide entry. Respawn search and ready anchors discard old
+releases, temporary use modifiers
+and pending launches, including unreleased item-use charges and reserved use input/facing. Item-use admission waits for
+respawn completion without resetting inventory or cooldown policy. Suppressed travel uses the compact spin body for block contacts. Unsupported
+impulses are retired at the
+collision-query budget, a known safety divergence for oversized levels. Exact positional rain eligibility, actor-hit
+termination, server spin metadata, audio and integrated acceptance remain incomplete; this
+change closes no movement parity or performance gate.
+
+Remaining double intermediates in processed controls, block-height contact, support
+offsets, climb requests and fallback travel drag now use f32 operations. Precision
+regressions await CI; full numeric and trajectory parity remains open.
+
 Spectator regressions cover forced flight without MayFly, solid and unloaded
 terrain traversal, and embedded server anchors. The full native trajectory,
 platform, and performance gates remain open.
+
+Body-contact sampling and retryable query limits now cover fast flight exits.
+The added simulator and controller regressions await CI; live movement and
+performance acceptance remain open.
 
 Server-defined vehicle seats have deterministic coverage for actor-origin conversion,
 yaw, scale, link ordering, updates and removal. Dismount request coverage includes
@@ -103,6 +183,14 @@ network and audio adapters remain in `app`. Menu tests moved with their owner;
 combined session, inventory and present-mode checks remain in `app`. These moves
 have not been compiled or executed and do not close this gate.
 
+Settings now manages ordered local components, independent reloads and per-mod permissions.
+The native mod host is always included; regular callback fuel and separate event/loading
+lanes are bounded across the full frame. Deferred lifecycle state and bounded screen-scoped
+edit text remain queued until delivery, while frame-local outputs reset. Revocation is distinct
+from quarantine, so unrelated registration changes do not restart trapped guests.
+These extension changes close no vanilla parity gate. Their native execution and visual
+acceptance remain incomplete until CI and owner review, as recorded in `plan.md`.
+
 `client-extensions` now owns personal component collection and callback merging,
 permission grants, player snapshots, panel fonts, and server consent input and text.
 Consent state and ordering live in `client-state`. The coupled session, gameplay,
@@ -137,6 +225,14 @@ and exact native and platform comparison remain open.
 | Final status | Open |
 
 ## P4.4-LIVE-ACTOR
+
+Held-sprite edge-mask fixtures include alpha 0/1/2 and 16–128 pixel rasters;
+matched pack frames, authored sword display transforms and first-person face shading
+remain open in `plan.md`.
+
+Full-texture weapon planes use ordinary held-sprite extrusion and stage artwork.
+Focused equipment regressions check contour walls and depth after first- and
+third-person placement. Matched native frames remain open.
 
 Stock wolf texture admission preserves controller-selected adult/baby variants
 and dye-mask alpha bytes. Tamed collar colors follow byte dye metadata and live
@@ -184,6 +280,11 @@ Sound engine, session, named playback, local cue and UI sound tests belong to
 `client-presentation`. App integration tests retain the composed frame-order and
 camera-listener coverage. This ownership change adds no new parity evidence.
 
+The `json_ui::vanilla` contract checks categorized names against the pinned UI
+vocabulary. Screen routing and core form/context consumers use those names;
+remaining controller migrations and stale-name corrections are incomplete.
+This adds no live visual evidence and leaves the UI acceptance gate open.
+
 ## P5.2-HUD
 
 | Field | Evidence |
@@ -199,12 +300,16 @@ camera-listener coverage. This ownership change adds no new parity evidence.
 
 | Field | Evidence |
 |---|---|
-| Owning plan/task | Not started |
-| Deterministic tests | Not started |
+| Owning plan/task | `plan.md`: chat completion and quoted player names. |
+| Deterministic tests | Mention filtering, name quoting, command permissions, insertion, Tab cycling, bounds and row-text regressions are written; compilation and execution await CI. |
 | Review commit | Not started |
 | Live/native witness | Not started |
 | Performance/resource witness | Not started |
 | Final status | Open |
+
+Plain chat offers `@here` and player-list names; command targets include `@n`.
+Education selectors, selector-expansion permission and cheat gating, selector
+argument completion, and live visual acceptance remain incomplete.
 
 ## P5.4-SCOREBOARD
 
@@ -219,6 +324,14 @@ camera-listener coverage. This ownership change adds no new parity evidence.
 
 ## P5.5-INTERACTION-COMBAT-INVENTORY
 
+Block and actor rays share float normalization. Block traversal and clipping use
+rounded float segments; placement bounds and click coordinates stay in float
+precision. CI must verify the new rounding regressions. Block tie/union rules,
+camera-direction generation and runtime witnesses remain incomplete.
+
+Remote actor snapping respects target-column terrain order. Block-use and painting
+occlusion share rounded intercept distances. CI verification remains pending.
+
 | Field | Evidence |
 |---|---|
 | Owning plan/task | Partial local placement coverage and compiled movement/selection ownership; see Local placement prediction and Block selection outlines and visual bounds in plan.md. |
@@ -226,7 +339,7 @@ camera-listener coverage. This ownership change adds no new parity evidence.
 | Review commit | Recorded by the placement follow-up PR. |
 | Live/native witness | Headless stair comparison and door pair before server confirmation; broader family visual parity remains open. |
 | Performance/resource witness | Paused-server stair recording: first visible/staged +3 frames, observed upload +5; bounded late worker service. Click-frame and full hardware budgets remain open. |
-| Final status | Open: remaining placement families and the wider interaction/inventory gate are incomplete. |
+| Final status | Open: remaining placement families and the wider interaction/inventory gate are incomplete. Combat reach, float clipping, movement rounding and snapping, minimum collision dimensions, actor/latency commit ordering and fresh-press swings have regression coverage pending CI. Pose-dependent reach, per-entity pick radii, specialized actor motion, native-origin rounding, terrain availability during asynchronous ingestion, catch-up-frame attack positions and full batch/latency timing remain open. |
 
 ## P5.6-FORMS
 
@@ -241,6 +354,11 @@ camera-listener coverage. This ownership change adds no new parity evidence.
 
 ## P5.7-PARITY-PERF
 
+Cloud preparation skips hidden geometry, prefetches finite windows on workers and
+retains GPU storage. Regression coverage checks admission frames, exact records,
+bounded caching and buffer reuse. Cold and missed windows still wait for geometry;
+hardware frame-time and capture acceptance remain open.
+
 | Field | Evidence |
 |---|---|
 | Owning plan/task | Bamboo geometry, column transforms, sampling and overlay consumers covered; wider parity and performance work remains open |
@@ -251,6 +369,18 @@ camera-listener coverage. This ownership change adds no new parity evidence.
 | Final status | Open |
 
 ## P5.8-SETTINGS
+
+Minecraft import adds explicit consent, per-profile preview, schema-checked option
+mapping, server merging, validated pack copying and a restore snapshot. Full option
+and control-layout coverage, live checks of every supported data location and
+Android scoped-storage import remain incomplete. This leaves the settings parity
+and acceptance gates open.
+
+The global Subscriptions tab and marketplace UI/services are removed from the
+product. Settings retain the remaining category order and icon alignment;
+Realms, Dressing Room and server resource packs remain supported. Navigation
+and unused-packet regressions await CI. No rendered-frame witness was captured,
+and this visible removal closes no settings, UI parity or performance gate.
 
 | Field | Evidence |
 |---|---|
@@ -296,6 +426,18 @@ gate is closed by the ownership change.
 
 Admitted live biome identifiers and climate now travel with the session tint registry. Weather, fog precipitation, camera temperature and environment routes read that registry, including custom biome routes. Registry replacement clears removed routes. No existing completion entry is advanced by this change; the remaining gates are recorded in `plan.md`.
 
+
+## Spawner display actors
+
+Spawner displays now use client-owned actor lifetimes and the ordinary actor
+evaluator, render controllers, sampled poses and active pack artwork. Configured
+entities no longer depend on a fixed mob list. Displays retire when the block or
+world changes, and pack replacement rebinds existing lifetimes.
+
+Incomplete parity: display factory metadata defaults, exact native renderer bounds,
+activation edge cases and the full entity gallery are unverified. Frame and GPU
+budgets remain open; these changes do not close those acceptance gates.
+
 ## Protocol session layer
 
 `protocol::login` runs the spawn sequence and play stream over the core's session endpoint, and
@@ -335,3 +477,30 @@ JSON-UI banner controls draw ordered front-cloth layers from the active artwork.
 normalization machinery are gone. Packet routing and UI budgets derive from the generated packet
 table and field sites rather than hand-maintained ID lists. The ported tests have not been
 executed locally. No existing completion entry is advanced.
+
+## Graphics API startup recovery
+
+The shared backend policy, driver blocklist, crash sentinel and restart-only Video override
+are implemented. GL/GLES is absent from choices and candidates; older saved GL choices read
+as Auto. Android requires Vulkan. Failed saved Video choices retry Auto for the current launch,
+while WGPU_BACKEND stays strict. Each API is enumerated under its own sentinel before eligible adapters are
+ranked by power preference, device type and vendor backend order, with unclassified hardware
+ahead of software. Device failures advance through all candidates;
+named GPU selection restricts every API. Exclusions are keyed only by backend and reset on a
+client version change or Graphics API selection, including choosing Auto again. Exhausted candidates permit one retry
+pass with exclusions cleared. Startup log boundaries synchronize only the file sink.
+Candidate filtering requires base-vertex terrain draws, vertex and fragment storage, alternate
+texture views, non-power-of-two mipmaps, sample-rate shading, unaligned buffer bindings and
+sufficient storage limits. Native crash reports retain the running process's renderer context
+independently of shared recovery files.
+Window closure and handled SIGINT/SIGTERM cancel unfinished startup and termination prevents
+later sentinel writes. Panics and native faults remain recoverable. Hardware crash reproduction,
+Android lifecycle and rendered Video acceptance remain incomplete as recorded in `plan.md`.
+No parity or performance completion entry advances.
+
+## Generated block-entity routing
+
+Registry generation now supplies the shared backing and renderer table used by
+block-entity admission, spawner displays, portal scans and visual diagnostics.
+Unsupported and provisional routes remain explicit. This changes no completion
+status; the remaining renderer and live acceptance gates stay open in `plan.md`.

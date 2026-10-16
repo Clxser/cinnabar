@@ -17,6 +17,14 @@ mod multitexture;
 #[cfg(test)]
 #[path = "artwork/page_capacity_tests.rs"]
 mod page_capacity_tests;
+#[cfg(test)]
+#[path = "artwork/raster_page_tests.rs"]
+mod raster_page_tests;
+#[path = "artwork/raster_pages.rs"]
+mod raster_pages;
+#[cfg(test)]
+#[path = "artwork/retained_equipment_tests.rs"]
+mod retained_equipment_tests;
 
 /// CPU draw routing selects an artwork page independently of the shader's texture layer.
 pub type ActorArtworkPageId = u16;
@@ -35,6 +43,22 @@ pub struct EquipmentRaster {
     pub width: u16,
     pub height: u16,
     pub rgba8: Arc<[u8]>,
+}
+
+impl EquipmentRaster {
+    /// Box-filters this raster by the smallest power of two that fits the device limit.
+    pub fn fit_within(&self, limit: u32) -> std::borrow::Cow<'_, Self> {
+        let Some(([width, height], rgba8)) =
+            crate::fit_rgba_within(self.width, self.height, &self.rgba8, limit)
+        else {
+            return std::borrow::Cow::Borrowed(self);
+        };
+        std::borrow::Cow::Owned(Self {
+            width,
+            height,
+            rgba8: rgba8.into(),
+        })
+    }
 }
 
 fn within_page_budget(generic_pages: usize, declared_pixel_bytes: usize) -> bool {
@@ -135,11 +159,19 @@ impl ActorTexturePage {
     }
 }
 
+/// An admitted source binding and a shared witness of the page that contains it.
+#[derive(Clone, Debug)]
+struct RetainedEquipmentArtwork {
+    location: ActorArtworkLocation,
+    page: ActorTexturePage,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ActorArtworkPages {
     pub identity: [u8; 32],
     pub entity_identity: [u8; 32],
     pub actor_glint: Option<EquipmentRaster>,
+    pub item_glint: Option<EquipmentRaster>,
     pub pages: Arc<[ActorTexturePage]>,
     routes: Arc<BTreeMap<EntityRigId, ActorArtworkLocation>>,
     /// Location of every catalog texture by entity-catalog source index.
@@ -148,6 +180,8 @@ pub struct ActorArtworkPages {
     entity_locations: Arc<BTreeSet<(ActorArtworkPageId, u32)>>,
     /// `(page, layer)` of every equipment raster; equipment rigs are not entity routes.
     equipment: Arc<BTreeSet<(ActorArtworkPageId, u32)>>,
+    /// Immutable source identities retain their admitted equipment layer without scanning pixels.
+    equipment_artwork: Arc<BTreeMap<[u8; 32], RetainedEquipmentArtwork>>,
     /// Session pack textures by pack-catalog source index, a separate index space.
     pack_source_locations: Arc<BTreeMap<u32, ActorArtworkLocation>>,
     pack_locations: Arc<BTreeSet<(ActorArtworkPageId, u32)>>,
@@ -157,6 +191,18 @@ impl ActorArtworkPages {
     /// Installs the shared actor glint image once, independently of skin and armor pages.
     #[must_use]
     pub fn with_actor_glint(mut self, raster: EquipmentRaster) -> Self {
+        self = self.with_glint_raster(raster, false);
+        self
+    }
+
+    /// Installs item glint beside the actor raster so both profiles can draw together.
+    #[must_use]
+    pub fn with_item_glint(self, raster: EquipmentRaster) -> Self {
+        self.with_glint_raster(raster, true)
+    }
+
+    /// Hashes a validated raster under its sampler role before replacing that role.
+    fn with_glint_raster(mut self, raster: EquipmentRaster, item: bool) -> Self {
         if raster.width == 0
             || raster.height == 0
             || raster.rgba8.len() != usize::from(raster.width) * usize::from(raster.height) * 4
@@ -165,11 +211,16 @@ impl ActorArtworkPages {
         }
         let mut hasher = Sha256::new();
         hasher.update(self.identity);
+        hasher.update([u8::from(item)]);
         hasher.update(raster.width.to_le_bytes());
         hasher.update(raster.height.to_le_bytes());
         hasher.update(&raster.rgba8);
         self.identity = hasher.finalize().into();
-        self.actor_glint = Some(raster);
+        if item {
+            self.item_glint = Some(raster);
+        } else {
+            self.actor_glint = Some(raster);
+        }
         self
     }
 
@@ -256,13 +307,63 @@ impl ActorArtworkPages {
             identity: catalog.identity(),
             entity_identity: catalog.entity_identity(),
             actor_glint: None,
+            item_glint: None,
             pages: pages.into(),
             routes: Arc::new(routes),
             equipment: Arc::new(BTreeSet::new()),
+            equipment_artwork: Arc::default(),
             pack_source_locations: Arc::default(),
             pack_locations: Arc::default(),
             rejected_bindings,
         }
+    }
+
+    /// Retains an admitted equipment layer under its immutable source identity.
+    /// The identity must cover source dimensions, pixels, placements and material interpretation.
+    pub fn register_equipment_artwork(
+        &mut self,
+        identity: [u8; 32],
+        location: ActorArtworkLocation,
+    ) {
+        if !self.equipment.contains(&(location.page, location.layer)) {
+            return;
+        }
+        let Some(page) = location
+            .page
+            .checked_sub(1)
+            .and_then(|page| self.pages.get(usize::from(page)))
+        else {
+            return;
+        };
+        if location.layer >= page.layers {
+            return;
+        }
+        Arc::make_mut(&mut self.equipment_artwork).insert(
+            identity,
+            RetainedEquipmentArtwork {
+                location,
+                page: page.clone(),
+            },
+        );
+    }
+
+    /// Reuses a retained source while its admitted page still shares the same pixels and layout.
+    /// Appending pages preserves bindings; replacing public page data invalidates the witness.
+    pub fn equipment_artwork_location(&self, identity: [u8; 32]) -> Option<ActorArtworkLocation> {
+        let retained = self.equipment_artwork.get(&identity)?;
+        let page = self
+            .pages
+            .get(usize::from(retained.location.page.checked_sub(1)?))?;
+        (Arc::ptr_eq(&page.rgba8, &retained.page.rgba8)
+            && page.width == retained.page.width
+            && page.height == retained.page.height
+            && page.layers == retained.page.layers
+            && page.color_mask == retained.page.color_mask
+            && page.multitexture == retained.page.multitexture
+            && self
+                .equipment
+                .contains(&(retained.location.page, retained.location.layer)))
+        .then_some(retained.location)
     }
 
     /// Appends pages for `rasters`, grouped by size, and returns each raster's location (`None`
@@ -314,7 +415,7 @@ impl ActorArtworkPages {
                 hasher.update((pixels.len() as u64).to_le_bytes());
                 hasher.update([u8::from(color_mask)]);
                 hasher.update([0u8]); // Equipment/overrides are never three-sampler pages.
-                hasher.update(&pixels);
+                raster_pages::hash_pixels(&mut hasher, &pixels);
                 let page = ActorTexturePage {
                     width,
                     height,
@@ -507,6 +608,7 @@ impl ActorArtworkPages {
             && Arc::ptr_eq(&self.source_locations, &other.source_locations)
             && Arc::ptr_eq(&self.entity_locations, &other.entity_locations)
             && Arc::ptr_eq(&self.equipment, &other.equipment)
+            && Arc::ptr_eq(&self.equipment_artwork, &other.equipment_artwork)
             && Arc::ptr_eq(&self.pack_source_locations, &other.pack_source_locations)
             && Arc::ptr_eq(&self.pack_locations, &other.pack_locations)
     }

@@ -1,5 +1,5 @@
-//! Item-space geometry shared by every item renderer: sprites extruded one texel deep and unit
-//! block cubes, with UVs mapped into a caller-chosen region of its texture layer.
+//! Item-space geometry: centered one-texel sprite slabs, fixed-depth held sprites and unit
+//! block cubes, with UVs mapped into a caller-chosen region of the texture layer.
 //!
 //! Each slab face shows the sprite unmirrored to a viewer on that face's side, so an item reads
 //! correctly from either side. Vertices sit on rig bone 0; `back_uv` is what a viewer behind the
@@ -7,9 +7,13 @@
 
 use crate::ActorRigVertex;
 
+/// Ordinary held-sprite depth after normalizing the longer side to one model unit.
+const HELD_SPRITE_DEPTH: f32 = 1.0 / 16.0;
+
 /// Extrudes an RGBA8 sprite into a slab centred on the origin: the longer side spans one unit,
 /// the slab is one texel thick, and each edge quad samples its own texel. `uv_rect` is the
-/// sprite's `[u0, v0, u1, v1]` region of its texture layer. `None` for a malformed pixel buffer;
+/// sprite's `[u0, v0, u1, v1]` region of its texture layer. `None` for malformed pixels or
+/// geometry exceeding the shared retained-storage budget;
 /// a fully transparent sprite still gets its (discarded) faces.
 #[must_use]
 pub fn extruded_sprite_vertices(
@@ -18,15 +22,28 @@ pub fn extruded_sprite_vertices(
     rgba8: &[u8],
     uv_rect: [f32; 4],
 ) -> Option<Vec<ActorRigVertex>> {
+    sprite_vertices(width, height, rgba8, uv_rect, 1)
+}
+
+/// Builds a centered slab whose side faces follow texels at or above `minimum_alpha`.
+fn sprite_vertices(
+    width: usize,
+    height: usize,
+    rgba8: &[u8],
+    uv_rect: [f32; 4],
+    minimum_alpha: u8,
+) -> Option<Vec<ActorRigVertex>> {
     if width == 0 || height == 0 || rgba8.len() != width.checked_mul(height)?.checked_mul(4)? {
         return None;
     }
+    let max_vertices = crate::MAX_ACTOR_RIG_VERTICES
+        .min(assets::texture::policy::MAX_SUBSCRIBER_BYTES / std::mem::size_of::<ActorRigVertex>());
     let opaque = |column: isize, row: isize| {
         column >= 0
             && row >= 0
             && (column as usize) < width
             && (row as usize) < height
-            && rgba8[(row as usize * width + column as usize) * 4 + 3] != 0
+            && rgba8[(row as usize * width + column as usize) * 4 + 3] >= minimum_alpha
     };
     let texel = 1.0 / width.max(height) as f32;
     let half_depth = texel * 0.5;
@@ -48,7 +65,14 @@ pub fn extruded_sprite_vertices(
         (-half_depth, [0.0, 0.0, -1.0], mirrored, upright),
     ] {
         let corners = [[x0, y0, z], [x1, y0, z], [x1, y1, z], [x0, y1, z]];
-        push_quad(&mut vertices, corners, uvs, back_uvs, normal);
+        push_quad(
+            &mut vertices,
+            corners,
+            uvs,
+            back_uvs,
+            normal,
+            [uv_rect[0], uv_rect[1]],
+        );
     }
     for row in 0..height {
         for column in 0..width {
@@ -92,13 +116,23 @@ pub fn extruded_sprite_vertices(
                 if neighbour_opaque {
                     continue;
                 }
+                if vertices.len() + 6 > max_vertices {
+                    return None;
+                }
                 let corners = [
                     [xs[0], ys[0], half_depth],
                     [xs[0], ys[0], -half_depth],
                     [xs[1], ys[1], -half_depth],
                     [xs[1], ys[1], half_depth],
                 ];
-                push_quad(&mut vertices, corners, [uv; 4], [uv; 4], normal);
+                push_quad(
+                    &mut vertices,
+                    corners,
+                    [uv; 4],
+                    [uv; 4],
+                    normal,
+                    [uv_rect[0], uv_rect[1]],
+                );
             }
         }
     }
@@ -106,8 +140,9 @@ pub fn extruded_sprite_vertices(
 }
 
 /// The slab in vanilla's held-item tessellation frame: column `c` at `X = -c`, row `r` at
-/// `Y = height - r` (texels of the longer side spanning one unit) and one texel deep towards
-/// `-Z`. Both faces sample the same texel at a point, so the back reads mirrored, as vanilla's.
+/// `Y = height - r`, divided by the longer side. Depth spans 1/16 model unit towards `-Z`,
+/// independent of sprite resolution. Both faces sample the same texel at a point, so the
+/// back reads mirrored, as vanilla's. Alpha 0 and 1 do not contribute side faces.
 #[must_use]
 pub fn held_sprite_vertices(
     width: usize,
@@ -116,15 +151,15 @@ pub fn held_sprite_vertices(
     uv_rect: [f32; 4],
 ) -> Option<Vec<ActorRigVertex>> {
     let texel = 1.0 / width.max(height) as f32;
-    let offset = [
-        width as f32 * texel * 0.5,
-        height as f32 * texel * 0.5,
-        -texel * 0.5,
-    ];
-    let mut vertices = extruded_sprite_vertices(width, height, rgba8, uv_rect)?;
+    let offset = [width as f32 * texel * 0.5, height as f32 * texel * 0.5];
+    let mut vertices = sprite_vertices(width, height, rgba8, uv_rect, 2)?;
     for vertex in &mut vertices {
         let [x, y, z] = vertex.position;
-        vertex.position = [-(x + offset[0]), y + offset[1], z + offset[2]];
+        vertex.position = [
+            -(x + offset[0]),
+            y + offset[1],
+            if z > 0.0 { 0.0 } else { -HELD_SPRITE_DEPTH },
+        ];
         vertex.normal[0] = -vertex.normal[0];
         // The +Z face's front UVs and the -Z face's back UVs carry the unmirrored layout.
         if vertex.normal[2] < 0.0 {
@@ -211,17 +246,19 @@ pub fn textured_cube_vertices(face_rects: [[f32; 4]; 6]) -> Vec<ActorRigVertex> 
             [rect[2], rect[3]],
             [rect[0], rect[3]],
         ];
-        push_quad(&mut vertices, corners, uvs, uvs, normal);
+        push_quad(&mut vertices, corners, uvs, uvs, normal, [rect[0], rect[1]]);
     }
     vertices
 }
 
+/// Emits a wound quad with the sprite or face origin shared by all its vertices.
 fn push_quad(
     vertices: &mut Vec<ActorRigVertex>,
     corners: [[f32; 3]; 4],
     uvs: [[f32; 2]; 4],
     back_uvs: [[f32; 2]; 4],
     normal: [f32; 3],
+    glint_origin: [f32; 2],
 ) {
     let edge_a = std::array::from_fn::<f32, 3, _>(|axis| corners[1][axis] - corners[0][axis]);
     let edge_b = std::array::from_fn::<f32, 3, _>(|axis| corners[2][axis] - corners[0][axis]);
@@ -244,6 +281,7 @@ fn push_quad(
             back_uv: back_uvs[index],
             bone_index: 0,
             surface: crate::ActorRigSurface::SINGLE_FACE,
+            glint_origin,
         });
     }
 }
@@ -254,8 +292,188 @@ mod tests {
 
     const FULL: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
 
+    #[test]
+    fn dense_hd_transparency_cannot_expand_into_unbounded_geometry() {
+        let side = 512;
+        let pixels = (0..side * side)
+            .flat_map(|index| {
+                [
+                    255,
+                    73,
+                    91,
+                    if (index % side + index / side) % 2 == 0 {
+                        255
+                    } else {
+                        0
+                    },
+                ]
+            })
+            .collect::<Vec<_>>();
+        assert!(extruded_sprite_vertices(side, side, &pixels, FULL).is_none());
+        assert!(held_sprite_vertices(side, side, &pixels, FULL).is_none());
+        assert!(extruded_sprite_vertices(side, side, &opaque(side, side), FULL).is_some());
+    }
+
     fn opaque(width: usize, height: usize) -> Vec<u8> {
         vec![255; width * height * 4]
+    }
+
+    /// Scales an original eight-cell silhouette with a hole and one-cell-wide protrusions.
+    fn resolution_fixture(width: usize, height: usize) -> Vec<u8> {
+        (0..height)
+            .flat_map(|row| {
+                (0..width).flat_map(move |column| {
+                    let longer = width.max(height);
+                    let (x, y) = (column * 8 / longer, row * 8 / longer);
+                    let solid = ((1..7).contains(&x)
+                        && (1..7).contains(&y)
+                        && !((3..5).contains(&x) && (3..5).contains(&y)))
+                        || (x == y);
+                    [29, 173, 211, if solid { 255 } else { 0 }]
+                })
+            })
+            .collect()
+    }
+
+    /// Measures total outward side area by axis, including walls inside transparent holes.
+    fn side_areas(vertices: &[crate::ActorRigVertex]) -> [f32; 2] {
+        let mut areas = [0.0; 2];
+        for triangle in vertices.as_chunks::<3>().0 {
+            let normal = triangle[0].normal;
+            if normal[2] != 0.0 {
+                continue;
+            }
+            let [a, b, c] = [0, 1, 2].map(|index| triangle[index].position);
+            let axis = usize::from(normal[0] == 0.0);
+            let along = 1 - axis;
+            areas[axis] += ((b[along] - a[along]) * (c[2] - a[2])
+                - (c[along] - a[along]) * (b[2] - a[2]))
+                .abs()
+                * 0.5;
+        }
+        areas
+    }
+
+    #[test]
+    fn held_sprite_depth_and_contour_do_not_change_with_pack_resolution() {
+        let region = [0.25, 0.5, 0.5, 0.75];
+        for aspect in [0, 1, 2] {
+            let mut reference_areas = None;
+            for side in [8, 16, 32, 64, 128] {
+                let (width, height) = match aspect {
+                    1 => (side, side / 2),
+                    2 => (side / 2, side),
+                    _ => (side, side),
+                };
+                let pixels = resolution_fixture(width, height);
+                let vertices = held_sprite_vertices(width, height, &pixels, region).unwrap();
+                let (mut min, mut max) = ([f32::MAX; 3], [f32::MIN; 3]);
+                for vertex in &vertices {
+                    for axis in 0..3 {
+                        min[axis] = min[axis].min(vertex.position[axis]);
+                        max[axis] = max[axis].max(vertex.position[axis]);
+                    }
+                    if vertex.normal[2] == 0.0 {
+                        let [u, v] = std::array::from_fn(|axis| {
+                            (vertex.uv[axis] - region[axis]) / (region[axis + 2] - region[axis])
+                        });
+                        let column = (u * width as f32).floor() as usize;
+                        let row = (v * height as f32).floor() as usize;
+                        assert_eq!(pixels[(row * width + column) * 4 + 3], 255);
+                        assert_eq!(vertex.uv, vertex.back_uv);
+                    }
+                    assert_eq!(vertex.glint_origin, [region[0], region[1]]);
+                }
+                assert_eq!(
+                    min,
+                    [-((width as f32) / side as f32), 0.0, -1.0 / 16.0],
+                    "resolution {width}x{height}"
+                );
+                assert_eq!(max, [0.0, height as f32 / side as f32, 0.0]);
+                let areas = side_areas(&vertices);
+                let reference = *reference_areas.get_or_insert(areas);
+                for (actual, expected) in areas.into_iter().zip(reference) {
+                    assert!(
+                        (actual - expected).abs() < 1e-6,
+                        "resolution {width}x{height}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn centered_sprite_keeps_source_texel_depth_at_every_resolution() {
+        for side in [8, 16, 32, 64, 128] {
+            let vertices = extruded_sprite_vertices(side, side, &opaque(side, side), FULL).unwrap();
+            let half_depth = 0.5 / side as f32;
+            assert!(
+                vertices
+                    .iter()
+                    .all(|vertex| vertex.position[2].abs() == half_depth)
+            );
+            assert!(
+                vertices
+                    .iter()
+                    .any(|vertex| vertex.position[2] == half_depth)
+            );
+            assert!(
+                vertices
+                    .iter()
+                    .any(|vertex| vertex.position[2] == -half_depth)
+            );
+        }
+    }
+
+    #[test]
+    fn held_sprite_edges_ignore_alpha_one_without_hiding_their_neighbours() {
+        let region = [0.25, 0.5, 0.5, 0.75];
+        for side in [16, 32, 64, 128] {
+            let mut pixels = resolution_fixture(side, side);
+            let expected = held_sprite_vertices(side, side, &pixels, region).unwrap();
+            for pixel in pixels.as_chunks_mut::<4>().0 {
+                if pixel[3] == 0 {
+                    pixel[3] = 1;
+                }
+            }
+            let actual = held_sprite_vertices(side, side, &pixels, region).unwrap();
+            assert_eq!(actual, expected, "resolution {side}");
+            assert!(actual.iter().any(|vertex| vertex.normal[0] != 0.0));
+            assert!(actual.iter().any(|vertex| vertex.normal[1] != 0.0));
+        }
+    }
+
+    #[test]
+    fn held_sprite_edge_mask_keeps_alpha_two_and_partial_coverage() {
+        for side in [16, 32, 64, 128] {
+            for alpha in [0, 1, 2, 127, 128, 255] {
+                let mut pixels = vec![0; side * side * 4];
+                let (column, row) = (side / 2, side / 4);
+                pixels[(row * side + column) * 4..][..4].copy_from_slice(&[23, 149, 211, alpha]);
+                let vertices = held_sprite_vertices(side, side, &pixels, FULL).unwrap();
+                let sides = &vertices[12..];
+                assert_eq!(sides.len(), if alpha < 2 { 0 } else { 24 });
+                let uv = [
+                    (column as f32 + 0.5) / side as f32,
+                    (row as f32 + 0.5) / side as f32,
+                ];
+                for vertex in sides {
+                    assert_eq!(vertex.uv, uv);
+                    assert_eq!(vertex.back_uv, uv);
+                    assert!(
+                        vertex.position[2] == 0.0
+                            || vertex.position[2] == -super::HELD_SPRITE_DEPTH
+                    );
+                }
+            }
+        }
+        // Centered sprites retain their separate nonzero-alpha edge contract.
+        assert_eq!(
+            extruded_sprite_vertices(1, 1, &[255, 255, 255, 1], FULL)
+                .unwrap()
+                .len(),
+            36
+        );
     }
 
     #[test]
@@ -299,6 +517,25 @@ mod tests {
         for vertex in extruded_sprite_vertices(4, 4, &opaque(4, 4), region).unwrap() {
             assert!((0.25..=0.5).contains(&vertex.uv[0]));
             assert!((0.5..=0.75).contains(&vertex.uv[1]));
+            assert_eq!(vertex.glint_origin, [region[0], region[1]]);
+        }
+    }
+
+    #[test]
+    fn held_sprite_glint_coordinates_are_independent_of_atlas_placement() {
+        let plain = held_sprite_vertices(4, 4, &opaque(4, 4), FULL).unwrap();
+        let placed = held_sprite_vertices(4, 4, &opaque(4, 4), [0.25, 0.5, 0.5, 0.625]).unwrap();
+        for (plain, placed) in plain.iter().zip(&placed) {
+            for (axis, span) in [0.25, 0.125].into_iter().enumerate() {
+                assert_eq!(
+                    (placed.uv[axis] - placed.glint_origin[axis]) / span,
+                    plain.uv[axis]
+                );
+                assert_eq!(
+                    (placed.back_uv[axis] - placed.glint_origin[axis]) / span,
+                    plain.back_uv[axis]
+                );
+            }
         }
     }
 

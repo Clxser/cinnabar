@@ -4,6 +4,7 @@ use super::context::{
     PressurePlateTemplateKey, RuleInputs, SignTemplateKey, ThinTemplateKey, diagnostic_visual,
 };
 use super::fallback::FallbackInventory;
+use assets::facts::pack::PackBlock as B;
 
 #[derive(Clone, Copy)]
 pub(in crate::compiler) struct ExactAdmissions {
@@ -35,7 +36,7 @@ pub(in crate::compiler) struct CanonicalAirIdentity {
 }
 
 fn air_candidate(record: &RegistryRecord) -> bool {
-    record.name.as_ref() == "minecraft:air"
+    record.name.as_ref() == B::Air.identifier()
         && record.canonical_state.as_ref() == "{}"
         && record.flags.contains(BlockFlags::AIR)
         && record.contributor_role == ContributorRole::Air
@@ -54,7 +55,7 @@ pub(in crate::compiler) fn resolve_canonical_air(
     let mut canonical = None;
     for record in records
         .iter()
-        .filter(|record| record.name.as_ref() == "minecraft:air")
+        .filter(|record| record.name.as_ref() == B::Air.identifier())
     {
         if !air_candidate(record) {
             return Err(AssetError::InvalidCompiledAssets {
@@ -105,7 +106,9 @@ fn diagnostic_for_unmatched_record(
 struct VisualCompiler {
     model_templates: Vec<ModelTemplate>,
     model_quads: Vec<ModelQuad>,
-    cross_templates: BTreeMap<([u32; 2], bool), u32>,
+    cross_templates: BTreeMap<super::cross::TemplateKey, u32>,
+    stem_templates: BTreeMap<super::stem::TemplateKey, u32>,
+    pitcher_crop_templates: BTreeMap<super::pitcher_crop::TemplateKey, u32>,
     kelp_templates: BTreeMap<[u32; 6], u32>,
     transparent_cube_templates: BTreeMap<[u32; 6], u32>,
     honey_templates: BTreeMap<[u32; 6], u32>,
@@ -121,6 +124,7 @@ struct VisualCompiler {
     vine_templates: BTreeMap<[u32; 2], u32>,
     multiface_templates: BTreeMap<[u32; 3], u32>,
     cuboid_templates: BTreeMap<CuboidTemplateKey, u32>,
+    door_templates: BTreeMap<super::doors::TemplateKey, u32>,
     trapdoor_templates: BTreeMap<super::trapdoor::TemplateKey, u32>,
     wall_templates: BTreeMap<[u32; 7], u32>,
     pressure_plate_templates: BTreeMap<PressurePlateTemplateKey, u32>,
@@ -136,6 +140,7 @@ struct VisualCompiler {
     flower_pot_templates: BTreeMap<[u32; 7], u32>,
     bamboo_templates: BTreeMap<(u32, u32, i16, u8), u32>,
     lantern_templates: BTreeMap<(u32, bool), u32>,
+    lever_templates: BTreeMap<super::lever::TemplateKey, u32>,
     flower_pot_soil: Option<u32>,
     chiseled_bookshelf_templates: BTreeMap<[u32; 5], u32>,
     shelf_templates: BTreeMap<([u32; 6], u8, u8), u32>,
@@ -145,6 +150,7 @@ struct VisualCompiler {
     coral_templates: BTreeMap<(u32, super::coral::Shape), u32>,
     barrel_templates: BTreeMap<([u32; 6], usize), u32>,
     brewing_stand_templates: BTreeMap<([u32; 6], [bool; 3]), u32>,
+    campfire_templates: BTreeMap<([u32; 6], bool, u8), u32>,
     bubble_column_templates: BTreeMap<[u32; 9], u32>,
     candle_cake_templates: BTreeMap<[u32; 4], u32>,
     hollow_container_templates: BTreeMap<(super::hollow_containers::VesselState, Vec<u32>), u32>,
@@ -180,6 +186,15 @@ impl VisualCompiler {
             &mut ModelStorage {
                 templates: &mut self.model_templates,
                 quads: &mut self.model_quads
+            },
+        ));
+        ordered_rule!(super::lever::compile_rule(
+            record,
+            inputs,
+            &mut self.lever_templates,
+            &mut ModelStorage {
+                templates: &mut self.model_templates,
+                quads: &mut self.model_quads,
             },
         ));
         ordered_rule!(super::barrel::compile_rule(
@@ -312,6 +327,15 @@ impl VisualCompiler {
             record,
             inputs,
             &mut self.brewing_stand_templates,
+            &mut ModelStorage {
+                templates: &mut self.model_templates,
+                quads: &mut self.model_quads,
+            },
+        ));
+        ordered_rule!(super::campfire::compile_rule(
+            record,
+            inputs,
+            &mut self.campfire_templates,
             &mut ModelStorage {
                 templates: &mut self.model_templates,
                 quads: &mut self.model_quads,
@@ -451,7 +475,7 @@ impl VisualCompiler {
         ordered_rule!(super::doors::compile_rule(
             record,
             inputs,
-            &mut self.cuboid_templates,
+            &mut self.door_templates,
             &mut ModelStorage {
                 templates: &mut self.model_templates,
                 quads: &mut self.model_quads,
@@ -613,6 +637,24 @@ impl VisualCompiler {
                 quads: &mut self.model_quads,
             },
         ));
+        ordered_rule!(super::stem::compile_rule(
+            record,
+            inputs,
+            &mut self.stem_templates,
+            &mut ModelStorage {
+                templates: &mut self.model_templates,
+                quads: &mut self.model_quads
+            },
+        ));
+        ordered_rule!(super::pitcher_crop::compile_rule(
+            record,
+            inputs,
+            &mut self.pitcher_crop_templates,
+            &mut ModelStorage {
+                templates: &mut self.model_templates,
+                quads: &mut self.model_quads
+            },
+        ));
         ordered_rule!(super::cross::compile_rule(
             record,
             inputs,
@@ -736,6 +778,9 @@ mod tests {
     fn synthetic_record(name: &str, state: &str, id: u32, hash: u32) -> RegistryRecord {
         RegistryRecord {
             beacon_tint: assets::BeaconTint::Unresolved,
+            traits: assets::registry::BlockTraits::empty(),
+            survival: assets::registry::SurvivalRule::None,
+            properties: Box::new([]),
             sequential_id: id,
             network_hash: hash,
             name: name.into(),

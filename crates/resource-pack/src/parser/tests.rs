@@ -477,13 +477,16 @@ fn rejects_malformed_jsonc_and_multiple_json_values() {
             AdmissionError::MalformedManifest
         );
     }
+}
 
-    let invalid_utf8_comment = b"// \xff\n{}";
-    let archive = zip_files(&[("manifest.json", invalid_utf8_comment)]);
-    assert_eq!(
-        validate_fixture(archive, "").unwrap_err(),
-        AdmissionError::MalformedManifest
-    );
+#[test]
+fn admits_legacy_encoded_manifest_comments() {
+    for comment in [b"// \xff\n".as_slice(), b"/* \xff */".as_slice()] {
+        let mut body = comment.to_vec();
+        body.extend_from_slice(manifest("").as_bytes());
+        let archive = zip_files(&[("manifest.json", &body)]);
+        validate_fixture(archive, "").expect("valid manifest with a Latin-1 comment");
+    }
 }
 
 #[test]

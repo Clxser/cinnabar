@@ -4,7 +4,7 @@ use assets::{
     BlockFlags, ContributorRole, ModelFamily, ModelState, RegistryProvenance, RegistryRecord,
 };
 
-use pack_compiler::TextureKey;
+use pack_compile_input::TextureKey;
 use tempfile::TempDir;
 
 pub const MINIMAL_BLOCKS: &str = r#"{
@@ -96,6 +96,9 @@ pub fn registry_bytes(records: &[RegistryFixture<'_>]) -> Vec<u8> {
 pub fn record(name: &str, canonical_state: &str) -> RegistryRecord {
     RegistryRecord {
         beacon_tint: assets::BeaconTint::Unresolved,
+        traits: assets::registry::BlockTraits::empty(),
+        survival: assets::registry::SurvivalRule::None,
+        properties: Box::new([]),
         sequential_id: 7,
         network_hash: 0x8000_0007,
         name: name.into(),

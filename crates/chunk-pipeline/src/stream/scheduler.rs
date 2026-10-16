@@ -1,6 +1,8 @@
 use super::*;
 
 pub(super) const NEAR_CAMERA_RADIUS: i32 = 4;
+/// Horizontal light halo around the directly prioritized mesh area.
+const NEAR_LIGHT_COLUMN_RADIUS: i32 = NEAR_CAMERA_RADIUS + 1;
 
 /// Longest wait, in startup ingress polls, before a still-blocked promoted job is rechecked.
 const MAX_RECHECK_BACKOFF_POLLS: u64 = 32;
@@ -92,6 +94,7 @@ impl Lane {
 pub(super) struct SchedulerRefresh<const L: usize> {
     previous: [Lane; L],
     view: Option<SchedulerView>,
+    woken: Vec<SubChunkKey>, // nearby work made ready without a new scan record
 }
 
 impl<const L: usize> Default for SchedulerRefresh<L> {
@@ -99,11 +102,31 @@ impl<const L: usize> Default for SchedulerRefresh<L> {
         Self {
             previous: std::array::from_fn(|_| Lane::default()),
             view: None,
+            woken: Vec::new(),
         }
     }
 }
 
 impl<const L: usize> SchedulerRefresh<L> {
+    /// Offers `key` to the next dispatch when it lies in the camera's neighbourhood.
+    pub(super) fn wake_near(&mut self, key: SubChunkKey) {
+        if self.view.is_some_and(|view| mesh_is_near(view, key)) {
+            self.requeue_woken(key);
+        }
+    }
+
+    /// Keeps an unexamined key for a later dispatch, even if the camera has moved.
+    pub(super) fn requeue_woken(&mut self, key: SubChunkKey) {
+        if !self.woken.contains(&key) {
+            self.woken.push(key);
+        }
+    }
+
+    /// Drains the keys [`Self::wake_near`] offered since the last dispatch.
+    pub(super) fn take_woken(&mut self) -> Vec<SubChunkKey> {
+        std::mem::take(&mut self.woken)
+    }
+
     /// Refreshes bounded queue work and reports whether the view still needs direct local probes.
     pub(super) fn refresh(
         &mut self,
@@ -112,9 +135,7 @@ impl<const L: usize> SchedulerRefresh<L> {
         deadline: Option<Instant>,
         is_current: impl Fn(SubChunkKey, u64) -> bool,
     ) -> bool {
-        let moved = self.view.is_none_or(|previous| {
-            previous.cell() != view.cell() || previous.startup_center != view.startup_center
-        });
+        let moved = self.view.is_none_or(|previous| view.reranks_from(previous));
         if self.previous.iter().all(Lane::is_empty) && moved {
             std::mem::swap(&mut self.previous, queues);
             self.view = Some(view);
@@ -335,6 +356,20 @@ fn compact_scheduler_scan(
     scan.retain(|&(key, revision)| is_live(key, revision) && seen.insert(key));
 }
 
+/// Whether `key` lies in the neighbourhood [`near_camera_keys`] probes.
+pub(super) fn mesh_is_near(view: SchedulerView, key: SubChunkKey) -> bool {
+    let [x, y, z] = view.cell();
+    let radius = NEAR_CAMERA_RADIUS.unsigned_abs();
+    key.x.abs_diff(x) <= radius && key.y.abs_diff(y) <= radius && key.z.abs_diff(z) <= radius
+}
+
+/// Whether `key`'s column lies in the halo [`near_light_columns`] probes.
+pub(super) fn light_column_is_near(view: SchedulerView, key: SubChunkKey) -> bool {
+    let [x, _, z] = view.cell();
+    let radius = NEAR_LIGHT_COLUMN_RADIUS.unsigned_abs();
+    key.x.abs_diff(x) <= radius && key.z.abs_diff(z) <= radius
+}
+
 /// Probes the camera's immediate sub-chunk neighbourhood without scanning pending maps.
 pub(super) fn near_camera_keys(
     view: SchedulerView,
@@ -362,7 +397,7 @@ pub(super) fn near_light_columns(
     view: SchedulerView,
     dimension: i32,
 ) -> impl Iterator<Item = SubChunkKey> {
-    let radius = NEAR_CAMERA_RADIUS + 1;
+    let radius = NEAR_LIGHT_COLUMN_RADIUS;
     let [x, y, z] = view
         .position
         .map(|value| floor_to_i32(value).div_euclid(16));
@@ -577,5 +612,176 @@ mod tests {
             Some(spawn.key)
         );
         assert_eq!(lane.ready.len(), 1);
+    }
+
+    fn turn_view(forward: [f32; 3]) -> SchedulerView {
+        let length = forward
+            .iter()
+            .map(|value| value * value)
+            .sum::<f32>()
+            .sqrt();
+        SchedulerView {
+            position: [8.0; 3],
+            forward: Some(forward.map(|value| value / length)),
+            startup_center: None,
+        }
+    }
+
+    fn yaw(degrees: f32) -> SchedulerView {
+        let radians = degrees.to_radians();
+        turn_view([radians.cos(), 0.0, radians.sin()])
+    }
+
+    /// Runs bounded refresh passes until no re-rank remains in flight.
+    fn settle(refresh: &mut SchedulerRefresh<1>, lanes: &mut [Lane; 1], view: SchedulerView) {
+        for _ in 0..64 {
+            refresh.refresh(view, lanes, None, |_, _| true);
+            if refresh.previous[0].is_empty() {
+                return;
+            }
+        }
+        panic!("refresh did not settle");
+    }
+
+    fn lane_of(keys: &[SubChunkKey], view: SchedulerView, deferred: bool) -> Lane {
+        let heap = keys
+            .iter()
+            .map(|&key| PendingSchedulerCandidate::new(key, 1, view, false))
+            .collect();
+        if deferred {
+            Lane {
+                deferred: heap,
+                ..Lane::default()
+            }
+        } else {
+            Lane {
+                ready: heap,
+                ..Lane::default()
+            }
+        }
+    }
+
+    /// 180 sections just ahead of a camera facing +X, and one straight above it.
+    fn pitch_witness() -> (Vec<SubChunkKey>, SubChunkKey) {
+        let above = SubChunkKey::new(0, 0, 10, 0);
+        let ahead = (9..=12)
+            .flat_map(|x| {
+                (-2..=2).flat_map(move |y| (-4..=4).map(move |z| SubChunkKey::new(0, x, y, z)))
+            })
+            .chain([above])
+            .collect();
+        (ahead, above)
+    }
+
+    /// Looking up makes the section overhead the nearest in view, though the turn stays in one
+    /// compass eighth and the sections ahead outnumber one refresh pass.
+    #[test]
+    fn a_pitch_only_turn_reranks_queued_sections() {
+        let (keys, above) = pitch_witness();
+        let level = turn_view([1.0, 0.0, 0.0]);
+        let up = turn_view([0.1, 0.995, 0.0]);
+        assert!(keys.len() > MAX_PENDING_SCHEDULER_SCANS_PER_POLL);
+        let mut lanes = [lane_of(&keys, level, false)];
+        let mut refresh = SchedulerRefresh::<1>::default();
+        settle(&mut refresh, &mut lanes, level);
+        assert_ne!(lanes[0].ready.peek().unwrap().key, above);
+
+        settle(&mut refresh, &mut lanes, up);
+
+        assert_eq!(lanes[0].ready.peek().unwrap().key, above);
+        assert_eq!(lanes[0].ready.len(), keys.len());
+    }
+
+    /// Deferred work is re-ranked by the same turn, so a later wake dispatches the new favourite.
+    #[test]
+    fn a_pitch_only_turn_reranks_deferred_sections() {
+        let (keys, above) = pitch_witness();
+        let level = turn_view([1.0, 0.0, 0.0]);
+        let mut lanes = [lane_of(&keys, level, true)];
+        let mut refresh = SchedulerRefresh::<1>::default();
+        settle(&mut refresh, &mut lanes, level);
+
+        settle(&mut refresh, &mut lanes, turn_view([0.1, 0.995, 0.0]));
+
+        assert_eq!(lanes[0].deferred.peek().unwrap().key, above);
+        assert!(lanes[0].ready.is_empty());
+    }
+
+    /// A 42° turn inside one compass eighth moves one section into the view cone and another out.
+    #[test]
+    fn a_yaw_turn_within_one_compass_eighth_reranks() {
+        let entering = SubChunkKey::new(0, -6, 0, 1);
+        let leaving = SubChunkKey::new(0, 3, 0, 4);
+        let (before, after) = (yaw(92.0), yaw(134.0));
+        let mut lanes = [lane_of(&[entering, leaving], before, false)];
+        let mut refresh = SchedulerRefresh::<1>::default();
+        settle(&mut refresh, &mut lanes, before);
+        assert_eq!(lanes[0].ready.peek().unwrap().key, leaving);
+
+        settle(&mut refresh, &mut lanes, after);
+
+        assert_eq!(lanes[0].ready.peek().unwrap().key, entering);
+    }
+
+    /// Turns below the threshold leave settled queues alone, so mouse jitter costs no re-rank.
+    #[test]
+    fn small_turns_do_no_refresh_work() {
+        let (keys, _) = pitch_witness();
+        let mut lanes = [lane_of(&keys, yaw(0.0), false)];
+        let mut refresh = SchedulerRefresh::<1>::default();
+        settle(&mut refresh, &mut lanes, yaw(0.0));
+        for degrees in [3.0, 6.0, 9.0, 3.0] {
+            assert!(!refresh.refresh(yaw(degrees), &mut lanes, None, |_, _| true));
+            assert!(refresh.previous[0].is_empty());
+        }
+        assert!(refresh.refresh(yaw(12.0), &mut lanes, None, |_, _| true));
+        assert!(!refresh.previous[0].is_empty());
+    }
+
+    /// A second turn during a bounded refresh still leaves every record ranked for the newest view.
+    #[test]
+    fn a_turn_during_an_active_refresh_settles_in_the_newest_order() {
+        let keys = (-8..=8)
+            .flat_map(|x| (-8..=8).map(move |z| SubChunkKey::new(0, x, (x + z) % 3, z)))
+            .collect::<Vec<_>>();
+        assert!(keys.len() > 2 * MAX_PENDING_SCHEDULER_SCANS_PER_POLL);
+        let mut lanes = [lane_of(&keys, yaw(0.0), false)];
+        let mut refresh = SchedulerRefresh::<1>::default();
+        settle(&mut refresh, &mut lanes, yaw(0.0));
+        refresh.refresh(yaw(90.0), &mut lanes, None, |_, _| true);
+        assert!(!refresh.previous[0].is_empty());
+
+        settle(&mut refresh, &mut lanes, yaw(200.0));
+        settle(&mut refresh, &mut lanes, yaw(200.0));
+
+        let newest = yaw(200.0);
+        let mut ranks = Vec::new();
+        while let Some(candidate) = lanes[0].ready.pop() {
+            ranks.push(newest.rank(candidate.key));
+        }
+        assert_eq!(ranks.len(), keys.len());
+        assert!(ranks.windows(2).all(|pair| pair[0] <= pair[1]));
+    }
+
+    /// Spawn sections keep their startup priority through a turn that favours other sections.
+    #[test]
+    fn a_turn_keeps_startup_priority() {
+        let spawn = SubChunkKey::new(0, 0, -2, 0);
+        let ahead = SubChunkKey::new(0, 4, 0, 0);
+        let with_startup = |view: SchedulerView| SchedulerView {
+            startup_center: Some(ChunkKey::new(0, 0, 0)),
+            ..view
+        };
+        let (level, up) = (
+            with_startup(turn_view([1.0, 0.0, 0.0])),
+            with_startup(turn_view([0.1, 0.995, 0.0])),
+        );
+        let mut lanes = [lane_of(&[spawn, ahead], level, false)];
+        let mut refresh = SchedulerRefresh::<1>::default();
+        settle(&mut refresh, &mut lanes, level);
+
+        settle(&mut refresh, &mut lanes, up);
+
+        assert_eq!(lanes[0].ready.peek().unwrap().key, spawn);
     }
 }

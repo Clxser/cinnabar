@@ -370,3 +370,66 @@ fn repeated_artwork_paths_do_not_exclude_later_unique_sources() {
     };
     assert_eq!(sources(&set).len(), 2);
 }
+
+/// The worlds tab packs each world's captured view under the key its row draws.
+#[test]
+fn world_thumbnails_are_packed_from_memory_on_the_worlds_tab() {
+    use launcher::local_worlds::world::{WorldThumbnail, thumbnail_key};
+    use launcher::menu::{LocalWorldCard, MenuScreen};
+    let mut view = launcher::menu::MenuView::new(true, "Fixture".into());
+    view.screen = MenuScreen::Play;
+    view.local_worlds = vec![LocalWorldCard {
+        thumbnail: Some(WorldThumbnail::new(
+            "0123456789abcdef",
+            Arc::from(&b"jpeg"[..]),
+        )),
+        ..Default::default()
+    }]
+    .into();
+    let set = ArtworkSet {
+        images: view_images(&view, &[]),
+        ..Default::default()
+    };
+    let keys: Vec<_> = sources(&set).iter().map(|source| source.key().0).collect();
+    assert_eq!(keys, [thumbnail_key("0123456789abcdef")]);
+
+    view.screen = MenuScreen::Home;
+    assert!(
+        view_images(&view, &[]).is_empty(),
+        "other screens leave atlas room to theirs"
+    );
+}
+
+/// Mods-tab icons pack from their validated source under the key each card draws.
+#[test]
+fn mod_icons_are_packed_from_memory_on_the_mods_tab() {
+    use launcher::menu::{MenuScreen, settings_sections::SettingSection};
+    use launcher::mods::{InstalledMod, Library, Snapshot};
+    let icon = |id| InstalledMod {
+        id,
+        file: format!("{id}.wasm"),
+        bytes: 1,
+        permissions: Vec::new(),
+        metadata: ui::mod_metadata::ModMetadata {
+            icon: (id == 1).then(|| Arc::from(&b"png"[..])),
+            ..Default::default()
+        },
+    };
+    let mut view = launcher::menu::MenuView::new(true, "Fixture".into());
+    view.screen = MenuScreen::Settings;
+    view.settings_section = SettingSection::Mods.definition().index;
+    view.mods = Arc::new(Snapshot {
+        library: Library {
+            installed: vec![icon(1), icon(2)],
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let keys: Vec<_> = view_images(&view, &[])
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect();
+    assert_eq!(keys, [icon(1).icon_key().unwrap()]);
+    view.settings_section = SettingSection::Video.definition().index;
+    assert!(view_images(&view, &[]).is_empty());
+}

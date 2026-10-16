@@ -34,7 +34,7 @@ pub(crate) fn sampled_rig_placement(
             ),
             actor.death_rotation_progress(alpha),
         ),
-        glide_rotation(actor, alpha),
+        spin_rotation(actor, alpha).or_else(|| glide_rotation(actor, alpha)),
     );
     Some((rows, yaw))
 }
@@ -60,12 +60,12 @@ pub(super) fn scaled_axes(mut rows: [[f32; 4]; 3], axis_scale: [f32; 3]) -> [[f3
     rows
 }
 
-/// Tips the rig sideways about its feet as death progresses; the ease-out curve needs measurement.
+/// Tips the rig sideways about its feet by `progress` of a right angle.
 pub fn death_tilted(mut rows: [[f32; 4]; 3], progress: Option<f32>) -> [[f32; 4]; 3] {
     let Some(progress) = progress else {
         return rows;
     };
-    let angle = progress.clamp(0.0, 1.0).sqrt() * std::f32::consts::FRAC_PI_2;
+    let angle = progress.clamp(0.0, 1.0) * std::f32::consts::FRAC_PI_2;
     let (sine, cosine) = angle.sin_cos();
     for row in &mut rows {
         let (x, y) = (row[0], row[1]);
@@ -80,6 +80,14 @@ const DEGREES_TO_RADIANS: f32 = 0.017_453_292;
 const RADIANS_TO_DEGREES: f32 = 57.295_776;
 /// Cross products below this leave the gliding body unturned.
 const GLIDE_TURN_DEAD_ZONE: f32 = 0.0625;
+
+/// A spin pitches immediately along the view and rotates around the actor's own up axis.
+pub fn spin_rotation(actor: &ActorSnapshot, alpha: f32) -> Option<[f32; 2]> {
+    actor.is_spinning().then_some([
+        -90.0 - actor.pitch,
+        (actor.status.age_ticks as f32 + alpha) * -75.0,
+    ])
+}
 
 /// A gliding actor's `[pitch, yaw]` body tilt in degrees: pitch eases in over its first ten
 /// gliding ticks, and yaw turns it toward its horizontal motion.

@@ -135,6 +135,12 @@ impl UiPresentationRuntime {
     ) {
         let pack = self.gui_models.pack_equipment.source.clone();
         let base = self.equipment_catalog.clone();
+        self.gui_models.wearing_elytra = armor[1].is_some_and(|(identifier, _)| {
+            pack.as_deref()
+                .and_then(|catalog| catalog.binding(identifier))
+                .or_else(|| base.as_deref()?.binding(identifier))
+                .is_some_and(|binding| binding.category == assets::EquipmentCategory::Elytra)
+        });
         let from_pack: [bool; 4] = std::array::from_fn(|slot| {
             armor[slot].is_some_and(|(identifier, _)| {
                 pack.as_deref()
@@ -143,20 +149,29 @@ impl UiPresentationRuntime {
         });
         let resolved: [_; 4] = std::array::from_fn(|slot| {
             let catalog = if from_pack[slot] { &pack } else { &base };
-            worn_armor(catalog.as_deref(), armor[slot])
+            worn_armor(
+                catalog.as_deref(),
+                pack.as_deref(),
+                base.as_deref(),
+                armor[slot],
+            )
         });
         self.wear_pack_armor(std::array::from_fn(|slot| {
-            let (_, texture) = resolved[slot].as_ref().filter(|_| from_pack[slot])?;
+            let (_, texture) = resolved[slot].as_ref()?;
+            pack.as_deref()?.texture(texture)?;
             Some(*texture)
         }));
         let armor = std::array::from_fn(|slot| {
-            // Pack art the GUI atlas could not hold falls back to the item's base art.
-            if from_pack[slot]
-                && self.gui_models.enabled
-                && resolved[slot].is_some()
+            // A supplied image that could not fit the GUI atlas retains base artwork.
+            if self.gui_models.enabled
+                && resolved[slot].as_ref().is_some_and(|(_, texture)| {
+                    pack.as_deref()
+                        .is_some_and(|pack| pack.texture(texture).is_some())
+                })
                 && self.gui_models.pack_equipment.region(slot).is_none()
             {
-                return worn_armor(base.as_deref(), armor[slot]).map(|(preview, _)| preview);
+                return worn_armor(base.as_deref(), None, base.as_deref(), armor[slot])
+                    .map(|(preview, _)| preview);
             }
             resolved[slot].as_ref().map(|(preview, _)| preview.clone())
         });
@@ -172,6 +187,14 @@ impl UiPresentationRuntime {
             None,
         ];
         let held = held.and_then(|(identifier, metadata)| {
+            if let Some(sprite) = self.session_icons.sprite(identifier, metadata) {
+                return Some(PreviewTexture {
+                    rgba: self.session_icons.sprite_pixels(identifier, metadata)?,
+                    width: sprite.width.try_into().ok()?,
+                    height: sprite.height.try_into().ok()?,
+                    tint: None,
+                });
+            }
             let sprite = self.icon_catalog.as_ref()?.lookup(identifier, metadata)?;
             Some(PreviewTexture {
                 rgba: Arc::clone(&sprite.rgba8),
@@ -201,12 +224,17 @@ impl UiPresentationRuntime {
 /// material is a color mask, and that texture's identifier.
 fn worn_armor<'a>(
     catalog: Option<&'a RuntimeEquipmentCatalog>,
+    artwork: Option<&'a RuntimeEquipmentCatalog>,
+    base: Option<&'a RuntimeEquipmentCatalog>,
     worn: Option<(&str, Option<u32>)>,
 ) -> Option<(PreviewTexture, &'a str)> {
     let (identifier, dye) = worn?;
     let catalog = catalog?;
     let binding = catalog.binding(identifier)?;
-    let texture = catalog.texture(&binding.texture.identifier)?;
+    let texture = artwork
+        .and_then(|artwork| artwork.texture(&binding.texture.identifier))
+        .or_else(|| catalog.texture(&binding.texture.identifier))
+        .or_else(|| base?.texture(&binding.texture.identifier))?;
     let tint = binding
         .color_mask_rgb(dye)
         .map(|rgb| [(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8]);

@@ -19,10 +19,14 @@ pub fn benches(c: &mut Criterion) {
             ),
         ] {
             capture(&fixture);
+            #[cfg(not(feature = "runtime-profile"))]
             let before = test_alloc::thread_allocations();
             capture(&fixture);
-            let allocations = test_alloc::thread_allocations() - before;
-            eprintln!("DISPATCH_INPUTS kind={name} jobs={count} allocations={allocations}");
+            #[cfg(not(feature = "runtime-profile"))]
+            {
+                let allocations = test_alloc::thread_allocations() - before;
+                eprintln!("DISPATCH_INPUTS kind={name} jobs={count} allocations={allocations}");
+            }
             group.throughput(Throughput::Elements(count as u64));
             group.bench_with_input(BenchmarkId::new(name, count), &fixture, |b, fixture| {
                 b.iter(|| capture(black_box(fixture)));

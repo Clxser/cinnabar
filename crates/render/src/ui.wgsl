@@ -14,6 +14,7 @@ const STYLE_FONT_SDF: u32 = FONT_STYLE_SDF;
 const STYLE_ALPHA_TEST: u32 = UI_STYLE_ALPHA_TEST;
 const STYLE_COLOR_MASK: u32 = UI_STYLE_COLOR_MASK;
 const STYLE_RADIAL_GRADIENT: u32 = UI_STYLE_RADIAL_GRADIENT;
+const STYLE_COVERAGE_PAINT: u32 = UI_STYLE_COVERAGE_PAINT;
 
 @group(0) @binding(0) var<uniform> viewport: UiViewport;
 @group(0) @binding(1) var ui_pages: texture_2d_array<f32>;
@@ -86,6 +87,20 @@ fn srgb_to_linear(srgb: vec3<f32>) -> vec3<f32> {
 fn shade_ui(input: UiVertexOutput, direct: bool) -> vec4<f32> {
     let uv_dx = dpdx(input.uv);
     let uv_dy = dpdy(input.uv);
+    if (input.style_flags & STYLE_COVERAGE_PAINT) != 0u {
+        let packed = vec4<u32>(round(input.overlay_color));
+        let end_color = vec4<f32>(packed & vec4<u32>(255u)) / 255.0;
+        let border_color = vec4<f32>(packed >> vec4<u32>(8u)) / 255.0;
+        let fill_color = mix(input.color, end_color, clamp(input.uv.x, 0.0, 1.0));
+        let fill_alpha = fill_color.a * clamp(input.uv.y, 0.0, 1.0);
+        let border_alpha = border_color.a * clamp(input.model_light, 0.0, 1.0);
+        let coverage_alpha = fill_alpha + border_alpha;
+        let rgb = fill_color.rgb * fill_alpha + border_color.rgb * border_alpha;
+        if direct && coverage_alpha > 0.0 {
+            return vec4<f32>(srgb_to_linear(rgb / coverage_alpha) * coverage_alpha, coverage_alpha);
+        }
+        return vec4<f32>(rgb, coverage_alpha);
+    }
     if (input.style_flags & STYLE_RADIAL_GRADIENT) != 0u {
         let radius = clamp(length(input.uv), 0.0, 1.0);
         let inner = vec4<f32>(input.color.rgb * input.color.a, input.color.a);
@@ -124,12 +139,12 @@ fn shade_ui(input: UiVertexOutput, direct: bool) -> vec4<f32> {
         sample = vec4<f32>(1.0, 1.0, 1.0, sample.r);
     }
     if sdf_font {
-        let distance = sample.a * 7.96875 - 3.984375;
-        let threshold = max((128.0 / 255.0) * texels_per_pixel, 0.000001);
+        let distance = sample.a * SDF_DISTANCE_SCALE - SDF_DISTANCE_BIAS;
+        let threshold = max(SDF_SMOOTHING_SCALE * texels_per_pixel, SDF_MIN_THRESHOLD);
         sample = vec4<f32>(1.0, 1.0, 1.0, smoothstep(-threshold, threshold, distance));
     }
     if native_font {
-        let exponent = 1.45 - dot(input.color.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+        let exponent = COVERAGE_GAMMA_BASE - dot(input.color.rgb, COVERAGE_LUMINANCE);
         sample = vec4<f32>(1.0, 1.0, 1.0, pow(sample.a, exponent));
     }
     if (input.style_flags & STYLE_GRAYSCALE) != 0u {

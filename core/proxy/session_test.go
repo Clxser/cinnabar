@@ -30,6 +30,12 @@ import (
 	"github.com/sandertv/gophertunnel/minecraft/resource"
 )
 
+func TestSharedGameVersionMatchesPinnedProtocol(t *testing.T) {
+	if bridgecontract.GameVersion != minecraft.DefaultProtocol.Ver() {
+		t.Fatalf("bridge version %q differs from pinned protocol %q", bridgecontract.GameVersion, minecraft.DefaultProtocol.Ver())
+	}
+}
+
 // sessionFixture reads a wire fixture the Rust protocol tests share.
 func sessionFixture(t *testing.T, name string) []byte {
 	t.Helper()
@@ -335,8 +341,8 @@ func TestSelectSessionPacksRejectsUnavailableRequiredPacks(t *testing.T) {
 	}
 	first := testAdmissionPack(t)
 	offer, _ := negotiatedOfferUpstream(t, []*resource.Pack{first}, false).ResourcePackOffer()
-	stack, _ := negotiatedOfferUpstream(t, []*resource.Pack{first, second}, false).ResourcePackStack()
 	for _, required := range []bool{false, true} {
+		stack, _ := negotiatedOfferUpstream(t, []*resource.Pack{first, second}, required).ResourcePackStack()
 		selected, _, err := selectSessionPacks(&selectedResourcePackStack{offer: offer, snapshot: stack, required: required}, nil)
 		var admission *PackAdmissionError
 		if required != errors.As(err, &admission) {
@@ -977,9 +983,12 @@ func TestBashAcceptanceObservesHashedSessionReadiness(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			command := exec.CommandContext(t.Context(), bash, "-c", `export CINNABAR_ACCEPTANCE_TEST_LIBRARY_ONLY=1; source "$1"; wait_for_core_ready "$2" $$ 1`, "acceptance", script, logPath)
-			if output, err := command.CombinedOutput(); err != nil {
-				t.Fatalf("readiness wait: %v: %s", err, output)
+			// The marker is already published, so readiness does not need any waiting budget.
+			for _, timeout := range []string{"0", "1"} {
+				command := exec.CommandContext(t.Context(), bash, "-c", `export CINNABAR_ACCEPTANCE_TEST_LIBRARY_ONLY=1; source "$1"; wait_for_core_ready "$2" $$ "$3"`, "acceptance", script, logPath, timeout)
+				if output, err := command.CombinedOutput(); err != nil {
+					t.Fatalf("readiness wait with timeout %s: %v: %s", timeout, err, output)
+				}
 			}
 		}()
 	}

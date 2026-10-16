@@ -5,6 +5,7 @@ struct CompiledSnowFixture {
     covered_layers: [u32; assets::TOP_SNOW_LAYER_COUNT as usize],
     cube: u32,
     plants: [u32; 5],
+    stems: Vec<u32>,
 }
 
 fn compiled_snow_fixture() -> &'static CompiledSnowFixture {
@@ -15,6 +16,9 @@ fn compiled_snow_fixture() -> &'static CompiledSnowFixture {
             let id = records.len() as u32;
             records.push(RegistryRecord {
                 beacon_tint: assets::BeaconTint::Unresolved,
+        traits: assets::registry::BlockTraits::empty(),
+        survival: assets::registry::SurvivalRule::None,
+        properties: Box::new([]),
                 sequential_id: id,
                 network_hash: id,
                 name: name.into(),
@@ -55,10 +59,23 @@ fn compiled_snow_fixture() -> &'static CompiledSnowFixture {
         let plants = plant_names.map(|name| {
             add(&format!("minecraft:{name}"), "{}".into(), BlockFlags::empty(), ModelFamily::Cross)
         });
+        let stem_names = ["melon_stem", "pumpkin_stem"];
+        let stems = stem_names.iter().flat_map(|name| {
+            [0, 5].map(|facing| {
+                add(
+                    &format!("minecraft:{name}"),
+                    format!(r#"{{"growth":{{"type":"int","value":7}},"facing_direction":{{"type":"int","value":{facing}}}}}"#),
+                    BlockFlags::empty(),
+                    ModelFamily::Crop,
+                )
+            })
+        }).collect();
         let directory = tempfile::tempdir().expect("snow fixture directory");
         // Original opaque fixture art only; the compiler selects native snow geometry.
         write_slab_render_pack(directory.path(), "snow_layer", "unused_snow", "stone");
-        let plant_routes = plant_names.map(|name| format!(r#""{name}":{{"textures":"cube_all"}}"#)).join(",");
+        let plant_routes = plant_names.into_iter().chain(stem_names)
+            .map(|name| format!(r#""{name}":{{"textures":"cube_all"}}"#))
+            .collect::<Vec<_>>().join(",");
         fs::write(directory.path().join("blocks.json"), format!(
             r#"{{"snow_layer":{{"textures":{{"down":"slab_down","side":"slab_side","up":"slab_up"}}}},"stone":{{"textures":"cube_all"}},{plant_routes}}}"#
         )).expect("write covered vegetation fixture routing");
@@ -69,7 +86,7 @@ fn compiled_snow_fixture() -> &'static CompiledSnowFixture {
         let blob = encode_blob(&compiled).expect("encode snow fixture");
         CompiledSnowFixture {
             assets: RuntimeAssets::decode(&blob).expect("decode snow fixture"),
-            air, layers, covered_layers, cube, plants,
+            air, layers, covered_layers, cube, plants, stems,
         }
     })
 }

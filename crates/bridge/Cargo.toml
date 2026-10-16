@@ -8,6 +8,7 @@ publish = false
 [package.metadata.cinnabar]
 platform-specific = ["macos", "windows"]
 reads = [
+    "assets/bedrock-target.json",
     "core",
 ]
 
@@ -28,6 +29,9 @@ rustix = { version = "1", default-features = false, features = ["net", "process"
 
 [target.'cfg(windows)'.dependencies]
 tempfile = "3"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true, features = ["fs", "net", "rt-multi-thread"] }
 
 [dev-dependencies]
 test-time = { path = "../test-time" }

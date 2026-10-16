@@ -23,6 +23,8 @@ pub struct ActorAnimationStore {
     pub(super) stats: ActorAnimationStats,
     /// Whether the local first-person actor also evaluates a third-person world body.
     pub(super) local_body_enabled: bool,
+    /// Frame samples that failed or ran out of budget and drew the completed tick pair instead.
+    pub(super) frame_fallbacks: std::sync::atomic::AtomicU64,
     #[cfg(any(test, feature = "test-support"))]
     pub(super) schedule: schedule::TestSchedule,
 }
@@ -78,6 +80,7 @@ impl ActorAnimationStore {
             next_rest_reset_generation: 1,
             stats: ActorAnimationStats::default(),
             local_body_enabled: false,
+            frame_fallbacks: Default::default(),
             #[cfg(any(test, feature = "test-support"))]
             schedule: Default::default(),
         };
@@ -167,6 +170,25 @@ impl ActorAnimationStore {
         if let Some(state) = self.rigs.get_mut(lifetime) {
             state.reset_pending = true;
             state.rest_reset_pending = true;
+            state.java.reset_cape();
+        }
+    }
+
+    /// Reanchors displacement and cape history without restarting animation clocks or controllers.
+    pub fn reanchor_position(&mut self, runtime_id: u64, position: [f32; 3]) {
+        if !position.iter().all(|value| value.is_finite()) {
+            return;
+        }
+        let Some(state) = self
+            .runtime_to_lifetime
+            .get(&runtime_id)
+            .and_then(|id| self.rigs.get_mut(id))
+        else {
+            return;
+        };
+        if let Some(input) = state.history.back_mut() {
+            state.java.reanchor_position(input.position, position);
+            input.position = position;
         }
     }
 
@@ -293,6 +315,12 @@ impl ActorAnimationStore {
         );
     }
 
+    /// Frame samples that fell back to the completed tick pair since the store was created.
+    pub fn frame_fallbacks(&self) -> u64 {
+        self.frame_fallbacks
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub fn get(&self, runtime_id: u64) -> Option<ActorRigSnapshot<'_>> {
         let lifetime = *self.runtime_to_lifetime.get(&runtime_id)?;
         self.snapshot(lifetime, self.rigs.get(&lifetime)?)
@@ -370,6 +398,7 @@ impl ActorAnimationStore {
                 .and_then(|skeleton| skeleton.prepared.mesh.as_ref()),
             skin_layers: &state.skin_layers,
             hand: state.hand_phases(),
+            main_hand_equipped: state.equipped_main.0.as_deref(),
             item_animation: state.hand_phases().map(ItemAnimationState::from),
             off_hand_animation: state.off_hand_animation,
             animation_variables: ActorAnimationVariables::new(
@@ -428,7 +457,7 @@ fn resolve_rig(
     completed_tick: u64,
 ) -> Option<ActorRigState> {
     let identifier = match actor.kind() {
-        ActorKind::Player { .. } => "minecraft:player",
+        ActorKind::Player { .. } => assets::facts::VanillaEntity::Player.identifier(),
         ActorKind::Entity { identifier } => identifier,
     };
     let entity_symbol = assets

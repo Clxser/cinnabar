@@ -14,6 +14,20 @@ use bedrock_protocol_1_26_51::wire::{self, Decode, Encode};
 
 use crate::{Packet, WorldEvent, WorldPacketError, into_world_event};
 
+/// Builds both terrain packet shapes with the requested blob-cache mode.
+pub fn terrain_cache_packets(cache_enabled: bool) -> [Packet; 2] {
+    [
+        Packet::new(packets::LevelChunk {
+            cache_enabled,
+            ..Default::default()
+        }),
+        Packet::new(packets::SubChunk {
+            cache_enabled,
+            ..Default::default()
+        }),
+    ]
+}
+
 /// An outbound Emote packet's fields.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EmoteObservation {
@@ -219,6 +233,26 @@ pub fn move_actor_absolute_event(
     into_world_event(crate::Packet::new(packet), 0)
 }
 
+/// Normalizes a dedicated AddPainting packet without exposing vendor types to fixture consumers.
+pub fn add_painting_event(
+    unique_id: i64,
+    runtime_id: u64,
+    motive: &str,
+    direction: i32,
+    position: [f32; 3],
+) -> Result<Option<WorldEvent>, WorldPacketError> {
+    into_world_event(
+        crate::Packet::new(bedrock_protocol_1_26_51::packets::AddPainting {
+            target_actor_id: ActorUniqueID(unique_id),
+            target_runtime_id: ActorRuntimeID(runtime_id),
+            position: position.into(),
+            direction: wire::ZigZag32(direction),
+            motif: motive.into(),
+        }),
+        0,
+    )
+}
+
 /// Normalizes an AddActor spawning `identifier` with short-typed `metadata`, in dimension 0.
 pub fn add_actor_event(
     unique_id: i64,
@@ -251,4 +285,15 @@ pub fn add_actor_event(
 fn round_trip<T: Encode + Decode>(packet: T) -> T {
     let bytes = packet.encode_to_vec().expect("a fixture packet encodes");
     T::decode_exact(&bytes).expect("an encoded fixture decodes")
+}
+
+/// A successful acknowledgement with no corrections, in either optional-list encoding.
+pub fn empty_stack_response(request_id: i32, list_present: bool) -> Packet {
+    Packet::new(round_trip(packets::ItemStackResponse {
+        responses: vec![bedrock_protocol_1_26_51::types::ItemStackResponseInfo {
+            result: bedrock_protocol_1_26_51::enums::ItemStackNetResult::Success,
+            client_request_id: bedrock_protocol_1_26_51::types::ItemStackRequestID(request_id),
+            containers: list_present.then(Vec::new),
+        }],
+    }))
 }

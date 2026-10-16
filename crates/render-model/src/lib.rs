@@ -3,17 +3,20 @@
 //! Engine-free: no Bevy or wgpu types, so presentation compiles without waiting on the renderer.
 
 pub mod actor;
+pub mod cape;
 mod chunk_metrics;
 pub mod dropped_item;
 mod entity_shadow;
 pub mod equipment;
 mod font_atlas;
+pub mod font_shading;
 mod frame_pacing;
 pub use font_atlas::{
     FONT_ATLAS_GUTTER, FONT_ATLAS_SIDE, FontAtlas, FontAtlasFrame, FontAtlasVertex, FontRect,
 };
 mod item_geometry;
 pub mod java_animation;
+pub mod legacy_combat;
 mod nametag;
 pub mod panorama;
 mod presentation;
@@ -31,16 +34,17 @@ pub use actor::{
     MAX_ACTOR_CATALOG_VERTEX_BYTES, MAX_ACTOR_CATALOG_VERTICES, MAX_ACTOR_RIG_VERTICES,
     MAX_RENDER_BONES_PER_ACTOR, MAX_RENDERED_PLAYERS, ONE_SIDED_BACK_UV, PLAYER_SKIN_BUDGET_BYTES,
     RenderBoneTransform, SKIN_CLASS_SIDES, STANDARD_BIPED_VERTEX_COUNT, STANDARD_SKIN_BYTES,
-    STANDARD_SKIN_SIDE, UNIT_AXIS_SCALE, actor_skin_side, append_entity_cube_vertices,
-    attachable_geometry, attachable_raster_frame, default_actor_skin_rgba8, diagnostic_geometry,
-    entity_geometry, equipment_geometry, equipment_rig_id, find_geometry_index, fit_rgba_within,
-    geometry_bone_binding_expressions, geometry_bone_names, geometry_bone_pivots,
-    geometry_from_geometry_index, geometry_from_runtime_assets, install_default_player_skin,
-    is_equipment_rig_id, is_layer_geometry_rig_id, is_pack_equipment_rig_id, is_pack_rig_id,
-    item_mesh_rig_id, layer_geometries, layer_geometry_rig_id, normalize_actor_skin,
-    pack_equipment_rig_id, pack_geometries, pack_rig_id, prepare_actor_skin_cached,
-    resolve_geometry_bones, sampled_locator_transform, skin_geometry, skin_rig_id,
-    standard_biped_overlay_vertices, standard_biped_vertices,
+    STANDARD_SKIN_SIDE, UNIT_AXIS_SCALE, actor_catalog_budget_bytes, actor_skin_side,
+    append_entity_cube_vertices, attachable_geometry, attachable_raster_frame,
+    default_actor_skin_rgba8, diagnostic_geometry, entity_geometry, equipment_geometry,
+    equipment_rig_id, find_geometry_index, fit_rgba_within, geometry_bone_binding_expressions,
+    geometry_bone_names, geometry_bone_pivots, geometry_from_geometry_index,
+    geometry_from_runtime_assets, install_default_player_skin, is_equipment_rig_id,
+    is_layer_geometry_rig_id, is_pack_equipment_rig_id, is_pack_rig_id, item_mesh_rig_id,
+    layer_geometries, layer_geometry_rig_id, normalize_actor_skin, pack_equipment_rig_id,
+    pack_geometries, pack_rig_id, prepare_actor_skin_cached, resolve_geometry_bones,
+    sampled_locator_transform, skin_geometry, skin_rig_id, standard_biped_overlay_vertices,
+    standard_biped_vertices,
 };
 pub use chunk_metrics::{
     ModelWorkloadCount, ModelWorkloadMetricsSnapshot, TransparentSortMetricsSnapshot,
@@ -58,10 +62,10 @@ pub use frame_pacing::{
 };
 pub use item_geometry::{extruded_sprite_vertices, held_sprite_vertices, textured_cube_vertices};
 pub use nametag::{
-    MAX_NAMETAG_RECORDS, NAMETAG_ACOS_CUBIC, NAMETAG_ACOS_LINEAR, NAMETAG_ATLAS_SIDE,
-    NAMETAG_BLOCKS_PER_FONT_PIXEL, NAMETAG_HORIZONTAL_ZERO, NAMETAG_LINE_PITCH_PX,
-    NAMETAG_TEXT_REVERSE_Z_BIAS, NametagAtlasRect, NametagRecord, NametagScene,
-    nametag_line_backgrounds, nametag_line_left,
+    MAX_NAMETAG_RECORDS, NAMETAG_ALPHA_CUTOFF, NAMETAG_ATLAS_SIDE, NAMETAG_BLOCKS_PER_FONT_PIXEL,
+    NAMETAG_DIM_TEXT_ALPHA, NAMETAG_LINE_PITCH_PX, NAMETAG_TEXT_REVERSE_Z_BIAS, NametagAtlasRect,
+    NametagRecord, NametagScene, java_nametag_line_backgrounds, nametag_line_backgrounds,
+    nametag_line_left,
 };
 pub use panorama::{MAX_PANORAMA_FACE_SIDE, PanoramaFaces, PanoramaView};
 pub use presentation::{
@@ -143,9 +147,9 @@ pub mod hand;
 pub mod lightmap;
 
 pub mod native_trig;
+pub mod spawner;
 pub mod viewmodel;
 pub mod weather;
-pub use actor::ActorGlint;
 pub use actor::ActorRigVertexSegments;
 pub use actor::{
     ACTOR_BONE_MATRIX_BYTES, ACTOR_GPU_INSTANCE_WORDS, ACTOR_LAYER_BODY, ActorDrawManifestEntry,
@@ -157,17 +161,19 @@ pub use actor::{
 };
 pub use actor::{ACTOR_CANDIDATE_RADIUS_BLOCKS, ActorCullView, MAX_ACTOR_RENDER_DISTANCE_BLOCKS};
 pub use actor::{
+    ACTOR_COLOR_MASK_MATERIAL_FLAG, ActorGlint, LEGACY_COMBAT_MATERIAL_FLAG, legacy_glint_uv,
+};
+pub use actor::{
     ActorArtworkLocation, ActorArtworkPageId, ActorArtworkPages, ActorTexturePage, EquipmentRaster,
     MAX_ACTOR_GPU_PIXEL_BYTES, MAX_ACTOR_TEXTURE_PAGES,
 };
 pub use actor::{ActorSkinResidency, ResidentSkin, pack_skin_slot};
+pub use actor::{GlintTexture, ITEM_GLINT_UV_SCALE};
 pub use block_entity::BeaconModel;
 pub use block_entity::ConduitModel;
 pub use block_entity::CrystalBeamModel;
 pub use block_entity::DragonDeathModel;
-pub use block_entity::SPAWNER_MOBS;
 pub use block_entity::ShulkerModel;
-pub use block_entity::SpawnerModel;
 pub use block_entity::{
     AtlasRect, BlockEntityAtlas, MAP_CELL, TEXT_CELL, TEXT_SLOT_COUNT, TextureRef,
 };
@@ -183,10 +189,13 @@ pub use block_entity::{
 };
 pub use block_entity::{BannerLayer, BannerModel, BannerMount};
 pub use block_entity::{BedModel, bed_color};
-pub use block_entity::{BellAttachment, BellModel, swing_degrees};
+pub use block_entity::{BellAttachment, BellModel, BookPose, EnchantingBook, swing_degrees};
 pub use block_entity::{BlockEntityArtworkPreparer, PreparedBlockEntityArtwork};
 pub use block_entity::{ChestModel, ChestPair, ChestVariant, CopperAge, lid_angle_radians};
-pub use block_entity::{CrackQuad, CrackShape, crack_shape_from_template, crack_texture_name};
+pub use block_entity::{
+    CrackQuad, CrackShape, CrackShapeCache, crack_shape_for_block, crack_shape_from_template,
+    crack_texture_name,
+};
 pub use block_entity::{DecoratedPotModel, sherd_pattern};
 pub use block_entity::{
     ITEM_FRAME_PANEL_FRONT_PIXELS, ITEM_FRAME_ROTATION_STEP_DEGREES, ItemFrameModel,
@@ -203,8 +212,8 @@ pub use celestial::{
 pub use dropped_item::ItemMeshVertex;
 pub use dropped_item::{
     DroppedItemInstance, DroppedItemModel, MAX_DROPPED_ITEM_INSTANCES, MAX_DYNAMIC_ITEM_VERTICES,
-    MAX_ITEM_LAYERS, MAX_ITEM_SPRITE_SIDE, TerrainItemInstance, TerrainItemTransition, WHITE_LAYER,
-    dropped_item_transform,
+    MAX_ITEM_LAYERS, MAX_ITEM_SPRITE_SIDE, MIN_ITEM_ATLAS_SIDE, TerrainItemInstance,
+    TerrainItemTransition, WHITE_LAYER, dropped_item_transform,
 };
 pub use dropped_item::{DroppedItemShape, DroppedItemSpawnPose, native_dropped_item_transform};
 pub use dropped_item::{rope_color, rope_point, rope_ribbon};

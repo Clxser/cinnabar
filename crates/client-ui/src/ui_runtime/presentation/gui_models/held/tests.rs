@@ -49,10 +49,23 @@ fn held_block_is_the_shared_six_face_cube_not_a_gui_thumbnail() {
 
 /// Compiles original item bones and retains entity-only banner routes without cube sheets.
 fn banner_catalog() -> (RuntimeEntityAssets, RuntimeIconCatalog) {
+    sprite_catalog(
+        "minecraft:banner",
+        ItemVisualDefinitionRoute::BlockItem {
+            block_visual: assets::BlockVisualId(1),
+        },
+    )
+}
+
+/// Compiles original hand bones and distinct sprite variants for one item route.
+pub(super) fn sprite_catalog(
+    identifier: &str,
+    route: ItemVisualDefinitionRoute,
+) -> (RuntimeEntityAssets, RuntimeIconCatalog) {
     let entity = br#"{"format_version":"1.10.0","minecraft:client_entity":{"description":{"identifier":"minecraft:player","geometry":{"default":"geometry.test_player"},"render_controllers":["controller.render.test_player"]}}}"#;
     let geometry = br#"{"format_version":"1.12.0","minecraft:geometry":[{"description":{"identifier":"geometry.test_player","texture_width":64,"texture_height":64},"bones":[{"name":"body","pivot":[0,0,0],"cubes":[{"origin":[-4,0,-2],"size":[8,12,4],"uv":[0,0]}]},{"name":"rightItem","parent":"body","pivot":[-6,12,0]},{"name":"leftItem","parent":"body","pivot":[6,12,0]}]}]}"#;
     let render = br#"{"format_version":"1.8.0","render_controllers":{"controller.render.test_player":{"geometry":"Geometry.default"}}}"#;
-    let mut compiled = pack_compiler::compile_entity_pack(vec![
+    let mut compiled = pack_entity_compiler::compile_entity_pack(vec![
         ("entity/player.json".into(), entity.to_vec()),
         ("models/entity/player.geo.json".into(), geometry.to_vec()),
         ("render_controllers/player.json".into(), render.to_vec()),
@@ -69,13 +82,11 @@ fn banner_catalog() -> (RuntimeEntityAssets, RuntimeIconCatalog) {
             durability: assets::item::durability::ItemDurability::Unresolved,
             armour: assets::item::armour::ItemArmour::Unresolved,
             key: ItemVisualKey {
-                identifier: "minecraft:banner".into(),
+                identifier: identifier.into(),
                 metadata,
             },
             source: 0,
-            route: ItemVisualDefinitionRoute::BlockItem {
-                block_visual: assets::BlockVisualId(1),
-            },
+            route,
             first_person: assets::ItemDisplayTransform::identity(),
             third_person: assets::ItemDisplayTransform::identity(),
             dropped: assets::ItemDisplayTransform::identity(),
@@ -109,7 +120,7 @@ fn banner_catalog() -> (RuntimeEntityAssets, RuntimeIconCatalog) {
         .collect::<Vec<_>>();
     let entries = (0..16)
         .map(|metadata| assets::IconEntry {
-            identifier: "minecraft:banner".into(),
+            identifier: identifier.into(),
             metadata,
             sprite: metadata,
         })
@@ -258,5 +269,64 @@ fn installed_gui_carriers_reuse_sprite_pages_within_the_model_atlas_budget() {
     assert!(
         sprites > 0,
         "installed items exercise the resident sprite path"
+    );
+}
+
+// Local-only: cutout cubes and chests draw as geometry; blended cubes retain composed thumbnails.
+#[test]
+fn installed_see_through_and_chest_blocks_draw_as_gui_geometry() {
+    use crate::test_support::fixture_hud;
+    use crate::ui_runtime::presentation::UiPresentationRuntime;
+    use assets::carriers;
+    use ui_engine::test_support::fixture_font;
+    let compiled = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(carriers::COMPILED_DIR);
+    let read = |carrier: &carriers::Carrier| {
+        let path = compiled.join(carrier.output);
+        std::fs::read(&path).map_err(|_| {
+            eprintln!(
+                "skipping installed_see_through_and_chest_blocks_draw_as_gui_geometry: missing {}; run make assets",
+                path.display()
+            );
+        })
+    };
+    let (Ok(world), Ok(entities), Ok(icons)) = (
+        read(&carriers::WORLD),
+        read(&carriers::ENTITY),
+        read(&carriers::ICON),
+    ) else {
+        return;
+    };
+    let world = assets::RuntimeAssets::decode(&world).unwrap();
+    let entities = RuntimeEntityAssets::decode(&entities).unwrap();
+    let icons = Arc::new(RuntimeIconCatalog::decode(&icons).unwrap());
+    let mut presentation =
+        UiPresentationRuntime::with_hud_and_icons(fixture_font(), fixture_hud(), icons).unwrap();
+    presentation.set_gui_models(&world, &entities).unwrap();
+    for identifier in [
+        "minecraft:chest",
+        "minecraft:oak_leaves",
+        "minecraft:glass",
+        "minecraft:anvil",
+    ] {
+        let icon = presentation.item_icon(identifier, 0).unwrap();
+        assert!(
+            presentation
+                .gui_models
+                .models
+                .contains_key(&super::super::icon_key(icon)),
+            "{identifier} draws as GUI geometry"
+        );
+    }
+    let blended = presentation
+        .item_icon("minecraft:white_stained_glass", 0)
+        .unwrap();
+    assert!(
+        !presentation
+            .gui_models
+            .models
+            .contains_key(&super::super::icon_key(blended)),
+        "fractional blended cubes retain the thumbnail's rear-face compositing"
     );
 }

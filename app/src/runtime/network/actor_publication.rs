@@ -12,16 +12,18 @@ use client_presentation::actor_publication::ActorFramePartialTick;
 use client_presentation::actor_publication::{ActorFrameInput, ActorWorld};
 use client_shell::ui_resources::{UiPresentationResource, UiRuntimeResource};
 use {
-    crate::runtime::world::ClientWorld,
+    crate::runtime::{shutdown::FatalError, world::ClientWorld},
     client_interaction::movement::{
         LocalPhysicsController, MovementTicker, PhysicsCollisionRegistries,
     },
     client_state::PlayerRuntime,
 };
 
+use launcher::menu::settings_options::SettingId;
 /// Projects local damage only after actor ticking, clearing it when the session leaves gameplay.
 pub(crate) fn publish_local_actor_damage(
     world: Res<ClientWorld>,
+    fatal_error: Res<FatalError>,
     mut ui: Option<ResMut<UiRuntimeResource>>,
 ) {
     let Some(ui) = ui.as_deref_mut() else {
@@ -30,7 +32,7 @@ pub(crate) fn publish_local_actor_damage(
     let actor = world
         .stream
         .as_ref()
-        .filter(|_| world.fatal_error.is_none() && world.transfer_notice.is_none())
+        .filter(|_| fatal_error.0.is_none() && world.transfer_notice.is_none())
         .and_then(|stream| stream.authority().actor(stream.local_player_runtime_id()));
     ui.publish_local_actor_health(actor);
 }
@@ -134,10 +136,14 @@ pub(crate) fn advance_actor_frame(
             gameplay::melee::java_swing_duration(mining_effects),
         ),
     );
+    let (predicted_eye, predicted_feet) = view.actor_positions(
+        physics.render_eye_position(),
+        physics.render_feet_position(),
+    );
     let input = ActorFrameInput {
         local_feed,
-        predicted_eye: physics.render_eye_position(),
-        predicted_feet: physics.render_feet_position(),
+        predicted_eye,
+        predicted_feet,
         local_equipment,
         swing_progress: None,
         // Resolving the screen policy is UI work, attributed as such inside actor publication.
@@ -164,8 +170,8 @@ pub(crate) fn advance_actor_frame(
         hide_hand: menu.as_ref().is_some_and(|menu| {
             let settings = menu.settings_snapshot().0;
             !client_presentation::presentation::visibility::GameplayOverlayVisibility::new(
-                settings.value("hide_hud") != 0,
-                settings.value("hide_hand") != 0,
+                settings.value(SettingId::HideHud) != 0,
+                settings.value(SettingId::HideHand) != 0,
                 player.facts.player_game_mode() == Some(protocol::PlayerGameMode::Spectator),
             )
             .hand
@@ -204,10 +210,11 @@ pub(crate) fn advance_actor_frame(
                 client_presentation::actor_sampling::sample_actor_world_state(stream, collisions);
             }
         },
-        |stream, partial_tick| {
+        |stream, _partial_tick| {
             let consume = ui.as_deref().and_then(|_| {
                 client_interaction::item_use::selection::consume_ticks(&player, stream)
             });
+            // The use is timed in local physics ticks, so its frame fraction is that clock's too.
             let animation = ui
                 .as_deref()
                 .zip(item_use.as_deref())
@@ -219,7 +226,7 @@ pub(crate) fn advance_actor_frame(
                         movement
                             .as_deref()
                             .map_or(0, |movement| movement.completed_tick()),
-                        partial_tick,
+                        physics.tick_alpha(),
                     )
                 });
             (consume, animation)
@@ -243,6 +250,21 @@ pub(crate) struct ActorFinalObservations<'w> {
 }
 
 /// Consumes admitted local ticks and builds their final poses with the pre-send capture.
+/// Lets the actor geometry catalog grow to this device's memory-tier budget, within what one
+/// storage binding of its GPU holds.
+pub(crate) fn initialize_actor_geometry_budget(
+    device: Option<Res<bevy::render::renderer::RenderDevice>>,
+    scene: Option<ResMut<render_scene::ActorRenderScene>>,
+) {
+    let (Some(device), Some(mut scene)) = (device, scene) else {
+        return;
+    };
+    scene.set_geometry_budget(
+        resource_pack::subpacks::device_memory_tier(launcher_host::memory::physical_bytes()),
+        render::actor_storage_binding_bytes(&device),
+    );
+}
+
 pub(crate) fn prepare_actor_render_frame(
     observations: ActorFinalObservations,
     params: client_presentation::actor_publication::ActorFramePublication,
@@ -404,7 +426,7 @@ pub(crate) fn publish_entity_shadows(
 
 #[cfg(test)]
 #[path = "actor_publication/tests/custom_emotes.rs"]
-mod custom_emotes;
+pub(super) mod custom_emotes;
 
 #[cfg(test)]
 #[path = "actor_publication/tests/item_swing.rs"]

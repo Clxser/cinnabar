@@ -21,7 +21,7 @@ impl CollisionRegistry {
         runtime_id: u32,
         component: block_transform::random_offset::RandomOffsetComponent,
     ) -> bool {
-        let Some(block) = Arc::make_mut(&mut self.blocks).get_mut(&runtime_id) else {
+        let Some(block) = Arc::make_mut(&mut self.blocks).get_mut(runtime_id) else {
             return false;
         };
         block.random_offset = Some((component, component.offset([0; 3])));
@@ -37,7 +37,7 @@ impl CollisionRegistry {
         if !component.is_valid() {
             return false;
         }
-        let Some(block) = Arc::make_mut(&mut self.blocks).get_mut(&runtime_id) else {
+        let Some(block) = Arc::make_mut(&mut self.blocks).get_mut(runtime_id) else {
             return false;
         };
         block.random_offset = Some((component, [0.0; 3]));
@@ -78,13 +78,18 @@ impl CollisionRegistry {
 }
 
 impl BlockPhysics {
+    /// Adds the sampled displacement after rounding the owner coordinate to float precision.
     pub(super) fn shape_offset(&self, position: [i32; 3]) -> Vec3 {
-        let mut offset = Vec3::new(position[0] as f64, position[1] as f64, position[2] as f64);
+        let offset =
+            Vec3::new(position[0] as f64, position[1] as f64, position[2] as f64).rounded();
         if let Some((component, origin)) = self.random_offset {
             let column = component.offset(position);
-            for axis in 0..3 {
-                offset[axis] += f64::from(column[axis] - origin[axis]);
-            }
+            return offset
+                + Vec3::new(
+                    f64::from(column[0] - origin[0]),
+                    f64::from(column[1] - origin[1]),
+                    f64::from(column[2] - origin[2]),
+                );
         }
         offset
     }

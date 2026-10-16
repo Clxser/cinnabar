@@ -1,13 +1,14 @@
 //! Renderer setup shared by direct and launcher sessions.
 
-use std::{ffi::OsStr, num::NonZeroU32};
+use std::num::NonZeroU32;
+
+mod device;
+mod guarded;
+mod selection;
 
 use bevy::{
-    render::{
-        RenderPlugin,
-        settings::{Backends, RenderCreation, WgpuSettings},
-    },
-    window::{PresentMode, Window},
+    render::settings::WgpuSettings,
+    window::{PresentMode, Window, WindowResizeConstraints},
 };
 
 /// The primary window; `frame_latency` must suit the session's VSync choice from the start.
@@ -20,57 +21,54 @@ pub(super) fn primary_window(
         title,
         present_mode,
         desired_maximum_frame_latency: Some(frame_latency),
+        resize_constraints: WindowResizeConstraints {
+            min_width: ui::MIN_WINDOW_LOGICAL_SIZE[0],
+            min_height: ui::MIN_WINDOW_LOGICAL_SIZE[1],
+            ..Default::default()
+        },
         ..Default::default()
     }
 }
 
-pub(super) fn render_plugin() -> RenderPlugin {
-    let mut settings = WgpuSettings::default();
-    configure_render_settings(&mut settings);
-    if let Some(backends) = preferred_render_backends(std::env::var_os("WGPU_BACKEND").as_deref()) {
-        settings.backends = Some(backends);
-    }
-    #[cfg(all(feature = "enhanced", target_os = "windows"))]
-    render::configure_enhanced_shader_compiler(&mut settings);
-    #[cfg(windows)]
-    {
-        static LOG_COMPILER: std::sync::Once = std::sync::Once::new();
-        // Renderer settings are selected before the log plugin is installed.
-        LOG_COMPILER.call_once(|| {
-            eprintln!(
-                "Configured DX12 shader compiler: {:?}",
-                settings.dx12_shader_compiler
-            );
-        });
-    }
-    RenderPlugin {
-        render_creation: RenderCreation::Automatic(Box::new(settings)),
-        ..Default::default()
-    }
+/// Initializes the renderer after winit has supplied the real display connection.
+pub(super) struct RendererSetup {
+    pub data_root: std::path::PathBuf,
+    pub graphics_api_revision: u64,
+    pub video_override: Option<launcher::graphics_backend::Backend>,
 }
 
-/// Applies renderer limits and compiler policy to Bevy's defaults.
-fn configure_render_settings(settings: &mut WgpuSettings) {
-    // Shipping installs use FXC; a DLL in the launch directory must not change that.
-    settings.dx12_shader_compiler = wgpu::Dx12Compiler::Fxc;
-    settings.limits.max_storage_buffers_per_shader_stage = settings
-        .limits
-        .max_storage_buffers_per_shader_stage
-        .max(render::required_vertex_storage_buffers());
-}
-
-/// Preserves explicit backend choices; otherwise Windows admits Vulkan before DX12.
-/// Vulkan uses count-driven GPU culling, with DX12 available as a fallback.
-fn preferred_render_backends(explicit: Option<&OsStr>) -> Option<Backends> {
-    if explicit.is_some() || !cfg!(target_os = "windows") {
-        return None;
+impl bevy::prelude::Plugin for RendererSetup {
+    /// Keeps GL on the same display as Bevy's windows and installs first-frame recovery.
+    fn build(&self, app: &mut bevy::prelude::App) {
+        let mut settings = WgpuSettings::default();
+        device::configure_render_settings(&mut settings);
+        let renderer = guarded::render_plugin(
+            app,
+            &self.data_root,
+            self.video_override,
+            self.graphics_api_revision,
+            settings,
+        )
+        .unwrap_or_else(|error| panic!("Renderer startup failed: {error:#}"));
+        app.add_plugins(renderer);
     }
-    Some(Backends::VULKAN | Backends::DX12)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_arch = "wasm32")]
+    #[test]
+    fn browser_requests_portable_webgpu_device_settings() {
+        let mut settings = WgpuSettings::default();
+        device::configure_render_settings(&mut settings);
+        assert!(matches!(
+            settings.priority,
+            bevy::render::settings::WgpuSettingsPriority::WebGPU
+        ));
+        assert_eq!(settings.backends, Some(wgpu::Backends::BROWSER_WEBGPU));
+    }
 
     #[test]
     fn shader_compiler_does_not_inherit_a_launch_directory_dxc() {
@@ -80,21 +78,11 @@ mod tests {
             },
             ..Default::default()
         };
-        configure_render_settings(&mut settings);
+        device::configure_render_settings(&mut settings);
         assert!(matches!(
             settings.dx12_shader_compiler,
             wgpu::Dx12Compiler::Fxc
         ));
-    }
-
-    #[test]
-    fn windows_admits_vulkan_before_dx12_without_overriding_an_explicit_backend() {
-        use bevy::render::settings::Backends;
-        use std::ffi::OsStr;
-
-        assert_eq!(preferred_render_backends(Some(OsStr::new("dx12"))), None);
-        let expected = cfg!(target_os = "windows").then_some(Backends::VULKAN | Backends::DX12);
-        assert_eq!(preferred_render_backends(None), expected);
     }
 
     #[test]
@@ -111,6 +99,14 @@ mod tests {
                 Some(queued)
             );
             assert_eq!(window.present_mode, PresentMode::Fifo);
+            assert_eq!(
+                window.resize_constraints.min_width,
+                ui::MIN_WINDOW_LOGICAL_SIZE[0]
+            );
+            assert_eq!(
+                window.resize_constraints.min_height,
+                ui::MIN_WINDOW_LOGICAL_SIZE[1]
+            );
         }
     }
 }

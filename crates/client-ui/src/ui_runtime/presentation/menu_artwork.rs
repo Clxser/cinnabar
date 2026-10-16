@@ -44,10 +44,6 @@ const MAX_ARTWORKS: usize = 64;
 /// Longest side kept for a list thumbnail (server logos, gamerpics, badges), so
 /// a whole featured list fits the art pages beside banners.
 pub const THUMBNAIL_SIDE: u32 = 128;
-/// Marketplace art sides: a card thumbnail, and the offer page's key art and screenshots. Both
-/// keep 16:9 art several to a 1024 art page next to the title, so a screen's images all pack.
-const STORE_CARD_SIDE: u32 = 192;
-const STORE_FEATURE_SIDE: u32 = 480;
 /// Prefix of a server-pack texture's full-resolution copy on the art pages, so
 /// a pack's `textures/ui/title` never collides with Cinnabar's logo.
 pub(super) const SERVER_ART_PREFIX: &str = "server-pack:";
@@ -58,17 +54,20 @@ pub(super) struct MenuArtworkAtlas {
 }
 
 /// Decoded artwork: straight-alpha RGBA8, which the UI shader premultiplies, and its size.
-struct Artwork {
-    width: u32,
-    height: u32,
-    pixels: Vec<u8>,
+pub(super) struct Artwork {
+    pub(super) width: u32,
+    pub(super) height: u32,
+    pub(super) pixels: Vec<u8>,
 }
 
-/// What an atlas is packed from: the service art at its sides plus the
+/// What an atlas is packed from: the service art at its sides, images held in memory, and the
 /// engine's oversized textures by key.
 #[derive(Clone, Default)]
 pub(super) struct ArtworkSet {
+    pub(super) logo: Option<Arc<Artwork>>,
     pub(super) paths: Vec<(String, u32)>,
+    /// Encoded images held in memory, by the key they draw under, such as world thumbnails.
+    pub(super) images: Vec<(String, Arc<[u8]>)>,
     pub(super) oversized: Vec<(String, Arc<[u8]>)>,
     pub(super) skins: Vec<SkinArtwork>,
     pub(super) capes: Vec<CapeArtwork>,
@@ -77,18 +76,35 @@ pub(super) struct ArtworkSet {
 impl ArtworkSet {
     /// Equality without comparing texture bytes: engine textures by key and payload.
     pub(super) fn same(&self, other: &Self) -> bool {
-        self.paths == other.paths
+        (match (&self.logo, &other.logo) {
+            (None, None) => true,
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }) && self.paths == other.paths
+            && self.images.len() == other.images.len()
+            && self
+                .images
+                .iter()
+                .zip(&other.images)
+                .all(|(a, b)| a.0 == b.0 && Arc::ptr_eq(&a.1, &b.1))
             && self.capes.len() == other.capes.len()
             && self.capes.iter().zip(&other.capes).all(|(a, b)| a.same(b))
             && self.skins.len() == other.skins.len()
             && self.skins.iter().zip(&other.skins).all(|(a, b)| a.same(b))
-            && self.oversized.len() == other.oversized.len()
-            && self
-                .oversized
-                .iter()
-                .zip(&other.oversized)
-                .all(|(a, b)| a.0 == b.0 && Arc::ptr_eq(&a.1, &b.1))
+            && same_engine_textures(&self.oversized, &other.oversized)
     }
+}
+
+/// Whether two lists name the same engine textures, by key and payload, in order.
+pub(super) fn same_engine_textures(
+    left: &[(String, Arc<[u8]>)],
+    right: &[(String, Arc<[u8]>)],
+) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(a, b)| a.0 == b.0 && Arc::ptr_eq(&a.1, &b.1))
 }
 
 struct Request {
@@ -358,6 +374,12 @@ impl DecodeCache {
 /// `set`'s distinct sources in draw priority, capped like the atlas.
 fn sources(set: &ArtworkSet) -> Vec<Source> {
     let mut unique = BTreeSet::new();
+    let images: Vec<_> = set
+        .images
+        .iter()
+        .filter(|(key, _)| unique.insert(key.clone()))
+        .map(|(key, bytes)| Source::Bytes(key.clone(), Arc::clone(bytes)))
+        .collect();
     let files = set
         .paths
         .iter()
@@ -376,6 +398,8 @@ fn sources(set: &ArtworkSet) -> Vec<Source> {
         .collect();
     let remaining = MAX_ARTWORKS - all.len();
     all.extend(set.skins.iter().take(remaining).cloned().map(Source::Skin));
+    let remaining = MAX_ARTWORKS - all.len();
+    all.extend(images.into_iter().take(remaining));
     let remaining = MAX_ARTWORKS - all.len();
     all.extend(files.take(remaining));
     let remaining = MAX_ARTWORKS - all.len();
@@ -402,7 +426,7 @@ fn decode(path: &Path, max_side: u32) -> Option<(Vec<u8>, u32, u32)> {
 /// Straight-alpha RGBA8 (what the UI shader samples) of an image no larger
 /// than `max_side` on either axis; a downscale filters premultiplied so
 /// transparent texels never bleed into edges.
-fn decode_bytes(bytes: &[u8], max_side: u32) -> Option<(Vec<u8>, u32, u32)> {
+pub(super) fn decode_bytes(bytes: &[u8], max_side: u32) -> Option<(Vec<u8>, u32, u32)> {
     if bytes.is_empty() || bytes.len() > MAX_SOURCE_BYTES || max_side == 0 {
         return None;
     }
@@ -487,9 +511,6 @@ pub fn view_paths(view: &launcher::menu::MenuView) -> Vec<(String, u32)> {
     if view.screen == launcher::menu::MenuScreen::Profile {
         return profile_art(view);
     }
-    if view.screen == launcher::menu::MenuScreen::Store {
-        return store_art(view);
-    }
     // The invite screen draws only its friends' gamerpics, online list first.
     if let Some(invite) = view.invite.as_deref() {
         use launcher::menu::invite::Section;
@@ -565,27 +586,71 @@ pub fn view_paths(view: &launcher::menu::MenuView) -> Vec<(String, u32)> {
         .collect()
 }
 
-/// Queues Profile card art first, followed by only the achievements Overview draws.
-/// The Marketplace draws only its offer art, so the start screen's art does not take its pages.
-fn store_art(view: &launcher::menu::MenuView) -> Vec<(String, u32)> {
-    let Some(store) = view.store.as_deref() else {
-        return Vec::new();
+/// The edited world first, the Mods tab's card icons, or the worlds list's visible rows, within
+/// the atlas budget.
+fn view_images(
+    view: &launcher::menu::MenuView,
+    hits: &[(launcher::menu::MenuAction, ui::UiRect)],
+) -> Vec<(String, Arc<[u8]>)> {
+    use launcher::{
+        local_worlds::Screen,
+        menu::{MenuAction, MenuScreen},
     };
-    let mut paths = store.image_paths();
-    // Feature art packs first: where a large image lands on the shelves decides how much else fits.
-    paths.sort_by_key(|(_, art)| *art != launcher::store::StoreArt::Feature);
-    paths
-        .into_iter()
-        .map(|(path, art)| {
-            let side = match art {
-                launcher::store::StoreArt::Card => STORE_CARD_SIDE,
-                launcher::store::StoreArt::Feature => STORE_FEATURE_SIDE,
-            };
-            (path, side)
+    if !matches!(view.screen, MenuScreen::Play | MenuScreen::Settings) {
+        return Vec::new();
+    }
+    if matches!(view.local.screen, Screen::Edit | Screen::ConfirmDelete) {
+        let edited = view
+            .local
+            .edited
+            .as_ref()
+            .map(|world| launcher::local_worlds::world::thumbnail_key(&world.id));
+        return view
+            .local_worlds
+            .iter()
+            .filter_map(|world| world.thumbnail.as_ref())
+            .find(|thumbnail| Some(&thumbnail.key) == edited.as_ref())
+            .map(|thumbnail| (thumbnail.key.clone(), Arc::clone(&thumbnail.image)))
+            .into_iter()
+            .collect();
+    }
+    if view.screen == MenuScreen::Settings
+        && view.settings_section
+            == launcher::menu::settings_sections::SettingSection::Mods
+                .definition()
+                .index
+    {
+        return view
+            .mods
+            .library
+            .installed
+            .iter()
+            .filter_map(|item| Some((item.icon_key()?, Arc::clone(item.metadata.icon.as_ref()?))))
+            .collect();
+    }
+    if view.screen != MenuScreen::Play || view.local.screen != Screen::List {
+        return Vec::new();
+    }
+    let mut indices: Vec<_> = hits
+        .iter()
+        .filter_map(|(action, _)| match action {
+            MenuAction::PlayLocalWorld(index) => Some(*index),
+            _ => None,
         })
+        .collect();
+    // The first paint has no row geometry yet; it supplies the actual visible set next frame.
+    if indices.is_empty() {
+        indices.extend(0..view.local_worlds.len().min(FIRST_BATCH));
+    }
+    indices
+        .into_iter()
+        .filter_map(|index| view.local_worlds.get(index))
+        .filter_map(|world| world.thumbnail.as_ref())
+        .map(|thumbnail| (thumbnail.key.clone(), Arc::clone(&thumbnail.image)))
         .collect()
 }
 
+/// Queues Profile card art before the achievements shown by Overview.
 fn profile_art(view: &launcher::menu::MenuView) -> Vec<(String, u32)> {
     let profile = &view.feeds.profile;
     let mut paths = vec![
@@ -614,7 +679,7 @@ fn profile_art(view: &launcher::menu::MenuView) -> Vec<(String, u32)> {
 /// The start screen's service art: messaging tile layers, the event badge and the persona head.
 fn home_art(home: &launcher::menu::MenuHome) -> Vec<String> {
     let mut paths = vec![home.persona_head.clone()];
-    for art in [&home.play_art, &home.store_art].into_iter().flatten() {
+    if let Some(art) = &home.play_art {
         paths.extend([
             art.banner_texture.clone(),
             art.default_background.clone(),
@@ -630,7 +695,7 @@ fn home_art(home: &launcher::menu::MenuHome) -> Vec<String> {
 }
 
 #[cfg(test)]
-mod store_tests;
+mod tests;
 
 #[cfg(test)]
-mod tests;
+mod world_preview_tests;

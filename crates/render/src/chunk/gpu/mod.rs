@@ -4,6 +4,7 @@ pub(in crate::chunk) mod arena;
 #[cfg(feature = "enhanced")]
 mod authored_upload;
 pub(crate) mod bind_groups;
+mod capacity;
 pub(in crate::chunk) mod graphics_metadata;
 pub(in crate::chunk) mod layout;
 pub(in crate::chunk) mod resource_geometry;

@@ -15,7 +15,7 @@ use super::render_report::{compile_local_pack, world_for};
 
 use client_ui::ui_runtime::presentation::{
     nametag_atlas::{GlyphPage, GlyphPixels, NametagAtlas, font_page},
-    nametags::{build_nametag_scene, extract_nametag},
+    nametags::{NametagView, build_nametag_scene, extract_nametag},
 };
 
 pub(super) const WIDTH: u32 = 1280;
@@ -103,7 +103,11 @@ fn render_captured_scene() {
         .filter_map(|actor| {
             extract_nametag(
                 actor,
-                eye,
+                NametagView {
+                    viewer_position: eye,
+                    camera_position: eye,
+                    camera_forward: rotation * Vec3::NEG_Z,
+                },
                 None,
                 world.authority().actor_name_tag(actor.unique_id)?,
                 &ui::ScoreboardStore::default(),
@@ -114,6 +118,7 @@ fn render_captured_scene() {
     let first_glyph_page = font.pages().len();
     let scene = build_nametag_scene(
         &anchors,
+        1.0,
         &font,
         &mut TextLayoutCache::new(64, 1 << 24),
         &mut NametagAtlas::default(),
@@ -129,7 +134,7 @@ fn render_captured_scene() {
             })
         },
     );
-    draw_nametags(&mut frame, &scene, eye);
+    draw_nametags(&mut frame, &scene, rotation);
     eprintln!(
         "scene: {} tags, {} records",
         anchors.len(),
@@ -437,12 +442,12 @@ fn apply(rows: &[[f32; 4]; 3], point: [f32; 3]) -> [f32; 3] {
     })
 }
 
-/// The shader's billboard: facing the camera position by yaw then pitch, x right and y down.
-fn draw_nametags(frame: &mut Frame, scene: &NametagScene, eye: Vec3) {
+/// Draws screen-aligned labels using the camera rotation and each record's depth selection.
+fn draw_nametags(frame: &mut Frame, scene: &NametagScene, camera_rotation: Quat) {
     let side = NAMETAG_ATLAS_SIDE as f32;
     let atlas = nametag_pixels(scene);
-    for (index, record) in scene.records.iter().enumerate() {
-        let Some(corners) = record.world_corners(eye.to_array()) else {
+    for record in &scene.records {
+        let Some(corners) = record.world_corners(camera_rotation) else {
             continue;
         };
         let [u0, v0, u1, v1] = record.uv;
@@ -452,36 +457,77 @@ fn draw_nametags(frame: &mut Frame, scene: &NametagScene, eye: Vec3) {
             (Vec3::from_array(corners[2]), [u1, v1]),
             (Vec3::from_array(corners[3]), [u0, v1]),
         ];
-        let color = record.color;
         let shade = |uv: [f32; 2]| {
-            let mut rgba = color;
-            if u1 >= 0.0 {
+            let texel = if u1 >= 0.0 {
                 let tx = ((uv[0] * side) as usize).min(NAMETAG_ATLAS_SIDE as usize - 1);
                 let ty = ((uv[1] * side) as usize).min(NAMETAG_ATLAS_SIDE as usize - 1);
                 let at = (ty * NAMETAG_ATLAS_SIDE as usize + tx) * 4;
-                let texel = &atlas[at..at + 4];
-                if index >= scene.see_through && record.text != 0 && texel[3] < 128 {
-                    return None;
-                }
-                for (channel, value) in rgba.iter_mut().zip(texel) {
-                    *channel *= f32::from(*value) / 255.0;
-                }
-            }
-            (rgba[3] > 0.0).then(|| rgba.map(|value| (value.clamp(0.0, 1.0) * 255.0).round() as u8))
+                std::array::from_fn(|channel| f32::from(atlas[at + channel]) / 255.0)
+            } else {
+                [1.0; 4]
+            };
+            record
+                .fragment_color(texel)
+                .map(|rgba| rgba.map(|value| (value.clamp(0.0, 1.0) * 255.0).round() as u8))
         };
-        let depth_tested = index >= scene.see_through;
+        let depth_tested = record.depth_tested != 0;
         frame.triangle(
             [quad[0], quad[1], quad[2]],
             depth_tested,
-            record.text != 0,
+            depth_tested && record.text != 0,
             &shade,
         );
         frame.triangle(
             [quad[0], quad[2], quad[3]],
             depth_tested,
-            record.text != 0,
+            depth_tested && record.text != 0,
             &shade,
         );
+    }
+}
+
+#[test]
+fn report_labels_follow_camera_rotation_without_writing_through_wall_depth() {
+    use render_model::{NAMETAG_BLOCKS_PER_FONT_PIXEL, NametagAtlasRect, NametagRecord};
+    let eye = Vec3::new(2.0, 3.0, -1.0);
+    let rotation = Quat::from_euler(EulerRot::YXZ, 0.8, -0.4, 0.3);
+    let world_from_view = Mat4::from_rotation_translation(rotation, eye);
+    let center = Vec3::new(-0.3, 0.2, -2.0);
+    let record = NametagRecord {
+        anchor: world_from_view.transform_point3(center).to_array(),
+        text: 1,
+        rect: [-10.0, -5.0, 10.0, 5.0],
+        uv: [
+            0.0,
+            0.0,
+            1.0 / NAMETAG_ATLAS_SIDE as f32,
+            1.0 / NAMETAG_ATLAS_SIDE as f32,
+        ],
+        color: [1.0, 0.0, 0.0, 32.0 / 255.0],
+        ..Default::default()
+    };
+    let scene = NametagScene {
+        records: vec![record],
+        atlas: Arc::from([NametagAtlasRect {
+            cell: [0, 0, 1, 1],
+            rgba8: Arc::from([255; 4]),
+        }]),
+        ..Default::default()
+    };
+    let clip_from_world = Mat4::from_scale(Vec3::new(1.0, 1.0, -0.1)) * world_from_view.inverse();
+    let mut frame = Frame::new(clip_from_world);
+    draw_nametags(&mut frame, &scene, rotation);
+    for x in [-9.0, 9.0] {
+        for y in [-4.0, 4.0] {
+            let view = center + Vec3::new(x, -y, 0.0) * NAMETAG_BLOCKS_PER_FONT_PIXEL;
+            let px = ((view.x * 0.5 + 0.5) * WIDTH as f32) as u32;
+            let py = ((0.5 - view.y * 0.5) * HEIGHT as f32) as u32;
+            assert_eq!(
+                *frame.image.get_pixel(px, py),
+                image::Rgba([153, 156, 203, 255])
+            );
+            assert!(frame.depth[(py * WIDTH + px) as usize].is_infinite());
+        }
     }
 }
 

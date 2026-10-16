@@ -1,15 +1,17 @@
 //! Per-frame HUD observation and publication.
 use crate::runtime::network::resource_packs::PackApplication;
-use bevy::prelude::{Local, Transform};
+use bevy::prelude::{Local, Transform, Vec3};
 use client_runtime::network::NetworkHandle;
 use inventory::inventory_ledger::PlayerInventorySlot;
 use {super::*, client_presentation::camera::CameraSettingsAuthority};
 
+use launcher::menu::settings_options::SettingId;
 #[cfg(test)]
 mod camera_hand_tests;
 mod commit;
 mod cooldowns;
 mod loading;
+mod menu_icons;
 use client_ui::ui_runtime::presentation::{
     ItemIconFrames, PendingUiPublication, PreviewCapture, capture_hud_frame, nametags,
     player_preview,
@@ -35,7 +37,7 @@ pub(crate) fn platform_safe_area_insets() -> SafeArea {
 }
 
 /// CPU hand carriers follow the same camera capability as the animated hand rig.
-fn hand_first_person(
+pub(crate) fn hand_first_person(
     perspective: semantic_input::PerspectiveMode,
     server: Option<&client_presentation::camera::ServerCameraView>,
 ) -> bool {
@@ -54,9 +56,11 @@ type PublishExtras<'w, 's> = (
     Option<Res<'w, render_scene::PipelineWarmupReadiness>>,
     Option<Res<'w, client_presentation::camera::ServerCameraView>>,
     Local<'s, nametags::NametagTextCache>,
+    ResMut<'w, crate::runtime::shutdown::FatalError>,
     (
         Res<'w, client_presentation::actor_publication::ActorFramePartialTick>,
         Res<'w, client_presentation::local_player::LocalPlayerFrameCarrier>,
+        Res<'w, client_presentation::local_player::LocalAvatarVisibilityCarrier>,
         Res<'w, crate::environment::WorldClock>,
         Res<'w, crate::environment::WeatherState>,
         Res<'w, NetworkHandle<PackApplication>>,
@@ -95,9 +99,11 @@ pub(crate) fn prepare_ui_runtime(
         warmed_pipelines,
         server_camera,
         mut nametag_cache,
+        mut fatal_error,
         (
             actor_partial,
             local_frame,
+            local_visibility,
             clock,
             weather,
             network,
@@ -140,6 +146,7 @@ pub(crate) fn prepare_ui_runtime(
     let restart = client_world.dimension_transfer.take_presentation_reset();
     loading::prepare_loading(
         &mut client_world,
+        &mut fatal_error.0,
         &mut presentation,
         &runtime,
         &mut diagnostics_input,
@@ -207,8 +214,8 @@ pub(crate) fn prepare_ui_runtime(
     presentation.observe_paper_doll(now_millis, doll_state);
     let settings = menu_runtime.settings_snapshot().0;
     let hud_doll = presentation.hud_frame_mut().paper_doll_visible
-        && settings.value("hide_hud") == 0
-        && settings.value("hide_paperdoll") == 0
+        && settings.value(SettingId::HideHud) == 0
+        && settings.value(SettingId::HidePaperdoll) == 0
         && !menu_runtime.is_visible()
         && !runtime.inventory_open();
     let emote_preview = runtime
@@ -238,8 +245,8 @@ pub(crate) fn prepare_ui_runtime(
         );
     }
     let overlays = client_presentation::presentation::visibility::GameplayOverlayVisibility::new(
-        settings.value("hide_hud") != 0,
-        settings.value("hide_hand") != 0,
+        settings.value(SettingId::HideHud) != 0,
+        settings.value(SettingId::HideHand) != 0,
         player_runtime.facts.player_game_mode() == Some(protocol::PlayerGameMode::Spectator),
     );
     let hide_hand = !overlays.hand;
@@ -350,7 +357,7 @@ pub(crate) fn prepare_ui_runtime(
     let show_names = menu_runtime
         .settings_snapshot()
         .0
-        .value("ingame_player_names")
+        .value(SettingId::IngamePlayerNames)
         != 0;
     let tag_style = presentation
         .mod_ui()
@@ -365,7 +372,7 @@ pub(crate) fn prepare_ui_runtime(
         .filter(|_| {
             overlays.nametags
                 || (names_with_hidden_hud
-                    && settings.value("hide_hud") != 0
+                    && settings.value(SettingId::HideHud) != 0
                     && !menu_runtime.is_visible())
         })
         .zip(
@@ -375,11 +382,27 @@ pub(crate) fn prepare_ui_runtime(
                 .map(|(_, transform)| GlobalTransform::from(*transform)),
         )
         .map(|(stream, transform)| {
+            let authority = stream.authority();
+            let viewer_position = local_frame
+                .snapshot()
+                .map(|frame| frame.feet())
+                .or_else(|| {
+                    authority
+                        .actor(authority.local_player_runtime_id())
+                        .and_then(|actor| actor.interpolated_position(actor_partial.0))
+                        .map(Vec3::from_array)
+                })
+                .unwrap_or_else(|| transform.translation());
+            let nametag_view = nametags::NametagView {
+                viewer_position,
+                camera_position: transform.translation(),
+                camera_forward: *transform.forward(),
+            };
             let mut tags = nametags::project_nametags(
                 &mut nametag_cache,
                 runtime.scoreboards(),
                 stream,
-                transform.translation(),
+                nametag_view,
                 picked_nametag_actor(stream, &transform, collisions.as_deref(), &player_runtime),
                 actor_partial.0,
                 show_names && !tag_style.is_some_and(|style| style.hide_players),
@@ -394,23 +417,29 @@ pub(crate) fn prepare_ui_runtime(
             }
             if show_self_tag && show_names {
                 let authority = stream.authority();
-                if let Some(actor) =
-                    authority
-                        .actor(authority.local_player_runtime_id())
-                        .filter(|actor| {
-                            !tag_style.is_some_and(|style| style.hide_passengers)
-                                || authority.ridden_unique_id(actor.unique_id).is_none()
-                        })
+                if let Some(visibility) = local_visibility.snapshot().filter(|visibility| {
+                    visibility.visible()
+                        && visibility.runtime_id() == authority.local_player_runtime_id()
+                        && visibility.session_generation().get() == clock.session_generation()
+                }) && let Some(actor) = authority
+                    .actor(authority.local_player_runtime_id())
+                    .filter(|actor| {
+                        !tag_style.is_some_and(|style| style.hide_passengers)
+                            || authority.ridden_unique_id(actor.unique_id).is_none()
+                    })
                     && let Some(name) = authority
                         .actor_name_tag(actor.unique_id)
                         .or_else(|| authority.actor_display_name(actor.unique_id))
-                    && let Some(tag) = nametags::extract_nametag(
+                    && let Some(tag) = nametags::extract_nametag_at_feet(
                         actor,
-                        transform.translation(),
+                        nametags::NametagView {
+                            viewer_position: visibility.feet(),
+                            ..nametag_view
+                        },
                         None,
                         name,
                         runtime.scoreboards(),
-                        actor_partial.0,
+                        visibility.feet(),
                     )
                 {
                     tags.push(tag);
@@ -433,10 +462,7 @@ pub(crate) fn prepare_ui_runtime(
         for server in view.featured.iter_mut() {
             server.icon = presentation.menu_artwork_icon(&server.image_path);
         }
-        view.featured_icon = presentation.item_icon("minecraft:compass_item", 0);
-        view.realm_icon = presentation.item_icon("minecraft:ender_pearl", 0);
-        view.friend_icon = presentation.item_icon("minecraft:heart_of_the_sea", 0);
-        view.saved_icon = presentation.item_icon("minecraft:book_normal", 0);
+        menu_icons::install(&presentation, &mut view);
         view.profile_icon = presentation.player_preview_icon();
         view
     });

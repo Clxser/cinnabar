@@ -2,6 +2,15 @@ use super::*;
 use simulation_clock::identity::{PositionAuthorityGeneration, SessionGeneration};
 
 impl WorldAuthority {
+    /// Publishes local placement, reanchoring animation only when presentation changes.
+    pub fn set_local_actor_presentation_position(&mut self, position: [f32; 3], reanchor: bool) {
+        self.actors.set_local_presentation_position(
+            self.local_player_runtime_id,
+            position,
+            reanchor,
+        );
+    }
+
     /// Admits and polls appearance work without advancing animation ticks; true while work remains.
     pub fn poll_actor_appearance_preparation(&mut self) -> bool {
         self.actors.prepare_appearances(false);
@@ -16,6 +25,11 @@ impl WorldAuthority {
     pub fn render_players(&self) -> Vec<(&ActorSnapshot, Option<&PlayerProfile>)> {
         self.actors
             .render_players(Some(self.local_player_runtime_id))
+    }
+    /// Remote non-spectator players, including those whose appearance is still preparing.
+    pub fn present_remote_players(&self) -> impl Iterator<Item = &ActorSnapshot> {
+        self.actors
+            .present_players(Some(self.local_player_runtime_id))
     }
     /// Returns the retained display name for an actor identity.
     pub fn actor_display_name(&self, unique_id: i64) -> Option<std::sync::Arc<str>> {
@@ -85,6 +99,11 @@ impl WorldAuthority {
     pub fn seed_item_registry(&mut self, registry: protocol::ItemRegistryEvent) -> bool {
         self.actors.seed_item_registry(registry)
     }
+
+    /// Identifies the registry and compiled facts used by canonical item resolution.
+    pub fn item_presentation_generation(&self) -> &std::sync::Arc<()> {
+        self.actors.item_presentation_generation()
+    }
     /// Advances simulation ticks with one visual evaluation per tick.
     pub fn advance_actor_interpolation_ticks(&mut self, ticks: u32) {
         self.actors.advance_interpolation_ticks(ticks);
@@ -109,7 +128,10 @@ impl WorldAuthority {
         }
     }
     fn publish_actor_audio(&mut self) {
-        for event in self.actors.take_synchronized_audio() {
+        for mut event in self.actors.take_synchronized_audio() {
+            if event.client_generated {
+                event.dimension_epoch = self.form_dimension_epoch;
+            }
             self.push_committed_audio(event);
         }
     }
@@ -272,9 +294,10 @@ impl WorldAuthority {
     pub fn actor_player_profile(&self, runtime_id: u64) -> Option<&PlayerProfile> {
         self.actors.player_profile(runtime_id)
     }
-    /// Dropped-item stacks with interpolated pose, spin, and pickup flight at `partial_tick`.
-    pub fn dropped_items(&self, partial_tick: f32) -> Vec<crate::DroppedItemView> {
-        self.actors.dropped_items(partial_tick)
+    /// Replaces `views` with dropped-item stacks at their interpolated pose, spin, and pickup
+    /// flight at `partial_tick`.
+    pub fn dropped_items_into(&self, partial_tick: f32, views: &mut Vec<crate::DroppedItemView>) {
+        self.actors.dropped_items_into(partial_tick, views);
     }
     /// Live lightning-bolt actors, for the bolt renderer and sky flash.
     pub fn lightning_bolts(&self) -> Vec<crate::LightningBoltView> {
@@ -284,9 +307,15 @@ impl WorldAuthority {
     pub fn block_entities(&self, partial_tick: f32) -> Vec<crate::BlockEntityView> {
         self.actors.block_entities(partial_tick)
     }
-    /// Retains pending block actors for visibility decisions in the terrain's render frame.
-    pub fn block_entity_candidates(&self, partial_tick: f32) -> Vec<crate::BlockEntityCandidate> {
-        self.actors.block_entity_candidates(partial_tick)
+    /// Replaces `candidates` with pending block actors, retained for visibility decisions in
+    /// the terrain's render frame.
+    pub fn block_entity_candidates_into(
+        &self,
+        partial_tick: f32,
+        candidates: &mut Vec<crate::BlockEntityCandidate>,
+    ) {
+        self.actors
+            .block_entity_candidates_into(partial_tick, candidates);
     }
     /// End crystal beams with interpolated endpoints and actor animation age.
     pub fn crystal_beams(&self, partial_tick: f32) -> Vec<crate::CrystalBeamView> {
@@ -296,9 +325,9 @@ impl WorldAuthority {
     pub fn dragon_death_rays(&self, partial_tick: f32) -> Vec<crate::DragonDeathView> {
         self.actors.dragon_death_rays(partial_tick)
     }
-    /// Fishing lines and leads with interpolated endpoints.
-    pub fn ropes(&self, partial_tick: f32) -> Vec<crate::RopeView> {
-        self.actors.ropes(partial_tick)
+    /// Replaces `ropes` with fishing lines and leads at their interpolated endpoints.
+    pub fn ropes_into(&self, partial_tick: f32, ropes: &mut Vec<crate::RopeView>) {
+        self.actors.ropes_into(partial_tick, ropes);
     }
     /// Borrows one actor rig for presentation.
     pub fn actor_rig(&self, runtime_id: u64) -> Option<ActorRigSnapshot<'_>> {
@@ -459,6 +488,19 @@ impl WorldAuthority {
     pub fn pending_item_resolution_count(&self) -> usize {
         self.actors.pending_item_resolution_count()
     }
+    /// Retained hanging pictures in runtime-ID order, excluding the local player.
+    pub fn painting_actors(&self) -> impl Iterator<Item = &ActorSnapshot> {
+        self.actors
+            .painting_actors()
+            .filter(|actor| actor.runtime_id != self.local_player_runtime_id)
+    }
+
+    /// Shares solid bounds for prediction, excluding the local actor and its current mount.
+    pub fn movement_actor_colliders(&self) -> std::sync::Arc<[crate::ActorCollisionBounds]> {
+        self.actors
+            .movement_collider_snapshot(self.local_player_runtime_id, self.local_player_unique_id)
+    }
+
     /// Every tracked actor except the local player, in no particular order.
     pub fn remote_actors(&self) -> impl Iterator<Item = &ActorSnapshot> {
         let local = self.local_player_runtime_id;

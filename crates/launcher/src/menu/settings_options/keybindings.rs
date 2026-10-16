@@ -1,59 +1,27 @@
 //! Desktop key remapping uses the same physical controls as the gameplay router.
 
 use super::{
-    SettingsOptions,
+    BindingId, SettingsOptions,
+    bindings::{EXTRA_GAMEPAD, EXTRA_KEYS, GAMEPAD_BINDINGS, KEY_BINDINGS, LATE_DEFAULTS},
     control_bindings::{
-        EXTRA_GAMEPAD, EXTRA_KEYS, GAMEPAD_BINDINGS, GAMEPAD_OFFSET, SECONDARY_KEYS,
-        decode_control, encode_control, is_gamepad,
+        GAMEPAD_OFFSET, UNBOUND_CONTROL, decode_control, encode_control, is_gamepad,
     },
 };
 use semantic_input::{Action, ControlSettings, InputContext, PhysicalControl};
 
-pub const KEY_BINDINGS: &[(Action, &str)] = &[
-    (Action::Attack, "key.attack"),
-    (Action::Use, "key.use"),
-    (Action::MoveForward, "key.forward"),
-    (Action::MoveBackward, "key.back"),
-    (Action::MoveLeft, "key.left"),
-    (Action::MoveRight, "key.right"),
-    (Action::Jump, "key.jump"),
-    (Action::Sneak, "key.sneak"),
-    (Action::Sprint, "key.sprint"),
-    (Action::CyclePerspective, "key.togglePerspective"),
-    (Action::Hotbar1, "key.hotbar.1"),
-    (Action::Hotbar2, "key.hotbar.2"),
-    (Action::Hotbar3, "key.hotbar.3"),
-    (Action::Hotbar4, "key.hotbar.4"),
-    (Action::Hotbar5, "key.hotbar.5"),
-    (Action::Hotbar6, "key.hotbar.6"),
-    (Action::Hotbar7, "key.hotbar.7"),
-    (Action::Hotbar8, "key.hotbar.8"),
-    (Action::Hotbar9, "key.hotbar.9"),
-    (Action::Freelook, "key.freelook"),
-    (Action::InteractWithToast, OPEN_NOTIFICATION_KEY),
-    (Action::PlayerList, PLAYER_LIST_KEY),
-];
-
-pub const DEBUG_OVERLAY_KEY: &str = "key.debugOverlay";
-pub const PLAYER_LIST_KEY: &str = "key.playerList";
+pub const DEBUG_OVERLAY_KEY: &str = BindingId::DebugOverlay.name();
+pub const PLAYER_LIST_KEY: &str = BindingId::PlayerList.name();
 
 /// Vanilla's "Open Notification" binding name.
-pub const OPEN_NOTIFICATION_KEY: &str = "key.interactwithtoast";
+pub const OPEN_NOTIFICATION_KEY: &str = BindingId::InteractWithToast.name();
 
 /// Labels for client controls that have no installed language-pack entry.
 pub fn custom_key_label(name: &str) -> Option<&'static str> {
-    match name {
-        "key.freelook" => Some("Freelook"),
-        DEBUG_OVERLAY_KEY => Some("Debug Overlay"),
-        PLAYER_LIST_KEY => Some("Player List"),
-        _ => None,
-    }
+    BindingId::from_name(name)?.definition().label
 }
 
-/// Actions added after layouts were saved; their default yields to a stored key already using it.
-const LATE_DEFAULTS: [Action; 2] = [Action::Freelook, Action::InteractWithToast];
-
 impl SettingsOptions {
+    /// Captures active yielding defaults before a remap can change their conflicts.
     fn active_late_defaults(&self) -> [(Action, Option<PhysicalControl>); LATE_DEFAULTS.len()] {
         LATE_DEFAULTS.map(|action| {
             let index = KEY_BINDINGS
@@ -86,6 +54,7 @@ impl SettingsOptions {
         inserted
     }
 
+    /// Lets an untouched late default yield to a conflicting saved keyboard control.
     fn default_yields(&self, action: Action) -> bool {
         let Some((_, name)) = KEY_BINDINGS
             .iter()
@@ -122,8 +91,9 @@ impl SettingsOptions {
                     let Some(code) = self.keys.get(&name) else {
                         return true;
                     };
-                    decode_control(*code)
-                        .is_some_and(|control| is_gamepad(control) == (index >= GAMEPAD_OFFSET))
+                    *code == UNBOUND_CONTROL
+                        || decode_control(*code)
+                            .is_some_and(|control| is_gamepad(control) == (index >= GAMEPAD_OFFSET))
                 })
     }
 
@@ -146,6 +116,9 @@ impl SettingsOptions {
     /// Reads the persisted device binding, falling back to the gameplay router's defaults.
     pub fn key_control(&self, index: usize) -> Option<PhysicalControl> {
         let (name, action, fallback) = self.binding(index)?;
+        if self.keys.get(&name) == Some(&UNBOUND_CONTROL) {
+            return None;
+        }
         if action.is_some_and(|action| self.default_yields(action)) {
             return None;
         }
@@ -169,27 +142,21 @@ impl SettingsOptions {
             .map(|control| self.swap_gamepad_control(control))
     }
 
-    /// Reads an existing UI action through the same remapping table as the settings grid.
-    pub fn named_key_control(&self, name: &str) -> Option<PhysicalControl> {
-        let index = KEY_BINDINGS
-            .iter()
-            .position(|(_, label)| *label == name)
-            .or_else(|| {
-                EXTRA_KEYS
-                    .iter()
-                    .position(|(label, _)| *label == name)
-                    .map(|index| KEY_BINDINGS.len() + index)
-            })?;
-        self.key_control(index)
+    /// Reads a registered UI action through the settings grid's remapping table.
+    ///
+    /// ```compile_fail
+    /// let options = launcher::menu::settings_options::SettingsOptions::default();
+    /// options.named_key_control("key.inventory");
+    /// ```
+    pub fn named_key_control(&self, id: BindingId) -> Option<PhysicalControl> {
+        self.key_control(id.row(false)?)
     }
 
-    /// Keeps vanilla secondary defaults until a remap replaces the complete key list.
-    pub fn secondary_key_control(&self, name: &str) -> Option<PhysicalControl> {
-        // Vanilla keyboard remapping replaces the list with one captured key.
-        SECONDARY_KEYS
-            .iter()
-            .find(|(label, _)| *label == name && !self.keys.contains_key(name))
-            .map(|(_, control)| *control)
+    /// Keeps secondary defaults until an explicit remap replaces the key list.
+    pub fn secondary_key_control(&self, id: BindingId) -> Option<PhysicalControl> {
+        (!self.keys.contains_key(id.name()))
+            .then_some(id.definition().secondary)
+            .flatten()
     }
 
     /// Restores one device's full layout without disturbing bindings on the other device.
@@ -228,6 +195,30 @@ impl SettingsOptions {
                 }
             }
             return false;
+        }
+        true
+    }
+
+    /// Clears one action's keyboard and mouse assignments, preserving the gamepad layout.
+    pub fn unbind_key(&mut self, index: usize) -> bool {
+        if index >= GAMEPAD_OFFSET {
+            return false;
+        }
+        let Some((name, _, _)) = self.binding(index) else {
+            return false;
+        };
+        let previous_defaults = self.active_late_defaults();
+        self.keys.insert(name, UNBOUND_CONTROL);
+        for (action, control) in previous_defaults {
+            if control.is_none() {
+                let (_, name) = KEY_BINDINGS
+                    .iter()
+                    .find(|(candidate, _)| *candidate == action)
+                    .expect("late defaults belong to the keyboard layout");
+                self.keys
+                    .entry((*name).to_owned())
+                    .or_insert(UNBOUND_CONTROL);
+            }
         }
         true
     }
@@ -273,18 +264,28 @@ impl SettingsOptions {
             let Some((name, Some(action), _)) = self.binding(index) else {
                 continue;
             };
-            let Some(control) = self.keys.get(&name).and_then(|code| decode_control(*code)) else {
+            let Some(code) = self.keys.get(&name) else {
                 continue;
             };
+            let control = decode_control(*code);
+            if control.is_none() && *code != UNBOUND_CONTROL {
+                continue;
+            }
             let mut replaced = false;
             bindings.retain_mut(|binding| {
                 if binding.action != action
                     || binding.context != InputContext::Gameplay
                     || is_gamepad(binding.chord.control) != (index >= GAMEPAD_OFFSET)
-                    || matches!(binding.chord.control, PhysicalControl::MouseAxis(_))
+                    || matches!(
+                        binding.chord.control,
+                        PhysicalControl::MouseAxis(_) | PhysicalControl::TouchControl(_)
+                    )
                 {
                     return true;
                 }
+                let Some(control) = control else {
+                    return false;
+                };
                 if replaced {
                     return false;
                 }
@@ -309,7 +310,34 @@ impl SettingsOptions {
     }
 }
 
-/// Displays USB controls in the keyboard layout's common desktop notation.
+impl SettingsOptions {
+    /// Uses the most recently observed layout label, falling back to the physical name.
+    pub fn key_name(&self, control: PhysicalControl) -> String {
+        if let PhysicalControl::KeyboardUsage(usage) = control
+            && let Some(label) = self.key_labels.get(&usage)
+        {
+            return label.clone();
+        }
+        key_name(control)
+    }
+
+    /// Records a printable layout character without changing any saved binding.
+    pub fn set_key_label(&mut self, usage: u16, text: &str) {
+        if !matches!(usage, 0x04..=0x27 | 0x2d..=0x38 | 0x64) {
+            return;
+        }
+        let mut chars = text.chars();
+        let Some(character) = chars.next() else {
+            return;
+        };
+        if chars.next().is_some() || character.is_control() || character.is_whitespace() {
+            return;
+        }
+        self.key_labels.insert(usage, text.to_uppercase());
+    }
+}
+
+/// Displays the physical USB control when no layout label is available.
 pub fn key_name(control: PhysicalControl) -> String {
     match control {
         PhysicalControl::KeyboardUsage(code @ 0x04..=0x1d) => {
@@ -351,8 +379,77 @@ pub fn key_name(control: PhysicalControl) -> String {
 mod overlay_binding_tests;
 
 #[cfg(test)]
+#[path = "unbound_tests.rs"]
+mod unbound_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fake_azerty_layout_labels_preserve_saved_bindings() {
+        let mut settings = SettingsOptions::default();
+        let row = KEY_BINDINGS
+            .iter()
+            .position(|(action, _)| *action == semantic_input::Action::Hotbar1)
+            .unwrap();
+        assert!(settings.remap(row, PhysicalControl::KeyboardUsage(0x14)));
+        let saved = serde_json::to_value(&settings).unwrap();
+        for (usage, character, expected) in [
+            (0x14, "a", "A"),
+            (0x04, "q", "Q"),
+            (0x1a, "z", "Z"),
+            (0x1d, "w", "W"),
+            (0x1f, "é", "É"),
+            (0x1e, "&", "&"),
+            (0x33, "m", "M"),
+        ] {
+            settings.set_key_label(usage, character);
+            assert_eq!(
+                settings.key_name(PhysicalControl::KeyboardUsage(usage)),
+                expected
+            );
+        }
+        assert_eq!(serde_json::to_value(&settings).unwrap(), saved);
+        let loaded: SettingsOptions = serde_json::from_value(saved).unwrap();
+        assert_eq!(loaded.key_control(row), settings.key_control(row));
+        assert_eq!(loaded.controls().unwrap(), settings.controls().unwrap());
+        assert_eq!(loaded.key_name(PhysicalControl::KeyboardUsage(0x14)), "Q");
+    }
+
+    #[test]
+    fn layout_labels_update_and_leave_named_controls_unchanged() {
+        let mut settings = SettingsOptions::default();
+        let q = PhysicalControl::KeyboardUsage(0x14);
+        assert_eq!(settings.key_name(q), "Q");
+        settings.set_key_label(0x14, "a");
+        assert_eq!(settings.key_name(q), "A");
+        settings.set_key_label(0x14, "q");
+        assert_eq!(settings.key_name(q), "Q");
+        for text in ["", "\n", " ", "ab"] {
+            settings.set_key_label(0x14, text);
+            assert_eq!(settings.key_name(q), "Q");
+        }
+        for (usage, text, expected) in [
+            (0x2c, " ", "Space"),
+            (0x59, "1", "Numpad 1"),
+            (0xe1, "a", "Left Shift"),
+        ] {
+            settings.set_key_label(usage, text);
+            assert_eq!(
+                settings.key_name(PhysicalControl::KeyboardUsage(usage)),
+                expected
+            );
+        }
+        assert_eq!(
+            settings.key_name(PhysicalControl::MouseButton(1)),
+            "Mouse 1"
+        );
+        assert_eq!(
+            settings.key_name(PhysicalControl::KeyboardUsage(0xff)),
+            "Key FF"
+        );
+    }
 
     #[test]
     fn additional_keyboard_usages_have_readable_names() {

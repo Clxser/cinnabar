@@ -10,10 +10,13 @@ use simulation_clock::identity::{PositionAuthorityGeneration, SessionGeneration}
 /// independent measurement.
 const ATTACK_BUILD_BLOCK_MILLIS: u64 = 200;
 
+#[cfg(test)]
+mod painting_tests;
 mod target;
 pub use target::{
-    ActorHit, Crosshair, actor_is_pickable, classify, obstructs_placement, pick_actor,
-    pick_actor_by, ray_box_entry,
+    ActorHit, Crosshair, actor_is_pickable, block_pick_distance, classify, classify_block_hit,
+    obstructs_placement, painting_pick_unique_id, pick_actor, pick_actor_by, pick_distance,
+    ray_box_entry,
 };
 
 /// Bedrock swing length in ticks, with the stronger Haste or Conduit Power taking priority.
@@ -177,15 +180,15 @@ impl MeleeRuntime {
         }
     }
 
-    /// Prioritizes current-frame block ticks, then this authority's exact rejected tick.
-    /// Bounds a latched press while no eligible simulation sample exists.
+    /// Block presses retain their current-frame or rejected tick. Actor attacks and misses
+    /// precede the frame's first input and report the state before that tick simulated.
     pub fn press_sample(
         &mut self,
         crosshair: Crosshair,
         movement: &crate::movement::MovementTicker,
         recent_ticks: usize,
         now_millis: u64,
-    ) -> Option<crate::movement::UnsentSampleView> {
+    ) -> Option<crate::movement::InteractionSample> {
         let sample = if crosshair == Crosshair::Block {
             movement
                 .first_unsent_sample_in_frame(recent_ticks)
@@ -199,8 +202,11 @@ impl MeleeRuntime {
                         None
                     }
                 })
+                .map(Into::into)
         } else {
-            movement.newest_unsent_sample()
+            movement
+                .first_unsent_sample_in_frame(recent_ticks)
+                .and_then(|sample| movement.interaction_before_tick(sample.tick))
         };
         if sample.is_none() {
             self.defer(now_millis);
@@ -235,7 +241,7 @@ impl MeleeRuntime {
         }
         self.rejected_tick = None;
         let mut swing = |outcome: &mut MeleeOutcome, source| {
-            if swings.try_swing(press.tick, press.swing_duration) {
+            if swings.try_attack_swing(press.tick, press.swing_duration) {
                 outcome
                     .packets
                     .push(protocol::swing_arm_packet(press.local_runtime_id, source));
@@ -262,6 +268,7 @@ impl MeleeRuntime {
             ) else {
                 return outcome;
             };
+            outcome.packets.push(packet);
             if !on_cooldown {
                 swing(&mut outcome, SwingSource::Attack);
                 if let Some(cooldown) = attack.cooldown.as_ref() {
@@ -272,14 +279,13 @@ impl MeleeRuntime {
                 }
             }
             self.last_attack_millis = Some(press.now_millis);
-            outcome.packets.push(packet);
             return outcome;
         }
         match crosshair {
             Crosshair::Actor(hit) => {
-                swing(&mut outcome, SwingSource::Attack);
                 self.last_attack_millis = Some(press.now_millis);
                 let Some(selection) = press.selection.clone() else {
+                    swing(&mut outcome, SwingSource::Attack);
                     return outcome;
                 };
                 if let Ok(packet) = protocol::use_actor_packet(ActorUseRequest {
@@ -292,6 +298,7 @@ impl MeleeRuntime {
                 }) {
                     outcome.packets.push(packet);
                 }
+                swing(&mut outcome, SwingSource::Attack);
             }
             Crosshair::Block => swing(&mut outcome, SwingSource::Mine),
             Crosshair::Miss => {
@@ -391,3 +398,7 @@ mod selection_tests;
 #[cfg(test)]
 #[path = "melee/item_attack_tests.rs"]
 mod item_attack_tests;
+
+#[cfg(test)]
+#[path = "melee/press_timing_tests.rs"]
+mod press_timing_tests;

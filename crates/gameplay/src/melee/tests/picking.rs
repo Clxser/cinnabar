@@ -1,4 +1,5 @@
 use super::*;
+use protocol_ids::ActorDataKey;
 
 #[test]
 fn ordered_hitboxes_use_the_first_intersection_within_reach() {
@@ -22,11 +23,11 @@ fn advertised_projectile_base_excludes_picking_and_placement_obstruction() {
         [0.0, 0.0, -2.0],
         HashMap::from([
             (
-                BOUNDING_BOX_WIDTH_METADATA_KEY,
+                ActorDataKey::Width.wire_value(),
                 ActorMetadataValue::Float(0.6),
             ),
             (
-                BOUNDING_BOX_HEIGHT_METADATA_KEY,
+                ActorDataKey::Height.wire_value(),
                 ActorMetadataValue::Float(2.0),
             ),
         ]),
@@ -89,7 +90,7 @@ fn actor_with_raised_hitbox(identifier: &str, base: Option<&str>, feet: [f32; 3]
         base,
         feet,
         HashMap::from([(
-            client_world::HITBOX_METADATA_KEY,
+            ActorDataKey::HitBox.wire_value(),
             ActorMetadataValue::Compound(Arc::from(bytes)),
         )]),
     )
@@ -151,10 +152,10 @@ fn custom_npc_without_size_metadata_sends_attack_for_picked_world_point() {
     );
     assert_eq!(
         kinds(&outcome.packets),
-        ["AnimatePacket", "InventoryTransactionPacket"]
+        ["InventoryTransactionPacket", "AnimatePacket"]
     );
     assert!(!outcome.missed_swing);
-    let observed = observe_transaction(&outcome.packets[1])
+    let observed = observe_transaction(&outcome.packets[0])
         .expect("the picked NPC receives an attack transaction");
     let transaction = observed
         .actor_use()
@@ -174,8 +175,10 @@ fn a_positive_actor_scale_expands_the_pick_box() {
         Some((0.6, 1.0)),
     );
     assert_eq!(pick_actor([&npc].into_iter(), None, EYE, NORTH, 3.0), None);
-    npc.metadata
-        .insert(SCALE_METADATA_KEY, ActorMetadataValue::Float(2.0));
+    npc.metadata.insert(
+        ActorDataKey::Scale.wire_value(),
+        ActorMetadataValue::Float(2.0),
+    );
     let hit = pick_actor([npc].iter(), None, EYE, NORTH, 3.0)
         .expect("the ray intersects the scaled actor above its unscaled height");
     assert_eq!(hit.runtime_id, 71);
@@ -212,4 +215,113 @@ fn survival_reach_and_block_occlusion_decide_the_press() {
         classify(Some(hit(5.0)), None, 7.0),
         Crosshair::Actor(hit(5.0))
     );
+}
+
+#[test]
+fn rounded_attack_margin_rejects_the_boundary_in_every_attacking_mode() {
+    use client_world::game_mode_capabilities::GameModeCapabilities;
+
+    for mode in [
+        protocol::PlayerGameMode::Survival,
+        protocol::PlayerGameMode::Adventure,
+        protocol::PlayerGameMode::Creative,
+    ] {
+        let reach = GameModeCapabilities::for_mode(mode).attack_reach;
+        let hit = ActorHit {
+            runtime_id: 7,
+            distance: reach - 0.1 - 0.000_000_01,
+            point: [0.0; 3],
+        };
+        assert_eq!(classify(Some(hit), None, reach), Crosshair::Miss);
+        let near = ActorHit {
+            distance: hit.distance - 0.001,
+            ..hit
+        };
+        assert_eq!(classify(Some(near), None, reach), Crosshair::Actor(near));
+    }
+}
+
+#[test]
+fn rounded_occlusion_margin_keeps_a_nearly_tied_actor_behind_the_block() {
+    let hit = ActorHit {
+        runtime_id: 7,
+        distance: f64::from(1.9_f32),
+        point: [0.0; 3],
+    };
+    assert_eq!(classify(Some(hit), Some(2.0), 3.0), Crosshair::Block);
+}
+
+#[test]
+fn pick_box_inflation_rounds_before_intersection() {
+    let actor = actor(9, "minecraft:pig", [0.0; 3], None);
+    let min = [3.2_f32, 0.0, -0.5];
+    let max = [4.0, 3.0, 0.5];
+    let hit = pick_actor_by(
+        [&actor].into_iter(),
+        |_| [(min, max)],
+        None,
+        EYE,
+        [1.0, 0.0, 0.0],
+        5.0,
+    )
+    .unwrap();
+    // The f32-inflated face is reached by the native float segment interpolation.
+    let plane = min[0] - 0.1_f32;
+    let delta = 5.0_f32 - EYE[0];
+    let fraction = (plane - EYE[0]) / delta;
+    assert_eq!(hit.point[0], EYE[0] + delta * fraction);
+    assert_eq!(hit.distance, f64::from(pick_distance(EYE, hit.point)));
+}
+
+#[test]
+fn pick_distance_uses_the_rounded_world_intercept() {
+    let origin = [8192.0, 65.62, -4096.0];
+    let point = [origin[0] + 1.3, origin[1] + 0.2, origin[2] + 2.4];
+    let [x, y, z] = std::array::from_fn(|axis| point[axis] - origin[axis]);
+    assert_eq!(pick_distance(origin, point), (z * z + y * y + x * x).sqrt());
+    assert_ne!(
+        f64::from(pick_distance(origin, point)),
+        point
+            .into_iter()
+            .zip(origin)
+            .map(|(point, origin)| (f64::from(point) - f64::from(origin)).powi(2))
+            .sum::<f64>()
+            .sqrt(),
+    );
+}
+
+#[test]
+fn distinct_squared_distances_keep_the_nearer_actor_when_roots_tie() {
+    let actors = [
+        actor(2, "minecraft:pig", [0.0; 3], None),
+        actor(1, "minecraft:pig", [0.0; 3], None),
+    ];
+    let origin = [0.0, 8192.0, 0.0];
+    let boxes = |actor: &ActorSnapshot| {
+        let offset = if actor.runtime_id == 1 { 2 } else { 3 };
+        let x = f32::from_bits(2.1_f32.to_bits() + offset);
+        [([x, 8193.0, -0.5], [3.0, 8195.0, 0.5])]
+    };
+    let far = pick_actor_by(
+        actors[..1].iter(),
+        boxes,
+        None,
+        origin,
+        [1.0, 1.0, 0.0],
+        5.0,
+    )
+    .unwrap();
+    let near = pick_actor_by(
+        actors[1..].iter(),
+        boxes,
+        None,
+        origin,
+        [1.0, 1.0, 0.0],
+        5.0,
+    )
+    .unwrap();
+    assert!(near.point[0] < far.point[0]);
+    assert_eq!(near.distance, far.distance);
+    let hit = pick_actor_by(actors.iter(), boxes, None, origin, [1.0, 1.0, 0.0], 5.0).unwrap();
+    assert_eq!(hit.runtime_id, near.runtime_id);
 }

@@ -71,7 +71,7 @@ impl EnhancedTextureAssets {
                 }
                 let page = (texture_ref >> 31) as usize;
                 let layer = (texture_ref & (assets::texture::PBR_REF_COLOR - 1)) as usize;
-                page >= assets::MAX_TEXTURE_PAGES || layer >= color_pages[page].layers as usize
+                page >= color_pages.len() || layer >= color_pages[page].layers as usize
             })
         {
             return None;
@@ -474,23 +474,28 @@ pub fn select_animation_frames(
     AnimationFrameSample::new(current, next, blend / animation.ticks_per_frame as f32)
 }
 
-/// Source assigned to each of the two physical texture bindings.
+/// Source assigned to each supported physical texture binding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TexturePageBinding {
     Asset(usize),
     DiagnosticFallback,
 }
 
+/// Maps present pages in order and fills unused bindings with the diagnostic texture.
 #[must_use]
-pub const fn plan_texture_page_bindings(page_count: usize) -> Option<[TexturePageBinding; 2]> {
-    match page_count {
-        1 => Some([
-            TexturePageBinding::Asset(0),
-            TexturePageBinding::DiagnosticFallback,
-        ]),
-        2 => Some([TexturePageBinding::Asset(0), TexturePageBinding::Asset(1)]),
-        _ => None,
+pub const fn plan_texture_page_bindings(
+    page_count: usize,
+) -> Option<[TexturePageBinding; assets::MAX_TEXTURE_PAGES]> {
+    if page_count == 0 || page_count > assets::MAX_TEXTURE_PAGES {
+        return None;
     }
+    let mut bindings = [TexturePageBinding::DiagnosticFallback; assets::MAX_TEXTURE_PAGES];
+    let mut index = 0;
+    while index < page_count {
+        bindings[index] = TexturePageBinding::Asset(index);
+        index += 1;
+    }
+    Some(bindings)
 }
 
 /// Copies physical layer zero from every mip into the real one-layer page bound

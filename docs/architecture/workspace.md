@@ -21,7 +21,7 @@ and relays packets over a local stream.
 | [go-raknet](https://github.com/Sandertv/go-raknet) | RakNet transport to servers, plus server-list pings. |
 | [go-nethernet](https://github.com/df-mc/go-nethernet) | WebRTC transport for Realms and friend worlds. |
 | [go-xsapi](https://github.com/df-mc/go-xsapi) | Xbox Live identity, friends, presence and signaling. |
-| [go-playfab](https://github.com/df-mc/go-playfab) | PlayFab sign-in and the menu catalog (featured servers, marketplace). |
+| [go-playfab](https://github.com/df-mc/go-playfab) | PlayFab sign-in and the menu catalog (featured servers). |
 | [dragonfly](https://github.com/df-mc/dragonfly) | The built-in local-world server in `tools/localserver`. |
 
 Mojang assets are never committed or embedded. `make assets` fetches Mojang's official
@@ -46,6 +46,9 @@ coordinates work that crosses these owners.
 | Workspace member | Package | Ownership and caller guidance | Related owners |
 | --- | --- | --- | --- |
 | `app` | `cinnabar` | Client executable and Bevy composition; use it to launch the client and assemble its plugins. | `client-*` crates own subsystem adapters; domain crates own game rules. |
+| `web/client` | `web-client` | Browser page control, delivery admission and physical input translation. | `assets` owns carrier validation; `web-transport` owns relay sessions; `semantic-input` owns device frames. |
+| `web/transport` | `web-transport` | Browser WebTransport and WebSocket channels, bounded control and reconnect state; the browser host drives timers and passes prepared play I/O to the existing session. | `bridge` owns framing and the shared relay contract. |
+| `packaging/android/client` | `cinnabar-android` | Android NativeActivity entry and setup-activity natives; build it with `packaging/android/build-apk.sh`. | `cinnabar` runs the client; `launcher` owns the Android install layout; `first-run` prepares carriers. |
 | `crates/client-state` | `client-state` | Shared ECS resource wrappers, frame sets and observations; use these contracts to connect plugins. | Domain crates own transitions; the other `client-*` crates own systems. |
 | `crates/client-runtime` | `client-runtime` | Transport resources, world servicing and session lifecycle adapters; use its runtime plugin and ingress/publication APIs. | `client-session` owns transport; `client-world` and `chunk-pipeline` own world work. |
 | `crates/client-session` | `client-session` | Session transport, join bootstrap and separate bounded control/world FIFOs; use its network handle and sequenced events. | `pack-runtime` prepares packs; presentation owners interpret the opaque prepared payload. |
@@ -61,8 +64,9 @@ coordinates work that crosses these owners.
 | Workspace member | Package | Ownership and caller guidance | Related owners |
 | --- | --- | --- | --- |
 | `crates/world` | `world` | Palette-native chunks and world storage; use its block, chunk and coordinate types. | `client-world` admits network state; `meshing` produces geometry. |
-| `crates/client-world` | `client-world` | Authoritative world, actor and local-player facts, decoding and ordered commits; use its ingestion and committed views. | `world` owns storage; `chunk-pipeline` schedules terrain; `player-state` joins player authorities. |
+| `crates/client-world` | `client-world` | Authoritative world, actor and local-player facts, decoding and ordered commits; use its ingestion and committed views. | `world` owns storage; `inventory` admits numeric session item facts; `chunk-pipeline` schedules terrain; `player-state` joins player authorities. |
 | `crates/chunk-pipeline` | `chunk-pipeline` | Bounded terrain residency, worker scheduling and publication; use its world stream and publication snapshots. | `client-world` owns admitted state; `meshing` builds geometry; `render` consumes publications. |
+| `crates/far-terrain` | `far-terrain` | Far-terrain level of detail from received terrain: per-column surface summaries, their caches and bounds; use its summaries and config. | `chunk-pipeline` extracts summaries on its workers; `render` draws the far pass. |
 | `crates/inventory` | `inventory` | Inventory authority, prediction, crafting and commands; use its session, ledger and router APIs. | `player-state` shares it with gameplay and UI; `protocol` defines wire requests. |
 | `crates/player-state` | `player-state` | Shared inventory and local-player authority; use `PlayerState` to keep both on one session generation. | `inventory` owns stacks and crafting; `client-world` owns player facts. |
 | `crates/gameplay` | `gameplay` | Local interaction decisions, prediction and ordered admission; use its mining, placement, item-use and movement APIs. | `sim` owns physics; `client-interaction` binds decisions to ECS; `client-session` sends packets. |
@@ -80,12 +84,26 @@ coordinates work that crosses these owners.
 | --- | --- | --- | --- |
 | `crates/bridge` | `bridge` | Framing and I/O for the local stream to the Go core; use its bounded bridge messages. | The Go core owns upstream transports; `protocol` interprets Bedrock packets. |
 | `crates/protocol` | `protocol` | Bedrock packet codecs, shared wire contracts and session adapters; use its packet and codec APIs. | `bridge` owns local framing; `client-session` owns client transport; the codec lives in its vendored tree. |
+| `crates/protocol-ids` | `protocol-ids` | Dependency-free named wire IDs and pinned air identities; import its constants and enums directly. | `protocol` and `assets` share these facts; the editor can consume them on WebAssembly. |
 | `crates/pack-json` | `pack-json` | Shared pack text decoding and JSONC parsing; use its decoder before reading authored pack documents. | Pack admission, compilers and UI readers share this format policy. |
-| `crates/resource-pack` | `resource-pack` | Bounded archive admission, decryption and pack-stack views; use its read-only admitted packs. | The Go core downloads packs; `pack-runtime` prepares them; `pack-compiler` compiles them. |
-| `crates/assets` | `assets` | Pack source readers and compiled carrier formats; use bounded loaders and typed asset data. | `pack-compiler` writes carriers; `pack-runtime` prepares active session stacks. |
-| `crates/pack-compiler` | `pack-compiler` | Reusable pack compilation; use its compiler APIs from tools and runtime loading. | `assets` owns formats; `asset-compiler` owns the CLI; `pack-runtime` owns admission and reloads. |
-| `crates/asset-compiler` | `asset-compiler` | The `assetc` executable for runtime carrier preparation; use its CLI from asset setup. | `pack-compiler` owns compilation; `first-run` coordinates initial preparation. |
-| `crates/pack-runtime` | `pack-runtime` | Runtime pack admission, compilation cache and reload dependencies; use its pack preparation and reload APIs. | `resource-pack` admits archives; `pack-compiler` compiles; client adapters install the results. |
+| `crates/resource-pack` | `resource-pack` | Bounded archive admission, decryption and pack-stack views; use its read-only admitted packs. | The Go core downloads packs; `pack-runtime` prepares them; the pack compiler owners compile them. |
+| `crates/assets` | `assets` | Pack source readers, compiled carrier formats and the pinned item- and entity-facts owner; use bounded loaders and typed asset data. | The pack compiler owners write carriers; `protocol-ids` supplies query metadata IDs; `pack-runtime` prepares active session stacks. |
+| `crates/pack-compiler` | `pack-compiler` | Terrain, materials and independent carriers such as atmosphere, audio and UI; import its compiler APIs directly. | `pack-compile-input` owns shared inputs; `assets` owns formats. |
+| `crates/pack-compiler/input` | `pack-compile-input` | Bounded pack sources, source validation, JSON and texture decoding; use its shared input APIs. | Terrain and entity compilers consume these inputs; `assets` owns formats. |
+| `crates/pack-compiler/entity` | `pack-entity-compiler` | Entity, actor, equipment, icons, starter skins and block-entity artwork; import its compilation APIs directly. | `pack-compile-input` owns shared inputs; `pack-runtime` prepares session packs. |
+| `crates/pack-compiler/font` | `pack-font-compiler` | Bitmap and outline font compilation, including native rasterization; use its font APIs from offline tools. | `assets` owns font carrier formats; `asset-compiler` owns the CLI. |
+| `crates/asset-compiler` | `asset-compiler` | The `assetc` executable for runtime carrier preparation; use its CLI from asset setup. | the pack compiler owners implement compilation; `protocol-ids` validates generated event routes; `first-run` coordinates initial preparation. |
+| `crates/pack-runtime` | `pack-runtime` | Runtime pack admission, compilation cache and reload dependencies; use its pack preparation and reload APIs. | `resource-pack` admits archives; `pack-entity-compiler` compiles entities; client adapters install the results. |
+
+`assets` owns `crates/assets/data/item-facts-v2193.bin`, generated by `registryc` from
+the pinned item tables and typed rules. It contains identifiers and behavior metadata,
+with a checked schema and hash, rather than artwork or executable code. Regenerate it
+through the item-facts compiler; runtime pack carriers remain local inputs.
+
+`assets` also owns `crates/assets/data/entity-facts-v2193.bin`, generated by `registryc`
+from pinned entity component metadata and typed compatibility rules. It contains
+identifiers and constructor facts with a checked schema and hash. Runtime artwork
+and pack carriers remain local inputs.
 
 ### UI layers
 
@@ -124,9 +142,11 @@ the prepared visual data to the GPU.
 
 | Workspace member | Package | Ownership and caller guidance | Related owners |
 | --- | --- | --- | --- |
-| `crates/launcher` | `launcher` | Engine-independent account, menu, world and store models plus product identity; use these models across services and screens. | `launcher-host` owns process and persistence services; `client-shell` integrates them. |
-| `crates/launcher-host` | `launcher-host` | Launcher processes, platform services, persistence and background work; use its service APIs without Bevy. | `launcher` owns models; the Go core owns authentication and upstream services; `client-shell` owns ECS adapters. |
-| `crates/first-run` | `first-run` | Consent, download and preparation of local asset carriers; use its setup runner before launching the game window. | `asset-compiler` builds carriers; `launcher-host` owns ordinary launcher services. |
+| `crates/launcher` | `launcher` | Bevy-free account, menu and world models plus product identity; use these models across services and screens. | `json-ui` owns vanilla screen names; `launcher-host` owns process and persistence services; `client-shell` integrates them. |
+| `crates/launcher-host` | `launcher-host` | Launcher processes, platform services, persistence and background work; use its service APIs without Bevy. | `launcher` owns models; `resource-pack` validates user pack imports; the Go core owns authentication and upstream services; `client-shell` owns ECS adapters. |
+| `crates/first-run` | `first-run` | Consent, download and preparation of local asset carriers, with the setup window; use its setup runner before launching the game window. | `asset-compiler` builds carriers; `bootstrap-ui` draws the setup window; `launcher-host` owns ordinary launcher services. |
+| `crates/bootstrap-ui` | `bootstrap-ui` | The shared pre-game window stack for the setup and crash windows: panorama presenter, CPU-drawn OreUI canvas and controls, focus input, preferences, window attributes and the UI font lookup; build Bevy-free windows on it. | `first-run` owns the setup window; `crash-monitor` owns the crash window; `ui` owns the OreUI theme; `render-model` owns the panorama shader. |
+| `crates/crash-monitor` | `crash-monitor` | The `--crash-monitor` process: minidump server watching the client, crash report folders, the crash window and native-dialog fallback; run it beside the client and show reports through its window API. | `crash-report` owns the report format; `launcher-host` installs in-process crash handlers; `bootstrap-ui` draws the window. |
 | `crates/rich-presence` | `rich-presence` | Optional Discord desktop activity and RPC worker; use its presence and join-request APIs. | `client-shell` projects menu/session state; `launcher` owns product identity. |
 | `crates/update-manifest` | `update-manifest` | Signed release manifest format, channels, verification and build comparison; use its manifest APIs for update decisions. | `release-manifest` signs releases; `launcher-host` downloads them; `update-installer` verifies staged payloads. |
 | `crates/update-installer` | `update-installer` | Resumable verified files and the offline native apply helper; use its staging API for downloads and its executable after client exit. | `update-manifest` owns trust and ordering; `launcher-host` owns consent and helper handoff. |
@@ -155,13 +175,14 @@ the SDK for their own host contract; they do not import client runtime authority
 
 | Workspace member | Package | Ownership and caller guidance | Related owners |
 | --- | --- | --- | --- |
-| `crates/diagnostics` | `diagnostics` | Runtime metrics, logging and shared diagnostic markers; use its bounded logs and observation contracts. | `acceptance` evaluates evidence; subsystem owners produce observations. |
+| `crates/diagnostics` | `diagnostics` | Runtime metrics, the process `tracing` subscriber and log categories, the ordered console writer, bounded per-session log files and shared diagnostic markers; install logging through it before anything logs. | `acceptance` evaluates evidence; subsystem owners produce observations; `app` adds Bevy-only profiler layers. |
+| `crates/crash-report` | `crash-report` | Crash report schema, `crashes/<UTC time>-<id>/` folder layout, session log sections and retention; write, read, list and prune reports through it with caller-supplied time. | `launcher-host` installs the crash handlers that write reports; `devtool` bundles them; `diagnostics` owns the session identity. |
 | `crates/acceptance` | `acceptance` | Optional acceptance evidence over committed runtime observations; use its control and witness adapters. | `diagnostics` owns marker contracts; world and render owners publish committed observations. |
 | `crates/developer-control` | `developer-control` | Authenticated loopback control protocol, client/server and recording primitives; use it to drive developer builds. | `app` applies commands; `cinnabar-mcp` exposes them as tools. |
 | `crates/test-time` | `test-time` | Test-only manual clocks and bounded eventual waits; use these instead of sleeping in tests. | Domain owners accept caller time; edge owners read real clocks. |
-| `crates/test-alloc` | `test-alloc` | Test-only per-thread allocation counting; install its allocator in a test or benchmark binary. | Owning crates define allocation contracts for their own hot paths. |
+| `crates/test-alloc` | `test-alloc` | Per-thread allocation request counting for tests, benchmarks and opt-in runtime diagnostics; optional process totals compose with the chosen allocator. | Owning crates define allocation contracts for their own hot paths. |
 | `tools/architecture` | `architecture` | Repository gate for boundaries, ownership docs, source limits and declarations; run its `check` command. | `policy.toml` defines rules; `workspace-declarations` shares metadata with `devtool`. |
-| `tools/devtool` | `devtool` | Affected verification, CI planning, captures and worktree tools; use its commands for scoped checks and artifacts. | `architecture` enforces boundaries; `workspace-declarations` supplies metadata and path matching. |
+| `tools/devtool` | `devtool` | Affected verification, CI planning, captures, worktree tools and offline crash symbolication; use its commands for scoped checks and artifacts. | `architecture` enforces boundaries; `workspace-declarations` supplies metadata and path matching; `crash-report` owns the crash folders `symbolicate` reads. |
 | `tools/workspace-declarations` | `workspace-declarations` | Shared Cargo metadata keys and repository path matching; use these declarations in gates and CI selection. | `architecture` validates metadata; `devtool` selects affected packages. |
 | `tools/dist` | `dist-local` | Distribution staging, layout and hashes; use its CLI to assemble distributable bundles. | `launcher` owns install layout; `release-manifest` signs the published update manifest. |
 | `tools/release-manifest` | `release-manifest` | Release key generation and manifest signing; use its CLI in release publishing. | `update-manifest` owns the format and verification; `dist-local` stages artifacts. |
@@ -169,6 +190,7 @@ the SDK for their own host contract; they do not import client runtime authority
 | `tools/bedrock-replay` | `bedrock-replay` | Offline replay of saved server packets through a local session endpoint; use its replay CLI. | `bridge` owns framing; `protocol` owns packets; `client-session` consumes the replay. |
 | `tools/jsonui-editor` | `jsonui-editor` | Shared JSON-UI editor API and browser frontend; use its editing, layout, rasterization and export APIs. | `ui-engine` owns screen resources; `json-ui` owns resolution; `jsonui-mcp` wraps the API. |
 | `tools/jsonui-mcp` | `jsonui-mcp` | Stdio MCP frontend for JSON-UI editing and rendering; use its editor tools. | `jsonui-editor` owns editing operations; `mcp-stdio` owns the wire protocol. |
+| `tools/ui-snapshot` | `ui-snapshot` | Named offline UI fixtures and PNG captures; use `--list` and `--state NAME --out PNG`. | `oreui` and `ui-screens` paint screens; `jsonui-editor` supplies the CPU target. |
 | `tools/cinnabar-mcp` | `cinnabar-mcp` | Stdio MCP frontend that launches and drives a developer client; use its input, state, capture and recording tools. | `developer-control` owns loopback commands; `mcp-stdio` owns the wire protocol. |
 | `tools/mcp-stdio` | `mcp-stdio` | Shared newline-delimited JSON-RPC MCP serving; implement its tool-server trait for a new stdio frontend. | `jsonui-mcp` and `cinnabar-mcp` own their tool definitions. |
 
@@ -177,7 +199,7 @@ the SDK for their own host contract; they do not import client runtime authority
 | `cmd/bedrock-core` | The core binary. |
 | `proxy` | Upstream session, resource-pack download and packet relay. |
 | `authflow`, `authcache` | Microsoft device sign-in and token cache. |
-| `catalog`, `store`, `launcher`, `control`, `xboxpresence` | Menu data and services: featured servers, Realms, friends, marketplace and presence. |
+| `catalog`, `launcher`, `control`, `xboxpresence` | Menu data and services: featured servers, Realms, friends and presence. |
 | `localworld` | The launcher's open local world as the core routes it; `proxy` hosts it for Xbox friends. |
 | `packcache` | On-disk cache of server packs. |
 

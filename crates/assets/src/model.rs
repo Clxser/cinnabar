@@ -1,6 +1,6 @@
 use crate::{AssetError, TEXTURE_LAYER_MASK, texture::TextureArray};
 
-pub const MAX_TEXTURE_PAGES: usize = 2;
+pub const MAX_TEXTURE_PAGES: usize = 5;
 pub const MAX_MODEL_TEMPLATES: usize = 65_536;
 pub const MAX_MODEL_TEMPLATE_QUADS: usize = u32::BITS as usize;
 pub const MAX_MODEL_QUADS: usize = MAX_MODEL_TEMPLATES * MAX_MODEL_TEMPLATE_QUADS;
@@ -104,6 +104,10 @@ pub const MODEL_TEMPLATE_FLAG_BAMBOO: u32 = 1 << 14;
 pub const MODEL_TEMPLATE_FLAG_POTTED_PLANT: u32 = 1 << 15;
 /// Bubble-column shells select positional sprites and an exposed surface template.
 pub const MODEL_TEMPLATE_FLAG_BUBBLE_COLUMN: u32 = 1 << 16;
+/// Native torch planes take one light value from their own cell, with no neighbour AO.
+pub const MODEL_TEMPLATE_FLAG_TORCH: u32 = 1 << 17;
+/// Templates retain all poses and both texture halves for one door class.
+pub const MODEL_TEMPLATE_FLAG_DOOR: u32 = 1 << 18;
 /// Number of positional sprite variants in each bubble-column surface group.
 pub const BUBBLE_COLUMN_POSITION_VARIANTS: u32 = 4;
 /// Submerged and exposed bubble-column templates, in that order.
@@ -115,16 +119,17 @@ pub const fn bubble_column_quad_count(offset: u32) -> u32 {
 }
 /// Neighbor-selected portal axis. The low two model-transform bits stay zero.
 pub const BLOCK_VISUAL_VARIANT_PORTAL_UNKNOWN: u32 = 1 << 2;
-pub const NETHER_PORTAL_IDENTIFIER: &str = "minecraft:portal";
+pub const NETHER_PORTAL_IDENTIFIER: &str = crate::facts::VanillaBlock::Portal.identifier();
 
 /// The End portal surface is drawn by the block-entity renderer.
-pub const END_PORTAL_IDENTIFIER: &str = "minecraft:end_portal";
+pub const END_PORTAL_IDENTIFIER: &str = crate::facts::VanillaBlock::EndPortal.identifier();
 
 /// The End gateway uses the same animated surface family.
-pub const END_GATEWAY_IDENTIFIER: &str = "minecraft:end_gateway";
+pub const END_GATEWAY_IDENTIFIER: &str = crate::facts::VanillaBlock::EndGateway.identifier();
 
 /// End portal frame state identity shared by compilation and presentation.
-pub const END_PORTAL_FRAME_IDENTIFIER: &str = "minecraft:end_portal_frame";
+pub const END_PORTAL_FRAME_IDENTIFIER: &str =
+    crate::facts::VanillaBlock::EndPortalFrame.identifier();
 
 /// Checks the six outward unit-cube surfaces in canonical face order.
 pub(crate) fn unit_cube_quad_geometry_is_valid(
@@ -162,14 +167,24 @@ pub(crate) const fn model_template_flags_are_valid(flags: u32) -> bool {
             | MODEL_TEMPLATE_FLAG_BAMBOO
             | MODEL_TEMPLATE_FLAG_POTTED_PLANT
             | MODEL_TEMPLATE_FLAG_BUBBLE_COLUMN
+            | MODEL_TEMPLATE_FLAG_TORCH
+            | MODEL_TEMPLATE_FLAG_DOOR
     ) || flags == MODEL_TEMPLATE_FLAG_COMPOUND_NEXT | MODEL_TEMPLATE_FLAG_GATE_AXIS_X
         || flags == MODEL_TEMPLATE_FLAG_COMPOUND_NEXT | MODEL_TEMPLATE_FLAG_GATE_AXIS_Z
 }
 
-const TEXTURE_PAGE_BIT: u32 = 1 << 31;
-const TEXTURE_RESERVED_MASK: u32 = !(TEXTURE_PAGE_BIT | TEXTURE_LAYER_MASK);
+/// Page field of a texture reference: three bits above the GPU metadata word,
+/// addressing the base carrier page plus up to four overlay shards. Layer
+/// addressing is unchanged, so each shard stays within the device per-array
+/// limit while the overlay totals four shards.
+pub const TEXTURE_PAGE_SHIFT: u32 = 28;
+pub const TEXTURE_PAGE_MASK: u32 = (1 << 3) - 1;
+const TEXTURE_RESERVED_MASK: u32 =
+    !((TEXTURE_PAGE_MASK << TEXTURE_PAGE_SHIFT) | TEXTURE_LAYER_MASK);
 
-/// Canonical reference to a layer in one of at most two texture-array pages.
+/// Canonical reference to a layer in one of at most [`MAX_TEXTURE_PAGES`]
+/// texture-array pages: page zero is the base carrier, higher pages are
+/// overlay shards in order.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TextureRef(u32);
@@ -183,13 +198,18 @@ impl TextureRef {
                 "texture reference page {page}, layer {layer} is out of range"
             )));
         }
-        Ok(Self((page << 31) | layer))
+        Ok(Self((page << TEXTURE_PAGE_SHIFT) | layer))
     }
 
     pub fn from_raw(raw: u32) -> Result<Self, AssetError> {
         if raw & TEXTURE_RESERVED_MASK != 0 {
             return Err(invalid(format!(
                 "texture reference {raw:#010x} has non-zero reserved bits"
+            )));
+        }
+        if (raw >> TEXTURE_PAGE_SHIFT) & TEXTURE_PAGE_MASK >= MAX_TEXTURE_PAGES as u32 {
+            return Err(invalid(format!(
+                "texture reference {raw:#010x} names no allocated page"
             )));
         }
         Ok(Self(raw))
@@ -202,7 +222,7 @@ impl TextureRef {
 
     #[must_use]
     pub const fn page(self) -> u32 {
-        self.0 >> 31
+        (self.0 >> TEXTURE_PAGE_SHIFT) & TEXTURE_PAGE_MASK
     }
 
     #[must_use]

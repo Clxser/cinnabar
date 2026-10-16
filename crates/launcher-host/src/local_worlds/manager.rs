@@ -183,9 +183,26 @@ impl Manager {
         }
     }
 
+    /// Deletes imports a killed client left behind; it walks and deletes folders, so it runs on
+    /// the worlds worker.
+    pub fn reclaim_abandoned_imports(&self) {
+        self.inner.store.reclaim_abandoned_imports();
+    }
+
     /// Saved worlds, most recently played first.
     pub fn list(&self) -> Result<Vec<World>, WorldError> {
         self.inner.store.list()
+    }
+
+    /// World `id`'s saved menu thumbnail, if one was captured.
+    #[must_use]
+    pub fn thumbnail(&self, id: &str) -> Option<Vec<u8>> {
+        self.inner.store.thumbnail(id)
+    }
+
+    /// Saves `image` as world `id`'s menu thumbnail.
+    pub fn save_thumbnail(&self, id: &str, image: &[u8]) -> Result<(), WorldError> {
+        self.inner.store.save_thumbnail(id, image)
     }
 
     /// Saves a new world; a BDS world is refused where BDS cannot run. Unless Dragonfly was asked
@@ -193,15 +210,35 @@ impl Manager {
     pub fn create(&self, world: &NewWorld) -> Result<World, WorldError> {
         let mut world = world.clone();
         world.name = validate_name(&world.name)?;
+        world.backend = Some(self.creatable_backend(world.backend)?);
+        self.inner.store.create(&world)
+    }
+
+    /// Imports the `.mcworld` at `archive` as a new world on this machine's default backend.
+    pub fn import(
+        &self,
+        archive: &std::path::Path,
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<World, WorldError> {
+        let backend = self.creatable_backend(None)?;
+        super::import::import(
+            &self.inner.store,
+            archive,
+            backend,
+            &super::import::WORLD_LIMITS,
+            cancelled,
+        )
+    }
+
+    /// The backend a new world runs on, or why none can be saved yet.
+    fn creatable_backend(&self, requested: Option<Backend>) -> Result<Backend, WorldError> {
         if let Some(setup) = &self.inner.setup
-            && world.backend != Some(Backend::Dragonfly)
+            && requested != Some(Backend::Dragonfly)
             && !setup.await_runtime(self.inner.runtime_wait)
         {
             return Err(WorldError::RuntimePending);
         }
-        let backend = world
-            .backend
-            .unwrap_or_else(|| self.inner.store.default_backend());
+        let backend = requested.unwrap_or_else(|| self.inner.store.default_backend());
         if let Some((_, reason)) = self
             .inner
             .unavailable
@@ -214,8 +251,7 @@ impl Manager {
         if backend == Backend::Bds && !self.bds_runnable() {
             return Err(WorldError::BackendUnavailable);
         }
-        world.backend = Some(backend);
-        self.inner.store.create(&world)
+        Ok(backend)
     }
 
     fn bds_runnable(&self) -> bool {

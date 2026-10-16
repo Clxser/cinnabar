@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use json_ui::RectOut;
+use launcher::menu::settings_options::SettingId;
 use launcher::menu::split_address;
 use {
     super::*,
@@ -21,6 +22,7 @@ fn reconnect_regions_require_a_retryable_failure() {
 
 fn view(screen: MenuScreen) -> MenuView {
     let mut view = launcher::menu::MenuView::new(true, "Steve".to_owned());
+    view.over_world = true;
     view.screen = screen;
     view.auth_state = AuthState::SignedOut;
     view
@@ -62,11 +64,6 @@ fn region(kind: HitKind, pressed: Option<&str>) -> HitRegion {
 
 fn reference(view: &MenuView) -> Option<&'static str> {
     screen_data(view, &|_| None, 0).map(|screen| screen.reference)
-}
-
-#[test]
-fn the_pause_store_button_names_the_server_store() {
-    assert_eq!(server_store_text(&|_| None), "Server Store");
 }
 
 #[test]
@@ -257,29 +254,6 @@ fn the_pause_friends_drawer_invites_only_while_hosting() {
 }
 
 #[test]
-fn the_start_screen_marketplace_button_opens_the_store_and_its_presses_route_to_it() {
-    let home = view(MenuScreen::Home);
-    assert_eq!(
-        action_for(&home, &region(HitKind::Button, Some("button.menu_store"))),
-        Some(MenuAction::Store(launcher::store::StoreAction::Open))
-    );
-    let mut store = view(MenuScreen::Store);
-    assert!(
-        reference(&store).is_none(),
-        "no engine screen until the store publishes"
-    );
-    store.store = Some(std::sync::Arc::new(launcher::store::StoreSnapshot::empty()));
-    assert_eq!(
-        reference(&store),
-        Some("store_layout.store_data_driven_screen")
-    );
-    assert_eq!(
-        action_for(&store, &region(HitKind::Button, Some("button.menu_exit"))),
-        Some(MenuAction::Store(launcher::store::StoreAction::Back))
-    );
-}
-
-#[test]
 fn radio_tabs_pick_play_tabs_and_settings_sections() {
     let mut tab = region(HitKind::Toggle, None);
     tab.control_name = Some("navigation_tab".into());
@@ -334,6 +308,40 @@ fn fullscreen_toggle_binds_and_changes_the_current_window_mode() {
         Some(&Value::Bool(true))
     );
     assert_eq!(bound.properties.get("#enabled"), Some(&Value::Bool(true)));
+}
+
+#[test]
+fn gui_scale_slider_enabled_only_when_multiple_choices_are_available() {
+    let name = SettingId::GuiScale.name();
+    let slider = json_ui::ResolvedControl {
+        name: name.into(),
+        control_type: Some("slider".into()),
+        base: None,
+        unresolved_base: None,
+        properties: [(
+            "bindings".into(),
+            serde_json::json!([{
+                "binding_name": format!("#{name}_enabled"),
+                "binding_name_override": "#enabled"
+            }]),
+        )]
+        .into(),
+        children: Vec::new(),
+        factory: None,
+    };
+    for (window, enabled) in [([376, 250], false), ([1920, 1080], true)] {
+        let mut shown = view(MenuScreen::Settings);
+        shown.gui_scale_choices = ui::DesktopGuiScale::for_window(window).choices().collect();
+        if !enabled {
+            assert_eq!(shown.gui_scale_choices.len(), 1);
+        }
+        let data = screen_data(&shown, &|_| None, 0).unwrap().data;
+        let bound = json_ui::bind(&slider, &data, &json_ui::EmptyLibrary);
+        assert_eq!(
+            bound.properties.get("#enabled"),
+            Some(&Value::Bool(enabled))
+        );
+    }
 }
 
 #[test]
@@ -393,7 +401,7 @@ fn antialiasing_slider_uses_device_sample_stops_and_numeric_labels() {
     options.set_anti_aliasing_support(ui::AntiAliasingSupport::from_counts([1, 4, 8]));
     let index = launcher::menu::settings_options::SETTINGS_OPTIONS
         .iter()
-        .position(|option| option.name == "msaa")
+        .position(|option| option.id == SettingId::Msaa)
         .unwrap();
     options.set(index, 4);
     let mut slider = region(HitKind::Slider, None);
@@ -493,4 +501,64 @@ fn automatic_update_binding_uses_the_persisted_opt_out() {
     let mut expected = data.clone();
     expected.set_global("#auto_update_enabled", json_ui::Scalar::Bool(false));
     assert_eq!(data, expected);
+}
+#[test]
+fn disconnect_is_never_a_json_ui_screen() {
+    let mut shown = view(MenuScreen::Play);
+    shown.disconnect_message = Some(launcher::menu::disconnect::from_server(
+        "§cDisconnected\n§fTry again.",
+    ));
+    shown.can_reconnect = true;
+    shown.over_world = false;
+    assert!(screen_data(&shown, &|_| None, 0).is_none());
+}
+
+#[test]
+fn every_out_of_game_flow_rejects_json_ui_roots() {
+    use launcher::menu::flow::MenuFlow;
+    for &flow in MenuFlow::ALL {
+        for &screen in MenuScreen::ALL {
+            if screen.requires_session() {
+                continue;
+            }
+            let mut shown = view(screen);
+            shown.over_world = false;
+            match flow {
+                MenuFlow::Screen => {}
+                MenuFlow::LocalProgress => {
+                    shown.local.progress =
+                        Some(launcher::local_worlds::Progress::connecting("Fixture"))
+                }
+                MenuFlow::Connecting => shown.connecting = true,
+                MenuFlow::Disconnect => shown.disconnect_message = Some("closed".into()),
+                MenuFlow::SignIn => {
+                    // A standalone prompt belongs to the launcher, irrespective of its underlying route.
+                    shown.screen = MenuScreen::Home;
+                    shown.auth_state = AuthState::AwaitingCode {
+                        uri: "https://example.invalid".into(),
+                        code: "EXAMPLE".into(),
+                    };
+                }
+                MenuFlow::RealmMembership => shown.realm_membership = Some(Default::default()),
+            }
+            assert_eq!(shown.flow(), flow);
+            assert!(shown.out_of_game());
+            assert!(
+                screen_data(&shown, &|_| None, 0).is_none(),
+                "{flow:?}/{screen:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn session_menu_bindings_keep_their_existing_root_families() {
+    for &screen in MenuScreen::ALL {
+        let shown = view(screen);
+        assert!(!shown.out_of_game());
+        assert_eq!(
+            screen_data(&shown, &|_| None, 0).map(|data| data.reference),
+            launcher::menu::menu_reference(screen)
+        );
+    }
 }

@@ -26,9 +26,9 @@ use crate::presentation::{
     },
 };
 
-const BOW: &str = "minecraft:bow";
+const BOW: &str = assets::facts::VanillaItem::Bow.identifier();
 const BOW_USE_DURATION: u32 = assets::item_use::LONG_WEAPON_USE_TICKS;
-const FILLED_MAP: &str = "minecraft:filled_map";
+const FILLED_MAP: &str = assets::facts::FILLED_MAP_IDENTIFIER;
 /// Pose bones Java's parts drive, in [`JavaBiped::parts`] order.
 const PART_BONES: [&str; 6] = ["head", "body", "rightarm", "leftarm", "rightleg", "leftleg"];
 const RIGHT_ARM: usize = 2;
@@ -88,20 +88,46 @@ pub(super) fn java_bow_frame(use_ticks: u32) -> u32 {
     }
 }
 
-/// Java's first-person hand at the frame.
+/// Java's first-person hand, using the physics clock for local item use and the actor clock
+/// for equip progress. Sword blocking keeps the actor's use flag.
 pub(super) fn first_person_hand(
     rig: &ActorRigSnapshot<'_>,
     main: Option<&str>,
     selected: Option<&str>,
     consume_ticks: Option<u32>,
     alpha: f32,
+    item_animation: Option<&actor_animation::AttachableAnimationInput<'_>>,
 ) -> JavaHand {
     let [previous, current] = rig.java.equip;
+    let (use_ticks, use_alpha) = use_clock(rig.hand[1].use_ticks, alpha, item_animation);
     JavaHand {
         swing: rig.java.swing_progress(alpha),
         equip: previous + (current - previous) * alpha,
-        using: main
-            .and_then(|item| java_use(item, selected, rig.hand[1].use_ticks, consume_ticks, alpha)),
+        using: main.and_then(|item| {
+            let ticks = if is_java_sword(item) {
+                rig.hand[1].use_ticks
+            } else {
+                use_ticks
+            };
+            java_use(item, selected, ticks, consume_ticks, use_alpha)
+        }),
+    }
+}
+
+/// Pairs a local use's elapsed ticks with its physics fraction; other uses keep the actor clock.
+fn use_clock(
+    ticks: u32,
+    alpha: f32,
+    input: Option<&actor_animation::AttachableAnimationInput<'_>>,
+) -> (u32, f32) {
+    match input.filter(|input| input.is_local_player) {
+        Some(input) => (
+            input
+                .use_elapsed_ticks
+                .map_or(0, |elapsed| elapsed.saturating_add(1)),
+            render_model::legacy_combat::partial_tick(input.frame_alpha),
+        ),
+        None => (ticks, alpha),
     }
 }
 
@@ -329,8 +355,8 @@ pub(super) fn apply_pose(
 fn death_tilt(mut rows: [[f32; 4]; 3], native_progress: f32, death_ticks: f32) -> [[f32; 4]; 3] {
     let java_progress =
         ((death_ticks - 1.0) / f32::from(client_world::DEATH_DURATION_TICKS) * 1.6).clamp(0.0, 1.0);
-    let angle = (java_progress.sqrt() - native_progress.clamp(0.0, 1.0).sqrt())
-        * std::f32::consts::FRAC_PI_2;
+    let angle =
+        (java_progress.sqrt() - native_progress.clamp(0.0, 1.0)) * std::f32::consts::FRAC_PI_2;
     let (sine, cosine) = angle.sin_cos();
     for row in &mut rows {
         let (x, y) = (row[0], row[1]);
@@ -384,6 +410,7 @@ fn third_person_input(
     }
 }
 
+/// Samples remote look over the shortest arc and uses live look for the local player.
 fn head_look(actor: &ActorSnapshot, alpha: f32, local: bool) -> (f32, f32) {
     // Local look arrives every frame; current actor angles advance only at fixed ticks.
     if local {
@@ -391,7 +418,8 @@ fn head_look(actor: &ActorSnapshot, alpha: f32, local: bool) -> (f32, f32) {
     } else {
         (
             lerp_degrees(actor.previous_pose.head_yaw, actor.head_yaw, alpha),
-            actor.previous_pose.pitch + (actor.pitch - actor.previous_pose.pitch) * alpha,
+            actor.previous_pose.pitch
+                + wrap_degrees(actor.pitch - actor.previous_pose.pitch) * alpha,
         )
     }
 }
@@ -413,11 +441,14 @@ pub(super) fn lift(world_from_actor: &mut [[f32; 4]; 3], sneaking: bool, local: 
 
 type ArmKey = (actor_animation::ActorLifetimeId, u32, u64);
 
-/// Frame-to-frame state of Java's first-person hand.
+/// Retained artwork and poses for both first-person animation modes.
 #[derive(Default)]
 pub(super) struct HandCache {
+    lifetime: Option<actor_animation::ActorLifetimeId>,
     /// The main-hand item still drawn through an equip dip.
     shown: Option<WornItem>,
+    /// Native and Java equip clocks can adopt the selected item on different ticks.
+    native_shown: Option<WornItem>,
     pub(super) native_pose: super::hand::NativePoseCache,
     /// The empty hand's rest pose, by actor lifetime, rig and rest generation.
     arm: Option<(ArmKey, Arc<[RenderBoneTransform]>)>,
@@ -429,8 +460,23 @@ fn is_held(item: &WornItem, held: &JavaHeldItem) -> bool {
 }
 
 impl HandCache {
-    /// Remembers the held item once Java's equip adopts it, in any perspective.
+    /// Remembers each mode's adopted stack, including while the player is in third person.
     pub(super) fn remember(&mut self, rig: &ActorRigSnapshot<'_>, main: Option<&WornItem>) {
+        if self.lifetime != Some(rig.actor) {
+            self.lifetime = Some(rig.actor);
+            self.shown = None;
+            self.native_shown = None;
+        }
+        if rig.main_hand_equipped.is_none() {
+            self.native_shown = None;
+        } else if let Some(item) = main
+            && Some(item.identifier.as_ref()) == rig.main_hand_equipped
+        {
+            self.native_shown = Some(item.clone());
+        }
+        if rig.java_equipped.is_none() {
+            self.shown = None;
+        }
         if let (Some(item), Some(equipped)) = (main, rig.java_equipped)
             && is_held(item, equipped)
         {
@@ -448,12 +494,25 @@ impl HandCache {
         let equipped = equipped?;
         match selected {
             Some(item) if is_held(item, equipped) => Some(item.clone()),
-            _ => self
-                .shown
-                .clone()
-                .filter(|old| is_held(old, equipped))
-                .or_else(|| selected.cloned()),
+            _ => self.shown.clone().filter(|old| is_held(old, equipped)),
         }
+    }
+
+    /// Keeps native artwork on the retained item while selection has already changed.
+    pub(super) fn native_displayed_main(
+        &self,
+        equipped: Option<&str>,
+        selected: Option<&WornItem>,
+    ) -> Option<WornItem> {
+        let equipped = equipped?;
+        selected
+            .filter(|item| item.identifier.as_ref() == equipped)
+            .or_else(|| {
+                self.native_shown
+                    .as_ref()
+                    .filter(|item| item.identifier.as_ref() == equipped)
+            })
+            .cloned()
     }
 }
 
@@ -496,23 +555,30 @@ pub(super) fn hand_source(
         .filter(|item| rig.java_equipped.is_some_and(|held| is_held(item, held)))
         .map(|item| item.identifier.as_ref());
     let retained = main.as_ref().map(|item| item.identifier.as_ref());
-    let hand = first_person_hand(&rig, retained, selected, consume_ticks, alpha);
+    let hand = first_person_hand(
+        &rig,
+        retained,
+        selected,
+        consume_ticks,
+        alpha,
+        item_animation.as_ref(),
+    );
+    let retained_equipment = ActorEquipmentInput {
+        main: main.clone(),
+        ..equipment_input.clone()
+    };
     if vanilla_draws(main.as_ref(), equipment_input.off.as_ref(), |identifier| {
         equipment.is_vanilla_attachable(identifier)
     }) {
-        let retained_equipment = ActorEquipmentInput {
-            main: main.clone(),
-            ..equipment_input.clone()
-        };
         let progress = FirstPersonHand {
             swing: hand.swing,
             equip: hand.equip,
-            consume: hand_progress(
-                rig.hand,
-                consume_ticks.filter(|_| retained == selected),
-                alpha,
-            )
-            .consume,
+            consume: {
+                let consume_ticks = consume_ticks.filter(|_| retained == selected);
+                super::hand::local_consume(item_animation.as_ref(), consume_ticks)
+                    .or(hand_progress(rig.hand, consume_ticks, alpha).consume)
+            },
+            aspect: inputs.aspect,
         };
         let mut source = vanilla_hand_source(
             HandInputs {
@@ -522,6 +588,7 @@ pub(super) fn hand_source(
             equipment,
             progress,
             &mut cache.native_pose,
+            true,
         )?;
         let map = |item: &WornItem| &*item.identifier == FILLED_MAP;
         if main.as_ref().is_some_and(|item| !map(item))
@@ -535,8 +602,9 @@ pub(super) fn hand_source(
         let attachable =
             (retained == selected && java_draws_attachable(&item.identifier)).then(|| {
                 let mut input = item_animation?;
+                let (use_ticks, _) = use_clock(rig.hand[1].use_ticks, alpha, Some(&input));
                 input.frame_alpha = alpha;
-                input.animation_frame = java_bow_frame(rig.hand[1].use_ticks);
+                input.animation_frame = java_bow_frame(use_ticks);
                 let input = equipment_input.attachable_input(input.for_hand(false));
                 let actor = stream.authority().actor(runtime_id)?;
                 cache.native_pose.apply(&mut inputs);
@@ -550,7 +618,21 @@ pub(super) fn hand_source(
                 )
             });
         let layer = attachable.flatten().or_else(|| {
-            equipment.first_person_java_item(&inputs.presentation.submission, item, hand)
+            equipment.first_person_java_item_with_use(
+                &inputs.presentation.submission,
+                item,
+                hand,
+                item_animation
+                    .map(|input| {
+                        super::hand::attachable_hand_input(
+                            &retained_equipment,
+                            owner_equipment,
+                            input,
+                            false,
+                        )
+                    })
+                    .unwrap_or_default(),
+            )
         })?;
         let atlas = item_atlas(&layer, artwork)?;
         Some((layer, atlas))
@@ -591,7 +673,7 @@ pub(super) fn hand_source(
         };
         Some((bones, java::first_person_arm(hand.swing, hand.equip)))
     });
-    let (body, java_body_camera) = match arm.flatten() {
+    let (body, body_camera) = match arm.flatten() {
         Some((bones, camera)) => {
             let mut posed = inputs.presentation.submission.clone();
             posed.input.previous_bones = Arc::clone(&bones);
@@ -608,8 +690,9 @@ pub(super) fn hand_source(
         presentation: inputs.presentation,
         body,
         items: [main_layer, off_layer],
+        item_glint: inputs.artwork.item_glint.clone(),
         motion,
-        java_body_camera,
+        body_camera,
     })
 }
 

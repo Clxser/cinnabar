@@ -37,6 +37,26 @@ pub enum Scene {
 }
 
 impl Scene {
+    /// Whether a touchscreen reaches this scene only through an emulated mouse pointer.
+    /// Gameplay and its overlays take touch controls; menus and chat read touches themselves.
+    pub const fn reads_only_pointer(self) -> bool {
+        match self {
+            Self::Bed
+            | Self::Container
+            | Self::Emote
+            | Self::SignEditor
+            | Self::ServerForm
+            | Self::ServerSettingsForm
+            | Self::Credits => true,
+            Self::Gameplay
+            | Self::Crosshair
+            | Self::Hud
+            | Self::Chat
+            | Self::Loading
+            | Self::Menu(_) => false,
+        }
+    }
+
     /// Whether both draw one vanilla screen (menu tabs share theirs).
     fn same_screen(self, other: Self) -> bool {
         use launcher::menu::menu_reference;
@@ -56,8 +76,8 @@ pub struct SceneHost {
     pub menu: Option<MenuScreen>,
     /// The menu opened over the session's world (pause, death) rather than the launcher's.
     pub over_world: bool,
-    /// The world-loading cover is up.
-    pub loading: bool,
+    /// The world-loading cover's stage, while it is up.
+    pub loading: Option<ui::LoadingStage>,
 }
 
 impl SceneHost {
@@ -118,7 +138,11 @@ impl UiRuntime {
     }
 
     /// Takes this frame's loading cover and the presentation catalog's settings.
-    pub fn observe_presentation(&mut self, loading: bool, table: Arc<ScreenSettingsTable>) {
+    pub fn observe_presentation(
+        &mut self,
+        loading: Option<ui::LoadingStage>,
+        table: Arc<ScreenSettingsTable>,
+    ) {
         self.loading_screen = loading;
         if !Arc::ptr_eq(&table, &self.screen_settings) {
             self.screen_settings = table;
@@ -163,6 +187,17 @@ impl UiRuntime {
             .all(|scene| !scene.settings.absorbs_input)
     }
 
+    /// Whether the top scene is one a touchscreen drives through the mouse pointer.
+    pub fn top_scene_reads_only_pointer(
+        &self,
+        player_runtime: &player_state::PlayerState,
+        menu: Option<&dyn MenuScene>,
+    ) -> bool {
+        self.scenes(player_runtime, SceneHost::of(menu, self))
+            .top()
+            .is_some_and(|scene| scene.key.reads_only_pointer())
+    }
+
     /// Whether the top scene captures the mouse;
     /// with nothing up, the game underneath does.
     pub fn steals_mouse(
@@ -194,7 +229,8 @@ impl SceneClocks {
     /// Notes `stack` (bottom first) as this frame's scenes at `now` seconds.
     pub fn observe(&mut self, stack: &[Scene], now: f64) {
         if !std::mem::replace(&mut self.started, true) {
-            self.previous = stack.to_vec();
+            self.previous.clear();
+            self.previous.extend_from_slice(stack);
             return;
         }
         for (index, scene) in stack.iter().enumerate() {
@@ -222,7 +258,8 @@ impl SceneClocks {
                 None => false,
             }
         });
-        self.previous = stack.to_vec();
+        self.previous.clear();
+        self.previous.extend_from_slice(stack);
     }
 
     /// The event clocks `scene`'s screen reads this frame.

@@ -1,4 +1,5 @@
 use super::*;
+use protocol_ids::ActorFlag;
 
 fn fixture() -> (TestActor, ActorAnimationStore) {
     let mut actor = super::super::tests::actor_with_metadata(HashMap::new());
@@ -23,6 +24,98 @@ fn advance(
         |_| context.clone(),
     );
     store.get(actor.runtime_id).unwrap().java
+}
+
+/// Samples the published chase offsets at the same frame fractions used by presentation.
+fn cape_frame(
+    motion: super::super::java::JavaMotion,
+    alpha: f32,
+) -> render_model::java_animation::JavaCapeInput {
+    let lerp = |[from, to]: [f32; 2]| from + (to - from) * alpha;
+    let chase: [f32; 3] =
+        std::array::from_fn(|axis| lerp([motion.cape[0][axis], motion.cape[1][axis]]));
+    render_model::java_animation::JavaCapeInput {
+        chase: chase.into(),
+        body_yaw: motion.body_yaw_at(alpha),
+        bob: lerp(motion.bob),
+        walked: lerp(motion.walked),
+        sneaking: false,
+    }
+}
+
+#[test]
+fn local_cape_flap_keeps_velocity_after_a_catch_up_tick_consumes_the_position() {
+    let (mut actor, mut store) = fixture();
+    let context = ActorTickContext {
+        is_local: true,
+        ..Default::default()
+    };
+    advance(&actor, &mut store, context.clone());
+    actor.position[2] += 0.3;
+    actor.velocity = [0.0, 0.0, 0.1];
+    for _ in 0..3 {
+        advance(&actor, &mut store, context.clone());
+        let rig = store.get(actor.runtime_id).unwrap();
+        let flap = rig
+            .particle_queries(&actor, 1.0, 0)
+            .query("cape_flap_amount");
+        assert!((flap - 0.4).abs() < 1e-6);
+    }
+    actor.velocity = [0.0; 3];
+    advance(&actor, &mut store, context);
+    assert_eq!(
+        store
+            .get(actor.runtime_id)
+            .unwrap()
+            .particle_queries(&actor, 1.0, 0)
+            .query("cape_flap_amount"),
+        0.0
+    );
+}
+
+#[test]
+fn local_and_remote_flying_capes_stay_bounded_and_settle_after_stopping() {
+    use render_model::java_animation::{CAPE_MAX_SWING_DEGREES, java_cape_angles, java_cape_bone};
+
+    for local in [false, true] {
+        for (velocity, expected_tilt) in [
+            ([0.0, 2.0, 0.0], 0.0),
+            ([0.0, -2.0, 0.0], 38.0),
+            ([0.0, 0.0, 2.0], CAPE_MAX_SWING_DEGREES),
+        ] {
+            let (mut actor, mut store) = fixture();
+            actor.on_ground = Some(false);
+            let context = ActorTickContext {
+                is_local: local,
+                is_flying: local,
+                ..Default::default()
+            };
+            advance(&actor, &mut store, context.clone());
+            for tick in 1..=70 {
+                actor.velocity = if tick <= 40 { velocity } else { [0.0; 3] };
+                actor.status.native_velocity = actor.velocity;
+                for axis in 0..3 {
+                    actor.position[axis] += actor.velocity[axis];
+                }
+                let motion = advance(&actor, &mut store, context.clone());
+                for alpha in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                    let input = cape_frame(motion, alpha);
+                    let (tilt, side) = java_cape_angles(&input);
+                    assert!((0.0..=CAPE_MAX_SWING_DEGREES).contains(&tilt));
+                    assert!(side.abs() <= CAPE_MAX_SWING_DEGREES);
+                    let (rotation, _) = java_cape_bone(&input, [0.0, 1.5, 0.1875].into());
+                    let down = rotation.mul_vec3([0.0, -1.0, 0.0].into());
+                    assert!(down.y <= 1e-6, "local {local}, tick {tick}, alpha {alpha}");
+                }
+                let tilt = java_cape_angles(&cape_frame(motion, 1.0)).0;
+                if tick == 40 {
+                    assert!((tilt - expected_tilt).abs() < 1e-4);
+                } else if tick == 70 {
+                    assert!((tilt - 6.0).abs() < 0.1, "cape must settle: {tilt}");
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -112,9 +205,10 @@ fn cape_bob_clears_immediately_while_riding() {
 fn rig_snapshot_retains_java_equip_and_native_wing_inputs() {
     let (mut actor, mut store) = fixture();
     actor.on_ground = Some(false);
-    actor
-        .metadata
-        .insert(0, ActorMetadataValue::Flags(1 << query::FLAG_GLIDING));
+    actor.metadata.insert(
+        0,
+        ActorMetadataValue::Flags(1 << ActorFlag::Gliding.wire_value()),
+    );
     let context = ActorTickContext {
         main_hand: Some(Arc::from("minecraft:potion")),
         main_hand_metadata: 21,
@@ -123,6 +217,10 @@ fn rig_snapshot_retains_java_equip_and_native_wing_inputs() {
             None,
             Some(WornArmor {
                 item: "minecraft:elytra".into(),
+                fact: *assets::facts::ItemFacts::builtin()
+                    .unwrap()
+                    .by_identifier("minecraft:elytra")
+                    .unwrap(),
                 dye_rgb: None,
             }),
             None,
@@ -326,4 +424,49 @@ fn local_swing_sampling_uses_physics_phase_without_changing_equip() {
             ..idle
         }
     ));
+}
+
+/// A held stack whose data, block or tags change re-equips through the dip, but a count or
+/// instance change does not.
+#[test]
+fn equip_dips_when_the_held_stack_variant_changes_but_not_its_count() {
+    let actor = super::super::tests::actor_with_metadata(HashMap::new());
+    let actors = HashMap::from([(actor.runtime_id, actor.clone())]);
+    let sword: Option<Arc<str>> = Some(Arc::from("minecraft:iron_sword"));
+    let fresh = StackVariant::default();
+    let damaged = StackVariant {
+        nbt_digest: [7; 32],
+        ..fresh
+    };
+    let heights = |variants: &[StackVariant]| {
+        let mut store =
+            ActorAnimationStore::with_assets(crate::test_support::counting_random_assets());
+        store.insert(1, 0, &actor);
+        variants
+            .iter()
+            .map(|variant| {
+                let context = ActorTickContext {
+                    main_hand: sword.clone(),
+                    held_variants: [*variant, StackVariant::default()],
+                    ..Default::default()
+                };
+                store.advance_tick(&actors, None, None, true, true, |_| context.clone());
+                store.get(1).unwrap().hand[1].arm_height
+            })
+            .collect::<Vec<_>>()
+    };
+    let near = |actual: Vec<f32>, expected: &[f32]| {
+        actual.len() == expected.len()
+            && actual
+                .iter()
+                .zip(expected)
+                .all(|(actual, expected)| (actual - expected).abs() < 1.0e-6)
+    };
+    let dipped = heights(&[fresh, fresh, damaged, damaged, damaged, damaged]);
+    assert!(
+        near(dipped.clone(), &[1.0, 1.0, 0.6, 0.2, 0.0, 0.4]),
+        "{dipped:?}"
+    );
+    let steady = heights(&[fresh, fresh, fresh, fresh]);
+    assert!(near(steady.clone(), &[1.0; 4]), "{steady:?}");
 }

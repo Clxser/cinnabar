@@ -2,6 +2,7 @@ use super::*;
 use protocol::{
     ActorEvent, ActorKind, ActorMetadata, ActorMetadataValue, ActorSpawnEvent, WorldEvent,
 };
+use render_api::PoseGeneration;
 use std::sync::Arc;
 
 fn view() -> ActorCullView {
@@ -219,4 +220,75 @@ fn local_shadow_follows_body_visibility_without_hiding_other_casters() {
         .collect();
     casters.sort_by(f32::total_cmp);
     assert_eq!(casters, [2.0, 6.0]);
+}
+
+/// Builds a manifest entry whose actor namespace and layer are independently controlled.
+fn manifest_entry(
+    session_id: u64,
+    runtime_id: u64,
+    layer: u8,
+) -> render_model::ActorDrawManifestEntry {
+    render_model::ActorDrawManifestEntry {
+        identity: render_model::ActorRenderIdentity {
+            session_id,
+            runtime_id,
+            layer,
+            dimension: 0,
+            spawn_revision: 1,
+            ingress_sequence: 1,
+            source_tick: None,
+            movement_revision: 1,
+            pose_generation: PoseGeneration::new(1),
+        },
+        rig: render_model::EntityRigId(0),
+        completed_tick: 1,
+        reset_generation: 1,
+        route: render_model::ActorRigRoute::Compiled,
+        instance_index: 0,
+        previous_bone_base: 0,
+        current_bone_base: 0,
+        bone_count: 1,
+    }
+}
+
+#[test]
+fn regression_display_runtime_ids_cannot_admit_undrawn_network_shadows() {
+    let mut stream = WorldStream::new(protocol::WorldBootstrap {
+        local_player_unique_id: 1,
+        local_player_runtime_id: 1,
+        dimension: 0,
+        player_position: [0.0, 65.62, 0.0],
+        world_spawn_position: [0, 64, 0],
+        air_network_id: 0,
+        block_network_ids_are_hashes: false,
+    });
+    spawn(&mut stream, 1, 5, "cow", 2.0);
+    spawn(&mut stream, 2, 6, "cow", 4.0);
+    let session = stream.authority().actor_session_id();
+    let mut frame = ActorRenderFrame::default();
+    frame.rig.manifest = Arc::from([
+        manifest_entry(session + 1, 5, ACTOR_LAYER_BODY),
+        manifest_entry(session, 5, 1),
+        manifest_entry(session, 6, ACTOR_LAYER_BODY),
+    ]);
+    let mut drawn = vec![99];
+    drawn_bodies(&frame, Some(session), &mut drawn);
+    let mut staging = Vec::new();
+    let mut scene = EntityShadowScene::default();
+    publish_entity_shadows(
+        Some(&stream),
+        1.0,
+        None,
+        None,
+        &drawn,
+        &mut staging,
+        &mut scene,
+    );
+    assert_eq!(scene.0.shadows.len(), 1);
+    assert_eq!(scene.0.shadows[0].feet[0], 4.0);
+    drawn_bodies(&frame, None, &mut drawn);
+    assert!(
+        drawn.is_empty(),
+        "a disconnected network session admits no bodies"
+    );
 }

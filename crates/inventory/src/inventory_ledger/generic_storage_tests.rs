@@ -147,6 +147,31 @@ fn ready(count: usize, dynamic_id: u32) -> PlayerInventoryLedger {
 }
 
 #[test]
+fn full_storage_refresh_prevents_rejection_from_restoring_an_empty_taken_slot() {
+    for count in [
+        super::SMALL_STORAGE_SLOT_COUNT,
+        super::LARGE_STORAGE_SLOT_COUNT,
+    ] {
+        let mut ledger = ready(count, 777);
+        let request = ledger.begin_storage_click(2).unwrap();
+        assert!(ledger.mark_transport_enqueued(20));
+        let InventoryEvent::Content(mut refresh) = content(1, 777, count) else {
+            unreachable!();
+        };
+        Arc::make_mut(&mut refresh.slots)[2] = NetworkItemStack::empty();
+        Arc::make_mut(&mut refresh.slots)[5] = stack(5, 2, 93);
+        ledger.apply(&InventoryEvent::Content(refresh));
+        ledger.apply(&response(request, StackResponseStatus::Rejected));
+        assert!(ledger.storage_stack(2).is_none());
+        assert!(ledger.cursor_stack().is_none());
+        assert_eq!(ledger.storage_stack(5), Some(&stack(5, 2, 93)));
+        assert_eq!(ledger.pending_request_count(), 0);
+        assert!(!ledger.resync_required());
+        assert!(ledger.begin_storage_click(5).is_ok());
+    }
+}
+
+#[test]
 fn only_exact_27_and_54_slot_level_entity_windows_become_authoritative() {
     for count in [27, 54] {
         let ledger = ready(count, 700 + count as u32);
@@ -351,7 +376,19 @@ fn close_and_channel_pressure_are_bounded() {
         window_type: 0,
         server_initiated: true,
     }));
+    // Confirm the server command once; it cannot acknowledge an unsent close.
+    assert_eq!(ledger.pending_batch().unwrap().unwrap().1, 1);
+    assert!(ledger.mark_transport_enqueued(10 + INVENTORY_REQUEST_TIMEOUT_MILLIS));
     assert!(ledger.pending_batch().unwrap().is_none());
+    assert!(!ledger.mark_transport_enqueued(10 + INVENTORY_REQUEST_TIMEOUT_MILLIS));
+    ledger.apply(&InventoryEvent::Close(ContainerCloseEvent {
+        container: ContainerIdentity::window(1),
+        window_type: 0,
+        server_initiated: false,
+    }));
+    assert!(ledger.pending_batch().unwrap().is_none());
+    assert!(ledger.controls.storage.sent.is_none());
+    assert!(ledger.controls.storage.confirmed.is_none());
 
     // Structure-editor windows have no client screen.
     let mut unsupported = PlayerInventoryLedger::default();
@@ -561,7 +598,7 @@ fn timed_out_closing_state_settles_on_the_server_close() {
     ledger.apply(&InventoryEvent::Close(ContainerCloseEvent {
         container: ContainerIdentity::window(1),
         window_type: 0,
-        server_initiated: false,
+        server_initiated: true,
     }));
     assert_eq!(ledger.storage_generation(), None);
     assert!(ledger.pending_request_id().is_none());

@@ -14,7 +14,7 @@ use {
     render_model::{
         ActorArtworkLocation, ActorArtworkPages, ActorCullView, ActorRenderIdentity,
         ActorRigRenderInput, ActorRigRoute, ActorRigSubmission, actor_bounds_are_visible,
-        actor_rig_submission_is_visible, pack_overlay_rgba8,
+        actor_rig_submission_is_visible,
     },
     render_scene::{ActorRenderFrame, ActorRenderScene},
 };
@@ -31,14 +31,11 @@ mod locator;
 pub use locator::actor_emitter_transform;
 mod admission;
 pub use admission::within_actor_candidate_cube;
-pub(crate) use admission::{actor_within_render_distance, sample_candidate_scale};
+pub(crate) use admission::{actor_is_render_candidate, sample_candidate_scale};
 mod tick_cache;
 pub use tick_cache::PoseConversions;
 use tick_cache::TickKey;
 pub(crate) use tick_cache::{convert_bones, convert_bones_with};
-
-/// Damage tint blended over a hurt or dying actor.
-const HURT_OVERLAY_RGBA: [f32; 4] = [1.0, 0.0, 0.0, client_world::HURT_OVERLAY_ALPHA];
 
 #[derive(Clone, Debug)]
 pub struct ActorRigPresentation {
@@ -80,7 +77,7 @@ pub fn update_actor_rig_scene(
     )
 }
 
-/// Checks distance and frustum bounds before building a rig's presentation.
+/// Checks camera overlap, distance and frustum bounds before building a rig's presentation.
 /// Always-depth layers survive terrain occlusion, using the draw frame's cached layers when available.
 /// Controllers that can replace the base mesh bypass terrain proofs using its bounds.
 pub fn rig_may_be_visible(
@@ -91,7 +88,7 @@ pub fn rig_may_be_visible(
     frame: Option<&mut actor_animation::ActorRenderFrame<'_>>,
     occluded: impl Fn([f32; 3], [f32; 3]) -> bool,
 ) -> bool {
-    if !actor_within_render_distance(actor, partial_tick, view) {
+    if !actor_is_render_candidate(actor, partial_tick, view) {
         return false;
     }
     let (Some(view), Some(feet)) = (
@@ -356,11 +353,8 @@ fn place(
         return None;
     }
     submission.world_from_actor = world_from_actor;
-    submission.overlay_rgba8 = if actor.hurt_overlay_active() {
-        pack_overlay_rgba8(HURT_OVERLAY_RGBA)
-    } else {
-        0
-    };
+    submission.overlay_rgba8 =
+        crate::presentation::combat::overlay(actor, render_api::DEFAULT_COMBAT_VISUALS);
     presentation.world_yaw_degrees = yaw;
     presentation.head_over_body =
         wrap_degrees(lerp_degrees(actor.previous_pose.head_yaw, actor.head_yaw, alpha) - yaw);
@@ -566,7 +560,7 @@ pub fn select_actor_presentations_for_shadow_view(
 
     let mut artwork = HashMap::with_capacity(selected.len());
     let mut skin_families = Vec::<SkinRgba8>::new();
-    let mut skin_layer_of = HashMap::<SkinRgba8, usize>::new();
+    let mut skin_layer_of = bevy::platform::collections::HashMap::<SkinRgba8, usize>::default();
     let mut submissions = Vec::with_capacity(selected.len());
     for mut presentation in selected {
         if presentation.submission.route == ActorRigRoute::NoDraw {
@@ -586,15 +580,15 @@ pub fn select_actor_presentations_for_shadow_view(
             continue;
         };
         let layer = match skin_layer_of.entry(skin) {
-            std::collections::hash_map::Entry::Occupied(layer) => *layer.get(),
-            std::collections::hash_map::Entry::Vacant(layer)
+            bevy::platform::collections::hash_map::Entry::Occupied(layer) => *layer.get(),
+            bevy::platform::collections::hash_map::Entry::Vacant(layer)
                 if skin_families.len() < MAX_RENDERED_PLAYERS =>
             {
                 let index = skin_families.len();
                 skin_families.push(layer.key().clone());
                 *layer.insert(index)
             }
-            std::collections::hash_map::Entry::Vacant(_) => {
+            bevy::platform::collections::hash_map::Entry::Vacant(_) => {
                 presentation.submission.route = ActorRigRoute::NoDraw;
                 presentation.submission.texture_layer = u32::MAX;
                 submissions.push(presentation.submission);

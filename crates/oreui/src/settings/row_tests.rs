@@ -2,9 +2,111 @@ use crate::{review_tests::paint, test_support::solids};
 use std::collections::HashMap;
 use {
     super::*,
-    launcher::menu::settings_options::SETTINGS_OPTIONS,
+    launcher::menu::settings_options::{SETTINGS_OPTIONS, layout::SettingPanel},
     launcher::menu::{MenuAction, MenuView},
 };
+
+/// Draws related distance controls in order and omits an empty Advanced heading.
+#[test]
+fn video_distance_rows_stay_together_without_an_empty_advanced_section() {
+    let view = MenuView::new(true, "Player".into());
+    for width in [400.0, 800.0] {
+        let mut tracks = HashMap::new();
+        let (_, hits, nodes) = paint(HashMap::new(), |canvas| {
+            let mut content = Content {
+                canvas,
+                view: &view,
+                span: [100.0, 100.0 + width],
+                column_width: width,
+                y: 100.0,
+                translate: &|_| None,
+                nested: false,
+            };
+            sections::draw(&mut content, SettingSection::Video).unwrap();
+            tracks.extend(
+                content
+                    .canvas
+                    .slider_tracks
+                    .iter()
+                    .map(|(index, track, _)| (*index, *track)),
+            );
+        });
+        let render = tracks[&(SettingId::RenderDistance.index() as u16)];
+        let full = tracks[&(SettingId::FullDetailDistance.index() as u16)];
+        let far = hits
+            .iter()
+            .find(|(action, _)| {
+                *action == MenuAction::SettingsDropdown(SettingId::FarTerrain.index() as u16)
+                    || *action
+                        == MenuAction::SettingsOption(
+                            SettingId::FarTerrain.index() as u16,
+                            view.settings_options.value(SettingId::FarTerrain),
+                        )
+            })
+            .expect("far terrain selector")
+            .1;
+        assert!(render.max().y() < full.min().y());
+        assert!(full.max().y() < far.min().y());
+        let advanced = nodes.iter().any(|node| match node.visual() {
+            ui::UiVisual::Text { layout, .. } => layout
+                .glyphs()
+                .iter()
+                .map(|glyph| glyph.codepoint)
+                .collect::<String>()
+                .eq_ignore_ascii_case("Advanced"),
+            _ => false,
+        });
+        assert_eq!(
+            advanced,
+            SettingPanel::VideoAdvanced.options().next().is_some()
+        );
+    }
+}
+
+#[test]
+fn keyboard_rows_display_observed_layout_labels() {
+    use launcher::menu::settings_options::KEY_BINDINGS;
+    use semantic_input::{Action, PhysicalControl};
+    let mut view = MenuView::new(true, "Player".into());
+    let row = KEY_BINDINGS
+        .iter()
+        .position(|(action, _)| *action == Action::Hotbar1)
+        .unwrap();
+    let settings = std::sync::Arc::make_mut(&mut view.settings_options);
+    assert!(settings.remap(row, PhysicalControl::KeyboardUsage(0x14)));
+    settings.set_key_label(0x14, "a");
+    let (_, _, nodes) = paint(HashMap::new(), |canvas| {
+        let mut content = Content {
+            canvas,
+            view: &view,
+            span: [100.0, 1100.0],
+            column_width: 1000.0,
+            y: 100.0,
+            translate: &|_| None,
+            nested: false,
+        };
+        sections::draw(&mut content, SettingSection::KeyboardAndMouse).unwrap();
+    });
+    let labels: Vec<_> = nodes
+        .iter()
+        .filter_map(|node| match node.visual() {
+            ui::UiVisual::Text { layout, .. } => Some(
+                layout
+                    .glyphs()
+                    .iter()
+                    .map(|glyph| glyph.codepoint)
+                    .collect::<String>(),
+            ),
+            _ => None,
+        })
+        .collect();
+    assert!(labels.iter().any(|label| label == "A"));
+    assert!(!labels.iter().any(|label| label == "Q"));
+    assert_eq!(
+        view.settings_options.key_control(row),
+        Some(PhysicalControl::KeyboardUsage(0x14))
+    );
+}
 
 #[test]
 fn keyboard_overlay_rows_show_readable_bindings_and_reset_controls() {
@@ -44,7 +146,11 @@ fn keyboard_overlay_rows_show_readable_bindings_and_reset_controls() {
                 translate: &|_| None,
                 nested: false,
             };
-            sections::draw(&mut content, "keyboard_and_mouse_forced_index").unwrap();
+            sections::draw(
+                &mut content,
+                launcher::menu::settings_sections::SettingSection::KeyboardAndMouse,
+            )
+            .unwrap();
         });
         let labels: Vec<_> = nodes
             .iter()
@@ -101,7 +207,11 @@ fn passive_clients_have_no_update_settings_actions() {
             translate: &|_| None,
             nested: false,
         };
-        sections::draw(&mut content, "general_forced_index").unwrap();
+        sections::draw(
+            &mut content,
+            launcher::menu::settings_sections::SettingSection::General,
+        )
+        .unwrap();
     });
     let update_options = [
         AUTO_UPDATE_OPTION,
@@ -118,6 +228,65 @@ fn passive_clients_have_no_update_settings_actions() {
         }
     }));
     assert!(!hits.is_empty());
+}
+
+/// General ends with an Advanced heading holding both diagnostics toggles, off by default,
+/// and the capture caption says what a recording holds and that it stays local.
+#[test]
+fn general_advanced_rows_toggle_diagnostics_and_explain_the_capture() {
+    use launcher::menu::settings_options::SettingId;
+    let view = MenuView::new(true, "Player".into());
+    let (_, hits, nodes) = paint(HashMap::new(), |canvas| {
+        let mut content = Content {
+            canvas,
+            view: &view,
+            span: [100.0, 900.0],
+            column_width: 800.0,
+            y: 100.0,
+            translate: &|_| None,
+            nested: false,
+        };
+        sections::draw(
+            &mut content,
+            launcher::menu::settings_sections::SettingSection::General,
+        )
+        .unwrap();
+    });
+    let text: String = nodes
+        .iter()
+        .filter_map(|node| match node.visual() {
+            ui::UiVisual::Text { layout, .. } => Some(
+                layout
+                    .glyphs()
+                    .iter()
+                    .map(|glyph| glyph.codepoint)
+                    .collect::<String>(),
+            ),
+            _ => None,
+        })
+        .collect::<String>()
+        .replace(' ', "");
+    for expected in [
+        "Verboselogging",
+        "Recordnetworksession",
+        "containschatmessagesandplayernames",
+        "neveruploaded",
+    ] {
+        assert!(text.contains(expected), "missing {expected}");
+    }
+    // Section headings draw in capitals.
+    let heading = text.find("ADVANCED").expect("missing the Advanced heading");
+    assert!(
+        heading < text.find("Verboselogging").unwrap(),
+        "the toggles sit under the Advanced heading"
+    );
+    for id in [SettingId::VerboseLogging, SettingId::RecordNetworkSession] {
+        assert!(
+            hits.iter()
+                .any(|(action, _)| *action == MenuAction::SettingsOption(id.index() as u16, 1)),
+            "{id:?} toggles on from its default"
+        );
+    }
 }
 
 #[test]
@@ -144,7 +313,11 @@ fn graphics_group_rows_keep_the_same_horizontal_gutters_as_regular_rows() {
                     translate: &|_| None,
                     nested: false,
                 };
-                sections::draw(&mut content, "video_forced_index").unwrap();
+                sections::draw(
+                    &mut content,
+                    launcher::menu::settings_sections::SettingSection::Video,
+                )
+                .unwrap();
                 assert_eq!(content.span, [100.0, 100.0 + width]);
                 assert!(!content.nested);
                 tracks.extend(
@@ -287,7 +460,9 @@ fn cloud_option_has_a_readable_title_and_description_without_locale_data() {
             translate: &|_| None,
             nested: false,
         };
-        content.option("render_clouds").unwrap();
+        content
+            .option(launcher::menu::settings_options::SettingId::RenderClouds)
+            .unwrap();
         let texts: Vec<_> = content
             .canvas
             .nodes
@@ -324,7 +499,7 @@ fn exact_server_ping_setting_has_a_title_description_and_toggle() {
             nested: false,
         };
         content
-            .option(launcher::menu::settings_options::SHOW_EXACT_SERVER_PING)
+            .option(launcher::menu::settings_options::SettingId::ShowExactServerPing)
             .unwrap();
     });
     let labels: String = nodes
@@ -374,7 +549,11 @@ fn command_macro_invalid_draft_shows_a_chat_limit_error() {
             translate: &|_| None,
             nested: false,
         };
-        sections::draw(&mut content, "keyboard_and_mouse_forced_index").unwrap();
+        sections::draw(
+            &mut content,
+            launcher::menu::settings_sections::SettingSection::KeyboardAndMouse,
+        )
+        .unwrap();
     });
     let labels: String = nodes
         .iter()

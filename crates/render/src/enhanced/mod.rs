@@ -47,7 +47,7 @@ mod indirect;
 pub(crate) mod local_lights;
 #[cfg(feature = "enhanced")]
 mod local_shadow_history;
-#[cfg(feature = "enhanced")]
+#[cfg(any(test, feature = "enhanced"))]
 mod materials;
 #[cfg(feature = "enhanced")]
 mod multiple_scattering;
@@ -71,7 +71,7 @@ mod shadow_tests;
 #[cfg(feature = "enhanced")]
 pub(crate) mod shadows;
 #[cfg(feature = "enhanced")]
-mod snapshot;
+pub(crate) mod snapshot;
 #[cfg(feature = "enhanced")]
 mod sun_shadow_history;
 #[cfg(feature = "enhanced")]

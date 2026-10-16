@@ -9,15 +9,18 @@ mod tabs;
 use super::grid::{Grid, space};
 use super::icons::{self, Icon};
 use super::paint::{Bounds, Canvas};
-use super::theme::EDGE;
 use super::theme::{
     BODY, CAPTION, NEUTRAL80, NEUTRAL100, SECONDARY_BUTTON, TEXT, TEXT_DIMMER, TEXT_DIMMEST,
 };
-use super::widgets::{Variant, button, header, panel, row, screen_overlay, tag};
+use super::theme::{EDGE, HEADER_HEIGHT, SPACE};
+use super::widgets::{TAB_HEIGHT, Variant, button, header, panel, row, screen_overlay, tag};
 use super::{play_realms, play_servers};
 use launcher::menu::{LocalWorldAction, MenuAction, MenuScreen, MenuView};
 use ui::IconRef;
 use ui_engine::engine::screen::PaintError;
+
+const CREATE_HEIGHT: f32 = 4.4;
+const WORLD_ROW_HEIGHT: f32 = 8.4;
 
 pub(super) fn draw(
     canvas: &mut Canvas<'_>,
@@ -33,7 +36,32 @@ pub(super) fn draw(
     draw_tab(canvas, view, size, images, selected)
 }
 
+/// Fits the selected route's pinned controls while preserving a usable content viewport.
 pub(super) fn draw_tab(
+    canvas: &mut Canvas<'_>,
+    view: &MenuView,
+    size: [f32; 2],
+    images: &HashMap<String, IconRef>,
+    selected: usize,
+) -> Result<(), PaintError> {
+    let chrome = HEADER_HEIGHT + EDGE + SPACE[0] + TAB_HEIGHT + SPACE[1] * 2.0;
+    let content = if selected == 0 {
+        CREATE_HEIGHT + SPACE[0] + WORLD_ROW_HEIGHT * 0.5
+    } else if selected == 1 && !view.realms.is_empty() {
+        play_realms::MIN_DETAILS_HEIGHT
+    } else if selected == 2 {
+        play_servers::GROUP_HEADER_HEIGHT
+    } else {
+        super::theme::BODY.line
+    };
+    let scale = (size[1] / canvas.r(chrome + content)).min(1.0);
+    canvas.with_scale(scale, |canvas| {
+        draw_fitted(canvas, view, size, images, selected)
+    })
+}
+
+/// Keeps the header, tabs and world creation controls above a positive scroll viewport.
+fn draw_fitted(
     canvas: &mut Canvas<'_>,
     view: &MenuView,
     size: [f32; 2],
@@ -52,7 +80,7 @@ pub(super) fn draw_tab(
     let grid = Grid::new(canvas.r(1.0), width);
     let [left, right] = grid.span(0, if grid.narrow { 8 } else { 12 });
     let tab_top = top + space(canvas, 1);
-    let tab_bottom = tab_top + canvas.r(4.8);
+    let tab_bottom = tab_top + canvas.r(TAB_HEIGHT);
     tabs::draw(canvas, view, [left, tab_top, right, tab_bottom], selected)?;
     let body: Bounds = [
         left,
@@ -70,33 +98,38 @@ pub(super) fn draw_tab(
 }
 
 fn worlds_tab(canvas: &mut Canvas<'_>, view: &MenuView, body: Bounds) -> Result<(), PaintError> {
-    // Create buttons, right-aligned, each at most 25.6rem.
-    let button_height = canvas.r(4.4);
+    // Create and import buttons, right-aligned, each at most 25.6rem.
+    let buttons = [
+        (
+            Variant::Primary,
+            "Create new world",
+            LocalWorldAction::BeginCreate,
+        ),
+        (
+            Variant::Secondary,
+            "Create from template",
+            LocalWorldAction::OpenTemplates,
+        ),
+        (Variant::Secondary, "Import world", LocalWorldAction::Import),
+    ];
+    let button_height = canvas.r(CREATE_HEIGHT);
     let gap = space(canvas, 2);
-    let button_width = canvas.r(25.6).min((body[2] - body[0] - gap) / 2.0);
-    let second = body[2] - button_width;
-    let first = second - gap - button_width;
-    button(
-        canvas,
-        view,
-        [
-            first,
-            body[1],
-            first + button_width,
-            body[1] + button_height,
-        ],
-        Variant::Primary,
-        "Create new world",
-        Some(MenuAction::LocalWorld(LocalWorldAction::BeginCreate)),
-    )?;
-    button(
-        canvas,
-        view,
-        [second, body[1], body[2], body[1] + button_height],
-        Variant::Secondary,
-        "Create from template",
-        Some(MenuAction::LocalWorld(LocalWorldAction::OpenTemplates)),
-    )?;
+    let count = buttons.len() as f32;
+    let button_width = canvas
+        .r(25.6)
+        .min((body[2] - body[0] - gap * (count - 1.0)) / count);
+    let mut left = body[2] - button_width * count - gap * (count - 1.0);
+    for (variant, label, action) in buttons {
+        button(
+            canvas,
+            view,
+            [left, body[1], left + button_width, body[1] + button_height],
+            variant,
+            label,
+            Some(MenuAction::LocalWorld(action)),
+        )?;
+        left += button_width + gap;
+    }
     let list_top = body[1] + button_height + space(canvas, 1);
     if view.friends.is_empty() && view.local_worlds.is_empty() {
         let card = [body[0], list_top, body[2], list_top + canvas.r(18.0)];
@@ -128,7 +161,7 @@ fn worlds_tab(canvas: &mut Canvas<'_>, view: &MenuView, body: Bounds) -> Result<
         )?;
         return Ok(());
     }
-    let row_height = canvas.r(8.4);
+    let row_height = canvas.r(WORLD_ROW_HEIGHT);
     let gap = space(canvas, 2);
     let scroll = canvas.begin_scroll("worlds_list", [body[0], list_top, body[2], body[3]])?;
     let mut y = list_top - scroll.offset;
@@ -141,9 +174,11 @@ fn worlds_tab(canvas: &mut Canvas<'_>, view: &MenuView, body: Bounds) -> Result<
             subtitle: format!("{}'s world", friend.gamertag),
             tag: "Friend's world",
             world_type: String::new(),
+            server: String::new(),
             meta: [friend.members.clone(), String::new()],
             action: MenuAction::PlayFriend(index),
             edit: None,
+            thumbnail: None,
         })
         .chain(
             view.local_worlds
@@ -154,9 +189,11 @@ fn worlds_tab(canvas: &mut Canvas<'_>, view: &MenuView, body: Bounds) -> Result<
                     subtitle: String::new(),
                     tag: game_mode_tag(&world.game_mode),
                     world_type: world.world_type.clone(),
+                    server: world.server.clone(),
                     meta: [world.size.clone(), world.date.clone()],
                     action: MenuAction::PlayLocalWorld(index),
                     edit: Some(MenuAction::LocalWorld(LocalWorldAction::Edit(index))),
+                    thumbnail: world.thumbnail.as_ref().map(|image| image.key.clone()),
                 }),
         );
     for entry in entries {
@@ -177,10 +214,14 @@ struct WorldEntry {
     tag: &'static str,
     /// A local world's type tag, beside its game mode.
     world_type: String,
+    /// A local world's hosting server tag, after its type.
+    server: String,
     meta: [String; 2],
     action: MenuAction,
     /// The trailing pencil-and-"Edit" action of an owned world.
     edit: Option<MenuAction>,
+    /// The artwork key of the world's last captured view.
+    thumbnail: Option<String>,
 }
 
 fn game_mode_tag(mode: &str) -> &'static str {
@@ -208,6 +249,13 @@ fn world_row(
         b[1] + pad + thumb_width * 9.0 / 16.0,
     ];
     canvas.fill(thumb, NEUTRAL100)?;
+    if let Some(icon) = entry
+        .thumbnail
+        .as_ref()
+        .and_then(|key| canvas.artwork?.get(key).copied())
+    {
+        canvas.icon_ref_cover(icon, thumb)?;
+    }
     canvas.frame(thumb, 0.2, [0x1e, 0x1e, 0x1f, 255])?;
     let text_left = thumb[2] + canvas.r(0.8);
     let edit_width = if entry.edit.is_some() {
@@ -229,21 +277,23 @@ fn world_row(
             false,
         )?;
     }
-    let tag_right = tag(
+    let mut tag_right = tag(
         canvas,
         entry.tag,
         [text_left, y + canvas.r(0.4)],
         NEUTRAL80.fill,
         TEXT,
     )?;
-    if !entry.world_type.is_empty() {
-        tag(
-            canvas,
-            &entry.world_type,
-            [tag_right + canvas.r(0.4), y + canvas.r(0.4)],
-            NEUTRAL80.fill,
-            TEXT,
-        )?;
+    for label in [&entry.world_type, &entry.server] {
+        if !label.is_empty() {
+            tag_right = tag(
+                canvas,
+                label,
+                [tag_right + canvas.r(0.4), y + canvas.r(0.4)],
+                NEUTRAL80.fill,
+                TEXT,
+            )?;
+        }
     }
     let meta_right = b[2] - pad - edit_width;
     let mut meta_top = b[1] + pad;

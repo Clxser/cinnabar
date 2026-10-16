@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "culling_tests.rs"]
+mod culling;
+
 #[test]
 fn potted_models_sample_the_exposed_server_texture_grid() {
     let side = 64;
@@ -49,11 +52,10 @@ fn potted_models_sample_the_exposed_server_texture_grid() {
                 },
             ],
             model_quads: vec![quad, cropped, quad],
-            texture: Some(assets::texture::TextureArray {
+            textures: vec![assets::TextureArray {
                 layers: 1,
-                mips: assets::texture::build_texture_mip_chain(pixels.clone().into(), side)
-                    .unwrap(),
-            }),
+                mips: assets::build_texture_mip_chain(pixels.clone().into(), side).unwrap(),
+            }],
             texture_source_sizes: vec![[side as u16 >> grid; 2]],
             texture_source_grids: vec![grid],
             ..assets::BlockOverlay::default()
@@ -353,5 +355,77 @@ fn dropped_barrel_models_use_authored_carried_faces_for_both_id_modes() {
         for (face, pixels) in cube.faces.iter().enumerate() {
             assert_eq!(pixels.as_ref(), tiles[face].rgba8.as_ref());
         }
+    }
+}
+
+#[test]
+fn weighted_replacement_updates_dropped_pixels_and_keeps_the_variation_range() {
+    let (mut compiled, records) = barrels();
+    let record = records
+        .iter()
+        .find(|record| record.name.as_ref() == "minecraft:barrel")
+        .unwrap();
+    let visual = &mut compiled.visuals[record.sequential_id as usize];
+    let representative = compiled.materials[visual.faces[0] as usize];
+    let mut materials = compiled.materials.into_vec();
+    let selector = materials.len() as u32;
+    materials.push(assets::Material {
+        variation_start: selector + 1,
+        variation_count: 2,
+        ..representative
+    });
+    materials.extend([0.25_f32, 0.75_f32].map(|weight| assets::Material {
+        variation_weight: weight.to_bits(),
+        ..representative
+    }));
+    compiled.materials = materials.into();
+    visual.faces = [selector; 6];
+    visual.kind = VisualKind::Cube;
+    visual.flags = assets::BlockFlags::CUBE_GEOMETRY | assets::BlockFlags::OCCLUDES_FULL_FACE;
+    visual.model_template = assets::NO_MODEL_TEMPLATE;
+    let base = RuntimeAssets::decode(&assets::encode_blob(&compiled).unwrap()).unwrap();
+    let color = [91, 40, 80, 255];
+    let replacement = assets::BlockOverlay {
+        textures: vec![assets::TextureArray {
+            layers: 1,
+            mips: assets::build_texture_mip_chain(
+                color
+                    .repeat((assets::TILE_SIZE * assets::TILE_SIZE) as usize)
+                    .into(),
+                assets::TILE_SIZE,
+            )
+            .unwrap(),
+        }],
+        material_overrides: (selector..selector + 3)
+            .map(|material| assets::MaterialOverride {
+                material,
+                texture: assets::TextureRef::new(1, 0).unwrap(),
+                animation: assets::NO_ANIMATION,
+                variation: None,
+            })
+            .collect(),
+        ..assets::BlockOverlay::default()
+    };
+    let session = base
+        .with_block_overlay(base.visual_count() as u32, &replacement)
+        .unwrap();
+    for (mode, id) in [
+        (NetworkIdMode::Sequential, record.sequential_id),
+        (NetworkIdMode::Hashed, record.network_hash),
+    ] {
+        let original = block_cube(&base, mode, id).unwrap();
+        let dropped = block_cube(&session, mode, id).unwrap();
+        for (face, original_face) in dropped.faces.iter().zip(&original.faces) {
+            assert!(face.as_chunks::<4>().0.iter().all(|pixel| *pixel == color));
+            assert_ne!(face, original_face);
+        }
+    }
+    let group = session.material(selector);
+    assert_eq!(group.variation_start, selector + 1);
+    assert_eq!(group.variation_count, 2);
+    for (leaf, weight) in [0.25_f32, 0.75_f32].into_iter().enumerate() {
+        let material = session.material(selector + 1 + leaf as u32);
+        assert_eq!(material.texture, group.texture);
+        assert_eq!(material.variation_weight, weight.to_bits());
     }
 }

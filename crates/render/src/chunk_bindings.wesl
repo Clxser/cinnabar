@@ -21,9 +21,15 @@ struct AtmosphereUniform {
 @group(0) @binding(2) var<storage, read> chunk_origins: array<ChunkOrigin>;
 @group(0) @binding(4) var block_textures_page_0: texture_2d_array<f32>;
 @group(0) @binding(5) var block_textures_page_1: texture_2d_array<f32>;
+@group(0) @binding(19) var block_textures_page_2: texture_2d_array<f32>;
+@group(0) @binding(20) var block_textures_page_3: texture_2d_array<f32>;
+@group(0) @binding(21) var block_textures_page_4: texture_2d_array<f32>;
 @group(0) @binding(6) var block_sampler: sampler;
 @group(0) @binding(NATIVE_LEAF_TEXTURE_BINDING_0) var terrain_gamma_page_0: texture_2d_array<f32>;
 @group(0) @binding(NATIVE_LEAF_TEXTURE_BINDING_1) var terrain_gamma_page_1: texture_2d_array<f32>;
+@group(0) @binding(22) var terrain_gamma_page_2: texture_2d_array<f32>;
+@group(0) @binding(23) var terrain_gamma_page_3: texture_2d_array<f32>;
+@group(0) @binding(24) var terrain_gamma_page_4: texture_2d_array<f32>;
 @group(0) @binding(NATIVE_LEAF_SAMPLER_BINDING) var model_sampler: sampler;
 @group(0) @binding(9) var<storage, read> animations: array<AnimationGpu>;
 @group(0) @binding(10) var<storage, read> animation_frames: array<u32>;

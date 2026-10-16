@@ -1,10 +1,14 @@
 mod decode;
+mod face_overrides;
+#[cfg(test)]
+mod geometry_tests;
+mod hashed_ids;
 mod id_remap;
 mod overlay;
 mod server_defined_blocks;
 
 pub use id_remap::SequentialIdRemap;
-pub use overlay::{BlockOverlay, MaterialOverride};
+pub use overlay::{BlockOverlay, MaterialOverride, VanillaFallback};
 pub use server_defined_blocks::{
     ServerDefinedBlock, server_defined_blocks, server_defined_blocks_for_registry,
 };
@@ -136,7 +140,7 @@ const fn diagnostic_visual() -> BlockVisual {
 pub struct RuntimeAssets {
     visuals: Box<[BlockVisual]>,
     light_properties: Box<[LightProperties]>,
-    hashed: Box<[(u32, u32)]>,
+    hashed: hashed_ids::HashedIds,
     materials: Box<[Material]>,
     model_templates: Box<[ModelTemplate]>,
     model_random_offsets: Box<[(u32, block_transform::random_offset::RandomOffsetComponent)]>,
@@ -146,6 +150,9 @@ pub struct RuntimeAssets {
     texture_pages: Box<[TexturePage]>,
     overlay_texture_source_sizes: Box<[[u16; 2]]>,
     overlay_texture_source_grids: Box<[u8]>,
+    /// Flat layer counts of each shard, so a shard-local layer maps to the
+    /// per-layer source arrays without a stored start table.
+    overlay_page_layer_counts: Box<[usize]>,
     biomes: CompiledBiomeAssets,
     provenance: BlobProvenance,
     missing: AtomicU64,
@@ -177,7 +184,7 @@ impl RuntimeAssets {
         Self {
             visuals: vec![diagnostic_visual()].into_boxed_slice(),
             light_properties: vec![LightProperties::OPAQUE_DARK].into_boxed_slice(),
-            hashed: Box::new([]),
+            hashed: hashed_ids::HashedIds::new(Box::new([])),
             materials: vec![Material {
                 texture: TextureRef::DIAGNOSTIC,
                 flags: 0,
@@ -194,6 +201,7 @@ impl RuntimeAssets {
                 .into_boxed_slice(),
             overlay_texture_source_sizes: Box::new([]),
             overlay_texture_source_grids: Box::new([]),
+            overlay_page_layer_counts: Box::new([]),
             biomes: CompiledBiomeAssets::diagnostic(),
             provenance: BlobProvenance::ZEROED,
             missing: AtomicU64::new(0),
@@ -202,26 +210,27 @@ impl RuntimeAssets {
 
     #[must_use]
     pub fn resolve(&self, mode: NetworkIdMode, value: u32) -> ResolvedBlock {
+        self.resolve_known(mode, value).unwrap_or_else(|| {
+            self.record_missing();
+            ResolvedBlock::diagnostic()
+        })
+    }
+
+    /// Resolves a registered network value exactly as [`Self::resolve`] does; an unregistered
+    /// value answers `None` without counting a miss.
+    #[must_use]
+    pub fn resolve_known(&self, mode: NetworkIdMode, value: u32) -> Option<ResolvedBlock> {
         let index = match mode {
             NetworkIdMode::Sequential => Some(value),
             NetworkIdMode::Hashed => self.sequential_id_for_hash(value),
-        };
-        let visual = index.and_then(|index| {
-            self.visuals
-                .get(index as usize)
-                .copied()
-                .zip(self.light_properties.get(index as usize).copied())
-        });
-        visual.map_or_else(
-            || {
-                self.record_missing();
-                ResolvedBlock::diagnostic()
-            },
-            |(visual, light)| ResolvedBlock::known(visual, light),
-        )
+        }? as usize;
+        Some(ResolvedBlock::known(
+            *self.visuals.get(index)?,
+            *self.light_properties.get(index)?,
+        ))
     }
 
-    /// Texture pixels and animation frames do not change the mesh's material addresses.
+    /// Mesh reuse requires matching material addresses, flags, and positional variation mode.
     pub fn has_same_geometry(&self, other: &Self) -> bool {
         self.visuals == other.visuals
             && self.hashed == other.hashed
@@ -233,16 +242,19 @@ impl RuntimeAssets {
                 .materials
                 .iter()
                 .zip(other.materials.iter())
-                .all(|(a, b)| a.flags == b.flags)
+                .all(|(a, b)| {
+                    a.flags == b.flags && (a.variation_count > 1) == (b.variation_count > 1)
+                })
     }
 
-    /// Exposed source rectangle pixels, independently of the physical texture-array size.
+    /// Source pixel dimensions of the shard a reference names, or the base
+    /// carrier's physical page size for page zero.
     #[must_use]
     pub fn texture_source_size(&self, reference: TextureRef) -> [u32; 2] {
-        if reference.page() == 1
+        if reference.page() != 0
             && let Some(size) = self
-                .overlay_texture_source_sizes
-                .get(reference.layer() as usize)
+                .flat_overlay_layer(reference)
+                .and_then(|flat| self.overlay_texture_source_sizes.get(flat))
         {
             return size.map(u32::from);
         }
@@ -257,14 +269,27 @@ impl RuntimeAssets {
     /// Terrain UV-grid exponent for a session layer; carrier layers use their full rectangle.
     #[must_use]
     pub fn texture_source_grid(&self, reference: TextureRef) -> u8 {
-        if reference.page() == 1 {
-            self.overlay_texture_source_grids
-                .get(reference.layer() as usize)
+        if reference.page() != 0 {
+            self.flat_overlay_layer(reference)
+                .and_then(|flat| self.overlay_texture_source_grids.get(flat))
                 .copied()
                 .unwrap_or(0)
         } else {
             0
         }
+    }
+
+    /// Index of a shard reference's layer inside the flat per-layer arrays.
+    fn flat_overlay_layer(&self, reference: TextureRef) -> Option<usize> {
+        let shard = reference.page().checked_sub(1)? as usize;
+        let layers = self.overlay_page_layer_counts.get(shard).copied()?;
+        let layer = reference.layer() as usize;
+        (layer < layers).then(|| {
+            self.overlay_page_layer_counts[..shard]
+                .iter()
+                .sum::<usize>()
+                + layer
+        })
     }
 
     /// Returns terrain mips in admitted source pixels, rebuilding legacy carrier art as needed.
@@ -279,7 +304,7 @@ impl RuntimeAssets {
                 detail: "terrain texture page is out of range".into(),
             })?
             .texture;
-        if page == 1 && !self.overlay_texture_source_sizes.is_empty() {
+        if page != 0 && !self.overlay_texture_source_sizes.is_empty() {
             return Ok(std::borrow::Cow::Borrowed(texture));
         }
         crate::texture::rebuild_legacy_terrain_mips(texture).map(std::borrow::Cow::Owned)
@@ -316,10 +341,7 @@ impl RuntimeAssets {
     /// distinct states may intentionally share byte-identical visuals.
     #[must_use]
     pub fn sequential_id_for_hash(&self, network_hash: u32) -> Option<u32> {
-        self.hashed
-            .binary_search_by_key(&network_hash, |entry| entry.0)
-            .ok()
-            .map(|index| self.hashed[index].1)
+        self.hashed.get(network_hash)
     }
 
     /// Returns the unique network identity marked as air by the validated
@@ -341,6 +363,7 @@ impl RuntimeAssets {
 
         let mut air_hashes = self
             .hashed
+            .entries()
             .iter()
             .filter(|(_, mapped_id)| *mapped_id == sequential_id)
             .map(|(network_hash, _)| *network_hash);
@@ -416,6 +439,17 @@ impl RuntimeAssets {
     #[must_use]
     pub const fn texture_pages(&self) -> &[TexturePage] {
         &self.texture_pages
+    }
+    /// Overlay texture shards appended after the base carrier's page, in
+    /// reference page order (page 1 first). Vanilla carriers decode none.
+    pub fn texture_shards(&self) -> impl ExactSizeIterator<Item = &TextureArray> {
+        let first = self.texture_pages.len() - self.overlay_page_layer_counts.len();
+        self.texture_pages[first..].iter().map(|page| &page.texture)
+    }
+    /// Layer count of each overlay shard, parallel to the shards.
+    #[must_use]
+    pub fn overlay_page_layer_counts(&self) -> &[usize] {
+        &self.overlay_page_layer_counts
     }
     #[must_use]
     pub const fn texture_array(&self) -> &TextureArray {

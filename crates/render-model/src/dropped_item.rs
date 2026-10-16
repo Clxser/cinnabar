@@ -2,14 +2,16 @@
 
 use std::sync::Arc;
 
+mod atlas;
 mod block;
 mod bounds;
 mod culling;
 mod mesh;
 mod native;
 mod rope;
+pub use atlas::atlas_layer_limit;
 pub use block::block_mesh;
-pub use bounds::{DroppedItemBounds, DroppedItemCullView};
+pub use bounds::{DroppedItemBounds, DroppedItemCullView, DroppedItemFrustum};
 
 pub use mesh::{
     ITEM_MESH_VERTEX_BYTES, ItemMeshVertex, cube_mesh, extruded_sprite_mesh,
@@ -18,8 +20,10 @@ pub use mesh::{
 pub use native::{DroppedItemShape, DroppedItemSpawnPose, native_dropped_item_transform};
 pub use rope::{rope_color, rope_point, rope_ribbon};
 
-/// Side length of every layer on the GPU; larger textures are rejected.
-pub const MAX_ITEM_SPRITE_SIDE: u32 = 32;
+/// Maximum source extent shared by item preparation and texture upload.
+pub const MAX_ITEM_SPRITE_SIDE: u32 = assets::texture::policy::MAX_TEXTURE_SIDE;
+/// Minimum physical layer size for the dropped-item array.
+pub const MIN_ITEM_ATLAS_SIDE: u32 = 32;
 /// Cap on GPU layers, including the reserved white layer.
 pub const MAX_ITEM_LAYERS: usize = 512;
 pub const MAX_DROPPED_ITEM_INSTANCES: usize = 1_024;
@@ -49,6 +53,8 @@ pub struct DroppedItemInstance {
     pub sky_level: u32,
     /// Packed RGBA8 colour blended over the lit result (see `pack_overlay_rgba8`); 0 disables it.
     pub overlay_rgba8: u32,
+    /// Draws vanilla's item glint across the model's sprite.
+    pub glint: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

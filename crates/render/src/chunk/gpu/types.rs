@@ -342,9 +342,12 @@ pub(in crate::chunk) fn summarize_model_workload<'a>(
 ) -> ModelWorkloadCount {
     allocations
         .into_iter()
+        // Both model commands need a model stream; testing it first skips building their
+        // stream addresses for the many sub-chunks without models.
         .filter(|allocation| {
-            model_direct_draw_command(allocation).is_some()
-                || transparent_model_direct_draw_command(allocation).is_some()
+            allocation.model_range.is_some()
+                && (model_direct_draw_command(allocation).is_some()
+                    || transparent_model_direct_draw_command(allocation).is_some())
         })
         .fold(ModelWorkloadCount::default(), |mut total, allocation| {
             let model_ref_count = model_ref_count_for_witness(allocation);
@@ -552,6 +555,8 @@ pub(in crate::chunk) struct ArenaAllocation {
     pub(in crate::chunk) geometry_stream_capacity: u32,
     pub(in crate::chunk) biome_range: Range<u32>,
     pub(in crate::chunk) biome_capacity: u32,
+    /// The record written to `biome_range`, or `None` for the shared fallback.
+    pub(in crate::chunk) biome_record: Option<meshing::PackedBiomeRecord>,
     pub(in crate::chunk) gpu: GpuChunkAllocation,
 }
 
@@ -629,6 +634,18 @@ impl RetiredArenaAllocation {
 }
 
 impl ArenaAllocation {
+    /// This allocation's biome range and capacity when it already holds exactly `record`, so a
+    /// new generation can keep it without rewriting or reallocating it.
+    pub(in crate::chunk) fn reusable_biome(
+        &self,
+        record: &meshing::PackedBiomeRecord,
+    ) -> Option<(Range<u32>, u32)> {
+        self.biome_record
+            .as_ref()
+            .filter(|resident| resident.words() == record.words())
+            .map(|_| (self.biome_range.clone(), self.biome_capacity))
+    }
+
     pub(in crate::chunk) fn expected_streams(&self) -> ChunkStreamMask {
         let mut mask = ChunkStreamMask::default();
         if self.cube_range.is_some() || self.cube_lighting_range.is_some() {

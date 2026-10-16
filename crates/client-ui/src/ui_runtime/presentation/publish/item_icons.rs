@@ -22,13 +22,17 @@ pub(super) fn stack_icon(
     animation_frame: Option<u32>,
 ) -> Option<IconRef> {
     let identifier = item.identifier.as_deref()?;
-    let (icon_identifier, variant) = UiPresentationRuntime::item_icon_key(
-        identifier,
-        stack.metadata,
-        item.use_animation,
-        item.charged_projectile_role,
-        animation_frame,
-    );
+    let (icon_identifier, variant) = presentation
+        .dial_icon_key(identifier, stack.metadata)
+        .unwrap_or_else(|| {
+            UiPresentationRuntime::item_icon_key(
+                identifier,
+                stack.metadata,
+                item.use_animation,
+                item.charged_projectile_role,
+                animation_frame,
+            )
+        });
     let icon = presentation.item_icon(icon_identifier, variant)?;
     Some(icon.with_glint(runtime.item_glint(stack, item.glint)))
 }

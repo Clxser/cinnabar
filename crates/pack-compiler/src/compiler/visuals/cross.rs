@@ -1,15 +1,38 @@
 use super::context::{ModelStorage, RuleInputs, diagnostic_visual, push_model_template};
 use super::dispatcher::CompileRuleResult;
+use assets::facts::{BlockRenderKind as R, block_render_fact};
 use {super::super::*, assets::BlockFace};
+
+/// Fixed-point inset of an ordinary nine-tenths-width plant sprite.
+pub(in crate::compiler) const PLANT_INSET: i16 = 13;
+/// Fixed-point inset of the narrower berry and pitcher flower sprites.
+pub(in crate::compiler) const NARROW_PLANT_INSET: i16 = 36;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(in crate::compiler) enum Geometry {
+    Diagonal,
+    CropRows,
+    Torchflower,
+    BerryBush,
+}
+
+pub(in crate::compiler) type TemplateKey = ([u32; 2], Geometry);
 
 pub(in crate::compiler) fn compile_rule(
     record: &RegistryRecord,
     inputs: &RuleInputs<'_>,
-    templates: &mut BTreeMap<([u32; 2], bool), u32>,
+    templates: &mut BTreeMap<TemplateKey, u32>,
     storage: &mut ModelStorage<'_>,
 ) -> Result<CompileRuleResult, AssetError> {
     if !is_cross_visual(record) {
         return Ok(CompileRuleResult::NoMatch);
+    }
+    if block_render_fact(&record.name).kind == R::BerryBush
+        && canonical_state_u32(&record.canonical_state, "growth")
+            .filter(|&growth| growth <= 7)
+            .is_none()
+    {
+        return Ok(CompileRuleResult::Reject);
     }
     let mut visual = diagnostic_visual(record);
     let faces = if is_aquatic_cross(record) {
@@ -25,18 +48,21 @@ pub(in crate::compiler) fn compile_rule(
         )
     {
         let materials = [material_a, material_b];
-        let crop_rows = matches!(
-            record.name.as_ref(),
-            "minecraft:wheat" | "minecraft:carrots" | "minecraft:potatoes" | "minecraft:beetroot"
-        );
-        let key = (materials, crop_rows);
+        let geometry = match block_render_fact(&record.name).kind {
+            R::CropRows => Geometry::CropRows,
+            R::Torchflower => Geometry::Torchflower,
+            R::BerryBush => Geometry::BerryBush,
+            _ => Geometry::Diagonal,
+        };
+        let key = (materials, geometry);
         let template = if let Some(&template) = templates.get(&key) {
             template
         } else {
-            let quads = if crop_rows {
-                crop_row_quads(material_a).to_vec()
-            } else {
-                crossed_quads(materials).to_vec()
+            let quads = match geometry {
+                Geometry::CropRows => crop_row_quads(material_a).to_vec(),
+                Geometry::Torchflower => plant_quads(material_a, 256, 0, PLANT_INSET).to_vec(),
+                Geometry::BerryBush => plant_quads(material_a, 256, 0, NARROW_PLANT_INSET).to_vec(),
+                Geometry::Diagonal => crossed_quads(materials).to_vec(),
             };
             let template = push_model_template(quads, 0, storage.templates, storage.quads)?;
             templates.insert(key, template);
@@ -105,4 +131,24 @@ pub(in crate::compiler) fn crossed_quads(materials: [u32; 2]) -> [ModelQuad; 2] 
             flags: MODEL_QUAD_FLAG_TWO_SIDED,
         },
     ]
+}
+
+/// Emits an inset sprite cross with upright UVs and a caller-owned height and base.
+pub(in crate::compiler) fn plant_quads(
+    material: u32,
+    height: i16,
+    base: i16,
+    inset: i16,
+) -> [ModelQuad; 2] {
+    let mut quads = crossed_quads([material; 2]);
+    for quad in &mut quads {
+        for (position, uv) in quad.positions.iter_mut().zip(&mut quad.uvs) {
+            position[0] = if position[0] == 0 { inset } else { 256 - inset };
+            position[2] = if position[2] == 0 { inset } else { 256 - inset };
+            let bottom = position[1] == 0;
+            position[1] = base + if bottom { 0 } else { height };
+            uv[1] = if bottom { height as u16 * 16 } else { 0 };
+        }
+    }
+    quads
 }

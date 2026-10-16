@@ -48,6 +48,19 @@ impl Units {
             .ok_or(TextError::FixedPointOverflow)
     }
 
+    /// Scales styling texels independently of glyph rasters, retaining this layout's units.
+    /// Zero keeps the existing device-unit rounding used by bitmap glyphs.
+    pub(super) fn effect_texels(self, value_64: i64, scale_1024: u32) -> Result<i64, TextError> {
+        if scale_1024 == 0 {
+            return self.texels(value_64);
+        }
+        let output = Self::Output {
+            scale_1024: i64::from(scale_1024),
+        }
+        .texels(value_64)?;
+        self.output_to_layout(output)
+    }
+
     /// A request value in output 1/64 pixels, in layout units, rounded to nearest.
     pub(super) fn output_to_layout(self, value_64: i64) -> Result<i64, TextError> {
         match self {

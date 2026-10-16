@@ -21,10 +21,10 @@ impl Write for ReadyOutput {
     /// Records output while notifying the client as soon as the endpoint is published.
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
         self.bytes.extend_from_slice(data);
-        if String::from_utf8_lossy(&self.bytes).contains("BEDROCK_REPLAY_READY") {
-            if let Some(ready) = self.ready.take() {
-                let _ = ready.send(());
-            }
+        if String::from_utf8_lossy(&self.bytes).contains("BEDROCK_REPLAY_READY")
+            && let Some(ready) = self.ready.take()
+        {
+            let _ = ready.send(());
         }
         Ok(data.len())
     }
@@ -223,6 +223,8 @@ async fn native_login_joins_the_replay_session() {
             None,
             None,
             &Default::default(),
+            None,
+            |_, _| (),
         )
         .await
         .unwrap();

@@ -5,6 +5,7 @@ pub mod item_icons;
 use item_icons::{ItemIconFrames, ItemResolver};
 
 mod container;
+pub(super) mod inventory_cache;
 mod observations;
 mod player_items;
 mod recipes;
@@ -19,6 +20,7 @@ pub fn capture_hud_frame(
     now_millis: u64,
     icon_frames: ItemIconFrames,
 ) -> (Option<IconRef>, Option<IconRef>) {
+    runtime.sync_anvil_name(player_runtime);
     // Inventory capture precedes lectern opening and screen selection. Selected-item
     // and sleep observations run after item capture, immediately before publication.
     let armor = observations::armor(
@@ -30,25 +32,22 @@ pub fn capture_hud_frame(
     let mount_health = runtime.gameplay_hud().mount_unique_id().and_then(|unique| {
         stream.and_then(|stream| stream.authority().actor_health_by_unique(unique))
     });
+    let mut inventory_cache = presentation
+        .inventory_cache
+        .take()
+        .expect("inventory cache retained");
     let items = ItemResolver {
         runtime,
         presentation,
         authority: stream.map(|stream| stream.authority()),
     };
-    let contents = ui_screens::inventory_capture::capture_contents(
-        runtime.inventory_ledger(player_runtime),
-        runtime.inventory_open(),
-        || runtime.crafting_match(player_runtime),
-        |stack, slot| items.icon(stack, slot.and_then(|slot| icon_frames.slot(slot))),
-        |stack| Some(runtime.localized_item_name(&items.identifier(stack)?)),
-    );
+    let projections = inventory_cache.capture(player_runtime, &items, &icon_frames);
+    presentation.inventory_cache = Some(inventory_cache);
     let mut window_icons = container::ghost_icons(presentation, runtime.inventory_open());
-    let (durability, ui_icons) = ui_screens::inventory_capture::capture_decorations(
-        runtime.inventory_ledger(player_runtime),
-        |stack, correction| items.durability(stack, correction),
-        |stack| items.icon(stack, None),
-    );
-    window_icons.ui = ui_icons;
+    window_icons.ui = projections
+        .decorations
+        .as_ref()
+        .map_or(presentation.hud_frame.window_icons.ui, |(_, icons)| *icons);
     observations::open_lectern(player_runtime, runtime, stream);
     let items = ItemResolver {
         runtime,
@@ -103,11 +102,18 @@ pub fn capture_hud_frame(
     frame.hotbar_stacks = hotbar.stacks;
     frame.offhand_durability = equipment.offhand_durability;
     frame.hotbar_icons = hotbar.icons;
-    frame.inventory_icons = contents.inventory_icons;
-    frame.storage_icons = contents.storage_icons;
-    frame.crafting = contents.crafting;
+    if let Some(contents) = projections.contents {
+        frame.inventory_icons = contents.inventory_icons;
+        frame.storage_icons = contents.storage_icons;
+        frame.crafting = contents.crafting;
+    }
+    if let Some(names) = projections.item_names {
+        frame.item_names = names;
+    }
     frame.window_icons = window_icons;
-    frame.durability = durability;
+    if let Some((durability, _)) = projections.decorations {
+        frame.durability = durability;
+    }
     frame.window_text = window_text;
     frame.cursor_icon = cursor_icon;
     frame.armor_icons = equipment.armor_icons;
@@ -127,7 +133,6 @@ pub fn capture_hud_frame(
         .and_then(|identifier| runtime.food_properties(&identifier));
     frame.selected_item_name = equipment.selected_item_name;
     frame.holding_filled_map = equipment.holding_filled_map;
-    frame.item_names = contents.item_names;
     frame.mount_jump = mount_jump;
     frame.attack_indicator_charge = Some(1.0);
     observations::note_diagnostics(runtime, presentation);
@@ -163,6 +168,11 @@ pub fn hovered_stack(
                 ledger.target_stack(inventory::inventory_ledger::InventoryTarget::Offhand),
                 None,
             ),
+            Hit::CraftOutput if ledger.window_kind() == Some(protocol::WindowKind::Anvil) => {
+                return runtime
+                    .anvil_output(player_runtime)
+                    .map(|stack| (stack, None));
+            }
             Hit::CraftOutput => (ledger.created_output_stack(), None),
             Hit::CreativeGrid(index) => {
                 let position = runtime.screen_state().creative_row * super::screens::GRID_COLUMNS

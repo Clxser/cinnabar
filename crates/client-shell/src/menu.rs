@@ -27,6 +27,7 @@ mod realm_membership;
 pub use join_requests::open_join_requests_from_key;
 pub mod launcher_account;
 mod launcher_core;
+mod minecraft_import;
 mod navigation;
 mod presence_targets;
 mod reconnect;
@@ -54,13 +55,15 @@ use ui::RenderMode;
 use {auth::AuthSupervisor, launcher::menu::auth::AuthState};
 
 use core_process::{auth_cache_path, core_executable};
-pub use input::{MenuClipboard, drive_menu_input};
+pub(crate) use input::context::observe_keyboard_labels;
+pub use input::{HOTKEY_OPTIONS, MenuClipboard, drive_menu_input};
 use launcher::menu::view::{CatalogFile, MenuFeeds};
 
 use launcher::menu::view::{
     JoinKind, LocalWorldCard, MenuFriendCard, MenuRealmCard, MenuServerCard, SavedServer,
 };
 
+pub use account::SignInStatus;
 pub use launcher_core::LauncherCoreSlot;
 use servers::{ServerWriter, load_servers};
 pub use video_settings::persist_video_settings;
@@ -74,7 +77,7 @@ use bevy::prelude::{Commands, ResMut, Resource};
 
 use launcher::install_layout::InstallLayout;
 
-use launcher::menu::{MAX_SERVER_ADDRESS_BYTES, MAX_SERVER_NAME_BYTES};
+use launcher::menu::{MAX_SERVER_ADDRESS_BYTES, MAX_SERVER_NAME_BYTES, MenuList};
 /// Vanilla's port box: six number characters, prefilled with the Bedrock default.
 const MAX_SERVER_PORT_BYTES: usize = 6;
 use launcher::menu::DEFAULT_PORT;
@@ -129,15 +132,15 @@ pub struct MenuRuntime {
     vsync_override: Option<bool>,
     display_name: String,
     launcher: bool,
-    servers: Vec<SavedServer>,
+    servers: MenuList<SavedServer>,
     config_path: PathBuf,
     saves: ServerWriter,
     intents: SessionIntents,
     /// The session controller's last published state.
     session: SessionStatus,
-    featured: Vec<MenuServerCard>,
-    realms: Vec<MenuRealmCard>,
-    friends: Vec<MenuFriendCard>,
+    featured: MenuList<MenuServerCard>,
+    realms: MenuList<MenuRealmCard>,
+    friends: MenuList<MenuFriendCard>,
     catalog_message: Option<String>,
     catalog_started: bool,
     catalog: launcher_host::catalog::Catalog,
@@ -145,6 +148,8 @@ pub struct MenuRuntime {
     auth_process: Option<AuthSupervisor>,
     auth_attempted: bool,
     auth_restart_requested: bool,
+    /// The account core a held join may still use; `None` when it cannot start for the join.
+    account_core: Option<launcher_core::AccountCore>,
     layout: InstallLayout,
     /// The client's own skin, cloned into every reconnection's `NetworkConfig`.
     player_skin: crate::player_skin::LocalPlayerSkin,
@@ -161,7 +166,7 @@ pub struct MenuRuntime {
     death_loading: bool,
     death_presentation: launcher::menu::death::DeathPresentation,
     death_retry_remaining: Option<std::time::Duration>,
-    local_worlds: Vec<LocalWorldCard>,
+    local_worlds: MenuList<LocalWorldCard>,
     local_world_requested: Option<usize>,
     local_ui: worlds_tab::LocalWorldsUi,
     /// Sign-in state reported by the core's account control, when bound.
@@ -180,22 +185,24 @@ pub struct MenuRuntime {
     presentation_accounts: bool,
     sign_out_requested: bool,
     accounts: accounts::Manager,
-    /// Marketplace actions waiting for the store driver.
-    store_actions: Vec<launcher::store::StoreAction>,
     pub global_resource_actions: Vec<launcher::global_resources::Action>,
     pub global_resources: std::sync::Arc<launcher::global_resources::Snapshot>,
-    /// The Marketplace's presented state while its screen is up.
-    store_snapshot: Option<std::sync::Arc<launcher::store::snapshot::StoreSnapshot>>,
+    /// Mods-tab work for the mod runtime; disclosure toggles apply in place.
+    pub mod_actions: Vec<launcher::mods::Action>,
+    pub mods: std::sync::Arc<launcher::mods::Snapshot>,
+    minecraft_import: std::sync::Arc<launcher::minecraft_import::Snapshot>,
+    minecraft_import_requests: Vec<launcher_host::minecraft_import::Request>,
     settings_options: std::sync::Arc<launcher::menu::settings_options::SettingsOptions>,
     storage: std::sync::Arc<launcher::menu::settings_storage::StorageView>,
     settings_dropdown: Option<u16>,
     settings_scale_picker: bool,
     settings_dirty: bool,
-    /// Failed writes wait until this deadline while retaining the newest edits.
+    settings_writer: Option<launcher::menu::settings_options::persistence::writer::Writer>,
+    /// Worker startup failures wait until this deadline before another attempt.
     settings_retry_at: Option<std::time::Instant>,
     settings_apply: bool,
-    /// In-memory option overrides (index, persisted value) that saves never write.
-    session_overrides: Vec<(usize, i32)>,
+    /// Stored choices beneath session-only overrides, restored before saving preferences.
+    session_overrides: Vec<launcher::menu::settings_options::OptionPreference>,
     /// A developer controller is driving: hotkey toggles stay in memory.
     transient_toggles: bool,
     language_choices: std::sync::Arc<[(String, String)]>,
@@ -226,6 +233,10 @@ pub struct MenuRuntime {
 #[derive(Debug, Default)]
 struct SessionIntents {
     join: Option<JoinIntent>,
+    /// The queued join waits for the saved account's check until this passes.
+    join_sign_in_deadline: Option<std::time::Instant>,
+    /// The background sign-in check serves a join: it may finish, but never prompts.
+    join_sign_in_check: bool,
     disconnect: bool,
     respawn: bool,
     exit: bool,
@@ -299,33 +310,9 @@ impl MenuRuntime {
         }
     }
 
-    /// Marketplace actions queued since the last call, for the store driver.
-    pub fn take_store_actions(&mut self) -> Vec<launcher::store::StoreAction> {
-        std::mem::take(&mut self.store_actions)
-    }
-
-    /// Publish (or clear) the Marketplace's presented state.
-    pub fn set_store_snapshot(
-        &mut self,
-        snapshot: Option<std::sync::Arc<launcher::store::snapshot::StoreSnapshot>>,
-    ) {
-        self.store_snapshot = snapshot;
-    }
-
-    pub fn in_store(&self) -> bool {
-        self.screen == MenuScreen::Store
-    }
-
-    /// Leave the Marketplace for the start screen.
-    pub fn leave_store(&mut self) {
-        if self.in_store() {
-            self.enter(MenuScreen::Home);
-        }
-    }
-
     /// The local worlds the worlds tab lists (the local-worlds module feeds it).
     pub fn set_local_worlds(&mut self, worlds: Vec<LocalWorldCard>) {
-        self.local_worlds = worlds;
+        self.local_worlds.replace(worlds);
     }
 
     /// A local world the player chose to open, for the local-worlds module.
@@ -345,12 +332,19 @@ impl MenuRuntime {
         self.visible = true;
     }
 
-    /// The queued join, once any sign-in helper has finished cleaning up.
+    /// The queued join, once the saved account's check has settled (bounded) and any
+    /// sign-in helper the join does not outlive has finished cleaning up.
     pub fn take_join_intent(&mut self) -> Option<JoinIntent> {
-        if self
-            .auth_process
-            .as_ref()
-            .is_some_and(|process| !process.cleanup_complete())
+        let helper_outlives_join = match self.settle_join_sign_in(std::time::Instant::now()) {
+            account::JoinSignIn::Waiting => return None,
+            account::JoinSignIn::Settled => false,
+            account::JoinSignIn::Expired => true,
+        };
+        if !helper_outlives_join
+            && self
+                .auth_process
+                .as_ref()
+                .is_some_and(|process| !process.cleanup_complete())
         {
             return None;
         }
@@ -392,6 +386,8 @@ impl MenuRuntime {
     /// A cancelled join drops any queued join and returns to the play screen.
     pub fn cancel_join(&mut self) {
         self.intents.join = None;
+        self.intents.join_sign_in_deadline = None;
+        self.intents.join_sign_in_check = false;
         self.retry_target = None;
         self.show_session_origin(MenuScreen::Play);
     }
@@ -472,6 +468,9 @@ impl MenuRuntime {
     }
 
     pub fn activate(&mut self, action: MenuAction) {
+        if self.dismiss_minecraft_import(action) {
+            return;
+        }
         if self.disconnect_message.is_some() && self.join_request_prompted() {
             if let MenuAction::JoinRequest(accept) = action {
                 self.answer_join_request(accept);
@@ -528,6 +527,7 @@ impl MenuRuntime {
         self.message = None;
         self.disconnect_message = None;
         match action {
+            MenuAction::MinecraftImport(action) => self.activate_minecraft_import(action),
             MenuAction::SelectProfileTab(tab) => self.profile_tab = tab,
             MenuAction::RefreshProfile => {
                 self.feeds.profile.loaded = false;
@@ -581,7 +581,7 @@ impl MenuRuntime {
                     self.set_visible(false);
                 }
             }
-            MenuAction::DismissDialog => self.dismiss_accounts(),
+            MenuAction::DismissDialog | MenuAction::CloseExitDialog => self.dismiss_accounts(),
             MenuAction::Reconnect => {
                 unreachable!("reconnect is handled before clearing the failure")
             }
@@ -739,6 +739,7 @@ impl MenuRuntime {
             | MenuAction::SettingsFullscreen(_)
             | MenuAction::SettingsSection(_)
             | MenuAction::SettingsOption(..)
+            | MenuAction::SettingsVideoPreset(_)
             | MenuAction::SettingsLanguage(_)
             | MenuAction::SettingsDropdown(_)
             | MenuAction::SettingsResetBindings(_)
@@ -766,13 +767,12 @@ impl MenuRuntime {
             MenuAction::ToggleReadMore(section) => self.feeds.toggle_read_more(section),
             MenuAction::OpenLiveEvent => self.open_live_event(),
             MenuAction::GlobalResources(action) => self.global_resource_actions.push(action),
-            MenuAction::DressingRoom(action) => self.activate_dressing_room(action),
-            MenuAction::Store(action) => {
-                if action == launcher::store::StoreAction::Open {
-                    self.enter(MenuScreen::Store);
+            MenuAction::Mods(action) => {
+                if let Some(work) = std::sync::Arc::make_mut(&mut self.mods).apply(action) {
+                    self.mod_actions.push(work);
                 }
-                self.store_actions.push(action);
             }
+            MenuAction::DressingRoom(action) => self.activate_dressing_room(action),
             MenuAction::PlayLocalWorld(index) => {
                 if index < self.local_worlds.len() {
                     self.local_world_requested = Some(index);
@@ -886,9 +886,9 @@ impl MenuRuntime {
         }
         self.remember_session_origin();
         self.stop_catalog();
+        self.hold_join_for_sign_in();
         let auth_cache = self.launcher_auth_cache();
         self.remember_retry_target(&address, auth_cache.as_deref(), false);
-        self.stop_sign_in();
         self.local_world_joined = false;
         self.intents.join = Some(JoinIntent {
             address,
@@ -902,6 +902,9 @@ impl MenuRuntime {
 
 impl Drop for MenuRuntime {
     fn drop(&mut self) {
+        if let Err(error) = self.flush_user_settings() {
+            bevy::log::warn!("could not save settings at shutdown: {error}");
+        }
         self.stop_sign_in();
         self.stop_catalog();
     }

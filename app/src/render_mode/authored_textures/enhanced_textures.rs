@@ -3,7 +3,8 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use assets::{
-    MaterialKeys, NO_ANIMATION, RuntimeAssets, TextureRef,
+    NO_ANIMATION, RuntimeAssets, TextureRef,
+    material_keys::MaterialKeys,
     texture::{TextureArray, TextureMip},
 };
 use image::{ImageBuffer, Rgba};
@@ -221,11 +222,8 @@ fn load(
                     }
                 };
                 let layer = colors[target_page].layers;
-                let Ok(texture_ref) = TextureRef::new(target_page as u32, layer) else {
-                    audit_alias.error = true;
-                    continue;
-                };
-                let reference = texture_ref.raw() | mip.flags;
+                // Authored references keep their page in the top bit, above the PBR flags.
+                let reference = ((target_page as u32) << 31) | layer | mip.flags;
                 colors[target_page].append(&mip.color);
                 normals[target_page].append(&mip.normal);
                 materials[target_page].append(&mip.material);
@@ -266,9 +264,8 @@ fn load(
 
 /// The reference-table slot of a carrier texture, indexed like the shader's authored lookup.
 fn reference_slot(texture: u32) -> Option<usize> {
-    let page = (texture >> 31) as usize;
-    let layer = (texture & assets::TEXTURE_LAYER_MASK) as usize;
-    (page < assets::MAX_TEXTURE_PAGES).then_some(page * assets::MAX_TEXTURE_LAYERS + layer)
+    let texture = TextureRef::from_raw(texture).ok()?;
+    Some(texture.page() as usize * assets::MAX_TEXTURE_LAYERS + texture.layer() as usize)
 }
 
 pub(crate) fn load_optional_enhanced_textures(
@@ -336,7 +333,7 @@ mod tests {
                 base.visual_count() as u32,
                 &assets::BlockOverlay {
                     materials: vec![material; 2],
-                    texture: Some(base.texture_array().clone()),
+                    textures: vec![base.texture_array().clone()],
                     ..Default::default()
                 },
             )

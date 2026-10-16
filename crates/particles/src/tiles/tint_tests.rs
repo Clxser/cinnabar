@@ -7,6 +7,25 @@ use assets::{
 
 use super::{column_exposed, seasonal_tint};
 
+#[test]
+fn stem_particles_keep_the_growth_colour_independent_of_biome() {
+    let tints = CompiledBiomeAssets::diagnostic().resolve_live(&[]).unwrap();
+    let mut record = tints.records[0];
+    record.grass = [0.7, 0.2, 0.5, 1.0];
+    assert_eq!(
+        super::material_tint(&record, assets::stem::material_flags(0).unwrap()),
+        [0.0, 1.0, 0.0, 1.0]
+    );
+    let mature = super::material_tint(&record, assets::stem::material_flags(7).unwrap());
+    for (actual, expected) in
+        mature
+            .into_iter()
+            .zip([224.0 / 255.0, 199.0 / 255.0, 28.0 / 255.0, 1.0])
+    {
+        assert!((actual - expected).abs() < f32::EPSILON);
+    }
+}
+
 fn cell(kind: VisualKind, flags: BlockFlags, variant: u32) -> SeasonalFoliageBlock {
     SeasonalFoliageBlock {
         flags,

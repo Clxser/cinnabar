@@ -1,7 +1,8 @@
 import bevy_render::view::View;
+import render::glint::glint_layer_uvs;
 import render::lighting::{actor_lighting, actor_distance_fog, actor_shadow_opacity_visible, actor_light_colour, tint_to_gamma, tint_to_linear};
 @if(ALPHA_TO_COVERAGE)
-import render::lighting::{CutoutSample, cutout_alpha_array};
+import render::lighting::{CutoutSample, cutout_alpha_array_region};
 @if(ENHANCED)
 import render::enhanced::atmosphere::enhanced_distance_fog;
 @if(ENHANCED)
@@ -41,17 +42,34 @@ struct BoneMatrix {
 
 @group(0) @binding(12) var actor_glint: texture_2d<f32>;
 @group(0) @binding(13) var glint_sampler: sampler;
+@group(0) @binding(14) var item_glint: texture_2d<f32>;
+
+@if(ACTOR_MOTION)
+struct MotionInstance {
+    current_clip_from_actor: mat4x4<f32>,
+    previous_clip_from_actor: mat4x4<f32>,
+    pose: vec4<u32>,
+}
+@if(ACTOR_MOTION)
+@group(2) @binding(0) var<storage, read> actor_motion: array<MotionInstance>;
+@if(ACTOR_MOTION)
+@group(2) @binding(1) var<storage, read> rendered_previous_bones: array<BoneMatrix>;
 
 struct VertexOutput {
     @builtin(position) @invariant position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) @interpolate(flat) skin_info: vec2<u32>,
+    // xy samples the artwork; zw carries the item sprite or face origin.
+    @location(0) @interpolate(perspective, centroid) uv: vec4<f32>,
+    // Texture layer, geometry validity, optional glint instance index and UV wrapping.
+    @location(1) @interpolate(flat) skin_info: vec4<u32>,
+    @if(!ACTOR_MOTION)
     @location(2) world_normal: vec3<f32>,
-    @location(3) back_uv: vec2<f32>,
+    @if(ACTOR_MOTION)
+    @location(2) current_clip: vec4<f32>,
+    @location(3) @interpolate(perspective, centroid) back_uv: vec2<f32>,
     @location(4) @interpolate(flat) tint: u32,
     @location(5) @interpolate(flat) overlay: vec4<f32>,
-    @location(6) @interpolate(flat) uv_wrap: u32,
     @location(7) @interpolate(flat) light: u32,
+    // Enhanced camera motion replaces the main pass's lighting and position varyings.
     @if(ENHANCED_MOTION)
     @location(8) current_clip: vec4<f32>,
     @if(!ENHANCED_MOTION)
@@ -62,16 +80,84 @@ struct VertexOutput {
     @if(!ENHANCED_MOTION)
     @location(10) native_lighting: vec3<f32>,
     @location(11) @interpolate(flat) material: u32,
-    @location(12) @interpolate(flat) dissolve_multiplier: f32,
-    @location(13) @interpolate(flat) surface: u32,
+    // Stored float bits and surface kind share a slot within default motion interface limits.
+    @location(12) @interpolate(flat) material_parameters: vec2<u32>,
     @if(ENHANCED_MOTION)
     @location(14) @interpolate(flat) motion_valid: u32,
     @if(!ENHANCED_MOTION)
     @location(14) back_native_lighting: vec3<f32>,
+    @if(ALPHA_TO_COVERAGE)
+    @location(13) @interpolate(flat) chart_bounds: vec4<u32>,
+    @if(ACTOR_MOTION)
+    @location(6) previous_clip: vec4<f32>,
+}
+
+// Geometry texture dimensions use u16 coordinates; both charts fit one flat varying.
+@if(ALPHA_TO_COVERAGE)
+const ACTOR_CHART_BITS: u32 = ACTOR_CHART_COORDINATE_BITS;
+
+// Selects the physical raster used by this skin resolution class.
+@if(ALPHA_TO_COVERAGE)
+fn actor_texture_dimensions(layer: u32) -> vec2<f32> {
+    switch (layer >> 24u) {
+        case 1u: { return vec2<f32>(textureDimensions(skins_64, 0)); }
+        case 2u: { return vec2<f32>(textureDimensions(skins_128, 0)); }
+        case 3u: { return vec2<f32>(textureDimensions(skins_256, 0)); }
+        default: { return vec2<f32>(textureDimensions(skins, 0)); }
+    }
+}
+
+// Reads both UV maps from the existing geometry buffer.
+@if(ALPHA_TO_COVERAGE)
+fn actor_triangle_uv(vertex: u32) -> vec4<f32> {
+    let base = vertex * ACTOR_RIG_VERTEX_WORDS;
+    return vec4(
+        bitcast<f32>(vertex_words[base + 6u]), bitcast<f32>(vertex_words[base + 7u]),
+        bitcast<f32>(vertex_words[base + 8u]), bitcast<f32>(vertex_words[base + 9u]),
+    );
+}
+
+// Bounds texture taps to texels touched by the chart, including fractional border texels.
+@if(ALPHA_TO_COVERAGE)
+fn actor_chart_region(low: vec2<f32>, high: vec2<f32>, size: vec2<f32>) -> vec4<u32> {
+    let limit = vec2<i32>(size) - vec2(1);
+    let first = clamp(vec2<i32>(floor(clamp(low, vec2(0.0), vec2(1.0)) * size)), vec2(0), limit);
+    let last = max(first, clamp(vec2<i32>(ceil(clamp(high, vec2(0.0), vec2(1.0)) * size)) - vec2(1), vec2(0), limit));
+    return vec4<u32>(vec4(first, last));
+}
+
+// Packs independent front/back UV extents without growing the stored rig vertex.
+@if(ALPHA_TO_COVERAGE)
+fn actor_triangle_chart_bounds(first: u32, last: u32, layer: u32) -> vec4<u32> {
+    let a = actor_triangle_uv(first);
+    let b = actor_triangle_uv(min(first + 1u, last));
+    let c = actor_triangle_uv(min(first + 2u, last));
+    let low = min(min(a, b), c);
+    let high = max(max(a, b), c);
+    let size = actor_texture_dimensions(layer);
+    let front = actor_chart_region(low.xy, high.xy, size);
+    let back = actor_chart_region(low.zw, high.zw, size);
+    return front | (back << vec4(ACTOR_CHART_BITS));
+}
+
+// Selects the chart belonging to the rasterized side of the triangle.
+@if(ALPHA_TO_COVERAGE)
+fn actor_fragment_chart_bounds(packed: vec4<u32>, front: bool) -> vec4<i32> {
+    let mask = (1u << ACTOR_CHART_BITS) - 1u;
+    return vec4<i32>(select(packed >> vec4(ACTOR_CHART_BITS), packed & vec4(mask), front));
 }
 
 fn word_f32(index: u32) -> f32 {
     return bitcast<f32>(instance_words[index]);
+}
+
+// The two glint layers share sprite-normalized coordinates and the selected raster.
+fn glint_layers(uv: vec2<f32>, origin: vec2<f32>, offsets: vec2<f32>, scale: vec2<f32>, item_extent: f32, legacy: bool) -> vec3<f32> {
+    let layers = glint_layer_uvs(uv, origin, scale, offsets * scale.x, item_extent, legacy);
+    if (item_extent > 0.0) {
+        return tint_to_gamma(textureSampleLevel(item_glint, glint_sampler, layers[0], 0.0)).rgb + tint_to_gamma(textureSampleLevel(item_glint, glint_sampler, layers[1], 0.0)).rgb;
+    }
+    return tint_to_gamma(textureSampleLevel(actor_glint, glint_sampler, layers[0], 0.0)).rgb + tint_to_gamma(textureSampleLevel(actor_glint, glint_sampler, layers[1], 0.0)).rgb;
 }
 
 fn instance_row(base: u32, row: u32) -> vec4<f32> {
@@ -130,25 +216,34 @@ fn actor_vertex(
     out.native_lighting = vec3(1.0);
     @if(!ENHANCED_MOTION)
     out.back_native_lighting = vec3(1.0);
-    out.surface = 0u;
+    out.material_parameters.y = 0u;
     out.multitexture_layers = vec2(instance_words[instance_base + 25u], instance_words[instance_base + 26u]);
     out.material = instance_words[instance_base + 27u];
     if ((out.material & ACTOR_MATERIAL_DISABLE_OVERLAY_FLAG) != 0u) { out.overlay = vec4(0.0); }
-    if ((out.material & ACTOR_MATERIAL_KIND_MASK) == ACTOR_MATERIAL_GLINT) { out.multitexture_layers.x = instance_index; }
-    out.dissolve_multiplier = word_f32(instance_base + 28u);
+    let has_glint = (out.material & ACTOR_MATERIAL_KIND_MASK) == ACTOR_MATERIAL_GLINT || word_f32(instance_base + 35u) != 0.0;
+    out.skin_info.z = select(0xffffffffu, instance_index, has_glint);
+    out.material_parameters.x = instance_words[instance_base + 28u];
     let light_color_multiplier = word_f32(instance_base + 29u);
     // Render-controller uv_anim, applied as vanilla's entity shader does: offset + uv * scale.
     let uv_offset = vec2(word_f32(instance_base + 20u), word_f32(instance_base + 21u));
     let uv_scale = vec2(word_f32(instance_base + 22u), word_f32(instance_base + 23u));
-    out.uv_wrap = select(0u, 1u, any(uv_offset != vec2(0.0)) || any(uv_scale != vec2(1.0)));
+    out.skin_info.w = select(0u, 1u, any(uv_offset != vec2(0.0)) || any(uv_scale != vec2(1.0)));
     if (vertex_index >= span.vertex_count) {
         out.position = vec4(2.0, 2.0, 2.0, 1.0);
-        out.uv = vec2(0.0);
+        @if(ACTOR_MOTION)
+        out.current_clip = out.position;
+        @if(ACTOR_MOTION)
+        out.previous_clip = out.position;
+        out.uv = vec4(0.0);
         out.back_uv = vec2(0.0);
         out.skin_info.y = 0u;
+        @if(!ACTOR_MOTION)
         out.world_normal = vec3(0.0, 1.0, 0.0);
         return out;
     }
+
+    @if(ALPHA_TO_COVERAGE)
+    out.chart_bounds = actor_triangle_chart_bounds(span.first_vertex + (vertex_index / 3u) * 3u, span.first_vertex + span.vertex_count - 1u, texture_layer);
 
     // ActorRigVertex uses its Rust stride for both the actor and hand vertex pullers.
     let vertex_base = (span.first_vertex + vertex_index) * ACTOR_RIG_VERTEX_WORDS;
@@ -162,10 +257,15 @@ fn actor_vertex(
         bitcast<f32>(vertex_words[vertex_base + 4u]),
         bitcast<f32>(vertex_words[vertex_base + 5u]),
     );
-    out.uv = uv_offset + vec2(
+    let artwork_uv = uv_offset + vec2(
         bitcast<f32>(vertex_words[vertex_base + 6u]),
         bitcast<f32>(vertex_words[vertex_base + 7u]),
     ) * uv_scale;
+    let glint_origin = uv_offset + vec2(
+        bitcast<f32>(vertex_words[vertex_base + ACTOR_RIG_VERTEX_WORDS - 2u]),
+        bitcast<f32>(vertex_words[vertex_base + ACTOR_RIG_VERTEX_WORDS - 1u]),
+    ) * uv_scale;
+    out.uv = vec4(artwork_uv, glint_origin);
     let raw_back_uv = vec2(
         bitcast<f32>(vertex_words[vertex_base + 8u]),
         bitcast<f32>(vertex_words[vertex_base + 9u]),
@@ -173,7 +273,7 @@ fn actor_vertex(
     // A one-sided plane's back keeps its sentinel so the fragment stage can discard it.
     out.back_uv = select(uv_offset + raw_back_uv * uv_scale, raw_back_uv, raw_back_uv.x < -1.0e8);
     let bone_index = vertex_words[vertex_base + 10u];
-    out.surface = vertex_words[vertex_base + 11u];
+    out.material_parameters.y = vertex_words[vertex_base + 11u];
     let previous = transform_point(previous_bones[previous_bone_base + bone_index], local);
     let current = transform_point(current_bones[current_bone_base + bone_index], local);
     let posed = mix(previous, current, partial_tick);
@@ -196,6 +296,16 @@ fn actor_vertex(
     out.position = caster.clip_from_world * world;
     @if(!ENHANCED_SHADOW)
     out.position = view.clip_from_world * world;
+    @if(ACTOR_MOTION)
+    {
+        let motion = actor_motion[instance_index];
+        out.current_clip = motion.current_clip_from_actor * vec4(posed, 1.0);
+        out.previous_clip = out.current_clip;
+        if (motion.pose.y != 0u) {
+            let previous_rendered = transform_point(rendered_previous_bones[motion.pose.x + bone_index], local);
+            out.previous_clip = motion.previous_clip_from_actor * vec4(previous_rendered, 1.0);
+        }
+    }
     @if(ENHANCED_MOTION)
     let submitted_world = submitted_actor_position(instance_index, bone_index, local);
     @if(ENHANCED_MOTION)
@@ -206,20 +316,22 @@ fn actor_vertex(
     out.motion_valid = select(0u, 1u, submitted_world.w > 0.5 && caster.previous_params.w > 0.5);
     @if(!ENHANCED_MOTION)
     out.world_position = world.xyz;
-    out.world_normal = normalize(vec3(
+    let world_normal = normalize(vec3(
         dot(instance_row(instance_base, 0u).xyz, posed_normal),
         dot(instance_row(instance_base, 1u).xyz, posed_normal),
         dot(instance_row(instance_base, 2u).xyz, posed_normal),
     ));
+    @if(!ACTOR_MOTION)
+    out.world_normal = world_normal;
     @if(!ENHANCED_SHADOW && ENHANCED)
     out.native_lighting = vec3(light_color_multiplier);
     @if(!ENHANCED_SHADOW && !ENHANCED)
-    out.native_lighting = actor_lighting(out.light, out.world_normal, out.overlay.a) * light_color_multiplier;
+    out.native_lighting = actor_lighting(out.light, world_normal, out.overlay.a) * light_color_multiplier;
     @if(!ENHANCED_SHADOW && !ENHANCED)
     out.back_native_lighting = out.native_lighting;
     @if(!ENHANCED_SHADOW && !ENHANCED)
-    if (out.surface != 0u) {
-        out.back_native_lighting = actor_lighting(out.light, -out.world_normal, out.overlay.a) * light_color_multiplier;
+    if (out.material_parameters.y != 0u) {
+        out.back_native_lighting = actor_lighting(out.light, -world_normal, out.overlay.a) * light_color_multiplier;
     }
     out.skin_info.y = 1u;
     return out;
@@ -245,13 +357,14 @@ layer: u32, @if(ALPHA_TO_COVERAGE)
 dx: vec2<f32>, @if(ALPHA_TO_COVERAGE)
 dy: vec2<f32>, @if(ALPHA_TO_COVERAGE)
 sampled: vec4<f32>, @if(ALPHA_TO_COVERAGE)
-repeat_uv: bool) -> CutoutSample {
+repeat_uv: bool, @if(ALPHA_TO_COVERAGE)
+region: vec4<i32>) -> CutoutSample {
     let index = i32(layer & 0xffffffu);
     switch (layer >> 24u) {
-        case 1u: { return cutout_alpha_array(skins_64, uv, index, dx, dy, sampled, repeat_uv, ACTOR_ALPHA_TEST_THRESHOLD); }
-        case 2u: { return cutout_alpha_array(skins_128, uv, index, dx, dy, sampled, repeat_uv, ACTOR_ALPHA_TEST_THRESHOLD); }
-        case 3u: { return cutout_alpha_array(skins_256, uv, index, dx, dy, sampled, repeat_uv, ACTOR_ALPHA_TEST_THRESHOLD); }
-        default: { return cutout_alpha_array(skins, uv, index, dx, dy, sampled, repeat_uv, ACTOR_ALPHA_TEST_THRESHOLD); }
+        case 1u: { return cutout_alpha_array_region(skins_64, uv, index, dx, dy, sampled, repeat_uv, ACTOR_ALPHA_TEST_THRESHOLD, region); }
+        case 2u: { return cutout_alpha_array_region(skins_128, uv, index, dx, dy, sampled, repeat_uv, ACTOR_ALPHA_TEST_THRESHOLD, region); }
+        case 3u: { return cutout_alpha_array_region(skins_256, uv, index, dx, dy, sampled, repeat_uv, ACTOR_ALPHA_TEST_THRESHOLD, region); }
+        default: { return cutout_alpha_array_region(skins, uv, index, dx, dy, sampled, repeat_uv, ACTOR_ALPHA_TEST_THRESHOLD, region); }
     }
 }
 
@@ -262,7 +375,14 @@ struct ActorSurface {
 
 // Keeps authored opacity available for lighting independently of sample coverage.
 fn actor_surface_color(input: VertexOutput, front: bool) -> ActorSurface {
+    var uv = select(input.back_uv, input.uv.xy, front);
+    // Gradients precede per-pixel rejection and remain valid inside material branches.
+    let uv_dx = dpdx(uv);
+    let uv_dy = dpdy(uv);
     let material = input.material & ACTOR_MATERIAL_KIND_MASK;
+    let legacy = (input.material & ACTOR_MATERIAL_LEGACY112_FLAG) != 0u;
+    let color_mask_material = material_class.y != 0u || (input.material & ACTOR_COLOR_MASK_MATERIAL_FLAG) != 0u;
+    let legacy_mask = legacy && (input.material & ACTOR_COLOR_MASK_MATERIAL_FLAG) != 0u;
     let authored = (input.material & ACTOR_MATERIAL_AUTHORED_FLAG) != 0u;
     let emissive = material == ACTOR_MATERIAL_DRAGON || (input.material & ACTOR_MATERIAL_EMISSIVE_FLAG) != 0u;
     if (input.skin_info.y == 0u) {
@@ -273,16 +393,11 @@ fn actor_surface_color(input: VertexOutput, front: bool) -> ActorSurface {
     }
     if (!front && authored && (input.material & ACTOR_MATERIAL_CULL_FLAG) != 0u) { discard; }
     let one_sided_material = material == ACTOR_MATERIAL_DRAGON || material == ACTOR_MATERIAL_DISSOLVE_DEPTH || material == ACTOR_MATERIAL_DISSOLVE_COLOR;
-    if (!front && one_sided_material && input.surface == 0u) {
+    if (!front && one_sided_material && input.material_parameters.y == 0u) {
         discard;
     }
-    var uv = select(input.back_uv, input.uv, front);
-    @if(ALPHA_TO_COVERAGE)
-    let uv_dx = dpdx(uv);
-    @if(ALPHA_TO_COVERAGE)
-    let uv_dy = dpdy(uv);
     // Every uv_anim material vanilla and packs ship samples with repeat wrap (scrolling armor).
-    if (input.uv_wrap != 0u) {
+    if (input.skin_info.w != 0u) {
         uv = fract(uv);
     }
     // Ordinary native actor materials compose gamma RGB. Undo Bevy's texture
@@ -290,25 +405,25 @@ fn actor_surface_color(input: VertexOutput, front: bool) -> ActorSurface {
     let texel = sample_actor_texture(uv, input.skin_info.x);
     var color = tint_to_gamma(texel);
     @if(ALPHA_TO_COVERAGE)
-    let cutout = actor_alpha_footprint(uv, input.skin_info.x, uv_dx, uv_dy, texel, input.uv_wrap != 0u);
+    let cutout = actor_alpha_footprint(uv, input.skin_info.x, uv_dx, uv_dy, texel, input.skin_info.w != 0u, actor_fragment_chart_bounds(input.chart_bounds, front));
     @if(ALPHA_TO_COVERAGE)
     let coverage = cutout.coverage;
     @if(ALPHA_TO_COVERAGE)
     if (color.a < ACTOR_ALPHA_TEST_THRESHOLD && coverage > 0.0) { color = tint_to_gamma(cutout.colour); }
     if (material == ACTOR_MATERIAL_DISSOLVE_DEPTH) {
-        if (color.a * input.dissolve_multiplier < ACTOR_ALPHA_TEST_THRESHOLD) { discard; }
+        if (color.a * bitcast<f32>(input.material_parameters.x) < ACTOR_ALPHA_TEST_THRESHOLD) { discard; }
         return ActorSurface(vec4(0.0), 0.0);
     }
     if (material == ACTOR_MATERIAL_DISSOLVE_COLOR && color.a < ACTOR_ALPHA_TEST_THRESHOLD) { discard; }
     if (material == ACTOR_MATERIAL_DRAGON && all(color == vec4(0.0))) { discard; }
     @if(!ALPHA_TO_COVERAGE)
-    if (material == ACTOR_MATERIAL_GLINT && color.a < ACTOR_ALPHA_TEST_THRESHOLD) { discard; }
-    let color_mask_material = material_class.y != 0u;
+    if (material == ACTOR_MATERIAL_GLINT && !legacy_mask && color.a < ACTOR_ALPHA_TEST_THRESHOLD) { discard; }
+    if (legacy_mask && color.a == 0.0) { discard; }
     let multitexture_material = material_class.z != 0u && all(input.multitexture_layers != vec2(0xffffffffu));
     if (authored && (input.material & ACTOR_MATERIAL_ALPHA_TEST_FLAG) != 0u) {
         if (emissive && all(color == vec4(0.0))) { discard; }
         @if(!ALPHA_TO_COVERAGE)
-        if (!emissive && color.a < ACTOR_ALPHA_TEST_THRESHOLD) { discard; }
+        if (!emissive && !legacy_mask && color.a < ACTOR_ALPHA_TEST_THRESHOLD) { discard; }
     }
     if (!authored && !color_mask_material && !multitexture_material && material == ACTOR_MATERIAL_DEFAULT && ((material_class.x == 0u && color.a < 0.1) || (material_class.x == 1u && color.a == 0.0))) {
         discard;
@@ -331,8 +446,8 @@ fn actor_surface_color(input: VertexOutput, front: bool) -> ActorSurface {
     if (multitexture_material) {
         // Native llama:entity_multitexture has three samplers, no ALPHA_TEST and no blend.
         // Coverage never comes from the base alpha; overlay alpha weights RGB instead.
-        let tex1 = tint_to_gamma(textureSample(skins, skin_sampler, uv, i32(input.multitexture_layers.x)));
-        let tex2 = tint_to_gamma(textureSample(skins, skin_sampler, uv, i32(input.multitexture_layers.y)));
+        let tex1 = tint_to_gamma(textureSampleGrad(skins, skin_sampler, uv, i32(input.multitexture_layers.x), uv_dx, uv_dy));
+        let tex2 = tint_to_gamma(textureSampleGrad(skins, skin_sampler, uv, i32(input.multitexture_layers.y), uv_dx, uv_dy));
         color = vec4(mix(mix(color.rgb, tex1.rgb, tex1.a), tex2.rgb, tex2.a), color.a);
     }
     @if(ALPHA_TO_COVERAGE)
@@ -372,28 +487,50 @@ fn actor_fragment_shadow(input: VertexOutput, @builtin(front_facing) front: bool
     let color = actor_shadow_surface(input, front);
 }
 
-@if(!ENHANCED_SHADOW)
-fn actor_glint_color(input: VertexOutput, front: bool) -> vec3<f32> {
-    var uv = select(input.back_uv, input.uv, front);
-    if (input.uv_wrap != 0u) {
-        uv = fract(uv);
-    }
-    let base = input.multitexture_layers.x * ACTOR_GPU_INSTANCE_WORDS;
-    let offsets = vec2(word_f32(base + 30u), word_f32(base + 31u));
-    let strength = word_f32(base + 32u);
-    let centered_uv = uv - vec2(0.5);
-    let first_uv = vec2(0.9396926 * centered_uv.x + 0.34202015 * centered_uv.y, -0.34202015 * centered_uv.x + 0.9396926 * centered_uv.y) + vec2(offsets.x + 0.5, 0.5);
-    let second_uv = vec2(0.17364818 * centered_uv.x - 0.9848077 * centered_uv.y, 0.9848077 * centered_uv.x + 0.17364818 * centered_uv.y) + vec2(offsets.y + 0.5, 0.5);
-    let first = tint_to_gamma(textureSampleLevel(actor_glint, glint_sampler, first_uv, 0.0)).rgb;
-    let second = tint_to_gamma(textureSampleLevel(actor_glint, glint_sampler, second_uv, 0.0)).rgb;
-    let foil_light = select(vec3(1.0), actor_light_colour(input.light), (input.light & ACTOR_LIGHT_WORLD_FLAG) != 0u);
-    let foil = (first + second) * GLINT_TINT_RGB * strength * foil_light;
-    return foil * foil;
+// Gamma foil added to the lit colour; worn 1.12 glint instead composes after fog with its own alpha.
+struct ActorGlint {
+    lit: vec3<f32>,
+    legacy: vec3<f32>,
+    alpha: f32,
 }
 
 @if(!ENHANCED_SHADOW)
-@fragment
-fn actor_fragment(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+fn surface_glint(input: VertexOutput, front: bool, alpha: f32) -> ActorGlint {
+    var glint = ActorGlint(vec3(0.0), vec3(0.0), alpha);
+    if (input.skin_info.z == 0xffffffffu) {
+        return glint;
+    }
+    var uv = select(input.back_uv, input.uv.xy, front);
+    if (input.skin_info.w != 0u) {
+        uv = fract(uv);
+    }
+    let material = input.material & ACTOR_MATERIAL_KIND_MASK;
+    let legacy = (input.material & ACTOR_MATERIAL_LEGACY112_FLAG) != 0u;
+    let base = input.skin_info.z * ACTOR_GPU_INSTANCE_WORDS;
+    let offsets = vec2(word_f32(base + 30u), word_f32(base + 31u));
+    let strength = word_f32(base + 32u);
+    let glint_scale = vec2(word_f32(base + 33u), word_f32(base + 34u));
+    let item_extent = word_f32(base + 35u);
+    let worn_legacy = legacy && material == ACTOR_MATERIAL_GLINT && item_extent == 0.0;
+    var foil_tex = vec3(0.0);
+    if (worn_legacy) {
+        foil_tex = glint_layers(uv, vec2(0.0), offsets, vec2(1.0), 1.0, true);
+    } else {
+        foil_tex = glint_layers(uv, input.uv.zw, offsets, glint_scale, item_extent, legacy);
+    }
+    let foil_light = select(vec3(1.0), actor_light_colour(input.light), (input.light & ACTOR_LIGHT_WORLD_FLAG) != 0u);
+    let foil = foil_tex * GLINT_TINT_RGB * strength * foil_light;
+    if (worn_legacy) {
+        glint.legacy = foil * foil;
+        glint.alpha = foil_tex.r * strength;
+    } else {
+        glint.lit = foil * foil;
+    }
+    return glint;
+}
+
+@if(!ENHANCED_SHADOW)
+fn actor_colour(input: VertexOutput, front: bool) -> vec4<f32> {
     let surface = actor_surface_color(input, front);
     let color = surface.color;
     let material = input.material & ACTOR_MATERIAL_KIND_MASK;
@@ -404,6 +541,11 @@ fn actor_fragment(input: VertexOutput, @builtin(front_facing) front: bool) -> @l
     // Actor/Entity overlays blend BEFORE the shaded lightmap product. Vertex
     // shading preserves its interpolation and the explicit zero/unlit override.
     let overlay = select(input.overlay, vec4(0.0), material == ACTOR_MATERIAL_DISSOLVE_COLOR);
+    let glint = surface_glint(input, front, color.a);
+    @if(ALPHA_TO_COVERAGE)
+    let alpha = surface.coverage;
+    @if(!ALPHA_TO_COVERAGE)
+    let alpha = glint.alpha;
     @if(ENHANCED)
     let albedo = tint_to_linear(vec4(mix(color.rgb, overlay.rgb, overlay.a), color.a));
     @if(ENHANCED)
@@ -416,25 +558,45 @@ fn actor_fragment(input: VertexOutput, @builtin(front_facing) front: bool) -> @l
     @if(ENHANCED)
     lit = select(lit, mix(albedo.rgb, lit, color.a), emissive) * input.native_lighting;
     @if(ENHANCED)
-    if (material == ACTOR_MATERIAL_GLINT) {
-        lit = tint_to_linear(vec4(tint_to_gamma(vec4(lit, 1.0)).rgb + actor_glint_color(input, front), 1.0)).rgb;
-    }
+    lit = tint_to_linear(vec4(tint_to_gamma(vec4(lit, 1.0)).rgb + glint.lit, 1.0)).rgb;
     @if(ENHANCED)
-    return vec4(enhanced_distance_fog(enhanced_frame, lit, input.world_position), surface.coverage);
+    let fogged = enhanced_distance_fog(enhanced_frame, lit, input.world_position);
+    @if(ENHANCED)
+    return vec4(tint_to_linear(vec4(tint_to_gamma(vec4(fogged, 1.0)).rgb + glint.legacy, 1.0)).rgb, alpha);
     @if(!ENHANCED)
-    let native_lighting = select(input.native_lighting, input.back_native_lighting, !front && input.surface != 0u);
+    let native_lighting = select(input.native_lighting, input.back_native_lighting, !front && input.material_parameters.y != 0u);
     @if(!ENHANCED)
     let lighting = select(native_lighting, mix(vec3(1.0), native_lighting, color.a), emissive);
     @if(!ENHANCED)
-    var lit_gamma = mix(color.rgb, overlay.rgb, overlay.a) * lighting;
+    let lit_gamma = mix(color.rgb, overlay.rgb, overlay.a) * lighting + glint.lit;
     @if(!ENHANCED)
-    if (material == ACTOR_MATERIAL_GLINT) {
-        lit_gamma += actor_glint_color(input, front);
-    }
-    @if(!ENHANCED)
-    let fogged_gamma = vec4(actor_distance_fog(lit_gamma, input.world_position, view.world_position), surface.coverage);
+    let fogged_gamma = vec4(actor_distance_fog(lit_gamma, input.world_position, view.world_position) + glint.legacy, alpha);
     @if(!ENHANCED && ACTOR_GAMMA_BLEND)
     return fogged_gamma;
     @if(!ENHANCED && !ACTOR_GAMMA_BLEND)
     return tint_to_linear(fogged_gamma);
+}
+
+@if(!ENHANCED_SHADOW)
+@fragment
+fn actor_fragment(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return actor_colour(input, front);
+}
+
+@if(ACTOR_MOTION)
+// Both frames retain local detail by projecting their actor roots relative to their cameras.
+fn actor_motion_velocity(input: VertexOutput) -> vec2<f32> {
+    var velocity = vec2(0.0);
+    if (input.previous_clip.w > 0.00001 && input.current_clip.w > 0.00001) {
+        velocity = (input.current_clip.xy / input.current_clip.w - input.previous_clip.xy / input.previous_clip.w) * vec2(0.5, -0.5);
+    }
+    return velocity;
+}
+
+@if(ACTOR_MOTION)
+@fragment
+fn actor_motion_fragment(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    // The same artwork and discard rules retain cutouts and multisample alpha coverage.
+    let colour = actor_colour(input, front);
+    return vec4(actor_motion_velocity(input), 1.0, colour.a);
 }

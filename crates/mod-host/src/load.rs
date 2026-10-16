@@ -1,7 +1,9 @@
 //! Bounded component and package admission and deferred settings activation.
 
 use crate::{
-    DataSource, MAX_COMPONENT_BYTES, ModEvent, ModGrants, ModHost, Source,
+    DataSource, MAX_COMPONENT_SOURCE_BYTES, ModEvent, ModGrants, ModHost, Source,
+    component_assets::ComponentAssets,
+    execution, local_files,
     package::{self, Package},
     runtime::{Declared, Instance},
     screens::{declared, loaded},
@@ -10,8 +12,7 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 use experience_sdk::mod_manifest::{ModManifest, ModPermission};
 use sha2::{Digest, Sha256};
-use std::{fs::File, io::Read, path::Path, sync::Arc};
-use wasmtime::{Config, Engine};
+use std::{path::Path, sync::Arc};
 
 impl ModHost {
     /// Loads a local component with HUD and demo input, denying optional capabilities.
@@ -30,6 +31,14 @@ impl ModHost {
         let mut host = Self::prepare_snapshot_with_grants(path, bytes, grants, None)?;
         host.activate_settings(None);
         Ok(host)
+    }
+
+    /// Rejects oversized bytes, invalid imports and incompatible callbacks without running
+    /// guest code.
+    pub fn validate_component(bytes: &[u8]) -> Result<()> {
+        let assets = ComponentAssets::read(bytes)?;
+        let (engine, _ticker) = execution::engine()?;
+        Instance::check(&engine, &assets.executable)
     }
 
     /// Loads the package at `dir` with what its manifest asks for granted, plus `extra`: the
@@ -101,16 +110,10 @@ impl ModHost {
         declared: Declared,
         digest: [u8; 32],
     ) -> Result<Self> {
-        ensure!(
-            bytes.len() <= MAX_COMPONENT_BYTES,
-            "component exceeds byte limit"
-        );
+        let assets = ComponentAssets::read(bytes)?;
         grants.validate()?;
         let path = &source.settings_anchor();
-        let mut config = Config::new();
-        config.wasm_component_model(true).consume_fuel(true);
-        config.max_wasm_stack(256 * 1024);
-        let engine = Engine::new(&config)?;
+        let (engine, ticker) = execution::engine()?;
         let settings_writer = if grants.settings {
             Some(settings::SettingsWriter::prepare(path).context("start mod settings writer")?)
         } else {
@@ -131,16 +134,30 @@ impl ModHost {
             read_settings(path, &grants)?
         };
         let settings_seed = grants.settings.then(|| seed.clone());
-        let instance = Instance::new(&engine, bytes, grants.clone(), seed, declared)?;
+        let instance = Instance::new(
+            &engine,
+            &assets.executable,
+            grants.clone(),
+            seed,
+            declared,
+            assets.panel_bundle.filter(|_| grants.controls),
+        )?;
         Ok(Self {
             engine,
+            _ticker: ticker,
             instance,
+            embedded_font: assets.font,
+            embedded_logo: assets.logo,
+            embedded_title: assets.title,
+            embedded_notices: assets.notices,
+            panel_bundle_override: None,
             source,
             attempted: digest,
             authorized_grants: grants.clone(),
             grants,
             settings_writer,
             settings_seed,
+            pending_events: Vec::new(),
             package: None,
             layout: None,
             session: Arc::default(),
@@ -180,6 +197,9 @@ impl ModHost {
         if self.attempted == digest {
             return Ok(false);
         }
+        if !self.instance.can_reload() {
+            return Ok(false);
+        }
         self.attempted = digest;
         let (bytes, declared) = match &package {
             Some(package) => (&package.component, declared(package)),
@@ -189,19 +209,30 @@ impl ModHost {
             || self.grants.clone(),
             |package| self.authorized_grants.with_manifest(&package.manifest),
         );
-        let mut candidate = Instance::new(
-            &self.engine,
-            bytes,
-            grants.clone(),
-            self.instance.settings().to_owned(),
-            declared,
-        )
-        .context("reload rejected; previous mod retained")?;
-        if let Some(bundle) = self.instance.panel_bundle() {
-            candidate.set_panel_bundle(bundle)?;
-        }
+        let assets = ComponentAssets::read(bytes)?;
+        let bundle = self
+            .panel_bundle_override
+            .clone()
+            .or(assets.panel_bundle)
+            .filter(|_| grants.controls);
+        let mut candidate = self
+            .instance
+            .replacement(
+                &self.engine,
+                &assets.executable,
+                grants.clone(),
+                self.instance.settings().to_owned(),
+                declared,
+                bundle,
+            )
+            .context("reload rejected; previous mod retained")?;
         candidate.set_session(Arc::clone(&self.session));
         self.instance = candidate;
+        self.embedded_font = assets.font;
+        self.embedded_logo = assets.logo;
+        self.embedded_title = assets.title;
+        self.embedded_notices = assets.notices;
+        self.pending_events.clear();
         self.grants = grants;
         if let Some(package) = package {
             self.package = Some(loaded(package));
@@ -231,6 +262,45 @@ impl ModHost {
 
     pub fn settings_seed(&self) -> Option<&str> {
         self.settings_seed.as_deref()
+    }
+
+    /// Shares this accepted source snapshot's optional font only with an authorized panel.
+    pub fn panel_font_source(&self) -> Option<&[u8]> {
+        (self.grants.controls && self.instance.is_active())
+            .then_some(self.embedded_font.as_deref())
+            .flatten()
+    }
+
+    /// An active instance's menu logo source requires the explicit environment grant.
+    pub fn menu_logo_source(&self) -> Option<&[u8]> {
+        (self.grants.environment && self.instance.is_active())
+            .then_some(self.embedded_logo.as_deref())
+            .flatten()
+    }
+
+    /// An active instance's menu heading requires the explicit environment grant.
+    pub fn menu_title(&self) -> Option<&str> {
+        (self.grants.environment && self.instance.is_active())
+            .then_some(self.embedded_title.as_deref())
+            .flatten()
+    }
+
+    /// Copyright notices belong to the accepted source snapshot and carry no guest authority.
+    pub fn notices(&self) -> Option<&str> {
+        self.embedded_notices.as_deref()
+    }
+
+    /// Identifies a bare local component for its caller's off-frame reload worker.
+    pub fn component_source(&self) -> Option<&Path> {
+        match &self.source {
+            Source::Component(path) => Some(path),
+            Source::Package(_) => None,
+        }
+    }
+
+    /// The last attempted full source identity, including embedded static presentation data.
+    pub fn source_digest(&self) -> [u8; 32] {
+        self.attempted
     }
 }
 
@@ -292,34 +362,19 @@ pub(crate) fn read_settings(path: &Path, grants: &ModGrants) -> Result<String> {
     if !grants.settings {
         return Ok(String::new());
     }
-    let path = path.with_extension("settings.json");
-    let file = match File::open(&path) {
-        Ok(file) => file,
+    let path = crate::settings_companion(path);
+    let bytes = match local_files::read(&path, mod_api::MAX_SETTINGS_BYTES) {
+        Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
         Err(error) => {
             return Err(error).with_context(|| format!("read mod settings {}", path.display()));
         }
     };
-    let mut bytes = Vec::new();
-    file.take((mod_api::MAX_SETTINGS_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)?;
-    ensure!(
-        bytes.len() <= mod_api::MAX_SETTINGS_BYTES,
-        "mod settings exceed byte limit"
-    );
     Ok(String::from_utf8(bytes)?)
 }
 
 /// Bounds file reads even if a writer grows the file between metadata and read.
 pub(crate) fn read_component(path: &Path) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    File::open(path)
-        .with_context(|| format!("open mod {}", path.display()))?
-        .take((MAX_COMPONENT_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)?;
-    ensure!(
-        bytes.len() <= MAX_COMPONENT_BYTES,
-        "component exceeds byte limit"
-    );
-    Ok(bytes)
+    local_files::read(path, MAX_COMPONENT_SOURCE_BYTES)
+        .with_context(|| format!("read mod {}", path.display()))
 }

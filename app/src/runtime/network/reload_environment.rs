@@ -145,7 +145,10 @@ fn overlay_biome_profile(
             if profiles.len() >= assets::atmosphere::MAX_ENVIRONMENT_PROFILES {
                 return;
             }
-            let Some(mut fallback) = profiles.get("minecraft:plains").cloned() else {
+            let Some(mut fallback) = profiles
+                .get(assets::facts::dimension_fallback_biome(0).expect("pinned overworld biome"))
+                .cloned()
+            else {
                 return;
             };
             fallback.biome_identifier = identifier.into();

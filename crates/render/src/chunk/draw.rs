@@ -562,10 +562,11 @@ pub(in crate::chunk) fn queue_transparent_chunks(
     texture_assets: Res<ChunkTextureAssets>,
     biome_tints: Res<ChunkBiomeTints>,
     mut mixed: ResMut<crate::chunk::transparent::mixed::MixedTerrainRuntime>,
-    (arena, mut unsorted, mut water_order): (
+    (arena, mut unsorted, mut water_order, mut scratch): (
         Res<ChunkGpuArena>,
         Local<UnsortedWaterDiagnostics>,
         Local<VisibleWaterOrder>,
+        Local<TransparentQueueScratch>,
     ),
     profiler: Option<Res<RuntimeStageProfiler>>,
 ) {
@@ -610,25 +611,62 @@ pub(in crate::chunk) fn queue_transparent_chunks(
         else {
             continue;
         };
-        let (models, water) =
-            visible_transparent_terrain(visible_entities, &allocations, &biome_tints);
+        let TransparentQueueScratch { models, water } = &mut *scratch;
+        models.clear();
+        water.clear();
+        for (entity, main) in visible_entities
+            .get::<ChunkRenderInstance>()
+            .into_iter()
+            .flat_map(|class| class.iter_visible())
+            .map(|(entity, main)| (*entity, *main))
+        {
+            let Ok(allocation) = allocations.get(entity) else {
+                continue;
+            };
+            if transparent_model_direct_draw_command(allocation).is_some() {
+                models.push(QueuedTransparentModel {
+                    key: allocation.key,
+                    entity,
+                    main,
+                    merged: false,
+                });
+            }
+            // Like opaque terrain, water waits for its re-upload under a new tint table.
+            if transparent_liquid_direct_draw_command(allocation).is_some()
+                && chunk_tint_identity_is_active(
+                    allocation.tint_identity,
+                    biome_tints.table_identity(),
+                )
+            {
+                water.push(VisibleWater {
+                    key: allocation.key,
+                    entity,
+                    main,
+                    order_independent: allocation.order_independent_liquid,
+                });
+            }
+        }
+        // Key order with the last visible entity of each key, as a map insert would keep.
+        models.reverse();
+        models.sort_by_key(|model| model.key);
+        models.dedup_by_key(|model| model.key);
+        // Captures sort their own water so the gameplay view's retained order is untouched.
         if capture {
             queue_capture_transparent(
                 phase,
                 &rangefinder,
                 pipeline_id,
                 [record_draw, transparent_model_draw],
-                &models,
+                models,
                 water,
                 &arena.transparent_liquids,
             );
             continue;
         }
         // Equal phase distances keep insertion order, so water enters in key order.
-        let water = water_order.update(water);
+        let water = water_order.update(water.drain(..));
         // Displaced water can overlap itself even when flat, so such views sort all of it.
         let direct_order_independent = !view_displaces_water(enhanced.is_some());
-        let mut merged = HashSet::new();
         let snapshot = runtime.state.committed();
         let groups = snapshot.and_then(TransparentOrderedSnapshot::phase_groups);
         if snapshot.is_some() && groups.is_none() {
@@ -677,7 +715,8 @@ pub(in crate::chunk) fn queue_transparent_chunks(
             };
             // Native deferred water uses layer 2, not ordinary blend layer 3.
             if enhanced.is_none()
-                && let Some(&(entity, main)) = models.get(&group.key)
+                && let Ok(model_index) = models.binary_search_by_key(&group.key, |model| model.key)
+                && let Some(&QueuedTransparentModel { entity, main, .. }) = models.get(model_index)
                 && let (Ok(instance), Ok(allocation)) =
                     (instances.get(entity), allocations.get(entity))
                 && let Some(index) = mixed.plan(
@@ -693,7 +732,7 @@ pub(in crate::chunk) fn queue_transparent_chunks(
                     pipeline_id,
                 )
             {
-                merged.insert(entity);
+                models[model_index].merged = true;
                 crate::transparent_phase::add(
                     phase,
                     Transparent3d {
@@ -731,10 +770,13 @@ pub(in crate::chunk) fn queue_transparent_chunks(
                 },
             );
         }
-        for (&model_key, &(entity, main)) in &models {
-            if merged.contains(&entity) {
-                continue;
-            }
+        for &QueuedTransparentModel {
+            key: model_key,
+            entity,
+            main,
+            ..
+        } in models.iter().filter(|model| !model.merged)
+        {
             crate::transparent_phase::add(
                 phase,
                 Transparent3d {
@@ -755,42 +797,22 @@ pub(in crate::chunk) fn queue_transparent_chunks(
     unsorted.finish_frame();
 }
 
-/// Visible sub-chunks with drawable transparent models, by key, and with drawable water.
-fn visible_transparent_terrain(
-    visible_entities: &RenderVisibleEntities,
-    allocations: &Query<&GpuChunkAllocation>,
-    biome_tints: &ChunkBiomeTints,
-) -> (
-    BTreeMap<SubChunkKey, (Entity, MainEntity)>,
-    Vec<VisibleWater>,
-) {
-    let mut models = BTreeMap::new();
-    let mut water = Vec::new();
-    for (entity, main) in visible_entities
-        .get::<ChunkRenderInstance>()
-        .into_iter()
-        .flat_map(|class| class.iter_visible())
-        .map(|(entity, main)| (*entity, *main))
-    {
-        let Ok(allocation) = allocations.get(entity) else {
-            continue;
-        };
-        if transparent_model_direct_draw_command(allocation).is_some() {
-            models.insert(allocation.key, (entity, main));
-        }
-        // Like opaque terrain, water waits for its re-upload under a new tint table.
-        if transparent_liquid_direct_draw_command(allocation).is_some()
-            && chunk_tint_identity_is_active(allocation.tint_identity, biome_tints.table_identity())
-        {
-            water.push(VisibleWater {
-                key: allocation.key,
-                entity,
-                main,
-                order_independent: allocation.order_independent_liquid,
-            });
-        }
-    }
-    (models, water)
+/// A visible sub-chunk with transparent models, queued unless its group merged it with water.
+#[derive(Clone, Copy)]
+pub(in crate::chunk) struct QueuedTransparentModel {
+    key: SubChunkKey,
+    entity: Entity,
+    main: MainEntity,
+    /// Drawn inside its water group's mixed order instead of on its own.
+    merged: bool,
+}
+
+/// Per-view lists the transparent queue refills each frame without reallocating.
+#[derive(Default)]
+pub(in crate::chunk) struct TransparentQueueScratch {
+    /// Sorted by key with one entry per key once a view's visible set is gathered.
+    models: Vec<QueuedTransparentModel>,
+    water: Vec<VisibleWater>,
 }
 
 /// Queues a reflection capture's transparent terrain without the gameplay view's retained sort:
@@ -800,24 +822,24 @@ fn queue_capture_transparent(
     rangefinder: &ViewRangefinder3d,
     pipeline: bevy::render::render_resource::CachedRenderPipelineId,
     [water_draw, model_draw]: [bevy::render::render_phase::DrawFunctionId; 2],
-    models: &BTreeMap<SubChunkKey, (Entity, MainEntity)>,
-    mut water: Vec<VisibleWater>,
+    models: &[QueuedTransparentModel],
+    water: &mut [VisibleWater],
     residents: &TransparentLiquidResidents,
 ) {
     // Equal phase distances keep insertion order, so water enters in key order before models.
     water.sort_unstable_by_key(|water| (water.key, water.entity));
-    let water = each_visible_key(&water, residents).map(|water| {
+    let water = each_visible_key(water, residents).map(|water| {
         (
             (water.entity, water.main),
             water_draw,
             transparent_liquid_phase_distance(rangefinder, water.key),
         )
     });
-    let models = models.iter().map(|(&key, &entity)| {
+    let models = models.iter().map(|model| {
         (
-            entity,
+            (model.entity, model.main),
             model_draw,
-            transparent_model_phase_distance(rangefinder, key),
+            transparent_model_phase_distance(rangefinder, model.key),
         )
     });
     for (entity, draw_function, distance) in water.chain(models) {

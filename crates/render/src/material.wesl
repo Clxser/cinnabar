@@ -72,6 +72,11 @@ fn texture_layer(reference: u32) -> i32 {
     return i32(reference & TEXTURE_LAYER_MASK);
 }
 
+// Pages sit above that metadata in three bits, addressing each bound array.
+fn texture_page(reference: u32) -> u32 {
+    return (reference >> GPU_TEXTURE_PAGE_SHIFT) & GPU_TEXTURE_PAGE_MASK;
+}
+
 // A grid exposes the upper-left rectangle while retaining its original neighbouring texels.
 fn texture_uv_scale(reference: u32) -> f32 {
     return exp2(-f32((reference >> GPU_TEXTURE_GRID_SHIFT) & TERRAIN_QUAD_SHIFT_MASK));

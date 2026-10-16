@@ -4,6 +4,7 @@ use bevy::{
 };
 use client_shell::menu::MenuRuntime;
 use client_shell::ui_resources::{UiPresentationResource, UiRuntimeResource};
+use launcher::menu::settings_options::SettingId;
 use render_model::panorama::{launcher_faces, launcher_view, overlay_tint};
 use render_scene::PanoramaScene;
 use std::{sync::Arc, time::Instant};
@@ -37,7 +38,10 @@ pub(crate) fn drive_menu_panorama(
         *state = Some((Instant::now(), 0.0, overlay_tint(assets)));
         scene.set_faces(launcher_faces(assets).map(Arc::new));
     }
-    let shown = menu.as_deref().is_some_and(MenuRuntime::uses_panorama);
+    let shown = presentation
+        .loading_stage()
+        .is_some_and(ui::LoadingStage::is_world_entry)
+        || menu.as_deref().is_some_and(MenuRuntime::uses_panorama);
     let aspect = windows
         .iter()
         .next()
@@ -48,7 +52,7 @@ pub(crate) fn drive_menu_panorama(
     };
     let now = Instant::now();
     let speed = menu.as_ref().map_or(1.0, |menu| {
-        menu.settings_snapshot().0.value("panorama_speed") as f32 / 100.0
+        menu.settings_snapshot().0.value(SettingId::PanoramaSpeed) as f32 / 100.0
     });
     *seconds += now.duration_since(*last).as_secs_f32() * speed;
     *last = now;

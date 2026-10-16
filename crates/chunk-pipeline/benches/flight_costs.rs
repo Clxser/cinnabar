@@ -1,4 +1,8 @@
 //! Main-thread cost of streaming while the camera flies over realistic synthetic terrain.
+#![expect(
+    clippy::print_stderr,
+    reason = "the benchmark reports its preflight measurement lines on stderr"
+)]
 
 use std::{
     collections::VecDeque,
@@ -22,6 +26,12 @@ use criterion::{BenchmarkId, Criterion, SamplingMode, criterion_group, criterion
 use protocol::{MovePlayerEvent, PublisherUpdateEvent, WorldEvent};
 use world::{SubChunkKey, chunk_in_view};
 
+#[cfg(feature = "benchmark-mimalloc")]
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[path = "flight_costs/biomes.rs"]
+mod biomes;
 #[path = "flight_costs/camera.rs"]
 mod camera;
 
@@ -63,7 +73,7 @@ fn terrain_assets() -> RuntimeAssets {
             visuals: (0..CUBE_IDS).map(visual).collect(),
             light_properties: vec![LightProperties::OPAQUE_DARK; CUBE_IDS as usize],
             materials: vec![material; CUBE_IDS as usize],
-            texture: Some(texture),
+            textures: vec![texture],
             ..Default::default()
         },
     )
@@ -98,7 +108,7 @@ fn block(x: i32, y: i32, z: i32, top: i32) -> u32 {
         DIRT
     } else if cave(x, y, z) {
         AIR
-    } else if hash(x, y, z) % 23 == 0 {
+    } else if hash(x, y, z).is_multiple_of(23) {
         ORE
     } else {
         STONE
@@ -180,7 +190,8 @@ fn column_payload(cx: i32, cz: i32) -> (usize, Bytes) {
             block(wx, wy, wz, tops[x as usize][z as usize])
         });
     }
-    payload.extend([1, 0]); // Uniform biome zero followed by extruded upper slots.
+    payload.push(1);
+    push_var_i32(&mut payload, biomes::column_biome(cx, cz));
     payload.extend(std::iter::repeat_n(0xff, range.sub_chunk_count - 1));
     payload.push(0); // Border-block count; no block entities.
     (count, Bytes::from(payload))
@@ -192,10 +203,14 @@ enum Ingress {
     Position([f32; 3]),
     Publisher([i32; 3], u32),
     Column(i32, i32, usize, Bytes),
+    Biomes,
 }
 
 struct Flight {
     stream: WorldStream,
+    /// Mesh bytes handed to the renderer since the fixture began.
+    uploaded_bytes: u64,
+    far_summaries: Vec<chunk_pipeline::FarColumnSummary>,
     radius: i32,
     blocks_per_second: f32,
     camera_x: f32,
@@ -203,12 +218,22 @@ struct Flight {
     sequence: u64,
     backlog: VecDeque<Ingress>,
     next_frame: Instant,
+    biome_probe: biomes::PayloadProbe,
 }
 
 impl Flight {
     fn new(assets: &Arc<RuntimeAssets>, radius: i32) -> Self {
+        Self::with_full_detail(assets, radius, None)
+    }
+
+    /// A settled view of `radius` meshing only within `full_detail`, summarising the rest.
+    fn with_full_detail(
+        assets: &Arc<RuntimeAssets>,
+        radius: i32,
+        full_detail: Option<i32>,
+    ) -> Self {
         let camera = [8.0, EYE_Y, 8.0];
-        let stream = WorldStream::new_with_assets(
+        let mut stream = WorldStream::new_with_assets(
             WorldBootstrap {
                 local_player_unique_id: 1,
                 dimension: 0,
@@ -222,8 +247,12 @@ impl Flight {
             camera,
             None,
         );
+        stream.set_far_terrain_enabled(full_detail.is_some());
+        stream.set_full_detail_radius(full_detail);
         let mut flight = Self {
             stream,
+            uploaded_bytes: 0,
+            far_summaries: Vec::new(),
             radius,
             blocks_per_second: 0.0,
             camera_x: 8.0,
@@ -231,7 +260,9 @@ impl Flight {
             sequence: 0,
             backlog: VecDeque::new(),
             next_frame: Instant::now(),
+            biome_probe: biomes::PayloadProbe::warming_up(),
         };
+        flight.backlog.push_back(Ingress::Biomes);
         flight.backlog.push_back(Ingress::Radius(radius));
         flight
             .backlog
@@ -284,6 +315,7 @@ impl Flight {
         self.sequence += 1;
         let sequence = self.sequence;
         match ingress {
+            Ingress::Biomes => self.stream.submit(sequence, biomes::definitions()),
             Ingress::Radius(radius) => self
                 .stream
                 .submit(sequence, WorldEvent::ChunkRadiusUpdated(radius)),
@@ -362,6 +394,8 @@ impl Flight {
         }
         self.stream.set_view_forward([1.0, 0.0, 0.0]);
         black_box(self.stream.poll(camera, MESH_JOBS_PER_FRAME));
+        // This headless fixture has no local physics to advance its retained grid.
+        self.stream.retain_for_server_position();
         while let Some(change) = self.stream.pop_mesh_change() {
             let (key, generation, dirty_since) = match change {
                 WorldMeshChange::Upsert {
@@ -372,6 +406,8 @@ impl Flight {
                     biome,
                     ..
                 } => {
+                    self.uploaded_bytes += meshing::chunk_publication_byte_len(&mesh, &biome);
+                    self.biome_probe.observe(key, &mesh, &biome);
                     black_box((&mesh, &biome));
                     (key, generation, dirty_since)
                 }
@@ -380,11 +416,16 @@ impl Flight {
                     generation,
                     dirty_since,
                     ..
-                } => (key, generation, dirty_since),
+                } => {
+                    self.biome_probe.remove(key);
+                    (key, generation, dirty_since)
+                }
             };
             self.stream
                 .acknowledge_mesh_upload(key, generation, dirty_since, Instant::now());
         }
+        self.stream.drain_far_summaries(&mut self.far_summaries);
+        self.far_summaries.clear();
         let elapsed = started.elapsed();
         let now = Instant::now();
         self.next_frame = (self.next_frame + FRAME).max(now);
@@ -394,7 +435,7 @@ impl Flight {
         elapsed
     }
 
-    /// Times only the server position update that retires the trailing row, then
+    /// Times the server position update and explicit retention of the new grid, then
     /// streams the leading row and settles so every crossing starts from a full view.
     fn cross_one_chunk(&mut self) -> Duration {
         self.center_x += 1;
@@ -402,6 +443,7 @@ impl Flight {
         let position = Ingress::Position(self.server_position());
         let started = Instant::now();
         self.submit(position);
+        self.stream.retain_for_server_position();
         let elapsed = started.elapsed();
         self.publish_view();
         self.enqueue_entering_columns(Some(self.center_x - 1));
@@ -418,7 +460,9 @@ fn flight_benches(c: &mut Criterion) {
     let assets = Arc::new(terrain_assets());
     let mut group = c.benchmark_group("pipeline/flight_main_thread_per_frame");
     group.sampling_mode(SamplingMode::Flat);
-    group.sample_size(10);
+    if !cfg!(feature = "runtime-profile") {
+        group.sample_size(10);
+    }
     group.measurement_time(Duration::from_secs(3));
     for (radius, blocks_per_second) in [
         (10, 0.0_f32),
@@ -442,6 +486,8 @@ fn flight_benches(c: &mut Criterion) {
                     .stats()
                     .publication_stages
                     .mesh_uploads_acknowledged;
+                flight.biome_probe.start();
+                let cpu_before = benchmark_support::biomes::cpu_counters();
                 // Two seconds of flight: per-frame distribution and work witnesses.
                 let mut frames: Vec<_> = (0..480).map(|_| flight.frame()).collect();
                 frames.sort_unstable();
@@ -457,6 +503,7 @@ fn flight_benches(c: &mut Criterion) {
                 if blocks_per_second > 0.0 {
                     assert!(published > 0, "flight published no meshes");
                 }
+                flight.biome_probe.report(radius, blocks_per_second, cpu_before);
                 let total: Duration = frames.iter().sum();
                 eprintln!(
                     "FLIGHT_PREFLIGHT radius={radius} blocks_per_second={blocks_per_second} resident_columns={resident_before}->{} meshes_published={published} backlog={} main_ms_per_frame_mean={:.3} p50_us={} p99_us={} max_us={}",
@@ -475,11 +522,81 @@ fn flight_benches(c: &mut Criterion) {
     group.finish();
 }
 
+/// Process CPU time across every thread, in seconds; zero where unmeasured.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn cpu_seconds() -> f64 {
+    0.0
+}
+
+/// Process CPU time across every thread, in seconds.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn cpu_seconds() -> f64 {
+    // SAFETY: getrusage only writes the zeroed struct it is given.
+    let usage = unsafe {
+        let mut usage = std::mem::zeroed::<libc::rusage>();
+        libc::getrusage(libc::RUSAGE_SELF, &mut usage);
+        usage
+    };
+    let seconds = |time: libc::timeval| time.tv_sec as f64 + time.tv_usec as f64 / 1e6;
+    seconds(usage.ru_utime) + seconds(usage.ru_stime)
+}
+
+/// Joining at a large render distance with everything full detail against a 32-chunk
+/// full-detail radius: work, bytes and memory to settle, then a still frame's cost.
+fn hybrid_join_benches(c: &mut Criterion) {
+    let assets = Arc::new(terrain_assets());
+    let mut group = c.benchmark_group("pipeline/hybrid_join_still_frame");
+    group.sampling_mode(SamplingMode::Flat);
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(2));
+    let radii: Vec<i32> = std::env::var("HYBRID_RADII")
+        .ok()
+        .map(|list| {
+            list.split(',')
+                .filter_map(|radius| radius.parse().ok())
+                .collect()
+        })
+        .unwrap_or_else(|| vec![32, 64, 128]);
+    for radius in radii {
+        for full_detail in [None, Some(32)] {
+            let id = BenchmarkId::new(
+                format!("radius_{radius}"),
+                full_detail.map_or("all_full_detail".to_owned(), |n| format!("full_detail_{n}")),
+            );
+            let mut fixture = None;
+            group.bench_function(id, |b| {
+                let flight = fixture.get_or_insert_with(|| {
+                    let (cpu, wall) = (cpu_seconds(), Instant::now());
+                    let flight = Flight::with_full_detail(&assets, radius, full_detail);
+                    let (cpu, wall) = (cpu_seconds() - cpu, wall.elapsed().as_secs_f64());
+                    let stats = flight.stream.stats();
+                    let columns = flight.stream.loaded_column_count().max(1);
+                    let block_bytes = benchmark_support::terrain_block_bytes(&flight.stream);
+                    eprintln!(
+                        "HYBRID_JOIN radius={radius} full_detail={full_detail:?} columns={columns} sections={} join_wall_s={wall:.2} join_cpu_s={cpu:.2} light_jobs={} mesh_jobs={} meshes_acknowledged={} uploaded_mib={:.1} block_bytes_per_column={}",
+                        stats.resident_sub_chunks,
+                        stats.publication_stages.light_jobs_completed,
+                        stats.publication_stages.mesh_jobs_completed,
+                        stats.publication_stages.mesh_uploads_acknowledged,
+                        flight.uploaded_bytes as f64 / (1024.0 * 1024.0),
+                        block_bytes / columns,
+                    );
+                    flight
+                });
+                b.iter_custom(|frames| (0..frames).map(|_| flight.frame()).sum());
+            });
+        }
+    }
+    group.finish();
+}
+
 fn eviction_benches(c: &mut Criterion) {
     let assets = Arc::new(terrain_assets());
     let mut group = c.benchmark_group("pipeline/row_eviction_on_chunk_crossing");
     group.sampling_mode(SamplingMode::Flat);
-    group.sample_size(10);
+    if !cfg!(feature = "runtime-profile") {
+        group.sample_size(10);
+    }
     group.warm_up_time(Duration::from_millis(100));
     group.measurement_time(Duration::from_millis(300));
     for radius in [10, 16] {
@@ -559,6 +676,7 @@ criterion_group!(
     flight_benches,
     eviction_benches,
     cave_visibility_benches,
+    hybrid_join_benches,
     camera::camera_benches
 );
 criterion_main!(benches);

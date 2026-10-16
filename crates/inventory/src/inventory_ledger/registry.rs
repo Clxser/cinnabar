@@ -40,19 +40,35 @@ impl PlayerInventoryLedger {
         self.item_registry.as_ref()
     }
 
+    /// Effective facts from the current negotiated item registry.
+    pub fn item_facts(&self) -> &crate::SessionItemFacts {
+        &self.item_facts
+    }
+
     pub fn apply_registry(&mut self, event: &ItemRegistryEvent) {
         let Some(next) = registry_map(event) else {
             return;
         };
+        if self
+            .item_registry
+            .as_ref()
+            .is_some_and(|previous| previous.as_ref() == &next)
+        {
+            return;
+        }
+        let Ok(pinned) = assets::facts::ItemFacts::builtin() else {
+            return;
+        };
+        let Some(facts) = crate::SessionItemFacts::from_registry(pinned, event) else {
+            return;
+        };
+        let facts = std::sync::Arc::new(facts);
         let Some(previous) = self.item_registry.as_ref() else {
             self.item_registry = Some(std::sync::Arc::new(next));
+            self.item_facts = facts;
             self.refresh_fuel_facts();
             return;
         };
-        if previous.as_ref() == &next {
-            return;
-        }
-
         let affected_cells = self.registry_affected_cells(previous, &next);
         let affected_requests: Vec<i32> = self
             .queue
@@ -67,8 +83,8 @@ impl PlayerInventoryLedger {
                         registry_identity_changed(previous, &next, network_id)
                             || (pending.predicted.iter().any(|prediction| {
                                 matches!(prediction.cell, Cell::Armor(_) | Cell::Offhand)
-                            }) && (equipment_admission(previous.get(&network_id))
-                                != equipment_admission(next.get(&network_id))
+                            }) && (equipment_admission(&self.item_facts, network_id)
+                                != equipment_admission(&facts, network_id)
                                 || previous.get(&network_id).and_then(entry_capacity)
                                     != next.get(&network_id).and_then(entry_capacity)))
                             || (pending.registry_bound_merge
@@ -82,8 +98,9 @@ impl PlayerInventoryLedger {
             self.mark_cell_recovery(cell);
         }
         self.item_registry = Some(std::sync::Arc::new(next));
+        self.item_facts = facts;
         self.refresh_fuel_facts();
-        self.retire_rerouted_furnace_moves();
+        self.retire_rerouted_quick_moves();
         self.refold();
     }
 
@@ -109,17 +126,10 @@ impl PlayerInventoryLedger {
             };
         }
         if self.authority == Some(protocol::InventoryAuthority::Server)
-            && ((source.stack_network_id <= 0
-                && !self
-                    .queue
-                    .iter()
-                    .any(|request| request.request_id == source.stack_network_id))
-                || (destination.stack_network_id <= 0
-                    && !self
-                        .queue
-                        .iter()
-                        .any(|request| request.request_id == destination.stack_network_id))
-                || (source.stack_network_id > 0
+            && (self.stack_awaiting_identity(source)
+                || self.stack_awaiting_identity(destination)
+                || ((source.stack_network_id > 0
+                    || protocol::is_legacy_request_id(source.stack_network_id))
                     && source.stack_network_id == destination.stack_network_id))
         {
             return OccupiedStackRelation::Unsupported;
@@ -214,31 +224,47 @@ fn effective_merge_binding(entry: Option<&ItemRegistryEntry>) -> Option<(&str, O
     Some((entry.identifier.as_ref(), entry_capacity(entry)))
 }
 
+/// Returns the entry's stack capacity, or `None` when its declarations are unresolved.
+///
+/// DataDriven entries use component capacities even for known names. Other entries keep
+/// the known item's capacity, or use the component flag for an unknown name.
 pub(super) fn entry_capacity(entry: &ItemRegistryEntry) -> Option<u8> {
-    let vanilla = protocol::vanilla_item_capacity(&entry.identifier, 0);
-    if matches!(entry.version, ItemRegistryVersion::Unknown(_)) {
+    entry_capacity_with_base(entry, protocol::vanilla_item_capacity(&entry.identifier, 0))
+}
+
+/// Resolves negotiated capacity using a caller's admitted base capacity.
+pub(crate) fn entry_capacity_with_base(
+    entry: &ItemRegistryEntry,
+    vanilla: Option<u8>,
+) -> Option<u8> {
+    let components = entry.components.as_deref();
+    if components.is_some_and(|components| components.stack_capacity_ambiguous)
+        || (components.is_none() && !entry.canonical_empty_component_data)
+    {
+        // Ambiguous or unavailable facts do not prove that capacity declarations were absent.
         return None;
     }
-    // A component item's declared stack size binds it as it binds the vanilla client.
-    if let Some(capacity) = entry.negotiated_max_stack_size
-        && (vanilla.is_some() || entry.component_based)
-    {
-        return Some(capacity);
+    let item_properties = components.is_some_and(|components| components.item_properties_declared);
+    let stack_component =
+        components.is_some_and(|components| components.max_stack_size_component_declared);
+    let component_item = matches!(entry.version, ItemRegistryVersion::DataDriven)
+        || (vanilla.is_none()
+            && entry.component_based
+            && !matches!(entry.version, ItemRegistryVersion::Legacy));
+    if component_item {
+        return if item_properties {
+            entry.negotiated_max_stack_size
+        } else if stack_component {
+            components.and_then(|components| components.max_stack_size)
+        } else {
+            Some(protocol::ITEM_DEFAULT_MAX_STACK_SIZE)
+        };
     }
-    // An item vanilla does not know that the server defines no item of its own is a server
-    // block's BlockItem (Dragonfly sends it without components or an item version): the
-    // block registers it and it keeps Item's default stack size.
-    if vanilla.is_none()
-        && !entry.component_based
-        && matches!(entry.version, ItemRegistryVersion::None)
-    {
-        return Some(protocol::ITEM_DEFAULT_MAX_STACK_SIZE);
+    if stack_component {
+        // The top-level stack component's effect on plain and vanilla items is unresolved.
+        return None;
     }
-    vanilla.filter(|_| {
-        !entry.component_based
-            && (entry.canonical_empty_component_data
-                || entry.identifier.as_ref() == super::TOTEM_IDENTIFIER)
-    })
+    Some(vanilla.unwrap_or(protocol::ITEM_DEFAULT_MAX_STACK_SIZE))
 }
 
 pub(super) fn plain_stack(stack: &NetworkItemStack) -> bool {
@@ -253,17 +279,25 @@ pub(super) fn plain_stack(stack: &NetworkItemStack) -> bool {
 mod tests {
     use std::sync::Arc;
 
-    use protocol::{ItemRegistryEntry, ItemRegistryVersion};
+    use protocol::{ItemComponents, ItemRegistryEntry, ItemRegistryVersion};
 
     use super::entry_capacity;
 
+    /// A DataDriven entry whose components declare `declared` through `item_properties`, or
+    /// carry no components.
     fn entry(identifier: &str, component_based: bool, declared: Option<u8>) -> ItemRegistryEntry {
         ItemRegistryEntry {
             identifier: identifier.into(),
             network_id: 900,
             component_based,
             version: ItemRegistryVersion::DataDriven,
-            components: None,
+            components: declared.map(|size| {
+                Arc::new(ItemComponents {
+                    max_stack_size: Some(size),
+                    item_properties_declared: true,
+                    ..ItemComponents::default()
+                })
+            }),
             component_digest: [0; 32],
             negotiated_max_stack_size: declared,
             canonical_empty_component_data: declared.is_none(),
@@ -271,15 +305,124 @@ mod tests {
         }
     }
 
-    // A custom item binds merges only through its own declared stack size.
+    /// `entry` registered under `version`.
+    fn versioned(entry: ItemRegistryEntry, version: ItemRegistryVersion) -> ItemRegistryEntry {
+        ItemRegistryEntry { version, ..entry }
+    }
+
     #[test]
-    fn component_items_use_their_declared_stack_size() {
+    fn unparsed_component_data_keeps_capacity_unresolved() {
+        for version in [
+            ItemRegistryVersion::DataDriven,
+            ItemRegistryVersion::Legacy,
+            ItemRegistryVersion::None,
+            ItemRegistryVersion::Unknown(99),
+        ] {
+            for identifier in ["minecraft:egg", "test:gem"] {
+                for component_based in [false, true] {
+                    let unresolved = ItemRegistryEntry {
+                        components: None,
+                        canonical_empty_component_data: false,
+                        ..versioned(entry(identifier, component_based, Some(1)), version)
+                    };
+                    assert_eq!(entry_capacity(&unresolved), None);
+                }
+            }
+        }
+    }
+
+    // DataDriven entries register as component items ahead of the vanilla classes, so their
+    // stack size comes from item_properties or the item default, never the vanilla class.
+    #[test]
+    fn data_driven_entries_take_item_properties_or_the_item_default() {
         assert_eq!(entry_capacity(&entry("zeqa:gem", true, Some(16))), Some(16));
-        assert_eq!(entry_capacity(&entry("zeqa:gem", true, None)), None);
-        assert_eq!(entry_capacity(&entry("zeqa:gem", false, Some(16))), None);
         assert_eq!(
-            entry_capacity(&entry("minecraft:stick", false, None)),
-            Some(64)
+            entry_capacity(&entry("zeqa:gem", false, Some(16))),
+            Some(16)
+        );
+        assert_eq!(entry_capacity(&entry("zeqa:gem", true, None)), Some(64));
+        let parsed_without_declarations = ItemRegistryEntry {
+            components: Some(Arc::new(ItemComponents::default())),
+            canonical_empty_component_data: false,
+            ..entry("zeqa:gem", true, None)
+        };
+        assert_eq!(
+            entry_capacity(&parsed_without_declarations),
+            Some(protocol::ITEM_DEFAULT_MAX_STACK_SIZE)
+        );
+        assert_eq!(
+            entry_capacity(&entry("minecraft:egg", true, None)),
+            Some(64),
+            "an empty component item replaces the vanilla egg"
+        );
+        let undeclared = ItemRegistryEntry {
+            components: Some(Arc::new(ItemComponents {
+                item_properties_declared: true,
+                ..ItemComponents::default()
+            })),
+            ..entry("zeqa:gem", true, None)
+        };
+        assert_eq!(
+            entry_capacity(&undeclared),
+            None,
+            "properties without a size"
+        );
+    }
+
+    // Other entries keep the vanilla class of their name whatever the component flag says.
+    #[test]
+    fn legacy_and_unversioned_vanilla_entries_keep_the_vanilla_class() {
+        for version in [ItemRegistryVersion::Legacy, ItemRegistryVersion::None] {
+            assert_eq!(
+                entry_capacity(&versioned(entry("minecraft:egg", true, None), version)),
+                Some(16)
+            );
+            assert_eq!(
+                entry_capacity(&versioned(entry("minecraft:stick", false, None), version)),
+                Some(64)
+            );
+        }
+        assert_eq!(
+            entry_capacity(&versioned(
+                entry("zeqa:gem", true, Some(16)),
+                ItemRegistryVersion::Legacy
+            )),
+            Some(64),
+            "a Legacy entry is a plain item, which ignores item_properties"
+        );
+        assert_eq!(
+            entry_capacity(&versioned(
+                entry("zeqa:gem", true, Some(16)),
+                ItemRegistryVersion::None
+            )),
+            Some(16),
+            "an unversioned component-based entry is a component item"
+        );
+    }
+
+    // A component item without item_properties takes the stack size component; plain items
+    // read it differently, so they leave the stack size unsettled.
+    #[test]
+    fn the_stack_size_component_binds_only_component_items() {
+        let with_component = |entry: ItemRegistryEntry| ItemRegistryEntry {
+            components: Some(Arc::new(ItemComponents {
+                max_stack_size: Some(1),
+                max_stack_size_component_declared: true,
+                ..ItemComponents::default()
+            })),
+            canonical_empty_component_data: false,
+            ..entry
+        };
+        assert_eq!(
+            entry_capacity(&with_component(entry("zeqa:gem", true, None))),
+            Some(1)
+        );
+        assert_eq!(
+            entry_capacity(&with_component(versioned(
+                entry("minecraft:stick", false, None),
+                ItemRegistryVersion::Legacy
+            ))),
+            None
         );
     }
 
@@ -288,7 +431,6 @@ mod tests {
     #[test]
     fn server_block_items_stack_to_the_item_default() {
         let block_item = |declared| ItemRegistryEntry {
-            components: None,
             version: ItemRegistryVersion::None,
             ..entry("benergistics:controller", false, declared)
         };

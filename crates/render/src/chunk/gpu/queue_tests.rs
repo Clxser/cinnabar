@@ -357,6 +357,74 @@ fn an_overdue_backlog_uploads_nearest_first_until_one_starves() {
     assert_eq!(selected, [far, near]);
 }
 
+/// Urgency, starvation, overdue work, distance and equal-key stability retain their precedence.
+#[test]
+fn gpu_update_order_preserves_priority_and_stable_ties() {
+    let mut world = World::new();
+    let [
+        urgent,
+        urgent_waiter,
+        oldest,
+        starved,
+        overdue,
+        nearest,
+        equal_first,
+        equal_second,
+    ] = std::array::from_fn(|_| world.spawn_empty().id());
+    let tint = ChunkBiomeTintIdentity::default();
+    let mut fairness = GpuUpdateFairness::default();
+    fairness.urgent_waiters.insert(urgent_waiter);
+    for (entity, age) in [
+        (urgent_waiter, GPU_UPDATE_STARVED_FRAMES),
+        (oldest, GPU_UPDATE_STARVED_FRAMES + 1),
+        (starved, GPU_UPDATE_STARVED_FRAMES),
+        (overdue, GPU_UPDATE_OVERDUE_FRAMES),
+    ] {
+        fairness.wait_ages.insert(entity, age);
+    }
+    for camera in [
+        Vec3::ZERO,
+        Vec3::splat(f32::NAN),
+        Vec3::splat(f32::INFINITY),
+    ] {
+        let candidates = [
+            (equal_first, 1),
+            (equal_second, 1),
+            (nearest, 0),
+            (overdue, 100),
+            (starved, 0),
+            (oldest, 100),
+            (urgent, 100),
+            (urgent_waiter, 100),
+        ]
+        .map(|(entity, x)| GpuUpdateCandidate {
+            entity,
+            key: SubChunkKey::new(0, x, 0, 0),
+            generation: 1,
+            tint_identity: tint,
+            priority: if entity == urgent {
+                ChunkUploadPriority::urgent()
+            } else {
+                ChunkUploadPriority::new(0.0)
+            },
+        })
+        .to_vec();
+        assert_eq!(
+            plan_gpu_chunk_updates(candidates, &HashMap::new(), camera, tint, &fairness),
+            [
+                urgent_waiter,
+                urgent,
+                oldest,
+                starved,
+                overdue,
+                nearest,
+                equal_first,
+                equal_second,
+            ]
+        );
+    }
+}
+
 #[test]
 fn gpu_update_fairness_is_bounded_prunes_inactive_and_clears_success_or_reset() {
     let mut world = World::new();
@@ -1021,4 +1089,88 @@ fn an_older_tracked_change_never_replaces_a_newer_one() {
         queue.pending[&key].generation, 1,
         "a new session restarts generations"
     );
+}
+
+#[test]
+fn main_queue_retained_priorities_follow_replacements_and_session_reset() {
+    let mut app = App::new();
+    app.add_plugins(bevy::MinimalPlugins)
+        .add_plugins(ChunkRenderPlugin::new(1));
+    let first = SubChunkKey::new(0, 0, 0, 0);
+    let second = SubChunkKey::new(0, 1, 0, 0);
+    {
+        let mut queue = app.world_mut().resource_mut::<ChunkRenderQueue>();
+        queue
+            .try_insert(
+                first,
+                solid_test_mesh(),
+                render_scene::ChunkUploadPriority::new(1.0),
+            )
+            .unwrap();
+        queue
+            .try_insert(
+                second,
+                solid_test_mesh(),
+                render_scene::ChunkUploadPriority::new(2.0),
+            )
+            .unwrap();
+    }
+    app.update();
+    assert!(
+        app.world()
+            .resource::<ChunkEntities>()
+            .0
+            .contains_key(&first)
+    );
+    assert!(
+        !app.world()
+            .resource::<ChunkEntities>()
+            .0
+            .contains_key(&second)
+    );
+    {
+        let mut queue = app.world_mut().resource_mut::<ChunkRenderQueue>();
+        queue
+            .try_insert(
+                second,
+                solid_test_mesh(),
+                render_scene::ChunkUploadPriority::urgent(),
+            )
+            .unwrap();
+        queue
+            .try_insert(
+                first,
+                solid_test_mesh(),
+                render_scene::ChunkUploadPriority::new(0.0),
+            )
+            .unwrap();
+    }
+    app.update();
+    assert!(
+        app.world()
+            .resource::<ChunkEntities>()
+            .0
+            .contains_key(&second)
+    );
+    assert!(
+        app.world()
+            .resource::<ChunkRenderQueue>()
+            .pending
+            .contains_key(&first)
+    );
+    {
+        let mut queue = app.world_mut().resource_mut::<ChunkRenderQueue>();
+        queue.reset_session();
+        queue
+            .try_insert(
+                second,
+                solid_test_mesh(),
+                render_scene::ChunkUploadPriority::new(3.0),
+            )
+            .unwrap();
+    }
+    app.update();
+    let entities = &app.world().resource::<ChunkEntities>().0;
+    assert_eq!(entities.len(), 1);
+    assert!(entities.contains_key(&second));
 }

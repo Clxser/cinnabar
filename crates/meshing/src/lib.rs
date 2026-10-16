@@ -16,6 +16,7 @@ mod cube_layout;
 mod light_emitters;
 pub mod lighting;
 pub mod liquid;
+mod palette_bits;
 mod publication;
 mod types;
 pub use light_emitters::BlockLightEmitter;
@@ -38,7 +39,9 @@ pub use cloud::{
     PackedCloudQuad, cloud_face_shade, cloud_instance_origins, mesh_cloud_texture,
 };
 pub use color::debug_color;
-pub use contributors::{ContributorResolver, ResolvedContributors};
+pub use contributors::{
+    ContributorResolver, ResolvedContributors, mesh_inputs::block_changes_preserve_meshes,
+};
 pub use cube_layout::{
     CubeQuadLayout, FaceMask, facing_cell, is_single_sided_opaque, sub_chunk_facing_faces,
 };

@@ -1,22 +1,28 @@
 //! Engine-independent contracts shared by world publication and rendering.
 //!
-//! This crate owns publication authority, pacing bounds and shared skin layout
-//! rules. It has no dependencies and must not acquire game state or GPU types.
+//! This crate owns publication authority, pacing bounds, UI paint and shared skin
+//! layout rules. It has no dependencies and must not acquire game state or GPU types.
 
 mod actor_lighting;
+pub mod far_terrain;
 mod frame_rate_limit;
+mod legacy_combat;
 mod pose_generation;
 pub mod primitive_shapes;
 mod publication;
 mod quality;
 pub use pose_generation::PoseGeneration;
 mod skin;
+mod ui_coverage_paint;
 mod vrr;
+
+pub use ui_coverage_paint::{UI_STYLE_COVERAGE_PAINT, UiCoveragePaint};
 
 pub use actor_lighting::{
     ACTOR_LIGHT_DIRECTIONAL, ACTOR_LIGHT_WORLD, ACTOR_SHADE_COEFFICIENTS, fancy_actor_shade,
 };
 pub use frame_rate_limit::FrameRateLimit;
+pub use legacy_combat::{BEDROCK_112, Bedrock112Rules, CombatVisuals, DEFAULT_COMBAT_VISUALS};
 pub use publication::{
     PublicationAllowance, PublicationPermit, PublicationPermitStage, PublicationServiceConfig,
 };

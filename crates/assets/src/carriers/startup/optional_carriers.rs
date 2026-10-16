@@ -21,17 +21,17 @@ use std::{
 pub(super) fn load_material_keys(
     world_asset_path: &Path,
     material_count: usize,
-) -> Option<crate::MaterialKeys> {
+) -> Option<crate::material_keys::MaterialKeys> {
     let path = world_asset_path.with_extension("matkeys.json");
     let file = File::open(&path).ok()?;
     let mut bytes = Vec::new();
-    file.take(crate::MAX_MATERIAL_KEYS_BYTES + 1)
+    file.take(crate::material_keys::MAX_MATERIAL_KEYS_BYTES + 1)
         .read_to_end(&mut bytes)
         .ok()?;
-    if bytes.len() as u64 > crate::MAX_MATERIAL_KEYS_BYTES {
+    if bytes.len() as u64 > crate::material_keys::MAX_MATERIAL_KEYS_BYTES {
         return None;
     }
-    let keys = crate::MaterialKeys::from_json(&bytes, material_count);
+    let keys = crate::material_keys::MaterialKeys::from_json(&bytes, material_count);
     if keys.is_none() {
         tracing::warn!(
             "material key sidecar does not match the world carrier; rebuild with make assets"

@@ -7,7 +7,7 @@ def render(schema):
     rust=[]; go=[]
     for v in fields['variants']:
         kind=v['admission']; r=v['rust']; g=v['go']
-        if kind=='bool': a=f'(Field::{r}, Scalar::{r}(_)) => true,'; b=f'case {g}: return value.Bool!=nil'
+        if kind=='bool': a=f'(Field::{r} {{}}, Scalar::{r}(_)) => true,'; b=f'case {g}: return value.Bool!=nil'
         elif kind=='range': a=f'(Field::{r} {{ min,max }}, Scalar::{r}(value)) => min<=value && value<=max,'; b=f'case {g}: return value.Integer!=nil && f.Min<=*value.Integer && *value.Integer<=f.Max'
         elif kind=='utf8_bytes': a=f'(Field::{r} {{ max_bytes }}, Scalar::{r}(value)) => value.len()<=usize::from(*max_bytes),'; b=f'case {g}: return value.Text!=nil && len(*value.Text)<=int(f.MaxBytes)'
         elif kind=='choice': a=f'(Field::{r} {{ variants }}, Scalar::{r}(value)) => value<variants,'; b=f'case {g}: return value.Choice!=nil && *value.Choice<f.Variants'

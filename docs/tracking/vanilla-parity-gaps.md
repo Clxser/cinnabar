@@ -40,7 +40,7 @@ Values marked *(measure)* may now be taken directly from the client references (
 - `task/resource-packs` — server pack download/decrypt/apply (review fixes).
 - `task/enhanced-shaders` — opt-in Enhanced render mode (non-parity, off by default).
 
-## JSON-UI engine (clean-room, Bedrock target; Java HUD stays an override)
+## JSON-UI engine (Bedrock target; Java HUD stays an override)
 Owner decision: a faithful 1:1 Bedrock JSON-UI interpreter drives forms, container
 screens and menus from the vanilla `ui/*.json` + textures; the Java-styled gameplay HUD
 (`hud_screen` family) stays on the existing path and is absent from the engine's screen
@@ -88,7 +88,7 @@ count and the live-event button. OreUI screens that 26.30 shows by default are d
 (`docs/oreui.md`): play (Worlds/Realms/Servers), death, profile, inbox and the friends drawer;
 settings, disconnect and the main menu stay JSON-UI as in 26.30's defaults. Bed and
 create/edit-world OreUI screens are not built. All need screenshot checks. Not
-served: persona appearance pieces for the paper doll, gathering venues, store layouts. A launcher run keeps one `-control-status` core (restarted
+served: persona appearance pieces for the paper doll, gathering venues. A launcher run keeps one `-control-status` core (restarted
 on sign-in/sign-out) that feeds account, realms, friends and local worlds; joins select their
 target over `connect.v1` and fall back to a per-session core; opened local worlds are joined and
 closed with their session; respawn sends the client-ready respawn request only (no player
@@ -219,7 +219,7 @@ animated rig remotes use. All three below flow from that.
   bell with frame and swing, lectern, enchant-table book, conduit, decorated pot, item/glow frames with framed items
   (dropped-item sprite path), campfire items, tinted scrolling beacon beam, additive end portal, sign text and
   model-shaped crack overlay draw from the `.mcbeben` carrier; all uncompiled, unmeasured and lit by the terrain
-  light curve. Filled maps, spawner mob, flower-pot plants, conduit wind cube, campfire/hopper/brewing-stand
+  light curve. Filled maps, spawner mob, flower-pot plants, conduit wind cube, hopper/brewing-stand
   terrain models and exact bell/lectern/pot dimensions remain open (MED-HIGH).
 - Server resource packs: custom blocks (sequential and hashed ids), item icons, and lang apply at runtime;
   custom entities apply in the neutral material profile only (pack attachables apply to held/worn items on player bodies through a per-session equipment layer; no custom materials, cross-catalog vanilla clip references, or conditional/multi-texture render controllers); pack property defaults seed query.property only when a resource pack carries `entities/` behavior definitions; vanilla-entity retexturing rides the same path when the pack redefines a vanilla identifier; merged pack sounds now feed the audio engine as server overrides (uncompiled) (HIGH).
@@ -227,7 +227,9 @@ animated rig remotes use. All three below flow from that.
   sun/moon quad size, AO darkening step, water surface alpha *(measure)*.
 - Terrain blocks (uncompiled): ice, slime, honey, tinted glass, powder snow, snow layers, named opaque cubes, amethyst
   and standing coral-fan sprites, redstone bases now compile; lanterns, candles, end/lightning rods, cauldron, hopper,
-  anvils, pistons, scaffolding, dripleaf, campfire and slime/honey inner cubes still diagnostic pending measurement (HIGH).
+  anvils, pistons, scaffolding, dripleaf and slime/honey inner cubes still diagnostic pending measurement; campfire logs,
+  ember bed and flames match the 26.30 client model. The model is unchanged for 1.26.50 but remains
+  unverified there (HIGH).
 
 ## HUD (Java target; chat/scoreboard intentionally Java — not gaps)
 - Title/subtitle/action bar centered, magnified, alpha-faded from SetTitle timings; placement constants need measurement (uncompiled).
@@ -339,8 +341,9 @@ aim assist, sounds, buoyancy, container data) have no visual effect and are reta
 | 84 score, 140 nameplate_render_distance_max (current target) | yes | synced below-name score inside the native ten-block gate; per-actor tag range |
 | 136 filtered_name (older table's target) | no | filtered tag text — missing; current target key mapping still needs reconciliation |
 
-Missing presentation that the flags drive: the entity flame billboard
-and `on_fire_color`, entity ground shadows (none are drawn at any scale), the charged-creeper
+World actors now draw collision-box flame billboards from on-fire metadata;
+matched-version world placement and playback acceptance remain incomplete in `plan.md`.
+Missing presentation that the flags drive: `on_fire_color`, entity ground shadows (none are drawn at any scale), the charged-creeper
 armor layer (needs `uv_anim`), and per-tick Molang `scripts.scale` (only a constant authored scale
 is carried).
 

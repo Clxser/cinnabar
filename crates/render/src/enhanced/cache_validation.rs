@@ -1,6 +1,7 @@
 //! Exercises Bevy's recursive import loading and asynchronous native pipeline compilation.
 use super::validation::{
-    actor_descriptor, actor_motion_descriptor, variant_definitions, variant_shader, variants,
+    actor_descriptor, actor_motion_descriptor, reads_draw_offsets, variant_definitions,
+    variant_shader, variants,
 };
 use crate::{shader_safety, shader_source};
 use bevy::{
@@ -146,6 +147,11 @@ fn enhanced_pipelines_compile_through_async_cache() {
                 },
                 entry_point: Some(vertex.into()),
                 shader_defs: shader_defs.clone(),
+                buffers: if reads_draw_offsets(name, vertex) {
+                    vec![crate::chunk::pipeline::layouts::draw_offsets_layout()]
+                } else {
+                    Vec::new()
+                },
                 ..Default::default()
             },
             fragment: Some(FragmentState {

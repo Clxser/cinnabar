@@ -371,6 +371,7 @@ fn profile() -> assets::EntityGeometry {
     .collect::<Vec<_>>()
     .into();
     EntityGeometry {
+        animation_no_head_bob: false,
         visible_bounds: None,
         identifier: "geometry.humanoid.custom".into(),
         inherits: None,
@@ -738,10 +739,10 @@ fn opaque_cube_refuses_server_block_overlay_ids() {
             animation: NO_ANIMATION,
             ..assets::Material::unvaried()
         }],
-        texture: Some(TextureArray {
+        textures: vec![TextureArray {
             layers: 1,
             mips: [16, 8, 4, 2, 1].into_iter().map(mip).collect(),
-        }),
+        }],
         ..BlockOverlay::default()
     };
     let session = base.with_block_overlay(base_count, &overlay).unwrap();

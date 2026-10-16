@@ -3,6 +3,17 @@
 use crate::shader_source;
 type Variant = (&'static str, String, &'static str, &'static str, bool);
 
+/// Indirect world entries read each draw's offsets from the production vertex buffer.
+pub(super) fn reads_draw_offsets(name: &str, vertex: &str) -> bool {
+    matches!(
+        (name, vertex),
+        (
+            "chunk" | "model" | "chunk_motion" | "model_motion",
+            "vertex"
+        ) | ("liquid", "vertex_depth")
+    )
+}
+
 /// All forward, shadow-caster and fullscreen variants used by the extension.
 pub(super) fn variants() -> Vec<Variant> {
     let mut result = Vec::new();
@@ -18,7 +29,12 @@ pub(super) fn variants() -> Vec<Variant> {
         result.push((
             name,
             shader_source::composed(source, &["ENHANCED"]),
-            "vertex",
+            // Liquid has no ordinary vertex entry; its colour fragment shares the depth vertex.
+            if name == "liquid" {
+                "vertex_depth"
+            } else {
+                "vertex"
+            },
             "fragment",
             false,
         ));
@@ -390,6 +406,12 @@ fn build_native_pipelines() {
                 }
             })]
         };
+        let offsets = crate::chunk::pipeline::layouts::draw_offsets_layout();
+        let offset_buffers = [Some(wgpu::VertexBufferLayout {
+            array_stride: offsets.array_stride,
+            step_mode: offsets.step_mode,
+            attributes: &offsets.attributes,
+        })];
         let _pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(name),
             layout: Some(&layout),
@@ -397,7 +419,11 @@ fn build_native_pipelines() {
                 module: &shader,
                 entry_point: Some(vertex),
                 compilation_options: Default::default(),
-                buffers: &[],
+                buffers: if reads_draw_offsets(name, vertex) {
+                    &offset_buffers
+                } else {
+                    &[]
+                },
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,

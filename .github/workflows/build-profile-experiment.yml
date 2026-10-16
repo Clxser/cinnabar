@@ -1,7 +1,15 @@
-name: Build profile experiment
+name: Release profile experiment
 
 on:
   workflow_dispatch:
+    inputs:
+      measurement:
+        description: Measure runtime performance or build duration
+        type: choice
+        options:
+          - runtime
+          - build
+        default: runtime
 
 permissions:
   contents: read
@@ -9,9 +17,11 @@ permissions:
 env:
   CARGO_INCREMENTAL: "0"
   CARGO_TERM_COLOR: always
+  LINUX_DESKTOP_PACKAGES: libwayland-dev libxkbcommon-dev libasound2-dev libudev-dev
 
 jobs:
   build:
+    if: inputs.measurement == 'build'
     name: Linux release (${{ matrix.profile }})
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -36,7 +46,8 @@ jobs:
       - name: Install Linux desktop development libraries
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libwayland-dev libxkbcommon-dev libasound2-dev libudev-dev
+          read -r -a desktop_packages <<< "$LINUX_DESKTOP_PACKAGES"
+          sudo apt-get install --yes "${desktop_packages[@]}"
       # Each job starts cold and never restores or saves a shared build cache.
       - name: Build release client
         env:
@@ -50,7 +61,7 @@ jobs:
             export CARGO_PROFILE_RELEASE_CODEGEN_UNITS="$EXPERIMENT_CODEGEN_UNITS"
           fi
           cargo build --release --locked --no-default-features -p cinnabar \
-            --features local-mods --bin cinnabar --timings
+            --bin cinnabar --timings
       - name: Upload build timings
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
@@ -58,3 +69,66 @@ jobs:
           name: build-timings-linux-${{ matrix.profile }}
           path: target/cargo-timings/cargo-timing.html
           if-no-files-found: warn
+
+  runtime:
+    name: CPU benchmarks on one runner
+    if: inputs.measurement == 'runtime'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - name: Measure release CPU benchmarks
+        run: python3 .github/scripts/runtime_profile.py suite
+      - name: Upload Criterion estimates and runner metadata
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: runtime-profile-results
+          path: |
+            target/runtime-profile-*/criterion/**/new/*.json
+            target/runtime-profile-*/runtime-profile.json
+          if-no-files-found: error
+
+  runtime-allocator:
+    name: Check the opt-in client allocator
+    if: inputs.measurement == 'runtime'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - name: Install Linux desktop development libraries
+        run: |
+          sudo apt-get update
+          read -r -a desktop_packages <<< "$LINUX_DESKTOP_PACKAGES"
+          sudo apt-get install --yes "${desktop_packages[@]}"
+      - name: Check the client binary with mimalloc enabled
+        run: cargo check --locked -p cinnabar --bin cinnabar --no-default-features --features mimalloc
+
+  runtime-summary:
+    name: Compare runtime medians
+    if: ${{ !cancelled() && inputs.measurement == 'runtime' }}
+    needs: runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Verify result comparison
+        run: python3 -m unittest discover -s .github/tests -p test_runtime_profile.py -v
+      - uses: actions/download-artifact@v8
+        with:
+          name: runtime-profile-results
+          path: runtime-results
+      - name: Write the runtime comparison table
+        run: python3 .github/scripts/runtime_profile.py summary runtime-results "$GITHUB_STEP_SUMMARY"

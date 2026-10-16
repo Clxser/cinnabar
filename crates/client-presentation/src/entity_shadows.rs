@@ -18,15 +18,18 @@ pub struct LocalShadowSource {
     pub spectator: bool,
 }
 
-/// Sorted runtime ids of the bodies `frame` drew, excluding capacity overflow and undrawable rigs.
-pub fn drawn_bodies(frame: &ActorRenderFrame, out: &mut Vec<u64>) {
+/// Sorted runtime ids of the network session bodies drawn in this frame.
+pub fn drawn_bodies(frame: &ActorRenderFrame, session_id: Option<u64>, out: &mut Vec<u64>) {
     out.clear();
     out.extend(
         frame
             .rig
             .manifest
             .iter()
-            .filter(|entry| entry.identity.layer == ACTOR_LAYER_BODY)
+            .filter(|entry| {
+                entry.identity.layer == ACTOR_LAYER_BODY
+                    && Some(entry.identity.session_id) == session_id
+            })
             .map(|entry| entry.identity.runtime_id),
     );
     out.sort_unstable();
@@ -62,8 +65,7 @@ pub fn publish_entity_shadows(
             };
             let actor = stream.authority().actor(caster.runtime_id);
             let item = actor.is_some_and(|actor| {
-                matches!(&actor.kind, protocol::ActorKind::Entity { identifier }
-                    if identifier.as_ref() == "minecraft:item")
+                actor.entity_fact.native_class == assets::facts::entity::NativeEntityClass::Item
             });
             let admitted = if local.is_some() || item {
                 let player = local.is_some();
@@ -152,7 +154,11 @@ pub fn drive_entity_shadows(
             camera_position: transform.translation,
             max_distance: render_model::MAX_ACTOR_RENDER_DISTANCE_BLOCKS,
         });
-    crate::entity_shadows::drawn_bodies(&frame, &mut drawn);
+    crate::entity_shadows::drawn_bodies(
+        &frame,
+        stream.map(|stream| stream.authority().actor_session_id()),
+        &mut drawn,
+    );
     crate::entity_shadows::publish_entity_shadows(
         stream,
         partial_tick.0,

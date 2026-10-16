@@ -163,7 +163,7 @@ fn lightning_rod_states_keep_complete_geometry_after_roundtrip() {
     let (compiled, records, pixels) = compile_rods();
     let runtime = RuntimeAssets::decode(&assets::encode_blob(&compiled).unwrap()).unwrap();
     let mut family = BTreeMap::<String, Vec<usize>>::new();
-    let mut materials = BTreeMap::new();
+    let mut sprites = BTreeMap::new();
     for record in records.iter().filter(|r| r.name.ends_with("lightning_rod")) {
         let state: serde_json::Value = serde_json::from_str(&record.canonical_state).unwrap();
         let direction = state["facing_direction"]["value"].as_u64().unwrap() as usize;
@@ -194,7 +194,7 @@ fn lightning_rod_states_keep_complete_geometry_after_roundtrip() {
             (
                 &quads[..shaft_faces],
                 (112, 144),
-                if direction % 2 == 0 {
+                if direction.is_multiple_of(2) {
                     (64, 256)
                 } else {
                     (0, 192)
@@ -203,7 +203,7 @@ fn lightning_rod_states_keep_complete_geometry_after_roundtrip() {
             (
                 &quads[shaft_faces..],
                 (96, 160),
-                if direction % 2 == 0 {
+                if direction.is_multiple_of(2) {
                     (0, 64)
                 } else {
                     (192, 256)
@@ -252,9 +252,16 @@ fn lightning_rod_states_keep_complete_geometry_after_roundtrip() {
                 .strip_prefix("waxed_")
                 .unwrap_or(record.name.strip_prefix("minecraft:").unwrap())
         };
-        if let Some(previous) = materials.insert(sprite_name, quads[0].material) {
+        // Different terrain destinations retain separate materials while sharing sprite storage.
+        let texture = runtime.material(quads[0].material).texture;
+        assert!(
+            quads
+                .iter()
+                .all(|quad| runtime.material(quad.material).texture == texture)
+        );
+        if let Some(previous) = sprites.insert(sprite_name, texture) {
             assert_eq!(
-                previous, quads[0].material,
+                previous, texture,
                 "waxing and facing retain the selected sprite"
             );
         }
@@ -266,11 +273,11 @@ fn lightning_rod_states_keep_complete_geometry_after_roundtrip() {
         );
     }
     assert_eq!(family.len(), 8);
-    let mut sprite_materials = materials.into_values().collect::<Vec<_>>();
-    sprite_materials.sort_unstable();
-    sprite_materials.dedup();
+    let mut sprite_textures = sprites.into_values().collect::<Vec<_>>();
+    sprite_textures.sort_unstable();
+    sprite_textures.dedup();
     assert_eq!(
-        sprite_materials.len(),
+        sprite_textures.len(),
         5,
         "each oxidation stage and the shared powered variant retain their pack sprite overrides"
     );

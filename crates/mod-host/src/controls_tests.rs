@@ -399,6 +399,7 @@ fn callback_controls_budgets_are_independent_and_preserve_retained_state() {
         },
         "{}".into(),
         Default::default(),
+        None,
     )
     .unwrap();
     let state = instance.store.data_mut();
@@ -426,7 +427,7 @@ fn callback_controls_budgets_are_independent_and_preserve_retained_state() {
                 Ok(())
             })
             .unwrap();
-        assert!(instance.active);
+        assert!(instance.is_active());
         let controls = &instance.store.data().controls;
         assert_eq!(controls.frame, control_frame());
         assert!(controls.panel.is_some());
@@ -443,7 +444,7 @@ fn callback_controls_budgets_are_independent_and_preserve_retained_state() {
             })
             .is_err()
     );
-    assert!(!instance.active);
+    assert!(!instance.is_active());
 }
 
 #[test]

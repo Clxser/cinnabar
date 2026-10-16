@@ -22,13 +22,64 @@ pub(super) struct GpuArtworkPage {
     pub multitexture: bool,
 }
 
+/// One immutable glint raster, replaced only when its pixels change.
+#[derive(Default)]
+pub(super) struct GpuGlint {
+    pub texture: Option<(Texture, TextureView)>,
+    source: Option<TextureKey>,
+    bytes: usize,
+}
+
+impl GpuGlint {
+    /// Uploads `raster` (or a transparent texel without one); `true` when the texture changed.
+    fn prepare(
+        &mut self,
+        raster: Option<&render_model::EquipmentRaster>,
+        hasher: &RandomState,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        label: &'static str,
+    ) -> bool {
+        let fallback = render_model::EquipmentRaster {
+            width: 1,
+            height: 1,
+            rgba8: Arc::from([0u8; 4]),
+        };
+        let source = raster.unwrap_or(&fallback);
+        let page = render_model::ActorTexturePage {
+            width: source.width,
+            height: source.height,
+            layers: 1,
+            rgba8: Arc::clone(&source.rgba8),
+            color_mask: false,
+            multitexture: false,
+        };
+        let key = self
+            .source
+            .as_ref()
+            .filter(|key| key.shares_pixels_with(&page))
+            .cloned()
+            .unwrap_or_else(|| TextureKey::new(&page, hasher));
+        let changed = self.source.as_ref() != Some(&key);
+        if changed {
+            let fitted = page.fit_within(device.limits().max_texture_dimension_2d);
+            let texture = upload_page(device, queue, &fitted, label);
+            let view = texture.create_view(&TextureViewDescriptor::default());
+            self.texture = Some((texture, view));
+            self.bytes = fitted.rgba8.len();
+        }
+        self.source = Some(key);
+        changed
+    }
+}
+
 #[derive(Default)]
 pub(super) struct GpuArtwork {
     identity: Option<([u8; 32], [u8; 32])>,
     pub pages: Vec<GpuArtworkPage>,
-    pub glint: Option<(Texture, TextureView)>,
-    glint_source: Option<TextureKey>,
-    glint_bytes: usize,
+    pub glint: GpuGlint,
+    /// The held-item glint, sampled when an instance selects the item raster.
+    pub item_glint: GpuGlint,
     source_hasher: RandomState,
     rejected: bool,
 }
@@ -48,37 +99,25 @@ impl GpuArtwork {
         self.identity = Some(identity);
         self.rejected = false;
         let limits = device.limits();
-        let fallback = render_model::EquipmentRaster {
-            width: 1,
-            height: 1,
-            rgba8: Arc::from([0u8; 4]),
-        };
-        let source = pages.actor_glint.as_ref().unwrap_or(&fallback);
-        let glint_page = render_model::ActorTexturePage {
-            width: source.width,
-            height: source.height,
-            layers: 1,
-            rgba8: Arc::clone(&source.rgba8),
-            color_mask: false,
-            multitexture: false,
-        };
-        let glint_key = self
-            .glint_source
-            .as_ref()
-            .filter(|key| key.shares_pixels_with(&glint_page))
-            .cloned()
-            .unwrap_or_else(|| TextureKey::new(&glint_page, &self.source_hasher));
-        if self.glint_source.as_ref() != Some(&glint_key) {
-            let glint = glint_page.fit_within(limits.max_texture_dimension_2d);
-            let texture = upload_page(device, queue, &glint, "immutable actor glint");
-            let view = texture.create_view(&TextureViewDescriptor::default());
-            self.glint = Some((texture, view));
-            self.glint_bytes = glint.rgba8.len();
+        let actor_changed = self.glint.prepare(
+            pages.actor_glint.as_ref(),
+            &self.source_hasher,
+            device,
+            queue,
+            "immutable actor glint",
+        );
+        let item_changed = self.item_glint.prepare(
+            pages.item_glint.as_ref(),
+            &self.source_hasher,
+            device,
+            queue,
+            "immutable item glint",
+        );
+        if actor_changed || item_changed {
             self.invalidate_bindings();
         }
-        self.glint_source = Some(glint_key);
         let bytes = pages.pages.iter().try_fold(
-            render_model::PLAYER_SKIN_BUDGET_BYTES + self.glint_bytes,
+            render_model::PLAYER_SKIN_BUDGET_BYTES + self.glint.bytes + self.item_glint.bytes,
             |total, page| total.checked_add(page.rgba8.len()),
         );
         if pages.pages.len() + 1 > MAX_ACTOR_TEXTURE_PAGES
@@ -146,6 +185,8 @@ fn upload_page(
     page: &render_model::ActorTexturePage,
     label: &'static str,
 ) -> Texture {
+    #[cfg(test)]
+    work_tests::record_upload(page.rgba8.len());
     #[cfg(feature = "tracy")]
     let _span = bevy::log::info_span!(
         "actor.artwork_upload",
@@ -177,13 +218,15 @@ fn upload_page(
     )
 }
 
-/// Opaque instances share runs; sorted-pass instances retain individual sort positions.
+/// Rebuilds `spans` in place, reusing its capacity across frames. Opaque instances share runs;
+/// sorted-pass instances retain individual sort positions.
 pub(super) fn draw_spans(
+    spans: &mut Vec<ActorDrawSpan>,
     pages: &[ActorArtworkPageId],
     instances: &[render_model::ActorGpuInstance],
     geometry: &[render_model::ActorRigGeometrySpan],
-) -> Vec<ActorDrawSpan> {
-    let mut spans: Vec<ActorDrawSpan> = Vec::new();
+) {
+    spans.clear();
     let mut last_geometry = None;
     for (index, (page, instance)) in pages.iter().copied().zip(instances).enumerate() {
         if let Some(span) = spans.last_mut().filter(|span| {
@@ -206,7 +249,6 @@ pub(super) fn draw_spans(
             last_geometry = Some(instance.geometry_id);
         }
     }
-    spans
 }
 
 #[cfg(test)]
@@ -224,7 +266,9 @@ mod tests {
             material,
             ..Default::default()
         }; 2];
-        let spans = draw_spans(
+        let mut spans = Vec::new();
+        draw_spans(
+            &mut spans,
             &[1; 2],
             &instances,
             &[render_model::ActorRigGeometrySpan {
@@ -253,7 +297,9 @@ mod tests {
             material: material(blend),
             ..Default::default()
         });
-        let spans = draw_spans(
+        let mut spans = Vec::new();
+        draw_spans(
+            &mut spans,
             &[1; 4],
             &instances,
             &[render_model::ActorRigGeometrySpan {
@@ -362,7 +408,13 @@ mod tests {
             .iter()
             .map(|entry| page_of(&entry.identity))
             .collect::<Vec<_>>();
-        let spans = draw_spans(&instance_pages, &frame.instances, &frame.geometry_spans);
+        let mut spans = Vec::new();
+        draw_spans(
+            &mut spans,
+            &instance_pages,
+            &frame.instances,
+            &frame.geometry_spans,
+        );
         assert_eq!(spans.len(), 2);
         assert_eq!((spans[0].page, spans[0].count), (low.page(), 1));
         assert_eq!((spans[1].page, spans[1].count), (high.page(), 2));
@@ -378,7 +430,9 @@ mod tests {
             material: material as u32,
             ..Default::default()
         });
-        let spans = draw_spans(
+        let mut spans = Vec::new();
+        draw_spans(
+            &mut spans,
             &[1, 1],
             &instances,
             &[render_model::ActorRigGeometrySpan {
@@ -412,7 +466,9 @@ mod tests {
                 vertex_count: 3024,
             },
         ];
-        let spans = draw_spans(
+        let mut spans = Vec::new();
+        draw_spans(
+            &mut spans,
             &[0, 1, 1, 1, 2],
             &[
                 instance(0),
@@ -491,7 +547,7 @@ mod tests {
         assert_eq!(gpu.identity, Some(([1; 32], [3; 32])));
         // Without artwork the old pages go, but the glint stays bound for player skins.
         assert!(gpu.prepare(&ActorArtworkPages::default(), &device, &queue));
-        assert!(gpu.pages.is_empty() && gpu.glint.is_some());
+        assert!(gpu.pages.is_empty() && gpu.glint.texture.is_some());
         assert_eq!(gpu.identity, Some(([0; 32], [0; 32])));
     }
 }
@@ -499,3 +555,7 @@ mod tests {
 #[cfg(test)]
 #[path = "artwork_reuse_tests.rs"]
 mod reuse_tests;
+
+#[cfg(test)]
+#[path = "artwork_work_tests.rs"]
+mod work_tests;

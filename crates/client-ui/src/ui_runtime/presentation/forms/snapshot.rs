@@ -90,13 +90,18 @@ fn rasterize_offsets(input: &UiRenderInput, offset: impl Fn(usize) -> [f32; 2]) 
             fill(
                 &mut image,
                 corners,
-                |[u, v], color, overlay, x, y| {
+                |[u, v], color, overlay, coverage, x, y| {
                     if x < scissor.x
                         || y < scissor.y
                         || x >= scissor.x + scissor.width
                         || y >= scissor.y + scissor.height
                     {
                         return None;
+                    }
+                    if corners[0].style_flags & u32::from(render_api::UI_STYLE_COVERAGE_PAINT) != 0
+                    {
+                        let paint = render_api::UiCoveragePaint::from_vertex_colors(color, overlay);
+                        return Some(paint.sample(u, [v, coverage]));
                     }
                     if corners[0].style_flags & UI_STYLE_RADIAL_GRADIENT != 0 {
                         let radius = u.hypot(v).clamp(0.0, 1.0);
@@ -154,7 +159,7 @@ fn premultiply(color: [u8; 4]) -> [f32; 4] {
 fn fill(
     image: &mut RgbaImage,
     mut corners: [UiRenderVertex; 3],
-    shade: impl Fn([f32; 2], [u8; 4], [f32; 4], u32, u32) -> Option<[f32; 4]>,
+    shade: impl Fn([f32; 2], [u8; 4], [f32; 4], f32, u32, u32) -> Option<[f32; 4]>,
     invert: bool,
 ) {
     for corner in &mut corners {
@@ -207,7 +212,10 @@ fn fill(
                     + wb * corners[1].overlay_color[channel]
                     + wc * corners[2].overlay_color[channel]
             });
-            let Some(source) = shade(uv, color, overlay, x, y) else {
+            let coverage = wa * corners[0].model_light
+                + wb * corners[1].model_light
+                + wc * corners[2].model_light;
+            let Some(source) = shade(uv, color, overlay, coverage, x, y) else {
                 continue;
             };
             let target = image.get_pixel_mut(x, y);
@@ -233,6 +241,10 @@ pub fn write(input: &UiRenderInput, name: &str) {
 }
 
 /// Saves an already checked raster only when the local snapshot directory is configured.
+#[expect(
+    clippy::print_stderr,
+    reason = "names the written snapshot on stderr for local visual inspection"
+)]
 pub(in crate::ui_runtime::presentation) fn write_image(image: &RgbaImage, name: &str) {
     let Ok(dir) = std::env::var(SNAPSHOT_ENV) else {
         return;
@@ -383,7 +395,7 @@ mod tests {
             fill(
                 &mut image,
                 [vertex(0., 0.), vertex(2., 0.), vertex(0., 2.)],
-                |_, _, _, _, _| Some(premultiply(source)),
+                |_, _, _, _, _, _| Some(premultiply(source)),
                 true,
             );
             assert_eq!(image.get_pixel(0, 0).0, expected);
@@ -406,7 +418,7 @@ mod tests {
                 fill(
                     &mut image,
                     triangle.map(|index| quad[index]),
-                    |_, color, _, _, _| Some(premultiply(color)),
+                    |_, color, _, _, _, _| Some(premultiply(color)),
                     false,
                 );
             }

@@ -1,5 +1,9 @@
 use {super::*, ui::IconRef};
 
+mod cubes;
+mod short_models;
+mod world_models;
+
 #[test]
 fn source_atlas_keeps_original_pixels_and_deduplicates_sources() {
     let pixels: Vec<u8> = (0..16 * 16)
@@ -68,7 +72,7 @@ fn mesh_modulation_preserves_geometry_and_adds_glint_without_baking() {
     for (original, result) in mesh.vertices().iter().zip(faded.vertices()) {
         assert_eq!(original.position, result.position);
         assert_eq!(result.color[3], 127);
-        assert_ne!(result.style_flags & ui::UI_STYLE_GLINT, 0);
+        assert_ne!(result.style_flags & u16::from(ui::UI_STYLE_GLINT), 0);
     }
 }
 
@@ -159,6 +163,7 @@ fn the_player_preview_mesh_is_built_only_for_a_shown_preview() {
         &BTreeSet::new(),
         player,
         models,
+        super::modulated,
     );
     assert_eq!(builds.get(), 0, "no node shows the preview");
     assert!(
@@ -173,6 +178,7 @@ fn the_player_preview_mesh_is_built_only_for_a_shown_preview() {
         &BTreeSet::new(),
         player,
         models,
+        super::modulated,
     );
     assert_eq!(builds.get(), 1, "one build serves every preview node");
     assert!(
@@ -254,6 +260,10 @@ fn review_faded_block_models_keep_single_layer_thumbnail_opacity() {
     presentation
         .gui_models
         .optional_models
+        .insert(icon_key(icon));
+    presentation
+        .gui_models
+        .faded_thumbnails
         .insert(icon_key(icon));
     let bounds = UiRect::new(
         UiPoint::new(0.0, 0.0).unwrap(),

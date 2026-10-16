@@ -105,8 +105,10 @@ fn alpha_comparison(
         naga::Expression::Load { pointer } => &function.expressions[pointer],
         _ => &function.expressions[left],
     };
-    if op == naga::BinaryOperator::Less
-        && matches!(alpha, naga::Expression::AccessIndex { index: 3, .. })
+    if matches!(
+        op,
+        naga::BinaryOperator::Less | naga::BinaryOperator::LessEqual
+    ) && matches!(alpha, naga::Expression::AccessIndex { index: 3, .. })
     {
         let expression = match function.expressions[right] {
             naga::Expression::Constant(constant) => {
@@ -168,6 +170,11 @@ pub fn standalone(source: &str, definitions: &[&str]) -> String {
     compile(source, definitions, false)
 }
 
+/// Composes a production constructor's output without injecting constants into its root again.
+pub fn standalone_prepared(source: &str, definitions: &[&str]) -> String {
+    compile_prepared(source, definitions, false)
+}
+
 /// Uses Bevy's WESL composition and pruning options before validating the resulting WGSL.
 pub fn composed(source: &str, definitions: &[&str]) -> String {
     let source = composed_source(source, definitions);
@@ -220,15 +227,18 @@ fn features(definitions: &[&str]) -> wesl::Features {
 
 /// Resolves generated constants and all production imports through the WESL compiler.
 fn compile(source: &str, definitions: &[&str], prune: bool) -> String {
+    let source = material_shader::source(&meshing::cloud_viewport::shader_source(source));
+    compile_prepared(&source, definitions, prune)
+}
+
+/// Resolves imports while preserving the already prepared root module verbatim.
+fn compile_prepared(source: &str, definitions: &[&str], prune: bool) -> String {
     let mut resolver = wesl::resolver::VirtualResolver::new();
     for (path, source) in composable_sources() {
         resolver.add_module(path.parse().expect("module path"), source.into());
     }
     let root: wesl::syntax::ModulePath = "fixture::shader".parse().expect("root module path");
-    resolver.add_module(
-        root.clone(),
-        material_shader::source(&meshing::cloud_viewport::shader_source(source)).into(),
-    );
+    resolver.add_module(root.clone(), source.to_owned().into());
     let options = wesl::CompileOptions {
         visibility: false,
         features: features(definitions),
@@ -264,6 +274,10 @@ pub fn composable_sources() -> Vec<(&'static str, String)> {
         (
             "render::lighting",
             material_shader::source(include_str!("../../../src/lighting.wesl")),
+        ),
+        (
+            "render::glint",
+            material_shader::source(include_str!("../../../src/glint.wesl")),
         ),
         (
             "render::biome_tint",

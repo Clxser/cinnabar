@@ -3,9 +3,12 @@
 
 use std::{collections::BTreeMap, sync::Arc};
 
+use foldhash::fast::FixedState;
+use hashbrown::HashMap;
+
 use assets::RuntimeBlockEntityAssets;
 
-use super::{artwork::appended_layout, mob::MobTexture};
+use super::artwork::{StaticTexture, appended_layout};
 
 /// Size of one text canvas cell in atlas pixels.
 pub const TEXT_CELL: [u32; 2] = [96, 48];
@@ -143,6 +146,17 @@ impl BlockEntityAtlas {
         })
     }
 
+    /// Finds the static texture containing a point in atlas pixels.
+    pub(super) fn static_texture_at(&self, [x, y]: [f32; 2]) -> Option<AtlasRect> {
+        self.placements
+            .values()
+            .find(|rect| {
+                (rect.x..rect.x + rect.width).contains(&x)
+                    && (rect.y..rect.y + rect.height).contains(&y)
+            })
+            .copied()
+    }
+
     /// The rect of dynamic map cell `slot`.
     #[must_use]
     pub fn map_cell(&self, slot: usize) -> Option<AtlasRect> {
@@ -159,7 +173,7 @@ impl BlockEntityAtlas {
 
     /// Shelf-packs `textures` into new static rows below the packed ones, moving the dynamic
     /// strips down; textures wider than the atlas or already present are skipped.
-    pub fn append_textures(&mut self, textures: &[MobTexture]) {
+    pub(super) fn append_textures(&mut self, textures: &[StaticTexture]) {
         let Some((added_height, placements)) = appended_layout(self.size[0], textures, |name| {
             self.placements.contains_key(name)
         }) else {
@@ -243,6 +257,8 @@ struct CellPool {
     max_pages: usize,
     pages: Vec<Vec<u8>>,
     keys: Vec<Option<u64>>,
+    /// The slot holding each `Some` entry of `keys`, so a hit needs no scan of every slot.
+    slots_by_key: HashMap<u64, usize, FixedState>,
     last_used: Vec<u64>,
     clock: u64,
     /// The first clock value of the current frame; slots used since then are never evicted.
@@ -263,6 +279,7 @@ impl CellPool {
             max_pages,
             pages: Vec::new(),
             keys: Vec::new(),
+            slots_by_key: HashMap::with_hasher(FixedState::default()),
             last_used: Vec::new(),
             clock: 0,
             frame_start: 0,
@@ -311,7 +328,7 @@ impl CellPool {
     /// Evicts only unused slots; returns None for invalid canvases or exhausted page/raster budgets.
     fn slot(&mut self, key: u64, make: impl FnOnce() -> Vec<u8>) -> Option<usize> {
         self.clock += 1;
-        if let Some(slot) = self.keys.iter().position(|entry| *entry == Some(key)) {
+        if let Some(&slot) = self.slots_by_key.get(&key) {
             self.last_used[slot] = self.clock;
             return Some(slot);
         }
@@ -358,7 +375,10 @@ impl CellPool {
             page[target..target + cell_width * 4]
                 .copy_from_slice(&canvas[source..source + cell_width * 4]);
         }
-        self.keys[slot] = Some(key);
+        if let Some(evicted) = self.keys[slot].replace(key) {
+            self.slots_by_key.remove(&evicted);
+        }
+        self.slots_by_key.insert(key, slot);
         self.last_used[slot] = self.clock;
         self.revision = self.revision.wrapping_add(1);
         Some(slot)
@@ -634,7 +654,7 @@ mod tests {
         let mut atlas = BlockEntityAtlas::from_assets(
             &assets::RuntimeBlockEntityAssets::decode(&bytes).unwrap(),
         );
-        let texture = MobTexture {
+        let texture = StaticTexture {
             name: "mob/test".into(),
             width: 4,
             height: 3,

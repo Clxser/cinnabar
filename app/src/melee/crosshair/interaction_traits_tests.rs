@@ -1,5 +1,6 @@
 //! Original diagnostic projection of the admitted actor-pick result.
 
+use protocol_ids::ActorDataKey;
 use std::sync::Arc;
 
 use protocol::{ActorEvent, ActorKind, ActorSpawnEvent, WorldBootstrap, WorldEvent};
@@ -19,7 +20,7 @@ fn checked_world() -> client_world::WorldAuthority {
             local_player_unique_id: 99,
             player_position: [0.0; 3],
             world_spawn_position: [0; 3],
-            air_network_id: protocol::SEQUENTIAL_AIR_NETWORK_ID,
+            air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
             block_network_ids_are_hashes: false,
         },
         Arc::new(assets::RuntimeAssets::diagnostic()),
@@ -57,11 +58,11 @@ fn checked_world() -> client_world::WorldAuthority {
                 held_item: Default::default(),
                 metadata: Arc::from([
                     protocol::ActorMetadata {
-                        key: client_world::BOUNDING_BOX_WIDTH_METADATA_KEY,
+                        key: ActorDataKey::Width.wire_value(),
                         value: protocol::ActorMetadataValue::Float(0.6),
                     },
                     protocol::ActorMetadata {
-                        key: client_world::BOUNDING_BOX_HEIGHT_METADATA_KEY,
+                        key: ActorDataKey::Height.wire_value(),
                         value: protocol::ActorMetadataValue::Float(2.0),
                     },
                 ]),

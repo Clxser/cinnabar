@@ -7,6 +7,17 @@ use render_scene::{ActorMainWitness, ActorRenderFrame, ActorRuntimeWitness};
 pub struct PreparedActorPublication(pub(super) Option<PendingActorPublication>);
 
 impl PreparedActorPublication {
+    /// Appends client-owned entities after their normal controller and artwork resolution.
+    pub fn extend_entities(&mut self, batch: ActorPresentationBatch) {
+        if let Some(pending) = &mut self.0 {
+            if !batch.skin_layers.is_empty() {
+                return;
+            }
+            pending.batch.submissions.extend(batch.submissions);
+            pending.batch.artwork.extend(batch.artwork);
+        }
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn submissions(&self) -> Option<&[render_model::ActorRigSubmission]> {
         self.0
@@ -17,6 +28,7 @@ impl PreparedActorPublication {
 
 pub(super) struct PendingActorPublication {
     pub(super) batch: ActorPresentationBatch,
+    pub(super) session_id: Option<u64>,
     pub(super) partial_tick: f32,
     pub(super) witness: ActorMainWitness,
 }
@@ -28,12 +40,14 @@ impl PendingActorPublication {
         partial_tick: f32,
         visibility: Option<crate::local_player::FrozenLocalAvatarVisibility>,
         local_visible: bool,
-        local_runtime_id: u64,
+        local_actor: (Option<u64>, u64),
         selected_count: usize,
         unrigged_actors: usize,
     ) -> Self {
+        let (session_id, local_runtime_id) = local_actor;
         Self {
             batch,
+            session_id,
             partial_tick,
             witness: ActorMainWitness {
                 local_snapshot: visibility.is_some(),
@@ -74,7 +88,10 @@ pub fn publish_actor_render_frame(
         .rig
         .manifest
         .iter()
-        .find(|entry| entry.identity.runtime_id == prepared.witness.expected_runtime_id)
+        .find(|entry| {
+            Some(entry.identity.session_id) == prepared.session_id
+                && entry.identity.runtime_id == prepared.witness.expected_runtime_id
+        })
         .map(|entry| entry.route);
     prepared.witness.frame_instances = frame.rig.instances.len();
     prepared.witness.frame_manifest = frame.rig.manifest.len();

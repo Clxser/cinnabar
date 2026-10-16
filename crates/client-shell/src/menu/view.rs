@@ -3,7 +3,7 @@
 use {super::*, launcher::menu::auth::AuthState, launcher::menu::view::MenuView};
 
 impl MenuRuntime {
-    /// Presents the visible route, modal focus, and current service feeds together.
+    /// Presents current interaction state while retaining each owner's published list storage.
     pub fn view(&self) -> MenuView {
         #[cfg(feature = "developer-control")]
         if let Some(view) = self.fixture_view() {
@@ -92,12 +92,13 @@ impl MenuRuntime {
             key_remap: self.key_remap,
             settings_advanced_graphics: self.settings_advanced_graphics,
             feeds: self.presented_feeds(),
-            store: self.store_snapshot.clone(),
             hosting: self.hosting_world(),
             invite: self.invite_view(),
             realm_membership: self.realm_membership.state.clone(),
             join_request: self.join_request_view(),
             global_resources: self.global_resources.clone(),
+            mods: self.mods.clone(),
+            minecraft_import: self.minecraft_import.clone(),
         }
     }
 }
@@ -124,3 +125,6 @@ impl client_ui::ui_runtime::presentation::forms::scene_policy::MenuScene for Men
         self.uses_panorama()
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"sync"
 	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/hashimthearab/rust-mcbe/core/authcache"
+	"github.com/hashimthearab/rust-mcbe/core/internal/bridgecontract"
 	"github.com/sandertv/gophertunnel/minecraft"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 	"github.com/sandertv/gophertunnel/minecraft/resource"
@@ -44,9 +46,9 @@ var errResourcePackTransferTooLarge = errors.New("proxy: resource-pack transfers
 type ConnectStage string
 
 const (
-	ConnectStageRealm      ConnectStage = "realm"      // vanilla progress stage: the Realm lookup
-	ConnectStageConnecting ConnectStage = "connecting" // vanilla progress stage: connecting to the server
-	ConnectStagePacks      ConnectStage = "packs"      // vanilla progress stage: resource packs
+	ConnectStageRealm      ConnectStage = bridgecontract.ConnectStageRealm      // vanilla progress stage: the Realm lookup
+	ConnectStageConnecting ConnectStage = bridgecontract.ConnectStageConnecting // vanilla progress stage: connecting to the server
+	ConnectStagePacks      ConnectStage = bridgecontract.ConnectStagePacks      // vanilla progress stage: resource packs
 )
 
 // ConnectProgress is the join's live stage; a zero Stage means no join is being prepared.
@@ -72,8 +74,8 @@ func reportConnectStage(ctx context.Context, stage ConnectStage) {
 	}
 }
 
-// resourcePackAcquisitionBudget admits offered packs for download in offer
-// order within the count and byte bounds; later packs are ignored, not fatal.
+// resourcePackAcquisitionBudget admits the first offer for each pack identity
+// within the count and byte bounds; later entries are ignored, not fatal.
 // Transfer sizes replace offer estimates within the archive and selection byte bounds;
 // transfers past the memory ceiling cancel the upstream dial.
 // It turns gophertunnel's acquisition events into vanilla's progress figures.
@@ -128,8 +130,14 @@ func (budget *resourcePackAcquisitionBudget) admitOffer(info *packet.ResourcePac
 		return
 	}
 	budget.accepted = make([]bool, len(info.TexturePacks))
+	seen := make(map[string]bool, len(info.TexturePacks))
 	var total uint64
 	for index, pack := range info.TexturePacks {
+		id := resourcePackIdentity(pack.UUID.String(), pack.Version)
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
 		if int(budget.packs) == maxSelectedResourcePacks || pack.Size > maxResourcePackArchiveBytes ||
 			pack.Size > maxSelectedResourcePackTotalBytes-total {
 			continue
@@ -137,7 +145,7 @@ func (budget *resourcePackAcquisitionBudget) admitOffer(info *packet.ResourcePac
 		total += pack.Size
 		budget.packs++
 		budget.accepted[index] = true
-		budget.offered[resourcePackIdentity(pack.UUID.String(), pack.Version)] = pack.Size
+		budget.offered[id] = pack.Size
 	}
 	budget.reserved = total
 }
@@ -240,18 +248,16 @@ func (budget *resourcePackAcquisitionBudget) admit(_ uuid.UUID, _ string, index,
 }
 
 // withResourcePackAcquisitionBudget routes pack admission, acquisition events and
-// ResourcePacksInfo observation through budget, preserving any existing PacketFunc.
+// ResourcePacksInfo observation through budget, preserving existing observers.
 func withResourcePackAcquisitionBudget(dialer minecraft.Dialer, budget *resourcePackAcquisitionBudget) minecraft.Dialer {
 	dialer.DownloadResourcePack = budget.admit
 	dialer.ResourcePackProgress = budget.event
-	next := dialer.PacketFunc
-	dialer.PacketFunc = func(header packet.Header, payload []byte, source, destination net.Addr) {
-		budget.observe(header, payload)
-		if next != nil {
-			next(header, payload, source, destination)
-		}
-	}
-	return dialer
+	return withPacketObserver(dialer, minecraft.PacketObserver{
+		PacketIDs: []uint32{packet.IDResourcePacksInfo},
+		Func: func(header packet.Header, payload []byte, _, _ net.Addr) {
+			budget.observe(header, payload)
+		},
+	})
 }
 
 // accountTokenSource keeps an offline (nil) account a nil interface.
@@ -470,6 +476,8 @@ type preparedConnections struct {
 	upstreamClientCache         bool
 	connectPrepared             func(context.Context, dialerDownstream) (*preparedConnection, error)
 	resolveTarget               func(context.Context) (*resolvedUpstreamTarget, error)
+	httpClient                  *http.Client          // nil keeps the native pack downloader
+	addressNetwork              minecraft.Network     // nil keeps native transfer probing
 	serverTrust                 minecraft.ServerTrust // decides transfer hops to addressed NetherNet servers
 	dialTarget                  func(context.Context, *resolvedUpstreamTarget, minecraft.Dialer) (upstreamSession, error)
 	captureResourcePackStack    func(upstreamSession, func(*resource.Pack) bool) (*selectedResourcePackStack, error)
@@ -514,7 +522,7 @@ func newPreparedConnections(upstreamAddress string, account *authcache.Account, 
 					return dialWithPreparedTransport(ctx, network, address, attempt.DialContextNetwork)
 				}
 			}
-			return dialMinecraftUpstream(ctx, networkForAddress(target, address, connections.serverTrust), address, dial)
+			return dialMinecraftUpstream(ctx, connections.hopNetwork(target, address), address, dial)
 		})
 	}
 	connections.captureResourcePackStack = captureSelectedResourcePackStack
@@ -655,6 +663,8 @@ func (connections *preparedConnections) connect(ctx context.Context, downstream 
 		clientCache = clientCache && session.sessionClientCache()
 	}
 	dialer := newUpstreamDialerForAdmission(downstream, tokenSource, cache, packAdmission, clientCache)
+	dialer.HTTPClient = connections.httpClient
+	dialer.ErrorLog = secretSafeResourcePackLogger(connections.logger)
 	if target.clientData != nil {
 		target.clientData(&dialer.ClientData)
 	}

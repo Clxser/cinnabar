@@ -200,7 +200,11 @@ fn enhanced_lobby_replay_on_native_gpu() {
                     let actor = stream.authority().actor(rig.actor.runtime_id)?;
                     nametags::extract_nametag(
                         actor,
-                        camera.translation,
+                        nametags::NametagView {
+                            viewer_position: replay.local_position.into(),
+                            camera_position: camera.translation,
+                            camera_forward: *camera.forward(),
+                        },
                         None,
                         stream.authority().actor_name_tag(actor.unique_id)?,
                         &ui::ScoreboardStore::default(),
@@ -212,6 +216,7 @@ fn enhanced_lobby_replay_on_native_gpu() {
                 .insert_resource(render_scene::NametagSceneResource(
                     nametags::build_nametag_scene(
                         &anchors,
+                        1.0,
                         &font,
                         &mut layouts,
                         &mut atlas,

@@ -16,7 +16,14 @@ const HELD_ITEMS: [&str; 9] = [
 
 /// Supplies original item pixels, including a carried cube, without installed assets.
 fn equipment_fixture() -> (EquipmentRuntime, render_model::ActorArtworkPages) {
-    let mut files = vec![
+    equipment_fixture_with_native_bow(false)
+}
+
+/// Optionally installs a texture-only bow overlay on the original equipment fixture.
+fn equipment_fixture_with_native_bow(
+    native_bow: bool,
+) -> (EquipmentRuntime, render_model::ActorArtworkPages) {
+    let mut files: Vec<(Box<str>, Vec<u8>)> = vec![
         ("models/entity/test.geo.json".into(), br#"{"format_version":"1.12.0","minecraft:geometry":[{"description":{"identifier":"geometry.test","texture_width":16,"texture_height":16},"bones":[{"name":"item","pivot":[0,0,0],"texture_meshes":[{"texture":"default","position":[0,0,0],"rotation":[0,0,0]}]}]}]}"#.to_vec()),
         ("render_controllers/test.json".into(), br#"{"format_version":"1.8.0","render_controllers":{"controller.render.test":{"geometry":"Geometry.default","materials":[{"*":"Material.default"}],"arrays":{"textures":{"Array.frames":["Texture.default","Texture.pull1","Texture.pull2","Texture.pull3"]}},"textures":["Array.frames[query.get_animation_frame]"]}}}"#.to_vec()),
     ];
@@ -31,7 +38,7 @@ fn equipment_fixture() -> (EquipmentRuntime, render_model::ActorArtworkPages) {
             "format_version": "1.10.0", "minecraft:attachable": {"description": {
                 "identifier": format!("minecraft:{item}"),
                 "materials": {"default": "entity_alphatest"},
-                "textures": {"default": "textures/test0", "pull1": "textures/test1", "pull2": "textures/test2", "pull3": "textures/test3"},
+                "textures": {"default": "textures/test0", "pull1": "textures/test1", "pull2": "textures/test2", "pull3": "textures/test3", "bow_pulling_0": "textures/test1", "bow_pulling_1": "textures/test2", "bow_pulling_2": "textures/test3"},
                 "geometry": {"default": "geometry.test"},
                 "render_controllers": ["controller.render.test"],
             }},
@@ -41,7 +48,19 @@ fn equipment_fixture() -> (EquipmentRuntime, render_model::ActorArtworkPages) {
             attachable.to_string().into_bytes(),
         ));
     }
-    let mut compiled = pack_compiler::compile_actor_pack(files).unwrap().unwrap();
+    if native_bow {
+        for (path, bytes) in &mut files {
+            if path.ends_with(".json") {
+                *bytes = String::from_utf8(std::mem::take(bytes))
+                    .unwrap()
+                    .replace("geometry.test", "geometry.bow_standby")
+                    .into_bytes();
+            }
+        }
+    }
+    let mut compiled = pack_entity_compiler::compile_actor_pack(files)
+        .unwrap()
+        .unwrap();
     compiled.entities.block_visual_count = 1;
     let catalog = Arc::new(
         assets::RuntimeEquipmentCatalog::from_parts(
@@ -82,14 +101,21 @@ fn equipment_fixture() -> (EquipmentRuntime, render_model::ActorArtworkPages) {
         )
         .unwrap(),
     );
-    let (equipment, pages, _) = EquipmentRuntime::build(
-        entities,
-        Some(catalog),
+    let (mut equipment, mut pages, _) = EquipmentRuntime::build(
+        Arc::clone(&entities),
+        Some(Arc::clone(&catalog)),
         icons,
         None,
         None,
         render_model::ActorArtworkPages::default(),
     );
+    if native_bow {
+        let (next, locations) =
+            pages.with_equipment_rasters(&EquipmentRuntime::pack_rasters(&catalog));
+        pages = next;
+        equipment.set_pack_layer(Some((entities, Some(catalog), locations)));
+        assert!(equipment.uses_native_item_mesh(BOW));
+    }
     (equipment, pages)
 }
 
@@ -121,6 +147,17 @@ fn source_for_use(
     with_artwork: bool,
     use_ticks: u32,
 ) -> (HandSource, Vec<render_model::ActorRigGeometry>) {
+    source_for_use_and_swing(identifier, with_artwork, use_ticks, None, None)
+}
+
+/// Samples independent swing clocks and optional local use timing through Java publication.
+fn source_for_use_and_swing(
+    identifier: Option<&str>,
+    with_artwork: bool,
+    use_ticks: u32,
+    swing: Option<actor_animation::LocalSwingProgress>,
+    timing: Option<actor_animation::AttachableAnimationInput<'static>>,
+) -> (HandSource, Vec<render_model::ActorRigGeometry>) {
     let mut stream = super::tests::head_stream();
     let mut feed = super::tests::uploaded_skin_feed(false);
     let protocol::PlayerSkin::Standard(skin) = &mut feed.skin else {
@@ -146,6 +183,10 @@ fn source_for_use(
         stream.prepare_actor_appearance_fixture();
         stream.advance_actor_interpolation_frame(use_ticks);
     }
+    if let Some(swing) = swing {
+        stream.sync_local_swing(swing);
+        stream.advance_actor_interpolation_frame(0);
+    }
     let (mut equipment, artwork) = equipment_fixture();
     let artwork = if with_artwork {
         artwork
@@ -159,6 +200,8 @@ fn source_for_use(
     );
     let input = ActorEquipmentInput {
         main: identifier.map(|identifier| WornItem {
+            variant: Default::default(),
+            charged_projectile: None,
             use_facts: client_world::EffectiveItemUse::default(),
             grip: assets::item::grip::builtin_item_grip(identifier),
             identifier: identifier.into(),
@@ -188,12 +231,13 @@ fn source_for_use(
             consume_ticks: None,
             item_animation: Some(actor_animation::AttachableAnimationInput {
                 first_person: true,
-                ..Default::default()
+                ..timing.unwrap_or_default()
             }),
             alpha: 0.5,
             artwork: &artwork,
             motion: Mat4::IDENTITY,
             sampling_camera: None,
+            aspect: 1.0,
         },
         &mut equipment,
         &mut cache,
@@ -210,7 +254,7 @@ fn held_java_items_publish_only_the_resolved_item_layer() {
             source.body.is_none(),
             "{identifier} must not publish a player arm"
         );
-        assert!(source.java_body_camera.is_none());
+        assert!(source.body_camera.is_none());
         assert_eq!(source.items.iter().flatten().count(), 1, "{identifier}");
         if matches!(identifier, "minecraft:shield" | "minecraft:crossbow") {
             assert!(
@@ -257,6 +301,36 @@ fn every_java_bow_pull_frame_publishes_one_textured_raster_without_an_arm() {
 }
 
 #[test]
+fn published_java_bow_uses_local_draw_time_for_placement_and_artwork() {
+    let mut previous = None;
+    for alpha in [0.25, 0.75] {
+        let timing = actor_animation::AttachableAnimationInput {
+            is_local_player: true,
+            frame_alpha: alpha,
+            use_elapsed_ticks: Some(1),
+            ..Default::default()
+        };
+        let (source, meshes) = source_for_use_and_swing(Some(BOW), true, 19, None, Some(timing));
+        let (item, atlas) = source.items[0].as_ref().unwrap();
+        let mesh = meshes
+            .iter()
+            .find(|mesh| mesh.id == item.presentation.submission.input.rig)
+            .unwrap();
+        let [u, v] = mesh.vertices[0]
+            .uv
+            .map(|coordinate| (coordinate * 16.0) as usize);
+        let layer = item.presentation.location.layer() as usize;
+        let texel = ((layer * 16 + v) * 16 + u) * 4;
+        assert_eq!(atlas.rgba8[texel + 2], 70, "the first local bow pull frame");
+        let camera = item.java_camera.unwrap();
+        if let Some(previous) = previous {
+            assert!(!camera.abs_diff_eq(previous, 1e-6));
+        }
+        previous = Some(camera);
+    }
+}
+
+#[test]
 fn missing_held_item_artwork_does_not_publish_an_empty_arm() {
     for identifier in HELD_ITEMS.into_iter().filter(|item| *item != FILLED_MAP) {
         let source = source_for(Some(identifier), false);
@@ -265,7 +339,7 @@ fn missing_held_item_artwork_does_not_publish_an_empty_arm() {
             source.body.is_none(),
             "missing {identifier} artwork must not substitute a player arm"
         );
-        assert!(source.java_body_camera.is_none());
+        assert!(source.body_camera.is_none());
     }
 }
 
@@ -289,7 +363,7 @@ fn first_person_texture_lookup_rejects_a_layer_absent_from_its_page() {
 fn empty_hand_and_maps_keep_their_intentional_textured_arms() {
     let empty = source_for(None, true);
     assert!(empty.body.is_some());
-    assert!(empty.java_body_camera.is_some());
+    assert!(empty.body_camera.is_some());
     assert!(empty.items.iter().all(Option::is_none));
     assert_resolved_textures(&empty);
     let map = source_for(Some(FILLED_MAP), true);
@@ -319,4 +393,129 @@ fn assert_resolved_textures(source: &HandSource) {
             render_model::STANDARD_SKIN_BYTES
         );
     }
+}
+
+#[test]
+fn java_bare_arm_takes_precedence_over_the_legacy_attack_clock() {
+    let swing = actor_animation::LocalSwingProgress {
+        bedrock: [0.25, 0.5],
+        java: [0.1, 0.2],
+        frame_alpha: Some(0.75),
+    };
+    let source = source_for_use_and_swing(None, true, 0, Some(swing), None).0;
+    let expected = render_model::java_animation::first_person_arm(0.175, 1.0);
+    assert!(source.body_camera.unwrap().abs_diff_eq(expected, 1e-5));
+    let legacy = render_model::legacy_combat::legacy_first_person_arm(0.4375, 1.0);
+    assert!(!expected.abs_diff_eq(legacy, 1e-3));
+}
+
+#[test]
+fn retained_native_bow_stays_idle_when_the_newly_selected_food_is_used() {
+    let (mut equipment, artwork) = equipment_fixture_with_native_bow(true);
+    let mut stream = super::tests::head_stream();
+    let mut feed = super::tests::uploaded_skin_feed(false);
+    feed.first_person = true;
+    feed.main_hand = Some(BOW.into());
+    stream.sync_local_player_pose(&feed);
+    stream.prepare_actor_appearance_fixture();
+    stream.advance_actor_interpolation_frame(6);
+    let bow = WornItem {
+        identifier: BOW.into(),
+        metadata: 0,
+        damage: None,
+        charged_projectile: None,
+        use_facts: client_world::EffectiveItemUse::default(),
+        grip: assets::item::grip::builtin_item_grip(BOW),
+        kind: HeldKind::Sprite,
+        dye_rgb: None,
+        enchanted: false,
+        variant: Default::default(),
+    };
+    let mut cache = HandCache::default();
+    let rig = stream.authority().actor_rig(1).unwrap();
+    equipment.register_skin_rig(
+        render_model::EntityRigId(rig.rig.0),
+        rig.bone_names.to_vec(),
+    );
+    cache.remember(&rig, Some(&bow));
+    feed.main_hand = Some("minecraft:golden_apple".into());
+    feed.item_use = client_world::LocalItemUse::Using;
+    stream.sync_local_player_pose(&feed);
+    stream.prepare_actor_appearance_fixture();
+    stream.advance_actor_interpolation_frame(1);
+    let selected = ActorEquipmentInput {
+        main: Some(WornItem {
+            identifier: "minecraft:golden_apple".into(),
+            ..bow.clone()
+        }),
+        ..Default::default()
+    };
+    let rig = stream.authority().actor_rig(1).unwrap();
+    assert_eq!(rig.java_equipped.unwrap().identifier.as_ref(), BOW);
+    cache.remember(&rig, selected.main.as_ref());
+    let actor = stream.authority().actor(1).unwrap();
+    let presentation =
+        crate::presentation::actors::entity_rig_presentation(&rig, actor, &artwork, 0.5).unwrap();
+    let idle = equipment
+        .first_person_java_item_with_use(
+            &presentation.submission,
+            &bow,
+            JavaHand {
+                swing: 0.0,
+                equip: 1.0,
+                using: None,
+            },
+            actor_animation::AttachableAnimationInput::default(),
+        )
+        .unwrap();
+    let pulling = equipment
+        .first_person_java_item_with_use(
+            &presentation.submission,
+            &bow,
+            JavaHand {
+                swing: 0.0,
+                equip: 1.0,
+                using: None,
+            },
+            actor_animation::AttachableAnimationInput {
+                use_elapsed_ticks: Some(19),
+                max_use_ticks: 32,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_ne!(idle.presentation.location, pulling.presentation.location);
+    let source = hand_source(
+        HandInputs {
+            stream: &stream,
+            presentation,
+            equipment_input: &selected,
+            owner_equipment: &selected,
+            consume_ticks: Some(32),
+            item_animation: Some(actor_animation::AttachableAnimationInput {
+                first_person: true,
+                is_local_player: true,
+                animation_frame: 3,
+                use_elapsed_ticks: Some(19),
+                max_use_ticks: 32,
+                hand_charged: true,
+                ..Default::default()
+            }),
+            alpha: 0.5,
+            artwork: &artwork,
+            motion: Mat4::IDENTITY,
+            sampling_camera: None,
+            aspect: 1.0,
+        },
+        &mut equipment,
+        &mut cache,
+    )
+    .unwrap();
+    let draw = &source.items[0].as_ref().unwrap().0;
+    assert_eq!(draw.presentation.location, idle.presentation.location);
+    assert_eq!(
+        draw.presentation.submission.input.rig,
+        idle.presentation.submission.input.rig
+    );
+    assert!(draw.java_camera.is_some());
 }

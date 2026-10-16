@@ -11,10 +11,12 @@ use bevy::prelude::DetectChanges;
 /// Retained actor state shared by early simulation and final render preparation.
 #[derive(Resource, Default)]
 pub struct ActorFrameState {
+    pub(super) paintings: super::paintings::PaintingRoutes,
     pub(super) published_session: Option<u64>,
     pub(super) published_pack: Option<Arc<assets::SessionEntityPack>>,
     pub(super) pack_geometry_ready: SessionGeometryReady,
     pub(super) published_items: Option<Arc<crate::session_assets::SessionItems>>,
+    published_artwork: Option<Arc<crate::prepared_actor_artwork::PreparedActorArtwork>>,
     pub(super) actor_clock: ActorFrameClock,
     pub(super) session_artwork: Option<render_model::ActorArtworkPages>,
     pub(super) cape_state: crate::presentation::cape::CapeState,
@@ -26,6 +28,7 @@ pub struct ActorFrameState {
     pub(super) hand_revision: u64,
     pub(super) java_hand: java::HandCache,
     pub(super) java_poses: java::PoseScratch,
+    pub(super) body_scratch: super::bodies::BodyScratch,
     pub(super) input: Option<ActorFrameInput>,
     pub(super) step: Option<crate::actor_clock::ActorFrameStep>,
     motion_step: Option<crate::actor_clock::ActorFrameStep>, // Taken by early remote motion.
@@ -34,8 +37,10 @@ pub struct ActorFrameState {
     hand_ready: bool,
     pub(super) captured_view: LocalViewPose,
     pub(super) captured_sampling_camera: Option<([f32; 2], [f32; 3])>,
+    pub(super) captured_aspect: f32,
     pub(super) first_person: bool,
     pub(super) java_mode: bool,
+    pub(super) combat_visuals: render_api::CombatVisuals,
     pub(super) hand_use: (
         Option<u32>,
         Option<actor_animation::AttachableAnimationInput<'static>>,
@@ -43,6 +48,24 @@ pub struct ActorFrameState {
 }
 
 impl ActorFrameState {
+    /// Shares the exact accepted artwork snapshot with client-owned actor publishers.
+    pub fn actor_artwork<'a>(
+        &'a self,
+        startup: &'a render_model::ActorArtworkPages,
+    ) -> &'a render_model::ActorArtworkPages {
+        self.session_artwork.as_ref().unwrap_or(startup)
+    }
+
+    /// Returns the clock step used to evaluate and publish every actor in this frame.
+    pub fn frame_step(&self) -> Option<crate::actor_clock::ActorFrameStep> {
+        self.step
+    }
+
+    /// Returns the resolved camera rotation and position captured for actor evaluation.
+    pub fn sampling_camera(&self) -> Option<([f32; 2], [f32; 3])> {
+        self.captured_sampling_camera
+    }
+
     /// Whether the current captured first-person source will pass hand-frame validation.
     pub fn hand_is_active(&self) -> bool {
         self.hand_ready
@@ -102,11 +125,13 @@ pub fn advance_actor_frame(
         published_pack,
         pack_geometry_ready,
         published_items,
+        published_artwork,
         actor_clock,
         motion_step,
         session_artwork,
         skin_rigs,
         skin_layers,
+        cape_state,
         poses,
         shadow_poses,
         layer_poses,
@@ -119,8 +144,10 @@ pub fn advance_actor_frame(
         step: captured_step,
         captured_view,
         captured_sampling_camera,
+        captured_aspect,
         first_person: captured_first_person,
         java_mode: captured_java_mode,
+        combat_visuals: captured_combat_visuals,
         hand_use: captured_hand_use,
         ..
     } = &mut *state;
@@ -148,6 +175,7 @@ pub fn advance_actor_frame(
             actor_clock.reset();
         }
         *skin_layers = Default::default();
+        *cape_state = Default::default();
         *published_session = session_id;
     }
     let pack = session_id.and_then(|_| client_world.pack_entities.clone());
@@ -163,12 +191,20 @@ pub fn advance_actor_frame(
             .map(|items| Arc::as_ptr(items).cast()),
         items.as_ref().map(|items| Arc::as_ptr(items).cast()),
     );
-    if new_session || pack_changed || items_changed || artwork.is_changed() {
+    let prepared = client_world.prepared_actor_artwork.clone();
+    let prepared_changed = !same(
+        published_artwork
+            .as_ref()
+            .map(|art| Arc::as_ptr(art).cast()),
+        prepared.as_ref().map(|art| Arc::as_ptr(art).cast()),
+    );
+    if new_session || pack_changed || items_changed || prepared_changed || artwork.is_changed() {
         let _setup = profiler
             .as_deref()
             .map(|profiler| profiler.time(render_scene::RuntimeStage::ActorSessionSetup));
         *published_pack = pack.clone();
         *published_items = items.clone();
+        *published_artwork = prepared.clone();
         let staged = StagedSessionIcons::stage(items.as_deref());
         if new_session || pack_changed {
             *pack_geometry_ready = SessionGeometryReady::default();
@@ -179,7 +215,7 @@ pub fn advance_actor_frame(
         let resources = crate::prepared_actor_artwork::session_resources(
             &artwork,
             pack.as_ref(),
-            client_world.prepared_actor_artwork.as_deref(),
+            prepared.as_deref(),
         );
         drop(artwork_timer);
         // Always republished: presentation selects from these pages, the scene validates them.
@@ -220,6 +256,8 @@ pub fn advance_actor_frame(
         shadow_poses.begin_frame();
     }
     let java_mode = settings.feel().java_animations;
+    // Java selects poses and items; the shared combat profile always owns bob, hurt and glint.
+    let combat_visuals = render_api::DEFAULT_COMBAT_VISUALS;
     let mut local_feed = input.local_feed.take();
     if let Some(feed) = local_feed.as_mut() {
         feed.first_person = first_person;
@@ -238,6 +276,8 @@ pub fn advance_actor_frame(
             .main
             .as_ref()
             .map_or(0, |item| item.damage.unwrap_or(item.metadata));
+        feed.held_variants = [&input.local_equipment.main, &input.local_equipment.off]
+            .map(|item| item.as_ref().map(|item| item.variant).unwrap_or_default());
     }
     if let Some(stream) = client_world.stream.as_mut() {
         if let Some(equipment) = equipment.as_deref() {
@@ -277,7 +317,7 @@ pub fn advance_actor_frame(
         let _animation = profiler
             .as_deref()
             .map(|profiler| profiler.time(render_scene::RuntimeStage::ActorAnimation));
-        // Fluid and bed state is tick state; a frame without a tick would resample the same.
+        // Liquid contact is tick state; bed headings are resolved before camera publication.
         if step.ticks > 0 {
             sample_world(stream);
         }
@@ -311,6 +351,10 @@ pub fn advance_actor_frame(
         &mut local_visibility,
     );
 
+    let aspect = match camera.single() {
+        Ok((_, Projection::Perspective(perspective), _)) => perspective.aspect_ratio,
+        _ => 1.0,
+    };
     let sampling_camera = camera.single().ok().map(|(transform, _, _)| {
         (
             views::actor_camera_rotation(view.camera_rotation()),
@@ -334,6 +378,8 @@ pub fn advance_actor_frame(
                     step.partial_tick,
                     poses,
                 )?;
+                presentation.submission.overlay_rgba8 =
+                    crate::presentation::combat::overlay(actor, combat_visuals);
                 register_player_skin(
                     &mut presentation,
                     &rig,
@@ -341,9 +387,7 @@ pub fn advance_actor_frame(
                     equipment.as_deref_mut(),
                     &mut geometries,
                 );
-                if java_mode {
-                    java_hand.remember(&rig, input.local_equipment.main.as_ref());
-                }
+                java_hand.remember(&rig, input.local_equipment.main.as_ref());
                 Some(presentation)
             })
         })
@@ -377,6 +421,7 @@ pub fn advance_actor_frame(
                     alpha: step.partial_tick,
                     artwork,
                     sampling_camera,
+                    aspect,
                     motion: hand_motion
                         .as_deref()
                         .map_or(Mat4::IDENTITY, hand_motion_matrix),
@@ -403,8 +448,10 @@ pub fn advance_actor_frame(
     *hand_ready = hand::is_ready(&hand_builder.0, hand_source.as_ref(), fov);
     *captured_view = *view;
     *captured_sampling_camera = sampling_camera;
+    *captured_aspect = aspect;
     *captured_first_person = first_person;
     *captured_java_mode = java_mode;
+    *captured_combat_visuals = combat_visuals;
     *captured_step = Some(step);
     *captured_input = Some(input);
 }

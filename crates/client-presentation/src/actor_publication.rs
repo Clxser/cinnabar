@@ -1,10 +1,13 @@
 mod bodies;
 mod commit;
 mod culling;
+mod flames;
 mod geometry;
 mod hand_frame;
 mod layers;
 mod occlusion;
+mod paintings;
+pub use flames::WorldActorFlames;
 mod views;
 use geometry::{SessionGeometryReady, apply_session_pack, register_geometries};
 mod preparation;
@@ -121,6 +124,7 @@ pub struct ActorFramePublication<'w, 's> {
     dropped_items: DroppedItemPublisher<'w, 's>,
     profiler: Option<Res<'w, render_scene::RuntimeStageProfiler>>,
     partial_tick: ResMut<'w, ActorFramePartialTick>,
+    flames: Option<ResMut<'w, WorldActorFlames>>,
 }
 
 /// Builds final actor and hand poses after admission, without advancing remote actor ticks.
@@ -144,7 +148,9 @@ pub fn prepare_actor_render_frame(
         partial_tick: step.partial_tick,
         first_person: state.first_person,
         java_mode: state.java_mode,
+        combat_visuals: state.combat_visuals,
         sampling_camera: state.captured_sampling_camera,
+        aspect: state.captured_aspect,
     };
     views::refresh_interpolation(
         client_world.stream.as_deref_mut(),
@@ -165,8 +171,7 @@ pub fn prepare_actor_render_frame(
     let cull_view = actor_views.map(|views| views.publication);
     let local_shadows = state.first_person && actor_views.is_some_and(|views| views.casts_shadows);
     let mut new_geometries = Vec::new();
-    // The hand reads the canonical body before local placement. Layers share the body sample's
-    // controller budget; all new geometry is registered together before either rig is published.
+    // The hand and body share controller sampling before local placement.
     let mut bodies = bodies::sample(
         stream,
         &input,
@@ -178,9 +183,15 @@ pub fn prepare_actor_render_frame(
             native_pose: &mut state.java_hand.native_pose,
             skin_rigs: &mut state.skin_rigs,
             equipment: params.equipment.as_deref_mut(),
+            scratch: &mut state.body_scratch,
         },
         hides_box,
         &mut new_geometries,
+    );
+    state.paintings.refresh(
+        client_world.entity_assets,
+        client_world.pack_entities.as_deref(),
+        artwork,
     );
     let hand_source = hand_frame::prepare(
         stream,
@@ -223,9 +234,7 @@ pub fn prepare_actor_render_frame(
         ),
         step.partial_tick,
     );
-    let camera_position = cull_view
-        .as_ref()
-        .map(|view| view.camera_position.to_array());
+    let camera_position = cull_view.map(|view| view.camera_position.to_array());
     let mut batch = select_actor_presentations_for_shadow_view(
         bodies.local_runtime_id,
         local_visible,
@@ -236,6 +245,11 @@ pub fn prepare_actor_render_frame(
             .filter(|views| views.casts_shadows)
             .map(|views| views.publication),
     );
+    if let Some(stream) = stream {
+        state
+            .paintings
+            .append(stream.authority(), step.partial_tick, cull_view, &mut batch);
+    }
     if let Some(stream) = stream {
         crate::presentation::actors::light_bodies(&mut batch, stream);
     }
@@ -250,8 +264,10 @@ pub fn prepare_actor_render_frame(
             local_runtime_id: bodies.local_runtime_id,
             local_equipment: &input.local_equipment,
             java_posed: &bodies.java_posed,
+            combat_visuals: state.combat_visuals,
             local_emote_pose: bodies.local_emote_pose.as_ref(),
             native_body_sampled: bodies.native_body_sampled,
+            remote_skin_layers: &bodies.remote_skin_layers,
             native_pose: &state.java_hand.native_pose,
             local_shadows,
         },
@@ -276,6 +292,20 @@ pub fn prepare_actor_render_frame(
         culling::shadow_only_caster_layers(&mut batch);
     }
     layers::apply_style_and_visibility(&mut batch, stream, params.actor_style.as_deref());
+    state
+        .body_scratch
+        .recycle(bodies.java_posed, bodies.remote_skin_layers);
+    if let Some(flames) = params.flames.as_deref_mut()
+        && let Ok((camera, _, _)) = params.presentation.camera.single()
+    {
+        let (yaw, _, _) = camera.rotation.to_euler(bevy::math::EulerRot::YXZ);
+        flames.append(
+            stream.map(WorldStream::authority),
+            yaw,
+            step.partial_tick,
+            &mut batch,
+        );
+    }
     if let Some(equipment) = params.equipment.as_deref_mut() {
         new_geometries.extend(equipment.take_pending_geometries());
     }
@@ -291,7 +321,10 @@ pub fn prepare_actor_render_frame(
         step.partial_tick,
         visibility,
         local_visible,
-        bodies.local_runtime_id,
+        (
+            stream.map(|stream| stream.authority().actor_session_id()),
+            bodies.local_runtime_id,
+        ),
         selected_count,
         bodies.unrigged_actors,
     ));
@@ -309,11 +342,30 @@ pub fn prepare_actor_render_frame(
         icons,
         stream,
         client_world.collisions,
-        camera_position.map(|position| {
-            let (yaw, _, _) = view.rotation().to_euler(bevy::math::EulerRot::YXZ);
-            (position, (180.0 - yaw.to_degrees()).rem_euclid(360.0))
-        }),
+        (
+            camera_position.map(|position| {
+                let (yaw, _, _) = view.rotation().to_euler(bevy::math::EulerRot::YXZ);
+                (position, (180.0 - yaw.to_degrees()).rem_euclid(360.0))
+            }),
+            cull_view,
+        ),
         step.partial_tick,
+        (
+            artwork.item_glint.clone(),
+            render_model::ActorGlint {
+                profile: render_api::CombatVisuals::Modern,
+                time_seconds: params.time.elapsed_secs(),
+                strength: params
+                    .glint_settings
+                    .as_deref()
+                    .map_or(1.0, |settings| settings.strength),
+                speed: params
+                    .glint_settings
+                    .as_deref()
+                    .map_or(1.0, |settings| settings.speed),
+                ..Default::default()
+            },
+        ),
     );
     publish_hand_rig(
         &mut params.hand_builder.0,
@@ -322,7 +374,7 @@ pub fn prepare_actor_render_frame(
         hand_source.filter(|_| !input.hide_hand),
         hand_camera_fov,
         hand_light,
-        step.partial_tick,
+        (step.partial_tick, params.glint_settings.as_deref()),
     );
 }
 

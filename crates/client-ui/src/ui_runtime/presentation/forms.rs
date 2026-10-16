@@ -23,6 +23,8 @@ pub mod hud;
 #[cfg(test)]
 pub mod inbox_tests;
 #[cfg(test)]
+mod item_renderer_tests;
+#[cfg(test)]
 mod join_request_tests;
 pub mod loading_screen;
 #[cfg(test)]
@@ -42,6 +44,8 @@ mod preview_renderer;
 #[cfg(test)]
 mod retained_image_tests;
 mod retained_menu;
+#[cfg(test)]
+mod session_renderer_tests;
 pub(super) use retained_menu::RetainedMenu;
 #[cfg(test)]
 pub(crate) mod compatibility_tests;
@@ -54,6 +58,7 @@ mod publication_tests;
 #[cfg(test)]
 pub mod regression_snapshots;
 
+use launcher::menu::settings_options::SettingId;
 #[cfg(test)]
 mod accounts;
 #[cfg(test)]
@@ -73,11 +78,11 @@ pub mod sign_editor;
 #[cfg(any(test, feature = "test-support"))]
 pub mod snapshot;
 #[cfg(test)]
-mod store_tests;
 #[cfg(test)]
 pub mod tests;
 mod texture_sources;
 pub mod toast_screen;
+mod touch_controls;
 
 pub use containers::observe_station_block;
 
@@ -135,6 +140,7 @@ pub(super) struct ScreenStates {
     credits_hits: Vec<(ui_screens::credits_screen::CreditsAction, UiRect)>,
     /// OreUI's artwork, look and motion.
     oreui: oreui::OreUiScreen,
+    touch: touch_controls::TouchControls,
 }
 
 /// What the last build exposes to input and the next build; reset as each build starts.
@@ -368,16 +374,14 @@ impl UiPresentationRuntime {
         let changed = self.screens.mod_ui.refresh_experience_modal_pages()
             | self.screens.mod_ui.refresh_mod_screen_pages()
             | server;
-        // Server textures too big for a server page draw from full-resolution art.
-        let set = super::menu_artwork::ArtworkSet {
-            paths: self.menu_artwork_set.paths.clone(),
-            oversized: self.oversized_ui_textures(),
-            skins: self.menu_artwork_set.skins.clone(),
-            capes: self.menu_artwork_set.capes.clone(),
-        };
-        if !set.same(&self.menu_artwork_set) {
-            self.menu_artwork_set = set.clone();
-            self.menu_artwork_loader.request(set);
+        // Server textures too big for a server page draw from full-resolution art. Only the
+        // oversized list can differ from the requested set, so the rest is not copied to compare.
+        let oversized = self.oversized_ui_textures();
+        if !super::menu_artwork::same_engine_textures(&oversized, &self.menu_artwork_set.oversized)
+        {
+            self.menu_artwork_set.oversized = oversized;
+            self.menu_artwork_loader
+                .request(self.menu_artwork_set.clone());
         }
         if changed {
             self.rebuild_dynamic_textures();
@@ -435,13 +439,17 @@ impl UiPresentationRuntime {
         self.screens.oreui.transitions.end_frame();
     }
 
-    pub(super) fn configure_oreui_motion(&mut self) {
+    /// Refreshes screen preferences before painting, including while the menu is hidden.
+    pub(super) fn configure_oreui_settings(&mut self) {
         if let Some(view) = &self.menu_view {
+            self.screens
+                .oreui
+                .configure_accessibility(&view.settings_options);
             self.screens.oreui.dark_mode = view.settings_options.oreui_dark_mode();
             self.screens
                 .oreui
                 .transitions
-                .configure_motion(view.settings_options.value("screen_animations") != 0);
+                .configure_motion(view.settings_options.value(SettingId::ScreenAnimations) != 0);
         }
     }
 
@@ -509,7 +517,7 @@ impl UiPresentationRuntime {
 
     /// Hands the runtime this frame's loading cover and the catalog's screen settings.
     pub fn publish_scene_inputs(&self, runtime: &mut UiRuntime) {
-        runtime.observe_presentation(self.loading_stage.is_some(), self.screen_settings());
+        runtime.observe_presentation(self.loading_stage, self.screen_settings());
     }
 
     fn refresh_screen_settings(&mut self) {
@@ -595,6 +603,7 @@ impl UiPresentationRuntime {
             ..FrameProjections::default()
         };
         self.screens.mod_ui.begin_mod_screens_frame();
+        self.screens.touch.begin_frame();
     }
 
     /// Draws the open container's engine screen.
@@ -630,6 +639,7 @@ impl UiPresentationRuntime {
     pub(super) fn append_server_form(
         &mut self,
         runtime: &UiRuntime,
+        registry: Option<&std::collections::BTreeMap<i32, protocol::ItemRegistryEntry>>,
         nodes: &mut Vec<UiNode>,
         next: &mut u32,
         metrics: TextMetrics,
@@ -653,6 +663,20 @@ impl UiPresentationRuntime {
         {
             return Ok(());
         }
+        let session_icons = &self.session_icons;
+        let icon_catalog = self.icon_catalog.as_deref();
+        let icon_refs = self.icon_refs.as_deref();
+        let item_icon = |id, aux| {
+            let entry = registry?.get(&id)?;
+            super::session_icons::lookup_icon(
+                session_icons,
+                icon_catalog,
+                icon_refs,
+                &entry.identifier,
+                aux,
+            )
+        };
+        let mut items = ui_engine::engine::item_renderer::ItemIdAuxRenderer { icon: &item_icon };
         let reason = match self.engine.as_deref_mut() {
             None => "JSON-UI carrier not loaded".to_owned(),
             Some(renderer) => {
@@ -678,7 +702,7 @@ impl UiPresentationRuntime {
                             now: self.menu_seconds,
                             nodes: &mut *nodes,
                             next: &mut *next,
-                            renderers: &mut [],
+                            renderers: &mut [&mut items],
                         };
                         let catalog = renderer.catalog_label();
                         match renderer.render(&form, &state.view, &mut frame) {
@@ -727,7 +751,6 @@ pub fn host_screen_references() -> impl Iterator<Item = &'static str> {
         ui_screens::emote_screen::EMOTE_EQUIP_POPUP,
         ui_screens::npc::NPC_SCREEN,
         ui_screens::toast_screen::TOAST_SCREEN,
-        launcher::store::SDL_SCREEN,
         ui_screens::credits_screen::CREDITS_SCREEN,
     ]
     .into_iter()

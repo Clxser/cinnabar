@@ -14,10 +14,14 @@ pub(crate) mod barrel;
 mod brewing_stand;
 #[path = "tests/bubble_column.rs"]
 mod bubble_column;
+#[path = "tests/campfire.rs"]
+mod campfire;
 #[path = "tests/candle_cake.rs"]
 mod candle_cake;
 #[path = "tests/coral.rs"]
 mod coral;
+#[path = "tests/crop_families.rs"]
+mod crop_families;
 #[path = "tests/crops.rs"]
 mod crops;
 #[path = "tests/dragon_egg.rs"]
@@ -34,6 +38,8 @@ mod hollow_containers;
 mod isotropic;
 #[path = "tests/lantern.rs"]
 mod lantern;
+#[path = "tests/lever.rs"]
+mod lever;
 #[path = "tests/lightning_rod.rs"]
 mod lightning_rod;
 #[path = "tests/potted_plants.rs"]
@@ -42,6 +48,8 @@ mod potted_plants;
 mod sea_pickle;
 #[path = "tests/shelf_cake.rs"]
 mod shelf_cake;
+#[path = "tests/torch.rs"]
+mod torch;
 #[path = "tests/trapdoor.rs"]
 mod trapdoor;
 #[path = "tests/tripwire_hook.rs"]
@@ -224,6 +232,9 @@ fn visual_family_dispatch_uses_explicit_ordered_outcomes() {
 fn synthetic_air_record(sequential_id: u32, network_hash: u32) -> RegistryRecord {
     RegistryRecord {
         beacon_tint: assets::BeaconTint::Unresolved,
+        traits: assets::registry::BlockTraits::empty(),
+        survival: assets::registry::SurvivalRule::None,
+        properties: Box::new([]),
         sequential_id,
         network_hash,
         name: "minecraft:air".into(),
@@ -238,7 +249,7 @@ fn synthetic_air_record(sequential_id: u32, network_hash: u32) -> RegistryRecord
     }
 }
 
-fn empty_pack_sources() -> crate::PackSources {
+fn empty_pack_sources() -> pack_compile_input::PackSources {
     let directory = tempfile::tempdir().expect("create empty-pack fixture");
     // `read_pack` borrows nothing from the directory after parsing, so leak
     // the temporary directory for the lifetime of the returned sources.
@@ -250,7 +261,7 @@ fn empty_pack_sources() -> crate::PackSources {
         r#"{"texture_data":{}}"#,
     );
     write(root.join("textures/flipbook_textures.json"), "[]");
-    crate::pack::read_pack(&root).expect("parse synthetic empty pack")
+    pack_compile_input::pack::read_pack(&root).expect("parse synthetic empty pack")
 }
 
 fn no_exact_admissions() -> super::visuals::dispatcher::ExactAdmissions {
@@ -320,7 +331,7 @@ fn non_canonical_air_flagged_decoys_keep_the_stripped_diagnostic_route() {
 }
 
 #[test]
-fn every_current_registry_button_has_a_supported_name() {
+fn every_current_registry_button_uses_the_family_route() {
     let records = assets::read_registry_for_protocol(
         include_bytes!("../../../assets/data/block-registry-v2193.bin"),
         2193,
@@ -329,7 +340,7 @@ fn every_current_registry_button_has_a_supported_name() {
     let unsupported = records
         .iter()
         .filter(|record| record.model_family == assets::ModelFamily::Button)
-        .filter(|record| !super::classification::is_supported_button_name(&record.name))
+        .filter(|record| !super::classification::is_button(record))
         .map(|record| record.name.as_ref())
         .collect::<std::collections::BTreeSet<_>>();
     assert!(unsupported.is_empty(), "{unsupported:?}");
@@ -426,7 +437,8 @@ fn material_keys_carry_every_vanilla_terrain_alias() {
     );
     write(
         directory.path().join("textures/flipbook_textures.json"),
-        "[]",
+        r#"[{"flipbook_texture":"textures/blocks/animated", "atlas_tile":"stone",
+            "frames":[1,0], "ticks_per_frame":7, "replicate":2, "blend_frames":false}]"#,
     );
     let (_, keys) = super::compile_pack_inner(
         directory.path(),
@@ -436,6 +448,15 @@ fn material_keys_carry_every_vanilla_terrain_alias() {
         super::LEGACY_REGISTRY_PROTOCOL,
     )
     .expect("compile alias fixture");
+    let terrain = keys
+        .terrain_entries()
+        .find(|(key, _)| *key == "variants")
+        .unwrap()
+        .1;
+    assert_eq!(
+        terrain["textures"],
+        serde_json::json!(["textures/blocks/first", "textures/blocks/second"])
+    );
     assert_eq!(
         keys.aliases().collect::<Vec<_>>(),
         [
@@ -443,4 +464,23 @@ fn material_keys_carry_every_vanilla_terrain_alias() {
             ("variants", "textures/blocks/first")
         ]
     );
+    let source = &keys.flipbooks()[0];
+    assert_eq!(
+        keys.flipbook_destinations()
+            .map(|(key, counts)| (key, counts.to_vec()))
+            .collect::<Vec<_>>(),
+        [("stone", vec![1]), ("variants", vec![1, 1])]
+    );
+    assert_eq!(source.texture_path.as_ref(), "textures/blocks/animated");
+    assert_eq!(source.frames.as_ref(), [1, 0]);
+    assert_eq!(
+        (
+            source.ticks_per_frame,
+            source.replicate,
+            source.blend_frames
+        ),
+        (7, 2, false)
+    );
+    let round_trip = assets::material_keys::MaterialKeys::from_json(&keys.to_json(1), 1).unwrap();
+    assert_eq!(round_trip.flipbooks(), keys.flipbooks());
 }

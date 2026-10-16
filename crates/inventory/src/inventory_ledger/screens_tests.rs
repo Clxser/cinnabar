@@ -8,9 +8,9 @@ use sha2::Digest;
 use protocol::{
     CONTAINER_NAME_CURSOR, ContainerDataEvent, ContainerIdentity, ContainerOpenEvent,
     EnchantOption, EnchantOptionsEvent, InventoryContentEvent, InventoryEvent, InventorySlotEvent,
-    ItemRegistryEntry, ItemRegistryEvent, ItemRegistryVersion, NetworkItemStack, SlotIdentity,
-    StackRequestAction, StackRequestContainer, WINDOW_TYPE_ANVIL, WINDOW_TYPE_BEACON,
-    WINDOW_TYPE_ENCHANTMENT, WINDOW_TYPE_FURNACE, WINDOW_TYPE_HOPPER, WindowKind,
+    NetworkItemStack, SlotIdentity, StackRequestAction, StackRequestContainer, WINDOW_TYPE_ANVIL,
+    WINDOW_TYPE_BEACON, WINDOW_TYPE_ENCHANTMENT, WINDOW_TYPE_FURNACE, WINDOW_TYPE_HOPPER,
+    WindowKind,
 };
 
 use super::*;
@@ -29,24 +29,17 @@ fn stack(stack_network_id: i32, count: u16) -> NetworkItemStack {
     }
 }
 
+/// Establishes server-backed player slots and a parsed apple capacity declaration.
 fn ledger_with(slots: &[(usize, NetworkItemStack)]) -> PlayerInventoryLedger {
     let mut ledger = PlayerInventoryLedger::default();
     ledger.begin_session(1);
     ledger.apply(&InventoryEvent::Authority(InventoryAuthority::Server));
-    ledger.apply_registry(&ItemRegistryEvent {
-        entries: vec![ItemRegistryEntry {
-            identifier: Arc::from("minecraft:apple"),
-            network_id: 6,
-            component_based: true,
-            version: ItemRegistryVersion::DataDriven,
-            components: None,
-            component_digest: [6; 32],
-            negotiated_max_stack_size: Some(64),
-            canonical_empty_component_data: false,
-            item_tags: Arc::from([]),
-        }]
-        .into(),
-    });
+    ledger.apply_registry(&protocol::test_support::items::component_item_registry(
+        "minecraft:apple",
+        6,
+        protocol::ITEM_DEFAULT_MAX_STACK_SIZE,
+        0,
+    ));
     let mut content = vec![NetworkItemStack::default(); PLAYER_INVENTORY_SLOT_COUNT];
     for (slot, held) in slots {
         content[*slot] = held.clone();
@@ -117,6 +110,48 @@ fn furnace_cells_are_addressed_by_role() {
         }
     );
     assert_eq!(source.slot, 1);
+}
+
+#[test]
+fn named_window_refreshes_keep_taken_slots_empty_after_rejection() {
+    for admission in 0..3 {
+        let mut ledger = ledger_with(&[]);
+        open(&mut ledger, 3, WINDOW_TYPE_FURNACE);
+        let original = vec![stack(20, 2), stack(21, 3), stack(22, 4)];
+        ledger.apply(&content(ContainerIdentity::window(3), original.clone()));
+        let request = ledger.begin_storage_take_count(1, 3).unwrap();
+        assert!(ledger.mark_transport_enqueued(20));
+        let mut refreshed = original.clone();
+        refreshed[1] = NetworkItemStack::empty();
+        match admission {
+            0 => ledger.apply(&content(ContainerIdentity::window(3), refreshed)),
+            1 => ledger.apply_window_content(ContainerIdentity::window(3), 0, &refreshed),
+            _ => {
+                let (StackRequestContainer::OpenWindow { name, .. }, _) =
+                    protocol::open_cell_request(WindowKind::Furnace, 1, None, None).unwrap()
+                else {
+                    panic!("named furnace cell");
+                };
+                ledger.apply_window_content(named(3, name), name, &[NetworkItemStack::empty()]);
+            }
+        }
+        ledger.apply(&InventoryEvent::Response(
+            protocol::ItemStackResponseEvent {
+                responses: Arc::from([protocol::StackResponse {
+                    request_id: request,
+                    status: protocol::StackResponseStatus::Rejected,
+                    containers: Arc::from([]),
+                }]),
+            },
+        ));
+        assert!(ledger.storage_stack(1).is_none());
+        assert!(ledger.cursor_stack().is_none());
+        assert_eq!(ledger.storage_stack(0), Some(&original[0]));
+        assert_eq!(ledger.storage_stack(2), Some(&original[2]));
+        assert_eq!(ledger.pending_request_count(), 0);
+        assert!(!ledger.resync_required());
+        assert!(ledger.begin_storage_click(0).is_ok());
+    }
 }
 
 /// A hopper takes the level-entity name with a five-cell payload.

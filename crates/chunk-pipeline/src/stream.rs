@@ -55,6 +55,9 @@ mod block_entities;
 mod block_events;
 mod cave_visibility;
 mod cohort;
+mod column_bookkeeping;
+use column_bookkeeping::{ColumnOwned, ColumnQueue, ColumnRecords};
+mod column_scan;
 mod column_set;
 mod commit_budget;
 mod connectivity;
@@ -64,6 +67,12 @@ mod diagnostics;
 mod dimension_transfer;
 mod dirty;
 mod entity_occlusion;
+mod far_summaries;
+mod full_detail;
+#[cfg(feature = "publication-test-support")]
+pub use far_summaries::FarSummaryFixture;
+pub use far_summaries::{FarColumnSummary, FarSummaryInbox};
+pub use full_detail::FULL_DETAIL_HYSTERESIS_CHUNKS;
 mod helpers;
 mod light_diagnostics;
 mod light_queries;
@@ -71,6 +80,7 @@ mod lighting;
 mod map_data;
 mod meshing;
 mod model;
+mod near_drawn;
 mod particle_events;
 mod polling;
 mod prediction;
@@ -87,11 +97,15 @@ mod scheduler;
 mod seasonal_foliage;
 mod sequencing;
 mod service;
+#[cfg(all(test, feature = "tracy"))]
+mod trace_test_support;
 pub use service::{ServicedStream, WorldStreamService};
 mod sign_edit;
 mod transfer_priority;
-mod workers;
-pub use workers::{on_idle_world_cores, world_worker_threads};
+pub(crate) mod workers;
+#[cfg(not(target_arch = "wasm32"))]
+pub use workers::on_idle_world_cores;
+pub use workers::world_worker_threads;
 
 use client_world::ingestion::{
     BlockMutationBatch, CommitBudget, CommitStep, DecodeCommit, DecodeCompletion, DecodeIds,
@@ -101,6 +115,7 @@ use client_world::ingestion::{
 use column_set::ColumnSubChunkSet;
 use helpers::*;
 use lighting::types::*;
+use meshing::biome_records::pack_biome_record;
 use meshing::types::*;
 use request_queue::RequestQueue;
 
@@ -123,6 +138,10 @@ pub const OUTBOUND_REQUEST_CAPACITY: usize = 64;
 pub const DEFERRED_RETRY_CAPACITY: usize = 64;
 pub const MAX_SUB_CHUNK_RETRIES: u8 = 2;
 pub const SUB_CHUNK_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long an abandoned sub-chunk waits before it is asked for again, doubling each time it is
+/// abandoned again up to [`MAX_SUB_CHUNK_RECOVERY_DELAY`].
+const SUB_CHUNK_RECOVERY_DELAY: Duration = Duration::from_secs(2);
+const MAX_SUB_CHUNK_RECOVERY_DELAY: Duration = Duration::from_secs(16);
 pub const MAX_PENDING_MESH_CHANGES: usize = 512;
 /// Quiet wait after local relevance or new publisher-cohort progress.
 const UNSENT_COLUMN_GRACE: Duration = Duration::from_secs(1);
@@ -266,40 +285,62 @@ impl SchedulerView {
         }
     }
 
-    /// Squared distance, quadrupled (twice the distance) behind the view plane.
+    /// Squared distance, doubled more than 60° off the view axis and quadrupled behind the view
+    /// plane, so sections in the view cone build before nearer ones beside or behind it.
     fn rank(self, key: SubChunkKey) -> f32 {
         let distance = distance_squared(key, self.position);
-        let behind = self.forward.is_some_and(|forward| {
-            let offset = [
-                key.x as f32 * 16.0 + 8.0 - self.position[0],
-                key.y as f32 * 16.0 + 8.0 - self.position[1],
-                key.z as f32 * 16.0 + 8.0 - self.position[2],
-            ];
-            offset[0].mul_add(
-                forward[0],
-                offset[1].mul_add(forward[1], offset[2] * forward[2]),
-            ) < -8.0
-        });
-        if behind { distance * 4.0 } else { distance }
+        let Some(forward) = self.forward else {
+            return distance;
+        };
+        let offset = [
+            key.x as f32 * 16.0 + 8.0 - self.position[0],
+            key.y as f32 * 16.0 + 8.0 - self.position[1],
+            key.z as f32 * 16.0 + 8.0 - self.position[2],
+        ];
+        let along = offset[0].mul_add(
+            forward[0],
+            offset[1].mul_add(forward[1], offset[2] * forward[2]),
+        );
+        if along < -8.0 {
+            distance * 4.0
+        } else if along < 0.5 * distance.sqrt() {
+            distance * 2.0
+        } else {
+            distance
+        }
     }
 
-    /// Changes when the camera crosses a sub-chunk or turns into another eighth of the compass.
-    fn cell(self) -> [i32; 4] {
-        let [x, y, z] = self
-            .position
-            .map(|value| floor_to_i32(value).div_euclid(16));
-        let sector = self.forward.map_or(-1, |forward| {
-            ((forward[2].atan2(forward[0]) / std::f32::consts::TAU * 8.0).floor() as i32)
-                .rem_euclid(8)
-        });
-        [x, y, z, sector]
+    /// The sub-chunk holding the camera.
+    fn cell(self) -> [i32; 3] {
+        self.position
+            .map(|value| floor_to_i32(value).div_euclid(16))
+    }
+
+    /// Whether ranks queued under `previous` are stale: the camera changed sub-chunk or startup
+    /// footing, or its view direction turned, in any axis, by more than a sixth of the 60° cone.
+    fn reranks_from(self, previous: Self) -> bool {
+        self.cell() != previous.cell()
+            || self.startup_center != previous.startup_center
+            || match (self.forward, previous.forward) {
+                (None, None) => false,
+                (Some(current), Some(previous)) => {
+                    current[0].mul_add(
+                        previous[0],
+                        current[1].mul_add(previous[1], current[2] * previous[2]),
+                    ) < RERANK_TURN_COSINE
+                }
+                _ => true,
+            }
     }
 }
+
+/// Cosine of the 10° turn after which queued view ranks are refreshed.
+const RERANK_TURN_COSINE: f32 = 0.984_807_8;
 
 use model::{
     CorrelatedSubChunkAttempts, MeshChangeQueue, MeshCompletion, NormalizationErrorReason,
     PendingMesh, PendingSubChunk, PendingSubChunkColumn, RetrySchedule, RevisionTracker,
-    queue_wait, split_block_update,
+    SubChunkRecovery, queue_wait, split_block_update,
 };
 
 pub use block_cracks::{
@@ -332,14 +373,17 @@ pub struct WorldStream {
     predictions: prediction::DeferredPredictions,
     decode_tx: Sender<DecodeCompletion>,
     decode_rx: Receiver<DecodeCompletion>,
+    biome_records: Option<Arc<meshing::biome_records::BiomeRecordCache>>,
     mesh_tx: Sender<MeshCompletion>,
     mesh_rx: Receiver<MeshCompletion>,
     lighting: lighting::Lighting,
     fatal_error: Option<WorldStreamFatalError>,
     revisions: RevisionTracker,
     applied_mesh_generations: HashMap<SubChunkKey, u64>,
+    /// Sections whose last acknowledged mesh withdrew them, as past full detail, so none is drawn.
+    withdrawn_meshes: HashSet<SubChunkKey>,
     actor_block_syncs: actor_block_sync::ActorBlockSyncs,
-    mesh_dependency_masks: HashMap<SubChunkKey, (u64, MeshDependencyMask)>,
+    mesh_dependency_masks: HashMap<SubChunkKey, dirty::RegisteredMeshDependencies>,
     mesh_jobs: scheduler::KeyedJobs<PendingMesh, u64, 2>,
     /// Unit view direction the schedulers favour; `None` orders by distance alone.
     view_forward: Option<[f32; 3]>,
@@ -349,6 +393,14 @@ pub struct WorldStream {
     admitted_mesh_jobs: Arc<AtomicUsize>,
     mesh_memory: meshing::memory::MeshMemoryBudget,
     mesh_cancellations: HashMap<SubChunkKey, Arc<AtomicBool>>,
+    /// Queued sections found to be air, by their pending revision; drained under removal credit.
+    air_removals: BTreeMap<SubChunkKey, u64>,
+    /// Last air entry examined, so bounded passes over `air_removals` rotate through it.
+    air_removal_cursor: Option<SubChunkKey>,
+    /// Sections the air pass returned to the worker queue, by revision, until a dispatch pops them.
+    air_requeued: BTreeMap<SubChunkKey, u64>,
+    /// Last `air_requeued` entry pruned, so bounded passes rotate through it.
+    air_requeue_cursor: Option<SubChunkKey>,
     urgent_mesh_in_flight: HashSet<SubChunkKey>,
     staged_mesh_completions: VecDeque<MeshCompletion>,
     staged_mesh_bytes: u64,
@@ -358,7 +410,7 @@ pub struct WorldStream {
     connectivity: crate::culling::ConnectivityGrid,
     connectivity_generation: u64,
     requests: requests::SubChunkRequests,
-    unsent_column_deadlines: HashMap<ChunkKey, Instant>,
+    unsent_column_deadlines: BTreeMap<ChunkKey, Instant>,
     arrival_cohort: Option<residency::ArrivalCohort>,
     poll_deadline: Option<Instant>,
     /// Test allocation for exercising an expired urgent pass without timing assertions.
@@ -384,6 +436,14 @@ pub struct WorldStream {
     service_window: Duration,
     /// A deferred retention re-evaluation awaits the next poll.
     retention_due: bool,
+    /// Last column visited by the current retention change.
+    retention_cursor: Option<ChunkKey>,
+    /// Maintenance items completed since construction, including interior row skips.
+    maintenance_items: u64,
+    /// Maximum elapsed time of a maintenance item, commit or worker-result acceptance.
+    service_item_max: Duration,
+    /// One maintenance item may progress past the active allocation's deadline.
+    maintenance_guarantee: bool,
     /// This frame poll leaves chunk-data commits to the service.
     chunk_data_offloaded: bool,
     /// Ordered commit steps applied so far, so a poll can report commit progress.
@@ -392,9 +452,14 @@ pub struct WorldStream {
     mesh_changes: MeshChangeQueue,
     publisher: cohort::PublisherScope,
     chunk_radius: Option<i32>,
+    /// The view radius the player asked the server for; it sets the render distance.
+    requested_radius: Option<i32>,
     last_retention_center: Option<ChunkKey>,
     last_retention_radius: Option<i32>,
     local_player_chunk: Option<ChunkKey>,
+    far_terrain: far_summaries::FarTerrainFeed,
+    full_detail: full_detail::FullDetail,
+    near_drawn: near_drawn::NearDrawn,
     stats: WorldStreamStats,
 }
 

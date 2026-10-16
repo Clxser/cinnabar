@@ -11,10 +11,22 @@ use super::ids::DIAGNOSTIC_RIG_ID;
 
 pub const MAX_RENDER_BONES_PER_ACTOR: usize = assets::MAX_ENTITY_GEOMETRY_BONES;
 pub const MAX_ACTOR_RIG_VERTICES: usize = assets::MAX_SKIN_GEOMETRY_VERTICES;
-/// Aggregate geometry storage, independent of the vertex limit for one model.
+/// Aggregate geometry storage every device binds; device tiers grow the catalog past it.
 pub const MAX_ACTOR_CATALOG_VERTEX_BYTES: usize = 128 * 1024 * 1024;
 pub const MAX_ACTOR_CATALOG_VERTICES: usize =
     MAX_ACTOR_CATALOG_VERTEX_BYTES / std::mem::size_of::<ActorRigVertex>();
+
+/// Geometry storage the actor catalog may grow to on a device of vanilla memory tier
+/// `memory_tier` (0 at 2 GiB or less, 5 above 12 GiB), so server packs stay resident.
+#[must_use]
+pub const fn actor_catalog_budget_bytes(memory_tier: u32) -> usize {
+    let scale = match memory_tier {
+        0 | 1 => 1,
+        2 | 3 => 2,
+        _ => 4,
+    };
+    MAX_ACTOR_CATALOG_VERTEX_BYTES * scale
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(transparent)]
@@ -78,10 +90,16 @@ pub struct ActorRigVertex {
     pub back_uv: [f32; 2],
     pub bone_index: u32,
     pub surface: ActorRigSurface,
+    /// Offset subtracted before glint scaling: the atlas origin for sprites and block faces,
+    /// or a per-vertex offset for models sharing differently sized textures. Zero for actors.
+    pub glint_origin: [f32; 2],
 }
 
 pub const ACTOR_RIG_VERTEX_WORDS: usize = std::mem::size_of::<ActorRigVertex>() / 4;
 const _: () = assert!(std::mem::size_of::<ActorRigVertex>() == ACTOR_RIG_VERTEX_WORDS * 4);
+// Both vertex pullers read the origin from the final two storage words.
+const _: () =
+    assert!(std::mem::offset_of!(ActorRigVertex, glint_origin) == (ACTOR_RIG_VERTEX_WORDS - 2) * 4);
 
 #[derive(Clone, Debug)]
 pub struct ActorRigGeometry {
@@ -134,6 +152,7 @@ impl ActorRigGeometry {
                 .chain(vertex.normal.iter())
                 .chain(vertex.uv.iter())
                 .chain(vertex.back_uv.iter())
+                .chain(vertex.glint_origin.iter())
                 .any(|value| !value.is_finite())
                 || vertex.bone_index as usize >= bone_pivots.len()
                 || !vertex.surface.is_valid()
@@ -257,6 +276,7 @@ pub fn diagnostic_geometry() -> ActorRigGeometry {
             back_uv: vertex.uv,
             bone_index: vertex.part,
             surface: ActorRigSurface::SINGLE_FACE,
+            glint_origin: [0.0; 2],
         })
         .collect::<Vec<_>>();
     for triangle in vertices.as_chunks_mut::<3>().0 {

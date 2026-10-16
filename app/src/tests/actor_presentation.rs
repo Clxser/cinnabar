@@ -78,6 +78,7 @@ fn actor(runtime_id: u64, movement_revision: u64) -> ActorSnapshot {
     actor.on_ground = Some(true);
     actor.source_tick = Some(41);
     actor.previous_pose = ActorPose {
+        y_origin: Default::default(),
         position: [2.0, 64.0, -2.0],
         pitch: 0.0,
         yaw: 0.0,
@@ -138,6 +139,7 @@ fn rig<'a>(
         off_hand_animation: [actor_animation::ItemAnimationState::default(); 2],
         animation_variables: Default::default(),
         java: Default::default(),
+        main_hand_equipped: None,
         java_equipped: None,
     }
 }

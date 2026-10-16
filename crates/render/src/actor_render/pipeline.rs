@@ -1,5 +1,6 @@
 use super::*;
 use render_model::{ActorGpuInstance, ActorRigGeometrySpan};
+use std::collections::hash_map::Entry;
 
 pub(super) struct ActorPipelineSpecializer;
 
@@ -11,13 +12,23 @@ pub(crate) struct ActorPipeline {
         ActorPipelineContract,
         bevy::render::render_resource::CachedRenderPipelineId,
     >,
+    motion_variants: Variants<RenderPipeline, super::motion::MotionSpecializer>,
+    motion_ids: std::collections::HashMap<ActorPipelineContract, CachedRenderPipelineId>,
+    /// View configurations whose every draw and motion contract is already specialized, so
+    /// later frames skip the per-material map probes.
+    prewarmed: Vec<(Msaa, bool, bool)>,
 }
 
 impl FromWorld for ActorPipeline {
     fn from_world(_world: &mut World) -> Self {
         let bind_group_layout = actor_bind_group_layout();
         let descriptor = actor_pipeline_descriptor(bind_group_layout.clone());
+        let mut motion_descriptor = descriptor.clone();
+        motion_descriptor.layout.push(super::motion::layout());
         Self {
+            motion_variants: Variants::new(super::motion::MotionSpecializer, motion_descriptor),
+            motion_ids: Default::default(),
+            prewarmed: Vec::new(),
             variants: Variants::new(ActorPipelineSpecializer, descriptor),
             bind_group_layout,
             draw_variants: Default::default(),
@@ -26,6 +37,7 @@ impl FromWorld for ActorPipeline {
 }
 
 impl ActorPipeline {
+    /// Queues draw and eligible motion contracts before actors enter a view.
     pub(super) fn prewarm(
         &mut self,
         cache: &PipelineCache,
@@ -33,19 +45,29 @@ impl ActorPipeline {
         hdr: bool,
         enhanced: bool,
     ) -> Option<bevy::render::render_resource::CachedRenderPipelineId> {
-        for material in prewarm_materials() {
-            let key = ActorPipelineKey {
-                msaa,
-                hdr,
-                enhanced,
-                material,
-            };
-            let contract = key.contract();
-            if self.draw_variants.contains_key(&contract) {
-                continue;
+        let view = (msaa, hdr, enhanced);
+        if !self.prewarmed.contains(&view) {
+            for material in prewarm_materials() {
+                let key = ActorPipelineKey {
+                    msaa,
+                    hdr,
+                    enhanced,
+                    material,
+                };
+                let contract = key.contract();
+                if let Entry::Vacant(entry) = self.draw_variants.entry(contract) {
+                    let id = self.variants.specialize(cache, key).ok()?;
+                    entry.insert(id);
+                }
+                if super::motion::eligible(material)
+                    && let Entry::Vacant(entry) = self.motion_ids.entry(contract)
+                {
+                    let id = self.motion_variants.specialize(cache, key).ok()?;
+                    entry.insert(id);
+                }
             }
-            let id = self.variants.specialize(cache, key).ok()?;
-            self.draw_variants.insert(contract, id);
+            // A failed specialization returned above, so it retries next frame as before.
+            self.prewarmed.push(view);
         }
         self.draw_variant(
             msaa,
@@ -75,6 +97,12 @@ impl ActorPipeline {
             .copied()
     }
 
+    /// Looks up a motion contract already requested by the loading path.
+    pub(super) fn motion_variant(&self, key: ActorPipelineKey) -> Option<CachedRenderPipelineId> {
+        self.motion_ids.get(&key.contract()).copied()
+    }
+
+    /// Loading completes only when both color and eligible motion pipelines are compiled.
     pub(super) fn ready(
         &self,
         cache: &PipelineCache,
@@ -85,6 +113,15 @@ impl ActorPipeline {
         prewarm_materials().all(|material| {
             self.draw_variant(msaa, hdr, enhanced, material)
                 .is_some_and(|id| cache.get_render_pipeline(id).is_some())
+                && (!super::motion::eligible(material)
+                    || self
+                        .motion_variant(ActorPipelineKey {
+                            msaa,
+                            hdr,
+                            enhanced,
+                            material,
+                        })
+                        .is_some_and(|id| cache.get_render_pipeline(id).is_some()))
         })
     }
 }
@@ -129,17 +166,27 @@ fn prewarm_materials() -> impl Iterator<Item = u32> {
             })
         })
     });
-    ordinary.chain(additive).flat_map(|material| {
-        [
-            Some(material),
-            Some(material | assets::EntityRenderMaterialState::DEPTH_ALWAYS),
-            (material & assets::EntityRenderMaterialState::KIND_MASK
-                == assets::EntityRenderMaterial::DissolveColor as u32)
-                .then_some(material | crate::actor::material::LATE_DISSOLVE_COLOR),
-        ]
-        .into_iter()
-        .flatten()
-    })
+    ordinary
+        .chain(additive)
+        .flat_map(|material| {
+            [
+                material,
+                material
+                    | render_model::LEGACY_COMBAT_MATERIAL_FLAG
+                    | render_model::ACTOR_COLOR_MASK_MATERIAL_FLAG,
+            ]
+        })
+        .flat_map(|material| {
+            [
+                Some(material),
+                Some(material | assets::EntityRenderMaterialState::DEPTH_ALWAYS),
+                (material & assets::EntityRenderMaterialState::KIND_MASK
+                    == assets::EntityRenderMaterial::DissolveColor as u32)
+                    .then_some(material | crate::actor::material::LATE_DISSOLVE_COLOR),
+            ]
+            .into_iter()
+            .flatten()
+        })
 }
 
 pub(super) fn prepare_actor_pipelines(
@@ -231,7 +278,7 @@ pub(crate) fn actor_bind_group_layout() -> BindGroupLayoutDescriptor {
             },
             BindGroupLayoutEntry {
                 binding: 6,
-                visibility: ShaderStages::FRAGMENT,
+                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
                 ty: BindingType::Texture {
                     sample_type: TextureSampleType::Float { filterable: true },
                     view_dimension: TextureViewDimension::D2Array,
@@ -271,10 +318,20 @@ pub(crate) fn actor_bind_group_layout() -> BindGroupLayoutDescriptor {
                 ty: BindingType::Sampler(SamplerBindingType::Filtering),
                 count: None,
             },
+            BindGroupLayoutEntry {
+                binding: 14,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
             // Player skin arrays of the 64, 128 and 256 texel classes.
             BindGroupLayoutEntry {
                 binding: 9,
-                visibility: ShaderStages::FRAGMENT,
+                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
                 ty: BindingType::Texture {
                     sample_type: TextureSampleType::Float { filterable: true },
                     view_dimension: TextureViewDimension::D2Array,
@@ -284,7 +341,7 @@ pub(crate) fn actor_bind_group_layout() -> BindGroupLayoutDescriptor {
             },
             BindGroupLayoutEntry {
                 binding: 10,
-                visibility: ShaderStages::FRAGMENT,
+                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
                 ty: BindingType::Texture {
                     sample_type: TextureSampleType::Float { filterable: true },
                     view_dimension: TextureViewDimension::D2Array,
@@ -294,7 +351,7 @@ pub(crate) fn actor_bind_group_layout() -> BindGroupLayoutDescriptor {
             },
             BindGroupLayoutEntry {
                 binding: 11,
-                visibility: ShaderStages::FRAGMENT,
+                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
                 ty: BindingType::Texture {
                     sample_type: TextureSampleType::Float { filterable: true },
                     view_dimension: TextureViewDimension::D2Array,
@@ -360,11 +417,12 @@ pub(super) struct ActorPipelineContract {
     additive: bool,
     additive_alpha: bool,
     alpha_to_coverage: bool,
+    write_alpha: bool,
 }
 
 impl ActorPipelineKey {
     /// Coalesces shader-only material flags while retaining distinct coverage and depth states.
-    fn contract(self) -> ActorPipelineContract {
+    pub(super) fn contract(self) -> ActorPipelineContract {
         let state = crate::actor::material::state(self.material).unwrap_or(
             assets::EntityRenderMaterialState {
                 alpha_test: false,
@@ -403,10 +461,16 @@ impl ActorPipelineKey {
             depth_always: state.depth_always,
             additive: state.blend && state.additive,
             additive_alpha: state.blend && state.additive && state.additive_alpha,
+            write_alpha: self.material
+                & (render_model::LEGACY_COMBAT_MATERIAL_FLAG
+                    | render_model::ACTOR_COLOR_MASK_MATERIAL_FLAG)
+                != (render_model::LEGACY_COMBAT_MATERIAL_FLAG
+                    | render_model::ACTOR_COLOR_MASK_MATERIAL_FLAG),
             alpha_to_coverage: self.msaa.samples() > 1
                 && state.alpha_test
                 && !state.blend
                 && !state.emissive
+                && self.material & render_model::ACTOR_COLOR_MASK_MATERIAL_FLAG == 0
                 && self.material & assets::EntityRenderMaterialState::KIND_MASK
                     != assets::EntityRenderMaterial::Dragon as u32
                 && kind == assets::EntityRenderMaterial::Default,
@@ -459,6 +523,12 @@ impl Specializer<RenderPipeline> for ActorPipelineSpecializer {
                 .blend = crate::actor::material::blend_state(state);
         }
         let kind = key.material & assets::EntityRenderMaterialState::KIND_MASK;
+        if !contract.write_alpha {
+            descriptor.fragment.as_mut().unwrap().targets[0]
+                .as_mut()
+                .unwrap()
+                .write_mask = ColorWrites::COLOR;
+        }
         if kind == assets::EntityRenderMaterial::DissolveDepth as u32 {
             descriptor.fragment.as_mut().unwrap().targets[0]
                 .as_mut()
@@ -525,7 +595,9 @@ pub(crate) fn actor_motion_pipeline_descriptor(
     depth_format: TextureFormat,
 ) -> RenderPipelineDescriptor {
     let mut descriptor = actor_shadow_pipeline_descriptor(caster_layout, depth_format);
-    descriptor.layout.push(super::motion::actor_motion_layout());
+    descriptor
+        .layout
+        .push(super::enhanced_motion::actor_motion_layout());
     descriptor.vertex.shader_defs.push("ENHANCED_MOTION".into());
     let fragment = descriptor.fragment.as_mut().unwrap();
     fragment.shader_defs.push("ENHANCED_MOTION".into());

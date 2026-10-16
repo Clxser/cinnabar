@@ -98,6 +98,7 @@ pub fn resolve_item_use(
 impl ItemStateStore {
     /// Rebuilds numerical profiles and owned category admissions only when source facts change.
     pub(super) fn rebuild_use_profiles(&mut self) {
+        self.presentation_generation = Arc::new(());
         // Category generations prevent a previous registry timer from blocking new definitions.
         static NEXT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let generation = NEXT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -159,20 +160,20 @@ impl ItemStateStore {
         self.use_profiles = profiles;
     }
 
-    /// Reads animation duration from the selected numerical admission; local zero means empty.
-    pub(crate) fn held_use_ticks(
+    /// Reads the selected hand's numerical admission; an explicit local zero means empty.
+    pub(crate) fn held_use_profile(
         &self,
         actor: ActorLifetimeId,
         hand: ActorHandedness,
         local_network_id: Option<i32>,
-    ) -> u32 {
+    ) -> EffectiveItemUse {
         let network_id = local_network_id
             .or_else(|| {
                 self.get_in_hand(actor, hand)
                     .map(|held| held.item.identity.network_id)
             })
             .unwrap_or(0);
-        self.item_use_profile(network_id).ticks.unwrap_or(0)
+        self.item_use_profile(network_id)
     }
 
     /// Retrieves admitted facts without resolving names or parsing component data.
@@ -304,6 +305,44 @@ mod tests {
     }
 
     #[test]
+    fn animation_facts_follow_numeric_registry_replacements_and_retail_fallback() {
+        use assets::facts::ItemTraits;
+        let entries = protocol::vanilla_item_registry();
+        let sword = entries
+            .iter()
+            .find(|entry| entry.identifier.as_ref() == "minecraft:iron_sword")
+            .unwrap();
+        let mut spear = entries
+            .iter()
+            .find(|entry| entry.identifier.as_ref() == "minecraft:wooden_spear")
+            .unwrap()
+            .clone();
+        spear.network_id = sword.network_id;
+        let mut store = ItemStateStore::diagnostic();
+        assert!(
+            store
+                .animation_fact(sword.network_id)
+                .traits
+                .contains(ItemTraits::SWORD)
+        );
+        assert!(store.apply_registry(protocol::ItemRegistryEvent {
+            entries: Arc::from([spear]),
+        }));
+        let replacement = store.animation_fact(sword.network_id);
+        assert!(replacement.traits.contains(ItemTraits::SPEAR));
+        assert!(!replacement.traits.contains(ItemTraits::SWORD));
+        assert!(store.apply_registry(protocol::ItemRegistryEvent {
+            entries: Arc::from([]),
+        }));
+        assert!(
+            store
+                .animation_fact(sword.network_id)
+                .traits
+                .contains(ItemTraits::SWORD)
+        );
+    }
+
+    #[test]
     fn numeric_animation_admission_clears_when_the_registry_identity_changes() {
         let mut store = ItemStateStore::diagnostic();
         assert!(store.apply_registry(protocol::ItemRegistryEvent {
@@ -349,6 +388,9 @@ mod tests {
         };
         let component = |ticks| protocol::ItemComponents {
             use_duration_ticks: Some(ticks),
+            use_animation: Some("drink".into()),
+            food: true,
+            food_can_always_eat: Some(true),
             ..Default::default()
         };
         assert!(store.apply_registry(protocol::ItemRegistryEvent {
@@ -383,22 +425,37 @@ mod tests {
                     handedness: Some(hand),
                 }
             ));
-            assert_eq!(store.held_use_ticks(actor, hand, None), ticks);
-            assert_eq!(store.held_use_ticks(actor, hand, Some(network_id)), ticks);
-            assert_eq!(store.held_use_ticks(actor, hand, Some(0)), 0);
+            let remote = store.held_use_profile(actor, hand, None);
+            assert_eq!(remote.ticks, Some(ticks));
+            assert_eq!(remote.consumption, ItemConsumption::Drink);
+            assert_eq!(
+                store.held_use_profile(actor, hand, Some(network_id)),
+                remote
+            );
+            assert_eq!(
+                store.held_use_profile(actor, hand, Some(0)),
+                EffectiveItemUse::default()
+            );
         }
         assert!(store.apply_registry(protocol::ItemRegistryEvent {
             entries: Arc::from([entry(15000, "fixture:renamed", component(31))])
         }));
         assert_eq!(
-            store.held_use_ticks(actor, ActorHandedness::Right, None),
-            31
+            store
+                .held_use_profile(actor, ActorHandedness::Right, None)
+                .ticks,
+            Some(31)
         );
         assert_eq!(
-            store.held_use_ticks(actor, ActorHandedness::Right, Some(15000)),
-            31
+            store
+                .held_use_profile(actor, ActorHandedness::Right, Some(15000))
+                .ticks,
+            Some(31)
         );
-        assert_eq!(store.held_use_ticks(actor, ActorHandedness::Left, None), 0);
+        assert_eq!(
+            store.held_use_profile(actor, ActorHandedness::Left, None),
+            EffectiveItemUse::default()
+        );
     }
 
     #[test]

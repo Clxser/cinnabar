@@ -77,7 +77,7 @@ pub enum Scalar {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum Field {
-    Bool,
+    Bool {},
     Integer { min: i64, max: i64 },
     Text { max_bytes: u16 },
     Choice { variants: u16 },
@@ -101,7 +101,7 @@ impl Field {
     /// Checks the value's type and every schema-defined bound recursively.
     fn admits(&self, value: &Scalar) -> bool {
         match (self, value) {
-            (Field::Bool, Scalar::Bool(_)) => true,
+            (Field::Bool {}, Scalar::Bool(_)) => true,
             (Field::Integer { min, max }, Scalar::Integer(value)) => min <= value && value <= max,
             (Field::Text { max_bytes }, Scalar::Text(value)) => {
                 value.len() <= usize::from(*max_bytes)

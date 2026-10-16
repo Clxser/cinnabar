@@ -4,7 +4,7 @@ use {
         BlockFace, BlockFlags, CollisionSeed, DIAGNOSTIC_MATERIAL, MODEL_QUAD_FLAG_FACE_MASK,
         ModelFamily, ModelStateField, RegistryRecord, VisualKind, encode_blob, read_registry,
     },
-    std::{collections::HashSet, path::Path},
+    std::{collections::HashSet, fs, path::Path},
 };
 
 const BUTTON_PRESSED_FLAG: u32 = 1 << 1;
@@ -25,6 +25,7 @@ fn generated_button_records() -> Vec<RegistryRecord> {
     records
 }
 
+/// Writes scalar textures for every admitted button geometry fixture.
 fn write_button_pack(root: &Path) {
     let mappings = [
         ("acacia_button", "acacia_planks", "planks_acacia"),
@@ -61,15 +62,7 @@ fn write_button_pack(root: &Path) {
         .join(",");
     let terrain = mappings
         .iter()
-        .map(|(_, key, path)| {
-            if matches!(*key, "planks" | "stone") {
-                format!(
-                    r#""{key}":{{"textures":["textures/blocks/{path}","textures/blocks/button_unused_variant"]}}"#
-                )
-            } else {
-                format!(r#""{key}":{{"textures":"textures/blocks/{path}"}}"#)
-            }
-        })
+        .map(|(_, key, path)| format!(r#""{key}":{{"textures":"textures/blocks/{path}"}}"#))
         .collect::<Vec<_>>()
         .join(",");
     write_pack(
@@ -87,13 +80,6 @@ fn write_button_pack(root: &Path) {
             &solid(TILE_SIZE, TILE_SIZE, [index as u8 + 1, 71, 113, 255]),
         );
     }
-    write_png(
-        root,
-        "textures/blocks/button_unused_variant",
-        TILE_SIZE,
-        TILE_SIZE,
-        &solid(TILE_SIZE, TILE_SIZE, [255, 0, 255, 255]),
-    );
 }
 
 fn button_selector(record: &RegistryRecord) -> (u32, bool) {
@@ -501,6 +487,39 @@ fn compiler_covers_all_button_states_with_exact_geometry_uvs_materials_and_deter
         baseline,
         "collision-only seeds changed button render geometry"
     );
+}
+
+#[test]
+fn compiler_button_texture_arrays_without_selectors_draw_their_first_entry() {
+    let directory = tempfile::tempdir().expect("create button array fixture");
+    write_button_pack(directory.path());
+    let path = directory.path().join("textures/terrain_texture.json");
+    let mut terrain: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    for key in ["stone", "planks"] {
+        let first = terrain["texture_data"][key]["textures"].clone();
+        terrain["texture_data"][key]["textures"] =
+            serde_json::json!([first, "textures/blocks/button_unused_variant"]);
+    }
+    fs::write(path, serde_json::to_vec(&terrain).unwrap()).unwrap();
+    write_png(
+        directory.path(),
+        "textures/blocks/button_unused_variant",
+        TILE_SIZE,
+        TILE_SIZE,
+        &solid(TILE_SIZE, TILE_SIZE, [255, 0, 255, 255]),
+    );
+
+    let records = generated_button_records();
+    let compiled = compile_pack(directory.path(), &records).expect("compile button arrays");
+    for record in &records {
+        let visual = compiled.visuals[record.sequential_id as usize];
+        assert_eq!(visual.kind, VisualKind::Model, "{}", record.name);
+        assert!(
+            visual.faces.iter().all(|face| *face != DIAGNOSTIC_MATERIAL),
+            "{}",
+            record.name
+        );
+    }
 }
 
 #[test]

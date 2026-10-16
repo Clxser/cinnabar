@@ -127,7 +127,7 @@ fn open_two_sided_degenerate_and_inward_blocks_keep_culling_off() {
 }
 
 #[test]
-fn sprites_require_binary_alpha_and_legacy_masks_must_be_symmetric() {
+fn legacy_sprites_require_opaque_alpha_while_native_sprites_allow_binary_cutouts() {
     let sprite = DroppedItemSprite {
         width: 3,
         height: 1,
@@ -135,6 +135,10 @@ fn sprites_require_binary_alpha_and_legacy_masks_must_be_symmetric() {
     };
     assert!(DroppedItemModel::Sprite(sprite.clone()).can_cull_back_faces());
     assert!(DroppedItemModel::NativeSprite(sprite.clone()).can_cull_back_faces());
+    let mut symmetric = sprite.clone();
+    Arc::make_mut(&mut symmetric.rgba8)[7] = 0;
+    assert!(!DroppedItemModel::Sprite(symmetric.clone()).can_cull_back_faces());
+    assert!(DroppedItemModel::NativeSprite(symmetric).can_cull_back_faces());
     let mut asymmetric = sprite.clone();
     Arc::make_mut(&mut asymmetric.rgba8)[3] = 0;
     assert!(!DroppedItemModel::Sprite(asymmetric.clone()).can_cull_back_faces());

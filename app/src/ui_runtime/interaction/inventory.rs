@@ -8,7 +8,9 @@ use bevy::{
 };
 use client_shell::menu::settings_options::control_bindings::binding_keyboard_key;
 use client_ui::ui_runtime::interaction::dispatch_inventory_key;
+use simulation_clock::identity::{PositionAuthorityGeneration, SessionGeneration};
 use ui::UiPoint;
+use ui_screens::container_actions::{InventoryCellHit, Widget};
 use {
     client_ui::ui_runtime::{
         UiRuntime,
@@ -17,6 +19,7 @@ use {
     inventory::inventory_ledger::DropSource,
 };
 
+use launcher::menu::settings_options::BindingId;
 /// Applies presses routed to the open inventory screen, after any keys already queued for it.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_screen_presses(
@@ -91,13 +94,16 @@ pub(super) fn apply_inventory_pointer(
     let screen = InventoryScreen::of_runtime(player_runtime, runtime);
     runtime.observe_inventory_search_focus(player_runtime);
     let Some(position) = window.cursor_position() else {
+        // A cancelled touch withdraws the pointer, so its release closes nothing.
         runtime.set_inventory_pointer_gui(None);
         runtime.screen_state_mut().hover = None;
+        runtime.screen_state_mut().container_close_armed = false;
         return;
     };
     let Ok(point) = UiPoint::new(position.x, position.y) else {
         runtime.set_inventory_pointer_gui(None);
         runtime.screen_state_mut().hover = None;
+        runtime.screen_state_mut().container_close_armed = false;
         return;
     };
     let physical_size = [window.physical_width(), window.physical_height()];
@@ -107,7 +113,31 @@ pub(super) fn apply_inventory_pointer(
     let mod_owned = presentation
         .mod_ui()
         .mod_screens_own([point.x(), point.y()]);
-    let book_open = runtime.screen_state().book_open;
+    if mod_owned || screen == InventoryScreen::Book {
+        runtime.screen_state_mut().container_close_armed = false;
+    }
+    // The screen's close button closes it on a release over the button it was pressed on.
+    // A mod's view hides the container, so the hidden close button must not arm.
+    let on_close = gui
+        .filter(|_| !mod_owned)
+        .and_then(|gui| presentation.engine_container_hit(gui))
+        == Some(InventoryCellHit::Widget(Widget::Close));
+    if primary_pressed {
+        runtime.screen_state_mut().container_close_armed = on_close;
+    }
+    if runtime.screen_state().container_close_armed {
+        if primary_released {
+            runtime.screen_state_mut().container_close_armed = false;
+            if on_close {
+                let _ = runtime.close_inventory(player_runtime);
+                if let Some(focus) = focus.as_deref_mut() {
+                    focus.authorize_screen_return();
+                }
+            }
+        }
+        return;
+    }
+    let book_open = runtime.screen_state().book_open.unwrap_or(false);
     let reader_mode = runtime
         .screen_state()
         .book
@@ -146,7 +176,7 @@ pub(super) fn apply_inventory_pointer(
         }) {
             continue;
         }
-        let drop = binding_keyboard_key(menu, "key.drop", key);
+        let drop = binding_keyboard_key(menu, BindingId::Drop, key);
         let _ = dispatch_inventory_key(player_runtime, runtime, hit, key, control, None, drop);
     }
     for control in mouse_hotbar {
@@ -177,15 +207,10 @@ pub(super) fn apply_inventory_pointer(
         }
     }
     if hit.is_none() && !mod_owned {
-        // A held stack released outside the panel is dropped: all of it on a
-        // primary click, one item on a secondary click.
+        // A held stack clicked off the screen's panels is dropped: all of it
+        // on a primary click, one item on a secondary click.
         let outside = gui.is_some_and(|gui| {
-            !presentation.inventory_panel_contains(
-                gui,
-                physical_size,
-                window.scale_factor(),
-                screen,
-            )
+            presentation.inventory_press_drops(gui, physical_size, window.scale_factor(), screen)
         });
         if outside && (primary_pressed || secondary_pressed) {
             let amount = (!primary_pressed).then_some(1);
@@ -195,6 +220,9 @@ pub(super) fn apply_inventory_pointer(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 /// Wheel notches over an engine-drawn screen scroll the view under the pointer.
 pub(super) fn scroll_container(
@@ -233,5 +261,82 @@ pub(super) fn scroll_container(
             .screen_state_mut()
             .container_scroll
             .insert(view.key.clone(), offset);
+    }
+}
+
+/// Syncs `swings` to the movement `authority` before swinging for `tick`, so the later swing
+/// producers' sync this frame keeps the swing rather than resetting it.
+pub(super) fn swing_before_tick(
+    swings: &mut client_interaction::melee::SwingTracker,
+    authority: (SessionGeneration, PositionAuthorityGeneration),
+    completed_tick: u64,
+    effects: &client_interaction::movement::LocalMovementEffectTimeline,
+    item_duration: Option<u32>,
+    tick: u64,
+) -> bool {
+    swings.sync_ticks_for_item(authority, completed_tick, effects, item_duration);
+    swings.try_swing_before_tick_for_item(
+        tick,
+        effects.mining_tick(tick, completed_tick).0,
+        item_duration,
+    )
+}
+
+#[cfg(test)]
+mod drop_swing_tests {
+    use client_interaction::{melee::SwingTracker, movement::LocalMovementEffectTimeline};
+    use simulation_clock::identity::{PositionAuthorityGeneration, SessionGeneration};
+
+    fn authority(session: u64) -> (SessionGeneration, PositionAuthorityGeneration) {
+        (
+            SessionGeneration::new(session),
+            PositionAuthorityGeneration::new(0),
+        )
+    }
+
+    /// A drop swing under a new movement authority survives the block-use producer's sync.
+    #[test]
+    fn a_drop_swing_survives_the_next_sync_under_a_new_authority() {
+        let effects = LocalMovementEffectTimeline::default();
+        let mut swings = SwingTracker::default();
+        swings.sync_ticks(authority(1), 4, &effects);
+
+        assert!(super::swing_before_tick(
+            &mut swings,
+            authority(2),
+            4,
+            &effects,
+            None,
+            5
+        ));
+        swings.sync_ticks_for_item(authority(2), 4, &effects, None);
+
+        assert!(swings.take_started().is_some());
+    }
+
+    /// A drop keeps the selected item's Bedrock swing duration and the default Java timing.
+    #[test]
+    fn a_drop_swing_keeps_the_selected_items_swing_duration() {
+        const ITEM_DURATION: u32 = 19;
+        let effects = LocalMovementEffectTimeline::default();
+        let mut authored = SwingTracker::default();
+        let mut default = SwingTracker::default();
+
+        for (swings, duration) in [(&mut authored, Some(ITEM_DURATION)), (&mut default, None)] {
+            assert!(super::swing_before_tick(
+                swings,
+                authority(1),
+                4,
+                &effects,
+                duration,
+                5,
+            ));
+        }
+
+        assert_eq!(authored.take_started(), Some(ITEM_DURATION as i32));
+        let authored = authored.published_progress(6);
+        let default = default.published_progress(6);
+        assert_eq!(authored.bedrock[1], 1.0 / ITEM_DURATION as f32);
+        assert_eq!(authored.java, default.java);
     }
 }

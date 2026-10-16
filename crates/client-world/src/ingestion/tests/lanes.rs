@@ -127,6 +127,37 @@ fn commit_within(state: &mut OrderedCommitState, budget: CommitBudget) -> Option
 }
 
 #[test]
+fn latency_reply_waits_for_actor_movement_and_blocks_later_movement() {
+    let mut state = OrderedCommitState::new(1);
+    admit(&mut state, 1, actor_move(9), false);
+    admit(&mut state, 2, WorldEvent::NetworkStackLatency(7), true);
+    admit(&mut state, 3, actor_move(9), true);
+    assert!(state.next_commit().is_none());
+    state
+        .insert_ready(1, PreparedWorldEvent::Immediate(actor_move(9)))
+        .unwrap();
+    assert_eq!(commit_one(&mut state), Some(1));
+    assert_eq!(commit_one(&mut state), Some(2));
+    assert_eq!(commit_one(&mut state), Some(3));
+}
+
+#[test]
+fn later_actor_movement_cannot_overtake_a_pending_latency_reply() {
+    let mut state = OrderedCommitState::new(1);
+    admit(&mut state, 1, WorldEvent::NetworkStackLatency(7), false);
+    admit(&mut state, 2, actor_move(9), true);
+    assert!(state.next_commit().is_none());
+    state
+        .insert_ready(
+            1,
+            PreparedWorldEvent::Immediate(WorldEvent::NetworkStackLatency(7)),
+        )
+        .unwrap();
+    assert_eq!(commit_one(&mut state), Some(1));
+    assert_eq!(commit_one(&mut state), Some(2));
+}
+
+#[test]
 fn full_heavy_admission_leaves_light_capacity() {
     let mut state = OrderedCommitState::new(1);
     for sequence in 1..=MAX_ADMITTED_HEAVY_EVENTS as u64 {
@@ -204,6 +235,7 @@ fn local_authority_waits_for_block_mutations_but_not_chunk_decode() {
                 result: Ok(PreparedBlockMutations {
                     mutations: Vec::new(),
                     relight: Default::default(),
+                    crack_intermediates: Vec::new(),
                 }),
                 duration: Duration::ZERO,
             }
@@ -382,6 +414,7 @@ fn randomized_interleavings_match_strict_wire_order() {
                             result: Ok(PreparedBlockMutations {
                                 mutations: Vec::new(),
                                 relight: Default::default(),
+                                crack_intermediates: Vec::new(),
                             }),
                             duration: Duration::ZERO,
                         },
@@ -589,4 +622,28 @@ fn skipping_chunk_data_follows_a_queued_batch_dependency() {
             "unrelated chunk data stays offloaded"
         );
     }
+}
+
+/// Classifying single-column terrain allocates nothing; wider batches stay sorted and distinct.
+#[test]
+fn terrain_footprints_are_sorted_distinct_and_inline_for_one_column() {
+    let chunk = level_chunk(3);
+    let (footprint, allocations) = test_alloc::count(|| classify(&chunk, CONTEXT));
+    assert_eq!(allocations, 0);
+    assert_eq!(*footprint.columns, [ChunkKey::new(0, 3, 0)]);
+    let batch = WorldEvent::SubChunks(protocol::SubChunkBatchEvent {
+        dimension: 0,
+        entries: [2, 0, 2, 0]
+            .map(|x| protocol::SubChunkEntryEvent {
+                diagnostics: None,
+                position: [x, 0, 0],
+                result: protocol::SubChunkResult::AllAir,
+            })
+            .into(),
+    });
+    assert_eq!(
+        *classify(&batch, CONTEXT).columns,
+        [ChunkKey::new(0, 0, 0), ChunkKey::new(0, 2, 0)]
+    );
+    assert!(classify(&chat(), CONTEXT).columns.is_empty());
 }

@@ -1,4 +1,4 @@
-import render::material::{MaterialGpu, materials, positional_material_id, texture_layer, texture_cube_uv, texture_gradient_scale, material_face_is_visible, material_uses_native_leaf_colour, material_uses_overlay_mask, material_uv_flags, material_leaf_shade};
+import render::material::{MaterialGpu, materials, positional_material_id, texture_layer, texture_page, texture_cube_uv, texture_gradient_scale, material_face_is_visible, material_uses_native_leaf_colour, material_uses_overlay_mask, material_uv_flags, material_leaf_shade};
 @if(ENHANCED_SHADOW)
 import render::enhanced::caster::{caster_clip, caster_camera_clip, caster_previous_camera_clip, caster_history_valid, caster_excludes_emitter};
 @if(ENHANCED_MOTION)
@@ -8,7 +8,7 @@ import render::enhanced::common::encode_geometric_normal;
 import bevy_render::view::View;
 import render::world_projection::{section_camera_offset, camera_offset_clip};
 import render::biome_tint::{world_animation_clock, blended_biome_tint_gamma, uniform_biome_tint_gamma};
-import render::lighting::{configured_fog_amount, configured_distance_fog, light_ao_factor, light_colour, lit_colour, material_ambient_occlusion, material_face_shade, tint_to_gamma, tint_to_linear, terrain_light_levels, terrain_light_colour};
+import render::lighting::{configured_fog_fade, light_ao_factor, light_colour, lit_colour, material_ambient_occlusion, material_face_shade, tint_to_gamma, tint_to_linear, terrain_light_levels, terrain_light_colour};
 @if(ALPHA_TO_COVERAGE)
 import render::lighting::{CutoutSample, cutout_alpha_array, cutout_mix};
 @if(ENHANCED)
@@ -53,6 +53,9 @@ struct AtmosphereUniform {
 @group(0) @binding(2) var<storage, read> chunk_origins: array<ChunkOrigin>;
 @group(0) @binding(4) var block_textures_page_0: texture_2d_array<f32>;
 @group(0) @binding(5) var block_textures_page_1: texture_2d_array<f32>;
+@group(0) @binding(19) var block_textures_page_2: texture_2d_array<f32>;
+@group(0) @binding(20) var block_textures_page_3: texture_2d_array<f32>;
+@group(0) @binding(21) var block_textures_page_4: texture_2d_array<f32>;
 @group(0) @binding(6) var block_sampler: sampler;
 @group(0) @binding(9) var<storage, read> animations: array<AnimationGpu>;
 @group(0) @binding(10) var<storage, read> animation_frames: array<u32>;
@@ -60,17 +63,10 @@ struct AtmosphereUniform {
 @group(0) @binding(15) var<uniform> atmosphere: AtmosphereUniform;
 @group(0) @binding(NATIVE_LEAF_TEXTURE_BINDING_0) var native_leaf_textures_page_0: texture_2d_array<f32>;
 @group(0) @binding(NATIVE_LEAF_TEXTURE_BINDING_1) var native_leaf_textures_page_1: texture_2d_array<f32>;
+@group(0) @binding(NATIVE_LEAF_TEXTURE_BINDING_2) var native_leaf_textures_page_2: texture_2d_array<f32>;
+@group(0) @binding(NATIVE_LEAF_TEXTURE_BINDING_3) var native_leaf_textures_page_3: texture_2d_array<f32>;
+@group(0) @binding(NATIVE_LEAF_TEXTURE_BINDING_4) var native_leaf_textures_page_4: texture_2d_array<f32>;
 @group(0) @binding(NATIVE_LEAF_SAMPLER_BINDING) var native_leaf_sampler: sampler;
-@if(ENHANCED || ENHANCED_SHADOW)
-@group(0) @binding(PBR_NORMAL_TEXTURE_BINDING_0) var pbr_normal_page_0: texture_2d_array<f32>;
-@if(ENHANCED || ENHANCED_SHADOW)
-@group(0) @binding(PBR_NORMAL_TEXTURE_BINDING_1) var pbr_normal_page_1: texture_2d_array<f32>;
-@if(ENHANCED || ENHANCED_SHADOW)
-@group(0) @binding(PBR_MER_TEXTURE_BINDING_0) var pbr_mer_page_0: texture_2d_array<f32>;
-@if(ENHANCED || ENHANCED_SHADOW)
-@group(0) @binding(PBR_MER_TEXTURE_BINDING_1) var pbr_mer_page_1: texture_2d_array<f32>;
-@if(ENHANCED || ENHANCED_SHADOW)
-@group(0) @binding(PBR_SAMPLER_BINDING) var pbr_sampler: sampler;
 @if(ENHANCED || ENHANCED_SHADOW)
 @group(0) @binding(ENHANCED_COLOR_TEXTURE_BINDING_0) var enhanced_color_page_0: texture_2d_array<f32>;
 @if(ENHANCED || ENHANCED_SHADOW)
@@ -291,7 +287,10 @@ fn vertex_unit(
     @builtin(vertex_index) vertex_index: u32,
     @builtin(instance_index) instance_index: u32,
 ) -> VertexOutput {
-    let unit = terrain_units[instance_index];
+    // Header locates packed visibility references beside stable descriptor slots.
+    let references = terrain_units[0].x;
+    let slot = terrain_units[references + instance_index / 4u][instance_index % 4u];
+    let unit = terrain_units[1u + slot];
     let quad = vertex_index / 4u;
     if (quad >= unit.y) {
         var invisible: VertexOutput;
@@ -486,7 +485,7 @@ fn sample_texture_ref(
     uv_dx: vec2<f32>,
     uv_dy: vec2<f32>,
 ) -> vec4<f32> {
-    let page = texture_ref >> 31u;
+    let page = texture_page(texture_ref);
     let layer = texture_layer(texture_ref);
     @if(ENHANCED)
     if (page == 0u) {
@@ -494,9 +493,24 @@ fn sample_texture_ref(
         return textureSampleGrad(block_textures_page_0, block_sampler, texture_cube_uv(texture_ref, uv), layer, uv_dx * scale, uv_dy * scale);
     }
     @if(ENHANCED)
-    let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_1, 0));
+    if (page == 1u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_1, 0));
+        return textureSampleGrad(block_textures_page_1, block_sampler, texture_cube_uv(texture_ref, uv), layer, uv_dx * scale, uv_dy * scale);
+    }
     @if(ENHANCED)
-    return textureSampleGrad(block_textures_page_1, block_sampler, texture_cube_uv(texture_ref, uv), layer, uv_dx * scale, uv_dy * scale);
+    if (page == 2u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_2, 0));
+        return textureSampleGrad(block_textures_page_2, block_sampler, texture_cube_uv(texture_ref, uv), layer, uv_dx * scale, uv_dy * scale);
+    }
+    @if(ENHANCED)
+    if (page == 3u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_3, 0));
+        return textureSampleGrad(block_textures_page_3, block_sampler, texture_cube_uv(texture_ref, uv), layer, uv_dx * scale, uv_dy * scale);
+    }
+    @if(ENHANCED)
+    let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_4, 0));
+    @if(ENHANCED)
+    return textureSampleGrad(block_textures_page_4, block_sampler, texture_cube_uv(texture_ref, uv), layer, uv_dx * scale, uv_dy * scale);
     // Mips and animation frames interpolate the original encoded texture bytes.
     @if(!ENHANCED)
     if (page == 0u) {
@@ -504,9 +518,24 @@ fn sample_texture_ref(
         return textureSampleGrad(native_leaf_textures_page_0, block_sampler, texture_cube_uv(texture_ref, uv), layer, uv_dx * scale, uv_dy * scale);
     }
     @if(!ENHANCED)
-    let scale = texture_gradient_scale(texture_ref, textureDimensions(native_leaf_textures_page_1, 0));
+    if (page == 1u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(native_leaf_textures_page_1, 0));
+        return textureSampleGrad(native_leaf_textures_page_1, block_sampler, texture_cube_uv(texture_ref, uv), layer, uv_dx * scale, uv_dy * scale);
+    }
     @if(!ENHANCED)
-    return textureSampleGrad(native_leaf_textures_page_1, block_sampler, texture_cube_uv(texture_ref, uv), layer, uv_dx * scale, uv_dy * scale);
+    if (page == 2u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(native_leaf_textures_page_2, 0));
+        return textureSampleGrad(native_leaf_textures_page_2, block_sampler, texture_cube_uv(texture_ref, uv), layer, uv_dx * scale, uv_dy * scale);
+    }
+    @if(!ENHANCED)
+    if (page == 3u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(native_leaf_textures_page_3, 0));
+        return textureSampleGrad(native_leaf_textures_page_3, block_sampler, texture_cube_uv(texture_ref, uv), layer, uv_dx * scale, uv_dy * scale);
+    }
+    @if(!ENHANCED)
+    let scale = texture_gradient_scale(texture_ref, textureDimensions(native_leaf_textures_page_4, 0));
+    @if(!ENHANCED)
+    return textureSampleGrad(native_leaf_textures_page_4, block_sampler, texture_cube_uv(texture_ref, uv), layer, uv_dx * scale, uv_dy * scale);
 }
 
 fn sample_material_texture_ref(
@@ -522,12 +551,25 @@ fn sample_material_texture_ref(
     @if(!ENHANCED && !ENHANCED_SHADOW)
     if (material_uses_native_leaf_colour(material_flags)) {
         let layer = texture_layer(texture_ref);
-        if ((texture_ref >> 31u) == 0u) {
+        let page = texture_page(texture_ref);
+        if (page == 0u) {
             let scale = texture_gradient_scale(texture_ref, textureDimensions(native_leaf_textures_page_0, 0));
             return textureSampleGrad(native_leaf_textures_page_0, native_leaf_sampler, texture_cube_uv(texture_ref, uv), layer, uv_dx * scale, uv_dy * scale);
         }
-        let scale = texture_gradient_scale(texture_ref, textureDimensions(native_leaf_textures_page_1, 0));
-        return textureSampleGrad(native_leaf_textures_page_1, native_leaf_sampler, texture_cube_uv(texture_ref, uv), layer, uv_dx * scale, uv_dy * scale);
+        if (page == 1u) {
+            let scale = texture_gradient_scale(texture_ref, textureDimensions(native_leaf_textures_page_1, 0));
+            return textureSampleGrad(native_leaf_textures_page_1, native_leaf_sampler, texture_cube_uv(texture_ref, uv), layer, uv_dx * scale, uv_dy * scale);
+        }
+        if (page == 2u) {
+            let scale = texture_gradient_scale(texture_ref, textureDimensions(native_leaf_textures_page_2, 0));
+            return textureSampleGrad(native_leaf_textures_page_2, native_leaf_sampler, texture_cube_uv(texture_ref, uv), layer, uv_dx * scale, uv_dy * scale);
+        }
+        if (page == 3u) {
+            let scale = texture_gradient_scale(texture_ref, textureDimensions(native_leaf_textures_page_3, 0));
+            return textureSampleGrad(native_leaf_textures_page_3, native_leaf_sampler, texture_cube_uv(texture_ref, uv), layer, uv_dx * scale, uv_dy * scale);
+        }
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(native_leaf_textures_page_4, 0));
+        return textureSampleGrad(native_leaf_textures_page_4, native_leaf_sampler, texture_cube_uv(texture_ref, uv), layer, uv_dx * scale, uv_dy * scale);
     }
     @if(!ENHANCED && !ENHANCED_SHADOW)
     return sample_texture_ref(texture_ref, uv, uv_dx, uv_dy);
@@ -552,7 +594,8 @@ fn sample_enhanced_colour(in: VertexOutput, texture_ref: u32, uv: vec2<f32>, uv_
 
 // Reads the shared configured fade for native gamma-space shading.
 fn distance_fog_amount(world_position: vec3<f32>) -> f32 {
-    return configured_fog_amount(world_position, view.world_position, atmosphere.fog_color_start.w, atmosphere.fog_end_time.x);
+    let distance_to_camera = distance(world_position, view.world_position);
+    return configured_fog_fade(distance_to_camera, atmosphere.fog_color_start.w, atmosphere.fog_end_time.x);
 }
 
 // Applies fog before blending so depthless surfaces retain their own distance.
@@ -560,7 +603,7 @@ fn apply_distance_fog(colour: vec3<f32>, world_position: vec3<f32>) -> vec3<f32>
     @if(ENHANCED)
     return enhanced_distance_fog(enhanced_frame, colour, world_position);
     @if(!ENHANCED)
-    return configured_distance_fog(colour, world_position, view.world_position, atmosphere.fog_color_start, atmosphere.fog_end_time.x);
+    return mix(colour, atmosphere.fog_color_start.rgb, distance_fog_amount(world_position));
 }
 
 // Current atlas creation/upload uses RGBA8_UNORM,
@@ -647,26 +690,63 @@ dx: vec2<f32>, @if(ALPHA_TO_COVERAGE)
 dy: vec2<f32>, @if(ALPHA_TO_COVERAGE)
 sampled: vec4<f32>, @if(ALPHA_TO_COVERAGE)
 flags: u32) -> CutoutSample {
+    // World leaves use alpha as a cutoff, then cover every surviving sample.
+    // Fractional mip alpha must not turn a dense canopy into partial MSAA coverage.
+    @if(!ENHANCED)
+    if (material_uses_native_leaf_colour(flags)) {
+        return CutoutSample(select(0.0, 1.0, sampled.a >= TERRAIN_ALPHA_THRESHOLD), sampled);
+    }
     let layer = texture_layer(texture_ref);
     let coordinate = texture_cube_uv(texture_ref, uv);
+    let page = texture_page(texture_ref);
     @if(ENHANCED)
-    if ((texture_ref >> 31u) == 0u) {
+    if (page == 0u) {
         let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_0, 0));
         return cutout_alpha_array(block_textures_page_0, coordinate, layer, dx * scale, dy * scale, sampled, true, TERRAIN_ALPHA_THRESHOLD);
     }
     @if(ENHANCED)
-    let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_1, 0));
+    if (page == 1u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_1, 0));
+        return cutout_alpha_array(block_textures_page_1, coordinate, layer, dx * scale, dy * scale, sampled, true, TERRAIN_ALPHA_THRESHOLD);
+    }
     @if(ENHANCED)
-    return cutout_alpha_array(block_textures_page_1, coordinate, layer, dx * scale, dy * scale, sampled, true, TERRAIN_ALPHA_THRESHOLD);
+    if (page == 2u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_2, 0));
+        return cutout_alpha_array(block_textures_page_2, coordinate, layer, dx * scale, dy * scale, sampled, true, TERRAIN_ALPHA_THRESHOLD);
+    }
+    @if(ENHANCED)
+    if (page == 3u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_3, 0));
+        return cutout_alpha_array(block_textures_page_3, coordinate, layer, dx * scale, dy * scale, sampled, true, TERRAIN_ALPHA_THRESHOLD);
+    }
+    @if(ENHANCED)
+    let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_4, 0));
+    @if(ENHANCED)
+    return cutout_alpha_array(block_textures_page_4, coordinate, layer, dx * scale, dy * scale, sampled, true, TERRAIN_ALPHA_THRESHOLD);
     @if(!ENHANCED)
-    if ((texture_ref >> 31u) == 0u) {
+    if (page == 0u) {
         let scale = texture_gradient_scale(texture_ref, textureDimensions(native_leaf_textures_page_0, 0));
         return cutout_alpha_array(native_leaf_textures_page_0, coordinate, layer, dx * scale, dy * scale, sampled, !material_uses_native_leaf_colour(flags), TERRAIN_ALPHA_THRESHOLD);
     }
     @if(!ENHANCED)
-    let scale = texture_gradient_scale(texture_ref, textureDimensions(native_leaf_textures_page_1, 0));
+    if (page == 1u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(native_leaf_textures_page_1, 0));
+        return cutout_alpha_array(native_leaf_textures_page_1, coordinate, layer, dx * scale, dy * scale, sampled, !material_uses_native_leaf_colour(flags), TERRAIN_ALPHA_THRESHOLD);
+    }
     @if(!ENHANCED)
-    return cutout_alpha_array(native_leaf_textures_page_1, coordinate, layer, dx * scale, dy * scale, sampled, !material_uses_native_leaf_colour(flags), TERRAIN_ALPHA_THRESHOLD);
+    if (page == 2u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(native_leaf_textures_page_2, 0));
+        return cutout_alpha_array(native_leaf_textures_page_2, coordinate, layer, dx * scale, dy * scale, sampled, !material_uses_native_leaf_colour(flags), TERRAIN_ALPHA_THRESHOLD);
+    }
+    @if(!ENHANCED)
+    if (page == 3u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(native_leaf_textures_page_3, 0));
+        return cutout_alpha_array(native_leaf_textures_page_3, coordinate, layer, dx * scale, dy * scale, sampled, !material_uses_native_leaf_colour(flags), TERRAIN_ALPHA_THRESHOLD);
+    }
+    @if(!ENHANCED)
+    let scale = texture_gradient_scale(texture_ref, textureDimensions(native_leaf_textures_page_4, 0));
+    @if(!ENHANCED)
+    return cutout_alpha_array(native_leaf_textures_page_4, coordinate, layer, dx * scale, dy * scale, sampled, !material_uses_native_leaf_colour(flags), TERRAIN_ALPHA_THRESHOLD);
 }
 
 // Single-sided opaque runs: back-face culling and the mesher's material partition

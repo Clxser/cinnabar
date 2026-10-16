@@ -18,6 +18,7 @@ use ui::{TextLayoutCache, TextShadow, UiNode, UiNodeId, UiPoint, UiRect, UiVisua
 use {crate::text_metrics::TextMetrics, ui::FONT_DESIGN_PIXEL_TEXELS};
 
 mod banner_renderer;
+mod dependencies;
 mod fill_renderers;
 mod formatting_colors;
 pub mod host_edit;
@@ -33,6 +34,7 @@ pub mod screen_cache;
 mod sprites;
 pub mod text_paint;
 mod vector_icons;
+mod vector_paths;
 use crate::atlas::ServerAtlas;
 use crate::frame::EngineFrame;
 use crate::sources::{ImageWork, RemoteSource};
@@ -65,6 +67,8 @@ pub struct FormEngine {
     /// Resolve+bind and layout passes run, for cache tests and profiling.
     pub passes: [usize; 2],
     screens: screen_cache::ScreenCache,
+    /// Logical dependencies of recent immutable draw-node snapshots.
+    dependencies: std::sync::Mutex<dependencies::DependencyCache>,
     /// Animation state of every drawn control, keyed by layout key.
     animator: std::sync::Mutex<json_ui::Animator>,
 }
@@ -82,8 +86,7 @@ pub struct FormCache {
 
 struct LaidForm {
     view: ViewState,
-    root: [f64; 2],
-    px: f32,
+    layout: json_ui::LayoutCacheKey,
     text: [usize; 3],
     font: assets::FontCatalogIdentity,
     texture_metadata: u64,
@@ -96,6 +99,7 @@ struct Art<'a> {
     assets: &'a RuntimeUiAssets,
     set: &'a TextureSet,
     animator: &'a std::sync::Mutex<json_ui::Animator>,
+    dependencies: &'a std::sync::Mutex<dependencies::DependencyCache>,
 }
 
 /// A carrier catalog extended and layered with a registry's built-in screens: the costly part
@@ -169,6 +173,7 @@ impl FormEngine {
             cache: None,
             passes: [0; 2],
             animator: std::sync::Mutex::default(),
+            dependencies: std::sync::Mutex::default(),
         }
     }
 
@@ -177,6 +182,7 @@ impl FormEngine {
             assets: &self.assets,
             set: &self.textures,
             animator: &self.animator,
+            dependencies: &self.dependencies,
         }
     }
 
@@ -289,6 +295,11 @@ impl FormEngine {
         self.cache = None;
         self.screens = screen_cache::ScreenCache::default();
         *self
+            .dependencies
+            .get_mut()
+            .unwrap_or_else(|poison| poison.into_inner()) =
+            dependencies::DependencyCache::default();
+        *self
             .animator
             .get_mut()
             .unwrap_or_else(|poison| poison.into_inner()) = json_ui::Animator::new();
@@ -326,6 +337,7 @@ impl FormEngine {
             assets: &self.assets,
             set: &self.textures,
             animator: &self.animator,
+            dependencies: &self.dependencies,
         };
         let screen_cancel = self
             .cache
@@ -338,9 +350,11 @@ impl FormEngine {
         };
         let drawn = render_with(art, frame, screen_art, move |env, root| {
             let cache = cache.as_mut()?;
+            let layout = json_ui::LayoutCacheKey::new(root, px, env);
             let fresh = cache.laid.as_ref().is_some_and(|laid| {
                 laid.view.same_layout(view)
-                    && (laid.root, laid.px, laid.text) == (root, px, text)
+                    && laid.layout == layout
+                    && laid.text == text
                     && laid.font == font
                     && laid.texture_metadata == texture_metadata
             });
@@ -351,8 +365,7 @@ impl FormEngine {
                 let render = render_bound_gated(bound, root, env, view, measures);
                 cache.laid = Some(LaidForm {
                     view: view.clone(),
-                    root,
-                    px,
+                    layout,
                     text,
                     font,
                     texture_metadata,
@@ -373,6 +386,11 @@ impl FormEngine {
 
     pub fn catalog(&self) -> &Arc<Catalog> {
         &self.catalog
+    }
+
+    /// The catalog before server UI layers, including registered built-in packs.
+    pub fn base_catalog(&self) -> &Arc<Catalog> {
+        &self.base
     }
 
     /// Registered built-in screens resolve against the base catalog carrying pack filters;
@@ -422,6 +440,7 @@ impl FormEngine {
             assets: &self.assets,
             set: textures,
             animator: &self.animator,
+            dependencies: &self.dependencies,
         };
         render_with(sources, frame, art, draw)
     }
@@ -439,6 +458,7 @@ impl FormEngine {
     ) -> Result<Option<EngineFrame>, PaintError> {
         art.view = Some(view);
         let px = frame.metrics.scale.get() * FONT_DESIGN_PIXEL_TEXELS as f32;
+        let dpi_scale = frame.metrics.dpi_scale.get();
         let text = frame.language;
         let texture_metadata = self.textures.metadata_revision();
         render_with(self.art(), frame, art, |env, root| {
@@ -450,6 +470,7 @@ impl FormEngine {
                 view,
                 root,
                 px,
+                dpi_scale,
                 text,
                 texture_metadata,
             };
@@ -633,6 +654,9 @@ impl Canvas<'_> {
             "cinnabar_vector_icon" => self
                 .vector_icon(data, dest, &alpha)
                 .map(|visual| (visual, dest)),
+            json_ui::vector_path::RENDERER => self
+                .vector_path(data, dest, &alpha)
+                .map(|visual| (visual, dest)),
             "cinnabar_rounded_rectangle" => self
                 .rounded_rectangle(data, dest, &alpha)
                 .map(|visual| (visual, dest)),
@@ -721,8 +745,14 @@ impl Canvas<'_> {
             Some(&self.textures),
         );
         let clip = self.logical(&drawn.clip);
-        let dest = if matches!(node.draw, Draw::Text { .. }) {
-            self.positioned(&drawn.dest)
+        let dest = if let Draw::Text { options, .. } = &node.draw {
+            text_paint::label_positioned(
+                [drawn.dest.x, drawn.dest.y, drawn.dest.w, drawn.dest.h],
+                self.font,
+                options,
+                self.metrics.gui_scale,
+                self.px,
+            )
         } else {
             self.snapped(&drawn.dest)
         };
@@ -773,7 +803,7 @@ impl Canvas<'_> {
                 align: *align,
                 scale: *scale,
                 localize: *localize,
-                options: options.clone(),
+                options,
             };
             return self.text(text, dest, clip, style);
         }

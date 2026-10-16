@@ -6,7 +6,10 @@ use bevy::prelude::*;
 use render_scene::ActorRenderFrame;
 use serde_json::{Value, json};
 
-use {crate::runtime::world::ClientWorld, client_presentation::camera::FlyCamera};
+use {
+    crate::{block_entities::SpawnerDisplayPublisher, runtime::world::ClientWorld},
+    client_presentation::camera::FlyCamera,
+};
 
 const MAX_INSTANCES: usize = 512;
 const MAX_MATRIX_ROWS: usize = 8_192;
@@ -36,23 +39,40 @@ fn matrices(arena: &[[[f32; 4]; 3]], base: u32, count: usize) -> Option<&[[[f32;
     arena.get(start..start.checked_add(count)?)
 }
 
+/// Resolves a published lifetime within its own namespace; `true` marks a client-owned display.
+pub(crate) fn manifest_actor(
+    world: &World,
+    session_id: u64,
+    runtime_id: u64,
+) -> Option<(&client_world::ActorSnapshot, bool)> {
+    let network = world
+        .get_resource::<ClientWorld>()
+        .and_then(|world| world.stream.as_ref())
+        .map(|stream| stream.authority())
+        .filter(|authority| authority.actor_session_id() == session_id);
+    if let Some(authority) = network {
+        return authority.actor(runtime_id).map(|actor| (actor, false));
+    }
+    world
+        .get_resource::<SpawnerDisplayPublisher>()?
+        .actor(session_id, runtime_id)
+        .map(|actor| (actor, true))
+}
+
 pub(super) fn snapshot(world: &World) -> Value {
     let Some(frame) = world.get_resource::<ActorRenderFrame>() else {
         return json!({ "available": false, "camera": camera(world) });
     };
     let rig = &frame.rig;
-    let authority = world
-        .get_resource::<ClientWorld>()
-        .and_then(|world| world.stream.as_ref())
-        .map(|stream| stream.authority());
     let mut entries = rig
         .manifest
         .iter()
         .filter(|entry| {
             render_model::is_pack_rig_id(entry.rig)
-                || authority
-                    .and_then(|authority| authority.actor(entry.identity.runtime_id))
-                    .is_some_and(|actor| matches!(actor.kind, protocol::ActorKind::Entity { .. }))
+                || manifest_actor(world, entry.identity.session_id, entry.identity.runtime_id)
+                    .is_some_and(|(actor, _)| {
+                        matches!(actor.kind, protocol::ActorKind::Entity { .. })
+                    })
         })
         .collect::<Vec<_>>();
     entries.sort_by_key(|entry| {
@@ -75,7 +95,8 @@ pub(super) fn snapshot(world: &World) -> Value {
             let Some(instance) = rig.instances.get(entry.instance_index as usize) else {
                 return json!({ "runtime_id": identity.runtime_id, "invalid_instance_index": entry.instance_index });
             };
-            let actor = authority.and_then(|authority| authority.actor(identity.runtime_id));
+            let resolved = manifest_actor(world, identity.session_id, identity.runtime_id);
+            let actor = resolved.map(|(actor, _)| actor);
             let identifier = actor.and_then(|actor| match &actor.kind {
                 protocol::ActorKind::Entity { identifier } => Some(identifier.as_ref()),
                 protocol::ActorKind::Player { .. } => None,
@@ -124,6 +145,7 @@ pub(super) fn snapshot(world: &World) -> Value {
                 "runtime_id": identity.runtime_id,
                 "unique_id": actor.map(|actor| actor.unique_id),
                 "identifier": identifier,
+                "display_actor": resolved.map(|(_, display)| display),
                 "actor_lifetime_matches": actor.map(|actor| actor.spawn_revision == identity.spawn_revision),
                 "spawn_revision": identity.spawn_revision,
                 "ingress_sequence": identity.ingress_sequence,

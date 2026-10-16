@@ -1,12 +1,16 @@
 //! Launcher actions and immutable menu views shared with presentation.
 
+use json_ui::vanilla::Reference;
 pub mod auth;
 pub mod death;
+pub mod dialogs;
 pub mod disconnect;
+pub mod flow;
 pub mod inbox;
 pub mod invite;
 pub mod join_progress;
 pub mod join_requests;
+mod list;
 pub mod profile;
 pub mod profile_achievements;
 pub mod realm_membership;
@@ -20,6 +24,7 @@ pub mod updates;
 pub mod view;
 pub mod worlds_tab;
 
+pub use list::MenuList;
 pub use profile::{
     ProfileTab, profile_banner_index, profile_count_display, profile_minutes_display,
 };
@@ -32,24 +37,32 @@ pub use view::{
 };
 pub use worlds_tab::{LocalWorldAction, civil_date, file_size};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MenuScreen {
-    Home,
-    Play,
-    Social,
-    Servers,
-    Profile,
-    DressingRoom,
-    Settings,
-    AddServer,
-    Pause,
-    Death,
-    /// OreUI-only screens.
+/// Declares menu routes and their exhaustive traversal from one source.
+macro_rules! menu_screens {
+    ($($(#[$attribute:meta])* $name:ident),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        pub enum MenuScreen { $($(#[$attribute])* $name),+ }
+        impl MenuScreen {
+            /// All declared routes, including routes added in future changes.
+            pub const ALL: &[Self] = &[$(Self::$name),+];
+            /// Screens entered only from an active play session.
+            pub fn requires_session(self) -> bool {
+                match self {
+                    Self::Pause | Self::Death | Self::Invite => true,
+                    Self::Home | Self::Play | Self::Social | Self::Servers | Self::Profile | Self::DressingRoom | Self::Settings | Self::AddServer | Self::Inbox | Self::Friends => false,
+                }
+            }
+        }
+    };
+}
+menu_screens! {
+    Home, Play, Social, Servers, Profile, DressingRoom, Settings, AddServer,
+    Pause, Death,
+    /// OreUI-only screen.
     Inbox,
+    /// OreUI-only screen.
     Friends,
-    /// The Marketplace; its content is owned by [`crate::store`].
-    Store,
-    /// Vanilla's invite screen over the pause screen, while the world is hosted for friends.
+    /// The invite screen over Pause while the world is hosted for friends.
     Invite,
 }
 
@@ -63,6 +76,7 @@ pub enum MenuServerTab {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MenuDialog {
+    MinecraftImport,
     Accounts,
     Exit,
     DeathQuit,
@@ -90,6 +104,7 @@ pub enum MenuField {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MenuAction {
+    MinecraftImport(crate::minecraft_import::Action),
     Update(updates::Action),
     OpenAccounts,
     AddAccount,
@@ -99,6 +114,8 @@ pub enum MenuAction {
     OpenExitDialog,
     ConfirmExit,
     DismissDialog,
+    /// The quit dialog's header close control, independent of its Cancel button.
+    CloseExitDialog,
     Reconnect,
     SelectServerTab(MenuServerTab),
     ServerList(server_list::ServerListAction),
@@ -133,6 +150,8 @@ pub enum MenuAction {
     SettingsStorage(settings_storage::StorageAction),
     SettingsSupport(settings_support::SupportAction),
     SettingsOption(u16, i32),
+    /// Applies one graphics preset without changing personal video preferences.
+    SettingsVideoPreset(settings_options::video_presets::VideoPreset),
     SettingsDropdown(u16),
     SettingsLanguage(u16),
     SettingsKey(u16),
@@ -174,9 +193,9 @@ pub enum MenuAction {
     ToggleReadMore(u8),
     /// The start screen's live-event button.
     OpenLiveEvent,
-    /// A press on a Marketplace screen.
-    Store(crate::store::StoreAction),
     GlobalResources(crate::global_resources::Action),
+    /// A press on the Settings Mods tab.
+    Mods(crate::mods::Action),
     DressingRoom(crate::dressing_room::Action),
     /// Answers the join's server trust prompt: "Trust and Join" (true) or "Don't Trust".
     ServerTrust(bool),
@@ -210,14 +229,15 @@ pub fn play_featured(view: &MenuView, index: usize) -> Option<MenuAction> {
 /// The vanilla screen family used by both menu history and scene composition.
 pub fn menu_reference(screen: MenuScreen) -> Option<&'static str> {
     Some(match screen {
-        MenuScreen::Death => "death.death_screen",
-        MenuScreen::Pause => "pause.pause_screen",
-        MenuScreen::Home => "start.start_screen",
-        MenuScreen::Play | MenuScreen::Social | MenuScreen::Servers => "play.play_screen",
-        MenuScreen::AddServer => "add_external_server.add_external_server_screen_new",
-        MenuScreen::Settings => SETTINGS_SCREEN,
-        MenuScreen::Store => crate::store::SDL_SCREEN,
-        MenuScreen::Invite => invite::SCREEN,
+        MenuScreen::Death => Reference::DeathDeathScreen.as_str(),
+        MenuScreen::Pause => Reference::PausePauseScreen.as_str(),
+        MenuScreen::Home => Reference::StartStartScreen.as_str(),
+        MenuScreen::Play | MenuScreen::Social | MenuScreen::Servers => {
+            Reference::PlayPlayScreen.as_str()
+        }
+        MenuScreen::AddServer => Reference::AddExternalServerAddExternalServerScreenNew.as_str(),
+        MenuScreen::Settings => Reference::SettingsScreenControlsAndSettings.as_str(),
+        MenuScreen::Invite => Reference::InviteInviteScreen.as_str(),
         MenuScreen::Profile
         | MenuScreen::DressingRoom
         | MenuScreen::Inbox
@@ -226,10 +246,7 @@ pub fn menu_reference(screen: MenuScreen) -> Option<&'static str> {
 }
 
 /// The default Bedrock server port displayed by launcher address fields.
-pub const DEFAULT_PORT: &str = "19132";
-
-/// The vanilla screen shared by launcher and in-world settings.
-pub const SETTINGS_SCREEN: &str = "settings.screen_controls_and_settings";
+pub const DEFAULT_PORT: &str = bridge::contract::DEFAULT_BEDROCK_PORT_TEXT;
 
 /// Host and port of a saved `host:port`; a bare host gets the default port.
 pub fn split_address(address: &str) -> (String, String) {

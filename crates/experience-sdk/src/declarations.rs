@@ -60,6 +60,10 @@ pub fn generate_mod(path: impl AsRef<Path>) {
     write(path.as_ref(), mod_source);
 }
 
+#[expect(
+    clippy::print_stdout,
+    reason = "build scripts talk to Cargo through `cargo::` directives on stdout"
+)]
 fn write(path: &Path, source: fn(&str) -> Result<String, String>) {
     println!("cargo::rerun-if-changed={}", path.display());
     let text = std::fs::read_to_string(path)
@@ -233,7 +237,7 @@ fn fields(out: &mut String, fields: &[FieldDecl]) {
 
 fn field(out: &mut String, decl: &FieldDecl) {
     let _ = match decl {
-        FieldDecl::Bool => write!(out, "{SDK}::Field::Bool"),
+        FieldDecl::Bool => write!(out, "{SDK}::Field::Bool {{}}"),
         FieldDecl::Integer { min, max } => {
             write!(out, "{SDK}::Field::Integer {{ min: {min}, max: {max} }}")
         }

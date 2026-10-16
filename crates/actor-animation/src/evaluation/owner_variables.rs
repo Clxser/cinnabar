@@ -2,6 +2,16 @@
 use super::*;
 
 impl<'a> ActorAnimationVariables<'a> {
+    /// Selects the ordinary legacy attack path using the owner's retained posture and equipment.
+    pub fn uses_legacy_swing(self, actor: &dyn AnimatedActor) -> bool {
+        self.item_context.is_some_and(|context| {
+            super::super::legacy_swing::ordinary(
+                actor,
+                context,
+                self.input.map_or(0.0, |input| input.swim_amount),
+            )
+        })
+    }
     /// Borrows completed owner script values and retains its query clocks.
     pub(crate) fn new(
         assets: Option<&'a RuntimeEntityAssets>,
@@ -94,15 +104,15 @@ impl<'a> ActorAnimationVariables<'a> {
         self.anim_tick
     }
 
-    /// Borrows one inherited value without constructing another variable layout.
-    pub(crate) fn value(self, name: &str) -> Option<&'a MolangValue> {
+    /// Reads one inherited value without constructing another variable layout.
+    pub(crate) fn value(self, name: &str) -> Option<MolangValue> {
         let symbols = self.assets?.molang_symbols();
         let first = symbols.partition_point(|symbol| symbol.kind < MolangSymbolKind::Variable);
         let end = symbols.partition_point(|symbol| symbol.kind <= MolangSymbolKind::Variable);
         let slot = symbols[first..end]
             .binary_search_by(|symbol| symbol.identifier.as_ref().cmp(name))
             .ok()?;
-        self.variables?.values.get(slot)?.as_ref()
+        self.variables?.variable(slot)
     }
 
     /// The catalog that owns these retained rig script values.
@@ -123,15 +133,12 @@ impl<'a> ActorAnimationVariables<'a> {
         let owner_symbols = owner_assets.molang_symbols();
         let first =
             owner_symbols.partition_point(|symbol| symbol.kind < MolangSymbolKind::Variable);
-        for (offset, value) in variables.values.iter().enumerate() {
-            let Some(value) = value else {
-                continue;
-            };
+        for (offset, value) in variables.assigned_variables() {
             let Some(symbol) = owner_symbols.get(first + offset) else {
                 break;
             };
             if let Some(slot) = layout.named_slot(assets, &symbol.identifier) {
-                output.values[slot] = Some(value.clone());
+                output.assign_variable(slot, value);
             }
         }
     }

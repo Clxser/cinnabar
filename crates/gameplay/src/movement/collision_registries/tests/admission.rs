@@ -19,14 +19,14 @@ fn tag(bytes: &mut Vec<u8>, kind: u8, name: &str) {
     text(bytes, name);
 }
 
-/// Declares binary axes; large values exceed the byte budget before expansion.
+/// Declares binary axes whose retained property names exceed the expansion byte budget.
 fn large_definition(axes: u32, large_values: bool) -> Vec<u8> {
     let mut bytes = vec![10, 0];
     tag(&mut bytes, 9, "properties");
     bytes.extend([10, (axes * 2) as u8]);
     for index in 0..axes {
         tag(&mut bytes, 8, "name");
-        text(&mut bytes, &format!("test:axis_{index}"));
+        text(&mut bytes, &format!("test:axis_{index:064}"));
         tag(&mut bytes, 9, "enum");
         if large_values {
             bytes.extend([8, 4]);
@@ -89,7 +89,7 @@ fn budget_rejections_preserve_vanilla_ids_in_both_modes_and_admission_palettes()
             );
             for record in records
                 .iter()
-                .filter(|record| record.name.as_ref() != super::super::RESERVED_RECORD_NAME)
+                .filter(|record| record.name.as_ref() != super::super::RESERVED_BLOCK_NAME)
             {
                 let omitted = !supply_vanilla
                     && assets::server_defined_blocks().iter().any(|block| {
@@ -190,7 +190,7 @@ fn omitted_server_definitions_remap_the_pinned_sequential_palette() {
         } else {
             assert_eq!(remap.to_internal(wire), record.sequential_id);
             assert_eq!(remap.to_wire(record.sequential_id), wire);
-            if record.name.as_ref() != super::super::RESERVED_RECORD_NAME {
+            if record.name.as_ref() != super::super::RESERVED_BLOCK_NAME {
                 assert_eq!(
                     registries.block_identifier(
                         assets::NetworkIdMode::Sequential,

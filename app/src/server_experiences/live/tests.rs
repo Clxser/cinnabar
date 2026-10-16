@@ -137,7 +137,7 @@ fn fixture(count: usize) -> Live<FakeWorker> {
                     id: format!("{}.events{i}", owner.bundle),
                     schema: API_VERSION,
                     direction,
-                    fields: vec![Field::Bool],
+                    fields: vec![Field::Bool {}],
                 })
                 .collect();
             (

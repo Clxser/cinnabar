@@ -6,7 +6,7 @@ use gpu_snapshot::{Gpu, SNAPSHOT_SIDE};
 use render as render_api;
 
 #[path = "support/actor_raster.rs"]
-mod actor_raster;
+pub(crate) mod actor_raster;
 use actor_raster::{cube, raster, raster_material};
 
 pub(super) fn source() -> String {

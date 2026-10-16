@@ -1,5 +1,6 @@
 //! Attachment masks and fallback order for vanilla multiface placement.
 
+use assets::facts::BlockProperty as P;
 use serde_json::{Map, Value};
 
 use crate::placement_state::{only_keys, set_value, value};
@@ -14,21 +15,16 @@ const OTHER_FACES: [[usize; 5]; 6] = [
     [1, 0, 2, 3, 4],
 ];
 
-/// Recognizes the vanilla blocks that use the six-face attachment mask.
-pub(crate) fn is_multiface(identifier: &str) -> bool {
-    matches!(identifier, "minecraft:glow_lichen" | "minecraft:sculk_vein")
-}
-
 /// Resolves a first attachment in air; unknown fallback supports defer placement.
 pub(crate) fn attachment_states(
     canonical: &Map<String, Value>,
     clicked_face: u8,
     supports: [Option<bool>; 6],
 ) -> Option<Map<String, Value>> {
-    if clicked_face > 5 || !only_keys(canonical, &["multi_face_direction_bits"]) {
+    if clicked_face > 5 || !only_keys(canonical, &[P::MultiFaceDirectionBits.name()]) {
         return None;
     }
-    if value(canonical, "multi_face_direction_bits")?.as_u64()? > 63 {
+    if value(canonical, P::MultiFaceDirectionBits.name())?.as_u64()? > 63 {
         return None;
     }
     let opposite = usize::from(clicked_face ^ 1);
@@ -42,7 +38,7 @@ pub(crate) fn attachment_states(
     let mut states = canonical.clone();
     set_value(
         &mut states,
-        "multi_face_direction_bits",
+        P::MultiFaceDirectionBits.name(),
         Value::from(FACE_BITS[selected?]),
     )?;
     Some(states)
@@ -50,7 +46,7 @@ pub(crate) fn attachment_states(
 
 /// Returns the support of a first attachment; existing masks require separate survival checks.
 pub(crate) fn support_face(states: &Map<String, Value>) -> Option<u8> {
-    let mask = value(states, "multi_face_direction_bits")?.as_u64()?;
+    let mask = value(states, P::MultiFaceDirectionBits.name())?.as_u64()?;
     FACE_BITS
         .iter()
         .position(|bit| u64::from(*bit) == mask)
@@ -62,10 +58,27 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// Supplies a typed held state whose mask must not leak into first placement.
+    /// Supplies a registered held mask that must not leak into first placement.
     fn canonical() -> Map<String, Value> {
-        serde_json::from_value(json!({"multi_face_direction_bits":{"type":"int","value":63}}))
-            .unwrap()
+        static STATE: std::sync::OnceLock<Map<String, Value>> = std::sync::OnceLock::new();
+        STATE
+            .get_or_init(|| {
+                assets::read_registry_for_protocol(
+                    assets::pinned_block_registry_bytes(),
+                    assets::active_content_registry_protocol(),
+                )
+                .unwrap()
+                .iter()
+                .filter(|record| record.name.as_ref() == "minecraft:glow_lichen")
+                .find_map(|record| {
+                    let state: Map<String, Value> =
+                        serde_json::from_str(&record.canonical_state).unwrap();
+                    (value(&state, "multi_face_direction_bits") == Some(&json!(63)))
+                        .then_some(state)
+                })
+                .expect("registered glow lichen with all six attachments")
+            })
+            .clone()
     }
 
     #[test]

@@ -16,7 +16,7 @@ pub fn spawn_network<P: Send + 'static>(
     let session_generation = config.session_generation;
     let (control_event_tx, control_events) = mpsc::channel(CONTROL_EVENT_CAPACITY);
     let (world_event_tx, world_events) = mpsc::channel(WORLD_EVENT_CAPACITY);
-    let (commands, command_rx) = mpsc::channel(COMMAND_CAPACITY);
+    let (commands, command_rx) = frame_flush::command_channel(COMMAND_CAPACITY);
     let (physics_reanchor, _physics_reanchor_rx) =
         watch::channel(PositionAuthorityGeneration::default());
     let (shutdown, mut shutdown_rx) = watch::channel(false);
@@ -43,7 +43,11 @@ pub fn spawn_network<P: Send + 'static>(
                     return;
                 }
             };
+            let (packet_tap, packet_capture) =
+                packet_log::session_tap(config.packet_capture.as_ref());
             run_session_runtime(runtime, async move {
+                // Pack preparation overlaps the spawn wait, so the session keeps being read.
+                let cancelled = shutdown_rx.clone();
                 let Some(login) = wait_for_login_or_cancel(
                     LoginSequence::connect_session(
                         &config.socket_dir,
@@ -52,6 +56,14 @@ pub fn spawn_network<P: Send + 'static>(
                         Some(config.client_blob_cache.clone()),
                         Some(config.player_skin),
                         &config.login_settings,
+                        Some(packet_tap),
+                        move |handoff, game_data| {
+                            let packs = unless_cancelled(&cancelled, || {
+                                prepare_presentation(handoff, &game_data, &|| *cancelled.borrow())
+                            })
+                            .flatten();
+                            (game_data, packs)
+                        },
                     ),
                     &mut shutdown_rx,
                 )
@@ -59,7 +71,7 @@ pub fn spawn_network<P: Send + 'static>(
                 else {
                     return;
                 };
-                let (mut session, game_data) = match login {
+                let (session, (game_data, packs)) = match login {
                     Ok(connected) => connected,
                     Err(error) => {
                         send_login_error(&control_event_tx, &mut shutdown_rx, error).await;
@@ -70,25 +82,6 @@ pub fn spawn_network<P: Send + 'static>(
                     base_game_version = %game_data.settings.base_game_version,
                     "world lighting compatibility version"
                 );
-                // The login handoff is one-shot. Take and validate it before
-                // publishing any StartGame state; optional semantic rejection
-                // remains a live base-assets session, a required one ends it.
-                let handoff = session.take_resource_pack_handoff();
-                let cancelled = shutdown_rx.clone();
-                let Some((game_data, packs)) = run_blocking_or_cancel(
-                    move || {
-                        let packs = unless_cancelled(&cancelled, || {
-                            prepare_presentation(handoff, &game_data, &|| *cancelled.borrow())
-                        })
-                        .flatten();
-                        (game_data, packs)
-                    },
-                    &mut shutdown_rx,
-                )
-                .await
-                else {
-                    return;
-                };
                 let packs = match packs {
                     None => return,
                     Some(Ok(packs)) => packs,
@@ -136,6 +129,7 @@ pub fn spawn_network<P: Send + 'static>(
                         death_rules: settings.death_rules,
                         packs,
                         terrain_before_spawn: session.terrain_before_spawn(),
+                        level_identity: game_data.level_identity,
                     },
                 )
                 .await
@@ -173,6 +167,14 @@ pub fn spawn_network<P: Send + 'static>(
                     pump.await;
                 }
             });
+            // Tasks the background shutdown has not dropped yet may still hold the capture's
+            // feed, so end it explicitly. This thread is detached from the handle's teardown,
+            // and the wait is bounded.
+            if let Some(capture) = packet_capture
+                && !capture.finish(packet_log::CAPTURE_FINISH_TIMEOUT)
+            {
+                tracing::warn!("packet capture writer did not finish in time");
+            }
         })?;
     Ok(NetworkHandle {
         session_generation: session_generation.get(),
@@ -185,7 +187,7 @@ pub fn spawn_network<P: Send + 'static>(
         thread: Some(thread),
         readiness_ingress,
         experience_gate,
-        unflushed: AtomicBool::new(false),
+        unflushed: Default::default(),
     })
 }
 
@@ -250,6 +252,9 @@ mod tests {
             .with_finish_loading(vec![protocol::modal_form_cancel_response(1)]))
         }
 
+        /// This fixture's inbound never ends, so a failed write has no boundary to drain.
+        async fn drain_to_boundary(&mut self) {}
+
         async fn receive_world_event(&mut self, _: i32) -> Result<WorldEvent, Self::Error> {
             std::future::pending().await
         }
@@ -293,7 +298,7 @@ mod tests {
         ));
     }
 
-    // Cancelling during pack preparation ends the network thread while the compile still runs.
+    // Cancelling a join while its pack preparation runs ends the network thread mid-compile.
     #[test]
     fn cancelled_preparation_releases_the_network_thread() {
         let (release, blocked) = std::sync::mpsc::channel::<()>();
@@ -306,8 +311,8 @@ mod tests {
             .unwrap();
         let thread = thread::spawn(move || {
             run_session_runtime(runtime, async move {
-                let prepared =
-                    run_blocking_or_cancel(move || blocked.recv().is_ok(), &mut shutdown_rx).await;
+                let join = tokio::task::spawn_blocking(move || blocked.recv().is_ok());
+                let prepared = wait_for_login_or_cancel(join, &mut shutdown_rx).await;
                 assert!(prepared.is_none());
             });
             finished.send(()).unwrap();
@@ -342,15 +347,6 @@ mod tests {
         assert_eq!(worker.join().unwrap(), Some(true));
         notifier.join().unwrap();
         returned.expect("shutdown blocked behind the running compile");
-    }
-
-    #[tokio::test]
-    async fn uncancelled_preparation_returns_its_output() {
-        let (_shutdown, mut shutdown_rx) = watch::channel(false);
-        assert_eq!(
-            run_blocking_or_cancel(|| 7, &mut shutdown_rx).await,
-            Some(7)
-        );
     }
 
     #[tokio::test]

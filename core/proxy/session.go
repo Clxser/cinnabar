@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hashimthearab/rust-mcbe/core/internal/bridgecontract"
+	"github.com/hashimthearab/rust-mcbe/core/internal/redact"
 	"github.com/hashimthearab/rust-mcbe/core/internal/streamnet"
 	"github.com/sandertv/gophertunnel/minecraft"
 	"github.com/sandertv/gophertunnel/minecraft/device"
@@ -70,7 +71,7 @@ func (server *sessionServer) accept(ctx context.Context) {
 				return
 			}
 			retry = min(max(2*retry, 5*time.Millisecond), sessionAcceptRetryLimit)
-			server.logger.Warn("session accept failed; retrying", "error", err, "retry", retry)
+			server.logger.Warn("session accept failed; retrying", "error", redact.Error(err), "retry", retry)
 			select {
 			case <-time.After(retry):
 				continue
@@ -97,7 +98,7 @@ func (server *sessionServer) accept(ctx context.Context) {
 			server.mu.Unlock()
 			_ = conn.Close()
 			if err != nil && !streamnet.IsClosed(err) {
-				server.logger.Warn("session ended", "error", err)
+				server.logger.Warn("session ended", "error", redact.Error(err))
 			}
 		}()
 	}
@@ -326,7 +327,8 @@ func selectSessionPacks(stack *selectedResourcePackStack, logger *slog.Logger) (
 	for _, entry := range stack.snapshot.Entries() {
 		entries = append(entries, sessionStackEntry{uuid: entry.UUID(), version: entry.Version(), subPack: entry.SubPackName()})
 	}
-	return chooseSessionPacks(offers, entries, stack.required, logger)
+	// Offer requirements govern acquisition; the stack's own bit governs selection.
+	return chooseSessionPacks(offers, entries, stack.snapshot.Required(), logger)
 }
 
 // sessionOffer is one offered pack with its acquired content.
@@ -343,7 +345,7 @@ type sessionStackEntry struct {
 // chooseSessionPacks selects archives in stack order: an offer repeating an identity keeps its first
 // entry, as vanilla requests each identity once; built-in packs need no archive; and an unavailable
 // pack, a repeated stack entry or a sub-pack that differs from the offer is skipped, or refuses the
-// join when the packs are required. A nil logger drops the skip count.
+// join when the stack is required. A nil logger drops the skip count.
 func chooseSessionPacks(offers []sessionOffer, entries []sessionStackEntry, required bool, logger *slog.Logger) ([]sessionPack, []*resource.Pack, error) {
 	refuse := &PackAdmissionError{Reason: PackAdmissionRequiredUnsupported, PackCount: len(offers)}
 	byIdentity := make(map[string]sessionOffer, len(offers))
@@ -451,14 +453,14 @@ func newSessionDownstream(request sessionConnectRequest, claimed *device.Profile
 		claimed.Apply(&clientData)
 	}
 	pinned := minecraft.DefaultProtocol
-	if request.Protocol != pinned.ID() || clientData.GameVersion != pinned.Ver() {
+	if request.Protocol != pinned.ID() || clientData.GameVersion != bridgecontract.GameVersion {
 		// A newer client protocol finds this core outdated; any other mismatch is the client's, as
 		// gophertunnel's listener answers it.
 		key := "disconnectionScreen.outdatedClient"
 		if request.Protocol > pinned.ID() {
 			key = "disconnectionScreen.outdatedServer"
 		}
-		return nil, &sessionRefusedError{key: key, err: fmt.Errorf("unsupported session protocol %d/%s; want %d/%s", request.Protocol, clientData.GameVersion, pinned.ID(), pinned.Ver())}
+		return nil, &sessionRefusedError{key: key, err: fmt.Errorf("unsupported session protocol %d/%s; want %d/%s", request.Protocol, clientData.GameVersion, pinned.ID(), bridgecontract.GameVersion)}
 	}
 	if err := clientData.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: client data: %v", errMalformedSession, err)

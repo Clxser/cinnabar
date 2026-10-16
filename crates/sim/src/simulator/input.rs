@@ -5,6 +5,9 @@ use super::{MovementEffects, MovementMode, SimulationError, VerticalPhysics};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MovementInput {
+    /// One released trident, retaining its facing independently of this tick's look.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub riptide: Option<super::RiptideLaunch>,
     /// Spectator travel ignores terrain collision and block contact effects.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub spectator: bool,
@@ -18,6 +21,9 @@ pub struct MovementInput {
     /// Tick-captured authority that disables travel without discarding device input.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub immobile: bool,
+    /// Suppresses this tick's travel while jump state and block contacts still update.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub skip_travel: bool,
     /// Axes precede item and pose slowdown. False preserves historical
     /// already-processed input clamping; true retains partial-axis magnitude.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -42,7 +48,7 @@ pub struct MovementInput {
     /// Look pitch, degrees positive downward. Read only by swimming and gliding.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub pitch_degrees: f64,
-    /// Tick-captured height of native attach location 7 above the feet. The
+    /// Tick-captured height of the pose-adjusted eye anchor above the feet. The
     /// caller retains its pose-offset transition in prediction input; absence
     /// leaves the swimming surface guard unspecified for legacy traces.
     #[serde(default, skip_serializing_if = "Option::is_none")]

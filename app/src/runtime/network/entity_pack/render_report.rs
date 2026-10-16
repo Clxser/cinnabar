@@ -76,7 +76,7 @@ pub(super) fn compile_local_pack(pack: &Path) -> LocalPack {
     let refs = std::fs::read("../.local/assets/compiled/vanilla-v1.vanillarefs.json")
         .ok()
         .and_then(|bytes| assets::VanillaEntityRefs::from_json(&bytes));
-    let compiled = pack_compiler::compile_actor_pack(
+    let compiled = pack_entity_compiler::compile_actor_pack(
         pack_runtime::entity_pack::collect::collect_files(&view, refs.as_ref(), None),
     )
     .unwrap()
@@ -178,6 +178,10 @@ struct Triangle {
     uv_anim: [f32; 4],
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the entity render report explains each drawn or skipped actor on stderr"
+)]
 fn draw(
     world: &WorldStream,
     entities: &RuntimeEntityAssets,
@@ -351,6 +355,10 @@ fn rasterize(image: &mut image::RgbaImage, triangles: &[Triangle], artwork: &Act
 
 /// Prints the actor page count and bytes of the startup artwork (vanilla actor, equipment,
 /// icon, world and block-entity carriers in `dir`) and after the pack's artwork joins it.
+#[expect(
+    clippy::print_stderr,
+    reason = "the entity render report prints artwork page budgets on stderr"
+)]
 fn measure_pages(
     dir: &Path,
     textures: &[assets::actor::ActorTexture],

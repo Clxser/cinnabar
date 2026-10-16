@@ -12,16 +12,18 @@ reads = [
     "crates/render/src/model.wesl",
 ]
 
-[features]
-enhanced = []
-
 [dependencies]
 block-transform = { path = "../block-transform" }
 assets = { path = "../assets" }
 bytemuck = { version = "1", features = ["derive"] }
 world = { path = "../world" }
 
+[features]
+benchmark-mimalloc = []
+enhanced = []
+
 [dev-dependencies]
+mimalloc.workspace = true
 criterion.workspace = true
 pack-compiler = { path = "../pack-compiler" }
 image.workspace = true

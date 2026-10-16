@@ -1,8 +1,11 @@
 use assets::{MATERIAL_FLAG_TINT_MASK, NetworkIdMode};
 use chunk_pipeline::WorldStream;
-use particles::{TileRequest, tiles::material_tint};
+use particles::{
+    TileRequest,
+    tiles::{material_stage_tint, material_tint},
+};
 
-/// A block-textured particle tile with its gamma-space biome tint.
+/// A block-textured particle tile with its gamma-space material tint.
 pub(super) struct BlockTile {
     pub(super) tile: TileRequest,
     pub(super) tint: [f32; 4],
@@ -21,8 +24,11 @@ pub(super) fn block_tile(
     })
 }
 
-/// Gamma-space biome colour at `block` for a material's tint mode; white when untinted.
+/// Resolves stage colour before consulting the biome at `block`; white when untinted.
 pub(super) fn biome_tint(stream: &WorldStream, flags: u32, block: [i32; 3]) -> [f32; 4] {
+    if let Some(tint) = material_stage_tint(flags) {
+        return tint;
+    }
     if flags & MATERIAL_FLAG_TINT_MASK == 0 {
         return [1.0; 4];
     }
@@ -41,6 +47,33 @@ pub(super) fn biome_tint(stream: &WorldStream, flags: u32, block: [i32; 3]) -> [
 mod tests {
     use assets::{BlockFace, MATERIAL_FLAG_TINT_MASK, NetworkIdMode, RuntimeAssets, TextureRef};
     use particles::tiles::terrain_tile;
+
+    #[test]
+    fn stem_colour_survives_particle_routing_without_a_loaded_biome() {
+        let stream = chunk_pipeline::WorldStream::new(protocol::WorldBootstrap {
+            dimension: 0,
+            local_player_runtime_id: 1,
+            local_player_unique_id: 1,
+            player_position: [0.0; 3],
+            world_spawn_position: [0; 3],
+            air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
+            block_network_ids_are_hashes: false,
+        });
+        for growth in [0, 7] {
+            let flags = assets::stem::material_flags(growth).unwrap();
+            let rgb = assets::stem::colour(growth).unwrap();
+            assert_eq!(
+                super::biome_tint(&stream, flags, [0; 3]),
+                [
+                    rgb[0] as f32 / 255.0,
+                    rgb[1] as f32 / 255.0,
+                    rgb[2] as f32 / 255.0,
+                    1.0
+                ]
+            );
+        }
+        assert_eq!(super::biome_tint(&stream, 0, [0; 3]), [1.0; 4]);
+    }
 
     #[test]
     #[ignore = "requires the local compiled vanilla world carrier"]

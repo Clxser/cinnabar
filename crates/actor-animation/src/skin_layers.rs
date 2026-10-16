@@ -1,3 +1,4 @@
+use assets::entity::EngineVariable as V;
 use std::borrow::Cow;
 
 use render_api::{SkinAnimation, SkinAnimationKind, SkinGeometrySource};
@@ -33,6 +34,26 @@ impl SkinLayerSkeleton {
     /// Whether `layer` was posed on this skeleton.
     pub(super) fn poses(&self, layer: &SkinRenderLayer) -> bool {
         self.image.kind == layer.image.kind && self.geometry.digest == layer.geometry.digest
+    }
+
+    /// Composes one body's named animation endpoint on this persona skeleton.
+    fn compose(
+        &self,
+        body_names: &[Box<str>],
+        local: &[LocalDelta],
+    ) -> Option<Arc<[BoneTransform]>> {
+        let local = self
+            .names
+            .iter()
+            .map(|name| {
+                body_names
+                    .iter()
+                    .position(|driver| driver == name)
+                    .and_then(|index| local.get(index).copied())
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>();
+        compose_pose(&self.bones, &local).map(Arc::from)
     }
 }
 
@@ -107,9 +128,9 @@ pub(super) fn seed(
     };
     for layer in &skin.prepared.layers {
         let variable = match layer.image.kind {
-            SkinAnimationKind::Face => "variable.animation_frames_face",
-            SkinAnimationKind::Body32 => "variable.animation_frames_32x32",
-            SkinAnimationKind::Body128 => "variable.animation_frames_128x128",
+            SkinAnimationKind::Face => V::AnimationFramesFace.name(),
+            SkinAnimationKind::Body32 => V::AnimationFrames32x32.name(),
+            SkinAnimationKind::Body128 => V::AnimationFrames128x128.name(),
         };
         variables.set(
             evaluator.layout.slot(evaluator.assets, variable),
@@ -119,7 +140,7 @@ pub(super) fn seed(
             variables.set(
                 evaluator
                     .layout
-                    .slot(evaluator.assets, "variable.use_blinking_animation"),
+                    .slot(evaluator.assets, V::UseBlinkingAnimation.name()),
                 f32::from(layer.image.blinking),
             );
         }
@@ -135,12 +156,12 @@ fn uv_offset(image: &SkinAnimation, life_seconds: f32, blinking: f32) -> f32 {
     }
 }
 
-/// Poses animation layers using the same named animation deltas as the base skin.
+/// Poses persona layers from the body's current and optional distinct previous local deltas.
 pub(super) fn evaluate(
     state: &ActorRigState,
     evaluator: &Evaluator<'_>,
     variables: &MolangVariables,
-    local: &[LocalDelta],
+    (local, previous): (&[LocalDelta], Option<&[LocalDelta]>),
     render: Option<&[RenderTextureLayer]>,
 ) -> Vec<SkinRenderLayer> {
     let Some(skin) = state.skin_skeleton() else {
@@ -150,33 +171,25 @@ pub(super) fn evaluate(
         .get(
             evaluator
                 .layout
-                .slot(evaluator.assets, "variable.is_blinking"),
+                .slot(evaluator.assets, V::IsBlinking.name()),
         )
         .unwrap_or(0.0);
     skin.prepared
         .layers
         .iter()
         .filter_map(|layer| {
-            let local = layer
-                .names
-                .iter()
-                .map(|name| {
-                    state
-                        .bone_names
-                        .iter()
-                        .position(|driver| driver == name)
-                        .and_then(|index| local.get(index).copied())
-                        .unwrap_or_default()
-                })
-                .collect::<Vec<_>>();
-            let pose: Arc<[BoneTransform]> = compose_pose(&layer.bones, &local)?.into();
+            let current = layer.compose(&state.bone_names, local)?;
+            let previous = match previous {
+                Some(local) => layer.compose(&state.bone_names, local)?,
+                None => Arc::clone(&current),
+            };
             let (hidden_bones, uv_anim) = metadata(layer, evaluator, render, blinking);
             Some(SkinRenderLayer {
                 image: layer.image.clone(),
                 geometry: Arc::clone(&layer.geometry),
                 mesh: layer.mesh.clone(),
-                previous: Arc::clone(&pose),
-                current: pose,
+                previous,
+                current,
                 rest: Arc::clone(&layer.rest),
                 hidden_bones,
                 uv_anim,
@@ -238,7 +251,7 @@ pub(super) fn refresh<'s>(
         .get(
             evaluator
                 .layout
-                .slot(evaluator.assets, "variable.is_blinking"),
+                .slot(evaluator.assets, V::IsBlinking.name()),
         )
         .unwrap_or(0.0);
     let mut refreshed: Option<Vec<SkinRenderLayer>> = None;
@@ -259,22 +272,23 @@ pub(super) fn refresh<'s>(
     Ok(refreshed.map_or(Cow::Borrowed(&state.skin_layers), Cow::Owned))
 }
 
-/// Bounds the additional persona composition before sampling a body's frame pose.
+/// Charges for both persona endpoints before composing the sampled body's pose pair.
 pub(super) fn sample(
     state: &ActorRigState,
     evaluator: &Evaluator<'_>,
     variables: &MolangVariables,
-    local: &[LocalDelta],
+    local: (&[LocalDelta], Option<&[LocalDelta]>),
     render: Option<&[RenderTextureLayer]>,
     budget: &mut EvalBudget<'_>,
 ) -> Result<Vec<SkinRenderLayer>, EvalError> {
-    let work = state.skin_skeleton().map_or(0, |skin| {
+    let work: usize = state.skin_skeleton().map_or(0, |skin| {
         skin.prepared
             .layers
             .iter()
             .map(|layer| layer.bones.len())
             .sum()
     });
+    let work = work * if local.1.is_some() { 2 } else { 1 };
     if work > budget.work_left {
         return Err(EvalError::ActorBudget);
     }

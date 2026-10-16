@@ -176,20 +176,39 @@ fn animation_selects_current_next_cross_page_wrap_and_non_blended_frames() {
 }
 
 #[test]
-fn one_and_two_page_assets_have_one_stable_shared_binding_shape() {
+fn page_assets_have_one_stable_shared_binding_shape() {
     assert_eq!(
         plan_texture_page_bindings(1),
         Some([
             TexturePageBinding::Asset(0),
             TexturePageBinding::DiagnosticFallback,
+            TexturePageBinding::DiagnosticFallback,
+            TexturePageBinding::DiagnosticFallback,
+            TexturePageBinding::DiagnosticFallback,
         ])
     );
     assert_eq!(
         plan_texture_page_bindings(2),
-        Some([TexturePageBinding::Asset(0), TexturePageBinding::Asset(1)])
+        Some([
+            TexturePageBinding::Asset(0),
+            TexturePageBinding::Asset(1),
+            TexturePageBinding::DiagnosticFallback,
+            TexturePageBinding::DiagnosticFallback,
+            TexturePageBinding::DiagnosticFallback,
+        ])
+    );
+    assert_eq!(
+        plan_texture_page_bindings(5),
+        Some([
+            TexturePageBinding::Asset(0),
+            TexturePageBinding::Asset(1),
+            TexturePageBinding::Asset(2),
+            TexturePageBinding::Asset(3),
+            TexturePageBinding::Asset(4),
+        ])
     );
     assert_eq!(plan_texture_page_bindings(0), None);
-    assert_eq!(plan_texture_page_bindings(3), None);
+    assert_eq!(plan_texture_page_bindings(6), None);
 }
 
 #[test]

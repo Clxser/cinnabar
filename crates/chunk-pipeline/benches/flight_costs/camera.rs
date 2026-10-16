@@ -6,7 +6,9 @@ const CROSSINGS: usize = 32;
 pub(super) fn camera_benches(c: &mut Criterion) {
     let assets = Arc::new(terrain_assets());
     let mut group = c.benchmark_group("pipeline/cave_camera_boundaries");
-    group.sample_size(20);
+    if !cfg!(feature = "runtime-profile") {
+        group.sample_size(20);
+    }
     for radius in [10, 16] {
         let flight = Flight::new(&assets, radius);
         for (name, path) in [("straight", straight()), ("circle", circle())] {

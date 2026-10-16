@@ -173,12 +173,17 @@ pub fn update_look(
     mut view: ResMut<LocalViewPose>,
     mut server: Option<ResMut<ServerCameraView>>,
 ) {
-    let held = input.phase(Action::Freelook).held && !auto_fly.presentation_paused();
+    let death_view = settings.death_view();
+    let held = input.phase(Action::Freelook).held && !auto_fly.presentation_paused() && !death_view;
     if settings.freelook != held {
         smoother.reset();
     }
     settings.freelook = held;
     view.set_freelook(held);
+    if death_view {
+        smoother.reset();
+        return;
+    }
     if auto_fly.presentation_paused() {
         return;
     }
@@ -199,7 +204,7 @@ pub fn update_look(
         return;
     }
 
-    let (yaw, pitch, roll) = view.camera_rotation().to_euler(EulerRot::YXZ);
+    let (yaw, pitch, roll) = view.look_rotation().to_euler(EulerRot::YXZ);
     let feel = settings.feel();
     let degrees = match mode {
         semantic_input::InputMode::KeyboardMouse => {
@@ -225,9 +230,11 @@ pub fn update_look(
         .as_deref_mut()
         .and_then(|server| server.apply_look_delta(-turn));
     let (yaw, pitch) = look_angles(yaw, pitch, turn, Vec2::ONE);
-    view.set_look_rotation(
-        server_rotation.unwrap_or_else(|| Quat::from_euler(EulerRot::YXZ, yaw, pitch, roll)),
-    );
+    if let Some(rotation) = server_rotation {
+        view.set_look_rotation(rotation);
+    } else {
+        view.turn_look_rotation(Quat::from_euler(EulerRot::YXZ, yaw, pitch, roll), -turn.x);
+    }
 }
 
 /// Advances acceptance movement or the local non-physics fly camera.

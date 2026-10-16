@@ -6,6 +6,8 @@ use {assets::NetworkIdMode, gpu_snapshot::Draw, gpu_snapshot::Gpu};
 
 use crate::{chunk_constants, gpu_snapshot, material_shader, shader_source};
 
+const LIGHTMAP_BINDING: u32 = material_shader::BIOME_QUERY_TABLES_BINDING + 1;
+
 /// Reads the active registry and a requested original-art capture carrier.
 pub(crate) fn fixture(
     variable: &str,
@@ -258,18 +260,10 @@ pub(crate) fn render_at(
     let atmosphere = gpu.buffer(&atmosphere, uniform);
     let atlas = atlas(gpu, assets);
     let sampler = gpu.device.create_sampler(&Default::default());
-    let bindings = [
+    let mut bindings = [
         (0, view.as_entire_binding()),
         (2, origins.as_entire_binding()),
         (3, materials.as_entire_binding()),
-        (
-            material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[0],
-            wgpu::BindingResource::TextureView(&atlas),
-        ),
-        (
-            material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[1],
-            wgpu::BindingResource::TextureView(&atlas),
-        ),
         (
             material_shader::NATIVE_LEAF_SAMPLER_BINDING,
             wgpu::BindingResource::Sampler(&sampler),
@@ -286,9 +280,16 @@ pub(crate) fn render_at(
             material_shader::BIOME_QUERY_TABLES_BINDING,
             query.as_entire_binding(),
         ),
-        (20, lightmap.as_entire_binding()),
+        (LIGHTMAP_BINDING, lightmap.as_entire_binding()),
     ]
-    .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource });
+    .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource })
+    .to_vec();
+    bindings.extend(
+        material_shader::NATIVE_LEAF_TEXTURE_BINDINGS.map(|binding| wgpu::BindGroupEntry {
+            binding,
+            resource: wgpu::BindingResource::TextureView(&atlas),
+        }),
+    );
     let mut cube_bindings = bindings
         .iter()
         .filter(|entry| entry.binding != 12 && entry.binding != 13)
@@ -306,8 +307,10 @@ pub(crate) fn render_at(
     ]);
     let source = format!(
         "{}\n{}",
-        shader_source::standalone(include_str!("../../../src/model.wesl"), &[])
-            .replace("@group(1) @binding(0)", "@group(0) @binding(20)"),
+        shader_source::standalone(include_str!("../../../src/model.wesl"), &[]).replace(
+            "@group(1) @binding(0)",
+            &format!("@group(0) @binding({LIGHTMAP_BINDING})")
+        ),
         VERTEX.replace(
             "INDICES",
             &chunk_constants::STATIC_QUAD_INDICES
@@ -317,8 +320,10 @@ pub(crate) fn render_at(
     );
     let cube_source = format!(
         "{}\n{}",
-        shader_source::standalone(include_str!("../../../src/chunk.wesl"), &[])
-            .replace("@group(1) @binding(0)", "@group(0) @binding(20)"),
+        shader_source::standalone(include_str!("../../../src/chunk.wesl"), &[]).replace(
+            "@group(1) @binding(0)",
+            &format!("@group(0) @binding({LIGHTMAP_BINDING})")
+        ),
         CUBE_VERTEX.replace(
             "INDICES",
             &chunk_constants::STATIC_QUAD_INDICES
@@ -381,3 +386,35 @@ const CUBE_VERTEX: &str = r#"
     return cube_vertex(indices[index % 6u], index / 6u);
 }
 "#;
+
+#[test]
+fn rod_snapshots_render_cube_and_model_draws_with_all_texture_pages_bound() {
+    let Some((assets, records)) = fixture("CINNABAR_END_ROD_CARRIER") else {
+        return;
+    };
+    let Some(gpu) = Gpu::for_fixture("rod snapshot texture page bindings") else {
+        return;
+    };
+    let id = |name: &str| {
+        records
+            .iter()
+            .find(|record| record.name.as_ref() == name)
+            .unwrap()
+            .sequential_id
+    };
+    let mounting_offset = [0, -1, 0];
+    let mesh = mesh(
+        &assets,
+        id("minecraft:air"),
+        id("minecraft:stone"),
+        id("minecraft:end_rod"),
+        mounting_offset,
+    );
+    let cubes = render(&gpu, &assets, &mesh, mounting_offset, false);
+    let models = render(&gpu, &assets, &mesh, mounting_offset, true);
+    assert!(!mesh.model_draw_refs().is_empty());
+    assert_ne!(
+        cubes, models,
+        "the rod must contribute visible model pixels"
+    );
+}

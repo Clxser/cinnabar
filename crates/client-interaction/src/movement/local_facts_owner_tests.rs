@@ -4,7 +4,8 @@ use bevy::prelude::*;
 use client_state::PlayerRuntime;
 use gameplay::movement::control_modes::SPRINT_HUNGER_FLOOR;
 use gameplay::movement::local_facts::{LocalMovementFacts, read};
-use gameplay::test_support::DEPTH_STRIDER_ENCHANTMENT_ID;
+use protocol_ids::Enchantment;
+
 use inventory::inventory_ledger::{
     CellGesture, InventoryTarget, PERSONAL_INVENTORY_WINDOW_TYPE, PLAYER_INVENTORY_SLOT_COUNT,
 };
@@ -24,7 +25,10 @@ fn enchanted_boots() -> NetworkItemStack {
     bytes.push(10);
     bytes.extend(1_i32.to_le_bytes());
     for (name, value) in [
-        (b"id".as_slice(), DEPTH_STRIDER_ENCHANTMENT_ID),
+        (
+            b"id".as_slice(),
+            i16::from(Enchantment::Depthstrider.wire_value()),
+        ),
         (b"lvl".as_slice(), 3),
     ] {
         bytes.push(2);
@@ -138,7 +142,7 @@ fn physics_reads_predicted_equipment_and_hunger_in_the_same_frame() {
         local_player_unique_id: 1,
         player_position: [0.0, 70.0, 0.0],
         world_spawn_position: [0, 70, 0],
-        air_network_id: protocol::SEQUENTIAL_AIR_NETWORK_ID,
+        air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
         block_network_ids_are_hashes: false,
     });
     let before = read(Some(&player), &GameplayWorldView(&stream), false);
@@ -188,7 +192,7 @@ fn movement_food_gates_use_the_sprint_floor_and_flight_permission() {
         local_player_unique_id: 1,
         player_position: [0.0, 70.0, 0.0],
         world_spawn_position: [0, 70, 0],
-        air_network_id: protocol::SEQUENTIAL_AIR_NETWORK_ID,
+        air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
         block_network_ids_are_hashes: false,
     });
     let missing_food = read(Some(&player), &GameplayWorldView(&stream), false);

@@ -5,7 +5,7 @@ pub(crate) struct GeometryCheckpoint {
     rig: EntityRigId,
     sampling: [bool; 3],
     presentation_expressions: evaluation::PresentationReads,
-    swell_sampling: Option<Arc<render_frame::swell::SwellSampling>>,
+    motion_sampling: Option<Arc<render_frame::motion_sampling::MotionSampling>>,
     binding: usize,
     bones: Vec<RuntimeBone>,
     names: Vec<Box<str>>,
@@ -29,7 +29,7 @@ impl GeometryCheckpoint {
                 state.samples_render_frames,
             ],
             presentation_expressions: state.presentation_expressions,
-            swell_sampling: state.swell_sampling.take(),
+            motion_sampling: state.motion_sampling.take(),
             binding: state.geometry_binding,
             bones: std::mem::take(&mut state.bones),
             names: std::mem::take(&mut state.bone_names),
@@ -52,7 +52,7 @@ impl GeometryCheckpoint {
             state.samples_render_frames,
         ] = self.sampling;
         state.presentation_expressions = self.presentation_expressions;
-        state.swell_sampling = self.swell_sampling;
+        state.motion_sampling = self.motion_sampling;
         state.geometry_binding = self.binding;
         state.bones = self.bones;
         state.bone_names = self.names;

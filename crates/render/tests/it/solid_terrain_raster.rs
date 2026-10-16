@@ -181,7 +181,7 @@ fn culled_solid_runs_match_the_two_sided_discard_path_from_every_side() {
             &indices.map(|index| format!("{index}u")).join(", ")
         ),
     )
-    .replace("@group(1) @binding(0)", "@group(0) @binding(20)");
+    .replace("@group(1) @binding(0)", "@group(0) @binding(27)");
 
     let origin_point = Vec3::from_array(ORIGIN.map(|value| value as f32));
     let cameras = [
@@ -218,13 +218,25 @@ fn culled_solid_runs_match_the_two_sided_discard_path_from_every_side() {
             ),
             (13, streams.as_entire_binding()),
             (15, atmosphere.as_entire_binding()),
-            (20, lightmap.as_entire_binding()),
+            (27, lightmap.as_entire_binding()),
             (
                 material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[0],
                 wgpu::BindingResource::TextureView(&atlas),
             ),
             (
                 material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[1],
+                wgpu::BindingResource::TextureView(&atlas),
+            ),
+            (
+                material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[2],
+                wgpu::BindingResource::TextureView(&atlas),
+            ),
+            (
+                material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[3],
+                wgpu::BindingResource::TextureView(&atlas),
+            ),
+            (
+                material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[4],
                 wgpu::BindingResource::TextureView(&atlas),
             ),
             (

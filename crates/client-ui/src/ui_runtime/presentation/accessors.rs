@@ -79,8 +79,14 @@ impl UiPresentationRuntime {
         self.nametag_atlas.set_palette(palette);
         let (font, glyphs) = (&self.font, &self.session_glyphs);
         let dynamic_start = self.textures.dynamic_start();
+        let style = self
+            .screens
+            .mod_ui
+            .mod_actor_style()
+            .and_then(|style| style.nametags.as_ref());
         let mut scene = nametags::build_nametag_scene(
             &self.nametag_anchors,
+            style.map_or(1.0, |style| style.scale),
             font,
             &mut self.layouts,
             &mut self.nametag_atlas,
@@ -88,12 +94,7 @@ impl UiPresentationRuntime {
                 nametag_atlas::font_page(font, page).or_else(|| glyphs.page(dynamic_start, page))
             },
         );
-        if let Some(style) = self
-            .screens
-            .mod_ui
-            .mod_actor_style()
-            .and_then(|style| style.nametags.as_ref())
-        {
+        if let Some(style) = style {
             let own_anchor = self
                 .nametag_anchors
                 .iter()

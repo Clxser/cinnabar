@@ -1,17 +1,20 @@
-//! Optional camera exposure, using scene depth without object motion vectors.
+//! Optional exposure with depth-derived world motion and rendered actor velocities.
 
 use render_scene::CameraMotionBlur;
 
+pub(crate) mod actor_history;
 #[cfg(test)]
 mod extraction_tests;
+mod footprint;
 pub(crate) mod graph;
-mod history;
+pub(crate) mod history;
 mod pipeline;
 mod prepare;
 #[cfg(test)]
 mod raster_tests;
 #[cfg(test)]
 mod resource_tests;
+mod shader;
 #[cfg(test)]
 mod tests;
 
@@ -36,10 +39,10 @@ impl Plugin for CameraMotionBlurPlugin {
             return;
         }
         load_internal_asset!(app, SHADER, "motion_blur.wgsl", |source, path| {
-            crate::shader_safety::from_wgsl(shader_source(source, false), path)
+            crate::shader_safety::from_wgsl(shader::source(source, false), path)
         });
         load_internal_asset!(app, MSAA_SHADER, "motion_blur.wgsl", |source, path| {
-            crate::shader_safety::from_wgsl(shader_source(source, true), path)
+            crate::shader_safety::from_wgsl(shader::source(source, true), path)
         });
         crate::pipeline_warmup::register::<pipeline::BlurPipeline>(app);
         app.sub_app_mut(RenderApp)
@@ -49,17 +52,11 @@ impl Plugin for CameraMotionBlurPlugin {
                 Render,
                 (
                     graph::sync_graph.in_set(RenderSystems::Prepare),
-                    prepare::prepare_views.in_set(RenderSystems::PrepareBindGroups),
+                    prepare::prepare_views
+                        .in_set(RenderSystems::PrepareBindGroups)
+                        .after(crate::actor_render::prepare_actor_bind_group),
                 ),
             );
-    }
-}
-
-fn shader_source(source: &str, multisampled: bool) -> String {
-    if multisampled {
-        source.replace("texture_depth_2d", "texture_depth_multisampled_2d")
-    } else {
-        source.to_owned()
     }
 }
 
@@ -79,6 +76,9 @@ pub(crate) fn applies(world: &World, entity: Entity) -> bool {
     };
     state.active
         && cache.get_render_pipeline(state.pipeline).is_some()
+        && cache
+            .get_render_pipeline(state.footprint_pipeline)
+            .is_some()
         && state
             .binding(
                 target.main_texture_view().id(),

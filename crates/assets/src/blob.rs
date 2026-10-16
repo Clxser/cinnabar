@@ -12,8 +12,8 @@ use crate::model::{
 };
 use crate::{
     AssetError, BlockFlags, CompiledAssets, DIAGNOSTIC_MATERIAL, MATERIAL_FLAG_ALPHA_BLEND,
-    MATERIAL_FLAG_ALPHA_CUTOUT, MAX_ANIMATION_FRAMES, MAX_ANIMATIONS, MAX_MATERIALS,
-    MAX_MODEL_QUADS, MAX_MODEL_TEMPLATES, MAX_TEXTURE_LAYERS, MAX_TEXTURE_PAGES,
+    MATERIAL_FLAG_ALPHA_CUTOUT, MAX_ANIMATION_FRAMES, MAX_ANIMATIONS, MAX_CARRIER_TEXTURE_PAGES,
+    MAX_MATERIALS, MAX_MODEL_QUADS, MAX_MODEL_TEMPLATES, MAX_TEXTURE_LAYERS, MIP_COUNT,
     MODEL_TEMPLATE_FLAG_BUBBLE_COLUMN, MODEL_TEMPLATE_FLAG_COMPOUND_NEXT,
     MODEL_TEMPLATE_FLAG_FENCE_NETHER, MODEL_TEMPLATE_FLAG_FENCE_WOOD, MODEL_TEMPLATE_FLAG_FIRE,
     MODEL_TEMPLATE_FLAG_GATE_AXIS_X, MODEL_TEMPLATE_FLAG_GATE_AXIS_Z, MODEL_TEMPLATE_FLAG_KELP,
@@ -23,12 +23,14 @@ use crate::{
     biome::{TINT_MAP_BYTES, TINT_MAP_COUNT, TINT_MAP_SIZE, validate_biome_assets},
     compiled::{material_flags_are_valid, visual_semantics_are_valid},
     model::{ANIMATION_FLAGS_MASK, model_quad_flags_are_valid},
-    texture::{MIP_COUNT, TILE_SIZE},
+    texture::TILE_SIZE,
 };
 
 // World visuals retain solid/liquid material dispositions, and replicated flipbook tiles hold
-// their native upper-left crop; reject earlier carriers.
-pub const BLOB_VERSION: u32 = 17;
+// their native upper-left crop. Model texture arrays require explicit state selectors, and
+// texture references carry three page bits so a session palette can shard across several
+// device-limited arrays; reject earlier carriers.
+pub const BLOB_VERSION: u32 = 19;
 pub const BLOB_MAGIC: [u8; 8] = {
     let mut magic = *b"MCBEAS00";
     magic[6] += (BLOB_VERSION / 10) as u8;
@@ -287,8 +289,11 @@ fn validate_compiled(compiled: &CompiledAssets) -> Result<(), AssetError> {
         compiled.animation_frames.len(),
         MAX_ANIMATION_FRAMES,
     )?;
-    if compiled.texture_pages.is_empty() || compiled.texture_pages.len() > MAX_TEXTURE_PAGES {
-        return Err(invalid("texture page count must be one or two"));
+    if compiled.texture_pages.is_empty() || compiled.texture_pages.len() > MAX_CARRIER_TEXTURE_PAGES
+    {
+        return Err(invalid(format!(
+            "texture page count must be between one and {MAX_CARRIER_TEXTURE_PAGES}"
+        )));
     }
     for (page_index, page) in compiled.texture_pages.iter().enumerate() {
         if page.texture.layers as usize > MAX_TEXTURE_LAYERS {
@@ -444,16 +449,29 @@ fn validate_compiled(compiled: &CompiledAssets) -> Result<(), AssetError> {
                     | MODEL_TEMPLATE_FLAG_FENCE_WOOD
                     | MODEL_TEMPLATE_FLAG_FENCE_NETHER
                     | MODEL_TEMPLATE_FLAG_FIRE
-                    | MODEL_TEMPLATE_FLAG_BUBBLE_COLUMN);
+                    | MODEL_TEMPLATE_FLAG_BUBBLE_COLUMN
+                    | crate::MODEL_TEMPLATE_FLAG_DOOR);
             if connected_flag != 0 {
+                let group_base = if connected_flag == crate::MODEL_TEMPLATE_FLAG_DOOR {
+                    let pose = crate::door::DoorPose::from_variant(visual.variant)
+                        .ok_or_else(|| invalid("door visual has invalid selectors"))?;
+                    visual
+                        .model_template
+                        .checked_sub(pose.offset())
+                        .ok_or_else(|| invalid("door visual precedes its pose group"))?
+                } else {
+                    visual.model_template
+                };
                 let Some(base_index) = connected_bases.iter().position(|&(base, flag)| {
-                    base == visual.model_template as usize && flag == connected_flag
+                    base == group_base as usize && flag == connected_flag
                 }) else {
                     return Err(invalid(
                         "connected visual does not reference a topology-group base",
                     ));
                 };
-                if visual.kind != VisualKind::Model || visual.variant != 0 {
+                if visual.kind != VisualKind::Model
+                    || (connected_flag != crate::MODEL_TEMPLATE_FLAG_DOOR && visual.variant != 0)
+                {
                     return Err(invalid("connected visual has invalid kind or transform"));
                 }
                 referenced_connected_bases[base_index] = true;
@@ -636,7 +654,10 @@ pub(crate) fn compiled_compound_tails(
     Ok(tails)
 }
 
-fn compiled_stair_bases(templates: &[crate::ModelTemplate]) -> Result<Vec<usize>, AssetError> {
+/// Validates stair topology groups and returns each group's first template.
+pub(crate) fn compiled_stair_bases(
+    templates: &[crate::ModelTemplate],
+) -> Result<Vec<usize>, AssetError> {
     let mut bases = Vec::new();
     let mut index = 0;
     while index < templates.len() {
@@ -659,14 +680,28 @@ fn compiled_stair_bases(templates: &[crate::ModelTemplate]) -> Result<Vec<usize>
     Ok(bases)
 }
 
-fn compiled_connected_bases(
+/// Validates connected topology groups and returns their first templates and flags.
+pub(crate) fn compiled_connected_bases(
     templates: &[crate::ModelTemplate],
 ) -> Result<Vec<(usize, u32)>, AssetError> {
     let mut bases = Vec::new();
     let mut index = 0;
     while index < templates.len() {
         let flag = templates[index].flags;
-        if flag == MODEL_TEMPLATE_FLAG_PANE {
+        if flag == crate::MODEL_TEMPLATE_FLAG_DOOR {
+            let Some(group) = templates.get(index..index + crate::door::TEMPLATE_COUNT as usize)
+            else {
+                return Err(invalid("door template group is truncated"));
+            };
+            if group
+                .iter()
+                .any(|template| template.flags != flag || template.quad_count != 6)
+            {
+                return Err(invalid("door template group is noncanonical"));
+            }
+            bases.push((index, flag));
+            index += crate::door::TEMPLATE_COUNT as usize;
+        } else if flag == MODEL_TEMPLATE_FLAG_PANE {
             let Some(group) = templates.get(index..index + 16) else {
                 return Err(invalid("pane template group is truncated"));
             };
@@ -711,18 +746,19 @@ fn compiled_connected_bases(
             bases.push((index, flag));
             index += crate::BUBBLE_COLUMN_TEMPLATE_COUNT as usize;
         } else if flag == MODEL_TEMPLATE_FLAG_FIRE {
-            let Some(group) = templates.get(index..index + crate::FIRE_TEMPLATE_COUNT as usize)
+            let Some(group) =
+                templates.get(index..index + crate::fire::FIRE_TEMPLATE_COUNT as usize)
             else {
                 return Err(invalid("fire template group is truncated"));
             };
             if group.iter().enumerate().any(|(offset, template)| {
                 template.flags != flag
-                    || template.quad_count != crate::fire_template_quad_count(offset as u32)
+                    || template.quad_count != crate::fire::fire_template_quad_count(offset as u32)
             }) {
                 return Err(invalid("fire template group is noncanonical"));
             }
             bases.push((index, flag));
-            index += crate::FIRE_TEMPLATE_COUNT as usize;
+            index += crate::fire::FIRE_TEMPLATE_COUNT as usize;
         } else {
             index += 1;
         }

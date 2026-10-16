@@ -15,7 +15,7 @@ pub(super) fn sample(
     variables: &mut MolangVariables,
     state: &ActorRigState,
     history: ClipHistory<'_>,
-    swelling: Option<&swell::SwellSampling>,
+    motion: Option<&motion_sampling::MotionSampling>,
     presentation: bool,
     budget: &mut EvalBudget<'_>,
 ) -> Result<Vec<tick::WeightedClip>, EvalError> {
@@ -52,7 +52,7 @@ pub(super) fn sample(
     super::super::clock::sample(evaluator, clocks, &mut clips, budget)?;
     let mut sampled_times = BTreeMap::new();
     for weighted in &mut clips {
-        if (swelling.is_some() || presentation)
+        if (motion.is_some() || presentation)
             && weighted.weight >= f32::EPSILON
             && evaluator.assets.animation_clips()[weighted.clip]
                 .anim_time_update
@@ -66,7 +66,7 @@ pub(super) fn sample(
                 sampled_times.insert(key, weighted.time);
             }
         }
-        if !swelling.is_some_and(|sampling| sampling.samples_time(evaluator.assets, weighted.clip))
+        if !motion.is_some_and(|sampling| sampling.samples_time(evaluator.assets, weighted.clip))
             && let Some(old) = previous.iter().find(|old| {
                 old.clip == weighted.clip
                     && old.started_tick == weighted.started_tick

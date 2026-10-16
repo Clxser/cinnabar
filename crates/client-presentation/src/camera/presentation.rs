@@ -11,7 +11,7 @@ use semantic_input::{Action, PerspectiveMode};
 
 use super::{
     CameraSettingsAuthority, FlyCamera,
-    bob::{HandSwayState, ViewEffect, WalkBobState, walk_bob_effect},
+    bob::{ViewEffect, WalkBobState, walk_bob_effect},
     fov::CameraFovInputs,
     hurt::CameraHurtState,
     java::{JavaCameraState, JavaCameraTick, java_hurt_roll},
@@ -19,7 +19,7 @@ use super::{
         HeadMedium, PortalProgress, ScreenEffectInputs, ScreenOverlays, VisionEffects,
         compute_overlays, probe_head_medium,
     },
-    portal_projection::{apply_distortion, portal_distortion},
+    portal_projection::{apply_distortion, distortion_changes, portal_distortion},
     server_view::{ActorView, ServerCameraView, ViewContext},
 };
 
@@ -28,7 +28,7 @@ const EFFECT_ID_NAUSEA: i32 = 9;
 const EFFECT_ID_BLINDNESS: i32 = 15;
 const EFFECT_ID_NIGHT_VISION: i32 = 16;
 const EFFECT_ID_DARKNESS: i32 = 30;
-const CARVED_PUMPKIN_IDENTIFIER: &str = "minecraft:carved_pumpkin";
+const CARVED_PUMPKIN_IDENTIFIER: &str = assets::facts::VanillaItem::CarvedPumpkin.identifier();
 const VISION_FADE_SECONDS: f32 = 1.0;
 
 /// Facts other lanes own and publish each frame; both default to false.
@@ -41,6 +41,8 @@ pub struct ScreenEffectFacts {
 /// First-person hand motion for the equipment lane, all in view space.
 #[derive(Resource, Debug, Clone, Copy, PartialEq)]
 pub struct FirstPersonHandMotion {
+    /// One sampled legacy Hurt × Bob matrix shared with the whole camera.
+    pub legacy_effect: Option<Mat4>,
     pub bob: ViewEffect,
     pub hurt: Mat4,
     pub sway_pitch_radians: f32,
@@ -52,6 +54,7 @@ pub struct FirstPersonHandMotion {
 impl Default for FirstPersonHandMotion {
     fn default() -> Self {
         Self {
+            legacy_effect: None,
             bob: ViewEffect::NONE,
             hurt: Mat4::IDENTITY,
             sway_pitch_radians: 0.0,
@@ -110,38 +113,84 @@ pub fn advance_presentation_state(
     physics: Option<&dyn crate::observations::PhysicsObservation>,
     ui: Option<&client_ui::ui_runtime::UiRuntime>,
     mut bob: ResMut<WalkBobState>,
-    mut sway: ResMut<HandSwayState>,
     mut hurt: ResMut<CameraHurtState>,
     mut java: ResMut<JavaCameraState>,
+    mut legacy: ResMut<super::legacy::LegacyCameraMotion>,
     mut hand: ResMut<FirstPersonHandMotion>,
 ) {
     let dt = time.delta_secs();
     let on_ground = physics
         .and_then(|physics| physics.state())
         .is_some_and(|state| state.on_ground);
-    bob.advance(view.eye_translation(), on_ground, true, dt);
     hurt.advance(dt);
-    let (yaw, pitch, _) = view.rotation().to_euler(EulerRot::YXZ);
-    sway.advance(pitch, yaw, dt);
     hand.eye_height_adjustment = 0.0;
-    let look = [-pitch.to_degrees(), -yaw.to_degrees()];
-    let alive = client_world
+    let look = view.camera_look();
+    let local_actor = client_world
         .as_ref()
         .and_then(|world| world.stream)
-        .and_then(|stream| stream.authority().actor(stream.local_player_runtime_id()))
-        .map_or_else(
-            || {
-                ui.and_then(|ui| ui.hud().health())
-                    .is_none_or(|health| health.current() > 0)
-            },
-            |actor| {
-                !actor.status.dead
-                    && actor
-                        .attributes
-                        .get("minecraft:health")
-                        .is_none_or(|health| health.current > 0.0)
-            },
-        );
+        .and_then(|stream| stream.authority().actor(stream.local_player_runtime_id()));
+    let sleeping = local_actor.is_some_and(|actor| actor.is_sleeping());
+    let alive = local_actor.map_or_else(
+        || {
+            ui.and_then(|ui| ui.hud().health())
+                .is_none_or(|health| health.current() > 0)
+        },
+        |actor| {
+            !actor.status.dead
+                && actor
+                    .attributes
+                    .get("minecraft:health")
+                    .is_none_or(|health| health.current > 0.0)
+        },
+    );
+    bob.advance(view.eye_translation(), on_ground, alive, dt);
+    hand.legacy_effect = None;
+    let subject = client_world
+        .as_ref()
+        .and_then(|world| world.stream)
+        .map(|stream| {
+            (
+                stream.authority().actor_session_id(),
+                stream.local_player_runtime_id(),
+            )
+        });
+    let reanchored = legacy.observe_subject(
+        subject,
+        physics
+            .and_then(|physics| physics.state())
+            .map(|state| state.tick),
+        view.camera_reanchor_epoch(),
+    );
+    if reanchored {
+        *java = JavaCameraState::default();
+    }
+    if let Some(physics) = physics {
+        if reanchored && let Some(state) = physics.state() {
+            legacy.state.reset_at(
+                state.tick,
+                [
+                    state.position.x as f32,
+                    state.position.y as f32 + protocol::PLAYER_NETWORK_OFFSET,
+                    state.position.z as f32,
+                ],
+            );
+        }
+        let after = legacy.state.last_tick();
+        physics.visit_camera_ticks(after, &mut |tick| {
+            legacy
+                .state
+                .advance(render_model::legacy_combat::LegacyCameraTick {
+                    tick: tick.tick,
+                    position: tick.position,
+                    movement: tick.movement,
+                    velocity: tick.velocity,
+                    on_ground: tick.on_ground,
+                    alive,
+                    riding: tick.riding,
+                    walks: tick.walks,
+                });
+        });
+    }
     if let Some(physics) = physics
         && let Some(state) = physics.state()
     {
@@ -166,17 +215,26 @@ pub fn advance_presentation_state(
     } else {
         *java = JavaCameraState::default();
     }
+    // Java hand sway applies to both combat profiles and animation modes.
+    (hand.sway_pitch_radians, hand.sway_yaw_radians) =
+        if physics.and_then(|physics| physics.state()).is_some() {
+            java.sway(physics.map_or(1.0, |physics| physics.tick_alpha()), look)
+        } else {
+            (0.0, 0.0)
+        };
     if settings.feel().java_animations {
         let alpha = physics.map_or(1.0, |physics| physics.tick_alpha());
-        if physics.is_some_and(|physics| {
-            physics.state().is_some()
-                && !matches!(
-                    physics.mode(),
-                    sim::MovementMode::Swimming
-                        | sim::MovementMode::Crawling
-                        | sim::MovementMode::Gliding
-                )
-        }) {
+        if !sleeping
+            && physics.is_some_and(|physics| {
+                physics.state().is_some()
+                    && !matches!(
+                        physics.mode(),
+                        sim::MovementMode::Swimming
+                            | sim::MovementMode::Crawling
+                            | sim::MovementMode::Gliding
+                    )
+            })
+        {
             let eye_height = view.eye_translation().y - view.feet_translation().y;
             hand.eye_height_adjustment =
                 protocol::STANDING_PLAYER_EYE_HEIGHT - java.sneak_drop(alpha) - eye_height;
@@ -191,7 +249,14 @@ pub fn advance_presentation_state(
                 Quat::from_mat4(&java_hurt_roll(hurt.progress())),
                 settings.feel().damage_bob,
             ));
-        (hand.sway_pitch_radians, hand.sway_yaw_radians) = java.sway(alpha, look);
+        if render_api::DEFAULT_COMBAT_VISUALS == render_api::CombatVisuals::Modern {
+            return;
+        }
+    }
+    if render_api::DEFAULT_COMBAT_VISUALS == render_api::CombatVisuals::Legacy112 {
+        // Java keeps poses and sneak eye height; legacy combat owns bob and hurt.
+        hand.bob = ViewEffect::NONE;
+        hand.hurt = Mat4::IDENTITY;
         return;
     }
     hand.bob = if settings.feel().view_bobbing {
@@ -199,18 +264,11 @@ pub fn advance_presentation_state(
     } else {
         ViewEffect::NONE
     };
+    let (yaw, _, _) = view.camera_rotation().to_euler(EulerRot::YXZ);
     hand.hurt = Mat4::from_quat(Quat::IDENTITY.slerp(
         Quat::from_mat4(&hurt.view_matrix(yaw)),
         settings.feel().damage_bob,
     ));
-    // Vanilla sways the hand only while view bobbing is on.
-    let (sway_pitch, sway_yaw) = if settings.feel().view_bobbing {
-        sway.sway_radians()
-    } else {
-        (0.0, 0.0)
-    };
-    hand.sway_pitch_radians = sway_pitch;
-    hand.sway_yaw_radians = sway_yaw;
 }
 
 fn approach(current: f32, target: f32, step: f32) -> f32 {
@@ -367,7 +425,7 @@ pub fn apply_camera_presentation(
         base,
         subject: Transform {
             translation: view.eye_translation(),
-            rotation: view.rotation(),
+            rotation: view.camera_rotation(),
             ..Transform::IDENTITY
         },
         base_fov: settings.horizontal_fov_degrees(),
@@ -421,7 +479,9 @@ pub fn apply_camera_presentation(
                     settings.feel().distortion_scale,
                 )
             });
-        apply_distortion(&mut projection, distortion);
+        if distortion_changes(&projection, distortion) {
+            apply_distortion(&mut projection, distortion);
+        }
     }
 
     let shake = server.shake_offset();

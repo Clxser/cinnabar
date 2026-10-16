@@ -1,6 +1,8 @@
 //! Render-controller layers of entity bodies: the first replaces the body's default texture
 //! (and model, when its controller picks another), later layers draw after it.
-use std::{borrow::Cow, collections::HashMap, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
+
+use bevy::platform::collections::HashMap;
 
 #[cfg(any(test, feature = "test-support"))]
 use actor_animation::ActorRigSnapshot;
@@ -185,6 +187,7 @@ fn resolve(
                 };
                 Some(ResolvedLayer {
                     material: render_model::ActorMaterial {
+                        color_mask: false,
                         glint: Default::default(),
                         kind: layer.material,
                         state: layer.material_state,

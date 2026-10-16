@@ -1,7 +1,7 @@
 // Material-owned overrides split deduplicated carrier references without changing fallback UVs.
 @if(ENHANCED || ENHANCED_SHADOW)
 fn authored_material_ref(material_id:u32,texture_ref:u32)->u32 {
-    let carrier_ref=texture_ref & (0x80000000u | TEXTURE_LAYER_MASK);
+    let carrier_ref=texture_ref & ((GPU_TEXTURE_PAGE_MASK << GPU_TEXTURE_PAGE_SHIFT) | TEXTURE_LAYER_MASK);
     let words=arrayLength(&enhanced_texture_refs);
     var low=0u;
     var high=0u;

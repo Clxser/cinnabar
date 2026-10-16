@@ -26,7 +26,7 @@ fn native_liquid_faces_admit_only_their_original_and_marked_reverse_windings() {
             &["NATIVE_GAMMA_BLEND"]
         )
     )
-    .replace("@group(1) @binding(0)", "@group(0) @binding(20)");
+    .replace("@group(1) @binding(0)", "@group(0) @binding(27)");
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("liquid winding white-texel witness"),
         size: wgpu::Extent3d {
@@ -119,6 +119,18 @@ fn native_liquid_faces_admit_only_their_original_and_marked_reverse_windings() {
                             resource: wgpu::BindingResource::TextureView(&atlas),
                         },
                         wgpu::BindGroupEntry {
+                            binding: crate::material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[2],
+                            resource: wgpu::BindingResource::TextureView(&atlas),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: crate::material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[3],
+                            resource: wgpu::BindingResource::TextureView(&atlas),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: crate::material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[4],
+                            resource: wgpu::BindingResource::TextureView(&atlas),
+                        },
+                        wgpu::BindGroupEntry {
                             binding: 6,
                             resource: wgpu::BindingResource::Sampler(&sampler),
                         },
@@ -127,11 +139,11 @@ fn native_liquid_faces_admit_only_their_original_and_marked_reverse_windings() {
                             resource: atmosphere.as_entire_binding(),
                         },
                         wgpu::BindGroupEntry {
-                            binding: 20,
+                            binding: 27,
                             resource: lightmap.as_entire_binding(),
                         },
                         wgpu::BindGroupEntry {
-                            binding: 24,
+                            binding: 28,
                             resource: case.as_entire_binding(),
                         },
                     ];
@@ -215,7 +227,7 @@ fn face_view(face: Face, inside: bool) -> (Mat4, Vec3) {
 // Vertex positions come from production liquid_corner, not a screen-space
 // winding proxy. The same production index order feeds both actual triangles.
 const WITNESS: &str = r#"
-@group(0) @binding(24) var<storage, read> raster_case: array<vec4<u32>>;
+@group(0) @binding(28) var<storage, read> raster_case: array<vec4<u32>>;
 @vertex fn raster_witness(@builtin(vertex_index) index: u32) -> VertexOutput {
     let data = raster_case[0];
     let world = liquid_corner(data.x, data.y, RASTER_INDICES[index], data.z);

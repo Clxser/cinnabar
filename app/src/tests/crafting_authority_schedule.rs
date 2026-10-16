@@ -22,6 +22,7 @@ use {
         environment::{WeatherState, WorldClock, bind_session_generation},
         runtime::{
             movement_evidence::MovementEvidenceEmitter,
+            shutdown::FatalError,
             world::{
                 ClientWorld, WorldStreamFramePoll, drain_committed_ui_before_authority,
                 reconcile_world_stream_before_physics,
@@ -73,7 +74,7 @@ fn app() -> App {
         local_player_unique_id: 1,
         player_position: [0.0, 70.0, 0.0],
         world_spawn_position: [0, 70, 0],
-        air_network_id: protocol::SEQUENTIAL_AIR_NETWORK_ID,
+        air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
         block_network_ids_are_hashes: false,
     });
     let mut app = App::new();
@@ -81,6 +82,7 @@ fn app() -> App {
         stream: Some(stream),
         ..ClientWorld::default()
     })
+    .init_resource::<FatalError>()
     .insert_resource(clock)
     .insert_resource(weather)
     .insert_resource(collisions)
@@ -300,7 +302,7 @@ fn contextual_grid_ingress_and_mixed_slots_follow_actual_committed_frontier() {
         Some(PlayerInventorySlot::Unknown),
         "default UI124 must never alias player inventory"
     );
-    assert!(app.world().resource::<ClientWorld>().fatal_error.is_none());
+    assert!(app.world().resource::<FatalError>().0.is_none());
 }
 
 #[test]
@@ -339,7 +341,7 @@ fn contextual_grid_burst_refuses_only_craft_projection_and_recovers_from_fresh_f
             .crafting_preview()
             .is_none()
     );
-    assert!(app.world().resource::<ClientWorld>().fatal_error.is_none());
+    assert!(app.world().resource::<FatalError>().0.is_none());
     assert_eq!(
         app.world()
             .resource::<PlayerRuntime>()
@@ -368,7 +370,7 @@ fn contextual_grid_burst_refuses_only_craft_projection_and_recovers_from_fresh_f
         Some(CraftingPreview::NoMatch),
         "healthy catalog/registry/Server survived cell-domain overflow"
     );
-    assert!(app.world().resource::<ClientWorld>().fatal_error.is_none());
+    assert!(app.world().resource::<FatalError>().0.is_none());
 }
 
 #[test]
@@ -562,7 +564,7 @@ fn committed_registry_position_controls_cell_binding_even_when_ordinary_registry
         matches!(old.crafting_preview(), Some(CraftingPreview::Unique { .. })),
         "new catalog updates cannot mutate an older cloned preview"
     );
-    assert!(app.world().resource::<ClientWorld>().fatal_error.is_none());
+    assert!(app.world().resource::<FatalError>().0.is_none());
 }
 
 fn complete_empty_grid(app: &mut App, first: u64) {
@@ -600,7 +602,7 @@ fn missing_world_predecessor_withholds_crafting_but_not_ordinary_inventory_then_
             .crafting_preview(),
         Some(CraftingPreview::NoMatch)
     );
-    assert!(app.world().resource::<ClientWorld>().fatal_error.is_none());
+    assert!(app.world().resource::<FatalError>().0.is_none());
 }
 
 #[test]
@@ -721,7 +723,7 @@ fn slot_only_projection_overflow_does_not_disconnect_or_discard_healthy_bootstra
             .crafting_preview()
             .is_none()
     );
-    assert!(app.world().resource::<ClientWorld>().fatal_error.is_none());
+    assert!(app.world().resource::<FatalError>().0.is_none());
     complete_empty_grid(&mut app, 69);
     app.update();
     assert_eq!(
@@ -915,19 +917,12 @@ fn ordinary_transfer_bytes_and_conservation_are_identical_after_craft_only_overf
             PERSONAL_INVENTORY_WINDOW_TYPE, PLAYER_INVENTORY_SLOT_COUNT,
         };
         let mut app = app();
-        let registry = ItemRegistryEvent {
-            entries: std::sync::Arc::from([protocol::ItemRegistryEntry {
-                identifier: "minecraft:apple".into(),
-                network_id: 878,
-                component_based: true,
-                version: protocol::ItemRegistryVersion::DataDriven,
-                components: None,
-                component_digest: [8; 32],
-                negotiated_max_stack_size: Some(64),
-                canonical_empty_component_data: false,
-                item_tags: std::sync::Arc::from([]),
-            }]),
-        };
+        let registry = protocol::test_support::items::component_item_registry(
+            "minecraft:apple",
+            878,
+            protocol::ITEM_DEFAULT_MAX_STACK_SIZE,
+            0,
+        );
         assert!(crate::tests::with_ui_player(&mut app, |runtime, player| {
             publish_bootstrap_inventory(
                 player,
@@ -1065,7 +1060,7 @@ fn ordinary_transfer_bytes_and_conservation_are_identical_after_craft_only_overf
                     .crafting_preview()
                     .is_none()
             );
-            assert!(app.world().resource::<ClientWorld>().fatal_error.is_none());
+            assert!(app.world().resource::<FatalError>().0.is_none());
         }
         let mut player_runtime = app.world_mut().resource_mut::<PlayerRuntime>();
         let runtime = &mut player_runtime.inventory;

@@ -156,6 +156,7 @@ fn retirement_test_allocation() -> ArenaAllocation {
         geometry_stream_capacity: 30,
         biome_range: 2..6,
         biome_capacity: 4,
+        biome_record: None,
         gpu: GpuChunkAllocation {
             cube_layout: CubeQuadLayout::default(),
             key: SubChunkKey::new(0, 0, 0, 0),
@@ -180,8 +181,14 @@ fn retirement_test_allocation() -> ArenaAllocation {
 
 #[path = "gpu/tests.rs"]
 mod gpu;
+#[path = "gpu/admission_tests.rs"]
+mod gpu_admission;
 #[path = "gpu/arena_tests.rs"]
 mod gpu_arena;
+#[path = "gpu/biome_range_tests.rs"]
+mod gpu_biome_ranges;
+#[path = "gpu/growth_tests.rs"]
+mod gpu_growth;
 #[path = "gpu/model_tests.rs"]
 mod gpu_models;
 #[path = "gpu/publication_tests.rs"]

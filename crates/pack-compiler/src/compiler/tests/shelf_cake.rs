@@ -278,7 +278,7 @@ fn shared_shelf_pack(root: &Path, records: &[RegistryRecord]) {
         .collect();
     write(
         root.join("blocks.json"),
-        &serde_json::to_string(&blocks).unwrap(),
+        serde_json::to_string(&blocks).unwrap(),
     );
     write(
         root.join("textures/terrain_texture.json"),

@@ -1,13 +1,28 @@
+#![expect(
+    clippy::print_stderr,
+    reason = "GPU fixture helpers explain skipped tests and report raster comparisons on stderr"
+)]
+
 #[path = "../../src/chunk/constants.rs"]
 #[allow(dead_code, reason = "reuse the production quad index order")]
 mod chunk_constants;
 #[path = "support/gpu_snapshot.rs"]
 mod gpu_snapshot;
+#[path = "../../src/hand_rig_render/bindings.rs"]
+mod hand_rig_bindings;
 #[path = "../../src/material_shader.rs"]
 #[allow(dead_code, reason = "shared production shader substitutions")]
 mod material_shader;
+#[path = "../../src/motion_blur/shader.rs"]
+mod motion_blur_shader;
 #[path = "../../src/nametag_render/shader.rs"]
 mod nametag_shader;
+#[path = "../../src/queue_writes.rs"]
+#[allow(
+    dead_code,
+    reason = "fixtures exercise a subset of queue upload entry points"
+)]
+mod queue_writes;
 #[path = "support/rod_snapshot.rs"]
 mod rod_snapshot;
 #[path = "../../src/shader_safety.rs"]
@@ -19,6 +34,7 @@ mod shader_source;
 mod ui_shader;
 
 mod actor_colour;
+mod actor_item_glint;
 mod actor_rig;
 mod actor_sidedness;
 mod actor_skin_classes;
@@ -28,6 +44,7 @@ mod bamboo_enhanced_scene;
 mod bamboo_overlay_depth;
 mod bamboo_shader;
 mod bamboo_texture_filtering;
+mod biome_lattice_packing;
 mod biome_shader;
 mod biome_tint_bounds;
 mod block_selection;
@@ -63,6 +80,7 @@ mod mod_render;
 mod model_alpha;
 mod model_tint_raster;
 mod model_uv_raster;
+mod nametag_opacity;
 mod native_sky;
 mod oreui_font;
 mod plugin;

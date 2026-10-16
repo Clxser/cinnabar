@@ -5,6 +5,41 @@ use client_runtime::pack_admission::ResourcePackAdmissionState;
 /// Serializes tests that go through the process-wide block overlay cache.
 static OVERLAY_CACHE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+#[test]
+fn unchanged_icon_subscribers_reuse_outputs_without_baking_block_art() {
+    let stack = resource_pack::validate_handoff(protocol::ResourcePackHandoff::default());
+    let previous =
+        std::sync::Arc::new(client_ui::ui_runtime::presentation::SessionIcons::default());
+    let baked = std::cell::Cell::new(0);
+    let bake = || {
+        baked.set(baked.get() + 1);
+        super::BlockIcons {
+            icons: vec![client_ui::ui_runtime::presentation::SessionIcon {
+                identifier: "test:cube".into(),
+                metadata: 0,
+                width: 1,
+                height: 1,
+                rgba8: vec![255; 4].into(),
+            }],
+            ..Default::default()
+        }
+    };
+    let (reused, reads) =
+        super::compile_icons(&stack, &|| false, false, Some(previous.clone()), &[], bake).unwrap();
+    assert!(std::sync::Arc::ptr_eq(reused.as_ref().unwrap(), &previous));
+    assert!(reads.is_none());
+    assert_eq!(baked.get(), 0);
+    assert!(
+        super::compile_icons(&stack, &|| true, true, Some(previous.clone()), &[], bake).is_none()
+    );
+    assert_eq!(baked.get(), 0);
+    let (fresh, reads) =
+        super::compile_icons(&stack, &|| false, true, Some(previous), &[], bake).unwrap();
+    assert_eq!(baked.get(), 1);
+    assert_eq!(fresh.unwrap().icons[0].identifier.as_ref(), "test:cube");
+    assert!(reads.is_some());
+}
+
 /// Serializes fixtures that share the retained block-overlay cache.
 pub(super) fn overlay_cache() -> std::sync::MutexGuard<'static, ()> {
     OVERLAY_CACHE_LOCK
@@ -147,10 +182,11 @@ fn ui_glint_uses_the_winning_raster_and_restores_the_lower_pack_on_removal() {
             .unwrap();
         encoded.into_inner()
     };
-    let path = format!("{}.png", assets::ITEM_GLINT_TEXTURE_PATH);
+    let path = format!("{}.png", assets::entity::ITEM_GLINT_TEXTURE_IDENTIFIER);
     let low = encode(3, 2, [200, 0, 0, 255]);
     let high = encode(640, 617, [0, 200, 0, 255]);
-    let lower = archive(1, &[(&path, &low)]);
+    // Each one-shot handoff owns a fresh archive of the same lower-priority pixels.
+    let lower = || archive(1, &[(&path, &low)]);
     let upper = archive(2, &[(&path, &high)]);
     let read = |archives| {
         let view = resource_pack::LayeredPackView::new(resource_pack::validate_handoff(
@@ -158,12 +194,13 @@ fn ui_glint_uses_the_winning_raster_and_restores_the_lower_pack_on_removal() {
         ));
         super::collect_server_ui(&view).and_then(|pack| pack.item_glint.clone())
     };
-    let base = read(vec![lower.clone()]).unwrap();
-    let winner = read(vec![lower.clone(), upper]).unwrap();
+    let base = read(vec![lower()]).unwrap();
+    // Protocol handoffs list the highest-priority pack first.
+    let winner = read(vec![upper, lower()]).unwrap();
     assert_eq!(winner.dimensions(), [640, 617]);
     assert_eq!(&winner.pixels()[..4], &[0, 200, 0, 255]);
     assert_ne!(winner.identity(), base.identity());
-    let restored = read(vec![lower]).unwrap();
+    let restored = read(vec![lower()]).unwrap();
     assert_eq!(restored, base);
     assert!(read(Vec::new()).is_none());
     let malformed = read(vec![archive(3, &[(&path, b"invalid image")])]);
@@ -198,6 +235,29 @@ fn ui_index_loads_custom_paths_and_extensions() {
             .map(|(name, bytes)| (name.as_str(), bytes.as_slice())),
     );
     assert!(catalog.lookup("custom", "inventory").is_some());
+}
+
+#[test]
+fn ui_index_in_higher_pack_selects_lower_at_prefixed_document() {
+    let path = "@behub/components/label.json";
+    let lower = archive(
+        1,
+        &[(path, br#"{"namespace":"custom","label":{"type":"label"}}"#)],
+    );
+    let upper = archive(
+        2,
+        &[(
+            json_ui::UI_DEFS_PATH,
+            br#"{"ui_defs":["@behub/components/label.json"]}"#,
+        )],
+    );
+    let stack =
+        resource_pack::validate_handoff(protocol::ResourcePackHandoff::from_archives(vec![
+            upper, lower,
+        ]));
+    let view = resource_pack::LayeredPackView::tracked(stack);
+    let pack = super::collect_server_ui(&view).unwrap();
+    assert!(pack.ui_layers[0].iter().any(|(name, _)| name == path));
 }
 
 #[test]
@@ -519,7 +579,7 @@ fn overlay_cache_reuses_the_previous_session_compile() {
 fn reapplied_stack_reuses_blocks_identical_to_a_fresh_compile() {
     use std::sync::Arc;
     let _cache = overlay_cache();
-    let keys = assets::MaterialKeys::from_entries([(5, "reapply_key")]);
+    let keys = assets::material_keys::MaterialKeys::from_entries([(5, "reapply_key")]);
     let blocks = protocol::CustomBlocks::default();
     let limit = super::overlay_texture_layer_limit();
     let stack = |id| {
@@ -538,7 +598,7 @@ fn reapplied_stack_reuses_blocks_identical_to_a_fresh_compile() {
     };
     let fresh = |stack: &Arc<resource_pack::ValidatedPackStack>| {
         let view = resource_pack::LayeredPackView::tracked(stack.clone());
-        super::compile_block_overlay(&view, &blocks, false, Some(&keys), limit)
+        super::compile_block_overlay(&view, &blocks, false, Some(&keys), limit, None)
     };
     let mut compiles = 0;
     let mut cached = |stack: &Arc<resource_pack::ValidatedPackStack>| {
@@ -551,7 +611,7 @@ fn reapplied_stack_reuses_blocks_identical_to_a_fresh_compile() {
             limit,
             || {
                 compiles += 1;
-                super::compile_block_overlay(&view, &blocks, false, Some(&keys), limit)
+                super::compile_block_overlay(&view, &blocks, false, Some(&keys), limit, None)
                     .map(Arc::new)
             },
         )
@@ -724,6 +784,7 @@ fn the_same_blocks_share_the_extended_carrier_and_its_texture_identity() {
         Arc::new(super::CompiledBlockOverlay {
             overlay: Default::default(),
             gaps: Default::default(),
+            vanilla_carried: Vec::new(),
         })
     };
     let overlay = compiled();

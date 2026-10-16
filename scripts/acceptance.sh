@@ -320,12 +320,16 @@ wait_for_core_ready() {
     wait_for_marker "$log" 'msg="listener ready; waiting for local Rust client"' "$timeout" "$pid"
 }
 
+# An already published marker is ready even when the timeout has elapsed.
 wait_for_marker() {
     local log=$1 marker=$2 timeout=$3 pid=$4
     local deadline=$(( $(date +%s) + timeout ))
-    while (( $(date +%s) < deadline )); do
+    while :; do
         if [[ -f $log ]] && grep -Fq "$marker" "$log"; then
             return 0
+        fi
+        if (( $(date +%s) >= deadline )); then
+            break
         fi
         if ! kill -0 "$pid" 2>/dev/null; then
             die "process $pid exited before marker '$marker' (log: $log)"
@@ -927,7 +931,7 @@ metadata.update({
     "duration_seconds": int(os.environ["CINNABAR_META_DURATION"]),
     "build_app_command": "cargo build --release -p cinnabar --locked",
     "build_profile": "release",
-    "build_core_command": "go build -trimpath -o target/release/bedrock-core ./core/cmd/bedrock-core",
+    "build_core_command": 'go build -trimpath -ldflags "$(CINNABAR_BUILD_COMMIT="$repo_commit" bash packaging/common/core-ldflags.sh)" -o target/release/bedrock-core ./core/cmd/bedrock-core',
     "use_vsync": os.environ["CINNABAR_META_NO_VSYNC"] != "true",
     "no_vsync_ab": os.environ["CINNABAR_META_NO_VSYNC"] == "true",
     "requested_present_mode": "Immediate" if os.environ["CINNABAR_META_NO_VSYNC"] == "true" else "Fifo",
@@ -980,7 +984,7 @@ write_command_manifest
 write_metadata building
 
 (cd "$project_root" && cargo build --release -p cinnabar --locked) >"$run_dir/build-app.log" 2>&1 || die "release app build failed (log: $run_dir/build-app.log)"
-(cd "$project_root" && go build -trimpath -o "$core_executable" ./core/cmd/bedrock-core) >"$run_dir/build-core.log" 2>&1 || die "release core build failed (log: $run_dir/build-core.log)"
+(cd "$project_root" && go build -trimpath -ldflags "$(CINNABAR_BUILD_COMMIT="$repo_commit" bash packaging/common/core-ldflags.sh)" -o "$core_executable" ./core/cmd/bedrock-core) >"$run_dir/build-core.log" 2>&1 || die "release core build failed (log: $run_dir/build-core.log)"
 write_metadata launching
 
 if [[ -n $bds_dir ]]; then

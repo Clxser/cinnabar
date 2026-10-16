@@ -2,8 +2,8 @@
 //! from any untinted material which happens to share the same source image.
 
 use assets::{
-    MAX_CARRIER_TEXTURE_LAYERS, MAX_TEXTURE_PAGES, MODEL_TEMPLATE_FLAG_LILY_PAD,
-    texture::{MIP_COUNT, TILE_SIZE, TextureMip},
+    MAX_CARRIER_TEXTURE_LAYERS, MAX_CARRIER_TEXTURE_PAGES, MIP_COUNT, MODEL_TEMPLATE_FLAG_LILY_PAD,
+    TILE_SIZE, TextureMip,
 };
 use {super::*, assets::BlockFace};
 
@@ -123,7 +123,7 @@ fn copy_chain(
                 .to_vec();
             // Vanilla atlas tinting multiplies RGB only.
             // UNORM bytes are truncated after tinting; holes keep their alpha.
-            crate::apply_atlas_tint(&mut rgba8, tint);
+            pack_compile_input::apply_atlas_tint(&mut rgba8, tint);
             Ok(TextureMip {
                 size: mip.size,
                 rgba8: rgba8.into_boxed_slice(),
@@ -140,7 +140,7 @@ fn append_layer(
         .iter()
         .position(|page| page.texture.layers < MAX_CARRIER_TEXTURE_LAYERS as u32)
         .unwrap_or(pages.len());
-    if index >= MAX_TEXTURE_PAGES {
+    if index >= MAX_CARRIER_TEXTURE_PAGES {
         return Err(invalid("lily-pad textures exceed the page/layer budget"));
     }
     if index == pages.len() {

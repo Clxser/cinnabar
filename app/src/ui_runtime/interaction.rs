@@ -1,9 +1,11 @@
 use crate::runtime::network::resource_packs::PackApplication;
 use client_runtime::network::NetworkHandle;
+use launcher::menu::settings_options::BindingId;
 mod chat;
 mod chat_coordinates;
 pub(crate) mod chat_modifiers;
 pub(super) mod command_macros;
+mod drop_swing;
 pub(crate) mod input_capture;
 mod inventory;
 pub(crate) use chat::drive_chat_ui_actions;
@@ -47,6 +49,7 @@ use client_ui::ui_runtime::interaction::{
     ChatFlushError, PointerRouter, PressRoute, dispatch_chat_ui_action, dispatch_inventory_hotbar,
     flush_chat_sends, flush_inventory_send, is_chat_edit_shortcut, paste_chat_shortcut,
 };
+use drop_swing::DropSwing;
 use input_capture::{
     ordered_pointer_presses, restore_gameplay_input_after_chat, suppress_gameplay_input_for_chat,
     suppress_gameplay_input_for_inventory,
@@ -99,7 +102,7 @@ pub(crate) fn flush_chat_network(
     player_runtime: bevy::prelude::Res<client_state::PlayerRuntime>,
     mut runtime: ResMut<UiRuntimeResource>,
     network: Res<NetworkHandle<PackApplication>>,
-    mut client_world: ResMut<crate::runtime::world::ClientWorld>,
+    mut fatal_error: ResMut<crate::runtime::shutdown::FatalError>,
 ) {
     runtime.service_pending_chat_autocomplete(&player_runtime);
     if network.closed_command_has_pending_control() {
@@ -124,19 +127,19 @@ pub(crate) fn flush_chat_network(
         Ok(_) | Err(ChatFlushError::Transport(client_session::PacketSendError::Full(_))) => {}
         Err(ChatFlushError::Transport(client_session::PacketSendError::Closed(_))) => {
             crate::runtime::shutdown::record_fatal_error(
-                &mut client_world.fatal_error,
+                &mut fatal_error.0,
                 "chat send failed because the network command channel closed".to_owned(),
             );
         }
         Err(ChatFlushError::Packet(error)) => {
             crate::runtime::shutdown::record_fatal_error(
-                &mut client_world.fatal_error,
+                &mut fatal_error.0,
                 format!("queued chat packet became invalid: {error}"),
             );
         }
         Err(ChatFlushError::SessionChanged { expected, actual }) => {
             crate::runtime::shutdown::record_fatal_error(
-                &mut client_world.fatal_error,
+                &mut fatal_error.0,
                 format!(
                     "queued chat packet crossed a session boundary: expected {expected}, got {actual}"
                 ),
@@ -189,12 +192,14 @@ pub(crate) fn drive_inventory_ui_actions(
     // Presses are this frame's only; modifiers stay held across frames.
     let (presses, shift, control) = runtime.inventory_keys_mut().take_frame();
     if runtime.credits().owns_input() || runtime.server_forms().owns_input() {
+        runtime.screen_state_mut().container_close_armed = false;
         return;
     }
     if menu.as_ref().is_some_and(|menu| menu.is_visible())
         || !runtime.inventory_open()
         || !input_available
     {
+        runtime.screen_state_mut().container_close_armed = false;
         runtime.set_inventory_pointer_gui(None);
         runtime.screen_state_mut().hover = None;
         runtime.screen_state_mut().pointer.reset();
@@ -247,13 +252,13 @@ fn route_press(
         .is_some_and(|view| view.mod_ui().mod_view_shown());
     if !runtime.chat_focused() && (!runtime.screen_state().text_focused() || mod_view) && !mod_text
     {
-        if binding_mouse_button(menu, "key.inventory", button) {
+        if binding_mouse_button(menu, BindingId::Inventory, button) {
             runtime.toggle_inventory(player_runtime);
             return (PressRoute::Binding, true);
         }
         if !runtime.inventory_open() {
-            let chat = binding_mouse_button(menu, "key.chat", button);
-            if chat || binding_mouse_button(menu, "key.command", button) {
+            let chat = binding_mouse_button(menu, BindingId::Chat, button);
+            if chat || binding_mouse_button(menu, BindingId::Command, button) {
                 runtime.open_chat(player_runtime);
                 if !chat {
                     let _ = runtime.insert_chat_text("/");
@@ -267,20 +272,16 @@ fn route_press(
 
 /// Reserves vanilla container keys from mod declarations. While a mod view hides the
 /// container, only the inventory key and Escape stay reserved.
-#[cfg_attr(
-    not(feature = "local-mods"),
-    allow(dead_code, reason = "only player mods declare keys")
-)]
 pub(crate) fn inventory_consumes_key(
     menu: Option<&client_shell::menu::MenuRuntime>,
     key: KeyCode,
     view: bool,
 ) -> bool {
-    if binding_key(menu, "key.inventory", key) || key == KeyCode::Escape {
+    if binding_key(menu, BindingId::Inventory, key) || key == KeyCode::Escape {
         return true;
     }
     !view
-        && (binding_key(menu, "key.drop", key)
+        && (binding_key(menu, BindingId::Drop, key)
             || keyboard_usage(key).is_some_and(|code| {
                 hotbar_control_slots(menu, semantic_input::PhysicalControl::KeyboardUsage(code))
                     .next()
@@ -308,13 +309,16 @@ pub(crate) fn drive_world_inventory_keys(
     presentation: Option<Res<UiPresentationResource>>,
     mut runtime: ResMut<UiRuntimeResource>,
     emote_input: Option<Res<super::emotes::EmoteInputConsumed>>,
+    swing: DropSwing,
+    touch: Option<Res<crate::semantic_controls::SemanticTouchTargets>>,
 ) {
     if emote_input.is_some_and(|consumed| consumed.0) {
         return;
     }
-    let drop = binding_pressed(menu.as_deref(), "key.drop", &keys, &mouse)
-        || binding_gamepad(menu.as_deref(), "key.drop", &gamepads);
-    let use_book = binding_pressed(menu.as_deref(), "key.use", &keys, &mouse);
+    let drop = binding_pressed(menu.as_deref(), BindingId::Drop, &keys, &mouse)
+        || binding_gamepad(menu.as_deref(), BindingId::Drop, &gamepads);
+    let use_book = binding_pressed(menu.as_deref(), BindingId::Use, &keys, &mouse)
+        || touch.is_some_and(|touch| touch.pressed(semantic_input::touch::USE));
     if !window.focused
         || client_shell::screen_policy::absorbs_input(
             &player_runtime,
@@ -337,9 +341,13 @@ pub(crate) fn drive_world_inventory_keys(
         return;
     };
     let control = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
-    let _ = runtime
+    if runtime
         .inventory_ledger_mut(&mut player_runtime)
-        .begin_world_drop(slot, (!control).then_some(1));
+        .begin_world_drop(slot, (!control).then_some(1))
+        .is_ok()
+    {
+        swing.swing(&player_runtime);
+    }
 }
 
 /// Drops keyboard input another owner handles while keeping inventory modifiers in step
@@ -503,7 +511,7 @@ pub(crate) fn drive_chat_keyboard_input(
             if command_macros::dispatch_mouse(
                 menu.as_deref(),
                 &mut runtime,
-                chat_modifiers::alt_held(&keys),
+                chat_modifiers::held_chord(&keys),
                 button,
                 now_millis,
                 semantic.as_deref_mut(),
@@ -542,22 +550,22 @@ pub(crate) fn drive_chat_keyboard_input(
         .is_some_and(|view| view.mod_ui().mod_view_shown());
     if !runtime.chat_focused() && (!runtime.screen_state().text_focused() || mod_view) && !mod_text
     {
-        if (mouse_bindings && binding_mouse(menu.as_deref(), "key.inventory", &mouse_buttons))
-            || binding_gamepad(menu.as_deref(), "key.inventory", &gamepads)
+        if (mouse_bindings && binding_mouse(menu.as_deref(), BindingId::Inventory, &mouse_buttons))
+            || binding_gamepad(menu.as_deref(), BindingId::Inventory, &gamepads)
         {
             runtime.toggle_inventory(&mut player_runtime);
             dismissed |= !runtime.inventory_open();
             inventory_ownership_changed = true;
             consumed_gameplay = true;
         } else if !runtime.inventory_open()
-            && ((mouse_bindings && binding_mouse(menu.as_deref(), "key.chat", &mouse_buttons))
-                || binding_gamepad(menu.as_deref(), "key.chat", &gamepads))
+            && ((mouse_bindings && binding_mouse(menu.as_deref(), BindingId::Chat, &mouse_buttons))
+                || binding_gamepad(menu.as_deref(), BindingId::Chat, &gamepads))
         {
             runtime.open_chat(&mut player_runtime);
             consumed_gameplay = true;
         } else if !runtime.inventory_open()
             && mouse_bindings
-            && binding_mouse(menu.as_deref(), "key.command", &mouse_buttons)
+            && binding_mouse(menu.as_deref(), BindingId::Command, &mouse_buttons)
         {
             runtime.open_chat(&mut player_runtime);
             let _ = runtime.insert_chat_text("/");
@@ -575,7 +583,7 @@ pub(crate) fn drive_chat_keyboard_input(
             if command_macros::dispatch_mouse(
                 menu.as_deref(),
                 &mut runtime,
-                chat_modifiers::alt_held(&modifiers),
+                chat_modifiers::held_chord(&modifiers),
                 button,
                 now_millis,
                 semantic.as_deref_mut(),
@@ -681,8 +689,8 @@ pub(crate) fn drive_chat_keyboard_input(
                 // An OS repeat of a held key is not a new press, so it never toggles the screen.
                 key if input.repeat
                     && (key == KeyCode::Escape
-                        || binding_key(menu.as_deref(), "key.inventory", key)) => {}
-                key if binding_key(menu.as_deref(), "key.inventory", key) => {
+                        || binding_key(menu.as_deref(), BindingId::Inventory, key)) => {}
+                key if binding_key(menu.as_deref(), BindingId::Inventory, key) => {
                     runtime.toggle_inventory(&mut player_runtime);
                     inventory_ownership_changed = true;
                 }
@@ -709,10 +717,10 @@ pub(crate) fn drive_chat_keyboard_input(
                         focus.authorize_screen_return();
                     }
                 }
-                key if binding_key(menu.as_deref(), "key.chat", key) => {
+                key if binding_key(menu.as_deref(), BindingId::Chat, key) => {
                     runtime.open_chat(&mut player_runtime);
                 }
-                key if binding_key(menu.as_deref(), "key.command", key) => {
+                _ if chat_modifiers::command_key(menu.as_deref(), input) => {
                     runtime.open_chat(&mut player_runtime);
                     let _ = runtime.insert_chat_text("/");
                 }
@@ -727,7 +735,7 @@ pub(crate) fn drive_chat_keyboard_input(
             if command_macros::dispatch(
                 menu.as_deref(),
                 &mut runtime,
-                chat_modifiers::alt_held(&modifiers),
+                chat_modifiers::held_chord(&modifiers),
                 keyboard_usage(input.key_code).map(semantic_input::PhysicalControl::KeyboardUsage),
                 now_millis,
                 semantic.as_deref_mut(),
@@ -736,16 +744,16 @@ pub(crate) fn drive_chat_keyboard_input(
                 continue;
             }
             match input.key_code {
-                key if binding_key(menu.as_deref(), "key.inventory", key) => {
+                key if binding_key(menu.as_deref(), BindingId::Inventory, key) => {
                     runtime.toggle_inventory(&mut player_runtime);
                     inventory_ownership_changed = true;
                     consumed_gameplay = true;
                 }
-                key if binding_key(menu.as_deref(), "key.chat", key) => {
+                key if binding_key(menu.as_deref(), BindingId::Chat, key) => {
                     runtime.open_chat(&mut player_runtime);
                     consumed_gameplay = true;
                 }
-                key if binding_key(menu.as_deref(), "key.command", key) => {
+                _ if chat_modifiers::command_key(menu.as_deref(), input) => {
                     runtime.open_chat(&mut player_runtime);
                     let _ = runtime.insert_chat_text("/");
                     consumed_gameplay = true;
@@ -811,6 +819,10 @@ pub(crate) fn drive_chat_keyboard_input(
                     runtime.close_chat();
                 }
             }
+            key if is_chat_edit_shortcut(&held) && chat_modifiers::is_word_edit(key) => {
+                runtime
+                    .mutate_chat_editor(|editor| chat_modifiers::word_edit(editor, key, selecting));
+            }
             KeyCode::Backspace => runtime.backspace_chat_text(),
             KeyCode::Delete => runtime.delete_chat_text(),
             KeyCode::ArrowLeft => {
@@ -869,7 +881,7 @@ pub(crate) fn drive_chat_keyboard_input(
             if command_macros::dispatch_mouse(
                 menu.as_deref(),
                 &mut runtime,
-                chat_modifiers::alt_held(&modifiers),
+                chat_modifiers::held_chord(&modifiers),
                 button,
                 now_millis,
                 semantic.as_deref_mut(),

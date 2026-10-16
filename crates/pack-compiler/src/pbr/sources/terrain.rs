@@ -15,7 +15,8 @@ pub(in crate::pbr) fn read(root: &Path) -> Result<BTreeMap<String, TerrainSource
     if !path.is_file() {
         return Ok(BTreeMap::new());
     }
-    let terrain = crate::pack::terrain::read_terrain(&path).map_err(|error| error.to_string())?;
+    let terrain =
+        pack_compile_input::pack::read_terrain(&path).map_err(|error| error.to_string())?;
     let mut result = BTreeMap::new();
     for (key, value, tint) in terrain.fixed_tint_sources() {
         let relative = safe_relative(value)

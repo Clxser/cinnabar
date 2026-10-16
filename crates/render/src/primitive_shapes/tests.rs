@@ -8,6 +8,15 @@ use render_scene::PrimitiveShapesScene;
 use std::sync::{Arc, Mutex};
 
 #[test]
+fn debug_text_cubic_angles_keep_their_endpoints() {
+    let cubic =
+        |t: f32| (TEXT_ACOS_CUBIC * t * t * t - TEXT_ACOS_LINEAR * t) + std::f32::consts::FRAC_PI_2;
+    for t in [-1.0_f32, 0.0, 1.0] {
+        assert!((cubic(t) - t.acos()).abs() < 1e-6, "cubic endpoint {t}");
+    }
+}
+
+#[test]
 fn vanilla_mesh_counts_and_unit_geometry() {
     for (kind, segments, count) in [
         (PrimitiveShapeKind::Line, 0, 2),
@@ -73,6 +82,19 @@ fn all_shader_material_variants_validate() {
         )
         .validate(&module)
         .unwrap();
+        let fragment = module
+            .entry_points
+            .iter()
+            .find(|entry| entry.name == "shape_fragment")
+            .expect("shape fragment exists");
+        for (_, expression) in fragment.function.expressions.iter() {
+            if let naga::Expression::ImageSample { level, .. } = expression {
+                assert!(
+                    matches!(level, naga::SampleLevel::Gradient { .. }),
+                    "textured shapes keep their sample footprint through material branches"
+                );
+            }
+        }
     }
 }
 

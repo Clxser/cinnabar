@@ -215,6 +215,7 @@ impl UiRuntime {
 
     /// Shows a book screen over the world.
     pub fn open_book(&mut self, state: BookState) {
+        self.screen.container_close_armed = false;
         self.screen.book = Some(state);
         self.inventory_open = true;
         self.chat_focused = false;
@@ -235,10 +236,11 @@ impl UiRuntime {
         else {
             return false;
         };
-        let editable = match entry.identifier.as_ref() {
-            "minecraft:writable_book" => true,
-            "minecraft:written_book" => false,
-            _ => return false,
+        let Some(editable) = assets::facts::ItemFacts::builtin()
+            .ok()
+            .and_then(|facts| facts.book_editable(&entry.identifier))
+        else {
+            return false;
         };
         let book = protocol::item_book(&stack.extra_data);
         let state = BookState::new(

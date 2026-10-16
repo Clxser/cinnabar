@@ -9,7 +9,8 @@ use assets::{
 use bevy::prelude::Resource;
 use render_model::{
     ACTOR_LAYER_BODY, ActorArtworkLocation, ActorArtworkPages, ActorRigRenderInput, ActorRigRoute,
-    ActorRigSubmission, BlockEntityAtlas, EquipmentRaster, SkullKind, skull_geometry,
+    ActorRigSubmission, BlockEntityAtlas, EquipmentRaster, SkullKind,
+    block_entity::HeldBlockEntity, skull_geometry,
 };
 use render_model::{
     ActorRigGeometry, EntityRigId, RenderBoneTransform, equipment_rig_id, find_geometry_index,
@@ -19,15 +20,22 @@ use render_model::{
 
 mod alpha;
 mod attack;
+mod block_items;
+mod camera;
+mod combat;
 mod diagnostics;
+mod dials;
 mod elytra;
+mod held_block_entities;
 mod java;
 mod modern;
+mod native;
 mod pack;
 mod push;
 mod readiness;
 mod session;
 mod types;
+pub use block_items::{BlockItemPreparer, PreparedBlockItems};
 pub use java::java_draws_attachable;
 pub use pack::PackEquipment;
 pub use session::StagedSessionIcons;
@@ -43,8 +51,7 @@ use {
         atlas::{Placement, SpriteAtlas},
         display::{
             FirstPersonHand, FirstPersonShape, LAYER_BOOTS, LAYER_CHESTPLATE, LAYER_HELMET,
-            LAYER_LEGGINGS, LAYER_MAIN_HAND, LAYER_OFF_HAND, first_person_display,
-            head_block_display, view_bone,
+            LAYER_LEGGINGS, LAYER_MAIN_HAND, LAYER_OFF_HAND, head_block_display, view_bone,
         },
     },
     render_model::equipment::{self as attachable, blocks::BlockSheets},
@@ -67,24 +74,14 @@ fn body_bones(names: Vec<Box<str>>) -> BodyBones {
 
 /// Equipment geometry index space reserved for worn skulls (above any entity geometry index).
 const SKULL_RIG_INDEX_BASE: u32 = 0x00ff_0000;
-const SKULL_KINDS: [SkullKind; 5] = [
-    SkullKind::Skeleton,
-    SkullKind::WitherSkeleton,
-    SkullKind::Zombie,
-    SkullKind::Player,
-    SkullKind::Creeper,
-];
-
+/// Reads the shared model ordinal for a packed head rig.
 fn kind_index(kind: SkullKind) -> u8 {
-    SKULL_KINDS
-        .iter()
-        .position(|candidate| *candidate == kind)
-        .map_or(u8::MAX, |index| index as u8)
+    kind.packed_rig_index().unwrap_or(u8::MAX)
 }
 
 /// The head an item identifier wears as, for the heads with a packed texture.
 pub(super) fn skull_kind(identifier: &str) -> Option<SkullKind> {
-    SkullKind::from_block_identifier(identifier).filter(|kind| SKULL_KINDS.contains(kind))
+    SkullKind::from_block_identifier(identifier).filter(|kind| kind.packed_rig_index().is_some())
 }
 
 /// Generated item meshes kept resident; further distinct items draw nothing.
@@ -99,10 +96,8 @@ pub struct EquipmentRuntime {
     catalog: Option<Arc<RuntimeEquipmentCatalog>>,
     icons: Arc<RuntimeIconCatalog>,
     placements: Vec<Option<Placement>>,
-    /// Block visual id to its carried or fallback sheet's index in `placements`.
-    block_sheets: BTreeMap<u32, usize>,
-    block_models: BTreeMap<u32, Vec<render_model::ActorRigVertex>>,
-    block_alpha: BTreeMap<u32, render_model::HandItemAlphaMode>,
+    blocks: crate::prepared_actor_artwork::PlacedBlockItems,
+    startup_blocks: crate::prepared_actor_artwork::PlacedBlockItems,
     atlas_locations: Vec<Option<ActorArtworkLocation>>,
     texture_locations: BTreeMap<Box<str>, ActorArtworkLocation>,
     body_bones: BTreeMap<u32, Option<Arc<BodyBones>>>,
@@ -114,6 +109,9 @@ pub struct EquipmentRuntime {
     pending: Vec<ActorRigGeometry>,
     /// Worn head geometry and texture location per skull kind.
     skulls: BTreeMap<u8, (EntityRigId, ActorArtworkLocation)>,
+    /// Held model rigs, artwork locations and texture-local glint spans.
+    held_block_entities: crate::prepared_actor_artwork::PreparedHeldBlockEntities,
+    startup_held_block_entities: crate::prepared_actor_artwork::PreparedHeldBlockEntities,
     item_use: Arc<BTreeMap<Box<str>, u32>>,
     use_overlays: Arc<BTreeMap<Box<str>, assets::equipment::CompiledItemUseOverlay>>,
     /// The startup catalog's use durations, before session items join them.
@@ -136,10 +134,13 @@ pub struct EquipmentRuntime {
     layers: Vec<EquipmentPresentation>,
     attachables: actor_animation::AttachablesRuntime,
     attachable_meshes: BTreeMap<AttachableMeshKey, EntityRigId>,
+    native_meshes: BTreeMap<(u16, u32), EntityRigId>,
     /// Raster attachables' image-to-rig frame and rest pose under Java's hand, by mesh key.
     java_rasters: BTreeMap<AttachableMeshKey, Option<JavaRasterFrame>>,
     /// Render-controller models queued beyond the scene's binding geometries.
     selected_geometries: std::collections::BTreeSet<EntityRigId>,
+    /// The strip frame each held dial (compass or clock) shows this frame.
+    dial_frames: inventory::DialFrames,
 }
 
 impl EquipmentRuntime {
@@ -158,52 +159,15 @@ impl EquipmentRuntime {
         block_entities: Option<Arc<RuntimeBlockEntityAssets>>,
         artwork: ActorArtworkPages,
     ) -> (Self, ActorArtworkPages, Vec<u32>) {
-        let mut blocks = world.as_deref().map_or_else(
-            || BlockSheets {
-                sheets: Vec::new(),
-                by_visual: BTreeMap::new(),
-                models: BTreeMap::new(),
-            },
-            |world| render_model::equipment::blocks::collect(world, &assets),
-        );
-        if let Some(world) = world.as_deref() {
-            blocks.prefer_carried_faces(world, &icons);
-        }
-        let BlockSheets {
-            sheets,
-            by_visual,
-            models: block_models,
-        } = blocks;
-        let icon_count = icons.sprites().len();
-        let mut block_sheets = by_visual
-            .into_iter()
-            .map(|(visual, sheet)| (visual, icon_count + sheet))
-            .collect::<BTreeMap<_, _>>();
-        // Authored carried textures override world faces: grass uses an opaque
-        // alpha-mask overlay here, not the biome-tinted terrain material.
-        if icons.source_manifest_sha256() == assets.source_manifest_sha256() {
-            block_sheets.extend(
-                icons
-                    .block_sheets()
-                    .iter()
-                    .filter(|sheet| sheet.visual.0 < assets.block_visual_count())
-                    .filter(|sheet| !block_models.contains_key(&sheet.visual.0))
-                    .map(|sheet| (sheet.visual.0, sheet.sprite as usize)),
-            );
-        }
-        let block_alpha = alpha::block_alpha_modes(world.as_deref(), &block_sheets);
-        let packed = icons
-            .sprites()
-            .iter()
-            .cloned()
-            .chain(sheets)
-            .collect::<Vec<IconSprite>>();
-        let atlas = SpriteAtlas::pack(&packed);
+        let blocks = PreparedBlockItems::build(world, &assets, &icons);
+        let atlas = SpriteAtlas::pack(icons.sprites());
         let atlas_layers = atlas.layers.len();
         let textures = catalog
             .as_ref()
             .map_or(&[][..], |catalog| catalog.textures());
         let mut rasters = atlas.layers;
+        rasters.extend_from_slice(&blocks.rasters);
+        let texture_start = rasters.len();
         rasters.extend(textures.iter().map(|texture| EquipmentRaster {
             width: texture.width,
             height: texture.height,
@@ -230,24 +194,35 @@ impl EquipmentRuntime {
             Some(glint) => artwork.with_actor_glint(glint),
             None => artwork,
         };
-        let (artwork, locations) = artwork.with_equipment_rasters(&rasters);
+        let artwork = match catalog.as_deref().and_then(Self::item_glint) {
+            Some(glint) => artwork.with_item_glint(glint),
+            None => artwork,
+        };
+        let (mut artwork, locations) = artwork.with_equipment_rasters(&rasters);
         let texture_locations = textures
             .iter()
-            .zip(&locations[atlas_layers..])
+            .zip(&locations[texture_start..])
             .filter_map(|(texture, location)| Some((texture.identifier.clone(), (*location)?)))
             .collect();
+        let blocks = crate::prepared_actor_artwork::PlacedBlockItems {
+            source: blocks,
+            locations: locations[atlas_layers..texture_start].to_vec(),
+        };
         let skull_location = skull_raster_index.and_then(|index| locations[index]);
         let mut pending = Vec::new();
         let mut skulls = BTreeMap::new();
         if let (Some(atlas), Some(location)) = (&skull_atlas, skull_location) {
-            for (index, kind) in SKULL_KINDS.into_iter().enumerate() {
-                let id = equipment_rig_id(SKULL_RIG_INDEX_BASE + index as u32);
+            for kind in SkullKind::packed_kinds() {
+                let id = equipment_rig_id(SKULL_RIG_INDEX_BASE + u32::from(kind_index(kind)));
                 if let Some(geometry) = skull_geometry(id, atlas, kind) {
                     pending.push(geometry);
                     skulls.insert(kind_index(kind), (id, location));
                 }
             }
         }
+        let held_block_entities =
+            held_block_entities::build(skull_atlas.as_ref(), skull_location, &mut artwork);
+        pending.extend(held_block_entities.geometries.iter().cloned());
         let mut geometries = catalog
             .iter()
             .flat_map(|catalog| catalog.bindings())
@@ -305,14 +280,15 @@ impl EquipmentRuntime {
         let runtime = Self {
             attachables: actor_animation::AttachablesRuntime::new(Arc::clone(&assets)),
             attachable_meshes: BTreeMap::new(),
+            native_meshes: BTreeMap::new(),
             java_rasters: BTreeMap::new(),
             selected_geometries: Default::default(),
+            dial_frames: Default::default(),
             assets,
             icons,
             placements: atlas.placements,
-            block_sheets,
-            block_models,
-            block_alpha,
+            startup_blocks: blocks.clone(),
+            blocks,
             atlas_locations: locations[..atlas_layers].to_vec(),
             texture_locations,
             body_bones: BTreeMap::new(),
@@ -331,6 +307,8 @@ impl EquipmentRuntime {
             catalog,
             pending,
             skulls,
+            startup_held_block_entities: held_block_entities.clone(),
+            held_block_entities,
             pack: None,
             logged_misses: Default::default(),
             poses: PoseMemo::default(),
@@ -369,17 +347,21 @@ impl EquipmentRuntime {
         input: &ActorEquipmentInput,
         animation: Option<EquipmentAnimation<'_>>,
     ) -> &mut [EquipmentPresentation] {
+        self.layers_for_profile(body, input, render_api::DEFAULT_COMBAT_VISUALS, animation)
+    }
+
+    /// Selects combat visuals for worn slots without changing held items or Java poses.
+    pub fn layers_for_profile(
+        &mut self,
+        body: &ActorRigSubmission,
+        input: &ActorEquipmentInput,
+        profile: render_api::CombatVisuals,
+        animation: Option<EquipmentAnimation<'_>>,
+    ) -> &mut [EquipmentPresentation] {
         let mut layers = std::mem::take(&mut self.layers);
         layers.clear();
-        self.fill_layers(body, input, animation, &mut layers);
-        if input.java.is_some() {
-            // The Java animation option includes worn equipment in the body's hurt flash.
-            for layer in &mut layers {
-                if layer.submission.input.identity.layer >= LAYER_HELMET {
-                    layer.submission.overlay_rgba8 = body.overlay_rgba8;
-                }
-            }
-        }
+        self.fill_layers(body, input, profile, animation, &mut layers);
+        combat::apply(&mut layers, body, input, profile, animation);
         self.layers = layers;
         &mut self.layers
     }
@@ -389,6 +371,7 @@ impl EquipmentRuntime {
         &mut self,
         body: &ActorRigSubmission,
         input: &ActorEquipmentInput,
+        profile: render_api::CombatVisuals,
         animation: Option<EquipmentAnimation<'_>>,
         layers: &mut Vec<EquipmentPresentation>,
     ) {
@@ -414,6 +397,38 @@ impl EquipmentRuntime {
         ] {
             let Some(item) = item else { continue };
             let before = layers.len();
+            if self.uses_native_item_mesh(&item.identifier) {
+                let elapsed = animation
+                    .filter(|animation| animation.owner.is_using_item())
+                    .map(|animation| animation.rig.hand[1].use_ticks);
+                self.push_native_held(
+                    body,
+                    item,
+                    layer,
+                    &bones,
+                    input.java,
+                    actor_animation::AttachableAnimationInput {
+                        off_hand: layer == LAYER_OFF_HAND,
+                        animation_frame: inventory::crossbow_animation_frame(
+                            elapsed,
+                            item.use_facts.ticks.unwrap_or_default(),
+                            item.charged_projectile,
+                            input.off.as_ref().is_some_and(|off| {
+                                off.use_facts.projectile
+                                    == assets::item_use::ItemProjectileRole::Firework
+                            }),
+                        ),
+                        use_elapsed_ticks: elapsed,
+                        max_use_ticks: item.use_facts.ticks.unwrap_or_default(),
+                        ..Default::default()
+                    },
+                    layers,
+                );
+                if layers.len() == before {
+                    self.note_missing_layer(item, None, bone);
+                }
+                continue;
+            }
             // Authored item poses use the owning actor and the same sampled body as equipment.
             let animated = animation
                 .filter(|_| {
@@ -524,7 +539,7 @@ impl EquipmentRuntime {
                     geometry,
                     (slot, layer),
                     item,
-                    (input, animation),
+                    (input, animation, profile),
                     layers,
                 );
                 if layers.len() == before {
@@ -532,130 +547,6 @@ impl EquipmentRuntime {
                 }
             }
         }
-    }
-
-    /// The body pose with every bone but the visible arms (and their sleeves) zero-scaled, as
-    /// vanilla's first-person part visibility hides them. `None` when no arm shows or the pose
-    /// does not match the body geometry.
-    pub fn mask_first_person(
-        &mut self,
-        body: &ActorRigSubmission,
-        arms: FirstPersonArms,
-    ) -> Option<ActorRigSubmission> {
-        if !(arms.right || arms.left) {
-            return None;
-        }
-        let (_, bones) = self.body_bones_for(body.input.rig)?;
-        let pose_len = bones.names.len();
-        if body.input.previous_bones.len() != pose_len || body.input.current_bones.len() != pose_len
-        {
-            return None;
-        }
-        let visible = |name: &str| {
-            let is = |wanted: &str| name.eq_ignore_ascii_case(wanted);
-            (arms.right && (is("rightArm") || is("rightSleeve")))
-                || (arms.left && (is("leftArm") || is("leftSleeve")))
-        };
-        let mask = |pose: &[RenderBoneTransform]| {
-            pose.iter()
-                .zip(&bones.names)
-                .map(|(bone, name)| if visible(name) { *bone } else { hidden_bone() })
-                .collect::<Vec<_>>()
-        };
-        let mut masked = body.clone();
-        let (previous, current) = (
-            mask(&body.input.previous_bones),
-            mask(&body.input.current_bones),
-        );
-        [masked.input.previous_bones, masked.input.current_bones] =
-            self.poses
-                .share(body, FIRST_PERSON_MASK_LAYER, [&previous, &current]);
-        Some(masked)
-    }
-
-    /// The main-hand item as a first-person layer, when it is drawable. An attachable rides the
-    /// posed `rightItem` bone; any other item carries a camera-space bone (`view_space`), placed
-    /// by vanilla's first-person transforms for the arm's `hand` state.
-    pub fn first_person_item(
-        &mut self,
-        body: &ActorRigSubmission,
-        item: &WornItem,
-        hand: impl Into<FirstPersonHand>,
-    ) -> Option<FirstPersonItem> {
-        let (_, bones) = self.body_bones_for(body.input.rig)?;
-        let pose_len = bones.names.len();
-        if body.input.previous_bones.len() != pose_len || body.input.current_bones.len() != pose_len
-        {
-            return None;
-        }
-        // Modern attachables are evaluated in their own first-person state before this
-        // fallback. Never substitute a third-person grip for their camera-space animation.
-        let (mesh, location, block) = self.held_mesh(item, true)?;
-        let shape = if block {
-            FirstPersonShape::Block
-        } else {
-            FirstPersonShape::Sprite {
-                mirrored_art: item.grip.mirrored_art(),
-            }
-        };
-        let hand = hand.into();
-        let state = actor_animation::ItemAnimationState {
-            attack_time: hand.swing,
-            arm_height: hand.equip,
-        };
-        let bone = match (shape, hand.consume) {
-            (FirstPersonShape::Block, None) => super::first_person::block_pose(state),
-            (
-                FirstPersonShape::Sprite {
-                    mirrored_art: false,
-                },
-                None,
-            ) => super::first_person::sprite_pose(state),
-            _ => view_bone(first_person_display(shape, hand)),
-        }?;
-        let poses = self
-            .poses
-            .share(body, FIRST_PERSON_ITEM_LAYER, [&[bone], &[bone]]);
-        Some(FirstPersonItem {
-            presentation: layer_presentation(body, LAYER_MAIN_HAND, mesh, poses, location, 0),
-            camera_space: true,
-            alpha_mode: self.first_person_alpha_mode(item, block),
-            java_camera: None,
-            java_normal_axis: bevy::math::Vec3::Z,
-        })
-    }
-
-    /// Ordinary offhand geometry follows the separate native offhand stack.
-    pub fn first_person_offhand(
-        &mut self,
-        body: &ActorRigSubmission,
-        item: &WornItem,
-    ) -> Option<FirstPersonItem> {
-        let (mesh, location, block) = self.held_mesh(item, true)?;
-        let equipped = item.grip.upright().unwrap_or(false);
-        let bone = if block {
-            super::first_person::offhand_pose(equipped, true)
-        } else {
-            let sprite = self
-                .session_sprite(&item.identifier, item.metadata)
-                .and_then(|(index, _, _)| self.session_sprite_pixels(index))
-                .or_else(|| {
-                    self.icons
-                        .lookup_index(&item.identifier, item.metadata)
-                        .and_then(|index| self.icons.sprites().get(index))
-                })?;
-            super::first_person::offhand_sprite_pose(equipped, [sprite.width, sprite.height])
-        }?;
-        let poses = self
-            .poses
-            .share(body, FIRST_PERSON_OFFHAND_LAYER, [&[bone], &[bone]]);
-        Some(FirstPersonItem {
-            presentation: layer_presentation(body, LAYER_OFF_HAND, mesh, poses, location, 0),
-            camera_space: true,
-            alpha_mode: self.first_person_alpha_mode(item, block),
-            java_camera: None,
-            java_normal_axis: bevy::math::Vec3::Z,
-        })
     }
 
     /// Records the bones of a skin model registered under `rig`, replacing any earlier model.
@@ -767,9 +658,9 @@ impl EquipmentRuntime {
             MeshKey::Block(_) | MeshKey::SessionBlock(_) => None,
         };
         let vertices = match (key, sprite) {
-            (MeshKey::Block(visual), _) if self.block_models.contains_key(&visual) => {
+            (MeshKey::Block(visual), _) if self.block_model(visual).is_some() => {
                 let rect = placement.uv_rect();
-                self.block_models[&visual]
+                self.block_model(visual)?
                     .iter()
                     .copied()
                     .map(|mut vertex| {
@@ -777,6 +668,10 @@ impl EquipmentRuntime {
                             for axis in 0..2 {
                                 uv[axis] = rect[axis] + uv[axis] * (rect[axis + 2] - rect[axis]);
                             }
+                        }
+                        for axis in 0..2 {
+                            vertex.glint_origin[axis] = rect[axis]
+                                + vertex.glint_origin[axis] * (rect[axis + 2] - rect[axis]);
                         }
                         vertex
                     })
@@ -793,6 +688,21 @@ impl EquipmentRuntime {
             )?,
             (_, None) => return None,
         };
+        let vertices = match key {
+            // Opaque and blended held blocks draw only their outward faces, as vanilla culls a
+            // held stained glass block's far side; cutout blocks (glass, leaves) render both
+            // sides. A session cube's alpha mode is not known here, so it keeps both sides.
+            MeshKey::Block(visual)
+                if self.block_alpha_mode(visual)
+                    != Some(render_model::HandItemAlphaMode::Cutout) =>
+            {
+                one_sided(vertices)
+            }
+            MeshKey::Block(_)
+            | MeshKey::SessionBlock(_)
+            | MeshKey::Sprite(_)
+            | MeshKey::Session(_) => vertices,
+        };
         if let MeshKey::Session(index) | MeshKey::SessionBlock(index) = key {
             let id = session::session_mesh_id(index)?;
             let geometry = ActorRigGeometry::new(id, vertices, vec![[0.0; 3]]).ok()?;
@@ -802,6 +712,14 @@ impl EquipmentRuntime {
             self.build_item_mesh(|id| ActorRigGeometry::new(id, vertices, vec![[0.0; 3]]).ok())
         }
     }
+}
+
+/// Marks every face of a held block one-sided, so renderers discard its back faces.
+fn one_sided(mut vertices: Vec<render_model::ActorRigVertex>) -> Vec<render_model::ActorRigVertex> {
+    for vertex in &mut vertices {
+        vertex.back_uv = render_model::ONE_SIDED_BACK_UV;
+    }
+    vertices
 }
 
 /// Memo keys of the first-person arm mask and held item, which no worn layer uses.
@@ -818,7 +736,7 @@ type RenderPose = Arc<[RenderBoneTransform]>;
 /// tick share it and its bone matrices.
 #[derive(Debug, Default)]
 pub(super) struct PoseMemo {
-    entries: std::collections::HashMap<(u64, u8), ([RenderPose; 2], u64)>,
+    entries: bevy::platform::collections::HashMap<(u64, u8), ([RenderPose; 2], u64)>,
     frame: u64,
 }
 

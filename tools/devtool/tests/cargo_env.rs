@@ -10,6 +10,8 @@ fn build_directory_environment_expands_workspace_templates() {
         "[package]\nname='env-template-fixture'\nversion='0.1.0'\nedition='2024'\n[workspace]\n",
     )
     .unwrap();
+    let expected_build_directory = temp.path().join("target/ra-build");
+    fs::create_dir_all(&expected_build_directory).unwrap();
     let output = Command::new("cargo")
         .current_dir(temp.path())
         .env("CARGO_BUILD_BUILD_DIR", "{workspace-root}/target/ra-build")
@@ -23,11 +25,7 @@ fn build_directory_environment_expands_workspace_templates() {
     );
     let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
-        metadata["build_directory"].as_str().unwrap(),
-        std::fs::canonicalize(temp.path())
-            .unwrap()
-            .join("target/ra-build")
-            .to_str()
-            .unwrap()
+        fs::canonicalize(metadata["build_directory"].as_str().unwrap()).unwrap(),
+        fs::canonicalize(expected_build_directory).unwrap()
     );
 }

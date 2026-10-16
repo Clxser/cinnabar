@@ -1,7 +1,7 @@
-//! Bounded Bedrock resource-pack source readers.
 pub mod actor;
 pub mod atmosphere;
 mod audio;
+pub mod audio_category;
 mod audio_pcm;
 pub mod bamboo;
 pub mod banner;
@@ -17,6 +17,7 @@ pub mod block_presentation_state;
 pub mod block_shapes;
 pub mod carriers;
 pub mod compiled;
+pub mod door;
 pub mod dye;
 mod effects;
 mod encoding;
@@ -24,8 +25,8 @@ pub mod entity;
 mod environment_settings;
 pub mod equipment;
 mod error;
-mod family_routing;
-mod fire;
+pub mod facts;
+pub mod fire;
 mod fog_layers;
 mod fog_transition;
 mod font;
@@ -34,16 +35,17 @@ mod glyph_sheet;
 pub mod gui_item;
 mod hud;
 pub mod hud_extras;
-mod icon;
+pub mod icon;
 pub mod item;
 mod lang;
 mod light_registry;
-mod material_keys;
+pub mod material_keys;
 mod material_variations;
 mod model;
 pub mod native_material;
 mod ogg;
 pub mod oreui_icons;
+pub mod painting;
 mod particle;
 mod physics_registry;
 mod pinned_content;
@@ -58,13 +60,30 @@ mod skin_geometry;
 mod skybox;
 pub mod sound_bank;
 mod sound_events;
-mod stair;
+pub mod stair;
 pub mod starter_skins;
+pub mod stem;
 pub mod texture;
-mod ui;
+pub mod ui;
 pub mod vanilla_pack;
 mod vanilla_refs;
 pub mod weather_textures;
+pub use actor::{
+    ACTOR_CARRIER_MAGIC, ACTOR_CARRIER_VERSION, ActorArtworkBinding, ActorPoseMode, ActorTexture,
+    MAX_ACTOR_BINDINGS, MAX_ACTOR_CARRIER_BYTES, MAX_ACTOR_PIXEL_BYTES, MAX_ACTOR_TEXTURE_SIDE,
+    MAX_ACTOR_TEXTURES, RuntimeActorCatalog, actor_dissolve_mask_sources, encode_actor_catalog,
+    native_actor_texture_preserves_fractional_alpha, native_actor_texture_uses_color_mask,
+    native_actor_texture_uses_multitexture, native_actor_uses_multitexture,
+    neutral_actor_geometry_sampled_texels, neutral_actor_geometry_uvs_are_supported,
+    neutral_actor_material_is_supported, neutral_actor_pose_mode,
+};
+pub use atmosphere::{
+    ATMOSPHERE_BLOB_MAGIC, ATMOSPHERE_BLOB_VERSION, AtmosphereRole, AtmosphereTexture,
+    BiomeVisualProfile, CelestialBorderTexel, CelestialTile, CompiledAtmosphereAssets, FogDistance,
+    FogDistanceMode, FogMedium, FogProfile, MAX_ENVIRONMENT_IDENTIFIER_BYTES,
+    MAX_ENVIRONMENT_PROFILES, MAX_FOG_DISTANCES, ResolvedFog, RuntimeAtmosphereAssets,
+    atmosphere_texture_specs, composite_celestial, encode_atmosphere_blob,
+};
 pub use audio::{
     AUDIO_CARRIER_MAGIC, AudioAlternative, AudioCatalogError, AudioDefinition,
     MAX_AUDIO_ALTERNATIVES, MAX_AUDIO_ALTERNATIVES_PER_DEFINITION, MAX_AUDIO_CARRIER_BYTES,
@@ -89,9 +108,9 @@ pub use biome::{
 pub use biome_noise::{ClientRandom, GRASS_PERMUTATION_SIZE, grass_noise_permutation};
 pub use blob::{BLOB_MAGIC, BLOB_VERSION, MATERIAL_BYTES, encode_blob, write_blob_atomic};
 pub use block_entity::{
-    BLOCK_ENTITY_ROUTES, BlockEntityPlacement, BlockEntityRouteKind, CRYSTAL_BEAM_TEXTURE,
-    MAX_BLOCK_ENTITY_ATLAS_SIDE, MAX_BLOCK_ENTITY_CARRIER_BYTES, MAX_BLOCK_ENTITY_PLACEMENTS,
-    RuntimeBlockEntityAssets, block_entity_route, encode_block_entity_catalog,
+    BlockEntityPlacement, BlockEntityRouteKind, CRYSTAL_BEAM_TEXTURE, MAX_BLOCK_ENTITY_ATLAS_SIDE,
+    MAX_BLOCK_ENTITY_CARRIER_BYTES, MAX_BLOCK_ENTITY_PLACEMENTS, RuntimeBlockEntityAssets,
+    block_entity_route, encode_block_entity_catalog,
 };
 pub use block_names::{legacy_resource_pack_block_alias, vanilla_skull_type};
 pub use compiled::{
@@ -106,7 +125,8 @@ pub use compiled::{
     MATERIAL_FLAG_WATER_TINT, MATERIAL_FLAGS_MASK, MATERIAL_LEAF_AO_EXPONENT_MASK,
     MATERIAL_LEAF_AO_EXPONENT_MAX, MATERIAL_LEAF_AO_EXPONENT_SCALE,
     MATERIAL_LEAF_AO_EXPONENT_SHIFT, MATERIAL_LEAF_METADATA_MASK, MAX_CARRIER_TEXTURE_LAYERS,
-    MAX_MATERIALS, MAX_TEXTURE_LAYERS, Material, TEXTURE_LAYER_MASK, material_leaf_ao_exponent,
+    MAX_CARRIER_TEXTURE_PAGES, MAX_MATERIALS, MAX_TEXTURE_LAYERS, Material, TEXTURE_LAYER_MASK,
+    material_leaf_ao_exponent,
 };
 pub use effects::{
     EFFECT_DESCRIPTORS, EffectDescriptor, effect_descriptor, effect_descriptor_by_identifier,
@@ -164,10 +184,6 @@ pub use equipment::{
     encode_equipment_catalog_with_textures, encode_equipment_catalog_with_use_profiles,
 };
 pub use error::AssetError;
-pub use fire::{FIRE_ATTACHMENT_MASK_COUNT, FIRE_SUPPORTED_QUAD_COUNT, FIRE_TEMPLATE_COUNT};
-pub use fire::{fire_attachment_template_offset, fire_template_quad_count};
-pub use fog_layers::resolve_fog_layers;
-pub use fog_transition::FogTransition;
 pub use font::{
     CompiledFontCatalog, FONT_CARRIER_MAGIC, FONT_CARRIER_SCHEMA, FONT_FACE_BUNDLE_MAGIC,
     FONT_FACE_BUNDLE_SCHEMA, FONT_FALLBACK_ATLAS_SIDE, FONT_RASTER_EM_PIXELS,
@@ -204,7 +220,6 @@ pub use lang::{
     VANILLA_EN_US_LANG_SHA256, encode_lang_catalog, is_language_code,
 };
 pub use light_registry::{LightProperties, read_light_registry, read_light_registry_for_protocol};
-pub use material_keys::{MATERIAL_KEYS_SCHEMA, MAX_MATERIAL_KEYS_BYTES, MaterialKeys};
 pub use model::{
     ANIMATION_FLAG_BLEND, Animation, BLOCK_VISUAL_VARIANT_COVERED_GRASS,
     BLOCK_VISUAL_VARIANT_MATERIAL_MASK, BLOCK_VISUAL_VARIANT_NONSEASONAL_LEAF,
@@ -215,16 +230,16 @@ pub use model::{
     MAX_MODEL_QUADS, MAX_MODEL_TEMPLATE_QUADS, MAX_MODEL_TEMPLATES, MAX_TEXTURE_PAGES,
     MODEL_QUAD_FLAG_CULL_FACE_MASK, MODEL_QUAD_FLAG_FACE_MASK, MODEL_QUAD_FLAG_TWO_SIDED,
     MODEL_TEMPLATE_FLAG_BAMBOO, MODEL_TEMPLATE_FLAG_BUBBLE_COLUMN,
-    MODEL_TEMPLATE_FLAG_COMPOUND_NEXT, MODEL_TEMPLATE_FLAG_FENCE_NETHER,
+    MODEL_TEMPLATE_FLAG_COMPOUND_NEXT, MODEL_TEMPLATE_FLAG_DOOR, MODEL_TEMPLATE_FLAG_FENCE_NETHER,
     MODEL_TEMPLATE_FLAG_FENCE_WOOD, MODEL_TEMPLATE_FLAG_FIRE, MODEL_TEMPLATE_FLAG_GATE_AXIS_X,
     MODEL_TEMPLATE_FLAG_GATE_AXIS_Z, MODEL_TEMPLATE_FLAG_KELP, MODEL_TEMPLATE_FLAG_LILY_PAD,
     MODEL_TEMPLATE_FLAG_NETHER_PORTAL, MODEL_TEMPLATE_FLAG_PANE, MODEL_TEMPLATE_FLAG_POTTED_PLANT,
-    MODEL_TEMPLATE_FLAG_SNOW_LAYER, MODEL_TEMPLATE_FLAG_STAIR,
+    MODEL_TEMPLATE_FLAG_SNOW_LAYER, MODEL_TEMPLATE_FLAG_STAIR, MODEL_TEMPLATE_FLAG_TORCH,
     MODEL_TEMPLATE_FLAG_TRANSPARENT_CUBE, MODEL_TEMPLATE_FLAG_WALL, ModelQuad, ModelTemplate,
     NETHER_PORTAL_IDENTIFIER, NO_ANIMATION, NO_MODEL_TEMPLATE, SEASONAL_LEAF_DEEP_OFFSET,
     SEASONAL_LEAF_EXPOSED_OFFSET, SEASONAL_LEAF_MATERIAL_COUNT, SNOWED_GRASS_SIDE_TEXTURE,
-    TOP_SNOW_LAYER_COUNT, TexturePage, TextureRef, VisualKind, VisualSupport,
-    bubble_column_quad_count, model_template_parts,
+    TEXTURE_PAGE_MASK, TEXTURE_PAGE_SHIFT, TOP_SNOW_LAYER_COUNT, TexturePage, TextureRef,
+    VisualKind, VisualSupport, bubble_column_quad_count, model_template_parts,
 };
 pub use ogg::{decode_ogg, decode_sound};
 pub use particle::{
@@ -256,7 +271,7 @@ pub use registry::{
 };
 pub use runtime::{
     BlockOverlay, MaterialOverride, NetworkIdMode, ResolvedBlock, ResolvedFace, RuntimeAssets,
-    SequentialIdRemap, ServerDefinedBlock, server_defined_blocks,
+    SequentialIdRemap, ServerDefinedBlock, VanillaFallback, server_defined_blocks,
     server_defined_blocks_for_registry,
 };
 pub use server_lang::{MAX_SERVER_LANG_INPUT_BYTES, ServerLangOverlay};
@@ -269,12 +284,16 @@ pub use skin_geometry::{
 pub use skybox::{DEFAULT_NATIVE_SKYBOX_OFFSET, SKYBOX_FACE_COUNT};
 pub use skybox::{PackSkybox, SkyboxDimension, SkyboxFace};
 pub use sound_events::{FloatRange, RouteLookup, SoundEventTables, SoundRoute};
-pub use stair::StairDirection;
+pub use texture::{
+    MAX_TILE_SIZE, MIP_COUNT, TERRAIN_QUAD_SHIFT_MASK, TILE_SIZE, TextureArray, TextureMip,
+    VANILLA_TERRAIN_MIP_COUNT, build_legacy_terrain_mip_chain, build_texture_mip_chain,
+    downsample_linear_premultiplied, legacy_terrain_mip, rebuild_legacy_terrain_mips,
+};
 pub use ui::{
-    ITEM_GLINT_TEXTURE_PATH, MAX_UI_ATLAS_PAGES, MAX_UI_ATLAS_SIDE, MAX_UI_CARRIER_BYTES,
-    MAX_UI_FILE_BYTES, MAX_UI_FILES, MAX_UI_KEY_BYTES, MAX_UI_SIDECARS, MAX_UI_TEXTURES,
-    RuntimeUiAssets, SPLASH_RESOURCE_PATH, UI_CARRIER_MAGIC, UI_CARRIER_VERSION, UI_CREDITS_FILES,
-    UiAtlasPage, UiFile, UiNineSlice, UiSidecar, UiSidecarEntry, UiTexturePlacement, UiTextureUv,
-    encode_ui_catalog,
+    MAX_UI_ATLAS_PAGES, MAX_UI_ATLAS_SIDE, MAX_UI_CARRIER_BYTES, MAX_UI_FILE_BYTES, MAX_UI_FILES,
+    MAX_UI_KEY_BYTES, MAX_UI_SIDECARS, MAX_UI_TEXTURES, RuntimeUiAssets, SPLASH_RESOURCE_PATH,
+    UI_CARRIER_MAGIC, UI_CARRIER_VERSION, UI_CREDITS_FILES, UiAtlasPage, UiFile, UiNineSlice,
+    UiSidecar, UiSidecarEntry, UiTexturePlacement, UiTextureUv, encode_ui_catalog,
 };
 pub use vanilla_refs::{MAX_VANILLA_REFS_BYTES, VanillaEntityRefs, VanillaGeometryFile};
+pub use {fog_layers::resolve_fog_layers, fog_transition::FogTransition};

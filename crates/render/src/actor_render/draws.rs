@@ -107,7 +107,7 @@ pub(crate) fn draw_depth_actors<'w>(
     let Some(lightmap) = world.get_resource::<crate::lighting::LightmapGpu>() else {
         return;
     };
-    let Some(motion) = world.get_resource::<super::motion::ActorMotionGpu>() else {
+    let Some(motion) = world.get_resource::<super::enhanced_motion::ActorMotionGpu>() else {
         return;
     };
     let Some(motion_group) = motion.bind_group.as_ref() else {
@@ -117,7 +117,7 @@ pub(crate) fn draw_depth_actors<'w>(
     pass.set_bind_group(1, &lightmap.bind_group, &[]);
     pass.set_bind_group(3, motion_group, &[]);
     draw_prepared_actors(gpu, view_offset, pass, false, |span| {
-        super::motion::record_coverage(world, span.first, span.count);
+        super::enhanced_motion::record_coverage(world, span.first, span.count);
     });
 }
 

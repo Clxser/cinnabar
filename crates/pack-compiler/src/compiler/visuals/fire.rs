@@ -2,15 +2,14 @@ use super::context::{
     ModelStorage, RuleInputs, diagnostic_visual, push_model_template, set_model_visual,
 };
 use super::dispatcher::CompileRuleResult;
+use assets::facts::{BlockRenderKind as R, block_render_fact};
 use {super::super::*, assets::BlockFace};
 
 const FLAME_HEIGHT: f32 = 1.4;
 
 pub(in crate::compiler) fn is_record(record: &RegistryRecord) -> bool {
-    matches!(
-        record.name.as_ref(),
-        "minecraft:fire" | "minecraft:soul_fire"
-    ) && record.contributor_role == ContributorRole::Primary
+    block_render_fact(&record.name).kind == R::Fire
+        && record.contributor_role == ContributorRole::Primary
         && !record.flags.contains(BlockFlags::AIR)
 }
 
@@ -41,9 +40,9 @@ pub(in crate::compiler) fn compile_rule(
             )?;
             for alternate in [false, true] {
                 for flip_u in [false, true] {
-                    for mask in 0..assets::FIRE_ATTACHMENT_MASK_COUNT as u8 {
+                    for mask in 0..assets::fire::FIRE_ATTACHMENT_MASK_COUNT as u8 {
                         let offset =
-                            assets::fire_attachment_template_offset(mask, alternate, flip_u);
+                            assets::fire::fire_attachment_template_offset(mask, alternate, flip_u);
                         let index = push_model_template(
                             attached_quads(key, mask, alternate, flip_u),
                             assets::MODEL_TEMPLATE_FLAG_FIRE,

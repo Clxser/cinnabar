@@ -346,3 +346,167 @@ fn review_render_uniform_sentinel_tint_keeps_a_valid_blending_record() {
             .all(|sample| sample.tint_index == u32::MAX)
     );
 }
+
+/// A one-bit storage whose cells alternate between `a` and `b` in coarse slabs along X and Z.
+fn striped_storage(a: i32, b: i32) -> Arc<world::BiomeStorage> {
+    let mut payload = vec![3]; // Network palette, one bit per index.
+    let mut packed = vec![0_u32; 128];
+    for linear in 0..4096_usize {
+        let (x, z) = (linear >> 8, (linear >> 4) & 15);
+        if (x / 5 + z / 7) % 2 == 1 {
+            packed[linear / 32] |= 1 << (linear % 32);
+        }
+    }
+    for word in &packed {
+        payload.extend_from_slice(&word.to_le_bytes());
+    }
+    payload.extend(zig_zag_i32(2));
+    payload.extend(zig_zag_i32(a));
+    payload.extend(zig_zag_i32(b));
+    DecodedBiomeColumn::decode(0, 1, &payload, &BIOMES)
+        .storage(0)
+        .unwrap()
+}
+
+/// Every lattice point holds the four most frequent tints of its 27 samples, in first-seen order
+/// among equal counts, exactly as counted from `tint_index_at`.
+#[test]
+fn lattice_points_count_the_tints_their_samples_read() {
+    use meshing::biome_lattice::{
+        BIOME_LATTICE_STEP, LATTICE_BIOME_LIMIT, LATTICE_SIDE, LATTICE_STENCIL_SAMPLES,
+    };
+    let halo: [Option<Arc<world::BiomeStorage>>; BIOME_NEIGHBOUR_SLOT_COUNT] =
+        std::array::from_fn(|slot| match slot % 5 {
+            0 => None,
+            1 => Some(striped_storage(3, 11)),
+            2 => Some(uniform_storage(5)),
+            3 => Some(striped_storage(11, 7)),
+            _ => Some(uniform_storage(3)),
+        });
+    let record = PackedBiomeRecord::from_neighbourhood(&halo, |id| id + 100);
+    assert_eq!(record.uniform_tint_index(), None);
+    for x in 0..LATTICE_SIDE {
+        for y in 0..LATTICE_SIDE {
+            for z in 0..LATTICE_SIDE {
+                let mut counts: Vec<(u32, u32)> = Vec::new();
+                for dz in 0..3 {
+                    for dy in 0..3 {
+                        for dx in 0..3 {
+                            let sample = [x + dx, y + dy, z + dz]
+                                .map(|v| (v as i32 - 2) * BIOME_LATTICE_STEP);
+                            let tint = record.tint_index_at(sample).unwrap_or(0);
+                            match counts.iter_mut().find(|(seen, _)| *seen == tint) {
+                                Some((_, count)) => *count += 1,
+                                None => counts.push((tint, 1)),
+                            }
+                        }
+                    }
+                }
+                counts.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
+                let position = [x, y, z].map(|v| (v as i32 - 1) * BIOME_LATTICE_STEP);
+                let samples = record.lattice_samples(position);
+                assert_eq!(
+                    samples.iter().filter(|sample| sample.weight > 0.0).count(),
+                    counts.len().min(LATTICE_BIOME_LIMIT)
+                );
+                for (sample, &(tint, count)) in
+                    samples.iter().zip(counts.iter().take(LATTICE_BIOME_LIMIT))
+                {
+                    assert_eq!(sample.tint_index, tint, "point {position:?}");
+                    assert_eq!(
+                        sample.weight.to_bits(),
+                        (count as f32 / LATTICE_STENCIL_SAMPLES as f32).to_bits()
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn compact_lattice_preserves_all_stencil_fraction_bits_and_full_width_indices() {
+    use meshing::biome_lattice::{LATTICE_POINT_WORDS, WIDE_LATTICE_POINT_WORDS};
+    let halo = std::array::from_fn(|slot| Some(uniform_storage(slot as i32 + 1)));
+    for (offset, words) in [(0, LATTICE_POINT_WORDS), (65_536, WIDE_LATTICE_POINT_WORDS)] {
+        let record = PackedBiomeRecord::from_neighbourhood(&halo, |id| id + offset);
+        assert_eq!(record.lattice_point_words(), words);
+        for x in 0..16 {
+            for y in 0..16 {
+                for z in 0..16 {
+                    let points = meshing::biome_lattice::nearest_lattice_points([x, y, z]);
+                    let samples = record.blend_samples([x, y, z]).unwrap();
+                    for (point, (position, weight)) in points.into_iter().enumerate() {
+                        let mut counts: Vec<(u32, u32)> = Vec::new();
+                        for dz in -1..=1 {
+                            for dy in -1..=1 {
+                                for dx in -1..=1 {
+                                    let tint = record
+                                        .tint_index_at([
+                                            position[0]
+                                                + dx * meshing::biome_lattice::BIOME_LATTICE_STEP,
+                                            position[1]
+                                                + dy * meshing::biome_lattice::BIOME_LATTICE_STEP,
+                                            position[2]
+                                                + dz * meshing::biome_lattice::BIOME_LATTICE_STEP,
+                                        ])
+                                        .unwrap();
+                                    if let Some((_, count)) =
+                                        counts.iter_mut().find(|(value, _)| *value == tint)
+                                    {
+                                        *count += 1;
+                                    } else {
+                                        counts.push((tint, 1));
+                                    }
+                                }
+                            }
+                        }
+                        counts.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
+                        for (i, sample) in samples[point * 4..point * 4 + 4].iter().enumerate() {
+                            let expected = counts.get(i).map_or((0, 0.0), |&(tint, count)| {
+                                (
+                                    tint,
+                                    weight
+                                        * (count as f32
+                                            / meshing::biome_lattice::LATTICE_STENCIL_SAMPLES
+                                                as f32),
+                                )
+                            });
+                            assert_eq!(sample.tint_index, expected.0);
+                            assert_eq!(
+                                sample.weight.to_bits(),
+                                expected.1.to_bits(),
+                                "query {:?} point {position:?}",
+                                [x, y, z]
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let fractions = meshing::biome_lattice::lattice_fraction_words();
+    for (count, bits) in fractions.into_iter().enumerate() {
+        assert_eq!(
+            bits,
+            (count as f32 / meshing::biome_lattice::LATTICE_STENCIL_SAMPLES as f32).to_bits()
+        );
+    }
+    // The largest compact index must fit both halves of each tint word.
+    let edge = PackedBiomeRecord::from_neighbourhood(&halo, |id| u32::from(u16::MAX) + 1 - id);
+    assert_eq!(edge.lattice_point_words(), LATTICE_POINT_WORDS);
+    assert_eq!(edge.tint_index_at([-1, 8, -1]), Some(u32::from(u16::MAX)));
+    assert!(
+        edge.blend_samples([0, 8, 0])
+            .unwrap()
+            .iter()
+            .any(|sample| sample.tint_index == u32::from(u16::MAX) && sample.weight > 0.0)
+    );
+    for sample in edge
+        .blend_samples([15, 15, 15])
+        .unwrap()
+        .into_iter()
+        .filter(|sample| sample.weight > 0.0)
+    {
+        assert!(sample.tint_index >= u32::from(u16::MAX) - BIOME_NEIGHBOUR_SLOT_COUNT as u32);
+    }
+}

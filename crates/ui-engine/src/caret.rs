@@ -48,6 +48,8 @@ pub struct TextSpot<F> {
     pub left: f32,
     /// The text's scale over the frame metrics, and its named font (`None`: the default).
     pub factor: f32,
+    /// The painted bitmap-unit styling scale; zero follows the glyph scale.
+    pub effect_scale_1024: u32,
     pub font: Option<String>,
     pub letter_spacing_64: i32,
     pub metrics: TextMetrics,
@@ -75,6 +77,7 @@ impl<F> TextSpot<F> {
             request.scale = scale;
         }
         request.wrap.letter_spacing_64 = self.letter_spacing_64;
+        request.wrap.effect_scale_1024 = self.effect_scale_1024;
         layouts
             .layout(request)
             .map_or(0.0, |layout| layout.size_64()[0] as f32 / 64.0)

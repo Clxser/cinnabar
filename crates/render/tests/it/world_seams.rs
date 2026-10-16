@@ -231,7 +231,7 @@ impl Shaders {
                 shader_source::standalone(source, &[]),
                 entries.replace("INDICES", &indices)
             )
-            .replace("@group(1) @binding(0)", "@group(0) @binding(20)")
+            .replace("@group(1) @binding(0)", "@group(0) @binding(27)")
         };
         Self {
             cube: prepare(include_str!("../../src/chunk.wesl"), CUBE_ENTRIES),
@@ -296,7 +296,7 @@ impl Fixture {
         streams: &'a Streams,
         uniform: &'a wgpu::Buffer,
         geometry: &'a wgpu::Buffer,
-    ) -> [(u32, wgpu::BindingResource<'a>); 20] {
+    ) -> [(u32, wgpu::BindingResource<'a>); 23] {
         [
             (0, uniform.as_entire_binding()),
             (1, streams.cube_quads.as_entire_binding()),
@@ -326,10 +326,22 @@ impl Fixture {
                 wgpu::BindingResource::TextureView(&self.atlas),
             ),
             (
+                material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[2],
+                wgpu::BindingResource::TextureView(&self.atlas),
+            ),
+            (
+                material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[3],
+                wgpu::BindingResource::TextureView(&self.atlas),
+            ),
+            (
+                material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[4],
+                wgpu::BindingResource::TextureView(&self.atlas),
+            ),
+            (
                 material_shader::NATIVE_LEAF_SAMPLER_BINDING,
                 wgpu::BindingResource::Sampler(&self.sampler),
             ),
-            (20, self.lightmap.as_entire_binding()),
+            (27, self.lightmap.as_entire_binding()),
         ]
     }
 

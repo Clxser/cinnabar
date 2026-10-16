@@ -103,12 +103,14 @@ impl WorldStream {
             predictions: prediction::DeferredPredictions::default(),
             decode_tx,
             decode_rx,
+            biome_records: None,
             mesh_tx,
             mesh_rx,
             lighting: lighting::Lighting::new(),
             fatal_error: None,
             revisions: RevisionTracker::default(),
             applied_mesh_generations: HashMap::new(),
+            withdrawn_meshes: HashSet::new(),
             actor_block_syncs: actor_block_sync::ActorBlockSyncs::default(),
             mesh_dependency_masks: HashMap::new(),
             mesh_jobs: Default::default(),
@@ -117,6 +119,10 @@ impl WorldStream {
             dimension_transfer_priority: None,
             admitted_mesh_jobs: Arc::new(AtomicUsize::new(0)),
             mesh_cancellations: HashMap::new(),
+            air_removals: BTreeMap::new(),
+            air_removal_cursor: None,
+            air_requeued: BTreeMap::new(),
+            air_requeue_cursor: None,
             urgent_mesh_in_flight: HashSet::new(),
             staged_mesh_completions: VecDeque::new(),
             staged_mesh_bytes: 0,
@@ -126,7 +132,7 @@ impl WorldStream {
             connectivity: crate::culling::ConnectivityGrid::default(),
             connectivity_generation: 0,
             requests: Default::default(),
-            unsent_column_deadlines: HashMap::new(),
+            unsent_column_deadlines: BTreeMap::new(),
             arrival_cohort: None,
             poll_deadline: None,
             #[cfg(test)]
@@ -139,6 +145,10 @@ impl WorldStream {
             between_frames_service: false,
             service_window: Duration::ZERO,
             retention_due: false,
+            retention_cursor: None,
+            maintenance_items: 0,
+            service_item_max: Duration::ZERO,
+            maintenance_guarantee: true,
             chunk_data_offloaded: false,
             commit_steps: 0,
             last_camera_position: [0.0; 3],
@@ -150,9 +160,13 @@ impl WorldStream {
                 ..Default::default()
             },
             chunk_radius: None,
+            requested_radius: None,
             last_retention_center: None,
             last_retention_radius: None,
             local_player_chunk: None,
+            far_terrain: far_summaries::FarTerrainFeed::default(),
+            full_detail: full_detail::FullDetail::default(),
+            near_drawn: near_drawn::NearDrawn::default(),
             stats: WorldStreamStats::default(),
         }
     }
@@ -270,7 +284,13 @@ impl WorldStream {
 
     /// Prepares deferred terrain in wire order while decode and request capacity allow.
     pub(super) fn promote_deferred_ingress(&mut self) {
+        let mut promoted = 0;
         while let Some((sequence, event, _)) = self.deferred_ingress.front() {
+            if self.service_yield_requested()
+                || (self.polling && promoted != 0 && self.poll_budget_exhausted())
+            {
+                return;
+            }
             // Light events reserved their slot when deferred. Heavy terrain waits only on
             // earlier decodes and sent requests; at the frontier it may exceed the decode bound.
             let ready = !self.order.is_deferred_heavy(*sequence)
@@ -285,7 +305,11 @@ impl WorldStream {
                 .pop_front()
                 .expect("the front was inspected");
             self.order.promote_deferred(sequence);
-            if let Err(error) = self.prepare_admitted(sequence, event, payload) {
+            let result = self.service_item("ingress_preparation", |stream| {
+                stream.prepare_admitted(sequence, event, payload)
+            });
+            promoted += 1;
+            if let Err(error) = result {
                 self.record_normalization_error(
                     NormalizationErrorReason::OrderedCompletionRejection,
                 );
@@ -347,8 +371,14 @@ impl WorldStream {
                     return Ok(());
                 };
                 let ids = self.decode_ids(event.dimension);
+                let previous = self
+                    .authority
+                    .terrain()
+                    .chunk(ChunkKey::new(event.dimension, event.x, event.z))
+                    .map(world::Chunk::shared_sub_chunks);
                 self.enqueue_decode_job(DecodeJob::InlineLevelChunk {
                     sequence,
+                    previous,
                     payload: level_chunk_payload
                         .take()
                         .unwrap_or_else(|| Bytes::from(std::mem::take(&mut event.payload))),

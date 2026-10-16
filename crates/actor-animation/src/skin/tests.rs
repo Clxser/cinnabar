@@ -169,3 +169,118 @@ fn model_installed_between_ticks_never_leaves_a_hud_pose_on_the_old_bones() {
     assert_eq!(hud.len(), rig.bone_names.len());
     assert_eq!(hud, rig.current);
 }
+
+#[test]
+fn legacy_attack_targets_preserve_custom_skin_and_persona_geometry() {
+    let assets = crate::test_support::counting_random_assets();
+    let mut store = ActorAnimationStore::with_assets(Arc::clone(&assets));
+    let actor = super::super::tests::actor_with_metadata(HashMap::new());
+    store.insert(1, 0, &actor);
+    let source = Arc::new(SkinGeometrySource {
+        resource_patch: r#"{"geometry":{"default":"geometry.skin_cache","animated_face":"geometry.layer"}}"#.into(),
+        geometry_data: r#"{"format_version":"1.12.0","minecraft:geometry":[
+            {"description":{"identifier":"geometry.skin_cache","texture_width":64,"texture_height":64},"bones":[
+                {"name":"body","pivot":[0,10,0],"rotation":[0,30,0]},
+                {"name":"head","parent":"body","pivot":[0,30,0]},
+                {"name":"rightarm","parent":"body","pivot":[-7,26,2],"rotation":[10,20,30]}]},
+            {"description":{"identifier":"geometry.layer","texture_width":16,"texture_height":16},"bones":[
+                {"name":"head","parent":"body","pivot":[0,32,2]},
+                {"name":"rightarm","parent":"body","pivot":[-9,25,3],"rotation":[-15,30,10]},
+                {"name":"body","pivot":[2,8,0],"rotation":[0,-20,0]}]}]}"#.into(),
+        animations: Arc::from([render_api::SkinAnimation {
+            kind: render_api::SkinAnimationKind::Face, width: 16, height: 16,
+            rgba8: Arc::from([255; 16 * 16 * 4]), frames: 1, blinking: false,
+        }]),
+    });
+    warm_source(&mut store, &source);
+    let lifetime = store.runtime_to_lifetime[&actor.runtime_id];
+    let state = store.rigs.get_mut(&lifetime).unwrap();
+    state.bone_names = ["body", "head", "rightarm"].map(Into::into).into();
+    state.bones = vec![
+        RuntimeBone {
+            pivot: [0.0, 24.0, 0.0],
+            ..Default::default()
+        },
+        RuntimeBone {
+            parent: Some(0),
+            pivot: [0.0, 24.0, 0.0],
+            ..Default::default()
+        },
+        RuntimeBone {
+            parent: Some(0),
+            pivot: [5.0, 22.0, 0.0],
+            ..Default::default()
+        },
+    ];
+    assert!(!sync_skin(state, Some(&source), &store.skin_preparation));
+    let mut local = vec![LocalDelta::default(); state.bones.len()];
+    crate::legacy_swing::apply(&state.bone_names, &mut local, 0.5, 0.0, 1.0).unwrap();
+    let body = state.compose(&local).unwrap();
+    let prepared = &state.skin_skeleton().unwrap().prepared;
+    let baseline = compose_pose(&prepared.bones, &[]).unwrap();
+    assert_custom_attack(&body, &baseline, &prepared.names);
+    let layout = VariableLayout::new(&assets);
+    let input = ActorTickInput::default();
+    let context = ActorTickContext::default();
+    let evaluator = Evaluator {
+        assets: &assets,
+        pack: false,
+        layout: &layout,
+        program: None,
+        actor: &actor,
+        input: &input,
+        context: &context,
+        anim_tick: 0,
+        anim_time: None,
+        swell_amount: None,
+        presentation_alpha: None,
+        query_history: None,
+        life_tick: 0,
+        finished: (false, false),
+        state_time: 0.0,
+        bones: &state.bones,
+        bone_names: &state.bone_names,
+    };
+    let layers = skin_layers::evaluate(state, &evaluator, &layout.fresh(1), (&local, None), None);
+    assert_eq!(layers.len(), 1);
+    let layer = &prepared.layers[0];
+    let baseline = compose_pose(&layer.bones, &[]).unwrap();
+    assert_custom_attack(&layers[0].current, &baseline, &layer.names);
+    assert_eq!(layers[0].previous, layers[0].current);
+}
+
+/// Checks attack deltas relative to each destination's own pivots and authored orientation.
+fn assert_custom_attack(pose: &[BoneTransform], baseline: &[BoneTransform], names: &[Box<str>]) {
+    let index = |name: &str| {
+        names
+            .iter()
+            .position(|candidate| candidate.as_ref() == name)
+            .unwrap()
+    };
+    let head = index("head");
+    assert_eq!(pose[head], baseline[head]);
+    let body = index("body");
+    assert_eq!(
+        pose[body].translation_scale,
+        baseline[body].translation_scale
+    );
+    assert_ne!(pose[body].rotation, baseline[body].rotation);
+    let arm = index("rightarm");
+    let shift = [-0.092644215, 0.0, -0.95757717];
+    for ((actual, baseline), shift) in pose[arm].translation_scale[..3]
+        .iter()
+        .zip(&baseline[arm].translation_scale[..3])
+        .zip(shift)
+    {
+        assert!((actual - baseline - shift).abs() < 3e-6);
+    }
+    assert_ne!(pose[arm].rotation, baseline[arm].rotation);
+    assert_ne!(
+        pose[arm].rotation,
+        crate::pose::quat_from_euler([
+            0.7592212_f32.to_degrees(),
+            0.57832694_f32.to_degrees(),
+            0.0
+        ])
+    );
+}

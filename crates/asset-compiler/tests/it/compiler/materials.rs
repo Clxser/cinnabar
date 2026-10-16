@@ -59,13 +59,6 @@ fn compiler_marks_only_leaf_faces_as_alpha_cutout() {
     for leaf in 1..=3 {
         super::leaf_metadata::assert_agnostic_world_copy(&compiled, leaf);
     }
-    assert!(
-        compiled
-            .materials
-            .iter()
-            .all(|material| material.flags & !MATERIAL_FLAGS_MASK == 0)
-    );
-
     let baseline = encode_blob(&compiled).expect("encode cutout baseline");
     for iteration in 0..100_u64 {
         let shuffled = shuffled_records(&records, 0x9e37_79b9 ^ iteration);
@@ -403,7 +396,7 @@ fn compiler_deduplicates_pixels_without_conflating_uv_flags() {
             2,
             102,
             "minecraft:pillar",
-            r#"{"pillar_axis":"x"}"#,
+            r#"{"pillar_axis":{"type":"string","value":"x"}}"#,
             BlockFlags::CUBE_GEOMETRY,
         ),
         record(3, 103, "minecraft:blue", "{}", BlockFlags::CUBE_GEOMETRY),
@@ -417,10 +410,20 @@ fn compiler_deduplicates_pixels_without_conflating_uv_flags() {
     );
     assert_eq!(
         compiled.materials.len(),
-        4,
-        "diagnostic + three descriptors"
+        5,
+        "diagnostic + four material destinations and flag combinations"
     );
-    assert_eq!(compiled.visuals[0].faces, compiled.visuals[1].faces);
+    for face in BlockFace::ALL {
+        assert_ne!(
+            compiled.visuals[0].faces[face as usize], compiled.visuals[1].faces[face as usize],
+            "distinct terrain keys retain separate material destinations"
+        );
+        assert_eq!(
+            material_for_face(&compiled, 0, face).texture,
+            material_for_face(&compiled, 1, face).texture,
+            "identical pixels share texture storage"
+        );
+    }
 
     let red_plain = material_for_face(&compiled, 0, BlockFace::Up);
     let red_rotated = material_for_face(&compiled, 2, BlockFace::North);

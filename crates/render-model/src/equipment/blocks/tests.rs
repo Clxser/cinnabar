@@ -1,5 +1,5 @@
 use super::*;
-use assets::{ContributorRole, NO_MODEL_TEMPLATE, TextureRef};
+use assets::{ContributorRole, NO_MODEL_TEMPLATE, TextureMip, TextureRef};
 
 fn overlay(flags: BlockFlags, material_flags: u32, size: u32) -> BlockOverlay {
     let mut mips = Vec::new();
@@ -39,11 +39,58 @@ fn overlay(flags: BlockFlags, material_flags: u32, size: u32) -> BlockOverlay {
                 ..Material::unvaried()
             },
         ],
-        texture: Some(TextureArray {
+        textures: vec![TextureArray {
             layers: 2,
             mips: mips.into(),
-        }),
+        }],
         ..Default::default()
+    }
+}
+
+#[test]
+fn carried_face_sheets_sample_every_overlay_shard() {
+    let mut source = overlay(BlockFlags::CUBE_GEOMETRY, 0, 16);
+    for page in 2..assets::MAX_TEXTURE_PAGES as u32 {
+        let color = [40, page as u8, 120, 128];
+        let mut shard = overlay(BlockFlags::CUBE_GEOMETRY, 0, 32)
+            .textures
+            .into_iter()
+            .next()
+            .unwrap();
+        for mip in &mut shard.mips {
+            for pixel in mip.rgba8.as_chunks_mut::<4>().0 {
+                pixel.copy_from_slice(&color);
+            }
+        }
+        source.textures.push(shard);
+        source.materials[1].texture = TextureRef::new(page, 1).unwrap();
+        let faces = overlay_face_sheet(&source, [1; 6])
+            .expect("a carried face may reference any available overlay shard");
+        let visual = overlay_sheet(&source, 0).unwrap();
+        assert_eq!(faces.rgba8, visual.rgba8);
+        assert_eq!([faces.width, faces.height], assets::BLOCK_ITEM_SHEET_SIZE);
+        assert!(
+            faces
+                .rgba8
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|pixel| *pixel == color)
+        );
+    }
+}
+
+#[test]
+fn carried_face_sheets_reject_diagnostic_and_unavailable_overlay_references() {
+    let mut source = overlay(BlockFlags::CUBE_GEOMETRY, 0, 16);
+    assert!(overlay_face_sheet(&source, [DIAGNOSTIC_MATERIAL; 6]).is_none());
+    for reference in [
+        TextureRef::new(0, 1).unwrap(),
+        TextureRef::new(2, 1).unwrap(),
+        TextureRef::new(1, source.textures[0].layers).unwrap(),
+    ] {
+        source.materials[1].texture = reference;
+        assert!(overlay_face_sheet(&source, [1; 6]).is_none());
     }
 }
 
@@ -92,7 +139,7 @@ fn world_isotropy_preserves_carried_cube_face_pixels() {
             flags,
             BLOCK_ITEM_FACE_SIDE.into(),
         );
-        source.texture.as_mut().unwrap().mips[0].rgba8[TILE * TILE * 4] = 91;
+        source.textures.first_mut().unwrap().mips[0].rgba8[TILE * TILE * 4] = 91;
         let expected = overlay_sheet(&source, 0).unwrap();
         source.materials[1].flags |= assets::MATERIAL_FLAG_ISOTROPIC;
         let actual = overlay_sheet(&source, 0)
@@ -191,7 +238,7 @@ fn pinned_portal_frame_keeps_its_short_block_mesh_and_distinct_faces() {
     };
     let world = RuntimeAssets::decode(&std::fs::read(world_path).unwrap()).unwrap();
     let entities = RuntimeEntityAssets::from_compiled(
-        pack_compiler::compile_entity_assets(
+        pack_entity_compiler::compile_entity_assets(
             std::path::Path::new(&pack_root),
             assets::VANILLA_SOURCE_MANIFEST.as_bytes(),
         )
@@ -248,7 +295,7 @@ fn pinned_portal_frame_keeps_its_short_block_mesh_and_distinct_faces() {
 fn overlay_sheet_preserves_source_resolution_when_physical_page_is_larger() {
     let mut source = overlay(BlockFlags::CUBE_GEOMETRY, 0, 64);
     source.texture_source_sizes = vec![[16; 2]; 2];
-    let texture = source.texture.as_mut().unwrap();
+    let texture = source.textures.first_mut().unwrap();
     for mip in &mut texture.mips {
         for layer in 0..2usize {
             let side = mip.size as usize;
@@ -448,5 +495,208 @@ fn barrel_equipment_prefers_matching_authored_carried_faces() {
         sheets.prefer_carried_faces(&world, &icons);
         assert_eq!(sheets.models.contains_key(&block_visual.0), !matches);
         assert_eq!(sheets.models.len(), if matches { 11 } else { 12 });
+    }
+}
+
+#[test]
+fn weighted_replacement_updates_held_pixels_and_keeps_the_variation_range() {
+    let (mut compiled, records) = crate::viewmodel::cube::tests::barrels();
+    let visual = records
+        .iter()
+        .find(|record| record.name.as_ref() == "minecraft:barrel")
+        .unwrap()
+        .sequential_id as usize;
+    let representative = compiled.materials[compiled.visuals[visual].faces[0] as usize];
+    let mut materials = compiled.materials.into_vec();
+    let selector = materials.len() as u32;
+    materials.push(Material {
+        variation_start: selector + 1,
+        variation_count: 2,
+        ..representative
+    });
+    materials.extend([0.25_f32, 0.75_f32].map(|weight| Material {
+        variation_weight: weight.to_bits(),
+        ..representative
+    }));
+    compiled.materials = materials.into();
+    let world = RuntimeAssets::decode(&assets::encode_blob(&compiled).unwrap()).unwrap();
+    let original = compose_sheet(&world, &[selector; 6]).unwrap();
+    let replacement = BlockOverlay {
+        textures: overlay(BlockFlags::CUBE_GEOMETRY, 0, 16).textures,
+        material_overrides: (selector..selector + 3)
+            .map(|material| assets::MaterialOverride {
+                material,
+                texture: TextureRef::new(1, 1).unwrap(),
+                animation: NO_ANIMATION,
+                variation: None,
+            })
+            .collect(),
+        ..BlockOverlay::default()
+    };
+    let session = world
+        .with_block_overlay(world.visual_count() as u32, &replacement)
+        .unwrap();
+    let held = compose_sheet(&session, &[selector; 6]).unwrap();
+    assert!(
+        held.rgba8
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| *pixel == [40, 80, 120, 128])
+    );
+    assert_ne!(held.rgba8, original.rgba8);
+    let group = session.material(selector);
+    assert_eq!(group.variation_start, selector + 1);
+    assert_eq!(group.variation_count, 2);
+    for (leaf, weight) in [0.25_f32, 0.75_f32].into_iter().enumerate() {
+        let material = session.material(selector + 1 + leaf as u32);
+        assert_eq!(material.texture, group.texture);
+        assert_eq!(material.variation_weight, weight.to_bits());
+    }
+}
+
+/// Pinned world, entity and icon carriers, or `None` with a named missing-fixture message.
+fn pinned_carriers() -> Option<(
+    RuntimeAssets,
+    RuntimeEntityAssets,
+    assets::RuntimeIconCatalog,
+)> {
+    let (Ok(world), Ok(entities), Ok(icons)) = (
+        std::env::var("PINNED_WORLD_CARRIER"),
+        std::env::var("PINNED_ENTITY_CARRIER"),
+        std::env::var("PINNED_ICON_CARRIER"),
+    ) else {
+        eprintln!(
+            "missing fixture: PINNED_WORLD_CARRIER, PINNED_ENTITY_CARRIER and PINNED_ICON_CARRIER"
+        );
+        return None;
+    };
+    Some((
+        RuntimeAssets::decode(&std::fs::read(world).unwrap()).unwrap(),
+        RuntimeEntityAssets::decode(&std::fs::read(entities).unwrap()).unwrap(),
+        assets::RuntimeIconCatalog::decode(&std::fs::read(icons).unwrap()).unwrap(),
+    ))
+}
+
+#[test]
+fn pinned_non_cube_items_hold_their_inventory_model_and_flat_items_stay_sprites() {
+    let Some((world, entities, icons)) = pinned_carriers() else {
+        return;
+    };
+    let held = collect_held(&world, &entities, &icons);
+    let slots = collect(&world, &entities);
+    let visual = |name: &str| {
+        let definition = entities
+            .item_visuals()
+            .iter()
+            .find(|entry| entry.key.identifier.as_ref() == name)
+            .unwrap();
+        let ItemVisualDefinitionRoute::BlockItem { block_visual } = definition.route else {
+            panic!("{name} has no block route");
+        };
+        block_visual.0
+    };
+    for name in [
+        "minecraft:oak_stairs",
+        "minecraft:oak_slab",
+        "minecraft:oak_fence",
+    ] {
+        let vertices = held
+            .models
+            .get(&visual(name))
+            .unwrap_or_else(|| panic!("{name} holds as its model"));
+        assert!(!vertices.is_empty());
+        assert!(
+            vertices.iter().all(|vertex| vertex
+                .position
+                .iter()
+                .all(|axis| (-0.5..=0.5).contains(axis))),
+            "{name} stays within its block"
+        );
+        assert!(
+            !slots.models.contains_key(&visual(name)),
+            "{name}: slot cubes never take template sheets"
+        );
+    }
+    for name in ["minecraft:torch", "minecraft:poppy"] {
+        assert!(
+            !held.models.contains_key(&visual(name)),
+            "{name} is drawn flat in the inventory and stays a sprite in hand"
+        );
+    }
+}
+
+#[test]
+fn held_non_cube_admission_uses_the_inventory_state_and_preserves_its_height() {
+    let (mut compiled, records) = crate::viewmodel::cube::tests::barrels();
+    let visual = records
+        .iter()
+        .find(|record| record.name.as_ref() == "minecraft:barrel")
+        .unwrap()
+        .sequential_id;
+    let template = compiled.visuals[visual as usize].model_template as usize;
+    compiled.visuals[visual as usize].flags = BlockFlags::empty();
+    compiled.model_templates[template].flags = 0;
+    let span = compiled.model_templates[template];
+    for quad in &mut compiled.model_quads
+        [span.quad_start as usize..(span.quad_start + span.quad_count) as usize]
+    {
+        for position in &mut quad.positions {
+            position[1] /= 2;
+        }
+    }
+    let world = RuntimeAssets::decode(&assets::encode_blob(&compiled).unwrap()).unwrap();
+    let entities = barrel_entities(&world, &records);
+    let sprite = IconSprite {
+        width: 16,
+        height: 16,
+        rgba8: [40, 80, 120, 255].repeat(16 * 16).into(),
+    };
+    let entry = assets::IconEntry {
+        identifier: "minecraft:barrel".into(),
+        metadata: 0,
+        sprite: 0,
+    };
+    for has_model in [false, true] {
+        let bindings = has_model
+            .then_some(assets::IconBlockModel {
+                sprite: 0,
+                visual: assets::BlockVisualId(visual),
+            })
+            .into_iter()
+            .collect::<Vec<_>>();
+        let icons = assets::RuntimeIconCatalog::decode(
+            &assets::encode_icon_catalog_with_blocks(
+                world.provenance().source_manifest_sha256,
+                std::slice::from_ref(&sprite),
+                std::slice::from_ref(&entry),
+                &[],
+                &bindings,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let held = collect_held(&world, &entities, &icons);
+        assert_eq!(held.models.contains_key(&visual), has_model);
+        if let Some(vertices) = held.models.get(&visual) {
+            let (min, max) = vertices
+                .iter()
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), vertex| {
+                    (min.min(vertex.position[1]), max.max(vertex.position[1]))
+                });
+            assert_eq!([min, max], [-0.5, 0.0]);
+            assert!(vertices.iter().all(|vertex| {
+                vertex
+                    .uv
+                    .iter()
+                    .all(|component| (0.0..=1.0).contains(component))
+            }));
+            for triangle in vertices.as_chunks::<3>().0 {
+                let [a, b, c] = triangle.map(|vertex| glam::Vec3::from_array(vertex.position));
+                let normal = glam::Vec3::from_array(triangle[0].normal);
+                assert!((b - a).cross(c - a).dot(normal) > 0.0);
+            }
+        }
+        assert!(!collect(&world, &entities).models.contains_key(&visual));
     }
 }

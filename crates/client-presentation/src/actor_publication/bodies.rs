@@ -14,7 +14,10 @@ pub(super) struct PoseView {
     pub partial_tick: f32,
     pub first_person: bool,
     pub java_mode: bool,
+    pub combat_visuals: render_api::CombatVisuals,
     pub sampling_camera: Option<([f32; 2], [f32; 3])>,
+    /// Viewport width over height the first-person hand reads.
+    pub aspect: f32,
 }
 
 /// Retained pose conversions and skin registration used while sampling bodies.
@@ -24,6 +27,33 @@ pub(super) struct BodyCaches<'a> {
     pub native_pose: &'a mut hand::NativePoseCache,
     pub skin_rigs: &'a mut SkinRigCache,
     pub equipment: Option<&'a mut EquipmentRuntime>,
+    pub scratch: &'a mut BodyScratch,
+}
+
+/// Remote persona layers sampled this frame, by runtime id.
+pub(super) type RemoteSkinLayers =
+    bevy::platform::collections::HashMap<u64, Arc<[actor_animation::SkinRenderLayer]>>;
+
+/// Storage of the per-frame Java poses and remote persona layers, kept between frames so a
+/// steady frame does not reallocate it.
+#[derive(Default)]
+pub(super) struct BodyScratch {
+    java_posed: Vec<java::Posed>,
+    remote_skin_layers: RemoteSkinLayers,
+}
+
+impl BodyScratch {
+    /// Takes back a finished frame's storage, emptied so no pose outlives its frame.
+    pub(super) fn recycle(
+        &mut self,
+        mut java_posed: Vec<java::Posed>,
+        mut remote_skin_layers: RemoteSkinLayers,
+    ) {
+        java_posed.clear();
+        remote_skin_layers.clear();
+        self.java_posed = java_posed;
+        self.remote_skin_layers = remote_skin_layers;
+    }
 }
 
 /// Canonical bodies and their sampled animation data, before local visibility placement.
@@ -37,6 +67,7 @@ pub(super) struct SampledBodies<'a> {
     pub local_emote_pose: Option<actor_animation::CustomEmotePose>,
     pub java_posed: Vec<java::Posed>,
     pub native_body_sampled: bool,
+    pub remote_skin_layers: RemoteSkinLayers,
     pub occlusion: occlusion::PreparationWork,
     pub render_frame: Option<actor_animation::ActorRenderFrame<'a>>,
 }
@@ -56,7 +87,9 @@ pub(super) fn sample<'a>(
             partial_tick,
             first_person,
             java_mode,
+            combat_visuals,
             sampling_camera,
+            aspect: _,
         },
         actor_views,
     ) = view;
@@ -68,8 +101,10 @@ pub(super) fn sample<'a>(
         native_pose,
         skin_rigs,
         mut equipment,
+        scratch,
     } = caches;
-    let mut java_posed = Vec::new();
+    let mut java_posed = std::mem::take(&mut scratch.java_posed);
+    java_posed.clear();
     let local_emote_pose = (!first_person)
         .then(|| {
             let stream = stream?;
@@ -81,6 +116,8 @@ pub(super) fn sample<'a>(
         })
         .flatten();
     let mut native_body_sampled = false;
+    let mut remote_skin_layers = std::mem::take(&mut scratch.remote_skin_layers);
+    remote_skin_layers.clear();
     let mut occlusion_work = occlusion::PreparationWork::default();
     let mut render_frame = stream.map(|stream| stream.authority().actor_render_frame(partial_tick));
     let (local_runtime_id, actor_session_id, dimension, remotes, canonical_local, unrigged_actors) =
@@ -95,6 +132,9 @@ pub(super) fn sample<'a>(
                     let Some(actor) = stream.authority().actor(rig.actor.runtime_id) else {
                         continue;
                     };
+                    if actor.painting.is_some() {
+                        continue;
+                    }
                     let mut sample_scale = |rig| {
                         render_frame
                             .as_mut()
@@ -185,6 +225,16 @@ pub(super) fn sample<'a>(
                                 );
                                 native_body_sampled = true;
                             }
+                            if !local
+                                && !java_applied
+                                && let Some(frame) = render_frame.as_mut()
+                                && let Some(skin) = hand::NativePoseCache::apply_frame_body(
+                                    frame,
+                                    &mut presentation,
+                                )
+                            {
+                                remote_skin_layers.insert(rig.actor.runtime_id, skin);
+                            }
                             preparation::register_player_skin(
                                 &mut presentation,
                                 &rig,
@@ -203,9 +253,11 @@ pub(super) fn sample<'a>(
                             Some(poses),
                         )
                     };
-                    let Some(presentation) = presentation else {
+                    let Some(mut presentation) = presentation else {
                         continue;
                     };
+                    presentation.submission.overlay_rgba8 =
+                        crate::presentation::combat::overlay(actor, combat_visuals);
                     if rig.actor.runtime_id == local_runtime_id {
                         canonical_local = Some(presentation);
                     } else {
@@ -232,6 +284,7 @@ pub(super) fn sample<'a>(
         local_emote_pose,
         java_posed,
         native_body_sampled,
+        remote_skin_layers,
         occlusion: occlusion_work,
         render_frame,
     }

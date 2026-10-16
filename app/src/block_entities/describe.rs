@@ -3,15 +3,15 @@
 use assets::{
     banner::{MAX_BANNER_LAYERS, color_linear as banner_color, pattern_texture},
     block_entity_geometry::shulker_color_from_block_name,
+    facts::{BlockEntityBacking, BlockEntityMount, BlockEntityRenderer, BlockProperty},
 };
 use std::sync::Arc;
 
 use render_model::{
     BannerLayer, BannerModel, BannerMount, BedModel, BellAttachment, BlockEntityKind, ChestModel,
-    ChestPair, ChestVariant, CopperAge, DecoratedPotModel, Facing,
-    ITEM_FRAME_ROTATION_STEP_DEGREES, ItemFrameModel, Oxidation, ShulkerModel, SignMount,
-    SkullKind, SkullModel, SkullMount, SpawnerModel, StatueModel, StatuePose, bed_color,
-    sherd_pattern,
+    ChestPair, ChestVariant, DecoratedPotModel, Facing, ITEM_FRAME_ROTATION_STEP_DEGREES,
+    ItemFrameModel, Oxidation, ShulkerModel, SignMount, SkullKind, SkullModel, SkullMount,
+    StatueModel, StatuePose, bed_color, sherd_pattern,
 };
 use world::NbtCompound;
 
@@ -37,7 +37,7 @@ pub(super) struct PlantBlock {
 fn plant_block(plant: &NbtCompound) -> Option<PlantBlock> {
     let name = plant
         .string("name")
-        .filter(|name| !name.is_empty() && *name != "minecraft:air")?;
+        .filter(|name| !name.is_empty() && *name != assets::facts::block::AIR_IDENTIFIER)?;
     let mut states = serde_json::Map::new();
     if let Some(compound) = plant.compound("states") {
         for (key, value) in compound.iter() {
@@ -100,7 +100,7 @@ pub(super) enum Template {
 /// Facing from either state spelling: `minecraft:cardinal_direction` or `facing_direction`.
 fn facing(state: &BlockState) -> Option<Facing> {
     state
-        .text("minecraft:cardinal_direction")
+        .text(BlockProperty::MinecraftCardinalDirection.name())
         .and_then(Facing::from_cardinal)
         .or_else(|| {
             state
@@ -129,6 +129,7 @@ fn frame_rotation(nbt: &NbtCompound) -> f32 {
         .unwrap_or(0.0)
 }
 
+/// Reads a usable retained item stack.
 fn held_item(stack: &NbtCompound) -> Option<HeldItem> {
     let name = stack.string("Name").filter(|name| !name.is_empty())?;
     Some(HeldItem {
@@ -140,20 +141,7 @@ fn held_item(stack: &NbtCompound) -> Option<HeldItem> {
     })
 }
 
-fn chest_variant(block_name: &str) -> Option<ChestVariant> {
-    let name = block_name.strip_prefix("minecraft:")?;
-    let name = name.strip_prefix("waxed_").unwrap_or(name);
-    Some(match name {
-        "chest" => ChestVariant::Normal,
-        "trapped_chest" => ChestVariant::Trapped,
-        "copper_chest" => ChestVariant::Copper(CopperAge::Unaffected),
-        "exposed_copper_chest" => ChestVariant::Copper(CopperAge::Exposed),
-        "weathered_copper_chest" => ChestVariant::Copper(CopperAge::Weathered),
-        "oxidized_copper_chest" => ChestVariant::Copper(CopperAge::Oxidized),
-        _ => return None,
-    })
-}
-
+/// Selects one leading half from a valid pair.
 fn chest_pair(position: [i32; 3], nbt: &NbtCompound) -> ChestPair {
     let (Some(pair_x), Some(pair_z)) = (nbt.integer("pairx"), nbt.integer("pairz")) else {
         return ChestPair::Single;
@@ -174,12 +162,17 @@ fn chest_pair(position: [i32; 3], nbt: &NbtCompound) -> ChestPair {
     }
 }
 
-fn banner(block_name: &str, state: &BlockState, nbt: &NbtCompound) -> Option<Template> {
-    let mount = match block_name.strip_prefix("minecraft:")? {
-        "standing_banner" => BannerMount::Standing {
+/// Builds banner layers for the compiled mount.
+fn banner(
+    backing: BlockEntityBacking<'_>,
+    state: &BlockState,
+    nbt: &NbtCompound,
+) -> Option<Template> {
+    let mount = match backing.mount {
+        BlockEntityMount::Standing => BannerMount::Standing {
             rotation_degrees: ground_rotation(state),
         },
-        "wall_banner" => BannerMount::Wall(facing(state)?),
+        BlockEntityMount::Wall => BannerMount::Wall(facing(state)?),
         _ => return None,
     };
     let layers = nbt
@@ -204,41 +197,46 @@ fn banner(block_name: &str, state: &BlockState, nbt: &NbtCompound) -> Option<Tem
     })))
 }
 
-fn sign_mount(block_name: &str, state: &BlockState) -> Option<SignMount> {
-    let name = block_name.strip_prefix("minecraft:")?;
-    if name.ends_with("hanging_sign") {
-        return Some(if state.int("attached_bit") == Some(1) {
-            SignMount::Hanging {
-                rotation_degrees: ground_rotation(state),
+/// Resolves the compiled mount using the retained state's facing and rotation.
+fn sign_mount(backing: BlockEntityBacking<'_>, state: &BlockState) -> Option<SignMount> {
+    Some(match backing.mount {
+        BlockEntityMount::Hanging => {
+            if state.int(BlockProperty::AttachedBit.name()) == Some(1) {
+                SignMount::Hanging {
+                    rotation_degrees: ground_rotation(state),
+                }
+            } else {
+                SignMount::HangingWall(facing(state)?)
             }
-        } else {
-            SignMount::HangingWall(facing(state)?)
-        });
-    }
-    if name.ends_with("wall_sign") {
-        return Some(SignMount::Wall(facing(state)?));
-    }
-    name.ends_with("standing_sign")
-        .then(|| SignMount::Standing {
+        }
+        BlockEntityMount::Wall => SignMount::Wall(facing(state)?),
+        BlockEntityMount::Standing => SignMount::Standing {
             rotation_degrees: ground_rotation(state),
-        })
+        },
+        BlockEntityMount::None => return None,
+    })
 }
 
+/// Keeps visible text and its retained appearance.
 fn sign_face(face: &NbtCompound) -> Option<SignTextSpec> {
-    let spec = SignTextSpec {
-        text: face.string("Text")?.to_owned(),
-        color_argb: face
-            .integer("SignTextColor")
+    let spec = SignTextSpec::new(
+        face.string("Text")?.to_owned(),
+        face.integer("SignTextColor")
             .and_then(|value| i32::try_from(value).ok())
             .unwrap_or(DEFAULT_SIGN_COLOR),
-        glowing: face.boolean("IgnoreLighting").unwrap_or(false),
-        hide_glow_outline: face.boolean("HideGlowOutline").unwrap_or(false),
-    };
+        face.boolean("IgnoreLighting").unwrap_or(false),
+        face.boolean("HideGlowOutline").unwrap_or(false),
+    );
     spec.is_visible().then_some(spec)
 }
 
-fn sign(block_name: &str, state: &BlockState, nbt: &NbtCompound) -> Option<Template> {
-    let mount = sign_mount(block_name, state)?;
+/// Plans the visible faces of a sign on its compiled mount.
+fn sign(
+    backing: BlockEntityBacking<'_>,
+    state: &BlockState,
+    nbt: &NbtCompound,
+) -> Option<Template> {
+    let mount = sign_mount(backing, state)?;
     let (front, back) = match (nbt.compound("FrontText"), nbt.compound("BackText")) {
         (None, None) => (
             // Pre-1.19.80 signs carry one face's text at the root.
@@ -253,25 +251,29 @@ fn sign(block_name: &str, state: &BlockState, nbt: &NbtCompound) -> Option<Templ
 /// Plans the draw for one block entity, or `None` when nothing should be drawn.
 pub(super) fn describe(
     id: &str,
+    backing: BlockEntityBacking<'_>,
     block_name: &str,
     state: &BlockState,
     nbt: &NbtCompound,
     position: [i32; 3],
 ) -> Option<Template> {
-    match id {
-        "Chest" => Some(Template::Chest(ChestModel {
-            variant: chest_variant(block_name)?,
+    if backing.entity.nbt_id != id {
+        return None;
+    }
+    match backing.entity.renderer {
+        BlockEntityRenderer::Chest => Some(Template::Chest(ChestModel {
+            variant: ChestVariant::from_block_name(block_name)?,
             facing: facing(state).unwrap_or(Facing::North),
             pair: chest_pair(position, nbt),
             lid: 0.0,
         })),
-        "EnderChest" => Some(Template::Chest(ChestModel {
+        BlockEntityRenderer::EnderChest => Some(Template::Chest(ChestModel {
             variant: ChestVariant::Ender,
             facing: facing(state).unwrap_or(Facing::North),
             pair: ChestPair::Single,
             lid: 0.0,
         })),
-        "ShulkerBox" => Some(Template::Shulker(ShulkerModel {
+        BlockEntityRenderer::Shulker => Some(Template::Shulker(ShulkerModel {
             color: shulker_color_from_block_name(block_name)?,
             facing: nbt
                 .integer("facing")
@@ -280,14 +282,8 @@ pub(super) fn describe(
                 .unwrap_or(1),
             open: 0.0,
         })),
-        "Skull" => {
-            // Vanilla selects the skull model from the backing block type;
-            // the unsplit legacy block still needs its retained SkullType.
-            let kind = SkullKind::from_block_identifier(block_name).or_else(|| {
-                (block_name == "minecraft:skull")
-                    .then(|| nbt.integer("SkullType").and_then(SkullKind::from_nbt))
-                    .flatten()
-            })?;
+        BlockEntityRenderer::Skull => {
+            let kind = SkullKind::from_block_identifier(block_name)?;
             let mount = match state
                 .int("facing_direction")
                 .and_then(Facing::from_facing_direction)
@@ -302,19 +298,19 @@ pub(super) fn describe(
                 mount,
             })))
         }
-        "Bed" => Some(Template::Static(BlockEntityKind::Bed(BedModel {
+        BlockEntityRenderer::Bed => Some(Template::Static(BlockEntityKind::Bed(BedModel {
             color: bed_color(nbt.integer("color")?)?,
-            head: state.int("head_piece_bit") == Some(1),
+            head: state.int(BlockProperty::HeadPieceBit.name()) == Some(1),
             direction: u8::try_from(state.int("direction")?.rem_euclid(4)).ok()?,
         }))),
-        "Banner" => banner(block_name, state, nbt),
-        "Sign" | "HangingSign" => sign(block_name, state, nbt),
-        "EnchantTable" => Some(Template::EnchantTable),
-        "Lectern" => Some(Template::Static(BlockEntityKind::Lectern {
+        BlockEntityRenderer::Banner => banner(backing, state, nbt),
+        BlockEntityRenderer::Sign => sign(backing, state, nbt),
+        BlockEntityRenderer::EnchantTable => Some(Template::EnchantTable),
+        BlockEntityRenderer::Lectern => Some(Template::Static(BlockEntityKind::Lectern {
             facing_yaw_degrees: facing(state).unwrap_or(Facing::North).yaw_degrees(),
             has_book: nbt.boolean("hasBook").unwrap_or(false),
         })),
-        "Bell" => Some(Template::Bell {
+        BlockEntityRenderer::Bell => Some(Template::Bell {
             attachment: state
                 .text("attachment")
                 .and_then(BellAttachment::from_state)
@@ -324,12 +320,14 @@ pub(super) fn describe(
                 .and_then(|value| u8::try_from(value.rem_euclid(4)).ok())
                 .unwrap_or(0),
         }),
-        "Beacon" => (nbt.integer("Levels").unwrap_or(0) > 0).then_some(Template::Beacon),
-        "ItemFrame" | "GlowItemFrame" => {
+        BlockEntityRenderer::Beacon => {
+            (nbt.integer("Levels").unwrap_or(0) > 0).then_some(Template::Beacon)
+        }
+        BlockEntityRenderer::ItemFrame | BlockEntityRenderer::GlowItemFrame => {
             let outward = u8::try_from(state.int("facing_direction")?).ok()?;
             (outward < 6).then(|| Template::ItemFrame {
                 model: ItemFrameModel {
-                    glow: id == "GlowItemFrame",
+                    glow: backing.entity.renderer == BlockEntityRenderer::GlowItemFrame,
                     outward,
                     map: None,
                 },
@@ -341,22 +339,22 @@ pub(super) fn describe(
                 rotation_degrees: frame_rotation(nbt),
             })
         }
-        "FlowerPot" => (block_name == "minecraft:flower_pot")
-            .then(|| nbt.compound("PlantBlock").and_then(plant_block))
-            .flatten()
+        BlockEntityRenderer::FlowerPot => nbt
+            .compound("PlantBlock")
+            .and_then(plant_block)
             .map(|plant| Template::FlowerPot { plant }),
-        "Campfire" => Some(Template::Campfire {
+        BlockEntityRenderer::Campfire => Some(Template::Campfire {
             yaw_degrees: facing(state).unwrap_or(Facing::North).yaw_degrees(),
             items: std::array::from_fn(|slot| {
                 nbt.compound(&format!("Item{}", slot + 1))
                     .and_then(held_item)
             }),
         }),
-        "Conduit" => Some(Template::Conduit {
+        BlockEntityRenderer::Conduit => Some(Template::Conduit {
             active: nbt.boolean("Active").unwrap_or(false),
             hunting: nbt.integer("Target").is_some_and(|target| target != -1),
         }),
-        "DecoratedPot" => {
+        BlockEntityRenderer::DecoratedPot => {
             let mut sherds: [Option<String>; 4] = Default::default();
             for (slot, entry) in nbt
                 .list("sherds")
@@ -376,28 +374,23 @@ pub(super) fn describe(
                 },
             )))
         }
-        "CopperGolemStatue" => Some(Template::Static(BlockEntityKind::Statue(StatueModel {
-            pose: StatuePose::from_nbt(nbt.string("Pose"), nbt.integer("Pose"))?,
-            oxidation: Oxidation::from_block_name(block_name)?,
-            facing: facing(state).unwrap_or(Facing::North),
-        }))),
-        "MobSpawner" => nbt
-            .string("EntityIdentifier")
-            .filter(|mob| !mob.is_empty())
-            .map(|mob| {
-                Template::Static(BlockEntityKind::Spawner(SpawnerModel {
-                    mob: Arc::from(mob),
-                }))
-            }),
-        "EndPortal" => Some(Template::Static(BlockEntityKind::EndPortal)),
-        "EndGateway" => Some(Template::Static(BlockEntityKind::EndGateway)),
-        _ => None,
+        BlockEntityRenderer::Statue => {
+            Some(Template::Static(BlockEntityKind::Statue(StatueModel {
+                pose: StatuePose::from_nbt(nbt.string("Pose"), nbt.integer("Pose"))?,
+                oxidation: Oxidation::from_block_name(block_name)?,
+                facing: facing(state).unwrap_or(Facing::North),
+            })))
+        }
+        BlockEntityRenderer::EndPortal => Some(Template::Static(BlockEntityKind::EndPortal)),
+        BlockEntityRenderer::EndGateway => Some(Template::Static(BlockEntityKind::EndGateway)),
+        BlockEntityRenderer::None | BlockEntityRenderer::MobSpawner => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use render_model::block_entity::CopperAge;
 
     /// A retained plant with typed NBT states, independent of inventory item metadata.
     fn potted_nbt(name: &str, states: NbtCompound) -> NbtCompound {
@@ -500,6 +493,55 @@ mod tests {
         BlockState::parse(json)
     }
 
+    /// Resolves a test's named backing from the real pinned palette.
+    fn describe(
+        id: &str,
+        name: &str,
+        state: &BlockState,
+        nbt: &NbtCompound,
+        position: [i32; 3],
+    ) -> Option<Template> {
+        let records = assets::read_registry_for_protocol(
+            assets::pinned_block_registry_bytes(),
+            assets::active_content_registry_protocol(),
+        )
+        .unwrap();
+        let record = records.iter().find(|r| r.name.as_ref() == name)?;
+        let backing = assets::facts::BlockEntityFacts::pinned().get(record.sequential_id)?;
+        super::describe(id, backing, name, state, nbt, position)
+    }
+
+    #[test]
+    fn mismatched_block_entity_id_cannot_draw_on_a_different_backing() {
+        let empty = NbtCompound::default();
+        for (id, name) in [
+            ("Banner", "minecraft:stone"),
+            ("EnderChest", "minecraft:chest"),
+            ("MobSpawner", "minecraft:trial_spawner"),
+            ("Sign", "minecraft:oak_hanging_sign"),
+        ] {
+            assert!(describe(id, name, &BlockState::default(), &empty, [0; 3]).is_none());
+        }
+    }
+
+    #[test]
+    fn a_broken_enchanting_table_leaves_no_floating_book() {
+        let empty = nbt(|_| {});
+        let none = state("{}");
+        assert!(matches!(
+            describe(
+                "EnchantTable",
+                "minecraft:enchanting_table",
+                &none,
+                &empty,
+                [0; 3]
+            ),
+            Some(Template::EnchantTable)
+        ));
+        assert!(describe("EnchantTable", "minecraft:air", &none, &empty, [0; 3]).is_none());
+        assert!(describe("EnchantTable", "minecraft:stone", &none, &empty, [0; 3]).is_none());
+    }
+
     #[test]
     fn current_player_head_identity_overrides_absent_or_stale_skull_type() {
         for compound in [nbt(|_| {}), nbt(|out| int_tag(out, "SkullType", 0))] {
@@ -519,19 +561,16 @@ mod tests {
             ));
         }
         let legacy = nbt(|out| int_tag(out, "SkullType", 6));
-        assert!(matches!(
+        assert!(
             describe(
                 "Skull",
                 "minecraft:skull",
                 &BlockState::default(),
                 &legacy,
                 [0; 3]
-            ),
-            Some(Template::Static(BlockEntityKind::Skull(SkullModel {
-                kind: SkullKind::Player,
-                ..
-            })))
-        ));
+            )
+            .is_none()
+        );
         assert!(
             describe(
                 "Skull",
@@ -638,7 +677,15 @@ mod tests {
                 rotation_degrees: 90.0
             }
         );
-        assert_eq!(front.unwrap().text, "hi");
+        assert_eq!(
+            front,
+            Some(SignTextSpec::new(
+                "hi".into(),
+                DEFAULT_SIGN_COLOR,
+                false,
+                false
+            ))
+        );
         assert!(back.is_none());
     }
 

@@ -1,9 +1,12 @@
 //! Fixed-tick ambient block animation triggers.
 //! Other blocks' ambient animation and unclassified native materials remain unsupported.
 
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
-use assets::BLOCK_VISUAL_VARIANT_SEASONAL_LEAF;
+use assets::{BLOCK_VISUAL_VARIANT_SEASONAL_LEAF, facts::presentation::AmbientBlock};
 use chunk_pipeline::WorldStream;
 use particles::{
     ParticleSystem, ParticleView,
@@ -30,12 +33,18 @@ pub(super) struct AmbientParticles {
     random: AmbientRandom,
     accumulated_nanos: u128,
     diagnostics: diagnostics::Diagnostics,
+    /// What each sampled runtime id is to the fire and portal callbacks, in `kinds_mode`'s ids;
+    /// the session's palette is fixed, so it is looked up once instead of on every sample.
+    kinds: HashMap<u32, AmbientBlock>,
+    kinds_mode: Option<assets::NetworkIdMode>,
 }
 
 impl AmbientParticles {
     pub(super) fn reset(&mut self) {
         self.sampler = Sampler::default();
         self.accumulated_nanos = 0;
+        self.kinds.clear();
+        self.kinds_mode = None;
         self.diagnostics = diagnostics::Diagnostics::default();
     }
 
@@ -65,6 +74,11 @@ impl AmbientParticles {
             self.report(elapsed, due, leaf_effect_present, view_valid, system);
             return;
         }
+        let mode = stream.network_id_mode();
+        if self.kinds_mode != Some(mode) {
+            self.kinds.clear();
+            self.kinds_mode = Some(mode);
+        }
         for _ in 0..due {
             let started = Instant::now();
             let plan = self.sampler.plan(view.position, view.forward);
@@ -75,15 +89,23 @@ impl AmbientParticles {
                 if self.diagnostics.enabled {
                     self.diagnostics.samples += 1;
                 }
-                if fire_effect_present {
+                // One lookup serves every callback; unloaded or out-of-range blocks have none.
+                let Some(runtime_id) = world.block_runtime_id(block) else {
+                    continue;
+                };
+                let kind = *self
+                    .kinds
+                    .entry(runtime_id)
+                    .or_insert_with(|| collisions.block_facts(mode, runtime_id).ambient);
+                if fire_effect_present && kind == AmbientBlock::Fire {
                     self.try_fire(block, stream, world, collisions, system);
                 }
                 if leaf_effect_present {
-                    self.try_leaf(block, stream, world, system);
+                    self.try_leaf(block, runtime_id, stream, world, system);
                 }
                 // Legacy block callbacks use only the nearest sample cohort.
-                if index < particles::ambient::MIN_SAMPLES {
-                    self.try_portal(block, stream, world, collisions, system);
+                if kind == AmbientBlock::Portal && index < particles::ambient::MIN_SAMPLES {
+                    self.try_portal(block, runtime_id, stream, system);
                 }
             }
             self.sampler.finish(view.position, started.elapsed());
@@ -119,13 +141,11 @@ impl AmbientParticles {
     fn try_leaf(
         &mut self,
         block: [i32; 3],
+        runtime_id: u32,
         stream: &WorldStream,
         world: &StreamParticleWorld<'_>,
         system: &mut ParticleSystem,
     ) {
-        let Some(runtime_id) = world.block_runtime_id(block) else {
-            return;
-        };
         let mode = stream.network_id_mode();
         let leaf = stream.runtime_assets().resolve(mode, runtime_id);
         // This source-backed carrier route contains the seven standard biome

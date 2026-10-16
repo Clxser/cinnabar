@@ -6,13 +6,14 @@ use json_ui::{Draw, DrawNode, FormRender, HitRegion, LayoutEnv};
 use ui::FONT_DESIGN_PIXEL_TEXELS;
 
 use super::{
-    Art, Canvas, FormEngine, ScreenArt, banner_renderer, host_edit, pixel_snap,
+    Art, Canvas, FormEngine, ScreenArt, dependencies, host_edit,
     screen::{PaintError, PaintFrame},
-    text_paint::Measure,
+    text_paint::{Measure, label_metrics, label_positioned},
     tooltip,
 };
 use crate::{
     frame::{EditText, EngineFrame},
+    text_metrics::TextMetrics,
     textures::Textures,
 };
 
@@ -64,40 +65,13 @@ fn prepare_with<R: Borrow<FormRender>>(
     };
     let render = render?;
     let laid_render = render.borrow();
+    let base = textures
+        .dependencies
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .get(&laid_render.nodes, art);
     let mut atlas = textures.set.lock();
-    let laid = || {
-        laid_render
-            .nodes
-            .iter()
-            .chain(art.overlay)
-            .filter(|node| !art.omits(node))
-    };
-    let drawn_renderer = |name: &str| {
-        laid().any(|node| matches!(&node.draw, Draw::Custom { renderer, .. } if renderer == name))
-    };
-    // Only what this screen draws needs to be resident.
-    // Many nodes share a texture; each path resolves once.
-    let mut paths: std::collections::HashSet<&str> = laid()
-        .filter_map(|node| match &node.draw {
-            Draw::Sprite { texture, .. } => Some(texture.as_str()),
-            Draw::Custom { renderer, .. } if renderer == tooltip::RENDERER => {
-                Some(tooltip::BACKGROUND_TEXTURE)
-            }
-            _ => None,
-        })
-        .collect();
-    for renderer in frame.renderers.iter() {
-        renderer.textures(&drawn_renderer, &mut |path| {
-            paths.insert(path);
-        });
-    }
-    for node in laid() {
-        if let Draw::Custom { renderer, data } = &node.draw
-            && renderer == banner_renderer::RENDERER
-        {
-            paths.extend(banner_renderer::texture_paths(data));
-        }
-    }
+    let paths = dependencies::paths(&base, art, frame.renderers);
     let drawn = Textures {
         assets: textures.assets,
         set: textures.set,
@@ -105,7 +79,8 @@ fn prepare_with<R: Borrow<FormRender>>(
         images: art.images,
     }
     .atlas_keys(paths.into_iter());
-    atlas.require(drawn.iter().map(String::as_str));
+    atlas.require(drawn.iter().map(std::ops::Deref::deref));
+    drop(base);
     Some(render)
 }
 
@@ -180,35 +155,48 @@ pub(super) fn render_with<R: Borrow<FormRender>>(
             &render.hits,
             &render.nodes,
             origin[0],
-            [frame.metrics.gui_scale, px],
+            frame.metrics,
+            frame.font,
         ),
         top,
     }))
 }
 
-/// Each edit box's text label as painted: where it starts, its scale and font; `pixels` and
-/// `px` are the physical and logical pixels per GUI unit.
+/// Each edit box's text label as painted, including its effective scale and named face.
 fn edit_texts(
     hits: &[HitRegion],
     nodes: &[DrawNode],
     left: f32,
-    [pixels, px]: [f32; 2],
+    metrics: TextMetrics,
+    font: &assets::RuntimeFontCatalog,
 ) -> Vec<EditText> {
+    let px = metrics.scale.get() * FONT_DESIGN_PIXEL_TEXELS as f32;
     hits.iter()
         .filter_map(|region| {
             let (target, _) = region.widget.edit.as_ref()?.text_target.as_ref()?;
             nodes.iter().find_map(|node| match &node.draw {
-                Draw::Text { scale, options, .. } if node.key == *target => Some(EditText {
-                    key: region.key.clone(),
-                    left: left
-                        + pixel_snap::positioned(
-                            [node.dest.x, node.dest.y, node.dest.w, node.dest.h],
-                            pixels,
-                            px,
-                        )[0],
-                    scale: *scale,
-                    font: options.font_type.clone(),
-                }),
+                Draw::Text { scale, options, .. } if node.key == *target => {
+                    let label = label_metrics(
+                        metrics,
+                        font,
+                        font.font_named(options.font_type.as_deref().unwrap_or("default")),
+                        *scale,
+                    );
+                    Some(EditText {
+                        key: region.key.clone(),
+                        left: left
+                            + label_positioned(
+                                [node.dest.x, node.dest.y, node.dest.w, node.dest.h],
+                                font,
+                                options,
+                                metrics.gui_scale,
+                                px,
+                            )[0],
+                        scale: label.factor(),
+                        effect_scale_1024: label.effect_scale_1024(),
+                        font: options.font_type.clone(),
+                    })
+                }
                 _ => None,
             })
         })

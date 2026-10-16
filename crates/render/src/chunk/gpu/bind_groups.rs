@@ -3,6 +3,7 @@ use super::texture_upload::build_carrier_texture_assets;
 #[cfg(feature = "enhanced")]
 use super::{authored_upload, authored_upload::AuthoredUpload};
 use crate::chunk::*;
+use crate::queue_writes::ProfiledQueue as _;
 use bevy::color::ColorToPacked;
 #[cfg(feature = "enhanced")]
 use bevy::render::render_resource::TextureViewId;
@@ -11,8 +12,9 @@ use bevy::render::render_resource::TextureViewId;
 use render_scene::EnhancedTextureAssets;
 use render_scene::{
     BiomeTint, ChunkAnimationClock, ChunkBiomeTints, ChunkRenderInstance,
-    ChunkTextureAssetIdentity, ChunkTextureAssets, ChunkTextureReload, TextureMipUploadPlan,
-    TextureUploadPlanError, plan_texture_mip_uploads, texture_asset_needs_rebuild,
+    ChunkTextureAssetIdentity, ChunkTextureAssets, ChunkTexturePreparation, ChunkTextureReload,
+    TextureMipUploadPlan, TextureUploadPlanError, plan_texture_mip_uploads,
+    texture_asset_needs_rebuild,
 };
 
 #[cfg(test)]
@@ -24,6 +26,9 @@ mod water_tint_tests;
 
 #[cfg(test)]
 mod clock_tests;
+
+#[cfg(test)]
+mod reload_tests;
 
 #[derive(Clone, PartialEq, Eq)]
 pub(in crate::chunk) struct ChunkBindGroupBuffers {
@@ -186,8 +191,9 @@ pub(in crate::chunk) struct PreparedChunkTextureAssets {
     pub(in crate::chunk) animation_buffer: Buffer,
     pub(in crate::chunk) animation_frame_buffer: Buffer,
     pub(in crate::chunk) model_template_buffer: Buffer,
-    pub(in crate::chunk) _textures: [Texture; 2],
-    pub(in crate::chunk) views: [TextureView; 2],
+    pub(in crate::chunk) _textures: [Texture; assets::MAX_TEXTURE_PAGES],
+    pub(in crate::chunk) views: [TextureView; assets::MAX_TEXTURE_PAGES],
+    /// Neutral normal and MER pages that stand in for detached authored maps.
     #[cfg(feature = "enhanced")]
     pub(in crate::chunk) _pbr_textures: [Texture; 4],
     #[cfg(feature = "enhanced")]
@@ -204,8 +210,6 @@ pub(in crate::chunk) struct PreparedChunkTextureAssets {
     pub(in crate::chunk) authored_upload_bytes: u64,
     pub(in crate::chunk) native_leaf_views: [TextureView; assets::MAX_TEXTURE_PAGES],
     pub(in crate::chunk) sampler: Sampler,
-    #[cfg(feature = "enhanced")]
-    pub(in crate::chunk) pbr_sampler: Sampler,
     #[cfg(feature = "enhanced")]
     pub(in crate::chunk) enhanced_sampler: Sampler,
     pub(in crate::chunk) native_leaf_sampler: Sampler,
@@ -236,7 +240,7 @@ pub(in crate::chunk) fn prepare_chunk_animation_clock(
     gpu_clock: Res<ChunkGpuAnimationClock>,
     render_queue: Res<RenderQueue>,
 ) {
-    render_queue.write_buffer(&gpu_clock.buffer, 0, bytemuck::bytes_of(&*clock));
+    render_queue.profiled_write_buffer(&gpu_clock.buffer, 0, bytemuck::bytes_of(&*clock));
 }
 
 type PreparedReplacement = (
@@ -245,7 +249,17 @@ type PreparedReplacement = (
     Option<PreparedResourceGeometry>,
 );
 
-type PendingTextures = std::sync::Mutex<std::sync::mpsc::Receiver<Option<PreparedReplacement>>>;
+/// One render worker and the immutable request whose completion it may acknowledge.
+struct PendingTextures {
+    request: ChunkTexturePreparation,
+    result: std::sync::Mutex<std::sync::mpsc::Receiver<Option<PreparedReplacement>>>,
+}
+
+/// GPU resources retained for publication of the request that prepared them.
+struct StagedTextures {
+    request: ChunkTexturePreparation,
+    replacement: PreparedReplacement,
+}
 
 #[derive(Resource, Default)]
 pub(crate) struct ChunkGpuTextureAssets {
@@ -253,8 +267,7 @@ pub(crate) struct ChunkGpuTextureAssets {
     pub(in crate::chunk) _attempted_assets: Option<Arc<RuntimeAssets>>,
     pub(in crate::chunk) prepared: Option<PreparedChunkTextureAssets>,
     pending: Option<PendingTextures>,
-    pending_identity: Option<ChunkTextureAssetIdentity>,
-    staged: Option<PreparedReplacement>,
+    staged: Option<StagedTextures>,
     #[cfg(feature = "enhanced")]
     authored_pending: Option<AuthoredUpload>,
 }
@@ -304,6 +317,7 @@ pub(in crate::chunk) fn prepare_chunk_texture_assets(
     let identity = assets.identity();
     let completed = gpu_assets.pending.as_ref().and_then(|pending| {
         match pending
+            .result
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .try_recv()
@@ -314,28 +328,31 @@ pub(in crate::chunk) fn prepare_chunk_texture_assets(
         }
     });
     if let Some(completed) = completed {
-        gpu_assets.pending = None;
-        if let Some(pending) = gpu_assets.pending_identity.take() {
-            reload.finish(pending, completed.is_some());
+        let pending = gpu_assets.pending.take().expect("completed worker");
+        if reload.finish(&pending.request, completed.is_some()) {
+            gpu_assets.staged = completed.map(|replacement| StagedTextures {
+                request: pending.request,
+                replacement,
+            });
         }
-        gpu_assets.staged = completed;
     }
-    let requested = reload.requested();
-    if gpu_assets.staged.as_ref().is_some_and(|(prepared, _, _)| {
-        prepared.identity != identity
-            && requested
-                .as_ref()
-                .is_none_or(|candidate| candidate.identity() != prepared.identity)
+    let requested = reload.preparation();
+    // A newer request cannot retire resources the CPU has already selected but the renderer
+    // has not consumed yet. Publishing that snapshot leaves the newer mailbox attempt intact.
+    if gpu_assets.staged.as_ref().is_some_and(|staged| {
+        staged.replacement.0.identity != identity && !reload.is_current(&staged.request)
     }) {
         gpu_assets.staged = None;
     }
     if gpu_assets
         .staged
         .as_ref()
-        .is_some_and(|(prepared, _, _)| prepared.identity == identity)
+        .is_some_and(|staged| staged.replacement.0.identity == identity)
     {
-        let (prepared, uploaded, geometry) =
-            gpu_assets.staged.take().expect("matching staged atlas");
+        let StagedTextures {
+            request,
+            replacement: (prepared, uploaded, geometry),
+        } = gpu_assets.staged.take().expect("matching staged atlas");
         // Geometry built for chunks a session reset retired cannot publish. The main world
         // already meshes against this atlas, so it still installs and the reload completes.
         if let Some(geometry) = geometry
@@ -343,7 +360,7 @@ pub(in crate::chunk) fn prepare_chunk_texture_assets(
         {
             bevy::log::warn!("discarding resource geometry with retired chunk keys");
         }
-        reload.published();
+        reload.published(&request);
         gpu_assets.prepared = Some(prepared);
         gpu_assets.attempted_identity = Some(identity);
         gpu_assets._attempted_assets = Some(Arc::clone(assets.assets()));
@@ -444,9 +461,10 @@ pub(in crate::chunk) fn prepare_chunk_texture_assets(
             );
         }
     }
-    let Some(candidate) = requested else {
+    let Some(request) = requested else {
         return;
     };
+    let candidate = request.assets().clone();
     if candidate.identity() == identity
         || gpu_assets.pending.is_some()
         || reload.status(candidate.identity()).is_some()
@@ -456,9 +474,11 @@ pub(in crate::chunk) fn prepare_chunk_texture_assets(
     let device = render_device.clone();
     let queue = render_queue.clone();
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    gpu_assets.pending_identity = Some(candidate.identity());
-    gpu_assets.pending = Some(std::sync::Mutex::new(receiver));
-    let geometry = reload.geometry();
+    let geometry = request.geometry().cloned();
+    gpu_assets.pending = Some(PendingTextures {
+        request,
+        result: std::sync::Mutex::new(receiver),
+    });
     let view = views
         .iter()
         .min_by_key(|(entity, ..)| *entity)
@@ -611,7 +631,7 @@ pub(in crate::chunk) fn prepare_chunk_bind_group(
         arena.bind_group_buffers = None;
         return;
     };
-    let entries = [
+    let mut entries = vec![
         BindGroupEntry {
             binding: 0,
             resource: view_binding,
@@ -627,14 +647,6 @@ pub(in crate::chunk) fn prepare_chunk_bind_group(
         BindGroupEntry {
             binding: 3,
             resource: texture_assets.material_buffer.as_entire_binding(),
-        },
-        BindGroupEntry {
-            binding: 4,
-            resource: BindingResource::TextureView(&texture_assets.views[0]),
-        },
-        BindGroupEntry {
-            binding: 5,
-            resource: BindingResource::TextureView(&texture_assets.views[1]),
         },
         BindGroupEntry {
             binding: 6,
@@ -677,41 +689,8 @@ pub(in crate::chunk) fn prepare_chunk_bind_group(
             resource: atmosphere.buffer.as_entire_binding(),
         },
         BindGroupEntry {
-            binding: crate::material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[0],
-            resource: BindingResource::TextureView(&texture_assets.native_leaf_views[0]),
-        },
-        BindGroupEntry {
-            binding: crate::material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[1],
-            resource: BindingResource::TextureView(&texture_assets.native_leaf_views[1]),
-        },
-        BindGroupEntry {
             binding: crate::material_shader::NATIVE_LEAF_SAMPLER_BINDING,
             resource: BindingResource::Sampler(&texture_assets.native_leaf_sampler),
-        },
-        #[cfg(feature = "enhanced")]
-        BindGroupEntry {
-            binding: crate::material_shader::PBR_NORMAL_TEXTURE_BINDINGS[0],
-            resource: BindingResource::TextureView(&texture_assets.pbr_views[0]),
-        },
-        #[cfg(feature = "enhanced")]
-        BindGroupEntry {
-            binding: crate::material_shader::PBR_NORMAL_TEXTURE_BINDINGS[1],
-            resource: BindingResource::TextureView(&texture_assets.pbr_views[1]),
-        },
-        #[cfg(feature = "enhanced")]
-        BindGroupEntry {
-            binding: crate::material_shader::PBR_MER_TEXTURE_BINDINGS[0],
-            resource: BindingResource::TextureView(&texture_assets.pbr_views[2]),
-        },
-        #[cfg(feature = "enhanced")]
-        BindGroupEntry {
-            binding: crate::material_shader::PBR_MER_TEXTURE_BINDINGS[1],
-            resource: BindingResource::TextureView(&texture_assets.pbr_views[3]),
-        },
-        #[cfg(feature = "enhanced")]
-        BindGroupEntry {
-            binding: crate::material_shader::PBR_SAMPLER_BINDING,
-            resource: BindingResource::Sampler(&texture_assets.pbr_sampler),
         },
         #[cfg(feature = "enhanced")]
         BindGroupEntry {
@@ -754,6 +733,24 @@ pub(in crate::chunk) fn prepare_chunk_bind_group(
             resource: texture_assets.enhanced_texture_refs.as_entire_binding(),
         },
     ];
+    entries.extend(
+        crate::material_shader::SAMPLED_TEXTURE_BINDINGS
+            .into_iter()
+            .zip(texture_assets.views.iter())
+            .map(|(binding, view)| BindGroupEntry {
+                binding,
+                resource: BindingResource::TextureView(view),
+            }),
+    );
+    entries.extend(
+        crate::material_shader::NATIVE_LEAF_TEXTURE_BINDINGS
+            .into_iter()
+            .zip(texture_assets.native_leaf_views.iter())
+            .map(|(binding, view)| BindGroupEntry {
+                binding,
+                resource: BindingResource::TextureView(view),
+            }),
+    );
     let transparent_bind_group = render_device.create_bind_group(
         "transparent packed chunk bind group",
         &pipeline_cache.get_bind_group_layout(&pipeline.transparent_bind_group_layout),

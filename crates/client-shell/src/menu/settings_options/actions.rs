@@ -59,6 +59,22 @@ impl MenuRuntime {
                 self.set_option(index, value);
                 self.settings_dropdown = None;
             }
+            MenuAction::SettingsVideoPreset(preset) => {
+                let overrides = self.session_overrides.len();
+                self.session_overrides.retain(|preference| {
+                    !launcher::menu::settings_options::video_presets::VideoPreset::controls(
+                        launcher::menu::settings_options::SETTINGS_OPTIONS[preference.index()].id,
+                    )
+                });
+                let changed = Arc::make_mut(&mut self.settings_options).apply_video_preset(preset);
+                if changed || overrides != self.session_overrides.len() {
+                    self.settings_dirty = true;
+                    self.settings_apply = true;
+                }
+                self.settings_dropdown = None;
+                self.settings_scale_picker = false;
+                self.settings_slider_selected = None;
+            }
             MenuAction::SettingsLanguage(index) => self.set_language(index),
             MenuAction::SettingsDropdown(index) => {
                 self.settings_scale_picker = false;
@@ -128,6 +144,18 @@ impl MenuRuntime {
             self.settings_apply = true;
         } else {
             self.message = Some("That control cannot be assigned to this action.".to_owned());
+        }
+    }
+
+    /// Ends capture, clearing only a selected keyboard row's assignments.
+    pub(in crate::menu) fn capture_escape(&mut self) {
+        let Some(index) = self.key_remap.take().map(usize::from) else {
+            return;
+        };
+        if macro_row(index).is_none() && Arc::make_mut(&mut self.settings_options).unbind_key(index)
+        {
+            self.settings_dirty = true;
+            self.settings_apply = true;
         }
     }
 }

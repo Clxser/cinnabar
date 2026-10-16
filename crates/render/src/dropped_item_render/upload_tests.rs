@@ -1,11 +1,12 @@
 use super::*;
 use bevy::ecs::system::RunSystemOnce;
+use render_model::dropped_item::cube_mesh;
 
 use std::sync::Arc;
 use {render_model::ItemMeshVertex, render_scene::DroppedItemScene};
 
 /// Initializes item resources on the CPU-only backend for deterministic preparation tests.
-fn item_world() -> World {
+pub(super) fn item_world() -> World {
     let (device, queue) = wgpu::Device::noop(&Default::default());
     let mut world = World::new();
     world.insert_resource(RenderDevice::from(device));
@@ -59,12 +60,283 @@ fn potted_block_artwork_keeps_its_resolution_and_alpha() {
     assert_eq!(&atlas[(side * side * 4) as usize..], &pixels);
     assert!(mesh.iter().any(|vertex| vertex.uv == [1.0, 1.0]));
     assert_eq!(
-        atlas_side(&[DroppedItemModel::Sprite(render_model::DroppedItemSprite {
+        DroppedItemModel::Sprite(render_model::DroppedItemSprite {
             width: 16,
             height: 16,
             rgba8: Arc::from([255; 16 * 16 * 4])
-        })]),
-        MAX_ITEM_SPRITE_SIDE
+        })
+        .atlas_side(assets::texture::policy::device_policy()),
+        Some(render_model::MIN_ITEM_ATLAS_SIDE)
+    );
+}
+
+#[test]
+fn hd_dropped_sprites_keep_their_source_pixels_and_physical_extent() {
+    let width = 128;
+    let height = 64;
+    let pixels = (0..width * height)
+        .flat_map(|i| [if i % 2 == 0 { 255 } else { 0 }, 73, 91, 255])
+        .collect::<Vec<_>>();
+    let model = DroppedItemModel::NativeSprite(render_model::DroppedItemSprite {
+        width,
+        height,
+        rgba8: Arc::from(pixels.clone()),
+    });
+    assert_eq!(
+        model.atlas_side(assets::texture::policy::device_policy()),
+        Some(width)
+    );
+    let mut atlas = vec![255; (width * width * 4) as usize];
+    assert!(build_model(&mut atlas, &model, width).is_some());
+    let row = (width * 4) as usize;
+    let layer = (width * width * 4) as usize;
+    assert_eq!(&atlas[layer..layer + row * height as usize], &pixels);
+    let mut world = item_world();
+    world
+        .resource_mut::<DroppedItemScene>()
+        .publish(1, Arc::from([model]), &[], &[], 1.0);
+    world.run_system_once(prepare_items).unwrap();
+    assert_eq!(
+        world.resource::<ItemGpu>()._atlas.as_ref().unwrap().width(),
+        width
+    );
+}
+
+#[test]
+fn unaffordable_wide_sprite_does_not_hide_unrelated_small_items() {
+    let large = render_model::DroppedItemSprite {
+        width: 3072,
+        height: 16,
+        rgba8: vec![255; 3072 * 16 * 4].into(),
+    };
+    let small = DroppedItemModel::Sprite(render_model::DroppedItemSprite {
+        width: 16,
+        height: 16,
+        rgba8: vec![73; 16 * 16 * 4].into(),
+    });
+    for oversized in [
+        DroppedItemModel::Sprite(large.clone()),
+        DroppedItemModel::NativeSprite(large),
+    ] {
+        for (oversized_index, models) in [
+            [oversized.clone(), small.clone()],
+            [small.clone(), oversized.clone()],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let small_index = 1 - oversized_index;
+            let mut world = item_world();
+            world
+                .resource_mut::<DroppedItemScene>()
+                .publish(1, Arc::from(models), &[], &[], 1.0);
+            world.run_system_once(prepare_items).unwrap();
+            let gpu = world.resource::<ItemGpu>();
+            assert_eq!(gpu._atlas.as_ref().unwrap().width(), MIN_ITEM_ATLAS_SIDE);
+            assert!(!gpu.ranges[small_index].vertices.is_empty());
+            assert!(gpu.ranges[oversized_index].vertices.is_empty());
+        }
+    }
+}
+
+#[test]
+fn checkerboard_items_cannot_overflow_the_aggregate_geometry_upload() {
+    let side = 256;
+    let pixels: Arc<[u8]> = (0..side * side)
+        .flat_map(|index| {
+            [
+                255,
+                73,
+                91,
+                if (index % side + index / side) % 2 == 0 {
+                    255
+                } else {
+                    0
+                },
+            ]
+        })
+        .collect::<Vec<_>>()
+        .into();
+    let mut models = (0..9)
+        .map(|_| {
+            DroppedItemModel::Sprite(render_model::DroppedItemSprite {
+                width: side,
+                height: side,
+                rgba8: Arc::clone(&pixels),
+            })
+        })
+        .collect::<Vec<_>>();
+    models.push(DroppedItemModel::Sprite(render_model::DroppedItemSprite {
+        width: 16,
+        height: 16,
+        rgba8: vec![255; 16 * 16 * 4].into(),
+    }));
+    let mut world = item_world();
+    let limit = world
+        .resource::<RenderDevice>()
+        .limits()
+        .max_buffer_size
+        .min(assets::texture::policy::MAX_SUBSCRIBER_BYTES as u64);
+    world
+        .resource_mut::<DroppedItemScene>()
+        .publish(1, models.into(), &[], &[], 1.0);
+    world.run_system_once(prepare_items).unwrap();
+    let gpu = world.resource::<ItemGpu>();
+    assert!(gpu.mesh_buffer.as_ref().unwrap().size() <= limit);
+    let admitted = gpu.ranges[..9]
+        .iter()
+        .filter(|range| !range.vertices.is_empty())
+        .count();
+    assert!(admitted > 0 && admitted < 9);
+    assert!(
+        !gpu.ranges[9].vertices.is_empty(),
+        "rejected meshes leave storage for smaller items"
+    );
+}
+
+#[test]
+fn rejected_hd_geometry_cannot_enlarge_the_atlas_or_hide_small_items() {
+    let side = 2048;
+    let pixels: Arc<[u8]> = (0..side * side)
+        .flat_map(|index| {
+            [
+                73,
+                91,
+                255,
+                if (index % side + index / side) % 2 == 0 {
+                    255
+                } else {
+                    0
+                },
+            ]
+        })
+        .collect::<Vec<_>>()
+        .into();
+    for native in [false, true] {
+        for hd_first in [false, true] {
+            let sprite = render_model::DroppedItemSprite {
+                width: side,
+                height: side,
+                rgba8: Arc::clone(&pixels),
+            };
+            let rejected = if native {
+                DroppedItemModel::NativeSprite(sprite)
+            } else {
+                DroppedItemModel::Sprite(sprite)
+            };
+            let mut models = (0..4)
+                .map(|_| {
+                    DroppedItemModel::Sprite(render_model::DroppedItemSprite {
+                        width: 16,
+                        height: 16,
+                        rgba8: vec![255; 16 * 16 * 4].into(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let rejected_index = if hd_first { 0 } else { models.len() };
+            models.insert(rejected_index, rejected);
+            let mut world = item_world();
+            world
+                .resource_mut::<DroppedItemScene>()
+                .publish(1, models.into(), &[], &[], 1.0);
+            world.run_system_once(prepare_items).unwrap();
+            let gpu = world.resource::<ItemGpu>();
+            assert_eq!(gpu._atlas.as_ref().unwrap().width(), MIN_ITEM_ATLAS_SIDE);
+            assert!(gpu.ranges[rejected_index].vertices.is_empty());
+            for (index, range) in gpu.ranges.iter().enumerate() {
+                if index != rejected_index {
+                    assert!(!range.vertices.is_empty());
+                }
+            }
+            let buffer = gpu.mesh_buffer.as_ref().unwrap().id();
+            let texture = gpu._atlas.as_ref().unwrap().id();
+            world.run_system_once(prepare_items).unwrap();
+            let gpu = world.resource::<ItemGpu>();
+            assert_eq!(gpu.mesh_buffer.as_ref().unwrap().id(), buffer);
+            assert_eq!(gpu._atlas.as_ref().unwrap().id(), texture);
+        }
+    }
+}
+
+#[test]
+fn enlarging_an_admitted_atlas_keeps_earlier_uvs_glint_and_texture_layers() {
+    let models = [16, 128].map(|side| {
+        DroppedItemModel::Sprite(render_model::DroppedItemSprite {
+            width: side,
+            height: side,
+            rgba8: vec![side as u8; (side * side * 4) as usize].into(),
+        })
+    });
+    let original = PreparedModels::new(
+        &models[..1],
+        &[],
+        assets::texture::policy::device_policy(),
+        render_model::MAX_ITEM_LAYERS as u32,
+        assets::texture::policy::MAX_SUBSCRIBER_BYTES as u64,
+    );
+    let prepared = PreparedModels::new(
+        &models,
+        &[],
+        assets::texture::policy::device_policy(),
+        render_model::MAX_ITEM_LAYERS as u32,
+        assets::texture::policy::MAX_SUBSCRIBER_BYTES as u64,
+    );
+    assert_eq!(prepared.side, 128);
+    let first = &prepared.ranges[0].vertices;
+    for (before, after) in original
+        .vertices
+        .iter()
+        .zip(&prepared.vertices[first.start as usize..first.end as usize])
+    {
+        for axis in 0..2 {
+            assert_eq!(
+                before.uv[axis] * before.glint_scale[axis],
+                after.uv[axis] * after.glint_scale[axis],
+                "atlas growth preserves texture-local foil coordinates"
+            );
+        }
+    }
+    for (index, model) in models.iter().enumerate() {
+        let mut atlas = vec![255; (prepared.side * prepared.side * 4) as usize * (index + 1)];
+        let expected = build_model(&mut atlas, model, prepared.side).unwrap();
+        let range = &prepared.ranges[index].vertices;
+        assert_eq!(
+            &prepared.vertices[range.start as usize..range.end as usize],
+            &expected
+        );
+        let DroppedItemModel::Sprite(sprite) = model else {
+            unreachable!()
+        };
+        let layer_start = (index + 1) * (prepared.side * prepared.side * 4) as usize;
+        assert_eq!(
+            &prepared.atlas[layer_start..layer_start + 4],
+            &sprite.rgba8[..4]
+        );
+    }
+}
+
+#[test]
+fn buffer_rejection_cannot_enlarge_already_admitted_texture_layers() {
+    let models = [(16, 16), (2048, 16)].map(|(width, height)| {
+        DroppedItemModel::Sprite(render_model::DroppedItemSprite {
+            width,
+            height,
+            rgba8: vec![255; (width * height * 4) as usize].into(),
+        })
+    });
+    let prepared = PreparedModels::new(
+        &models,
+        &[],
+        assets::texture::policy::device_policy(),
+        render_model::MAX_ITEM_LAYERS as u32,
+        (4096 * ITEM_MESH_VERTEX_BYTES) as u64,
+    );
+    assert_eq!(prepared.side, MIN_ITEM_ATLAS_SIDE);
+    assert!(!prepared.ranges[0].vertices.is_empty());
+    assert!(prepared.ranges[1].vertices.is_empty());
+    assert_eq!(
+        prepared.atlas.len(),
+        2 * (MIN_ITEM_ATLAS_SIDE * MIN_ITEM_ATLAS_SIDE * 4) as usize
     );
 }
 
@@ -86,6 +358,7 @@ fn hidden_item_catalog_is_prepared_before_visibility() {
             block_level: 15,
             sky_level: 15,
             overlay_rgba8: 0,
+            glint: false,
         },
         visible: false,
         transitions: Arc::from([]),
@@ -165,6 +438,7 @@ fn steady_uploads_empty_item_scene_allocates_and_uploads_nothing() {
         normal: [0.0, 1.0, 0.0],
         layer: 0,
         color: render_model::OPAQUE_WHITE,
+        glint_scale: [0.0; 2],
     };
     world.resource_mut::<DroppedItemScene>().dynamic = Arc::from([vertex; 3]);
     system.run((), &mut world).unwrap();
@@ -235,6 +509,7 @@ fn cull_modes_follow_models_and_preserve_instance_order_and_mirrored_transforms(
         block_level: 15,
         sky_level: 15,
         overlay_rgba8: 0,
+        glint: false,
     };
     world.resource_mut::<DroppedItemScene>().publish(
         1,
@@ -285,4 +560,156 @@ fn one_prepared_item_selects_its_cull_mode_independently_for_each_view() {
         assert_eq!(draw.culls_in_view(Some(&view)), expected);
     }
     assert!(!draw.culls_in_view(None));
+}
+
+#[test]
+fn glinting_copies_carry_the_item_glint_scale_across_their_sprite() {
+    let sprite = render_model::DroppedItemSprite {
+        width: 16,
+        height: 16,
+        rgba8: Arc::from(vec![200_u8; 16 * 16 * 4]),
+    };
+    let mut world = item_world();
+    let glint = render_model::EquipmentRaster {
+        width: 2,
+        height: 2,
+        rgba8: Arc::from(vec![120_u8; 16]),
+    };
+    {
+        let mut scene = world.resource_mut::<DroppedItemScene>();
+        scene.publish(
+            1,
+            Arc::from([DroppedItemModel::NativeSprite(sprite)]),
+            &[],
+            &[],
+            1.0,
+        );
+        scene.set_glint(Some(glint.clone()), [-0.25, 0.5, 0.75]);
+    }
+    world.run_system_once(prepare_items).unwrap();
+    let gpu = world.resource::<ItemGpu>();
+    // A 16-pixel sprite fills half of a 32-pixel layer, so 0.5 across it is 1 across the layer.
+    let mut atlas = Vec::new();
+    let vertices = build_model(
+        &mut atlas,
+        &world.resource::<DroppedItemScene>().models[0],
+        32,
+    )
+    .unwrap();
+    assert!(vertices.iter().all(|vertex| vertex.glint_scale == [1.0; 2]));
+    assert!(
+        gpu.glint
+            .as_ref()
+            .and_then(|glint| glint.pixels.as_ref())
+            .is_some_and(|pixels| Arc::ptr_eq(pixels, &glint.rgba8)),
+        "the scene's item glint raster is uploaded"
+    );
+    let instance = |glint| render_model::DroppedItemInstance {
+        model: 0,
+        world_from_item: render_model::dropped_item_transform([0.0; 3], 0.0, 1.0),
+        block_level: 0,
+        sky_level: 15,
+        overlay_rgba8: 0,
+        glint,
+    };
+    assert_eq!(
+        glint::pack_instance(&instance(true)).glint,
+        [1.0, 0.0, 0.0, 0.0]
+    );
+    assert_eq!(glint::pack_instance(&instance(false)).glint, [0.0; 4]);
+}
+
+#[test]
+fn reshaped_dropped_glint_reuploads_shared_pixels_and_retains_unchanged_shapes() {
+    let mut world = item_world();
+    let device = world.resource::<RenderDevice>().clone();
+    let queue = world.resource::<RenderQueue>().clone();
+    let mut gpu = world.remove_resource::<ItemGpu>().unwrap();
+    let mut scene = DroppedItemScene::default();
+    let pixels: Arc<[u8]> = vec![255; 4 * 2 * 4].into();
+    let mut previous = None;
+    for (width, height) in [(4, 2), (2, 4), (2, 4)] {
+        scene.set_glint(
+            Some(render_model::EquipmentRaster {
+                width,
+                height,
+                rgba8: Arc::clone(&pixels),
+            }),
+            [0.0; 3],
+        );
+        glint::upload(&scene, &device, &queue, &mut gpu);
+        let texture = &gpu.glint.as_ref().unwrap()._texture;
+        let size = [texture.width(), texture.height()];
+        assert_eq!(size, [u32::from(width), u32::from(height)]);
+        if let Some((previous_size, id)) = previous {
+            assert_eq!(texture.id() == id, size == previous_size);
+        }
+        previous = Some((size, texture.id()));
+    }
+}
+
+#[test]
+fn oversized_dropped_glint_is_fitted_and_unchanged_uploads_are_retained() {
+    let mut world = item_world();
+    let device = world.resource::<RenderDevice>().clone();
+    let queue = world.resource::<RenderQueue>().clone();
+    let mut gpu = world.remove_resource::<ItemGpu>().unwrap();
+    let mut scene = DroppedItemScene::default();
+    let limit = device.limits().max_texture_dimension_2d;
+    let width = u16::try_from(limit * 2).expect("the noop device admits oversized pack artwork");
+    let pixels: Arc<[u8]> = vec![255; usize::from(width) * 4].into();
+    scene.set_glint(
+        Some(render_model::EquipmentRaster {
+            width,
+            height: 1,
+            rgba8: Arc::clone(&pixels),
+        }),
+        [0.0; 3],
+    );
+    glint::upload(&scene, &device, &queue, &mut gpu);
+    let uploaded = gpu.glint.as_ref().unwrap();
+    assert_eq!(
+        [uploaded._texture.width(), uploaded._texture.height()],
+        [limit, 1]
+    );
+    assert!(Arc::ptr_eq(uploaded.pixels.as_ref().unwrap(), &pixels));
+    let id = uploaded._texture.id();
+    let allocations = test_alloc::thread_allocations();
+    glint::upload(&scene, &device, &queue, &mut gpu);
+    assert_eq!(test_alloc::thread_allocations() - allocations, 0);
+    assert_eq!(gpu.glint.as_ref().unwrap()._texture.id(), id);
+}
+
+#[test]
+fn adjacent_copies_of_one_mesh_share_an_instanced_draw_in_submission_order() {
+    let draw = |vertices: Range<u32>, instance| ItemDraw {
+        vertices,
+        instance,
+        cull_back: false,
+        bounds: None,
+    };
+    let draws = [
+        draw(0..36, 0),
+        draw(0..36, 1),
+        draw(0..36, 2),
+        draw(36..42, 3),
+        draw(0..36, 4),
+        draw(0..36, 6),
+    ];
+    let mut submitted = Vec::new();
+    for_each_instanced_run(&draws, None, |vertices, instances, culls| {
+        submitted.push((vertices, instances, culls));
+    });
+    assert_eq!(
+        submitted,
+        [
+            (0..36, 0..3, false),
+            (36..42, 3..4, false),
+            (0..36, 4..5, false),
+            (0..36, 6..7, false),
+        ]
+    );
+    let mut none = 0;
+    for_each_instanced_run(&[], None, |_, _, _| none += 1);
+    assert_eq!(none, 0);
 }

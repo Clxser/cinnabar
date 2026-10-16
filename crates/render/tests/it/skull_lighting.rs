@@ -57,22 +57,6 @@ fn raster(
     rotation: f32,
     gallery: bool,
 ) -> Vec<u8> {
-    let mut scene = BlockEntityScene::default();
-    scene.install_assets(assets);
-    let frame = scene.update(
-        SceneClock::default(),
-        &[],
-        &[BlockEntitySubmission {
-            block: [0; 3],
-            light,
-            kind: BlockEntityKind::Skull(SkullModel {
-                kind: SkullKind::Player,
-                mount: SkullMount::Floor {
-                    rotation_degrees: rotation,
-                },
-            }),
-        }],
-    );
     let center = Vec3::new(0.5, 0.25, 0.5);
     let front = Mat4::from_rotation_y(render_model::floor_yaw_degrees(rotation).to_radians())
         .transform_vector3(Vec3::NEG_Z);
@@ -81,11 +65,60 @@ fn raster(
     } else {
         center + front * 2.0
     };
+    raster_from(gpu, assets, light, inputs, rotation, eye, center)
+}
+
+/// Draws a floor player head turned `rotation` degrees, seen from `eye` toward `target`.
+fn raster_from(
+    gpu: &Gpu,
+    assets: &assets::RuntimeBlockEntityAssets,
+    light: BlockEntityLight,
+    inputs: LightmapInputs,
+    rotation: f32,
+    eye: Vec3,
+    target: Vec3,
+) -> Vec<u8> {
+    raster_model_from(
+        gpu,
+        assets,
+        light,
+        inputs,
+        BlockEntityKind::Skull(SkullModel {
+            kind: SkullKind::Player,
+            mount: SkullMount::Floor {
+                rotation_degrees: rotation,
+            },
+        }),
+        (eye, target),
+    )
+}
+
+/// Draws a production block model with its retained normals and lighting from `view`.
+fn raster_model_from(
+    gpu: &Gpu,
+    assets: &assets::RuntimeBlockEntityAssets,
+    light: BlockEntityLight,
+    inputs: LightmapInputs,
+    kind: BlockEntityKind,
+    view: (Vec3, Vec3),
+) -> Vec<u8> {
+    let (eye, target) = view;
+    let mut scene = BlockEntityScene::default();
+    scene.install_assets(assets);
+    let frame = scene.update(
+        SceneClock::default(),
+        &[],
+        &[BlockEntitySubmission {
+            block: [0; 3],
+            light,
+            kind,
+        }],
+    );
     let clip = glam::camera::rh::proj::directx::perspective_infinite_reverse(
         35.0_f32.to_radians(),
         1.0,
         0.1,
-    ) * glam::camera::rh::view::look_at_mat4(eye, center, Vec3::Y);
+    ) * glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Y);
     let view = gpu.buffer(&gpu_snapshot::view(clip, eye), wgpu::BufferUsages::UNIFORM);
     let vertices: &[f32] = bytemuck::cast_slice(&frame.solid);
     let vertices = gpu.buffer(vertices, wgpu::BufferUsages::STORAGE);
@@ -313,4 +346,87 @@ fn write_local_placed_skull_gallery() {
         println!("gallery column {column}: {name}; rows previous scalar / native mob-head");
     }
     gallery.save(output).unwrap();
+}
+
+#[test]
+fn entity_lit_faces_are_culled_from_behind() {
+    let Some(gpu) = Gpu::for_fixture("entity_lit_faces_are_culled_from_behind") else {
+        return;
+    };
+    let assets = assets([200, 120, 60, 255]);
+    let light = BlockEntityLight::Actor { block: 15, sky: 15 };
+    let inputs = LightmapInputs::default();
+    let center = Vec3::new(0.5, 0.25, 0.5);
+    let outside = raster_from(
+        &gpu,
+        &assets,
+        light,
+        inputs,
+        0.0,
+        center + Vec3::Z * 2.0,
+        center,
+    );
+    // From inside the head every face points away, as from behind a flat entity part.
+    let inside = raster_from(&gpu, &assets, light, inputs, 0.0, center, center + Vec3::Z);
+    let empty = raster_from(
+        &gpu,
+        &assets,
+        light,
+        inputs,
+        0.0,
+        center + Vec3::Z * 2.0,
+        center + Vec3::new(0.0, 0.0, 9.0),
+    );
+    let pixel = center_pixel();
+    assert_ne!(
+        outside[pixel..pixel + 4],
+        empty[pixel..pixel + 4],
+        "the front draws"
+    );
+    assert_eq!(
+        inside[pixel..pixel + 4],
+        empty[pixel..pixel + 4],
+        "back faces are culled"
+    );
+}
+
+#[test]
+fn crystal_beam_lighting_normals_do_not_cull_the_beam_from_below() {
+    let Some(gpu) =
+        Gpu::for_fixture("crystal_beam_lighting_normals_do_not_cull_the_beam_from_below")
+    else {
+        return;
+    };
+    let encoded = assets::encode_block_entity_catalog(
+        b"{}",
+        16,
+        16,
+        &[200, 120, 60, 255].repeat(16 * 16),
+        &[assets::BlockEntityPlacement {
+            name: assets::CRYSTAL_BEAM_TEXTURE.into(),
+            x: 0,
+            y: 0,
+            width: 16,
+            height: 16,
+        }],
+    )
+    .unwrap();
+    let assets = assets::RuntimeBlockEntityAssets::decode(&encoded).unwrap();
+    let light = BlockEntityLight::Actor { block: 15, sky: 15 };
+    let inputs = LightmapInputs::default();
+    let center = Vec3::new(0.0, 2.0, 0.0);
+    let view = (center + Vec3::new(0.0, -1.0, 2.0), center);
+    let beam = |x| {
+        BlockEntityKind::CrystalBeam(render_model::CrystalBeamModel {
+            target: [x, 2.0, 0.0],
+            crystal: [x, 2.0, 4.0],
+            age_ticks: 50.0,
+        })
+    };
+    let visible = raster_model_from(&gpu, &assets, light, inputs, beam(0.0), view);
+    let empty = raster_model_from(&gpu, &assets, light, inputs, beam(100.0), view);
+    assert_ne!(
+        visible, empty,
+        "the beam remains visible below its lighting normals"
+    );
 }

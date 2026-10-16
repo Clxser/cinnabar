@@ -12,6 +12,17 @@ impl WorldStream {
             collision_authoritative = false;
             self.record_normalization_error(NormalizationErrorReason::BlockMutationFailure);
         }
+        if collision_authoritative {
+            if let Some(recoveries) = self.requests.recoveries.get_mut(&chunk) {
+                recoveries.remove(&key.y);
+                if recoveries.is_empty() {
+                    self.requests.recoveries.remove(&chunk);
+                    self.requests.collision_failures.remove(&chunk);
+                }
+            }
+        } else {
+            self.schedule_sub_chunk_recovery(key);
+        }
         if !collision_authoritative {
             self.requests.collision_failures.insert(chunk);
             // Vanilla leaves an unfilled slot empty, and an empty slot lights as air.
@@ -49,6 +60,8 @@ impl WorldStream {
             if self.authority.mark_chunk_loaded(chunk).is_err() {
                 self.loaded_columns.remove(&chunk);
                 self.record_normalization_error(NormalizationErrorReason::BlockMutationFailure);
+            } else {
+                self.note_far_column_complete(chunk);
             }
         }
     }
@@ -268,6 +281,73 @@ impl WorldStream {
             }
             if !self.enqueue_exact_retry(key) {
                 self.complete_requested_sub_chunk(key, false);
+            }
+        }
+    }
+
+    /// Marks sub-chunk `key` abandoned; the next recovery pass asks for it again after a delay
+    /// that doubles each time it is abandoned, up to [`MAX_SUB_CHUNK_RECOVERY_DELAY`].
+    fn schedule_sub_chunk_recovery(&mut self, key: SubChunkKey) {
+        let recovery = self
+            .requests
+            .recoveries
+            .entry(key.chunk())
+            .or_default()
+            .entry(key.y)
+            .or_default();
+        recovery.rounds = recovery.rounds.saturating_add(1);
+        recovery.due = None;
+    }
+
+    /// Visits recovery columns under the poll budget, resuming after the last visited column.
+    /// Each column has at most one dimension's slots; due slots share exact request ranges.
+    pub(super) fn request_due_sub_chunk_recoveries(&mut self, now: Instant) {
+        use std::ops::Bound::{Excluded, Unbounded};
+
+        let columns = self.requests.recoveries.len();
+        let mut checked = 0;
+        while checked < columns && (checked == 0 || !self.poll_budget_exhausted()) {
+            let next = self
+                .requests
+                .recovery_cursor
+                .and_then(|cursor| {
+                    self.requests
+                        .recoveries
+                        .range((Excluded(cursor), Unbounded))
+                        .next()
+                })
+                .or_else(|| self.requests.recoveries.first_key_value());
+            let Some((&chunk, _)) = next else {
+                break;
+            };
+            self.requests.recovery_cursor = Some(chunk);
+            checked += 1;
+            if !self.column_is_data_interesting(chunk) {
+                self.requests.recoveries.remove(&chunk);
+                continue;
+            }
+            let Some(range) = self.authority.dimension_range(chunk.dimension) else {
+                continue;
+            };
+            let expected = self.requests.requested.get(&chunk);
+            let recoveries = self.requests.recoveries.get_mut(&chunk).unwrap();
+            let mut due = Vec::new();
+            for (&y, recovery) in recoveries {
+                if expected.is_some_and(|column| column.contains_key(&y)) {
+                    continue;
+                }
+                let at = *recovery.due.get_or_insert_with(|| {
+                    let doublings = recovery.rounds.saturating_sub(1).min(3);
+                    now + SUB_CHUNK_RECOVERY_DELAY
+                        .saturating_mul(1 << doublings)
+                        .min(MAX_SUB_CHUNK_RECOVERY_DELAY)
+                });
+                if at <= now {
+                    due.push(y);
+                }
+            }
+            if !due.is_empty() {
+                self.enqueue_exact_recovery_requests(chunk, range, &due, None);
             }
         }
     }

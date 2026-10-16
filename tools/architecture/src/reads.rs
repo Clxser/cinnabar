@@ -98,6 +98,10 @@ pub(super) fn check_reads(
                 && names_path(literal);
             if relative_to_crate {
                 if let Some(target) = foreign(resolve(crate_root, literal.trim_start_matches('/')))
+                    // Rejected input strings in nested packages are not reads of absent parent files.
+                    && (existing.contains(&target)
+                        || owning_crate(&roots, &target)
+                            .is_none_or(|(owner, _)| !within(crate_root, owner)))
                 {
                     required
                         .entry(name)
@@ -138,6 +142,23 @@ pub(super) fn check_reads(
             reads
                 .entry(document)
                 .or_insert_with(|| "policy.workspace_document".to_owned());
+        }
+        if *name == env!("CARGO_PKG_NAME") {
+            for target in policy
+                .identifier_literals
+                .vocabularies
+                .iter()
+                .map(|source| &source.path)
+                .chain(&policy.identifier_literals.block_registries)
+            {
+                if let Some(target) = resolve("", target).filter(|target| {
+                    owning_crate(&roots, target).is_none_or(|(owner, _)| owner != *crate_root)
+                }) {
+                    reads
+                        .entry(target)
+                        .or_insert_with(|| "policy.identifier_literals".to_owned());
+                }
+            }
         }
         for (target, source) in &reads {
             if !declared.iter().any(|pattern| declares(pattern, target)) {

@@ -299,9 +299,8 @@ fn hollow_containers_have_visible_inward_walls_and_an_inset_floor() {
             let rim = runtime
                 .material(visual.faces[BlockFace::Up as usize])
                 .texture;
-            assert_eq!(
-                texture == rim,
-                false,
+            assert_ne!(
+                texture, rim,
                 "floor must select bottom/compost/ready instead of the transparent rim"
             );
         }

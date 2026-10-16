@@ -1,15 +1,19 @@
-//! Native name-tag extraction and font-pixel records for the retained GPU atlas.
-//! See docs/reference/nametag-rendering.md for the vanilla rules.
+//! Java-style actor labels, retaining server text and the shared font-pixel atlas.
 
-use std::{collections::HashMap, sync::Arc};
+use protocol_ids::ActorFlag;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use assets::RuntimeFontCatalog;
 use client_world::ActorSnapshot;
 use glam::Vec3;
 use protocol::{ActorKind, ActorMetadataValue};
 use render_model::{
-    MAX_NAMETAG_RECORDS, NAMETAG_ATLAS_SIDE, NAMETAG_LINE_PITCH_PX, NametagRecord, NametagScene,
-    nametag_line_backgrounds, nametag_line_left,
+    MAX_NAMETAG_RECORDS, NAMETAG_ATLAS_SIDE, NAMETAG_DIM_TEXT_ALPHA as DIM_TEXT_ALPHA,
+    NAMETAG_LINE_PITCH_PX, NametagRecord, NametagScene, java_nametag_line_backgrounds,
+    nametag_line_left,
 };
 use ui::{FONT_DESIGN_PIXEL_TEXELS, TextLayoutCache};
 use ui_screens::text::bounded_text;
@@ -22,35 +26,47 @@ pub(super) mod tests;
 /// Presentation resource bound, not a native visibility rule.
 pub(super) const MAX_PRESENTED_NAMETAGS: usize = 128;
 const DEFAULT_RENDER_DISTANCE: f32 = 64.0;
-const HEAD_CLEARANCE: f32 = 0.7;
+const SNEAK_RENDER_DISTANCE: f32 = 32.0;
+const HEAD_CLEARANCE: f32 = 0.5;
 const DEFAULT_HEIGHT: f32 = 1.8;
-const SNEAKING_HEIGHT: f32 = 1.5;
+/// Java's sneaking label moves down in camera space after its head translation.
+const SNEAK_LABEL_DROP: f32 = 0.25;
+const SNEAK_PLAYER_Y_OFFSET: f32 = 0.125;
+const SLEEPING_LABEL_DROP: f32 = 1.5;
 const METADATA_HEIGHT: u32 = 54;
 const METADATA_ALWAYS_SHOW_NAMETAG: u32 = 81;
 const METADATA_SCORE: u32 = 84;
 const METADATA_RENDER_DISTANCE: u32 = 140;
-const ACTOR_FLAG_SNEAKING: u32 = 1;
-const ACTOR_FLAG_INVISIBLE: u32 = 5;
-const ACTOR_FLAG_SHOW_NAME: u32 = 14;
 const ACTOR_FLAG_ALWAYS_SHOW_NAME: u32 = 15;
 const SCORE_DISTANCE_SQUARED: f32 = 100.0;
 pub(super) const EXTRA_LINE_LIFT: f32 = 0.125;
 pub(super) const PLATE_COLOR: [f32; 4] = [0.0, 0.0, 0.0, 0.25];
-const SNEAK_TEXT_ALPHA: f32 = 0.125;
-/// Each rendered line uses at most one background record and one text record.
+/// Each line needs a background and text; ordinary labels add a second text pass.
 const NAMETAG_RECORDS_PER_LINE: usize = 2;
 /// Most lines one tag can consume in a scene, including its backing plates.
 const MAX_NAMETAG_LINES: usize = MAX_NAMETAG_RECORDS / NAMETAG_RECORDS_PER_LINE;
 
+/// Viewer feet control visibility and score range; the camera controls label draw order.
+#[derive(Clone, Copy, Debug)]
+pub struct NametagView {
+    pub viewer_position: Vec3,
+    pub camera_position: Vec3,
+    /// Unit forward vector from the camera rotation, pointing into the scene.
+    pub camera_forward: Vec3,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct NametagAnchor {
     pub(super) runtime_id: u64,
-    /// Unlifted anchor: multiline lift must not change the eye-facing rotation.
+    /// Head anchor, before the world-Y multiline lift.
     pub(super) position: Vec3,
     pub(super) lines: Arc<[Arc<str>]>,
     pub(super) depth_tested: bool,
     pub(super) text_alpha: f32,
-    pub(super) distance: f32,
+    /// Signed camera-space depth of the head anchor, independent of viewer distance.
+    pub(super) view_depth: f32,
+    /// Camera depth gained by one block of world-Y lift.
+    pub(super) camera_forward_y: f32,
 }
 
 impl NametagAnchor {
@@ -64,6 +80,8 @@ impl NametagAnchor {
 #[derive(Default)]
 pub struct NametagTextCache {
     entries: HashMap<(u64, i64), CachedNametagText>,
+    #[cfg(test)]
+    retention_checks: usize,
 }
 
 struct CachedNametagText {
@@ -74,11 +92,26 @@ struct CachedNametagText {
 }
 
 impl NametagTextCache {
-    /// Reuses unchanged text while recomputing visibility, pose and score distance.
+    /// Checks each cached identity once against the selected actor identities.
+    fn retain_selected(&mut self, selected: &HashSet<(u64, i64)>) {
+        #[cfg(test)]
+        {
+            self.retention_checks = 0;
+        }
+        self.entries.retain(|identity, _| {
+            #[cfg(test)]
+            {
+                self.retention_checks += 1;
+            }
+            selected.contains(identity)
+        });
+    }
+
+    /// Reuses unchanged text while recomputing visibility, pose and viewer distance.
     fn extract(
         &mut self,
         actor: &ActorSnapshot,
-        eye: Vec3,
+        view: NametagView,
         picked_actor: Option<u64>,
         name: Arc<str>,
         scoreboards: &ui::ScoreboardStore,
@@ -88,7 +121,7 @@ impl NametagTextCache {
             return None;
         }
         let (position, distance_squared) =
-            nametag_geometry(actor, eye, picked_actor, partial_tick)?;
+            nametag_geometry(actor, view.viewer_position, picked_actor, partial_tick)?;
         let near_score = distance_squared < SCORE_DISTANCE_SQUARED;
         let score = match actor.metadata.get(&METADATA_SCORE) {
             Some(ActorMetadataValue::String(score)) if near_score => Some(Arc::clone(score)),
@@ -106,12 +139,7 @@ impl NametagTextCache {
                 && same_score
                 && cached.scoreboard_revision == scoreboard_revision
             {
-                return nametag_with_lines(
-                    actor,
-                    position,
-                    distance_squared,
-                    Arc::clone(&cached.lines),
-                );
+                return nametag_with_lines(actor, position, view, Arc::clone(&cached.lines));
             }
         }
         let text = tag_text(actor, Arc::clone(&name), distance_squared, scoreboards);
@@ -125,7 +153,7 @@ impl NametagTextCache {
                 lines: Arc::clone(&lines),
             },
         );
-        nametag_with_lines(actor, position, distance_squared, lines)
+        nametag_with_lines(actor, position, view, lines)
     }
 }
 
@@ -135,38 +163,67 @@ fn actor_flag(actor: &ActorSnapshot, bit: u32) -> bool {
             if flags & (1_u64 << bit) != 0)
 }
 
+/// The tag's height above the feet: the box height plus the head clearance, both following the
+/// actor's size as the Scale metadata sets it. A published zero height counts, so a text host
+/// with an empty box shows its tag one clearance up, and one at near-zero scale at its feet.
+/// Java player pose offsets are applied after that translation.
 fn tag_height(actor: &ActorSnapshot) -> f32 {
     let height = match actor.metadata.get(&METADATA_HEIGHT) {
-        Some(ActorMetadataValue::Float(height)) if height.is_finite() && *height > 0.0 => *height,
-        _ if actor_flag(actor, ACTOR_FLAG_SNEAKING) => SNEAKING_HEIGHT * actor.render_scale(),
-        _ => DEFAULT_HEIGHT * actor.render_scale(),
+        Some(ActorMetadataValue::Float(height)) if height.is_finite() && *height >= 0.0 => *height,
+        _ => DEFAULT_HEIGHT,
     };
-    height + HEAD_CLEARANCE
+    let offset = if !matches!(actor.kind, ActorKind::Player { .. }) {
+        0.0
+    } else if actor_flag(actor, ActorFlag::Sneaking.wire_value()) {
+        SNEAK_PLAYER_Y_OFFSET
+    } else if actor.is_sleeping() {
+        SLEEPING_LABEL_DROP
+    } else {
+        0.0
+    };
+    (height + HEAD_CLEARANCE) * actor.render_scale() - offset
 }
 
-fn tag_world_position(actor: &ActorSnapshot, partial_tick: f32) -> Option<Vec3> {
-    Some(
-        Vec3::from_array(actor.interpolated_position(partial_tick.clamp(0.0, 1.0))?)
-            + Vec3::Y * tag_height(actor),
-    )
+/// Adds the actor's current label height to the selected render feet.
+fn tag_world_position(actor: &ActorSnapshot, feet: Vec3) -> Vec3 {
+    feet + Vec3::Y * tag_height(actor)
 }
 
 fn render_distance(actor: &ActorSnapshot) -> f32 {
+    let java_distance = if actor_flag(actor, ActorFlag::Sneaking.wire_value()) {
+        SNEAK_RENDER_DISTANCE
+    } else {
+        DEFAULT_RENDER_DISTANCE
+    };
     match actor.metadata.get(&METADATA_RENDER_DISTANCE) {
         Some(ActorMetadataValue::Float(value)) if value.is_finite() && *value >= 0.0 => *value,
-        _ => DEFAULT_RENDER_DISTANCE,
+        _ => java_distance,
     }
+    .min(java_distance)
 }
 
+/// Applies explicit always-show overrides before the ordinary show-name gate.
 fn visible(actor: &ActorSnapshot, picked_actor: Option<u64>) -> bool {
-    if actor_flag(actor, ACTOR_FLAG_INVISIBLE) {
+    if actor_flag(actor, ActorFlag::Invisible.wire_value()) {
         return false;
     }
-    let always = matches!(actor.kind, ActorKind::Player { .. })
-        || actor_flag(actor, ACTOR_FLAG_ALWAYS_SHOW_NAME)
+    let always = actor_flag(actor, ACTOR_FLAG_ALWAYS_SHOW_NAME)
         || matches!(actor.metadata.get(&METADATA_ALWAYS_SHOW_NAMETAG),
-            Some(ActorMetadataValue::Byte(value)) if *value != 0);
-    always || (actor_flag(actor, ACTOR_FLAG_SHOW_NAME) && picked_actor == Some(actor.runtime_id))
+            Some(ActorMetadataValue::Byte(value)) if *value != 0 && *value != -1);
+    if always {
+        return true;
+    }
+    // Missing flags retain the player default; an explicit server hide stays authoritative.
+    if matches!(
+        actor.metadata.get(&0),
+        Some(ActorMetadataValue::Flags(_) | ActorMetadataValue::FlagsExtended(_))
+    ) && !actor_flag(actor, ActorFlag::ShowName.wire_value())
+    {
+        return false;
+    }
+    matches!(actor.kind, ActorKind::Player { .. })
+        || (actor_flag(actor, ActorFlag::ShowName.wire_value())
+            && picked_actor == Some(actor.runtime_id))
 }
 
 fn tag_text(
@@ -194,24 +251,34 @@ fn tag_text(
     }
 }
 
-/// Checks an actor's visibility and returns its unlifted anchor and squared eye distance.
+/// Checks an actor's visibility and returns its unlifted anchor and squared viewer distance.
 fn nametag_geometry(
     actor: &ActorSnapshot,
-    eye: Vec3,
+    viewer_position: Vec3,
     picked_actor: Option<u64>,
     partial_tick: f32,
+) -> Option<(Vec3, f32)> {
+    let feet = Vec3::from_array(actor.interpolated_position(partial_tick.clamp(0.0, 1.0))?);
+    nametag_geometry_at_feet(actor, viewer_position, picked_actor, feet)
+}
+
+/// Applies actor visibility and distance rules to the caller's current render feet.
+fn nametag_geometry_at_feet(
+    actor: &ActorSnapshot,
+    viewer_position: Vec3,
+    picked_actor: Option<u64>,
+    feet: Vec3,
 ) -> Option<(Vec3, f32)> {
     if !visible(actor, picked_actor) {
         return None;
     }
-    let feet = Vec3::from_array(actor.interpolated_position(partial_tick.clamp(0.0, 1.0))?);
-    let distance_squared = eye.distance_squared(feet);
+    let distance_squared = viewer_position.distance_squared(feet);
     let maximum = render_distance(actor);
-    if !distance_squared.is_finite() || distance_squared > maximum * maximum {
+    if !distance_squared.is_finite() || distance_squared >= maximum * maximum {
         return None;
     }
-    let position = tag_world_position(actor, partial_tick)?;
-    if !position.is_finite() || eye == position || !(eye - position).length_squared().is_finite() {
+    let position = tag_world_position(actor, feet);
+    if !position.is_finite() {
         return None;
     }
     Some((position, distance_squared))
@@ -238,38 +305,58 @@ fn nametag_lines(text: &str) -> Arc<[Arc<str>]> {
 fn nametag_with_lines(
     actor: &ActorSnapshot,
     position: Vec3,
-    distance_squared: f32,
+    view: NametagView,
     lines: Arc<[Arc<str>]>,
 ) -> Option<NametagAnchor> {
     if lines.is_empty() {
         return None;
     }
-    let sneaking = actor_flag(actor, ACTOR_FLAG_SNEAKING);
+    let view_depth = view.camera_forward.dot(position - view.camera_position);
+    if !view_depth.is_finite() {
+        return None;
+    }
+    let sneaking = actor_flag(actor, ActorFlag::Sneaking.wire_value());
     Some(NametagAnchor {
         runtime_id: actor.runtime_id,
         position,
         lines,
         depth_tested: sneaking,
-        text_alpha: if sneaking { SNEAK_TEXT_ALPHA } else { 1.0 },
-        distance: distance_squared.sqrt(),
+        text_alpha: if sneaking { DIM_TEXT_ALPHA } else { 1.0 },
+        view_depth,
+        camera_forward_y: view.camera_forward.y,
     })
 }
 
 /// Extracts a visible tag using the scene's bounded line prefix.
 pub fn extract_nametag(
     actor: &ActorSnapshot,
-    eye: Vec3,
+    view: NametagView,
     picked_actor: Option<u64>,
     name: Arc<str>,
     scoreboards: &ui::ScoreboardStore,
     partial_tick: f32,
 ) -> Option<NametagAnchor> {
+    let feet = Vec3::from_array(actor.interpolated_position(partial_tick.clamp(0.0, 1.0))?);
+    extract_nametag_at_feet(actor, view, picked_actor, name, scoreboards, feet)
+}
+
+/// Extracts a tag from the same render feet as its body, without interpolating the
+/// actor again. Metadata, visibility, score range and text limits remain authoritative.
+pub fn extract_nametag_at_feet(
+    actor: &ActorSnapshot,
+    view: NametagView,
+    picked_actor: Option<u64>,
+    name: Arc<str>,
+    scoreboards: &ui::ScoreboardStore,
+    feet: Vec3,
+) -> Option<NametagAnchor> {
     if name.is_empty() {
         return None;
     }
-    let (position, distance_squared) = nametag_geometry(actor, eye, picked_actor, partial_tick)?;
+    let (position, distance_squared) =
+        nametag_geometry_at_feet(actor, view.viewer_position, picked_actor, feet)?;
     let text = tag_text(actor, name, distance_squared, scoreboards);
-    nametag_with_lines(actor, position, distance_squared, nametag_lines(&text))
+    nametag_with_lines(actor, position, view, nametag_lines(&text))
 }
 
 /// Rejects newline-only names before selection, while allowing a visible appended score.
@@ -300,18 +387,26 @@ pub fn project_nametags(
     cache: &mut NametagTextCache,
     scoreboards: &ui::ScoreboardStore,
     stream: &chunk_pipeline::WorldStream,
-    eye: Vec3,
+    view: NametagView,
     picked_actor: Option<u64>,
     partial_tick: f32,
     show_players: bool,
 ) -> Vec<NametagAnchor> {
-    let mut candidates: Vec<_> = stream
-        .authority()
+    let authority = stream.authority();
+    // Java hides the label of a mount carrying a passenger, including the local player.
+    let mounts: HashSet<_> = authority
         .remote_actors()
+        .filter_map(|actor| authority.ridden_unique_id(actor.unique_id))
+        .chain(authority.ridden_unique_id(authority.local_player_unique_id()))
+        .collect();
+    let mut candidates: Vec<_> = authority
+        .remote_actors()
+        .filter(|actor| !mounts.contains(&actor.unique_id))
         .filter(|actor| show_players || !matches!(actor.kind, ActorKind::Player { .. }))
         .filter_map(|actor| {
             let name = stream.authority().actor_name_tag(actor.unique_id)?;
-            let (_, distance_squared) = nametag_geometry(actor, eye, picked_actor, partial_tick)?;
+            let (_, distance_squared) =
+                nametag_geometry(actor, view.viewer_position, picked_actor, partial_tick)?;
             has_nametag_lines(actor, &name, distance_squared, scoreboards).then_some((
                 actor,
                 name,
@@ -325,64 +420,73 @@ pub fn project_nametags(
             .then(a.runtime_id.cmp(&b.runtime_id))
     });
     candidates.truncate(MAX_PRESENTED_NAMETAGS);
-    cache.entries.retain(|&(runtime_id, unique_id), _| {
-        candidates
-            .iter()
-            .any(|(actor, _, _)| actor.runtime_id == runtime_id && actor.unique_id == unique_id)
-    });
+    let selected: HashSet<_> = candidates
+        .iter()
+        .map(|(actor, _, _)| (actor.runtime_id, actor.unique_id))
+        .collect();
+    cache.retain_selected(&selected);
     candidates
         .into_iter()
         .filter_map(|(actor, name, _)| {
-            cache.extract(actor, eye, picked_actor, name, scoreboards, partial_tick)
+            cache.extract(actor, view, picked_actor, name, scoreboards, partial_tick)
         })
         .collect()
 }
 
-/// Retained line atlas with a background and centred glyphs per line; backgrounds precede glyphs.
+/// Draws complete labels back to front, keeping each plate and its text passes together.
+/// `lift_scale` is the cosmetic scale applied to line lift after building the scene.
 pub fn build_nametag_scene<'p>(
     anchors: &[NametagAnchor],
+    lift_scale: f32,
     font: &RuntimeFontCatalog,
     layouts: &mut TextLayoutCache,
     atlas: &mut NametagAtlas,
     pages: &impl Fn(usize) -> Option<GlyphPage<'p>>,
 ) -> NametagScene {
+    // Retain budget and atlas allocation order; final draw order follows placed geometry.
     let mut ordered: Vec<&NametagAnchor> = anchors.iter().collect();
     ordered.sort_by(|a, b| {
-        a.depth_tested
-            .cmp(&b.depth_tested)
-            .then(b.distance.total_cmp(&a.distance))
+        b.view_depth
+            .total_cmp(&a.view_depth)
             .then(a.runtime_id.cmp(&b.runtime_id))
     });
-    let requested_lines = ordered
-        .iter()
-        .map(|anchor| anchor.lines.len())
-        .sum::<usize>()
-        .min(MAX_NAMETAG_LINES);
-    if !atlas.has_room_for(requested_lines) {
-        atlas.reset();
-    }
+    let mut available_records = MAX_NAMETAG_RECORDS;
+    // Any deferred atlas rebuild must finish before this frame captures its first cell UVs.
+    atlas.begin_frame(ordered.iter().flat_map(|anchor| {
+        let records_per_line = NAMETAG_RECORDS_PER_LINE + usize::from(!anchor.depth_tested);
+        let count = anchor.lines.len().min(available_records / records_per_line);
+        available_records -= count * records_per_line;
+        anchor.lines.iter().take(count)
+    }));
     let side = NAMETAG_ATLAS_SIDE as f32;
     let texels = FONT_DESIGN_PIXEL_TEXELS as f32;
     let mut records = Vec::new();
-    let mut see_through = 0;
+    let mut labels = Vec::with_capacity(ordered.len());
+    // One line buffer serves every label.
+    let mut placed = Vec::new();
     for anchor in ordered {
-        let remaining_lines = (MAX_NAMETAG_RECORDS - records.len()) / NAMETAG_RECORDS_PER_LINE;
-        let placed: Vec<_> = anchor
-            .lines
-            .iter()
-            .take(remaining_lines)
-            .filter_map(|line| atlas.line(line, font, layouts, pages))
-            .collect();
+        let records_per_line = NAMETAG_RECORDS_PER_LINE + usize::from(!anchor.depth_tested);
+        let remaining_lines = (MAX_NAMETAG_RECORDS - records.len()) / records_per_line;
+        placed.clear();
+        placed.extend(
+            anchor
+                .lines
+                .iter()
+                .take(remaining_lines)
+                .filter_map(|line| atlas.line(line, font, layouts, pages)),
+        );
         if placed.is_empty() {
             continue;
         }
         let common = NametagRecord {
             anchor: anchor.position.to_array(),
             line_lift: EXTRA_LINE_LIFT * placed.len().saturating_sub(1) as f32,
+            depth_tested: u32::from(anchor.depth_tested),
             ..NametagRecord::default()
         };
+        let first = records.len();
         records.extend(
-            nametag_line_backgrounds(placed.iter().map(|line| line.width_px)).map(|rect| {
+            java_nametag_line_backgrounds(placed.iter().map(|line| line.width_px)).map(|rect| {
                 NametagRecord {
                     rect,
                     uv: [0.0, 0.0, -1.0, -1.0],
@@ -391,6 +495,7 @@ pub fn build_nametag_scene<'p>(
                 }
             }),
         );
+        let first_glyph = records.len();
         for (index, line) in placed.iter().enumerate() {
             let left = nametag_line_left(line.width_px);
             let [x, y, width, height] = line.cell.map(|value| value as f32);
@@ -403,20 +508,41 @@ pub fn build_nametag_scene<'p>(
                 ..common
             });
         }
-        if !anchor.depth_tested {
-            see_through = records.len();
+        if anchor.depth_tested {
+            let drop = SNEAK_LABEL_DROP / render_model::NAMETAG_BLOCKS_PER_FONT_PIXEL;
+            for record in &mut records[first..] {
+                record.rect[1] += drop;
+                record.rect[3] += drop;
+            }
+        } else {
+            let glyph_end = records.len();
+            for index in first_glyph..glyph_end {
+                let full = NametagRecord {
+                    depth_tested: 1,
+                    ..records[index]
+                };
+                records[index].color[3] *= DIM_TEXT_ALPHA;
+                records.push(full);
+            }
         }
+        let plane_depth =
+            anchor.view_depth + anchor.camera_forward_y * (common.line_lift * lift_scale);
+        labels.push((plane_depth, anchor.runtime_id, first..records.len()));
     }
+    labels.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+    let records = labels
+        .into_iter()
+        .flat_map(|(_, _, range)| records[range].iter().copied())
+        .collect();
     let (atlas, atlas_revision) = atlas.publish();
     NametagScene {
         records,
-        see_through,
         atlas,
         atlas_revision,
     }
 }
 
-/// Applies bounded cosmetic overrides while preserving native depth pass membership.
+/// Applies bounded cosmetic overrides without changing record order or depth selection.
 pub(super) fn style_scene(
     scene: &mut NametagScene,
     style: &ui::mod_hud::NametagStyle,
@@ -424,13 +550,10 @@ pub(super) fn style_scene(
 ) {
     if style.hide {
         scene.records.clear();
-        scene.see_through = 0;
         return;
     }
     let original = std::mem::take(&mut scene.records);
-    let old_boundary = scene.see_through;
-    let mut boundary = 0;
-    for (index, mut record) in original.into_iter().enumerate() {
+    for mut record in original {
         for coordinate in &mut record.rect {
             *coordinate *= style.scale;
         }
@@ -493,9 +616,55 @@ pub(super) fn style_scene(
             scene.records.extend(extra);
             scene.records.push(record);
         }
-        if index + 1 == old_boundary {
-            boundary = scene.records.len();
-        }
     }
-    scene.see_through = boundary;
+}
+
+#[cfg(test)]
+mod selection_work_tests {
+    use super::*;
+
+    #[test]
+    fn retention_checks_each_identity_once_and_preserves_selected_text() {
+        let mut cache = NametagTextCache::default();
+        let lines: Arc<[Arc<str>]> = vec![Arc::from("cached")].into();
+        for runtime_id in 0..MAX_PRESENTED_NAMETAGS as u64 {
+            cache.entries.insert(
+                (runtime_id, runtime_id as i64),
+                CachedNametagText {
+                    name: Arc::from("cached"),
+                    score: None,
+                    scoreboard_revision: None,
+                    lines: Arc::clone(&lines),
+                },
+            );
+        }
+        let selected: HashSet<_> = cache.entries.keys().copied().collect();
+        let mut previous_checks = 0;
+        for identity in cache.entries.keys() {
+            assert!(selected.iter().any(|candidate| {
+                previous_checks += 1;
+                candidate == identity
+            }));
+        }
+        assert_eq!(
+            previous_checks,
+            MAX_PRESENTED_NAMETAGS * (MAX_PRESENTED_NAMETAGS + 1) / 2
+        );
+        cache.retain_selected(&selected);
+        assert_eq!(cache.retention_checks, MAX_PRESENTED_NAMETAGS);
+        assert_eq!(cache.entries.len(), selected.len());
+        assert!(
+            cache
+                .entries
+                .values()
+                .all(|entry| Arc::ptr_eq(&entry.lines, &lines))
+        );
+        // Reusing a runtime ID with a different unique ID must retire the old identity.
+        cache.retain_selected(&HashSet::from([(0, -1), (1, 1)]));
+        assert_eq!(cache.retention_checks, MAX_PRESENTED_NAMETAGS);
+        assert_eq!(cache.entries.keys().copied().collect::<Vec<_>>(), [(1, 1)]);
+        cache.retain_selected(&HashSet::new());
+        assert_eq!(cache.retention_checks, 1);
+        assert!(cache.entries.is_empty());
+    }
 }

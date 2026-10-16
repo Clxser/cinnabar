@@ -1,6 +1,12 @@
+use assets::facts::pack::PackTexture as T;
+use assets::material_keys::MaterialKeys;
+use pack_compile_input::image::{decode_static_texture, decode_texture, normalize_texture_tile};
+use pack_compile_input::{
+    PackSources, TextureKey, read_pack, resolve_texture_key, static_texture_path,
+};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use assets::{
@@ -14,21 +20,18 @@ use assets::{
     MODEL_TEMPLATE_FLAG_FENCE_NETHER, MODEL_TEMPLATE_FLAG_FENCE_WOOD,
     MODEL_TEMPLATE_FLAG_GATE_AXIS_X, MODEL_TEMPLATE_FLAG_GATE_AXIS_Z, MODEL_TEMPLATE_FLAG_KELP,
     MODEL_TEMPLATE_FLAG_PANE, MODEL_TEMPLATE_FLAG_STAIR, MODEL_TEMPLATE_FLAG_TRANSPARENT_CUBE,
-    MODEL_TEMPLATE_FLAG_WALL, Material, MaterialKeys, ModelFamily, ModelQuad, ModelStateField,
-    ModelTemplate, NO_ANIMATION, RegistryRecord, TexturePage, TextureRef, VisualKind,
-    VisualSupport, texture::TextureArray,
+    MODEL_TEMPLATE_FLAG_WALL, Material, ModelFamily, ModelQuad, ModelStateField, ModelTemplate,
+    NO_ANIMATION, RegistryRecord, TextureArray, TexturePage, TextureRef, VisualKind, VisualSupport,
 };
 
 use {
     crate::{
-        AnimationInventory, PackSources, TextureKey,
+        AnimationInventory,
         animation::{
             AnimationLimits, AnimationPlan, DecodedImage, compile_animation_plan,
             compile_animation_plan_selected,
         },
         compile_biome_assets,
-        image::{decode_static_texture, decode_texture, normalize_texture_tile},
-        pack::{read_pack, resolve_texture_key},
     },
     assets::BlockFace,
 };
@@ -39,6 +42,10 @@ mod destroy_facts;
 mod leaf_mips;
 mod lily_pad_textures;
 mod material_facts;
+mod material_keys;
+mod materials;
+use materials::compile_materials;
+mod pack_bindings;
 mod seasonal_leaves;
 mod variations;
 mod visuals;
@@ -85,7 +92,7 @@ use visuals::{
         mineral_cube_material_descriptor, mineral_cube_sources_are_exact,
     },
     multiface::multiface_quads,
-    named_blocks::{is_named_block, named_block_material_flags},
+    named_blocks::named_block_material_flags,
     resin_clump::{
         is_resin_clump, is_resin_clump_name, is_resin_clump_record, resin_clump_inventory_is_exact,
         resin_clump_material_descriptor,
@@ -260,10 +267,9 @@ fn compile_pack_inner(
     let admit_bee_housing = bee_housing_inventory_is_exact(records);
 
     let mut descriptor_keys = BTreeMap::<Descriptor, Box<str>>::new();
-    if records
-        .iter()
-        .any(|record| record.name.as_ref() == "minecraft:grass_block")
-        && let Some((descriptor, key)) = visuals::snowy_grass::material_descriptor(&pack)
+    if records.iter().any(|record| {
+        assets::facts::block_render_fact(&record.name).kind == assets::facts::BlockRenderKind::Grass
+    }) && let Some((descriptor, key)) = visuals::snowy_grass::material_descriptor(&pack)
     {
         descriptor_keys.insert(descriptor, key);
     }
@@ -305,7 +311,8 @@ fn compile_pack_inner(
             && !record_has_deferred_material(&pack, record))
             || is_model_visual(record)
             || is_liquid(record)
-            || record.name.as_ref() == "minecraft:enchanting_table"
+            || assets::facts::block_render_fact(&record.name).kind
+                == assets::facts::BlockRenderKind::EnchantingTable
             || visuals::literal::is_literal_cube(record)
             || visuals::bubble_column::is_record(record)
             || fallback.contains(record)
@@ -329,6 +336,11 @@ fn compile_pack_inner(
         if visuals::end_portal_frame::is_record(record)
             && let Some((descriptor, key)) =
                 visuals::end_portal_frame::eye_descriptor(&pack, record)
+        {
+            descriptor_keys.insert(descriptor, key);
+        }
+        if visuals::lever::is_record(record)
+            && let Some((descriptor, key)) = visuals::lever::base_descriptor(&pack, record)
         {
             descriptor_keys.insert(descriptor, key);
         }
@@ -447,6 +459,8 @@ fn compile_pack_inner(
         }
         let aquatic_faces;
         let faces: &[BlockFace] = if is_kelp(record)
+            || visuals::stem::is_record(record)
+            || visuals::pitcher_crop::is_record(record)
             || is_liquid(record)
             || visuals::fire::is_record(record)
             || visuals::potted_plants::is_record(record)
@@ -483,12 +497,8 @@ fn compile_pack_inner(
         compile_materials(&descriptor_keys, &animation_plan, &alpha_paths)?;
     let (materials, material_by_descriptor) =
         variations::install(materials, material_by_descriptor, variation_groups)?;
-    let material_keys = MaterialKeys::from_entries(
-        material_by_descriptor
-            .iter()
-            .map(|(descriptor, &material)| (material, descriptor.texture_key.as_ref())),
-    )
-    .with_aliases(pack.terrain.first_paths());
+    let material_keys =
+        material_keys::build(&pack, &material_by_descriptor, &materials, &animations);
     let vanilla_fallback_material =
         visuals::fallback::neutral_material(fallback, records, &pack, &material_by_descriptor)?;
     let (visuals, hashed, model_templates, mut model_quads) = compile_visuals(
@@ -538,28 +548,21 @@ fn compile_pack_inner(
     } = leaf_mips::install(&mut materials, texture_pages, animations, animation_frames)?;
     // World leaf selectors retain their original terrain keys even though their
     // native mip chains are separate from carried/shared texture pixels.
-    let original_keys = material_keys
-        .keys()
-        .flat_map(|key| {
-            material_keys
-                .materials(key)
-                .iter()
-                .map(move |&id| (id, key))
-        })
-        .collect::<Vec<_>>();
-    let material_keys = MaterialKeys::from_entries(
-        original_keys
-            .iter()
-            .copied()
-            .chain(lily_pad_keys.iter().map(|(id, key)| (*id, key.as_ref())))
-            .chain(seasonal_copies.iter().flat_map(|&(copy, original)| {
-                original_keys
-                    .iter()
-                    .filter_map(move |&(id, key)| (id == original).then_some((copy, key)))
-            })),
-    )
-    .with_aliases(material_keys.aliases())
-    .with_fixed_tints(lily_pad_tints);
+    let material_keys = material_keys::extend(
+        material_keys,
+        &lily_pad_keys,
+        lily_pad_tints,
+        &seasonal_copies,
+    );
+    let material_keys = pack_bindings::retain(
+        material_keys,
+        (&pack, root),
+        &material_by_descriptor,
+        &materials,
+        (records, &visuals),
+        &lily_pad_keys,
+        &seasonal_copies,
+    )?;
     if light_properties.len() != visuals.len() {
         return Err(AssetError::InvalidCompiledAssets {
             detail: "light-property count does not match sequential visual span".into(),
@@ -649,7 +652,7 @@ fn flowerbed_material_descriptors(
 fn pale_moss_carpet_side_material_descriptors(
     pack: &PackSources,
 ) -> Option<[(Descriptor, Box<str>); 2]> {
-    let key: Box<str> = "pale_moss_carpet_side".into();
+    let key: Box<str> = T::PaleMossCarpetSide.key().into();
     let paths = pack.terrain.get_exact_pair(&key)?;
     Some(std::array::from_fn(|index| {
         let path = paths[index];
@@ -722,7 +725,7 @@ fn compile_runtime_animation_plan(
                 .filter(|candidate| candidate.path == source_path)
                 .all(|candidate| candidate.flipbook_selector.is_some())
         {
-            crate::image::retain_first_strip_frame(&mut decoded);
+            pack_compile_input::image::retain_first_strip_frame(&mut decoded);
         }
         if decoded.width != decoded.height {
             if fallback_only {
@@ -794,7 +797,7 @@ fn compile_runtime_animation_plan(
         &decoded_images,
         AnimationLimits {
             max_layers_per_page: MAX_CARRIER_TEXTURE_LAYERS as u32,
-            max_pages: assets::MAX_TEXTURE_PAGES as u32,
+            max_pages: assets::MAX_CARRIER_TEXTURE_PAGES as u32,
         },
         Some(&selected_atlas_tiles),
         &overlay_mask_paths,
@@ -811,10 +814,7 @@ fn descriptor_supports_alpha(descriptor: &Descriptor) -> bool {
             | MATERIAL_FLAG_OVERLAY_MASK
             | MATERIAL_FLAG_LIQUID_DEPTH_WRITE)
         != 0
-        || matches!(
-            descriptor.texture_key.as_ref(),
-            "bamboo_fence_gate" | "beacon_core" | "beacon_shell"
-        )
+        || assets::facts::pack::rules().supports_alpha(&descriptor.texture_key)
 }
 
 fn animation_plan_pages(plan: &AnimationPlan) -> Result<Box<[TexturePage]>, AssetError> {
@@ -870,128 +870,6 @@ fn runtime_animation_tables(plan: &AnimationPlan) -> Result<CompiledAnimations, 
         .collect::<Vec<_>>()
         .into_boxed_slice();
     Ok((animations, plan.frames.clone()))
-}
-
-pub(crate) fn static_texture_path(
-    root: &Path,
-    source: &str,
-    key: &str,
-) -> Result<PathBuf, AssetError> {
-    let source_path = Path::new(source);
-    if source_path.extension().is_some() {
-        return Ok(root.join(source_path));
-    }
-
-    let png = root.join(format!("{source}.png"));
-    if png.try_exists().map_err(|source| AssetError::TextureIo {
-        key: key.into(),
-        path: png.clone(),
-        source,
-    })? {
-        return Ok(png);
-    }
-    let tga = root.join(format!("{source}.tga"));
-    if tga.try_exists().map_err(|source| AssetError::TextureIo {
-        key: key.into(),
-        path: tga.clone(),
-        source,
-    })? {
-        return Ok(tga);
-    }
-    Ok(png)
-}
-
-fn compile_materials(
-    descriptor_keys: &BTreeMap<Descriptor, Box<str>>,
-    plan: &AnimationPlan,
-    alpha_paths: &BTreeSet<Box<str>>,
-) -> Result<CompiledMaterials, AssetError> {
-    let mut materials = vec![Material {
-        texture: TextureRef::DIAGNOSTIC,
-        flags: 0,
-        animation: NO_ANIMATION,
-        ..assets::Material::unvaried()
-    }];
-    let mut material_by_value = BTreeMap::<(TextureRef, u32, u32), u32>::new();
-    material_by_value.insert(
-        (TextureRef::DIAGNOSTIC, 0, NO_ANIMATION),
-        DIAGNOSTIC_MATERIAL,
-    );
-    let mut material_by_descriptor = BTreeMap::new();
-
-    for descriptor in descriptor_keys.keys() {
-        if alpha_paths.contains(&descriptor.path) && !descriptor_supports_alpha(descriptor) {
-            continue;
-        }
-        let key = &descriptor.texture_key;
-        let candidates = plan
-            .animations
-            .iter()
-            .enumerate()
-            .filter(|(_, source)| {
-                source.atlas_tile.as_ref() == key.as_ref() && source.source_path == descriptor.path
-            })
-            .collect::<Vec<_>>();
-        let animation = if let Some((atlas_index, tile_variant)) = descriptor.flipbook_selector {
-            candidates.iter().find(|(_, source)| {
-                source.atlas_index == atlas_index && source.atlas_tile_variant == tile_variant
-            }).map(|(index, _)| *index)
-        } else {
-            match candidates.as_slice() {
-                [] => None,
-                [(index, _)] => Some(*index),
-                _ => Some(
-                    candidates.iter()
-                        .find(|(_, source)| source.atlas_index == 0 && source.atlas_tile_variant == 0)
-                        .map(|(index, _)| *index)
-                        .ok_or_else(|| AssetError::InvalidCompiledAssets {
-                            detail: format!(
-                                "texture {} has multiple flipbook selectors and no canonical selector (0, 0)",
-                                descriptor.path
-                            ).into(),
-                        })?,
-                ),
-            }
-        }.map(|index| u32::try_from(index).expect("bounded flipbook count"));
-        let texture = if let Some(animation) = animation {
-            let source = &plan.animations[animation as usize];
-            plan.frames[source.frame_start as usize]
-        } else if let Some(&texture) = plan
-            .static_refs
-            .get(&descriptor.path)
-            .or_else(|| plan.strip_first_refs.get(&descriptor.path))
-        {
-            texture
-        } else {
-            continue;
-        };
-        let animation = animation.unwrap_or(NO_ANIMATION);
-        let value = (texture, descriptor.flags, animation);
-        let material = if let Some(&material) = material_by_value.get(&value) {
-            material
-        } else {
-            if materials.len() >= MAX_MATERIALS {
-                return Err(AssetError::TooManyMaterials {
-                    count: materials.len() + 1,
-                    max: MAX_MATERIALS,
-                });
-            }
-            let material =
-                u32::try_from(materials.len()).map_err(|_| AssetError::BlobSizeOverflow {
-                    section: "material",
-                })?;
-            materials.push(Material {
-                texture,
-                flags: descriptor.flags,
-                animation,
-                ..assets::Material::unvaried()
-            });
-            material_by_value.insert(value, material);
-            material
-        };
-        material_by_descriptor.insert(descriptor.clone(), material);
-    }
-    Ok((materials.into_boxed_slice(), material_by_descriptor))
 }
 
 #[cfg(test)]

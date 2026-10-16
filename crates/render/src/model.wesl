@@ -1,14 +1,15 @@
 import render::chunk_bindings::{
-    view, chunk_origins, block_textures_page_0, block_textures_page_1, block_sampler,
-    terrain_gamma_page_0, terrain_gamma_page_1, model_sampler, animations, animation_frames,
-    model_templates, geometry_streams, atmosphere,
+    view, chunk_origins, block_textures_page_0, block_textures_page_1, block_textures_page_2,
+    block_textures_page_3, block_textures_page_4, block_sampler, terrain_gamma_page_0,
+    terrain_gamma_page_1, terrain_gamma_page_2, terrain_gamma_page_3, terrain_gamma_page_4,
+    model_sampler, animations, animation_frames, model_templates, geometry_streams, atmosphere,
 };
 @if(ENHANCED || ENHANCED_SHADOW)
 import render::chunk_bindings::{
     enhanced_color_page_0, enhanced_color_page_1, enhanced_sampler, enhanced_texture_refs,
     enhanced_normal_page_0, enhanced_normal_page_1, enhanced_mer_page_0, enhanced_mer_page_1,
 };
-import render::material::{MaterialGpu, materials, positional_material_id, texture_layer, material_uv_flags, texture_model_uv, texture_gradient_scale};
+import render::material::{MaterialGpu, materials, positional_material_id, texture_layer, texture_page, material_uv_flags, texture_model_uv, texture_gradient_scale};
 @if(ENHANCED_SHADOW)
 import render::enhanced::caster::{caster_clip, caster_camera_clip, caster_previous_camera_clip, caster_history_valid, caster_excludes_emitter};
 @if(ENHANCED_MOTION)
@@ -17,7 +18,7 @@ import render::enhanced::actor_motion::submitted_surface_motion;
 import render::enhanced::common::encode_geometric_normal;
 import render::world_projection::{section_camera_offset, camera_offset_clip};
 import render::biome_tint::{world_animation_clock, blended_biome_tint_gamma};
-import render::lighting::{configured_fog_amount, configured_distance_fog, light_ao_factor, light_colour, material_ambient_occlusion, material_face_shade, tint_to_gamma, tint_to_linear, terrain_light_levels, terrain_light_colour};
+import render::lighting::{configured_fog_fade, light_ao_factor, light_colour, material_ambient_occlusion, material_face_shade, tint_to_gamma, tint_to_linear, terrain_light_levels, terrain_light_colour};
 @if(ALPHA_TO_COVERAGE)
 import render::lighting::{CutoutSample, cutout_alpha_array, cutout_mix};
 @if(ENHANCED)
@@ -171,7 +172,10 @@ fn vertex_unit(
     @builtin(vertex_index) vertex_index: u32,
     @builtin(instance_index) instance_index: u32,
 ) -> VertexOutput {
-    let unit = terrain_units[instance_index];
+    // Header locates packed visibility references beside stable descriptor slots.
+    let references = terrain_units[0].x;
+    let slot = terrain_units[references + instance_index / 4u][instance_index % 4u];
+    let unit = terrain_units[1u + slot];
     let quad = vertex_index / 4u;
     if (quad >= unit.y) {
         return invisible_vertex();
@@ -346,7 +350,7 @@ fn model_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     out.world_position = world;
     out.world_origin = vec3<f32>(origin.value.xyz);
     @if(!ENHANCED_MOTION)
-    var tint_gamma = vec3(1.0);
+    var tint_gamma = stem_colour(material.flags);
     // Every corner belongs to the same block; keep its exact tint flat across the model.
     @if(!ENHANCED_MOTION && !ENHANCED_SHADOW && !OPAQUE_OVERDRAW)
     let tint_kind = material.flags & 0x30u;
@@ -398,6 +402,8 @@ fn template_quad_normal(template_quad_base: u32, transform: u32) -> vec3<f32> {
     return normalize(face);
 }
 
+// STEM_COLOURS
+
 fn tinted(sampled: vec4<f32>, tint_gamma: vec3<f32>) -> vec4<f32> {
     return vec4(sampled.rgb * tint_to_linear(vec4(tint_gamma, 1.0)).rgb, sampled.a);
 }
@@ -426,24 +432,55 @@ fn sample_enhanced_colour(in: VertexOutput, texture_ref: u32, uv: vec2<f32>, dx:
 
 fn sample_ref(texture_ref: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
     let layer = texture_layer(texture_ref);
+    let page = texture_page(texture_ref);
     @if(ENHANCED)
-    if ((texture_ref >> 31u) == 0u) {
+    if (page == 0u) {
         let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_0, 0));
         return textureSampleGrad(block_textures_page_0, model_sampler, texture_model_uv(texture_ref, uv), layer, dx * scale, dy * scale);
     }
     @if(ENHANCED)
-    let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_1, 0));
+    if (page == 1u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_1, 0));
+        return textureSampleGrad(block_textures_page_1, model_sampler, texture_model_uv(texture_ref, uv), layer, dx * scale, dy * scale);
+    }
     @if(ENHANCED)
-    return textureSampleGrad(block_textures_page_1, model_sampler, texture_model_uv(texture_ref, uv), layer, dx * scale, dy * scale);
+    if (page == 2u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_2, 0));
+        return textureSampleGrad(block_textures_page_2, model_sampler, texture_model_uv(texture_ref, uv), layer, dx * scale, dy * scale);
+    }
+    @if(ENHANCED)
+    if (page == 3u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_3, 0));
+        return textureSampleGrad(block_textures_page_3, model_sampler, texture_model_uv(texture_ref, uv), layer, dx * scale, dy * scale);
+    }
+    @if(ENHANCED)
+    let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_4, 0));
+    @if(ENHANCED)
+    return textureSampleGrad(block_textures_page_4, model_sampler, texture_model_uv(texture_ref, uv), layer, dx * scale, dy * scale);
     @if(!ENHANCED)
-    if ((texture_ref >> 31u) == 0u) {
+    if (page == 0u) {
         let scale = texture_gradient_scale(texture_ref, textureDimensions(terrain_gamma_page_0, 0));
         return textureSampleGrad(terrain_gamma_page_0, model_sampler, texture_model_uv(texture_ref, uv), layer, dx * scale, dy * scale);
     }
     @if(!ENHANCED)
-    let scale = texture_gradient_scale(texture_ref, textureDimensions(terrain_gamma_page_1, 0));
+    if (page == 1u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(terrain_gamma_page_1, 0));
+        return textureSampleGrad(terrain_gamma_page_1, model_sampler, texture_model_uv(texture_ref, uv), layer, dx * scale, dy * scale);
+    }
     @if(!ENHANCED)
-    return textureSampleGrad(terrain_gamma_page_1, model_sampler, texture_model_uv(texture_ref, uv), layer, dx * scale, dy * scale);
+    if (page == 2u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(terrain_gamma_page_2, 0));
+        return textureSampleGrad(terrain_gamma_page_2, model_sampler, texture_model_uv(texture_ref, uv), layer, dx * scale, dy * scale);
+    }
+    @if(!ENHANCED)
+    if (page == 3u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(terrain_gamma_page_3, 0));
+        return textureSampleGrad(terrain_gamma_page_3, model_sampler, texture_model_uv(texture_ref, uv), layer, dx * scale, dy * scale);
+    }
+    @if(!ENHANCED)
+    let scale = texture_gradient_scale(texture_ref, textureDimensions(terrain_gamma_page_4, 0));
+    @if(!ENHANCED)
+    return textureSampleGrad(terrain_gamma_page_4, model_sampler, texture_model_uv(texture_ref, uv), layer, dx * scale, dy * scale);
 }
 
 // Bamboo's atlas rectangle includes replicated border texels. Other model UVs retain their addressing.
@@ -452,17 +489,33 @@ fn sample_model_ref(in: VertexOutput, texture_ref: u32, dx: vec2<f32>, dy: vec2<
         return sample_raw_ref(in, texture_ref, in.uv, dx, dy);
     }
     let layer = texture_layer(texture_ref);
+    let page = texture_page(texture_ref);
     @if(ENHANCED)
     return sample_enhanced_colour(in, texture_ref, in.uv, dx, dy);
     @if(!ENHANCED)
-    if ((texture_ref >> 31u) == 0u) {
+    if (page == 0u) {
         let scale = texture_gradient_scale(texture_ref, textureDimensions(terrain_gamma_page_0, 0));
         return textureSampleGrad(terrain_gamma_page_0, block_sampler, texture_model_uv(texture_ref, in.uv), layer, dx * scale, dy * scale);
     }
     @if(!ENHANCED)
-    let scale = texture_gradient_scale(texture_ref, textureDimensions(terrain_gamma_page_1, 0));
+    if (page == 1u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(terrain_gamma_page_1, 0));
+        return textureSampleGrad(terrain_gamma_page_1, block_sampler, texture_model_uv(texture_ref, in.uv), layer, dx * scale, dy * scale);
+    }
     @if(!ENHANCED)
-    return textureSampleGrad(terrain_gamma_page_1, block_sampler, texture_model_uv(texture_ref, in.uv), layer, dx * scale, dy * scale);
+    if (page == 2u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(terrain_gamma_page_2, 0));
+        return textureSampleGrad(terrain_gamma_page_2, block_sampler, texture_model_uv(texture_ref, in.uv), layer, dx * scale, dy * scale);
+    }
+    @if(!ENHANCED)
+    if (page == 3u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(terrain_gamma_page_3, 0));
+        return textureSampleGrad(terrain_gamma_page_3, block_sampler, texture_model_uv(texture_ref, in.uv), layer, dx * scale, dy * scale);
+    }
+    @if(!ENHANCED)
+    let scale = texture_gradient_scale(texture_ref, textureDimensions(terrain_gamma_page_4, 0));
+    @if(!ENHANCED)
+    return textureSampleGrad(terrain_gamma_page_4, block_sampler, texture_model_uv(texture_ref, in.uv), layer, dx * scale, dy * scale);
 }
 
 // Coverage shares the authored UV rectangle and gradients for the source image with color.
@@ -474,32 +527,64 @@ dx: vec2<f32>, @if(ALPHA_TO_COVERAGE)
 dy: vec2<f32>, @if(ALPHA_TO_COVERAGE)
 sampled: vec4<f32>) -> CutoutSample {
     let layer = texture_layer(texture_ref);
+    let page = texture_page(texture_ref);
     let coordinate = texture_model_uv(texture_ref, uv);
     @if(ENHANCED)
-    if ((texture_ref >> 31u) == 0u) {
+    if (page == 0u) {
         let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_0, 0));
         return cutout_alpha_array(block_textures_page_0, coordinate, layer, dx * scale, dy * scale, sampled, true, MODEL_ALPHA_THRESHOLD);
     }
     @if(ENHANCED)
-    let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_1, 0));
+    if (page == 1u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_1, 0));
+        return cutout_alpha_array(block_textures_page_1, coordinate, layer, dx * scale, dy * scale, sampled, true, MODEL_ALPHA_THRESHOLD);
+    }
     @if(ENHANCED)
-    return cutout_alpha_array(block_textures_page_1, coordinate, layer, dx * scale, dy * scale, sampled, true, MODEL_ALPHA_THRESHOLD);
+    if (page == 2u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_2, 0));
+        return cutout_alpha_array(block_textures_page_2, coordinate, layer, dx * scale, dy * scale, sampled, true, MODEL_ALPHA_THRESHOLD);
+    }
+    @if(ENHANCED)
+    if (page == 3u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_3, 0));
+        return cutout_alpha_array(block_textures_page_3, coordinate, layer, dx * scale, dy * scale, sampled, true, MODEL_ALPHA_THRESHOLD);
+    }
+    @if(ENHANCED)
+    let scale = texture_gradient_scale(texture_ref, textureDimensions(block_textures_page_4, 0));
+    @if(ENHANCED)
+    return cutout_alpha_array(block_textures_page_4, coordinate, layer, dx * scale, dy * scale, sampled, true, MODEL_ALPHA_THRESHOLD);
     @if(!ENHANCED)
-    if ((texture_ref >> 31u) == 0u) {
+    if (page == 0u) {
         let scale = texture_gradient_scale(texture_ref, textureDimensions(terrain_gamma_page_0, 0));
         return cutout_alpha_array(terrain_gamma_page_0, coordinate, layer, dx * scale, dy * scale, sampled, true, MODEL_ALPHA_THRESHOLD);
     }
     @if(!ENHANCED)
-    let scale = texture_gradient_scale(texture_ref, textureDimensions(terrain_gamma_page_1, 0));
+    if (page == 1u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(terrain_gamma_page_1, 0));
+        return cutout_alpha_array(terrain_gamma_page_1, coordinate, layer, dx * scale, dy * scale, sampled, true, MODEL_ALPHA_THRESHOLD);
+    }
     @if(!ENHANCED)
-    return cutout_alpha_array(terrain_gamma_page_1, coordinate, layer, dx * scale, dy * scale, sampled, true, MODEL_ALPHA_THRESHOLD);
+    if (page == 2u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(terrain_gamma_page_2, 0));
+        return cutout_alpha_array(terrain_gamma_page_2, coordinate, layer, dx * scale, dy * scale, sampled, true, MODEL_ALPHA_THRESHOLD);
+    }
+    @if(!ENHANCED)
+    if (page == 3u) {
+        let scale = texture_gradient_scale(texture_ref, textureDimensions(terrain_gamma_page_3, 0));
+        return cutout_alpha_array(terrain_gamma_page_3, coordinate, layer, dx * scale, dy * scale, sampled, true, MODEL_ALPHA_THRESHOLD);
+    }
+    @if(!ENHANCED)
+    let scale = texture_gradient_scale(texture_ref, textureDimensions(terrain_gamma_page_4, 0));
+    @if(!ENHANCED)
+    return cutout_alpha_array(terrain_gamma_page_4, coordinate, layer, dx * scale, dy * scale, sampled, true, MODEL_ALPHA_THRESHOLD);
 }
 
 // ENHANCED_PBR_SAMPLING
 
 // Reads the shared configured fade for native gamma-space shading.
 fn distance_fog_amount(world_position: vec3<f32>) -> f32 {
-    return configured_fog_amount(world_position, view.world_position, atmosphere.fog_color_start.w, atmosphere.fog_end_time.x);
+    let distance_to_camera = distance(world_position, view.world_position);
+    return configured_fog_fade(distance_to_camera, atmosphere.fog_color_start.w, atmosphere.fog_end_time.x);
 }
 
 // Applies fog before blending so depthless surfaces retain their own distance.
@@ -507,7 +592,7 @@ fn apply_distance_fog(colour: vec3<f32>, world_position: vec3<f32>) -> vec3<f32>
     @if(ENHANCED)
     return enhanced_distance_fog(enhanced_frame, colour, world_position);
     @if(!ENHANCED)
-    return configured_distance_fog(colour, world_position, view.world_position, atmosphere.fog_color_start, atmosphere.fog_end_time.x);
+    return mix(colour, atmosphere.fog_color_start.rgb, distance_fog_amount(world_position));
 }
 
 // Current TopSnow tessellator -> ordinary terrain ->

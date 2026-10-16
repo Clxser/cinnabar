@@ -1,6 +1,7 @@
 //! Render-world Enhanced resources: bind group layouts, fallbacks, material
 //! classes, and per-view uniforms, targets and bind groups.
 
+use crate::queue_writes::ProfiledQueue as _;
 use std::{collections::HashMap, num::NonZeroU64};
 
 use bevy::{
@@ -401,7 +402,7 @@ pub(crate) fn prepare_enhanced_materials(
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        queue.write_texture(
+        queue.profiled_write_texture(
             TexelCopyTextureInfo {
                 texture: &table,
                 mip_level: 0,

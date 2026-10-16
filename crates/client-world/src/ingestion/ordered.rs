@@ -26,7 +26,8 @@ pub enum CommitStep {
     },
     SyncedBlockUpdates {
         sequence: u64,
-        events: Vec<SyncedBlockUpdateEvent>,
+        /// Packet boundaries preserve intermediate crack target changes.
+        packets: Vec<Vec<SyncedBlockUpdateEvent>>,
     },
 }
 
@@ -153,7 +154,9 @@ impl OrderedCommitState {
     pub fn next_sequence(&self) -> u64 {
         let mut expected = self.frontier;
         for (&sequence, entry) in self.entries.range(self.frontier..) {
-            expected = self.finished_through(expected).saturating_add(1);
+            expected = self
+                .finished_through_before(expected, sequence)
+                .saturating_add(1);
             if sequence != expected || matches!(entry.slot, Slot::Waiting | Slot::Ready(_)) {
                 return expected.min(sequence);
             }
@@ -168,6 +171,17 @@ impl OrderedCommitState {
         match self.finished.range(..=from).next_back() {
             Some((_, &end)) if end >= from => end,
             _ => from.saturating_sub(1),
+        }
+    }
+
+    /// [`Self::finished_through`] where `entry` is the next admitted, unfinished sequence at
+    /// or after `from`. Finished runs never contain an unfinished sequence, so when `from` is
+    /// that entry the run lookup is skipped: contiguous admitted work costs no tree search.
+    fn finished_through_before(&self, from: u64, entry: u64) -> u64 {
+        if from == entry {
+            from.saturating_sub(1)
+        } else {
+            self.finished_through(from)
         }
     }
 
@@ -199,7 +213,7 @@ impl OrderedCommitState {
     fn frontier_where(&self, passes: impl Fn(&Footprint) -> bool) -> u64 {
         let mut committed = self.frontier.saturating_sub(1);
         for (&sequence, entry) in self.entries.range(self.frontier..) {
-            committed = self.finished_through(committed.saturating_add(1));
+            committed = self.finished_through_before(committed.saturating_add(1), sequence);
             if sequence != committed.saturating_add(1)
                 || !(self.reads_committed(sequence, entry) || passes(&entry.footprint))
             {
@@ -466,9 +480,18 @@ impl OrderedCommitState {
             }
             PreparedWorldEvent::Immediate(WorldEvent::SyncedBlockUpdates(events)) => {
                 self.last_step_heavy = heavy;
-                self.block_update_range_end = Some(sequence);
+                let mut end = sequence;
+                let key = synced_update_key(&events);
+                let mut packets = vec![events];
+                if let Some(key) = key {
+                    while let Some(next) = self.take_adjacent_synced_updates(end, key, budget) {
+                        packets.push(next);
+                        end += 1;
+                    }
+                }
+                self.block_update_range_end = Some(end);
                 self.applying = Some(sequence);
-                CommitStep::SyncedBlockUpdates { sequence, events }
+                CommitStep::SyncedBlockUpdates { sequence, packets }
             }
             event => {
                 self.last_step_heavy = heavy;
@@ -488,9 +511,9 @@ impl OrderedCommitState {
             .entries
             .next()
             .map_or(PreparedWorldEvent::CommitOnly, |entry| {
-                PreparedWorldEvent::SubChunks {
+                PreparedWorldEvent::SubChunk {
                     dimension: pending.dimension,
-                    entries: vec![entry],
+                    entry,
                     duration: pending.duration,
                 }
             });
@@ -533,7 +556,11 @@ impl OrderedCommitState {
         self.earlier.clear();
         let mut expected = self.frontier;
         for (&sequence, entry) in self.entries.range(self.frontier..) {
-            if sequence != self.finished_through(expected).saturating_add(1) {
+            if sequence
+                != self
+                    .finished_through_before(expected, sequence)
+                    .saturating_add(1)
+            {
                 self.earlier.add_unknown();
             }
             if self.earlier.is_barrier() {
@@ -565,7 +592,11 @@ impl OrderedCommitState {
         let mut first_skipped = None;
         let mut expected = self.frontier;
         for (&sequence, entry) in self.entries.range(self.frontier..) {
-            if sequence != self.finished_through(expected).saturating_add(1) {
+            if sequence
+                != self
+                    .finished_through_before(expected, sequence)
+                    .saturating_add(1)
+            {
                 self.earlier.add_unknown();
             }
             if self.earlier.is_barrier() {
@@ -642,6 +673,35 @@ impl OrderedCommitState {
             std::mem::replace(&mut entry.slot, Slot::Active)
         else {
             unreachable!("the adjacent block update was inspected");
+        };
+        Some(updates)
+    }
+
+    /// Merges only adjacent packets for the same section, retaining every actor message in order.
+    fn take_adjacent_synced_updates(
+        &mut self,
+        end: u64,
+        key: world::SubChunkKey,
+        budget: CommitBudget,
+    ) -> Option<Vec<SyncedBlockUpdateEvent>> {
+        let next = end.checked_add(1)?;
+        let entry = self.entries.get_mut(&next)?;
+        let Slot::Ready(PreparedWorldEvent::Immediate(WorldEvent::SyncedBlockUpdates(updates))) =
+            &entry.slot
+        else {
+            return None;
+        };
+        if synced_update_key(updates) != Some(key)
+            || self
+                .earlier
+                .blocks(&entry.footprint, budget.couple_position)
+        {
+            return None;
+        }
+        let Slot::Ready(PreparedWorldEvent::Immediate(WorldEvent::SyncedBlockUpdates(updates))) =
+            std::mem::replace(&mut entry.slot, Slot::Active)
+        else {
+            unreachable!("the adjacent synced update was inspected");
         };
         Some(updates)
     }
@@ -816,6 +876,22 @@ fn block_updates_can_coalesce(events: &[BlockUpdateEvent]) -> bool {
     events
         .iter()
         .all(|event| event.layer < world::MAX_STORAGE_COUNT)
+}
+
+/// Identifies a packet-sized section batch; malformed layers retain their own failure boundary.
+fn synced_update_key(events: &[SyncedBlockUpdateEvent]) -> Option<world::SubChunkKey> {
+    let key = |event: &SyncedBlockUpdateEvent| {
+        let [x, y, z] = event
+            .update
+            .position
+            .map(|coordinate| coordinate.div_euclid(world::SUB_CHUNK_SIDE as i32));
+        world::SubChunkKey::new(event.update.dimension, x, y, z)
+    };
+    let first = key(events.first()?);
+    events
+        .iter()
+        .all(|event| event.update.layer < world::MAX_STORAGE_COUNT && key(event) == first)
+        .then_some(first)
 }
 
 /// Terrain that spends the heavy allowance with nothing local waiting on it; a pass without

@@ -69,7 +69,7 @@ fn snow_and_other_world_models_use_native_terrain_colour_at_day_and_night() {
         "{}\n{VERTEX}",
         shader_source::standalone(include_str!("../../src/model.wesl"), &[])
     )
-    .replace("@group(1) @binding(0)", "@group(0) @binding(20)")
+    .replace("@group(1) @binding(0)", "@group(0) @binding(27)")
     .replace("GRID_COLUMNS", &format!("{}.0", CASE_COUNT + 1))
     .replace("NEXT_FRAME", &format!("{NEXT_FRAME}u"));
     let view = gpu.buffer(&[0.0; 104], wgpu::BufferUsages::UNIFORM);
@@ -112,6 +112,18 @@ fn snow_and_other_world_models_use_native_terrain_colour_at_day_and_night() {
                 resource: wgpu::BindingResource::TextureView(&atlas),
             },
             wgpu::BindGroupEntry {
+                binding: crate::material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[2],
+                resource: wgpu::BindingResource::TextureView(&atlas),
+            },
+            wgpu::BindGroupEntry {
+                binding: crate::material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[3],
+                resource: wgpu::BindingResource::TextureView(&atlas),
+            },
+            wgpu::BindGroupEntry {
+                binding: crate::material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[4],
+                resource: wgpu::BindingResource::TextureView(&atlas),
+            },
+            wgpu::BindGroupEntry {
                 binding: crate::material_shader::NATIVE_LEAF_SAMPLER_BINDING,
                 resource: wgpu::BindingResource::Sampler(&sampler),
             },
@@ -124,11 +136,11 @@ fn snow_and_other_world_models_use_native_terrain_colour_at_day_and_night() {
                 resource: atmosphere.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
-                binding: 34,
+                binding: 40,
                 resource: cases.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
-                binding: 20,
+                binding: 27,
                 resource: lightmap.as_entire_binding(),
             },
         ];
@@ -199,7 +211,7 @@ fn snow_and_other_world_models_use_native_terrain_colour_at_day_and_night() {
 
 const VERTEX: &str = r#"
 struct ModelWitnessCase { light_texture: vec4<f32>, distance_frames: vec4<f32> }
-@group(0) @binding(34) var<storage, read> model_witness_cases: array<ModelWitnessCase>;
+@group(0) @binding(40) var<storage, read> model_witness_cases: array<ModelWitnessCase>;
 @vertex fn model_witness_vertex(@builtin(vertex_index) index: u32) -> VertexOutput {
     let corners = array(vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(1.0, 1.0));
     let case_index = index / 6u;

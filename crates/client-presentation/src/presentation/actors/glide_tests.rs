@@ -1,6 +1,6 @@
 //! Gliding bodies tilt and bank as vanilla's renderer turns them, about the feet.
 
-use super::transform::{glide_rotation, glide_tilted, rig_world_from_actor};
+use super::transform::{glide_rotation, glide_tilted, rig_world_from_actor, spin_rotation};
 use super::*;
 use client_world::WorldAuthority;
 use protocol::{ActorEvent, ActorMetadataValue, ActorSpawnEvent, WorldBootstrap, WorldEvent};
@@ -75,6 +75,19 @@ fn only_a_gliding_actor_tilts() {
     assert_eq!(glide_rotation(&player([0.0; 3], 0), 0.5), None);
     let rows = rig_world_from_actor([1.0, 2.0, 3.0], 30.0, 1.0);
     assert_eq!(glide_tilted(rows, None), rows);
+}
+
+#[test]
+fn a_spin_uses_view_pitch_and_continuous_actor_age_without_a_glide_blend() {
+    let mut actor = player(
+        [0.0; 3],
+        1 << protocol_ids::ActorFlag::DamageNearbyMobs.wire_value(),
+    );
+    actor.pitch = -30.0;
+    actor.status.age_ticks = 12;
+    assert_eq!(spin_rotation(&actor, 0.5), Some([-60.0, -937.5]));
+    actor.metadata.insert(0, ActorMetadataValue::Flags(0));
+    assert_eq!(spin_rotation(&actor, 0.5), None);
 }
 
 /// The local glide eases from upright to prone, reaching it once ticks plus alpha reach ten.

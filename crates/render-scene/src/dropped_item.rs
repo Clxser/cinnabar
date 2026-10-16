@@ -1,8 +1,8 @@
 use bevy::{prelude::Resource, render::extract_resource::ExtractResource};
 
 use render_model::{
-    DroppedItemInstance, DroppedItemModel, ItemMeshVertex, MAX_DROPPED_ITEM_INSTANCES,
-    MAX_DYNAMIC_ITEM_VERTICES, TerrainItemInstance,
+    DroppedItemInstance, DroppedItemModel, EquipmentRaster, ItemMeshVertex,
+    MAX_DROPPED_ITEM_INSTANCES, MAX_DYNAMIC_ITEM_VERTICES, TerrainItemInstance,
 };
 use std::sync::Arc;
 /// The frame's dropped items. `models_revision` must change whenever `models` changes.
@@ -17,6 +17,10 @@ pub struct DroppedItemScene {
     /// World-space geometry drawn as-is this frame (fishing line, leads).
     pub dynamic: Arc<[ItemMeshVertex]>,
     pub daylight: f32,
+    /// The item glint raster that glinting instances sample.
+    pub glint: Option<EquipmentRaster>,
+    /// This frame's glint scroll offsets at unit UV scale and strength.
+    pub glint_scroll: [f32; 3],
 }
 
 impl DroppedItemScene {
@@ -34,10 +38,10 @@ impl DroppedItemScene {
             self.models = models;
         }
         let count = instances.len().min(MAX_DROPPED_ITEM_INSTANCES);
-        self.instances = Arc::from(&instances[..count]);
+        replace_unless_both_empty(&mut self.instances, &instances[..count]);
         // Whole triangles only.
         let dynamic_count = dynamic.len().min(MAX_DYNAMIC_ITEM_VERTICES) / 3 * 3;
-        self.dynamic = Arc::from(&dynamic[..dynamic_count]);
+        replace_unless_both_empty(&mut self.dynamic, &dynamic[..dynamic_count]);
         self.daylight = if daylight.is_finite() {
             daylight.clamp(0.0, 1.0)
         } else {
@@ -45,10 +49,20 @@ impl DroppedItemScene {
         };
     }
 
+    /// Supplies the item glint raster and this frame's scroll; a malformed raster is dropped.
+    pub fn set_glint(&mut self, raster: Option<EquipmentRaster>, scroll: [f32; 3]) {
+        self.glint = raster.filter(|raster| {
+            raster.width != 0
+                && raster.height != 0
+                && raster.rgba8.len() == usize::from(raster.width) * usize::from(raster.height) * 4
+        });
+        self.glint_scroll = scroll.map(|value| if value.is_finite() { value } else { 0.0 });
+    }
+
     pub fn clear(&mut self) {
-        self.instances = Arc::from([]);
-        self.dynamic = Arc::from([]);
-        self.terrain_instances = Arc::from([]);
+        replace_unless_both_empty(&mut self.instances, &[]);
+        replace_unless_both_empty(&mut self.dynamic, &[]);
+        replace_unless_both_empty(&mut self.terrain_instances, &[]);
         self.terrain_session_id = None;
     }
 
@@ -66,6 +80,14 @@ impl DroppedItemScene {
     #[must_use]
     pub fn instance_count(&self) -> usize {
         self.instances.len()
+    }
+}
+
+/// Publishes `next` into `published`, keeping the existing allocation when both are empty so
+/// frames without items allocate nothing.
+fn replace_unless_both_empty<T: Clone>(published: &mut Arc<[T]>, next: &[T]) {
+    if !(published.is_empty() && next.is_empty()) {
+        *published = Arc::from(next);
     }
 }
 

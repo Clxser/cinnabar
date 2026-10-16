@@ -56,17 +56,17 @@ impl ColumnScan {
 }
 
 /// Maximum distant-column rescans per frame; near edits bypass this streaming budget.
-pub(super) const MAX_COLUMN_RESCANS_PER_FRAME: usize = 8;
+pub(in crate::block_entities) const MAX_COLUMN_RESCANS_PER_FRAME: usize = 8;
 
 /// Rotates distant rescan admission without changing the scene's submission order.
 #[derive(Default)]
-pub(super) struct RescanOrder {
+pub(in crate::block_entities) struct RescanOrder {
     cursor: Option<world::ChunkKey>,
 }
 
 impl RescanOrder {
     /// Selects at most the frame limit from sorted dirty keys, wrapping after the last admission.
-    pub(super) fn select(
+    pub(in crate::block_entities) fn select(
         &mut self,
         dirty: impl Iterator<Item = world::ChunkKey>,
     ) -> [Option<world::ChunkKey>; MAX_COLUMN_RESCANS_PER_FRAME] {
@@ -100,22 +100,28 @@ impl RescanOrder {
 const NEAR_COLUMN_REACH: i32 = 1;
 
 /// Whether column (`chunk_x`, `chunk_z`) is one of the eye column's near neighbours.
-pub(super) fn is_near_column(eye_column: [i32; 2], chunk_x: i32, chunk_z: i32) -> bool {
+pub(in crate::block_entities) fn is_near_column(
+    eye_column: [i32; 2],
+    chunk_x: i32,
+    chunk_z: i32,
+) -> bool {
     (chunk_x - eye_column[0]).abs() <= NEAR_COLUMN_REACH
         && (chunk_z - eye_column[1]).abs() <= NEAR_COLUMN_REACH
 }
 
 /// Reuses current scans and refreshes near or budgeted columns.
 /// Deferred columns keep their stale scan, or return `None` until first scanned.
-pub(super) fn frame_scan(
-    previous: Option<ColumnScan>,
+/// `is_current` checks the scan against the chunk without rebuilding it.
+pub(in crate::block_entities) fn frame_scan<S>(
+    previous: Option<S>,
     chunk: &Chunk,
     near: bool,
     rescans_left: &mut usize,
-    rescan: impl FnOnce(Option<ColumnScan>) -> ColumnScan,
-) -> Option<ColumnScan> {
+    is_current: impl Fn(&S, &Chunk) -> bool,
+    rescan: impl FnOnce(Option<S>) -> S,
+) -> Option<S> {
     match previous {
-        Some(scan) if scan.is_current(chunk) => Some(scan),
+        Some(scan) if is_current(&scan, chunk) => Some(scan),
         previous if near => Some(rescan(previous)),
         previous if *rescans_left > 0 => {
             *rescans_left -= 1;

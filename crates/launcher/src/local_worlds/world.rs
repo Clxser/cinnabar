@@ -40,6 +40,43 @@ pub struct World {
     pub size_bytes: u64,
 }
 
+/// The size of a world's menu thumbnail, 16:9 like the list rows that show it.
+pub const THUMBNAIL_SIZE: [u32; 2] = [320, 180];
+
+/// A saved world's menu thumbnail: its last captured view, as an encoded image. Equal when
+/// it names the same image, so comparing views never compares pixels.
+#[derive(Clone, Debug)]
+pub struct WorldThumbnail {
+    /// The artwork key the menu draws it under.
+    pub key: String,
+    pub image: std::sync::Arc<[u8]>,
+}
+
+impl WorldThumbnail {
+    /// The thumbnail of world `id` from its encoded `image`.
+    #[must_use]
+    pub fn new(id: &str, image: std::sync::Arc<[u8]>) -> Self {
+        Self {
+            key: thumbnail_key(id),
+            image,
+        }
+    }
+}
+
+impl PartialEq for WorldThumbnail {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key && std::sync::Arc::ptr_eq(&self.image, &other.image)
+    }
+}
+
+impl Eq for WorldThumbnail {}
+
+/// The artwork key of world `id`'s thumbnail.
+#[must_use]
+pub fn thumbnail_key(id: &str) -> String {
+    format!("world-thumbnail:{id}")
+}
+
 /// Settings changes for a saved world; `None` fields are left alone.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct WorldUpdate {

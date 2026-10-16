@@ -1,5 +1,5 @@
 //! Optional raster replacements follow source paths recorded by the pinned item carrier.
-use super::{MAX_SESSION_ICONS, first_frame, icon};
+use super::{MAX_SESSION_ICONS, icon};
 use assets::{ItemVisualDefinitionRoute, RuntimeEntityAssets};
 use client_ui::ui_runtime::presentation::SessionIcon;
 use resource_pack::LayeredPackView;
@@ -24,6 +24,7 @@ pub(crate) fn vanilla_item_paths_installed() -> bool {
 
 /// Retains source routes once, so menus can apply packs before any item registry arrives.
 pub(crate) fn set_vanilla_item_paths(entities: &RuntimeEntityAssets) {
+    super::vanilla_blocks::install(entities);
     let mut aliases_by_source = std::collections::HashMap::<_, Vec<String>>::new();
     for item in entities.item_visuals() {
         if let ItemVisualDefinitionRoute::Sprite { texture } = item.route {
@@ -64,7 +65,11 @@ pub(crate) fn set_vanilla_item_paths(entities: &RuntimeEntityAssets) {
 }
 
 /// Appends only files actually supplied by a pack; absent overrides keep their base icons.
-pub(super) fn append(view: &LayeredPackView, icons: &mut Vec<SessionIcon>) {
+pub(super) fn append(
+    view: &LayeredPackView,
+    icons: &mut Vec<SessionIcon>,
+    retained_bytes: &mut usize,
+) {
     let Some(paths) = PATHS.get() else {
         return;
     };
@@ -93,11 +98,20 @@ pub(super) fn append(view: &LayeredPackView, icons: &mut Vec<SessionIcon>) {
         let override_path = aliases
             .iter()
             .find_map(|key| catalog.get(key)?.get(*variant as usize));
-        if let Some(texture) = pack_runtime::pack_textures::decode_pack_texture(
+        if let Some(mut texture) = pack_runtime::pack_textures::decode_pack_texture_with_policy(
             view,
             override_path.map_or(stem, String::as_str),
+            assets::texture::policy::device_policy(),
+            true,
         ) {
-            let mut replacement = icon(identifier.clone(), first_frame(texture));
+            texture.retain_first_strip_frame();
+            let mut replacement = icon(identifier.clone(), texture);
+            if replacement.rgba8.len()
+                > assets::texture::policy::MAX_SUBSCRIBER_BYTES.saturating_sub(*retained_bytes)
+            {
+                continue;
+            }
+            *retained_bytes += replacement.rgba8.len();
             replacement.metadata = *metadata;
             icons.push(replacement);
             present.insert((identifier.clone(), *metadata));

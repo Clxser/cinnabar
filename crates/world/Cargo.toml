@@ -5,12 +5,18 @@ edition.workspace = true
 rust-version.workspace = true
 publish = false
 
+[features]
+# Select Criterion lighting measurements instead of the allocation-counting CSV diagnostic.
+runtime-profile = []
+benchmark-mimalloc = ["runtime-profile"]
+
 [dependencies]
 sha2.workspace = true
 hashbrown = "0.16"
 thiserror.workspace = true
 
 [dev-dependencies]
+mimalloc.workspace = true
 test-alloc = { path = "../test-alloc" }
 criterion.workspace = true
 rayon.workspace = true

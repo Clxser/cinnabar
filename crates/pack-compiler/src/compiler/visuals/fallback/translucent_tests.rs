@@ -55,7 +55,7 @@ fn current_registry_ice_supersedes_fallback_alpha_and_geometry() {
     .unwrap();
     fs::write(
         directory.path().join("textures/terrain_texture.json"),
-        r#"{"texture_data":{"test_cube":{"textures":["textures/blocks/test_cube","textures/blocks/test_cube","textures/blocks/test_cube","textures/blocks/test_cube"]},"stone":{"textures":"textures/blocks/stone"}}}"#,
+        r#"{"texture_data":{"test_cube":{"textures":"textures/blocks/test_cube"},"stone":{"textures":"textures/blocks/stone"}}}"#,
     )
     .unwrap();
     fs::write(

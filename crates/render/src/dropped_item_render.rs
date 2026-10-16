@@ -1,4 +1,7 @@
 //! Draws dropped-item and block models plus dynamic line geometry in the opaque 3D phase.
+use crate::queue_writes::ProfiledQueue as _;
+mod mesh_storage;
+mod model_upload;
 use bevy::prelude::IntoScheduleConfigs;
 #[cfg(test)]
 use bevy::prelude::IntoSystem;
@@ -46,20 +49,22 @@ use bevy::{
         view::{ExtractedView, ViewUniform, ViewUniformOffset, ViewUniforms},
     },
 };
+use model_upload::PreparedModels;
+#[cfg(test)]
+use model_upload::build_model;
+#[cfg(test)]
+use render_model::DroppedItemModel;
 use std::ops::Range;
 use {
     render_model::{
-        DroppedItemModel, ItemMeshVertex, MAX_DROPPED_ITEM_INSTANCES, MAX_DYNAMIC_ITEM_VERTICES,
-        MAX_ITEM_LAYERS, MAX_ITEM_SPRITE_SIDE,
-        dropped_item::{
-            DroppedItemBounds, DroppedItemCullView, ITEM_MESH_VERTEX_BYTES, block_mesh, cube_mesh,
-            extruded_sprite_mesh, native_dropped_sprite_mesh,
-        },
+        ItemMeshVertex, MAX_DROPPED_ITEM_INSTANCES, MAX_DYNAMIC_ITEM_VERTICES, MIN_ITEM_ATLAS_SIDE,
+        dropped_item::{DroppedItemBounds, DroppedItemCullView, ITEM_MESH_VERTEX_BYTES},
     },
     render_scene::DroppedItemScene,
 };
 
 const ITEM_SHADER_HANDLE: Handle<Shader> = uuid_handle!("6b7c1b0e-2f3d-4a61-9d1e-7a8f2c4e5b13");
+mod glint;
 pub(crate) mod terrain_items;
 use terrain_items::{TerrainItemMeshGenerations, TerrainItemSessionSet};
 
@@ -92,12 +97,7 @@ fn install(app: &mut App) {
         return;
     }
     app.add_plugins(ExtractResourcePlugin::<DroppedItemScene>::default());
-    load_internal_asset!(
-        app,
-        ITEM_SHADER_HANDLE,
-        "dropped_item.wesl",
-        crate::shader_safety::from_wesl
-    );
+    load_internal_asset!(app, ITEM_SHADER_HANDLE, "dropped_item.wesl", item_shader);
     crate::pipeline_warmup::register::<ItemPipeline>(app);
     crate::install_opaque_phase_reset(app.sub_app_mut(RenderApp));
     app.sub_app_mut(RenderApp)
@@ -122,15 +122,22 @@ fn install(app: &mut App) {
         );
 }
 
-/// Per-copy vertex-rate data: three affine rows, then model index, light levels and overlay.
+/// Resolves shared material constants before loading the dropped-item shader.
+pub(crate) fn item_shader(source: &str, path: impl Into<String>) -> bevy::shader::Shader {
+    crate::shader_safety::from_wesl(crate::material_shader::source(source), path)
+}
+
+/// Per-copy vertex-rate data: three affine rows, then model index, light levels and overlay,
+/// then the item glint UV scale (zero without glint).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct GpuItemInstance {
     rows: [[f32; 4]; 3],
     meta: [u32; 4],
+    glint: [f32; 4],
 }
 
-const _: () = assert!(size_of::<GpuItemInstance>() == 64);
+const _: () = assert!(size_of::<GpuItemInstance>() == 80);
 
 #[derive(Resource)]
 struct ItemGpu {
@@ -141,14 +148,25 @@ struct ItemGpu {
     dynamic_buffer: Buffer,
     /// Vertex range of each model's mesh; empty for rejected models.
     ranges: Vec<ItemMeshRange>,
+    glint_sampler: Sampler,
+    /// The uploaded item glint and the pixels it holds (`None` for the transparent fallback).
+    glint: Option<glint::UploadedGlint>,
     _atlas: Option<Texture>,
     atlas_view: Option<TextureView>,
     models_revision: u64,
+    /// Current model slots given priority during the last resource rebuild.
+    prioritized_models: Vec<bool>,
     dynamic_count: u32,
     /// Instance slot holding the identity transform used for dynamic geometry.
     identity_instance: u32,
     /// This frame's `(vertex range, instance index)` draws.
     draws: Vec<ItemDraw>,
+    /// Reused per-frame instance staging for the instance buffer upload.
+    instance_scratch: Vec<GpuItemInstance>,
+    /// Reused per-frame marks of the model slots current instances reference.
+    current_scratch: Vec<bool>,
+    /// Bit patterns last written to `environment`; equal frames skip the write.
+    environment_bits: Option<[u32; 4]>,
     bind_group: Option<BindGroup>,
     view_buffer_id: Option<BufferId>,
     #[cfg(test)]
@@ -160,6 +178,8 @@ struct ItemMeshRange {
     vertices: Range<u32>,
     cull_back: bool,
     bounds: Option<DroppedItemBounds>,
+    /// Valid geometry that fits alone but lost admission to other meshes.
+    capacity_rejected: bool,
 }
 
 /// One ordered draw, including the cull mode allowed by its model and transform.
@@ -178,6 +198,39 @@ impl ItemDraw {
                 .bounds
                 .zip(view)
                 .is_some_and(|(bounds, view)| bounds.allows_back_face_culling(view))
+    }
+}
+
+/// Calls `submit(vertices, instances, culls)` once per run of consecutive draws sharing a
+/// mesh range and this view's cull mode. Their instance slots are adjacent, so one instanced
+/// draw rasterizes the same primitives, in the same order, as one draw per copy.
+fn for_each_instanced_run(
+    draws: &[ItemDraw],
+    view: Option<&DroppedItemCullView>,
+    mut submit: impl FnMut(Range<u32>, Range<u32>, bool),
+) {
+    let mut run: Option<(Range<u32>, Range<u32>, bool)> = None;
+    for draw in draws {
+        let culls = draw.culls_in_view(view);
+        if let Some((vertices, instances, run_culls)) = &mut run
+            && *vertices == draw.vertices
+            && instances.end == draw.instance
+            && *run_culls == culls
+        {
+            instances.end += 1;
+            continue;
+        }
+        let next = (
+            draw.vertices.clone(),
+            draw.instance..draw.instance + 1,
+            culls,
+        );
+        if let Some((vertices, instances, culls)) = run.replace(next) {
+            submit(vertices, instances, culls);
+        }
+    }
+    if let Some((vertices, instances, culls)) = run {
+        submit(vertices, instances, culls);
     }
 }
 
@@ -221,12 +274,18 @@ fn init_gpu(mut commands: Commands, device: Res<RenderDevice>) {
             mapped_at_creation: false,
         }),
         ranges: Vec::new(),
+        glint_sampler: glint::sampler(&device),
+        glint: None,
         _atlas: None,
         atlas_view: None,
         models_revision: u64::MAX,
+        prioritized_models: Vec::new(),
         dynamic_count: 0,
         identity_instance: 0,
         draws: Vec::new(),
+        instance_scratch: Vec::new(),
+        current_scratch: Vec::new(),
+        environment_bits: None,
         bind_group: None,
         view_buffer_id: None,
         #[cfg(test)]
@@ -234,134 +293,36 @@ fn init_gpu(mut commands: Commands, device: Res<RenderDevice>) {
     });
 }
 
-/// Appends one square-or-smaller RGBA tile as a new atlas layer and returns its index.
-fn push_layer(atlas: &mut Vec<u8>, side: usize, width: usize, height: usize, rgba8: &[u8]) -> u32 {
-    let layer_bytes = side * side * 4;
-    let layer = atlas.len() / layer_bytes;
-    atlas.resize(atlas.len() + layer_bytes, 0);
-    let row_bytes = width * 4;
-    for row in 0..height {
-        let target = layer * layer_bytes + row * side * 4;
-        atlas[target..target + row_bytes]
-            .copy_from_slice(&rgba8[row * row_bytes..(row + 1) * row_bytes]);
-    }
-    layer as u32
-}
-
-/// Builds the mesh vertices for one model, appending its tiles to `atlas`; `None` if rejected.
-fn build_model(
-    atlas: &mut Vec<u8>,
-    model: &DroppedItemModel,
-    side: u32,
-) -> Option<Vec<ItemMeshVertex>> {
-    let layers_used = atlas.len() / (side * side * 4) as usize;
-    match model {
-        DroppedItemModel::Vacant => None,
-        DroppedItemModel::Sprite(sprite) | DroppedItemModel::NativeSprite(sprite) => {
-            let (width, height) = (sprite.width as usize, sprite.height as usize);
-            if layers_used >= MAX_ITEM_LAYERS
-                || sprite.width > side
-                || sprite.height > side
-                || sprite.rgba8.len() != width * height * 4
-            {
-                return None;
-            }
-            let build = if matches!(model, DroppedItemModel::NativeSprite(_)) {
-                native_dropped_sprite_mesh
-            } else {
-                extruded_sprite_mesh
-            };
-            let mesh = build(
-                sprite.width,
-                sprite.height,
-                &sprite.rgba8,
-                side,
-                layers_used as u32,
-            )?;
-            push_layer(atlas, side as usize, width, height, &sprite.rgba8);
-            Some(mesh)
-        }
-        DroppedItemModel::Cube(cube) => {
-            let tile = cube.tile as usize;
-            if cube.tile == 0
-                || cube.tile > side
-                || layers_used + 6 > MAX_ITEM_LAYERS
-                || cube.faces.iter().any(|face| face.len() != tile * tile * 4)
-            {
-                return None;
-            }
-            let layers: [u32; 6] = std::array::from_fn(|face| {
-                push_layer(atlas, side as usize, tile, tile, &cube.faces[face])
-            });
-            cube_mesh(layers, cube.tints, cube.tile, side)
-        }
-        DroppedItemModel::Block(block) => {
-            for (sprite, _) in block.materials.iter() {
-                if sprite.width == 0
-                    || sprite.height == 0
-                    || sprite.width > side
-                    || sprite.height > side
-                    || sprite.rgba8.len() != (sprite.width * sprite.height * 4) as usize
-                {
-                    return None;
-                }
-            }
-            let vertices = block_mesh(block, layers_used as u32, side)?;
-            for (sprite, _) in block.materials.iter() {
-                push_layer(
-                    atlas,
-                    side as usize,
-                    sprite.width as usize,
-                    sprite.height as usize,
-                    &sprite.rgba8,
-                );
-            }
-            Some(vertices)
-        }
-    }
-}
-
-/// Sizes the atlas to admitted block artwork while ordinary item sprites retain their size.
-fn atlas_side(models: &[DroppedItemModel]) -> u32 {
-    models
-        .iter()
-        .filter_map(|model| match model {
-            DroppedItemModel::Block(block) => block
-                .materials
-                .iter()
-                .map(|(sprite, _)| sprite.width.max(sprite.height))
-                .max(),
-            DroppedItemModel::Cube(cube) => Some(cube.tile),
-            _ => None,
-        })
-        .filter(|&side| side <= assets::texture::MAX_TILE_SIZE)
-        .fold(MAX_ITEM_SPRITE_SIDE, u32::max)
-        .next_power_of_two()
-}
-
+/// Uploads current models before cached extras while keeping model handles unchanged.
 fn rebuild_models(
     scene: &DroppedItemScene,
+    current: &[bool],
     device: &RenderDevice,
     queue: &RenderQueue,
     gpu: &mut ItemGpu,
 ) {
-    let side = atlas_side(&scene.models) as usize;
-    let layer_bytes = side * side * 4;
-    // Layer 0 is opaque white for untextured geometry.
-    let mut atlas = vec![255_u8; layer_bytes];
-    let mut vertices: Vec<ItemMeshVertex> = Vec::new();
-    let mut ranges = Vec::with_capacity(scene.models.len());
-    for model in scene.models.iter() {
-        let start = vertices.len() as u32;
-        if let Some(mesh) = build_model(&mut atlas, model, side as u32) {
-            vertices.extend(mesh);
-        }
-        ranges.push(ItemMeshRange {
-            vertices: start..vertices.len() as u32,
-            cull_back: model.can_cull_back_faces(),
-            bounds: DroppedItemBounds::from_mesh(&vertices[start as usize..]),
-        });
+    let policy = assets::texture::policy::TexturePolicy::for_device(
+        device.limits().max_texture_dimension_2d,
+    );
+    if policy
+        .page_bytes(MIN_ITEM_ATLAS_SIDE, MIN_ITEM_ATLAS_SIDE)
+        .is_none()
+    {
+        return;
     }
+    let PreparedModels {
+        side,
+        atlas,
+        vertices,
+        ranges,
+    } = PreparedModels::new(
+        &scene.models,
+        current,
+        policy,
+        device.limits().max_texture_array_layers,
+        device.limits().max_buffer_size,
+    );
+    let layer_bytes = side as usize * side as usize * 4;
     let layers = atlas.len() / layer_bytes;
     gpu.mesh_buffer = (!vertices.is_empty()).then(|| {
         device.create_buffer_with_data(&BufferInitDescriptor {
@@ -376,8 +337,8 @@ fn rebuild_models(
         &TextureDescriptor {
             label: Some("dropped item texture layers"),
             size: Extent3d {
-                width: side as u32,
-                height: side as u32,
+                width: side,
+                height: side,
                 depth_or_array_layers: layers as u32,
             },
             mip_level_count: 1,
@@ -397,7 +358,25 @@ fn rebuild_models(
     }));
     gpu._atlas = Some(texture);
     gpu.models_revision = scene.models_revision;
+    gpu.prioritized_models = current.to_vec();
     gpu.bind_group = None;
+}
+
+/// Refills `current` with marks for current instance models, including retained terrain
+/// candidates, at stable model slots.
+fn current_models(scene: &DroppedItemScene, current: &mut Vec<bool>) {
+    current.clear();
+    current.resize(scene.models.len(), false);
+    for instance in scene.instances.iter().chain(
+        scene
+            .terrain_instances
+            .iter()
+            .map(|candidate| &candidate.instance),
+    ) {
+        if let Some(required) = current.get_mut(instance.model as usize) {
+            *required = true;
+        }
+    }
 }
 
 fn prepare_items(
@@ -407,9 +386,22 @@ fn prepare_items(
     queue: Res<RenderQueue>,
     mut gpu: ResMut<ItemGpu>,
 ) {
-    if gpu.models_revision != scene.models_revision || gpu.atlas_view.is_none() {
-        rebuild_models(&scene, &device, &queue, &mut gpu);
+    let mut current = std::mem::take(&mut gpu.current_scratch);
+    current_models(&scene, &mut current);
+    let priority_changed = current != gpu.prioritized_models;
+    let missing_current = current.iter().enumerate().any(|(slot, &required)| {
+        required
+            && gpu.ranges.get(slot).is_none_or(|range| {
+                range.vertices.is_empty()
+                    && (!gpu.prioritized_models.get(slot).copied().unwrap_or(false)
+                        || (priority_changed && range.capacity_rejected))
+            })
+    });
+    if gpu.models_revision != scene.models_revision || gpu.atlas_view.is_none() || missing_current {
+        rebuild_models(&scene, &current, &device, &queue, &mut gpu);
     }
+    gpu.current_scratch = current;
+    glint::upload(&scene, &device, &queue, &mut gpu);
     if scene.instances.is_empty()
         && scene.dynamic.is_empty()
         && !scene
@@ -422,8 +414,10 @@ fn prepare_items(
         gpu.identity_instance = 0;
         return;
     }
-    let mut instances = Vec::with_capacity(scene.instances.len() + 1);
-    let mut draws = Vec::with_capacity(scene.instances.len());
+    let mut instances = std::mem::take(&mut gpu.instance_scratch);
+    instances.clear();
+    let mut draws = std::mem::take(&mut gpu.draws);
+    draws.clear();
     for instance in scene
         .instances
         .iter()
@@ -454,15 +448,7 @@ fn prepare_items(
                 .bounds
                 .and_then(|bounds| bounds.transformed(instance.world_from_item)),
         });
-        instances.push(GpuItemInstance {
-            rows: instance.world_from_item,
-            meta: [
-                instance.model,
-                instance.block_level,
-                instance.sky_level,
-                instance.overlay_rgba8,
-            ],
-        });
+        instances.push(glint::pack_instance(instance));
     }
     gpu.identity_instance = instances.len() as u32;
     instances.push(GpuItemInstance {
@@ -472,8 +458,9 @@ fn prepare_items(
             [0.0, 0.0, 1.0, 0.0],
         ],
         meta: [0, 15, 15, 0],
+        glint: [0.0; 4],
     });
-    queue.write_buffer(
+    queue.profiled_write_buffer(
         &gpu.instance_buffer,
         0,
         bytemuck::cast_slice::<GpuItemInstance, u8>(&instances),
@@ -484,7 +471,7 @@ fn prepare_items(
     }
     gpu.dynamic_count = scene.dynamic.len() as u32;
     if !scene.dynamic.is_empty() {
-        queue.write_buffer(
+        queue.profiled_write_buffer(
             &gpu.dynamic_buffer,
             0,
             bytemuck::cast_slice::<ItemMeshVertex, u8>(&scene.dynamic),
@@ -495,14 +482,25 @@ fn prepare_items(
         }
     }
     gpu.draws = draws;
-    queue.write_buffer(
-        &gpu.environment,
-        0,
-        bytemuck::cast_slice::<f32, u8>(&[scene.daylight, 0.0, 0.0, 0.0]),
-    );
-    #[cfg(test)]
-    {
-        gpu.upload_calls += 1;
+    gpu.instance_scratch = instances;
+    let environment = [
+        scene.daylight,
+        scene.glint_scroll[0],
+        scene.glint_scroll[1],
+        scene.glint_scroll[2],
+    ];
+    let environment_bits = environment.map(f32::to_bits);
+    if gpu.environment_bits != Some(environment_bits) {
+        queue.profiled_write_buffer(
+            &gpu.environment,
+            0,
+            bytemuck::cast_slice::<f32, u8>(&environment),
+        );
+        gpu.environment_bits = Some(environment_bits);
+        #[cfg(test)]
+        {
+            gpu.upload_calls += 1;
+        }
     }
 }
 
@@ -566,6 +564,22 @@ fn item_bind_group_layout() -> BindGroupLayoutDescriptor {
                 },
                 count: None,
             },
+            BindGroupLayoutEntry {
+                binding: 4,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 5,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
         ],
     )
 }
@@ -607,6 +621,11 @@ fn item_pipeline_descriptor(layout: BindGroupLayoutDescriptor) -> RenderPipeline
                             offset: 36,
                             shader_location: 8,
                         },
+                        VertexAttribute {
+                            format: VertexFormat::Float32x2,
+                            offset: std::mem::offset_of!(ItemMeshVertex, glint_scale) as u64,
+                            shader_location: 10,
+                        },
                     ],
                 },
                 VertexBufferLayout {
@@ -632,6 +651,11 @@ fn item_pipeline_descriptor(layout: BindGroupLayoutDescriptor) -> RenderPipeline
                             format: VertexFormat::Uint32x4,
                             offset: 48,
                             shader_location: 6,
+                        },
+                        VertexAttribute {
+                            format: VertexFormat::Float32x4,
+                            offset: 64,
+                            shader_location: 9,
                         },
                     ],
                 },
@@ -706,7 +730,7 @@ fn prepare_bind_group(
         gpu.bind_group = None;
         return;
     };
-    let Some(atlas_view) = gpu.atlas_view.as_ref() else {
+    let (Some(atlas_view), Some(glint)) = (gpu.atlas_view.as_ref(), gpu.glint.as_ref()) else {
         gpu.bind_group = None;
         return;
     };
@@ -736,6 +760,14 @@ fn prepare_bind_group(
             BindGroupEntry {
                 binding: 3,
                 resource: gpu.environment.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 4,
+                resource: BindingResource::TextureView(&glint.view),
+            },
+            BindGroupEntry {
+                binding: 5,
+                resource: BindingResource::Sampler(&gpu.glint_sampler),
             },
         ],
     );
@@ -876,14 +908,14 @@ impl<P: PhaseItem> RenderCommand<P> for DrawItems {
         pass.set_vertex_buffer(1, gpu.instance_buffer.slice(..));
         if let Some(mesh) = gpu.mesh_buffer.as_ref() {
             pass.set_vertex_buffer(0, mesh.slice(..));
-            for draw in &gpu.draws {
-                pass.set_render_pipeline(if draw.culls_in_view(pipelines.cull_view.as_ref()) {
-                    closed
-                } else {
-                    two_sided
-                });
-                pass.draw(draw.vertices.clone(), draw.instance..draw.instance + 1);
-            }
+            for_each_instanced_run(
+                &gpu.draws,
+                pipelines.cull_view.as_ref(),
+                |vertices, instances, culls| {
+                    pass.set_render_pipeline(if culls { closed } else { two_sided });
+                    pass.draw(vertices, instances);
+                },
+            );
         }
         if gpu.dynamic_count != 0 {
             pass.set_render_pipeline(two_sided);
@@ -933,6 +965,10 @@ impl crate::pipeline_warmup::PrewarmPipelines for ItemPipeline {
 #[cfg(test)]
 #[path = "dropped_item_render/upload_tests.rs"]
 mod upload_tests;
+
+#[cfg(test)]
+#[path = "dropped_item_render/priority_tests.rs"]
+mod priority_tests;
 
 #[cfg(test)]
 #[path = "dropped_item_render/pipeline_tests.rs"]

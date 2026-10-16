@@ -2,6 +2,10 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use meshing::occlusion::OcclusionBudget;
 use std::hint::black_box;
 
+#[cfg(feature = "benchmark-mimalloc")]
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// Measures a whole frame budget with clear sight or a solid wall in the same section.
 fn entity_occlusion(c: &mut Criterion) {
     for wall in [false, true] {

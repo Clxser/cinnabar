@@ -94,7 +94,7 @@ fn cached_pack_custom_armor_draws_in_its_wearable_slot() {
             continue;
         };
         let files = pack_runtime::entity_pack::collect::collect_files(&view, refs.as_ref(), None);
-        let Ok(Some(compiled)) = pack_compiler::compile_actor_pack(files) else {
+        let Ok(Some(compiled)) = pack_entity_compiler::compile_actor_pack(files) else {
             continue;
         };
         let custom_armor = compiled
@@ -172,6 +172,8 @@ fn cached_pack_custom_armor_draws_in_its_wearable_slot() {
             runtime.set_session_items(Some(&items), None, Vec::new());
             let mut input = ActorEquipmentInput::default();
             input.armor[slot as usize] = Some(WornItem {
+                variant: Default::default(),
+                charged_projectile: None,
                 use_facts: client_world::EffectiveItemUse::default(),
                 grip: assets::item::grip::ItemGrip::Unresolved,
                 identifier: Arc::from(item.as_ref()),

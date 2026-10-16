@@ -1,18 +1,27 @@
+use assets::facts::entity::{EntityFact, EntityFacts, NativeEntityClass};
+use hashbrown::HashMap as FastHashMap;
+use protocol_ids::{ActorDataKey, ActorFlag, PlayerFlag};
 use std::collections::{HashMap, HashSet};
+
+#[cfg(test)]
+use protocol::ITEM_ACTOR_NETWORK_OFFSET;
 
 mod aim_assist;
 mod animated;
 mod appearance_preparation;
+mod colliders;
 mod effect_members;
+pub use colliders::ActorCollisionBounds;
+mod native_facts;
 #[cfg(test)]
 pub(crate) use appearance_preparation::MAX_APPEARANCES_PUBLISHED_PER_FRAME;
 
 use protocol::{
     ActorAttribute, ActorEvent, ActorKind, ActorLinkEvent, ActorLinkType, ActorMetadataValue,
     ActorMoveEvent, ActorPositionOrigin, ActorProperty, ActorSpawnEvent, EquipmentEvent,
-    ITEM_ACTOR_NETWORK_OFFSET, ItemActorEvent, MAX_ACTOR_ATTRIBUTES, MAX_ACTOR_METADATA_ENTRIES,
-    MAX_ACTOR_PROPERTIES, MAX_PLAYER_LIST_SKIN_BYTES, MovePlayerEvent, MovePlayerMode,
-    PLAYER_NETWORK_OFFSET, PlayerListEntry, PlayerSkin, PlayerSkinUnavailable,
+    ItemActorEvent, MAX_ACTOR_ATTRIBUTES, MAX_ACTOR_METADATA_ENTRIES, MAX_ACTOR_PROPERTIES,
+    MAX_PLAYER_LIST_SKIN_BYTES, MovePlayerEvent, MovePlayerMode, PLAYER_NETWORK_OFFSET,
+    PlayerListEntry, PlayerSkin, PlayerSkinUnavailable,
 };
 
 use crate::{
@@ -27,43 +36,13 @@ pub(crate) const MAX_TRACKED_PLAYERS: usize = 4_096;
 pub(crate) const MAX_TRACKED_ACTOR_LINKS: usize = MAX_TRACKED_ACTORS;
 pub(crate) const MAX_TRACKED_PLAYER_SKIN_BYTES: usize = MAX_PLAYER_LIST_SKIN_BYTES;
 
-// Metadata keys retained verbatim by ActorSnapshot.
-const PLAYER_FLAGS_METADATA_KEY: u32 = 26;
-/// Raw server actor scale, applied independently of the visual definition's scale.
-pub const SCALE_METADATA_KEY: u32 = 38;
-/// Packed RGB color supplied by the server for casting particles.
-pub const SPELL_COLOR_METADATA_KEY: u32 = 77;
-const NAMETAG_METADATA_KEY: u32 = 4;
-pub(crate) const VARIANT_METADATA_KEY: u32 = 2;
-/// Unscaled actor collision width supplied by the server.
-pub const BOUNDING_BOX_WIDTH_METADATA_KEY: u32 = 53;
-/// Unscaled actor collision height supplied by the server.
-pub const BOUNDING_BOX_HEIGHT_METADATA_KEY: u32 = 54;
 const DEFAULT_ACTOR_COLLISION_WIDTH: f32 = 0.6;
 const DEFAULT_ACTOR_COLLISION_HEIGHT: f32 = 1.8;
-pub(crate) const EXTENDED_FLAGS_METADATA_KEY: u32 = 92;
-pub(crate) const FUSE_TIME_METADATA_KEY: u32 = 55;
-const PLAYER_FLAGS_SLEEPING: u8 = 1 << 1;
-/// Actor flag bits follow gophertunnel v1.61.0 `EntityDataFlag*` (iota from zero); bits from
-/// 64 live in the overflow flag word.
-pub(crate) const ACTOR_FLAG_SLEEPING: u32 = 76;
-const ACTOR_FLAG_SNEAKING: u32 = 1;
-const ACTOR_FLAG_INVISIBLE: u32 = 5;
-const ACTOR_FLAG_SWIMMING: u32 = 57;
-const ACTOR_FLAG_USING_ITEM: u32 = 4;
-const ACTOR_FLAG_SPRINTING: u32 = 3;
-pub(crate) const ACTOR_FLAG_IMMOBILE: u32 = 16;
-const ACTOR_FLAG_GLIDING: u32 = 32;
-pub(crate) const ACTOR_FLAG_CRAWLING: u32 = 114;
-pub(crate) const ACTOR_FLAG_SITTING: u32 = 24;
-const ACTOR_FLAG_HAS_GRAVITY: u32 = 49;
-const ACTOR_FLAG_USES_UNIFORM_AIR_DRAG: u32 = 128;
 
-const SLEEPING_PLAYER_NETWORK_OFFSET: f32 = 0.2;
-const FALLING_BLOCK_NETWORK_OFFSET: f32 = 0.5;
-const MINECART_NETWORK_OFFSET: f32 = 0.5;
-const BOAT_NETWORK_OFFSET: f32 = 0.375;
-const DEFAULT_PRIMED_TNT_NETWORK_OFFSET: f32 = 0.49;
+/// A sleeping player's offset from its feet to its native actor-state position (its eye).
+pub const SLEEPING_PLAYER_NETWORK_OFFSET: f32 = 0.2;
+/// A vanilla falling block's network offset, for its vanilla box height.
+const FALLING_BLOCK_HEIGHT: f32 = 0.98;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ActorApplyResult {
@@ -82,21 +61,62 @@ pub(crate) enum ActorApplyResult {
 /// Steps a remote actor takes to reach each absolute movement target.
 pub(crate) const ACTOR_INTERPOLATION_TICKS: u32 = 3;
 
+/// Vertical origin contributions; default values describe collision-feet coordinates.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PoseYOrigin {
+    spawn: f32,
+    network: f32,
+}
+impl PoseYOrigin {
+    const SPAWN: Self = Self {
+        spawn: 1.0,
+        network: 0.0,
+    };
+    const NETWORK: Self = Self {
+        spawn: 0.0,
+        network: 1.0,
+    };
+
+    /// Blends origin contributions with the same fraction as the vertical position.
+    fn interpolate(self, target: Self, fraction: f32) -> Self {
+        Self {
+            spawn: self.spawn + (target.spawn - self.spawn) * fraction,
+            network: self.network + (target.network - self.network) * fraction,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ActorPose {
+    /// Retains which vertical offsets contributed to this pose.
+    pub y_origin: PoseYOrigin,
     pub position: [f32; 3],
     pub pitch: f32,
     pub yaw: f32,
     pub head_yaw: f32,
 }
 
+impl ActorPose {
+    /// Applies only the offset deltas that contributed to this pose's vertical coordinate.
+    fn shift_y(&mut self, network_delta: f32, spawn_delta: f32) {
+        let delta = self.y_origin.network * network_delta + self.y_origin.spawn * spawn_delta;
+        if delta != 0.0 {
+            self.position[1] += delta;
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActorSnapshot {
+    /// Dedicated hanging-picture state; ordinary AddActor spawns do not supply it.
+    pub painting: Option<protocol::PaintingData>,
     pub unique_id: i64,
     pub runtime_id: u64,
     pub spawn_revision: u64,
     pub movement_revision: u64,
     pub kind: ActorKind,
+    /// Native facts copied at actor admission from its declared constructor.
+    pub entity_fact: EntityFact,
     /// Resolved at packet admission; frame and ray paths read these numeric dispositions.
     pub interaction_traits: assets::interactions::EntityInteractionTraits,
     pub position: [f32; 3],
@@ -119,7 +139,7 @@ pub struct ActorSnapshot {
     pub float_properties: HashMap<u32, f32>,
     pub status: ActorStatus,
     pub(crate) dragon_animation: Option<Box<dragon_animation::State>>,
-    /// Accumulated [`HITBOX_METADATA_KEY`] boxes; empty geometry uses the collision box.
+    /// Accumulated [`ActorDataKey::HitBox`] boxes; empty geometry uses the collision box.
     pub(crate) hitboxes: Option<std::sync::Arc<hitbox::State>>,
 }
 
@@ -127,7 +147,10 @@ impl ActorSnapshot {
     /// Reads the server's packed spell RGB color as an opaque particle tint.
     #[must_use]
     pub fn spell_color(&self) -> [f32; 4] {
-        let rgb = match self.metadata.get(&SPELL_COLOR_METADATA_KEY) {
+        let rgb = match self
+            .metadata
+            .get(&ActorDataKey::DataSpellCastingColor.wire_value())
+        {
             Some(ActorMetadataValue::Int(value)) => *value as u32,
             _ => 0,
         };
@@ -160,9 +183,7 @@ impl ActorSnapshot {
     }
 
     pub(crate) fn is_dying_dragon(&self) -> bool {
-        self.status.dead
-            && matches!(&self.kind, ActorKind::Entity { identifier }
-            if identifier.as_ref() == "minecraft:ender_dragon")
+        self.status.dead && self.entity_fact.native_class == NativeEntityClass::EnderDragon
     }
 
     /// Vanilla velocity units (blocks/tick) for tick-driven engine animation.
@@ -185,30 +206,33 @@ impl ActorSnapshot {
             .then_some(position)
     }
 
-    fn from_spawn(spawn: ActorSpawnEvent, spawn_revision: u64) -> Self {
-        let terrain_interlock =
-            terrain_interlock::TerrainInterlock::attached(&spawn.kind, std::time::Instant::now());
-        let mut position = spawn.position;
-        if matches!(&spawn.kind, ActorKind::Entity { identifier } if identifier.as_ref() == "minecraft:falling_block")
-        {
-            position[1] -= FALLING_BLOCK_NETWORK_OFFSET;
-        }
+    /// Builds retained state using the constructor facts resolved at admission.
+    fn from_spawn(spawn: ActorSpawnEvent, spawn_revision: u64, entity_fact: EntityFact) -> Self {
+        let terrain_interlock = terrain_interlock::TerrainInterlock::attached(
+            entity_fact.native_class,
+            std::time::Instant::now(),
+        );
+        let position = spawn.position;
+        let pitch = movement_interpolation::signed_pitch(spawn.pitch);
         let pose = ActorPose {
+            y_origin: PoseYOrigin::SPAWN,
             position,
-            pitch: spawn.pitch,
+            pitch,
             yaw: spawn.yaw,
             head_yaw: spawn.head_yaw,
         };
         let mut snapshot = Self {
+            painting: None,
             unique_id: spawn.unique_id,
             runtime_id: spawn.runtime_id,
             spawn_revision,
             movement_revision: 0,
             interaction_traits: assets::interactions::EntityInteractionTraits::Unresolved,
             kind: spawn.kind,
+            entity_fact,
             position,
             velocity: spawn.velocity,
-            pitch: spawn.pitch,
+            pitch,
             yaw: spawn.yaw,
             head_yaw: spawn.head_yaw,
             previous_pose: pose,
@@ -232,6 +256,15 @@ impl ActorSnapshot {
             dragon_animation: None,
             hitboxes: None,
         };
+        snapshot.set_current_pose(pose);
+        // A falling block's spawn position carries its network offset, which its box sets; the
+        // vanilla offset comes off here and `apply_metadata` rebases onto the spawn's box.
+        if snapshot.is_falling_block() {
+            snapshot.shift_poses_y(
+                -snapshot.falling_block_network_offset(),
+                -snapshot.falling_block_network_offset(),
+            );
+        }
         snapshot.apply_metadata(&spawn.metadata);
         snapshot.apply_attributes(&spawn.attributes);
         snapshot.sync_status_from_health();
@@ -251,18 +284,21 @@ impl ActorSnapshot {
         feed: &LocalPlayerFeed,
     ) -> Self {
         let pose = ActorPose {
+            y_origin: PoseYOrigin::default(),
             position: feed.position,
             pitch: feed.pitch,
             yaw: feed.yaw,
             head_yaw: feed.head_yaw,
         };
         let mut snapshot = Self {
+            painting: None,
             unique_id,
             runtime_id,
             spawn_revision: revision,
             movement_revision: revision,
             interaction_traits: assets::interactions::EntityInteractionTraits::GENERIC_MOB,
             kind: ActorKind::Player { uuid, username },
+            entity_fact: EntityFacts::pinned().player(),
             position: feed.position,
             velocity: feed.velocity,
             pitch: feed.pitch,
@@ -289,6 +325,8 @@ impl ActorSnapshot {
             dragon_animation: None,
             hitboxes: None,
         };
+        // Predicted flags must retain the visible-name default until the server replaces them.
+        snapshot.set_flag(ActorFlag::ShowName.wire_value(), true);
         snapshot.apply_local_flags(feed);
         snapshot
     }
@@ -296,18 +334,19 @@ impl ActorSnapshot {
     /// Overwrites the primary-word flags the client predicts itself: sneak, sprint, swim, glide
     /// and predicted item use. Shield blocking stays server-owned.
     fn apply_local_flags(&mut self, feed: &LocalPlayerFeed) {
-        self.set_flag(ACTOR_FLAG_SNEAKING, feed.sneaking);
-        self.set_flag(ACTOR_FLAG_SPRINTING, feed.sprinting);
-        self.set_flag(ACTOR_FLAG_GLIDING, feed.gliding);
+        self.set_flag(ActorFlag::Sneaking.wire_value(), feed.sneaking);
+        self.set_flag(ActorFlag::Sprinting.wire_value(), feed.sprinting);
+        self.set_flag(ActorFlag::Gliding.wire_value(), feed.gliding);
+        self.set_flag(ActorFlag::DamageNearbyMobs.wire_value(), feed.spinning);
         // Sprinting in water is swimming; the water sample lags one frame.
         let in_water = self.status.fluid.is_some_and(|(water, _)| water);
-        self.set_flag(ACTOR_FLAG_SWIMMING, feed.sprinting && in_water);
+        self.set_flag(ActorFlag::Swimming.wire_value(), feed.sprinting && in_water);
         match feed.item_use {
             LocalItemUse::Unpredicted => {}
-            LocalItemUse::Idle => self.set_flag(ACTOR_FLAG_USING_ITEM, false),
-            LocalItemUse::Using => self.set_flag(ACTOR_FLAG_USING_ITEM, true),
+            LocalItemUse::Idle => self.set_flag(ActorFlag::UsingItem.wire_value(), false),
+            LocalItemUse::Using => self.set_flag(ActorFlag::UsingItem.wire_value(), true),
             LocalItemUse::Predicted { elapsed_ticks, .. } => {
-                self.set_flag(ACTOR_FLAG_USING_ITEM, elapsed_ticks.is_some());
+                self.set_flag(ActorFlag::UsingItem.wire_value(), elapsed_ticks.is_some());
             }
         }
     }
@@ -315,10 +354,14 @@ impl ActorSnapshot {
     /// Sets one actor flag bit in the primary or overflow word, creating the word when absent.
     fn set_flag(&mut self, bit: u32, on: bool) {
         let (key, bit, empty) = if bit < 64 {
-            (0, bit, ActorMetadataValue::Flags(0))
+            (
+                ActorDataKey::Flags.wire_value(),
+                bit,
+                ActorMetadataValue::Flags(0),
+            )
         } else {
             (
-                EXTENDED_FLAGS_METADATA_KEY,
+                ActorDataKey::FlagsTwo.wire_value(),
                 bit - 64,
                 ActorMetadataValue::FlagsExtended(0),
             )
@@ -335,6 +378,7 @@ impl ActorSnapshot {
 
     fn current_pose(&self) -> ActorPose {
         ActorPose {
+            y_origin: self.status.movement_interpolation.current_y_origin,
             position: self.position,
             pitch: self.pitch,
             yaw: self.yaw,
@@ -343,133 +387,18 @@ impl ActorSnapshot {
     }
 
     fn set_current_pose(&mut self, pose: ActorPose) {
+        self.status.movement_interpolation.current_y_origin = pose.y_origin;
         self.position = pose.position;
         self.pitch = pose.pitch;
         self.yaw = pose.yaw;
         self.head_yaw = pose.head_yaw;
     }
 
-    /// Feet-anchored `(min, max)` box with server scale applied once.
-    /// Omitted dimensions retain the generic actor defaults independently.
-    #[must_use]
-    pub fn bounding_box(&self) -> Option<([f32; 3], [f32; 3])> {
-        self.bounding_box_at(self.position)
-    }
-
-    /// [`Self::bounding_box`] with the feet at `position`.
-    #[must_use]
-    pub fn bounding_box_at(&self, position: [f32; 3]) -> Option<([f32; 3], [f32; 3])> {
-        let player = matches!(self.kind, ActorKind::Player { .. });
-        let dimension = |key, default| match self.metadata.get(&key) {
-            Some(ActorMetadataValue::Float(value)) if value.is_finite() && *value > 0.0 => {
-                Some(*value)
-            }
-            Some(ActorMetadataValue::Float(_)) => player.then_some(default),
-            _ => Some(default),
-        };
-        let scale = self.render_scale();
-        let half_width = dimension(
-            BOUNDING_BOX_WIDTH_METADATA_KEY,
-            DEFAULT_ACTOR_COLLISION_WIDTH,
-        )? * scale
-            * 0.5;
-        let height = dimension(
-            BOUNDING_BOX_HEIGHT_METADATA_KEY,
-            DEFAULT_ACTOR_COLLISION_HEIGHT,
-        )? * scale;
-        if !half_width.is_finite() || !height.is_finite() {
-            return None;
-        }
-        let [x, y, z] = position;
-        Some((
-            [x - half_width, y, z - half_width],
-            [x + half_width, y + height, z + half_width],
-        ))
-    }
-
-    /// Interaction boxes at the actor's current pose.
-    #[must_use]
-    pub fn hit_boxes(&self) -> ActorHitBoxes<'_> {
-        self.hit_boxes_at(self.position)
-    }
-
-    /// Interaction boxes with collision feet at `position`. Custom pivots are relative
-    /// to the native actor position and are independent of render scale and rotation.
-    #[must_use]
-    pub fn hit_boxes_at(&self, mut position: [f32; 3]) -> ActorHitBoxes<'_> {
-        let custom = self
-            .hitboxes
-            .as_ref()
-            .map_or(&[][..], |state| state.boxes.as_slice());
-        let fallback = if custom.is_empty() {
-            self.bounding_box_at(position)
-        } else {
-            None
-        };
-        position[1] += self.network_position_offset();
-        ActorHitBoxes::new(custom, position, fallback)
-    }
-
-    /// Samples 0.66 of the body height above interpolated feet.
-    /// Network position offsets have already been removed by the actor store.
-    pub fn brightness_sample_position(&self, mut feet: [f32; 3]) -> [f32; 3] {
-        if let Some((min, max)) = self.bounding_box() {
-            feet[1] += 0.66 * (max[1] - min[1]);
-        }
-        feet
-    }
-
-    /// Restores the native actor-state origin from stored collision feet.
-    pub fn native_position(&self) -> [f32; 3] {
-        let mut position = self.position;
-        position[1] += self.network_position_offset();
-        position
-    }
-
-    /// Native actor-state origin at supplied retained feet, preserving this class's decoded offset.
-    pub fn native_position_at(&self, mut position: [f32; 3]) -> Option<[f32; 3]> {
-        position[1] += self.network_position_offset();
-        position
-            .iter()
-            .all(|value| value.is_finite())
-            .then_some(position)
-    }
-
-    /// Offset from stored collision feet to the native actor-state position.
-    pub(crate) fn network_position_offset(&self) -> f32 {
-        match &self.kind {
-            ActorKind::Player { .. } => {
-                if self.player_is_sleeping() {
-                    SLEEPING_PLAYER_NETWORK_OFFSET
-                } else {
-                    PLAYER_NETWORK_OFFSET
-                }
-            }
-            ActorKind::Entity { identifier } => {
-                let Some(path) = identifier.strip_prefix("minecraft:") else {
-                    return 0.0;
-                };
-                match path {
-                    "item" => ITEM_ACTOR_NETWORK_OFFSET,
-                    "falling_block" => FALLING_BLOCK_NETWORK_OFFSET,
-                    "tnt" => self.primed_tnt_network_offset(),
-                    "minecart"
-                    | "hopper_minecart"
-                    | "tnt_minecart"
-                    | "chest_minecart"
-                    | "command_block_minecart" => MINECART_NETWORK_OFFSET,
-                    "boat" => BOAT_NETWORK_OFFSET,
-                    _ => 0.0,
-                }
-            }
-        }
-    }
-
     /// The server-set render scale (metadata `Scale`), multiplying the model's own scale; an
     /// absent, non-finite or negative value reads 1. Zero hides the body while retaining its actor.
     #[must_use]
     pub fn render_scale(&self) -> f32 {
-        match self.metadata.get(&SCALE_METADATA_KEY) {
+        match self.metadata.get(&ActorDataKey::Scale.wire_value()) {
             Some(ActorMetadataValue::Float(scale)) if scale.is_finite() && *scale >= 0.0 => *scale,
             _ => 1.0,
         }
@@ -477,17 +406,22 @@ impl ActorSnapshot {
 
     #[must_use]
     pub fn is_invisible(&self) -> bool {
-        self.flag(ACTOR_FLAG_INVISIBLE)
+        self.flag(ActorFlag::Invisible.wire_value())
     }
 
     #[must_use]
     pub fn is_sneaking(&self) -> bool {
-        self.flag(ACTOR_FLAG_SNEAKING)
+        self.flag(ActorFlag::Sneaking.wire_value())
     }
 
     #[must_use]
     pub fn is_gliding(&self) -> bool {
-        self.flag(ACTOR_FLAG_GLIDING)
+        self.flag(ActorFlag::Gliding.wire_value())
+    }
+
+    /// Whether this actor is in its Riptide spin pose.
+    pub fn is_spinning(&self) -> bool {
+        self.flag(ActorFlag::DamageNearbyMobs.wire_value())
     }
 
     #[must_use]
@@ -496,25 +430,25 @@ impl ActorSnapshot {
     }
 
     pub(crate) fn player_is_sleeping(&self) -> bool {
-        let player_flags = self.metadata.get(&PLAYER_FLAGS_METADATA_KEY).is_some_and(
-            |value| matches!(value, ActorMetadataValue::Byte(flags) if (*flags as u8) & PLAYER_FLAGS_SLEEPING != 0),
+        let player_flags = self.metadata.get(&ActorDataKey::PlayerFlags.wire_value()).is_some_and(
+            |value| matches!(value, ActorMetadataValue::Byte(flags) if (*flags as u8) & PlayerFlag::Sleeping.wire_value() != 0),
         );
-        player_flags || self.flag(ACTOR_FLAG_SLEEPING)
+        player_flags || self.flag(ActorFlag::Sleeping.wire_value())
     }
 
     /// Whether the using-item flag is set; for the local player's food and drink it is the
     /// server's admission of the use.
     #[must_use]
     pub fn is_using_item(&self) -> bool {
-        self.flag(ACTOR_FLAG_USING_ITEM)
+        self.flag(ActorFlag::UsingItem.wire_value())
     }
 
     /// Reads one actor flag bit from the primary or overflow flag word.
     pub(crate) fn flag(&self, bit: u32) -> bool {
         let (key, bit) = if bit < 64 {
-            (0, bit)
+            (ActorDataKey::Flags.wire_value(), bit)
         } else {
-            (EXTENDED_FLAGS_METADATA_KEY, bit - 64)
+            (ActorDataKey::FlagsTwo.wire_value(), bit - 64)
         };
         match self.metadata.get(&key) {
             Some(ActorMetadataValue::Flags(flags) | ActorMetadataValue::FlagsExtended(flags)) => {
@@ -524,19 +458,68 @@ impl ActorSnapshot {
         }
     }
 
+    /// A falling block's network offset follows its box as the Scale metadata sizes it: half a
+    /// block for the vanilla box, none for an empty box or a near-zero scale, so a text host
+    /// built on a falling block stays at the position its server sends.
+    fn falling_block_network_offset(&self) -> f32 {
+        let height = match self.metadata.get(&ActorDataKey::Height.wire_value()) {
+            Some(ActorMetadataValue::Float(height)) if height.is_finite() && *height >= 0.0 => {
+                *height
+            }
+            _ => FALLING_BLOCK_HEIGHT,
+        };
+        let offset =
+            self.entity_fact.network_y_offset * height * self.render_scale() / FALLING_BLOCK_HEIGHT;
+        if offset.is_finite() {
+            offset
+        } else {
+            self.entity_fact.network_y_offset
+        }
+    }
+
     fn primed_tnt_network_offset(&self) -> f32 {
         self.metadata
-            .get(&BOUNDING_BOX_HEIGHT_METADATA_KEY)
+            .get(&ActorDataKey::Height.wire_value())
             .and_then(|value| match value {
                 ActorMetadataValue::Float(height) if height.is_finite() && *height > 0.0 => {
                     Some(*height * 0.5)
                 }
                 _ => None,
             })
-            .unwrap_or(DEFAULT_PRIMED_TNT_NETWORK_OFFSET)
+            .unwrap_or(self.entity_fact.network_y_offset)
+    }
+
+    fn is_falling_block(&self) -> bool {
+        self.entity_fact.native_class == NativeEntityClass::FallingBlock
+    }
+
+    /// Rebases retained poses and queued targets without moving collision-feet inputs.
+    fn shift_poses_y(&mut self, network_delta: f32, spawn_delta: f32) {
+        let mut current = self.current_pose();
+        for pose in [
+            &mut current,
+            &mut self.previous_pose,
+            &mut self.received_pose,
+        ] {
+            pose.shift_y(network_delta, spawn_delta);
+        }
+        self.set_current_pose(current);
+        self.shift_interpolation_targets_y(network_delta, spawn_delta);
+    }
+
+    /// Spawn packets need vertical normalization only for falling-block constructors.
+    fn spawn_network_offset(&self) -> f32 {
+        if self.is_falling_block() {
+            self.network_position_offset()
+        } else {
+            0.0
+        }
     }
 
     fn apply_metadata(&mut self, metadata: &[protocol::ActorMetadata]) -> bool {
+        let falling_block_offset = self
+            .is_falling_block()
+            .then(|| self.falling_block_network_offset());
         let mut rejected = false;
         for metadata in metadata {
             if self.metadata.len() >= MAX_ACTOR_METADATA_ENTRIES
@@ -545,14 +528,22 @@ impl ActorSnapshot {
                 rejected = true;
                 continue;
             }
-            if metadata.key == FUSE_TIME_METADATA_KEY {
+            if metadata.key == ActorDataKey::FuseTime.wire_value() {
                 self.status.fuse_age_ticks = self.status.age_ticks;
             }
-            if metadata.key == HITBOX_METADATA_KEY {
+            if metadata.key == ActorDataKey::HitBox.wire_value() {
                 std::sync::Arc::make_mut(self.hitboxes.get_or_insert_with(Default::default))
                     .apply(&metadata.value);
             }
             self.metadata.insert(metadata.key, metadata.value.clone());
+        }
+        // Stored feet stay under the unchanged network position when Scale or box height moves
+        // the offset.
+        if let Some(previous) = falling_block_offset {
+            let offset = self.falling_block_network_offset();
+            if offset != previous {
+                self.shift_poses_y(previous - offset, previous - offset);
+            }
         }
         let burning = self.is_on_fire();
         self.status.fire.observe(burning, self.status.age_ticks);
@@ -645,9 +636,9 @@ impl MovementFlagUpdate {
             })
         };
         let words = [
-            word(0),
-            word(EXTENDED_FLAGS_METADATA_KEY),
-            word(protocol::ACTOR_DATA_ID_FLAGS_THIRD),
+            word(ActorDataKey::Flags.wire_value()),
+            word(ActorDataKey::FlagsTwo.wire_value()),
+            word(ActorDataKey::FlagsThird.wire_value()),
         ];
         if words.iter().all(Option::is_none) {
             return None;
@@ -655,14 +646,14 @@ impl MovementFlagUpdate {
         let bit =
             |bit: u32| words[(bit / 64) as usize].map(|flags| flags & (1_u64 << (bit % 64)) != 0);
         Some(Self {
-            immobile: bit(ACTOR_FLAG_IMMOBILE),
-            sneaking: bit(ACTOR_FLAG_SNEAKING),
-            sprinting: bit(ACTOR_FLAG_SPRINTING),
-            gliding: bit(ACTOR_FLAG_GLIDING),
-            swimming: bit(ACTOR_FLAG_SWIMMING),
-            crawling: bit(ACTOR_FLAG_CRAWLING),
-            has_gravity: bit(ACTOR_FLAG_HAS_GRAVITY),
-            uniform_air_drag: bit(ACTOR_FLAG_USES_UNIFORM_AIR_DRAG),
+            immobile: bit(ActorFlag::NoAI.wire_value()),
+            sneaking: bit(ActorFlag::Sneaking.wire_value()),
+            sprinting: bit(ActorFlag::Sprinting.wire_value()),
+            gliding: bit(ActorFlag::Gliding.wire_value()),
+            swimming: bit(ActorFlag::Swimming.wire_value()),
+            crawling: bit(ActorFlag::Crawling.wire_value()),
+            has_gravity: bit(ActorFlag::HasGravity.wire_value()),
+            uniform_air_drag: bit(ActorFlag::UsesUniformAirDrag.wire_value()),
         })
     }
 }
@@ -687,6 +678,8 @@ pub struct LocalPlayerFeed {
     pub flying: bool,
     /// Predicted elytra glide; overrides the streamed gliding flag on the local rig.
     pub gliding: bool,
+    /// Predicted Riptide spin pose, independent of swimming and gliding.
+    pub spinning: bool,
     /// Consecutive completed gliding ticks, which ease the body into its glide tilt.
     pub fall_fly_ticks: u32,
     /// Look-input yaw driving the body target, not the camera boom.
@@ -700,6 +693,8 @@ pub struct LocalPlayerFeed {
     pub held_network_ids: [i32; 2],
     /// The main-hand stack's data value.
     pub main_hand_metadata: u32,
+    /// Main-hand and off-hand stack facts whose change re-equips the item.
+    pub held_variants: [actor_animation::StackVariant; 2],
     /// Positive server identity for the selected stack, if one is available.
     pub main_hand_stack_id: Option<i32>,
     /// Selected hotbar slot; equal stacks in different slots still re-equip.
@@ -750,15 +745,15 @@ pub(crate) struct ActorStore {
     retained_player_skin_bytes: usize,
     ignored_movement_components: u64,
     actor_identifier_skips: u64,
+    painting_motive_fallbacks: u64,
     player_game_mode_skips: u64,
     world_default_game_mode: Option<protocol::PlayerGameMode>,
     entity_assets: Option<std::sync::Arc<assets::RuntimeEntityAssets>>,
-    custom_actor_traits:
-        HashMap<std::sync::Arc<str>, assets::interactions::EntityInteractionTraits>,
+    custom_actor_facts: HashMap<std::sync::Arc<str>, EntityFact>,
     actors: HashMap<u64, ActorSnapshot>,
     effect_members: effect_members::EffectMembers,
-    unique_to_runtime: HashMap<i64, u64>,
-    rider_to_ridden: HashMap<i64, i64>,
+    unique_to_runtime: FastHashMap<i64, u64>,
+    rider_to_ridden: FastHashMap<i64, i64>,
     max_actor_links: usize,
     players: HashMap<[u8; 16], PlayerProfile>,
     /// Appearances of spawned players removed from the roster, retained until despawn.
@@ -774,6 +769,9 @@ pub(crate) struct ActorStore {
     local_server_swings: u8,
     pending_local_damage: Option<local_health::PendingLocalDamage>,
     local_health_skips: u64,
+    /// The local player's last-death data held while its actor is absent (a dimension change),
+    /// since servers need not resend it.
+    pending_local_death: Vec<protocol::ActorMetadata>,
     /// Server PlayerSpawn has enabled local health-drop animations in this session.
     local_player_spawned: bool,
     /// Key of the synthetic local-player profile, present only while the player list carries no
@@ -781,6 +779,8 @@ pub(crate) struct ActorStore {
     synthetic_local_uuid: Option<[u8; 16]>,
     /// Last client-fed appearance, separate from server replacements of its profile.
     synthetic_local_skin: Option<[u8; 32]>,
+    /// Avoids rehashing an unchanged client-fed skin on every pose feed.
+    local_skin_fingerprints: profiles::SkinFingerprintMemo,
     /// A client skin that could not fit the profile budget is retried on later feeds.
     synthetic_local_skin_pending: bool,
     /// Monotonic spawn/movement revision for the client-fed local player actor.
@@ -798,6 +798,7 @@ pub(crate) struct ActorStore {
     local_hands: [Option<std::sync::Arc<str>>; 2],
     local_held_network_ids: [i32; 2],
     local_main_metadata: u32,
+    local_held_variants: [actor_animation::StackVariant; 2],
     local_main_stack_id: Option<i32>,
     local_main_slot: u8,
     local_item_use: LocalItemUse,
@@ -810,7 +811,7 @@ pub(crate) struct ActorStore {
     /// Rigs outside this view hold their pose instead of animating.
     animation_view: Option<actor_animation::ActorAnimationView>,
     /// Seat descriptor per mount, for riders that stream no seat offset.
-    seat_bindings: HashMap<u64, Option<u32>>,
+    seat_bindings: FastHashMap<u64, Option<u32>>,
     seat_bases: HashMap<std::sync::Arc<str>, Option<u32>>,
     property_registry: properties::PropertyRegistry,
     /// Latest local-player knockback `(sequence, [x, z])`, for hurt direction inference.
@@ -821,6 +822,8 @@ pub(crate) struct ActorStore {
     particle_effects: std::collections::VecDeque<crate::CommittedParticleEvent>,
     synchronized_audio: synchronized_audio::SynchronizedAudio,
 }
+
+pub use synchronized_audio::ROCKET_LAUNCH_EVENT;
 
 mod cloud_particles;
 pub(crate) mod creeper;
@@ -837,17 +840,22 @@ mod entities;
 mod fire;
 mod hitbox;
 mod hurt;
+mod last_death;
 mod local_health;
 pub use local_health::DEFAULT_PLAYER_HEALTH;
 mod lifecycle;
 mod lightning;
 mod mount;
 mod movement_interpolation;
+#[cfg(test)]
+mod painting_tests;
+mod paintings;
 mod placement;
 mod projectile;
 pub(crate) mod properties;
 mod query;
 mod shadow;
+mod spatial;
 mod synchronized_audio;
 mod terrain_interlock;
 
@@ -856,13 +864,13 @@ pub use entities::{
     BlockEntityCandidate, BlockEntityKind, BlockEntityView, RopeKind, RopeView, tnt_presentation,
 };
 pub use fire::FIRE_FADE_TICKS;
-pub use hitbox::{ActorHitBoxes, HITBOX_METADATA_KEY};
+pub use hitbox::ActorHitBoxes;
 pub use hurt::{
     ActorDamageState, ActorPickup, ActorStatus, ActorStatusNotice, DEATH_DURATION_TICKS,
     HURT_DURATION_TICKS, HURT_OVERLAY_ALPHA, MAX_STATUS_NOTICES, PICKUP_DURATION_TICKS,
 };
 pub use lightning::LightningBoltView;
-pub(crate) use placement::FLAG_BABY;
+
 pub use placement::{ActorFluidProbe, RideSeat};
 pub use properties::PropertyDefault;
 pub use shadow::ActorShadowCaster;
@@ -883,9 +891,9 @@ fn retained_skin_bytes(skin: &PlayerSkin) -> usize {
 
 fn event_dimension(event: &ActorEvent) -> Option<i32> {
     match event {
-        ActorEvent::Spawn(event) | ActorEvent::PlayerSpawn { spawn: event, .. } => {
-            Some(event.dimension)
-        }
+        ActorEvent::Spawn(event)
+        | ActorEvent::PlayerSpawn { spawn: event, .. }
+        | ActorEvent::PaintingSpawn { spawn: event, .. } => Some(event.dimension),
         ActorEvent::Remove(event) => Some(event.dimension),
         ActorEvent::Move(event) => Some(event.dimension),
         ActorEvent::Metadata(event) => Some(event.dimension),
@@ -929,6 +937,9 @@ mod movement_duration_tests;
 mod scale_tests;
 
 #[cfg(test)]
+mod sleep_tests;
+
+#[cfg(test)]
 mod bounds_tests;
 
 #[cfg(test)]
@@ -936,3 +947,6 @@ mod hitbox_tests;
 
 #[cfg(test)]
 mod movement_flags_tests;
+
+mod display;
+pub use display::{DisplayActorStore, MAX_DISPLAY_ACTORS};

@@ -38,7 +38,8 @@ use {
 
 /// Registers the production actor observation and publication boundaries.
 pub(crate) fn configure_actor_render_systems(app: &mut App) {
-    app.init_resource::<client_presentation::actor_publication::ActorFrameState>()
+    app.init_resource::<crate::block_entities::SpawnerDisplayPublisher>()
+        .init_resource::<client_presentation::actor_publication::ActorFrameState>()
         .add_systems(
             Update,
             (
@@ -57,7 +58,12 @@ pub(crate) fn configure_actor_render_systems(app: &mut App) {
         )
         .add_systems(
             Update,
-            prepare_actor_render_frame.in_set(ClientFrameSet::ActorFinalization),
+            (
+                prepare_actor_render_frame,
+                crate::block_entities::prepare_spawner_actors,
+            )
+                .chain()
+                .in_set(ClientFrameSet::ActorFinalization),
         )
         .add_systems(
             Update,

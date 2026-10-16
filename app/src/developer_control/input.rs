@@ -180,8 +180,9 @@ fn resolve(
             ControlButton::Forward => MouseButton::Forward,
         })),
         Control::Binding(name) => {
-            match client_shell::menu::settings_options::control_bindings::named_control(menu, name)
-            {
+            let id = launcher::menu::settings_options::BindingId::from_name(name)
+                .ok_or_else(|| format!("unknown binding `{name}`"))?;
+            match client_shell::menu::settings_options::control_bindings::named_control(menu, id) {
                 Some(PhysicalControl::KeyboardUsage(usage)) => DESKTOP_KEYS
                     .iter()
                     .find(|(_, key)| key.usage() == Some(usage))
@@ -212,6 +213,7 @@ fn resolve(
 fn inject(
     driven: Option<Res<DrivenInput>>,
     mut driver: ResMut<Driver>,
+    mut isolation: Option<ResMut<super::cursor_isolation::Isolation>>,
     focus: Res<Messages<WindowFocused>>,
     mut window: Query<(Entity, &mut Window, &mut CursorOptions), With<PrimaryWindow>>,
     mut keys: MessageWriter<KeyboardInput>,
@@ -255,6 +257,9 @@ fn inject(
         match event {
             InputEvent::Pointer(pointer) => {
                 let position = Vec2::new(pointer.x, pointer.y);
+                if let Some(isolation) = isolation.as_deref_mut() {
+                    isolation.set_pointer(position);
+                }
                 let delta = window.cursor_position().map(|previous| position - previous);
                 window
                     .bypass_change_detection()

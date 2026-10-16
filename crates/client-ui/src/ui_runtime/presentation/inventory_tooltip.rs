@@ -1,5 +1,6 @@
 //! Item tooltip text: name, potion effects, enchantments and lore.
 
+use assets::facts::PotionForm;
 use protocol::NetworkItemStack;
 
 use super::UiRuntime;
@@ -11,25 +12,12 @@ const LORE_COLOR: [u8; 4] = [170, 0, 170, 255];
 const BENEFICIAL_EFFECT_COLOR: [u8; 4] = [85, 85, 255, 255];
 const HARMFUL_EFFECT_COLOR: [u8; 4] = [255, 85, 85, 255];
 
-/// One potion item form: its name key suffix and effect duration divisor.
-struct PotionForm {
-    name_suffix: &'static str,
-    duration_divisor: u32,
-}
-
 /// The potion form of a vanilla potion item identifier.
 fn potion_form(identifier: &str) -> Option<PotionForm> {
-    let (name_suffix, duration_divisor) = match identifier {
-        "minecraft:potion" => (".name", 1),
-        "minecraft:splash_potion" => (".splash.name", 1),
-        // Lingering clouds apply a quarter of the drinkable duration.
-        "minecraft:lingering_potion" => (".linger.name", 4),
-        _ => return None,
-    };
-    Some(PotionForm {
-        name_suffix,
-        duration_divisor,
-    })
+    assets::facts::ItemFacts::builtin()
+        .ok()?
+        .by_identifier(identifier)?
+        .potion_form
 }
 
 /// The vanilla potion type and form of a potion item stack.
@@ -73,7 +61,7 @@ fn potion_effect_lines(
         if let Some(ticks) = effect.duration_ticks {
             text.push_str(&format!(
                 " ({})",
-                duration_text(ticks / form.duration_divisor)
+                duration_text(ticks / form.duration_divisor())
             ));
         }
         let harmful = facts.is_some_and(|facts| facts.harmful);
@@ -88,55 +76,6 @@ fn potion_effect_lines(
     })
 }
 
-/// The language key suffix of an enchantment id, in protocol order.
-const fn enchantment_key(id: i16) -> Option<&'static str> {
-    Some(match id {
-        0 => "protect.all",
-        1 => "protect.fire",
-        2 => "protect.fall",
-        3 => "protect.explosion",
-        4 => "protect.projectile",
-        5 => "thorns",
-        6 => "oxygen",
-        7 => "waterWalker",
-        8 => "waterWorker",
-        9 => "damage.all",
-        10 => "damage.undead",
-        11 => "damage.arthropods",
-        12 => "knockback",
-        13 => "fire",
-        14 => "lootBonus",
-        15 => "digging",
-        16 => "untouching",
-        17 => "durability",
-        18 => "lootBonusDigger",
-        19 => "arrowDamage",
-        20 => "arrowKnockback",
-        21 => "arrowFire",
-        22 => "arrowInfinite",
-        23 => "lootBonusFishing",
-        24 => "fishingSpeed",
-        25 => "frostwalker",
-        26 => "mending",
-        27 => "curse.binding",
-        28 => "curse.vanishing",
-        29 => "tridentImpaling",
-        30 => "tridentRiptide",
-        31 => "tridentLoyalty",
-        32 => "tridentChanneling",
-        33 => "crossbowMultishot",
-        34 => "crossbowPiercing",
-        35 => "crossbowQuickCharge",
-        36 => "soul_speed",
-        37 => "swift_sneak",
-        38 => "wind_burst",
-        39 => "density",
-        40 => "breach",
-        41 => "lunge",
-        _ => return None,
-    })
-}
-
 fn level_text(runtime: &UiRuntime, level: u8) -> String {
     runtime
         .translation(&format!("enchantment.level.{level}"))
@@ -145,14 +84,15 @@ fn level_text(runtime: &UiRuntime, level: u8) -> String {
 
 /// An enchantment's localized name and level numeral (`Sharpness II`).
 pub(super) fn enchantment_name(runtime: &UiRuntime, id: i16, level: u8) -> String {
-    let label = enchantment_key(id)
-        .and_then(|key| runtime.translation(&format!("enchantment.{key}")))
+    let label = inventory::enchantments::enchantment(id)
+        .map(|enchantment| enchantment.lang_key)
+        .and_then(|key| runtime.translation(key))
         .map_or_else(|| format!("Enchantment {id}"), |text| text.to_string());
     format!("{label} {}", level_text(runtime, level))
 }
 
 /// The localized default name, preferring a component name over a potion's type.
-fn default_name(runtime: &UiRuntime, identifier: &str, metadata: u32) -> String {
+pub(crate) fn default_name(runtime: &UiRuntime, identifier: &str, metadata: u32) -> String {
     if runtime
         .item_components(identifier)
         .is_some_and(|components| components.display_name.is_some())
@@ -163,7 +103,8 @@ fn default_name(runtime: &UiRuntime, identifier: &str, metadata: u32) -> String 
         .and_then(|(descriptor, form)| {
             runtime.translation(&format!(
                 "potion.{}{}",
-                descriptor.name_key, form.name_suffix
+                descriptor.name_key,
+                form.name_suffix()
             ))
         })
         .map_or_else(
@@ -234,15 +175,4 @@ pub(super) fn tooltip_lines(
         color: LORE_COLOR,
     }));
     lines
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_protocol_enchantment_has_a_key() {
-        assert!((0..=41).all(|id| enchantment_key(id).is_some()));
-        assert!(enchantment_key(42).is_none());
-    }
 }

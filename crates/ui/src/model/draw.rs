@@ -273,6 +273,7 @@ fn emit_text(
     // itself, so an overlapping glyph never casts a shadow over an
     // already-drawn neighbour.
     let scale = f32::from(layout.key().scale_1024) / 1_024.0;
+    let effect_scale = layout.key().effect_scale();
     let layout_id = layout.id();
     let wrap = layout.key().wrap;
     let device_grid = (wrap.snap_glyphs_to_device_pixels
@@ -319,14 +320,14 @@ fn emit_text(
             // (so both passes agree) and animated across frames.
             let (page, uv) = obfuscated_raster(glyph, index, layout_id, effects);
             let shear = if glyph.style.italic {
-                ITALIC_SHEAR_PX * scale
+                ITALIC_SHEAR_PX * effect_scale
             } else {
                 0.0
             };
             let bold_offset = glyph
                 .style
                 .bold
-                .then_some(TEXT_BOLD_OFFSET_64 as f32 / 64.0 * scale);
+                .then_some(TEXT_BOLD_OFFSET_64 as f32 / 64.0 * effect_scale);
             emit_text_glyph(
                 glyph_bounds,
                 uv,
@@ -593,7 +594,7 @@ fn emit_colored_quad(
             clip_w,
             uv,
             color,
-            style_flags,
+            style_flags: u16::from(style_flags),
             alpha_test: clip
                 .projection
                 .is_some_and(|projection| projection.alpha_test),

@@ -53,6 +53,7 @@ fn allocation(x: i32, index: u32) -> ArenaAllocation {
         geometry_stream_capacity: capacity,
         biome_range: 0..1,
         biome_capacity: 1,
+        biome_record: None,
         gpu,
     }
 }

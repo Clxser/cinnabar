@@ -1,3 +1,5 @@
+use launcher::menu::settings_options::BindingId;
+use launcher::menu::settings_options::SettingId;
 use semantic_input::{InputContext, PhysicalControl};
 use {
     crate::menu::settings_options::control_bindings::{
@@ -29,17 +31,25 @@ fn server_list_actions_save_preferences_without_changing_selection_or_gameplay()
         ServerGroup::Featured,
     )));
     menu.activate(MenuAction::ServerList(ServerListAction::MoveBefore(
-        ServerGroup::Saved,
-        Some(ServerGroup::Featured),
+        ServerGroup::Creator,
+        Some(ServerGroup::Saved),
     )));
     assert!(menu.settings_dirty);
     assert!(!menu.settings_apply);
     assert_eq!(menu.feeds.selected_saved, Some(2));
     menu.sync_user_settings(None);
     assert!(!menu.settings_dirty);
+    menu.flush_user_settings().unwrap();
     let saved = SettingsOptions::load(&menu.config_path.with_file_name(SETTINGS_FILE));
     assert!(saved.server_list().collapsed(ServerGroup::Featured));
-    assert_eq!(saved.server_list().order()[0], ServerGroup::Saved);
+    assert_eq!(
+        saved.server_list().order(),
+        [
+            ServerGroup::Creator,
+            ServerGroup::Saved,
+            ServerGroup::Featured
+        ]
+    );
 }
 
 #[test]
@@ -59,49 +69,71 @@ fn supplemental_bindings_drive_production_keyboard_and_mouse_helpers() {
     let mut keys = ButtonInput::default();
     let mut mouse = ButtonInput::default();
     keys.press(KeyCode::KeyI);
-    assert!(binding_key(Some(&menu), "key.inventory", KeyCode::KeyI));
-    assert!(!binding_key(Some(&menu), "key.inventory", KeyCode::KeyE));
-    assert!(binding_pressed(Some(&menu), "key.inventory", &keys, &mouse));
+    assert!(binding_key(
+        Some(&menu),
+        BindingId::Inventory,
+        KeyCode::KeyI
+    ));
+    assert!(!binding_key(
+        Some(&menu),
+        BindingId::Inventory,
+        KeyCode::KeyE
+    ));
+    assert!(binding_pressed(
+        Some(&menu),
+        BindingId::Inventory,
+        &keys,
+        &mouse
+    ));
     assert!(
         std::sync::Arc::make_mut(&mut menu.settings_options)
             .remap(index, PhysicalControl::MouseButton(4))
     );
     mouse.press(MouseButton::Back);
-    assert!(binding_mouse(Some(&menu), "key.inventory", &mouse));
-    assert!(binding_pressed(Some(&menu), "key.inventory", &keys, &mouse));
+    assert!(binding_mouse(Some(&menu), BindingId::Inventory, &mouse));
+    assert!(binding_pressed(
+        Some(&menu),
+        BindingId::Inventory,
+        &keys,
+        &mouse
+    ));
 }
 
 /// An Alt+key macro resolves its stored command, and only while it is armed.
 #[test]
 fn a_bound_macro_runs_its_command_only_while_a_command_is_stored() {
     let mut menu = crate::menu::MenuRuntime::new(true, 2, "Macros".to_owned());
+    let modifiers = semantic_input::ModifierChord {
+        alt: true,
+        ..Default::default()
+    };
     let slot = 1;
     let key = PhysicalControl::KeyboardUsage(0x1e);
     // A binding without a stored command stays silent.
     assert!(std::sync::Arc::make_mut(&mut menu.settings_options).remap_macro(slot, key));
-    assert_eq!(binding_macro_command(Some(&menu), key), None);
+    assert_eq!(binding_macro_command(Some(&menu), key, modifiers), None);
     assert!(
         std::sync::Arc::make_mut(&mut menu.settings_options)
             .set_macro_command(slot, "time set day")
     );
     assert_eq!(
-        binding_macro_command(Some(&menu), key).as_deref(),
+        binding_macro_command(Some(&menu), key, modifiers).as_deref(),
         Some("/time set day")
     );
     // Other keys, and the macro key after its binding is cleared, stay silent.
     assert_eq!(
-        binding_macro_command(Some(&menu), PhysicalControl::KeyboardUsage(0x1f)),
+        binding_macro_command(Some(&menu), PhysicalControl::KeyboardUsage(0x1f), modifiers),
         None
     );
     assert!(std::sync::Arc::make_mut(&mut menu.settings_options).reset_macro(slot));
-    assert_eq!(binding_macro_command(Some(&menu), key), None);
+    assert_eq!(binding_macro_command(Some(&menu), key, modifiers), None);
     // A stored slash is preserved rather than doubled.
     assert!(std::sync::Arc::make_mut(&mut menu.settings_options).remap_macro(slot, key));
     assert!(
         std::sync::Arc::make_mut(&mut menu.settings_options).set_macro_command(slot, "/say hello")
     );
     assert_eq!(
-        binding_macro_command(Some(&menu), key).as_deref(),
+        binding_macro_command(Some(&menu), key, modifiers).as_deref(),
         Some("/say hello")
     );
 }
@@ -124,10 +156,10 @@ fn chat_secondary_default_obeys_remapping_and_allows_a_shared_reset() {
     let enter = PhysicalControl::KeyboardUsage(0x28);
     let mut keys = ButtonInput::default();
     keys.press(KeyCode::Enter);
-    assert!(binding_key(Some(&menu), "key.chat", KeyCode::KeyT));
+    assert!(binding_key(Some(&menu), BindingId::Chat, KeyCode::KeyT));
     assert!(binding_pressed(
         Some(&menu),
-        "key.chat",
+        BindingId::Chat,
         &keys,
         &ButtonInput::default()
     ));
@@ -135,12 +167,16 @@ fn chat_secondary_default_obeys_remapping_and_allows_a_shared_reset() {
     assert!(settings.remap(inventory, enter));
     assert!(settings.remap(chat, PhysicalControl::KeyboardUsage(0x1c)));
     assert!(settings.remap(inventory, enter));
-    assert!(!binding_key(Some(&menu), "key.chat", KeyCode::Enter));
-    assert!(binding_key(Some(&menu), "key.chat", KeyCode::KeyY));
+    assert!(!binding_key(Some(&menu), BindingId::Chat, KeyCode::Enter));
+    assert!(binding_key(Some(&menu), BindingId::Chat, KeyCode::KeyY));
     let settings = std::sync::Arc::make_mut(&mut menu.settings_options);
     assert!(settings.reset_key(chat));
-    assert!(binding_key(Some(&menu), "key.chat", KeyCode::Enter));
-    assert!(binding_key(Some(&menu), "key.inventory", KeyCode::Enter));
+    assert!(binding_key(Some(&menu), BindingId::Chat, KeyCode::Enter));
+    assert!(binding_key(
+        Some(&menu),
+        BindingId::Inventory,
+        KeyCode::Enter
+    ));
     assert!(std::sync::Arc::make_mut(&mut menu.settings_options).reset_key(inventory));
 }
 
@@ -271,65 +307,44 @@ fn settings_handoff_preserves_native_window_and_viewport_preferences() {
 }
 
 #[test]
-fn a_failed_settings_save_remains_pending_until_storage_recovers() {
-    let root = std::env::temp_dir().join(format!(
-        "cinnabar-settings-retry-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    std::fs::create_dir_all(&root).unwrap();
-    let blocked = root.join("config");
+fn a_failed_settings_save_is_reported_and_shutdown_saves_latest_edits_after_recovery() {
+    let layout = launcher::test_support::scratch("settings-retry");
+    let blocked = layout.user_config_root.join("config");
+    std::fs::create_dir_all(&layout.user_config_root).unwrap();
     std::fs::write(&blocked, b"blocked").unwrap();
     let mut menu = crate::menu::MenuRuntime::new(true, 2, "Steve".into());
     menu.config_path = blocked.join("servers.json");
+    menu.message = None;
     menu.set_option(index("gamma") as u16, 70);
     menu.sync_user_settings(None);
-    assert!(menu.settings_dirty);
+    test_time::eventually("settings write failure", || {
+        menu.sync_user_settings(None);
+        menu.message
+            .as_deref()
+            .is_some_and(|message| message.starts_with("Could not save settings:"))
+    });
     std::fs::remove_file(&blocked).unwrap();
-    menu.settings_retry_at = Some(std::time::Instant::now());
+    menu.set_option(index("gamma") as u16, 80);
     menu.sync_user_settings(None);
-    assert!(!menu.settings_dirty);
+    menu.flush_user_settings().unwrap();
     assert_eq!(
-        SettingsOptions::load(&blocked.join(SETTINGS_FILE)).value("gamma"),
-        70
+        SettingsOptions::load(&blocked.join(SETTINGS_FILE)).value(SettingId::Gamma),
+        80
     );
-    std::fs::remove_dir_all(root).unwrap();
+    drop(menu);
+    std::fs::remove_dir_all(layout.user_config_root).unwrap();
 }
 
 #[test]
-fn review_ui_failed_settings_save_does_not_retry_on_the_next_frame() {
-    let root = std::env::temp_dir().join(format!(
-        "cinnabar-settings-backoff-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let path = root.join(SETTINGS_FILE);
-    std::fs::create_dir_all(&path).unwrap();
-    let mut menu = crate::menu::MenuRuntime::new(true, 2, "Steve".into());
-    menu.config_path = root.join("servers.json");
+fn shutdown_saves_the_latest_edit_even_without_another_frame() {
+    let mut menu = crate::menu::MenuRuntime::new(true, 2, "Shutdown".into());
+    let path = menu.config_path.with_file_name(SETTINGS_FILE);
     menu.set_option(index("gamma") as u16, 70);
-    let attempted_at = std::time::Instant::now();
     menu.sync_user_settings(None);
-    assert!(menu.settings_dirty);
-    let retry_at = menu
-        .settings_retry_at
-        .expect("a failed save schedules a retry");
-    assert!(retry_at > attempted_at);
-    // Hold the deadline ahead of this check even if the test thread is delayed.
-    menu.settings_retry_at = Some(retry_at + std::time::Duration::from_secs(60));
-    std::fs::remove_dir(&path).unwrap();
-    // Even recovered storage must wait: this frame must not perform another write.
     menu.set_option(index("gamma") as u16, 80);
-    menu.sync_user_settings(None);
-    assert!(menu.settings_dirty);
-    assert!(!path.exists());
-    // Advance the retry deadline without sleeping, and persist the latest edit.
-    menu.settings_retry_at = Some(std::time::Instant::now());
-    menu.sync_user_settings(None);
-    assert!(!menu.settings_dirty);
-    assert!(menu.settings_retry_at.is_none());
-    assert_eq!(SettingsOptions::load(&path).value("gamma"), 80);
-    std::fs::remove_dir_all(root).unwrap();
+    drop(menu);
+    assert_eq!(SettingsOptions::load(&path).value(SettingId::Gamma), 80);
+    std::fs::remove_file(path).unwrap();
 }
 
 #[test]
@@ -339,19 +354,20 @@ fn session_overrides_apply_in_memory_but_are_never_saved() {
     let skin = crate::player_skin::LocalPlayerSkin::generated_default("Overrides");
     let mut menu =
         crate::menu::MenuRuntime::new_with_layout(true, Some(2), "Overrides".into(), layout, skin);
-    menu.set_session_option("hide_hud", Some(1));
-    menu.set_session_option("hide_hand", Some(1));
-    assert_eq!(menu.settings_snapshot().0.value("hide_hud"), 1);
+    menu.set_session_option(SettingId::HideHud, Some(1));
+    menu.set_session_option(SettingId::HideHand, Some(1));
+    assert_eq!(menu.settings_snapshot().0.value(SettingId::HideHud), 1);
     // A real edit elsewhere saves the file without the overrides.
     menu.set_option(index("main_volume") as u16, 30);
     menu.sync_user_settings(None);
+    menu.flush_user_settings().unwrap();
     let saved = SettingsOptions::load(&settings_path);
-    assert_eq!(saved.value("hide_hud"), 0);
-    assert_eq!(saved.value("hide_hand"), 0);
-    assert_eq!(saved.value("main_volume"), 30);
-    menu.set_session_option("hide_hud", None);
-    assert_eq!(menu.settings_snapshot().0.value("hide_hud"), 0);
-    assert_eq!(menu.settings_snapshot().0.value("hide_hand"), 1);
+    assert_eq!(saved.value(SettingId::HideHud), 0);
+    assert_eq!(saved.value(SettingId::HideHand), 0);
+    assert_eq!(saved.value(SettingId::MainVolume), 30);
+    menu.set_session_option(SettingId::HideHud, None);
+    assert_eq!(menu.settings_snapshot().0.value(SettingId::HideHud), 0);
+    assert_eq!(menu.settings_snapshot().0.value(SettingId::HideHand), 1);
 }
 
 #[test]
@@ -400,4 +416,21 @@ fn inventory_hotbar_controls_follow_saved_keyboard_and_mouse_remaps() {
             vec![slot as u8 + 1]
         );
     }
+}
+
+#[test]
+fn exit_message_flushes_edits_before_the_menu_is_dropped() {
+    use bevy::prelude::{App, AppExit, Last};
+    let mut menu = crate::menu::MenuRuntime::new(true, 2, "Exit".into());
+    let path = menu.config_path.with_file_name(SETTINGS_FILE);
+    menu.set_option(index("gamma") as u16, 80);
+    let mut app = App::new();
+    app.add_message::<AppExit>()
+        .insert_resource(menu)
+        .add_systems(Last, super::flush_on_exit);
+    app.world_mut().write_message(AppExit::Success);
+    app.update();
+    assert_eq!(SettingsOptions::load(&path).value(SettingId::Gamma), 80);
+    drop(app);
+    std::fs::remove_file(path).unwrap();
 }

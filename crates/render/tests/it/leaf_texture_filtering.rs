@@ -6,15 +6,28 @@ use crate::shader_source;
 use gpu_snapshot::{Draw, Gpu};
 
 // Two texels repeat vertically, making the minified centre a known average.
+/// Extra pages repeat the two proven patterns, so the filtering arithmetic the
+/// cases assert holds on every page without inventing new texel relationships.
 const BASE: [[[[u8; 3]; 2]; 2]; assets::MAX_TEXTURE_PAGES] = [
     [[[0; 3], [255; 3]], [[255, 0, 128], [0, 255, 32]]],
     [
         [[16, 64, 240], [240, 192, 16]],
         [[64, 32, 0], [192, 224, 255]],
     ],
+    [[[0; 3], [255; 3]], [[255, 0, 128], [0, 255, 32]]],
+    [
+        [[16, 64, 240], [240, 192, 16]],
+        [[64, 32, 0], [192, 224, 255]],
+    ],
+    [[[0; 3], [255; 3]], [[255, 0, 128], [0, 255, 32]]],
 ];
-const MIP: [[[u8; 3]; 2]; assets::MAX_TEXTURE_PAGES] =
-    [[[128; 3], [128, 128, 80]], [[128; 3], [128; 3]]];
+const MIP: [[[u8; 3]; 2]; assets::MAX_TEXTURE_PAGES] = [
+    [[128; 3], [128, 128, 80]],
+    [[128; 3], [128; 3]],
+    [[128; 3], [128, 128, 80]],
+    [[128; 3], [128; 3]],
+    [[128; 3], [128, 128, 80]],
+];
 
 struct Case {
     page: u32,
@@ -188,11 +201,23 @@ fn terrain_unorm_views_filter_both_pages_layers_and_frame_mix() {
                     resource: wgpu::BindingResource::TextureView(&native_views[1]),
                 },
                 wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[2],
+                    resource: wgpu::BindingResource::TextureView(&native_views[2]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[3],
+                    resource: wgpu::BindingResource::TextureView(&native_views[3]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[4],
+                    resource: wgpu::BindingResource::TextureView(&native_views[4]),
+                },
+                wgpu::BindGroupEntry {
                     binding: material_shader::NATIVE_LEAF_SAMPLER_BINDING,
                     resource: wgpu::BindingResource::Sampler(&native_sampler),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 34,
+                    binding: 40,
                     resource: data.as_entire_binding(),
                 },
             ],
@@ -201,7 +226,7 @@ fn terrain_unorm_views_filter_both_pages_layers_and_frame_mix() {
         }],
     );
     for (index, case) in cases.iter().enumerate() {
-        let offset = (((index / 4 * 64 + 32) * 256) + index % 4 * 64 + 32) * 4;
+        let offset = (((index / 8 * 32 + 16) * 256) + index % 8 * 32 + 16) * 4;
         for channel in 0..3 {
             let current = sampled_channel(case.page, case.layer, channel, case.minified);
             let next = sampled_channel(1, 0, channel, case.minified);
@@ -307,6 +332,18 @@ fn native_leaf_point_mip_filter_preserves_alpha_without_changing_carried_mips() 
                     resource: wgpu::BindingResource::TextureView(&unorm),
                 },
                 wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[2],
+                    resource: wgpu::BindingResource::TextureView(&unorm),
+                },
+                wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[3],
+                    resource: wgpu::BindingResource::TextureView(&unorm),
+                },
+                wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[4],
+                    resource: wgpu::BindingResource::TextureView(&unorm),
+                },
+                wgpu::BindGroupEntry {
                     binding: material_shader::NATIVE_LEAF_SAMPLER_BINDING,
                     resource: wgpu::BindingResource::Sampler(&native_sampler),
                 },
@@ -344,13 +381,13 @@ const MIP_FIXTURE: &str = r#"
 
 const FIXTURE: &str = r#"
 struct FilterCase { refs_flags: vec4<u32>, uv_grad_blend: vec4<f32>, }
-@group(0) @binding(34) var<storage, read> filter_cases: array<FilterCase>;
+@group(0) @binding(40) var<storage, read> filter_cases: array<FilterCase>;
 @vertex fn filter_vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
     let p = array(vec2(-1.0,-1.0), vec2(3.0,-1.0), vec2(-1.0,3.0));
     return vec4(p[index], 0.5, 1.0);
 }
 @fragment fn filter_fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let index = min(u32(position.y)/64u * 4u + u32(position.x)/64u, arrayLength(&filter_cases)-1u);
+    let index = min(u32(position.y)/32u * 8u + u32(position.x)/32u, arrayLength(&filter_cases)-1u);
     let witness = filter_cases[index];
     let dx = vec2(witness.uv_grad_blend.z, 0.0);
     let dy = vec2(0.0, witness.uv_grad_blend.z);

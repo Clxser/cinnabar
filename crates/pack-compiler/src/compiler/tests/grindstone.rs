@@ -169,7 +169,7 @@ fn grindstones_keep_separate_supports_pivots_and_wheel_in_every_mount_pose() {
             );
         }
         let support_axis = match attachment {
-            "side" if direction % 2 == 0 => 2,
+            "side" if direction.is_multiple_of(2) => 2,
             "side" => 0,
             _ => 1,
         };

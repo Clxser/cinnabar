@@ -1,46 +1,50 @@
 //! The material carrier and WGSL consume the same flag discriminants.
 
-pub(crate) const NATIVE_LEAF_TEXTURE_BINDINGS: [u32; assets::MAX_TEXTURE_PAGES] = [16, 17];
-pub(crate) const NATIVE_LEAF_SAMPLER_BINDING: u32 = 18;
-pub(crate) const PBR_NORMAL_TEXTURE_BINDINGS: [u32; assets::MAX_TEXTURE_PAGES] = [32, 33];
-pub(crate) const PBR_MER_TEXTURE_BINDINGS: [u32; assets::MAX_TEXTURE_PAGES] = [21, 22];
-pub(crate) const PBR_SAMPLER_BINDING: u32 = 23;
-pub(crate) const ENHANCED_COLOR_TEXTURE_BINDINGS: [u32; assets::MAX_TEXTURE_PAGES] = [24, 25];
-pub(crate) const ENHANCED_NORMAL_TEXTURE_BINDINGS: [u32; assets::MAX_TEXTURE_PAGES] = [26, 27];
-pub(crate) const ENHANCED_MER_TEXTURE_BINDINGS: [u32; assets::MAX_TEXTURE_PAGES] = [28, 29];
-pub(crate) const ENHANCED_SAMPLER_BINDING: u32 = 30;
-pub(crate) const ENHANCED_TEXTURE_REF_BINDING: u32 = 31;
-pub(crate) const LAST_CHUNK_BINDING: u32 =
-    PBR_NORMAL_TEXTURE_BINDINGS[assets::MAX_TEXTURE_PAGES - 1];
+/// Fragment bindings of each physical texture page: one filterable sRGB view
+/// and one gamma view, so `MAX_TEXTURE_PAGES` needs this many of each.
+pub(crate) const SAMPLED_TEXTURE_BINDINGS: [u32; assets::MAX_TEXTURE_PAGES] = [4, 5, 19, 20, 21];
+pub(crate) const NATIVE_LEAF_TEXTURE_BINDINGS: [u32; assets::MAX_TEXTURE_PAGES] =
+    [16, 17, 22, 23, 24];
+pub(crate) const NATIVE_LEAF_SAMPLER_BINDING: u32 = 25;
+pub(crate) const BIOME_QUERY_TABLES_BINDING: u32 = 26;
+/// Authored Enhanced arrays, selected by the top bit of an authored reference.
+/// They follow dev's carrier bindings so the vanilla prefix keeps its numbering.
+pub(crate) const ENHANCED_TEXTURE_PAGES: usize = 2;
+pub(crate) const ENHANCED_COLOR_TEXTURE_BINDINGS: [u32; ENHANCED_TEXTURE_PAGES] = [32, 33];
+pub(crate) const ENHANCED_NORMAL_TEXTURE_BINDINGS: [u32; ENHANCED_TEXTURE_PAGES] = [34, 35];
+pub(crate) const ENHANCED_MER_TEXTURE_BINDINGS: [u32; ENHANCED_TEXTURE_PAGES] = [36, 37];
+pub(crate) const ENHANCED_SAMPLER_BINDING: u32 = 38;
+pub(crate) const ENHANCED_TEXTURE_REF_BINDING: u32 = 39;
+pub(crate) const LAST_CHUNK_BINDING: u32 = ENHANCED_TEXTURE_REF_BINDING;
 pub(crate) const ACTIVE_LAST_CHUNK_BINDING: u32 = if cfg!(feature = "enhanced") {
     LAST_CHUNK_BINDING
 } else {
     BIOME_QUERY_TABLES_BINDING
 };
-pub(crate) const CHUNK_SAMPLER_COUNT: u32 = 2 + if cfg!(feature = "enhanced") { 2 } else { 0 };
+pub(crate) const CHUNK_SAMPLER_COUNT: u32 = 2 + if cfg!(feature = "enhanced") { 1 } else { 0 };
+/// Ten carrier views plus the six authored arrays fill the baseline 16 sampled textures.
 pub(crate) const CHUNK_SAMPLED_TEXTURE_BINDINGS: u32 = (assets::MAX_TEXTURE_PAGES
     + NATIVE_LEAF_TEXTURE_BINDINGS.len()
     + if cfg!(feature = "enhanced") {
-        PBR_NORMAL_TEXTURE_BINDINGS.len()
-            + PBR_MER_TEXTURE_BINDINGS.len()
-            + ENHANCED_COLOR_TEXTURE_BINDINGS.len()
+        ENHANCED_COLOR_TEXTURE_BINDINGS.len()
             + ENHANCED_NORMAL_TEXTURE_BINDINGS.len()
             + ENHANCED_MER_TEXTURE_BINDINGS.len()
     } else {
         0
     }) as u32;
-pub(crate) const BIOME_QUERY_TABLES_BINDING: u32 = 19;
 pub(crate) const WORLD_CLOCK_WORDS: usize = 4;
 pub(crate) const WORLD_UNIFORM_BYTES: u64 =
     ((WORLD_CLOCK_WORDS + meshing::biome_lattice::BIOME_QUERY_TABLE_WORDS) * 4) as u64;
 
 // Admitted source sizes are powers of two up to MAX_TILE_SIZE. Four bits store
 // log2(size) + 1; zero means the physical page size. Grid occupies five more bits.
+// They sit below the page field, which a reference's own width separates.
 const TEXTURE_SIZE_BITS: u32 = 4;
 const TEXTURE_WIDTH_SHIFT: u32 = assets::TEXTURE_LAYER_MASK.count_ones();
 const TEXTURE_HEIGHT_SHIFT: u32 = TEXTURE_WIDTH_SHIFT + TEXTURE_SIZE_BITS;
 const TEXTURE_GRID_SHIFT: u32 = TEXTURE_HEIGHT_SHIFT + TEXTURE_SIZE_BITS;
 const TEXTURE_SIZE_EXPONENT_MASK: u32 = (1 << TEXTURE_SIZE_BITS) - 1;
+const _: () = assert!(assets::MAX_TILE_SIZE.ilog2() < TEXTURE_SIZE_EXPONENT_MASK);
 
 /// Encodes admitted power-of-two dimensions above the shared page and layer fields.
 pub(crate) fn gpu_texture_ref(
@@ -132,18 +136,55 @@ pub(crate) fn glint_tint_source() -> String {
     format!("vec3<f32>({red:?}, {green:?}, {blue:?})")
 }
 
+/// Generates stem colours from the same bounded material contract as the compiler.
+fn stem_colours_source() -> String {
+    let colours = (0..=7)
+        .map(|growth| {
+            let rgb = assets::stem::colour(growth).expect("bounded stem growth");
+            format!(
+                "vec3<f32>({}, {}, {}) / 255.0",
+                rgb[0] as f32, rgb[1] as f32, rgb[2] as f32
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "const STEM_COLOURS: array<vec3<f32>, 8> = array({colours});\nfn stem_colour(flags: u32) -> vec3<f32> {{\n if ((flags & {}u) == 0u) {{ return vec3(1.0); }}\n return STEM_COLOURS[(flags & {}u) >> {}u];\n}}",
+        assets::stem::MATERIAL_FLAG,
+        assets::stem::GROWTH_MASK,
+        assets::stem::GROWTH_SHIFT,
+    )
+}
+
 pub(crate) fn source(source: &str) -> String {
     source
         .replace("// ENHANCED_PBR_LOOKUP", include_str!("enhanced/authored_lookup.wesl"))
+        .replace("FAR_TERRAIN_TILE_CELLS", &format!("{}u", far_terrain::config::TILE_CELLS))
+        .replace("FAR_TERRAIN_FACE_POSITIVE_X", &format!("{}u", far_terrain::FACE_POSITIVE_X))
+        .replace("FAR_TERRAIN_FACE_NEGATIVE_X", &format!("{}u", far_terrain::FACE_NEGATIVE_X))
+        .replace("FAR_TERRAIN_FACE_POSITIVE_Z", &format!("{}u", far_terrain::FACE_POSITIVE_Z))
+        .replace("FAR_TERRAIN_FACE_NEGATIVE_Z", &format!("{}u", far_terrain::FACE_NEGATIVE_Z))
+        .replace("// STEM_COLOURS", &stem_colours_source())
+        .replace("MATERIAL_STEM_FLAG", &format!("{}u", assets::stem::MATERIAL_FLAG))
+        .replace("ITEM_GLINT_UV_SCALE", &format!("{:?}", render_model::ITEM_GLINT_UV_SCALE))
         .replace("GLINT_TINT_RGB", &glint_tint_source())
         .replace("ACTOR_LIGHT_WORLD_FLAG", &format!("{}u", render_api::ACTOR_LIGHT_WORLD))
         .replace("ACTOR_LIGHT_DIRECTIONAL_FLAG", &format!("{}u", render_api::ACTOR_LIGHT_DIRECTIONAL))
         .replace("TEXTURE_LAYER_MASK", &format!("{}u", assets::TEXTURE_LAYER_MASK))
+        .replace(
+            "GPU_TEXTURE_PAGE_SHIFT",
+            &format!("{}u", assets::TEXTURE_PAGE_SHIFT),
+        )
+        .replace(
+            "GPU_TEXTURE_PAGE_MASK",
+            &format!("{}u", assets::TEXTURE_PAGE_MASK),
+        )
         .replace("GPU_TEXTURE_GRID_SHIFT", &format!("{TEXTURE_GRID_SHIFT}u"))
         .replace("GPU_TEXTURE_SIZE_EXPONENT_MASK", &format!("{TEXTURE_SIZE_EXPONENT_MASK}u"))
         .replace("TERRAIN_QUAD_SHIFT_MASK", &format!("{}u", assets::texture::TERRAIN_QUAD_SHIFT_MASK))
         .replace("GPU_TEXTURE_WIDTH_SHIFT", &format!("{TEXTURE_WIDTH_SHIFT}u"))
         .replace("GPU_TEXTURE_HEIGHT_SHIFT", &format!("{TEXTURE_HEIGHT_SHIFT}u"))
+        .replace("BLOCK_ENTITY_CULL_BACK_FACES", &format!("{}u", render_model::block_entity::mesh::BLOCK_ENTITY_CULL_BACK_FACES))
         .replace("BLOCK_OVERLAY_FACE_OFFSET", &format!("{:?}", render_api::BLOCK_OVERLAY_FACE_OFFSET))
         .replace("// ENHANCED_PBR_SAMPLING", include_str!("enhanced/pbr_sampling.wesl"))
         .replace("// ENHANCED_PBR_CONSTANTS", &format!(
@@ -151,6 +192,9 @@ pub(crate) fn source(source: &str) -> String {
             render_scene::EnhancedTextureAssets::REFERENCE_BASE_WORDS, render_scene::EnhancedTextureAssets::REFERENCE_OVERRIDE_WORDS,
             assets::texture::PBR_REF_COLOR, assets::texture::PBR_REF_NORMAL, assets::texture::PBR_REF_HEIGHT, assets::texture::PBR_REF_MATERIAL,
             assets::texture::PBR_REF_LABPBR, assets::texture::PBR_REF_OCCLUSION, assets::texture::PBR_REF_SUBSURFACE, assets::texture::PBR_HEIGHT_SCALE))
+        .replace("ACTOR_COLOR_MASK_MATERIAL_FLAG", &format!("{}u", render_model::ACTOR_COLOR_MASK_MATERIAL_FLAG))
+        .replace("ACTOR_MATERIAL_LEGACY112_FLAG", &format!("{}u", render_model::LEGACY_COMBAT_MATERIAL_FLAG))
+        .replace("// LEGACY_GLINT_CONSTANTS", &legacy_glint_constants())
         .replace("ACTOR_MATERIAL_GLINT", &format!("{}u", assets::EntityRenderMaterial::Glint as u32))
         .replace("ACTOR_MATERIAL_DEFAULT", &format!("{}u", assets::EntityRenderMaterial::Default as u32))
         .replace("ACTOR_MATERIAL_DRAGON", &format!("{}u", assets::EntityRenderMaterial::Dragon as u32))
@@ -163,6 +207,7 @@ pub(crate) fn source(source: &str) -> String {
         .replace("ACTOR_MATERIAL_BLEND_FLAG", &format!("{}u", assets::EntityRenderMaterialState::BLEND))
         .replace("ACTOR_MATERIAL_EMISSIVE_FLAG", &format!("{}u", assets::EntityRenderMaterialState::EMISSIVE))
         .replace("ACTOR_MATERIAL_DISABLE_OVERLAY_FLAG", &format!("{}u", assets::EntityRenderMaterialState::DISABLE_OVERLAY))
+        .replace("ACTOR_CHART_COORDINATE_BITS", &format!("{}u", u16::BITS))
         .replace("ACTOR_ALPHA_TEST_THRESHOLD", &format!("{:?}", assets::ENTITY_ALPHA_TEST_THRESHOLD))
         .replace("MODEL_RANDOM_OFFSET_FLAG", &format!("{}u", meshing::MODEL_REF_FLAG_RANDOM_OFFSET))
         .replace("MODEL_BAMBOO_FLAG", &format!("{}u", assets::MODEL_TEMPLATE_FLAG_BAMBOO))
@@ -241,26 +286,21 @@ pub(crate) fn source(source: &str) -> String {
             &NATIVE_LEAF_TEXTURE_BINDINGS[1].to_string(),
         )
         .replace(
+            "NATIVE_LEAF_TEXTURE_BINDING_2",
+            &NATIVE_LEAF_TEXTURE_BINDINGS[2].to_string(),
+        )
+        .replace(
+            "NATIVE_LEAF_TEXTURE_BINDING_3",
+            &NATIVE_LEAF_TEXTURE_BINDINGS[3].to_string(),
+        )
+        .replace(
+            "NATIVE_LEAF_TEXTURE_BINDING_4",
+            &NATIVE_LEAF_TEXTURE_BINDINGS[4].to_string(),
+        )
+        .replace(
             "NATIVE_LEAF_SAMPLER_BINDING",
             &NATIVE_LEAF_SAMPLER_BINDING.to_string(),
         )
-        .replace(
-            "PBR_NORMAL_TEXTURE_BINDING_0",
-            &PBR_NORMAL_TEXTURE_BINDINGS[0].to_string(),
-        )
-        .replace(
-            "PBR_NORMAL_TEXTURE_BINDING_1",
-            &PBR_NORMAL_TEXTURE_BINDINGS[1].to_string(),
-        )
-        .replace(
-            "PBR_MER_TEXTURE_BINDING_0",
-            &PBR_MER_TEXTURE_BINDINGS[0].to_string(),
-        )
-        .replace(
-            "PBR_MER_TEXTURE_BINDING_1",
-            &PBR_MER_TEXTURE_BINDINGS[1].to_string(),
-        )
-        .replace("PBR_SAMPLER_BINDING", &PBR_SAMPLER_BINDING.to_string())
         .replace(
             "ENHANCED_COLOR_TEXTURE_BINDING_0",
             &ENHANCED_COLOR_TEXTURE_BINDINGS[0].to_string(),
@@ -290,4 +330,18 @@ pub(crate) fn source(source: &str) -> String {
             "ENHANCED_TEXTURE_REF_BINDING",
             &ENHANCED_TEXTURE_REF_BINDING.to_string(),
         )
+}
+
+/// Generates the legacy shader's UV rules from the shared rendering contract.
+fn legacy_glint_constants() -> String {
+    let rules = render_api::BEDROCK_112;
+    let rotation = |angle: f32| {
+        let (sin, cos) = angle.sin_cos();
+        format!("vec2<f32>({cos:?}, {sin:?})")
+    };
+    format!(
+        "const LEGACY_GLINT_ROTATION_1: vec2<f32> = {};\nconst LEGACY_GLINT_ROTATION_2: vec2<f32> = {};",
+        rotation(rules.glint_rotation_radians[0]),
+        rotation(rules.glint_rotation_radians[1]),
+    )
 }

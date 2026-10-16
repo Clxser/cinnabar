@@ -1,14 +1,7 @@
 use protocol::ActorMetadataValue;
+use protocol_ids::ActorDataKey;
 
 use super::ActorStore;
-
-/// Seat metadata streamed on the rider (protocol `EntityDataKeySeat*`).
-pub(super) const KEY_SEAT_OFFSET: u32 = 56;
-const KEY_SEAT_LOCK_DEGREES: u32 = 58;
-const KEY_SEAT_ROTATION_DEGREES: u32 = 60;
-const KEY_BED_POSITION: u32 = 28;
-
-pub(crate) const FLAG_BABY: u32 = 11;
 
 /// Head turn, in degrees either side of the body, at or beyond which a seat does not limit it.
 const UNLOCKED_HEAD_DEGREES: f32 = 180.0;
@@ -66,6 +59,30 @@ struct Placement {
 }
 
 impl ActorStore {
+    /// Snaps local render endpoints and optionally reanchors animation on a presentation transition.
+    pub(crate) fn set_local_presentation_position(
+        &mut self,
+        runtime_id: u64,
+        position: [f32; 3],
+        reanchor: bool,
+    ) {
+        if !position.iter().all(|value| value.is_finite()) {
+            return;
+        }
+        let Some(actor) = self.actors.get_mut(&runtime_id) else {
+            return;
+        };
+        actor.position = position;
+        actor.previous_pose.position = position;
+        actor.received_pose.position = position;
+        actor.interpolation_ticks_remaining = 0;
+        actor.status.movement_interpolation = Default::default();
+        self.effect_members.collidable.update(actor);
+        if reanchor {
+            self.animation.reanchor_position(runtime_id, position);
+        }
+    }
+
     /// Streamed seat of a rider, else the mount type's default for its rider index (riders of
     /// one mount are ordered by unique id).
     fn seat_for(
@@ -78,7 +95,9 @@ impl ActorStore {
             Some(ActorMetadataValue::Float(value)) if value.is_finite() => Some(*value),
             _ => None,
         };
-        if let Some(ActorMetadataValue::Vector(seat)) = rider.metadata.get(&KEY_SEAT_OFFSET) {
+        if let Some(ActorMetadataValue::Vector(seat)) =
+            rider.metadata.get(&ActorDataKey::SeatOffset.wire_value())
+        {
             return seat.iter().all(|axis| axis.is_finite()).then(|| RideSeat {
                 // Streamed offsets join native actor origins; the store keeps collision feet.
                 position: [
@@ -88,8 +107,8 @@ impl ActorStore {
                 ],
                 min_riders: 0,
                 max_riders: u32::MAX,
-                rotate_by: degrees(KEY_SEAT_ROTATION_DEGREES),
-                lock_degrees: degrees(KEY_SEAT_LOCK_DEGREES),
+                rotate_by: degrees(ActorDataKey::SeatRotationOffsetDegrees.wire_value()),
+                lock_degrees: degrees(ActorDataKey::SeatLockPassengerRotationDegrees.wire_value()),
             });
         }
         let descriptor = self.seat_bindings.get(&mount.runtime_id)?.as_ref()?;
@@ -168,6 +187,7 @@ impl ActorStore {
             let mut state = rider.motion_state();
             state.seat(&placement);
             rider.apply_motion_state(state);
+            self.effect_members.collidable.update(rider);
         }
     }
 
@@ -207,28 +227,26 @@ impl ActorStore {
             .collect()
     }
 
-    /// Bed block under every sleeping actor: the streamed bed position, else the block it lies in.
+    /// The streamed bed block of every sleeping actor; sleepers without a bed position are skipped.
     pub(crate) fn bed_sample_points(&self) -> Vec<(u64, [i32; 3])> {
-        self.actors
-            .values()
-            .filter(|actor| actor.is_sleeping())
-            .map(|actor| {
-                let block = match actor.metadata.get(&KEY_BED_POSITION) {
-                    Some(ActorMetadataValue::BlockPosition(block)) => *block,
-                    _ => actor.position.map(|axis| axis.floor() as i32),
-                };
-                (actor.runtime_id, block)
-            })
+        self.effect_members
+            .sleepers
+            .iter()
+            .map(|(&runtime, &bed)| (runtime, bed))
             .collect()
     }
 
-    /// Replaces every actor's sampled bed rotation with `(runtime_id, degrees)` samples.
+    /// Replaces current sleepers' headings; unavailable beds lose their previous sample.
     pub(crate) fn set_bed_rotations(&mut self, samples: &[(u64, f32)]) {
-        for actor in self.actors.values_mut() {
-            actor.status.sleep_rotation = None;
+        for runtime in self.effect_members.sleepers.keys() {
+            if let Some(actor) = self.actors.get_mut(runtime) {
+                actor.status.sleep_rotation = None;
+            }
         }
         for &(runtime_id, degrees) in samples {
-            if let Some(actor) = self.actors.get_mut(&runtime_id) {
+            if self.effect_members.sleepers.contains_key(&runtime_id)
+                && let Some(actor) = self.actors.get_mut(&runtime_id)
+            {
                 actor.status.sleep_rotation = Some(degrees);
             }
         }
@@ -277,24 +295,22 @@ pub struct ActorFluidProbe {
 #[cfg(test)]
 mod tests {
     use protocol::ActorMetadataValue;
+    use protocol_ids::ActorDataKey;
 
     use super::seat_world_offset;
 
     #[test]
     fn actor_fluid_probes_use_the_streamed_body_bounds() {
-        use crate::actor_store::{
-            ActorStore, BOUNDING_BOX_HEIGHT_METADATA_KEY, BOUNDING_BOX_WIDTH_METADATA_KEY,
-            tests::spawn,
-        };
+        use crate::actor_store::{ActorStore, tests::spawn};
         let mut store = ActorStore::new(1, 0);
         store.apply(1, 1, spawn(7, 70));
         let actor = store.actors.get_mut(&7).unwrap();
         actor.metadata.insert(
-            BOUNDING_BOX_WIDTH_METADATA_KEY,
+            ActorDataKey::Width.wire_value(),
             ActorMetadataValue::Float(0.4),
         );
         actor.metadata.insert(
-            BOUNDING_BOX_HEIGHT_METADATA_KEY,
+            ActorDataKey::Height.wire_value(),
             ActorMetadataValue::Float(0.4),
         );
         let probes = store.fluid_probes();
@@ -308,7 +324,6 @@ mod tests {
     /// per-tick seating gives it.
     #[test]
     fn nested_rider_pick_pose_matches_the_live_frame() {
-        use super::{KEY_SEAT_OFFSET, KEY_SEAT_ROTATION_DEGREES};
         use crate::actor_store::{ActorStore, tests::spawn};
         let mut store = ActorStore::new(1, 0);
         for (sequence, runtime_id) in [(1, 7), (2, 8), (3, 9)] {
@@ -319,12 +334,14 @@ mod tests {
         store.rider_to_ridden.insert(90, 80);
         for runtime_id in [8, 9] {
             let rider = store.actors.get_mut(&runtime_id).unwrap();
-            rider
-                .metadata
-                .insert(KEY_SEAT_OFFSET, ActorMetadataValue::Vector([0.0, 1.0, 0.5]));
-            rider
-                .metadata
-                .insert(KEY_SEAT_ROTATION_DEGREES, ActorMetadataValue::Float(30.0));
+            rider.metadata.insert(
+                ActorDataKey::SeatOffset.wire_value(),
+                ActorMetadataValue::Vector([0.0, 1.0, 0.5]),
+            );
+            rider.metadata.insert(
+                ActorDataKey::SeatRotationOffsetDegrees.wire_value(),
+                ActorMetadataValue::Float(30.0),
+            );
         }
         store.apply(
             1,
@@ -609,5 +626,27 @@ mod compiled_seat_tests {
         };
         assert_eq!(compiled_seat(&admission, 1, 0), None);
         assert_eq!(compiled_seat(&EntitySeatAdmission::Unresolved, 1, 0), None);
+    }
+}
+
+impl super::ActorSnapshot {
+    /// The bed block the server streams for this actor.
+    #[must_use]
+    pub fn bed_position(&self) -> Option<[i32; 3]> {
+        match self.metadata.get(&ActorDataKey::BedPosition.wire_value()) {
+            Some(ActorMetadataValue::BlockPosition(block)) => Some(*block),
+            _ => None,
+        }
+    }
+
+    /// The bed this actor sleeps in and its sampled sleep rotation in degrees, while sleeping. A
+    /// bed not yet sampled (unloaded) reads 0 degrees, as the native rotation does for a
+    /// position holding no bed.
+    #[must_use]
+    pub fn sleeping_bed(&self) -> Option<([i32; 3], f32)> {
+        self.is_sleeping()
+            .then(|| self.bed_position())
+            .flatten()
+            .map(|bed| (bed, self.status.sleep_rotation.unwrap_or(0.0)))
     }
 }

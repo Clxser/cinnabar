@@ -50,15 +50,22 @@ impl Cell {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(super) struct Held {
     pub(super) stack: NetworkItemStack,
+    /// The stack identity before predictions and responses reassigned its wire ID.
+    /// Whole moves retain it; splits and fresh slot writes start a new identity.
+    pub(super) source_stack_id: Option<i32>,
     pub(super) overlay: Option<StackResponseOverlay>,
+    /// The accepted request that installed this held value's server stack identity.
+    pub(super) acknowledged_request_id: Option<i32>,
 }
 
 impl Held {
     /// `None` for an empty wire stack; empty cells are never retained as values.
     pub(super) fn new(stack: &NetworkItemStack) -> Option<Self> {
         (!stack.is_empty()).then(|| Self {
+            source_stack_id: Some(stack.stack_network_id),
             stack: stack.clone(),
             overlay: None,
+            acknowledged_request_id: None,
         })
     }
 }
@@ -90,6 +97,14 @@ impl Default for Cells {
 }
 
 impl Cells {
+    /// Compares the retained surfaces used by inventory display projections.
+    pub(super) fn shares_presentation(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.player, &other.player)
+            && Arc::ptr_eq(&self.storage, &other.storage)
+            && Arc::ptr_eq(&self.craft, &other.craft)
+            && self.created_output == other.created_output
+    }
+
     pub(super) fn get(&self, cell: Cell) -> Option<&Held> {
         match cell {
             Cell::Inventory(slot) => self.player.get(usize::from(slot))?.as_ref(),

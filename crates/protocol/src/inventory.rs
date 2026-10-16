@@ -26,7 +26,8 @@ pub use creative::{
 mod client_packets;
 mod legacy;
 pub use legacy::{
-    NormalInventoryChange, NormalInventorySource, normal_inventory_transaction_packet,
+    NormalInventoryChange, NormalInventorySource, inventory_drop_transaction_packet,
+    is_legacy_request_id, next_legacy_request_id, normal_inventory_transaction_packet,
 };
 mod raw_scan;
 pub mod recipes;
@@ -43,8 +44,8 @@ pub use address::{
     personal_craft_slot_index, project_container_cell,
 };
 pub use client_packets::{
-    BookEdit, MAX_BOOK_PAGE_BYTES, block_pick_request_packet, book_edit_packet,
-    crafter_slot_toggle_packet, lectern_update_packet,
+    BookEdit, MAX_BOOK_PAGE_BYTES, actor_pick_request_packet, block_pick_request_packet,
+    book_edit_packet, crafter_slot_toggle_packet, lectern_update_packet,
 };
 pub(crate) use raw_scan::validate_raw_inventory_packet;
 pub use request::mining::{MineBlockRequest, MineBlockRequestError};
@@ -69,7 +70,7 @@ pub use request::{
     MAX_FILTER_STRINGS, MAX_STACK_REQUEST_ACTIONS, PLAYER_INVENTORY_SLOTS, StackItemDescriptor,
     StackRequestAction, StackRequestContainer, StackRequestSlot, container_close_packet,
     item_stack_request_batch, item_stack_request_packet, item_stack_request_packet_filtered,
-    open_inventory_packet,
+    open_inventory_packet, repeated_container_open_warning_packet,
 };
 use validation::validate_item_user_data;
 pub const MAX_CONTAINER_SLOTS: usize = 4_096;
@@ -100,6 +101,12 @@ impl ContainerIdentity {
             slot_type: None,
             dynamic_id: None,
         }
+    }
+
+    /// An omitted or zero-filled descriptor; its owning legacy window must disambiguate it.
+    #[must_use]
+    pub const fn has_legacy_default_descriptor(self) -> bool {
+        matches!(self.slot_type, None | Some(0)) && matches!(self.dynamic_id, None | Some(0))
     }
 }
 
@@ -251,6 +258,8 @@ pub enum InventoryPacketError {
     InvalidNormalTransactionActionCount(usize),
     #[error("item stack request ID must be a negative odd integer below -1")]
     InvalidStackRequestId,
+    #[error("legacy request ID {0} is not a negative even integer below -1")]
+    InvalidLegacyRequestId(i32),
     #[error("item stack request amount must be from 1 to 64")]
     InvalidStackRequestAmount,
     #[error("item stack request has {0} actions, outside 1..=100")]
@@ -286,8 +295,6 @@ pub enum InventoryPacketError {
     TooManyResponseSlots { count: usize, max: usize },
     #[error("stack response name has {bytes} bytes, exceeding {max}")]
     ResponseNameTooLong { bytes: usize, max: usize },
-    #[error("accepted stack response has no content")]
-    MissingResponseContent,
     #[error("rejected stack response unexpectedly has content")]
     UnexpectedResponseContent,
     #[error("item network ID {0} is invalid")]
@@ -322,6 +329,7 @@ pub struct VerifiedNetworkItemStack {
 }
 
 impl VerifiedNetworkItemStack {
+    /// Checks retained item bytes and shape, including settled legacy transaction ids.
     pub fn try_new(
         stack: NetworkItemStack,
         expected_digest: [u8; 32],
@@ -372,6 +380,16 @@ impl VerifiedNetworkItemStack {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
+    }
+
+    /// The same stack under `stack_network_id`, which may name a pending request or a legacy
+    /// transaction as the native client's net id variant does; an empty stack stays unnamed.
+    #[must_use]
+    pub fn renamed(mut self, stack_network_id: i32) -> Self {
+        if !self.inner.is_empty() {
+            self.inner.stack_network_id = stack_network_id;
+        }
+        self
     }
 
     /// The stack less one item, carrying `legacy_request_id` as its net id; empty when none
@@ -537,9 +555,7 @@ pub(crate) fn normalize_response(
                 }
                 (StackResponseStatus::Accepted, containers)
             }
-            (ItemStackNetResult::Success, None) => {
-                return Err(InventoryPacketError::MissingResponseContent);
-            }
+            (ItemStackNetResult::Success, None) => (StackResponseStatus::Accepted, Vec::new()),
             (ItemStackNetResult::Error, None) => (StackResponseStatus::Rejected, Vec::new()),
             (other, None) => (StackResponseStatus::Unknown(other.to_raw()), Vec::new()),
             (_, Some(_)) => return Err(InventoryPacketError::UnexpectedResponseContent),
@@ -746,7 +762,9 @@ fn validate_stack_shape(stack: &NetworkItemStack) -> Result<(), InventoryPacketE
     if stack.network_id == 0 {
         return Err(InventoryPacketError::InvalidItemNetworkId(stack.network_id));
     }
-    if stack.stack_network_id == 0 || stack.stack_network_id < -1 {
+    if stack.stack_network_id == 0
+        || (stack.stack_network_id < -1 && !is_legacy_request_id(stack.stack_network_id))
+    {
         return Err(InventoryPacketError::InvalidStackNetworkId(
             stack.stack_network_id,
         ));

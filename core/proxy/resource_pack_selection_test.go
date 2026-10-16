@@ -110,6 +110,46 @@ func TestRequiredOfferAllowsAcquiredUnselectedPacks(t *testing.T) {
 	}
 }
 
+// Download requirements do not make an optional selection require unavailable entries.
+func TestRequiredOfferRetainsAvailablePacksFromOptionalStack(t *testing.T) {
+	first := testAdmissionPack(t)
+	second, err := resource.ReadBytes(admissionPackArchiveWithID(t, "11223344-5566-7788-99aa-bbccddeeff00"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	offer, _ := negotiatedOfferUpstream(t, []*resource.Pack{first}, true).ResourcePackOffer()
+	snapshot, _ := negotiatedOfferUpstream(t, []*resource.Pack{first, second}, false).ResourcePackStack()
+	stack := &selectedResourcePackStack{offer: offer, snapshot: snapshot, required: true}
+	selected, archives, err := selectSessionPacks(stack, nil)
+	if err != nil {
+		t.Fatalf("optional stack rejected after required acquisition: %v", err)
+	}
+	if !stack.required || !stack.offer.TexturePackRequired() || stack.snapshot.Required() {
+		t.Fatal("selection changed the server's independent required bits")
+	}
+	if len(selected) != 1 || len(archives) != 1 || selected[0].UUID != first.UUID().String() ||
+		archives[0].UUID() != first.UUID() {
+		t.Fatal("optional selection did not retain exactly its available offered archive")
+	}
+}
+
+// A repeated entry in an optional stack uses its archive once after required acquisition.
+func TestRequiredOfferDeduplicatesOptionalStack(t *testing.T) {
+	pack := testAdmissionPack(t)
+	offer, _ := negotiatedOfferUpstream(t, []*resource.Pack{pack}, true).ResourcePackOffer()
+	snapshot, _ := negotiatedOfferUpstream(t, []*resource.Pack{pack, pack}, false).ResourcePackStack()
+	selected, archives, err := selectSessionPacks(&selectedResourcePackStack{
+		offer: offer, snapshot: snapshot, required: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("optional repeated stack rejected after required acquisition: %v", err)
+	}
+	if len(selected) != 1 || len(archives) != 1 || selected[0].UUID != pack.UUID().String() ||
+		archives[0].UUID() != pack.UUID() {
+		t.Fatal("optional repeated selection did not retain exactly one offered archive")
+	}
+}
+
 // negotiatedPackSelection obtains real snapshots with independent offer and stack required bits.
 func negotiatedPackSelection(t *testing.T, offer minecraft.ResourcePackOfferSnapshot, stack minecraft.ResourcePackStackSnapshot, offerRequired, stackRequired bool) *minecraft.Conn {
 	t.Helper()

@@ -60,15 +60,43 @@ impl PlayerInventoryLedger {
         if hotbar >= 9 || source == destination {
             return Err(InventoryGestureError::InvalidRequest);
         }
-        let personal_generation = self.gesture_preflight(!matches!(source, Cell::Storage(_)))?;
+        let personal_generation = self
+            .gesture_preflight(!matches!(source, Cell::Storage(_)))
+            .or_else(|error| {
+                // A first-frame hotbar swap queues behind its unsent Open, never ahead of it.
+                if error == InventoryGestureError::PersonalInventoryUnavailable
+                    && let Some(super::control::ControlRequest::Open { generation, .. }) =
+                        self.pending_control()
+                {
+                    return Ok(Some(generation));
+                }
+                Err(error)
+            })?;
         self.check_surfaces([source, destination])?;
         let from = self.movable(source)?;
         let to = self.movable(destination)?;
         let identity = self.window_address();
+        // The hotbar stack lands in the hovered cell, which may be equipment.
+        let equipment_limit = to
+            .as_ref()
+            .and_then(|to| self.equipment_capacity(source, &to.stack));
+        if equipment_limit == Some(0) {
+            return Err(InventoryGestureError::EquipmentRefused);
+        }
         let built = match (from, to) {
+            (Some(_), Some(to)) if equipment_limit.is_some_and(|limit| to.stack.count > limit) => {
+                return Err(InventoryGestureError::EquipmentRefused);
+            }
             (Some(from), Some(to)) => swap(source, destination, &from.stack, &to.stack, identity)?,
             (Some(from), None) => place(source, destination, &from, identity)?,
-            (None, Some(to)) => place(destination, source, &to, identity)?,
+            (None, Some(to)) => counted_transfer(
+                StackRequestActionKind::Place,
+                destination,
+                source,
+                &to.stack,
+                identity,
+                equipment_limit.filter(|limit| *limit < to.stack.count),
+            )?,
             (None, None) => return Err(InventoryGestureError::EmptyGesture),
         };
         self.submit_built(built, personal_generation)
@@ -89,11 +117,23 @@ impl PlayerInventoryLedger {
         slot: u8,
         amount: Option<u16>,
     ) -> Result<i32, InventoryGestureError> {
+        let legacy_request_id =
+            protocol::next_legacy_request_id().ok_or(InventoryGestureError::InvalidRequest)?;
         let request = self.drop_from(
             DropSource::Target(InventoryTarget::Player(slot)),
             amount,
             false,
         )?;
+        if let Some(pending) = self
+            .queue
+            .iter_mut()
+            .find(|pending| pending.request_id == request)
+        {
+            pending.world_drop = Some(super::queue::WorldDrop {
+                legacy_request_id,
+                consumed_after: 0,
+            });
+        }
         self.pending_world_drops = self
             .pending_world_drops
             .saturating_add(1)

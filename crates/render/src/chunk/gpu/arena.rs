@@ -1,6 +1,8 @@
 use crate::chunk::*;
 use render_scene::{ChunkRenderInstance, ChunkUploadPriority};
 
+mod priority;
+
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(in crate::chunk) struct ChunkGpuUploadStats {
     // Actual packed-quad/origin arena writes for the most recent render frame.
@@ -11,6 +13,12 @@ pub(in crate::chunk) struct ChunkGpuUploadStats {
     pub(in crate::chunk) gpu_copy_bytes: u64,
     pub(in crate::chunk) full_shadow_bytes: u64,
     pub(in crate::chunk) total_bytes: u64,
+    pub(in crate::chunk) migrations_started: usize,
+    pub(in crate::chunk) uploads_waiting_for_growth: usize,
+    pub(in crate::chunk) candidates_examined: usize,
+    pub(in crate::chunk) model_streams_validated: usize,
+    pub(in crate::chunk) range_plans: usize,
+    pub(in crate::chunk) candidates_deferred: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,6 +123,7 @@ pub(in crate::chunk) struct ChunkGpuArena {
     pub(in crate::chunk) free_geometry_stream_words: Vec<Range<u32>>,
     pub(in crate::chunk) free_origins: Vec<u32>,
     pub(in crate::chunk) free_biomes: Vec<Range<u32>>,
+    pub(in crate::chunk) shared_biome_ranges: SharedBiomeRanges,
     pub(in crate::chunk) allocations: HashMap<Entity, ArenaAllocation>,
     /// The transparent water of `allocations`, updated wherever an allocation changes.
     pub(in crate::chunk) transparent_liquids: TransparentLiquidResidents,
@@ -195,6 +204,7 @@ impl ChunkGpuArena {
             free_geometry_stream_words: Vec::new(),
             free_origins: Vec::new(),
             free_biomes: Vec::new(),
+            shared_biome_ranges: SharedBiomeRanges::default(),
             allocations: HashMap::new(),
             transparent_liquids: TransparentLiquidResidents::default(),
             retired_allocations: Vec::new(),
@@ -287,6 +297,10 @@ pub(in crate::chunk) struct GpuUpdateFairness {
     pub(in crate::chunk) limit: usize,
     pub(in crate::chunk) recover_untracked: bool,
     pub(in crate::chunk) last_tint_identity: Option<ChunkBiomeTintIdentity>,
+    pub(in crate::chunk) model_validation: super::upload::model_validation::ModelValidationCache,
+    examination_cursor: usize,
+    priority_frame: u64,
+    priorities: Mutex<priority::GpuUpdatePriorities>,
 }
 
 impl Default for GpuUpdateFairness {
@@ -303,6 +317,10 @@ impl GpuUpdateFairness {
             last_tint_identity: None,
             recover_untracked: false,
             limit,
+            model_validation: Default::default(),
+            examination_cursor: 0,
+            priority_frame: 0,
+            priorities: Mutex::default(),
         }
     }
 
@@ -314,12 +332,30 @@ impl GpuUpdateFairness {
         self.urgent_waiters.contains(&entity)
     }
 
+    /// Examines a priority prefix and a rotating tail, each bounded by the service item ceiling.
+    pub(in crate::chunk) fn examination_order<'a>(
+        &mut self,
+        selected: &'a [Entity],
+    ) -> impl Iterator<Item = Entity> + use<'a> {
+        let limit = PublicationServiceConfig::DEFAULT.maximum_frame_items;
+        let (priority, tail) = selected.split_at(selected.len().min(limit));
+        let start = self.examination_cursor % tail.len().max(1);
+        let count = tail.len().min(limit);
+        self.examination_cursor = (start + count) % tail.len().max(1);
+        let (before, after) = tail.split_at(start);
+        priority
+            .iter()
+            .chain(after.iter().chain(before).take(count))
+            .copied()
+    }
+
     pub(in crate::chunk) fn finish_frame(
         &mut self,
         active: &[Entity],
         successful: &[Entity],
         urgent: &[Entity],
     ) {
+        self.priority_frame = self.priority_frame.saturating_add(1);
         let active_set = active.iter().copied().collect::<HashSet<_>>();
         let successful = successful.iter().copied().collect::<HashSet<_>>();
         self.wait_ages
@@ -345,6 +381,7 @@ impl GpuUpdateFairness {
                 self.urgent_waiters.insert(entity);
             }
         }
+        self.model_validation.retain_waiters(&self.wait_ages);
     }
 
     #[cfg(test)]
@@ -353,6 +390,10 @@ impl GpuUpdateFairness {
         self.urgent_waiters.clear();
         self.last_tint_identity = None;
         self.recover_untracked = false;
+        self.model_validation = Default::default();
+        self.examination_cursor = 0;
+        self.priority_frame = 0;
+        self.priorities = Mutex::default();
     }
 
     #[cfg(test)]
@@ -373,54 +414,21 @@ pub(in crate::chunk) const fn chunk_tint_identity_is_active(
     record.stream() == active.stream() && record.revision() == active.revision()
 }
 
+/// Reconciles retained priorities without changing admission or the bounded examination order.
 pub(in crate::chunk) fn plan_gpu_chunk_updates(
-    mut candidates: Vec<GpuUpdateCandidate>,
+    candidates: Vec<GpuUpdateCandidate>,
     allocations: &HashMap<Entity, ArenaAllocation>,
     camera_position: Vec3,
     active_tint_identity: ChunkBiomeTintIdentity,
     fairness: &GpuUpdateFairness,
 ) -> Vec<Entity> {
-    candidates.retain(|candidate| {
-        chunk_tint_identity_is_active(candidate.tint_identity, active_tint_identity)
-            && allocations.get(&candidate.entity).is_none_or(|allocation| {
-                allocation.generation != candidate.generation
-                    || allocation.tint_identity != candidate.tint_identity
-            })
-    });
-    candidates.sort_by(|left, right| {
-        let left_age = fairness.wait_age(left.entity);
-        let right_age = fairness.wait_age(right.entity);
-        let left_overdue = left_age >= GPU_UPDATE_OVERDUE_FRAMES;
-        let right_overdue = right_age >= GPU_UPDATE_OVERDUE_FRAMES;
-        let left_starved = left_age >= GPU_UPDATE_STARVED_FRAMES;
-        let right_starved = right_age >= GPU_UPDATE_STARVED_FRAMES;
-        let left_urgent = left.priority.is_urgent() || fairness.is_urgent(left.entity);
-        let right_urgent = right.priority.is_urgent() || fairness.is_urgent(right.entity);
-        right_urgent
-            .cmp(&left_urgent)
-            .then_with(|| right_starved.cmp(&left_starved))
-            .then_with(|| {
-                if left_starved && right_starved {
-                    right_age.cmp(&left_age)
-                } else {
-                    std::cmp::Ordering::Equal
-                }
-            })
-            .then_with(|| right_overdue.cmp(&left_overdue))
-            .then_with(|| {
-                ChunkUploadPriority::from_camera(left.key, camera_position)
-                    .distance_squared()
-                    .total_cmp(
-                        &ChunkUploadPriority::from_camera(right.key, camera_position)
-                            .distance_squared(),
-                    )
-            })
-            .then_with(|| left.key.cmp(&right.key))
-    });
-    candidates
-        .into_iter()
-        .map(|candidate| candidate.entity)
-        .collect()
+    priority::plan_updates(
+        candidates,
+        allocations,
+        camera_position,
+        active_tint_identity,
+        fairness,
+    )
 }
 
 /// Ranges for a fresh allocation, found without copying the free lists; the
@@ -445,7 +453,7 @@ pub(in crate::chunk) struct FreshChunkRanges {
     pub(in crate::chunk) biome_len: usize,
 }
 
-/// Where a fresh first-fit allocation of `required` would land and the
+/// Where a fresh best-fit allocation of `required` would land and the
 /// resulting arena length.
 fn probe_range(
     len: usize,
@@ -456,11 +464,8 @@ fn probe_range(
     if required == 0 {
         return Some((0, len));
     }
-    if let Some(range) = free
-        .iter()
-        .find(|range| range.end - range.start >= required)
-    {
-        return Some((range.start, len));
+    if let Some((_, start)) = best_free_range(free, required, 1) {
+        return Some((start, len));
     }
     let next = len.checked_add(required as usize)?;
     if next > max_items || len > u32::MAX as usize {
@@ -479,11 +484,8 @@ fn probe_aligned_range(
     if required == 0 {
         return Some((0, len));
     }
-    for range in free {
-        let start = checked_align_up(range.start, alignment)?;
-        if start.checked_add(required)? <= range.end {
-            return Some((start, len));
-        }
+    if let Some((_, start)) = best_free_range(free, required, alignment) {
+        return Some((start, len));
     }
     let start = checked_align_up(u32::try_from(len).ok()?, alignment)?;
     let end = start.checked_add(required)?;
@@ -776,12 +778,8 @@ pub(in crate::chunk) fn allocate_aligned_quad_range(
     max_items: usize,
     alignment: u32,
 ) -> Option<u32> {
-    for index in 0..free.len() {
-        let start = checked_align_up(free[index].start, alignment)?;
+    if let Some((index, start)) = best_free_range(free, required, alignment) {
         let end = start.checked_add(required)?;
-        if end > free[index].end {
-            continue;
-        }
         let source = free.remove(index);
         insert_free_quad_range(free, source.start..start);
         insert_free_quad_range(free, end..source.end);
@@ -847,14 +845,24 @@ pub(in crate::chunk) fn insert_free_quad_range(free: &mut Vec<Range<u32>>, mut f
     free.insert(index, freed);
 }
 
+/// Chooses the smallest fitting hole, preserving larger contiguous ranges for large uploads.
+fn best_free_range(free: &[Range<u32>], required: u32, alignment: u32) -> Option<(usize, u32)> {
+    free.iter()
+        .enumerate()
+        .filter_map(|(index, range)| {
+            let start = checked_align_up(range.start, alignment)?;
+            let end = start.checked_add(required)?;
+            (end <= range.end).then_some((range.end - range.start, index, start))
+        })
+        .min_by_key(|&(size, index, _)| (size, index))
+        .map(|(_, index, start)| (index, start))
+}
+
 pub(in crate::chunk) fn take_free_quad_range(
     free: &mut Vec<Range<u32>>,
     required: u32,
 ) -> Option<u32> {
-    let index = free
-        .iter()
-        .position(|range| range.end - range.start >= required)?;
-    let start = free[index].start;
+    let (index, start) = best_free_range(free, required, 1)?;
     free[index].start += required;
     if free[index].is_empty() {
         free.remove(index);
@@ -883,6 +891,31 @@ pub(in crate::chunk) fn release_origin(arena: &mut ChunkGpuArena, index: u32) {
         };
         arena.free_origins.swap_remove(position);
         arena.origin_len -= 1;
+    }
+}
+
+/// Biome ranges that more than one generation holds, keyed by range start. A generation whose
+/// record is unchanged keeps its predecessor's range, and either may still be drawn until its own
+/// retirement releases, so the range is reusable only once its last holder has released it.
+#[derive(Default)]
+pub(in crate::chunk) struct SharedBiomeRanges(HashMap<u32, u32>);
+
+impl SharedBiomeRanges {
+    /// Records one more generation holding the range starting at `start`.
+    pub(in crate::chunk) fn share(&mut self, start: u32) {
+        *self.0.entry(start).or_insert(0) += 1;
+    }
+
+    /// Drops one holder of the range starting at `start`; true when it was the last.
+    pub(in crate::chunk) fn release(&mut self, start: u32) -> bool {
+        let Some(extra) = self.0.get_mut(&start) else {
+            return true;
+        };
+        *extra -= 1;
+        if *extra == 0 {
+            self.0.remove(&start);
+        }
+        false
     }
 }
 
@@ -918,7 +951,9 @@ pub(in crate::chunk) fn release_completed_transparent_retirements(
                 range.start..range.start + capacity,
             );
         }
-        if let Some((range, capacity)) = retirement.biome {
+        if let Some((range, capacity)) = retirement.biome
+            && arena.shared_biome_ranges.release(range.start)
+        {
             release_quad_range(
                 &mut arena.biome_len,
                 &mut arena.free_biomes,

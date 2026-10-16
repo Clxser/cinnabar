@@ -34,7 +34,9 @@ pub(super) fn prepare(
         partial_tick,
         first_person,
         java_mode,
+        combat_visuals: _,
         sampling_camera,
+        aspect,
     } = view;
     let HandCaches {
         source: ready_hand_source,
@@ -45,9 +47,7 @@ pub(super) fn prepare(
     // First person draws the player's own rig near the camera: the visible arms with every other
     // bone hidden, and a drawable held item in its own first-person frame. Anything not covered
     // (an undrawable item) leaves the CPU viewmodel in charge.
-    if java_mode
-        && let Some(rig) = stream.and_then(|stream| stream.authority().actor_rig(local_runtime_id))
-    {
+    if let Some(rig) = stream.and_then(|stream| stream.authority().actor_rig(local_runtime_id)) {
         java_hand.remember(&rig, input.local_equipment.main.as_ref());
     }
     let mut reused_hand = false;
@@ -61,7 +61,10 @@ pub(super) fn prepare(
             let key = hand::source_key(stream, consume_ticks, item_animation, partial_tick);
             if key == *ready_hand_key {
                 reused_hand = true;
-                return ready_hand_source.take();
+                return ready_hand_source.take().map(|mut source| {
+                    source.motion = motion;
+                    source
+                });
             }
             hand::source(
                 hand::HandInputs {
@@ -75,6 +78,7 @@ pub(super) fn prepare(
                     artwork,
                     motion,
                     sampling_camera,
+                    aspect,
                 },
                 java_mode,
                 equipment,

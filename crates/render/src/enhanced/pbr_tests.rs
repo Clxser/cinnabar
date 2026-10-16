@@ -86,11 +86,19 @@ fn production_parallax_intersects_height_and_skips_unmapped_or_subpixel_surfaces
     results[2]=vec4(parallax_direct_visibility(authored_material_ref(0u,0u),uv,dx,dy,view,basis,2.0,true),
         parallax_direct_visibility(authored_material_ref(0u,0u),uv,dx,dy,-view,basis,2.0,true),
         select(0.0,1.0,authored_material_ref(1u,0u)==0u),
-        select(0.0,1.0,authored_material_ref(0u,0x40000000u)==PBR_REF_HEIGHT));
+        select(0.0,1.0,authored_material_ref(0u,METADATA_ONLY_REFERENCE)==PBR_REF_HEIGHT));
     results[3]=sample_pbr_texture(false,authored_material_ref(0u,2u),vec2(0.49,0.5),vec2(0.001,0.0),vec2(0.0,0.001));
     results[4]=sample_pbr_texture(false,authored_material_ref(0u,2u),vec2(0.51,0.5),vec2(0.001,0.0),vec2(0.0,0.001));
 }
 "#;
+    // Size and grid metadata sit between the layer and page fields and never select a slot.
+    let metadata_only = crate::material_shader::gpu_grid_texture_ref(
+        assets::TextureRef::new(0, 0).unwrap(),
+        [32; 2],
+        256,
+        3,
+    );
+    let source = source.replace("METADATA_ONLY_REFERENCE", &format!("{metadata_only}u"));
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("production POM sampling"),
         source: wgpu::ShaderSource::Wgsl(

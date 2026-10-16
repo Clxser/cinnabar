@@ -52,6 +52,7 @@ pub fn build_local_player_feed(
         main_hand: None,
         off_hand: None,
         held_network_ids: [0; 2],
+        held_variants: Default::default(),
         main_hand_metadata: 0,
         main_hand_slot: 0,
         main_hand_stack_id: None,
@@ -59,6 +60,7 @@ pub fn build_local_player_feed(
         java_swing_ticks: actor_animation::ACTOR_SWING_TICKS,
         flying: matches!(physics.mode(), sim::MovementMode::Flying),
         gliding: matches!(physics.mode(), sim::MovementMode::Gliding),
+        spinning: state.spin_attack_ticks.is_some(),
         fall_fly_ticks: physics.fall_fly_ticks(),
         teleported: false,
         first_person,
@@ -115,6 +117,7 @@ pub fn prepare_local_player_feed(
         local_use,
     );
     if let Some(feed) = &mut local_feed {
+        view.apply_actor_presentation(feed);
         feed.game_mode = player.facts.player_game_mode();
         feed.prefer_client_skin = prefer_client_skin;
         feed.held_network_ids = [

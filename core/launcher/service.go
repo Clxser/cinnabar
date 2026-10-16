@@ -21,6 +21,8 @@ import (
 	"github.com/hashimthearab/rust-mcbe/core/authflow"
 	"github.com/hashimthearab/rust-mcbe/core/catalog"
 	"github.com/hashimthearab/rust-mcbe/core/control"
+	"github.com/hashimthearab/rust-mcbe/core/internal/bridgecontract"
+	"github.com/hashimthearab/rust-mcbe/core/internal/redact"
 	"github.com/hashimthearab/rust-mcbe/core/proxy"
 	"github.com/hashimthearab/rust-mcbe/core/xboxpresence"
 	"github.com/sandertv/gophertunnel/minecraft/realms"
@@ -174,7 +176,7 @@ func (s *Service) FeaturedServersWithCounts(ctx context.Context) ([]catalog.Feat
 	}
 	counts, countErr := s.cfg.ExperienceCounts(ctx, src)
 	if countErr != nil {
-		s.logger.Warn("experience counts unavailable", "error", control.RedactError(countErr))
+		s.logger.Warn("experience counts unavailable", "error", redact.Error(countErr))
 	}
 	if _, err := s.source(); err != nil {
 		return nil, err
@@ -273,12 +275,12 @@ func upstreamTarget(kind, value string) (string, error) {
 		if id, err := strconv.ParseUint(value, 10, 31); err != nil || id == 0 {
 			return "", control.ErrInvalidTarget
 		}
-		return "realm_id/" + value, nil
+		return bridgecontract.RealmTargetPrefix + value, nil
 	case control.TargetFriend:
 		if _, err := strconv.ParseUint(value, 10, 64); err != nil {
 			return "", control.ErrInvalidTarget
 		}
-		return "friend_xuid/" + value, nil
+		return bridgecontract.FriendTargetPrefix + value, nil
 	case control.TargetGathering:
 		id, err := uuid.Parse(value)
 		if err != nil || id == uuid.Nil {
@@ -317,9 +319,9 @@ func gatheringTarget(address *gatherings.Address) (string, error) {
 	}
 	switch realms.ParseNetworkProtocol(string(address.NetworkProtocol)) {
 	case realms.NetworkProtocolNetherNet:
-		return "nethernet/websocket/" + dial, nil
+		return bridgecontract.NetherNetTargetPrefix + bridgecontract.NetherNetSignalingWebSocket + "/" + dial, nil
 	case realms.NetworkProtocolNetherNetJSONRPC:
-		return "nethernet/jsonrpc/" + dial, nil
+		return bridgecontract.NetherNetTargetPrefix + bridgecontract.NetherNetSignalingJSONRPC + "/" + dial, nil
 	}
 	return dial, nil
 }

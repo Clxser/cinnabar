@@ -5,24 +5,29 @@
 use std::sync::Arc;
 
 use crate::{ActorRigGeometry, EntityRigId, append_entity_cube_vertices};
+use assets::block_entity_geometry::{
+    BoxSpec, SKULL_HAT, SKULL_HAT_INFLATE, SKULL_HEAD, heads::skull_mob_head, skull_has_hat,
+    skull_texture,
+};
 use assets::{EntityGeometryCube, EntityGeometryScalar, EntityGeometryUv};
 use glam::Mat4;
 
 use super::{
     atlas::{BlockEntityAtlas, TextureRef},
     heads::HeadModels,
-    mesh::{BoxSpec, Facing, Layer, MeshBuilder, WHITE, model_matrix},
+    mesh::{Facing, Layer, MeshBuilder, WHITE, model_matrix},
 };
 
+/// Discriminants are the legacy `SkullType` ordinals.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SkullKind {
-    Skeleton,
-    WitherSkeleton,
-    Zombie,
-    Player,
-    Creeper,
-    Dragon,
-    Piglin,
+    Skeleton = 0,
+    WitherSkeleton = 1,
+    Zombie = 2,
+    Player = 3,
+    Creeper = 4,
+    Dragon = 5,
+    Piglin = 6,
 }
 
 impl SkullKind {
@@ -47,25 +52,33 @@ impl SkullKind {
         })
     }
 
+    /// Packed skull rigs exist exactly when the head has an atlas texture.
+    pub const fn packed_rig_index(self) -> Option<u8> {
+        if skull_texture(self as u8).is_some() {
+            Some(self as u8)
+        } else {
+            None
+        }
+    }
+
+    /// Iterates packed head models across the legacy byte ordinal domain.
+    pub fn packed_kinds() -> impl Iterator<Item = Self> {
+        (0..=u8::MAX)
+            .filter_map(|value| Self::from_nbt(i64::from(value)))
+            .filter(|kind| kind.packed_rig_index().is_some())
+    }
+
     /// The head's packed texture and the size its UVs were authored against.
     #[must_use]
     pub fn texture(self, atlas: &BlockEntityAtlas) -> Option<TextureRef> {
-        match self {
-            Self::Skeleton => atlas.texture("textures/entity/skulls/skeleton", [64.0, 32.0]),
-            Self::WitherSkeleton => {
-                atlas.texture("textures/entity/skulls/wither_skeleton", [64.0, 32.0])
-            }
-            Self::Zombie => atlas.texture("textures/entity/skulls/zombie", [64.0, 32.0]),
-            Self::Creeper => atlas.texture("textures/entity/skulls/creeper", [64.0, 32.0]),
-            Self::Player => atlas.texture("textures/entity/steve", [64.0, 64.0]),
-            Self::Dragon | Self::Piglin => None,
-        }
+        let (name, logical) = skull_texture(self as u8)?;
+        atlas.texture(name, logical)
     }
 
     /// Whether the head carries a second, slightly larger hat layer.
     #[must_use]
     pub const fn has_hat_layer(self) -> bool {
-        matches!(self, Self::Zombie | Self::Player)
+        skull_has_hat(self as u8)
     }
 }
 
@@ -107,17 +120,16 @@ pub(super) fn emit(
         }
     };
     let geometry = match model.kind {
-        SkullKind::Piglin => heads
-            .piglin
-            .as_ref()
-            .zip(atlas.texture("textures/entity/piglin/piglin", [64.0, 64.0])),
-        SkullKind::Dragon => heads.dragon.as_ref().and_then(|head| {
-            atlas
-                .texture("textures/entity/dragon/dragon", head.texture)
-                .map(|texture| (head, texture))
-        }),
+        SkullKind::Piglin => heads.piglin.as_ref(),
+        SkullKind::Dragon => heads.dragon.as_ref(),
         _ => None,
-    };
+    }
+    .zip(skull_mob_head(model.kind as u8))
+    .and_then(|(head, source)| {
+        atlas
+            .texture(source.texture, head.texture)
+            .map(|texture| (head, texture))
+    });
     if let Some((head, texture)) = geometry {
         for head_box in &head.boxes {
             builder.cuboid(
@@ -133,20 +145,22 @@ pub(super) fn emit(
     let Some(texture) = model.kind.texture(atlas) else {
         return;
     };
+    let (origin, size, uv) = SKULL_HEAD;
     builder.cuboid(
         Layer::Solid,
         &texture,
         matrix,
-        BoxSpec::new([-4.0, 0.0, -4.0], [8.0; 3], [0.0, 0.0]),
+        BoxSpec::new(origin, size, uv),
         WHITE,
     );
     if model.kind.has_hat_layer() {
         // Hat inflation needs native measurement.
+        let (origin, size, uv) = SKULL_HAT;
         builder.cuboid(
             Layer::Solid,
             &texture,
             matrix,
-            BoxSpec::new([-4.0, 0.0, -4.0], [8.0; 3], [32.0, 0.0]).inflated(0.25),
+            BoxSpec::new(origin, size, uv).inflated(SKULL_HAT_INFLATE),
             WHITE,
         );
     }

@@ -15,8 +15,9 @@ pub type PackEquipmentLayer = (
 /// A pack's entity catalog, which also owns the bodies of pack-rigged actors, and its attachables.
 pub struct PackEquipment {
     pub(super) assets: Arc<RuntimeEntityAssets>,
-    catalog: Option<Arc<RuntimeEquipmentCatalog>>,
-    texture_locations: BTreeMap<Box<str>, ActorArtworkLocation>,
+    pub(super) catalog: Option<Arc<RuntimeEquipmentCatalog>>,
+    pub(super) native_items: BTreeMap<Box<str>, super::native::NativeArtwork>,
+    pub(super) texture_locations: BTreeMap<Box<str>, ActorArtworkLocation>,
     armor_geometry: BTreeMap<Box<str>, Option<Arc<ArmorGeometry>>>,
     pub(super) attachables: actor_animation::AttachablesRuntime,
 }
@@ -43,10 +44,23 @@ impl EquipmentRuntime {
 
     /// The catalog's shared enchantment raster, which binds apart from equipment pages.
     pub fn actor_glint(catalog: &RuntimeEquipmentCatalog) -> Option<EquipmentRaster> {
+        Self::glint_raster(catalog, assets::ACTOR_GLINT_TEXTURE_IDENTIFIER)
+    }
+
+    /// The shared item glint for held items and legacy worn equipment.
+    pub fn item_glint(catalog: &RuntimeEquipmentCatalog) -> Option<EquipmentRaster> {
+        Self::glint_raster(catalog, assets::entity::ITEM_GLINT_TEXTURE_IDENTIFIER)
+    }
+
+    /// Returns the catalog raster for one glint texture identifier.
+    fn glint_raster(
+        catalog: &RuntimeEquipmentCatalog,
+        identifier: &str,
+    ) -> Option<EquipmentRaster> {
         catalog
             .textures()
             .iter()
-            .find(|texture| texture.identifier.as_ref() == assets::ACTOR_GLINT_TEXTURE_IDENTIFIER)
+            .find(|texture| texture.identifier.as_ref() == identifier)
             .map(|texture| EquipmentRaster {
                 width: texture.width,
                 height: texture.height,
@@ -83,13 +97,14 @@ impl EquipmentRuntime {
     /// Installs the session's pack layer, or removes it. `locations` parallel the catalog's
     /// textures (the pages `pack_rasters` produced).
     pub fn set_pack_layer(&mut self, layer: Option<PackEquipmentLayer>) {
-        self.java_rasters.retain(|(from_pack, _, _), _| !from_pack);
-        self.attachable_meshes.retain(|(from_pack, _, _), rig| {
-            if *from_pack {
-                self.free_meshes.push(*rig);
-            }
-            !from_pack
-        });
+        // Startup texture meshes also depend on the replaced artwork layer.
+        self.java_rasters.clear();
+        self.free_meshes
+            .extend(self.attachable_meshes.values().copied());
+        self.attachable_meshes.clear();
+        self.free_meshes
+            .extend(self.native_meshes.values().copied());
+        self.native_meshes.clear();
         // Pack equipment ids name the replaced pack's geometry indices.
         self.pending.retain(|geometry| {
             !self.free_meshes.contains(&geometry.id)
@@ -102,6 +117,12 @@ impl EquipmentRuntime {
         });
         self.body_bones.retain(|body, _| !is_pack_body_key(*body));
         self.pack = layer.map(|(assets, catalog, locations)| PackEquipment {
+            native_items: super::native::recognize(
+                &assets,
+                catalog.as_deref(),
+                &self.assets,
+                self.catalog.as_deref(),
+            ),
             attachables: actor_animation::AttachablesRuntime::new(Arc::clone(&assets)),
             texture_locations: catalog
                 .iter()
@@ -115,7 +136,7 @@ impl EquipmentRuntime {
         });
     }
 
-    /// The catalog binding an item resolves through, the pack's first, and whether it is the pack's.
+    /// Prefers pack declarations; drawing resolves controller artwork before falling back.
     pub(super) fn binding_source(
         &self,
         identifier: &str,
@@ -129,6 +150,45 @@ impl EquipmentRuntime {
         catalog
             .binding(identifier)
             .map(|_| (Arc::clone(catalog), false))
+    }
+
+    /// Resolves selected pixels by path without changing the binding or controller result.
+    /// Authored models with missing artwork may use their startup item's default raster.
+    pub(super) fn draw_artwork(
+        &self,
+        identifier: &str,
+        texture: &str,
+        (catalog, from_pack): (Arc<RuntimeEquipmentCatalog>, bool),
+    ) -> Option<(Arc<RuntimeEquipmentCatalog>, usize, ActorArtworkLocation)> {
+        if let Some(pack) = &self.pack
+            && let Some(artwork) = &pack.catalog
+            && let Some(location) = pack.texture_locations.get(texture)
+            && let Some(index) = artwork
+                .textures()
+                .iter()
+                .position(|image| image.identifier.as_ref() == texture)
+        {
+            return Some((Arc::clone(artwork), index, *location));
+        }
+        let base = self.catalog.as_ref().unwrap_or(&catalog);
+        if let Some(index) = base
+            .textures()
+            .iter()
+            .position(|image| image.identifier.as_ref() == texture)
+            && let Some(location) = self.texture_locations.get(texture)
+        {
+            return Some((Arc::clone(base), index, *location));
+        }
+        if !from_pack {
+            return None;
+        }
+        let catalog = self.catalog.as_ref()?;
+        let binding = catalog.binding(identifier)?;
+        self.draw_artwork(
+            identifier,
+            &binding.texture.identifier,
+            (Arc::clone(catalog), false),
+        )
     }
 
     pub(super) fn texture_location(

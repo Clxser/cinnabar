@@ -25,7 +25,7 @@ pub struct DoorState {
 impl CollisionRegistry {
     /// Attaches paired-door behavior to an existing registered runtime ID.
     pub fn set_door_state(&mut self, runtime_id: u32, state: DoorState) -> bool {
-        let Some(block) = Arc::make_mut(&mut self.blocks).get_mut(&runtime_id) else {
+        let Some(block) = Arc::make_mut(&mut self.blocks).get_mut(runtime_id) else {
             return false;
         };
         block.door = Some(state);
@@ -137,14 +137,14 @@ impl PaletteWorld<'_> {
 
 /// Builds the current native door plane after resolving its paired state.
 fn door_box(facing: DoorFacing, open: bool, hinge_right: bool) -> Aabb {
-    // Vanilla door planes use thickness 0.1825f.
-    let direction = facing as usize;
-    let blocked = if open {
-        (direction + usize::from(hinge_right) * 2) & 3
-    } else {
-        (direction + 3) & 3
-    };
-    let thickness = f64::from(0.1825_f32);
+    let blocked = assets::door::DoorPose {
+        direction: facing as u32,
+        open,
+        hinge_right,
+        upper: false,
+    }
+    .plane();
+    let thickness = f64::from(assets::door::THICKNESS);
     let far = f64::from(1.0_f32 - thickness as f32);
     let mut min = Vec3::ZERO;
     let mut max = Vec3::ONE;

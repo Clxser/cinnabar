@@ -121,16 +121,34 @@ pub fn bake_quad_lighting_with_sampler<S: MeshLightSampler + ?Sized>(
     )
 }
 
+/// One halo cell's inputs to a bake corner, read together.
+#[derive(Clone, Copy)]
+pub(crate) struct CellInputs {
+    occludes: bool,
+    shade_darkened: bool,
+    light: MeshLightSample,
+}
+
 /// Occlusion and light lookups shared by the direct and cached bake paths.
 pub(crate) trait LightingInputs {
     /// Native cached solid-render bit, independent of geometric face coverage.
     fn occludes(&self, coordinate: [i32; 3]) -> bool;
-    /// Native shade brightness is 0.2 for leaves, emitting blocks and solid
-    /// render blocks; only the last group also blocks diagonal light sampling.
+    /// Native shade brightness is 0.2 for leaves and solid render blocks; only
+    /// the latter also block diagonal light sampling. Light emission does not
+    /// count, so torches and lanterns leave neighbouring faces unshaded.
     fn shade_darkened(&self, coordinate: [i32; 3]) -> bool {
         self.occludes(coordinate)
     }
     fn sample(&self, coordinate: [i32; 3]) -> MeshLightSample;
+    /// [`Self::occludes`], [`Self::shade_darkened`] and [`Self::sample`] of one cell; caches
+    /// answer all three from one lookup.
+    fn cell(&self, coordinate: [i32; 3]) -> CellInputs {
+        CellInputs {
+            occludes: self.occludes(coordinate),
+            shade_darkened: self.shade_darkened(coordinate),
+            light: self.sample(coordinate),
+        }
+    }
 }
 
 fn surface_emits(
@@ -174,9 +192,17 @@ impl<S: MeshLightSampler + ?Sized> LightingInputs for DirectInputs<'_, '_, S> {
     }
 
     fn shade_darkened(&self, coordinate: [i32; 3]) -> bool {
-        if self.occludes(coordinate) {
-            return true;
-        }
+        self.occludes(coordinate) || self.leaf_shaded(coordinate)
+    }
+
+    fn sample(&self, coordinate: [i32; 3]) -> MeshLightSample {
+        self.sampler.sample(coordinate)
+    }
+}
+
+impl<S: MeshLightSampler + ?Sized> DirectInputs<'_, '_, S> {
+    /// Whether the storage-zero block is a leaf, which darkens shade whatever its solidity.
+    fn leaf_shaded(&self, coordinate: [i32; 3]) -> bool {
         let Some((chunk, local)) = self.neighbourhood.block_source(coordinate) else {
             return false;
         };
@@ -185,15 +211,9 @@ impl<S: MeshLightSampler + ?Sized> LightingInputs for DirectInputs<'_, '_, S> {
             .filter(|&id| !self.classifier.is_air(id))
             .is_some_and(|id| {
                 let visual = self.assets.resolve(self.network_id_mode, id);
-                // Vanilla shade brightness: leaf models and light emitters count,
-                // whatever their solidity.
+                // Vanilla shade brightness also counts leaves, whatever their solidity.
                 visual.flags().contains(assets::BlockFlags::LEAF_MODEL)
-                    || visual.light_properties().emission() > 0
             })
-    }
-
-    fn sample(&self, coordinate: [i32; 3]) -> MeshLightSample {
-        self.sampler.sample(coordinate)
     }
 }
 
@@ -203,8 +223,10 @@ const HALO_WORDS: usize = HALO_VOLUME.div_ceil(64);
 
 /// Per-mesh memo of light samples and native solid-render bits over the one-block
 /// halo, filled lazily so sparse sub-chunks resolve only what their faces touch.
+/// Misses read the mesh's per-palette-value bits rather than resolving each cell.
 pub(crate) struct MeshLightingCache<'a, 'n, S: MeshLightSampler + ?Sized> {
     direct: DirectInputs<'a, 'n, S>,
+    bits: &'a crate::palette_bits::NeighbourhoodBlockBits<'a, 'n>,
     light: [Cell<MeshLightSample>; HALO_VOLUME],
     light_known: [Cell<u64>; HALO_WORDS],
     occluder_known: [Cell<u64>; HALO_WORDS],
@@ -220,6 +242,7 @@ impl<'a, 'n, S: MeshLightSampler + ?Sized> MeshLightingCache<'a, 'n, S> {
         network_id_mode: NetworkIdMode,
         neighbourhood: &'a MeshNeighbourhood<'n>,
         sampler: &'a S,
+        bits: &'a crate::palette_bits::NeighbourhoodBlockBits<'a, 'n>,
     ) -> Self {
         Self {
             direct: DirectInputs {
@@ -229,6 +252,7 @@ impl<'a, 'n, S: MeshLightSampler + ?Sized> MeshLightingCache<'a, 'n, S> {
                 neighbourhood,
                 sampler,
             },
+            bits,
             light: [const { Cell::new(MeshLightSample::FULL_BRIGHT) }; HALO_VOLUME],
             light_known: [const { Cell::new(0) }; HALO_WORDS],
             occluder_known: [const { Cell::new(0) }; HALO_WORDS],
@@ -239,14 +263,11 @@ impl<'a, 'n, S: MeshLightSampler + ?Sized> MeshLightingCache<'a, 'n, S> {
     }
 }
 
-impl<S: MeshLightSampler + ?Sized> LightingInputs for MeshLightingCache<'_, '_, S> {
-    fn occludes(&self, coordinate: [i32; 3]) -> bool {
-        let Some(index) = halo_index(coordinate) else {
-            return self.direct.occludes(coordinate);
-        };
+impl<S: MeshLightSampler + ?Sized> MeshLightingCache<'_, '_, S> {
+    fn occludes_at(&self, index: usize, coordinate: [i32; 3]) -> bool {
         let (word, bit) = (index / 64, 1_u64 << (index % 64));
         if self.occluder_known[word].get() & bit == 0 {
-            if self.direct.occludes(coordinate) {
+            if self.bits.solid_render(coordinate) {
                 self.occluders[word].set(self.occluders[word].get() | bit);
             }
             self.occluder_known[word].set(self.occluder_known[word].get() | bit);
@@ -254,13 +275,12 @@ impl<S: MeshLightSampler + ?Sized> LightingInputs for MeshLightingCache<'_, '_, 
         self.occluders[word].get() & bit != 0
     }
 
-    fn shade_darkened(&self, coordinate: [i32; 3]) -> bool {
-        let Some(index) = halo_index(coordinate) else {
-            return self.direct.shade_darkened(coordinate);
-        };
+    fn shade_darkened_at(&self, index: usize, coordinate: [i32; 3]) -> bool {
         let (word, bit) = (index / 64, 1_u64 << (index % 64));
         if self.shade_known[word].get() & bit == 0 {
-            if self.direct.shade_darkened(coordinate) {
+            if self.occludes_at(index, coordinate)
+                || self.bits.layer(0, coordinate) & crate::palette_bits::SHADE_LEAF != 0
+            {
                 self.darkened_shades[word].set(self.darkened_shades[word].get() | bit);
             }
             self.shade_known[word].set(self.shade_known[word].get() | bit);
@@ -268,16 +288,47 @@ impl<S: MeshLightSampler + ?Sized> LightingInputs for MeshLightingCache<'_, '_, 
         self.darkened_shades[word].get() & bit != 0
     }
 
-    fn sample(&self, coordinate: [i32; 3]) -> MeshLightSample {
-        let Some(index) = halo_index(coordinate) else {
-            return self.direct.sample(coordinate);
-        };
+    fn sample_at(&self, index: usize, coordinate: [i32; 3]) -> MeshLightSample {
         let (word, bit) = (index / 64, 1_u64 << (index % 64));
         if self.light_known[word].get() & bit == 0 {
             self.light[index].set(self.direct.sample(coordinate));
             self.light_known[word].set(self.light_known[word].get() | bit);
         }
         self.light[index].get()
+    }
+}
+
+impl<S: MeshLightSampler + ?Sized> LightingInputs for MeshLightingCache<'_, '_, S> {
+    fn occludes(&self, coordinate: [i32; 3]) -> bool {
+        halo_index(coordinate).map_or_else(
+            || self.direct.occludes(coordinate),
+            |index| self.occludes_at(index, coordinate),
+        )
+    }
+
+    fn shade_darkened(&self, coordinate: [i32; 3]) -> bool {
+        halo_index(coordinate).map_or_else(
+            || self.direct.shade_darkened(coordinate),
+            |index| self.shade_darkened_at(index, coordinate),
+        )
+    }
+
+    fn sample(&self, coordinate: [i32; 3]) -> MeshLightSample {
+        halo_index(coordinate).map_or_else(
+            || self.direct.sample(coordinate),
+            |index| self.sample_at(index, coordinate),
+        )
+    }
+
+    fn cell(&self, coordinate: [i32; 3]) -> CellInputs {
+        let Some(index) = halo_index(coordinate) else {
+            return self.direct.cell(coordinate);
+        };
+        CellInputs {
+            occludes: self.occludes_at(index, coordinate),
+            shade_darkened: self.shade_darkened_at(index, coordinate),
+            light: self.sample_at(index, coordinate),
+        }
     }
 }
 
@@ -374,6 +425,7 @@ fn bake_quad_in_plane<I: LightingInputs + ?Sized>(
     // Solved light samples still include every contributor's physical emission.
     let emitter = u16::from(emitting_block) << 11;
     let shade_face = u8::from(inputs.shade_darkened(outward));
+    let origin_light = inputs.sample(light_origin);
     let samples = positions.map(|position| {
         let sign_a = corner_sign(position[tangent_a]);
         let sign_b = corner_sign(position[tangent_b]);
@@ -386,22 +438,20 @@ fn bake_quad_in_plane<I: LightingInputs + ?Sized>(
             sign_a,
             Some((tangent_b, sign_b)),
         );
-        let solid_a = inputs.occludes(side_a);
-        let solid_b = inputs.occludes(side_b);
-        let blocked_diagonal = solid_a && solid_b;
+        let a = inputs.cell(side_a);
+        let b = inputs.cell(side_b);
         // Vanilla ambient occlusion averages four independent 0.2/1 shade samples. Its diagonal fallback
         // uses the solid-render bits, not those shade samples: two leaves may
         // darken the vertex while still admitting the diagonal's light.
-        let shade_diagonal = if blocked_diagonal { side_a } else { corner };
-        let ao = u8::from(inputs.shade_darkened(side_a))
-            + u8::from(inputs.shade_darkened(side_b))
-            + u8::from(inputs.shade_darkened(shade_diagonal));
-        let light = maximum_light([
-            inputs.sample(light_origin),
-            inputs.sample(side_a),
-            inputs.sample(side_b),
-            inputs.sample(shade_diagonal),
-        ]);
+        let diagonal = if a.occludes && b.occludes {
+            a
+        } else {
+            inputs.cell(corner)
+        };
+        let ao = u8::from(a.shade_darkened)
+            + u8::from(b.shade_darkened)
+            + u8::from(diagonal.shade_darkened);
+        let light = maximum_light([origin_light, a.light, b.light, diagonal.light]);
         pack_sample(light.block(), light.sky(), ao + shade_face) | emitter
     });
     PackedQuadLighting::new(samples)
@@ -474,10 +524,12 @@ pub(crate) fn bake_template<I: LightingInputs + ?Sized>(
     let start = template.quad_start as usize;
     let end = start.checked_add(template.quad_count as usize)?;
     let quads = assets.model_quads().get(start..end)?;
-    // Lily pads and bubble columns read light at their own cell.
+    // Lily pads, bubble columns and torches read light at their own cell.
     // Neither neighbor AO nor terrain's underside face coefficient is applied.
     if template.flags
-        & (assets::MODEL_TEMPLATE_FLAG_LILY_PAD | assets::MODEL_TEMPLATE_FLAG_BUBBLE_COLUMN)
+        & (assets::MODEL_TEMPLATE_FLAG_LILY_PAD
+            | assets::MODEL_TEMPLATE_FLAG_BUBBLE_COLUMN
+            | assets::MODEL_TEMPLATE_FLAG_TORCH)
         != 0
     {
         return Some(vec![lighting_at(inputs.sample(block)); quads.len()]);
@@ -729,10 +781,66 @@ mod native_liquid;
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use super::{
-        HALO_VOLUME, LightingInputs, MeshLightSample, bake_quad, bake_quad_with, halo_index,
+        CellInputs, HALO_VOLUME, LightingInputs, MeshLightSample, bake_quad, bake_quad_with,
+        halo_index,
     };
     use crate::Face;
+
+    /// Cells read whole; per-input reads count separately, so a bake's reads are visible.
+    struct CountedReads {
+        solid: fn([i32; 3]) -> bool,
+        cells: Cell<usize>,
+        single: Cell<usize>,
+    }
+
+    impl LightingInputs for CountedReads {
+        fn occludes(&self, coordinate: [i32; 3]) -> bool {
+            self.single.set(self.single.get() + 1);
+            (self.solid)(coordinate)
+        }
+
+        fn sample(&self, _coordinate: [i32; 3]) -> MeshLightSample {
+            self.single.set(self.single.get() + 1);
+            MeshLightSample::try_new(4, 9).unwrap()
+        }
+
+        fn cell(&self, coordinate: [i32; 3]) -> CellInputs {
+            self.cells.set(self.cells.get() + 1);
+            let solid = (self.solid)(coordinate);
+            CellInputs {
+                occludes: solid,
+                shade_darkened: solid,
+                light: MeshLightSample::try_new(4, 9).unwrap(),
+            }
+        }
+    }
+
+    /// Each corner reads its two sides and, unless both block it, its diagonal once; the face
+    /// reads its own block, light origin and outward shade once rather than per corner.
+    #[test]
+    fn bake_reads_each_corner_cell_once() {
+        let positions = [[0, 256, 0], [256, 256, 0], [256, 256, 256], [0, 256, 256]];
+        let open = CountedReads {
+            solid: |_| false,
+            cells: Cell::new(0),
+            single: Cell::new(0),
+        };
+        bake_quad(&open, [0, 0, 0], Face::PositiveY, positions, false);
+        assert_eq!(open.cells.get(), 4 * 3);
+        assert_eq!(open.single.get(), 3);
+
+        // Solid on both sides of every corner: the diagonal reuses a side.
+        let walled = CountedReads {
+            solid: |[x, y, z]| y == 1 && (x != 0 || z != 0),
+            cells: Cell::new(0),
+            single: Cell::new(0),
+        };
+        bake_quad(&walled, [0, 0, 0], Face::PositiveY, positions, false);
+        assert_eq!(walled.cells.get(), 4 * 2);
+    }
 
     /// A log to the west (opaque, unlit) beside an open cell lit at block 9, sky 12.
     struct VineOnLog {

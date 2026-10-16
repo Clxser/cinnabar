@@ -1,9 +1,10 @@
 //! The per-frame system, carrier loading and the caches behind them.
 
 use crate::runtime::network::resource_packs::PackApplication;
+use bevy::platform::collections::HashMap;
 use bevy::prelude::IntoScheduleConfigs;
 use client_runtime::network::NetworkHandle;
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 use assets::{RuntimeBlockEntityAssets, RuntimeFontCatalog};
 use bevy::prelude::{
@@ -14,15 +15,16 @@ use world::{ChunkKey, SUB_CHUNK_SIDE, SubChunkKey};
 use {
     render_model::{
         AtlasRect, BellModel, BlockEntityKind, BlockEntityLight, BlockEntityScene,
-        BlockEntitySubmission, ConduitModel, SceneClock, SignFace, SignModel, StaticItemPlacement,
-        item_frame_item_transform, matrix_rows,
+        BlockEntitySubmission, ConduitModel, CrackShapeCache, SceneClock, SignFace, SignModel,
+        StaticItemPlacement, item_frame_item_transform, matrix_rows,
     },
     render_scene::AtmosphereFrame,
 };
 
 use super::{
+    books,
     containers::{ContainerKind, ContainerLids, cue_is_open},
-    cracks::{CrackShapeCache, crack_instances, crack_shape},
+    cracks::{CrackLayers, crack_instances, with_second_parts},
     describe::{HeldItem, Template, describe},
     sign_text,
     state::BlockState,
@@ -38,7 +40,7 @@ use {
 
 const BLOCK_ENTITY_ASSETS_FILENAME: &str = assets::carriers::BLOCK_ENTITY.output;
 /// Block entities farther than this from the eye are not drawn.
-const SCAN_RADIUS_BLOCKS: f32 = 64.0;
+pub(super) const SCAN_RADIUS_BLOCKS: f32 = 64.0;
 const MAX_SUBMISSIONS: usize = 4_096;
 const TICKS_PER_SECOND: f64 = 20.0;
 const TEXT_CACHE_ENTRIES: usize = 256;
@@ -48,7 +50,9 @@ mod beacon;
 #[cfg(test)]
 mod beacon_tests;
 mod bed;
-mod columns;
+mod bell_rings;
+use bell_rings::{BELL_RING_EVENT_TYPE, bell_elapsed, prune_bell_rings};
+pub(super) mod columns;
 mod crystal_beams;
 mod culling;
 mod dragon_death;
@@ -69,7 +73,7 @@ pub(crate) fn load_block_entity_carrier(
     ) {
         Ok(bytes) => bytes,
         Err(error) => {
-            diagnostics::log_stderr!(
+            bevy::log::warn!(
                 "block-entity carrier {} unavailable ({error}); block-entity models, sign text, break cracks and worn heads are not drawn; rebuild with: make block-entity-assets",
                 path.display()
             );
@@ -78,7 +82,7 @@ pub(crate) fn load_block_entity_carrier(
     };
     match RuntimeBlockEntityAssets::decode(&bytes) {
         Ok(assets) => {
-            diagnostics::log_stderr!(
+            bevy::log::info!(
                 "loaded block-entity carrier from {} ({} textures, atlas {:?})",
                 path.display(),
                 assets.placements().len(),
@@ -87,7 +91,7 @@ pub(crate) fn load_block_entity_carrier(
             Some(Arc::new(assets))
         }
         Err(error) => {
-            diagnostics::log_stderr!(
+            bevy::log::warn!(
                 "block-entity carrier {} is invalid ({error}); block-entity models, sign text, break cracks and worn heads are not drawn; rebuild with: make block-entity-assets",
                 path.display()
             );
@@ -112,6 +116,7 @@ pub(crate) struct BlockEntityFont(pub(crate) Arc<RuntimeFontCatalog>);
 struct BlockInfo {
     name: Arc<str>,
     state: BlockState,
+    backing: Option<assets::facts::BlockEntityBacking<'static>>,
 }
 
 #[derive(Resource)]
@@ -133,6 +138,10 @@ pub(crate) struct BlockEntityRuntime {
     /// Session and dimension the runtime-id keyed caches were filled from.
     session: Option<(u64, i32)>,
     beam_source: Option<(Arc<assets::RuntimeAssets>, Option<protocol::DimensionRange>)>,
+    /// Enchanting-table books, ticked like the native block actor.
+    books: books::TableBooks,
+    /// This frame's submissions, kept empty between frames so their buffer is reused.
+    submissions: Vec<BlockEntitySubmission>,
 }
 
 impl BlockEntityRuntime {
@@ -151,6 +160,8 @@ impl BlockEntityRuntime {
             map_requests: HashMap::new(),
             session: None,
             beam_source: None,
+            books: books::TableBooks::default(),
+            submissions: Vec::new(),
         }
     }
 
@@ -189,6 +200,7 @@ impl BlockEntityRuntime {
         self.shapes.clear();
         self.bell_rings.clear();
         self.map_requests.clear();
+        self.books = books::TableBooks::default();
     }
 }
 
@@ -248,14 +260,19 @@ fn light_factor(block: u8, sky: u8, daylight: f32) -> f32 {
 
 fn model_light(kind: &BlockEntityKind, block: u8, sky: u8, daylight: f32) -> BlockEntityLight {
     // Vanilla lights a skull with the world light at its block position,
-    // through mob_head's ordinary entity material.
-    if matches!(kind, BlockEntityKind::Skull(_)) {
+    // through mob_head's ordinary entity material. The enchanting table's book is an entity
+    // model lit the same way, so the table's own glow lights it at night (provisional).
+    if matches!(
+        kind,
+        BlockEntityKind::Skull(_) | BlockEntityKind::EnchantTable { .. }
+    ) {
         BlockEntityLight::Actor { block, sky }
     } else {
         light_factor(block, sky, daylight).into()
     }
 }
 
+/// Caches the canonical state and generated route for one admitted runtime identity.
 fn block_info(
     runtime: &mut BlockEntityRuntime,
     collisions: &PhysicsCollisionRegistries,
@@ -274,22 +291,57 @@ fn block_info(
             Some(Arc::new(BlockInfo {
                 name: Arc::from(name),
                 state,
+                backing: assets::facts::BlockEntityFacts::pinned().for_registry(
+                    runtime_id,
+                    mode,
+                    collisions.breg_sha256(),
+                ),
             }))
         })
         .clone()
 }
 
+/// The other block of `entry`'s two-block structure and its layers, while that block is still
+/// the same kind (a lone door half has no partner to crack).
+fn second_crack_part(
+    collisions: &PhysicsCollisionRegistries,
+    store: &world::ChunkStore,
+    mode: assets::NetworkIdMode,
+    dimension: i32,
+    entry: &chunk_pipeline::ActiveBlockCrack,
+) -> Option<([i32; 3], CrackLayers)> {
+    let id = entry.layers[0]?;
+    let offset = collisions.second_part_offset(mode, id)?;
+    let position: [i32; 3] = std::array::from_fn(|axis| entry.position[axis] + offset[axis]);
+    let side = SUB_CHUNK_SIDE as i32;
+    let key = world::SubChunkKey::new(
+        dimension,
+        position[0].div_euclid(side),
+        position[1].div_euclid(side),
+        position[2].div_euclid(side),
+    );
+    let chunk = store.sub_chunk(key)?;
+    let [x, y, z] = position.map(|value| value.rem_euclid(side) as u8);
+    let layers: CrackLayers = std::array::from_fn(|layer| chunk.runtime_id(layer, x, y, z));
+    let other = layers[0]?;
+    (collisions.block_identifier(mode, other) == collisions.block_identifier(mode, id))
+        .then_some((position, layers))
+}
+
 /// The portal surface `runtime_id` draws, if any.
 fn portal_kind(
-    runtime: &mut BlockEntityRuntime,
     collisions: &PhysicsCollisionRegistries,
     mode: assets::NetworkIdMode,
     runtime_id: u32,
 ) -> Option<BlockEntityKind> {
-    let info = block_info(runtime, collisions, mode, runtime_id)?;
-    match info.name.as_ref() {
-        assets::END_PORTAL_IDENTIFIER => Some(BlockEntityKind::EndPortal),
-        assets::END_GATEWAY_IDENTIFIER => Some(BlockEntityKind::EndGateway),
+    let backing = assets::facts::BlockEntityFacts::pinned().for_registry(
+        runtime_id,
+        mode,
+        collisions.breg_sha256(),
+    )?;
+    match backing.entity.renderer {
+        assets::facts::BlockEntityRenderer::EndPortal => Some(BlockEntityKind::EndPortal),
+        assets::facts::BlockEntityRenderer::EndGateway => Some(BlockEntityKind::EndGateway),
         _ => None,
     }
 }
@@ -312,14 +364,12 @@ pub(crate) fn update_block_entity_scene(
     profiler: Option<Res<render_scene::RuntimeStageProfiler>>,
     cave: Option<Res<CaveVisibilityCache>>,
 ) {
+    let camera = camera.single().ok();
     if !scene.has_assets() {
         dragon_death::update_without_atlas(
             client_world.stream.as_ref(),
             actor_partial_tick.0,
-            camera
-                .single()
-                .ok()
-                .map(|(transform, _)| transform.translation),
+            camera.map(|(transform, _)| transform.translation),
             &mut scene,
             &mut frame,
         );
@@ -360,10 +410,10 @@ pub(crate) fn update_block_entity_scene(
     let eye = view.eye_translation();
     let delta = time.delta_secs();
     let daylight = atmosphere.daylight();
-    let camera_position = camera
-        .single()
-        .ok()
-        .map(|(transform, _)| transform.translation);
+    let camera_position = camera.map(|(transform, _)| transform.translation);
+    let clip_from_world = camera.map(|(transform, projection)| {
+        projection.get_clip_from_view() * transform.to_matrix().inverse()
+    });
     let culling = cave
         .as_deref()
         .zip(camera_position)
@@ -377,16 +427,17 @@ pub(crate) fn update_block_entity_scene(
         });
     let mut work = culling::BlockEntityWork::default();
     let mut occlusion_budget = meshing::occlusion::OcclusionBudget::default();
-    let occlusion_eye = camera.single().ok().and_then(|(transform, projection)| {
-        let eye = transform.translation.to_array();
-        let matrix = projection.get_clip_from_view() * transform.to_matrix().inverse();
-        render_model::visibility_bounds::perspective_supports_occlusion(
-            matrix,
-            eye,
-            f64::from(meshing::occlusion::OCCLUSION_EYE_GAP_BLOCKS),
-        )
-        .then_some(eye)
-    });
+    let occlusion_eye = camera
+        .zip(clip_from_world)
+        .and_then(|((transform, _), matrix)| {
+            let eye = transform.translation.to_array();
+            render_model::visibility_bounds::perspective_supports_occlusion(
+                matrix,
+                eye,
+                f64::from(meshing::occlusion::OCCLUSION_EYE_GAP_BLOCKS),
+            )
+            .then_some(eye)
+        });
 
     let cracks = ui
         .block_crack_snapshot()
@@ -394,23 +445,37 @@ pub(crate) fn update_block_entity_scene(
         .map_or_else(Vec::new, |snapshot| {
             let assets = stream.runtime_assets();
             let shapes = &mut runtime.shapes;
-            crack_instances(&snapshot.entries, |entry| {
-                crack_shape(
-                    shapes,
-                    assets,
-                    mode,
-                    entry.layers.iter().flatten().next().copied(),
-                    entry.position,
-                )
+            let entries = with_second_parts(&snapshot.entries, |entry| {
+                second_crack_part(&collisions, store, mode, dimension, entry)
+            });
+            crack_instances(&entries, |entry| {
+                let runtime_id = entry.layers.iter().flatten().next().copied();
+                let template = runtime_id.and_then(|id| {
+                    assets.model_template_at(mode, id, entry.position, |position| {
+                        let side = SUB_CHUNK_SIDE as i32;
+                        let key = SubChunkKey::new(
+                            dimension,
+                            position[0].div_euclid(side),
+                            position[1].div_euclid(side),
+                            position[2].div_euclid(side),
+                        );
+                        let [x, y, z] = position.map(|value| value.rem_euclid(side) as u8);
+                        store.sub_chunk(key)?.runtime_id(0, x, y, z)
+                    })
+                });
+                shapes.shape(assets, mode, runtime_id, entry.position, template)
             })
         });
 
-    let mut submissions: Vec<BlockEntitySubmission> = Vec::new();
+    runtime.books.begin(clock.ticks);
+    let readers = book_readers(stream, eye);
+    let mut submissions = std::mem::take(&mut runtime.submissions);
     runtime.frame = runtime.frame.wrapping_add(1);
     let frame_stamp = runtime.frame;
     // Moved out so `resolve` can borrow a template while mutating the rest of the runtime.
     let mut scans = std::mem::take(&mut runtime.columns);
-    let mut held: Vec<StaticItemPlacement> = Vec::new();
+    let mut held = std::mem::take(&mut placements.0.0);
+    held.clear();
     runtime.lids.begin();
     let mut rescans_left = columns::MAX_COLUMN_RESCANS_PER_FRAME;
     let eye_column = [eye.x, eye.z].map(|axis| (axis / SUB_CHUNK_SIDE as f32).floor() as i32);
@@ -443,20 +508,37 @@ pub(crate) fn update_block_entity_scene(
             } else {
                 &mut deferred
             };
-            let Some(mut scan) = columns::frame_scan(previous, chunk, near, budget, |previous| {
-                let portals = portals::column_cells(chunk_key, chunk, |id| {
-                    portal_kind(runtime, &collisions, mode, id)
-                });
-                let entities =
-                    columns::routed_entities(chunk, previous, |id, runtime_id, nbt, position| {
-                        block_info(runtime, &collisions, mode, runtime_id)
-                            .zip(nbt.parse())
-                            .and_then(|(info, root)| {
-                                describe(id, &info.name, &info.state, &root, position)
-                            })
+            let Some(mut scan) = columns::frame_scan(
+                previous,
+                chunk,
+                near,
+                budget,
+                columns::ColumnScan::is_current,
+                |previous| {
+                    let portals = portals::column_cells(chunk_key, chunk, |id| {
+                        portal_kind(&collisions, mode, id)
                     });
-                columns::ColumnScan::new(chunk, portals, entities)
-            }) else {
+                    let entities = columns::routed_entities(
+                        chunk,
+                        previous,
+                        |id, runtime_id, nbt, position| {
+                            block_info(runtime, &collisions, mode, runtime_id)
+                                .zip(nbt.parse())
+                                .and_then(|(info, root)| {
+                                    describe(
+                                        id,
+                                        info.backing?,
+                                        &info.name,
+                                        &info.state,
+                                        &root,
+                                        position,
+                                    )
+                                })
+                        },
+                    );
+                    columns::ColumnScan::new(chunk, portals, entities)
+                },
+            ) else {
                 continue;
             };
             scan.seen_frame = frame_stamp;
@@ -479,8 +561,9 @@ pub(crate) fn update_block_entity_scene(
                 if center.distance_squared(eye) > SCAN_RADIUS_BLOCKS * SCAN_RADIUS_BLOCKS {
                     continue;
                 }
-                // Hidden entities skip geometry but keep lids, rings, map requests and canvases.
-                let mut hidden = !work.admit(culling.as_ref(), template, [x, y, z]);
+                // Hidden entities keep animations, map requests and canvases without geometry.
+                let mut hidden =
+                    !work.admit(culling.as_ref(), clip_from_world, template, [x, y, z]);
                 if !hidden
                     && let Some((low, high)) = culling::bounds(template, [x, y, z])
                     && let Some(eye) = occlusion_eye
@@ -503,6 +586,7 @@ pub(crate) fn update_block_entity_scene(
                     delta_seconds: delta,
                     now_seconds,
                     font: &font.0,
+                    readers: &readers,
                 };
                 let kind = if matches!(template, Template::Beacon) {
                     beam_top.map(|top| {
@@ -563,6 +647,7 @@ pub(crate) fn update_block_entity_scene(
     }
     drop(prepare_zone);
     runtime.lids.finish();
+    runtime.books.finish();
     scans.retain(|_, scan| scan.seen_frame == frame_stamp);
     runtime.columns = scans;
     prune_bell_rings(&mut runtime.bell_rings, now_seconds, |position| {
@@ -598,12 +683,14 @@ pub(crate) fn update_block_entity_scene(
         "block_entity.scene_update",
         candidates = work.candidates,
         prepared = work.prepared,
-        hidden_by_occlusion = work.candidates - work.prepared,
+        hidden_by_visibility = work.candidates - work.prepared,
         probes = meshing::occlusion::ENTITY_OCCLUSION_PROBES - occlusion_budget.remaining(),
         submitted = submissions.len()
     )
     .entered();
     frame.0 = scene.update(clock, &cracks, &submissions).clone();
+    submissions.clear();
+    runtime.submissions = submissions;
 }
 
 struct FrameContext<'a> {
@@ -613,6 +700,18 @@ struct FrameContext<'a> {
     delta_seconds: f32,
     now_seconds: f64,
     font: &'a RuntimeFontCatalog,
+    /// Eye-level positions of every player who could read an enchanting table's book.
+    readers: &'a [Vec3],
+}
+
+/// The local eye and every remote player's eye-level position, as Bedrock measures readers.
+fn book_readers(stream: &chunk_pipeline::WorldStream, eye: Vec3) -> Vec<Vec3> {
+    let remote = stream
+        .authority()
+        .remote_actors()
+        .filter(|actor| matches!(&actor.kind, protocol::ActorKind::Player { .. }))
+        .map(|actor| Vec3::from_array(actor.native_position()));
+    std::iter::once(eye).chain(remote).collect()
 }
 
 /// Yaw that turns a front-toward--Z model to face `eye` from `position`.
@@ -696,7 +795,7 @@ fn map_canvas(pixels: &[u32]) -> Vec<u8> {
 }
 
 /// Applies per-frame state (lid openness, sign canvases, viewer yaw) to a template; a `hidden`
-/// one still advances its lid, ring and map request and keeps its text and map canvases
+/// one still advances its book, lid, ring and map request and keeps its text and map canvases
 /// resident, but prepares no geometry.
 fn resolve(
     template: &Template,
@@ -707,17 +806,6 @@ fn resolve(
     held: &mut Vec<StaticItemPlacement>,
     hidden: bool,
 ) -> Option<BlockEntityKind> {
-    let stateful = matches!(
-        template,
-        Template::Chest(_)
-            | Template::Shulker(_)
-            | Template::Bell { .. }
-            | Template::ItemFrame { .. }
-            | Template::Sign { .. }
-    );
-    if hidden && !stateful {
-        return None;
-    }
     let stream = context.stream;
     let open_at = |at: [i32; 3]| {
         stream
@@ -725,7 +813,7 @@ fn resolve(
             .is_some_and(|cue| cue_is_open(cue.event_type, cue.event_value))
     };
     match template {
-        Template::Static(kind) => Some(kind.clone()),
+        Template::Static(kind) => (!hidden).then(|| kind.clone()),
         Template::Beacon => None,
         &Template::Chest(mut model) => {
             let open = open_at(position)
@@ -749,14 +837,17 @@ fn resolve(
             );
             (!hidden).then_some(BlockEntityKind::Shulker(model))
         }
-        Template::EnchantTable => Some(BlockEntityKind::EnchantTable {
-            facing_yaw_degrees: yaw_toward(context.eye, position),
+        Template::EnchantTable => {
+            let book = runtime.books.advance(position, context.readers);
+            (!hidden).then_some(BlockEntityKind::EnchantTable { book })
+        }
+        &Template::Conduit { active, hunting } => (!hidden).then(|| {
+            BlockEntityKind::Conduit(ConduitModel {
+                active,
+                hunting,
+                viewer_yaw_degrees: yaw_toward(context.eye, position),
+            })
         }),
-        &Template::Conduit { active, hunting } => Some(BlockEntityKind::Conduit(ConduitModel {
-            active,
-            hunting,
-            viewer_yaw_degrees: yaw_toward(context.eye, position),
-        })),
         &Template::Bell {
             attachment,
             direction,
@@ -809,9 +900,12 @@ fn resolve(
             Some(BlockEntityKind::ItemFrame(model))
         }
         Template::FlowerPot { plant } => {
+            if hidden {
+                return None;
+            }
             let id = context.collisions.block_state_runtime_id(
                 assets::NetworkIdMode::Sequential,
-                &plant.identifier,
+                assets::facts::BlockStateIdentity::Named(&plant.identifier),
                 &plant.states,
             )?;
             held.push(StaticItemPlacement {
@@ -828,6 +922,9 @@ fn resolve(
             None
         }
         Template::Campfire { yaw_degrees, items } => {
+            if hidden {
+                return None;
+            }
             let base = render_model::block_matrix(position, [0.5, 0.0, 0.5], *yaw_degrees);
             for (item, [x, z]) in items.iter().zip(CAMPFIRE_SLOTS) {
                 let Some(item) = item else {
@@ -851,7 +948,7 @@ fn resolve(
                 })?;
                 Some(SignFace {
                     rect,
-                    glowing: spec.glowing,
+                    glowing: spec.glowing(),
                 })
             };
             let front = face(front);
@@ -865,40 +962,6 @@ fn resolve(
             ))
         }
     }
-}
-
-/// The `BlockEventPacket` type a bell ring arrives as.
-/// Starts each newly observed ring once and reports its elapsed animation time.
-fn bell_elapsed(
-    rings: &mut HashMap<[i32; 3], (u64, f64)>,
-    position: [i32; 3],
-    sequence: Option<u64>,
-    now: f64,
-) -> f32 {
-    if let Some(sequence) = sequence {
-        let entry = rings.entry(position).or_insert((sequence, now));
-        if entry.0 != sequence {
-            *entry = (sequence, now);
-        }
-    }
-    rings
-        .get(&position)
-        .map_or(f32::INFINITY, |(_, start)| (now - start) as f32)
-}
-
-const BELL_RING_EVENT_TYPE: i32 = 1;
-/// Seconds after a ring when the swing has visibly settled and its state can go.
-const BELL_RING_RETAIN_SECONDS: f64 = 10.0;
-
-/// Keeps a latched cue's sequence so an expired swing cannot restart; evicted cues age out.
-fn prune_bell_rings(
-    rings: &mut HashMap<[i32; 3], (u64, f64)>,
-    now_seconds: f64,
-    mut cue: impl FnMut(&[i32; 3]) -> Option<u64>,
-) {
-    rings.retain(|position, (sequence, start)| {
-        cue(position) == Some(*sequence) || now_seconds - *start < BELL_RING_RETAIN_SECONDS
-    });
 }
 
 #[cfg(test)]

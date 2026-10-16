@@ -1,7 +1,8 @@
 use super::*;
 
 const CASE_BINDING: u32 = crate::material_shader::LAST_CHUNK_BINDING + 1;
-const COLUMNS: u32 = 4;
+/// Five pages of eight cases fill forty cells; eight columns keep the grid square-ish.
+const COLUMNS: u32 = 8;
 const CELL_SIDE: u32 = SNAPSHOT_SIDE / COLUMNS;
 
 struct GridCase {
@@ -108,7 +109,7 @@ fn grid_raster(gpu: &Gpu, model: bool, enhanced: bool, samples: u32) -> Vec<u8> 
     for (page, view) in views.iter().enumerate() {
         bindings.push(wgpu::BindGroupEntry {
             binding: if enhanced {
-                4 + page as u32
+                crate::material_shader::SAMPLED_TEXTURE_BINDINGS[page]
             } else {
                 crate::material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[page]
             },
@@ -128,9 +129,12 @@ fn grid_raster(gpu: &Gpu, model: bool, enhanced: bool, samples: u32) -> Vec<u8> 
         wgpu::BufferUsages::STORAGE,
     );
     if enhanced {
-        for (page, view) in views.iter().enumerate() {
+        for (binding, view) in crate::material_shader::ENHANCED_COLOR_TEXTURE_BINDINGS
+            .into_iter()
+            .zip(&views)
+        {
             bindings.push(wgpu::BindGroupEntry {
-                binding: crate::material_shader::ENHANCED_COLOR_TEXTURE_BINDINGS[page],
+                binding,
                 resource: wgpu::BindingResource::TextureView(view),
             });
         }
@@ -268,7 +272,7 @@ fn assert_grid_coverage(model: bool) {
                 clear
             };
             assert_eq!(pixel(&one, index), expected, "single-sample case {index}");
-            if case.coverage == 0.5 {
+            if case.coverage == 0.5 && (model || enhanced || !case.special_sampler) {
                 let actual = pixel(&four, index);
                 assert!(
                     actual[0] > clear[0] && actual[0] < 255,

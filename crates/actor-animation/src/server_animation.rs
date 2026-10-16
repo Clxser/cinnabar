@@ -97,11 +97,11 @@ impl ActorAnimationStore {
             return;
         };
         let catalog = if state.pack {
-            self.pack.as_ref().map(|pack| &pack.assets)
+            self.pack.as_ref().map(|pack| (&pack.assets, &pack.layout))
         } else {
-            self.assets.as_ref()
+            self.assets.as_ref().map(|assets| (assets, &self.layout))
         };
-        let Some(assets) = catalog else {
+        let Some((assets, layout)) = catalog else {
             return;
         };
         let Some(clip) = assets.server_animation_clip(state.geometry_binding, &request.animation)
@@ -154,14 +154,16 @@ impl ActorAnimationStore {
         };
         let now = self.completed_tick.saturating_sub(state.lifetime_epoch);
         controller.change(Some(definition), now, runtime_id);
-        if state.creeper {
-            state.swell_sampling = Some(super::render_frame::swell::SwellSampling::new(
-                assets,
-                state.rig_binding,
-                state.geometry_binding,
-                &state.controllers,
-                &dependency_clips(assets, state.geometry_binding, &state.server_animations),
-            ));
+        if state.motion_sampling.is_some() {
+            state.motion_sampling =
+                Some(super::render_frame::motion_sampling::MotionSampling::new(
+                    assets,
+                    layout,
+                    state.rig_binding,
+                    state.geometry_binding,
+                    &state.controllers,
+                    &dependency_clips(assets, state.geometry_binding, &state.server_animations),
+                ));
         }
         if let Some(ui) = state.ui_animation.as_mut() {
             ui.server_animations.clone_from(&state.server_animations);

@@ -39,7 +39,7 @@ fn positional_materials_keep_one_cell_per_quad_on_every_cube_face() {
                 ..Material::unvaried()
             },
         ],
-        texture: Some(page),
+        textures: vec![page],
         ..Default::default()
     };
     let sub = uniform(1);
@@ -95,7 +95,7 @@ fn mixed_biome_option_keeps_tinted_faces_one_block_wide() {
             flags: assets::MATERIAL_FLAG_GRASS_TINT,
             ..Material::unvaried()
         }],
-        texture: Some(page),
+        textures: vec![page],
         ..Default::default()
     };
     let assets = base.with_block_overlay(1, &overlay).unwrap();

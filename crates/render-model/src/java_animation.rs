@@ -11,6 +11,22 @@ mod tests;
 #[cfg(test)]
 mod reference_tests;
 
+#[cfg(test)]
+mod cape_tests;
+
+/// Java first-person hand sway, shared by both combat profiles.
+#[derive(Clone, Copy, Debug)]
+pub struct JavaHandSwayRules {
+    pub tick_follow: f64,
+    pub rotation_gain: f32,
+}
+
+/// Tick smoothing precedes partial-tick interpolation and the camera-space X then Y turns.
+pub const JAVA_HAND_SWAY: JavaHandSwayRules = JavaHandSwayRules {
+    tick_follow: 0.5,
+    rotation_gain: 0.1,
+};
+
 /// Java's table sine: the angle snapped down to a 65536th of a turn.
 #[must_use]
 pub fn java_sin(radians: f32) -> f32 {
@@ -467,8 +483,11 @@ pub struct JavaCapeInput {
     pub sneaking: bool,
 }
 
+/// Capes may trail horizontally but must not swing above their shoulder attachment.
+pub const CAPE_MAX_SWING_DEGREES: f32 = 90.0;
+
 /// Java's cape tilt about X and sideways swing in degrees; the swing turns half about Z and
-/// half back about Y.
+/// half back about Y. Cinnabar bounds both angles to keep fast flight from inverting the cape.
 #[must_use]
 pub fn java_cape_angles(input: &JavaCapeInput) -> (f32, f32) {
     let yaw = input.body_yaw * PI / 180.0;
@@ -481,7 +500,10 @@ pub fn java_cape_angles(input: &JavaCapeInput) -> (f32, f32) {
     if input.sneaking {
         lift += 25.0;
     }
-    (6.0 + back / 2.0 + lift, side / 2.0)
+    (
+        (6.0 + back / 2.0 + lift).min(CAPE_MAX_SWING_DEGREES),
+        (side / 2.0).clamp(-CAPE_MAX_SWING_DEGREES, CAPE_MAX_SWING_DEGREES),
+    )
 }
 
 /// The cape bone in our rig frame (blocks) for its bind pivot `pivot`: Java turns the cape about
@@ -494,17 +516,6 @@ pub fn java_cape_bone(input: &JavaCapeInput, pivot: Vec3) -> (Quat, Vec3) {
         * Quat::from_rotation_y(side.to_radians());
     let hinge = rig_from_java_model().transform_point3(Vec3::Z * 2.0 / 16.0);
     (rotation, hinge + rotation * (pivot - hinge))
-}
-
-/// Items Java draws upright in the hand.
-#[must_use]
-pub fn is_java_tool(identifier: &str) -> bool {
-    let name = identifier.strip_prefix("minecraft:").unwrap_or(identifier);
-    ["_sword", "_pickaxe", "_axe", "_shovel", "_hoe"]
-        .iter()
-        .any(|suffix| name.ends_with(suffix))
-        || matches!(name, "stick" | "bone")
-        || crate::equipment::is_rod(name)
 }
 
 /// Swords, which Java blocks with.

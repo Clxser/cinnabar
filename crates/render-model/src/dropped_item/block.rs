@@ -1,3 +1,4 @@
+use super::native::{block_item_position, block_item_rotation};
 use super::{ItemMeshVertex, MAX_ITEM_LAYERS};
 use crate::DroppedItemBlock;
 use glam::Vec3;
@@ -14,12 +15,6 @@ pub fn block_mesh(
     if layer_side == 0 || first_layer as usize + model.materials.len() > MAX_ITEM_LAYERS {
         return None;
     }
-    let rotate = |[x, y, z]: [f32; 3]| match model.rotation & 3 {
-        1 => [-z, y, x],
-        2 => [-x, y, -z],
-        3 => [z, y, -x],
-        _ => [x, y, z],
-    };
     let mut vertices = Vec::with_capacity(model.quads.len() * 6);
     for quad in model.quads.iter() {
         let (texture, color) = model.materials.get(quad.material as usize)?;
@@ -30,9 +25,17 @@ pub fn block_mesh(
             continue;
         };
         let [a, b, c, d] = quad_order(quad, normal);
+        let glint_scale = crate::ActorGlint::item(
+            0.0,
+            [
+                texture.width as f32 / layer_side as f32,
+                texture.height as f32 / layer_side as f32,
+            ],
+        )
+        .uv_scale;
         for corner in [a, b, c, a, c, d] {
             vertices.push(ItemMeshVertex {
-                position: rotate(quad.positions[corner].map(|p| f32::from(p) / 256.0 - 0.5)),
+                position: block_item_position(quad.positions[corner], model.rotation),
                 uv: [
                     f32::from(quad.uvs[corner][0]) / f32::from(UV_TILE_UNITS)
                         * texture.width as f32
@@ -41,9 +44,10 @@ pub fn block_mesh(
                         * texture.height as f32
                         / layer_side as f32,
                 ],
-                normal: rotate(normal),
+                normal: block_item_rotation(normal, model.rotation),
                 layer: first_layer + quad.material,
                 color: *color,
+                glint_scale,
             });
         }
     }
@@ -80,6 +84,68 @@ pub(super) fn quad_order(quad: &assets::ModelQuad, normal: [f32; 3]) -> [usize; 
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn differently_sized_block_materials_keep_the_same_glint_coverage() {
+        let quad = assets::ModelQuad {
+            positions: [[0, 0, 128], [256, 0, 128], [256, 256, 128], [0, 256, 128]],
+            uvs: [
+                [0, 0],
+                [UV_TILE_UNITS, 0],
+                [UV_TILE_UNITS, UV_TILE_UNITS],
+                [0, UV_TILE_UNITS],
+            ],
+            material: 0,
+            flags: assets::MODEL_QUAD_FLAG_TWO_SIDED,
+        };
+        let materials = [(16, 32), (32, 16)].map(|(width, height)| {
+            (
+                crate::DroppedItemSprite {
+                    width,
+                    height,
+                    rgba8: vec![255; (width * height * 4) as usize].into(),
+                },
+                crate::OPAQUE_WHITE,
+            )
+        });
+        let model = DroppedItemBlock {
+            materials: materials.into(),
+            quads: Arc::from([
+                quad,
+                assets::ModelQuad {
+                    material: 1,
+                    ..quad
+                },
+            ]),
+            rotation: 0,
+        };
+        let vertices = block_mesh(&model, 1, 32).unwrap();
+        for (first, second) in vertices[..6].iter().zip(&vertices[6..]) {
+            assert_ne!(first.glint_scale, second.glint_scale);
+            for axis in 0..2 {
+                assert_eq!(
+                    first.uv[axis] * first.glint_scale[axis],
+                    second.uv[axis] * second.glint_scale[axis]
+                );
+            }
+        }
+        let covered_span = |face: &[ItemMeshVertex], axis| {
+            let max = face
+                .iter()
+                .map(|v| v.uv[axis] * v.glint_scale[axis])
+                .fold(0.0, f32::max);
+            let min = face
+                .iter()
+                .map(|v| v.uv[axis] * v.glint_scale[axis])
+                .fold(f32::INFINITY, f32::min);
+            max - min
+        };
+        for face in vertices.as_chunks::<6>().0 {
+            for axis in 0..2 {
+                assert_eq!(covered_span(face, axis), crate::ITEM_GLINT_UV_SCALE);
+            }
+        }
+    }
 
     #[test]
     fn quantized_collapsed_faces_do_not_hide_drawable_faces() {

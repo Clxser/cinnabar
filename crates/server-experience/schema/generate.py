@@ -115,6 +115,7 @@ def rust_enum(enum):
     for v in enum['variants']:
         if 'type' in v: out += [f"{v['rust']}({v['type']}),"]
         elif v.get('fields'): out += [v['rust']+' {']+[f"{f['name']}: {f['type']}," for f in v['fields']]+['},']
+        elif enum.get('tag') and not enum.get('content'): out += [v['rust']+' {},']
         else: out += [v['rust']+',']
     return '\n'.join(out+['}'])+'\n'
 

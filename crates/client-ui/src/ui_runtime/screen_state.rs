@@ -1,5 +1,4 @@
-//! Transient state of the open inventory screen: hover, drag, creative tab,
-//! search text and beacon effect choice.
+//! Inventory layout preferences and per-window interaction state.
 
 use protocol::CreativeCategory;
 
@@ -19,6 +18,8 @@ const MAX_ANVIL_NAME_CHARS: usize = 50;
 #[derive(Clone, Debug, Default)]
 pub struct ScreenState {
     pub pointer: InventoryPointer,
+    /// A primary press on the container's close control, awaiting its release.
+    pub container_close_armed: bool,
     pub hover: Option<InventoryCellHit>,
     /// Chosen beacon effects; `0` means none.
     pub beacon: (i32, i32),
@@ -34,6 +35,8 @@ pub struct ScreenState {
     pub loom_row: usize,
     pub anvil_name: String,
     pub anvil_focused: bool,
+    /// The target and resolved name the anvil name box was last filled from.
+    pub anvil_target: Option<super::anvil::AnvilNameState>,
     /// The beacon's pyramid level, from its block entity.
     pub beacon_level: Option<u8>,
     pub crafter: CrafterView,
@@ -41,7 +44,8 @@ pub struct ScreenState {
     pub mount_identifier: Option<std::sync::Arc<str>>,
     /// Admitted equipment facts; an unknown mount is not assumed to be a horse.
     pub mount_equipment: assets::entity::mount::MountEquipment,
-    pub book_open: bool,
+    /// An explicit layout choice; otherwise the current game mode selects its default.
+    pub book_open: Option<bool>,
     pub furnace_book_open: bool,
     /// Furnace tabs have their own food/items/blocks/search indexes.
     pub furnace_tab: Option<u8>,
@@ -101,11 +105,21 @@ impl CrafterView {
 }
 
 impl ScreenState {
+    /// Drops session-owned input and window data while retaining the chosen inventory layout.
+    pub(super) fn reset_session(&mut self) {
+        *self = Self {
+            book_open: self.book_open,
+            creative_wide: self.creative_wide,
+            ..Default::default()
+        };
+    }
+
     /// Clears per-window choices when a different window becomes current.
     pub fn observe_window(&mut self, generation: Option<u64>) {
         if self.window != generation {
             self.window = generation;
             self.pointer.reset();
+            self.container_close_armed = false;
             self.beacon = (0, 0);
             self.search_focused = false;
             self.recipe_choice = None;
@@ -114,6 +128,7 @@ impl ScreenState {
             self.loom_row = 0;
             self.anvil_name.clear();
             self.anvil_focused = false;
+            self.anvil_target = None;
             self.beacon_level = None;
             self.crafter = CrafterView::default();
             self.mount_identifier = None;

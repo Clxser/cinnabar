@@ -127,6 +127,14 @@ pub fn decode_font_face_bundle(
         .collect()
 }
 
+const fn rendering_code(rendering: FontRendering) -> u8 {
+    match rendering {
+        FontRendering::Coverage => 0,
+        FontRendering::NativeCoverage => 1,
+        FontRendering::NativeSdf => 2,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,13 +202,5 @@ mod tests {
             decode_font_face_bundle(&corrupt, manifest),
             Err(FontCatalogError::CarrierHashMismatch)
         ));
-    }
-}
-
-const fn rendering_code(rendering: FontRendering) -> u8 {
-    match rendering {
-        FontRendering::Coverage => 0,
-        FontRendering::NativeCoverage => 1,
-        FontRendering::NativeSdf => 2,
     }
 }

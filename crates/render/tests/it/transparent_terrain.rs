@@ -193,6 +193,9 @@ impl Fixture {
                     buffer(3, read),
                     texture(4),
                     texture(5),
+                    texture(19),
+                    texture(20),
+                    texture(21),
                     sampler_entry(6),
                     buffer(7, read),
                     buffer(8, read),
@@ -204,12 +207,15 @@ impl Fixture {
                     buffer(15, wgpu::BufferBindingType::Uniform),
                     texture(material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[0]),
                     texture(material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[1]),
+                    texture(material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[2]),
+                    texture(material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[3]),
+                    texture(material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[4]),
                     sampler_entry(material_shader::NATIVE_LEAF_SAMPLER_BINDING),
                     buffer(
                         material_shader::BIOME_QUERY_TABLES_BINDING,
                         wgpu::BufferBindingType::Uniform,
                     ),
-                    buffer(20, wgpu::BufferBindingType::Uniform),
+                    buffer(27, wgpu::BufferBindingType::Uniform),
                 ],
             });
         let entries = [
@@ -218,6 +224,9 @@ impl Fixture {
             (3, materials.as_entire_binding()),
             (4, wgpu::BindingResource::TextureView(&atlas)),
             (5, wgpu::BindingResource::TextureView(&atlas)),
+            (19, wgpu::BindingResource::TextureView(&atlas)),
+            (20, wgpu::BindingResource::TextureView(&atlas)),
+            (21, wgpu::BindingResource::TextureView(&atlas)),
             (6, wgpu::BindingResource::Sampler(&sampler)),
             (7, empty.as_entire_binding()),
             (8, tints.as_entire_binding()),
@@ -236,6 +245,18 @@ impl Fixture {
                 wgpu::BindingResource::TextureView(&atlas),
             ),
             (
+                material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[2],
+                wgpu::BindingResource::TextureView(&atlas),
+            ),
+            (
+                material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[3],
+                wgpu::BindingResource::TextureView(&atlas),
+            ),
+            (
+                material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[4],
+                wgpu::BindingResource::TextureView(&atlas),
+            ),
+            (
                 material_shader::NATIVE_LEAF_SAMPLER_BINDING,
                 wgpu::BindingResource::Sampler(&sampler),
             ),
@@ -243,7 +264,7 @@ impl Fixture {
                 material_shader::BIOME_QUERY_TABLES_BINDING,
                 query_tables.as_entire_binding(),
             ),
-            (20, lightmap.as_entire_binding()),
+            (27, lightmap.as_entire_binding()),
         ]
         .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource });
         let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -455,7 +476,7 @@ fn shared_transparent_pipeline_draws_water_and_models_like_their_own_pipelines()
     };
     let fixture = Fixture::new(&gpu);
     let lightmap =
-        |source: String| source.replace("@group(1) @binding(0)", "@group(0) @binding(20)");
+        |source: String| source.replace("@group(1) @binding(0)", "@group(0) @binding(27)");
     let defs = ["NATIVE_GAMMA_BLEND"];
     // Each family's own program, as its dedicated pipeline ran it before the merge.
     let liquid = lightmap(format!(

@@ -1,4 +1,5 @@
 //! A left click during gameplay must reach the attack producers through the production input chain.
+mod latency;
 use bevy::{
     input::{ButtonInput, keyboard::KeyboardInput, mouse::AccumulatedMouseMotion, touch::Touches},
     prelude::{App, MouseButton},
@@ -97,7 +98,7 @@ pub(crate) fn gameplay_app(menu_visible: bool) -> App {
                 local_player_unique_id: 1,
                 player_position: [0.0, 70.0, 0.0],
                 world_spawn_position: [0, 70, 0],
-                air_network_id: protocol::SEQUENTIAL_AIR_NETWORK_ID,
+                air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
                 block_network_ids_are_hashes: false,
             })),
             ..ClientWorld::default()

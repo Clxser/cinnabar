@@ -178,14 +178,21 @@ fn a_frame_rescans_a_bounded_number_of_columns() {
         let mut left = MAX_COLUMN_RESCANS_PER_FRAME;
         for (x, scan) in scans.iter_mut().enumerate() {
             let chunk = store.chunk(world::ChunkKey::new(0, x as i32, 0)).unwrap();
-            *scan = frame_scan(scan.take(), chunk, false, &mut left, |previous| {
-                rescans.set(rescans.get() + 1);
-                ColumnScan::new(
-                    chunk,
-                    Vec::new(),
-                    routed_entities(chunk, previous, |_, _, _, _| None),
-                )
-            });
+            *scan = frame_scan(
+                scan.take(),
+                chunk,
+                false,
+                &mut left,
+                ColumnScan::is_current,
+                |previous| {
+                    rescans.set(rescans.get() + 1);
+                    ColumnScan::new(
+                        chunk,
+                        Vec::new(),
+                        routed_entities(chunk, previous, |_, _, _, _| None),
+                    )
+                },
+            );
         }
         rescans.replace(0)
     };
@@ -220,23 +227,38 @@ fn near_columns_rescan_past_a_spent_budget() {
     };
     let mut spent = 0;
     let chunk = store.chunk(key).unwrap();
-    let scan = frame_scan(None, chunk, true, &mut spent, |previous| {
-        rescan(chunk, previous)
-    })
+    let scan = frame_scan(
+        None,
+        chunk,
+        true,
+        &mut spent,
+        ColumnScan::is_current,
+        |previous| rescan(chunk, previous),
+    )
     .expect("a near column scans without budget");
     store
         .commit_sub_chunk(SECTION, uniform_sub_chunk(2))
         .unwrap();
     let chunk = store.chunk(key).unwrap();
     assert!(!scan.is_current(chunk));
-    let scan = frame_scan(Some(scan), chunk, true, &mut spent, |previous| {
-        rescan(chunk, previous)
-    })
+    let scan = frame_scan(
+        Some(scan),
+        chunk,
+        true,
+        &mut spent,
+        ColumnScan::is_current,
+        |previous| rescan(chunk, previous),
+    )
     .unwrap();
     assert!(scan.is_current(chunk), "the edited near column rescans");
-    let far = frame_scan(None, chunk, false, &mut spent, |previous| {
-        rescan(chunk, previous)
-    });
+    let far = frame_scan(
+        None,
+        chunk,
+        false,
+        &mut spent,
+        ColumnScan::is_current,
+        |previous| rescan(chunk, previous),
+    );
     assert!(far.is_none(), "a far column waits for budget");
     assert!(is_near_column([0, 0], 1, -1));
     assert!(!is_near_column([0, 0], 2, 0));
@@ -283,13 +305,20 @@ fn continuously_changed_columns_do_not_starve_later_rescans() {
             } else {
                 &mut deferred
             };
-            *scan = frame_scan(scan.take(), chunk, false, budget, |previous| {
-                ColumnScan::new(
-                    chunk,
-                    Vec::new(),
-                    routed_entities(chunk, previous, |_, _, _, _| None),
-                )
-            });
+            *scan = frame_scan(
+                scan.take(),
+                chunk,
+                false,
+                budget,
+                ColumnScan::is_current,
+                |previous| {
+                    ColumnScan::new(
+                        chunk,
+                        Vec::new(),
+                        routed_entities(chunk, previous, |_, _, _, _| None),
+                    )
+                },
+            );
         }
     }
     assert!(
@@ -327,14 +356,30 @@ fn beacon_sections_share_unchanged_columns_and_refresh_after_block_or_nbt_edits(
     let mut scan = build(chunk);
     let first = Arc::clone(&scan.beacons[&beacon].sections);
     for _ in 0..3 {
-        scan = frame_scan(Some(scan), chunk, true, &mut 0, |_| build(chunk)).unwrap();
+        scan = frame_scan(
+            Some(scan),
+            chunk,
+            true,
+            &mut 0,
+            ColumnScan::is_current,
+            |_| build(chunk),
+        )
+        .unwrap();
         assert!(Arc::ptr_eq(&first, &scan.beacons[&beacon].sections));
     }
     store
         .commit_sub_chunk(SECTION, uniform_sub_chunk(2))
         .unwrap();
     let chunk = store.chunk(beacon.chunk()).unwrap();
-    scan = frame_scan(Some(scan), chunk, true, &mut 0, |_| build(chunk)).unwrap();
+    scan = frame_scan(
+        Some(scan),
+        chunk,
+        true,
+        &mut 0,
+        ColumnScan::is_current,
+        |_| build(chunk),
+    )
+    .unwrap();
     assert!(!Arc::ptr_eq(&first, &scan.beacons[&beacon].sections));
     assert_eq!(scan.beacons[&beacon].sections[1].tint, [0.0, 0.0, 1.0]);
     let replacement = Arc::clone(&scan.beacons[&beacon].sections);
@@ -342,6 +387,14 @@ fn beacon_sections_share_unchanged_columns_and_refresh_after_block_or_nbt_edits(
         .commit_block_entity_update(beacon, entity_nbt("Beacon", beacon.position(), "changed"))
         .unwrap();
     let chunk = store.chunk(beacon.chunk()).unwrap();
-    scan = frame_scan(Some(scan), chunk, true, &mut 0, |_| build(chunk)).unwrap();
+    scan = frame_scan(
+        Some(scan),
+        chunk,
+        true,
+        &mut 0,
+        ColumnScan::is_current,
+        |_| build(chunk),
+    )
+    .unwrap();
     assert!(!Arc::ptr_eq(&replacement, &scan.beacons[&beacon].sections));
 }

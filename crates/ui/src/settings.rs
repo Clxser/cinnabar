@@ -3,10 +3,10 @@ use semantic_input::{ControlSettings, PerspectiveMode};
 
 pub const CURRENT_SETTINGS_SCHEMA: u32 = 2;
 pub const DEFAULT_OUTLINE_SELECTION: bool = true;
-/// Vanilla's field-of-view option: default and slider range in degrees.
+/// Default and slider bounds for the field-of-view option, in degrees.
 pub const DEFAULT_FOV_DEGREES: i32 = 60;
 pub const MIN_FOV_DEGREES: i32 = 30;
-pub const MAX_FOV_DEGREES: i32 = 110;
+pub const MAX_FOV_DEGREES: i32 = 130;
 
 /// Desktop vanilla starts with two coverage samples per pixel.
 pub const DEFAULT_ANTI_ALIASING_SAMPLES: u32 = 2;
@@ -199,6 +199,10 @@ pub struct VideoSettings {
     pub java_animations: bool,
     /// Preserves Bedrock skybox placement; disabling it centers the cube.
     pub native_skybox_offset: bool,
+    /// When to draw cached terrain past the render distance.
+    pub far_terrain: render_api::far_terrain::FarTerrainMode,
+    /// Chunks meshed in full detail, or `render_api::far_terrain::FULL_DETAIL_AUTO`.
+    pub full_detail_distance_chunks: u32,
 }
 
 impl Default for VideoSettings {
@@ -226,6 +230,9 @@ impl Default for VideoSettings {
             damage_bob: 1.0,
             java_animations: false,
             native_skybox_offset: assets::DEFAULT_NATIVE_SKYBOX_OFFSET,
+            // The settings registry's default; a launcher test keeps the two equal.
+            far_terrain: render_api::far_terrain::FarTerrainMode::Auto,
+            full_detail_distance_chunks: render_api::far_terrain::FULL_DETAIL_AUTO,
         }
     }
 }

@@ -1,8 +1,12 @@
 # Java 1.7 animations
 
-Owner-mandated default, selected with Video › Animations: Java 1.7 or Bedrock (live, persisted). The selector uses the same dropdown and radio controls as Graphics mode, with pointer, keyboard and controller access. Selecting Bedrock keeps every vanilla path.
+Video › Animations selects Java 1.7 or Bedrock player poses and held-item animations.
+New installs and old files without a saved animation preference use Bedrock. Saved
+toggle values migrate: on selects Java 1.7; off selects Bedrock.
 
-New installs and existing installs with no saved animation preference default to Java 1.7. Saved toggle values migrate: on selects Java 1.7; off selects Bedrock.
+The shared combat profile takes precedence for view bobbing, hurt/death camera
+motion and glint. Bedrock 1.12 combat visuals are the deliberate default, with no
+user setting. Java keeps its poses, item animation, sneak eye height and arm sway.
 
 Code: `render-model::java_animation` (pose, cape and matrix stacks), `actor-animation` `java.rs` (tick motion, retargeting), `client-presentation` `actor_publication/java.rs`, `camera/java.rs` and `equipment/runtime/java.rs`.
 
@@ -41,7 +45,7 @@ Trig uses Java's 65536-entry sine table (angle × 10430.378, truncated, masked).
 | Flat item draw | `T(0, -0.3, 0)`, `S(1.5)`, `Ry(50)`, `Rz(335)`, `T(-0.9375, -0.0625, 0)` onto the unit slab. Cubes take only the quarter turn. |
 | Empty hand | `T(-0.3·sin(√s·π), 0.4·sin(2√s·π), -0.4·sin(s·π))`, `T(0.64, -0.6 - 0.6(1 - e), -0.72)`, `Ry(45)`, `Ry(70·sin(√s·π))`, `Rz(-20·sin(s²π))`, `T(-1, 3.6, 3.5)`, `Rz(120)`, `Rx(200)`, `Ry(-135)`, `T(5.6, 0, 0)`. Ordinary held items hide the arm; maps are the two-arm exception. |
 | First-person lighting | Ambient 0.4 plus two diffuse 0.6 lights along normalized `(0.2, 1, -0.7)` and `(-0.2, 1, 0.7)`. Camera hurt/bob and look rotate the lights before hand sway. Normals use inverse transpose and legacy rescaling by the inverse native Z-row length, including bow stretch. Texture, directional shade and byte-quantized world light multiply in gamma space. |
-| Hand motion | Hurt roll, then view bob, then sway `Rx(0.1·(pitch - armPitch))`, `Ry(0.1·(yaw - armYaw))`; the arm angles move halfway to the look each tick and sway is always on. |
+| Hand motion | Hurt roll, then view bob, then sway `Rx(0.1·(pitch - armPitch))`, `Ry(0.1·(yaw - armYaw))`; the arm angles move halfway to the look each tick and sway is always on. Yaw keeps complete input turns; neither the lag nor its interpolation wraps to a half turn. |
 | View bob | Walk phase `w = -(d + (d - d_prev)·frame)` (one tick ahead); `T(0.5·sin(wπ)·b, -|cos(wπ)·b|, 0)`, `Rz(3·sin(wπ)·b)`, `Rx(5·|cos(wπ - 0.2)·b|)`, `Rx(fall)`. `d += 0.6` per block walked (not flying, riding or sneaking on the ground); `b` eases 40% a tick to the capped 0.1 horizontal speed on the ground; `fall` eases 80% to `15·atan(-0.2·vy)` in the air. Death sets both targets to zero. |
 | Death roll | `Rz(40 - 8000/(deathTicks + frame + 200))` before hurt roll. The body tips by `min(sqrt((deathTicks + frame - 1)/20 · 1.6), 1) · 90°`. |
 | Sneak camera | Held sneak lowers the rendered eye by 0.08 blocks; release decays the drop by 0.4 per tick, interpolated to the frame. Gameplay keeps the Bedrock eye origin. |
@@ -51,7 +55,7 @@ Trig uses Java's 65536-entry sine table (angle × 10430.378, truncated, masked).
 | Pose | Arms `X = cos(0.6662·limb (+π right))·amount`, legs `1.4·` the opposite; riding `-36°` arms, `-72°`/`±18°` legs; holding `X·0.5 - 18°·n` (n = 1, 3 blocking); attack `body Y = 0.2·sin(2π√s)` with the arm points circling the body and the right arm lifted by `1.2·sin(π(1 - (1 - s)⁴)) - 0.75·sin(sπ)·(head X - 0.7)`, `Z = -0.4·sin(sπ)`; sneak body 0.5 rad, arms +0.4, legs at (y 9, z 4), head y 1 (otherwise legs z 0.1); idle `Z ±= 0.05·cos(0.09·age) + 0.05`, `X ±= 0.05·sin(0.067·age)`; bow aim arms `X = -90° + head X`, `Y = -0.1/+0.5 + head Y`. Parts are separate: the head and arms do not follow the body. |
 | Third-person grips | After `T(-1/16, 7/16, 1/16)`: cube `T(0, 0.1875, -0.3125)`, `Rx(20)`, `Ry(45)`, `S(-0.375, -0.375, 0.375)`; bow `T(0, 0.125, 0.3125)`, `Ry(-20)`, `S(0.625, -0.625, 0.625)`, `Rx(-100)`, `Ry(45)`; tools (swords, pickaxes, axes, shovels, hoes, sticks, bones, rods) rods first `Rz(180)`, `T(0, -0.125, 0)`, blocking `T(0.05, 0, -0.1)`, `Ry(-50)`, `Rx(-10)`, `Rz(-60)`, then `T(0, 0.1875, 0)`, `S(0.625, -0.625, 0.625)`, `Rx(-100)`, `Ry(45)`; other items `T(0.25, 0.1875, -0.1875)`, `S(0.375)`, `Rz(60)`, `Rx(-90)`, `Rz(20)`. |
 | Placement | Sneaking players draw 0.125 lower (the local player 0.08, its eased step offset). The red hurt flash covers body and armour but not held items. |
-| Cape | A chasing point closes a quarter of its lag to the position each tick (an axis more than 10 blocks off snaps, still adding that quarter). From its lag `d` and body yaw `y`: `back = max(100·(d.x·sin y - d.z·cos y), 0)`, `side = 100·(-d.x·cos y - d.z·sin y)`, `lift = clamp(10·d.y, -6, 32) + 32·sin(6·walked)·b`, plus 25 sneaking; then `T(0, 0, 2 px)`, `Rx(6 + back/2 + lift)`, `Rz(side/2)`, `Ry(-side/2)`, `Ry(180)` in model space, so the body's tilt and swing never move it. Only the local player has a walked distance, which holds while flying, riding or sneaking on the ground; 1.7 clamps nothing else and hides the cape only when invisible. |
+| Cape | A chasing point closes a quarter of its lag to the position each tick (an axis more than 10 blocks off snaps, still adding that quarter). From its lag `d` and body yaw `y`: `back = max(100·(d.x·sin y - d.z·cos y), 0)`, `side = 100·(-d.x·cos y - d.z·sin y)`, `lift = clamp(10·d.y, -6, 32) + 32·sin(6·walked)·b`, plus 25 sneaking; then `T(0, 0, 2 px)`, `Rx(6 + back/2 + lift)`, `Rz(side/2)`, `Ry(-side/2)`, `Ry(180)` in model space, so the body's tilt and swing never move it. Only the local player has a walked distance, which holds while flying, riding or sneaking on the ground; Cinnabar caps the final tilt at 90° and the sideways swing at ±90° so fast flight cannot invert the cape; these limits are a deliberate extension to the 1.7 rule. |
 | Blocking trigger | A sword with the using flag; locally, holding use with a sword, since Bedrock never flags that use. |
 
 ## Kept vanilla or left out
@@ -64,6 +68,14 @@ Trig uses Java's 65536-entry sine table (angle × 10430.378, truncated, masked).
 - Java's first-person arm can inherit another player's riding pose through a shared model; that bug is not reproduced. Skins keep their outer layers and slim arms (Java 1.7 had neither).
 - Recognized living mounts supply the displayed player's body heading. Head lag clamps to ±85°; above 50° the body moves another fifth toward the head, reducing extreme relative head output to ±68°. Mount yaw takes the short interpolation path. The cape retains the player's ordinary body yaw. Nonliving vehicles and unclassified mount identities keep the ordinary player body basis.
 - Active local creative flight freezes the cape's walking phase while its trailing motion and limbs continue. The phase resumes after landing; permission to fly alone does not freeze it.
+- Both animation modes keep the cape below its shoulder attachment. Java mode bounds the
+  final tilt and sideways swing. Bedrock mode bounds the cape's actual direction after bind
+  retargeting, preserving hanging authored rotations, the attachment and the parent pose.
+- Remote teleports and interpolation resets discard both Java cape chase endpoints. A remote
+  step beyond the chase's ten-block snap threshold re-anchors without retaining the old lag.
+  Remote Bedrock flap uses completed tick displacement rather than packet speed and ignores
+  these large steps. Local flap uses retained per-tick velocity so catch-up frames keep moving
+  the cape. Its exact flap calculation remains incomplete.
 - No hurt particles: Java 1.7 has none tied to the animation.
 
 ## Reference validation

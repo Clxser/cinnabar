@@ -17,7 +17,7 @@ mod world;
 pub mod ambient;
 pub mod tiles;
 
-pub use atlas::{ATLAS_SIDE, AtlasPatch};
+pub use atlas::{ATLAS_SIDE, AtlasPatch, particle_textures_fit};
 pub use dragon_egg::dragon_egg_teleport_requests;
 pub use draw::{DrawLists, ParticleInstance, ParticleView};
 pub use emitter::{ParticleSound, SpawnRequest, TileRequest};
@@ -27,7 +27,7 @@ pub use triggers::{
     ITEM_ICON_PARTICLES, LevelParticle, TOTEM_PARTICLE_EFFECT, block_break_request,
     block_crack_request, burst_requests, classify_level_event, crack_cadence_due,
     critical_hit_request, eating_item_request, face_toward, is_particle_level_event,
-    item_icon_request, named_request, parse_molang_variables, terrain_request,
+    item_icon_request, named_request, native_request, parse_molang_variables, terrain_request,
     totem_activation_request,
 };
 pub use world::{BlockIdentity, BlockList, EmptyWorld, Fluid, ParticleWorld};

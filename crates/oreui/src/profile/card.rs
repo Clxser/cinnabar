@@ -81,7 +81,7 @@ pub(super) fn draw(
         banner_bottom,
     ];
     if let Some(icon) = featured {
-        canvas.icon_ref(cover(icon, banner_bounds), banner_bounds)?;
+        canvas.icon_ref_cover(icon, banner_bounds)?;
     } else {
         let banners = &crate::images::PROFILE_BANNERS;
         let banner_index =
@@ -94,7 +94,7 @@ pub(super) fn draw(
                 uv: sprite.bounds,
                 glint: false,
             };
-            canvas.icon_ref(cover(icon, banner_bounds), banner_bounds)?;
+            canvas.icon_ref_cover(icon, banner_bounds)?;
         }
     }
     if let Some(icon) = character {
@@ -153,27 +153,6 @@ pub(super) fn draw(
         )),
     )?;
     Ok(end)
-}
-
-/// Crops image UVs around their center, matching OreUI `lm` background-size cover.
-fn cover(mut icon: IconRef, bounds: Bounds) -> IconRef {
-    let [left, top, right, bottom] = icon.uv;
-    let width = f32::from(right - left);
-    let height = f32::from(bottom - top);
-    let aspect = (bounds[2] - bounds[0]) / (bounds[3] - bounds[1]);
-    if width <= 0.0 || height <= 0.0 || !aspect.is_finite() || aspect <= 0.0 {
-        return icon;
-    }
-    if width / height > aspect {
-        let crop = ((width - height * aspect) * 0.5).round() as u16;
-        icon.uv[0] += crop;
-        icon.uv[2] -= crop;
-    } else {
-        let crop = ((height - width / aspect) * 0.5).round() as u16;
-        icon.uv[1] += crop;
-        icon.uv[3] -= crop;
-    }
-    icon
 }
 
 #[cfg(test)]

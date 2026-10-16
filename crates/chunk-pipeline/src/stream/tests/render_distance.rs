@@ -101,3 +101,51 @@ fn absent_confirmed_radius_preserves_existing_fallbacks() {
     submit_publisher(&mut stream, 1, 32);
     assert_eq!(stream.render_distance_blocks(), 32.0);
 }
+
+/// The player's setting sets the render distance whether the server grants less or more.
+#[test]
+fn requested_radius_sets_render_distance_whatever_the_server_grants() {
+    let mut stream = stream();
+    stream.set_requested_radius(12);
+    stream
+        .submit(1, WorldEvent::ChunkRadiusUpdated(4))
+        .expect("admit a smaller granted radius");
+    assert_eq!(stream.render_distance_blocks(), 192.0);
+
+    stream
+        .submit(2, WorldEvent::ChunkRadiusUpdated(16))
+        .expect("admit a larger granted radius");
+    stream.set_requested_radius(6);
+    assert_eq!(stream.render_distance_blocks(), 96.0);
+}
+
+/// Retention keeps the wider radius: what the player asked for beyond a smaller grant, and every
+/// column a larger grant still counts as sent.
+#[test]
+fn retention_keeps_the_wider_of_the_requested_and_granted_radius() {
+    let mut stream = stream();
+    let column = ChunkKey::new(0, 6, 0);
+    stream.loaded_columns.insert(column);
+    stream.set_requested_radius(8);
+    stream
+        .submit(1, WorldEvent::ChunkRadiusUpdated(2))
+        .expect("admit a smaller granted radius");
+    assert!(
+        stream.tracked_columns().contains(&column),
+        "the player asked for 8"
+    );
+
+    stream
+        .submit(2, WorldEvent::ChunkRadiusUpdated(8))
+        .expect("admit a larger granted radius");
+    stream.set_requested_radius(2);
+    assert!(
+        stream.tracked_columns().contains(&column),
+        "the server still counts it sent"
+    );
+
+    stream
+        .submit(3, WorldEvent::ChunkRadiusUpdated(2))
+        .expect("admit a shrunk granted radius");
+    assert!(!stream.tracked_columns().contains(&column));
+}

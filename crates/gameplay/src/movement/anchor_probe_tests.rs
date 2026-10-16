@@ -28,6 +28,40 @@ use sim::{
     Aabb, CollisionQuery, CollisionWorld, MovementInput, ProvenancedCollider, Vec3, WorldQueryError,
 };
 
+#[test]
+fn absent_anchor_defers_depenetration_until_terrain_arrives() {
+    let mut registry = sim::CollisionRegistry::new();
+    registry.register(0, []).unwrap();
+    registry
+        .register(1, [Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0))])
+        .unwrap();
+    let mut store = world::ChunkStore::new();
+    let feet = Vec3::new(24.5, 80.5, 8.5);
+    let mut probe = AnchorProbeState::new();
+    probe.note_hard_anchor();
+    let absent = sim::PaletteWorld::for_movement(&store, &registry, 0);
+    assert_eq!(
+        probe.before_tick(&absent, feet, sim::PLAYER_HEIGHT),
+        BeforeTick::Proceed
+    );
+    store
+        .mark_chunk_loaded(world::ChunkKey::new(0, 1, 0))
+        .unwrap();
+    store
+        .update_block(
+            world::SubChunkKey::new(0, 1, 5, 0),
+            world::BlockUpdate::new(8, 0, 8, 0, 1),
+            0,
+        )
+        .unwrap();
+    let arrived = sim::PaletteWorld::for_movement(&store, &registry, 0);
+    let BeforeTick::Adjust(cleared) = probe.before_tick(&arrived, feet, sim::PLAYER_HEIGHT) else {
+        panic!("the deferred anchor must be cleared against newly arrived terrain");
+    };
+    assert!(sim::pose_fits(&arrived, cleared, sim::MovementMode::Walking, false).unwrap());
+    assert_ne!(cleared, feet);
+}
+
 /// Flat surface whose walkable top is exactly `y = 70`.
 struct SurfaceFloor;
 
@@ -566,6 +600,7 @@ impl ProvenancedShaft {
             aabb,
             block: Some(block),
             runtime_id: Some(runtime_id),
+            cell_has_scaffolding: None,
         })
         .collect()
     }
@@ -598,12 +633,14 @@ impl LayeredProvenancedShaft {
                 aabb: FLOOR_CELL,
                 block: Some([0, 65, 0]),
                 runtime_id: Some(1_000 + layer),
+                cell_has_scaffolding: None,
             })
             .collect::<Vec<_>>();
         entries.push(ProvenancedCollider {
             aabb: CEILING_CELL,
             block: Some([0, 67, 0]),
             runtime_id: Some(13_094),
+            cell_has_scaffolding: None,
         });
         entries
             .into_iter()
@@ -980,6 +1017,7 @@ fn provenance_attribution_wins_over_geometric_cell_inference() {
                     aabb,
                     block: Some([5, 60, -3]),
                     runtime_id: Some(4_242),
+                    cell_has_scaffolding: None,
                 })
                 .collect()
         }

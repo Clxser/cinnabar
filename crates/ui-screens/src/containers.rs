@@ -9,6 +9,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use json_ui::{
     CollectionItem, DataSource, Draw, DrawNode, RectOut, Scalar, TextAlign, ViewState, hit_test,
+    press_region,
 };
 use protocol::NetworkItemStack;
 use serde_json::Value;
@@ -20,7 +21,7 @@ use ui_engine::engine::{
 };
 use ui_engine::frame::EngineFrame;
 
-use crate::container_actions::InventoryCellHit;
+use crate::container_actions::{InventoryCellHit, Widget};
 use crate::container_data;
 use crate::container_kinds::{Cell, ContainerKind};
 use crate::container_source::{ContainerFrame, ContainerSource};
@@ -71,6 +72,9 @@ impl ScreenLayout {
     /// equal GUI px).
     pub fn hit(self, frame: &EngineFrame, gui: [f32; 2]) -> Option<InventoryCellHit> {
         let region = hit_test(&frame.hits, [f64::from(gui[0]), f64::from(gui[1])])?;
+        if !matches!(self, ScreenLayout::Book) && region.pressed.as_deref() == Some(CLOSE_BUTTON) {
+            return Some(InventoryCellHit::Widget(Widget::Close));
+        }
         let widget = || match self {
             ScreenLayout::Station(kind) => furnace_book::hit(kind.screen, region).or_else(|| {
                 container_data::widget_hit(kind.screen, region).map(InventoryCellHit::Widget)
@@ -271,8 +275,7 @@ impl ContainerScreen {
             cache.as_ref().map(|cached| Arc::as_ptr(&cached.resolved))
         };
         let before = resolved(cache);
-        // Server ui files always come with a new catalog, which rebuilds the screen's binding.
-        let server_ui = engine.server_ui;
+        let baseline = engine.base_catalog();
         let drawn = {
             let mut renderers: Vec<&mut dyn CustomRenderer> = Vec::with_capacity(caller.len() + 1);
             renderers.push(&mut item_renderer);
@@ -282,7 +285,7 @@ impl ContainerScreen {
             let mut paint_frame = frame.with_renderers(&mut renderers);
             let draw = |env: &json_ui::LayoutEnv<'_>, root| {
                 ScreenCache::render(
-                    cache, catalog, server_ui, reference, &context, &data, &view, root, env, text,
+                    cache, catalog, baseline, reference, &context, &data, &view, root, env, text,
                 )
             };
             if prepare {
@@ -290,7 +293,7 @@ impl ContainerScreen {
                 if let Some(cached) = cache {
                     // Closed-screen data is incomplete. The first paint binds from fresh state,
                     // even if its data happens to match the prepared layout's inputs.
-                    cached.binding = recipe_book::screen_binding(server_ui);
+                    cached.binding = recipe_book::screen_binding(cached.virtualize_recipe_book);
                     cached.data = None;
                 }
                 Ok(None)
@@ -382,13 +385,15 @@ struct ScreenCache {
     tree: Option<json_ui::ResolvedControl>,
     /// The tree's measurements at the laid root size, reused while scrolling.
     measures: json_ui::MeasureCache,
-    laid: Option<(ViewState, [f64; 2], Arc<json_ui::FormRender>)>,
+    laid: Option<(ViewState, json_ui::LayoutCacheKey, Arc<json_ui::FormRender>)>,
     /// The open screen's live bindings across data refreshes.
     binding: json_ui::BindState,
+    virtualize_recipe_book: bool,
+    factory_inputs: bool,
     /// Grid and factory templates kept across binds, so their unchanged instances stand.
     resolutions: json_ui::ResolveCache,
-    /// Font scale and language tables used by the retained measurements.
-    text: (f32, [usize; 3]),
+    /// Language tables used by the retained measurements.
+    language: [usize; 3],
     /// Layouts run for this screen, for cache tests.
     layouts: usize,
 }
@@ -427,7 +432,7 @@ impl ScreenCache {
     fn render(
         cache: &mut Option<Self>,
         catalog: &Arc<json_ui::Catalog>,
-        server_ui: bool,
+        baseline: &Arc<json_ui::Catalog>,
         reference: &'static str,
         context: &json_ui::Context,
         data: &DataSource,
@@ -440,27 +445,42 @@ impl ScreenCache {
             Arc::ptr_eq(&cached.catalog, catalog)
                 && cached.reference == reference
                 && cached.context == *context
+                && cached.factory_inputs == data.has_factory_inputs()
         };
         if !cache.as_ref().is_some_and(same_screen) {
+            let resolved = Arc::new(json_ui::resolve_screen(reference, catalog, context)?);
+            let virtualize_recipe_book = Arc::ptr_eq(catalog, baseline)
+                || json_ui::screen_templates_unchanged(
+                    &resolved, reference, catalog, baseline, context, data,
+                );
             *cache = Some(Self {
                 catalog: Arc::clone(catalog),
                 reference,
                 context: context.clone(),
-                resolved: Arc::new(json_ui::resolve_screen(reference, catalog, context)?),
+                resolved,
                 data: None,
                 tree: None,
                 measures: json_ui::MeasureCache::default(),
                 laid: None,
-                binding: recipe_book::screen_binding(server_ui),
+                binding: recipe_book::screen_binding(virtualize_recipe_book),
+                virtualize_recipe_book,
+                factory_inputs: data.has_factory_inputs(),
                 resolutions: json_ui::ResolveCache::default(),
-                text,
+                language: text.1,
                 layouts: 0,
             });
         }
         let cached = cache.as_mut()?;
-        let text_changed = cached.text != text;
+        let layout = json_ui::LayoutCacheKey::new(root, text.0, env);
+        let text_changed = cached.language != text.1;
+        let layout_changed = cached
+            .laid
+            .as_ref()
+            .is_some_and(|(_, previous, _)| *previous != layout);
         if text_changed {
-            cached.text = text;
+            cached.language = text.1;
+        }
+        if text_changed || layout_changed {
             cached.measures = json_ui::MeasureCache::default();
         }
         if cached.data.as_deref() != Some(data) {
@@ -493,17 +513,10 @@ impl ScreenCache {
             cached.laid = None;
         }
         // Hover, press and focus only filter the gated nodes; scroll lays out again.
-        let fresh = |(laid_view, laid_root, _): &(ViewState, [f64; 2], _)| {
-            !text_changed && laid_view.scroll == view.scroll && *laid_root == root
+        let fresh = |(laid_view, laid_layout, _): &(ViewState, json_ui::LayoutCacheKey, _)| {
+            !text_changed && laid_view.scroll == view.scroll && *laid_layout == layout
         };
         if !cached.laid.as_ref().is_some_and(fresh) {
-            if cached
-                .laid
-                .as_ref()
-                .is_some_and(|(_, laid_root, _)| *laid_root != root)
-            {
-                cached.measures = json_ui::MeasureCache::default();
-            }
             let tree = cached.bound_tree()?;
             let mut render =
                 json_ui::render_bound_gated(tree, root, env, view, &mut cached.measures);
@@ -533,7 +546,7 @@ impl ScreenCache {
                 cached.data = None;
             }
             cached.layouts += 1;
-            cached.laid = Some((view.clone(), root, Arc::new(render)));
+            cached.laid = Some((view.clone(), layout, Arc::new(render)));
         }
         cached
             .laid
@@ -542,12 +555,23 @@ impl ScreenCache {
     }
 }
 
-/// Whether a point lies on the engine-drawn container's `root_panel`.
-pub fn engine_panel_contains(frame: &EngineFrame, gui: [f32; 2]) -> bool {
-    let (x, y) = (f64::from(gui[0]), f64::from(gui[1]));
-    frame
-        .panel
-        .is_some_and(|[px, py, pw, ph]| x >= px && x < px + pw && y >= py && y < py + ph)
+/// The press targets that drop the held stack, as vanilla's `drop_item_panel`
+/// routes them.
+const CURSOR_DROPS: [&str; 2] = ["button.cursor_drop_all", "button.cursor_drop_one"];
+
+/// Whether a press at `gui` on the engine-drawn container drops the held stack.
+/// The press drops when it reaches no control, since the screen itself maps it
+/// to a cursor drop, or reaches a drop panel. Every `common.root_panel` section,
+/// such as the inventory, recipe book or creative hotbar, claims presses
+/// anywhere on its background, as do its buttons.
+pub fn engine_press_drops(frame: &EngineFrame, gui: [f32; 2]) -> bool {
+    let point = [f64::from(gui[0]), f64::from(gui[1])];
+    press_region(&frame.hits, point).is_none_or(|region| {
+        region
+            .pressed
+            .as_deref()
+            .is_some_and(|target| CURSOR_DROPS.contains(&target))
+    })
 }
 
 /// Builds collections with one icon-table entry per cell, keeping later bindings stable.
@@ -748,12 +772,16 @@ pub fn screen_data(
 }
 
 #[cfg(test)]
+mod anvil_output_tests;
+#[cfg(test)]
 mod empty_cells_tests;
+#[cfg(test)]
+mod press_drop_tests;
 
 /// The stack, icon, and durability a station cell shows.
 fn station_cell<'a>(
     player_runtime: &'a player_state::PlayerState,
-    frame: &ContainerFrame<'_>,
+    frame: &ContainerFrame<'a>,
     cell: Cell,
 ) -> (Option<&'a NetworkItemStack>, Option<IconRef>, Option<f32>) {
     let ledger = player_runtime.inventory.ledger();
@@ -776,14 +804,25 @@ fn station_cell<'a>(
         }
         Cell::Output => {
             let index = usize::from(protocol::CREATED_OUTPUT_SLOT);
-            (
-                ledger.created_output_stack(),
-                frame.ui_icons.get(index).copied().flatten(),
-                frame.ui_durability.get(index).copied().flatten(),
-            )
+            match (ledger.created_output_stack(), frame.recipe_output) {
+                // The anvil's result is the client's prediction until the server states one.
+                (None, Some(output))
+                    if ledger.window_kind() == Some(protocol::WindowKind::Anvil) =>
+                {
+                    (Some(&output.stack), output.icon, output.durability)
+                }
+                (stack, _) => (
+                    stack,
+                    frame.ui_icons.get(index).copied().flatten(),
+                    frame.ui_durability.get(index).copied().flatten(),
+                ),
+            }
         }
     }
 }
+
+/// The button the pack's close (X) controls press, as `$close_button_to_button_id`.
+const CLOSE_BUTTON: &str = "button.menu_exit";
 
 /// The classic survival layout on desktop: no recipe book, no creative tabs.
 fn survival_globals(data: &mut DataSource, title: &str) {
@@ -797,6 +836,8 @@ fn survival_globals(data: &mut DataSource, title: &str) {
         ("#needs_crafting_table", false),
         ("#show_persistent_bundle_hover_text", true),
         ("#gamepad_helper_visible", false),
+        // Desktop screens show their close (X) button; it presses `CLOSE_BUTTON`.
+        ("#close_button_visible", true),
         ("#filtering_enabled", false),
     ] {
         data.set_global(name, Scalar::Bool(value));
@@ -912,7 +953,7 @@ mod review_tests {
             let rendered = ScreenCache::render(
                 &mut cache,
                 &catalog,
-                false,
+                &catalog,
                 "chest.small_chest_screen",
                 &context,
                 &data,

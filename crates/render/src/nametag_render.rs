@@ -1,6 +1,8 @@
 //! Draws [`render_model::NametagScene`] in the transparent 3D phase with a see-through pass
-//! and a depth-tested pass, matching the `name_tag` and `name_tag_depth_tested` materials.
+//! and a depth-tested pass, using Java label depth and blending rules.
 
+use crate::queue_writes::ProfiledQueue as _;
+use bevy::prelude::DetectChanges;
 use bevy::prelude::IntoScheduleConfigs;
 use bevy::render::render_phase::AddRenderCommand;
 use bevy::render::render_resource::ShaderType;
@@ -30,12 +32,12 @@ use bevy::{
         },
         render_resource::{
             AddressMode, BindGroup, BindGroupEntry, BindGroupLayoutDescriptor,
-            BindGroupLayoutEntry, BindingResource, BindingType, BlendState, Buffer,
+            BindGroupLayoutEntry, BindingResource, BindingType, BlendComponent, BlendState, Buffer,
             BufferBindingType, BufferId, BufferInitDescriptor, BufferSize, BufferUsages, Canonical,
-            ColorTargetState, ColorWrites, CompareFunction, DepthBiasState, DepthStencilState,
-            Extent3d, FilterMode, FragmentState, PipelineCache, RenderPipeline,
-            RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
-            Specializer, SpecializerKey, TexelCopyBufferLayout, TextureAspect, TextureDescriptor,
+            ColorTargetState, ColorWrites, CompareFunction, DepthStencilState, Extent3d,
+            FilterMode, FragmentState, PipelineCache, RenderPipeline, RenderPipelineDescriptor,
+            Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages, Specializer,
+            SpecializerKey, TexelCopyBufferLayout, TextureAspect, TextureDescriptor,
             TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView,
             TextureViewDescriptor, TextureViewDimension, Variants, VertexState,
         },
@@ -45,13 +47,14 @@ use bevy::{
     },
 };
 
-use render_model::{
-    MAX_NAMETAG_RECORDS, NAMETAG_ATLAS_SIDE, NAMETAG_TEXT_REVERSE_Z_BIAS, NametagAtlasRect,
-    NametagRecord,
-};
+use render_model::{MAX_NAMETAG_RECORDS, NAMETAG_ATLAS_SIDE, NametagAtlasRect, NametagRecord};
 
 const NAMETAG_SHADER_HANDLE: Handle<Shader> = uuid_handle!("5d1f0c8e-2a47-4b93-9e6c-1f7a3b8d4c20");
 const RECORD_BYTES: usize = std::mem::size_of::<NametagRecord>();
+const NAMETAG_BLEND: BlendState = BlendState {
+    alpha: BlendComponent::REPLACE,
+    ..BlendState::ALPHA_BLENDING
+};
 
 #[path = "nametag_render/shader.rs"]
 mod shader;
@@ -63,10 +66,12 @@ struct NametagBatch {
     text: bool,
 }
 
-fn record_batches(records: &[NametagRecord], see_through: usize) -> Vec<NametagBatch> {
-    let mut batches: Vec<NametagBatch> = Vec::new();
+/// Refills `batches` with adjacent material modes batched, without moving records across
+/// label boundaries; the vector's allocation is reused.
+fn record_batches(records: &[NametagRecord], batches: &mut Vec<NametagBatch>) {
+    batches.clear();
     for (index, record) in records.iter().enumerate() {
-        let depth_tested = index >= see_through;
+        let depth_tested = record.depth_tested != 0;
         let text = record.text != 0;
         if let Some(last) = batches
             .last_mut()
@@ -81,7 +86,6 @@ fn record_batches(records: &[NametagRecord], see_through: usize) -> Vec<NametagB
             });
         }
     }
-    batches
 }
 
 /// A material batch consumes one Bevy phase entry, irrespective of its glyph count.
@@ -174,27 +178,31 @@ fn init_nametag_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
     });
 }
 
+/// Uploads records and batches only when the extracted scene was reassigned, the GPU
+/// resources were (re)created, or the queue changed; the atlas uploads its changed cells.
 fn prepare_nametags(
     scene: Res<NametagSceneResource>,
     render_queue: Res<RenderQueue>,
     mut gpu: ResMut<NametagGpu>,
 ) {
-    let total = scene.records.len().min(MAX_NAMETAG_RECORDS);
-    gpu.total = total as u32;
-    gpu.batches = record_batches(&scene.records[..total], scene.see_through.min(total));
-    if total > 0 {
-        render_queue.write_buffer(
-            &gpu.record_buffer,
-            0,
-            bytemuck::cast_slice::<NametagRecord, u8>(&scene.records[..total]),
-        );
+    if scene.is_changed() || gpu.is_added() || render_queue.is_changed() {
+        let total = scene.records.len().min(MAX_NAMETAG_RECORDS);
+        gpu.total = total as u32;
+        record_batches(&scene.records[..total], &mut gpu.batches);
+        if total > 0 {
+            render_queue.profiled_write_buffer(
+                &gpu.record_buffer,
+                0,
+                bytemuck::cast_slice::<NametagRecord, u8>(&scene.records[..total]),
+            );
+        }
     }
     if Arc::ptr_eq(&scene.atlas, &gpu.atlas) {
         return;
     }
     for rectangle in NametagAtlasRect::updates(&scene.atlas, &gpu.atlas) {
         let [x, y, width, height] = rectangle.cell;
-        render_queue.write_texture(
+        render_queue.profiled_write_texture(
             bevy::render::render_resource::TexelCopyTextureInfo {
                 texture: &gpu.atlas_texture,
                 mip_level: 0,
@@ -282,7 +290,7 @@ impl FromWorld for NametagPipeline {
                 entry_point: Some("nametag_fragment".into()),
                 targets: vec![Some(ColorTargetState {
                     format: render_scene::SCENE_COLOR_FORMAT,
-                    blend: Some(BlendState::ALPHA_BLENDING),
+                    blend: Some(NAMETAG_BLEND),
                     write_mask: ColorWrites::ALL,
                 })],
                 ..default()
@@ -342,19 +350,12 @@ impl Specializer<RenderPipeline> for NametagPipelineSpecializer {
             CompareFunction::Always
         });
         let depth = descriptor.depth_stencil.as_mut().unwrap();
-        depth.depth_write_enabled = Some(key.text);
-        depth.bias = DepthBiasState {
-            constant: if key.text && key.depth_tested {
-                NAMETAG_TEXT_REVERSE_Z_BIAS
-            } else {
-                0
-            },
-            ..default()
-        };
-        let fragment = descriptor.fragment.as_mut().unwrap();
-        if key.text && key.depth_tested {
-            fragment.shader_defs.push("NAMETAG_ALPHA_TEST".into());
-        }
+        depth.depth_write_enabled = Some(key.text && key.depth_tested);
+        depth.bias = default();
+        descriptor.fragment.as_mut().unwrap().targets[0]
+            .as_mut()
+            .unwrap()
+            .blend = Some(NAMETAG_BLEND);
         Ok(key)
     }
 }
@@ -425,7 +426,7 @@ fn queue_nametags(
         return;
     }
     let functions = draw_functions.read();
-    // Preserve record order (plate then glyphs, ordinary then sneaking) after world alpha.
+    // Preserve complete back-to-front labels and their individual passes after world alpha.
     // At this magnitude one float ULP is 64; 128 avoids losing the batch ordering.
     for (view_entity, main_entity, view, extracted_camera, msaa, enhanced) in &views {
         let Some(phase) = phases.get_mut(&view.retained_view_entity) else {
@@ -564,27 +565,77 @@ impl crate::pipeline_warmup::PrewarmPipelines for NametagPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use render_model::{NAMETAG_ACOS_CUBIC, NAMETAG_ACOS_LINEAR, NAMETAG_BLOCKS_PER_FONT_PIXEL};
+    use render_model::NAMETAG_BLOCKS_PER_FONT_PIXEL;
 
-    // Storage layout and native geometry, with no invented glyph-to-plate separation.
+    fn batches_of(records: &[NametagRecord]) -> Vec<NametagBatch> {
+        let mut batches = Vec::new();
+        record_batches(records, &mut batches);
+        batches
+    }
+
+    #[test]
+    fn records_reupload_on_the_first_frame_and_each_scene_change_only() {
+        use bevy::ecs::system::RunSystemOnce;
+        use bevy::prelude::{IntoSystem, System};
+        let (device, queue) = wgpu::Device::noop(&Default::default());
+        let mut world = World::new();
+        world.insert_resource(RenderDevice::from(device));
+        world.insert_resource(RenderQueue::new(queue));
+        let plate = NametagRecord::default();
+        let glyph = NametagRecord { text: 1, ..plate };
+        world.insert_resource(NametagSceneResource(render_model::NametagScene {
+            records: vec![plate, glyph],
+            ..default()
+        }));
+        world.run_system_once(init_nametag_gpu).unwrap();
+        let mut system = IntoSystem::into_system(prepare_nametags);
+        system.initialize(&mut world);
+        system.run((), &mut world).unwrap();
+        assert_eq!(world.resource::<NametagGpu>().total, 2);
+        assert_eq!(world.resource::<NametagGpu>().batches.len(), 2);
+
+        // An unchanged scene leaves the uploaded state alone.
+        world.resource_mut::<NametagGpu>().total = 0;
+        system.run((), &mut world).unwrap();
+        assert_eq!(world.resource::<NametagGpu>().total, 0);
+
+        world.resource_mut::<NametagSceneResource>().records = vec![glyph];
+        system.run((), &mut world).unwrap();
+        let gpu = world.resource::<NametagGpu>();
+        assert_eq!(gpu.total, 1);
+        assert_eq!(
+            gpu.batches,
+            [NametagBatch {
+                records: 0..1,
+                depth_tested: false,
+                text: true
+            }]
+        );
+    }
+
+    // Storage layout and shared geometry, with no glyph-to-plate separation.
     #[test]
     fn shader_mirrors_the_record_layout_scale_and_lift() {
         let source = include_str!("nametag.wesl");
         assert_eq!(std::mem::size_of::<NametagRecord>(), 80);
         assert!(source.contains("BLOCKS_PER_FONT_PIXEL: f32 = NAMETAG_SCALE_VALUE;"));
-        assert!(source.contains("native_acos(-z / horizontal)"));
         assert!(source.contains("record.line_lift"));
         assert!(!source.contains("TEXT_LIFT_BLOCKS"));
-        assert!(
-            source.find("texel.a < 0.5").unwrap() < source.find("color = color * texel").unwrap()
-        );
     }
 
     #[test]
     fn records_batch_only_adjacent_identical_native_material_modes() {
         let plate = NametagRecord::default();
         let glyph = NametagRecord { text: 1, ..plate };
-        let batches = record_batches(&[plate, glyph, glyph, plate, glyph], 3);
+        let tested_plate = NametagRecord {
+            depth_tested: 1,
+            ..plate
+        };
+        let tested_glyph = NametagRecord {
+            depth_tested: 1,
+            ..glyph
+        };
+        let batches = batches_of(&[plate, glyph, glyph, tested_plate, tested_glyph]);
         assert_eq!(
             batches,
             [
@@ -613,13 +664,48 @@ mod tests {
     }
 
     #[test]
+    fn complete_labels_keep_their_interleaved_depth_passes_in_draw_order() {
+        let plate = NametagRecord::default();
+        let dim = NametagRecord { text: 1, ..plate };
+        let full = NametagRecord {
+            depth_tested: 1,
+            ..dim
+        };
+        let batches = batches_of(&[plate, dim, full, plate, dim, full]);
+        assert_eq!(
+            batches
+                .iter()
+                .map(|batch| (batch.depth_tested, batch.text))
+                .collect::<Vec<_>>(),
+            [
+                (false, false),
+                (false, true),
+                (true, true),
+                (false, false),
+                (false, true),
+                (true, true)
+            ]
+        );
+        assert_eq!(
+            batches
+                .into_iter()
+                .flat_map(|batch| batch.records)
+                .collect::<Vec<_>>(),
+            [0, 1, 2, 3, 4, 5]
+        );
+    }
+
+    #[test]
     fn multiline_material_batches_visit_every_record_once_in_the_sorted_phase() {
         let plate = NametagRecord::default();
         let glyph = NametagRecord { text: 1, ..plate };
-        let records = [
+        let mut records = [
             plate, glyph, glyph, plate, glyph, plate, glyph, glyph, glyph,
         ];
-        let batches = record_batches(&records, 5);
+        for record in &mut records[5..] {
+            record.depth_tested = 1;
+        }
+        let batches = batches_of(&records);
         let mut phase_index = 0;
         let mut visited = Vec::new();
         while phase_index < batches.len() {
@@ -684,7 +770,7 @@ mod tests {
                                 base
                             }
                         );
-                        assert_eq!(target.blend, Some(BlendState::ALPHA_BLENDING));
+                        assert_eq!(target.blend, Some(NAMETAG_BLEND));
                         assert_eq!(
                             fragment.shader_defs.contains(&"NAMETAG_GAMMA_BLEND".into()),
                             gamma_blend
@@ -696,7 +782,7 @@ mod tests {
     }
 
     #[test]
-    fn four_native_material_modes_keep_depth_writes_alpha_test_and_bias() {
+    fn java_label_passes_write_depth_only_for_tested_text_without_bias() {
         for msaa in [Msaa::Off, Msaa::Sample2, Msaa::Sample4, Msaa::Sample8] {
             for depth_tested in [false, true] {
                 for text in [false, true] {
@@ -731,7 +817,7 @@ mod tests {
                         )
                         .unwrap();
                     let depth = descriptor.depth_stencil.unwrap();
-                    assert_eq!(depth.depth_write_enabled, Some(text));
+                    assert_eq!(depth.depth_write_enabled, Some(text && depth_tested));
                     assert_eq!(
                         depth.depth_compare,
                         Some(if depth_tested {
@@ -740,40 +826,31 @@ mod tests {
                             CompareFunction::Always
                         })
                     );
-                    assert_eq!(
-                        depth.bias.constant,
-                        if text && depth_tested {
-                            NAMETAG_TEXT_REVERSE_Z_BIAS
-                        } else {
-                            0
-                        }
-                    );
+                    assert_eq!(depth.bias.constant, 0);
                     assert_eq!(depth.bias.slope_scale, 0.0);
                     assert_eq!(depth.bias.clamp, 0.0);
-                    assert_eq!(
-                        descriptor
-                            .fragment
-                            .unwrap()
-                            .shader_defs
-                            .iter()
-                            .any(|def| def == &"NAMETAG_ALPHA_TEST".into()),
-                        text && depth_tested
-                    );
                 }
             }
         }
     }
 
     #[test]
-    fn native_billboard_keeps_world_scale_and_uses_unlifted_cubic_eye_angles() {
-        use bevy::math::Vec3;
+    fn screen_alignment_keeps_world_scale_anchor_and_multiline_lift() {
+        use bevy::math::{EulerRot, Quat, Vec3};
         let record = NametagRecord {
             anchor: [1.0, 2.5, -5.0],
             rect: [0.0, 0.0, 1.0, 1.0],
             ..default()
         };
-        for eye in [[0.0; 3], [0.0, 8.0, -4.0], [20.0, -5.0, 70.0]] {
-            let corners = record.world_corners(eye).unwrap().map(Vec3::from_array);
+        for rotation in [
+            Quat::IDENTITY,
+            Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+            Quat::from_euler(EulerRot::YXZ, 0.7, -0.4, 0.3),
+        ] {
+            let corners = record
+                .world_corners(rotation)
+                .unwrap()
+                .map(Vec3::from_array);
             assert_eq!(corners[0].to_array(), record.anchor);
             assert!(
                 ((corners[1] - corners[0]).length() - NAMETAG_BLOCKS_PER_FONT_PIXEL).abs() < 1e-6
@@ -785,28 +862,78 @@ mod tests {
                 line_lift: 0.25,
                 ..record
             }
-            .world_corners(eye)
+            .world_corners(rotation)
             .unwrap()
             .map(Vec3::from_array);
             for (single, multi) in corners.into_iter().zip(lifted) {
                 assert!((multi - single - Vec3::Y * 0.25).length() < 1e-6);
             }
         }
-        let diagonal = NametagRecord {
-            anchor: [0.0; 3],
-            ..record
-        }
-        .world_corners([1.0, 0.0, 1.0])
-        .unwrap();
-        let acos = |value: f32| {
-            (NAMETAG_ACOS_CUBIC * value * value * value - NAMETAG_ACOS_LINEAR * value)
-                + std::f32::consts::FRAC_PI_2
+    }
+
+    /// Mirrors the shader's view-uniform columns without the CPU's quaternion rotation.
+    fn shader_world_corners(
+        record: &NametagRecord,
+        world_from_view: bevy::math::Mat4,
+    ) -> [bevy::math::Vec3; 4] {
+        use bevy::math::Vec3;
+        let anchor = Vec3::from_array(record.anchor);
+        let right = world_from_view.x_axis.truncate().normalize();
+        let up = world_from_view.y_axis.truncate().normalize();
+        let [x0, y0, x1, y1] = record.rect;
+        [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(|[x, y]| {
+            anchor
+                + Vec3::Y * record.line_lift
+                + (right * x - up * y) * NAMETAG_BLOCKS_PER_FONT_PIXEL
+        })
+    }
+
+    #[test]
+    fn cpu_screen_alignment_matches_the_shader_for_camera_rotations_and_tag_positions() {
+        use bevy::math::{EulerRot, Mat4, Quat, Vec3};
+        let record = NametagRecord {
+            anchor: [1.0, 2.5, -5.0],
+            rect: [-21.0, -1.0, 21.0, 9.0],
+            line_lift: 0.25,
+            ..default()
         };
-        let expected_yaw = -acos(-std::f32::consts::FRAC_1_SQRT_2);
-        assert!((diagonal[1][0] + expected_yaw.cos() * NAMETAG_BLOCKS_PER_FONT_PIXEL).abs() < 1e-7);
-        assert!((diagonal[1][2] - expected_yaw.sin() * NAMETAG_BLOCKS_PER_FONT_PIXEL).abs() < 1e-7);
-        assert!((expected_yaw + 3.0 * std::f32::consts::FRAC_PI_4).abs() > 0.02);
-        assert!(record.world_corners(record.anchor).is_none());
-        assert!(record.world_corners([f32::MAX; 3]).is_none());
+        for rotation in [
+            Quat::IDENTITY,
+            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+            Quat::from_rotation_y(std::f32::consts::PI),
+            Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+            Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
+            Quat::from_euler(EulerRot::YXZ, 0.7, -0.4, 0.3),
+            Quat::from_euler(EulerRot::YXZ, -2.1, 1.2, -0.6),
+        ] {
+            for eye in [Vec3::ZERO, Vec3::new(3.0, 2.0, -1.0)] {
+                for scale in [Vec3::ONE, Vec3::new(2.0, 3.0, 4.0)] {
+                    let world_from_view =
+                        Mat4::from_scale_rotation_translation(scale, rotation, eye);
+                    for offset in [
+                        Vec3::ZERO,
+                        Vec3::new(0.0, 0.0, -5.0),
+                        Vec3::new(4.75, 0.0, -5.0),
+                        Vec3::new(-4.75, 4.75, -5.0),
+                        Vec3::new(4.75, -4.75, -5.0),
+                    ] {
+                        let tag = NametagRecord {
+                            anchor: (eye + rotation * offset).to_array(),
+                            ..record
+                        };
+                        let cpu = tag.world_corners(rotation).unwrap().map(Vec3::from_array);
+                        for (cpu, shader) in cpu
+                            .into_iter()
+                            .zip(shader_world_corners(&tag, world_from_view))
+                        {
+                            assert!(
+                                (cpu - shader).length() < 1e-6,
+                                "rotation {rotation:?}, eye {eye:?}, scale {scale:?}, offset {offset:?}: CPU {cpu:?}, shader {shader:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 }

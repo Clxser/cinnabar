@@ -137,11 +137,23 @@ fn render(
             resource: wgpu::BindingResource::TextureView(&atlas),
         },
         wgpu::BindGroupEntry {
-            binding: 20,
+            binding: crate::material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[2],
+            resource: wgpu::BindingResource::TextureView(&atlas),
+        },
+        wgpu::BindGroupEntry {
+            binding: crate::material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[3],
+            resource: wgpu::BindingResource::TextureView(&atlas),
+        },
+        wgpu::BindGroupEntry {
+            binding: crate::material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[4],
+            resource: wgpu::BindingResource::TextureView(&atlas),
+        },
+        wgpu::BindGroupEntry {
+            binding: 27,
             resource: lightmap.as_entire_binding(),
         },
         wgpu::BindGroupEntry {
-            binding: 24,
+            binding: 28,
             resource: draw.as_entire_binding(),
         },
     ];
@@ -183,7 +195,7 @@ fn witness_source() -> String {
             &["NATIVE_GAMMA_BLEND"]
         )
     )
-    .replace("@group(1) @binding(0)", "@group(0) @binding(20)")
+    .replace("@group(1) @binding(0)", "@group(0) @binding(27)")
 }
 
 /// The water chunk's metadata index, which its records name.
@@ -242,7 +254,7 @@ fn flat_water_draws_the_same_pixels_from_records_as_from_any_sorted_order() {
 // Reaches production liquid geometry with indexed-draw vertex and instance selection.
 // Each record gets a distinct color so pixel comparisons expose blend-order changes.
 const WITNESS: &str = r#"
-@group(0) @binding(24) var<uniform> raster_draw: vec4<u32>;
+@group(0) @binding(28) var<uniform> raster_draw: vec4<u32>;
 /// Draws production liquid geometry with per-record colors that expose blend order.
 @vertex fn order_witness(@builtin(vertex_index) index: u32) -> VertexOutput {
     let corner = RASTER_INDICES[index % 6u];

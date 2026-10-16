@@ -1,5 +1,5 @@
 use crate::{
-    ActorRigVertex, OPAQUE_WHITE, extruded_sprite_vertices, held_sprite_vertices,
+    ActorGlint, ActorRigVertex, OPAQUE_WHITE, extruded_sprite_vertices, held_sprite_vertices,
     textured_cube_vertices,
 };
 use bytemuck::{Pod, Zeroable};
@@ -15,10 +15,12 @@ pub struct ItemMeshVertex {
     pub layer: u32,
     /// Little-endian RGBA8 multiplier applied to the sampled texel.
     pub color: u32,
+    /// Item glint UV scale for the material sampled by this vertex.
+    pub glint_scale: [f32; 2],
 }
 
 pub const ITEM_MESH_VERTEX_BYTES: usize = std::mem::size_of::<ItemMeshVertex>();
-const _: () = assert!(ITEM_MESH_VERTEX_BYTES == 40);
+const _: () = assert!(ITEM_MESH_VERTEX_BYTES == 48);
 
 /// Builds a unit cube centred on the origin; face `i` samples `layers[i]` over a `tile`-texel
 /// square inside a `layer_side` layer and is multiplied by `colors[i]`.
@@ -34,6 +36,7 @@ pub fn cube_mesh(
     }
     let extent = tile as f32 / layer_side as f32;
     let vertices = textured_cube_vertices([[0.0, 0.0, extent, extent]; 6]);
+    let glint_scale = ActorGlint::item(0.0, [extent; 2]).uv_scale;
     // Six vertices per face, in face order.
     Some(
         vertices
@@ -42,7 +45,8 @@ pub fn cube_mesh(
             .iter()
             .zip(layers.into_iter().zip(colors))
             .flat_map(|(face, (layer, color))| {
-                face.iter().map(move |vertex| paint(vertex, layer, color))
+                face.iter()
+                    .map(move |vertex| paint(vertex, layer, color, glint_scale))
             })
             .collect(),
     )
@@ -64,22 +68,25 @@ pub fn extruded_sprite_mesh(
     }
     let side = layer_side as f32;
     let rect = [0.0, 0.0, width as f32 / side, height as f32 / side];
+    let glint_scale = ActorGlint::item(0.0, [rect[2], rect[3]]).uv_scale;
     let vertices = extruded_sprite_vertices(width as usize, height as usize, rgba8, rect)?;
     Some(
         vertices
             .iter()
-            .map(|vertex| paint(vertex, layer, OPAQUE_WHITE))
+            .map(|vertex| paint(vertex, layer, OPAQUE_WHITE, glint_scale))
             .collect(),
     )
 }
 
-fn paint(vertex: &ActorRigVertex, layer: u32, color: u32) -> ItemMeshVertex {
+/// Copies one source vertex with the texture, tint and glint scale of its material.
+fn paint(vertex: &ActorRigVertex, layer: u32, color: u32, glint_scale: [f32; 2]) -> ItemMeshVertex {
     ItemMeshVertex {
         position: vertex.position,
         uv: vertex.uv,
         normal: vertex.normal,
         layer,
         color,
+        glint_scale,
     }
 }
 
@@ -99,24 +106,17 @@ pub fn native_dropped_sprite_mesh(
     }
     let side = layer_side as f32;
     let rect = [0.0, 0.0, width as f32 / side, height as f32 / side];
-    // Native tessellation excludes alpha 0 and 1; retain the original texture for sampling.
-    let mut mask = rgba8.to_vec();
-    for pixel in mask.as_chunks_mut::<4>().0 {
-        if pixel[3] < 2 {
-            pixel[3] = 0;
-        }
-    }
+    let glint_scale = ActorGlint::item(0.0, [rect[2], rect[3]]).uv_scale;
     let longest = width.max(height) as f32;
-    let mut vertices = held_sprite_vertices(width as usize, height as usize, &mask, rect)?;
+    let mut vertices = held_sprite_vertices(width as usize, height as usize, rgba8, rect)?;
     for vertex in &mut vertices {
         vertex.position[0] += 0.5;
         vertex.position[1] += 1.0 - height as f32 / longest;
-        vertex.position[2] *= longest / 16.0;
     }
     Some(
         vertices
             .iter()
-            .map(|vertex| paint(vertex, layer, OPAQUE_WHITE))
+            .map(|vertex| paint(vertex, layer, OPAQUE_WHITE, glint_scale))
             .collect(),
     )
 }
@@ -202,17 +202,30 @@ mod tests {
 
     #[test]
     fn native_drop_slab_retains_floor_origin_fixed_pixel_depth_and_mirrored_back() {
-        for (width, height) in [(16, 16), (32, 16), (8, 16)] {
+        for (width, height) in [
+            (8, 8),
+            (16, 16),
+            (32, 32),
+            (64, 64),
+            (32, 16),
+            (8, 16),
+            (64, 32),
+            (32, 64),
+        ] {
             let mesh = native_dropped_sprite_mesh(
                 width,
                 height,
                 &vec![255; (width * height * 4) as usize],
-                32,
+                64,
                 2,
             )
             .unwrap();
             let (mut min, mut max) = ([f32::MAX; 3], [f32::MIN; 3]);
             for vertex in &mesh {
+                assert_eq!(vertex.layer, 2);
+                assert_eq!(vertex.color, OPAQUE_WHITE);
+                assert!((0.0..=width as f32 / 64.0).contains(&vertex.uv[0]));
+                assert!((0.0..=height as f32 / 64.0).contains(&vertex.uv[1]));
                 for axis in 0..3 {
                     min[axis] = min[axis].min(vertex.position[axis]);
                     max[axis] = max[axis].max(vertex.position[axis]);

@@ -331,7 +331,7 @@ fn animation(path: &Path) -> Result<Vec<u32>, String> {
 /// Applies the shared atlas-space multiplier before frame extraction and mip filtering.
 fn tinted(mut texture: PbrTexture, tint: Option<[u8; 3]>) -> PbrTexture {
     if let Some(tint) = tint {
-        crate::apply_atlas_tint(texture.surface.color.as_mut(), tint);
+        pack_compile_input::apply_atlas_tint(texture.surface.color.as_mut(), tint);
     }
     texture
 }

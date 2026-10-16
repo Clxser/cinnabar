@@ -127,8 +127,12 @@ fn projected_nametag_glyphs_keep_logical_page_order_without_shadow() {
         .unwrap();
     // The world glyphs now rasterize into the retained GPU line atlas, not HUD vertices.
     let scene = presentation.nametag_scene();
-    assert_eq!(scene.records.len(), 2);
-    assert_eq!(scene.records[1].color, [1.0; 4]);
+    assert_eq!(scene.records.len(), 3);
+    assert_eq!(
+        scene.records[1].color,
+        [1.0, 1.0, 1.0, render_model::NAMETAG_DIM_TEXT_ALPHA]
+    );
+    assert_eq!(scene.records[2].color, [1.0; 4]);
     assert_eq!(scene.atlas.len(), 1);
     assert!(
         scene.atlas[0]
@@ -544,7 +548,8 @@ fn session_glyph_sheets_extend_the_font_and_reset_with_the_session() {
         lines: vec![Arc::from("\u{e005}")].into(),
         depth_tested: false,
         text_alpha: 1.0,
-        distance: 5.0,
+        view_depth: 5.0,
+        camera_forward_y: 0.0,
     }]);
     let before = presentation.nametag_scene();
     let mut rgba8 = vec![0u8; 128 * 128 * 4];

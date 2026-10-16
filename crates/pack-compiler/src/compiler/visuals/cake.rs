@@ -1,7 +1,9 @@
 use super::super::*;
+use assets::facts::pack::PackTexture as T;
+use assets::facts::{BlockRenderKind as R, block_render_fact};
 
 pub(in crate::compiler) fn is_cake_name(name: &str) -> bool {
-    name == "minecraft:cake"
+    block_render_fact(name).kind == R::Cake
 }
 
 pub(in crate::compiler) fn exact_cake_bite(record: &RegistryRecord) -> Option<u32> {
@@ -92,19 +94,19 @@ pub(in crate::compiler) fn cake_material_descriptors(
     pack.blocks.get_exact_cake_faces()?;
     let pairs = [
         (
-            "cake_bottom",
+            T::CakeBottom.key(),
             ["textures/blocks/cake_bottom", "textures/blocks/cake_bottom"],
         ),
         (
-            "cake_side",
+            T::CakeSide.key(),
             ["textures/blocks/cake_side", "textures/blocks/cake_side"],
         ),
         (
-            "cake_top",
+            T::CakeTop.key(),
             ["textures/blocks/cake_top", "textures/blocks/cake_top"],
         ),
         (
-            "cake_west",
+            T::CakeWest.key(),
             ["textures/blocks/cake_side", "textures/blocks/cake_inner"],
         ),
     ];
@@ -121,15 +123,21 @@ pub(in crate::compiler) fn cake_material_descriptors(
     }
     Some(
         [
-            ("cake_side", "textures/blocks/cake_side"),
-            ("cake_bottom", "textures/blocks/cake_bottom"),
-            ("cake_top", "textures/blocks/cake_top"),
-            ("cake_west", "textures/blocks/cake_inner"),
+            (T::CakeSide.key(), "textures/blocks/cake_side"),
+            (T::CakeBottom.key(), "textures/blocks/cake_bottom"),
+            (T::CakeTop.key(), "textures/blocks/cake_top"),
+            (T::CakeWest.key(), "textures/blocks/cake_inner"),
         ]
         .map(|(key, path)| {
+            let state_variant = pairs
+                .iter()
+                .find(|(source_key, _)| *source_key == key)
+                .and_then(|(_, paths)| paths.iter().position(|&source| source == path))
+                .expect("validated cake pair contains its emitted path")
+                as u32;
             (
                 Descriptor {
-                    state_variant: 0,
+                    state_variant,
                     flipbook_selector: None,
                     path: path.into(),
                     texture_key: key.into(),
@@ -141,15 +149,31 @@ pub(in crate::compiler) fn cake_material_descriptors(
     )
 }
 
+#[cfg(test)]
+#[path = "cake/tests.rs"]
+mod source_tests;
+
 pub(in crate::compiler) fn cake_source_alpha_is_exact(root: &Path, pack: &PackSources) -> bool {
     if cake_material_descriptors(pack).is_none() {
         return false;
     }
     let sources = [
-        ("cake_bottom", "textures/blocks/cake_bottom", [1, 1, 14, 14]),
-        ("cake_side", "textures/blocks/cake_side", [1, 8, 14, 15]),
-        ("cake_top", "textures/blocks/cake_top", [1, 1, 14, 14]),
-        ("cake_west", "textures/blocks/cake_inner", [1, 8, 14, 15]),
+        (
+            T::CakeBottom.key(),
+            "textures/blocks/cake_bottom",
+            [1, 1, 14, 14],
+        ),
+        (
+            T::CakeSide.key(),
+            "textures/blocks/cake_side",
+            [1, 8, 14, 15],
+        ),
+        (T::CakeTop.key(), "textures/blocks/cake_top", [1, 1, 14, 14]),
+        (
+            T::CakeWest.key(),
+            "textures/blocks/cake_inner",
+            [1, 8, 14, 15],
+        ),
     ];
     sources.into_iter().all(|(key, source, bounds)| {
         let Ok(path) = static_texture_path(root, source, key) else {

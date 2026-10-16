@@ -66,6 +66,28 @@ fn hand_progress_interpolates_the_swing_forward_and_counts_the_use() {
     assert_eq!(idle.consume, None);
 }
 
+#[test]
+fn the_first_person_eat_position_moves_forward_every_frame_across_its_ticks() {
+    let at = |elapsed, frame_alpha| actor_animation::AttachableAnimationInput {
+        use_elapsed_ticks: Some(elapsed),
+        frame_alpha,
+        ..Default::default()
+    };
+    let samples = [at(4, 0.25), at(4, 0.9), at(5, 0.1), at(5, 0.6)].map(|input| {
+        super::hand::local_consume(Some(&input), Some(32))
+            .unwrap()
+            .0
+    });
+    assert!(
+        samples.windows(2).all(|pair| pair[0] < pair[1]),
+        "{samples:?}"
+    );
+    assert_eq!(
+        super::hand::local_consume(Some(&at(40, 0.5)), Some(32)),
+        Some((32.0, 32.0))
+    );
+}
+
 // The pack's first-person arm offset sits behind the model's left side; vanilla's facing puts
 // that ahead of the view and to its right.
 #[test]
@@ -414,7 +436,7 @@ fn equipment_pack_fixture() -> (
             png([90, 20, 200, 255], 1, 1),
         ),
     ];
-    let compiled = pack_compiler::compile_actor_pack(files)
+    let compiled = pack_entity_compiler::compile_actor_pack(files)
         .unwrap()
         .expect("pack compiles");
     let catalog = assets::RuntimeEquipmentCatalog::from_parts(
@@ -716,7 +738,7 @@ fn player_model_from_an_attachable_free_pack_keeps_held_items() {
         ]
     };
     let compile = |files| {
-        pack_compiler::compile_actor_pack(files)
+        pack_entity_compiler::compile_actor_pack(files)
             .unwrap()
             .expect("pack compiles")
     };
@@ -820,6 +842,8 @@ fn player_model_from_an_attachable_free_pack_keeps_held_items() {
     };
     let input = crate::presentation::equipment::ActorEquipmentInput {
         main: Some(crate::presentation::equipment::WornItem {
+            variant: Default::default(),
+            charged_projectile: None,
             use_facts: client_world::EffectiveItemUse::default(),
             grip: assets::item::grip::builtin_item_grip("minecraft:apple"),
             identifier: Arc::from("minecraft:apple"),

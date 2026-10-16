@@ -1,6 +1,6 @@
 //! Compiled JSON-UI asset carrier: the packed `textures/ui` atlas, each
 //! texture's page placement, the nine-slice texture sidecars, and the raw
-//! `ui/*.json` catalog the clean-room resolver consumes at runtime.
+//! `ui/*.json` catalog the UI resolver consumes at runtime.
 //!
 //! The raw ui-json bytes are kept verbatim (not pre-resolved) because a joined
 //! server pack overrides ui json at runtime, so resolution happens then, not
@@ -16,10 +16,10 @@ use sha2::{Digest, Sha256};
 
 use crate::AssetError;
 
+mod item_glint;
+
 pub const UI_CARRIER_MAGIC: [u8; 8] = *b"MCBEUI01";
 pub const UI_CARRIER_VERSION: u32 = 2;
-/// Resource used by the inventory and UI item enchantment overlay.
-pub const ITEM_GLINT_TEXTURE_PATH: &str = "textures/misc/enchanted_item_glint";
 pub const SPLASH_RESOURCE_PATH: &str = "splashes.json";
 pub const MAX_UI_ATLAS_PAGES: usize = 16;
 /// Bound on an atlas page's width and height in pixels.

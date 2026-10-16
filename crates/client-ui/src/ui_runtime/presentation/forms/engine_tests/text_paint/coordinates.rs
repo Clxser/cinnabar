@@ -1,6 +1,7 @@
 //! Original fixture matching the observed coordinate control's geometry, through real label
 //! measurement, JSON-UI layout, retained painting and rasterization; no game assets are needed.
 
+use json_ui::vanilla::Reference;
 use std::sync::Arc;
 
 use assets::{
@@ -8,7 +9,7 @@ use assets::{
     UiNineSlice, UiSidecar, UiTexturePlacement, encode_font_catalog, encode_ui_catalog,
 };
 use image::RgbaImage;
-use json_ui::{Catalog, Context, DataSource, HUD_SCREEN, render_screen};
+use json_ui::{Catalog, Context, DataSource, render_screen};
 use sha2::{Digest, Sha256};
 use ui::{DpiScale, SafeArea, UiScale, UiTree};
 
@@ -186,7 +187,7 @@ fn paint(physical: [u32; 2], scale: f32, named: bool) -> ([u32; 4], [u32; 4], f3
             },
             |env, root| {
                 render_screen(
-                    HUD_SCREEN,
+                    Reference::HudHudScreen.as_str(),
                     &catalog,
                     &Context::desktop(),
                     &DataSource::new(),
@@ -267,6 +268,6 @@ fn default_label_top_padding_does_not_scale_with_font_size() {
 fn bitmap_label_correction_preserves_attached_named_font_metrics() {
     let (background, ink, top) = paint([854, 459], 1.0, true);
     assert_eq!(background, [0, 2, 54, 13]);
-    assert_eq!(ink, [3, 3, 50, 11]);
-    assert_eq!(top, 3.0);
+    assert_eq!(ink, [3, 4, 50, 12]);
+    assert_eq!(top, 4.0);
 }

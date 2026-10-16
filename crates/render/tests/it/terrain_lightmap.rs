@@ -6,7 +6,7 @@ use crate::shader_source;
 
 use gpu_snapshot::{Draw, Gpu};
 
-const WITNESS_BINDING: u32 = 21;
+const WITNESS_BINDING: u32 = 28;
 
 /// Samples the byte-quantized reference table at interpolated terrain light levels.
 fn native_sample(table: &[[f32; 4]], levels: [f32; 2]) -> [f32; 3] {
@@ -123,7 +123,7 @@ fn terrain_fragments_sample_interpolated_levels_not_interpolated_light_rgb() {
             "{}\n{VERTEX}\n{vertex}",
             shader_source::standalone(shader, &[])
         )
-        .replace("@group(1) @binding(0)", "@group(0) @binding(20)")
+        .replace("@group(1) @binding(0)", "@group(0) @binding(27)")
         .replace("WITNESS_BINDING", &WITNESS_BINDING.to_string());
         for (lower, upper) in [
             ([0.0, 13.0], [0.0, 15.0]),
@@ -150,6 +150,18 @@ fn terrain_fragments_sample_interpolated_levels_not_interpolated_light_rgb() {
                     resource: wgpu::BindingResource::TextureView(&atlas),
                 },
                 wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[2],
+                    resource: wgpu::BindingResource::TextureView(&atlas),
+                },
+                wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[3],
+                    resource: wgpu::BindingResource::TextureView(&atlas),
+                },
+                wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[4],
+                    resource: wgpu::BindingResource::TextureView(&atlas),
+                },
+                wgpu::BindGroupEntry {
                     binding: 6,
                     resource: wgpu::BindingResource::Sampler(&sampler),
                 },
@@ -162,7 +174,7 @@ fn terrain_fragments_sample_interpolated_levels_not_interpolated_light_rgb() {
                     resource: case.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 20,
+                    binding: 27,
                     resource: lightmap.as_entire_binding(),
                 },
             ];

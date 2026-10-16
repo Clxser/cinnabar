@@ -52,7 +52,7 @@ fn app_audio_seam_drains_each_committed_event_once_in_the_same_call() {
         local_player_unique_id: 1,
         player_position: [0.0, 64.0, 0.0],
         world_spawn_position: [0, 64, 0],
-        air_network_id: protocol::SEQUENTIAL_AIR_NETWORK_ID,
+        air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
         block_network_ids_are_hashes: false,
     });
     stream.submit(1, audio_event("first")).unwrap();
@@ -179,6 +179,7 @@ fn sequenced_play(origin_stream_session_id: u64, sequence: u64, name: &str) -> S
         origin_stream_session_id,
         dimension: 0,
         dimension_epoch: 0,
+        client_generated: false,
         actor_synchronization: None,
         sequence,
         event: AudioEvent::Play(PlayAudioEvent {
@@ -198,6 +199,7 @@ fn sequenced_stop(origin_stream_session_id: u64, sequence: u64) -> SequencedAudi
         origin_stream_session_id,
         dimension: 0,
         dimension_epoch: 0,
+        client_generated: false,
         actor_synchronization: None,
         sequence,
         event: AudioEvent::Stop(StopAudioEvent {
@@ -216,7 +218,7 @@ fn connected_client_world() -> ClientWorld {
             local_player_unique_id: 1,
             player_position: [0.0, 64.0, 0.0],
             world_spawn_position: [0, 64, 0],
-            air_network_id: protocol::SEQUENTIAL_AIR_NETWORK_ID,
+            air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
             block_network_ids_are_hashes: false,
         })),
         ..ClientWorld::default()
@@ -360,10 +362,12 @@ fn add_audio_teardown_resources(app: &mut App, client_world: ClientWorld, menu: 
         .insert_resource(SessionAudioCatalog(None))
         .insert_resource(retained_session_audio())
         .insert_resource(client_world)
+        .init_resource::<crate::runtime::shutdown::FatalError>()
         .insert_resource(menu)
         .insert_resource(crate::session::SessionController::default())
         .insert_resource(NetworkHandle::<PackApplication>::disconnected())
         .insert_resource(ResourcePackAdmissionState::default())
+        .insert_resource(crate::runtime::network::session_registries::tests::collision_resource())
         .insert_resource(UiRuntimeResource(UiRuntime::new(1)))
         .insert_resource(PlayerRuntime(player_state::PlayerState::new(1)))
         .insert_resource(client_interaction::movement::MovementTicker::default())
@@ -398,13 +402,14 @@ fn menu_disconnect_clears_audio_in_its_production_frame() {
 #[test]
 fn failure_recovery_clears_audio_in_its_production_frame() {
     let mut app = App::new();
-    let mut client_world = connected_client_world();
-    client_world.fatal_error = Some("session failed".to_owned());
     add_audio_teardown_resources(
         &mut app,
-        client_world,
+        connected_client_world(),
         MenuRuntime::new(true, 2, "Player".to_owned()),
     );
+    app.world_mut()
+        .resource_mut::<crate::runtime::shutdown::FatalError>()
+        .0 = Some("session failed".to_owned());
     app.add_systems(
         Update,
         (

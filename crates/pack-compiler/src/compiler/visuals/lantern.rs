@@ -4,16 +4,24 @@ use super::context::{
 use super::dispatcher::CompileRuleResult;
 use {super::super::*, assets::BlockFace};
 
+/// Recognizes lantern variants with the registered hanging state.
+pub(in crate::compiler) fn is_record(record: &RegistryRecord) -> bool {
+    (record
+        .traits
+        .contains(assets::registry::BlockTraits::LANTERN_LIKE)
+        || assets::facts::block_render_fact(&record.name).kind
+            == assets::facts::BlockRenderKind::Lantern)
+        && canonical_state_u32(&record.canonical_state, "hanging").is_some()
+}
+
 pub(in crate::compiler) fn compile_rule(
     record: &RegistryRecord,
     inputs: &RuleInputs<'_>,
     templates: &mut BTreeMap<(u32, bool), u32>,
     storage: &mut ModelStorage<'_>,
 ) -> Result<CompileRuleResult, AssetError> {
-    if !matches!(
-        record.name.as_ref(),
-        "minecraft:lantern" | "minecraft:soul_lantern"
-    ) || record.contributor_role != ContributorRole::Primary
+    if !is_record(record)
+        || record.contributor_role != ContributorRole::Primary
         || record.flags.contains(BlockFlags::AIR)
     {
         return Ok(CompileRuleResult::NoMatch);

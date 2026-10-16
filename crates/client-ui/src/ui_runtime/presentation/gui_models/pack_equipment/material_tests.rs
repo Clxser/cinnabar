@@ -31,6 +31,7 @@ fn chestplate(
         },
         geometry: reference("geometry.player.armor.chestplate"),
         texture: reference(texture),
+        resources: Default::default(),
         material: material.into(),
         color_mask,
         render_controller: "controller.render.armor".into(),
@@ -126,7 +127,7 @@ fn armor_shading(presentation: &UiPresentationRuntime) -> (Vec<[u8; 4]>, bool) {
     colors.dedup();
     let masked = vertices
         .iter()
-        .any(|vertex| vertex.style_flags & render_model::UI_STYLE_COLOR_MASK as u8 != 0);
+        .any(|vertex| u32::from(vertex.style_flags) & render_model::UI_STYLE_COLOR_MASK != 0);
     (colors, masked)
 }
 
@@ -229,7 +230,9 @@ fn authored_material_dye_reaches_the_player_preview() {
             attachable.to_string().into_bytes(),
         ));
     }
-    let compiled = pack_compiler::compile_entity_pack(files).unwrap().unwrap();
+    let compiled = pack_entity_compiler::compile_entity_pack(files)
+        .unwrap()
+        .unwrap();
     assert_eq!(compiled.skipped.unparsable, 0);
     let catalog = Arc::new(
         RuntimeEquipmentCatalog::from_parts(

@@ -1,17 +1,12 @@
-use crate as render_api;
-use crate::shader_source;
 use bevy::render::render_resource::Specializer;
 
-use crate::gpu_snapshot;
+use crate::{actor_raster, gpu_snapshot};
 use assets::{EntityRenderMaterial, EntityRenderMaterialState};
 use bevy::{prelude::Msaa, shader::ShaderDefVal};
 
 use super::super::{
     ActorPipelineKey, ActorPipelineSpecializer, actor_bind_group_layout, actor_pipeline_descriptor,
 };
-
-#[path = "../../tests/it/support/actor_raster.rs"]
-mod actor_raster;
 
 fn center(frame: &[u8]) -> &[u8] {
     let pixel = (gpu_snapshot::SNAPSHOT_SIDE as usize / 2 * gpu_snapshot::SNAPSHOT_SIDE as usize
@@ -593,4 +588,54 @@ fn ordinary_dissolve_color_finishes_before_depth_writing_transparency() {
             .format
             .is_srgb()
     );
+}
+
+#[test]
+fn legacy_leather_preserves_alpha_and_uses_mask_alpha_only_for_dye() {
+    use bevy::render::render_resource::ColorWrites;
+    for profile in [
+        ::render_api::CombatVisuals::Modern,
+        ::render_api::CombatVisuals::Legacy112,
+    ] {
+        for mask in [false, true] {
+            let material = render_model::ActorMaterial {
+                color_mask: mask,
+                glint: render_model::ActorGlint {
+                    profile,
+                    ..Default::default()
+                },
+                state: Some(EntityRenderMaterialState {
+                    alpha_test: true,
+                    cull: false,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let mut descriptor = actor_pipeline_descriptor(actor_bind_group_layout());
+            ActorPipelineSpecializer
+                .specialize(
+                    ActorPipelineKey {
+                        msaa: Msaa::Sample4,
+                        hdr: false,
+                        enhanced: false,
+                        material: material.gpu_word(),
+                    },
+                    &mut descriptor,
+                )
+                .unwrap();
+            let legacy_mask = mask && profile == ::render_api::CombatVisuals::Legacy112;
+            assert_eq!(
+                descriptor.fragment.unwrap().targets[0]
+                    .as_ref()
+                    .unwrap()
+                    .write_mask,
+                if legacy_mask {
+                    ColorWrites::COLOR
+                } else {
+                    ColorWrites::ALL
+                }
+            );
+            assert_eq!(descriptor.multisample.alpha_to_coverage_enabled, !mask);
+        }
+    }
 }

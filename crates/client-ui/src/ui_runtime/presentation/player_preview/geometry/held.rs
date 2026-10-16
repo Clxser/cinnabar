@@ -33,6 +33,8 @@ pub(super) fn append(
     if left >= right || top >= bottom {
         return None;
     }
+    #[cfg(test)]
+    PROJECTED_VERTICES.with(|count| count.set(count.get() + model.vertices.len()));
     for source in &*model.vertices {
         if source.bone_index != 0 {
             // Multi-bone attachables require their evaluated native pose, not
@@ -85,7 +87,7 @@ pub(super) fn append(
             model_light,
             overlay_color: [0.0; 4],
             style_flags: if model.source.glint {
-                UI_STYLE_GLINT
+                u16::from(UI_STYLE_GLINT)
             } else {
                 0
             },
@@ -101,6 +103,11 @@ pub(super) fn append(
         alpha_cutoff: Some(0.5),
     });
     Some(())
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(super) static PROJECTED_VERTICES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 fn placement(model: &PreviewHeldModel, hand: usize) -> Option<(RenderBoneTransform, Vec3)> {

@@ -3,8 +3,7 @@ use sim::{Aabb, Vec3, sample_actor_liquids, sample_liquid_submersion};
 
 use crate::observations::CollisionLookup;
 
-/// Samples the world state actor presentation reads: body liquid contact, breathing-point
-/// submersion and the bed orientation under each sleeper.
+/// Samples body liquid contact and breathing-point submersion for actor animation ticks.
 pub fn sample_actor_world_state(stream: &mut WorldStream, collisions: &dyn CollisionLookup) {
     let mode = stream.network_id_mode();
     let world = sim::PaletteWorld::new(
@@ -32,19 +31,44 @@ pub fn sample_actor_world_state(stream: &mut WorldStream, collisions: &dyn Colli
             Some((probe.runtime_id, submerged.value))
         })
         .collect();
-    let beds: Vec<_> = stream
-        .authority()
-        .actor_bed_sample_points()
-        .into_iter()
-        .filter_map(|(runtime_id, block)| {
-            let runtime = world.primary_runtime_id(block).ok()?;
-            let state = collisions.block_canonical_state(mode, runtime)?;
-            Some((runtime_id, bed_rotation_degrees(state)?))
-        })
-        .collect();
     stream.set_actor_fluids(&fluids);
     stream.set_actor_breathing_liquids(&breathing);
+}
+
+/// Samples bed headings before frame presentation, including frames without an actor tick.
+pub fn sample_actor_bed_rotations(stream: &mut WorldStream, collisions: &dyn CollisionLookup) {
+    let points = stream.authority().actor_bed_sample_points();
+    if points.is_empty() {
+        return;
+    }
+    let mode = stream.network_id_mode();
+    let world = sim::PaletteWorld::new(
+        stream.collision_store(),
+        collisions.registry(mode),
+        stream.current_dimension(),
+        Default::default(),
+    );
+    let beds: Vec<_> = points
+        .into_iter()
+        .filter_map(|(runtime_id, block)| {
+            Some((
+                runtime_id,
+                sampled_bed_rotation(&world, collisions, mode, block)?,
+            ))
+        })
+        .collect();
     stream.set_actor_bed_rotations(&beds);
+}
+
+/// Resolves the shared bed-direction state for camera and actor sampling.
+fn sampled_bed_rotation(
+    world: &sim::PaletteWorld<'_>,
+    collisions: &dyn CollisionLookup,
+    mode: assets::NetworkIdMode,
+    bed: [i32; 3],
+) -> Option<f32> {
+    let runtime = world.primary_runtime_id(bed).ok()?;
+    collisions.bed_rotation_degrees(mode, runtime)
 }
 
 /// The body-box point tested for submersion: the eye at nine tenths of the height, as vanilla
@@ -57,27 +81,41 @@ fn breathing_point(probe: &client_world::ActorFluidProbe) -> [f32; 3] {
     ]
 }
 
-/// Quarter turns of the bed's `direction` state as degrees; the origin needs native measurement.
-fn bed_rotation_degrees(canonical_state: &str) -> Option<f32> {
-    let serde_json::Value::Object(map) = serde_json::from_str(canonical_state).ok()? else {
-        return None;
-    };
-    let value = map.get("direction")?;
-    let direction = value.get("value").unwrap_or(value).as_i64()?;
-    Some(direction.rem_euclid(4) as f32 * 90.0)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::bed_rotation_degrees;
+    use super::*;
+
+    /// Fails if an empty sleeper set tries to borrow or sample the world registry.
+    struct NoBedQueries;
+
+    impl CollisionLookup for NoBedQueries {
+        /// No sleeper means no registry borrow is needed.
+        fn registry(&self, _: assets::NetworkIdMode) -> &sim::CollisionRegistry {
+            panic!("an empty sleeper set must not query the registry")
+        }
+
+        /// No sleeper means no heading lookup is needed.
+        fn bed_rotation_degrees(&self, _: assets::NetworkIdMode, _: u32) -> Option<f32> {
+            panic!("an empty sleeper set must not query bed facts")
+        }
+
+        /// Bed sampling does not need block names.
+        fn block_identifier(&self, _: assets::NetworkIdMode, _: u32) -> Option<&str> {
+            panic!("bed sampling must not query block names")
+        }
+    }
 
     #[test]
-    fn bed_direction_reads_typed_and_plain_states() {
-        assert_eq!(
-            bed_rotation_degrees(r#"{"direction":{"type":"int","value":3}}"#),
-            Some(270.0)
-        );
-        assert_eq!(bed_rotation_degrees(r#"{"direction":1}"#), Some(90.0));
-        assert_eq!(bed_rotation_degrees(r#"{"head_piece_bit":true}"#), None);
+    fn no_sleepers_skip_registry_and_terrain_queries() {
+        let mut stream = WorldStream::new(protocol::WorldBootstrap {
+            local_player_unique_id: 1,
+            local_player_runtime_id: 1,
+            dimension: 0,
+            player_position: [0.0; 3],
+            world_spawn_position: [0; 3],
+            air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
+            block_network_ids_are_hashes: false,
+        });
+        sample_actor_bed_rotations(&mut stream, &NoBedQueries);
     }
 }

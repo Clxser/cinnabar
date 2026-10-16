@@ -1,4 +1,5 @@
 use super::{evaluation::MolangValue, pose::LocalDelta, query::QueryInputs, *};
+use protocol_ids::{ActorDataKey, ActorFlag};
 
 #[test]
 fn item_animation_interpolates_observations_before_rendering_and_wraps_the_swing() {
@@ -316,7 +317,7 @@ fn operation_work_and_transition_budgets_are_aggregate() {
         work_left: 1,
         transitions_left: MAX_CONTROLLER_TRANSITIONS_PER_TICK,
         used: 0,
-        stack: Vec::new(),
+        stack: Default::default(),
         static_draw: None,
     };
     assert_eq!(budget.charge(), Ok(()));
@@ -447,6 +448,92 @@ fn is_first_person_variable_tracks_the_local_camera_context() {
         &motion,
     );
     assert_eq!(variables.number_at(0), Some(0.0));
+}
+
+#[test]
+fn eating_raises_the_arm_then_bobs_and_other_held_items_stay_lowered() {
+    use assets::item_use::ItemConsumption;
+
+    let engine = EngineSlots {
+        use_item_startup_progress: Some(0),
+        use_item_interval_progress: Some(1),
+        ..EngineSlots::default()
+    };
+    let actor = actor_with_metadata(HashMap::new());
+    let motion = MotionState::default();
+    let holding = |identifier: &str, consumption| ActorTickContext {
+        main_hand: Some(identifier.into()),
+        main_hand_consumption: consumption,
+        main_hand_max_use_ticks: 32,
+        ..ActorTickContext::default()
+    };
+    let progress = |context: &ActorTickContext, item_use_ticks: u32| {
+        let mut variables = MolangVariables::slots(2);
+        let input = ActorTickInput {
+            item_use_ticks,
+            ..ActorTickInput::default()
+        };
+        tick::apply_engine_variables(&engine, &mut variables, &actor, context, &input, &motion);
+        [
+            variables.number_at(0).unwrap(),
+            variables.number_at(1).unwrap(),
+        ]
+    };
+    let apple = holding("minecraft:golden_apple", ItemConsumption::Eat);
+    assert_eq!(progress(&apple, 0), [0.0, 0.0]);
+    // The first using tick has the whole use remaining; the arm rises until 25 ticks remain,
+    // then bobs on the remaining ticks modulo four.
+    let expected = [
+        (1, [0.0, 0.0]),
+        (4, [1.0 - 4.0 / 7.0, 0.0]),
+        (8, [1.0, 0.0]),
+        (9, [1.0, 0.0]),
+        (10, [1.0, 0.75]),
+        (11, [1.0, 0.5]),
+        (12, [1.0, 0.25]),
+        (13, [1.0, 0.0]),
+    ];
+    // An undeclared duration uses the default consumable duration.
+    let undeclared = ActorTickContext {
+        main_hand_max_use_ticks: 0,
+        ..apple.clone()
+    };
+    for context in [&apple, &undeclared] {
+        for (ticks, expected) in expected {
+            let actual = progress(context, ticks);
+            for (actual, expected) in actual.into_iter().zip(expected) {
+                assert!(
+                    (actual - expected).abs() < 1.0e-6,
+                    "tick {ticks}: {actual} vs {expected}"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        progress(&holding("minecraft:bow", ItemConsumption::None), 8),
+        [0.0, 0.0]
+    );
+    assert_eq!(
+        progress(&holding("minecraft:golden_apple", ItemConsumption::None), 8),
+        [0.0, 0.0]
+    );
+    assert_eq!(
+        progress(
+            &holding("minecraft:golden_apple", ItemConsumption::Unresolved),
+            8
+        ),
+        [0.0, 0.0]
+    );
+    for consumption in [
+        ItemConsumption::Eat,
+        ItemConsumption::Drink,
+        ItemConsumption::Honey,
+    ] {
+        assert_eq!(
+            progress(&holding("fixture:custom_consumable", consumption), 8),
+            progress(&apple, 8)
+        );
+    }
 }
 
 #[test]
@@ -715,10 +802,18 @@ fn sampled_fluid_overrides_the_heuristic_and_armor_queries_read_worn_stacks() {
     let mut context = ActorTickContext::default();
     context.armor[4] = Some(WornArmor {
         item: "minecraft:golden_horse_armor".into(),
+        fact: *assets::facts::ItemFacts::builtin()
+            .unwrap()
+            .by_identifier("minecraft:golden_horse_armor")
+            .unwrap(),
         dye_rgb: None,
     });
     context.armor[0] = Some(WornArmor {
         item: "minecraft:leather_helmet".into(),
+        fact: *assets::facts::ItemFacts::builtin()
+            .unwrap()
+            .by_identifier("minecraft:leather_helmet")
+            .unwrap(),
         dye_rgb: Some(0x00FF_0000),
     });
     let number = |name: &str, arguments: &[f32]| {
@@ -844,15 +939,20 @@ fn has_cape_reads_the_tick_context() {
 }
 
 #[test]
-fn elytra_reads_slot_five_on_the_chest_and_cape_flap_follows_ground_speed() {
+fn elytra_reads_slot_five_on_the_chest_and_cape_flap_follows_tick_displacement() {
     let actor = actor_with_metadata(HashMap::new());
     let mut context = ActorTickContext::default();
     context.armor[1] = Some(WornArmor {
         item: "minecraft:elytra".into(),
+        fact: *assets::facts::ItemFacts::builtin()
+            .unwrap()
+            .by_identifier("minecraft:elytra")
+            .unwrap(),
         dye_rgb: None,
     });
     let input = ActorTickInput {
-        velocity: [0.0, 0.0, 0.1],
+        position_delta: [0.0, 0.0, 0.1],
+        velocity: [0.0, 0.0, 2.0],
         ..ActorTickInput::default()
     };
     let slot = read_with(
@@ -866,6 +966,19 @@ fn elytra_reads_slot_five_on_the_chest_and_cape_flap_follows_ground_speed() {
     assert_eq!(slot.number(), 5.0);
     let flap = read_with(&actor, &input, &context, 0, "query.cape_flap_amount", &[]);
     assert!((flap.number() - 0.4).abs() < 1.0e-6);
+}
+
+#[test]
+fn cape_flap_rejects_position_discontinuities_and_non_finite_steps() {
+    let actor = actor_with_metadata(HashMap::new());
+    for step in [30.0, -30.0, f32::NAN, f32::INFINITY] {
+        for axis in 0..3 {
+            let mut input = ActorTickInput::default();
+            input.position_delta[axis] = step;
+            input.velocity = [10.0; 3];
+            assert_eq!(read(&actor, &input, 0, "query.cape_flap_amount"), 0.0);
+        }
+    }
 }
 
 // The first-person item offset reads rest pivots; rig pivots mirror authored X.
@@ -969,8 +1082,8 @@ fn hud_pose_advances_crawling_animation_independently_of_first_person() {
     };
     let assets = Arc::new(RuntimeEntityAssets::decode(&bytes).unwrap());
     let mut actor = actor_with_metadata(HashMap::from([(
-        super::test_actor::EXTENDED_FLAGS_METADATA_KEY,
-        ActorMetadataValue::FlagsExtended(1 << (query::FLAG_CRAWLING - u64::BITS)),
+        ActorDataKey::FlagsTwo.wire_value(),
+        ActorMetadataValue::FlagsExtended(1 << (ActorFlag::Crawling.wire_value() - u64::BITS)),
     )]));
     actor.kind = ActorKind::Player {
         uuid: [0; 16],

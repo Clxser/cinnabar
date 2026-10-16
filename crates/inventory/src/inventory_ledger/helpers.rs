@@ -3,14 +3,13 @@ use protocol::{StackRequestAction, StackRequestContainer, StackRequestSlot};
 use super::{Cell, ContainerIdentity, InventoryGestureError, PlayerInventoryLedger, StorageWindow};
 
 impl PlayerInventoryLedger {
-    /// A legacy full-container descriptor can be zero/default on a server chest.
-    /// Resolve it only against the already-open generic window; zero remains a
-    /// real screen-input name everywhere else, and dynamic names stay distinct.
+    /// Resolves a default descriptor only against the open legacy storage window.
+    /// Real named and dynamic containers retain their exact identities.
     pub(super) fn storage_wire_identity(&self, identity: ContainerIdentity) -> ContainerIdentity {
-        if matches!(identity.slot_type, None | Some(0))
-            && identity.dynamic_id.is_none()
+        if identity.has_legacy_default_descriptor()
             && self.storage.as_ref().is_some_and(|storage| {
                 identity.window_id == Some(storage.window_id)
+                    && storage.window_id != protocol::DYNAMIC_STORAGE_WINDOW_ID
                     && matches!(
                         storage.kind.open_cells(),
                         Some(protocol::OpenCells::Generic(_))
@@ -19,6 +18,7 @@ impl PlayerInventoryLedger {
         {
             ContainerIdentity {
                 slot_type: Some(protocol::CONTAINER_NAME_LEVEL_ENTITY),
+                dynamic_id: None,
                 ..identity
             }
         } else {
@@ -35,27 +35,7 @@ impl PlayerInventoryLedger {
         request_id: i32,
     ) {
         for action in actions {
-            let (first, second) = match action {
-                StackRequestAction::Take {
-                    source,
-                    destination,
-                    ..
-                }
-                | StackRequestAction::Place {
-                    source,
-                    destination,
-                    ..
-                }
-                | StackRequestAction::Swap {
-                    source,
-                    destination,
-                } => (Some(source), Some(destination)),
-                StackRequestAction::Drop { source, .. }
-                | StackRequestAction::Destroy { source, .. }
-                | StackRequestAction::Consume { source, .. } => (Some(source), None),
-                _ => (None, None),
-            };
-            for slot in first.into_iter().chain(second) {
+            for slot in action_slots_mut(action) {
                 if slot.stack_network_id == request_id {
                     continue;
                 }
@@ -63,10 +43,11 @@ impl PlayerInventoryLedger {
                     continue;
                 };
                 if let Some(owner) = self.queue.iter().rev().find(|pending| {
-                    pending
-                        .predicted
-                        .iter()
-                        .any(|prediction| prediction.cell == cell && prediction.active)
+                    !pending.locally_committed()
+                        && pending
+                            .predicted
+                            .iter()
+                            .any(|prediction| prediction.cell == cell && prediction.active)
                 }) {
                     slot.stack_network_id = owner.request_id;
                 }
@@ -95,6 +76,33 @@ impl PlayerInventoryLedger {
             }
         })
     }
+}
+
+/// The source and destination slots `action` names.
+pub(super) fn action_slots_mut(
+    action: &mut StackRequestAction,
+) -> impl Iterator<Item = &mut StackRequestSlot> {
+    let (first, second) = match action {
+        StackRequestAction::Take {
+            source,
+            destination,
+            ..
+        }
+        | StackRequestAction::Place {
+            source,
+            destination,
+            ..
+        }
+        | StackRequestAction::Swap {
+            source,
+            destination,
+        } => (Some(source), Some(destination)),
+        StackRequestAction::Drop { source, .. }
+        | StackRequestAction::Destroy { source, .. }
+        | StackRequestAction::Consume { source, .. } => (Some(source), None),
+        _ => (None, None),
+    };
+    first.into_iter().chain(second)
 }
 
 pub(super) const fn valid_raw_window_id(window_id: i32) -> bool {

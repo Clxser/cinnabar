@@ -54,7 +54,9 @@ impl WorldStream {
 }
 
 /// Decode registries that keep every id, for fixtures committed straight to the store.
-const RAW_IDS: RawBlockIds = RawBlockIds { air: 12_530 };
+const RAW_IDS: RawBlockIds = RawBlockIds {
+    air: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
+};
 const RAW_BIOMES: RawBiomeIds = RawBiomeIds { default_biome: 0 };
 
 fn test_decode_ids() -> super::DecodeIds {
@@ -64,7 +66,7 @@ fn test_decode_ids() -> super::DecodeIds {
         local_player_unique_id: 1,
         player_position: [0.0; 3],
         world_spawn_position: [0; 3],
-        air_network_id: 12_530,
+        air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
         block_network_ids_are_hashes: false,
     })
     .decode_ids(0)
@@ -78,7 +80,7 @@ fn level_chunk_bytes_submit_moves_backing_allocation_into_decode_job() {
         local_player_unique_id: 1,
         player_position: [0.0; 3],
         world_spawn_position: [0; 3],
-        air_network_id: 12_530,
+        air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
         block_network_ids_are_hashes: false,
     });
     let payload = bytes::Bytes::from(vec![0x6b; 1024 * 1024]);
@@ -116,6 +118,7 @@ mod job_snapshots;
 mod light_scheduler;
 mod local_retention;
 mod neighbour_deadlines;
+mod resend_light;
 
 mod mesh_dependency;
 mod seasonal_foliage;
@@ -413,6 +416,28 @@ fn idless_note_block_entity_nbt(position: [i32; 3], note: u8, powered: u8, marke
     bytes
 }
 
+/// Reads the pinned registry once for visual fixtures and their event identities.
+fn block_entity_visual_registry() -> &'static [assets::RegistryRecord] {
+    static RECORDS: std::sync::OnceLock<Box<[assets::RegistryRecord]>> = std::sync::OnceLock::new();
+    RECORDS.get_or_init(|| {
+        assets::read_registry_for_protocol(
+            assets::pinned_block_registry_bytes(),
+            assets::active_content_registry_protocol(),
+        )
+        .expect("decode pinned block-entity visual registry")
+    })
+}
+
+/// Selects a real state for a named block used in a visual event.
+fn block_entity_runtime_id(name: &str) -> u32 {
+    block_entity_visual_registry()
+        .iter()
+        .find(|record| record.name.as_ref() == name)
+        .expect("visual fixture block exists in the pinned registry")
+        .sequential_id
+}
+
+/// Gives synthetic cube artwork the pinned registry's state and hash identities.
 fn block_entity_visual_assets() -> RuntimeAssets {
     let visual = BlockVisual {
         native_material: assets::native_material::NativeMaterialFacts::Unresolved,
@@ -426,10 +451,22 @@ fn block_entity_visual_assets() -> RuntimeAssets {
         variant: 0,
         destroy: assets::compiled::block_destroy::BlockDestroyFacts::Unresolved,
     };
+    let records = block_entity_visual_registry();
+    let count = records
+        .iter()
+        .map(|record| record.sequential_id)
+        .max()
+        .unwrap() as usize
+        + 1;
+    let mut hashed = records
+        .iter()
+        .map(|record| (record.network_hash, record.sequential_id))
+        .collect::<Vec<_>>();
+    hashed.sort_unstable();
     let compiled = CompiledAssets {
-        visuals: vec![visual; 15_692].into_boxed_slice(),
-        light_properties: vec![assets::LightProperties::default(); 15_692].into_boxed_slice(),
-        hashed: Box::new([]),
+        visuals: vec![visual; count].into_boxed_slice(),
+        light_properties: vec![assets::LightProperties::default(); count].into_boxed_slice(),
+        hashed: hashed.into_boxed_slice(),
         materials: vec![Material {
             texture: TextureRef::DIAGNOSTIC,
             flags: 0,
@@ -454,12 +491,7 @@ fn block_entity_visual_assets() -> RuntimeAssets {
         })]
         .into_boxed_slice(),
         biomes: CompiledBiomeAssets::diagnostic(),
-        provenance: assets::BlobProvenance {
-            source_manifest_sha256: [0xA5; 32],
-            block_registry_sha256: [0x5A; 32],
-            light_registry_sha256: [0x33; 32],
-            biome_registry_sha256: [0x3C; 32],
-        },
+        provenance: *assets::pinned_world_provenance(),
     };
     RuntimeAssets::decode(&encode_blob(&compiled).unwrap()).unwrap()
 }
@@ -478,7 +510,7 @@ fn block_entity_visual_stream_for_player(local_player_unique_id: i64) -> WorldSt
             local_player_runtime_id: 1,
             player_position: [0.0; 3],
             world_spawn_position: [0; 3],
-            air_network_id: 0,
+            air_network_id: block_entity_runtime_id("minecraft:air"),
             block_network_ids_are_hashes: false,
         },
         Arc::new(block_entity_visual_assets()),
@@ -605,15 +637,27 @@ fn complete_decode_job(stream: &mut WorldStream, job: super::QueuedDecodeJob) {
                 slots,
                 count,
                 ids,
+                previous,
             } => {
                 let chunk = ChunkKey::new(event.dimension, event.x, event.z);
+                let decoded = DecodedLevelChunk::decode_inline_reusing(
+                    chunk,
+                    slots,
+                    count,
+                    &payload,
+                    &ids,
+                    &ids,
+                    previous.as_deref(),
+                );
+                let light_neutral = previous.map_or_else(Vec::new, |previous| {
+                    client_world::ingestion::light_neutral_sections(&previous, &decoded, &ids)
+                });
                 (
                     sequence,
                     super::PreparedWorldEvent::InlineLevelChunk {
                         event,
-                        decoded: DecodedLevelChunk::decode_inline(
-                            chunk, slots, count, &payload, &ids, &ids,
-                        ),
+                        decoded,
+                        light_neutral,
                         duration: std::time::Duration::ZERO,
                     },
                 )
@@ -792,7 +836,7 @@ fn stream_with_one_expected_sub_chunk() -> (WorldStream, SubChunkKey) {
         local_player_runtime_id: 1,
         player_position: [0.0; 3],
         world_spawn_position: [0; 3],
-        air_network_id: 12_530,
+        air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
         block_network_ids_are_hashes: false,
     });
     let key = SubChunkKey::new(0, 0, -4, 0);
@@ -821,7 +865,7 @@ fn abandoned_cached_column_recovery_enters_bounded_request_scheduler() {
         local_player_unique_id: 1,
         player_position: [0.0; 3],
         world_spawn_position: [0; 3],
-        air_network_id: 12_530,
+        air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
         block_network_ids_are_hashes: false,
     });
     stream
@@ -852,7 +896,7 @@ fn exact_recovery_keeps_disjoint_ranges_expected_when_outbound_is_saturated() {
         local_player_unique_id: 1,
         player_position: [0.0; 3],
         world_spawn_position: [0; 3],
-        air_network_id: 12_530,
+        air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
         block_network_ids_are_hashes: false,
     });
     for index in 0..(super::OUTBOUND_REQUEST_CAPACITY - 1) {
@@ -925,7 +969,7 @@ fn stream_with_unsent_sub_chunks(
         local_player_runtime_id: 1,
         player_position: [0.0; 3],
         world_spawn_position: [0; 3],
-        air_network_id: 12_530,
+        air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
         block_network_ids_are_hashes: false,
     });
     let chunk = ChunkKey::new(0, 0, 0);
@@ -982,17 +1026,22 @@ mod cases_11;
 mod cases_12;
 mod cohort_progress;
 mod entity_occlusion;
+mod far_summaries;
 mod forced_remesh;
+mod full_detail;
 mod inbound_lanes;
 mod inline_cohort;
 mod inventory_commit_fence;
 mod lane_footprints;
 mod lenient_decode;
 mod local_abilities;
+mod near_drawn;
 mod prediction;
+mod remote_motion_replay;
 mod render_distance;
 mod service;
 mod streaming_harness;
+mod sub_chunk_recovery;
 
 mod actor_block_sync;
 #[path = "tests/ordered_commits.rs"]

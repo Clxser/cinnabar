@@ -177,7 +177,7 @@ fn overridden_assets(
     let visual = assets.resolve(assets::NetworkIdMode::Sequential, record.sequential_id);
     let template = assets.model_templates()[visual.model_template().unwrap() as usize];
     let mut overlay = assets::BlockOverlay {
-        texture: Some(assets.texture_pages()[0].texture.clone()),
+        textures: vec![assets.texture_pages()[0].texture.clone()],
         ..Default::default()
     };
     let mut materials = std::collections::HashMap::new();

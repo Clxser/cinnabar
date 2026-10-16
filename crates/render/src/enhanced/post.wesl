@@ -1,6 +1,6 @@
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
 import render::enhanced::common::{EnhancedFrame, FEATURE_SHAFTS, FEATURE_SSAO, FEATURE_VOLUMETRIC_CLOUDS, FEATURE_WATER, FEATURE_WAVING, interleaved_gradient_noise,decode_geometric_normal};
-import render::enhanced::atmosphere::{atmospheric_sky_background, atmosphere_discs, atmosphere_stars, sky_view_ray,cloud_shadow_receiver_height};
+import render::enhanced::atmosphere::{atmospheric_sky_background, atmosphere_discs, atmosphere_stars, finite_world_sky_uv, sky_view_ray,cloud_shadow_receiver_height};
 import render::enhanced::clouds::{integrate_clouds, cloud_shadow, cloud_history_position};
 import render::enhanced::ao::{horizon_ao, screen_contact_shadow, ao_world_position};
 import render::enhanced::shadow::sun_shadow_sample;

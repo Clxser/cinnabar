@@ -23,6 +23,7 @@ use ui_screens::emote_screen::EmoteHit;
 
 use client_shell::ui_resources::{UiPresentationResource, UiRuntimeResource};
 use client_ui::ui_runtime::UiRuntime;
+use launcher::menu::settings_options::BindingId;
 use {
     crate::runtime::world::ClientWorld,
     client_shell::menu::{
@@ -69,6 +70,7 @@ pub(crate) struct EmoteInput<'w, 's> {
     focus: Option<ResMut<'w, client_state::CursorFocus>>,
     driven: Option<Res<'w, client_state::DrivenInput>>,
     network: Option<Res<'w, NetworkHandle<PackApplication>>>,
+    movement: Option<ResMut<'w, client_interaction::movement::MovementTicker>>,
 }
 
 /// Runs before chat/menu adapters and before semantic gameplay is finalized.
@@ -163,13 +165,23 @@ pub(crate) fn drive_emote_input(mut input: EmoteInput) {
     let mouse_toggled = input.mouse.get_just_pressed().any(|button| {
         if !client_shell::menu::settings_options::control_bindings::binding_mouse_button(
             input.menu.as_deref(),
-            "key.emote",
+            BindingId::Emote,
             *button,
         ) {
             return false;
         }
-        let alt = if pointer_presses.is_empty() {
-            chat_modifiers::alt_held(&input.keys)
+        let macro_matches = |held: &ButtonInput<KeyCode>| {
+            command_macros::command(
+                input.menu.as_deref(),
+                &input.runtime,
+                chat_modifiers::held_chord(held),
+                client_shell::physical_input::mouse_button_code(*button)
+                    .map(semantic_input::PhysicalControl::MouseButton),
+            )
+            .is_some()
+        };
+        let macro_owns_press = if pointer_presses.is_empty() {
+            macro_matches(&input.keys)
         } else {
             pointer_presses
                 .iter()
@@ -179,23 +191,16 @@ pub(crate) fn drive_emote_input(mut input: EmoteInput) {
                     for event in keyboard.iter().take(*before) {
                         chat_modifiers::track(&mut held, event);
                     }
-                    chat_modifiers::alt_held(&held)
+                    macro_matches(&held)
                 })
         };
-        command_macros::command(
-            input.menu.as_deref(),
-            &input.runtime,
-            alt,
-            client_shell::physical_input::mouse_button_code(*button)
-                .map(semantic_input::PhysicalControl::MouseButton),
-        )
-        .is_none()
+        !macro_owns_press
     });
     // An open wheel owns D-pad selection, including the default opening button.
     let navigating =
         input.runtime.emotes().is_open() && controls::directional_navigation(&input.pads);
     let gamepad_toggled =
-        !navigating && binding_gamepad(input.menu.as_deref(), "key.emote", &input.pads);
+        !navigating && binding_gamepad(input.menu.as_deref(), BindingId::Emote, &input.pads);
     let toggled = mouse_toggled || gamepad_toggled;
     let mut dismissed = false;
     if toggled {
@@ -216,11 +221,11 @@ pub(crate) fn drive_emote_input(mut input: EmoteInput) {
         if event.state != ButtonState::Pressed || event.repeat {
             continue;
         }
-        if binding_key(input.menu.as_deref(), "key.emote", event.key_code)
+        if binding_key(input.menu.as_deref(), BindingId::Emote, event.key_code)
             && command_macros::command(
                 input.menu.as_deref(),
                 &input.runtime,
-                chat_modifiers::alt_held(&input.observed.modifiers),
+                chat_modifiers::held_chord(&input.observed.modifiers),
                 client_shell::physical_input::keyboard_usage(event.key_code)
                     .map(semantic_input::PhysicalControl::KeyboardUsage),
             )
@@ -228,7 +233,7 @@ pub(crate) fn drive_emote_input(mut input: EmoteInput) {
         {
             continue;
         }
-        if binding_key(input.menu.as_deref(), "key.emote", event.key_code) {
+        if binding_key(input.menu.as_deref(), BindingId::Emote, event.key_code) {
             if let Some(presentation) = input.presentation.as_deref_mut() {
                 presentation.set_emote_input_mode(json_ui::InputMode::Mouse);
             }
@@ -329,6 +334,8 @@ pub(crate) fn drive_emote_input(mut input: EmoteInput) {
             length_ticks,
         )) {
             bevy::log::warn!(?error, "emote start was not admitted to the session queue");
+        } else if let Some(movement) = input.movement.as_deref_mut() {
+            movement.start_emote(length_ticks);
         }
     }
     if let Some(preferences) = input.runtime.emotes_mut().take_preferences()
@@ -359,9 +366,15 @@ pub(crate) fn drive_emote_input(mut input: EmoteInput) {
 pub(crate) fn cancel_emote_from_gameplay(
     semantic: Res<SemanticInputSnapshot>,
     mut runtime: ResMut<UiRuntimeResource>,
+    movement: Option<ResMut<client_interaction::movement::MovementTicker>>,
 ) {
     if should_stop_emote(&semantic) {
         runtime.emotes_mut().stop();
+    }
+    if runtime.emotes().playback().is_none()
+        && let Some(mut movement) = movement
+    {
+        movement.stop_emote();
     }
 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use protocol_ids::Attribute;
 
 impl WorldAuthority {
     /// Applies a non-terrain event at its current ordered commit position.
@@ -45,6 +46,7 @@ impl WorldAuthority {
                     });
                 }
             }
+            WorldEvent::WorldSpawn(update) => self.world_spawn = update.position,
             WorldEvent::SetTime(update) => {
                 let sequence = sequence.expect("sequenced SetTime commits through submit");
                 self.push_committed_control(CommittedControlEvent::SetTime { sequence, update });
@@ -92,6 +94,7 @@ impl WorldAuthority {
                     sequence,
                     dimension: self.current_dimension,
                     dimension_epoch: self.form_dimension_epoch,
+                    client_generated: false,
                     actor_synchronization: None,
                     event,
                 };
@@ -111,8 +114,11 @@ impl WorldAuthority {
                 let sequence = sequence.expect("sequenced camera events commit through submit");
                 self.push_committed_camera(CommittedCameraEvent { sequence, event });
             }
-            WorldEvent::Actor(event) => {
+            WorldEvent::Actor(mut event) => {
                 let sequence = sequence.expect("sequenced actor events commit through submit");
+                if let ActorEvent::Move(movement) = &mut event {
+                    self.resolve_actor_teleport(movement);
+                }
                 let player_list_changed = matches!(&event, ActorEvent::PlayerList(_));
                 let previous_mount = self.actors.ridden_unique_id(self.local_player_unique_id);
                 if let ActorEvent::Attributes(update) = &event
@@ -128,7 +134,9 @@ impl WorldAuthority {
                         .attributes
                         .iter()
                         .rev()
-                        .filter(|attribute| attribute.name.as_ref() == "minecraft:movement")
+                        .filter(|attribute| {
+                            attribute.name.as_ref() == Attribute::Movement.wire_name()
+                        })
                         .find_map(MovementSpeedAttribute::from_attribute);
                     let liquid = |name: &str| {
                         update
@@ -138,15 +146,14 @@ impl WorldAuthority {
                             .find(|attribute| attribute.name.as_ref() == name)
                             .map(|attribute| f64::from(attribute.current))
                     };
-                    let underwater = liquid("minecraft:underwater_movement");
-                    let lava = liquid("minecraft:lava_movement");
+                    let underwater = liquid(Attribute::UnderwaterMovement.wire_name());
+                    let lava = liquid(Attribute::LavaMovement.wire_name());
                     let air_drag_modifier = update
                         .attributes
                         .iter()
                         .rev()
                         .find(|attribute| {
-                            attribute.name.as_ref()
-                                == movement_attribute::AIR_DRAG_MODIFIER_ATTRIBUTE
+                            attribute.name.as_ref() == Attribute::AirDragModifier.wire_name()
                         })
                         .map(|attribute| attribute.current)
                         .filter(|current| current.is_finite());
@@ -235,6 +242,7 @@ impl WorldAuthority {
                         sequence,
                         dimension: self.current_dimension,
                         dimension_epoch: self.form_dimension_epoch,
+                        client_generated: false,
                         actor_synchronization: None,
                         event: AudioEvent::Level(protocol::LevelAudioEvent {
                             sound_event: "pop".into(),

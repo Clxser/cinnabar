@@ -422,7 +422,7 @@ fn packed_chunk_shader_parses_and_validates() {
         "terrain sampling must retain explicit gradients"
     );
     assert!(shader.contains("fn sample_texture_ref("));
-    assert!(shader.contains("texture_ref >> 31u"));
+    assert!(shader.contains("texture_page(texture_ref)"));
     assert!(shader.contains("let uv_dx = dpdx(in.uv);"));
     assert!(shader.contains("let uv_dy = dpdy(in.uv);"));
     assert!(shader.contains("if (frame_blend > 0.0)"));

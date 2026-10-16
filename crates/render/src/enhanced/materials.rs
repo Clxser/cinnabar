@@ -83,10 +83,11 @@ fn kind_class(kind: VisualKind, flags: u32) -> u32 {
     let cutout = flags & MATERIAL_FLAG_ALPHA_CUTOUT != 0;
     let tint = flags & MATERIAL_FLAG_TINT_MASK;
     let vegetation_tint = tint == MATERIAL_FLAG_FOLIAGE_TINT || tint == MATERIAL_FLAG_GRASS_TINT;
+    let stem = flags & assets::stem::MATERIAL_FLAG != 0;
     match kind {
         VisualKind::Cube if cutout && tint == MATERIAL_FLAG_FOLIAGE_TINT => CLASS_LEAVES,
         VisualKind::Cross => CLASS_PLANT,
-        VisualKind::Model if cutout && vegetation_tint => CLASS_PLANT,
+        VisualKind::Model if cutout && (vegetation_tint || stem) => CLASS_PLANT,
         _ => 0,
     }
 }
@@ -109,6 +110,29 @@ mod tests {
             CLASS_PLANT
         );
         assert_eq!(kind_class(VisualKind::Model, MATERIAL_FLAG_ALPHA_CUTOUT), 0);
+    }
+
+    #[test]
+    fn stem_models_keep_plant_class_without_biome_tint() {
+        for growth in 0..=7 {
+            let flags = MATERIAL_FLAG_ALPHA_CUTOUT
+                | assets::stem::material_flags(growth).expect("bounded stem growth");
+            assert_eq!(flags & MATERIAL_FLAG_TINT_MASK, 0);
+            assert_eq!(kind_class(VisualKind::Model, flags), CLASS_PLANT);
+            assert_eq!(kind_class(VisualKind::Cube, flags), 0);
+            assert_eq!(kind_class(VisualKind::Invisible, flags), 0);
+        }
+        assert_eq!(
+            kind_class(VisualKind::Model, assets::stem::MATERIAL_FLAG),
+            0
+        );
+        assert_eq!(
+            kind_class(
+                VisualKind::Model,
+                MATERIAL_FLAG_ALPHA_CUTOUT | assets::stem::GROWTH_MASK
+            ),
+            0
+        );
     }
 
     /// Builds a cube visual for the shared-material regression.

@@ -321,10 +321,12 @@ impl LocalPhysicsController {
             changed |= edited;
             present.sprinting = reached.then_some(sprinting);
         }
-        if let Some(sneaking) = flags.sneaking.filter(|value| *value != anchor.sneaking) {
+        if pose_flag_controls_sneak(anchor.mode)
+            && let Some(sneaking) = flags.sneaking.filter(|value| *value != anchor.sneaking)
+        {
             let (edited, reached) = rewrite_run(
                 self.history.retained_inputs_after_mut(tick),
-                |input| input.sneaking == anchor.sneaking,
+                |input| pose_flag_controls_sneak(input.mode) && input.sneaking == anchor.sneaking,
                 |input| input.sneaking = sneaking,
             );
             changed |= edited;
@@ -362,7 +364,7 @@ impl LocalPhysicsController {
         self.server_control_flags.take()
     }
 
-    fn adopt_live_flags(&mut self, flags: client_world::MovementFlagUpdate) {
+    fn adopt_live_flags(&mut self, mut flags: client_world::MovementFlagUpdate) {
         for (flag, mode) in [
             (flags.gliding, sim::MovementMode::Gliding),
             (flags.swimming, sim::MovementMode::Swimming),
@@ -371,6 +373,9 @@ impl LocalPhysicsController {
             if flag == Some(false) {
                 self.modes.end(mode);
             }
+        }
+        if !pose_flag_controls_sneak(self.modes.mode()) {
+            flags.sneaking = None;
         }
         if flags.sprinting.is_none() && flags.sneaking.is_none() {
             return;
@@ -383,6 +388,11 @@ impl LocalPhysicsController {
         pending.sprinting = flags.sprinting.or(pending.sprinting);
         pending.sneaking = flags.sneaking.or(pending.sneaking);
     }
+}
+
+/// Crouch metadata owns the sneak pose; in flight the same input lane is a held descent request.
+fn pose_flag_controls_sneak(mode: sim::MovementMode) -> bool {
+    mode != sim::MovementMode::Flying
 }
 
 /// Edits the leading run of inputs still matching `unchanged`; returns whether

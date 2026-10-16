@@ -2,8 +2,8 @@
 use bevy::prelude::{Projection, Query, Res, ResMut, Time, Transform, With};
 use client_presentation::camera::presentation::{FirstPersonHandMotion, ScreenEffectFacts};
 use client_presentation::camera::{
-    CameraFovInputs, CameraHurtState, CameraSettingsAuthority, FlyCamera, HandSwayState,
-    HeadMedium, PortalProgress, ScreenOverlays, ServerCameraView, VisionEffects, WalkBobState,
+    CameraFovInputs, CameraHurtState, CameraSettingsAuthority, FlyCamera, HeadMedium,
+    PortalProgress, ScreenOverlays, ServerCameraView, VisionEffects, WalkBobState,
 };
 use client_presentation::server_camera::ServerCameraInstructions;
 use client_shell::ui_resources::UiRuntimeResource;
@@ -48,17 +48,21 @@ pub(crate) fn collect_death_fov_inputs(
 }
 
 /// Composes actor damage after this frame's counters advance and before UI publication.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_actor_damage_camera_rotation(
     settings: Res<CameraSettingsAuthority>,
-    hand: Res<FirstPersonHandMotion>,
+    hand: ResMut<FirstPersonHandMotion>,
+    legacy: Option<Res<client_presentation::camera::legacy::LegacyCameraMotion>>,
     server: Res<ServerCameraView>,
     world: Option<Res<ClientWorld>>,
     partial_tick: Option<Res<client_presentation::actor_publication::ActorFramePartialTick>>,
+    physics: Option<Res<LocalPhysicsController>>,
     cameras: Query<&mut Transform, With<FlyCamera>>,
 ) {
     client_presentation::camera::actor_effects::apply_actor_damage_camera_rotation(
         settings,
         hand,
+        legacy,
         server,
         world.as_deref().map(
             |world| client_presentation::observations::WorldObservation {
@@ -66,6 +70,9 @@ pub(crate) fn apply_actor_damage_camera_rotation(
             },
         ),
         partial_tick.map_or(0.0, |tick| tick.0),
+        physics
+            .as_deref()
+            .map_or(1.0, |physics| physics.tick_alpha()),
         cameras,
     );
 }
@@ -80,9 +87,9 @@ pub(crate) fn advance_presentation_state(
     physics: Option<Res<LocalPhysicsController>>,
     ui: Option<Res<UiRuntimeResource>>,
     bob: ResMut<WalkBobState>,
-    sway: ResMut<HandSwayState>,
     hurt: ResMut<CameraHurtState>,
     java: ResMut<client_presentation::camera::java::JavaCameraState>,
+    legacy: ResMut<client_presentation::camera::legacy::LegacyCameraMotion>,
     hand: ResMut<FirstPersonHandMotion>,
 ) {
     client_presentation::camera::presentation::advance_presentation_state(
@@ -99,9 +106,9 @@ pub(crate) fn advance_presentation_state(
             .map(|value| value as &dyn client_presentation::observations::PhysicsObservation),
         ui.as_deref().map(|ui| &ui.0),
         bob,
-        sway,
         hurt,
         java,
+        legacy,
         hand,
     );
 }

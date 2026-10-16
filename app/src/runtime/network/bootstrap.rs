@@ -59,6 +59,7 @@ pub(super) fn apply(
     } = resources;
     let AppWorldState {
         client_world,
+        fatal_error,
         clock,
         weather,
         movement,
@@ -97,6 +98,7 @@ pub(super) fn apply(
         death_rules,
         mut packs,
         terrain_before_spawn,
+        level_identity,
     } = control
     else {
         unreachable!("bootstrap routing accepts only StartGame");
@@ -108,10 +110,13 @@ pub(super) fn apply(
         session_generation,
     ) {
         BootstrapGenerationDisposition::Expected => {}
-        BootstrapGenerationDisposition::Stale => return,
+        BootstrapGenerationDisposition::Stale => {
+            client_runtime::session::release_off_frame(packs);
+            return;
+        }
         BootstrapGenerationDisposition::Unexpected => {
             record_fatal_error(
-                &mut client_world.fatal_error,
+                &mut fatal_error.0,
                 format!(
                     "unexpected StartGame session generation: UI {}, world {}, incoming {session_generation}",
                     ui_runtime.session_id(),
@@ -120,6 +125,27 @@ pub(super) fn apply(
             );
             return;
         }
+    }
+    let Some(registries) = packs.registries.take() else {
+        record_fatal_error(
+            &mut fatal_error.0,
+            "StartGame block registries were not prepared".to_owned(),
+        );
+        return;
+    };
+    if !registries.matches(
+        SessionGeneration::new(session_generation),
+        bootstrap.block_network_ids_are_hashes,
+        &client_world.runtime_assets,
+        collisions,
+        &custom_blocks,
+    ) {
+        client_runtime::session::release_off_frame(registries);
+        record_fatal_error(
+            &mut fatal_error.0,
+            "StartGame block registries do not match the active session inputs".to_owned(),
+        );
+        return;
     }
     ui_runtime.set_server_lang(None);
     player_runtime.facts.clear_block_breaking_mode();
@@ -145,8 +171,9 @@ pub(super) fn apply(
     client_runtime::item_diagnostics::session_registry(item_registry.as_ref());
     let world_item_registry = item_registry.clone();
     if !publish_bootstrap_inventory(&mut player_runtime, ui_runtime, item_registry, inventory) {
+        client_runtime::session::release_off_frame(registries);
         record_fatal_error(
-            &mut client_world.fatal_error,
+            &mut fatal_error.0,
             "StartGame inventory fanout was not an authority event".to_owned(),
         );
         return;
@@ -191,6 +218,7 @@ pub(super) fn apply(
             terrain_before_spawn,
         },
         &packs,
+        registries,
         current,
         super::bootstrap_world::StreamResources {
             client_world,
@@ -225,17 +253,19 @@ pub(super) fn apply(
     .apply(***physics_authority, movement, local_physics)
     {
         record_fatal_error(
-            &mut client_world.fatal_error,
+            &mut fatal_error.0,
             format!("local Physics authority failed closed: {fault:?}"),
         );
     }
     client_world.pending_surface_spawn = resolved.surface_anchor;
+    client_world.level_identity = level_identity;
     client_world.stream = Some(stream);
     timings.mark(bootstrap_timing::BootstrapPhase::WorldStream);
     if !super::equipment::publish_bootstrap_equipment(
         &mut player_runtime,
         ui_runtime,
         client_world,
+        &mut fatal_error.0,
         session_generation,
         bootstrap.local_player_runtime_id,
     ) {
@@ -246,19 +276,19 @@ pub(super) fn apply(
         &mut packs,
         ui_runtime,
         session_generation,
-        client_world.fatal_error.is_none(),
+        fatal_error.0.is_none(),
     );
     player_runtime.facts.install_block_breaking_mode(
         session_generation,
         server_authoritative_block_breaking,
-        client_world.fatal_error.is_none(),
+        fatal_error.0.is_none(),
     );
     if let Some(stream) = client_world.stream.as_ref() {
         player_runtime.facts.bind_local_abilities(
             session_generation,
             stream.biome_tint_identity().stream(),
             bootstrap.local_player_unique_id,
-            client_world.fatal_error.is_none(),
+            fatal_error.0.is_none(),
         );
     }
     timings.mark(bootstrap_timing::BootstrapPhase::Presentation);

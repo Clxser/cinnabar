@@ -38,6 +38,8 @@ pub struct RuntimeEntityAssets {
     pub(super) item_visuals: Arc<[ItemVisualDefinition]>,
     pub(super) item_visual_aliases: Arc<[ItemVisualAlias]>,
     pub(super) render: Arc<EntityRenderData>,
+    /// Whether each rig binding draws the witnessed vanilla three-sampler material.
+    pub(super) multitexture_rigs: Arc<[bool]>,
 }
 
 impl RuntimeEntityAssets {
@@ -59,7 +61,6 @@ impl RuntimeEntityAssets {
         let item_visual_count = u32_at(bytes, 76)? as usize;
         if source_count == 0
             || source_count > MAX_ENTITY_ASSET_SOURCES
-            || symbol_count == 0
             || symbol_count > MAX_ENTITY_ASSET_SYMBOLS
             || geometry_count > MAX_ENTITY_GEOMETRIES
             || animation_clip_count > MAX_ENTITY_ANIMATION_CLIPS
@@ -160,6 +161,11 @@ impl RuntimeEntityAssets {
     pub fn from_compiled(compiled: CompiledEntityAssets) -> Result<Self, AssetError> {
         let geometry_parents = validate_compiled(&compiled)?;
         let locator_catalog = locator::compile(&compiled.geometries, &geometry_parents)?;
+        let multitexture_rigs = crate::actor::color_mask::multitexture_rigs(
+            &compiled.rig_bindings,
+            &compiled.symbols,
+            &compiled.sources,
+        );
         Ok(Self {
             carrier_identity: None,
             item_use_profiles: Arc::from(compiled.item_use_profiles),
@@ -192,7 +198,17 @@ impl RuntimeEntityAssets {
             item_visuals: Arc::from(compiled.item_visuals),
             item_visual_aliases: Arc::from(compiled.item_visual_aliases),
             render: Arc::new(compiled.render),
+            multitexture_rigs,
         })
+    }
+
+    /// Whether rig `binding` draws the witnessed vanilla three-sampler material; see
+    /// [`crate::native_actor_uses_multitexture`]. Unknown bindings do not.
+    pub(crate) fn multitexture_rig(&self, binding: usize) -> bool {
+        self.multitexture_rigs
+            .get(binding)
+            .copied()
+            .unwrap_or(false)
     }
 
     /// The SHA-256 of the carrier this was decoded from or encoded as; `None` for a bare compiled catalog.

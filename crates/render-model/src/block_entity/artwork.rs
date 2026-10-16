@@ -2,27 +2,39 @@
 
 use std::{collections::BTreeSet, sync::Arc};
 
-use super::{
-    atlas::{AtlasRect, BlockEntityAtlas, MAX_TEXT_PAGES, dynamic_height},
-    mob::MobTexture,
-};
+use super::atlas::{AtlasRect, BlockEntityAtlas, MAX_TEXT_PAGES, dynamic_height};
 
 /// wgpu's default 2D texture side, which every adapter must support.
 pub(super) const MAX_ATLAS_SIDE: u32 = 8192;
 
-/// Startup mob textures retained by join and reload workers.
+/// A static texture appended to the block-entity atlas.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct StaticTexture {
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub rgba8: Arc<[u8]>,
+}
+
+/// Static textures retained by join and reload workers.
 #[derive(Clone, Debug, Default)]
 pub struct BlockEntityArtworkPreparer {
-    textures: Arc<[MobTexture]>,
+    textures: Arc<[StaticTexture]>,
 }
 
 /// Appended pixels, placements and identity; publication shares the pixel allocation.
 #[derive(Clone, Debug)]
 pub struct PreparedBlockEntityArtwork {
     pub(super) atlas: BlockEntityAtlas,
+    held: Arc<super::held::PreparedHeldBlockModels>,
 }
 
 impl PreparedBlockEntityArtwork {
+    /// Shares held geometry prepared from these exact static pixels and placements.
+    pub fn held_models(&self) -> &super::held::PreparedHeldBlockModels {
+        &self.held
+    }
+
     /// Returns the immutable atlas built on the preparation worker.
     pub fn atlas(&self) -> &BlockEntityAtlas {
         &self.atlas
@@ -30,14 +42,14 @@ impl PreparedBlockEntityArtwork {
 }
 
 impl BlockEntityArtworkPreparer {
-    /// Snapshots immutable mob textures without copying their pixels.
-    pub(super) fn new(textures: &[MobTexture]) -> Self {
+    /// Snapshots immutable static textures without copying their pixels.
+    pub(super) fn new(textures: &[StaticTexture]) -> Self {
         Self {
             textures: textures.into(),
         }
     }
 
-    /// Admits carrier dimensions only when mobs, maps and every text page also fit.
+    /// Admits carrier dimensions only when static textures, maps and every text page also fit.
     pub fn accepts_size(&self, [width, height]: [u32; 2]) -> bool {
         let limit = MAX_ATLAS_SIDE;
         width > 0
@@ -59,17 +71,18 @@ impl BlockEntityArtworkPreparer {
         }
         let mut atlas = BlockEntityAtlas::from_assets(assets);
         atlas.append_textures(&self.textures);
-        Some(PreparedBlockEntityArtwork { atlas })
+        let held = Arc::new(super::held::PreparedHeldBlockModels::new(&atlas));
+        Some(PreparedBlockEntityArtwork { atlas, held })
     }
 }
 
-/// Computes relative mob shelves without allocating or hashing any atlas pixels.
+/// Computes relative texture shelves without allocating or hashing any atlas pixels.
 /// Invalid textures and duplicate names are skipped, matching the append operation.
 pub(super) fn appended_layout(
     width: u32,
-    textures: &[MobTexture],
+    textures: &[StaticTexture],
     contains: impl Fn(&str) -> bool,
-) -> Option<(u32, Vec<(&MobTexture, AtlasRect)>)> {
+) -> Option<(u32, Vec<(&StaticTexture, AtlasRect)>)> {
     let (mut x, mut y, mut shelf) = (0u32, 0u32, 0u32);
     let mut placements = Vec::new();
     let mut names = BTreeSet::new();
@@ -113,7 +126,7 @@ mod tests {
     #[test]
     fn admission_counts_mob_shelves_and_gutters() {
         let textures: Vec<_> = (0..3)
-            .map(|index| MobTexture {
+            .map(|index| StaticTexture {
                 name: format!("mob/{index}"),
                 width: 512,
                 height: 64,

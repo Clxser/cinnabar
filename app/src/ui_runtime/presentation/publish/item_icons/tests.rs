@@ -98,7 +98,7 @@ fn stream() -> chunk_pipeline::WorldStream {
         local_player_unique_id: 1,
         player_position: [0.0; 3],
         world_spawn_position: [0; 3],
-        air_network_id: protocol::SEQUENTIAL_AIR_NETWORK_ID,
+        air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
         block_network_ids_are_hashes: false,
     });
     assert!(stream.seed_item_registry(protocol::ItemRegistryEvent {
@@ -114,6 +114,8 @@ fn charge_frame(
     tick: u64,
 ) -> UseFrame {
     UseFrame {
+        riptide_facing: Default::default(),
+        riptide: None,
         tick,
         now_millis: tick * 50,
         position: [0.0; 3],

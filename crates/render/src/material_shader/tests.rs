@@ -10,7 +10,10 @@ fn gpu_metadata_preserves_page_and_layer() {
                     let reference = assets::TextureRef::new(page, layer).unwrap();
                     let encoded = gpu_grid_texture_ref(reference, dimensions, 256, grid);
                     assert_eq!(encoded & mask, layer, "{dimensions:?}, grid {grid}");
-                    assert_eq!(encoded >> 31, page);
+                    assert_eq!(
+                        (encoded >> assets::TEXTURE_PAGE_SHIFT) & assets::TEXTURE_PAGE_MASK,
+                        page
+                    );
                 }
             }
         }

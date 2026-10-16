@@ -12,6 +12,7 @@ use client_runtime::network::NetworkHandle;
 use client_runtime::session::{
     begin_session, format_transfer_address, release_off_frame, transfer_handoff_address,
 };
+use launcher::menu::settings_options::SettingId;
 use launcher_host::{
     core_process::{CoreProcessGuard, spawn_core_for_address},
     server_trust::SessionTrust,
@@ -23,7 +24,7 @@ use client_shell::ui_resources::UiRuntimeResource;
 use {
     crate::runtime::{
         network::{CompiledStacks, session::NetworkConfig},
-        shutdown::record_fatal_error,
+        shutdown::{FatalError, record_fatal_error},
         world::{ClientWorld, TransferNotice},
     },
     client_interaction::movement::{LocalPhysicsController, MovementTicker},
@@ -116,7 +117,6 @@ impl SessionController {
     }
 
     /// Stable selected destination, kept independent from invites and transient session ids.
-    #[cfg(feature = "local-mods")]
     pub(crate) fn destination_identity(&self) -> Option<&str> {
         self.destination_identity.as_deref()
     }
@@ -126,7 +126,6 @@ impl SessionController {
     }
 
     /// Endpoint directory of the live session core; unavailable during teardown.
-    #[cfg(feature = "local-mods")]
     pub(crate) fn socket_directory(&self) -> Option<&std::path::Path> {
         self.directory
             .as_ref()
@@ -221,7 +220,8 @@ impl SessionController {
         self.directory = None;
     }
 
-    #[cfg(test)]
+    /// Advances with every join, transfer and leave, so each session is told apart even on
+    /// one address.
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
@@ -277,6 +277,8 @@ pub(crate) struct SessionResources<'w> {
     runtime: ResMut<'w, UiRuntimeResource>,
     player_runtime: ResMut<'w, PlayerRuntime>,
     client_world: ResMut<'w, ClientWorld>,
+    fatal_error: ResMut<'w, FatalError>,
+    collisions: Res<'w, client_interaction::movement::PhysicsCollisionRegistries>,
     movement: ResMut<'w, MovementTicker>,
     local_physics: ResMut<'w, LocalPhysicsController>,
     local_frame: ResMut<'w, LocalPlayerFrameCarrier>,
@@ -285,6 +287,7 @@ pub(crate) struct SessionResources<'w> {
     actor_artwork: Option<Res<'w, render_scene::ActorArtworkResource>>,
     ui_catalog: Option<Res<'w, crate::runtime::network::PackUiCatalog>>,
     input: Option<Res<'w, client_state::SemanticInputSnapshot>>,
+    far_terrain: Option<ResMut<'w, crate::far_terrain::FarTerrain>>,
 }
 
 impl SessionResources<'_> {
@@ -311,6 +314,11 @@ impl SessionResources<'_> {
         let generation = controller.next_generation();
         self.resource_packs.begin_generation(generation);
         begin_session(&mut self.runtime, &mut self.player_runtime, generation);
+        if let (Some(far), Some(stream)) =
+            (self.far_terrain.as_mut(), self.client_world.stream.as_mut())
+        {
+            far.retire_stream(stream);
+        }
         release_off_frame((
             self.client_world.stream.take(),
             self.client_world.pack_entities.take(),
@@ -318,7 +326,7 @@ impl SessionResources<'_> {
             self.client_world.session_items.take(),
         ));
         self.client_world.pending_surface_spawn = None;
-        self.client_world.fatal_error = None;
+        self.fatal_error.0 = None;
         self.client_world.transfer_notice = None;
         quiesce_local_player(
             &mut self.movement,
@@ -366,15 +374,13 @@ fn attempt_connect(
         presence.max_players = menu.destination_max_players(&address);
     }
     session.controller.presence = Some(presence);
-    session.controller.destination_identity = Some(format!(
-        "{}:{}",
-        if local_world { "local" } else { "remote" },
-        if local_world {
-            menu.local_world_identity().unwrap_or(&address).to_owned()
+    session.controller.destination_identity = Some(
+        if let Some(id) = menu.local_world_identity().filter(|_| local_world) {
+            format!("local:{id}")
         } else {
-            address.trim().to_lowercase()
-        }
-    ));
+            format!("remote:{}", address.trim().to_lowercase())
+        },
+    );
     let launcher = session.launcher.as_deref().and_then(|slot| {
         slot.begin_join(
             &address,
@@ -441,7 +447,7 @@ fn poll_join(
     let attempt = controller.join.take().expect("pending join");
     use client_session::connection::JoinPoll;
     match attempt.poll(controller.generation, controller.connecting, || {
-        controller.core.exited()
+        controller.core.exit_status()
     }) {
         JoinPoll::Retired => {}
         JoinPoll::Pending(attempt) => controller.join = Some(attempt),
@@ -479,6 +485,10 @@ fn poll_join(
                 client_random_id,
                 session.actor_artwork.as_deref().map(|artwork| &artwork.0),
                 session.ui_catalog.as_deref(),
+                crate::runtime::network::session_registries::RegistryBase::new(
+                    &session.client_world.runtime_assets,
+                    &session.collisions,
+                ),
             ) {
                 if owned_core {
                     let directory = controller.directory.take();
@@ -510,8 +520,8 @@ pub(crate) fn login_settings(
             }),
         gui_scale_offset: menu.gui_scale_offset(),
         memory_tier: protocol::login_memory_tier(launcher_host::memory::physical_bytes()),
-        graphics_mode: u8::from(menu.settings_snapshot().0.value("graphics_mode") != 0),
-        filter_profanity: menu.settings_snapshot().0.value("filter_profanity") != 0,
+        graphics_mode: u8::from(menu.settings_snapshot().0.value(SettingId::GraphicsMode) != 0),
+        filter_profanity: menu.settings_snapshot().0.value(SettingId::FilterProfanity) != 0,
         resource_pack_cache_dir: Some(menu.layout().resource_pack_cache_dir()),
     }
 }
@@ -531,8 +541,10 @@ fn start_network(
     client_random_id: protocol::ClientRandomId,
     actor_artwork: Option<&render_model::ActorArtworkPages>,
     ui_catalog: Option<&crate::runtime::network::PackUiCatalog>,
+    registry_base: crate::runtime::network::session_registries::RegistryBase,
 ) -> Result<(), String> {
     let replacement = crate::runtime::network::session::spawn_network(NetworkConfig {
+        registry_base,
         session_generation: simulation_clock::identity::SessionGeneration::new(session_generation),
         socket_dir,
         display_name: menu.display_name().to_owned(),
@@ -542,6 +554,8 @@ fn start_network(
         login_settings,
         actor_artwork: actor_artwork.cloned(),
         ui_catalog: ui_catalog.map(|base| base.0.clone()),
+        log_dir: menu.layout().log_dir(),
+        record_session: menu.settings_snapshot().0.record_network_session(),
     })
     .map_err(|error| error.to_string())?;
     commands.insert_resource(
@@ -639,7 +653,7 @@ pub(crate) fn recover_session_failure(
     mut menu: ResMut<MenuRuntime>,
     mut session: SessionResources,
 ) {
-    let Some(error) = session.client_world.fatal_error.clone() else {
+    let Some(error) = session.fatal_error.0.clone() else {
         return;
     };
     if !menu.absorb_session_failure(&error) {
@@ -682,7 +696,7 @@ fn follow_transfer(
         // the server-directed move named explicitly instead of followed.
         session.leave();
         record_fatal_error(
-            &mut session.client_world.fatal_error,
+            &mut session.fatal_error.0,
             format!(
                 "server transferred to {}",
                 format_transfer_address(&notice.host, notice.port)
@@ -751,7 +765,7 @@ mod tests {
 
         let index = SETTINGS_OPTIONS
             .iter()
-            .position(|option| option.name == "filter_profanity")
+            .position(|option| option.id == SettingId::FilterProfanity)
             .unwrap();
         for filter_profanity in [false, true] {
             let layout =

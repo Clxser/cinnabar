@@ -67,6 +67,7 @@ fn actor_render_source_uses_only_remote_actor_pose_and_roster_skin() {
     actor.movement_revision = 23;
     actor.on_ground = Some(true);
     actor.previous_pose = client_world::ActorPose {
+        y_origin: Default::default(),
         position: [8.0, 64.0, -3.0],
         pitch: 10.0,
         yaw: 40.0,
@@ -195,6 +196,21 @@ fn teardown_without_app_exit_arms_the_watchdog() {
     assert_eq!(termination.recv_timeout(Duration::from_secs(1)), Ok(0));
 }
 
+// A panic unwinding the main thread tears the world down too; cut short, it must not exit 0.
+#[test]
+fn teardown_during_a_panic_keeps_the_panic_status() {
+    let (terminated, termination) = mpsc::channel();
+    let watchdog = ShutdownWatchdog::new(Duration::from_millis(10), move |code| {
+        terminated.send(code).unwrap();
+    });
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _teardown = TeardownWatchdog(watchdog);
+        panic!("teardown fixture panic");
+    }));
+    assert!(unwound.is_err());
+    assert_eq!(termination.recv_timeout(Duration::from_secs(1)), Ok(101));
+}
+
 #[test]
 fn window_close_request_exits_before_the_window_is_despawned() {
     assert_eq!(window_close_exit(false), None);
@@ -320,7 +336,7 @@ fn client_world_publication_contract_crosses_the_app_boundary() {
         local_player_runtime_id: 1,
         player_position: [0.0; 3],
         world_spawn_position: [0; 3],
-        air_network_id: 12_530,
+        air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
         block_network_ids_are_hashes: false,
     });
     stream
@@ -414,7 +430,7 @@ fn compiled_and_live_biome_tables_preserve_raw_id_water_colour_parity() {
             local_player_runtime_id: 1,
             player_position: [0.0; 3],
             world_spawn_position: [0; 3],
-            air_network_id: 12_530,
+            air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
             block_network_ids_are_hashes: false,
         },
         runtime_assets,
@@ -485,7 +501,7 @@ fn equal_numeric_revisions_from_different_streams_replace_the_active_table() {
                 local_player_runtime_id: 1,
                 player_position: [0.0; 3],
                 world_spawn_position: [0; 3],
-                air_network_id: 12_530,
+                air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
                 block_network_ids_are_hashes: false,
             },
             runtime_assets,

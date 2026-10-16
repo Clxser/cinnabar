@@ -2,7 +2,7 @@
 
 // Carrier references index the authored table by page and the carrier's whole layer field.
 fn authored_texture_slot(texture_ref: u32) -> u32 {
-    return (texture_ref >> 31u) * (TEXTURE_LAYER_MASK + 1u) + (texture_ref & TEXTURE_LAYER_MASK);
+    return ((texture_ref >> GPU_TEXTURE_PAGE_SHIFT) & GPU_TEXTURE_PAGE_MASK) * (TEXTURE_LAYER_MASK + 1u) + (texture_ref & TEXTURE_LAYER_MASK);
 }
 
 // Authored references keep their layer below the PBR_REF_* flag bits.

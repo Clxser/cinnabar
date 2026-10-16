@@ -3,14 +3,15 @@
 //! The mesh uses the native icon basis (X in [-1, 0], Y in [0, 1]); centering or
 //! mirroring it again would duplicate the correction already in held_sprite_vertices.
 
+#[cfg(test)]
 use actor_animation::ItemAnimationState;
 use bevy::math::{Mat4, Vec3};
 use render_model::RenderBoneTransform;
 
-use {
-    super::display::{FirstPersonShape, first_person_display, view_bone},
-    render_model::equipment::ItemDisplay,
-};
+use {super::display::view_bone, render_model::equipment::ItemDisplay};
+
+#[cfg(test)]
+use super::display::{FirstPersonShape, first_person_display};
 
 #[cfg(test)]
 mod tests;
@@ -24,6 +25,7 @@ const FIRST_PERSON_ITEM_SCALE: f32 = 0.4;
 const CAMERA_ANCHOR: Vec3 = Vec3::new(0.56, -0.52, -0.72);
 
 /// Current native camera stack followed by legacy icon placement.
+#[cfg(test)]
 pub(super) fn sprite_pose(state: ItemAnimationState) -> Option<RenderBoneTransform> {
     pose(
         state,
@@ -34,6 +36,7 @@ pub(super) fn sprite_pose(state: ItemAnimationState) -> Option<RenderBoneTransfo
 }
 
 /// Presentation-mode-1 correction and default display matrix cancel the block Y turns.
+#[cfg(test)]
 pub(super) fn block_pose(state: ItemAnimationState) -> Option<RenderBoneTransform> {
     pose(state, FirstPersonShape::Block)
 }
@@ -98,6 +101,7 @@ fn matrix_bone(matrix: Mat4) -> Option<RenderBoneTransform> {
     })
 }
 
+#[cfg(test)]
 fn pose(state: ItemAnimationState, shape: FirstPersonShape) -> Option<RenderBoneTransform> {
     if !state.attack_time.is_finite() || !state.arm_height.is_finite() {
         return None;

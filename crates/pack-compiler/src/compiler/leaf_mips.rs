@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 
 use assets::{
     Animation, AssetError, MATERIAL_FLAG_NATIVE_LEAF_COLOUR, MAX_ANIMATION_FRAMES, MAX_ANIMATIONS,
-    MAX_CARRIER_TEXTURE_LAYERS, MAX_TEXTURE_PAGES, Material, NO_ANIMATION, TexturePage, TextureRef,
-    texture::{MIP_COUNT, TILE_SIZE, TextureArray, TextureMip, build_legacy_terrain_mip_chain},
+    MAX_CARRIER_TEXTURE_LAYERS, MAX_CARRIER_TEXTURE_PAGES, MIP_COUNT, Material, NO_ANIMATION,
+    TILE_SIZE, TextureArray, TextureMip, TexturePage, TextureRef, build_legacy_terrain_mip_chain,
 };
 
 pub(super) struct CompiledLeafTextures {
@@ -80,7 +80,7 @@ struct NativeLayers<'a> {
 
 impl<'a> NativeLayers<'a> {
     fn new(pages: &'a [TexturePage]) -> Result<Self, AssetError> {
-        if pages.is_empty() || pages.len() > MAX_TEXTURE_PAGES {
+        if pages.is_empty() || pages.len() > MAX_CARRIER_TEXTURE_PAGES {
             return Err(invalid("world leaf texture pages are outside their bound"));
         }
         for page in pages {
@@ -128,7 +128,7 @@ impl<'a> NativeLayers<'a> {
             .iter()
             .position(|&layers| layers < MAX_CARRIER_TEXTURE_LAYERS)
             .unwrap_or(self.counts.len());
-        if page_index >= MAX_TEXTURE_PAGES {
+        if page_index >= MAX_CARRIER_TEXTURE_PAGES {
             return Err(invalid(
                 "world leaf copies exceed the texture page/layer budget",
             ));
@@ -155,7 +155,7 @@ fn append_layers(
     additions: Vec<(TextureRef, Box<[TextureMip]>)>,
 ) -> Result<Box<[TexturePage]>, AssetError> {
     // Append each page once. Its existing per-mip prefixes stay byte-identical.
-    for index in 0..MAX_TEXTURE_PAGES {
+    for index in 0..MAX_CARRIER_TEXTURE_PAGES {
         let layers = additions
             .iter()
             .filter(|(texture, _)| texture.page() as usize == index)

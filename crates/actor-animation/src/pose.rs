@@ -15,6 +15,7 @@ pub(super) struct LocalDelta {
     pub(super) rotation: [f32; 3],
     pub(super) scale: [f32; 3],
     pub(super) rotation_relative_to_entity: bool,
+    pub(super) legacy_swing: Option<super::legacy_swing::Delta>,
 }
 
 impl Default for LocalDelta {
@@ -24,6 +25,7 @@ impl Default for LocalDelta {
             rotation: [0.0; 3],
             scale: [1.0; 3],
             rotation_relative_to_entity: false,
+            legacy_swing: None,
         }
     }
 }
@@ -58,6 +60,15 @@ pub(super) fn sample_clips(
         ]
     });
     let mut pending: Option<ControllerBlend> = None;
+    let mut legacy_weight = 0.0_f32;
+    let legacy_attack = !evaluator.pack
+        && !evaluator.context.is_local_first_person
+        && super::legacy_swing::ordinary(
+            evaluator.actor,
+            evaluator.context,
+            evaluator.input.swim_amount,
+        );
+    let mut channel_bones = ChannelBones::new(bone_names);
     for weighted in clips {
         budget.charge_work()?;
         if let (Some(blend), Some(sides)) = (pending, sides.as_mut())
@@ -83,6 +94,27 @@ pub(super) fn sample_clips(
             .animation_clips()
             .get(weighted.clip)
             .ok_or(EvalError::Invalid)?;
+        if legacy_attack {
+            match assets
+                .symbols()
+                .get(clip.symbol as usize)
+                .map(|symbol| symbol.identifier.as_ref())
+            {
+                Some("animation.player.attack.positions") => continue,
+                Some("animation.player.attack.rotations") => {
+                    legacy_weight += weight
+                        * weighted.blend.map_or(1.0, |blend| {
+                            if blend.incoming {
+                                blend.amount
+                            } else {
+                                1.0 - blend.amount
+                            }
+                        });
+                    continue;
+                }
+                _ => {}
+            }
+        }
         if let Some(cacheable) = budget.static_draw.as_mut() {
             *cacheable &= weighted.blend.is_none()
                 && clip.loop_mode != EntityAnimationLoop::Once
@@ -120,7 +152,7 @@ pub(super) fn sample_clips(
         // An override clip first restores every bone it animates to its whole default pose.
         if clip.override_previous {
             for channel in channels {
-                let Some(index) = channel_bone(channel, bone_names) else {
+                let Some(index) = channel_bones.resolve(channel) else {
                     continue;
                 };
                 *pose.get_mut(index).ok_or(EvalError::Invalid)? = LocalDelta::default();
@@ -131,7 +163,7 @@ pub(super) fn sample_clips(
                 *cacheable &= channel.keyframe_count == 1;
             }
             budget.charge_work()?;
-            let Some(index) = channel_bone(channel, bone_names) else {
+            let Some(index) = channel_bones.resolve(channel) else {
                 continue;
             };
             let bone = pose.get_mut(index).ok_or(EvalError::Invalid)?;
@@ -165,13 +197,46 @@ pub(super) fn sample_clips(
     if let (Some(blend), Some(sides)) = (pending, sides.as_mut()) {
         compose_blend(&mut local, sides, blend.amount);
     }
+    if legacy_weight > 0.0 {
+        super::legacy_swing::apply(
+            bone_names,
+            &mut local,
+            variables
+                .get(evaluator.layout.engine.attack_time)
+                .unwrap_or(evaluator.input.attack_time),
+            evaluator.input.pitch.to_radians(),
+            legacy_weight,
+        )?;
+    }
     Ok(local)
 }
 
-fn channel_bone(channel: &assets::EntityAnimationChannel, names: &[Box<str>]) -> Option<usize> {
-    match &channel.bone_name {
-        Some(name) => names.iter().position(|candidate| candidate == name),
-        None => Some(channel.bone as usize),
+/// Resolves animation channels to bones of one skeleton by lowercase name or compiled index.
+/// Clips list each bone's properties consecutively, so a channel naming the same bone as the
+/// previous one reuses that scan's result.
+pub(super) struct ChannelBones<'a> {
+    names: &'a [Box<str>],
+    last: Option<(&'a str, Option<usize>)>,
+}
+
+impl<'a> ChannelBones<'a> {
+    pub(super) fn new(names: &'a [Box<str>]) -> Self {
+        Self { names, last: None }
+    }
+
+    /// The first bone named by `channel`, or its compiled index when it names none.
+    pub(super) fn resolve(&mut self, channel: &'a assets::EntityAnimationChannel) -> Option<usize> {
+        let Some(name) = channel.bone_name.as_deref() else {
+            return Some(channel.bone as usize);
+        };
+        if let Some((last, index)) = self.last
+            && last == name
+        {
+            return index;
+        }
+        let index = self.names.iter().position(|candidate| **candidate == *name);
+        self.last = Some((name, index));
+        index
     }
 }
 
@@ -309,7 +374,13 @@ pub(super) fn compose_pose(
     bones: &[RuntimeBone],
     local: &[LocalDelta],
 ) -> Option<Vec<BoneTransform>> {
-    compose_pose_with_targets(bones, local, &[])
+    let baseline = compose_pose_with_targets(bones, local, &[])?;
+    if !local.iter().any(|delta| delta.legacy_swing.is_some()) {
+        return Some(baseline);
+    }
+    // Named skin drivers carry attack deltas, never absolute transforms from another geometry.
+    let targets = super::legacy_swing::targets(&baseline, local);
+    compose_pose_with_targets(bones, local, &targets)
 }
 
 /// Retarget named joints in model space while composing their clothing and other children.

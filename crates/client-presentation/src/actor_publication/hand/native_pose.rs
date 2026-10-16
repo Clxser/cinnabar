@@ -4,6 +4,11 @@ use std::borrow::Cow;
 
 type RenderPose = Arc<[render_model::RenderBoneTransform]>;
 
+struct NativeBodyPose {
+    bones: [RenderPose; 2],
+    skin: Option<Arc<[actor_animation::SkinRenderLayer]>>,
+}
+
 struct NativePoseInput {
     consume: Option<u32>,
     animation: Option<actor_animation::AttachableAnimationInput<'static>>,
@@ -25,6 +30,14 @@ struct PoseKey {
 /// Keeps one lifetime's sampled pose instead of resampling unchanged captured inputs.
 #[derive(Default)]
 pub(in super::super) struct NativePoseCache {
+    rest: Option<(
+        (
+            actor_animation::ActorLifetimeId,
+            actor_animation::EntityRigId,
+            u64,
+        ),
+        RenderPose,
+    )>,
     key: Option<PoseKey>,
     pose: Option<[RenderPose; 2]>,
     skin_layers: Option<Arc<[actor_animation::SkinRenderLayer]>>,
@@ -33,6 +46,22 @@ pub(in super::super) struct NativePoseCache {
 }
 
 impl NativePoseCache {
+    /// Converts immutable rest geometry once for the bare-arm camera stack.
+    pub(super) fn rest_pose(
+        &mut self,
+        rig: &actor_animation::ActorRigSnapshot<'_>,
+    ) -> Option<RenderPose> {
+        let key = (rig.actor, rig.rig, rig.rest_reset_generation);
+        if self
+            .rest
+            .as_ref()
+            .is_none_or(|(retained, _)| *retained != key)
+        {
+            self.rest = Some((key, crate::presentation::actors::convert_bones(rig.rest)?));
+        }
+        self.rest.as_ref().map(|(_, pose)| Arc::clone(pose))
+    }
+
     /// Applies the sampled parent only when a native arm or attachable consumes its bones.
     pub(in super::super) fn apply(&mut self, inputs: &mut HandInputs<'_>) {
         if let Some([previous, current]) = self.sample(
@@ -75,6 +104,21 @@ impl NativePoseCache {
             presentation.submission.input.previous_bones = previous;
             presentation.submission.input.current_bones = current;
         }
+    }
+
+    /// Publishes a remote body and returns its sampled persona layers from the shared frame.
+    pub(in super::super) fn apply_frame_body(
+        frame: &mut actor_animation::ActorRenderFrame<'_>,
+        presentation: &mut ActorRigPresentation,
+    ) -> Option<Arc<[actor_animation::SkinRenderLayer]>> {
+        let runtime_id = presentation.submission.input.identity.runtime_id;
+        let NativeBodyPose {
+            bones: [previous, current],
+            skin,
+        } = body_pose(presentation, frame.layers_with_skin(runtime_id)?)?;
+        presentation.submission.input.previous_bones = previous;
+        presentation.submission.input.current_bones = current;
+        skin
     }
 
     /// Samples native parent bones without requesting unused first-person persona layers.
@@ -142,26 +186,9 @@ impl NativePoseCache {
                 })
         };
         let pose = sampled.and_then(|sampled| {
-            let Cow::Owned(layers) = sampled.render else {
-                return None;
-            };
-            let layer = layers.iter().find(|layer| {
-                layer.geometry.is_none()
-                    && layer.pose.len() == presentation.submission.input.current_bones.len()
-                    && layer.previous_pose.len()
-                        == presentation.submission.input.previous_bones.len()
-                    && !layer.pose.is_empty()
-            })?;
-            let current = crate::presentation::actors::convert_bones(&layer.pose)?;
-            let previous = if Arc::ptr_eq(&layer.previous_pose, &layer.pose) {
-                Arc::clone(&current)
-            } else {
-                crate::presentation::actors::convert_bones(&layer.previous_pose)?
-            };
-            if let Cow::Owned(skin) = sampled.skin {
-                self.skin_layers = Some(skin.into());
-            }
-            Some([previous, current])
+            let pose = body_pose(presentation, sampled)?;
+            self.skin_layers = pose.skin;
+            Some(pose.bones)
         });
         #[cfg(test)]
         {
@@ -172,4 +199,34 @@ impl NativePoseCache {
         self.pose = pose.clone();
         pose
     }
+}
+
+/// Converts sampled native endpoints only when they match the runtime body's skeleton.
+fn body_pose(
+    presentation: &ActorRigPresentation,
+    sampled: actor_animation::ActorRenderLayers<'_>,
+) -> Option<NativeBodyPose> {
+    let Cow::Owned(layers) = sampled.render else {
+        return None;
+    };
+    let layer = layers.iter().find(|layer| {
+        layer.geometry.is_none()
+            && layer.pose.len() == presentation.submission.input.current_bones.len()
+            && layer.previous_pose.len() == presentation.submission.input.previous_bones.len()
+            && !layer.pose.is_empty()
+    })?;
+    let current = crate::presentation::actors::convert_bones(&layer.pose)?;
+    let previous = if Arc::ptr_eq(&layer.previous_pose, &layer.pose) {
+        Arc::clone(&current)
+    } else {
+        crate::presentation::actors::convert_bones(&layer.previous_pose)?
+    };
+    let skin = match sampled.skin {
+        Cow::Owned(skin) => Some(skin.into()),
+        Cow::Borrowed(_) => None,
+    };
+    Some(NativeBodyPose {
+        bones: [previous, current],
+        skin,
+    })
 }

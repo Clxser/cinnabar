@@ -37,6 +37,44 @@ fn front_orbit_follows_pitch_and_yaw_without_rolling_at_the_pitch_limits() {
 }
 
 #[test]
+fn nametags_follow_the_front_view_pitch_sign() {
+    let subject = Vec3::new(4.0, 20.0, -3.0);
+    for yaw in [-2.6, 0.0, 0.8] {
+        for pitch in [-0.7, 0.0, 0.7] {
+            let rotation = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
+            for perspective in [
+                PerspectiveMode::ThirdPersonBack,
+                PerspectiveMode::ThirdPersonFront,
+            ] {
+                let view =
+                    client_presentation::camera::perspective_pose(subject, rotation, perspective);
+                let expected_rotation = if perspective == PerspectiveMode::ThirdPersonFront {
+                    Quat::from_euler(EulerRot::YXZ, yaw + std::f32::consts::PI, -pitch, 0.0)
+                } else {
+                    rotation
+                };
+                let record = render_model::NametagRecord {
+                    anchor: (subject + rotation * Vec3::new(4.0, 0.0, -5.0)).to_array(),
+                    rect: [-20.0, -5.0, 20.0, 5.0],
+                    ..default()
+                };
+                let corners = record
+                    .world_corners(view.rotation)
+                    .unwrap()
+                    .map(Vec3::from_array);
+                let right = corners[1] - corners[0];
+                let down = corners[3] - corners[0];
+                assert!(
+                    (right.cross(down).normalize() - expected_rotation * Vec3::NEG_Z).length()
+                        < 1e-5
+                );
+                assert!((down.normalize() + expected_rotation * Vec3::Y).length() < 1e-5);
+            }
+        }
+    }
+}
+
+#[test]
 fn routed_mouse_turns_keep_actor_direction_through_the_f5_cycle() {
     let mut app = App::new();
     app.insert_resource(client_state::PlayerRuntime(player_state::PlayerState::new(

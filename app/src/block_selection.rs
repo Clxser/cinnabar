@@ -1,13 +1,16 @@
 //! Publishes the current gameplay pick to the native outline/highlight overlay passes.
 use bevy::{ecs::system::SystemParam, prelude::*};
 use gameplay::melee::{Crosshair, classify, pick_actor};
-use render_model::{BlockSelectionTarget, CrackShape, crack_shape_from_template};
+use render_model::{BlockSelectionTarget, CrackShape, crack_shape_for_block};
 use sim::PaletteWorld;
 use simulation_clock::identity::SessionGeneration;
 
 use client_shell::ui_resources::UiRuntimeResource;
 use {
-    crate::{interaction_authority::ray_is_current, runtime::world::ClientWorld},
+    crate::{
+        interaction_authority::ray_is_current,
+        runtime::{shutdown::FatalError, world::ClientWorld},
+    },
     client_interaction::movement::PhysicsCollisionRegistries,
     client_presentation::local_player::InteractionOriginSnapshot,
     client_state::{ClientFrameSet, RuntimeSettings, SemanticInputSnapshot},
@@ -18,6 +21,7 @@ use {
 pub(crate) struct SelectionContext<'w> {
     player: Res<'w, client_state::PlayerRuntime>,
     world: Res<'w, ClientWorld>,
+    fatal_error: Res<'w, FatalError>,
     collisions: Res<'w, PhysicsCollisionRegistries>,
     ui: Res<'w, UiRuntimeResource>,
     focus: Res<'w, client_state::ScreenFocus>,
@@ -55,8 +59,7 @@ fn target(
     player_runtime: &client_state::PlayerRuntime,
     context: &SelectionContext,
 ) -> Option<BlockSelectionTarget> {
-    if context.focus.menu_visible || context.focus.ui_focused || context.world.fatal_error.is_some()
-    {
+    if context.focus.menu_visible || context.focus.ui_focused || context.fatal_error.0.is_some() {
         return None;
     }
     let stream = context.world.stream.as_ref()?;
@@ -122,13 +125,14 @@ fn target(
     let outline = world.block_outline(hit.block_pos, hit.runtime_id).ok()??;
     let point = |point: sim::Vec3| [point.x as f32, point.y as f32, point.z as f32];
     let assets = stream.runtime_assets();
-    let visual = assets.resolve(stream.network_id_mode(), hit.runtime_id);
-    let shape = visual
-        .model_template()
-        .and_then(|template| {
-            crack_shape_from_template(assets, template, visual.variant(), hit.block_pos)
-        })
-        .unwrap_or(CrackShape::Cube);
+    let shape = crack_shape_for_block(
+        assets,
+        stream.network_id_mode(),
+        hit.runtime_id,
+        hit.block_pos,
+        |position| world.primary_runtime_id(position).ok(),
+    )
+    .unwrap_or(CrackShape::Cube);
     Some(BlockSelectionTarget {
         block: hit.block_pos,
         bounds: [point(outline.min), point(outline.max)],

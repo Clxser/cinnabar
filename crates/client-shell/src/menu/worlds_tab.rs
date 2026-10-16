@@ -64,6 +64,20 @@ impl Default for LocalWorldsUi {
 }
 
 impl MenuRuntime {
+    /// The local world the player is in, by id; `None` outside one.
+    #[must_use]
+    pub fn playing_local_world(&self) -> Option<&str> {
+        self.local_world_active
+            .then_some(self.local_ui.world_id.as_deref())
+            .flatten()
+    }
+
+    /// Whether the Worlds tab is on screen, where dropped world files import.
+    #[must_use]
+    pub fn showing_worlds(&self) -> bool {
+        self.visible && self.screen == MenuScreen::Play
+    }
+
     /// The core's stable local-world identifier, independent of a rename or invite.
     pub fn local_world_identity(&self) -> Option<&str> {
         self.local_ui.world_id.as_deref()
@@ -97,7 +111,7 @@ impl MenuRuntime {
     pub fn sync_local_worlds(&mut self, worlds: &mut LocalWorlds, in_session: bool) {
         self.sync_storage_worlds(worlds);
         self.push_local_text(worlds);
-        let on_worlds = self.visible && self.screen == MenuScreen::Play;
+        let on_worlds = self.showing_worlds();
         if on_worlds && !self.local_ui.prepared {
             worlds.prepare();
         }
@@ -112,7 +126,15 @@ impl MenuRuntime {
         if view.screen != before {
             self.load_local_text(&view);
         }
-        let cards = worlds.menu().worlds().iter().map(world_card).collect();
+        let cards = worlds
+            .menu()
+            .worlds()
+            .iter()
+            .map(|world| launcher::menu::LocalWorldCard {
+                thumbnail: worlds.thumbnail(&world.id),
+                ..world_card(world)
+            })
+            .collect();
         self.set_local_worlds(cards);
         if let Some(index) = self.take_local_world_request() {
             worlds.input(Input::Select(index));
@@ -259,6 +281,8 @@ impl MenuRuntime {
         }
         match view.screen {
             Screen::List | Screen::Opening | Screen::BackendPrompt => None,
+            // The import modal has no buttons and the copy cannot be interrupted.
+            Screen::Importing => Some(Vec::new()),
             Screen::Create => match view.tab {
                 Tab::General => local(&[
                     A::Create,
@@ -293,10 +317,7 @@ impl MenuRuntime {
                 A::Difficulty(Difficulty::Hard),
                 A::Delete,
             ]),
-            Screen::Templates => Some(vec![
-                MenuAction::LocalWorld(A::BeginCreate),
-                MenuAction::Store(launcher::store::OPEN),
-            ]),
+            Screen::Templates => Some(vec![MenuAction::LocalWorld(A::BeginCreate)]),
             Screen::ConfirmDelete => local(&[A::Back, A::ConfirmDelete]),
             Screen::Eula => local(&[A::AcceptEula, A::ViewEula, A::Back]),
             Screen::Error => local(&[A::Back]),
@@ -405,6 +426,22 @@ mod tests {
         assert!(menu.view().local_worlds.is_empty());
         menu.activate(MenuAction::PlayLocalWorld(0));
         assert_eq!(menu.take_local_world_request(), None);
+    }
+
+    /// Keyboard and gamepad focus cannot reach the tab or navigation behind the import modal.
+    #[test]
+    fn importing_blocks_focus_behind_its_modal() {
+        let mut menu = MenuRuntime::new(true, 2, "Steve".to_owned());
+        menu.activate(MenuAction::Navigate(MenuScreen::Play));
+        menu.local_ui.view.screen = Screen::Importing;
+        assert_eq!(menu.focus_actions(), Vec::<MenuAction>::new());
+        menu.move_focus(1);
+        menu.activate_focused();
+        assert_eq!(menu.view().screen, MenuScreen::Play);
+        assert!(
+            menu.local_ui.actions.is_empty(),
+            "nothing reached the module"
+        );
     }
 
     #[test]

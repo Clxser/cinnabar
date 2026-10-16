@@ -1,6 +1,6 @@
 //! Optional local typography for the explicitly granted personal controls panel.
 
-use std::{fs::File, io::Read, path::Path};
+use std::path::Path;
 
 use assets::{
     CellGlyph, FontPixels, FontTexturePage, RuntimeFontCatalog, encode_font_catalog, pack_cells,
@@ -10,21 +10,15 @@ use sha2::{Digest, Sha256};
 /// Optional font selected for the personal controls panel.
 pub const FONT_ENV: &str = "CINNABAR_MOD_FONT";
 /// Upper bound on the local font source read by the registration worker.
-pub const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_SOURCE_BYTES: usize = mod_api::MAX_PANEL_FONT_BYTES;
 const ATLAS_SIDE: u32 = render_model::UI_LOCAL_FONT_PAGE_SIDE;
 const FONT_EM: f32 = 18.0;
 const RASTER_SCALE: u32 = 2;
 
 /// Reads and rasterizes a bounded local source on the registration worker.
 pub fn load(path: &Path) -> Result<RuntimeFontCatalog, String> {
-    let file = File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let mut bytes = Vec::new();
-    file.take((MAX_SOURCE_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
-    if bytes.len() > MAX_SOURCE_BYTES {
-        return Err("font source exceeds local byte limit".into());
-    }
+    let bytes = mod_host::local_files::read(path, MAX_SOURCE_BYTES)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
     rasterize(&bytes)
 }
 

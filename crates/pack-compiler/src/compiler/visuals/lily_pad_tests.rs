@@ -163,6 +163,13 @@ fn current_registry_lily_pad_uses_native_planes_tint_and_isolated_materials() {
         assert!(!keys.materials("pad_alias").contains(&quad.material));
     }
     assert_eq!(visual.faces, [quads[0].material; 6]);
+    assert_eq!(
+        keys.material_source(quads[0].material).unwrap().baked_tint,
+        Some([32, 128, 48])
+    );
+    for &alias in keys.materials("pad_alias") {
+        assert_eq!(keys.material_source(alias).unwrap().baked_tint, None);
+    }
     let decoded_keys = MaterialKeys::from_json(
         &keys.to_json(compiled.materials.len() as u32),
         compiled.materials.len(),

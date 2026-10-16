@@ -157,14 +157,14 @@ fn world_leaf_mip_copies_keep_pages_device_compatible_and_fail_at_total_capacity
         Box::default(),
     )
     .unwrap();
-    assert_eq!(result.pages.len(), MAX_TEXTURE_PAGES);
+    assert_eq!(result.pages.len(), MAX_CARRIER_TEXTURE_PAGES);
     assert_eq!(materials[0].texture, TextureRef::new(1, 0).unwrap());
     assert_eq!(result.pages[0], full);
     let mut materials = [material(TextureRef::DIAGNOSTIC, true)];
     assert!(
         install(
             &mut materials,
-            vec![full; MAX_TEXTURE_PAGES].into(),
+            vec![full; MAX_CARRIER_TEXTURE_PAGES].into(),
             Box::default(),
             Box::default()
         )

@@ -40,7 +40,7 @@ fn release_local_terrain(
         local_player_unique_id: 42,
         player_position: position,
         world_spawn_position: [0, 64, 0],
-        air_network_id: protocol::SEQUENTIAL_AIR_NETWORK_ID,
+        air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
         block_network_ids_are_hashes: false,
     });
     let slots = protocol::vanilla_dimension_range(dimension)
@@ -122,9 +122,11 @@ fn release_local_terrain(
         .queue_switch(Duration::ZERO, true, &network)
         .unwrap();
     let mut diagnostics = VisibilityDiagnosticsInput::default();
+    let mut fatal_error = None;
     for frame_generation in 10..=if wait_for_actor_pipelines { 13 } else { 11 } {
         prepare_loading(
             &mut client_world,
+            &mut fatal_error,
             &mut presentation,
             &runtime,
             &mut diagnostics,
@@ -160,5 +162,5 @@ fn release_local_terrain(
         presentation.startup_mut().completion_queued,
         completion_queued
     );
-    assert!(client_world.fatal_error.is_none());
+    assert!(fatal_error.is_none());
 }

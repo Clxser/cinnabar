@@ -20,7 +20,11 @@ mod capture;
 /// Everything the session applies from its server pack stack.
 #[derive(Clone, Debug)]
 pub struct PackApplication {
+    /// One-shot block state prepared after reusable pack compilation.
+    pub(super) registries: Option<super::session_registries::PreparedSessionRegistries>,
     pub(super) dependencies: pack_runtime::reload_diff::Dependencies,
+    /// Finalized by the join or reload worker after all terrain reads have been recorded.
+    pub(super) terrain_identity: [u8; 32],
     /// Inert metadata only; accepting a pack does not authorize execution.
     pub(crate) extension_marker: Option<Arc<[u8]>>,
     pub(crate) admission: PackAdmission,
@@ -47,7 +51,9 @@ pub struct PackApplication {
 impl Default for PackApplication {
     fn default() -> Self {
         Self {
+            registries: None,
             dependencies: Default::default(),
+            terrain_identity: [0; 32],
             extension_marker: None,
             admission: PackAdmission::None,
             inputs: Arc::default(),
@@ -77,17 +83,35 @@ impl PackApplication {
     }
 
     /// Prepares against the exact base snapshot that this application will publish over.
-    pub(super) fn prepare_actor_artwork(&mut self, base: Option<&render_model::ActorArtworkPages>) {
-        self.prepared_actor_artwork = base.zip(self.entities.as_ref()).map(|(base, pack)| {
-            if let Some(previous) = &self.prepared_actor_artwork
-                && previous.pages_for(base, pack).is_some()
-            {
-                return previous.clone();
-            }
-            Arc::new(
-                client_presentation::prepared_actor_artwork::PreparedActorArtwork::new(base, pack),
+    pub(super) fn prepare_actor_artwork(
+        &mut self,
+        base: Option<&render_model::ActorArtworkPages>,
+        blocks: Option<Arc<client_presentation::presentation::equipment::PreparedBlockItems>>,
+    ) {
+        let Some(base) = base.filter(|_| {
+            self.entities.is_some() || self.block_entity_art.is_some() || blocks.is_some()
+        }) else {
+            self.prepared_actor_artwork = None;
+            return;
+        };
+        if let Some(previous) = &self.prepared_actor_artwork
+            && previous.matches_sources(
+                base,
+                self.entities.as_ref(),
+                self.block_entity_art.as_ref(),
             )
-        });
+            && previous.matches_block_items(blocks.as_ref())
+        {
+            return;
+        }
+        self.prepared_actor_artwork = Some(Arc::new(
+            client_presentation::prepared_actor_artwork::PreparedActorArtwork::new_with_block_items(
+                base,
+                self.entities.as_ref(),
+                self.block_entity_art.as_ref(),
+                blocks,
+            ),
+        ));
     }
 }
 
@@ -146,7 +170,10 @@ fn prepare_join_with(
         },
     )?;
     Some(packs.map(|mut packs| {
-        packs.prepare_actor_artwork(bases.actor_artwork);
+        if let PackAdmission::Validated(stack) = &packs.admission {
+            packs.terrain_identity = terrain_identity(stack, &packs.dependencies);
+        }
+        packs.prepare_actor_artwork(bases.actor_artwork, None);
         let source_ui = packs.server_ui.clone();
         packs.prepare_ui_catalog(bases.ui_catalog);
         let now = reuse::CompileEnvironment::current();
@@ -312,8 +339,9 @@ fn compile_application(
                                 view,
                                 custom_blocks,
                                 hashed_block_ids,
-                                BASE_MATERIAL_KEYS.get(),
+                                BASE_MATERIAL_KEYS.get().map(|(keys, _)| keys),
                                 max_layers,
+                                base_world_assets(),
                             )
                             .map(Arc::new)
                         },
@@ -326,23 +354,31 @@ fn compile_application(
             {
                 bevy::log::warn!(gaps = ?compiled.gaps, "server block visuals are incomplete");
             }
-            let block_icons = overlay
-                .as_deref()
-                .map_or_else(BlockIcons::default, |compiled| {
-                    custom_block_icons(
-                        &compiled.overlay,
-                        custom_blocks,
-                        hashed_block_ids,
-                        &inputs.block_items,
-                    )
-                });
-            icons = compile_part(
+            icons = compile_icons(
                 &stack,
                 cancelled,
                 changes.icons || changes.blocks,
-                Subscriber::Icons,
                 previous.and_then(|old| old.item_icons.clone()),
-                |view| compile_session_icons(view, icon_keys, block_icons),
+                icon_keys,
+                || {
+                    let mut block_icons =
+                        overlay
+                            .as_deref()
+                            .map_or_else(BlockIcons::default, |compiled| {
+                                custom_block_icons(
+                                    &compiled.overlay,
+                                    custom_blocks,
+                                    hashed_block_ids,
+                                    &inputs.block_items,
+                                )
+                            });
+                    if let (Some(compiled), Some((_, base))) =
+                        (overlay.as_deref(), BASE_MATERIAL_KEYS.get())
+                    {
+                        super::item_icons::vanilla_blocks::append(base, compiled, &mut block_icons);
+                    }
+                    block_icons
+                },
             );
         });
         scope.spawn(|_| {
@@ -448,6 +484,7 @@ fn compile_application(
             .or_default()
             .extend(inputs);
     }
+    let terrain_identity = previous.map_or([0; 32], |previous| previous.terrain_identity);
     client_runtime::item_diagnostics::session_icons(icon_keys, item_icons.as_deref());
     if entities_stopped || cancelled() {
         return None;
@@ -469,6 +506,7 @@ fn compile_application(
         ),
     };
     Some(PackApplication {
+        registries: None,
         extension_marker,
         property_defaults,
         prepared_actor_artwork: previous.and_then(|old| old.prepared_actor_artwork.clone()),
@@ -486,7 +524,24 @@ fn compile_application(
         admission: PackAdmission::Validated(stack),
         block_overlay,
         dependencies,
+        terrain_identity,
     })
+}
+
+/// Separates cached terrain colors using the base pack and the block compiler's tracked reads.
+pub(super) fn terrain_identity(
+    stack: &resource_pack::ValidatedPackStack,
+    dependencies: &pack_runtime::reload_diff::Dependencies,
+) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let inputs = &dependencies[&pack_runtime::reload_diff::Subscriber::Blocks];
+    Sha256::new()
+        .chain_update(assets::vanilla_source_manifest_sha256())
+        .chain_update(pack_runtime::reload_diff::dependency_fingerprint(
+            stack, inputs,
+        ))
+        .finalize()
+        .into()
 }
 
 pub(super) fn install_server_ui(
@@ -513,6 +568,15 @@ pub(crate) fn await_overlay_texture_device() {
 pub(crate) fn initialize_overlay_texture_limit(
     device: Option<bevy::prelude::Res<bevy::render::renderer::RenderDevice>>,
 ) {
+    let max_dimension_2d = device.as_ref().map_or_else(
+        || wgpu::Limits::default().max_texture_dimension_2d,
+        |device| device.limits().max_texture_dimension_2d,
+    );
+    assets::texture::policy::set_device_policy(max_dimension_2d);
+    assets::texture::policy::set_terrain_device_policy(
+        max_dimension_2d,
+        resource_pack::subpacks::device_memory_tier(launcher_host::memory::physical_bytes()),
+    );
     let limit = device.map_or_else(
         || wgpu::Limits::default().max_texture_array_layers,
         |device| device.limits().max_texture_array_layers,
@@ -532,10 +596,58 @@ pub(super) fn overlay_texture_layer_limit() -> u32 {
 }
 
 /// Texture keys of the vanilla carrier's materials, set once at startup when the sidecar loads.
-static BASE_MATERIAL_KEYS: std::sync::OnceLock<assets::MaterialKeys> = std::sync::OnceLock::new();
+static BASE_MATERIAL_KEYS: std::sync::OnceLock<(
+    assets::material_keys::MaterialKeys,
+    Arc<assets::RuntimeAssets>,
+)> = std::sync::OnceLock::new();
 
-pub(crate) fn set_base_material_keys(keys: assets::MaterialKeys) {
-    let _ = BASE_MATERIAL_KEYS.set(keys);
+static BASE_WORLD_ASSETS: std::sync::OnceLock<Arc<assets::RuntimeAssets>> =
+    std::sync::OnceLock::new();
+
+/// Keeps material admission bounded by the world table even when its optional sidecar is absent.
+pub(crate) fn set_base_world_assets(base: Arc<assets::RuntimeAssets>) {
+    let _ = BASE_WORLD_ASSETS.set(base);
+}
+
+/// Uses the sidecar's matching world, or the startup world when no sidecar was available.
+fn base_world_assets() -> Option<&'static assets::RuntimeAssets> {
+    BASE_MATERIAL_KEYS
+        .get()
+        .map(|(_, base)| base.as_ref())
+        .or_else(|| BASE_WORLD_ASSETS.get().map(AsRef::as_ref))
+}
+
+/// Installs immutable source facts and pixels from the same world carrier.
+pub(crate) fn set_base_material_keys(
+    keys: assets::material_keys::MaterialKeys,
+    base: Arc<assets::RuntimeAssets>,
+) {
+    let _ = BASE_MATERIAL_KEYS.set((keys, base));
+}
+
+/// Icon output and optional dependency reads returned by the subscriber gate.
+type CompiledIcons = Option<(
+    Option<Arc<SessionIcons>>,
+    Option<std::collections::BTreeSet<resource_pack::PackDependency>>,
+)>;
+
+/// Bakes block art only when the icon subscriber compiles, preserving reused icon outputs.
+fn compile_icons(
+    stack: &Arc<resource_pack::ValidatedPackStack>,
+    cancelled: &(dyn Fn() -> bool + Sync),
+    changed: bool,
+    reuse: Option<Arc<SessionIcons>>,
+    icon_keys: &[(Arc<str>, Arc<str>)],
+    bake_blocks: impl FnOnce() -> BlockIcons,
+) -> CompiledIcons {
+    pack_runtime::reload_diff::compile_part(
+        stack,
+        cancelled,
+        changed,
+        pack_runtime::reload_diff::Subscriber::Icons,
+        reuse,
+        |view| compile_session_icons(view, icon_keys, bake_blocks()),
+    )
 }
 
 use pack_runtime::pack_language::merged_server_lang;

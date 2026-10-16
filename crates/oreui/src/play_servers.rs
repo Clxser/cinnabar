@@ -1,5 +1,5 @@
 //! The play route's Servers tab (classic layout): the side menu in four of
-//! twelve columns (Add server, featured experiences then custom servers) and
+//! twelve columns (Add server and reorderable server categories) and
 //! the selected server's details in eight (10:3 banner with ping and players,
 //! name with the hero Play button, then description, activities and news for
 //! an experience, or edit and remove for a saved server).
@@ -10,6 +10,10 @@ mod details;
 pub(super) mod drag;
 mod list;
 use details::{details, saved_details};
+
+/// The complete draggable header row, including its top inset, must fit in the list.
+pub(super) const GROUP_HEADER_HEIGHT: f32 = 4.8;
+const GROUP_HEADER_INSET: f32 = 1.6;
 
 #[cfg(test)]
 mod catalog_tests;
@@ -268,7 +272,8 @@ mod tests {
             address: "127.0.0.1:19132".to_owned(),
             favorite: false,
             last_joined_unix: 0,
-        }];
+        }]
+        .into();
         assert_eq!(selection(&view, 0), Some(Selection::Saved(0)));
         assert_eq!(selection(&view, 2), Some(Selection::Featured(0)));
         view.feeds.select_saved(0);

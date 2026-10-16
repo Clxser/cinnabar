@@ -78,12 +78,7 @@ fn update(
     ui: Res<crate::ui_resources::UiPresentationResource>,
 ) {
     let now = time.elapsed();
-    if menu
-        .settings_snapshot()
-        .0
-        .value(DISCORD_PRESENCE_OPTION.name)
-        == 0
-    {
+    if menu.settings_snapshot().0.value(DISCORD_PRESENCE_OPTION.id) == 0 {
         // Nothing new arrives while presence is off, so its requests go with it.
         if discord.presence.is_some() {
             discord.presence = None;
@@ -111,7 +106,8 @@ fn update(
         && crate::presence_target::invite_joinable(&address)
         && !already_there(world.target.as_ref(), &address)
     {
-        info!("joining {address} from a Discord invite");
+        // The address stays out of the log, which crash reports copy.
+        info!("joining a server from a Discord invite");
         menu.request_connect(address);
     }
 }

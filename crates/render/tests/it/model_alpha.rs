@@ -4,9 +4,22 @@ use crate::{
     material_shader, shader_source,
 };
 
+/// Enhanced model fragments add authored references to the vanilla varyings; with front
+/// facing they exceed the baseline 16 inter-stage variables, so Enhanced needs a larger tier.
+fn enhanced_gpu(name: &str) -> Option<Gpu> {
+    Gpu::for_fixture_with_limits(
+        name,
+        wgpu::Features::empty(),
+        wgpu::Limits {
+            max_inter_stage_shader_variables: 17,
+            ..Default::default()
+        },
+    )
+}
+
 #[test]
 fn displaced_models_preserve_opaque_texels_and_cutout_thresholds() {
-    let Some(gpu) = Gpu::for_fixture("model opaque and cutout alpha") else {
+    let Some(gpu) = enhanced_gpu("model opaque and cutout alpha") else {
         return;
     };
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -73,6 +86,9 @@ fn displaced_models_preserve_opaque_texels_and_cutout_thresholds() {
             VERTEX.replace(
                 "ALPHA_FLAG",
                 &format!("{}u", assets::MATERIAL_FLAG_ALPHA_CUTOUT)
+            ).replace(
+                "PAGE_ONE_REFERENCE",
+                &format!("{}u", assets::TextureRef::new(1, 0).unwrap().raw())
             ).replace("// AUTHORED_FRAME_REFERENCES", if enhanced || shadow {
                 "out.authored_refs = vec2(authored_material_ref(0u, out.current_texture), authored_material_ref(0u, out.next_texture));"
             } else { "" })
@@ -131,6 +147,10 @@ fn displaced_models_preserve_opaque_texels_and_cutout_thresholds() {
                 "ALPHA_FLAG",
                 &format!("{}u", assets::MATERIAL_FLAG_ALPHA_CUTOUT)
             )
+            .replace(
+                "PAGE_ONE_REFERENCE",
+                &format!("{}u", assets::TextureRef::new(1, 0).unwrap().raw())
+            )
             .replace("// AUTHORED_FRAME_REFERENCES", "")
     );
     let bindings = used_alpha_resources(&source, "fragment", &resources);
@@ -182,11 +202,9 @@ fn alpha_resources<'a>(
             resource: texture_refs.as_entire_binding(),
         },
     ];
-    for binding in [4, 5]
+    for binding in material_shader::SAMPLED_TEXTURE_BINDINGS
         .into_iter()
         .chain(material_shader::NATIVE_LEAF_TEXTURE_BINDINGS)
-        .chain(material_shader::PBR_NORMAL_TEXTURE_BINDINGS)
-        .chain(material_shader::PBR_MER_TEXTURE_BINDINGS)
         .chain(material_shader::ENHANCED_COLOR_TEXTURE_BINDINGS)
         .chain(material_shader::ENHANCED_NORMAL_TEXTURE_BINDINGS)
         .chain(material_shader::ENHANCED_MER_TEXTURE_BINDINGS)
@@ -199,7 +217,6 @@ fn alpha_resources<'a>(
     for binding in [
         6,
         material_shader::NATIVE_LEAF_SAMPLER_BINDING,
-        material_shader::PBR_SAMPLER_BINDING,
         material_shader::ENHANCED_SAMPLER_BINDING,
     ] {
         resources.push(wgpu::BindGroupEntry {
@@ -239,7 +256,7 @@ const VERTEX: &str = r#"
     var out: VertexOutput;
     out.clip_position = vec4((vec2(f32(cell),0.0)+corner) / vec2(8.0,1.0)*vec2(2.0,-2.0)+vec2(-1.0,1.0),0.5,1.0);
     out.uv = vec2(0.5);
-    out.current_texture = 0x80000000u | (cell % 4u);
+    out.current_texture = PAGE_ONE_REFERENCE | (cell % 4u);
     out.next_texture = out.current_texture;
     // AUTHORED_FRAME_REFERENCES
     out.visibility.x = 1u;
@@ -266,7 +283,7 @@ fn blended_sampling_source(raw: &str) -> String {
 
 #[test]
 fn blended_enhanced_models_use_authored_albedo_and_animation_alpha() {
-    let Some(gpu) = Gpu::for_fixture("blended model authored albedo") else {
+    let Some(gpu) = enhanced_gpu("blended model authored albedo") else {
         return;
     };
     let fallback = colour_layers(&gpu, &[[80, 120, 160, 255]; 4]);
@@ -290,8 +307,12 @@ fn blended_enhanced_models_use_authored_albedo_and_animation_alpha() {
     let vertex = VERTEX
         .replace("ALPHA_FLAG", "0u")
         .replace(
-            "out.current_texture = 0x80000000u | (cell % 4u);",
-            "out.current_texture = 0x80000000u | select(0u,2u,cell >= 4u);",
+            "out.current_texture = PAGE_ONE_REFERENCE | (cell % 4u);",
+            "out.current_texture = PAGE_ONE_REFERENCE | select(0u,2u,cell >= 4u);",
+        )
+        .replace(
+            "PAGE_ONE_REFERENCE",
+            &format!("{}u", assets::TextureRef::new(1, 0).unwrap().raw()),
         )
         .replace(
             "out.next_texture = out.current_texture;",

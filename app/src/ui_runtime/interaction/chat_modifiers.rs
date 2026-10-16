@@ -1,6 +1,7 @@
 //! Physical modifiers survive gameplay-button resets while chat or mod screens own input.
 use super::*;
 
+use launcher::menu::settings_options::BindingId;
 const MODIFIERS: [KeyCode; 8] = [
     KeyCode::ControlLeft,
     KeyCode::ControlRight,
@@ -48,9 +49,45 @@ pub(super) fn text_modified(held: &ButtonInput<KeyCode>) -> bool {
     is_chat_edit_shortcut(&held)
 }
 
-/// Whether either physical Alt key is held, for vanilla's Alt+key command macros.
-pub(crate) fn alt_held(held: &ButtonInput<KeyCode>) -> bool {
-    held.pressed(KeyCode::AltLeft) || held.pressed(KeyCode::AltRight)
+/// Samples both physical sides of each modifier for keyboard and mouse shortcuts.
+pub(crate) fn held_chord(held: &ButtonInput<KeyCode>) -> semantic_input::ModifierChord {
+    semantic_input::ModifierChord {
+        alt: held.pressed(KeyCode::AltLeft) || held.pressed(KeyCode::AltRight),
+        control: held.pressed(KeyCode::ControlLeft) || held.pressed(KeyCode::ControlRight),
+        shift: held.pressed(KeyCode::ShiftLeft) || held.pressed(KeyCode::ShiftRight),
+        super_key: held.pressed(KeyCode::SuperLeft) || held.pressed(KeyCode::SuperRight),
+    }
+}
+
+/// Matches the command binding, also accepting a typed slash on other layouts
+/// while the default command control is selected.
+pub(crate) fn command_key(
+    menu: Option<&client_shell::menu::MenuRuntime>,
+    input: &KeyboardInput,
+) -> bool {
+    use client_shell::menu::settings_options::control_bindings::named_control;
+    binding_key(menu, BindingId::Command, input.key_code)
+        || (input.text.as_deref() == Some("/")
+            && named_control(menu, BindingId::Command) == named_control(None, BindingId::Command))
+}
+
+/// Whether `key` edits chat by whole words when the word-edit modifier is held.
+pub(crate) fn is_word_edit(key: KeyCode) -> bool {
+    matches!(
+        key,
+        KeyCode::Backspace | KeyCode::Delete | KeyCode::ArrowLeft | KeyCode::ArrowRight
+    )
+}
+
+/// Applies the word edit for `key`; `selecting` extends the selection instead of moving the caret.
+pub(crate) fn word_edit(editor: &mut ui::ChatEditor, key: KeyCode, selecting: bool) {
+    match key {
+        KeyCode::Backspace => editor.backspace_word(),
+        KeyCode::Delete => editor.delete_word(),
+        KeyCode::ArrowLeft => editor.move_word_left(selecting),
+        KeyCode::ArrowRight => editor.move_word_right(selecting),
+        _ => {}
+    }
 }
 
 #[cfg(test)]

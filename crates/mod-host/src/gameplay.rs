@@ -287,10 +287,16 @@ impl cinnabar::extension::gameplay::Host for State {
         if self.gameplay_reads > MAX_IMPORT_WRITES {
             bail!("gameplay read budget exhausted");
         }
-        if !self.grants.players {
-            return Ok(Err("players capability denied".into()));
+        if !(self.grants.players || self.grants.terrain) {
+            return Ok(Err("local pose capability denied".into()));
         }
-        Ok(Ok(self.snapshot.clone()))
+        let mut snapshot = self.snapshot.clone();
+        if !self.grants.players
+            && let Some(frame) = snapshot.as_mut()
+        {
+            frame.players.clear();
+        }
+        Ok(Ok(snapshot))
     }
 
     fn read_mobs(&mut self) -> Result<Result<Vec<GameplayMob>, String>> {
@@ -308,6 +314,9 @@ impl cinnabar::extension::gameplay::Host for State {
         self.camera_writes += 1;
         if self.camera_writes > MAX_IMPORT_WRITES {
             bail!("camera import budget exhausted");
+        }
+        if self.exclusive.camera {
+            return Ok(Err(self.exclusive.refuse()));
         }
         if !self.grants.camera {
             return Ok(Err("camera capability denied".into()));
@@ -350,6 +359,9 @@ impl cinnabar::extension::gameplay::Host for State {
         self.camera_writes += 1;
         if self.camera_writes > MAX_IMPORT_WRITES {
             bail!("camera import budget exhausted");
+        }
+        if self.exclusive.camera {
+            return Ok(Err(self.exclusive.refuse()));
         }
         if !self.grants.camera {
             return Ok(Err("camera capability denied".into()));

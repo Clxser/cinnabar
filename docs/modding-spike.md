@@ -15,14 +15,15 @@ cargo run -p mod-host --bin mod-host --locked -- pack \
   target/wasm32-unknown-unknown/debug/hello_mod.wasm /tmp/cinnabar-hello.wasm
 cargo run -p mod-host --bin mod-host --locked -- probe /tmp/cinnabar-hello.wasm
 cargo run -p mod-host --bin mod-host --locked -- bench /tmp/cinnabar-hello.wasm
-CINNABAR_MOD_COMPONENT=/tmp/cinnabar-hello.wasm cargo run -p cinnabar --features local-mods --locked
+CINNABAR_MOD_COMPONENT=/tmp/cinnabar-hello.wasm cargo run -p cinnabar --locked
 ```
 
 Route local builds through the shared limiter as required by
 `docs/agents/multi-agent-workflow.md`. No Go core or server is needed for `probe`,
 `bench` or the tests. Launching the client still requires its normal pinned carriers.
-No mod is loaded without an environment selection or enabled local registration; builds without `local-mods`
-do not compile Wasmtime and ignore it with a warning.
+Every native build includes the mod host and Wasmtime, including builds with
+`--no-default-features`. The host has no optional execution feature. No guest is loaded
+without an environment selection or an enabled local registration.
 
 The last command opens the launcher. Select a server only in a separately
 authorized live session. To exercise the same startup switch, scheduled adapter,
@@ -30,7 +31,7 @@ window-focus check and F8 action entirely offline, run:
 
 ```sh
 CINNABAR_MOD_COMPONENT=/tmp/cinnabar-hello.wasm \
-  cargo test -p cinnabar --features local-mods --lib configured_sample_drives_the_app_adapter_offline --locked
+  cargo test -p cinnabar --lib configured_sample_drives_the_app_adapter_offline --locked
 ```
 
 During gameplay, F8 changes the label. UI focus and window focus suppress the
@@ -41,6 +42,75 @@ the selected component to reload. Reload resets guest state and commits the new
 label only after initialization succeeds; a broken replacement keeps the previous
 instance. A runtime trap removes its label and disables callbacks until a changed,
 valid component is loaded.
+
+## Single-file presentation resources
+
+An installed binary component may carry optional resources in these singleton
+top-level WebAssembly custom sections. No filesystem extraction or additional
+guest imports are required.
+
+| Section | Contents | Source limit |
+| --- | --- | --- |
+| `cinnabar:extension/panel-bundle@1` | Existing UTF-8 panel bundle JSON | 8 MiB |
+| `cinnabar:extension/font@1` | Outline font bytes | 2 MiB |
+| `cinnabar:extension/menu-logo@1` | PNG main-menu logo | 2 MiB |
+| `cinnabar:extension/menu-title@1` | Nonempty UTF-8 single-line heading | 64 bytes |
+| `cinnabar:extension/notices@1` | UTF-8 copyright and license text | 4 MiB |
+| `cinnabar:extension/icon@1` | PNG Mods-tab icon, at most 256 by 256 pixels | 256 KiB |
+
+Embedded resources are supported only in the single-file component form, not in
+directory packages. Directory packages retain their existing asset lifecycle and
+4 MiB component ceiling. Resources require a binary component and are rejected when duplicated, nested,
+truncated or over their limits; an icon's size or content only affects its card.
+Recognized resources are removed before compiling
+the component; executable bytes and unrelated custom metadata retain the existing
+4 MiB limit. License text has no required product schema and grants no authority.
+The PNG must be at most 4096 by 2048 pixels and 4,194,304 pixels in total. Its
+original source bytes remain intact; the existing artwork decoder fits the image
+into its bounded atlas and native main-menu layout preserves its aspect ratio.
+
+Panel bundles are available before guest initialization. Panel and font use require
+the controls grant; local main-menu branding requires the environment grant.
+Declaring requested grants in component metadata never grants them automatically.
+Enabled instances use their existing registration order for branding precedence.
+Disabling, removing or quarantining the selected instance restores the next active
+instance or Cinnabar's shipped branding. Server-defined pause and loading logos
+keep their existing priority.
+
+Install through Settings, Mods, Import, review the requested grants, then Enable.
+To update while preserving the same registration and preferences, atomically
+replace the installed component at its current path and select Reload. Importing
+a differently named version creates another registration.
+
+`CINNABAR_MOD_COMPONENT=/absolute/path/component.wasm` also accepts embedded
+resources with the existing explicit capability switches. Optional
+`CINNABAR_MOD_FONT` and `CINNABAR_MOD_UI` sidecars override the embedded sources.
+Changed environment components prepare the guest, panel, font and branding on a
+bounded worker, then publish them together. Invalid replacements retain the
+accepted instance; preferences changed during preparation cause a fresh retry.
+
+## Mods-tab name, version and icon
+
+Mod cards read the WebAssembly Component Model's standard metadata sections, the
+ones `wasm-tools metadata add` writes: the component name, `description`,
+`version`, `authors` and `licenses`. The file name is the fallback name. For example:
+
+```sh
+wasm-tools metadata add --name "Zoom Plus" --description "Smooth zoom" \
+  --version 1.2.0 --authors "Example Author" --licenses MIT mod.wasm -o mod.wasm
+```
+
+Recent `cargo component` releases write the same sections from `Cargo.toml` package
+metadata. Each field displays as one line. Name is limited to 64 bytes,
+description 512, version 32, authors 256 and licenses 128. A field that is too
+long, not UTF-8 or has control characters is ignored.
+
+Append an icon to the finished component as the top-level custom section
+`cinnabar:extension/icon@1`, for example with `wasm-encoder`'s `CustomSection`.
+A section inside the core module is rejected like other embedded resources. The
+icon must be one PNG within the limits above that decodes completely; otherwise
+the card shows the placeholder. Metadata and icons are read by parsing the file
+only, and their content never causes a load to fail.
 
 ## Visual time changer
 
@@ -62,14 +132,13 @@ cargo build -p time-changer-mod --target wasm32-unknown-unknown --locked
 cargo run -p mod-host --bin mod-host --locked -- pack \
   target/wasm32-unknown-unknown/debug/time_changer_mod.wasm /tmp/cinnabar-time-changer.wasm
 cargo run -p mod-host --bin mod-host --locked -- probe-environment /tmp/cinnabar-time-changer.wasm
-CINNABAR_MOD_COMPONENT=/tmp/cinnabar-time-changer.wasm cargo run -p cinnabar --features local-mods --locked
+CINNABAR_MOD_COMPONENT=/tmp/cinnabar-time-changer.wasm cargo run -p cinnabar --locked
 ```
 
 Use the shared build limiter for every cargo command, as for hello. The last
 command opens the launcher; the existing offline adapter and snapshot commands
 also accept this component. The dedicated offline cycle/no-packets test is
-`configured_time_changer_is_visual_only_offline` with `CINNABAR_MOD_COMPONENT` set and
-`--features local-mods`.
+`configured_time_changer_is_visual_only_offline` with `CINNABAR_MOD_COMPONENT` set.
 
 Vanilla time uses six presets, preset-table lookup and modulo 24000, including
 celestial time wrapping. The vanilla 1.26.50.4 pack's
@@ -131,15 +200,16 @@ default, independently of the visual time grant. Explicitly opt in at startup:
 ```sh
 CINNABAR_MOD_COMPONENT=/tmp/my-mod.wasm \
 CINNABAR_MOD_PLAYERS=1 CINNABAR_MOD_CAMERA=1 \
-  cargo run -p cinnabar --features local-mods --locked
+  cargo run -p cinnabar --locked
 ```
 
 On PowerShell, set the corresponding `$env:CINNABAR_MOD_*` variables before
 launching the client. Only the exact value `1` grants access. These grants apply
 only to the explicitly selected personal component, not to server bundles.
 
-`read-frame` returns an error without the players grant, or `ok(none)` outside
-active gameplay. A snapshot contains the actor session, dimension, local subject
+`read-frame` returns an error without the players or terrain grant, or `ok(none)` outside
+active gameplay; the terrain grant alone omits remote players. Terrain reads
+(`CINNABAR_MOD_TERRAIN=1`) are described in [mod-terrain-api.md](mod-terrain-api.md). A snapshot contains the actor session, dimension, local subject
 eye position, actor yaw/pitch, frame duration in seconds, held semantic attack
 action and up to `mod_api::MAX_GAMEPLAY_PLAYERS` remote player feet positions.
 Positions are world block coordinates; angles and rotation deltas are radians
@@ -202,8 +272,7 @@ engine and compiled carrier. Guest strings never become JSON or binding expressi
 
 The app integration sits after semantic input finalization and before UI
 publication, between physical look and movement. Without an active selection it
-installs no guest runtime or gameplay output. A `local-mods` build watches its
-local registration on a background worker; default builds have no watcher.
+installs no guest runtime or gameplay output. Every native build watches its local registration on a background worker.
 Required vanilla carriers remain required. The extension adds no protocol types
 or dependencies on gameplay state to the component host.
 
@@ -313,7 +382,30 @@ declared control identities and kinds before any prepared route can be selected.
 Optional `color2` fades the fill linearly from `color` along `gradient_direction`
 (`vertical`, the default, or `horizontal`). Optional `border_color` draws an inside
 border `border_width` GUI pixels wide (default 1). The fill stops at the border, so
-translucent fills never mix with it.
+translucent fills do not paint underneath it. Edge coverage spans one physical pixel at
+every display density, including subpixel borders and square inner corners.
+Coverage is centered on the authored outline; layout and hit bounds stay fixed.
+
+`cinnabar_vector_path` draws caller-authored geometry without registering product
+icons in the runtime. `view_box` is `[x, y, width, height]`; `paths` contains arrays
+of finite `[x, y]` points in that coordinate space. Without `stroke_width`, closed
+contours use even-odd filling, including holes; fills require `closed: true`.
+With a positive `stroke_width` in view-box units,
+paths form continuous strokes with rounded joins and caps; `closed` defaults to
+false for strokes and true for fills. For example:
+
+```json
+{"type":"custom","renderer":"cinnabar_vector_path","size":[16,16],
+ "view_box":[0,0,16,16],"paths":[[[3,3],[8,13],[13,3]]],
+ "stroke_width":1.5,"color":[1,1,1,1]}
+```
+
+The renderer accepts at most 64 contours and 2,048 points. It covers round caps
+and joins beyond the view box, keeping the edge band one physical pixel wide.
+The half-pixel mesh grid is bounded to 256 cells per axis, eight million
+sample/segment operations, and 32,768 expanded indices per path. Over-budget
+paths draw nothing; they are never silently reduced to a coarser grid. An
+eight-MiB cache retains hot geometry. Path data belongs to the caller's surface.
 
 Personal-panel surfaces support JSON-UI scroll views, including wheel input, track
 presses and scrollbar-box dragging. Wheel input stays within the view under the
@@ -336,7 +428,9 @@ layout, branding and navigation state remain in that guest.
 
 `gameplay.set-attack-reach` requests a current-frame actor selection/admission
 range up to `mod_api::MAX_ENTITY_REACH_BLOCKS`. It preserves obstruction checks
-and normal attack transactions; the server still decides whether a hit is valid.
+and normal attack transactions. The client caps the request at the current game
+mode's attack reach and the input mode's pick range, so an override can only
+shorten either limit. The server still decides whether a hit is valid.
 `gameplay.pulse-attack` requests one press only while the captured semantic Attack
 action is physically held. Neither operation synthesizes OS input. These requests
 commit after a successful guest callback and expire each frame.
@@ -388,7 +482,7 @@ cargo run -p mod-host --bin mod-host --locked -- pack \
   target/wasm32-unknown-unknown/debug/render_sample_mod.wasm /tmp/cinnabar-render.wasm
 cargo run -p mod-host --bin mod-host --locked -- probe-render /tmp/cinnabar-render.wasm
 CINNABAR_MOD_COMPONENT=/tmp/cinnabar-render.wasm CINNABAR_MOD_RENDER=1 CINNABAR_MOD_PLAYERS=1 \
-  cargo run -p cinnabar --features local-mods --locked
+  cargo run -p cinnabar --locked
 ```
 
 Replacing the component reloads it as for other mods. A rejected shader shows its error as
@@ -438,58 +532,88 @@ labels join with ` | `; commands and cues keep load order. Render passes merge b
 the earliest mod keeping a contested name, and passes
 and each primitive kind fill the single-mod budgets in load order. Each mod polls
 every mod's previous-frame cues. The set takes precedence over `CINNABAR_MOD_COMPONENT`;
-the registration watcher adds one independently managed local component.
+the registration watcher manages independently enabled components ahead of the environment set.
 
 ## Attach a local component to a running client
 
-A `local-mods` build watches `local-mod.json` in `InstallLayout.user_config_root`
-(on an installed Windows client, `%LOCALAPPDATA%/Cinnabar/`). Write it atomically:
+Every native build watches `local-mod.json` in `InstallLayout.user_config_root`
+(on an installed Windows client, `%LOCALAPPDATA%/Cinnabar/`). Settings › Mods owns an
+ordered list and writes it atomically:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "request_id": "local-request-1",
-  "enabled": true,
-  "component": "C:/Local/mod.component.wasm",
-  "font": "C:/Local/panel.ttf",
-  "ui": "C:/Local/panel-ui.json",
-  "grants": {
-    "environment": false,
-    "players": true,
-    "camera": true,
-    "controls": true,
-    "interaction": true,
-    "settings": true,
-    "render": false,
-    "render_depth": false,
-    "entities": false,
-    "commands": []
-  }
+  "mods": [
+    {"component": "C:/Local/camera.wasm", "enabled": true,
+     "font": "C:/Local/panel.ttf", "ui": "C:/Local/panel-ui.json",
+     "grants": {"camera": true, "controls": true}, "reload": 0},
+    {"component": "C:/Local/hud.wasm", "enabled": true,
+     "grants": {"hud": true}, "reload": 0}
+  ]
 }
 ```
 
-The registration is bounded to 16 KiB, paths must be absolute, and grants default
-to false. Component compilation, source polling, font rasterization, UI preparation and status
-writes run on the worker. The current generation is installed before physical
-input sampling; deleting, disabling or invalidating the registration revokes its
-runtime and restores input ownership. A request-ID-only change preserves guest
-state. Environment-selected components load first; registration adds a companion without
-replacing them. Replacing, disabling or revoking registration affects only that companion. The total
-loaded component count remains bounded by `mod_api::MAX_LOADED_MODS`.
+The original version-1 single selection is read losslessly and written as version 2
+on the next Settings command. Disabled entries retain their permissions until Remove.
+The file is bounded to 64 KiB, paths must be absolute, duplicate identities are rejected,
+and entries are bounded by `mod_api::MAX_LOADED_MODS`. Settings companions derive from
+component paths using the host's existing companion naming rule.
 
-`local-mod.status.json` reports the request ID, client PID and `loaded`, `error`
-or `disabled` state. The additive capability field `independent_registration: true`
-indicates that registration can attach, replace and revoke a component independently of
-environment-selected components. `loaded` acknowledges actual installation, rather than
-only successful compilation. The guest still has no filesystem or process access.
-This loader cannot be added to an executable that is already running without it;
-older clients require one update and restart.
+Import validates a `.wasm` component without executing it and never overwrites an
+existing filename. Enable adds a card to Active; Disable and Remove target that card's
+identity. Move up/down changes precedence without restarting guests. Registered mods
+run before environment-selected mods. Higher Active entries publishing camera or time output own that authority, and contested HUD card IDs refuse lower publications and count each
+refused import. Distinct HUD slots are merged within the shared presentation limit.
+Per-instance fuel, epoch deadlines, memory, host-copy and source limits remain in force.
+Regular frame callbacks share `mod_api::TOTAL_MOD_FRAME_FUEL`. Events retain their
+existing `CALLBACK_FUEL` allowance, and session-loading callbacks retain `LOAD_FUEL`.
+Separate bounded lanes admit one event and one loading callback per frame across all mods.
+A callback needing an unavailable lane defers rather than receiving a smaller guest limit.
+Latest layout, changed session sources and view-closure notifications remain queued and
+coalesced until delivery. Each declared edit control also retains one latest bounded text value
+for its current screen and view. Screen changes, view closure and host replacement discard
+old edits; key, click and wheel edges are not replayed. Frame-local camera and item-use
+policies reset even when a callback defers; retained presentation follows its existing contract.
+
+An authority revocation is distinct from a guest quarantine: restoring superseded grants
+rebuilds a revoked guest, while unrelated Settings changes preserve a trapped guest's
+quarantine and installed identity.
+
+Reload and Reload all work from Settings while in a world. Candidates re-read sources
+through the bounded admission path and initialize off-frame. An invalid reload keeps
+the previous instance, with its failure displayed on that card. A successful reload
+resets guest state and preserves current companion preferences. Hot replacement uses
+the same path. Permission changes reload only the affected mod; revoked authority is
+released before admission completes. A guest trap quarantines only that guest.
+
+Cards show how many requested permissions are allowed and warn about allowed
+capabilities that can change gameplay. Customize opens a compact requested-first
+grid; Show all permissions reveals the remaining capabilities. Hover or focus a
+permission to read its description. Allow requested grants exactly the declared
+requests, while Revoke all clears the card's grants. Both save once through the
+same path as individual toggles. Undeclared components offer Customize only.
+Permission names and gameplay warnings come from `ModGrants`. Optional grants
+default off. A binary component may declare its requested grants as JSON in the
+optional top-level custom section `cinnabar:grants`; declarations never grant authority.
+For example, `{"camera":true,"controls":true,"commands":["ability"]}` marks those
+requests. Command permissions enable only the declared command names; undeclared
+components cannot gain unrestricted command authority through the toggle.
+
+`local-mod.status.json` uses version 2, reports the client PID and the
+`independent_registration` capability, and records per-component `loaded`, `error` or `reload-error` outcomes
+for the list's request ID. Source polling, compilation, font rasterization, UI preparation,
+status writes and final settings retirement run off-frame. Remove first clears the entry's
+grants and metadata, waits for its detached host's final settings writes, then deletes its
+component and unshared companion. Environment-loaded settings writers also protect their companions. A changed list or watcher generation cancels deletion.
+Resolved directory aliases agree on selection and companion ownership. The guest has
+no filesystem or process access.
 
 ## Verification and limits
 
 ```sh
 cargo test -p mod-host --locked
-cargo test -p cinnabar --features local-mods --lib modding --locked
+cargo test -p cinnabar --lib modding --locked
 cargo test -p cinnabar --lib mod_hud --locked
 ```
 
@@ -544,8 +668,7 @@ hidden-HUD test is not full visibility parity evidence.
 ## Mod packages and screens (world `player-mod`)
 
 A package is a directory: `mod.toml`, `mod.wasm` (a `player-mod` component), `ui/<name>.json`
-templates and `textures/`. `CINNABAR_MOD_PACKAGE=<dir>` loads it (with `--features
-local-mods`) and takes precedence over `CINNABAR_MOD_COMPONENT`. A set entry
+templates and `textures/`. `CINNABAR_MOD_PACKAGE=<dir>` loads it and takes precedence over `CINNABAR_MOD_COMPONENT`. A set entry
 `{"package": "/abs/dir", "grants": {...}}` loads one beside other mods. Its settings companion
 sits beside the directory, `<dir>.settings.json`, outside the hashed files.
 `examples/mods/screen-probe` is a complete package; the host tests build it.

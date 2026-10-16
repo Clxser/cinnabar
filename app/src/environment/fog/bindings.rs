@@ -10,7 +10,8 @@ use assets::{
 #[cfg(test)]
 use assets::BiomeRule;
 
-use super::super::{EnvironmentProfileRoute, profile_lookup::dimension_fallback_biome};
+use super::super::EnvironmentProfileRoute;
+use assets::facts::dimension_fallback_biome;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BiomeProfileIndex(pub usize);

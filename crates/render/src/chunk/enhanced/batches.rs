@@ -41,7 +41,9 @@ impl Volume {
                 center: entry.center.into(),
                 half_extents: entry.half_extent.into(),
             }),
-            Self::Shadow(bounds) => bounds.intersects_aabb(entry.center, entry.half_extent),
+            Self::Shadow(bounds) => {
+                bounds.intersects_rotated(entry.center, bounds.rotated_radius(entry.half_extent))
+            }
         }
     }
 }

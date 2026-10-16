@@ -1,7 +1,49 @@
 //! Static authoring geometry shared by placed block entities and their inventory models.
 
+pub mod heads;
+
 pub type ModelBox = ([f32; 3], [f32; 3], [f32; 2]);
 pub type ModelFace = ([[f32; 3]; 4], [f32; 4]);
+
+/// A box in entity-geometry authoring space: pixels, front toward -Z, +Y up.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BoxSpec {
+    pub origin: [f32; 3],
+    pub size: [f32; 3],
+    /// Box-UV origin in texels of the logical texture.
+    pub uv: [f32; 2],
+    pub inflate: f32,
+}
+
+impl BoxSpec {
+    #[must_use]
+    pub const fn new(origin: [f32; 3], size: [f32; 3], uv: [f32; 2]) -> Self {
+        Self {
+            origin,
+            size,
+            uv,
+            inflate: 0.0,
+        }
+    }
+
+    #[must_use]
+    pub const fn inflated(mut self, inflate: f32) -> Self {
+        self.inflate = inflate;
+        self
+    }
+
+    /// The box's faces in [`box_faces`] order.
+    #[must_use]
+    pub fn faces(self) -> [ModelFace; 6] {
+        box_faces(self.origin, self.size, self.uv, self.inflate)
+    }
+}
+
+impl From<ModelBox> for BoxSpec {
+    fn from((origin, size, uv): ModelBox) -> Self {
+        Self::new(origin, size, uv)
+    }
+}
 
 pub const BANNER_TEXTURE: (&str, [f32; 2]) = ("textures/entity/banner/banner_base", [64.0; 2]);
 pub const BANNER_POLE: ModelBox = ([-1.0, -30.0, -1.0], [2.0, 42.0, 2.0], [44.0, 0.0]);
@@ -25,6 +67,34 @@ pub const ITEM_FRAME_TEXTURES: [&str; 3] = [
     "textures/blocks/itemframe_background",
     "textures/blocks/glow_item_frame",
 ];
+
+/// The 8-texel head cube of a box-model skull, bottom on the floor and front toward -Z.
+pub const SKULL_HEAD: ModelBox = ([-4.0, 0.0, -4.0], [8.0; 3], [0.0, 0.0]);
+/// The hat layer over [`SKULL_HEAD`] that humanoid heads draw, inflated by [`SKULL_HAT_INFLATE`].
+pub const SKULL_HAT: ModelBox = ([-4.0, 0.0, -4.0], [8.0; 3], [32.0, 0.0]);
+pub const SKULL_HAT_INFLATE: f32 = 0.25;
+
+/// The pack texture of a box-model head and the size its UVs were authored against, by legacy
+/// `SkullType` ordinal (see [`crate::vanilla_skull_type`]). Dragon and piglin heads draw their
+/// mob geometry instead and have none here.
+#[must_use]
+pub const fn skull_texture(skull_type: u8) -> Option<(&'static str, [f32; 2])> {
+    Some(match skull_type {
+        0 => ("textures/entity/skulls/skeleton", [64.0, 32.0]),
+        1 => ("textures/entity/skulls/wither_skeleton", [64.0, 32.0]),
+        2 => ("textures/entity/skulls/zombie", [64.0, 32.0]),
+        3 => ("textures/entity/steve", [64.0, 64.0]),
+        4 => ("textures/entity/skulls/creeper", [64.0, 32.0]),
+        _ => return None,
+    })
+}
+
+/// Whether a head of legacy `SkullType` ordinal `skull_type` draws [`SKULL_HAT`]: zombie and
+/// player heads do.
+#[must_use]
+pub const fn skull_has_hat(skull_type: u8) -> bool {
+    matches!(skull_type, 2 | 3)
+}
 
 pub const SHULKER_BASE: ModelBox = ([-8.0, 0.0, -8.0], [16.0, 8.0, 16.0], [0.0, 28.0]);
 pub const SHULKER_LID: ModelBox = ([-8.0, 4.0, -8.0], [16.0, 12.0, 16.0], [0.0, 0.0]);
@@ -50,7 +120,7 @@ pub fn pot_sides() -> [[[f32; 3]; 4]; 4] {
     [faces[4], faces[5], faces[1], faces[0]]
 }
 pub const LECTERN_BASE: [[f32; 3]; 2] = [[-8.0, 0.0, -8.0], [8.0, 2.0, 8.0]];
-pub const LECTERN_POST: [[f32; 3]; 2] = [[-4.0, 2.0, -4.0], [4.0, 14.0, 4.0]];
+pub const LECTERN_POST: [[f32; 3]; 2] = [[-4.0, 2.0, -4.0], [4.0, 15.0, 4.0]];
 pub const LECTERN_BOARD: [[f32; 3]; 2] = [[-7.9, 11.0, -6.0], [7.9, 15.0, 7.0]];
 pub const LECTERN_BOARD_PIVOT: [f32; 3] = [0.0, 7.0, -1.0];
 pub const LECTERN_BOARD_OFFSET: [f32; 3] = [0.0, 1.05, 1.0];
@@ -120,7 +190,6 @@ pub fn lectern_board_point([x, y, z]: [f32; 3]) -> [f32; 3] {
     ]
 }
 
-/// Model-part box UV layout; texel rectangles preserve the bottom face's reversed V.
 #[must_use]
 pub fn box_faces(origin: [f32; 3], size: [f32; 3], uv: [f32; 2], inflate: f32) -> [ModelFace; 6] {
     let [ox, oy, oz] = origin;
@@ -172,30 +241,151 @@ pub fn tile_box_faces([min, max]: [[f32; 3]; 2]) -> [[[f32; 3]; 4]; 6] {
     ]
 }
 
-/// The texture suffix for a shulker-box block name such as `minecraft:silver_shulker_box`.
+/// Every shulker box's texture suffix, which is also its block name's colour stem.
+pub const SHULKER_COLORS: [&str; 17] = [
+    "undyed",
+    "white",
+    "orange",
+    "magenta",
+    "light_blue",
+    "yellow",
+    "lime",
+    "pink",
+    "gray",
+    "silver",
+    "cyan",
+    "purple",
+    "blue",
+    "brown",
+    "green",
+    "red",
+    "black",
+];
+
+/// The texture suffix for a shulker-box block name such as `minecraft:silver_shulker_box`;
+/// `light_gray` names the `silver` texture.
 #[must_use]
 pub fn shulker_color_from_block_name(name: &str) -> Option<&'static str> {
-    let stem = name
-        .strip_prefix("minecraft:")?
-        .strip_suffix("_shulker_box")?;
-    Some(match stem {
-        "undyed" => "undyed",
-        "white" => "white",
-        "orange" => "orange",
-        "magenta" => "magenta",
-        "light_blue" => "light_blue",
-        "yellow" => "yellow",
-        "lime" => "lime",
-        "pink" => "pink",
-        "gray" => "gray",
-        "silver" | "light_gray" => "silver",
-        "cyan" => "cyan",
-        "purple" => "purple",
-        "blue" => "blue",
-        "brown" => "brown",
-        "green" => "green",
-        "red" => "red",
-        "black" => "black",
-        _ => return None,
-    })
+    use std::{collections::HashMap, sync::OnceLock};
+    static COLORS: OnceLock<HashMap<Box<str>, &'static str>> = OnceLock::new();
+    COLORS
+        .get_or_init(|| {
+            let mut colors = HashMap::new();
+            for entry in crate::facts::BlockEntityFacts::pinned()
+                .entries()
+                .iter()
+                .filter(|entry| entry.renderer == crate::facts::BlockEntityRenderer::Shulker)
+            {
+                for identifier in &entry.backing_blocks {
+                    let Some(stem) = identifier
+                        .strip_prefix("minecraft:")
+                        .and_then(|name| name.strip_suffix("_shulker_box"))
+                    else {
+                        continue;
+                    };
+                    let stem = if stem == "light_gray" { "silver" } else { stem };
+                    if let Some(color) = SHULKER_COLORS.iter().copied().find(|color| *color == stem)
+                    {
+                        colors.insert(identifier.clone().into_boxed_str(), color);
+                        if color == "silver" {
+                            colors.insert(
+                                format!("minecraft:{color}_shulker_box").into_boxed_str(),
+                                color,
+                            );
+                        }
+                    }
+                }
+            }
+            colors
+        })
+        .get(name)
+        .copied()
+}
+
+#[cfg(test)]
+mod lectern_tests {
+    use super::*;
+
+    #[test]
+    fn lectern_post_preserves_the_full_height_of_its_side_artwork() {
+        let faces = lectern_faces();
+        for index in [6, 7, 10, 11] {
+            let (_, (corners, texels)) = faces[index];
+            let bottom = corners
+                .iter()
+                .map(|point| point[1])
+                .reduce(f32::min)
+                .unwrap();
+            let top = corners
+                .iter()
+                .map(|point| point[1])
+                .reduce(f32::max)
+                .unwrap();
+            let artwork_height = texels[2].abs().max(texels[3].abs());
+            assert_eq!(bottom, LECTERN_BASE[1][1], "post starts on the base");
+            assert_eq!(top - bottom, artwork_height, "post face {index}");
+        }
+    }
+}
+
+pub mod textures;
+
+#[cfg(test)]
+mod membership_tests {
+    #[test]
+    fn admitted_shulker_colour_lookups_allocate_nothing() {
+        assert_eq!(
+            super::shulker_color_from_block_name("minecraft:light_gray_shulker_box"),
+            Some("silver")
+        );
+        for name in [
+            "minecraft:light_gray_shulker_box",
+            "minecraft:silver_shulker_box",
+            "minecraft:undyed_shulker_box",
+        ] {
+            let (color, allocations) =
+                test_alloc::count(|| super::shulker_color_from_block_name(name));
+            assert!(color.is_some());
+            assert_eq!(allocations, 0, "{name}");
+        }
+    }
+    #[test]
+    fn compiled_shulker_renderer_preserves_every_pinned_colour_suffix() {
+        for entry in crate::facts::BlockEntityFacts::pinned()
+            .entries()
+            .iter()
+            .filter(|entry| entry.renderer == crate::facts::BlockEntityRenderer::Shulker)
+        {
+            for name in &entry.backing_blocks {
+                assert!(
+                    super::shulker_color_from_block_name(name).is_some(),
+                    "{name}"
+                );
+            }
+        }
+        for record in crate::read_registry_for_protocol(
+            crate::pinned_block_registry_bytes(),
+            crate::active_content_registry_protocol(),
+        )
+        .unwrap()
+        {
+            let old = record
+                .name
+                .strip_prefix("minecraft:")
+                .and_then(|name| name.strip_suffix("_shulker_box"))
+                .map(|stem| if stem == "light_gray" { "silver" } else { stem })
+                .and_then(|stem| {
+                    super::SHULKER_COLORS
+                        .iter()
+                        .copied()
+                        .find(|color| *color == stem)
+                });
+            assert_eq!(
+                super::shulker_color_from_block_name(&record.name),
+                old,
+                "{}",
+                record.name
+            );
+        }
+    }
 }

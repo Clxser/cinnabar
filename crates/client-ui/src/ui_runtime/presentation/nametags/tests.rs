@@ -1,7 +1,23 @@
 use super::*;
+use protocol_ids::ActorFlag;
 
+mod opacity;
+mod own_tag;
+mod view_depth;
+mod visibility;
+
+/// Uses a camera at the origin looking along -Z, with independently supplied viewer feet.
+fn view(viewer_position: Vec3) -> NametagView {
+    NametagView {
+        viewer_position,
+        camera_position: Vec3::ZERO,
+        camera_forward: Vec3::NEG_Z,
+    }
+}
+
+/// Returns a spawned player with an initialized render pose.
 fn actor() -> ActorSnapshot {
-    let stream = actor_stream(1, None);
+    let stream = actor_stream(1, None, 0);
     let mut actor = stream
         .authority()
         .actor(1)
@@ -12,12 +28,16 @@ fn actor() -> ActorSnapshot {
 }
 
 /// Spawns nearby players in reverse distance order, optionally sharing synced score text.
-fn actor_stream(count: usize, score: Option<Arc<str>>) -> chunk_pipeline::WorldStream {
+fn actor_stream(
+    count: usize,
+    score: Option<Arc<str>>,
+    local_runtime_id: u64,
+) -> chunk_pipeline::WorldStream {
     let mut stream = chunk_pipeline::WorldStream::new_with_assets(
         protocol::WorldBootstrap {
             dimension: 0,
-            local_player_runtime_id: 0,
-            local_player_unique_id: 0,
+            local_player_runtime_id: local_runtime_id,
+            local_player_unique_id: local_runtime_id as i64,
             player_position: [0.0; 3],
             world_spawn_position: [0; 3],
             air_network_id: protocol::air_network_id(false),
@@ -70,6 +90,7 @@ fn actor_stream(count: usize, score: Option<Arc<str>>) -> chunk_pipeline::WorldS
     stream
 }
 
+/// Creates an ordinary tag for font and scene fixtures.
 pub(in crate::ui_runtime::presentation) fn anchor(name: &str) -> NametagAnchor {
     NametagAnchor {
         runtime_id: 1,
@@ -82,10 +103,12 @@ pub(in crate::ui_runtime::presentation) fn anchor(name: &str) -> NametagAnchor {
             .into(),
         depth_tested: false,
         text_alpha: 1.0,
-        distance: 5.0,
+        view_depth: 5.0,
+        camera_forward_y: 0.0,
     }
 }
 
+/// Builds label passes with the fixture font and a fresh atlas.
 fn scene(anchors: &[NametagAnchor]) -> NametagScene {
     let font = ui_engine::test_support::fixture_font();
     scene_with_font(anchors, &font)
@@ -95,6 +118,7 @@ fn scene(anchors: &[NametagAnchor]) -> NametagScene {
 fn scene_with_font(anchors: &[NametagAnchor], font: &RuntimeFontCatalog) -> NametagScene {
     build_nametag_scene(
         anchors,
+        1.0,
         font,
         &mut TextLayoutCache::new(8, 1 << 20),
         &mut NametagAtlas::default(),
@@ -103,14 +127,189 @@ fn scene_with_font(anchors: &[NametagAnchor], font: &RuntimeFontCatalog) -> Name
 }
 
 #[test]
-fn metadata_scale_raises_the_tag_without_rescaling_a_published_box() {
+fn metadata_scale_multiplies_the_box_height_and_the_head_clearance() {
     let mut actor = actor();
     actor.metadata.insert(38, ActorMetadataValue::Float(2.0));
-    assert_eq!(tag_height(&actor), 2.0 * DEFAULT_HEIGHT + HEAD_CLEARANCE);
+    assert_eq!(tag_height(&actor), 2.0 * (DEFAULT_HEIGHT + HEAD_CLEARANCE));
     actor
         .metadata
         .insert(METADATA_HEIGHT, ActorMetadataValue::Float(3.6));
-    assert_eq!(tag_height(&actor), 3.6 + HEAD_CLEARANCE);
+    assert_eq!(tag_height(&actor), 2.0 * (3.6 + HEAD_CLEARANCE));
+    actor.metadata.insert(
+        0,
+        ActorMetadataValue::Flags(1 << ActorFlag::Sneaking.wire_value()),
+    );
+    actor.metadata.remove(&METADATA_HEIGHT);
+    assert_eq!(
+        tag_height(&actor),
+        2.0 * (DEFAULT_HEIGHT + HEAD_CLEARANCE) - SNEAK_PLAYER_Y_OFFSET
+    );
+}
+
+#[test]
+fn near_zero_scale_floating_text_tags_sit_at_the_hosts_feet() {
+    let mut actor = actor();
+    actor.kind = ActorKind::Entity {
+        identifier: "minecraft:falling_block".into(),
+    };
+    actor
+        .metadata
+        .insert(METADATA_ALWAYS_SHOW_NAMETAG, ActorMetadataValue::Byte(1));
+    for (height, scale, expected) in [
+        (0.98, 0.000_000_1, 0.0),
+        (0.98, 0.0, 0.0),
+        // An empty published box is a size, not a missing one.
+        (0.0, 1.0, HEAD_CLEARANCE),
+    ] {
+        actor
+            .metadata
+            .insert(METADATA_HEIGHT, ActorMetadataValue::Float(height));
+        actor.metadata.insert(38, ActorMetadataValue::Float(scale));
+        let anchor = extract_nametag(
+            &actor,
+            view(Vec3::new(0.0, 1.62, 5.0)),
+            None,
+            "Floating text".into(),
+            &ui::ScoreboardStore::default(),
+            0.5,
+        )
+        .expect("an always-shown tag at any scale");
+        let feet = Vec3::from_array(actor.interpolated_position(0.5).unwrap());
+        let lift = anchor.position - feet;
+        assert!(lift.is_finite());
+        assert!(
+            (lift.y - expected).abs() < 1e-5,
+            "height {height} at scale {scale} lifted the tag {lift}"
+        );
+    }
+}
+
+#[test]
+fn java_head_clearance_and_sneaking_offsets_keep_the_label_world_scale() {
+    let mut actor = actor();
+    assert!((tag_height(&actor) - 2.3).abs() < 1e-6);
+    actor.metadata.insert(
+        0,
+        ActorMetadataValue::Flags(
+            (1 << ActorFlag::Sneaking.wire_value()) | (1 << ActorFlag::ShowName.wire_value()),
+        ),
+    );
+    assert!((tag_height(&actor) - 2.175).abs() < 1e-6);
+    let tag = extract_nametag(
+        &actor,
+        view(Vec3::new(0.0, 0.0, 5.0)),
+        None,
+        "AB".into(),
+        &ui::ScoreboardStore::default(),
+        1.0,
+    )
+    .unwrap();
+    let rendered = scene(&[tag]);
+    assert!(
+        rendered
+            .records
+            .iter()
+            .all(|record| record.depth_tested != 0)
+    );
+    assert_eq!(rendered.records.len(), 2);
+    assert_eq!(rendered.records[0].color, [0.0, 0.0, 0.0, 0.25]);
+    assert_eq!(rendered.records[1].color, [1.0, 1.0, 1.0, 32.0 / 255.0]);
+    let quad = rendered.records[1]
+        .world_corners(glam::Quat::IDENTITY)
+        .unwrap();
+    let origin = Vec3::from_array(rendered.records[1].anchor);
+    let first = Vec3::from_array(quad[0]);
+    assert!((first.y - origin.y + 0.25).abs() < 1e-6);
+}
+
+#[test]
+fn sleeping_players_lower_the_label_with_the_body() {
+    let mut actor = actor();
+    actor.metadata.insert(26, ActorMetadataValue::Byte(2));
+    assert!(actor.is_sleeping());
+    assert!((tag_height(&actor) - 0.8).abs() < 1e-6);
+}
+
+#[test]
+fn java_distance_cutoffs_are_strict_and_server_caps_can_only_shorten_them() {
+    let mut actor = actor();
+    for (sneaking, cutoff) in [(false, 64.0), (true, 32.0)] {
+        let flags = (1 << ActorFlag::ShowName.wire_value())
+            | if sneaking {
+                1 << ActorFlag::Sneaking.wire_value()
+            } else {
+                0
+            };
+        actor.metadata.insert(0, ActorMetadataValue::Flags(flags));
+        actor
+            .metadata
+            .insert(METADATA_RENDER_DISTANCE, ActorMetadataValue::Float(128.0));
+        for (distance, expected) in [
+            (cutoff - 0.01, true),
+            (cutoff, false),
+            (cutoff + 0.01, false),
+        ] {
+            assert_eq!(
+                nametag_geometry(&actor, Vec3::new(distance, 0.0, 0.0), None, 1.0).is_some(),
+                expected
+            );
+        }
+        actor
+            .metadata
+            .insert(METADATA_RENDER_DISTANCE, ActorMetadataValue::Float(12.0));
+        assert!(nametag_geometry(&actor, Vec3::new(11.99, 0.0, 0.0), None, 1.0).is_some());
+        assert!(nametag_geometry(&actor, Vec3::new(12.0, 0.0, 0.0), None, 1.0).is_none());
+    }
+}
+
+#[test]
+fn player_visibility_honors_explicit_hides_and_always_show_overrides() {
+    let mut actor = actor();
+    assert!(visible(&actor, None));
+    for (flags, expected) in [
+        (1 << ActorFlag::ShowName.wire_value(), true),
+        (0, false),
+        (1 << ACTOR_FLAG_ALWAYS_SHOW_NAME, true),
+        (
+            (1 << ActorFlag::ShowName.wire_value()) | (1 << ActorFlag::Invisible.wire_value()),
+            false,
+        ),
+    ] {
+        actor.metadata.insert(0, ActorMetadataValue::Flags(flags));
+        assert_eq!(visible(&actor, Some(actor.runtime_id)), expected);
+    }
+}
+
+#[test]
+fn projected_tags_hide_the_local_viewer_and_mounts_carrying_passengers() {
+    let mut stream = actor_stream(2, None, 1);
+    let mut cache = NametagTextCache::default();
+    let boards = ui::ScoreboardStore::default();
+    let project = |cache: &mut NametagTextCache, stream: &chunk_pipeline::WorldStream| {
+        project_nametags(cache, &boards, stream, view(Vec3::ZERO), None, 1.0, true)
+    };
+    let tags = project(&mut cache, &stream);
+    assert_eq!(
+        tags.iter()
+            .map(NametagAnchor::runtime_id)
+            .collect::<Vec<_>>(),
+        [2]
+    );
+    stream
+        .submit(
+            3,
+            protocol::WorldEvent::ActorLink(protocol::ActorLinkEvent {
+                dimension: 0,
+                ridden_unique_id: 2,
+                rider_unique_id: 1,
+                link_type: protocol::ActorLinkType::Rider,
+                immediate: true,
+                rider_initiated: false,
+            }),
+        )
+        .unwrap();
+    stream.poll([0.0; 3], 0);
+    assert!(project(&mut cache, &stream).is_empty());
 }
 
 #[test]
@@ -120,9 +319,9 @@ fn tag_anchor_follows_the_same_interpolated_feet_as_the_rig() {
     actor.received_pose.position = [4.0, 64.0, -2.0];
     actor.position = actor.received_pose.position;
     for partial in [0.25, 0.5, 0.75] {
-        let anchor = tag_world_position(&actor, partial).unwrap();
         let feet = Vec3::from_array(actor.interpolated_position(partial).unwrap());
-        assert_eq!(anchor - Vec3::Y * (DEFAULT_HEIGHT + HEAD_CLEARANCE), feet);
+        let anchor = tag_world_position(&actor, feet);
+        assert_eq!(anchor, feet + Vec3::Y * (DEFAULT_HEIGHT + HEAD_CLEARANCE));
     }
 }
 
@@ -130,16 +329,15 @@ fn tag_anchor_follows_the_same_interpolated_feet_as_the_rig() {
 fn multiline_lines_get_their_own_centred_backgrounds_before_their_glyphs() {
     let anchor = anchor("AB\nA");
     let scene = scene(std::slice::from_ref(&anchor));
-    assert_eq!(scene.records.len(), 4);
-    assert_eq!(scene.see_through, 4);
-    let (plates, glyphs) = scene.records.split_at(2);
+    assert_eq!(scene.records.len(), 6);
+    let (plates, glyphs) = scene.records[..4].split_at(2);
     for (index, (plate, glyph)) in plates.iter().zip(glyphs).enumerate() {
         assert_eq!(plate.color, PLATE_COLOR);
         assert_eq!(plate.text, 0);
         assert_eq!(plate.rect[0], glyph.rect[0] - 1.0);
         assert_eq!(plate.rect[0], -plate.rect[2]);
         assert_eq!(plate.rect[1], NAMETAG_LINE_PITCH_PX * index as f32 - 1.0);
-        assert_eq!(plate.rect[3], plate.rect[1] + NAMETAG_LINE_PITCH_PX);
+        assert_eq!(plate.rect[3], NAMETAG_LINE_PITCH_PX * index as f32 + 8.0);
         assert_eq!(glyph.rect[1], NAMETAG_LINE_PITCH_PX * index as f32);
     }
     assert!(
@@ -161,27 +359,43 @@ fn multiline_lines_get_their_own_centred_backgrounds_before_their_glyphs() {
     assert!(
         glyphs
             .iter()
-            .all(|record| record.text == 1 && record.color == [1.0; 4])
+            .all(|record| record.text == 1 && record.color == [1.0, 1.0, 1.0, DIM_TEXT_ALPHA])
     );
+    for (dim, full) in glyphs.iter().zip(&scene.records[4..]) {
+        assert_eq!(dim.depth_tested, 0);
+        assert_eq!(full.depth_tested, 1);
+        assert_eq!(full.color, [1.0; 4]);
+        assert_eq!(full.rect, dim.rect);
+        assert_eq!(full.uv, dim.uv);
+        assert_eq!(full.anchor, dim.anchor);
+    }
 }
 
 #[test]
 fn oversized_tags_render_a_prefix_within_the_scene_budget() {
-    let line_budget = MAX_NAMETAG_LINES;
+    let records_per_line = NAMETAG_RECORDS_PER_LINE + 1;
+    let line_budget = MAX_NAMETAG_RECORDS / records_per_line;
     let tag = anchor(&"A\n".repeat(line_budget + 1));
     let scene = scene(&[tag]);
     assert!(!scene.records.is_empty());
     assert!(scene.records.len() <= MAX_NAMETAG_RECORDS);
-    assert_eq!(scene.records.len(), line_budget * NAMETAG_RECORDS_PER_LINE);
+    assert_eq!(scene.records.len(), line_budget * records_per_line);
     assert_eq!(
         scene
             .records
             .iter()
             .filter(|record| record.text == 1)
             .count(),
-        line_budget
+        line_budget * 2
     );
-    assert_eq!(scene.see_through, scene.records.len());
+    assert_eq!(
+        scene
+            .records
+            .iter()
+            .filter(|record| record.depth_tested == 0)
+            .count(),
+        line_budget * NAMETAG_RECORDS_PER_LINE
+    );
     assert!(
         scene
             .records
@@ -194,13 +408,25 @@ fn oversized_tags_render_a_prefix_within_the_scene_budget() {
 fn oversized_tags_use_the_budget_left_by_earlier_tags() {
     let mut first = anchor("AB");
     first.position.x = 1.0;
-    let remaining_lines = MAX_NAMETAG_LINES - 1;
+    first.view_depth = 8.0;
+    let first_records = NAMETAG_RECORDS_PER_LINE + 1;
+    let remaining_lines = (MAX_NAMETAG_RECORDS - first_records) / NAMETAG_RECORDS_PER_LINE;
     let mut oversized = anchor(&"A\n".repeat(remaining_lines + 2));
     oversized.position.x = 2.0;
     oversized.depth_tested = true;
     let scene = scene(&[oversized, first]);
-    assert_eq!(scene.records.len(), MAX_NAMETAG_RECORDS);
-    assert_eq!(scene.see_through, NAMETAG_RECORDS_PER_LINE);
+    assert_eq!(
+        scene.records.len(),
+        first_records + remaining_lines * NAMETAG_RECORDS_PER_LINE
+    );
+    assert_eq!(
+        scene
+            .records
+            .iter()
+            .filter(|record| record.depth_tested == 0)
+            .count(),
+        NAMETAG_RECORDS_PER_LINE
+    );
     assert_eq!(
         scene
             .records
@@ -213,37 +439,51 @@ fn oversized_tags_use_the_budget_left_by_earlier_tags() {
 
 #[test]
 fn sneaking_preserves_plate_opacity_and_selects_tested_glyphs() {
+    let ordinary = scene(&[anchor("AB")]);
     let mut anchor = anchor("AB");
     anchor.depth_tested = true;
-    anchor.text_alpha = SNEAK_TEXT_ALPHA;
+    anchor.text_alpha = DIM_TEXT_ALPHA;
     let scene = scene(&[anchor]);
-    assert_eq!(scene.see_through, 0);
+    assert!(scene.records.iter().all(|record| record.depth_tested != 0));
     assert_eq!(scene.records[0].color, PLATE_COLOR);
-    assert_eq!(scene.records[1].color, [1.0, 1.0, 1.0, SNEAK_TEXT_ALPHA]);
+    assert_eq!(scene.records.len(), NAMETAG_RECORDS_PER_LINE);
+    assert_eq!(scene.records[1].color, [1.0, 1.0, 1.0, DIM_TEXT_ALPHA]);
+    let drop = SNEAK_LABEL_DROP / render_model::NAMETAG_BLOCKS_PER_FONT_PIXEL;
+    for (sneak, normal) in scene.records.iter().zip(&ordinary.records) {
+        assert!((sneak.rect[1] - normal.rect[1] - drop).abs() < 1e-6);
+        assert!((sneak.rect[3] - normal.rect[3] - drop).abs() < 1e-6);
+    }
 }
 
 #[test]
-fn ordinary_then_sneaking_tags_keep_farthest_first_record_order() {
+fn ordinary_and_sneaking_labels_draw_together_back_to_front() {
     let mut far = anchor("far");
     far.runtime_id = 2;
-    far.distance = 8.0;
+    far.view_depth = 8.0;
     far.position.x = 8.0;
     let mut sneak = anchor("sneak");
     sneak.depth_tested = true;
-    sneak.distance = 9.0;
+    sneak.view_depth = 9.0;
     sneak.position.x = 9.0;
     let mut near = anchor("near");
-    near.distance = 2.0;
+    near.view_depth = 2.0;
     near.position.x = 2.0;
     let scene = scene(&[near, sneak, far]);
-    assert_eq!(scene.see_through, 4);
     assert_eq!(
         scene
             .records
             .iter()
             .map(|record| record.anchor[0])
             .collect::<Vec<_>>(),
-        [8.0, 8.0, 2.0, 2.0, 9.0, 9.0]
+        [9.0, 9.0, 8.0, 8.0, 8.0, 2.0, 2.0, 2.0]
+    );
+    assert_eq!(
+        scene
+            .records
+            .iter()
+            .map(|record| record.depth_tested)
+            .collect::<Vec<_>>(),
+        [1, 1, 0, 0, 1, 0, 0, 1]
     );
 }
 
@@ -253,18 +493,20 @@ fn visibility_uses_the_picked_actor_not_screen_distance() {
     actor.kind = ActorKind::Entity {
         identifier: "test:npc".into(),
     };
-    actor
-        .metadata
-        .insert(0, ActorMetadataValue::Flags(1 << ACTOR_FLAG_SHOW_NAME));
+    actor.metadata.insert(
+        0,
+        ActorMetadataValue::Flags(1 << ActorFlag::ShowName.wire_value()),
+    );
     assert!(!visible(&actor, None));
     assert!(visible(&actor, Some(actor.runtime_id)));
     actor
         .metadata
         .insert(METADATA_ALWAYS_SHOW_NAMETAG, ActorMetadataValue::Byte(1));
     assert!(visible(&actor, None));
-    actor
-        .metadata
-        .insert(0, ActorMetadataValue::Flags(1 << ACTOR_FLAG_INVISIBLE));
+    actor.metadata.insert(
+        0,
+        ActorMetadataValue::Flags(1 << ActorFlag::Invisible.wire_value()),
+    );
     assert!(!visible(&actor, Some(actor.runtime_id)));
 }
 
@@ -276,7 +518,7 @@ fn render_distance_uses_the_synced_value_and_skips_bad_optional_data() {
         actor
             .metadata
             .insert(METADATA_RENDER_DISTANCE, ActorMetadataValue::Float(value));
-        assert_eq!(render_distance(&actor), value);
+        assert_eq!(render_distance(&actor), value.min(DEFAULT_RENDER_DISTANCE));
     }
     actor.metadata.insert(
         METADATA_RENDER_DISTANCE,
@@ -307,7 +549,7 @@ fn empty_names_hide_players_without_screen_coordinate_visibility_rules() {
     assert!(
         extract_nametag(
             &actor,
-            eye,
+            view(eye),
             None,
             "p".into(),
             &ui::ScoreboardStore::default(),
@@ -318,7 +560,7 @@ fn empty_names_hide_players_without_screen_coordinate_visibility_rules() {
     assert!(
         extract_nametag(
             &actor,
-            eye,
+            view(eye),
             None,
             "".into(),
             &ui::ScoreboardStore::default(),
@@ -329,24 +571,25 @@ fn empty_names_hide_players_without_screen_coordinate_visibility_rules() {
 }
 
 #[test]
-fn coincident_eye_skips_only_the_degenerate_actor() {
+fn a_viewer_at_the_anchor_keeps_the_screen_aligned_tag() {
     let actor = actor();
-    let eye = tag_world_position(&actor, 0.5).unwrap();
+    let feet = Vec3::from_array(actor.interpolated_position(0.5).unwrap());
+    let eye = tag_world_position(&actor, feet);
     assert!(
         extract_nametag(
             &actor,
-            eye,
+            view(eye),
             None,
             "p".into(),
             &ui::ScoreboardStore::default(),
             0.5
         )
-        .is_none()
+        .is_some()
     );
 }
 
 #[test]
-fn cosmetic_shadow_and_border_preserve_native_depth_partition_and_record_bound() {
+fn cosmetic_shadow_and_border_preserve_each_records_depth_selection_and_record_bound() {
     let plate = NametagRecord {
         uv: [0., 0., -1., -1.],
         rect: [-2., -1., 2., 9.],
@@ -360,8 +603,18 @@ fn cosmetic_shadow_and_border_preserve_native_depth_partition_and_record_bound()
         ..Default::default()
     };
     let mut scene = NametagScene {
-        records: vec![plate, text, plate, text],
-        see_through: 2,
+        records: vec![
+            plate,
+            text,
+            NametagRecord {
+                depth_tested: 1,
+                ..plate
+            },
+            NametagRecord {
+                depth_tested: 1,
+                ..text
+            },
+        ],
         ..Default::default()
     };
     let style: ui::mod_hud::NametagStyle = serde_json::from_value(
@@ -369,7 +622,16 @@ fn cosmetic_shadow_and_border_preserve_native_depth_partition_and_record_bound()
     )
     .unwrap();
     style_scene(&mut scene, &style, None);
-    assert_eq!(scene.see_through, 7);
+    assert!(
+        scene.records[..7]
+            .iter()
+            .all(|record| record.depth_tested == 0)
+    );
+    assert!(
+        scene.records[7..]
+            .iter()
+            .all(|record| record.depth_tested != 0)
+    );
     assert_eq!(scene.records.len(), 14);
     assert_eq!(
         scene.records[6].color[3], 0.125,
@@ -379,7 +641,6 @@ fn cosmetic_shadow_and_border_preserve_native_depth_partition_and_record_bound()
     hidden.hide = true;
     style_scene(&mut scene, &hidden, None);
     assert!(scene.records.is_empty());
-    assert_eq!(scene.see_through, 0);
 }
 
 #[test]
@@ -409,29 +670,6 @@ fn own_tag_color_and_border_width_preserve_other_tags() {
     assert_eq!(scene.records[6].color, [0., 1., 0., 0.125]);
 }
 
-/// Replacement removes a formatted tint, while opacity still preserves native sneaking alpha.
-#[test]
-fn replacement_and_default_text_opacity_preserve_native_coverage() {
-    let glyph = NametagRecord {
-        anchor: [1., 2., 3.],
-        color: [0., 1., 0., 0.125],
-        uv: [0., 0., 1., 1.],
-        ..Default::default()
-    };
-    let remote = NametagRecord {
-        anchor: [4., 5., 6.],
-        ..glyph
-    };
-    let mut scene = NametagScene {
-        records: vec![glyph, remote],
-        ..Default::default()
-    };
-    let style: ui::mod_hud::NametagStyle = serde_json::from_value(serde_json::json!({"opacity":0.5,"own_text_color":[1.,0.,0.,1.],"replace_own_text_color":true})).unwrap();
-    style_scene(&mut scene, &style, Some(glyph.anchor));
-    assert_eq!(scene.records[0].color, [1., 0., 0., 0.0625]);
-    assert_eq!(scene.records[1].color, [0., 1., 0., 0.0625]);
-}
-
 #[test]
 fn long_formatted_server_tags_keep_every_line() {
     let lines: Vec<String> = (0..40)
@@ -441,7 +679,7 @@ fn long_formatted_server_tags_keep_every_line() {
     assert!(text.len() > ui_screens::text::MAX_PRESENTED_TEXT_BYTES);
     let anchor = extract_nametag(
         &actor(),
-        Vec3::new(0.0, 1.62, 5.0),
+        view(Vec3::new(0.0, 1.62, 5.0)),
         None,
         text.into(),
         &ui::ScoreboardStore::default(),
@@ -462,7 +700,7 @@ fn huge_tags_allocate_only_the_scene_consumable_nonempty_lines() {
     let (tag, allocations) = test_alloc::count(|| {
         extract_nametag(
             &actor,
-            Vec3::new(0.0, 1.62, 5.0),
+            view(Vec3::new(0.0, 1.62, 5.0)),
             None,
             Arc::clone(&name),
             &scoreboards,
@@ -487,7 +725,7 @@ fn projection_limits_extraction_to_the_nearest_tags_and_reuses_their_text() {
     let score = "A\n"
         .repeat(protocol::MAX_ACTOR_METADATA_STRING_BYTES / "A\n".len())
         .into();
-    let stream = actor_stream(count, Some(score));
+    let stream = actor_stream(count, Some(score), 0);
     let mut cache = NametagTextCache::default();
     let boards = ui::ScoreboardStore::default();
     let project = |cache: &mut NametagTextCache, show_players| {
@@ -495,7 +733,7 @@ fn projection_limits_extraction_to_the_nearest_tags_and_reuses_their_text() {
             cache,
             &boards,
             &stream,
-            Vec3::new(0.0, 1.62, 5.0),
+            view(Vec3::new(0.0, 1.62, 5.0)),
             None,
             0.5,
             show_players,
@@ -534,28 +772,37 @@ fn cached_text_refreshes_pose_visibility_name_score_and_score_distance() {
     let eye = Vec3::new(0.0, 1.62, 5.0);
     let mut cache = NametagTextCache::default();
     let first = cache
-        .extract(&actor, eye, None, Arc::clone(&name), &boards, 0.5)
+        .extract(&actor, view(eye), None, Arc::clone(&name), &boards, 0.5)
         .unwrap();
     actor.position[0] = 1.0;
-    actor
-        .metadata
-        .insert(0, ActorMetadataValue::Flags(1 << ACTOR_FLAG_SNEAKING));
+    actor.metadata.insert(
+        0,
+        ActorMetadataValue::Flags(
+            (1 << ActorFlag::Sneaking.wire_value()) | (1 << ActorFlag::ShowName.wire_value()),
+        ),
+    );
+    actor.metadata.insert(38, ActorMetadataValue::Float(2.0));
     let (moved, allocations) = test_alloc::count(|| {
         cache
-            .extract(&actor, eye, None, Arc::clone(&name), &boards, 0.5)
+            .extract(&actor, view(eye), None, Arc::clone(&name), &boards, 0.5)
             .unwrap()
     });
     assert_eq!(allocations, 0);
     assert!(Arc::ptr_eq(&first.lines, &moved.lines));
     assert_ne!(first.position, moved.position);
+    assert_eq!(
+        moved.position.y,
+        2.0 * (DEFAULT_HEIGHT + HEAD_CLEARANCE) - SNEAK_PLAYER_Y_OFFSET
+    );
     assert!(moved.depth_tested);
-    assert_eq!(moved.text_alpha, SNEAK_TEXT_ALPHA);
-    actor
-        .metadata
-        .insert(0, ActorMetadataValue::Flags(1 << ACTOR_FLAG_INVISIBLE));
+    assert_eq!(moved.text_alpha, DIM_TEXT_ALPHA);
+    actor.metadata.insert(
+        0,
+        ActorMetadataValue::Flags(1 << ActorFlag::Invisible.wire_value()),
+    );
     assert!(
         cache
-            .extract(&actor, eye, None, Arc::clone(&name), &boards, 0.5)
+            .extract(&actor, view(eye), None, Arc::clone(&name), &boards, 0.5)
             .is_none()
     );
     actor.metadata.remove(&0);
@@ -563,13 +810,13 @@ fn cached_text_refreshes_pose_visibility_name_score_and_score_distance() {
         .metadata
         .insert(METADATA_SCORE, ActorMetadataValue::String("8 wins".into()));
     let changed = cache
-        .extract(&actor, eye, None, Arc::clone(&name), &boards, 0.5)
+        .extract(&actor, view(eye), None, Arc::clone(&name), &boards, 0.5)
         .unwrap();
     assert_eq!(changed.lines[1].as_ref(), "8 wins");
     let far = cache
         .extract(
             &actor,
-            Vec3::new(0.0, 1.62, 20.0),
+            view(Vec3::new(0.0, 1.62, 20.0)),
             None,
             Arc::clone(&name),
             &boards,
@@ -578,7 +825,7 @@ fn cached_text_refreshes_pose_visibility_name_score_and_score_distance() {
         .unwrap();
     assert_eq!(far.lines.len(), 1);
     let renamed = cache
-        .extract(&actor, eye, None, "Other".into(), &boards, 0.5)
+        .extract(&actor, view(eye), None, "Other".into(), &boards, 0.5)
         .unwrap();
     assert_eq!(renamed.lines[0].as_ref(), "Other");
     actor
@@ -586,7 +833,7 @@ fn cached_text_refreshes_pose_visibility_name_score_and_score_distance() {
         .insert(METADATA_SCORE, ActorMetadataValue::String("".into()));
     assert_eq!(
         cache
-            .extract(&actor, eye, None, name, &boards, 0.5)
+            .extract(&actor, view(eye), None, name, &boards, 0.5)
             .unwrap()
             .lines
             .len(),
@@ -629,14 +876,14 @@ fn cached_below_name_scores_follow_scoreboard_updates_and_clears() {
             )
             .unwrap();
         let tag = cache
-            .extract(&actor, eye, None, Arc::clone(&name), &boards, 0.5)
+            .extract(&actor, view(eye), None, Arc::clone(&name), &boards, 0.5)
             .unwrap();
         assert_eq!(tag.lines[1].as_ref(), format!("{score} wins"));
     }
     boards.clear();
     assert_eq!(
         cache
-            .extract(&actor, eye, None, name, &boards, 0.5)
+            .extract(&actor, view(eye), None, name, &boards, 0.5)
             .unwrap()
             .lines
             .len(),
@@ -649,7 +896,7 @@ fn long_server_tag_lines_render_bounded_utf8_prefixes() {
     for text in ["A".repeat(20_000), "界".repeat(20_000 / "界".len() + 1)] {
         let tag = extract_nametag(
             &actor(),
-            Vec3::new(0.0, 1.62, 5.0),
+            view(Vec3::new(0.0, 1.62, 5.0)),
             None,
             Arc::from(text.as_str()),
             &ui::ScoreboardStore::default(),
@@ -663,7 +910,7 @@ fn long_server_tag_lines_render_bounded_utf8_prefixes() {
         );
         assert!(tag.lines[0].chars().count() <= ui::MAX_GLYPHS_PER_LAYOUT);
         let scene = scene(&[tag]);
-        assert_eq!(scene.records.len(), NAMETAG_RECORDS_PER_LINE);
+        assert_eq!(scene.records.len(), NAMETAG_RECORDS_PER_LINE + 1);
         assert!(scene.atlas[0].rgba8.iter().any(|&byte| byte != 0));
         assert!(scene.atlas[0].cell[2] <= NAMETAG_ATLAS_SIDE);
         assert!(scene.atlas[0].cell[3] <= NAMETAG_ATLAS_SIDE);
@@ -675,7 +922,7 @@ fn long_formatted_lines_keep_the_aggregate_multiline_budget() {
     let line = "§aA§bB".repeat(ui::MAX_TEXT_SPANS / 2 + 1);
     let tag = extract_nametag(
         &actor(),
-        Vec3::new(0.0, 1.62, 5.0),
+        view(Vec3::new(0.0, 1.62, 5.0)),
         None,
         format!("{line}\n{line}").into(),
         &ui::ScoreboardStore::default(),
@@ -693,7 +940,10 @@ fn long_formatted_lines_keep_the_aggregate_multiline_budget() {
                 <= ui::MAX_TEXT_SPANS
         );
     }
-    assert_eq!(scene(&[tag]).records.len(), 2 * NAMETAG_RECORDS_PER_LINE);
+    assert_eq!(
+        scene(&[tag]).records.len(),
+        2 * (NAMETAG_RECORDS_PER_LINE + 1)
+    );
 }
 
 #[test]
@@ -715,7 +965,7 @@ fn wide_advance_lines_keep_a_prefix_instead_of_exceeding_the_wrap_limit() {
     let text = "0".repeat(ui::MAX_WRAP_LINES * glyphs_per_line + 1);
     assert!(text.len() <= ui::UiLimits::MAX_TEXT_BYTES);
     let scene = scene_with_font(&[anchor(&text)], &font);
-    assert_eq!(scene.records.len(), NAMETAG_RECORDS_PER_LINE);
+    assert_eq!(scene.records.len(), NAMETAG_RECORDS_PER_LINE + 1);
     assert!(scene.atlas[0].cell[2] <= NAMETAG_ATLAS_SIDE);
 }
 
@@ -730,7 +980,7 @@ fn oversized_glyph_ink_is_clipped_to_the_atlas_cell() {
         |_| true,
     );
     let scene = scene_with_font(&[anchor("0")], &font);
-    assert_eq!(scene.records.len(), NAMETAG_RECORDS_PER_LINE);
+    assert_eq!(scene.records.len(), NAMETAG_RECORDS_PER_LINE + 1);
     assert_eq!(scene.atlas[0].cell[2..], [NAMETAG_ATLAS_SIDE; 2]);
     assert!(scene.atlas[0].rgba8.iter().any(|&byte| byte != 0));
 }

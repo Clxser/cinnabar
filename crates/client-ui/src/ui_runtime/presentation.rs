@@ -16,6 +16,7 @@ use crate::ui_runtime::render_adapter::adapt_ui_draw_list;
 mod accessors;
 mod construction;
 pub mod debug_overlay;
+mod dial_icons;
 pub mod dynamic_textures;
 pub mod forms;
 mod frame;
@@ -31,6 +32,7 @@ pub mod item_sprite;
 pub mod item_viewmodel;
 pub mod menu;
 pub mod menu_artwork;
+pub mod menu_branding;
 pub mod menu_scroll;
 mod mod_panel_font;
 mod runtime_assets;
@@ -49,7 +51,7 @@ pub mod session_icons;
 pub use forms::{PreparedJsonUi, ServerUiPack};
 
 pub use session_glyphs::SessionGlyphSheets;
-pub use session_icons::{MAX_SESSION_ICON_SIDE, SessionIcon, SessionIcons};
+pub use session_icons::{SessionIcon, SessionIcons};
 pub mod startup;
 pub mod texture_atlas;
 
@@ -119,13 +121,15 @@ pub struct UiPresentationRuntime {
     solid_texture_page: u16,
     hud_textures: Option<HudTexturePages>,
     icon_catalog: Option<Arc<RuntimeIconCatalog>>,
+    /// The strip frame each dial item shows this frame.
+    dial_frames: inventory::DialFrames,
     icon_refs: Option<Box<[IconRef]>>,
     layouts: TextLayoutCache,
     rejected_frames: u64,
     obfuscation: ObfuscationGlyphs, // same-width pools for the per-frame §k swap
     revision: u64,
     last_input: Option<UiRenderInput>, // last built frame; see `stabilize_revision`
-    /// What the last frame was built from, while time cannot change its output.
+    /// What the last frame was built from; later frames re-emit only changed and `§k` nodes.
     last_frame: Option<frame::BuiltFrame>,
     /// Scene assembly keeps its capacity across unchanged frames and failed builds.
     assembly_nodes: Vec<UiNode>,
@@ -148,6 +152,10 @@ pub struct UiPresentationRuntime {
     safe_area: SafeArea,
     /// Item facts and camera state refreshed immediately before each build.
     hud_frame: HudFrame,
+    /// Inventory projections retained across HUD publications.
+    inventory_cache: Option<Box<publish::inventory_cache::InventoryCache>>,
+    /// Semantic HUD content retained before binding construction.
+    hud_cache: forms::hud::SemanticHud,
     /// Last logged skip/odd-data counters, so changes surface exactly once.
     last_hud_diagnostics: crate::ui_runtime::gameplay_hud::GameplayHudDiagnostics,
     /// This frame's world-space tags, including scores, and their retained glyph atlas.
@@ -187,6 +195,7 @@ pub struct UiPresentationRuntime {
     offhand_viewmodel_icon: Option<IconRef>,
     /// The art set last requested: service art plus engine textures too big for a server page.
     menu_artwork_set: menu_artwork::ArtworkSet,
+    mod_menu_branding: Option<Arc<menu_branding::PreparedMenuBranding>>,
     menu_artwork_loader: menu_artwork::ArtworkLoader,
     /// This frame's clock in seconds, which engine screen animations paint at.
     menu_seconds: f64,

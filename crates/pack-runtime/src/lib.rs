@@ -3,6 +3,7 @@
 mod block_physics;
 pub mod compile_cache;
 pub mod entity_pack;
+pub mod pack_flipbooks;
 pub mod pack_language;
 mod pack_preparation;
 pub mod pack_skybox;

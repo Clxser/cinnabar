@@ -254,7 +254,7 @@ impl Fixture {
                     .join(", "),
             ),
         )
-        .replace("@group(1) @binding(0)", "@group(0) @binding(20)");
+        .replace("@group(1) @binding(0)", "@group(0) @binding(27)");
         Some(Self {
             materials: gpu.words(&[0, 0, u32::MAX, 0, 0, 0], storage),
             animations: gpu.words(&[0; 8], storage),
@@ -304,13 +304,25 @@ impl Fixture {
             (10, self.animation_frames.as_entire_binding()),
             (13, streams.geometry.as_entire_binding()),
             (15, self.atmosphere.as_entire_binding()),
-            (20, self.lightmap.as_entire_binding()),
+            (27, self.lightmap.as_entire_binding()),
             (
                 material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[0],
                 wgpu::BindingResource::TextureView(&self.atlas),
             ),
             (
                 material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[1],
+                wgpu::BindingResource::TextureView(&self.atlas),
+            ),
+            (
+                material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[2],
+                wgpu::BindingResource::TextureView(&self.atlas),
+            ),
+            (
+                material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[3],
+                wgpu::BindingResource::TextureView(&self.atlas),
+            ),
+            (
+                material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[4],
                 wgpu::BindingResource::TextureView(&self.atlas),
             ),
             (

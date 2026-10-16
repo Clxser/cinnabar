@@ -6,7 +6,7 @@ fn head_assets() -> Arc<assets::RuntimeEntityAssets> {
     let entity = br#"{"format_version":"1.10.0","minecraft:client_entity":{"description":{"identifier":"minecraft:player","materials":{"default":"entity"},"textures":{"default":"textures/entity/test"},"geometry":{"default":"geometry.test"},"render_controllers":["controller.render.test"]}}}"#;
     let geometry = br#"{"format_version":"1.12.0","minecraft:geometry":[{"description":{"identifier":"geometry.test","texture_width":64,"texture_height":64},"bones":[{"name":"head","pivot":[0,24,0]},{"name":"body","pivot":[0,24,0]},{"name":"rightarm","pivot":[5,22,0]},{"name":"leftarm","pivot":[-5,22,0]},{"name":"rightleg","pivot":[1.9,12,0]},{"name":"leftleg","pivot":[-1.9,12,0]}]}]}"#;
     let controller = br#"{"format_version":"1.8.0","render_controllers":{"controller.render.test":{"geometry":"Geometry.default","materials":[{"*":"Material.default"}],"textures":["Texture.default"]}}}"#;
-    let compiled = pack_compiler::compile_entity_pack(vec![
+    let compiled = pack_entity_compiler::compile_entity_pack(vec![
         ("entity/player.json".into(), entity.to_vec()),
         ("models/entity/test.geo.json".into(), geometry.to_vec()),
         ("render_controllers/test.json".into(), controller.to_vec()),
@@ -25,7 +25,7 @@ pub(super) fn head_stream() -> WorldStream {
             local_player_unique_id: 1,
             player_position: [0.0, 64.0, 0.0],
             world_spawn_position: [0, 64, 0],
-            air_network_id: protocol::SEQUENTIAL_AIR_NETWORK_ID,
+            air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
             block_network_ids_are_hashes: false,
         },
         Arc::new(assets::RuntimeAssets::diagnostic()),
@@ -52,6 +52,7 @@ pub(super) fn head_feed() -> client_world::LocalPlayerFeed {
         main_hand: None,
         off_hand: None,
         held_network_ids: [0; 2],
+        held_variants: Default::default(),
         main_hand_metadata: 0,
         main_hand_slot: 0,
         main_hand_stack_id: None,
@@ -59,6 +60,7 @@ pub(super) fn head_feed() -> client_world::LocalPlayerFeed {
         java_swing_ticks: actor_animation::ACTOR_SWING_TICKS,
         flying: false,
         gliding: false,
+        spinning: false,
         fall_fly_ticks: 0,
         teleported: false,
         first_person: false,
@@ -264,6 +266,25 @@ fn nonlocal_head_keeps_tick_interpolation_and_takes_the_short_yaw_path() {
     }
 }
 
+#[test]
+fn nonlocal_head_pitch_takes_the_short_path_across_the_signed_boundary() {
+    let mut stream = head_stream();
+    stream.sync_local_player_pose(&head_feed());
+    stream.prepare_actor_appearance_fixture();
+    stream.advance_actor_interpolation_frame(1);
+    let mut actor = stream.authority().actor(1).unwrap().clone();
+    actor.received_pose.pitch = -40.0;
+    let rig = stream.authority().actor_rig(1).unwrap();
+    for (previous, current, delta) in [(179.0, -179.0, 2.0), (-179.0, 179.0, -2.0)] {
+        actor.previous_pose.pitch = previous;
+        actor.pitch = current;
+        for alpha in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let input = third_person_input(&rig, &actor, None, alpha, false);
+            assert_eq!(input.head_pitch, previous + delta * alpha);
+        }
+    }
+}
+
 /// Draw and eat timing count from the first using tick, a tick behind the frame.
 #[test]
 fn use_timing_maps_java_counts() {
@@ -313,6 +334,7 @@ fn retained_item_does_not_use_the_selected_items_clock() {
 #[test]
 fn native_and_modern_items_stay_retained_until_equip_adopts_them() {
     let item = |identifier: &str| WornItem {
+        charged_projectile: None,
         use_facts: client_world::EffectiveItemUse::default(),
         grip: assets::item::grip::builtin_item_grip(identifier),
         identifier: identifier.into(),
@@ -321,6 +343,7 @@ fn native_and_modern_items_stay_retained_until_equip_adopts_them() {
         kind: crate::presentation::equipment::HeldKind::Sprite,
         dye_rgb: None,
         enchanted: false,
+        variant: Default::default(),
     };
     for modern in [FILLED_MAP, "minecraft:crossbow", "minecraft:shield"] {
         let sword = item("minecraft:iron_sword");
@@ -342,6 +365,7 @@ fn native_and_modern_items_stay_retained_until_equip_adopts_them() {
 #[test]
 fn outgoing_main_use_is_idle_while_offhand_keeps_the_actual_owner_use() {
     let item = |identifier: &str| WornItem {
+        charged_projectile: None,
         use_facts: client_world::EffectiveItemUse::default(),
         grip: assets::item::grip::builtin_item_grip(identifier),
         identifier: identifier.into(),
@@ -350,6 +374,7 @@ fn outgoing_main_use_is_idle_while_offhand_keeps_the_actual_owner_use() {
         kind: crate::presentation::equipment::HeldKind::Sprite,
         dye_rgb: None,
         enchanted: false,
+        variant: Default::default(),
     };
     let owner = ActorEquipmentInput {
         main: Some(item("minecraft:apple")),
@@ -416,6 +441,7 @@ fn mixed_native_map_swaps_publish_the_outgoing_mesh_until_adoption() {
         .unwrap(),
     );
     let item = |identifier: &str| WornItem {
+        charged_projectile: None,
         use_facts: client_world::EffectiveItemUse::default(),
         grip: assets::item::grip::builtin_item_grip(identifier),
         identifier: identifier.into(),
@@ -424,6 +450,7 @@ fn mixed_native_map_swaps_publish_the_outgoing_mesh_until_adoption() {
         kind: crate::presentation::equipment::HeldKind::Sprite,
         dye_rgb: None,
         enchanted: false,
+        variant: Default::default(),
     };
     for (old, new) in [(ids[0], ids[1]), (ids[1], ids[0])] {
         let mut stream = head_stream();
@@ -494,6 +521,7 @@ fn mixed_native_map_swaps_publish_the_outgoing_mesh_until_adoption() {
                     artwork: &artwork,
                     motion: Mat4::IDENTITY,
                     sampling_camera: None,
+                    aspect: 1.0,
                 },
                 &mut equipment,
                 &mut cache,
@@ -540,6 +568,8 @@ fn partial_layers_skip_missing_parts() {
 /// Builds a sprite stack for the hand transition tests.
 fn worn(identifier: &str) -> WornItem {
     WornItem {
+        variant: Default::default(),
+        charged_projectile: None,
         use_facts: client_world::EffectiveItemUse::default(),
         grip: assets::item::grip::builtin_item_grip(identifier),
         identifier: Arc::from(identifier),
@@ -611,7 +641,7 @@ fn displayed_stack_keeps_its_data_value_through_the_dip() {
     assert_eq!(shown.map(|item| item.metadata), Some(0));
 }
 
-/// Java's body reaches its side during the fourteenth tick, while the native curve is still falling.
+/// Java's body reaches its side during the fourteenth tick without moving its feet.
 #[test]
 fn death_body_reaches_java_angle_without_moving_its_feet() {
     use crate::presentation::actors::transform::death_tilted;

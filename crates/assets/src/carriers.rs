@@ -39,8 +39,10 @@ pub fn physics_registry_basename() -> &'static str {
 pub enum Recipe {
     World,
     BlockPhysics,
+    ItemFacts,
     Atmosphere,
     Entity,
+    EntityFacts,
     Font,
     Hud,
     Lang,
@@ -135,6 +137,30 @@ pub const WORLD: Carrier = Carrier {
         true,
     )
 };
+/// Pinned gameplay item facts, independent of fetched artwork.
+pub const ITEM_FACTS: Carrier = Carrier {
+    inputs: &item_facts_inputs(),
+    ..carrier(
+        "item-facts",
+        "Compiling item facts",
+        Recipe::ItemFacts,
+        crate::facts::ITEM_FACTS_FILENAME,
+        None,
+        true,
+    )
+};
+
+/// Converts the shared compiler source list into tracked recipe inputs.
+const fn item_facts_inputs() -> [Input; crate::facts::ITEM_FACTS_INPUTS.len()] {
+    let mut inputs = [Input::File(""); crate::facts::ITEM_FACTS_INPUTS.len()];
+    let mut index = 0;
+    while index < inputs.len() {
+        inputs[index] = Input::File(crate::facts::ITEM_FACTS_INPUTS[index]);
+        index += 1;
+    }
+    inputs
+}
+
 pub const BLOCK_PHYSICS: Carrier = Carrier {
     inputs: &[
         Input::File(BLOCK_REGISTRY),
@@ -157,6 +183,17 @@ pub const ATMOSPHERE: Carrier = carrier(
     Some("atmosphere-assets.json"),
     true,
 );
+pub const ENTITY_FACTS: Carrier = Carrier {
+    inputs: &[Input::File(crate::facts::entity::SOURCE_PATH)],
+    ..carrier(
+        "entity-facts",
+        "Installing entity facts",
+        Recipe::EntityFacts,
+        crate::facts::entity::FILENAME,
+        None,
+        true,
+    )
+};
 pub const ENTITY: Carrier = Carrier {
     inputs: &[
         Input::Pack,
@@ -180,6 +217,7 @@ pub const FONT: Carrier = Carrier {
     font_face: Some(FontFace {
         native_raster: false,
         name: "Cinnangles Sans",
+        json_ui_alias: None,
         ascii_bearing: None,
         space_em_1000: None,
         manifest: include_bytes!("../../../assets/cinnangles-sans-source.json"),
@@ -205,6 +243,7 @@ pub const FONT_TEN: Carrier = Carrier {
     font_face: Some(FontFace {
         native_raster: true,
         name: "Cinnangles Ten",
+        json_ui_alias: Some("MinecraftTen"),
         ascii_bearing: None,
         space_em_1000: None,
         manifest: include_bytes!("../../../assets/cinnangles-ten-source.json"),
@@ -230,6 +269,7 @@ pub const FONT_SEVEN: Carrier = Carrier {
     font_face: Some(FontFace {
         native_raster: true,
         name: "Cinnangles Seven",
+        json_ui_alias: None,
         ascii_bearing: None,
         space_em_1000: None,
         manifest: include_bytes!("../../../assets/cinnangles-seven-source.json"),
@@ -255,6 +295,7 @@ pub const FONT_FIVE: Carrier = Carrier {
     font_face: Some(FontFace {
         native_raster: true,
         name: "Cinnangles Five",
+        json_ui_alias: None,
         ascii_bearing: None,
         space_em_1000: None,
         manifest: include_bytes!("../../../assets/cinnangles-five-source.json"),
@@ -280,6 +321,7 @@ pub const FONT_FIVE_BOLD: Carrier = Carrier {
     font_face: Some(FontFace {
         native_raster: true,
         name: "Cinnangles Five Bold",
+        json_ui_alias: None,
         ascii_bearing: None,
         space_em_1000: None,
         manifest: include_bytes!("../../../assets/cinnangles-five-bold-source.json"),
@@ -473,10 +515,12 @@ pub const AUDIO_PCM: Carrier = Carrier {
 
 /// Every carrier, in the order progress reports them.
 pub const CARRIERS: &[Carrier] = &[
+    ITEM_FACTS,
     BLOCK_PHYSICS,
     WORLD,
     ATMOSPHERE,
     ENTITY,
+    ENTITY_FACTS,
     FONT,
     FONT_TEN,
     FONT_SEVEN,
@@ -632,7 +676,7 @@ mod tests {
 
     #[test]
     fn shipped_oreui_icons_are_optional_and_independent_of_the_game_pack() {
-        assert!(!OREUI_ICONS.required && OREUI_ICONS.installed);
+        const { assert!(!OREUI_ICONS.required && OREUI_ICONS.installed) };
         assert_eq!(OREUI_ICONS.inputs, &[Input::Manifest(OREUI_ICONS_MANIFEST)]);
     }
 

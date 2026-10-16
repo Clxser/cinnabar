@@ -3,11 +3,12 @@
 //! Box sizes and UV origins follow the chest textures' unwraps (56x19 lid, 56x24 body,
 //! 6x5 latch; 88 wide for the double); hinge height and latch placement need native measurement.
 
+use assets::block_entity_geometry::BoxSpec;
 use glam::{Mat4, Vec3};
 
 use super::{
     atlas::BlockEntityAtlas,
-    mesh::{BoxSpec, Facing, Layer, MeshBuilder, WHITE, model_matrix},
+    mesh::{Facing, Layer, MeshBuilder, WHITE, model_matrix},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -27,7 +28,28 @@ pub enum ChestVariant {
 }
 
 impl ChestVariant {
-    fn texture(self, double: bool) -> String {
+    /// The variant a chest block draws as, waxed copper as its unwaxed age; `None` for other
+    /// blocks, including the ender chest, which its own block entity selects.
+    #[must_use]
+    pub fn from_block_name(block_name: &str) -> Option<Self> {
+        use assets::facts::{BlockModelVariant, ChestKind, CopperAge as Age};
+        Some(
+            match assets::facts::block_render_fact(block_name).variant? {
+                BlockModelVariant::Chest(ChestKind::Normal) => Self::Normal,
+                BlockModelVariant::Chest(ChestKind::Trapped) => Self::Trapped,
+                BlockModelVariant::Chest(ChestKind::Copper(age)) => Self::Copper(match age {
+                    Age::Unaffected => CopperAge::Unaffected,
+                    Age::Exposed => CopperAge::Exposed,
+                    Age::Weathered => CopperAge::Weathered,
+                    Age::Oxidized => CopperAge::Oxidized,
+                }),
+                _ => return None,
+            },
+        )
+    }
+
+    /// Returns the pack-relative texture path for this chest layout.
+    pub(super) fn texture(self, double: bool) -> String {
         let stem = match self {
             Self::Normal => "normal",
             Self::Trapped => "trapped",
@@ -96,7 +118,8 @@ pub(super) fn emit(
             [128.0, 64.0],
         ),
     };
-    let Some(texture) = atlas.texture(&model.variant.texture(double), logical) else {
+    let Some(texture) = builder.required_texture(atlas, &model.variant.texture(double), logical)
+    else {
         return;
     };
     let base = model_matrix(block, center, model.facing.yaw_degrees());
@@ -190,5 +213,41 @@ mod tests {
                 .fold(f32::MIN, f32::max)
         };
         assert!(top(1.0) > top(0.0) + 5.0);
+    }
+}
+
+#[cfg(test)]
+mod membership_tests {
+    use super::*;
+    /// Retains the old parser as an independent registry-wide membership oracle.
+    fn previous(block_name: &str) -> Option<ChestVariant> {
+        let name = block_name.strip_prefix("minecraft:")?;
+        let name = name.strip_prefix("waxed_").unwrap_or(name);
+        Some(match name {
+            "chest" => ChestVariant::Normal,
+            "trapped_chest" => ChestVariant::Trapped,
+            "copper_chest" => ChestVariant::Copper(CopperAge::Unaffected),
+            "exposed_copper_chest" => ChestVariant::Copper(CopperAge::Exposed),
+            "weathered_copper_chest" => ChestVariant::Copper(CopperAge::Weathered),
+            "oxidized_copper_chest" => ChestVariant::Copper(CopperAge::Oxidized),
+            _ => return None,
+        })
+    }
+    #[test]
+    fn compiled_model_metadata_matches_previous_pinned_membership() {
+        for record in assets::read_registry_for_protocol(
+            assets::pinned_block_registry_bytes(),
+            assets::active_content_registry_protocol(),
+        )
+        .unwrap()
+        {
+            assert_eq!(
+                ChestVariant::from_block_name(&record.name),
+                previous(&record.name),
+                "{}",
+                record.name
+            );
+        }
+        assert_eq!(ChestVariant::from_block_name("example:chest"), None);
     }
 }

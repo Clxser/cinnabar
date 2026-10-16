@@ -1,111 +1,37 @@
-//! Projects the committed crack progress onto the block's model surfaces.
-
-use std::{
-    collections::HashMap,
-    sync::{Arc, Weak},
-};
+//! Projects committed crack progress onto model surfaces.
 
 use chunk_pipeline::ActiveBlockCrack;
-use render_model::{CrackInstance, CrackShape, crack_shape_from_template};
-
-/// Keeps shapes only while their admitted asset identity is current.
-#[derive(Default)]
-pub(super) struct CrackShapeCache {
-    assets: Option<Weak<assets::RuntimeAssets>>,
-    shapes: HashMap<(u32, u32), CachedCrackShape>,
-}
-
-impl CrackShapeCache {
-    /// Clears a session's surfaces and owner while retaining the cache's buckets.
-    pub(super) fn clear(&mut self) {
-        self.shapes.clear();
-        self.assets = None;
-    }
-
-    /// Reports whether any surfaces are retained for the current asset identity.
-    #[cfg(test)]
-    pub(super) fn is_empty(&self) -> bool {
-        self.shapes.is_empty()
-    }
-
-    /// Drops surfaces when resource reload publishes a different asset generation.
-    fn bind_assets(&mut self, assets: &Arc<assets::RuntimeAssets>) {
-        if self
-            .assets
-            .as_ref()
-            .is_some_and(|current| current.as_ptr() == Arc::as_ptr(assets))
-        {
-            return;
-        }
-        self.shapes.clear();
-        self.assets = Some(Arc::downgrade(assets));
-    }
-}
-
-/// Retains one column per runtime identity and transform without growing with world positions.
-pub(super) struct CachedCrackShape {
-    pub(super) column: Option<[i32; 2]>,
-    pub(super) shape: CrackShape,
-}
-
-/// Caches model surfaces by runtime identity, transform and admitted column displacement.
-pub(super) fn crack_shape(
-    cache: &mut CrackShapeCache,
-    assets: &Arc<assets::RuntimeAssets>,
-    mode: assets::NetworkIdMode,
-    runtime_id: Option<u32>,
-    block: [i32; 3],
-) -> CrackShape {
-    cache.bind_assets(assets);
-    let Some(runtime_id) = runtime_id else {
-        return CrackShape::Cube;
-    };
-    let visual = assets.resolve(mode, runtime_id);
-    let transform = visual
-        .model_template()
-        .and_then(|template| assets.model_templates().get(template as usize))
-        .map_or(visual.variant(), |template| {
-            assets::bamboo::transform_for_template(template.flags, visual.variant(), block)
-        });
-    let column = visual.model_template().and_then(|template| {
-        has_component_offset(assets, template).then_some([block[0], block[2]])
-    });
-    let build = || CachedCrackShape {
-        column,
-        shape: visual
-            .model_template()
-            .and_then(|template| {
-                crack_shape_from_template(assets, template, visual.variant(), block)
-            })
-            .unwrap_or_default(),
-    };
-    let cached = cache
-        .shapes
-        .entry((runtime_id, transform))
-        .or_insert_with(build);
-    if cached.column != column {
-        *cached = build();
-    }
-    cached.shape.clone()
-}
-
-/// Checks every part because a compound surface may admit displacement after its first part.
-fn has_component_offset(assets: &assets::RuntimeAssets, mut template: u32) -> bool {
-    while let Some(part) = assets.model_templates().get(template as usize) {
-        if assets.model_random_offset(template).is_some() {
-            return true;
-        }
-        if part.flags & assets::MODEL_TEMPLATE_FLAG_COMPOUND_NEXT == 0 {
-            break;
-        }
-        template += 1;
-    }
-    false
-}
+use render_model::{CrackInstance, CrackShape};
 
 /// The destroy stage (`0..=9`) for progress below completion.
 pub(super) fn stage_for_progress(progress: f32) -> u8 {
     ((progress * 10.0) as u8).min(9)
+}
+
+/// The block layers stored at a crack position.
+pub(super) type CrackLayers = [Option<u32>; world::MAX_STORAGE_COUNT];
+
+/// Each crack plus the other block of its two-block structure, as vanilla cracks both halves of
+/// a door or bed together. `second_part` gives the other block's position and layers; a position
+/// that already has its own crack keeps it.
+pub(super) fn with_second_parts(
+    entries: &[ActiveBlockCrack],
+    mut second_part: impl FnMut(&ActiveBlockCrack) -> Option<([i32; 3], CrackLayers)>,
+) -> Vec<ActiveBlockCrack> {
+    let mut expanded = entries.to_vec();
+    for entry in entries {
+        let Some((position, layers)) = second_part(entry) else {
+            continue;
+        };
+        if expanded.iter().all(|other| other.position != position) {
+            expanded.push(ActiveBlockCrack {
+                position,
+                layers,
+                ..entry.clone()
+            });
+        }
+    }
+    expanded
 }
 
 /// Draws positive committed progress without maintaining another crack lifecycle.
@@ -125,10 +51,6 @@ pub(super) fn crack_instances(
 }
 
 #[cfg(test)]
-#[path = "crack_shape_tests.rs"]
-mod shape_tests;
-
-#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -141,6 +63,41 @@ mod tests {
             progress,
             layers: [None; world::MAX_STORAGE_COUNT],
         }
+    }
+
+    /// One layer-zero block id, as stored for a crack position.
+    fn layers(id: u32) -> CrackLayers {
+        std::array::from_fn(|layer| (layer == 0).then_some(id))
+    }
+
+    #[test]
+    fn the_other_half_of_a_door_cracks_with_the_hit_half() {
+        let lower = ActiveBlockCrack {
+            layers: layers(7),
+            ..crack(0.4)
+        };
+        let upper = [lower.position[0], lower.position[1] + 1, lower.position[2]];
+        let expanded = with_second_parts(std::slice::from_ref(&lower), |entry| {
+            (entry.layers[0] == Some(7)).then_some((upper, layers(8)))
+        });
+        assert_eq!(expanded.len(), 2);
+        assert_eq!(expanded[1].position, upper);
+        assert_eq!(
+            expanded[1].progress, lower.progress,
+            "both halves crack together"
+        );
+        assert_eq!(expanded[1].layers, layers(8));
+        let both = with_second_parts(&[lower.clone(), expanded[1].clone()], |entry| {
+            Some((
+                if entry.position == upper {
+                    lower.position
+                } else {
+                    upper
+                },
+                entry.layers,
+            ))
+        });
+        assert_eq!(both.len(), 2, "a half with its own crack is not doubled");
     }
 
     /// Zero and negative progress have no overlay until progression becomes positive.

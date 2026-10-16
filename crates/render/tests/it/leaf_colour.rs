@@ -215,11 +215,23 @@ fn native_cube_and_leaf_pixels_match_gamma_products_without_changing_carried_col
                     resource: wgpu::BindingResource::TextureView(&native_view),
                 },
                 wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[2],
+                    resource: wgpu::BindingResource::TextureView(&native_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[3],
+                    resource: wgpu::BindingResource::TextureView(&native_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[4],
+                    resource: wgpu::BindingResource::TextureView(&native_view),
+                },
+                wgpu::BindGroupEntry {
                     binding: material_shader::NATIVE_LEAF_SAMPLER_BINDING,
                     resource: wgpu::BindingResource::Sampler(&native_sampler),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 34,
+                    binding: 40,
                     resource: data.as_entire_binding(),
                 },
             ],
@@ -281,7 +293,7 @@ struct LeafWitnessCase {
     fog_amount: vec4<f32>,
     route: vec4<u32>,
 }
-@group(0) @binding(34) var<storage, read> leaf_witness_cases: array<LeafWitnessCase>;
+@group(0) @binding(40) var<storage, read> leaf_witness_cases: array<LeafWitnessCase>;
 
 @vertex fn leaf_witness_vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
     let corners = array(vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));

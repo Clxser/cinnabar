@@ -271,6 +271,124 @@ fn invalid_nonempty_server_stop_is_counted_once_and_skips_playback() {
     assert_eq!(store.animation_stats().frozen_actors, 0);
 }
 
+#[test]
+fn display_actor_uses_custom_rig_and_keeps_a_separate_lifetime_namespace() {
+    let mut custom = compiled();
+    custom.symbols[0].identifier = "custom:display_actor".into();
+    let custom =
+        Arc::new(RuntimeEntityAssets::from_compiled(custom.with_unresolved_admissions()).unwrap());
+    let mut displays = crate::DisplayActorStore::new(0, Arc::clone(&custom));
+    let mut second = crate::DisplayActorStore::new(0, Arc::clone(&custom));
+    let position = [1, 64, 2];
+    let runtime = displays.resolve(position, "custom:display_actor").unwrap();
+    assert_eq!(
+        displays.resolve(position, "custom:display_actor"),
+        Some(runtime)
+    );
+    displays.advance(1);
+    let first = displays
+        .rig(runtime)
+        .expect("custom entity must use its normal rig")
+        .actor;
+    let other = second.resolve(position, "custom:display_actor").unwrap();
+    second.advance(1);
+    assert_ne!(
+        first.session_id,
+        second.rig(other).unwrap().actor.session_id
+    );
+    assert_eq!(
+        first.runtime_id, other,
+        "identical runtime ids cannot alias across pools"
+    );
+    assert_eq!(displays.actor(runtime).unwrap().position, [1.0, 64.0, 2.0]);
+    assert_eq!(
+        displays.resolve(position, "minecraft:test"),
+        None,
+        "an entity without a rig retains no display lifetime"
+    );
+    assert!(displays.actor(runtime).is_none());
+    let replacement = displays.resolve(position, "custom:display_actor").unwrap();
+    assert_ne!(replacement, runtime);
+    displays.retain(&Default::default());
+    assert!(displays.actor(replacement).is_none());
+    assert!(
+        second.actor(other).is_some(),
+        "retirement is local to one pool"
+    );
+}
+
+#[test]
+fn display_actor_rigless_identifier_cache_evicts_its_oldest_entries() {
+    let mut displays = crate::DisplayActorStore::new(0, assets());
+    let limit = crate::MAX_DISPLAY_ACTORS;
+    for index in 0..limit * 4 {
+        let identifier = format!("custom:missing_{index}");
+        assert_eq!(displays.resolve([index as i32, 0, 0], &identifier), None);
+    }
+    assert_eq!(displays.caches_unrigged("custom:missing_0"), None);
+    assert_eq!(
+        displays.caches_unrigged(&format!("custom:missing_{}", limit * 4 - 1)),
+        Some(limit),
+        "distinct server identifiers must not grow the cache past its bound"
+    );
+    assert!(displays.resolve([0; 3], "minecraft:test").is_some());
+}
+
+#[test]
+fn display_actor_retires_a_replacement_with_a_cached_rigless_identifier() {
+    let mut displays = crate::DisplayActorStore::new(0, assets());
+    assert_eq!(displays.resolve([0; 3], "custom:missing"), None);
+    let position = [1, 64, 2];
+    let runtime = displays.resolve(position, "minecraft:test").unwrap();
+    assert_eq!(displays.resolve(position, "custom:missing"), None);
+    assert!(
+        displays.actor(runtime).is_none(),
+        "cached rigless replacements must release the previous display's slot"
+    );
+    assert!(displays.resolve(position, "minecraft:test").is_some());
+}
+
+#[test]
+fn display_actor_retires_a_reused_lifetime_whose_pack_rig_was_removed() {
+    let mut custom = compiled();
+    custom.symbols[0].identifier = "custom:display_actor".into();
+    let custom =
+        Arc::new(RuntimeEntityAssets::from_compiled(custom.with_unresolved_admissions()).unwrap());
+    let mut displays = crate::DisplayActorStore::new(0, assets());
+    displays.set_pack(Some((Arc::clone(&custom), vec![0])));
+    let position = [3, 64, 4];
+    let runtime = displays.resolve(position, "custom:display_actor").unwrap();
+    displays.set_pack(None);
+    assert_eq!(
+        displays.resolve(position, "custom:display_actor"),
+        None,
+        "a display whose rig left with its pack must not keep its slot"
+    );
+    assert!(displays.actor(runtime).is_none());
+    assert!(displays.caches_unrigged("custom:display_actor").is_some());
+    displays.set_pack(Some((custom, vec![0])));
+    assert!(displays.resolve(position, "custom:display_actor").is_some());
+}
+
+#[test]
+fn display_actor_rebinds_the_same_lifetime_to_replaced_pack_geometry() {
+    let base = assets();
+    let mut displays = crate::DisplayActorStore::new(0, Arc::clone(&base));
+    let runtime = displays.resolve([0; 3], "minecraft:test").unwrap();
+    displays.advance(1);
+    let identity = displays.rig(runtime).unwrap().actor;
+    displays.set_pack(Some((Arc::clone(&base), vec![0])));
+    displays.advance(1);
+    let overridden = displays.rig(runtime).unwrap();
+    assert_eq!(overridden.actor, identity);
+    assert!(overridden.rig.0 >= assets::PACK_RIG_ID_BASE);
+    displays.set_pack(None);
+    displays.advance(1);
+    let restored = displays.rig(runtime).unwrap();
+    assert_eq!(restored.actor, identity);
+    assert!(restored.rig.0 < assets::PACK_RIG_ID_BASE);
+}
+
 /// Java 1.7's swing as a remote viewer runs it: a request restarts only an idle swing, one not
 /// yet started or one past its first half; each tick steps it, and frames wrap forward to 1.
 #[derive(Default)]
@@ -434,4 +552,25 @@ fn remote_haste_shortens_the_java_swing_and_its_restart_guard_until_removed() {
     assert_eq!(frames[FRAME_FRACTIONS.len() * 3], 0.5);
     swing_effect(&mut store, protocol::ActorEffectAction::Remove, 0);
     remote_swing_frames(&mut store, &[0, 3], 8, 6);
+}
+
+/// Remote Bedrock swings follow the actor's effects: six ticks under Haste I, four under Haste II.
+#[test]
+fn remote_bedrock_swing_length_follows_haste_levels() {
+    for (amplifier, length) in [(0, 6), (1, 4)] {
+        let mut store = store();
+        swing_effect(&mut store, protocol::ActorEffectAction::Add, amplifier);
+        let first = store.latest_sequence + 1;
+        swing_arm(&mut store, first);
+        let mut progress = Vec::new();
+        for _ in 0..length + 1 {
+            store.advance_interpolation_ticks(1);
+            progress.push(store.actor_rigs().next().unwrap().hand[1].attack_time);
+        }
+        let expected: Vec<f32> = (0..length)
+            .map(|tick| tick as f32 / length as f32)
+            .chain([0.0])
+            .collect();
+        assert_eq!(progress, expected, "Haste amplifier {amplifier}");
+    }
 }
