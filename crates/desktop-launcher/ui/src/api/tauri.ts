@@ -30,6 +30,8 @@ export const tauriApi: Api = {
   getFeaturedServers: () => invoke('get_featured_servers'),
   openExternal: (url) => invoke('open_external', { url }),
   openLogs: () => invoke('open_logs'),
+  getRecentServers: () => invoke('get_recent_servers'),
+  getChangelog: () => invoke('get_changelog'),
   onUpdateState: (cb) => subscribe<UpdateState>('update-state', cb),
   onGameState: (cb) => subscribe<GameState>('game-state', cb),
 };

@@ -1,10 +1,23 @@
 // Synthetic data for design work and screenshots. Server names, addresses and news are invented.
 // Pick a state with `?scenario=<name>`, a host with `?platform=`; `&freeze` stops simulated progress.
 import { mockSkin } from '../lib/diorama/textures';
-import type { Account, Changelog, RecentServer, Server } from './proposed';
-import nightArt from './mock-art/night.jpg';
-import dawnArt from './mock-art/dawn.jpg';
-import type { Api, Channel, GameState, InstallState, News, Platform, UpdateState } from './types';
+import type { Account, Server } from './proposed';
+
+/** A 16:9 voxel-skyline poster drawn as SVG, so mock news art never ships as an image file. */
+function poster(top: string, bottom: string, ground: string, stars: boolean): string {
+  const blocks = [3, 5, 4, 7, 6, 8, 5, 4, 6, 9, 7, 5, 3, 4, 6, 5]
+    .map((h, i) => `<rect x="${i * 40}" y="${360 - h * 18}" width="40" height="${h * 18}" fill="${ground}"/>`)
+    .join('');
+  const sky = stars
+    ? Array.from({ length: 40 }, (_, i) => `<rect x="${(i * 97) % 640}" y="${(i * 53) % 180}" width="3" height="3" fill="#fff" opacity="0.7"/>`).join('')
+    : '<circle cx="470" cy="150" r="46" fill="#ffd9a0" opacity="0.9"/>';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360"><defs><linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${top}"/><stop offset="1" stop-color="${bottom}"/></linearGradient></defs><rect width="640" height="360" fill="url(#s)"/>${sky}${blocks}</svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+const nightArt = poster('#0b1030', '#3a2458', '#140d24', true);
+const dawnArt = poster('#f08a5d', '#f6c48c', '#5a2a2a', false);
+import type { Api, Changelog, RecentServer, Channel, GameState, InstallState, News, Platform, UpdateState } from './types';
 
 const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search);
 const scenario = params.get('scenario') ?? 'idle';
@@ -201,9 +214,9 @@ export async function mockRecentServers(): Promise<RecentServer[]> {
 }
 
 /** Notes for the installed build; `?new` marks it as the first launch of this version. */
-export async function mockChangelog(): Promise<Changelog | undefined> {
+export async function mockChangelog(): Promise<Changelog | null> {
   await wait(100);
-  if (scenario === 'bare') return undefined;
+  if (scenario === 'bare') return null;
   return {
     version: install.version,
     publishedAt: ago(26 * 60 * MINUTE),
@@ -264,6 +277,8 @@ export const mockApi: Api = {
     window.open(url, '_blank', 'noopener');
   },
   async openLogs() {},
+  getRecentServers: () => mockRecentServers(),
+  getChangelog: () => mockChangelog(),
   onUpdateState(cb) {
     updateListeners.add(cb);
     return () => updateListeners.delete(cb);

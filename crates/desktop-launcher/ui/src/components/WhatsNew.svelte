@@ -1,6 +1,6 @@
 <script lang="ts">
   import ArrowUpRight from '@lucide/svelte/icons/arrow-up-right';
-  import type { Changelog } from '../api/proposed';
+  import type { Changelog } from '../api';
   import { store } from '../lib/store.svelte';
 
   let { log }: { log: Changelog } = $props();

@@ -9,8 +9,11 @@ use std::{
 const REQUIRE_UI: &str = "CINNABAR_REQUIRE_LAUNCHER_UI";
 const LOGO: &str = "../../packaging/icons/cinnabar.svg";
 
+const CHANGELOG: &str = "CINNABAR_CHANGELOG";
+
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(webview)");
+    embed_changelog();
     let linux = env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "linux");
     if linux && env::var_os("CARGO_FEATURE_LINUX_WEBVIEW").is_none() {
         return;
@@ -86,4 +89,18 @@ fn render_icons(logo: &Path, out: &Path) -> (PathBuf, PathBuf) {
         .write_png(fs::File::create(&png_path).expect("create icon.png"))
         .expect("write icon.png");
     (png_path, ico_path)
+}
+
+/// Embeds the release highlights packaging generated for this build, or `null` without them.
+fn embed_changelog() {
+    println!("cargo:rerun-if-env-changed={CHANGELOG}");
+    let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));
+    let changelog = match env::var_os(CHANGELOG) {
+        Some(path) => {
+            println!("cargo:rerun-if-changed={}", Path::new(&path).display());
+            fs::read_to_string(&path).expect("read the generated changelog")
+        }
+        None => "null".to_owned(),
+    };
+    fs::write(out.join("changelog.json"), changelog).expect("embed the changelog");
 }

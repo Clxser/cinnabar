@@ -65,6 +65,14 @@ address: string, port: number, description?: string, imageUrl?: string, online?:
  */
 pingMs?: number, };
 
+export type RecentServer = { name: string, address: string, port: number, imageUrl?: string, lastPlayedAt: string, };
+
+export type Changelog = { version: string, publishedAt: string, highlights: Array<string>, url?: string, 
+/**
+ * True on the first launch of this version; reading it marks it seen.
+ */
+unseen: boolean, };
+
 export type ServerTarget = { address: string, port: number, };
 
 export type LaunchOptions = { server?: ServerTarget, };

@@ -1,5 +1,5 @@
-import { api, type Channel, type FeaturedServer, type GameState, type InstallState, type News, type UpdateState } from '../api';
-import { getAccount, getChangelog, getRecentServers, signIn, type Account, type Changelog, type RecentServer, type Server } from '../api/proposed';
+import { api, type Changelog, type RecentServer, type Channel, type FeaturedServer, type GameState, type InstallState, type News, type UpdateState } from '../api';
+import { getAccount, signIn, type Account, type Server } from '../api/proposed';
 import type { ActionIntent } from './play';
 import type { Platform } from '../api';
 import { platform as guessedPlatform } from './window';
@@ -59,8 +59,8 @@ class LauncherStore {
     this.reloadNews();
     this.reloadServers();
     getAccount().then((a) => (this.account = a), () => undefined);
-    getRecentServers().then((r) => (this.recent = r ?? []), () => undefined);
-    getChangelog().then((c) => (this.changelog = c), () => undefined);
+    api.getRecentServers().then((r) => (this.recent = r), () => undefined);
+    api.getChangelog().then((c) => (this.changelog = c ?? undefined), () => undefined);
 
     return () => {
       offUpdate();

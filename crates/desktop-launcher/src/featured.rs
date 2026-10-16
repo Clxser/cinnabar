@@ -39,6 +39,59 @@ pub struct FeaturedServer {
     pub ping_ms: Option<u32>,
 }
 
+/// A saved server the game joined, newest first.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct RecentServer {
+    pub name: String,
+    pub address: String,
+    pub port: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub image_url: Option<String>,
+    pub last_played_at: String,
+}
+
+/// The game's recently joined saved servers, with artwork when the game's featured list has it.
+pub fn recent(server_file: &Path, featured_snapshot: &Path) -> Vec<RecentServer> {
+    let featured = from_game(featured_snapshot);
+    launcher::desktop::recent_servers(server_file, 8)
+        .into_iter()
+        .map(|saved| {
+            let (address, port) = split(&saved.address);
+            RecentServer {
+                image_url: featured
+                    .iter()
+                    .find(|server| server.address == address && server.port == port)
+                    .and_then(|server| server.image_url.clone()),
+                name: saved.name,
+                address,
+                port,
+                last_played_at: time::OffsetDateTime::from_unix_timestamp(
+                    saved.last_joined_unix.min(i64::MAX as u64) as i64,
+                )
+                .ok()
+                .and_then(|joined| {
+                    joined
+                        .format(&time::format_description::well_known::Rfc3339)
+                        .ok()
+                })
+                .unwrap_or_default(),
+            }
+        })
+        .collect()
+}
+
+/// Splits `host:port`; anything else is an address joined with port 0.
+fn split(address: &str) -> (String, u16) {
+    address
+        .rsplit_once(':')
+        .and_then(|(host, port)| Some((host.to_owned(), port.parse().ok()?)))
+        .filter(|(host, _)| !host.is_empty())
+        .unwrap_or_else(|| (address.to_owned(), 0))
+}
+
 #[derive(Deserialize, Serialize)]
 struct Curated {
     servers: Vec<FeaturedServer>,
@@ -125,12 +178,7 @@ pub fn merge(curated: Vec<FeaturedServer>, game: Vec<FeaturedServer>) -> Vec<Fea
 }
 
 fn server(entry: FeaturedEntry) -> FeaturedServer {
-    let (address, port) = entry
-        .address
-        .rsplit_once(':')
-        .and_then(|(host, port)| Some((host.to_owned(), port.parse().ok()?)))
-        .filter(|(host, _)| !host.is_empty())
-        .unwrap_or_else(|| (entry.address.clone(), 0));
+    let (address, port) = split(&entry.address);
     FeaturedServer {
         id: entry.address,
         name: entry.name,
@@ -160,6 +208,40 @@ fn server(entry: FeaturedEntry) -> FeaturedServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recent_servers_split_addresses_and_borrow_featured_artwork() {
+        let root = tempfile::tempdir().unwrap();
+        let servers = root.path().join("servers.json");
+        std::fs::write(
+            &servers,
+            serde_json::json!([{ "name": "Mine", "address": "play.example.test:19133", "last_joined_unix": 86400 }])
+                .to_string(),
+        )
+        .unwrap();
+        let snapshot = root.path().join("featured.json");
+        FeaturedSnapshot {
+            servers: vec![FeaturedEntry {
+                name: "Featured".into(),
+                address: "play.example.test:19133".into(),
+                logo_url: "https://example.test/logo.png".into(),
+                ..FeaturedEntry::default()
+            }],
+        }
+        .save(&snapshot)
+        .unwrap();
+        let recent = recent(&servers, &snapshot);
+        assert_eq!(recent.len(), 1);
+        assert_eq!(
+            (recent[0].address.as_str(), recent[0].port),
+            ("play.example.test", 19133)
+        );
+        assert_eq!(
+            recent[0].image_url.as_deref(),
+            Some("https://example.test/logo.png")
+        );
+        assert_eq!(recent[0].last_played_at, "1970-01-02T00:00:00Z");
+    }
 
     #[test]
     fn curated_servers_come_first_and_the_game_adds_only_new_ones() {

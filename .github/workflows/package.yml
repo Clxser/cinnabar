@@ -116,6 +116,8 @@ jobs:
           ref: ${{ needs.prepare.outputs.ref }}
           persist-credentials: false
           path: source
+          # Tags and history give the launcher its release highlights.
+          fetch-depth: 0
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.workflow_sha }}
@@ -287,6 +289,8 @@ jobs:
           ref: ${{ needs.prepare.outputs.ref }}
           persist-credentials: false
           path: source
+          # Tags and history give the launcher its release highlights.
+          fetch-depth: 0
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.workflow_sha }}
@@ -448,6 +452,8 @@ jobs:
           ref: ${{ needs.prepare.outputs.ref }}
           persist-credentials: false
           path: source
+          # Tags and history give the launcher its release highlights.
+          fetch-depth: 0
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.workflow_sha }}

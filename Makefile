@@ -168,8 +168,11 @@ launcher-ui:
 	$(PNPM) --dir $(LAUNCHER_UI) install --frozen-lockfile
 	$(PNPM) --dir $(LAUNCHER_UI) build
 
+# The installed build's release highlights, embedded so the launcher shows them offline.
+LAUNCHER_CHANGELOG = .local/dist/launcher-changelog.json
 package-binaries: launcher-ui
-	CINNABAR_REQUIRE_LAUNCHER_UI=1 CINNABAR_BUILD_COMMIT="$(CINNABAR_BUILD_COMMIT)" $(CARGO) build $(PACKAGE_CARGO_FLAGS) --release --locked --no-default-features --features desktop-launcher/linux-webview $(PACKAGE_RUST_BINARIES) -p asset-compiler --bin assetc
+	python3 packaging/changelog.py highlights "$(LAUNCHER_CHANGELOG)"
+	CINNABAR_CHANGELOG="$(abspath $(LAUNCHER_CHANGELOG))" CINNABAR_REQUIRE_LAUNCHER_UI=1 CINNABAR_BUILD_COMMIT="$(CINNABAR_BUILD_COMMIT)" $(CARGO) build $(PACKAGE_CARGO_FLAGS) --release --locked --no-default-features --features desktop-launcher/linux-webview $(PACKAGE_RUST_BINARIES) -p asset-compiler --bin assetc
 	$(GO) build -trimpath -ldflags "$(PKG_CORE_LDFLAGS) $(CORE_STAMP)" -o "$(DIST_CORE)" ./core/cmd/bedrock-core
 	cd tools/localserver && GOWORK=off $(GO) build -trimpath -ldflags "-s -w" -o "$(abspath $(LOCAL_SERVER_OUT))" .
 

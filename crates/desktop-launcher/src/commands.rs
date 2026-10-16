@@ -55,6 +55,8 @@ commands!(
     get_featured_servers,
     open_external,
     open_logs,
+    get_recent_servers,
+    get_changelog,
 );
 
 /// The edge clock as RFC 3339 text.
@@ -198,6 +200,26 @@ fn open_external(url: String, app: AppHandle) -> Result<(), String> {
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_recent_servers(launcher: State<'_, Shared>) -> Vec<featured::RecentServer> {
+    featured::recent(
+        &launcher.layout.server_file(),
+        &launcher.layout.featured_servers_file(),
+    )
+}
+
+/// The installed build's highlights; `unseen` only on this version's first read.
+#[tauri::command]
+fn get_changelog(launcher: State<'_, Shared>) -> Option<crate::changelog::Changelog> {
+    crate::changelog::installed(
+        &launcher.current.version,
+        &launcher
+            .layout
+            .user_data_root
+            .join("launcher-changelog-seen.json"),
+    )
 }
 
 /// Opens the folder holding the launcher's and the game's logs.

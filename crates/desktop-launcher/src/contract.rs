@@ -3,7 +3,8 @@
 //! Run with `CINNABAR_WRITE_UI_TYPES=1` to regenerate `types.ts`.
 
 use crate::{
-    featured::FeaturedServer,
+    changelog::Changelog,
+    featured::{FeaturedServer, RecentServer},
     game::{GameState, LastExit, LaunchOptions, ServerTarget},
     install::{InstallState, Platform},
     news::{News, NewsItem},
@@ -35,6 +36,8 @@ fn generated() -> String {
         NewsItem::decl(&config),
         News::decl(&config),
         FeaturedServer::decl(&config),
+        RecentServer::decl(&config),
+        Changelog::decl(&config),
         ServerTarget::decl(&config),
         LaunchOptions::decl(&config),
     ];

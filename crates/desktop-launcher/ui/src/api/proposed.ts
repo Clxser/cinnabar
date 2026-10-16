@@ -11,32 +11,11 @@ export type Account =
 
 export type Server = FeaturedServer;
 
-/** A server the game joined recently, newest first. */
-export interface RecentServer {
-  name: string;
-  address: string;
-  port: number;
-  imageUrl?: string;
-  lastPlayedAt: string;
-}
-
-/** Release notes for the installed build, shipped with it so they work offline. */
-export interface Changelog {
-  version: string;
-  publishedAt: string;
-  highlights: string[];
-  url?: string;
-  /** True on the first launch of this version; the launcher clears it once shown. */
-  unseen: boolean;
-}
-
 async function fromMock<T>(pick: (mock: typeof import('./mock')) => Promise<T>): Promise<T | undefined> {
   if (inTauri) return undefined;
   return pick(await import('./mock'));
 }
 
 export const getAccount = () => fromMock((m) => m.mockAccount());
-export const getRecentServers = () => fromMock((m) => m.mockRecentServers());
-export const getChangelog = () => fromMock((m) => m.mockChangelog());
 
 export async function signIn(): Promise<void> {}

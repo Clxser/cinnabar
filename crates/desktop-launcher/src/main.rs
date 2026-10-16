@@ -7,6 +7,7 @@
 mod api;
 #[cfg(webview)]
 mod app;
+mod changelog;
 #[cfg(webview)]
 mod commands;
 #[cfg(test)]

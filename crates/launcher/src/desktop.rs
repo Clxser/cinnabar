@@ -31,6 +31,25 @@ impl GameExit {
     }
 }
 
+/// Saved servers the game joined, newest first, read without the game's repair of a bad file.
+pub fn recent_servers(server_file: &Path, limit: usize) -> Vec<crate::menu::view::SavedServer> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    let read = std::fs::File::open(server_file).and_then(|file| {
+        file.take(crate::menu::MAX_SAVED_SERVER_FILE_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+    });
+    if read.is_err() || bytes.len() > crate::menu::MAX_SAVED_SERVER_FILE_BYTES {
+        return Vec::new();
+    }
+    let mut servers: Vec<crate::menu::view::SavedServer> =
+        serde_json::from_slice(&bytes).unwrap_or_default();
+    servers.retain(|server| server.last_joined_unix > 0);
+    servers.sort_by_key(|server| std::cmp::Reverse(server.last_joined_unix));
+    servers.truncate(limit);
+    servers
+}
+
 /// The featured servers the game last received from the signed-in account's services, so the
 /// launcher can show them without its own account core.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -89,6 +108,34 @@ impl FeaturedSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recent_servers_are_joined_saved_servers_newest_first() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("servers.json");
+        assert!(recent_servers(&path, 8).is_empty());
+        let saved = |name: &str, joined: u64| crate::menu::view::SavedServer {
+            name: name.into(),
+            address: format!("{name}.example.test:19132"),
+            favorite: false,
+            last_joined_unix: joined,
+        };
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&[saved("old", 10), saved("never", 0), saved("new", 20)]).unwrap(),
+        )
+        .unwrap();
+        let names = |limit| {
+            recent_servers(&path, limit)
+                .into_iter()
+                .map(|server| server.name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(8), ["new", "old"]);
+        assert_eq!(names(1), ["new"]);
+        std::fs::write(&path, b"{").unwrap();
+        assert!(recent_servers(&path, 8).is_empty());
+    }
 
     #[test]
     fn featured_snapshots_round_trip_and_missing_files_read_empty() {
