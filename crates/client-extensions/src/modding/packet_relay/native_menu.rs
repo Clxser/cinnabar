@@ -65,6 +65,10 @@ struct State {
     /// Combined queued and pending control/key work, independently bounded from phase count.
     work: usize,
     output: Option<(u64, Arc<MenuOutput>)>,
+    /// Last panel delivered to the presenter, which declares incoming control kinds.
+    input_panel: Option<Arc<MenuOutput>>,
+    /// Earlier events belong to a previously delivered panel and cannot be folded.
+    pointer_barrier: usize,
     wake_pending: bool,
 }
 
@@ -110,6 +114,8 @@ impl NativeMenu {
         state.queued.clear();
         state.work = 0;
         state.output = None;
+        state.input_panel = None;
+        state.pointer_barrier = 0;
         state.wake_pending = false;
         state.epoch = state.epoch.wrapping_add(1);
     }
@@ -138,6 +144,7 @@ impl NativeMenu {
                     epoch,
                 });
             }
+            state.pointer_barrier = 0;
             state.open = input.open;
             state.epoch = state.epoch.wrapping_add(1);
             state.output = state
@@ -152,6 +159,16 @@ impl NativeMenu {
             .take()
             .filter(|(generation, _)| *generation == epoch)
             .map(|(_, value)| value);
+        let panel = state.input_panel.clone();
+        let barrier = state.pointer_barrier;
+        if let Some(panel) = panel
+            .as_ref()
+            .and_then(|output| output.output.panel.as_ref())
+            && let Some(pending) = state.pending.as_mut()
+        {
+            let removed = coalesce_pointer_axes(panel, pending, &input, barrier);
+            state.work -= removed;
+        }
         let work = input.events.len() + input.keys.len();
         if state.work + work > mod_api::MAX_CONTROL_KEYS
             || state.queued.len() + 1 > mod_api::MAX_CONTROL_KEYS
@@ -174,6 +191,15 @@ impl NativeMenu {
         } else {
             state.pending = Some(input);
         }
+        if let Some(panel) = output
+            .as_ref()
+            .filter(|output| output.output.panel.is_some())
+        {
+            // This call's input came from the previously painted panel. Only
+            // subsequent samples may use the newly delivered declaration.
+            state.pointer_barrier = state.pending.as_ref().map_or(0, |input| input.events.len());
+            state.input_panel = Some(Arc::clone(panel));
+        }
         let wake = !std::mem::replace(&mut state.wake_pending, true);
         Some((output, wake))
     }
@@ -193,6 +219,7 @@ impl NativeMenu {
             });
         }
         state.work = 0;
+        state.pointer_barrier = 0;
         inputs
     }
 
@@ -212,6 +239,54 @@ impl NativeMenu {
             }
         }
     }
+}
+
+/// Keeps the latest held-pointer slider values within one uninterrupted action run.
+/// Buttons, keys, cancellation, visibility and newly delivered panels remain barriers.
+fn coalesce_pointer_axes(
+    panel: &ui::mod_panel::Panel,
+    pending: &mut Input,
+    incoming: &Input,
+    barrier: usize,
+) -> usize {
+    if !pending.open
+        || !pending.pointer_held
+        || !incoming.pointer_held
+        || pending.pointer_cancelled
+        || incoming.pointer_cancelled
+        || !pending.keys.is_empty()
+        || !incoming.keys.is_empty()
+    {
+        return 0;
+    }
+    let slider = |id: &str| {
+        panel.controls.iter().any(|control| {
+            matches!(control, ui::mod_panel::Control::Slider { id: declared, .. } if declared == id)
+        })
+    };
+    let prefix = incoming
+        .events
+        .iter()
+        .take_while(|event| slider(&event.id))
+        .count();
+    if prefix == 0 {
+        return 0;
+    }
+    let start = pending.events[barrier..]
+        .iter()
+        .rposition(|event| !slider(&event.id))
+        .map_or(barrier, |index| barrier + index + 1);
+    let before = pending.events.len();
+    let mut index = 0;
+    pending.events.retain(|event| {
+        let keep = index < start
+            || !incoming.events[..prefix]
+                .iter()
+                .any(|next| next.id == event.id);
+        index += 1;
+        keep
+    });
+    before - pending.events.len()
 }
 
 /// Persistent HUD state is independent of visibility; stale menu controls never reopen it.
@@ -306,6 +381,212 @@ mod tests {
             &mut None,
         )
         .unwrap()
+    }
+
+    /// Advertises numeric drag axes and an ordered button through the real panel schema.
+    fn drag_output() -> Arc<MenuOutput> {
+        let mut declared = output().output.clone();
+        declared.panel.as_mut().unwrap().controls = serde_json::from_value(serde_json::json!([
+            {"id":"x","kind":"slider","label":"X","min":0,"max":1,"step":0.001,"value":0},
+            {"id":"y","kind":"slider","label":"Y","min":0,"max":1,"step":0.001,"value":0},
+            {"id":"apply","kind":"button","label":"Apply"}
+        ]))
+        .unwrap();
+        prepare(declared, &mut None).unwrap()
+    }
+
+    /// Installs the same declaration that produces the subsequent pointer samples.
+    fn drag_mailbox() -> NativeMenu {
+        let (menu, _) = mailbox();
+        menu.exchange(Input {
+            open: true,
+            ..Default::default()
+        })
+        .unwrap();
+        let initial = menu.take_inputs().pop().unwrap();
+        menu.complete(&initial, Some(drag_output()));
+        assert!(
+            menu.exchange(Input {
+                open: true,
+                ..Default::default()
+            })
+            .unwrap()
+            .0
+            .is_some()
+        );
+        menu.take_inputs();
+        menu
+    }
+
+    #[test]
+    fn sustained_pointer_axes_remain_available_when_the_worker_has_not_drained() {
+        let menu = drag_mailbox();
+        for index in 0..1000 {
+            let input = Input {
+                open: true,
+                pointer_held: true,
+                events: vec![
+                    Event {
+                        id: "x".into(),
+                        value: index as f32 / 1000.0,
+                    },
+                    Event {
+                        id: "y".into(),
+                        value: 0.75,
+                    },
+                ],
+                ..Default::default()
+            };
+            assert!(
+                menu.exchange(input).is_some(),
+                "valid drag sample {index} disabled the native menu"
+            );
+        }
+        menu.exchange(Input {
+            open: true,
+            ..Default::default()
+        })
+        .unwrap();
+        let inputs = menu.take_inputs();
+        assert_eq!(inputs.len(), 1);
+        assert!(!inputs[0].input.pointer_held);
+        assert_eq!(
+            inputs[0].input.events,
+            vec![
+                Event {
+                    id: "x".into(),
+                    value: 0.999
+                },
+                Event {
+                    id: "y".into(),
+                    value: 0.75
+                }
+            ]
+        );
+        menu.complete(&inputs[0], Some(drag_output()));
+        assert!(
+            menu.exchange(Input::default()).is_some(),
+            "closing still reaches the guest"
+        );
+        assert!(
+            menu.exchange(Input {
+                open: true,
+                ..Default::default()
+            })
+            .is_some(),
+            "a later command can reopen the menu"
+        );
+        assert!(menu.available());
+    }
+
+    #[test]
+    fn pointer_coalescing_keeps_button_key_cancellation_and_visibility_barriers() {
+        let event = |id: &str, value| Event {
+            id: id.into(),
+            value,
+        };
+        let sample = |events| Input {
+            open: true,
+            pointer_held: true,
+            events,
+            ..Default::default()
+        };
+        let menu = drag_mailbox();
+        menu.exchange(sample(vec![
+            event("x", 0.1),
+            event("apply", 1.0),
+            event("x", 0.2),
+            event("y", 0.3),
+        ]))
+        .unwrap();
+        menu.exchange(sample(vec![event("x", 0.8), event("y", 0.9)]))
+            .unwrap();
+        let pending = menu.take_inputs().pop().unwrap();
+        assert_eq!(
+            pending.input.events,
+            vec![
+                event("x", 0.1),
+                event("apply", 1.0),
+                event("x", 0.8),
+                event("y", 0.9)
+            ]
+        );
+        for boundary in ["key", "cancel", "release", "visibility"] {
+            let menu = drag_mailbox();
+            let mut first = sample(vec![event("x", 0.1)]);
+            match boundary {
+                "key" => first.keys.push(Key {
+                    key: "KeyR".into(),
+                    text: None,
+                }),
+                "cancel" => first.pointer_cancelled = true,
+                "release" => first.pointer_held = false,
+                "visibility" => first.open = false,
+                _ => unreachable!(),
+            }
+            menu.exchange(first).unwrap();
+            menu.exchange(sample(vec![event("x", 0.9)])).unwrap();
+            let phases = menu.take_inputs();
+            assert_eq!(
+                phases
+                    .iter()
+                    .flat_map(|phase| phase.input.events.iter())
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                vec![event("x", 0.1), event("x", 0.9)],
+                "{boundary} was folded away"
+            );
+        }
+    }
+
+    #[test]
+    fn a_new_panel_cannot_reclassify_a_pending_button_as_a_pointer_axis() {
+        let menu = drag_mailbox();
+        menu.exchange(Input {
+            open: true,
+            ..Default::default()
+        })
+        .unwrap();
+        let request = menu.take_inputs().pop().unwrap();
+        let mut buttons = drag_output().output.clone();
+        buttons.panel.as_mut().unwrap().controls[0] = ui::mod_panel::Control::Button {
+            id: "x".into(),
+            label: "Action".into(),
+        };
+        menu.complete(&request, Some(prepare(buttons, &mut None).unwrap()));
+        menu.exchange(Input {
+            open: true,
+            ..Default::default()
+        })
+        .unwrap();
+        let request = menu.take_inputs().pop().unwrap();
+        menu.complete(&request, Some(drag_output()));
+        for value in [1.0, 0.2, 0.8] {
+            menu.exchange(Input {
+                open: true,
+                pointer_held: true,
+                events: vec![Event {
+                    id: "x".into(),
+                    value,
+                }],
+                ..Default::default()
+            })
+            .unwrap();
+        }
+        let request = menu.take_inputs().pop().unwrap();
+        assert_eq!(
+            request.input.events,
+            vec![
+                Event {
+                    id: "x".into(),
+                    value: 1.0
+                },
+                Event {
+                    id: "x".into(),
+                    value: 0.8
+                }
+            ]
+        );
     }
 
     #[test]

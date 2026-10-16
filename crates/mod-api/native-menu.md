@@ -119,6 +119,9 @@ Those keys are reserved from ordinary gameplay, never collected from chat or
 another menu. Each native packet session has its own menu identity, input queue
 and prepared catalog; reconnecting or revoking grants retires its pending input
 and retained presentation. Calls run on the existing serial packet worker.
+Consecutive held-pointer edits of declared sliders retain their latest values
+while the worker is busy. Buttons, keys, cancellation, visibility changes and
+newly delivered panels preserve their ordering boundaries.
 
 Custom panels support surface bindings, eased transitions, glass and paint
 transforms through the shared JSON-UI engine. The `mod_panel_sans` font alias selects the shipped Inter outline face. `mod.control:N` invokes declared
