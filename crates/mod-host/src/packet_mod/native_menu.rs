@@ -5,12 +5,20 @@ use anyhow::{Result, ensure};
 use mod_api::native_menu::{Input, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES};
 use serde::{Deserialize, Serialize};
 
-/// A complete retained panel update; JSON null leaves the existing presentation unchanged.
+/// Retained presentation updates; omitted panel or HUD bindings keep their previous values.
+/// JSON null leaves the entire presentation unchanged.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Output {
     pub open: bool,
-    pub panel: ui::mod_panel::Panel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panel: Option<ui::mod_panel::Panel>,
+    /// Bounded, trusted globals for the actual resource-pack HUD, independent of menu visibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hud_bindings: Option<ui::mod_hud::HudBindings>,
+    /// Opaque inert gameplay HUD roots requested independently of menu visibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hud_geometry: Option<ui::mod_hud::HudGeometryRequests>,
     /// Physical keys reserved for guest-owned module actions while gameplay owns input.
     #[serde(default)]
     pub keys: Vec<String>,
@@ -53,9 +61,20 @@ impl PacketMod {
             );
             let output: Option<Output> = serde_json::from_slice(&bytes)?;
             if let Some(output) = &output {
-                output.panel.validate().map_err(anyhow::Error::msg)?;
+                if let Some(panel) = &output.panel {
+                    panel.validate().map_err(anyhow::Error::msg)?;
+                }
+                if let Some(bindings) = &output.hud_bindings {
+                    bindings.validate().map_err(anyhow::Error::msg)?;
+                }
+                if let Some(requests) = &output.hud_geometry {
+                    requests.validate().map_err(anyhow::Error::msg)?;
+                }
                 ensure!(
-                    mod_api::control_key_valid(&output.panel.toggle_key)
+                    output
+                        .panel
+                        .as_ref()
+                        .is_none_or(|panel| mod_api::control_key_valid(&panel.toggle_key))
                         && output.keys.len() <= mod_api::MAX_CONTROL_KEYS
                         && output
                             .keys
@@ -138,7 +157,7 @@ mod tests {
         let menu = guest.menu(&Input::default()).unwrap().unwrap();
         assert!(menu.open);
         assert_eq!(menu.keys, ["KeyR"]);
-        assert_eq!(menu.panel.controls[0].id(), "action");
+        assert_eq!(menu.panel.as_ref().unwrap().controls[0].id(), "action");
         let mut denied = instance(&output, output.len(), false);
         assert!(!denied.has_native_menu());
         assert_eq!(denied.menu(&Input::default()).unwrap(), None);
@@ -150,6 +169,45 @@ mod tests {
         let mut guest = instance("null", 4, true);
         assert_eq!(guest.menu(&Input::default()).unwrap(), None);
         assert!(guest.is_active());
+    }
+
+    #[test]
+    fn hud_bindings_can_update_before_a_panel_and_reject_untrusted_globals() {
+        let output = serde_json::json!({"open":false,"hud_bindings":{
+            "#mod_fixture_position":[0.25,0.75],"#mod_fixture_scale":1.2,
+            "#mod_fixture_active":true
+        }})
+        .to_string();
+        let mut guest = instance(&output, output.len(), true);
+        let update = guest.menu(&Input::default()).unwrap().unwrap();
+        assert!(!update.open && update.panel.is_none());
+        assert!(update.hud_bindings.is_some());
+        for invalid in [
+            output.replace("#mod_fixture_scale", "#world_blur"),
+            output.replace("1.2", "\"untyped\""),
+        ] {
+            let mut guest = instance(&invalid, invalid.len(), true);
+            assert!(guest.menu(&Input::default()).is_err());
+            assert!(!guest.is_active());
+        }
+    }
+
+    #[test]
+    fn named_hud_geometry_requests_are_bounded_and_independent_of_menu_visibility() {
+        let output = serde_json::json!({"open":false,"hud_geometry":["fixture.clock"]}).to_string();
+        let mut guest = instance(&output, output.len(), true);
+        let update = guest.menu(&Input::default()).unwrap().unwrap();
+        assert!(update.panel.is_none());
+        assert_eq!(update.hud_geometry.unwrap().0, ["fixture.clock"]);
+        for names in [
+            serde_json::json!(["duplicate", "duplicate"]),
+            serde_json::json!(["bad/name"]),
+        ] {
+            let output = serde_json::json!({"open":false,"hud_geometry":names}).to_string();
+            let mut guest = instance(&output, output.len(), true);
+            assert!(guest.menu(&Input::default()).is_err());
+            assert!(!guest.is_active());
+        }
     }
 
     #[test]
@@ -211,7 +269,9 @@ mod tests {
             "camera support is independently denied"
         );
         guest.start(identity, client_data, startup).unwrap();
-        assert!(guest.menu(&Input::default()).unwrap().is_none());
+        if let Some(initial) = guest.menu(&Input::default()).unwrap() {
+            assert!(!initial.open);
+        }
         let mut input = Input {
             open: true,
             ..Default::default()
@@ -223,6 +283,8 @@ mod tests {
         assert!(menu.open);
         let modules = menu
             .panel
+            .as_ref()
+            .unwrap()
             .controls
             .iter()
             .find(|control| control.label() == "Modules")
@@ -238,6 +300,8 @@ mod tests {
         assert!(
             modules
                 .panel
+                .as_ref()
+                .unwrap()
                 .surface
                 .as_ref()
                 .unwrap()

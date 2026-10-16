@@ -577,12 +577,19 @@ fn relative_two_axis_drag_preserves_the_grab_offset_and_clamps_release() {
     presentation.mod_ui_mut().set_mod_panel_open(true);
     frame(&mut presentation, [1280, 720]);
     let at = point(&presentation, "mod.drag:1:4", 0.8);
-    assert!(
-        presentation
-            .mod_ui_mut()
-            .mod_panel_events(at, true, true)
-            .is_empty(),
-        "grabbing never changes the current position"
+    assert_eq!(
+        presentation.mod_ui_mut().mod_panel_events(at, true, true),
+        [
+            Event {
+                id: "strength".into(),
+                value: 30.0
+            },
+            Event {
+                id: "vertical".into(),
+                value: 40.0
+            },
+        ],
+        "press samples retain the exact current position"
     );
     let scale = presentation
         .mod_ui()
@@ -601,11 +608,11 @@ fn relative_two_axis_drag_preserves_the_grab_offset_and_clamps_release() {
         [
             Event {
                 id: "strength".into(),
-                value: 40.0
+                value: 43.0
             },
             Event {
                 id: "vertical".into(),
-                value: 30.0
+                value: 28.0
             }
         ]
     );

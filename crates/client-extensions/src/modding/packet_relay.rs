@@ -439,10 +439,17 @@ fn serve(
             }
             Request::Stop => break,
             Request::NativeMenu => {
-                if let Some(input) = menu.take_input()
-                    && let Some(instance) = instance.as_mut()
-                {
-                    if !input.input.events.is_empty() || !input.input.keys.is_empty() {
+                for input in menu.take_inputs() {
+                    if !menu.available() {
+                        break;
+                    }
+                    let Some(instance) = instance.as_mut() else {
+                        break;
+                    };
+                    if !input.input.events.is_empty()
+                        || !input.input.keys.is_empty()
+                        || input.input.pointer_cancelled
+                    {
                         frames.fence_guest_state();
                     }
                     let output = match instance.menu(&input.input) {

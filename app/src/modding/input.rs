@@ -40,6 +40,8 @@ pub(super) struct PhysicalControls {
     held_seeded: bool,
     restore_capture: bool,
     panel_owned: bool,
+    /// A packet panel accepted this primary gesture; interruption requires a fresh press.
+    packet_pointer_active: bool,
 }
 
 impl PhysicalControls {
@@ -57,6 +59,7 @@ impl PhysicalControls {
         self.left_held = false;
         self.held_keys.clear();
         self.held_seeded = false;
+        self.packet_pointer_active = false;
     }
 
     /// Adopts keys already down at attachment as held, without producing press edges.
@@ -140,6 +143,31 @@ impl PhysicalControls {
             self.restore_capture = false;
         }
         restore
+    }
+
+    /// Tracks accepted packet-panel gestures, separating interruption from a normal release.
+    fn packet_pointer_sample(
+        &mut self,
+        open: bool,
+        focused: bool,
+        absorbed: bool,
+        cursor: bool,
+        pressed: bool,
+    ) -> (bool, bool) {
+        let accepting = open && focused && !absorbed && cursor;
+        let cancelled = self.packet_pointer_active && !accepting;
+        self.packet_pointer_active =
+            accepting && self.left_held && (self.packet_pointer_active || pressed);
+        (self.packet_pointer_active, cancelled)
+    }
+
+    /// Reads Shift from the single physical key owner after UI-reserved keys were consumed.
+    fn shift_held(&self, focused: bool) -> bool {
+        focused
+            && self
+                .held_keys
+                .iter()
+                .any(|key| matches!(key.as_str(), "ShiftLeft" | "ShiftRight"))
     }
 }
 
@@ -238,6 +266,7 @@ pub(super) fn prepare_mod_input(
     }
     let pointer_pressed =
         physical.pointer_edges(mouse_events.as_deref(), mouse.as_deref(), entity, focused);
+    let primary_pressed = pointer_pressed.iter().any(|key| key == "MouseLeft");
     let absorbed = menu.as_deref().map_or_else(
         || ui.ui_focused(&player),
         |menu| presentation.base_absorbs_gameplay_input(&player, &ui, menu),
@@ -248,7 +277,8 @@ pub(super) fn prepare_mod_input(
                 .menu
                 .retained
                 .as_ref()
-                .map(|retained| retained.output.panel.toggle_key.clone());
+                .and_then(|retained| retained.output.panel.as_ref())
+                .map(|panel| panel.toggle_key.clone());
             if toggle.as_ref().is_some_and(|toggle| {
                 take_packet_toggle(
                     &mut panel_keys,
@@ -279,6 +309,20 @@ pub(super) fn prepare_mod_input(
                     .collect();
                 consume_reserved(&mut keys, &reserved, toggle.as_deref());
             }
+        }
+    }
+    if !packet_owned {
+        let (_, cancelled) = physical.packet_pointer_sample(
+            false,
+            focused,
+            absorbed,
+            window.cursor_position().is_some(),
+            primary_pressed,
+        );
+        if let Some(packets) = packets.as_mut() {
+            packets.menu.pending.pointer_held = false;
+            packets.menu.pending.pointer_cancelled |= cancelled;
+            packets.menu.pending.shift_held = physical.shift_held(focused);
         }
     }
     if extension.is_none() && !packet_owned && !physical.panel_owned {
@@ -329,15 +373,11 @@ pub(super) fn prepare_mod_input(
         presentation.mod_ui_mut().set_mod_panel_open(open);
         if open && focused {
             if let Some(position) = window.cursor_position() {
-                events.extend(
-                    presentation.mod_ui_mut().mod_panel_events(
-                        position.to_array(),
-                        mouse
-                            .as_ref()
-                            .is_some_and(|buttons| buttons.just_pressed(MouseButton::Left)),
-                        physical.left_held,
-                    ),
-                );
+                events.extend(presentation.mod_ui_mut().mod_panel_events(
+                    position.to_array(),
+                    primary_pressed,
+                    physical.left_held,
+                ));
                 if let Some(scroll) = scroll.as_ref() {
                     presentation.mod_ui_mut().scroll_mod_panel(
                         position.to_array(),
@@ -345,15 +385,26 @@ pub(super) fn prepare_mod_input(
                         scroll.unit == MouseScrollUnit::Pixel,
                     );
                 }
-            } else if !physical.left_held {
+            } else {
                 presentation.mod_ui_mut().cancel_mod_panel_pointer_input();
             }
         }
         open = presentation.mod_ui().mod_panel_open();
+        let (pointer_held, pointer_cancelled) = physical.packet_pointer_sample(
+            open,
+            focused,
+            absorbed,
+            window.cursor_position().is_some(),
+            primary_pressed,
+        );
         packets.menu.pending = mod_api::native_menu::Input {
             version: mod_api::native_menu::VERSION,
             open,
+            pointer_held,
+            pointer_cancelled,
+            shift_held: physical.shift_held(focused),
             viewport,
+            hud_geometry: Default::default(),
             events: events
                 .into_iter()
                 .take(ui::mod_panel::MAX_PANEL_EVENTS)
@@ -702,6 +753,86 @@ mod focus_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn packet_pointer_interruptions_emit_one_cancel_and_require_a_fresh_press() {
+        for (open, focused, absorbed, cursor) in [
+            (false, true, false, true),
+            (true, false, false, true),
+            (true, true, true, true),
+            (true, true, false, false),
+        ] {
+            let mut physical = PhysicalControls {
+                left_held: true,
+                ..Default::default()
+            };
+            assert_eq!(
+                physical.packet_pointer_sample(true, true, false, true, true),
+                (true, false)
+            );
+            assert_eq!(
+                physical.packet_pointer_sample(true, true, false, true, false),
+                (true, false)
+            );
+            assert_eq!(
+                physical.packet_pointer_sample(open, focused, absorbed, cursor, false),
+                (false, true)
+            );
+            assert_eq!(
+                physical.packet_pointer_sample(open, focused, absorbed, cursor, false),
+                (false, false),
+                "an interruption is an edge"
+            );
+            assert_eq!(
+                physical.packet_pointer_sample(true, true, false, true, false),
+                (false, false),
+                "holding across refocus or re-entry cannot resume capture"
+            );
+            assert_eq!(
+                physical.packet_pointer_sample(true, true, false, true, true),
+                (true, false)
+            );
+        }
+    }
+
+    #[test]
+    fn packet_pointer_release_is_a_commit_sample_instead_of_a_cancellation() {
+        let mut physical = PhysicalControls {
+            left_held: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            physical.packet_pointer_sample(true, true, false, true, true),
+            (true, false)
+        );
+        physical.left_held = false;
+        assert_eq!(
+            physical.packet_pointer_sample(true, true, false, true, false),
+            (false, false)
+        );
+        assert_eq!(
+            physical.packet_pointer_sample(false, false, true, false, false),
+            (false, false),
+            "losing the window after release does not cancel a completed gesture"
+        );
+    }
+
+    #[test]
+    fn shift_snapshot_uses_the_focused_physical_key_owner() {
+        let mut physical = PhysicalControls::default();
+        physical.track_held("ShiftLeft".into(), true);
+        assert!(physical.shift_held(true));
+        assert!(!physical.shift_held(false));
+        physical.track_held("ShiftRight".into(), true);
+        physical.track_held("ShiftLeft".into(), false);
+        assert!(
+            physical.shift_held(true),
+            "either physical Shift key remains held"
+        );
+        physical.track_held("ShiftRight".into(), false);
+        physical.track_held("KeyS".into(), true);
+        assert!(!physical.shift_held(true));
+    }
 
     #[test]
     fn native_menu_reopen_consumes_its_toggle_but_focused_capture_keeps_it() {

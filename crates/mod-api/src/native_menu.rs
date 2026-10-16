@@ -1,6 +1,7 @@
 //! Focused native menu input for trusted packet mods; the guest owns menu behavior.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Native menu JSON contract version.
 pub const VERSION: u32 = 1;
@@ -28,6 +29,14 @@ pub struct Key {
     pub text: Option<String>,
 }
 
+/// Last painted bounds of one guest-requested inert gameplay HUD root.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HudGeometry {
+    pub rect: [f32; 4],
+    pub size: [f32; 2],
+}
+
 impl Key {
     /// Physical key names use the same bounded spelling as the shared controls contract.
     pub fn is_valid(&self) -> bool {
@@ -45,9 +54,21 @@ impl Key {
 pub struct Input {
     pub version: u32,
     pub open: bool,
+    /// Focused active menu pointer state, including release samples without control edits.
+    #[serde(default)]
+    pub pointer_held: bool,
+    /// One-shot interruption of the active pointer gesture; ordinary releases leave this false.
+    #[serde(default)]
+    pub pointer_cancelled: bool,
+    /// Latest focused physical left/right Shift state, even when UI input consumes the key.
+    #[serde(default)]
+    pub shift_held: bool,
     /// Available authored GUI units before optional reference-size fitting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewport: Option<[f32; 2]>,
+    /// Available named HUD roots in the same GUI coordinate basis as the menu viewport.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub hud_geometry: BTreeMap<String, HudGeometry>,
     pub events: Vec<Event>,
     pub keys: Vec<Key>,
 }
@@ -57,7 +78,11 @@ impl Default for Input {
         Self {
             version: VERSION,
             open: false,
+            pointer_held: false,
+            pointer_cancelled: false,
+            shift_held: false,
             viewport: None,
+            hud_geometry: BTreeMap::new(),
             events: Vec::new(),
             keys: Vec::new(),
         }
@@ -74,6 +99,20 @@ impl Input {
             })
             && self.events.len() <= crate::MAX_CONTROL_KEYS
             && self.keys.len() <= crate::MAX_CONTROL_KEYS
+            // The presenter bounds requested roots; the callback bounds serialized input bytes.
+            && self.hud_geometry.iter().all(|(name, geometry)| {
+                !name.is_empty()
+                    && name.len() <= 256
+                    && geometry
+                        .rect
+                        .iter()
+                        .chain(&geometry.size)
+                        .all(|value| value.is_finite())
+                    && geometry.rect[2..]
+                        .iter()
+                        .chain(&geometry.size)
+                        .all(|value| *value > 0.0)
+            })
             && self.events.iter().all(|event| {
                 !event.id.is_empty()
                     && event.id.len() <= 256
@@ -84,5 +123,44 @@ impl Input {
                     && event.value.is_finite()
             })
             && self.keys.iter().all(Key::is_valid)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pointer_cancellation_and_shift_snapshot_default_for_older_input_json() {
+        let input: Input =
+            serde_json::from_str(r#"{"version":1,"open":true,"events":[],"keys":[]}"#).unwrap();
+        assert!(!input.pointer_held && !input.pointer_cancelled && !input.shift_held);
+        let input = Input {
+            pointer_cancelled: true,
+            shift_held: true,
+            ..Default::default()
+        };
+        let encoded = serde_json::to_value(&input).unwrap();
+        assert_eq!(encoded["pointer_cancelled"], true);
+        assert_eq!(encoded["shift_held"], true);
+        assert!(input.is_valid());
+    }
+
+    #[test]
+    fn geometry_reports_do_not_share_the_unrelated_key_subscription_limit() {
+        let mut input = Input::default();
+        for index in 0..128 {
+            input.hud_geometry.insert(
+                format!("example.root{index}"),
+                HudGeometry {
+                    rect: [0.0, 0.0, 80.0, 27.0],
+                    size: [80.0, 27.0],
+                },
+            );
+        }
+        assert!(input.is_valid());
+        assert!(serde_json::to_vec(&input).unwrap().len() < MAX_INPUT_BYTES);
+        input.hud_geometry.get_mut("example.root0").unwrap().rect[0] = f32::NAN;
+        assert!(!input.is_valid());
     }
 }
