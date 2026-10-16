@@ -6,7 +6,7 @@
 use crate::runtime::network::resource_packs::PackApplication;
 use bevy::{
     ecs::system::SystemParam,
-    prelude::{Query, Real, Res, ResMut, Time, Window, With},
+    prelude::{Local, Query, Real, Res, ResMut, Resource, Time, Window, With},
     window::PrimaryWindow,
 };
 use client_interaction::melee::{MeleeRuntime, SwingTracker};
@@ -16,9 +16,8 @@ use semantic_input::Action;
 mod crosshair;
 use crosshair::resolve_crosshair;
 
-use crate::modding::interaction::{ModInteraction, effective_reach};
+use crate::modding::interaction::ModInteraction;
 use client_shell::ui_resources::UiRuntimeResource;
-use client_world::game_mode_capabilities::SURVIVAL_ATTACK_REACH;
 use {
     crate::runtime::world::ClientWorld,
     client_interaction::{
@@ -31,6 +30,10 @@ use {
 };
 
 use gameplay::melee::{Crosshair, PressContext, press_admission, resolve_and_send, swing_duration};
+
+/// This frame's resolved press awaiting admission before its movement input.
+#[derive(Resource, Default)]
+pub(crate) struct MeleeTarget(Option<crosshair::ResolvedTarget>);
 
 #[derive(SystemParam)]
 pub(crate) struct MeleeContext<'w, 's> {
@@ -49,20 +52,19 @@ pub(crate) struct MeleeContext<'w, 's> {
     mod_interaction: Option<Res<'w, ModInteraction>>,
 }
 
-/// Whether the attack button acts at all: only an open screen or spectator mode stops it,
-/// whatever the game mode or abilities otherwise allow.
-/// Runs before the mining producers so they can defer to a targeted actor.
-///
-/// Like vanilla's build-action handler, only an open screen or spectator mode ignores the
-/// press; everything else swings.
-pub(crate) fn produce_melee(
+/// Publishes frame inputs and resolves presses through the single published-frame pick.
+/// Open screens and spectator mode cancel the press.
+pub(crate) fn prepare_melee(
     player_runtime: bevy::prelude::Res<client_state::PlayerRuntime>,
     context: MeleeContext,
     mut runtime: ResMut<MeleeRuntime>,
     mut swings: ResMut<SwingTracker>,
-    mut movement: ResMut<MovementTicker>,
-    mut view: ResMut<client_presentation::local_player::LocalViewPose>,
+    movement: Res<MovementTicker>,
+    mut target: ResMut<MeleeTarget>,
+    mut frames: Local<crosshair::FrameInputs>,
 ) {
+    target.0 = None;
+    frames.publish(&context, movement.interaction_authority_identity().1);
     let item_timing = selected_attack_timing(&player_runtime, &context.client_world);
     swings.sync_ticks_for_item(
         movement.interaction_authority_identity(),
@@ -78,10 +80,10 @@ pub(crate) fn produce_melee(
             gameplay::movement::note_click_drop("attack", reason);
         }
     };
-    let Some(input) = context.input.snapshot() else {
+    if context.input.snapshot().is_none() {
         runtime.cancel();
         return;
-    };
+    }
     let now_millis = u64::try_from(context.time.elapsed().as_millis()).unwrap_or(u64::MAX);
     let focused =
         !context.focus.menu_visible && context.windows.single().is_ok_and(|window| window.focused);
@@ -93,48 +95,60 @@ pub(crate) fn produce_melee(
         runtime.cancel();
         return;
     }
-    if !runtime.observe_input(attack.pressed, attack.held) {
-        runtime.cancel();
-        return;
-    }
+    let pending = runtime.observe_input(attack.pressed, attack.held);
     // A position-authority change is resolving; the press waits for it.
     if !movement.accepts_block_interactions() {
         drop("position_authority_pending");
         runtime.defer(now_millis);
         return;
     }
-    let caps = player_runtime.facts.game_mode_capabilities();
-    let attack_reach = caps.map_or(SURVIVAL_ATTACK_REACH, |caps| caps.attack_reach);
-    let attack_reach = effective_reach(attack_reach, context.mod_interaction.as_deref());
-    let input_mode = protocol_input_mode(input.input_mode);
-    let (Some(crosshair), Some(stream)) = (
-        resolve_crosshair(
-            &player_runtime,
-            &context,
-            input_mode,
-            attack_reach,
-            caps.is_some_and(|caps| caps.creative_reach),
-            (input.authority_generation, input.frame_sequence),
-            movement.interaction_authority_identity().1,
-        ),
-        context.client_world.stream.as_ref(),
+    if !pending {
+        runtime.cancel();
+        return;
+    }
+    let Some(mut picked) = resolve_crosshair(
+        &player_runtime,
+        &context,
+        &frames,
+        movement.interaction_authority_identity().1,
     ) else {
         drop("no_interaction_ray");
         runtime.defer(now_millis);
         return;
     };
-    let crosshair = runtime.observe_attack_target(
-        crosshair,
+    picked.crosshair = runtime.observe_attack_target(
+        picked.crosshair,
         item_timing.is_some_and(|timing| timing.piercing_weapon),
     );
-    // A press leaves in its own frame; an aim-assist facing needs an unsent tick to carry it.
-    let between_ticks =
-        client_interaction::camera::aim_assist::action_rotation(&context.aim, &context.camera)
-            .is_none()
-            .then(|| runtime.between_ticks_press(&movement))
-            .flatten();
-    // A frame with ticks sends the press before its first input, using the preceding pose.
-    let sample = between_ticks.or_else(|| {
+    target.0 = Some(picked);
+}
+
+/// Admits the picked press before this frame's inputs, using their preceding pose.
+pub(crate) fn produce_melee(
+    player_runtime: Res<client_state::PlayerRuntime>,
+    context: MeleeContext,
+    target: Res<MeleeTarget>,
+    mut runtime: ResMut<MeleeRuntime>,
+    mut swings: ResMut<SwingTracker>,
+    mut movement: ResMut<MovementTicker>,
+    mut view: ResMut<client_presentation::local_player::LocalViewPose>,
+) {
+    let (Some(picked), Some(input), Some(stream)) = (
+        target.0,
+        context.input.snapshot(),
+        context.client_world.stream.as_ref(),
+    ) else {
+        return;
+    };
+    let crosshair = picked.crosshair;
+    let item_timing = selected_attack_timing(&player_runtime, &context.client_world);
+    let input_mode = protocol_input_mode(input.input_mode);
+    let now_millis = u64::try_from(context.time.elapsed().as_millis()).unwrap_or(u64::MAX);
+    if movement.has_held_release() {
+        runtime.defer(now_millis);
+        return;
+    }
+    let sample = runtime.between_ticks_press(&movement).or_else(|| {
         runtime.press_sample(
             crosshair,
             &movement,
@@ -143,6 +157,7 @@ pub(crate) fn produce_melee(
         )
     });
     let Some(sample) = sample else {
+        runtime.defer(now_millis);
         return;
     };
     let press = PressContext {
@@ -207,10 +222,9 @@ pub(crate) fn produce_melee(
             result
         },
     );
-    if rotate_action {
-        client_interaction::camera::aim_assist::rotate_for_action(
-            &context.aim,
-            &context.camera,
+    if rotate_action && let Some(rotation) = picked.action_rotation {
+        client_interaction::camera::aim_assist::apply_action_rotation(
+            rotation,
             &mut view,
             &mut movement,
             sample.tick,

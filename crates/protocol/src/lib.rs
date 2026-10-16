@@ -6,6 +6,7 @@ mod blob_cache;
 mod block_edit;
 mod boss;
 mod camera;
+pub mod capture;
 mod codec;
 mod credits;
 mod dimension;
@@ -23,6 +24,7 @@ mod nbt_tree;
 mod packet;
 mod packet_relay;
 pub use packet_relay::{PacketRelay, RELAY_TICK, RelayOutput, RelayPack};
+pub mod packet_tap;
 mod particle;
 mod permissions;
 mod primitive_shapes;
@@ -32,7 +34,8 @@ mod respawn;
 mod settings;
 mod skin_change;
 pub use skin_change::{
-    cape_content_id, player_skin_packet, set_skin_packet_engine_version, set_skin_packet_uuid,
+    builtin_skin_id, cape_content_id, custom_skin_id, player_skin_packet,
+    set_skin_packet_engine_version, set_skin_packet_uuid,
 };
 mod session_transport;
 pub mod session_wire;
@@ -91,8 +94,9 @@ pub use camera::{
     CameraInstructionEvent, CameraPreset, CameraSetInstruction, CameraShakeAction,
     CameraShakeEvent, CameraShakeType, CameraSpline, CameraSplineInstruction, CameraSplineKind,
     CameraSplineProgressKeyFrame, CameraSplineRotationKeyFrame, CameraSwitchEvent,
-    CameraTargetInstruction, MAX_CAMERA_AIM_ASSIST_ENTRIES, MAX_CAMERA_EASE_IDENTIFIER_BYTES,
-    MAX_CAMERA_PRESETS, MAX_CAMERA_SPLINE_POINTS, camera_aim_assist_activation_packet,
+    CameraTargetInstruction, ClientInputLock, ClientInputLocks, MAX_CAMERA_AIM_ASSIST_ENTRIES,
+    MAX_CAMERA_EASE_IDENTIFIER_BYTES, MAX_CAMERA_PRESETS, MAX_CAMERA_SPLINE_POINTS,
+    camera_aim_assist_activation_packet,
 };
 pub use codec::{
     PacketDecodeError, PacketEncodeError, ProtocolError, SessionError, decode_batch, encode,
@@ -141,7 +145,7 @@ pub use inventory::{
     item_stack_request_packet_filtered, next_legacy_request_id,
     normal_inventory_transaction_packet, normalize_authority, open_inventory_packet,
     personal_craft_content_indices, personal_craft_slot_index, project_container_cell,
-    validate_item_nbt_size,
+    repeated_container_open_warning_packet, validate_item_nbt_size,
 };
 pub use inventory::{
     CreativeCategory, CreativeContentEvent, CreativeGroup, CreativeItem, MAX_CREATIVE_GROUPS,
@@ -186,7 +190,7 @@ pub use login::{
     ClientCape, ClientRandomId, ClientSkin, ClientSkinGeometry, GAME_VERSION, GameData,
     LoginSequence, LoginSettings, PROTOCOL_VERSION, PacketIdTraceSnapshot, PlayOutbound,
     PlaySession, ResourcePackArchive, ResourcePackContentKey, ResourcePackHandoff, StartupItems,
-    StartupSettings, login_memory_tier, network_stack_latency_reply,
+    StartupSettings, WRITE_FAILURE_DRAIN, login_memory_tier, network_stack_latency_reply,
 };
 pub use movement::{
     BlockAction, BlockActionKind, BlockActions, BlockActionsFull, BlockItemInteraction,

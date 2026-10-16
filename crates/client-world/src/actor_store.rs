@@ -1,4 +1,5 @@
 use assets::facts::entity::{EntityFact, EntityFacts, NativeEntityClass};
+use hashbrown::HashMap as FastHashMap;
 use protocol_ids::{ActorDataKey, ActorFlag, PlayerFlag};
 use std::collections::{HashMap, HashSet};
 
@@ -8,7 +9,9 @@ use protocol::ITEM_ACTOR_NETWORK_OFFSET;
 mod aim_assist;
 mod animated;
 mod appearance_preparation;
+mod colliders;
 mod effect_members;
+pub use colliders::ActorCollisionBounds;
 mod native_facts;
 #[cfg(test)]
 pub(crate) use appearance_preparation::MAX_APPEARANCES_PUBLISHED_PER_FRAME;
@@ -334,6 +337,7 @@ impl ActorSnapshot {
         self.set_flag(ActorFlag::Sneaking.wire_value(), feed.sneaking);
         self.set_flag(ActorFlag::Sprinting.wire_value(), feed.sprinting);
         self.set_flag(ActorFlag::Gliding.wire_value(), feed.gliding);
+        self.set_flag(ActorFlag::DamageNearbyMobs.wire_value(), feed.spinning);
         // Sprinting in water is swimming; the water sample lags one frame.
         let in_water = self.status.fluid.is_some_and(|(water, _)| water);
         self.set_flag(ActorFlag::Swimming.wire_value(), feed.sprinting && in_water);
@@ -413,6 +417,11 @@ impl ActorSnapshot {
     #[must_use]
     pub fn is_gliding(&self) -> bool {
         self.flag(ActorFlag::Gliding.wire_value())
+    }
+
+    /// Whether this actor is in its Riptide spin pose.
+    pub fn is_spinning(&self) -> bool {
+        self.flag(ActorFlag::DamageNearbyMobs.wire_value())
     }
 
     #[must_use]
@@ -595,6 +604,8 @@ pub struct PlayerProfile {
     pub unique_id: i64,
     pub username: std::sync::Arc<str>,
     pub verified: bool,
+    /// Decimal Xbox user ID, empty when the server sent none.
+    pub xuid: std::sync::Arc<str>,
     pub skin: PlayerSkin,
 }
 
@@ -669,6 +680,8 @@ pub struct LocalPlayerFeed {
     pub flying: bool,
     /// Predicted elytra glide; overrides the streamed gliding flag on the local rig.
     pub gliding: bool,
+    /// Predicted Riptide spin pose, independent of swimming and gliding.
+    pub spinning: bool,
     /// Consecutive completed gliding ticks, which ease the body into its glide tilt.
     pub fall_fly_ticks: u32,
     /// Look-input yaw driving the body target, not the camera boom.
@@ -741,8 +754,8 @@ pub(crate) struct ActorStore {
     custom_actor_facts: HashMap<std::sync::Arc<str>, EntityFact>,
     actors: HashMap<u64, ActorSnapshot>,
     effect_members: effect_members::EffectMembers,
-    unique_to_runtime: HashMap<i64, u64>,
-    rider_to_ridden: HashMap<i64, i64>,
+    unique_to_runtime: FastHashMap<i64, u64>,
+    rider_to_ridden: FastHashMap<i64, i64>,
     max_actor_links: usize,
     players: HashMap<[u8; 16], PlayerProfile>,
     /// Appearances of spawned players removed from the roster, retained until despawn.
@@ -768,6 +781,8 @@ pub(crate) struct ActorStore {
     synthetic_local_uuid: Option<[u8; 16]>,
     /// Last client-fed appearance, separate from server replacements of its profile.
     synthetic_local_skin: Option<[u8; 32]>,
+    /// Avoids rehashing an unchanged client-fed skin on every pose feed.
+    local_skin_fingerprints: profiles::SkinFingerprintMemo,
     /// A client skin that could not fit the profile budget is retried on later feeds.
     synthetic_local_skin_pending: bool,
     /// Monotonic spawn/movement revision for the client-fed local player actor.
@@ -798,7 +813,7 @@ pub(crate) struct ActorStore {
     /// Rigs outside this view hold their pose instead of animating.
     animation_view: Option<actor_animation::ActorAnimationView>,
     /// Seat descriptor per mount, for riders that stream no seat offset.
-    seat_bindings: HashMap<u64, Option<u32>>,
+    seat_bindings: FastHashMap<u64, Option<u32>>,
     seat_bases: HashMap<std::sync::Arc<str>, Option<u32>>,
     property_registry: properties::PropertyRegistry,
     /// Latest local-player knockback `(sequence, [x, z])`, for hurt direction inference.
@@ -810,7 +825,7 @@ pub(crate) struct ActorStore {
     synchronized_audio: synchronized_audio::SynchronizedAudio,
 }
 
-pub use synchronized_audio::{FIREWORK_ROCKET_IDENTIFIER, ROCKET_LAUNCH_EVENT};
+pub use synchronized_audio::ROCKET_LAUNCH_EVENT;
 
 mod cloud_particles;
 pub(crate) mod creeper;
@@ -901,6 +916,8 @@ mod player_appearance;
 mod profiles;
 #[cfg(test)]
 mod riding_tests;
+#[cfg(test)]
+mod roster_identity_tests;
 mod skin_update;
 #[cfg(test)]
 mod tests;

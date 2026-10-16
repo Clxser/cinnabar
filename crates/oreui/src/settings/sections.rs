@@ -106,8 +106,10 @@ fn video(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
         "menu.video.group.accessibility.description",
     )?;
     options(content, SettingPanel::VideoAccessibility)?;
-    content.heading("options.cinnabar.advanced", "")?;
-    options(content, SettingPanel::VideoAdvanced)?;
+    if SettingPanel::VideoAdvanced.options().next().is_some() {
+        content.heading("options.cinnabar.advanced", "")?;
+        options(content, SettingPanel::VideoAdvanced)?;
+    }
     reset(content, SettingsGroup::Video, "options.video.resetSettings")
 }
 
@@ -232,7 +234,7 @@ fn draw_macro_binding(content: &mut Content<'_, '_>, slot: usize) -> Result<(), 
     } else {
         control.map_or_else(
             || content.word("controllerLayoutScreen.unassigned"),
-            key_name,
+            |control| content.view.settings_options.key_name(control),
         )
     };
     content
@@ -441,14 +443,14 @@ fn binding(
             .unwrap_or_else(|| content.word("controllerLayoutScreen.unassigned"))
     } else {
         let mut value = control
-            .map(key_name)
+            .map(|control| content.view.settings_options.key_name(control))
             .unwrap_or_else(|| content.word("controllerLayoutScreen.unassigned"));
         if let Some(secondary) = content.view.settings_options.secondary_key_control(
             launcher::menu::settings_options::BindingId::from_name(key)
                 .expect("registered binding row"),
         ) {
             value.push_str(" / ");
-            value.push_str(&key_name(secondary));
+            value.push_str(&content.view.settings_options.key_name(secondary));
         }
         value
     };
@@ -577,7 +579,8 @@ fn general(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
             Some(MenuAction::SettingsSupport(action)),
         )?;
     }
-    Ok(())
+    content.heading("options.cinnabar.advanced", "")?;
+    options(content, SettingPanel::GeneralAdvanced)
 }
 
 fn creator(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
@@ -734,6 +737,13 @@ pub(super) fn fallback(key: &str) -> &str {
         "hbui.Settings.storage.cachedData.title" => "Cached data",
         "hbui.Settings.storage.emptyList.title" => "No %1$s found",
         "hbui.Settings.storage.listHeader.delete" => "Delete",
+        "options.cinnabar.worldsFolder" => "Worlds folder",
+        "options.cinnabar.worldsFolder.description" => "Where your worlds are saved",
+        "options.cinnabar.resourcePacksFolder" => "Resource packs folder",
+        "options.cinnabar.resourcePacksFolder.description" => {
+            "Where your imported resource packs are stored"
+        }
+        "options.cinnabar.openFolder.buttonLabel" => "Open folder",
         "options.dev_clearAllCache" => "Clear All Cache",
         "options.dev_clearDownloadeCache.name" => "Clear download cache",
         "options.dev_deleteLocalScreenshots" => "Delete Local Screenshots",

@@ -5,7 +5,7 @@ use std::ops::Range;
 use super::{
     DrawCounts, TextEffects, UiDrawBatch, UiDrawList, UiError, UiNode, UiNodeId, UiTree, UiVertex,
     UiVisual,
-    draw::{DrawSpace, emit_visual, is_empty},
+    draw::{DrawSpace, FrameAffine, emit_visual, is_empty},
     intersect, scale_rect,
 };
 use crate::{FormattingPalette, SafeArea, UiLimits, UiRect, UiScale};
@@ -210,8 +210,9 @@ impl RetainedDraw {
         &self.list
     }
 
-    /// Re-emits changed nodes when shape and frame inputs match, updating `last`.
-    /// On `None`, or for animated `§k` text, the caller must discard this cache and build afresh.
+    /// Re-emits changed nodes when shape and frame inputs match, updating `last`. Text with `§k`
+    /// glyphs is emitted again on every call, since `effects` re-rolls it. On `None` the caller
+    /// must discard this cache and build afresh.
     pub fn update(
         &mut self,
         last: &mut [UiNode],
@@ -237,14 +238,16 @@ impl RetainedDraw {
         {
             return None;
         }
-        // An unchanged frame allocates nothing.
-        let Some(first) = nodes
+        let changed = nodes
             .iter()
             .zip(last.iter())
-            .position(|(new, old)| new != old)
-        else {
+            .position(|(new, old)| new != old);
+        let rerolled = nodes.iter().any(obfuscated);
+        // An unchanged frame without `§k` text allocates nothing.
+        if changed.is_none() && !rerolled {
             return Some(DrawUpdate::default());
-        };
+        }
+        let first = changed.unwrap_or(nodes.len());
         // Draw positions to emit again: a moved node carries its subtree along.
         let mut dirty = vec![false; self.placed.len()];
         let mut moved = false;
@@ -263,6 +266,13 @@ impl RetainedDraw {
                 dirty[position] = true;
             }
             old.clone_from(new);
+        }
+        if rerolled {
+            for (index, node) in nodes.iter().enumerate() {
+                if obfuscated(node) {
+                    dirty[self.positions[index]] = true;
+                }
+            }
         }
         if moved && self.relayout(nodes, &dirty).is_err() {
             return None;
@@ -363,6 +373,10 @@ impl RetainedDraw {
                 clip,
                 projection: node.world_projection.as_ref(),
                 node: node.id,
+                transform: node.transform.as_ref().map(|transform| {
+                    FrameAffine::for_node(transform, place.bounds, self.frame.scale.get())
+                }),
+                filter: node.filter_group,
             },
             effects,
             &mut scratch.vertices,
@@ -451,6 +465,14 @@ fn same_shape(new: &UiNode, old: &UiNode) -> bool {
         && new.world_projection == old.world_projection
 }
 
+/// Whether the node draws `§k` text, whose glyphs [`TextEffects`] re-rolls on every emission.
+fn obfuscated(node: &UiNode) -> bool {
+    match &node.visual {
+        UiVisual::Text { layout, .. } | UiVisual::RotatedText { layout, .. } => layout.obfuscated(),
+        _ => false,
+    }
+}
+
 /// The clip a node draws under: its projection's viewport, else what its parent hands down.
 fn draw_clip(node: &UiNode, inherited: UiRect) -> Result<UiRect, UiError> {
     match node.world_projection {
@@ -498,6 +520,7 @@ fn append(
             && last.depth_test == batch.depth_test
             && last.depth_write == batch.depth_write
             && last.world_projection == batch.world_projection
+            && last.filter_group == batch.filter_group
             && last.index_range.end == range.start
         {
             last.index_range.end = range.end;

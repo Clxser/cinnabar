@@ -45,8 +45,10 @@ pub const CUSTOM_CONTROL_INSTANCE_KEY: &str = "_control_instance";
 pub(crate) use reuse::{Children, Patch};
 
 use bag::Bag;
+pub(crate) use feed::factory_scope;
 use feed::{collection_name, factory_awaits_views, is_collection_factory};
-use grid::{grid_awaits_views, grid_capacity, grid_cell_index, grid_template, static_grid_columns};
+pub(crate) use grid::grid_template;
+use grid::{grid_awaits_views, grid_capacity, grid_cell_index, static_grid_columns};
 use native::Native;
 use source::Src;
 use spec::Binding;
@@ -950,4 +952,9 @@ fn with_index(src: Src, index: usize) -> Src {
             .properties
             .insert("collection_index".to_owned(), Value::from(index as u64));
     })
+}
+
+/// Reports whether a resolved control creates collection items, including binding-fed lengths.
+pub(crate) fn has_collection_factory(control: &ResolvedControl) -> bool {
+    is_collection_factory(control, &spec::parse(control, &mut Vec::new()))
 }

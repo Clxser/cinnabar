@@ -282,6 +282,14 @@ impl ResourcePackAdmissionState {
         self.admission = PackAdmission::None;
     }
 
+    /// How many server resource packs the current session admitted.
+    pub fn pack_count(&self) -> usize {
+        match &self.admission {
+            PackAdmission::Validated(stack) => stack.packs().len(),
+            _ => 0,
+        }
+    }
+
     /// Reports the owned generation for downstream adapter tests.
     #[cfg(any(test, feature = "test-support"))]
     pub const fn generation(&self) -> u64 {

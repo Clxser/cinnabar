@@ -76,6 +76,7 @@ impl CommittedGameplayState<'_> {
             control,
             CommittedControlEvent::PlayerListChanged { .. }
                 | CommittedControlEvent::DimensionChangeAck { .. }
+                | CommittedControlEvent::ClientInputLocks { .. }
         ) {
             return ControlDisposition::Handled;
         }
@@ -350,6 +351,7 @@ impl CommittedGameplayState<'_> {
                 if !respawn.ready_to_spawn() {
                     return ControlDisposition::Handled;
                 }
+                self.movement.discard_respawn_actions(self.physics);
                 let tick = self.movement.completed_tick();
                 if self.movement.physics_is_authorized() {
                     // Opt-in HandledTeleport acknowledgement: a committed
@@ -386,6 +388,7 @@ impl CommittedGameplayState<'_> {
                 SpatialReset::Correction
             }
             CommittedControlEvent::SetTime { .. }
+            | CommittedControlEvent::ClientInputLocks { .. }
             | CommittedControlEvent::DimensionChangeAck { .. }
             | CommittedControlEvent::WorldClocks { .. }
             | CommittedControlEvent::WeatherCycle { .. }

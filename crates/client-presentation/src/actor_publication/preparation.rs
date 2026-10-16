@@ -27,6 +27,7 @@ pub struct ActorFrameState {
     pub(super) hand_revision: u64,
     pub(super) java_hand: java::HandCache,
     pub(super) java_poses: java::PoseScratch,
+    pub(super) body_scratch: super::bodies::BodyScratch,
     pub(super) input: Option<ActorFrameInput>,
     pub(super) step: Option<crate::actor_clock::ActorFrameStep>,
     motion_step: Option<crate::actor_clock::ActorFrameStep>, // Taken by early remote motion.
@@ -129,6 +130,7 @@ pub fn advance_actor_frame(
         session_artwork,
         skin_rigs,
         skin_layers,
+        cape_state,
         poses,
         layer_poses,
         java_hand,
@@ -171,6 +173,7 @@ pub fn advance_actor_frame(
             actor_clock.reset();
         }
         *skin_layers = Default::default();
+        *cape_state = Default::default();
         *published_session = session_id;
     }
     let pack = session_id.and_then(|_| client_world.pack_entities.clone());

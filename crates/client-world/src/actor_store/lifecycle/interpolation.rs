@@ -102,6 +102,9 @@ impl ActorStore {
             let mut state = actor.motion_state();
             state.tick();
             actor.apply_motion_state(state);
+            if actor.position.map(f32::to_bits) != actor.previous_pose.position.map(f32::to_bits) {
+                self.effect_members.collidable.update(actor);
+            }
             actor.advance_creeper_swell();
             actor.status.tick();
             let using_item = actor.is_using_item();
@@ -195,38 +198,31 @@ impl ActorStore {
                     spawn_revision: actor.spawn_revision,
                 };
                 let is_local = local_runtime == Some(actor.runtime_id);
-                let held = |hand| {
-                    if is_local {
-                        return local_hands[usize::from(hand != protocol::ActorHandedness::Right)]
-                            .clone();
-                    }
-                    items
-                        .get_in_hand(lifetime, hand)
+                // Each hand's equipment is looked up once; every held-item field reads it.
+                let right = items.get_in_hand(lifetime, protocol::ActorHandedness::Right);
+                let left = items.get_in_hand(lifetime, protocol::ActorHandedness::Left);
+                let held_identifier = |equipment: Option<&crate::ActorEquipmentSnapshot>| {
+                    equipment
                         .filter(|equipment| equipment.item.identity.network_id != 0)
                         .and_then(|equipment| equipment.item.identifier.clone())
                 };
-                let mut hand_charged = [
-                    protocol::ActorHandedness::Right,
-                    protocol::ActorHandedness::Left,
-                ]
-                .into_iter()
-                .any(|hand| {
-                    items
-                        .get_in_hand(lifetime, hand)
-                        .is_some_and(|equipment| equipment.item.charged_projectile.is_some())
+                let mut hand_charged = [right, left].into_iter().any(|equipment| {
+                    equipment.is_some_and(|equipment| equipment.item.charged_projectile.is_some())
                 });
-                let main_hand = held(protocol::ActorHandedness::Right);
+                let main_hand = if is_local {
+                    local_hands[0].clone()
+                } else {
+                    held_identifier(right)
+                };
                 let main_hand_metadata = if is_local {
                     local_main_metadata
                 } else {
-                    items
-                        .get_in_hand(lifetime, protocol::ActorHandedness::Right)
-                        .map_or(0, |equipment| {
-                            equipment
-                                .item
-                                .damage
-                                .unwrap_or(equipment.item.identity.metadata)
-                        })
+                    right.map_or(0, |equipment| {
+                        equipment
+                            .item
+                            .damage
+                            .unwrap_or(equipment.item.identity.metadata)
+                    })
                 };
                 let main_hand_use = items.held_use_profile(
                     lifetime,
@@ -247,7 +243,11 @@ impl ActorStore {
                 } else {
                     None
                 };
-                let off_hand = held(protocol::ActorHandedness::Left);
+                let off_hand = if is_local {
+                    local_hands[1].clone()
+                } else {
+                    held_identifier(left)
+                };
                 let off_hand_max_use_ticks = items
                     .held_use_profile(
                         lifetime,
@@ -287,17 +287,21 @@ impl ActorStore {
                     is_riding: rider_to_ridden.contains_key(&actor.unique_id),
                     hand_charged,
                     main_hand,
+                    held_item_facts: [protocol::ActorHandedness::Right, protocol::ActorHandedness::Left]
+                        .map(|hand| {
+                            let network_id = if is_local {
+                                local_held_network_ids[usize::from(hand == protocol::ActorHandedness::Left)]
+                            } else {
+                                items.get_in_hand(lifetime, hand).map_or(0, |equipment| equipment.item.identity.network_id)
+                            };
+                            items.animation_fact(network_id)
+                        }),
                     main_hand_metadata,
                     held_variants: if is_local {
                         local_held_variants
                     } else {
-                        [
-                            protocol::ActorHandedness::Right,
-                            protocol::ActorHandedness::Left,
-                        ]
-                        .map(|hand| {
-                            items
-                                .get_in_hand(lifetime, hand)
+                        [right, left].map(|equipment| {
+                            equipment
                                 .map(|equipment| (&equipment.item.identity).into())
                                 .unwrap_or_default()
                         })
@@ -305,8 +309,7 @@ impl ActorStore {
                     main_hand_stack_id: if is_local {
                         local_main_stack_id
                     } else {
-                        items
-                            .get_in_hand(lifetime, protocol::ActorHandedness::Right)
+                        right
                             .map(|equipment| equipment.item.identity.stack_network_id)
                             .filter(|id| *id > 0)
                     },
@@ -326,9 +329,7 @@ impl ActorStore {
                     main_hand_slot: if is_local {
                         local_main_slot
                     } else {
-                        items
-                            .get_in_hand(lifetime, protocol::ActorHandedness::Right)
-                            .map_or(0, |equipment| equipment.selected_slot)
+                        right.map_or(0, |equipment| equipment.selected_slot)
                     },
                     main_hand_max_use_ticks,
                     main_hand_consumption: main_hand_use.consumption,
@@ -342,7 +343,7 @@ impl ActorStore {
                         .get(&actor.unique_id)
                         .and_then(kind_of)
                         .map(|kind| match kind {
-                            ActorKind::Player { .. } => std::sync::Arc::from("minecraft:player"),
+                            ActorKind::Player { .. } => std::sync::Arc::from(assets::facts::entity::NativeEntityClass::Player.identifier().expect("pinned player identity")),
                             ActorKind::Entity { identifier } => std::sync::Arc::clone(identifier),
                         }),
                     has_rider,
@@ -357,7 +358,7 @@ impl ActorStore {
                     is_in_ui: false,
                     camera_rotation,
                     camera_position,
-                    armor: worn_armor(items.armor(actor.runtime_id)),
+                    armor: worn_armor(items, items.armor(actor.runtime_id)),
                     properties: property_registry.for_kind(&actor.kind),
                     skin_geometry: match &actor.kind {
                         ActorKind::Player { uuid, .. } => players.get(uuid).or_else(|| unlisted.get(uuid)).and_then(|profile| {
@@ -397,11 +398,13 @@ impl ActorStore {
 
 /// Worn stacks in helmet, chestplate, leggings, boots, body order.
 fn worn_armor(
+    items: &crate::item::ItemStateStore,
     snapshot: Option<&crate::item::ActorArmorSnapshot>,
 ) -> [Option<actor_animation::WornArmor>; 5] {
     let piece = |piece: &crate::item::ActorArmorPiece| {
         Some(actor_animation::WornArmor {
             item: piece.item.identifier.clone()?,
+            fact: items.animation_fact(piece.item.identity.network_id),
             dye_rgb: piece.dye_rgb,
         })
     };
@@ -420,8 +423,8 @@ fn worn_armor(
 fn rider_contexts(
     links: impl Iterator<Item = (i64, i64)>,
     mut is_player: impl FnMut(i64) -> bool,
-) -> HashMap<i64, (bool, bool)> {
-    let mut contexts = HashMap::new();
+) -> FastHashMap<i64, (bool, bool)> {
+    let mut contexts = FastHashMap::new();
     for (rider, ridden) in links {
         let flags = contexts.entry(ridden).or_insert((false, false));
         flags.0 = true;

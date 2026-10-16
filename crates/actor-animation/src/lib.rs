@@ -45,13 +45,15 @@ pub use rig::{
 mod state;
 use state::{
     ActorRigState, ActorTickInput, AttachableRootFrame, ControllerState, EvalBudget, EvalError,
-    EvaluatedState, RuntimeBone,
+    EvaluatedState, OperandStack, RuntimeBone,
 };
 mod store;
 pub use store::ActorAnimationStore;
 use store::{PackCatalog, PoseStep, model_scale};
 
 mod attachable;
+mod cape;
+pub use cape::CapePreparationQueue;
 mod clock;
 pub mod custom_emotes;
 pub use custom_emotes::{CustomEmote, CustomEmotePose, sample_custom_emote};
@@ -86,7 +88,8 @@ pub use attachable::{
     AttachableAnimationInput, AttachableBoneParent, AttachableRigSnapshot, AttachablesRuntime,
 };
 pub use evaluation::ActorAnimationVariables;
-use evaluation::{EngineSlots, Evaluator, MolangValue, MolangVariables, VariableLayout};
+use evaluation::variables::{MolangVariables, ScratchVariables};
+use evaluation::{EngineSlots, Evaluator, MolangValue, VariableLayout};
 use geometry::{collect_controllers, resolve_binding, resolve_bones, skeleton};
 pub use motion::{ACTOR_SWING_TICKS, SwingEffects};
 use motion::{MotionInput, MotionState};

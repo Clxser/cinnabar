@@ -5,6 +5,8 @@ use bedrock_protocol_1_26_51::wire;
 use bytes::Bytes;
 
 use crate::blob_cache::ResolverReady;
+use crate::packet::GameHeader;
+use crate::packet_tap::PacketOutcome;
 use crate::raw_packet::RawPacket;
 use crate::session_transport::{Inbound, SessionTransport};
 use crate::{
@@ -25,6 +27,9 @@ pub(crate) mod session_join;
 mod startup;
 mod unused_packets;
 use boundary::boundary_wakeup;
+
+/// Bounds the drain that surfaces the core's Transfer or Disconnect behind a failed write.
+pub const WRITE_FAILURE_DRAIN: std::time::Duration = std::time::Duration::from_secs(5);
 pub use client_data::{
     ClientCape, ClientRandomId, ClientSkin, ClientSkinGeometry, GAME_VERSION, LoginSettings,
     PROTOCOL_VERSION, login_memory_tier,
@@ -56,7 +61,6 @@ pub struct PlaySession {
     pending_blob_prefetch: Option<(Packet, usize)>,
     server_disconnect: Option<ServerDisconnectEvent>,
     server_transfer: Option<ServerTransferEvent>,
-    resource_packs: ResourcePackHandoff,
 }
 
 struct PendingBlobCacheDelivery {
@@ -85,6 +89,15 @@ impl WorldIngress {
 }
 
 impl PlaySession {
+    /// Buffers raw core frames while the world consumer is full. Decoding resumes in wire
+    /// order when the caller receives again. Reading stops at the shared byte bound or the
+    /// session's terminal message; cancelling this wait retains every complete frame read.
+    pub async fn read_ahead(&mut self) {
+        self.transport
+            .read_ahead(crate::session_transport::MAX_READ_AHEAD_BYTES)
+            .await;
+    }
+
     /// Sends loading-end and initialization once the client can present the world; later
     /// calls send nothing.
     pub async fn finish_loading(&mut self) -> Result<(), ProtocolError> {
@@ -103,7 +116,6 @@ impl PlaySession {
     fn new(
         transport: SessionTransport,
         cache: Option<ClientBlobCache>,
-        resource_packs: ResourcePackHandoff,
         runtime_id: u64,
         terrain_before_spawn: bool,
     ) -> Self {
@@ -121,7 +133,6 @@ impl PlaySession {
             pending_blob_prefetch: None,
             server_disconnect: None,
             server_transfer: None,
-            resource_packs,
         }
     }
 
@@ -146,12 +157,6 @@ impl PlaySession {
         self.transfer_skips
     }
 
-    /// Takes the validated ordered resource-pack archives captured during login.
-    /// No archive is parsed or applied, and a second call returns an empty handoff.
-    pub fn take_resource_pack_handoff(&mut self) -> ResourcePackHandoff {
-        std::mem::take(&mut self.resource_packs)
-    }
-
     /// Whether the server sent terrain before login completed at PlayerSpawn.
     /// Servers such as Dragonfly stream none until the client reports initialized.
     #[must_use]
@@ -170,6 +175,18 @@ impl PlaySession {
                 Err(error)
             }
         }
+    }
+
+    /// [`Self::skip_or_fail_world`] for the packet the transport delivered last, reporting
+    /// whether it was skipped or ended the session.
+    fn skip_or_fail_current(&mut self, error: ProtocolError) -> Result<(), ProtocolError> {
+        let result = self.skip_or_fail_world(error);
+        self.transport.reject_current(if result.is_ok() {
+            PacketOutcome::Skipped
+        } else {
+            PacketOutcome::Failed
+        });
+        result
     }
 
     /// Count of world packets skipped because normalization rejected them.
@@ -206,6 +223,7 @@ impl PlaySession {
             ) {
                 self.reset_blob_cache_pending();
             }
+            self.transport.accept_current();
             return Ok(packet);
         }
     }
@@ -244,7 +262,20 @@ impl PlaySession {
         })
     }
 
+    /// Settles accepted packets before the caller can pause world admission.
     async fn recv_world_ingress(
+        &mut self,
+        current_dimension: i32,
+    ) -> Result<WorldIngress, ProtocolError> {
+        let result = self.recv_world_ingress_inner(current_dimension).await;
+        if result.is_ok() {
+            self.transport.accept_current();
+        }
+        result
+    }
+
+    /// Routes raw world packets through the enabled cache and decoding lanes.
+    async fn recv_world_ingress_inner(
         &mut self,
         current_dimension: i32,
     ) -> Result<WorldIngress, ProtocolError> {
@@ -276,6 +307,7 @@ impl PlaySession {
             }
             if raw.id == PacketId::LevelChunk {
                 let raw = raw.into_retention_bounded();
+                self.transport.compact_current(&raw);
                 let packet = match self.decode_world_candidate(raw)? {
                     Some(packet) => packet,
                     None => continue,
@@ -286,7 +318,7 @@ impl PlaySession {
                 match crate::world::normalize_level_chunk_payload(packet) {
                     Ok((event, payload)) => return Ok(WorldIngress::LevelChunk(event, payload)),
                     Err(error) => {
-                        self.skip_or_fail_world(error.into())?;
+                        self.skip_or_fail_current(error.into())?;
                         continue;
                     }
                 }
@@ -298,7 +330,7 @@ impl PlaySession {
                 }
                 continue;
             }
-            let decoded = decode_world_raw_with(raw, current_dimension, RawPacket::decode);
+            let decoded = decode_world_raw_with(raw, current_dimension, RawPacket::decode_parts);
             match decoded {
                 Ok(Some(event)) => return Ok(WorldIngress::Event(event)),
                 Ok(None) => {}
@@ -306,9 +338,12 @@ impl PlaySession {
                     if error.0.is_decode() {
                         self.decode_errors = self.decode_errors.saturating_add(1);
                     }
+                    if error.0.is_packet_failure() {
+                        self.transport.reject_current(PacketOutcome::Failed);
+                    }
                     return Err(ProtocolError::Session(error));
                 }
-                Err(error) => self.skip_or_fail_world(error)?,
+                Err(error) => self.skip_or_fail_current(error)?,
             }
         }
     }
@@ -435,11 +470,23 @@ impl PlaySession {
             {
                 let event = match ready {
                     ResolverReady::Packet(packet) => {
-                        match into_world_event(packet, current_dimension) {
-                            Ok(Some(WorldEvent::LevelChunk(mut event))) => {
-                                let payload = Bytes::from(std::mem::take(&mut event.payload));
-                                return Ok(WorldIngress::LevelChunk(event, payload));
+                        // A reconstructed LevelChunk hands its rebuilt payload on as is, as
+                        // the uncached lane does, rather than through an owned copy.
+                        let normalized = match *packet.data {
+                            packets::Packet::LevelChunk(level_chunk) => {
+                                match crate::world::normalize_level_chunk_payload(level_chunk) {
+                                    Ok((event, payload)) => {
+                                        return Ok(WorldIngress::LevelChunk(event, payload));
+                                    }
+                                    Err(error) => {
+                                        self.skip_or_fail_world(error.into())?;
+                                        continue;
+                                    }
+                                }
                             }
+                            data => crate::world::dispatch(data, packet.header, current_dimension),
+                        };
+                        match normalized {
                             Ok(Some(event)) => event,
                             Ok(None) => {
                                 self.reset_blob_cache_pending();
@@ -494,6 +541,7 @@ impl PlaySession {
             let packet_bytes = raw.inner_frame().len();
             let packet_name = raw.id;
             let raw = detach_cached_chunk(raw);
+            self.transport.compact_current(&raw);
 
             if matches!(packet_name, PacketId::Transfer | PacketId::Disconnect) {
                 if self.absorb_boundary_packet(raw, packet_name).await? {
@@ -519,7 +567,7 @@ impl PlaySession {
                     let (event, payload) = match crate::world::normalize_level_chunk_payload(view) {
                         Ok(value) => value,
                         Err(error) => {
-                            self.skip_or_fail_world(error.into())?;
+                            self.skip_or_fail_current(error.into())?;
                             continue;
                         }
                     };
@@ -538,13 +586,18 @@ impl PlaySession {
                     &packet,
                 )?;
                 if let packets::Packet::ClientCacheMissResponse(response) = *packet.data {
-                    if let Err(error) = self
+                    match self
                         .blob_cache
                         .as_mut()
                         .expect("enabled path owns a resolver")
                         .accept_miss_response(response)
                     {
-                        return Err(error.into());
+                        Ok(true) => {}
+                        Ok(false) => self.transport.reject_current(PacketOutcome::Skipped),
+                        Err(error) => {
+                            self.transport.reject_current(PacketOutcome::Failed);
+                            return Err(error.into());
+                        }
                     }
                     continue;
                 }
@@ -557,7 +610,7 @@ impl PlaySession {
                 let event = match into_world_event(packet, current_dimension) {
                     Ok(event) => event,
                     Err(error) => {
-                        self.skip_or_fail_world(error.into())?;
+                        self.skip_or_fail_current(error.into())?;
                         continue;
                     }
                 };
@@ -573,7 +626,7 @@ impl PlaySession {
                 continue;
             }
 
-            let decoded = decode_world_raw_with(raw, current_dimension, RawPacket::decode);
+            let decoded = decode_world_raw_with(raw, current_dimension, RawPacket::decode_parts);
             match decoded {
                 Ok(Some(event)) => {
                     if let Err(error) = self
@@ -587,7 +640,7 @@ impl PlaySession {
                 }
                 Ok(None) => {}
                 Err(ProtocolError::Session(error)) => return Err(self.fail_session(error)),
-                Err(error) => self.skip_or_fail_world(error)?,
+                Err(error) => self.skip_or_fail_current(error)?,
             }
         }
     }
@@ -602,7 +655,7 @@ impl PlaySession {
                 ProtocolError::Session(error) => Err(self.fail_session(error)),
                 semantic => {
                     tracing::debug!(%semantic, "skipping a world packet the codec rejected");
-                    self.skip_or_fail_world(semantic).map(|()| None)
+                    self.skip_or_fail_current(semantic).map(|()| None)
                 }
             },
         }
@@ -611,6 +664,9 @@ impl PlaySession {
     fn fail_session(&mut self, error: SessionError) -> ProtocolError {
         if error.0.is_decode() {
             self.decode_errors = self.decode_errors.saturating_add(1);
+        }
+        if error.0.is_packet_failure() {
+            self.transport.reject_current(PacketOutcome::Failed);
         }
         self.reset_blob_cache_pending();
         ProtocolError::from(error)
@@ -684,10 +740,12 @@ fn reset_cache_for_immediate_boundary(
     }
 }
 
+/// Normalizes one raw world-lane packet; `decode` supplies the generic payload decode for the
+/// packets no bounded raw decoder owns.
 fn decode_world_raw_with(
     raw: RawPacket,
     current_dimension: i32,
-    decode: impl FnOnce(RawPacket) -> Result<Packet, SessionError>,
+    decode: impl FnOnce(RawPacket) -> Result<(GameHeader, packets::Packet), SessionError>,
 ) -> Result<Option<WorldEvent>, ProtocolError> {
     if raw.id == PacketId::ItemRegistry {
         // Login has already initialized this session's registry. Vanilla 1.26.50
@@ -726,23 +784,23 @@ fn decode_world_raw_with(
     {
         return Ok(Some(WorldEvent::Equipment(equipment)));
     }
-    if let Some(packet) = level_event_generic(&raw) {
-        return Ok(into_world_event(packet, current_dimension)?);
+    if let Some((header, data)) = level_event_generic(&raw) {
+        return Ok(crate::world::dispatch(data, header, current_dimension)?);
     }
-    let packet = decode(raw).map_err(crate::codec::world_decode_error)?;
-    crate::codec::validate_decoded(&packet.data).map_err(demote_ui_semantic_rejection)?;
-    Ok(into_world_event(packet, current_dimension)?)
+    let (header, data) = decode(raw).map_err(crate::codec::world_decode_error)?;
+    crate::codec::validate_decoded(&data).map_err(demote_ui_semantic_rejection)?;
+    Ok(crate::world::dispatch(data, header, current_dimension)?)
 }
 
 /// Decodes a raw test packet as the play stream does.
 #[cfg(test)]
-fn decode_test_raw(raw: RawPacket) -> Result<Packet, SessionError> {
-    raw.decode()
+fn decode_test_raw(raw: RawPacket) -> Result<(GameHeader, packets::Packet), SessionError> {
+    raw.decode_parts()
 }
 
 /// LevelEventGeneric's event data is loose NBT tags filling the rest of the packet (as
 /// gophertunnel documents); the generated decoder reads one rooted value and rejects the rest.
-fn level_event_generic(raw: &RawPacket) -> Option<Packet> {
+fn level_event_generic(raw: &RawPacket) -> Option<(GameHeader, packets::Packet)> {
     if raw.id != PacketId::LevelEventGeneric {
         return None;
     }
@@ -752,7 +810,7 @@ fn level_event_generic(raw: &RawPacket) -> Option<Packet> {
         event_id: wire::ZigZag32(event_id),
         ctd: wire::NetworkNbt(raw.body().slice(reader.position()..)),
     };
-    Some(Packet::from_parts(raw.header, data.into()))
+    Some((raw.header, data.into()))
 }
 
 /// Reclassifies the decoded-packet UI and audio checks' semantic rejections as skippable world
@@ -775,6 +833,8 @@ mod experience_ingress_tests;
 mod generic_event_tests;
 #[cfg(test)]
 mod motion_tests;
+#[cfg(all(test, unix))]
+mod packet_tap_ingress_tests;
 #[cfg(test)]
 mod packet_trace_tests;
 #[cfg(test)]

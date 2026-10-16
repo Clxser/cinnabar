@@ -44,6 +44,7 @@ pub fn environment_packet_mod() -> Option<PacketModSelection> {
 pub fn environment_grants() -> ModGrants {
     ModGrants {
         environment: true,
+        terrain: std::env::var("CINNABAR_MOD_TERRAIN").is_ok_and(|value| value == "1"),
         players: std::env::var(PLAYERS_ENV).is_ok_and(|value| value == "1"),
         player_state: std::env::var(PLAYER_STATE_ENV).is_ok_and(|value| value == "1"),
         item_use: std::env::var(ITEM_USE_ENV).is_ok_and(|value| value == "1"),
