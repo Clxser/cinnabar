@@ -111,7 +111,11 @@ class LauncherStore {
     return api.checkForUpdates();
   };
 
-  retry = () => (this.lastUpdateAction === 'install' ? api.installUpdate() : api.checkForUpdates());
+  /** Repeats the step that failed: a failed check checks again, any later step reinstalls. */
+  retry = () => {
+    const failedCheck = this.update?.kind === 'failed' ? this.update.stage === 'check' : this.lastUpdateAction !== 'install';
+    return failedCheck ? api.checkForUpdates() : api.installUpdate();
+  };
 
   join = (server: FeaturedServer) => api.launchGame({ server: { address: server.address, port: server.port } });
 
@@ -122,6 +126,8 @@ class LauncherStore {
   };
 
   open = (url: string) => api.openExternal(url);
+
+  openLogs = () => api.openLogs();
 
   signIn = () => signIn();
 }

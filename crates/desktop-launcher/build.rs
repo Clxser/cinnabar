@@ -36,9 +36,10 @@ fn main() {
     // SAFETY: build scripts are single-threaded before tauri-build reads the variable.
     unsafe { env::set_var("TAURI_CONFIG", &config) };
     println!("cargo:rustc-env=TAURI_CONFIG={config}");
-    tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(
-        tauri_build::WindowsAttributes::new().window_icon_path(&ico),
-    ))
+    tauri_build::try_build(
+        tauri_build::Attributes::new()
+            .windows_attributes(tauri_build::WindowsAttributes::new().window_icon_path(&ico)),
+    )
     .expect("tauri-build");
 }
 

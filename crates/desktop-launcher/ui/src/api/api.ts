@@ -22,6 +22,8 @@ export interface Api {
   getNews(): Promise<News>;
   getFeaturedServers(): Promise<FeaturedServer[]>;
   openExternal(url: string): Promise<void>;
+  /** Opens the folder holding the launcher's and the game's logs. */
+  openLogs(): Promise<void>;
   /** Event `update-state`; returns the unsubscribe function. */
   onUpdateState(cb: (state: UpdateState) => void): () => void;
   /** Event `game-state`; returns the unsubscribe function. */

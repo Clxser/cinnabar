@@ -11,7 +11,11 @@ use std::{
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum GameState {
     Stopped {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -112,7 +116,10 @@ impl Supervisor {
         exited: impl FnOnce(LastExit, Option<GameExit>) + Send + 'static,
     ) -> Result<()> {
         {
-            let mut state = self.state.lock().unwrap_or_else(|poison| poison.into_inner());
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             ensure!(
                 matches!(*state, GameState::Stopped { .. }),
                 "Cinnabar is already running"
@@ -135,7 +142,10 @@ impl Supervisor {
         self.set(GameState::Running { started_at });
         let supervisor = Arc::clone(self);
         std::thread::spawn(move || {
-            let code = child.wait().ok().and_then(|status: ExitStatus| status.code());
+            let code = child
+                .wait()
+                .ok()
+                .and_then(|status: ExitStatus| status.code());
             let (last_exit, reason) = ended(code);
             supervisor.set(GameState::Stopped {
                 last_exit: Some(last_exit),
@@ -146,7 +156,10 @@ impl Supervisor {
     }
 
     fn set(&self, next: GameState) {
-        *self.state.lock().unwrap_or_else(|poison| poison.into_inner()) = next;
+        *self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = next;
         self.publish();
     }
 

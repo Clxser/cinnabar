@@ -2,6 +2,7 @@
 //! installs updates on request and starts and supervises the game.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod api;
 mod commands;
 #[cfg(test)]
 mod contract;
@@ -174,7 +175,9 @@ fn install_logging(layout: &InstallLayout) {
         .and_then(|()| std::fs::File::create(directory.join("launcher.log")));
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    let builder = tracing_subscriber::fmt().with_env_filter(filter).with_ansi(false);
+    let builder = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_ansi(false);
     match file {
         Ok(file) => builder.with_writer(Mutex::new(file)).init(),
         Err(_) => builder.init(),

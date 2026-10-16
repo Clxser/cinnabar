@@ -40,6 +40,8 @@ pub struct InstallState {
     pub launcher_version: String,
     /// Lets the UI leave room for native window controls.
     pub platform: Platform,
+    /// The command surface this launcher offers a web UI bundle.
+    pub native_api_version: u32,
 }
 
 /// The launcher's own release identity, kept apart from the game's even while they ship together.
@@ -62,6 +64,7 @@ pub fn state(current: &Build, channel: Channel) -> InstallState {
             .collect(),
         launcher_version: LAUNCHER_VERSION.to_owned(),
         platform: Platform::current(),
+        native_api_version: crate::commands::NATIVE_API_VERSION,
     }
 }
 
