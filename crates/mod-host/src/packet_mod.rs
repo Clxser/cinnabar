@@ -8,6 +8,7 @@ pub mod capture;
 mod component;
 mod core;
 mod limits;
+pub(crate) mod native_capabilities;
 mod native_frame;
 pub mod native_menu;
 mod wasi;
@@ -130,6 +131,7 @@ impl CompiledPacketMod {
         Ok(PacketMod {
             guest,
             status: Status::Active,
+            menu_input_extensions: mod_api::native_menu::InputExtensions::default(),
             call_deadline: PACKET_MOD_CALL_DEADLINE,
             _ticker: Arc::clone(&self.ticker),
         })
@@ -147,6 +149,7 @@ enum Status {
 pub struct PacketMod {
     guest: Box<dyn Guest>,
     status: Status,
+    menu_input_extensions: mod_api::native_menu::InputExtensions,
     call_deadline: Duration,
     _ticker: Arc<execution::EpochTicker>,
 }

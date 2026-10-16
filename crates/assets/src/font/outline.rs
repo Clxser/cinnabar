@@ -1,8 +1,7 @@
 //! Bounded outline rasters with stable logical metrics for private native UI fonts.
 
-use crate::{
-    CellGlyph, FontPixels, FontTexturePage, RuntimeFontCatalog, encode_font_catalog, pack_cells,
-};
+use super::{FontPixels, FontTexturePage, RuntimeFontCatalog, encode_font_catalog};
+use crate::{CellGlyph, pack_cells};
 use sha2::{Digest, Sha256};
 
 /// Builds a bounded atlas while preserving logical glyph sizes at the requested density.

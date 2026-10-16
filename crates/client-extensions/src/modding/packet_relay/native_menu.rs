@@ -239,6 +239,11 @@ pub(super) fn prepare(
                 .hud_bindings
                 .clone_from(&previous.output.hud_bindings);
         }
+        if output.input_extensions.is_none() {
+            output
+                .input_extensions
+                .clone_from(&previous.output.input_extensions);
+        }
         if output.hud_geometry.is_none() {
             output
                 .hud_geometry
@@ -294,6 +299,7 @@ mod tests {
                 panel: Some(panel),
                 hud_bindings: None,
                 hud_geometry: None,
+                input_extensions: None,
                 keys: vec!["KeyR".into()],
             },
             &mut None,
@@ -669,6 +675,7 @@ mod tests {
                 hud_geometry: Some(ui::mod_hud::HudGeometryRequests(vec![
                     "example.root".into(),
                 ])),
+                input_extensions: None,
                 keys: Vec::new(),
             },
             &mut previous,
@@ -686,6 +693,7 @@ mod tests {
                 panel: None,
                 hud_bindings: Some(globals()),
                 hud_geometry: None,
+                input_extensions: None,
                 keys: Vec::new(),
             },
             &mut previous,

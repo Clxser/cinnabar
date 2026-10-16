@@ -1,6 +1,8 @@
 use super::*;
 use mod_host::ModHost;
 
+mod native_import;
+
 /// Writes a binary component with the host's declared-request custom section.
 fn requested_component(path: &Path, request: &mod_host::ModGrants) {
     /// Appends a section's unsigned LEB128 byte length.

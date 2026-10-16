@@ -4,7 +4,10 @@
 
 use super::{
     Direction, Guest, Outbound, PACKET_MOD_LOAD_DEADLINE, PACKET_MOD_TRANSFER_BYTES,
-    SessionIdentity, SessionPack, cache, limits::PacketLimits, wasi,
+    SessionIdentity, SessionPack, cache,
+    limits::PacketLimits,
+    native_capabilities::{FRAME, MENU, NATIVE_INIT, NativeExports},
+    wasi,
 };
 use crate::{ModGrants, execution};
 use anyhow::{Context, Result, bail, ensure};
@@ -19,9 +22,6 @@ const START: &str = "start";
 const ON_BATCH: &str = "on-batch";
 const TICK: &str = "tick";
 const STOP: &str = "stop";
-const NATIVE_INIT: &str = "native-init";
-const FRAME: &str = "frame";
-const MENU: &str = "menu";
 /// Prefix of the optional export that frees a call's returned memory.
 const POST_RETURN: &str = "cabi_post_";
 /// Flat `i32` parameters and results of each canonical export: `start` passes three identity
@@ -74,27 +74,7 @@ impl Program {
                 _ => bail!("packet mod does not export function {name}"),
             }
         }
-        let native = module.get_export(NATIVE_INIT).is_some();
-        let frame = module.get_export(FRAME).is_some();
-        let menu = module.get_export(MENU).is_some();
-        ensure!(
-            native == (frame || menu),
-            "native-init requires frame or menu exports"
-        );
-        for (name, present, params, results) in [
-            (NATIVE_INIT, native, 1, 0),
-            (FRAME, frame, 2, 1),
-            (MENU, menu, 2, 1),
-        ] {
-            if present {
-                ensure!(
-                    matches!(module.get_export(name), Some(ExternType::Func(ty))
-                    if ty.params().len() == params && ty.results().len() == results
-                    && ty.params().chain(ty.results()).all(|ty| ty.is_i32())),
-                    "packet mod export {name} has the wrong signature"
-                );
-            }
-        }
+        let native_capabilities = NativeExports::from_module(&module).negotiate(grants)?;
         ensure!(
             matches!(module.get_export(MEMORY), Some(ExternType::Memory(_))),
             "packet mod does not export its memory"
@@ -108,15 +88,7 @@ impl Program {
         let pre = linker.instantiate_pre(&module).context("link packet mod")?;
         Ok(Self {
             pre,
-            native_capabilities: if frame && grants.players && grants.camera {
-                mod_api::native_frame::CAMERA_PLAYERS
-            } else {
-                0
-            } | if menu && grants.controls {
-                mod_api::native_menu::CONTROLS
-            } else {
-                0
-            },
+            native_capabilities,
         })
     }
 

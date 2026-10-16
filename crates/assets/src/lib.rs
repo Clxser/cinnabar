@@ -191,7 +191,7 @@ pub use font::{
     FontFaceRaster, FontLineMetrics, FontPixels, FontRendering, FontTexturePage, GlyphMetrics,
     MAX_FONT_CARRIER_BYTES, MAX_FONT_GLYPHS, MAX_FONT_KERNING_PAIRS, MAX_FONT_PAGE_SIDE,
     MAX_FONT_PAGES, MAX_FONT_PATH_BYTES, MAX_FONT_SOURCE_BYTES, RuntimeFontCatalog,
-    decode_font_face_bundle, encode_font_catalog, encode_font_face_bundle,
+    decode_font_face_bundle, encode_font_catalog, encode_font_face_bundle, rasterize_outline_font,
 };
 pub use fsb::{DecodedSound, FsbError, MAX_FSB_INPUT_BYTES, MAX_FSB_PCM_BYTES, decode_fsb5};
 pub use glyph_sheet::{CellGlyph, GlyphAtlas, GlyphSheet, SHEET_GRID, SheetGlyph};
@@ -297,6 +297,3 @@ pub use ui::{
 };
 pub use vanilla_refs::{MAX_VANILLA_REFS_BYTES, VanillaEntityRefs, VanillaGeometryFile};
 pub use {fog_layers::resolve_fog_layers, fog_transition::FogTransition};
-
-mod outline_font;
-pub use outline_font::rasterize_outline_font;

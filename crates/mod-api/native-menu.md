@@ -13,10 +13,20 @@ pointer and length of the successful byte list or error string. Exporting
 Input is bounded to 64 KiB:
 
 ```json
-{"version":1,"open":true,"pointer_held":false,"viewport":[640,400],"events":[{"id":"enabled","value":1}],"keys":[{"key":"KeyA","text":"a"}]}
+{"version":1,"open":true,"viewport":[640,400],"events":[{"id":"enabled","value":1}],"keys":[{"key":"KeyA","text":"a"}]}
 ```
 
 The optional `viewport` is the available authored GUI size before reference-size fitting; it follows window resizing and platform safe-area insets.
+
+Version one starts with only these original fields, including for guests that
+reject unknown JSON fields. To accept additional facts, return optional output
+`input_extensions:["pointer_state","shift_state","hud_geometry"]`. The next
+input includes only those groups: `pointer_state` adds `pointer_held` and
+`pointer_cancelled`, `shift_state` adds `shift_held`, and `hud_geometry` adds its
+map. Omission retains the accepted groups; an empty array clears them. Requests
+must contain unique known groups. A new session starts with no extensions.
+Each group's field set is frozen for version one. Future input facts require a
+new opt-in group so strict decoders that accepted an existing group remain valid.
 
 The host delivers native control IDs and values. Focused menu keys may carry
 composed text; native number and choice editors receive their keyboard input
@@ -42,7 +52,8 @@ grants. HUD overrides do not require the menu to be visible.
 Optional output `hud_geometry:["example_clock"]` requests the last painted bounds
 of up to 128 unique inert resource-pack HUD `input_panel` instance names. Names
 are opaque ASCII identifiers, at most 96 bytes; mapped controls are excluded.
-Omitting the list retains it, and an empty list clears it. Input returns a
+Omitting the list retains it, and an empty list clears it. After opting into the
+`hud_geometry` input extension, input returns a
 `hud_geometry` map, for example:
 
 ```json
@@ -101,6 +112,12 @@ current focused physical Shift state. Ordered visibility phases retain earlier
 edits while rejecting their stale panel results, so closing before a worker poll
 cannot silently lose a final HUD edit.
 The host owns drawing, input routing and animation; the guest owns feature state.
+
+The Mods library detects the native callback permissions of raw reactors when
+no explicit `cinnabar:grants` section exists. A native menu requests Controls;
+native camera frames request Players and Camera. These requests still require
+user consent and apply to a new server session. An explicit grant section stays
+authoritative, including when it omits optional native capabilities.
 
 For a window-free layout capture, run:
 

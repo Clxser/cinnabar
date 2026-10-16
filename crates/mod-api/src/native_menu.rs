@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 
 /// Native menu JSON contract version.
 pub const VERSION: u32 = 1;
@@ -35,6 +36,51 @@ pub struct Key {
 pub struct HudGeometry {
     pub rect: [f32; 4],
     pub size: [f32; 2],
+}
+
+/// Optional version-one input facts explicitly accepted by a packet guest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputExtension {
+    PointerState,
+    ShiftState,
+    HudGeometry,
+}
+
+/// A retained opt-in list; an empty list restores the original version-one input shape.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct InputExtensions(pub Vec<InputExtension>);
+
+impl InputExtensions {
+    /// Each known input group may be accepted at most once.
+    pub fn validate(&self) -> Result<(), String> {
+        let mut seen = HashSet::new();
+        if self.0.iter().all(|extension| seen.insert(extension)) {
+            Ok(())
+        } else {
+            Err("native menu input extensions must be unique".into())
+        }
+    }
+}
+
+/// The original wire shape plus only facts a guest has explicitly accepted.
+#[derive(Serialize)]
+struct WireInput<'a> {
+    version: u32,
+    open: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    viewport: Option<[f32; 2]>,
+    events: &'a [Event],
+    keys: &'a [Key],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pointer_held: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pointer_cancelled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    shift_held: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hud_geometry: Option<&'a BTreeMap<String, HudGeometry>>,
 }
 
 impl Key {
@@ -90,6 +136,43 @@ impl Default for Input {
 }
 
 impl Input {
+    /// Projects input onto the guest's accepted wire fields without changing physical state.
+    pub fn with_extensions(&self, extensions: &InputExtensions) -> impl Serialize + '_ {
+        let Self {
+            version,
+            open,
+            pointer_held,
+            pointer_cancelled,
+            shift_held,
+            viewport,
+            hud_geometry,
+            events,
+            keys,
+        } = self;
+        let mut wire = WireInput {
+            version: *version,
+            open: *open,
+            viewport: *viewport,
+            events,
+            keys,
+            pointer_held: None,
+            pointer_cancelled: None,
+            shift_held: None,
+            hud_geometry: None,
+        };
+        for extension in &extensions.0 {
+            match extension {
+                InputExtension::PointerState => {
+                    wire.pointer_held = Some(*pointer_held);
+                    wire.pointer_cancelled = Some(*pointer_cancelled);
+                }
+                InputExtension::ShiftState => wire.shift_held = Some(*shift_held),
+                InputExtension::HudGeometry => wire.hud_geometry = Some(hud_geometry),
+            }
+        }
+        wire
+    }
+
     /// Rejects unbounded or malformed input before invoking a packet guest.
     pub fn is_valid(&self) -> bool {
         self.version == VERSION
@@ -129,6 +212,47 @@ impl Input {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_wire_never_receives_unaccepted_extension_fields() {
+        let input = Input {
+            pointer_held: true,
+            pointer_cancelled: true,
+            shift_held: true,
+            ..Default::default()
+        };
+        let legacy =
+            serde_json::to_value(input.with_extensions(&InputExtensions::default())).unwrap();
+        assert_eq!(
+            legacy,
+            serde_json::json!({"version":1,"open":false,"events":[],"keys":[]})
+        );
+        let extensions = InputExtensions(vec![
+            InputExtension::PointerState,
+            InputExtension::HudGeometry,
+        ]);
+        assert!(extensions.validate().is_ok());
+        let extended = serde_json::to_value(input.with_extensions(&extensions)).unwrap();
+        assert_eq!(extended["pointer_held"], true);
+        assert_eq!(extended["pointer_cancelled"], true);
+        assert_eq!(extended["hud_geometry"], serde_json::json!({}));
+        assert!(extended.get("shift_held").is_none());
+        let shifted = serde_json::to_value(
+            input.with_extensions(&InputExtensions(vec![InputExtension::ShiftState])),
+        )
+        .unwrap();
+        assert_eq!(shifted["shift_held"], true);
+        assert!(shifted.get("pointer_held").is_none());
+        assert!(
+            InputExtensions(vec![
+                InputExtension::PointerState,
+                InputExtension::PointerState
+            ])
+            .validate()
+            .is_err()
+        );
+        assert!(serde_json::from_str::<InputExtensions>(r#"["future_unknown"]"#).is_err());
+    }
 
     #[test]
     fn pointer_cancellation_and_shift_snapshot_default_for_older_input_json() {
