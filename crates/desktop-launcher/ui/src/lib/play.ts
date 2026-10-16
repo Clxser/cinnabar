@@ -45,7 +45,7 @@ export function playModel(install: InstallState | undefined, installFailed: bool
 
   if (game.kind === 'starting') return { primary: { label: 'Starting', intent: 'none', tone: 'busy', progress: null } };
   if (game.kind === 'running') {
-    return { primary: { label: 'Running', detail: `Started ${formatAgo(game.startedAt, now)}`, intent: 'none', tone: 'running' } };
+    return { primary: { label: 'Playing', detail: `Started ${formatAgo(game.startedAt, now)}`, intent: 'none', tone: 'running' } };
   }
 
   const crash: Notice | undefined = game.lastExit?.crashed
@@ -63,16 +63,16 @@ export function playModel(install: InstallState | undefined, installFailed: bool
       const total = update.totalBytes;
       const bytes = total ? `${formatBytes(update.receivedBytes)} of ${formatBytes(total)}` : `${formatBytes(update.receivedBytes)} so far`;
       return {
-        primary: { label: 'Downloading', detail: `${update.version} · ${bytes}`, intent: 'none', tone: 'busy', progress: total ? update.receivedBytes / total : null },
+        primary: { label: 'Downloading', detail: `${update.version}, ${bytes}`, intent: 'none', tone: 'busy', progress: total ? update.receivedBytes / total : null },
         stage: 'download',
       };
     }
     case 'verifying':
-      return { primary: { label: 'Verifying', detail: `Version ${update.version}`, intent: 'none', tone: 'busy', progress: null }, stage: 'verify' };
+      return { primary: { label: 'Verifying', detail: `Checking ${update.version} against its signature`, intent: 'none', tone: 'busy', progress: null }, stage: 'verify' };
     case 'installing':
-      return { primary: { label: 'Installing', detail: `Version ${update.version}`, intent: 'none', tone: 'busy', progress: null }, stage: 'install' };
+      return { primary: { label: 'Installing', detail: `Replacing ${install.version} with ${update.version}`, intent: 'none', tone: 'busy', progress: null }, stage: 'install' };
     case 'available': {
-      const size = update.sizeBytes ? ` · ${formatBytes(update.sizeBytes)}` : '';
+      const size = update.sizeBytes ? `, ${formatBytes(update.sizeBytes)}` : '';
       const primary: Primary = { label: 'Update & play', detail: `Version ${update.version}${size}`, intent: 'update', tone: 'ore' };
       if (update.required) {
         return {
@@ -105,7 +105,7 @@ export function checkStatus(update: UpdateState | undefined, now: number): strin
     case 'checking':
       return 'Checking for updates…';
     case 'upToDate':
-      return `Up to date · checked ${formatAgo(update.lastChecked, now)}`;
+      return `Up to date, checked ${formatAgo(update.lastChecked, now)}`;
     case 'idle':
       return update.lastChecked ? `Checked ${formatAgo(update.lastChecked, now)}` : 'Not checked for updates yet';
     default:
@@ -128,4 +128,11 @@ export function joinBlockedReason(update: UpdateState | undefined, game: GameSta
     default:
       return undefined;
   }
+}
+
+/** How much of the diorama's vein glows: the download's progress, dark when the build can't start. */
+export function veinFill(model: PlayModel): number {
+  if (model.stage === 'download') return model.primary.progress ?? 0;
+  if (model.notice?.tone === 'error') return 0;
+  return 1;
 }

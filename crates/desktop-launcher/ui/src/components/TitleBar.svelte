@@ -4,96 +4,111 @@
   import X from '@lucide/svelte/icons/x';
   import WifiOff from '@lucide/svelte/icons/wifi-off';
   import mark from '../../../../../packaging/icons/cinnabar.svg';
+  import Nav from './Nav.svelte';
+  import AccountChip from './AccountChip.svelte';
   import { store } from '../lib/store.svelte';
   import { platform, windowAction } from '../lib/window';
   import { PRODUCT_NAME } from '../lib/product';
+
 </script>
 
 <header class="titlebar" data-tauri-drag-region>
-  {#if platform !== 'macos'}
-    <div class="brand" data-tauri-drag-region>
-      <img src={mark} alt="" width="16" height="16" />
-      <span data-tauri-drag-region>{PRODUCT_NAME}</span>
-    </div>
-  {/if}
+  <div class="lead" data-tauri-drag-region>
+    <img class="mark" src={mark} alt="" width="20" height="20" />
+    <span class="name" data-tauri-drag-region>{PRODUCT_NAME}</span>
+    <div class="tabs"><Nav variant="tabs" /></div>
+  </div>
 
-  <div class="spacer" data-tauri-drag-region></div>
-
-  {#if store.offline}
-    <p class="offline" role="status">
-      <WifiOff size={14} strokeWidth={2} aria-hidden="true" />
-      Offline
-    </p>
-  {/if}
-
-  {#if platform !== 'macos'}
-    <div class="controls">
-      <button aria-label="Minimize" onclick={() => windowAction('minimize')}><Minus size={16} strokeWidth={1.5} /></button>
-      <button aria-label="Maximize" onclick={() => windowAction('toggleMaximize')}><Square size={12} strokeWidth={1.5} /></button>
-      <button class="close" aria-label="Close" onclick={() => windowAction('close')}><X size={16} strokeWidth={1.5} /></button>
-    </div>
-  {/if}
+  <div class="trail" data-tauri-drag-region>
+    {#if store.offline && store.account?.kind !== 'offline'}
+      <p class="offline" role="status"><WifiOff size={14} strokeWidth={2} aria-hidden="true" />Offline</p>
+    {/if}
+    <AccountChip />
+    {#if platform !== 'macos'}
+      <div class="controls">
+        <button aria-label="Minimize" onclick={() => windowAction('minimize')}><Minus size={16} strokeWidth={1.5} /></button>
+        <button aria-label="Maximize" onclick={() => windowAction('toggleMaximize')}><Square size={12} strokeWidth={1.5} /></button>
+        <button class="close" aria-label="Close" onclick={() => windowAction('close')}><X size={16} strokeWidth={1.5} /></button>
+      </div>
+    {/if}
+  </div>
 </header>
 
 <style>
   .titlebar {
-    grid-column: 1 / -1;
-    display: flex;
+    position: relative;
+    z-index: 10;
+    display: grid;
+    grid-template-columns: 1fr auto;
     align-items: center;
-    height: var(--titlebar);
-    /* macOS draws its traffic lights over this inset. */
-    padding-left: var(--s-4);
+    height: 56px;
+    padding: 0 0 0 20px;
   }
 
   :global([data-platform='macos']) .titlebar {
-    padding-left: 84px;
-    padding-right: var(--s-4);
+    /* The traffic lights sit in this inset. */
+    padding-left: 88px;
+    padding-right: 14px;
   }
 
-  .brand {
+  .lead {
     display: flex;
     align-items: center;
-    gap: var(--s-2);
-    font-size: var(--text-sm);
-    font-weight: 600;
-    color: var(--text-2);
+    gap: 10px;
+    height: 100%;
+    min-width: 0;
   }
 
-  .brand img {
+  .mark {
     display: block;
+    border-radius: 5px;
   }
 
-  .spacer {
-    flex: 1;
-    align-self: stretch;
+  .name {
+    font: 800 15px / 1 var(--font);
+    font-stretch: 125%;
+    letter-spacing: -0.01em;
+  }
+
+  .tabs {
+    height: 100%;
+    margin-left: 36px;
+  }
+
+  .trail {
+    grid-column: 2;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    height: 100%;
   }
 
   .offline {
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: var(--text-xs);
-    font-weight: 500;
+    font: var(--t-meta);
     color: var(--warn);
-    margin-right: var(--s-3);
   }
 
   .controls {
     display: flex;
     align-self: stretch;
+    margin-left: 4px;
   }
 
   .controls button {
     display: grid;
     place-items: center;
     width: 46px;
-    color: var(--text-2);
+    color: var(--ink-2);
     transition: background-color var(--t-fast) linear;
   }
 
   .controls button:hover {
-    background: var(--raised-2);
-    color: var(--text);
+    background: var(--raise-2);
+    color: var(--ink);
   }
 
   .controls .close:hover {

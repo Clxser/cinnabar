@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { bannerSvg, hashString } from '../lib/iso';
+  import { posterFor } from '../lib/poster';
 
   interface Props {
     name: string;
@@ -8,31 +8,47 @@
 
   let { name, imageUrl }: Props = $props();
   let broken = $state(false);
-
-  // Servers without artwork get a generated island tinted from their name, never an empty box.
-  const generated = $derived(bannerSvg(name, hashString(name) % 360));
+  const poster = $derived(posterFor(name));
 </script>
 
-<div class="art">
+<div class="art" style:--h={poster.hue}>
   {#if imageUrl && !broken}
     <img src={imageUrl} alt="" loading="lazy" decoding="async" onerror={() => (broken = true)} />
   {:else}
-    {@html generated}
+    <!-- Typographic poster: a hue field, a fixed-scale block lattice and the name's initial. -->
+    <span class="initial" aria-hidden="true">{poster.initial}</span>
   {/if}
 </div>
 
 <style>
   .art {
+    position: relative;
     width: 100%;
     height: 100%;
-    background: var(--raised-2);
+    overflow: hidden;
+    container-type: size;
+    background:
+      radial-gradient(120% 90% at 12% 0%, rgb(255 255 255 / 0.22), transparent 60%),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='48.5'%3E%3Cpath d='M14 0 28 8.08v16.17L14 32.33 0 24.25V8.08zM14 16.17 28 8.08M14 16.17V32.33M14 16.17 0 8.08M14 32.33v16.17M0 24.25v24.25M28 24.25v24.25' fill='none' stroke='white' stroke-opacity='.09' stroke-width='.8'/%3E%3C/svg%3E") 0 0 / 28px 48.5px,
+      linear-gradient(160deg, hsl(var(--h) 44% 34%), hsl(var(--h) 46% 20%));
   }
 
-  .art img,
-  .art :global(svg) {
+  img {
     display: block;
     width: 100%;
     height: 100%;
     object-fit: cover;
+  }
+
+  .initial {
+    position: absolute;
+    right: 6%;
+    bottom: -0.18em;
+    font: 800 120px / 1 var(--font);
+    font-size: min(78cqh, 46cqw);
+    font-stretch: 125%;
+    color: hsl(var(--h) 62% 64%);
+    opacity: 0.5;
+    user-select: none;
   }
 </style>

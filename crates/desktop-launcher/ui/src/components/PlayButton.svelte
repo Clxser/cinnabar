@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { fade, fly } from 'svelte/transition';
+  import { cubicOut } from 'svelte/easing';
   import type { Primary } from '../lib/play';
 
   interface Props {
@@ -9,169 +11,242 @@
   let { primary, onactivate }: Props = $props();
 
   const percent = $derived(typeof primary.progress === 'number' ? Math.floor(primary.progress * 100) : undefined);
+  const indeterminate = $derived(primary.tone === 'busy' && percent === undefined);
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const enter = (node: Element) => fly(node, { y: reduce ? 0 : 8, duration: reduce ? 0 : 320, easing: cubicOut });
+  const leave = (node: Element) => fade(node, { duration: reduce ? 0 : 120 });
 </script>
 
-<button
-  class="play"
-  data-tone={primary.tone}
-  disabled={primary.intent === 'none'}
-  aria-busy={primary.tone === 'busy'}
-  onclick={onactivate}
->
+<button class="play" style:--mask={percent === undefined ? 1 : percent / 100} data-tone={primary.tone} disabled={primary.intent === 'none'} aria-busy={primary.tone === 'busy'} onclick={onactivate}>
   {#if primary.tone === 'busy'}
-    <span class="track" class:indeterminate={percent === undefined} style:--p={percent === undefined ? 1 : percent / 100}></span>
+    <span class="fill" class:indeterminate style:--p={percent === undefined ? 1 : percent / 100}></span>
   {/if}
-  <span class="face">
-    <span class="label">
-      {#if primary.tone === 'running'}<span class="dot" aria-hidden="true"></span>{/if}
-      {primary.label}{#if percent !== undefined}<span class="pct">{percent}%</span>{/if}
-    </span>
-    {#if primary.detail}<span class="detail">{primary.detail}</span>{/if}
+  <span class="sheen" aria-hidden="true"></span>
+  <span class="stack">
+    {#key primary.label}
+      <span class="content" in:enter out:leave>
+        <span class="label">
+          {#if primary.tone === 'running'}<span class="live" aria-hidden="true"></span>{/if}
+          {primary.label}
+        </span>
+        {#if primary.detail}<span class="detail">{primary.detail}</span>{/if}
+      </span>
+    {/key}
   </span>
+  {#if percent !== undefined}<span class="pct">{percent}<small>%</small></span>{/if}
 </button>
 
 <style>
   .play {
     position: relative;
-    display: block;
-    width: 320px;
+    isolation: isolate;
+    display: flex;
+    align-items: center;
+    width: 360px;
     height: 76px;
-    padding: 0 0 4px;
-    border-radius: var(--r-md);
+    padding: 0 26px;
+    border-radius: 16px;
     overflow: hidden;
     text-align: left;
-    color: var(--ore-ink);
-    background: var(--raised-2);
-    /* The pressable edge borrows the in-game OreUI button: a darker lower face that compresses on press. */
-    box-shadow: inset 0 -4px 0 rgb(0 0 0 / 0.28);
+    color: var(--cinnabar-ink);
+    background: var(--glass-strong);
+    box-shadow: inset 0 0 0 1px var(--glass-edge);
     transition:
-      background-color var(--t-fast) linear,
-      box-shadow var(--t-fast) var(--ease-out);
+      transform var(--t-med) var(--ease-out),
+      box-shadow var(--t-med) var(--ease-out),
+      background-color var(--t-fast) linear;
   }
 
-  .face {
-    position: relative;
+  /* The ready state is a lit block face: brighter at the top edge, deepening toward the base. */
+  .play[data-tone='ore'] {
+    background: linear-gradient(180deg, #ec5544 0%, var(--cinnabar-fill) 52%, #bd3228 100%);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.3),
+      inset 0 -2px 0 rgb(0 0 0 / 0.18),
+      0 12px 32px -12px rgb(210 59 46 / 0.85);
+  }
+
+  .play[data-tone='ore']:hover {
+    transform: translateY(-2px);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.34),
+      inset 0 -2px 0 rgb(0 0 0 / 0.18),
+      0 18px 40px -12px rgb(226 72 58 / 0.95);
+  }
+
+  .play[data-tone='ore']:active {
+    transform: translateY(1px) scale(0.99);
+    transition-duration: 60ms;
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.2),
+      inset 0 2px 6px rgb(0 0 0 / 0.25),
+      0 6px 18px -10px rgb(210 59 46 / 0.8);
+  }
+
+  /* A single band of light crosses the face on hover, and loops across progress while busy. */
+  .sheen {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: linear-gradient(105deg, transparent 35%, rgb(255 255 255 / 0.22) 50%, transparent 65%);
+    background-size: 250% 100%;
+    background-position: 130% 0;
+    pointer-events: none;
+  }
+
+  .play[data-tone='ore']:hover .sheen {
+    animation: sweep 900ms var(--ease-out);
+  }
+
+  .play[data-tone='busy'] .sheen {
+    animation: sweep 1.8s var(--ease-in-out) infinite;
+    mask: linear-gradient(90deg, #000 calc(var(--mask, 1) * 100%), transparent 0);
+  }
+
+  @keyframes sweep {
+    from {
+      background-position: 130% 0;
+    }
+    to {
+      background-position: -30% 0;
+    }
+  }
+
+  .fill {
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    background: linear-gradient(180deg, #e04b3b, #b8302a);
+    transform-origin: left;
+    transform: scaleX(var(--p));
+    transition: transform 500ms var(--ease-out);
+  }
+
+  .fill.indeterminate {
+    width: 30%;
+    transform: none;
+    animation: travel 1.6s var(--ease-in-out) infinite alternate;
+  }
+
+  @keyframes travel {
+    to {
+      translate: calc(100% / 0.3 - 100%) 0;
+    }
+  }
+
+  .stack {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .content {
+    grid-area: 1 / 1;
     display: flex;
     flex-direction: column;
-    justify-content: center;
-    gap: 6px;
-    height: 100%;
-    padding: 0 var(--s-5);
-    transition: transform var(--t-fast) var(--ease-out);
+    gap: 3px;
+    min-width: 0;
   }
 
   .label {
     display: flex;
     align-items: center;
-    gap: var(--s-3);
-    font-family: var(--font-display);
-    font-size: var(--display-2);
-    line-height: 1;
-    text-transform: uppercase;
-    white-space: nowrap;
-  }
-
-  .pct {
-    margin-left: auto;
-    font-family: var(--font-ui);
-    font-size: var(--text-lg);
-    font-weight: 600;
-  }
-
-  .detail {
-    font-size: var(--text-sm);
-    font-weight: 500;
-    opacity: 0.86;
+    gap: 10px;
+    font: 800 23px / 1.05 var(--font);
+    font-stretch: 125%;
+    letter-spacing: -0.01em;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  .play[data-tone='ore'] {
-    background: var(--ore);
-    box-shadow:
-      inset 0 -4px 0 var(--ore-deep),
-      inset 0 1px 0 rgb(255 255 255 / 0.16);
+  .detail {
+    font: var(--t-label);
+    font-weight: 500;
+    opacity: 0.84;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  .play[data-tone='ore']:hover {
-    background: var(--ore-hi);
+  .pct {
+    flex: none;
+    margin-left: 16px;
+    font: 800 26px / 1 var(--font);
+    font-stretch: 112%;
+    font-variant-numeric: tabular-nums;
   }
 
-  .play[data-tone='ore']:active {
-    box-shadow:
-      inset 0 -1px 0 var(--ore-deep),
-      inset 0 1px 0 rgb(255 255 255 / 0.16);
+  .pct small {
+    font-size: 15px;
+    margin-left: 1px;
+    opacity: 0.8;
   }
 
-  .play[data-tone='ore']:active .face {
-    transform: translateY(2px);
-  }
-
-  .play[data-tone='busy'] {
-    background: var(--ore-dormant);
-    box-shadow: inset 0 -4px 0 #24110f;
-  }
-
-  .track {
-    position: absolute;
-    inset: 0 0 4px;
-    background: var(--ore);
-    transform-origin: left;
-    transform: scaleX(var(--p));
-    transition: transform 400ms var(--ease-out);
-  }
-
-  /* Indeterminate work: one solid block of ore travelling the track. */
-  .track.indeterminate {
-    width: 28%;
-    transform: none;
-    animation: travel 1.5s cubic-bezier(0.65, 0, 0.35, 1) infinite alternate;
-  }
-
-  @keyframes travel {
-    from {
-      translate: 0 0;
-    }
-    to {
-      translate: calc(100% / 0.28 - 100%) 0;
-    }
-  }
-
-  .play[data-tone='running'] {
-    color: var(--text);
-  }
-
-  .play[data-tone='running'] .detail {
-    color: var(--text-2);
-    opacity: 1;
-  }
-
-  .dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 2px;
-    background: var(--ok);
+  .play[data-tone='running'],
+  .play[data-tone='disabled'] {
+    color: var(--ink);
   }
 
   .play[data-tone='disabled'] {
-    color: var(--text-3);
+    color: var(--ink-3);
+  }
+
+  .live {
+    position: relative;
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    background: var(--ok);
+  }
+
+  .live::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 6px;
+    border: 2px solid var(--ok);
+    opacity: 0;
+    animation: ping 2.4s var(--ease-out) infinite;
+  }
+
+  @keyframes ping {
+    0% {
+      opacity: 0.7;
+      transform: scale(0.6);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(1.4);
+    }
   }
 
   .play:focus-visible {
-    outline-offset: 3px;
+    outline-offset: 4px;
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .track.indeterminate {
-      width: 100%;
-      animation: none;
-      opacity: 0.35;
+    .play,
+    .fill {
+      transition: none;
     }
 
-    .track,
-    .face {
-      transition: none;
+    .play[data-tone='ore']:hover,
+    .play[data-tone='ore']:active {
+      transform: none;
+    }
+
+    .sheen,
+    .play[data-tone='ore']:hover .sheen,
+    .play[data-tone='busy'] .sheen,
+    .live::after {
+      animation: none;
+    }
+
+    .fill.indeterminate {
+      width: 100%;
+      animation: none;
+      opacity: 0.4;
     }
   }
 </style>

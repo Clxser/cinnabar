@@ -1,7 +1,8 @@
 // Synthetic data for design work and screenshots. Server names, addresses and news are invented.
 // Pick a state with `?scenario=<name>`; add `&freeze` to stop simulated progress for captures.
-import { isoBannerDataUri } from '../lib/iso';
-import type { Api, Channel, FeaturedServer, GameState, InstallState, News, UpdateState } from './types';
+import { mockSkin } from '../lib/diorama/textures';
+import type { Account, Server } from './proposed';
+import type { Api, Channel, GameState, InstallState, News, UpdateState } from './types';
 
 const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search);
 const scenario = params.get('scenario') ?? 'idle';
@@ -129,15 +130,15 @@ const news: News = {
   ],
 };
 
-const servers: FeaturedServer[] = [
-  { id: 's1', name: 'Emberfall', address: 'play.emberfall.example', port: 19132, description: 'Seasonal survival with a player-run market and town claims.', online: 2481, imageUrl: isoBannerDataUri('Emberfall', 14) },
-  { id: 's2', name: 'Northwind Duels', address: 'pvp.northwind.example', port: 19132, description: 'Practice arenas, ranked duels and weekly brackets.', online: 1960 },
-  { id: 's3', name: 'Tidewater Isles', address: 'tidewater.example', port: 19133, description: 'Skyblock across floating archipelagos, solo or in crews of four.', online: 1302, imageUrl: isoBannerDataUri('Tidewater Isles', 196) },
-  { id: 's4', name: 'Quarry Kings', address: 'mc.quarrykings.example', port: 19132, description: 'Eight-player mining races. First crew to the core wins.', online: 864 },
-  { id: 's5', name: 'Hollowmere', address: 'hollowmere.example', port: 19132, description: 'Story-driven adventure maps with a new chapter every Friday.', online: 412 },
-  { id: 's6', name: 'Brickyard Creative', address: 'build.brickyard.example', port: 19132, description: 'Plots, build battles and a monthly showcase.', online: 233 },
+const servers: Server[] = [
+  { id: 's1', name: 'Emberfall', address: 'play.emberfall.example', port: 19132, description: 'Seasonal survival with a player-run market and town claims.', online: 2481, motd: 'Season 7 opens Friday. Claim your plot early.', tags: ['Survival', 'Economy'], pingMs: 38 },
+  { id: 's2', name: 'Northwind Duels', address: 'pvp.northwind.example', port: 19132, description: 'Practice arenas, ranked duels and weekly brackets.', online: 1960, motd: 'Ranked queue is live. Weekly bracket at 8 pm.', tags: ['PvP', 'Ranked'], pingMs: 52 },
+  { id: 's3', name: 'Tidewater Isles', address: 'tidewater.example', port: 19133, description: 'Skyblock across floating archipelagos, solo or in crews of four.', online: 1302, motd: 'New island biome: the coral shelf.', tags: ['Skyblock'], pingMs: 71 },
+  { id: 's4', name: 'Quarry Kings', address: 'mc.quarrykings.example', port: 19132, description: 'Eight-player mining races. First crew to the core wins.', online: 864, motd: 'Double ore weekend.', tags: ['Minigames', 'Teams'], pingMs: 44 },
+  { id: 's5', name: 'Hollowmere', address: 'hollowmere.example', port: 19132, description: 'Story-driven adventure maps with a new chapter every Friday.', online: 412, tags: ['Adventure'], pingMs: 118 },
+  { id: 's6', name: 'Brickyard Creative', address: 'build.brickyard.example', port: 19132, description: 'Plots, build battles and a monthly showcase.', online: 233, tags: ['Creative'], pingMs: 63 },
   { id: 's7', name: 'Lanternfall', address: 'lanternfall.example', port: 19140 },
-  { id: 's8', name: 'Glasshouse SMP', address: 'glasshouse.example', port: 19132, description: 'Small whitelist-free survival. Be kind, build slow.', online: 57 },
+  { id: 's8', name: 'Glasshouse SMP', address: 'glasshouse.example', port: 19132, description: 'Small whitelist-free survival. Be kind, build slow.', online: 57, tags: ['Survival', 'Small'], pingMs: 196 },
 ];
 
 async function simulateInstall() {
@@ -159,6 +160,16 @@ async function simulateInstall() {
   install.build = '9c41d07';
   install.installedChannel = install.channel;
   setUpdate({ kind: 'upToDate', lastChecked: new Date().toISOString() });
+}
+
+/** Signed in by default; `?account=out` signs out, and the offline scenario keeps a cached identity. */
+export async function mockAccount(): Promise<Account> {
+  if (scenario === 'loading') return never();
+  await wait(120);
+  const forced = params.get('account');
+  if (forced === 'out') return { kind: 'signedOut' };
+  const skinUrl = mockSkin().toDataURL();
+  return scenario === 'offline' ? { kind: 'offline', gamertag: 'Vermillion Fox', skinUrl } : { kind: 'signedIn', gamertag: 'Vermillion Fox', skinUrl };
 }
 
 export const mockApi: Api = {

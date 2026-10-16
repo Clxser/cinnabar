@@ -1,4 +1,5 @@
 import { api, type Channel, type FeaturedServer, type GameState, type InstallState, type News, type UpdateState } from '../api';
+import { getAccount, signIn, type Account, type Server } from '../api/proposed';
 
 export type Load<T> = { status: 'loading' } | { status: 'ready'; value: T } | { status: 'error' };
 export type Page = 'home' | 'servers' | 'settings';
@@ -26,7 +27,9 @@ class LauncherStore {
   update = $state<UpdateState>();
   game = $state<GameState>();
   news = $state<Load<News>>({ status: 'loading' });
-  servers = $state<Load<FeaturedServer[]>>({ status: 'loading' });
+  servers = $state<Load<Server[]>>({ status: 'loading' });
+  /** Undefined while loading or when the bridge has no account support yet. */
+  account = $state<Account>();
   now = $state(Date.now());
   /** Set by "Update & play" so a finished install launches the game. */
   playAfterInstall = $state(false);
@@ -45,6 +48,7 @@ class LauncherStore {
     api.getGameState().then((s) => (this.game ??= s), () => (this.game ??= { kind: 'stopped' }));
     this.reloadNews();
     this.reloadServers();
+    getAccount().then((a) => (this.account = a), () => undefined);
 
     return () => {
       offUpdate();
@@ -104,6 +108,8 @@ class LauncherStore {
   };
 
   open = (url: string) => api.openExternal(url);
+
+  signIn = () => signIn();
 }
 
 export const store = new LauncherStore();

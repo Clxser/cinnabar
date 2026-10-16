@@ -12,10 +12,11 @@ body,
 }
 
 body {
-  background: var(--shell);
-  color: var(--text);
-  font: 400 var(--text-md) / 1.45 var(--font-ui);
+  background: var(--solid);
+  color: var(--ink);
+  font: var(--t-body);
   font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
   user-select: none;
@@ -25,7 +26,7 @@ body {
 
 ::selection {
   background: rgb(210 59 46 / 0.45);
-  color: var(--text);
+  color: var(--ink);
 }
 
 h1,
@@ -72,11 +73,11 @@ a {
 }
 
 input {
-  caret-color: var(--ore-lit);
+  caret-color: var(--cinnabar-hi);
 }
 
 ::placeholder {
-  color: var(--text-3);
+  color: var(--ink-3);
 }
 
 ::-webkit-scrollbar {
@@ -84,13 +85,14 @@ input {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--raised-2);
-  border: 3px solid var(--sheet);
+  background: var(--raise-2);
+  border: 3px solid transparent;
+  background-clip: padding-box;
   border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--hover);
+  background-color: rgb(255 255 255 / 0.18);
 }
 
 ::-webkit-scrollbar-track {
