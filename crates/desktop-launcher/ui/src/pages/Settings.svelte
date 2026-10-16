@@ -1,6 +1,9 @@
 <script lang="ts">
   import ArrowUpRight from '@lucide/svelte/icons/arrow-up-right';
+  import ChevronRight from '@lucide/svelte/icons/chevron-right';
+  import LoaderCircle from '@lucide/svelte/icons/loader-circle';
   import InlineState from '../components/InlineState.svelte';
+  import Segmented from '../components/Segmented.svelte';
   import { store } from '../lib/store.svelte';
   import { CHANNEL_LABEL, checkStatus } from '../lib/play';
   import { DISCORD_URL, LICENSE_NAME, PRODUCT_NAME, SOURCE_URL } from '../lib/product';
@@ -11,11 +14,12 @@
     beta: 'Tested builds. Recommended for most players.',
     nightly: 'Builds from the latest changes, plus any newer Beta. Expect rough edges.',
   };
+  const CHANNEL_ORDER: Channel[] = ['stable', 'beta', 'nightly'];
 
   const install = $derived(store.install.status === 'ready' ? store.install.value : undefined);
-  // Channel order follows the contract's union; unpublished channels never render.
-  const channels = $derived((['stable', 'beta', 'nightly'] as const).filter((c) => install?.publishedChannels.includes(c)));
-  const busy = $derived(store.update?.kind === 'checking' || store.update?.kind === 'downloading' || store.update?.kind === 'verifying' || store.update?.kind === 'installing');
+  // Only channels with real releases are offered; Stable appears once it publishes.
+  const channels = $derived(CHANNEL_ORDER.filter((c) => install?.publishedChannels.includes(c)).map((c) => ({ value: c, label: CHANNEL_LABEL[c] })));
+  const busy = $derived(['checking', 'downloading', 'verifying', 'installing'].includes(store.update?.kind ?? ''));
   const status = $derived(checkStatus(store.update, store.now));
 
   interface Notice {
@@ -41,303 +45,273 @@
 <div class="page">
   <h1>Settings</h1>
 
-  <section aria-labelledby="channel-title">
-    <h2 id="channel-title">Release channel</h2>
-    {#if store.install.status === 'error'}
-      <InlineState message="Cinnabar couldn’t read its installation, so the channel can’t change." onretry={() => void store.reloadInstall()} />
-    {:else if install}
-      <div class="channels" role="radiogroup" aria-labelledby="channel-title">
-        {#each channels as channel (channel)}
-          <label class="channel" class:selected={install.channel === channel}>
-            <input type="radio" name="channel" value={channel} checked={install.channel === channel} disabled={busy} onchange={() => void store.setChannel(channel)} />
-            <span class="radio" aria-hidden="true"></span>
-            <span class="copy">
-              <span class="name">{CHANNEL_LABEL[channel]}</span>
-              <span class="info">{CHANNEL_INFO[channel]}</span>
-            </span>
-          </label>
-        {/each}
-      </div>
-      {#if install.channel !== install.installedChannel}
-        <p class="note">
-          The installed build is from {CHANNEL_LABEL[install.installedChannel]}. {CHANNEL_LABEL[install.channel]} applies with the next update.
-        </p>
+  <section aria-labelledby="updates-title">
+    <h2 id="updates-title">Updates</h2>
+    <div class="group">
+      {#if store.install.status === 'error'}
+        <div class="row"><InlineState message="Cinnabar couldn’t read its installation." onretry={() => void store.reloadInstall()} /></div>
+      {:else}
+        <div class="row">
+          <div class="label">
+            <span class="name">Release channel</span>
+            <span class="hint">{install ? CHANNEL_INFO[install.channel] : ' '}</span>
+          </div>
+          {#if install}
+            <Segmented label="Release channel" options={channels} value={install.channel} disabled={busy} onchange={(c) => void store.setChannel(c)} />
+          {:else}
+            <span class="placeholder"></span>
+          {/if}
+        </div>
+        {#if install && install.channel !== install.installedChannel}
+          <p class="pending">
+            Your installed build is from {CHANNEL_LABEL[install.installedChannel]}. {CHANNEL_LABEL[install.channel]} installs with the next update.
+          </p>
+        {/if}
+        <div class="row">
+          <div class="label">
+            <span class="name">Game version</span>
+            <span class="hint">{install ? `${install.version}, build ${install.build}, from ${CHANNEL_LABEL[install.installedChannel]}` : ' '}</span>
+          </div>
+          <button class="button" disabled={busy || store.game?.kind !== 'stopped'} onclick={() => void store.check()}>
+            {#if store.update?.kind === 'checking'}<LoaderCircle class="spin" size={14} strokeWidth={2} aria-hidden="true" />{/if}
+            Check for updates
+          </button>
+        </div>
+        {#if status}<p class="status" aria-live="polite">{status}</p>{/if}
       {/if}
-    {:else}
-      <div class="channels" aria-busy="true"><span class="placeholder"></span><span class="placeholder"></span></div>
-    {/if}
-  </section>
-
-  <section aria-labelledby="versions-title">
-    <h2 id="versions-title">Versions</h2>
-    <dl class="facts">
-      <dt>Game</dt>
-      <dd>{install ? `${install.version} (${install.build})` : '—'}</dd>
-      <dt>Installed from</dt>
-      <dd>{install ? CHANNEL_LABEL[install.installedChannel] : '—'}</dd>
-      <dt>Launcher</dt>
-      <dd>{install?.launcherVersion ?? '—'}</dd>
-    </dl>
-    <div class="row">
-      <button class="button" disabled={busy || store.game?.kind !== 'stopped'} onclick={() => void store.check()}>Check for updates</button>
-      {#if status}<span class="muted">{status}</span>{/if}
     </div>
   </section>
 
   <section aria-labelledby="about-title">
     <h2 id="about-title">About</h2>
-    <p class="about">{PRODUCT_NAME} is an independent, source-available client for Bedrock servers. It is not affiliated with or endorsed by the makers of the original game.</p>
-    <div class="links">
-      <button class="link" onclick={() => void store.open(SOURCE_URL)}>Source code<ArrowUpRight size={14} strokeWidth={2} aria-hidden="true" /></button>
-      <button class="link" onclick={() => void store.open(DISCORD_URL)}>Discord<ArrowUpRight size={14} strokeWidth={2} aria-hidden="true" /></button>
+    <div class="group">
+      <div class="row">
+        <div class="label">
+          <span class="name">Launcher</span>
+          <span class="hint">Version {install?.launcherVersion ?? '…'}</span>
+        </div>
+      </div>
+      <div class="row">
+        <p class="about">{PRODUCT_NAME} is an independent, source-available client for Bedrock servers. It is not affiliated with or endorsed by the makers of the original game.</p>
+      </div>
+      <button class="row link" onclick={() => void store.open(SOURCE_URL)}>
+        <span class="name">Source code</span><ArrowUpRight size={16} strokeWidth={2} aria-hidden="true" />
+      </button>
+      <button class="row link" onclick={() => void store.open(DISCORD_URL)}>
+        <span class="name">Discord</span><ArrowUpRight size={16} strokeWidth={2} aria-hidden="true" />
+      </button>
+      <details class="row licenses" ontoggle={loadLicenses}>
+        <summary>
+          <span class="label">
+            <span class="name">Licenses</span>
+            <span class="hint">{PRODUCT_NAME} is licensed under {LICENSE_NAME}. Third-party notices for this launcher follow.</span>
+          </span>
+          <ChevronRight class="chev" size={16} strokeWidth={2} aria-hidden="true" />
+        </summary>
+        {#if licenses === 'error'}
+          <InlineState message="The license list didn’t load." />
+        {:else if licenses && licenses.length === 0}
+          <InlineState message="Development builds don’t list licenses. Run a production build to see them." />
+        {:else if licenses}
+          <ul>
+            {#each licenses as entry (entry.name)}
+              <li>
+                <details>
+                  <summary><span class="pkg">{entry.name}</span> <span class="hint">{entry.version}, {entry.license}</span></summary>
+                  <pre>{entry.text || 'This package ships no license file; its declared license is listed above.'}</pre>
+                </details>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </details>
     </div>
-    <p class="muted license">{PRODUCT_NAME} is licensed under {LICENSE_NAME}. Its display face, Cinnangles, is original to the project.</p>
-
-    <details class="licenses" ontoggle={loadLicenses}>
-      <summary>Third-party licenses in this launcher</summary>
-      {#if licenses === 'error'}
-        <InlineState message="The license list didn’t load." />
-      {:else if licenses && licenses.length === 0}
-        <InlineState message="Development builds don’t list licenses. Run a production build to see them." />
-      {:else if licenses}
-        <ul>
-          {#each licenses as entry (entry.name)}
-            <li>
-              <details>
-                <summary><span class="pkg">{entry.name}</span> <span class="muted">{entry.version} · {entry.license}</span></summary>
-                <pre>{entry.text || 'This package ships no license file; its declared license is listed above.'}</pre>
-              </details>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </details>
   </section>
 </div>
 
 <style>
   .page {
-    max-width: 760px;
-    padding: var(--s-6);
+    max-width: 720px;
+    padding: 20px 40px 48px;
   }
 
   h1 {
-    font-family: var(--font-display);
-    font-size: var(--display-2);
-    font-weight: 400;
-    line-height: 1;
-    text-transform: uppercase;
+    font: var(--t-page);
+    font-stretch: 125%;
+    letter-spacing: -0.02em;
   }
 
   section {
-    margin-top: var(--s-7);
-  }
-
-  section:first-of-type {
-    margin-top: var(--s-6);
+    margin-top: 36px;
   }
 
   h2 {
-    margin-bottom: var(--s-3);
-    font-size: var(--text-lg);
-    font-weight: 650;
+    margin: 0 0 10px 4px;
+    font: var(--t-label);
+    color: var(--ink-2);
   }
 
-  .channels {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-2);
-  }
-
-  .channel {
-    position: relative;
-    display: flex;
-    align-items: flex-start;
-    gap: var(--s-3);
-    padding: var(--s-4);
-    border-radius: var(--r-md);
-    background: var(--raised);
-    cursor: pointer;
-    transition: background-color var(--t-fast) linear, box-shadow var(--t-fast) linear;
-  }
-
-  .channel:hover {
-    background: var(--raised-2);
-  }
-
-  .channel.selected {
-    box-shadow: inset 0 0 0 1.5px var(--ore-hi);
-  }
-
-  .channel input {
-    position: absolute;
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  .channel:has(input:focus-visible) {
-    outline: 2px solid var(--focus);
-    outline-offset: 2px;
-  }
-
-  .channel:has(input:disabled) {
-    cursor: default;
-    opacity: 0.6;
-  }
-
-  .radio {
-    flex: none;
-    width: 18px;
-    height: 18px;
-    margin-top: 1px;
-    border-radius: 50%;
-    box-shadow: inset 0 0 0 2px var(--text-3);
-  }
-
-  .selected .radio {
-    box-shadow: inset 0 0 0 5px var(--ore-hi);
-  }
-
-  .copy {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .name {
-    font-weight: 600;
-  }
-
-  .info {
-    color: var(--text-2);
-    font-size: var(--text-sm);
-  }
-
-  .note {
-    margin-top: var(--s-3);
-    color: var(--warn);
-    font-size: var(--text-sm);
-  }
-
-  .placeholder {
-    height: 70px;
-    border-radius: var(--r-md);
-    background: var(--raised);
-  }
-
-  .facts {
-    display: grid;
-    grid-template-columns: 160px 1fr;
-    row-gap: var(--s-2);
-    margin: 0;
-  }
-
-  dt {
-    color: var(--text-3);
-  }
-
-  dd {
-    margin: 0;
-    user-select: text;
-    -webkit-user-select: text;
+  .group {
+    border-radius: var(--r-lg);
+    background: var(--glass-strong);
+    -webkit-backdrop-filter: blur(24px) saturate(1.4);
+    backdrop-filter: blur(24px) saturate(1.4);
+    box-shadow: inset 0 0 0 1px var(--glass-edge);
+    overflow: hidden;
   }
 
   .row {
     display: flex;
     align-items: center;
-    gap: var(--s-4);
-    margin-top: var(--s-4);
+    justify-content: space-between;
+    gap: 24px;
+    width: 100%;
+    min-height: 64px;
+    padding: 12px 20px;
+    text-align: left;
+  }
+
+  .row + .row,
+  .pending + .row,
+  .row + .pending {
+    box-shadow: inset 0 1px 0 var(--line);
+  }
+
+  .label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .name {
+    font: var(--t-label);
+    font-size: 14px;
+  }
+
+  .hint {
+    font: var(--t-meta);
+    font-size: 13px;
+    color: var(--ink-3);
+  }
+
+  .pending {
+    padding: 10px 20px 12px;
+    font: var(--t-meta);
+    font-size: 13px;
+    color: var(--warn);
+  }
+
+  .status {
+    padding: 0 20px 14px;
+    margin-top: -6px;
+    font: var(--t-meta);
+    color: var(--ink-3);
+    text-align: right;
+  }
+
+  .placeholder {
+    width: 180px;
+    height: 38px;
+    border-radius: 999px;
+    background: var(--raise);
   }
 
   .button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
     height: 36px;
-    padding: 0 var(--s-4);
-    border-radius: var(--r-sm);
-    background: var(--raised-2);
-    font-weight: 600;
+    padding: 0 16px;
+    border-radius: 999px;
+    background: var(--raise-2);
+    font: var(--t-label);
     transition: background-color var(--t-fast) linear;
   }
 
   .button:hover:not(:disabled) {
-    background: var(--hover);
+    background: rgb(255 255 255 / 0.16);
   }
 
   .button:disabled {
-    color: var(--text-3);
-  }
-
-  .muted {
-    color: var(--text-3);
-    font-size: var(--text-sm);
+    color: var(--ink-3);
   }
 
   .about {
-    max-width: 62ch;
-    color: var(--text-2);
-  }
-
-  .links {
-    display: flex;
-    gap: var(--s-5);
-    margin-top: var(--s-3);
+    max-width: 60ch;
+    font-size: 14px;
+    color: var(--ink-2);
   }
 
   .link {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    font-weight: 600;
-    text-decoration: underline;
-    text-decoration-color: rgb(173 167 161 / 0.4);
-    text-underline-offset: 3px;
+    color: var(--ink);
+    transition: background-color var(--t-fast) linear;
   }
 
   .link:hover {
-    text-decoration-color: currentColor;
+    background: var(--raise);
   }
 
-  .license {
-    margin-top: var(--s-4);
+  .link :global(svg) {
+    color: var(--ink-3);
   }
 
   .licenses {
-    margin-top: var(--s-4);
+    display: block;
   }
 
-  summary {
+  .licenses > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
     cursor: pointer;
-    font-size: var(--text-sm);
-    font-weight: 600;
-    color: var(--text-2);
+    list-style: none;
   }
 
-  summary:hover {
-    color: var(--text);
+  .licenses > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .licenses > summary :global(.chev) {
+    flex: none;
+    color: var(--ink-3);
+    transition: transform var(--t-med) var(--ease-out);
+  }
+
+  .licenses[open] > summary :global(.chev) {
+    transform: rotate(90deg);
   }
 
   .licenses ul {
-    margin: var(--s-3) 0 0;
+    margin: 12px 0 0;
     padding: 0;
     list-style: none;
   }
 
   .licenses li {
-    padding: var(--s-2) 0;
-    border-top: 1px solid var(--line);
+    padding: 8px 0;
+    box-shadow: inset 0 1px 0 var(--line);
+  }
+
+  .licenses li summary {
+    cursor: pointer;
+    font: var(--t-label);
   }
 
   .pkg {
-    color: var(--text);
+    color: var(--ink);
   }
 
   pre {
-    max-height: 240px;
-    margin: var(--s-2) 0 0;
-    padding: var(--s-3);
+    max-height: 220px;
+    margin: 8px 0 0;
+    padding: 12px;
     overflow: auto;
     border-radius: var(--r-sm);
-    background: var(--shell);
-    color: var(--text-2);
+    background: rgb(0 0 0 / 0.3);
+    color: var(--ink-2);
     font-size: 11px;
     white-space: pre-wrap;
     user-select: text;

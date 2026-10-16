@@ -13,7 +13,7 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    color: var(--text-2);
+    color: var(--ink-2);
   }
 
   .dot {

@@ -65,11 +65,13 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
-    fs: { allow: [here, join(repoRoot, 'assets/fonts'), join(repoRoot, 'packaging/icons')] },
+    fs: { allow: [here, join(repoRoot, 'packaging/icons')] },
   },
   envPrefix: ['VITE_', 'TAURI_ENV_'],
   build: {
     target: process.env.TAURI_ENV_PLATFORM === 'windows' ? 'chrome105' : 'safari15',
     sourcemap: Boolean(process.env.TAURI_ENV_DEBUG),
+    // The 3D scene is one lazy chunk read from local disk after first paint.
+    chunkSizeWarningLimit: 700,
   },
 });

@@ -18,20 +18,21 @@
     align-items: center;
     gap: var(--s-4);
     padding: var(--s-4) 0;
-    color: var(--text-2);
-    font-size: var(--text-sm);
+    color: var(--ink-2);
+    font: var(--t-meta);
+    font-size: 13px;
   }
 
   button {
     padding: 6px var(--s-3);
     border-radius: var(--r-sm);
-    background: var(--raised-2);
-    font-weight: 600;
+    background: var(--raise-2);
+    font: var(--t-label);
     white-space: nowrap;
     transition: background-color var(--t-fast) linear;
   }
 
   button:hover {
-    background: var(--hover);
+    background: rgb(255 255 255 / 0.16);
   }
 </style>

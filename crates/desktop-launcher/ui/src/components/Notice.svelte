@@ -32,13 +32,16 @@
     grid-template-columns: auto 1fr auto;
     align-items: start;
     gap: var(--s-3);
-    padding: var(--s-3) var(--s-4);
+    padding: 14px var(--s-4);
     border-radius: var(--r-md);
-    background: var(--warn-wash);
+    background: var(--glass-strong);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    backdrop-filter: blur(20px) saturate(1.4);
+    box-shadow: inset 0 0 0 1px rgb(242 181 80 / 0.22);
   }
 
   .notice[data-tone='error'] {
-    background: var(--bad-wash);
+    box-shadow: inset 0 0 0 1px rgb(255 122 138 / 0.28);
   }
 
   .icon {
@@ -51,13 +54,16 @@
   }
 
   .title {
-    font-weight: 600;
-    color: var(--text);
+    font: var(--t-label);
+    font-size: 14px;
+    color: var(--ink);
   }
 
   .body {
-    font-size: var(--text-sm);
-    color: var(--text-2);
+    margin-top: 2px;
+    font: var(--t-meta);
+    font-size: 13px;
+    color: var(--ink-2);
     text-wrap: pretty;
   }
 
@@ -65,14 +71,13 @@
     align-self: center;
     padding: 7px var(--s-3);
     border-radius: var(--r-sm);
-    background: var(--raised-2);
-    font-size: var(--text-sm);
-    font-weight: 600;
+    background: var(--raise-2);
+    font: var(--t-label);
     white-space: nowrap;
     transition: background-color var(--t-fast) linear;
   }
 
   .action:hover {
-    background: var(--hover);
+    background: rgb(255 255 255 / 0.16);
   }
 </style>

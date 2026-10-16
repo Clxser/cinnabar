@@ -6,15 +6,16 @@
 
   interface Props {
     server: FeaturedServer;
+    /** Solid cinnabar for the one server the layout features; glass otherwise. */
+    emphasis?: boolean;
   }
 
-  let { server }: Props = $props();
-
+  let { server, emphasis = false }: Props = $props();
   const reason = $derived(joinBlockedReason(store.update, store.game));
 </script>
 
-<button class="join" disabled={reason !== undefined} title={reason} aria-label={`Play on ${server.name}`} onclick={() => void store.join(server)}>
-  <Play size={14} strokeWidth={2.25} aria-hidden="true" />
+<button class="join" class:emphasis disabled={reason !== undefined} title={reason} aria-label={`Play on ${server.name}`} onclick={() => void store.join(server)}>
+  <Play size={13} strokeWidth={2.5} fill="currentColor" aria-hidden="true" />
   Play
 </button>
 
@@ -22,23 +23,31 @@
   .join {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 7px;
     flex: none;
-    height: 32px;
-    padding: 0 var(--s-3);
-    border-radius: var(--r-sm);
-    background: var(--raised-2);
-    font-size: var(--text-sm);
-    font-weight: 650;
-    transition: background-color var(--t-fast) linear, color var(--t-fast) linear;
+    height: 34px;
+    padding: 0 14px;
+    border-radius: 999px;
+    background: var(--raise-2);
+    font: var(--t-label);
+    transition:
+      background-color var(--t-fast) linear,
+      color var(--t-fast) linear,
+      transform var(--t-fast) var(--ease-out);
   }
 
-  .join:hover:not(:disabled) {
-    background: var(--ore);
-    color: var(--ore-ink);
+  .join:hover:not(:disabled),
+  .emphasis:not(:disabled) {
+    background: var(--cinnabar-fill);
+    color: var(--cinnabar-ink);
+  }
+
+  .join:active:not(:disabled) {
+    transform: scale(0.97);
   }
 
   .join:disabled {
-    color: var(--text-3);
+    color: var(--ink-3);
+    background: var(--raise);
   }
 </style>
