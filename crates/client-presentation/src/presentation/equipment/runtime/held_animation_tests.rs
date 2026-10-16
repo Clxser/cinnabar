@@ -1,6 +1,6 @@
 use super::{
-    elytra_tests::selected_pixel, local_carrier, pack_catalog, pack_runtime, player_body,
-    startup_runtime,
+    declare_wearable, elytra_tests::selected_pixel, local_carrier, pack_catalog, pack_runtime,
+    player_body, startup_runtime,
 };
 use crate::presentation::equipment::runtime::*;
 use actor_animation::{ActorLifetimeId, ActorRigSnapshot};
@@ -821,7 +821,11 @@ fn third_person_held_attachable_receives_the_render_delta() {
 
 #[test]
 fn worn_attachable_categories_do_not_become_held_models() {
-    for identifier in ["minecraft:elytra", "test:helmet"] {
+    // Vanilla elytra is worn by its item facts; the custom helmet by its declared wearable slot.
+    for (identifier, wearable) in [
+        ("minecraft:elytra", None),
+        ("test:helmet", Some("slot.armor.head")),
+    ] {
         let mut files = held_pack();
         let (_, attachable) = files
             .iter_mut()
@@ -833,6 +837,9 @@ fn worn_attachable_categories_do_not_become_held_models() {
         *attachable = serde_json::to_vec(&document).unwrap();
         let (mut runtime, _) = pack_runtime(files);
         let body = player_body(&mut runtime);
+        if let Some(slot) = wearable {
+            declare_wearable(&mut runtime, identifier, slot);
+        }
         let owner = owner();
         let names = ["rightItem".into()];
         let rig = owner_rig(&owner, &names);
@@ -1142,6 +1149,7 @@ fn animated_held_attachables_skip_the_hurt_overlay_in_both_views() {
     let (mut runtime, _) = pack_runtime(held_pack());
     let mut body = player_body(&mut runtime);
     body.overlay_rgba8 = 0x6600_00ff;
+    body.light = 123;
     let owner = owner();
     let names = [Box::from("rightItem"), Box::from("leftItem")];
     let rig = owner_rig(&owner, &names);
@@ -1158,6 +1166,7 @@ fn animated_held_attachables_skip_the_hurt_overlay_in_both_views() {
     );
     assert_eq!(layers.len(), 1);
     assert_eq!(layers[0].submission.overlay_rgba8, 0);
+    assert_eq!(layers[0].submission.light, body.light);
     for off_hand in [false, true] {
         let item = runtime
             .first_person_attachable(
@@ -1174,9 +1183,13 @@ fn animated_held_attachables_skip_the_hurt_overlay_in_both_views() {
             )
             .unwrap();
         assert_eq!(item.presentation.submission.overlay_rgba8, 0);
+        assert_eq!(item.presentation.submission.light, body.light);
     }
     assert_eq!(body.overlay_rgba8, 0x6600_00ff);
 }
 
 #[path = "held_artwork_tests.rs"]
 mod artwork;
+
+#[path = "held_style_tests.rs"]
+mod style;

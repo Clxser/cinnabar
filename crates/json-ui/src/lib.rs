@@ -21,6 +21,7 @@ mod context;
 mod emit;
 mod env;
 mod expr;
+pub mod filter;
 mod form;
 mod hud;
 mod input;
@@ -39,6 +40,8 @@ mod screens;
 mod sidecar;
 mod sprite;
 mod state;
+mod template_equivalence;
+pub mod transform;
 mod tree;
 pub mod vanilla;
 pub mod vector_path;
@@ -78,7 +81,8 @@ pub use form::{
     render_form_with,
 };
 pub use hud::{
-    BossBar, HudModel, HudSlot, HudTitle, Sidebar, Timed, hud_clocks, hud_context, hud_data_source,
+    BossBar, HudBindings, HudChanges, HudModel, HudSlot, HudTitle, Sidebar, Timed, hud_clocks,
+    hud_context, hud_data_source,
 };
 pub use input::{
     ControlSound, HitKind, HitRegion, InputComponent, InputMode, InputModeCondition, Mapping,
@@ -96,6 +100,7 @@ pub use layout::{
 };
 pub use layout_cache_key::LayoutCacheKey;
 pub use localize::{localize_text, localize_text_prefix};
+pub use pack::{GLOBAL_VARIABLES_PATH, UI_DEFS_PATH};
 pub use predicate::{Bindings, Scalar};
 pub use resolve::Resolver;
 pub use scene::{SceneEntry, SceneStack, ScreenNav, ScreenSettings};
@@ -108,6 +113,7 @@ pub use sidecar::{
 };
 pub use sprite::nine_slice;
 pub use state::{FocusMemory, LayoutReport, ScrollMetrics, ScrollRetained, ViewState};
+pub use template_equivalence::screen_templates_unchanged;
 pub use tree::{ControlRef, Factory, Properties, ResolvedControl};
 pub use widgets::{Draggable, ScrollMotion};
 

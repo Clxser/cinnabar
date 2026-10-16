@@ -3,6 +3,7 @@
 //! Engine-free: no Bevy or wgpu types, so presentation compiles without waiting on the renderer.
 
 pub mod actor;
+pub mod cape;
 mod chunk_metrics;
 pub mod dropped_item;
 mod entity_shadow;
@@ -33,16 +34,17 @@ pub use actor::{
     MAX_ACTOR_CATALOG_VERTEX_BYTES, MAX_ACTOR_CATALOG_VERTICES, MAX_ACTOR_RIG_VERTICES,
     MAX_RENDER_BONES_PER_ACTOR, MAX_RENDERED_PLAYERS, ONE_SIDED_BACK_UV, PLAYER_SKIN_BUDGET_BYTES,
     RenderBoneTransform, SKIN_CLASS_SIDES, STANDARD_BIPED_VERTEX_COUNT, STANDARD_SKIN_BYTES,
-    STANDARD_SKIN_SIDE, UNIT_AXIS_SCALE, actor_skin_side, append_entity_cube_vertices,
-    attachable_geometry, attachable_raster_frame, default_actor_skin_rgba8, diagnostic_geometry,
-    entity_geometry, equipment_geometry, equipment_rig_id, find_geometry_index, fit_rgba_within,
-    geometry_bone_binding_expressions, geometry_bone_names, geometry_bone_pivots,
-    geometry_from_geometry_index, geometry_from_runtime_assets, install_default_player_skin,
-    is_equipment_rig_id, is_layer_geometry_rig_id, is_pack_equipment_rig_id, is_pack_rig_id,
-    item_mesh_rig_id, layer_geometries, layer_geometry_rig_id, normalize_actor_skin,
-    pack_equipment_rig_id, pack_geometries, pack_rig_id, prepare_actor_skin_cached,
-    resolve_geometry_bones, sampled_locator_transform, skin_geometry, skin_rig_id,
-    standard_biped_overlay_vertices, standard_biped_vertices,
+    STANDARD_SKIN_SIDE, UNIT_AXIS_SCALE, actor_catalog_budget_bytes, actor_skin_side,
+    append_entity_cube_vertices, attachable_geometry, attachable_raster_frame,
+    default_actor_skin_rgba8, diagnostic_geometry, entity_geometry, equipment_geometry,
+    equipment_rig_id, find_geometry_index, fit_rgba_within, geometry_bone_binding_expressions,
+    geometry_bone_names, geometry_bone_pivots, geometry_from_geometry_index,
+    geometry_from_runtime_assets, install_default_player_skin, is_equipment_rig_id,
+    is_layer_geometry_rig_id, is_pack_equipment_rig_id, is_pack_rig_id, item_mesh_rig_id,
+    layer_geometries, layer_geometry_rig_id, normalize_actor_skin, pack_equipment_rig_id,
+    pack_geometries, pack_rig_id, prepare_actor_skin_cached, resolve_geometry_bones,
+    sampled_locator_transform, skin_geometry, skin_rig_id, standard_biped_overlay_vertices,
+    standard_biped_vertices,
 };
 pub use chunk_metrics::{
     ModelWorkloadCount, ModelWorkloadMetricsSnapshot, TransparentSortMetricsSnapshot,
@@ -74,10 +76,10 @@ pub use presentation::{
 pub use ui::{
     MAX_UI_BATCHES, MAX_UI_DRAW_BYTES, MAX_UI_FIXED_TEXTURE_BYTES, MAX_UI_INDICES,
     MAX_UI_TEXTURE_BYTES, MAX_UI_TEXTURE_LAYERS, MAX_UI_TEXTURE_SIDE, MAX_UI_VERTICES,
-    UI_BLEND_ALPHA, UI_BLEND_INVERT, UI_STYLE_ALPHA_TEST, UI_STYLE_COLOR_MASK, UI_STYLE_GLINT,
-    UI_STYLE_RADIAL_GRADIENT, UiRenderBatch, UiRenderInput, UiRenderReject, UiRenderRejectReason,
-    UiRenderScene, UiRenderStats, UiRenderStatsSnapshot, UiRenderTextureArray, UiRenderVertex,
-    UiScissor,
+    UI_BLEND_ALPHA, UI_BLEND_BACKDROP, UI_BLEND_FILTER, UI_BLEND_INVERT, UI_STYLE_ALPHA_TEST,
+    UI_STYLE_COLOR_MASK, UI_STYLE_GLINT, UI_STYLE_RADIAL_GRADIENT, UiRenderBatch, UiRenderInput,
+    UiRenderReject, UiRenderRejectReason, UiRenderScene, UiRenderStats, UiRenderStatsSnapshot,
+    UiRenderTextureArray, UiRenderVertex, UiScissor,
 };
 pub use ui_textures::{
     MAX_UI_ART_PAGES, MAX_UI_DYNAMIC_PAGES, MAX_UI_MODEL_ATLAS_PAGES, MAX_UI_NATIVE_SHEET_BYTES,
@@ -174,7 +176,8 @@ pub use block_entity::CrystalBeamModel;
 pub use block_entity::DragonDeathModel;
 pub use block_entity::ShulkerModel;
 pub use block_entity::{
-    AtlasRect, BlockEntityAtlas, MAP_CELL, TEXT_CELL, TEXT_SLOT_COUNT, TextureRef,
+    AtlasRect, BlockEntityAtlas, MAP_CELL, MIN_DYNAMIC_ATLAS_WIDTH, TEXT_CELL, TEXT_SLOT_COUNT,
+    TextureRef,
 };
 pub use block_entity::{
     BLOCK_ENTITY_REACH_BLOCKS, BlockEntityAtlasImage, BlockEntityFrame, BlockEntityKind,

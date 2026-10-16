@@ -16,6 +16,8 @@ pub(super) struct TextureKey {
 impl TextureKey {
     /// Hashes content only when a publication introduces a different source allocation.
     pub(super) fn new(page: &ActorTexturePage, hasher: &RandomState) -> Self {
+        #[cfg(test)]
+        super::work_tests::record_hash(page.rgba8.len());
         Self {
             page: page.clone(),
             fingerprint: hasher.hash_one((page.width, page.height, page.layers, &page.rgba8)),
@@ -88,6 +90,14 @@ impl TextureCache {
             cache.insert(page);
         }
         cache
+    }
+
+    /// Releases unused textures and their source allocations before replacement uploads begin.
+    pub(super) fn retain(&mut self, keys: &[TextureKey]) {
+        let keys: std::collections::HashSet<_> = keys.iter().collect();
+        self.textures.retain(|key, _| keys.contains(key));
+        self.allocations
+            .retain(|_, key| self.textures.contains_key(key));
     }
 
     /// Shared allocations avoid hashing; equal independent allocations share their texture too.

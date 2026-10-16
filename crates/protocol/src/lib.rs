@@ -6,6 +6,7 @@ mod blob_cache;
 mod block_edit;
 mod boss;
 mod camera;
+pub mod capture;
 mod codec;
 mod credits;
 mod dimension;
@@ -22,6 +23,7 @@ mod movement;
 mod nbt_tree;
 mod packet;
 mod packet_relay;
+pub mod packet_tap;
 pub use packet_relay::{PacketRelay, RELAY_TICK, RelayOutput, RelayPack};
 mod particle;
 mod permissions;
@@ -32,7 +34,8 @@ mod respawn;
 mod settings;
 mod skin_change;
 pub use skin_change::{
-    cape_content_id, player_skin_packet, set_skin_packet_engine_version, set_skin_packet_uuid,
+    builtin_skin_id, cape_content_id, custom_skin_id, player_skin_packet,
+    set_skin_packet_engine_version, set_skin_packet_uuid,
 };
 mod session_transport;
 pub mod session_wire;
@@ -91,8 +94,9 @@ pub use camera::{
     CameraInstructionEvent, CameraPreset, CameraSetInstruction, CameraShakeAction,
     CameraShakeEvent, CameraShakeType, CameraSpline, CameraSplineInstruction, CameraSplineKind,
     CameraSplineProgressKeyFrame, CameraSplineRotationKeyFrame, CameraSwitchEvent,
-    CameraTargetInstruction, MAX_CAMERA_AIM_ASSIST_ENTRIES, MAX_CAMERA_EASE_IDENTIFIER_BYTES,
-    MAX_CAMERA_PRESETS, MAX_CAMERA_SPLINE_POINTS, camera_aim_assist_activation_packet,
+    CameraTargetInstruction, ClientInputLock, ClientInputLocks, MAX_CAMERA_AIM_ASSIST_ENTRIES,
+    MAX_CAMERA_EASE_IDENTIFIER_BYTES, MAX_CAMERA_PRESETS, MAX_CAMERA_SPLINE_POINTS,
+    camera_aim_assist_activation_packet,
 };
 pub use codec::{
     PacketDecodeError, PacketEncodeError, ProtocolError, SessionError, decode_batch, encode,
@@ -104,7 +108,7 @@ pub use interaction::{
     click_block_packet, click_block_transaction_packet, destroy_block_packet,
     is_aim_assist_rotation_action, release_item_packet, start_item_use_on_packet,
     stop_item_use_on_packet, stop_riding_packet, stop_sleeping_packet, swing_arm_packet,
-    use_actor_packet, use_item_as_attack_packet,
+    use_actor_packet, use_item_as_attack_packet, writable_book_init_change,
 };
 pub use inventory::recipes::{
     MAX_RECIPE_INGREDIENTS, RECIPE_ANY_AUX, RECIPE_OWNED_BYTES, RecipeCatalog, RecipeDefinition,
@@ -141,7 +145,7 @@ pub use inventory::{
     item_stack_request_packet_filtered, next_legacy_request_id,
     normal_inventory_transaction_packet, normalize_authority, open_inventory_packet,
     personal_craft_content_indices, personal_craft_slot_index, project_container_cell,
-    validate_item_nbt_size,
+    repeated_container_open_warning_packet, validate_item_nbt_size,
 };
 pub use inventory::{
     CreativeCategory, CreativeContentEvent, CreativeGroup, CreativeItem, MAX_CREATIVE_GROUPS,
@@ -176,8 +180,8 @@ pub use item::{
     select_hotbar_slot_packet, vanilla_item_registry,
 };
 pub use item::{
-    ItemAnvilData, ItemNbtEdit, edit_item_extra, item_anvil_data, item_custom_name,
-    item_repair_cost,
+    ItemAnvilData, ItemNbtEdit, book_init_extra, book_needs_init, edit_item_extra, item_anvil_data,
+    item_custom_name, item_repair_cost,
 };
 pub use item_capacity::{ITEM_DEFAULT_MAX_STACK_SIZE, vanilla_item_capacity};
 pub use respawn::{respawn_ready_packet, respawn_request_packet};
@@ -186,7 +190,7 @@ pub use login::{
     ClientCape, ClientRandomId, ClientSkin, ClientSkinGeometry, GAME_VERSION, GameData,
     LoginSequence, LoginSettings, PROTOCOL_VERSION, PacketIdTraceSnapshot, PlayOutbound,
     PlaySession, ResourcePackArchive, ResourcePackContentKey, ResourcePackHandoff, StartupItems,
-    StartupSettings, login_memory_tier, network_stack_latency_reply,
+    StartupSettings, WRITE_FAILURE_DRAIN, login_memory_tier, network_stack_latency_reply,
 };
 pub use movement::{
     BlockAction, BlockActionKind, BlockActions, BlockActionsFull, BlockItemInteraction,

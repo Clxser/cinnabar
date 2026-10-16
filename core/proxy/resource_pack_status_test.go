@@ -297,16 +297,37 @@ func TestSecretSafeResourcePackHandlerRedactsURLsEverywhere(t *testing.T) {
 	signed := "https://cdn.example.test/pack.zip?sig=secret-signature"
 	logger := slog.New(handler).With("component", "upstream-dialer", slog.Group("pack", slog.String("url", signed), slog.Int("size", 7)))
 	logger.Warn("download "+signed+" failed", "download_url", signed, "downloaded_UUID", "uuid-sentinel",
-		"err", fmt.Errorf("Get %q: dial tcp: timeout", signed), slog.Group("attempt", slog.String("next", signed), slog.Int("try", 2)))
+		"err", fmt.Errorf("Get %q: dial tcp 198.51.100.4:443: timeout", signed), slog.Group("attempt", slog.String("next", signed), slog.Int("try", 2)))
 	got := output.String()
-	for _, forbidden := range []string{"secret-signature", "cdn.example.test", "uuid-sentinel"} {
+	for _, forbidden := range []string{"secret-signature", "cdn.example.test", "uuid-sentinel", "198.51.100"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("log exposed %q: %s", forbidden, got)
 		}
 	}
-	for _, kept := range []string{"dial tcp: timeout", "pack.size=7", "attempt.try=2", "[url]"} {
+	for _, kept := range []string{"dial tcp [redacted]: timeout", "pack.size=7", "attempt.try=2", "download [redacted] failed"} {
 		if !strings.Contains(got, kept) {
 			t.Fatalf("log lost %q: %s", kept, got)
 		}
+	}
+}
+
+// The upstream dialer logs through the session's logger, keeping its attributes and dropping pack secrets.
+func TestUpstreamDialerLogsThroughTheSessionLogger(t *testing.T) {
+	var logs bytes.Buffer
+	connections := newPreparedConnections("unused.invalid:19132", nil, slog.New(slog.NewTextHandler(&logs, nil)).With("process", "game"))
+	connections.resolveTarget = func(context.Context) (*resolvedUpstreamTarget, error) {
+		return &resolvedUpstreamTarget{address: "unused.invalid:19132", network: minecraft.RakNet{}}, nil
+	}
+	dialErr := errors.New("dial failed")
+	connections.dialTarget = func(_ context.Context, _ *resolvedUpstreamTarget, dialer minecraft.Dialer) (upstreamSession, error) {
+		dialer.ErrorLog.Warn("pack fetch failed", "pack_url", "https://cdn.example/pack?sig=secret-sentinel")
+		return nil, dialErr
+	}
+	if _, err := connections.connect(context.Background(), dialerTestDownstream{protocol: minecraft.DefaultProtocol}); !errors.Is(err, dialErr) {
+		t.Fatalf("connect error = %v, want %v", err, dialErr)
+	}
+	output := logs.String()
+	if !strings.Contains(output, `level=WARN msg="pack fetch failed" process=game component=upstream-dialer`) || strings.Contains(output, "secret-sentinel") {
+		t.Fatalf("dialer log = %q", output)
 	}
 }

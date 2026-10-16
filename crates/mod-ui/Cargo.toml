@@ -5,6 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 publish = false
 
+[package.metadata.cinnabar]
+reads = ["assets/fonts/InterVariable.ttf", "assets/licenses/Inter-OFL-1.1.txt"]
+
 [features]
 test-support = ["ui-engine/test-support"]
 

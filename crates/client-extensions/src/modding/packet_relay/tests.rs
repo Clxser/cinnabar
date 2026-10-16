@@ -116,3 +116,48 @@ fn a_session_created_before_reselection_never_starts_the_replacement() {
     assert!(stale.start(&identity(), "{}", &[1]).is_empty());
     assert_eq!(stale.outbound(&[1]), None);
 }
+
+/// Reconnecting to the same source creates a fresh native UI scope before UI session publication.
+#[test]
+fn reconnecting_the_same_mod_replaces_the_native_menu_identity() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = guest(directory.path());
+    let mut source = std::fs::read_to_string(&path).unwrap();
+    source = source.trim_end().strip_suffix(')').unwrap().to_owned();
+    source.push_str(
+        r#"
+        (func (export "native-init") (param i32))
+        (func (export "menu") (param i32 i32) (result i32) (i32.const 128)))
+    "#,
+    );
+    std::fs::write(&path, source).unwrap();
+    let mut selected = selection(path);
+    selected.grants.controls = true;
+    let program =
+        Arc::new(CompiledPacketMod::load(&selected.path, &selected.grants, None).unwrap());
+    let loader = PacketModLoader::default();
+    loader.select_prepared(selected, program);
+    let first = loader.session_relay().unwrap();
+    first.start(&identity(), "{}", &[1]);
+    let old_id = loader
+        .native_menu_identity()
+        .expect("first capable session");
+    let second = loader.session_relay().unwrap();
+    assert!(
+        loader.native_menu_identity().is_none(),
+        "new relay is unavailable before startup"
+    );
+    second.start(&identity(), "{}", &[1]);
+    let new_id = loader
+        .native_menu_identity()
+        .expect("second capable session");
+    assert_ne!(old_id, new_id);
+    first.stop();
+    assert_eq!(
+        loader.native_menu_identity(),
+        Some(new_id),
+        "old-session cleanup cannot revoke the replacement"
+    );
+    second.stop();
+    assert!(loader.native_menu_identity().is_none());
+}

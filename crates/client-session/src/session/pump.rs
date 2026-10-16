@@ -12,6 +12,7 @@ pub(super) enum WorldSideWork<'a, E> {
     Capacity(Result<mpsc::Permit<'a, WorldIngress>, mpsc::error::SendError<()>>),
 }
 
+/// Reads raw core frames while world admission is full, retaining the pending FIFO head.
 pub(super) async fn wait_for_world_side_work<'a, S: NetworkSession>(
     session: &mut S,
     current_dimension: i32,
@@ -19,7 +20,14 @@ pub(super) async fn wait_for_world_side_work<'a, S: NetworkSession>(
     has_pending_world_event: bool,
 ) -> WorldSideWork<'a, S::Error> {
     if has_pending_world_event {
-        WorldSideWork::Capacity(world_event_tx.reserve().await)
+        let capacity = world_event_tx.reserve();
+        tokio::pin!(capacity);
+        let permit = tokio::select! {
+            biased;
+            permit = &mut capacity => permit,
+            () = session.read_ahead() => capacity.await,
+        };
+        WorldSideWork::Capacity(permit)
     } else {
         WorldSideWork::Event(
             session
@@ -52,18 +60,6 @@ where
         biased;
         _ = wait_for_shutdown(shutdown) => None,
         result = login => Some(result),
-    }
-}
-
-/// Runs CPU-bound work on the blocking pool; `None` once the session is cancelled.
-pub(super) async fn run_blocking_or_cancel<T: Send + 'static>(
-    work: impl FnOnce() -> T + Send + 'static,
-    shutdown: &mut watch::Receiver<bool>,
-) -> Option<T> {
-    match wait_for_login_or_cancel(tokio::task::spawn_blocking(work), shutdown).await? {
-        Ok(output) => Some(output),
-        Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
-        Err(_) => None,
     }
 }
 
@@ -228,4 +224,40 @@ impl NetworkSequencer {
             event,
         }
     }
+}
+
+/// Records which core frame and slot produced `ingress`, once it is sequenced.
+pub(super) fn trace_decoded((conn, frame, index): (u64, u64, u32), ingress: &WorldIngress) {
+    if let Some(trace) = bridge::latency_trace::active() {
+        let (session, fifo) = ingress.identity();
+        trace.record(
+            bridge::latency_trace::kind::DECODED,
+            &[
+                conn as i64,
+                frame as i64,
+                i64::from(index),
+                session as i64,
+                fifo as i64,
+                trace.now(),
+            ],
+        );
+    }
+}
+
+/// Publishes `ingress` into the app's world channel, recording its entry at the time publishing
+/// began, so the app can never drain it before its recorded enqueue time.
+pub(super) fn publish_traced(permit: mpsc::Permit<'_, WorldIngress>, ingress: WorldIngress) {
+    let Some(trace) = bridge::latency_trace::active() else {
+        permit.send(ingress);
+        return;
+    };
+    let (session, fifo) = ingress.identity();
+    let _ = trace.record_admitted(
+        bridge::latency_trace::kind::ENQUEUED,
+        &[session as i64, fifo as i64],
+        || {
+            permit.send(ingress);
+            Ok::<_, std::convert::Infallible>(())
+        },
+    );
 }

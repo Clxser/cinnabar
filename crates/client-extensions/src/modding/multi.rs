@@ -137,7 +137,7 @@ pub fn load_entries(mods: Vec<(ModSource, ModGrants)>) -> Vec<ModHost> {
                 .load(grants)
                 .inspect_err(|error| {
                     let path = source.path().display();
-                    eprintln!("Cinnabar extension {path} disabled: {error:#}");
+                    bevy::log::warn!("Cinnabar extension {path} disabled: {error:#}");
                 })
                 .ok()
         })
@@ -380,6 +380,10 @@ fn claim_controls(frame: &ControlFrame, claimed: &[String], panel_owner: bool) -
             .collect()
     };
     ControlFrame {
+        seconds: frame.seconds,
+        focused: frame.focused,
+        gameplay: frame.gameplay,
+        panel_open: frame.panel_open,
         keys_pressed: free(&frame.keys_pressed),
         keys_held: free(&frame.keys_held),
         events: if panel_owner {
@@ -387,7 +391,6 @@ fn claim_controls(frame: &ControlFrame, claimed: &[String], panel_owner: bool) -
         } else {
             Vec::new()
         },
-        ..frame.clone()
     }
 }
 
@@ -429,6 +432,7 @@ pub fn run_frame(
         }
         active = true;
         let grants = host.grants();
+        union.terrain |= grants.terrain;
         union.players |= grants.players;
         union.camera |= grants.camera;
         union.item_use |= grants.item_use;
@@ -509,7 +513,7 @@ pub fn run_frame(
             failed(index, format!("{error:#}"));
         }
         if let Some(error) = host.take_settings_error() {
-            eprintln!("Cinnabar extension preferences could not be saved: {error}");
+            bevy::log::warn!("Cinnabar extension preferences could not be saved: {error}");
         }
         merged.absorb(host);
     }
@@ -518,7 +522,8 @@ pub fn run_frame(
 
 /// Whether the host may receive the common gameplay pose and input snapshot.
 fn needs_gameplay(grants: &ModGrants) -> bool {
-    grants.players
+    grants.terrain
+        || grants.players
         || grants.camera
         || grants.item_use
         || grants.movement

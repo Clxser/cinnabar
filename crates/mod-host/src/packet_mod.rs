@@ -8,6 +8,8 @@ pub mod capture;
 mod component;
 mod core;
 mod limits;
+mod native_frame;
+pub mod native_menu;
 mod wasi;
 
 pub use adapt::packet_mod_component;
@@ -52,6 +54,22 @@ trait Guest: Send {
     ) -> Result<Result<Option<Vec<u8>>, String>>;
     fn tick(&mut self) -> Result<Result<Outbound, String>>;
     fn stop(&mut self) -> Result<()>;
+    /// Whether startup negotiated the optional input-owned native frame capability.
+    fn has_native_frame(&self) -> bool {
+        false
+    }
+    /// Runs the optional core native callback with bounded UTF-8 JSON.
+    fn frame(&mut self, _json: &[u8]) -> Result<Result<Option<Vec<u8>>, String>> {
+        Ok(Ok(None))
+    }
+    /// Whether startup negotiated the optional focused menu capability.
+    fn has_native_menu(&self) -> bool {
+        false
+    }
+    /// Exchanges bounded retained menu state through the session's serial worker.
+    fn menu(&mut self, _json: &[u8]) -> Result<Result<Option<Vec<u8>>, String>> {
+        Ok(Ok(None))
+    }
     /// The largest linear memory the guest has requested.
     fn peak_memory(&self) -> usize;
 }

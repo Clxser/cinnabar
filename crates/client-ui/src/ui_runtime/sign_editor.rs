@@ -32,36 +32,8 @@ pub struct SignLook {
 impl SignLook {
     /// The `textures/ui` art for the sign block `name` (an oak sign when unknown).
     pub fn of_block(name: Option<&str>) -> Self {
-        let name = name.unwrap_or_default();
-        let name = name.strip_prefix("minecraft:").unwrap_or(name);
-        let hanging = name.ends_with("hanging_sign");
-        let wood = name
-            .trim_end_matches("_hanging_sign")
-            .trim_end_matches("hanging_sign")
-            .trim_end_matches("_standing_sign")
-            .trim_end_matches("standing_sign")
-            .trim_end_matches("_wall_sign")
-            .trim_end_matches("wall_sign")
-            .trim_end_matches("_sign");
-        let wood = match wood {
-            "" | "oak" | "sign" => "",
-            "dark_oak" | "darkoak" => "darkoak",
-            other => other,
-        };
-        let texture = match (hanging, wood) {
-            (true, "") => "hanging_sign".to_owned(),
-            (true, wood) => format!("hanging_sign_{wood}"),
-            (false, "") => "sign".to_owned(),
-            // Newer woods name the art wood-first.
-            (false, wood @ ("mangrove" | "bamboo" | "cherry" | "pale_oak" | "poplar")) => {
-                format!("{wood}_sign")
-            }
-            (false, wood) => format!("sign_{wood}"),
-        };
-        Self {
-            texture: format!("textures/ui/{texture}"),
-            hanging,
-        }
+        let (texture, hanging) = assets::facts::presentation::sign_texture(name);
+        Self { texture, hanging }
     }
 }
 
@@ -315,15 +287,14 @@ impl SignEditor {
         self.active.as_mut()
     }
 
+    /// Sends the edit back on close, even when unchanged: the server holds the sign
+    /// until the client's `BlockActorData` arrives, so skipping an unchanged edit
+    /// leaves the sign locked and it cannot be reopened.
     /// Keeps a completed edit open until the transport accepts its packet.
     pub fn finish(&mut self, send: impl FnOnce(protocol::Packet) -> Result<(), ()>) -> bool {
         let Some(edit) = self.active.clone() else {
             return true;
         };
-        if !edit.changed() {
-            self.close();
-            return true;
-        }
         let position = edit.position();
         let accepted = match edit.into_encoded_nbt() {
             Ok(nbt) => send(protocol::sign_edit_packet(position, &nbt)).is_ok(),

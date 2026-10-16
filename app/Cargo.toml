@@ -34,15 +34,18 @@ path = "src/main.rs"
 test = false
 
 [features]
+# Counts allocation requests and labelled GPU writes for diagnostic runs.
+alloc-stats = ["dep:test-alloc", "test-alloc/global-stats", "render/alloc-stats", "render-scene/alloc-stats"]
 # Developer runs and client MCP keep acceptance; packaging opts out with --no-default-features.
 default = ["acceptance"]
 acceptance = ["dep:acceptance"]
 enhanced = ["render/enhanced"]
 enhanced-diagnostics = ["enhanced", "developer-control", "acceptance", "render/enhanced-diagnostics"]
 # Loopback control endpoint for scripted driving and recording; never in release builds.
-developer-control = ["dep:developer-control", "client-shell/developer-control"]
-# Records Bevy schedules, systems, render graph, submission and presentation spans.
-frame-trace = ["bevy/trace_chrome", "bevy/debug"]
+developer-control = ["dep:developer-control", "dep:sadness-generator", "client-shell/developer-control"]
+# Records Bevy schedules, systems, render graph, submission and presentation spans as a
+# Chrome trace through the app's own subscriber layer.
+frame-trace = ["bevy/trace", "bevy/debug", "dep:tracing-chrome"]
 # Live CPU attribution through Bevy, wgpu's encoding and submission scopes, and the owned
 # streaming/render hot paths.
 tracy = ["bevy/trace", "bevy/debug", "dep:tracing-tracy", "dep:profiling", "chunk-pipeline/tracy", "render/tracy", "client-ui/tracy"]
@@ -52,6 +55,7 @@ reports = []
 mimalloc = ["dep:mimalloc"]
 
 [dependencies]
+test-alloc = { path = "../crates/test-alloc", optional = true }
 protocol-ids = { path = "../crates/protocol-ids" }
 mimalloc = { workspace = true, optional = true }
 pack-json = { path = "../crates/pack-json" }
@@ -65,6 +69,8 @@ client-extensions = { path = "../crates/client-extensions" }
 client-state = { path = "../crates/client-state" }
 client-audio = { path = "../crates/client-audio" }
 pack-runtime = { path = "../crates/pack-runtime" }
+bootstrap-ui = { path = "../crates/bootstrap-ui" }
+crash-monitor = { path = "../crates/crash-monitor" }
 first-run = { path = "../crates/first-run" }
 launcher-host = { path = "../crates/launcher-host" }
 bridge = { path = "../crates/bridge" }
@@ -73,10 +79,13 @@ mod-api = { path = "../crates/mod-api" }
 mod-render = { path = "../crates/mod-render" }
 block-transform = { path = "../crates/block-transform" }
 tracing-tracy = { version = "=0.12.0", default-features = false, features = ["enable", "only-localhost", "ondemand"], optional = true }
+tracing-chrome = { version = "=0.7.2", optional = true }
 profiling = { version = "=1.0.18", default-features = false, features = ["profile-with-tracing"], optional = true }
 acceptance = { path = "../crates/acceptance", optional = true }
+crash-report = { path = "../crates/crash-report" }
 diagnostics = { path = "../crates/diagnostics" }
 developer-control = { path = "../crates/developer-control", optional = true }
+sadness-generator = { version = "0.7", optional = true }
 client-presentation = { path = "../crates/client-presentation" }
 gameplay = { path = "../crates/gameplay" }
 client-session = { path = "../crates/client-session" }
@@ -122,6 +131,7 @@ serde_json = "1"
 sha2.workspace = true
 thiserror.workspace = true
 url = "2"
+uuid.workspace = true
 tokio.workspace = true
 ui = { path = "../crates/ui" }
 ui-engine = { path = "../crates/ui-engine" }
@@ -149,6 +159,7 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
+mimalloc.workspace = true
 wat = "1"
 actor-animation = { path = "../crates/actor-animation", features = ["test-support"] }
 test-alloc = { path = "../crates/test-alloc" }

@@ -1,5 +1,8 @@
 use super::super::resource_sorts::ResourceView;
 use super::*;
+use crate::chunk::plugin::publication_schedule::{
+    ChunkPublicationStage, configure_chunk_publication,
+};
 use crate::chunk::transparent::liquid::{
     transparent_frame_draw_for_range, transparent_frame_draws,
 };
@@ -71,12 +74,140 @@ fn publish(
     instances: Query<(Entity, &ChunkRenderInstance)>,
     mut arena: ResMut<ChunkGpuArena>,
     mut candidate: ResMut<Candidate>,
+    mut coverage: Option<ResMut<TerrainCoverage>>,
 ) {
-    candidate
-        .0
-        .take()
-        .unwrap()
-        .publish(&mut commands, &instances, &mut arena);
+    if let Some(staged) = candidate.0.take() {
+        candidate.0 = staged
+            .publish(
+                &mut commands,
+                &instances,
+                &mut arena,
+                coverage.as_deref_mut(),
+            )
+            .err();
+    }
+}
+
+/// Observes the component used by all terrain queues after deferred coverage changes apply.
+fn assert_suppressed_at_queue(
+    instances: Query<(Entity, &ChunkRenderInstance)>,
+    allocations: Query<&GpuChunkAllocation>,
+    arena: Res<ChunkGpuArena>,
+    coverage: Res<TerrainCoverage>,
+) {
+    for (entity, instance) in &instances {
+        assert!(
+            arena.allocations.contains_key(&entity),
+            "physical geometry remains resident"
+        );
+        assert!(!coverage.state.draws_near(instance.key.chunk()));
+        assert!(
+            !allocations.contains(entity),
+            "far-owned near geometry cannot reach a draw queue"
+        );
+    }
+}
+
+#[test]
+fn resource_swaps_reapply_cached_coverage_before_draw_queues_and_preserve_withdrawals() {
+    use bevy::render::{Render, RenderSystems};
+    for withdrawing in [false, true] {
+        let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+        let device = RenderDevice::from(device);
+        let queue = RenderQueue::new(queue);
+        let instance = water(ChunkBiomeTintIdentity::default());
+        let mut app = App::new();
+        app.insert_resource(ChunkGpuArena::new(&device))
+            .insert_resource(device.clone())
+            .insert_resource(queue.clone())
+            .init_resource::<TerrainCoverage>();
+        let entity = app.world_mut().spawn(instance.clone()).id();
+        let target = Arc::new(far_terrain::TerrainTarget {
+            centre: instance.key.chunk(),
+            horizon: 32,
+            near: std::sync::Arc::new(HashMap::new()),
+            retained: std::sync::Arc::new(HashSet::from([instance.key])),
+            empty_far: std::sync::Arc::new(HashSet::new()),
+        });
+        app.world_mut()
+            .resource_mut::<TerrainCoverage>()
+            .state
+            .publish(
+                &target,
+                &HashMap::from([(instance.key, instance.generation)]),
+                |_| true,
+            );
+        app.insert_resource(render_scene::FarTerrainScene {
+            target: Some(target),
+            ..Default::default()
+        });
+        let build = || {
+            PreparedResourceGeometry::build(
+                std::slice::from_ref(&instance),
+                ChunkTextureAssets::default(),
+                device.clone(),
+                queue.clone(),
+                None,
+            )
+            .unwrap()
+        };
+        app.insert_resource(Candidate(Some(build())));
+        app.world_mut().run_system_once(publish).unwrap();
+        app.world_mut()
+            .run_system_once(crate::chunk::coverage::publish_terrain_coverage)
+            .unwrap();
+        assert!(app.world().get::<GpuChunkAllocation>(entity).is_none());
+        let before = app
+            .world()
+            .resource::<ChunkGpuArena>()
+            .geometry_stream_buffer
+            .id();
+        if withdrawing {
+            app.world_mut()
+                .resource_mut::<ChunkGpuArena>()
+                .pending_removals
+                .insert(entity);
+        }
+        app.insert_resource(Candidate(Some(build())));
+        let mut schedule = Render::base_schedule();
+        configure_chunk_publication(&mut schedule);
+        schedule.add_systems((
+            publish.in_set(ChunkPublicationStage::Attributes),
+            crate::chunk::coverage::publish_terrain_coverage
+                .in_set(ChunkPublicationStage::Coverage),
+            assert_suppressed_at_queue.in_set(RenderSystems::Queue),
+        ));
+        schedule.run(app.world_mut());
+        let arena = app.world().resource::<ChunkGpuArena>();
+        assert_ne!(arena.geometry_stream_buffer.id(), before);
+        assert_eq!(arena.pending_removals.contains(&entity), withdrawing);
+        // The next frame has the same target and far revision and no replacement to publish.
+        schedule.run(app.world_mut());
+        if withdrawing {
+            let before = app
+                .world()
+                .resource::<ChunkGpuArena>()
+                .geometry_stream_buffer
+                .id();
+            let incomplete = PreparedResourceGeometry::build(
+                &[],
+                ChunkTextureAssets::default(),
+                device.clone(),
+                queue.clone(),
+                None,
+            )
+            .unwrap();
+            app.insert_resource(Candidate(Some(incomplete)));
+            schedule.run(app.world_mut());
+            let arena = app.world().resource::<ChunkGpuArena>();
+            assert_eq!(
+                arena.geometry_stream_buffer.id(),
+                before,
+                "a swap cannot drop pending retirement"
+            );
+            assert!(arena.pending_removals.contains(&entity));
+        }
+    }
 }
 
 #[test]
@@ -255,6 +386,8 @@ fn review_render_stale_resource_geometry_preserves_active_arena() {
         view_entity: view,
         order_camera: TransparentFaceMetric::new(Vec3::ZERO).order_camera([instance.key]),
         address: TransparentModelAddressIdentity {
+            revision: 0,
+            _retained_assets: None,
             asset_identity: ChunkTextureAssets::default().identity(),
             allocations: Arc::from([TransparentModelAllocationIdentity {
                 entity,
@@ -429,6 +562,8 @@ fn model_sort_app() -> (App, Entity, TransparentModelSortKey) {
         view_entity: view,
         order_camera: TransparentFaceMetric::new(Vec3::ZERO).order_camera([instance.key]),
         address: TransparentModelAddressIdentity {
+            revision: 0,
+            _retained_assets: None,
             asset_identity: app.world().resource::<ChunkTextureAssets>().identity(),
             allocations: Arc::from([TransparentModelAllocationIdentity {
                 entity,
@@ -720,6 +855,8 @@ fn queued_model_job_revalidates_groups_an_in_flight_result_overwrites() {
     let (mut app, view, identities) = model_groups_app(&[(moved, 2), (stale, 1)]);
     let (camera_a, camera_b) = (Vec3::new(8.0, 8.0, 8.0), Vec3::new(90.0, 8.0, 8.0));
     let address = TransparentModelAddressIdentity {
+        revision: 0,
+        _retained_assets: None,
         asset_identity: app.world().resource::<ChunkTextureAssets>().identity(),
         allocations: identities.clone().into(),
     };
@@ -869,6 +1006,8 @@ fn unwitnessed_model_order_resorts_when_its_class_changes() {
         .insert(filler.entity, filler_allocation);
     let asset_identity = app.world().resource::<ChunkTextureAssets>().identity();
     let address = TransparentModelAddressIdentity {
+        revision: 0,
+        _retained_assets: None,
         asset_identity,
         allocations: Arc::from([identity.clone()]),
     };
@@ -878,6 +1017,8 @@ fn unwitnessed_model_order_resorts_when_its_class_changes() {
             .resource_mut::<TransparentModelSortRuntime>();
         runtime.draw_orders.publish(
             &TransparentModelAddressIdentity {
+                revision: 0,
+                _retained_assets: None,
                 asset_identity,
                 allocations: Arc::from([filler.clone()]),
             },

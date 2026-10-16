@@ -9,7 +9,7 @@ pub struct PlayOutbound {
 }
 
 impl PlaySession {
-    /// Detaches the write half; batches it sends share the session's own send FIFO.
+    /// Detaches the write half; batches it sends share the session's own send FIFO and tap.
     pub fn outbound(&mut self) -> Result<PlayOutbound, ProtocolError> {
         Ok(PlayOutbound {
             writer: self.transport.batch_writer(),

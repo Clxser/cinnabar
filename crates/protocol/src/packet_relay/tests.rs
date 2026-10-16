@@ -186,3 +186,87 @@ fn startup_body_joins_packets_with_length_prefixes() {
     expected.extend_from_slice(&[3; 200]);
     assert_eq!(&body[..], &expected[..]);
 }
+
+/// Replacement and dropped bodies are observed once at the same bytes the client and core consume.
+#[tokio::test]
+async fn taps_record_relay_replacements_and_detached_writes_once() {
+    use crate::packet_tap::PacketDirection;
+    use crate::session_transport::tests::unix::tapped_pair;
+    use crate::session_transport::tests::{RecordingTap, TapEvent};
+
+    let relay = Arc::new(FakeRelay::default());
+    relay.state().inbound_replies = [Some(body(&[7]))].into();
+    relay.state().outbound_replies = [Some(body(&[5])), Some(Vec::new()), None].into();
+    let tap = Arc::new(RecordingTap::default());
+    let mut pair = tapped_pair("relay-tap", &[], Some(tap.clone())).await;
+    pair.transport.set_relay(relay);
+    pair.transport.finish_startup();
+
+    write_frame(&mut pair.peer, &batch_frame(&[set_time(1)]).unwrap()).await;
+    assert_eq!(next_times(&mut pair, 1).await, [7]);
+    pair.transport.send(&[set_time(1)]).await.unwrap();
+    pair.transport.send(&[set_time(2)]).await.unwrap();
+    pair.transport
+        .batch_writer()
+        .send(batch_frame(&[set_time(3)]).unwrap())
+        .await
+        .unwrap();
+    for time in [5, 3] {
+        assert_eq!(
+            read_frame(&mut pair).await,
+            batch_frame(&[set_time(time)]).unwrap()
+        );
+    }
+
+    let expected = |direction, time| {
+        let packet = crate::raw_packet::decode_batch_body(
+            Bytes::from(body(&[time])),
+            crate::session_transport::MAX_SESSION_BATCH_BYTES,
+        )
+        .unwrap()
+        .pop()
+        .unwrap();
+        TapEvent::Record(direction, packet.id as u32, packet.body().to_vec())
+    };
+    assert_eq!(
+        tap.events(),
+        [
+            expected(PacketDirection::Clientbound, 7),
+            expected(PacketDirection::Serverbound, 5),
+            expected(PacketDirection::Serverbound, 3),
+        ],
+    );
+}
+
+/// Tick injections reach both observers even though they do not traverse the replacement callbacks.
+#[tokio::test]
+async fn taps_record_relay_tick_injections_in_both_directions() {
+    use crate::packet_tap::PacketDirection;
+    use crate::session_transport::tests::unix::tapped_pair;
+    use crate::session_transport::tests::{RecordingTap, TapEvent};
+
+    let relay = Arc::new(FakeRelay::default());
+    relay.state().ticks = [RelayOutput {
+        to_client: body(&[8]),
+        to_server: body(&[9]),
+    }]
+    .into();
+    let tap = Arc::new(RecordingTap::default());
+    let mut pair = tapped_pair("relay-tick-tap", &[], Some(tap.clone())).await;
+    pair.transport.set_relay(relay);
+    pair.transport.finish_startup();
+    assert_eq!(next_times(&mut pair, 1).await, [8]);
+    assert_eq!(
+        read_frame(&mut pair).await,
+        batch_frame(&[set_time(9)]).unwrap()
+    );
+
+    let events = tap.events();
+    assert_eq!(events.len(), 2);
+    for direction in [PacketDirection::Clientbound, PacketDirection::Serverbound] {
+        assert_eq!(
+            events.iter().filter(|event| matches!(event, TapEvent::Record(observed, _, _) if *observed == direction)).count(),
+            1,
+        );
+    }
+}

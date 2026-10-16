@@ -13,24 +13,7 @@ type NetworkObservation struct {
 // latencySampler converts the upstream's half-RTT estimate without measuring the local bridge.
 func latencySampler(upstream upstreamSession) func() *uint32 {
 	latency := upstreamLatency(upstream)
-	return func() *uint32 { return roundTripMillis(latency()) }
-}
-
-// upstreamLatency returns upstream's half round-trip estimate, or zero when it has none.
-func upstreamLatency(upstream upstreamSession) func() time.Duration {
-	connection, ok := upstream.(interface{ Latency() time.Duration })
-	if !ok {
-		return func() time.Duration { return 0 }
-	}
-	return func() (latency time.Duration) {
-		// Some transport adapters expose Conn.Latency but have no underlying estimator.
-		defer func() {
-			if recover() != nil {
-				latency = 0
-			}
-		}()
-		return connection.Latency()
-	}
+	return func() *uint32 { return roundTripMillis(sampleLatency(latency)) }
 }
 
 // roundTripMillis rounds a positive half-RTT estimate up to full milliseconds.

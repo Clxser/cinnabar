@@ -1,6 +1,7 @@
 //! An optional trusted relay between the session and the core. It sees every batch body, in the
 //! session contract's batch form, before decoding and after encoding, and may inject its own.
 
+use crate::packet_tap::PacketTap;
 use crate::session_wire::SessionIdentity;
 use bridge::{BridgeError, FrameQueue};
 use bytes::{BufMut, Bytes, BytesMut};
@@ -66,6 +67,7 @@ struct Shared {
 pub(crate) struct BatchWriter {
     frames: FrameQueue,
     relay: Option<Arc<Shared>>,
+    tap: Option<Arc<dyn PacketTap>>,
 }
 
 impl BatchWriter {
@@ -74,6 +76,20 @@ impl BatchWriter {
         Self {
             frames,
             relay: None,
+            tap: None,
+        }
+    }
+
+    /// Reports every accepted server-bound batch after any relay replacement.
+    pub(crate) fn with_tap(mut self, tap: Option<Arc<dyn PacketTap>>) -> Self {
+        self.tap = tap;
+        self
+    }
+
+    /// Records the final batch body, including batches injected by the relay.
+    fn record(&self, frame: &Bytes) {
+        if let Some(tap) = &self.tap {
+            crate::packet_tap::record_serverbound(tap.as_ref(), frame);
         }
     }
 
@@ -86,6 +102,7 @@ impl BatchWriter {
     /// A relay sees its body first; a batch it drops resolves at once.
     pub(crate) async fn send(&self, frame: Bytes) -> Result<(), BridgeError> {
         let Some(shared) = &self.relay else {
+            self.record(&frame);
             return self.frames.send(frame).await;
         };
         let written = {
@@ -95,6 +112,7 @@ impl BatchWriter {
                 Some(body) if body.is_empty() => return Ok(()),
                 Some(body) => batch_frame_from_body(&body),
             };
+            self.record(&frame);
             self.frames.accept(frame).await?
         };
         written.await
@@ -103,7 +121,9 @@ impl BatchWriter {
     /// Accepts a relay's own server-bound body in write order, without relaying it again.
     async fn inject(&self, shared: &Shared, body: &[u8]) -> Result<(), BridgeError> {
         let _gate = shared.gate.lock().await;
-        self.frames.accept(batch_frame_from_body(body)).await?;
+        let frame = batch_frame_from_body(body);
+        self.record(&frame);
+        self.frames.accept(frame).await?;
         Ok(())
     }
 }
@@ -117,7 +137,11 @@ pub(crate) struct RelayLink {
 
 impl RelayLink {
     /// Starts the tick task on the current runtime and routes `frames` through the relay.
-    pub(crate) fn start(relay: Arc<dyn PacketRelay>, frames: FrameQueue) -> (Self, BatchWriter) {
+    pub(crate) fn start(
+        relay: Arc<dyn PacketRelay>,
+        frames: FrameQueue,
+        tap: Option<Arc<dyn PacketTap>>,
+    ) -> (Self, BatchWriter) {
         let shared = Arc::new(Shared {
             relay: Arc::clone(&relay),
             gate: Mutex::new(()),
@@ -125,6 +149,7 @@ impl RelayLink {
         let writer = BatchWriter {
             frames,
             relay: Some(Arc::clone(&shared)),
+            tap,
         };
         let (inject, injected) = mpsc::channel(INJECTED_CAPACITY);
         let ticker = tokio::spawn(run_ticks(shared, writer.clone(), inject));

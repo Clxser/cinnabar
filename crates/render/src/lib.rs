@@ -85,6 +85,7 @@ mod runtime_profile_phases;
 mod scene_sampling;
 mod scene_target;
 
+mod queue_writes;
 mod screen_overlay_render;
 mod shader_safety;
 #[cfg(test)]
@@ -111,6 +112,7 @@ use meshing::{
     PackedLiquidQuad, PackedModelDrawRef, PackedModelRef, PackedQuad, PackedQuadLighting,
 };
 
+pub use actor::gpu::storage_binding_bytes as actor_storage_binding_bytes;
 pub use actor::material::blend_state as actor_material_blend_state;
 pub use actor_render::ActorRenderPlugin;
 
@@ -129,7 +131,7 @@ pub use chunk::{
 #[cfg(feature = "publication-test-support")]
 pub use chunk::{
     PublicationRenderTerminalSnapshot, publication_noop_render_plugin,
-    publication_render_terminal_snapshot, settle_publication_noop_frame,
+    publication_render_terminal_snapshot, publication_terrain_draws, settle_publication_noop_frame,
 };
 
 pub use dropped_item_render::DroppedItemRenderPlugin;

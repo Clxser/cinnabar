@@ -89,7 +89,7 @@ fn budget_rejections_preserve_vanilla_ids_in_both_modes_and_admission_palettes()
             );
             for record in records
                 .iter()
-                .filter(|record| record.name.as_ref() != super::super::RESERVED_RECORD_NAME)
+                .filter(|record| record.name.as_ref() != super::super::RESERVED_BLOCK_NAME)
             {
                 let omitted = !supply_vanilla
                     && assets::server_defined_blocks().iter().any(|block| {
@@ -165,6 +165,45 @@ fn budget_rejections_preserve_vanilla_ids_in_both_modes_and_admission_palettes()
 }
 
 #[test]
+fn empty_server_block_definitions_preserve_sequential_wire_identities() {
+    let version = assets::active_content_registry_protocol();
+    let records = assets::read_registry_for_protocol(BREG_V2193, version).unwrap();
+    let mut registries = bind(
+        BREG_V2193,
+        include_bytes!("../../../../../assets/data/block-physics-v2193.bin"),
+        version,
+    )
+    .unwrap();
+    let empty_compound = [10, 0, 0];
+    let vanilla = assets::server_defined_blocks();
+    let definitions = protocol::CustomBlocks::from_definitions(
+        std::iter::repeat_n(("", empty_compound.as_slice()), vanilla.len()).chain(
+            vanilla
+                .iter()
+                .map(|block| (block.name, empty_compound.as_slice())),
+        ),
+    );
+    let registration = registries.begin_session_blocks(&definitions, false);
+
+    assert!(registration.supported);
+    for record in &records {
+        assert_eq!(
+            registration.remap.to_internal(record.sequential_id),
+            record.sequential_id,
+            "{}",
+            record.name,
+        );
+        assert_eq!(
+            registration.remap.to_wire(record.sequential_id),
+            record.sequential_id,
+            "{}",
+            record.name,
+        );
+    }
+    assert!(registration.custom_ids.unwrap().is_empty());
+}
+
+#[test]
 fn omitted_server_definitions_remap_the_pinned_sequential_palette() {
     let version = assets::active_content_registry_protocol();
     let records = assets::read_registry_for_protocol(BREG_V2193, version).unwrap();
@@ -190,7 +229,7 @@ fn omitted_server_definitions_remap_the_pinned_sequential_palette() {
         } else {
             assert_eq!(remap.to_internal(wire), record.sequential_id);
             assert_eq!(remap.to_wire(record.sequential_id), wire);
-            if record.name.as_ref() != super::super::RESERVED_RECORD_NAME {
+            if record.name.as_ref() != super::super::RESERVED_BLOCK_NAME {
                 assert_eq!(
                     registries.block_identifier(
                         assets::NetworkIdMode::Sequential,

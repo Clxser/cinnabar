@@ -13,6 +13,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hashimthearab/rust-mcbe/core/authcache"
+	"github.com/hashimthearab/rust-mcbe/core/internal/latencytrace"
+	"github.com/hashimthearab/rust-mcbe/core/internal/redact"
 	"github.com/hashimthearab/rust-mcbe/core/internal/streamnet"
 	"github.com/sandertv/gophertunnel/minecraft"
 	"github.com/sandertv/gophertunnel/minecraft/device"
@@ -195,14 +197,14 @@ func connectUpstream(
 		}
 	}()
 	started := time.Now()
-	logger.Info("upstream connection starting", "target", address, "authentication", authentication)
-	upstream, err := dialFollowingTransfers(ctx, address, dial)
+	logger.Info("upstream connection starting", "target", redact.Private(address), "authentication", authentication)
+	upstream, err := dialFollowingTransfers(ctx, address, logger, dial)
 	if err != nil {
-		logger.Error("upstream connection failed", "target", address, "authentication", authentication, "error", err)
+		logger.Error("upstream connection failed", "target", redact.Private(address), "authentication", authentication, "error", redact.Error(err))
 		return nil, err
 	}
 	owned = upstream
-	logger.Info("upstream connected", "target", address, "authentication", authentication, "elapsed_ms", time.Since(started).Milliseconds())
+	logger.Info("upstream connected", "target", redact.Private(address), "authentication", authentication, "elapsed_ms", time.Since(started).Milliseconds())
 	result = upstream
 	owned = nil
 	return result, nil
@@ -220,6 +222,7 @@ func networkForAddress(target *resolvedUpstreamTarget, address string, trust min
 func dialFollowingTransfers(
 	ctx context.Context,
 	initialAddress string,
+	logger *slog.Logger,
 	dial func(context.Context, string) (upstreamSession, error),
 ) (upstreamSession, error) {
 	address := initialAddress
@@ -251,7 +254,7 @@ func dialFollowingTransfers(
 		if _, ok := seen[key]; ok {
 			return nil, fmt.Errorf("proxy: transfer cycle to %q: %w", next, err)
 		}
-		slog.Info("following pre-login server transfer", "from", address, "to", next, "hop", transfers+1)
+		logger.Info("following pre-login server transfer", "from", redact.Private(address), "to", redact.Private(next), "hop", transfers+1)
 		seen[key] = struct{}{}
 		address = next
 	}
@@ -276,6 +279,8 @@ type dialerDownstream interface {
 // transfer ceiling still bounds what those bytes can amount to.
 const maxUpstreamDecompressedBatch = 256 * 1024 * 1024
 
+// newUpstreamDialerForAdmission observes incoming pack negotiation before filtering
+// subclients and leaves payload observation to callers that need packet bodies.
 func newUpstreamDialerForAdmission(
 	downstream dialerDownstream,
 	tokenSource oauth2.TokenSource,
@@ -290,25 +295,21 @@ func newUpstreamDialerForAdmission(
 		EnableBatchReading:   true,
 		MaxDecompressedLen:   maxUpstreamDecompressedBatch,
 		FlushRate:            -1, // the relay's packet readers own flushing
-		// Only the primary local player is present, so ignore server data routed to a second one.
 		AcceptPacketHeader: func(h packet.Header) bool {
+			// Observe even rejected subclients before body decoding or login handling.
+			if packAdmission != nil && h.PacketID == packet.IDResourcePacksInfo {
+				packAdmission.observeNegotiation()
+			}
+			// Only the primary local player is present.
 			return h.SenderSubClient == 0 && h.TargetSubClient == 0
 		},
 		// The Rust client owns the spawn sequence; the server's startup reaches it unchanged.
 		Handoff: minecraft.HandoffAtStartGame,
 		// A static opt-in, not the downstream status: the upstream login completes before it arrives.
 		EnableClientCache: enableUpstreamClientCache,
-		ErrorLog:          secretSafeResourcePackLogger(),
 		Protocol:          downstream.Proto(),
 		TokenSource:       tokenSource,
 		ResourcePackCache: resourcePackCache,
-	}
-	if packAdmission != nil {
-		dialer.PacketFunc = func(header packet.Header, _ []byte, _, _ net.Addr) {
-			if header.PacketID == packet.IDResourcePacksInfo {
-				packAdmission.observeNegotiation()
-			}
-		}
 	}
 	if tokenSource == nil {
 		identity := downstream.IdentityData()
@@ -511,6 +512,7 @@ func pumpPacketsWithDelay(ctx context.Context, delay *PacketDelay, intercept Ses
 	inspect = interceptDecode(intercept, direction, inspect)
 	reader := newDelayedPacketReader(ctx, delay, source, destination, !fromDownstream, relayIdleFlush, inspect)
 	defer reader.Close()
+	trace := newRelayTrace(source, destination, fromDownstream)
 	// Packets buffered before the relay began leave as their own batch.
 	if err := reader.Flush(); err != nil {
 		return err
@@ -521,6 +523,7 @@ func pumpPacketsWithDelay(ctx context.Context, delay *PacketDelay, intercept Ses
 		if err != nil {
 			return err
 		}
+		trace.read(batch, reader.readAt, destination)
 		epoch, tracking := delay.positionToken()
 		var position *ForwardedPosition
 		if intercept != nil {
@@ -544,6 +547,7 @@ func pumpPacketsWithDelay(ctx context.Context, delay *PacketDelay, intercept Ses
 		if err := reader.Flush(); err != nil {
 			return err
 		}
+		trace.forwarded()
 		delay.commitPosition(session, epoch, position)
 	}
 }
@@ -598,6 +602,7 @@ const relayIdleFlush = time.Second / 20
 type batchReadResult struct {
 	packets []minecraft.RawPacket
 	err     error
+	readAt  int64 // latency-trace time the source returned the batch; 0 when not tracing
 }
 
 // packetReader returns source's network batches one at a time and owns every flush of
@@ -614,6 +619,7 @@ type packetReader struct {
 	terminal    bool
 	wake        *time.Timer
 	released    uint64
+	readAt      int64 // readAt of the batch Read returned last
 }
 
 func newPacketReader(source, destination packetSession, upstream bool, idle time.Duration, decode func(uint32) bool) *packetReader {
@@ -625,10 +631,15 @@ func newDelayedPacketReader(ctx context.Context, delay *PacketDelay, source, des
 	results, done := make(chan batchReadResult), make(chan struct{})
 	go func() {
 		defer close(results)
+		trace := latencytrace.Active()
 		for {
 			packets, err := callBatchRead(source, decode)
+			var readAt int64
+			if trace != nil {
+				readAt = trace.Now()
+			}
 			select {
-			case results <- batchReadResult{packets: packets, err: err}:
+			case results <- batchReadResult{packets: packets, err: err, readAt: readAt}:
 			case <-done:
 				return
 			}
@@ -669,6 +680,7 @@ func (reader *packetReader) Read() ([]minecraft.RawPacket, error) {
 		if reader.pending.count != 0 {
 			if delay == 0 || !now.Before(reader.pending.front().due) {
 				result := reader.pending.pop()
+				reader.readAt = result.readAt
 				return result.packets, attributeRelayError(result.err, reader.upstream)
 			}
 			deadline := reader.pending.front().due
@@ -696,6 +708,7 @@ func (reader *packetReader) Read() ([]minecraft.RawPacket, error) {
 				result.err = net.ErrClosed
 			}
 			if delay == 0 && reader.pending.count == 0 {
+				reader.readAt = result.readAt
 				return result.packets, attributeRelayError(result.err, reader.upstream)
 			}
 			reader.pending.push(result, time.Now().Add(delay))

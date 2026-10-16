@@ -91,7 +91,7 @@ func (session *InterceptedSession) ClientData() login.ClientData { return sessio
 
 // Latency returns the upstream connection's current half round-trip estimate, or zero when its
 // transport has none.
-func (session *InterceptedSession) Latency() time.Duration { return session.latency() }
+func (session *InterceptedSession) Latency() time.Duration { return sampleLatency(session.latency) }
 
 // WriteToClient queues pk in the batch forming toward the client.
 func (session *InterceptedSession) WriteToClient(pk packet.Packet) error {

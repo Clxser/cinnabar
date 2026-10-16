@@ -25,7 +25,8 @@ use protocol::{FastTransferAction, InteractionPacketGuard, PhysicsSendIdentity};
 
 /// Holds a frame's light burst; terrain admission, not this bound, paces chunk ingress.
 pub const WORLD_EVENT_CAPACITY: usize = 256;
-const CONTROL_EVENT_CAPACITY: usize = 64;
+/// Bounds queued controls; send receipts wait here until the frame drains them.
+pub const CONTROL_EVENT_CAPACITY: usize = 64;
 const COMMAND_CAPACITY: usize = 64;
 const FINAL_CONTROL_FLUSH_TIMEOUT: Duration = Duration::from_millis(250);
 const NETWORK_PUMP_TERMINAL_MARKER: &str = "CINNABAR_NETWORK_PUMP_TERMINAL";
@@ -43,6 +44,8 @@ pub struct NetworkConfig {
     pub player_skin: protocol::ClientSkin,
     /// The player's language, input mode and GUI scale, reported at login.
     pub login_settings: protocol::LoginSettings,
+    /// Records this session's full packet capture when set.
+    pub packet_capture: Option<packet_log::PacketCaptureRequest>,
 }
 
 /// Prepared facts returned by the pack owner at the join bootstrap boundary.
@@ -97,8 +100,8 @@ pub enum NetworkControlEvent<P = ()> {
         packs: P,
         /// Whether the server sent terrain before spawn; Dragonfly sends none until initialized.
         terrain_before_spawn: bool,
-        /// StartGame's hashed world identity, stable across joins of one world.
-        level_identity: u64,
+        /// StartGame's hashed world identity, absent when no level ID was supplied.
+        level_identity: Option<u64>,
     },
     SubChunkRequestSent {
         chunk: ChunkKey,
@@ -181,6 +184,26 @@ pub enum WorldIngress {
         sequence: FifoSequence,
         action_sequence: u64,
     },
+}
+
+impl WorldIngress {
+    /// The session generation and FIFO sequence this ingress carries.
+    #[must_use]
+    pub fn identity(&self) -> (u64, u64) {
+        match self {
+            Self::Event(event) => (event.session_generation.get(), event.sequence.get()),
+            Self::LevelChunk {
+                session_generation,
+                sequence,
+                ..
+            }
+            | Self::FastTransferBarrier {
+                session_generation,
+                sequence,
+                ..
+            } => (session_generation.get(), sequence.get()),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -670,6 +693,17 @@ trait NetworkSession: Send {
 
     fn decode_error_count(&self) -> u64;
 
+    /// Buffers bounded raw input without decoding world events while their consumer is full.
+    fn read_ahead(&mut self) -> impl Future<Output = ()> + Send {
+        std::future::pending()
+    }
+
+    /// Reads inbound until it ends, so a Transfer or Disconnect the core sent before closing is
+    /// retained when a write fails first; the caller bounds the wait.
+    fn drain_to_boundary(&mut self) -> impl Future<Output = ()> + Send {
+        async move { while self.receive_world_ingress(0).await.is_ok() {} }
+    }
+
     fn take_server_disconnect(&mut self) -> Option<ServerDisconnectEvent> {
         None
     }
@@ -687,6 +721,11 @@ trait NetworkSession: Send {
     }
 
     fn begin_packet_id_trace(&mut self) {}
+
+    /// The latency-trace connection, core frame and in-frame index of the packet received last.
+    fn latency_trace_position(&self) -> (u64, u64, u32) {
+        (0, 0, 0)
+    }
 
     fn cancel_packet_id_trace(&mut self) {}
 
@@ -727,6 +766,15 @@ impl NetworkSession for protocol::PlaySession {
         protocol::PlaySession::decode_error_count(self)
     }
 
+    /// Reads into the play session's bounded raw transport buffer.
+    fn read_ahead(&mut self) -> impl Future<Output = ()> + Send {
+        protocol::PlaySession::read_ahead(self)
+    }
+
+    fn drain_to_boundary(&mut self) -> impl Future<Output = ()> + Send {
+        protocol::PlaySession::drain_to_boundary(self)
+    }
+
     fn take_server_disconnect(&mut self) -> Option<ServerDisconnectEvent> {
         protocol::PlaySession::take_server_disconnect(self)
     }
@@ -745,6 +793,10 @@ impl NetworkSession for protocol::PlaySession {
 
     fn begin_packet_id_trace(&mut self) {
         protocol::PlaySession::begin_packet_id_trace(self);
+    }
+
+    fn latency_trace_position(&self) -> (u64, u64, u32) {
+        protocol::PlaySession::latency_trace_position(self)
     }
 
     fn cancel_packet_id_trace(&mut self) {
@@ -871,6 +923,7 @@ mod frame_flush;
 pub(crate) mod handle_state;
 mod latency_reply;
 mod outbound;
+pub mod packet_log;
 use bootstrap::{send_startup_failure, start_game_inventory_authority, start_game_item_registry};
 use outbound::*;
 mod pump;

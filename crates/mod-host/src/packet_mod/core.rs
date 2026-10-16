@@ -19,6 +19,9 @@ const START: &str = "start";
 const ON_BATCH: &str = "on-batch";
 const TICK: &str = "tick";
 const STOP: &str = "stop";
+const NATIVE_INIT: &str = "native-init";
+const FRAME: &str = "frame";
+const MENU: &str = "menu";
 /// Prefix of the optional export that frees a call's returned memory.
 const POST_RETURN: &str = "cabi_post_";
 /// Flat `i32` parameters and results of each canonical export: `start` passes three identity
@@ -46,6 +49,7 @@ struct State {
 /// A compiled module linked against WASI preview 1 only with the `wasi` grant.
 pub(super) struct Program {
     pre: InstancePre<State>,
+    native_capabilities: u32,
 }
 
 impl Program {
@@ -70,6 +74,27 @@ impl Program {
                 _ => bail!("packet mod does not export function {name}"),
             }
         }
+        let native = module.get_export(NATIVE_INIT).is_some();
+        let frame = module.get_export(FRAME).is_some();
+        let menu = module.get_export(MENU).is_some();
+        ensure!(
+            native == (frame || menu),
+            "native-init requires frame or menu exports"
+        );
+        for (name, present, params, results) in [
+            (NATIVE_INIT, native, 1, 0),
+            (FRAME, frame, 2, 1),
+            (MENU, menu, 2, 1),
+        ] {
+            if present {
+                ensure!(
+                    matches!(module.get_export(name), Some(ExternType::Func(ty))
+                    if ty.params().len() == params && ty.results().len() == results
+                    && ty.params().chain(ty.results()).all(|ty| ty.is_i32())),
+                    "packet mod export {name} has the wrong signature"
+                );
+            }
+        }
         ensure!(
             matches!(module.get_export(MEMORY), Some(ExternType::Memory(_))),
             "packet mod does not export its memory"
@@ -81,7 +106,18 @@ impl Program {
             })?;
         }
         let pre = linker.instantiate_pre(&module).context("link packet mod")?;
-        Ok(Self { pre })
+        Ok(Self {
+            pre,
+            native_capabilities: if frame && grants.players && grants.camera {
+                mod_api::native_frame::CAMERA_PLAYERS
+            } else {
+                0
+            } | if menu && grants.controls {
+                mod_api::native_menu::CONTROLS
+            } else {
+                0
+            },
+        })
     }
 
     /// Instantiates the module and runs its `_initialize` under the load deadline.
@@ -103,6 +139,11 @@ impl Program {
                 .get_typed_func::<(), ()>(&mut store, INITIALIZE)?
                 .call(&mut store, ())?;
         }
+        if instance.get_func(&mut store, NATIVE_INIT).is_some() {
+            instance
+                .get_typed_func::<i32, ()>(&mut store, NATIVE_INIT)?
+                .call(&mut store, self.native_capabilities as i32)?;
+        }
         let memory = instance
             .get_memory(&mut store, MEMORY)
             .context("packet mod memory")?;
@@ -113,13 +154,31 @@ impl Program {
                 None => Ok(None),
             }
         };
-        let posts = [post(START)?, post(ON_BATCH)?, post(TICK)?];
+        let posts = [
+            post(START)?,
+            post(ON_BATCH)?,
+            post(TICK)?,
+            post(FRAME)?,
+            post(MENU)?,
+        ];
+        let frame = if self.native_capabilities & mod_api::native_frame::CAMERA_PLAYERS != 0 {
+            Some(instance.get_typed_func(&mut store, FRAME)?)
+        } else {
+            None
+        };
+        let menu = if self.native_capabilities & mod_api::native_menu::CONTROLS != 0 {
+            Some(instance.get_typed_func(&mut store, MENU)?)
+        } else {
+            None
+        };
         let calls = Calls {
             realloc: instance.get_typed_func(&mut store, REALLOC)?,
             start: instance.get_typed_func(&mut store, START)?,
             on_batch: instance.get_typed_func(&mut store, ON_BATCH)?,
             tick: instance.get_typed_func(&mut store, TICK)?,
             stop: instance.get_typed_func(&mut store, STOP)?,
+            frame,
+            menu,
             posts,
         };
         Ok(Box::new(CoreGuest {
@@ -137,8 +196,10 @@ struct Calls {
     on_batch: TypedFunc<(i32, i32, i32), i32>,
     tick: TypedFunc<(), i32>,
     stop: TypedFunc<(), ()>,
-    /// Post-return functions of `start`, `on-batch` and `tick`, when exported.
-    posts: [Option<TypedFunc<i32, ()>>; 3],
+    frame: Option<TypedFunc<(i32, i32), i32>>,
+    menu: Option<TypedFunc<(i32, i32), i32>>,
+    /// Post-return functions of `start`, `on-batch`, `tick` and optional `frame` and `menu`.
+    posts: [Option<TypedFunc<i32, ()>>; 5],
 }
 
 struct CoreGuest {
@@ -169,15 +230,25 @@ impl CoreGuest {
         result: i32,
         read: impl FnOnce(&mut Reader, u32) -> Result<T>,
     ) -> Result<T> {
+        self.lift_bounded(post, result, PACKET_MOD_TRANSFER_BYTES, read)
+    }
+
+    /// Reads a result under the callback's own transfer allowance.
+    fn lift_bounded<T>(
+        &mut self,
+        post: usize,
+        result: i32,
+        budget: usize,
+        read: impl FnOnce(&mut Reader, u32) -> Result<T>,
+    ) -> Result<T> {
         let address = result as u32;
         ensure!(address.is_multiple_of(4), "misaligned return area");
-        let value = read(
-            &mut Reader {
-                memory: self.memory.data(&self.store),
-                budget: PACKET_MOD_TRANSFER_BYTES,
-            },
-            address,
-        )?;
+        let mut reader = Reader {
+            memory: self.memory.data(&self.store),
+            budget,
+        };
+        reader.range(address, 12)?;
+        let value = read(&mut reader, address)?;
         if let Some(post) = &self.calls.posts[post] {
             post.call(&mut self.store, result)?;
         }
@@ -262,6 +333,39 @@ impl Guest for CoreGuest {
 
     fn stop(&mut self) -> Result<()> {
         self.calls.stop.call(&mut self.store, ())
+    }
+
+    fn has_native_frame(&self) -> bool {
+        self.calls.frame.is_some()
+    }
+
+    fn frame(&mut self, json: &[u8]) -> Result<Result<Option<Vec<u8>>, String>> {
+        let Some(frame) = self.calls.frame.clone() else {
+            return Ok(Ok(None));
+        };
+        let input = self.lower(json)?;
+        let result = frame.call(&mut self.store, input)?;
+        self.lift_bounded(3, result, mod_api::native_frame::MAX_BYTES, |reader, at| {
+            reader.result(at, |reader, at| reader.list(at).map(Some))
+        })
+    }
+
+    fn has_native_menu(&self) -> bool {
+        self.calls.menu.is_some()
+    }
+
+    fn menu(&mut self, json: &[u8]) -> Result<Result<Option<Vec<u8>>, String>> {
+        let Some(menu) = self.calls.menu.clone() else {
+            return Ok(Ok(None));
+        };
+        let input = self.lower(json)?;
+        let result = menu.call(&mut self.store, input)?;
+        self.lift_bounded(
+            4,
+            result,
+            mod_api::native_menu::MAX_OUTPUT_BYTES,
+            |reader, at| reader.result(at, |reader, at| reader.list(at).map(Some)),
+        )
     }
 
     fn peak_memory(&self) -> usize {

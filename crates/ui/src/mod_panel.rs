@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 
 mod surface;
 mod update;
-pub use surface::{Surface, SurfaceValue};
+pub use surface::{
+    MAX_TRANSITION_SECONDS, Surface, SurfaceTransition, SurfaceValue, TransitionEasing, backdrop,
+};
 pub use update::{
     MAX_PANEL_BUNDLE_BYTES, MAX_PANEL_PATCH_BYTES, MAX_PANEL_SURFACES, PanelBundle, PanelPatch,
 };
@@ -21,6 +23,8 @@ pub const MAX_PANEL_CHOICES: usize = 8;
 pub const MAX_PANEL_SECTIONS: usize = 32;
 pub const MAX_PANEL_CATEGORIES: usize = 4;
 pub const FONT_NAME: &str = "mod_panel";
+/// A shipped, smoothly sampled sans face for authored native panels.
+pub const SANS_FONT_NAME: &str = "mod_panel_sans";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -203,7 +207,10 @@ impl Panel {
                                 matches!(self.controls.get(i), Some(Control::Slider { .. }))
                             })
                     })
-                } else if let Some(indices) = action.strip_prefix("mod.vector:") {
+                } else if let Some(indices) = action
+                    .strip_prefix("mod.vector:")
+                    .or_else(|| action.strip_prefix("mod.drag:"))
+                {
                     indices.split_once(':').is_some_and(|(x, y)| {
                         let index = |s: &str| {
                             s.parse::<usize>().ok().filter(|i| {

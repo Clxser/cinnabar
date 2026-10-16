@@ -1,3 +1,4 @@
+use assets::entity::EngineVariable as V;
 use std::borrow::Cow;
 
 use render_api::{SkinAnimation, SkinAnimationKind, SkinGeometrySource};
@@ -9,7 +10,7 @@ use super::{pose::LocalDelta, *};
 pub struct SkinRenderLayer {
     pub image: SkinAnimation,
     pub geometry: Arc<assets::SkinGeometry>,
-    /// Immutable worker-built mesh for this exact animated layer.
+    /// Immutable prepared mesh for this exact animated layer.
     pub mesh: Option<render_model::ActorRigGeometry>,
     pub previous: Arc<[BoneTransform]>,
     pub current: Arc<[BoneTransform]>,
@@ -127,9 +128,9 @@ pub(super) fn seed(
     };
     for layer in &skin.prepared.layers {
         let variable = match layer.image.kind {
-            SkinAnimationKind::Face => "variable.animation_frames_face",
-            SkinAnimationKind::Body32 => "variable.animation_frames_32x32",
-            SkinAnimationKind::Body128 => "variable.animation_frames_128x128",
+            SkinAnimationKind::Face => V::AnimationFramesFace.name(),
+            SkinAnimationKind::Body32 => V::AnimationFrames32x32.name(),
+            SkinAnimationKind::Body128 => V::AnimationFrames128x128.name(),
         };
         variables.set(
             evaluator.layout.slot(evaluator.assets, variable),
@@ -139,7 +140,7 @@ pub(super) fn seed(
             variables.set(
                 evaluator
                     .layout
-                    .slot(evaluator.assets, "variable.use_blinking_animation"),
+                    .slot(evaluator.assets, V::UseBlinkingAnimation.name()),
                 f32::from(layer.image.blinking),
             );
         }
@@ -170,7 +171,7 @@ pub(super) fn evaluate(
         .get(
             evaluator
                 .layout
-                .slot(evaluator.assets, "variable.is_blinking"),
+                .slot(evaluator.assets, V::IsBlinking.name()),
         )
         .unwrap_or(0.0);
     skin.prepared
@@ -250,7 +251,7 @@ pub(super) fn refresh<'s>(
         .get(
             evaluator
                 .layout
-                .slot(evaluator.assets, "variable.is_blinking"),
+                .slot(evaluator.assets, V::IsBlinking.name()),
         )
         .unwrap_or(0.0);
     let mut refreshed: Option<Vec<SkinRenderLayer>> = None;

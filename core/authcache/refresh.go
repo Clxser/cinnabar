@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"io"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,11 +25,11 @@ var serviceDeviceNamespace = uuid.MustParse("52194710-c463-4fa4-98a9-334c1b905e0
 
 // CompleteSignIn exchanges the signed-in account's service token and persists it next to the Microsoft
 // token at oauthPath, so a join only mints its key-bound token.
-func CompleteSignIn(ctx context.Context, oauthPath string, oauth oauth2.TokenSource, diagnostics io.Writer) error {
+func CompleteSignIn(ctx context.Context, oauthPath string, oauth oauth2.TokenSource, diagnostics *slog.Logger) error {
 	return completeSignIn(ctx, oauthPath, oauth, diagnostics, defaultDerivedDeps())
 }
 
-func completeSignIn(ctx context.Context, oauthPath string, oauth oauth2.TokenSource, diagnostics io.Writer, deps derivedDeps) error {
+func completeSignIn(ctx context.Context, oauthPath string, oauth oauth2.TokenSource, diagnostics *slog.Logger, deps derivedDeps) error {
 	account := newAccount(ctx, DerivedCachePath(oauthPath), oauth, diagnostics, deps)
 	if account == nil {
 		return errors.New("authentication: no signed-in account")
@@ -89,7 +89,7 @@ func (s *Account) refreshServiceAhead(ctx context.Context, lead time.Duration) (
 	if err := s.lock(ctx); err != nil {
 		return 0, err
 	}
-	before := s.service
+	before, resets, gen := s.service, s.resets, s.serviceGen
 	s.unlock()
 	if before == nil || !before.Valid() {
 		token, err := s.serviceToken(ctx)
@@ -113,7 +113,7 @@ func (s *Account) refreshServiceAhead(ctx context.Context, lead time.Duration) (
 	if err := s.lock(ctx); err != nil {
 		return remaining, err
 	}
-	resets, deviceID := s.resets, s.serviceDeviceIDLocked()
+	deviceID := s.serviceDeviceIDLocked()
 	s.unlock()
 	source := s.deps.services(env, sessionTickets{s}, nil, deviceID, s.sessionID)
 	token, err := source.ServiceToken(ctx)
@@ -123,13 +123,13 @@ func (s *Account) refreshServiceAhead(ctx context.Context, lead time.Duration) (
 		}
 		return remaining, errors.New("authentication: refresh service credential")
 	}
-	return s.installServiceRefresh(ctx, resets, env, before, source, token)
+	return s.installServiceRefresh(ctx, resets, gen, env, before, source, token)
 }
 
-// installServiceRefresh swaps in an exchanged token unless the account changed or a newer token won.
+// installServiceRefresh installs only an unrefused result for the original service generation.
 func (s *Account) installServiceRefresh(
 	ctx context.Context,
-	resets uint64,
+	resets, gen uint64,
 	env *service.AuthorizationEnvironment,
 	before *service.Token,
 	source service.TokenSource,
@@ -139,10 +139,11 @@ func (s *Account) installServiceRefresh(
 		return 0, err
 	}
 	current := s.service
-	if s.resets != resets || s.environment != env ||
+	if s.resets != resets || s.serviceGen != gen || s.environment != env || s.rejectedServiceLocked(token) ||
 		(current != nil && current != before && current.ValidUntil.After(token.ValidUntil)) {
+		usable := current != nil && current.Valid() && !s.rejectedServiceLocked(current)
 		s.unlock()
-		if current != nil && current.Valid() {
+		if usable {
 			return current.Remaining(), nil
 		}
 		return 0, errors.New("authentication: account changed during service refresh")

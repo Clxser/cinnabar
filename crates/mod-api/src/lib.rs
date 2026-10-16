@@ -1,7 +1,26 @@
 //! Guest SDK for player mods, generated from the same `extension` WIT contract used by the host.
 //! A server Experience's client part uses `experience-sdk`'s `client` feature instead.
 
+/// Largest terrain query extent along each axis, in blocks.
+pub const MAX_TERRAIN_EXTENT: u8 = 16;
+/// Maximum cells in one terrain query.
+pub const MAX_TERRAIN_CELLS: usize = (MAX_TERRAIN_EXTENT as usize).pow(3);
+/// Maximum distinct terrain queries serviced for one mod per frame.
+pub const MAX_TERRAIN_QUERIES: usize = 4;
+/// Maximum terrain distance from the current player, along each axis.
+pub const MAX_TERRAIN_DISTANCE: i64 = 128;
+/// Cells re-sampled per frame across all mods; further changed queries wait a frame.
+pub const MAX_TERRAIN_FRAME_CELLS: usize = 2 * MAX_TERRAIN_CELLS;
+/// Distinct block-local boxes in one terrain region.
+pub const MAX_TERRAIN_BOXES: usize = 4096;
+/// Identifier, canonical-state and tag bytes in one terrain region.
+pub const MAX_TERRAIN_METADATA_BYTES: usize = 256 * 1024;
+/// Guest-memory bytes of one lowered terrain region.
+pub const MAX_TERRAIN_RESPONSE_BYTES: usize = 512 * 1024;
+
 mod guest;
+pub mod native_frame;
+pub mod native_menu;
 
 pub use guest::PlayerMod;
 
@@ -61,6 +80,13 @@ pub const COMPONENT_ASSET_SECTIONS: [&str; 6] = [
 pub const MAX_CONTROL_KEYS: usize = 64;
 /// Maximum bytes in a physical key name supplied by local controls.
 pub const MAX_CONTROL_KEY_BYTES: usize = 32;
+/// Whether a physical key name fits the shared controls wire contract.
+pub fn control_key_valid(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= MAX_CONTROL_KEY_BYTES
+        && key.bytes().all(|c| c.is_ascii_alphanumeric())
+}
+
 /// Maximum nearby mobs in one snapshot, and the radius they are drawn from.
 pub const MAX_GAMEPLAY_MOBS: usize = 64;
 pub const MAX_MOB_RANGE_BLOCKS: f32 = 64.0;

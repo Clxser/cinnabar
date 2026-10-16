@@ -23,6 +23,7 @@ fn authored() -> Panel {
         "button_mappings":[{"from_button_id":"button.menu_select","to_button_id":action,"mapping_type":"pressed"}]})
     };
     panel.surface = Some(Surface {
+        transitions: Default::default(),
         screen: "extension.screen".into(),
         document: json!({"namespace":"extension","screen":{
             "type":"screen","size":["100%","100%"],"controls":[
@@ -250,6 +251,7 @@ fn reference_size_keeps_bottom_control_visible_and_clickable_in_small_viewports(
     let mut panel = panel();
     panel.reference_size = Some([495.0, 304.0]);
     panel.surface = Some(Surface {
+        transitions: Default::default(),
         screen: "extension.screen".into(),
         document: json!({"namespace":"extension","screen":{
             "type":"screen","size":["100%","100%"],"controls":[{"dialog":{
@@ -326,6 +328,7 @@ fn custom_panel_buttons_render_captured_press_and_clear_feedback_on_release_and_
             "size":["100%","100%"],"radius":0,"color":color})
     };
     panel.surface = Some(Surface {
+        transitions: Default::default(),
         screen: "extension.screen".into(),
         document: json!({"namespace":"extension","screen":{
             "type":"panel","size":["100%","100%"],"controls":[{"continue":{
@@ -494,7 +497,7 @@ fn two_axis_capture_clamps_and_commits_release_without_resuming() {
         max: 100.,
         step: 1.,
     });
-    spec.surface = Some(ui::mod_panel::Surface {screen:"vector_test.root".into(),bindings:Default::default(),document:json!({"namespace":"vector_test","root":{"type":"panel","size":[200,150],"controls":[{"area":{"type":"button","size":[100,100],"button_mappings":[{"from_button_id":"button.menu_select","to_button_id":"mod.vector:1:4","mapping_type":"pressed"}]}}]}}).to_string()});
+    spec.surface = Some(ui::mod_panel::Surface {transitions:Default::default(),screen:"vector_test.root".into(),bindings:Default::default(),document:json!({"namespace":"vector_test","root":{"type":"panel","size":[200,150],"controls":[{"area":{"type":"button","size":[100,100],"button_mappings":[{"from_button_id":"button.menu_select","to_button_id":"mod.vector:1:4","mapping_type":"pressed"}]}}]}}).to_string()});
     let mut presentation = mini_engine_presentation();
     presentation
         .mod_ui_mut()
@@ -530,6 +533,95 @@ fn two_axis_capture_clamps_and_commits_release_without_resuming() {
             Event {
                 id: "vertical".into(),
                 value: 100.
+            }
+        ]
+    );
+    assert!(
+        presentation
+            .mod_ui_mut()
+            .mod_panel_events(at, false, true)
+            .is_empty()
+    );
+}
+
+/// Relative dragging preserves the grab offset, keeps its initial value across updates,
+/// and commits a release outside the handle without later resuming the capture.
+#[test]
+fn relative_two_axis_drag_preserves_the_grab_offset_and_clamps_release() {
+    let mut spec = panel();
+    spec.reference_size = Some([400.0, 300.0]);
+    spec.controls.push(Control::Slider {
+        id: "vertical".into(),
+        label: "Vertical".into(),
+        value: 40.0,
+        min: 0.0,
+        max: 100.0,
+        step: 1.0,
+    });
+    let Control::Slider { value, .. } = &mut spec.controls[1] else {
+        unreachable!()
+    };
+    *value = 30.0;
+    spec.surface = Some(Surface { transitions: Default::default(), screen: "drag.root".into(),
+        bindings: Default::default(), document: json!({"namespace":"drag","root":{
+            "type":"panel","size":[400,300],"controls":[{"handle":{
+                "type":"button","offset":[80,50],"size":[100,50],"button_mappings":[{
+                    "from_button_id":"button.menu_select","to_button_id":"mod.drag:1:4","mapping_type":"pressed"
+                }]
+            }}]}}).to_string() });
+    let mut presentation = mini_engine_presentation();
+    presentation
+        .mod_ui_mut()
+        .set_mod_panel(PanelUiOwner::Environment(0), Some(&spec))
+        .unwrap();
+    presentation.mod_ui_mut().set_mod_panel_open(true);
+    frame(&mut presentation, [1280, 720]);
+    let at = point(&presentation, "mod.drag:1:4", 0.8);
+    assert!(
+        presentation
+            .mod_ui_mut()
+            .mod_panel_events(at, true, true)
+            .is_empty(),
+        "grabbing never changes the current position"
+    );
+    let scale = presentation
+        .mod_ui()
+        .mod_panel_state()
+        .unwrap()
+        .frame
+        .unwrap()
+        .scale;
+    let events = presentation.mod_ui_mut().mod_panel_events(
+        [at[0] + 40.0 * scale, at[1] - 30.0 * scale],
+        false,
+        true,
+    );
+    assert_eq!(
+        events,
+        [
+            Event {
+                id: "strength".into(),
+                value: 40.0
+            },
+            Event {
+                id: "vertical".into(),
+                value: 30.0
+            }
+        ]
+    );
+    let events = presentation
+        .mod_ui_mut()
+        .mod_panel_events([20000.0, -20000.0], false, false);
+    assert_eq!(
+        events,
+        [
+            Event {
+                id: "strength".into(),
+                value: 100.0
+            },
+            Event {
+                id: "vertical".into(),
+                value: 0.0
             }
         ]
     );

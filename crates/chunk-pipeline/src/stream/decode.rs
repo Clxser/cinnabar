@@ -19,6 +19,7 @@ impl WorldStream {
             Ok(DecodeCommit::BlockUpdates(event)) => {
                 self.apply_prepared(event);
                 self.reapply_deferred_predictions();
+                self.order.announce_applied();
                 if !self.polling {
                     self.apply_ready();
                 }
@@ -69,6 +70,9 @@ impl WorldStream {
             .min(MAX_IN_FLIGHT_DECODE_JOBS.saturating_sub(self.in_flight_decode_jobs));
         // Enqueueing is count-bounded; spent commit time must not idle the decode lane.
         for _ in 0..budget {
+            if self.service_yield_requested() {
+                break;
+            }
             let Some(QueuedDecodeJob { queued_at, job }) = self.pending_decode.pop_front() else {
                 break;
             };
@@ -151,6 +155,14 @@ impl WorldStream {
         definitions: &client_world::ingestion::CustomBlocks,
     ) {
         self.authority.set_custom_block_identities(definitions);
+    }
+
+    /// Installs identities already prepared against this stream's palette mode and custom range.
+    pub fn install_custom_block_identities(
+        &mut self,
+        identities: client_world::PreparedBlockIdentities,
+    ) {
+        self.authority.install_custom_block_identities(identities);
     }
 
     /// Translates sequential wire ids when custom blocks sort among vanilla names.

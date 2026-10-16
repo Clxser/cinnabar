@@ -12,6 +12,7 @@ struct SnapshotData {
     registry: CollisionRegistry,
     dimension: i32,
     unloaded_collision_barriers: bool,
+    actor_colliders: Option<Arc<[Aabb]>>,
 }
 
 impl PartialEq for CollisionSnapshot {
@@ -28,6 +29,7 @@ impl CollisionSnapshot {
             registry: world.registry.clone(),
             dimension: world.dimension,
             unloaded_collision_barriers: world.unloaded_collision_barriers,
+            actor_colliders: world.actor_colliders.clone(),
         }))
     }
 
@@ -40,6 +42,7 @@ impl CollisionSnapshot {
             Default::default(),
         );
         world.unloaded_collision_barriers = self.0.unloaded_collision_barriers;
+        world.actor_colliders = self.0.actor_colliders.clone();
         world
     }
 }
@@ -74,6 +77,15 @@ impl CollisionWorld for CollisionSnapshot {
 
     fn block_physics(&self, block: [i32; 3]) -> Result<BlockPhysicsSample, WorldQueryError> {
         self.world().block_physics(block)
+    }
+
+    /// Uses the retained palette pages without constructing material-sample identities.
+    fn visit_block_materials(
+        &self,
+        block: [i32; 3],
+        visitor: &mut dyn FnMut(BlockPhysicsFacts),
+    ) -> Result<(), WorldQueryError> {
+        self.world().visit_block_materials(block, visitor)
     }
 
     fn primary_is_air(

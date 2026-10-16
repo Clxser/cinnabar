@@ -269,6 +269,13 @@ async fn run_network_pump_with_readiness_ingress_and_trace<S, F, W, P>(
                 if trace_armed {
                     session.cancel_packet_id_trace();
                 }
+                // A core that ended the session closes it, so the write can fail before the
+                // Transfer or Disconnect behind unread packets is read.
+                let _ = tokio::time::timeout(
+                    protocol::WRITE_FAILURE_DRAIN,
+                    session.drain_to_boundary(),
+                )
+                .await;
                 if let Some(transfer) = session.take_server_transfer() {
                     end_pump_with_transfer(
                         &session,
@@ -318,7 +325,7 @@ async fn run_network_pump_with_readiness_ingress_and_trace<S, F, W, P>(
                 let pending = pending_world_event
                     .take()
                     .expect("world capacity is reserved only for a pending event");
-                permit.send(pending);
+                publish_traced(permit, pending);
                 if let Some(transfer) = session.take_server_transfer() {
                     end_pump_with_transfer(
                         &session,
@@ -345,11 +352,9 @@ async fn run_network_pump_with_readiness_ingress_and_trace<S, F, W, P>(
                     &control_event_tx,
                     &mut last_blob_cache_stats,
                 );
-                pending_world_event = Some(wrap_inbound_world_event(
-                    &mut sequencer,
-                    &readiness_ingress,
-                    *event,
-                ));
+                let wrapped = wrap_inbound_world_event(&mut sequencer, &readiness_ingress, *event);
+                trace_decoded(session.latency_trace_position(), &wrapped);
+                pending_world_event = Some(wrapped);
                 if let Some(transfer) = session.take_server_transfer() {
                     end_pump_with_transfer(
                         &session,

@@ -132,7 +132,7 @@ impl WorldStream {
             connectivity: crate::culling::ConnectivityGrid::default(),
             connectivity_generation: 0,
             requests: Default::default(),
-            unsent_column_deadlines: HashMap::new(),
+            unsent_column_deadlines: BTreeMap::new(),
             arrival_cohort: None,
             poll_deadline: None,
             #[cfg(test)]
@@ -145,6 +145,10 @@ impl WorldStream {
             between_frames_service: false,
             service_window: Duration::ZERO,
             retention_due: false,
+            retention_cursor: None,
+            maintenance_items: 0,
+            service_item_max: Duration::ZERO,
+            maintenance_guarantee: true,
             chunk_data_offloaded: false,
             commit_steps: 0,
             last_camera_position: [0.0; 3],
@@ -221,6 +225,49 @@ impl WorldStream {
         }
     }
 
+    /// Describes the dependencies used by both ingress lookahead and ordered commits.
+    pub fn ingress_footprint(&self, event: &WorldEvent) -> Footprint {
+        client_world::ingestion::classify(event, self.lane_context())
+    }
+
+    /// Records a retained payload, returning whether its lane has credit for further lookahead.
+    pub fn retain_ingress(
+        &mut self,
+        sequence: u64,
+        footprint: Footprint,
+        capacity: usize,
+    ) -> Result<bool, WorldStreamError> {
+        self.order.retain_ingress(
+            sequence,
+            footprint,
+            capacity,
+            self.authority.retained_commit_count(),
+        )
+    }
+
+    /// Reserves light credit before later packets may pass a retained payload.
+    pub fn reserve_ingress_light(&mut self, sequence: u64) -> bool {
+        self.order
+            .reserve_ingress_light(sequence, self.authority.retained_commit_count())
+    }
+
+    /// Reports light headroom including this retained payload's own reserved credit.
+    pub fn retained_ingress_light_capacity(&self, sequence: u64) -> usize {
+        self.order
+            .retained_ingress_light_capacity(sequence, self.authority.retained_commit_count())
+    }
+
+    /// Borrows a retained payload's dependencies without classifying or copying its columns.
+    /// Panics if the sequence does not hold an ingress reservation.
+    pub fn retained_ingress_footprint(&self, sequence: u64) -> &Footprint {
+        self.order.retained_ingress_footprint(sequence)
+    }
+
+    /// Removes a retained payload's reservation immediately before normal submission.
+    pub fn release_ingress(&mut self, sequence: u64) {
+        self.order.release_ingress(sequence);
+    }
+
     fn submit_with_level_chunk_payload(
         &mut self,
         sequence: u64,
@@ -229,7 +276,7 @@ impl WorldStream {
     ) -> Result<(), WorldStreamError> {
         self.order.validate_sequence(sequence)?;
         self.promote_deferred_ingress();
-        let footprint = client_world::ingestion::classify(&event, self.lane_context());
+        let footprint = self.ingress_footprint(&event);
         if let WorldEvent::ChangeDimension(change) = &event {
             self.ingress_dimension = change.dimension;
         }
@@ -253,9 +300,17 @@ impl WorldStream {
         if self.remaining_admission_capacity() > 0 {
             return true;
         }
-        let footprint = client_world::ingestion::classify(event, self.lane_context());
+        let footprint = self.ingress_footprint(event);
+        self.can_admit_with_footprint(event, &footprint)
+    }
+
+    /// Reports lane headroom using this event's freshly classified or retained footprint.
+    pub fn can_admit_with_footprint(&self, event: &WorldEvent, footprint: &Footprint) -> bool {
+        if self.remaining_admission_capacity() > 0 {
+            return true;
+        }
         if footprint.heavy {
-            if self.defers_preparation(event, &footprint) {
+            if self.defers_preparation(event, footprint) {
                 self.order.deferred_capacity() > 0
             } else {
                 self.order.heavy_capacity() > 0
@@ -280,7 +335,13 @@ impl WorldStream {
 
     /// Prepares deferred terrain in wire order while decode and request capacity allow.
     pub(super) fn promote_deferred_ingress(&mut self) {
+        let mut promoted = 0;
         while let Some((sequence, event, _)) = self.deferred_ingress.front() {
+            if self.service_yield_requested()
+                || (self.polling && promoted != 0 && self.poll_budget_exhausted())
+            {
+                return;
+            }
             // Light events reserved their slot when deferred. Heavy terrain waits only on
             // earlier decodes and sent requests; at the frontier it may exceed the decode bound.
             let ready = !self.order.is_deferred_heavy(*sequence)
@@ -295,7 +356,11 @@ impl WorldStream {
                 .pop_front()
                 .expect("the front was inspected");
             self.order.promote_deferred(sequence);
-            if let Err(error) = self.prepare_admitted(sequence, event, payload) {
+            let result = self.service_item("ingress_preparation", |stream| {
+                stream.prepare_admitted(sequence, event, payload)
+            });
+            promoted += 1;
+            if let Err(error) = result {
                 self.record_normalization_error(
                     NormalizationErrorReason::OrderedCompletionRejection,
                 );

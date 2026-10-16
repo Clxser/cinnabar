@@ -15,6 +15,8 @@ pub enum PanelUiOwner {
     Environment(usize),
     /// The independently registered component, including all of its replacements.
     Registration(u64),
+    /// A trusted packet mod instance belonging to one live network session.
+    PacketSession(u64),
 }
 
 impl crate::ModUi {
@@ -79,7 +81,8 @@ pub struct PreparedPanelUi {
     routes: Vec<Arc<PreparedRoute>>,
 }
 
-pub(super) struct PreparedRoute {
+/// A validated static screen route, reusable across scalar-only updates.
+pub struct PreparedRoute {
     /// Position in the owning generation's immutable route list.
     index: usize,
     source: Surface,
@@ -119,7 +122,7 @@ impl PreparedPanelUi {
     }
 
     /// Matches only the exact validated source and its original control action schema.
-    pub(super) fn route(&self, panel: &Panel) -> Option<Arc<PreparedRoute>> {
+    pub fn route(&self, panel: &Panel) -> Option<Arc<PreparedRoute>> {
         if !template::same_template(&self.bundle.panel, panel) {
             return None;
         }

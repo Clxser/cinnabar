@@ -26,9 +26,9 @@ use catalog::GeometryCatalog;
 use super::{ActorArtworkLocation, ActorArtworkPageId, ActorCullView};
 
 pub const ACTOR_BONE_MATRIX_BYTES: usize = 48;
-/// Existing body/equipment allowance plus every animated skin layer per selected player.
+/// Body/equipment allowance, world flames and every animated skin layer per selected player.
 pub const MAX_ACTOR_RENDER_INSTANCES: usize =
-    MAX_RENDERED_PLAYERS * (4 + render_api::MAX_SKIN_ANIMATION_LAYERS);
+    MAX_RENDERED_PLAYERS * (5 + render_api::MAX_SKIN_ANIMATION_LAYERS);
 /// Shared previous/current pose storage, independent of one model's bone limit.
 pub const MAX_ACTOR_BONE_ARENA_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_ACTOR_POSE_BONES: usize = MAX_ACTOR_BONE_ARENA_BYTES / (2 * ACTOR_BONE_MATRIX_BYTES);
@@ -107,10 +107,32 @@ pub struct ActorMaterial {
     pub glint: super::ActorGlint,
     pub kind: assets::EntityRenderMaterial,
     pub state: Option<assets::EntityRenderMaterialState>,
+    /// Suppresses overlays without changing whether raster state was authored.
+    pub suppress_overlay: bool,
     /// Alpha-test multiplier remains a float because authored dissolve values exceed one.
     pub dissolve_multiplier: f32,
     /// RGB illumination multiplier; applies to lit and unlit draws without clamping.
     pub light_color_multiplier: f32,
+}
+
+impl ActorMaterial {
+    /// Whether color overlays may affect this material's fragment color and vertex lighting.
+    /// Dissolve alpha belongs only to its coverage parameter; authored suppression also wins.
+    #[must_use]
+    pub fn allows_overlay(self) -> bool {
+        if self.suppress_overlay {
+            return false;
+        }
+        match self.kind {
+            assets::EntityRenderMaterial::Default
+            | assets::EntityRenderMaterial::Dragon
+            | assets::EntityRenderMaterial::Glint => {
+                self.state.is_none_or(|state| !state.disable_overlay)
+            }
+            assets::EntityRenderMaterial::DissolveDepth
+            | assets::EntityRenderMaterial::DissolveColor => false,
+        }
+    }
 }
 
 impl Default for ActorMaterial {
@@ -120,6 +142,7 @@ impl Default for ActorMaterial {
             glint: Default::default(),
             kind: Default::default(),
             state: None,
+            suppress_overlay: false,
             dissolve_multiplier: 1.0,
             light_color_multiplier: 1.0,
         }
@@ -266,6 +289,7 @@ impl Default for ActorRigRenderFrame {
 #[derive(Debug)]
 pub struct ActorRigFrameBuilder {
     catalog: GeometryCatalog,
+    staged: pack::StagedPack,
     frame_generation: u64,
     matrices: PoseMatrixCache,
     scratch: BuildScratch,
@@ -356,6 +380,7 @@ impl ActorRigFrameBuilder {
         by_id.insert(DIAGNOSTIC_RIG_ID, diagnostic_geometry());
         Ok(Self {
             catalog: GeometryCatalog::layout(by_id)?,
+            staged: pack::StagedPack::default(),
             frame_generation: 0,
             matrices: PoseMatrixCache::default(),
             scratch: BuildScratch::default(),
@@ -386,19 +411,26 @@ impl ActorRigFrameBuilder {
         {
             return Err(ActorRigGeometryError::DuplicateRig);
         }
-        let mut revision = self.catalog.revision;
-        for geometry in &geometries {
-            revision = revision
-                .rotate_left(5)
-                .wrapping_add((u64::from(geometry.id.0) << 24) | geometry.vertices.len() as u64);
-        }
-        self.catalog.append(geometries, revision.max(1))?;
+        let revision = self.appended_revision(&geometries);
+        self.insert_reclaiming_staged(geometries, revision)?;
         self.matrices = PoseMatrixCache::default();
         Ok(())
     }
 
+    /// Catalog revision after appending `geometries`.
+    fn appended_revision(&self, geometries: &[ActorRigGeometry]) -> u64 {
+        let mut revision = self.catalog.revision;
+        for geometry in geometries {
+            revision = revision
+                .rotate_left(5)
+                .wrapping_add((u64::from(geometry.id.0) << 24) | geometry.vertices.len() as u64);
+        }
+        revision.max(1)
+    }
+
     /// Replaces every pack-range geometry with `geometries` (empty removes them) and
-    /// republishes the catalog; on error the catalog is unchanged.
+    /// republishes the catalog; a range that does not fit is staged for on-demand admission.
+    /// On error the catalog is unchanged.
     pub fn replace_pack_geometries(
         &mut self,
         geometries: Vec<ActorRigGeometry>,
@@ -412,21 +444,6 @@ impl ActorRigFrameBuilder {
         geometries: Vec<ActorRigGeometry>,
     ) -> Result<(), ActorRigGeometryError> {
         self.replace_range_geometries(is_pack_equipment_rig_id, geometries)
-    }
-
-    fn replace_range_geometries(
-        &mut self,
-        in_range: fn(EntityRigId) -> bool,
-        geometries: Vec<ActorRigGeometry>,
-    ) -> Result<(), ActorRigGeometryError> {
-        if geometries.is_empty() && !self.catalog.geometries.keys().any(|id| in_range(*id)) {
-            return Ok(());
-        }
-        let mut by_id = self.catalog.geometries.clone();
-        pack::replace_range(&mut by_id, in_range, geometries);
-        self.catalog = GeometryCatalog::layout_with_limit(by_id, self.catalog.maximum_vertices)?;
-        self.matrices = PoseMatrixCache::default();
-        Ok(())
     }
 
     #[must_use]
@@ -444,7 +461,9 @@ impl ActorRigFrameBuilder {
         if self.frame_generation == u64::MAX || eligibility::validate_input(submission).is_err() {
             return false;
         }
-        let Ok((id, geometry)) = eligibility::geometry(&self.catalog, submission) else {
+        let Ok((id, geometry)) =
+            eligibility::geometry(&self.catalog.geometries, &self.matrices, submission)
+        else {
             return false;
         };
         let Some(&index) = self.catalog.indices.get(&id) else {
@@ -552,6 +571,16 @@ impl ActorRigFrameBuilder {
                 .then(a.cmp(&b))
         });
         order.dedup_by_key(|index| key(&ordered[*index as usize]));
+        self.admit_staged(
+            order
+                .iter()
+                .map(|&index| &ordered[index as usize])
+                .filter(|submission| {
+                    eligibility::validate_input(submission).is_ok()
+                        && actor_rig_submission_is_visible(submission, view)
+                }),
+            frame_generation,
+        );
         let mut instances = std::mem::take(&mut scratch.instances);
         let mut previous_bones = std::mem::take(&mut scratch.previous_bones);
         let mut current_bones = std::mem::take(&mut scratch.current_bones);
@@ -596,13 +625,14 @@ impl ActorRigFrameBuilder {
             }
             let previous = &submission.input.previous_bones;
             let current = &submission.input.current_bones;
-            let (geometry_id, geometry) = match eligibility::geometry(&self.catalog, submission) {
-                Ok(geometry) => geometry,
-                Err(error) => {
-                    error.count(&mut rejects);
-                    continue;
-                }
-            };
+            let (geometry_id, geometry) =
+                match eligibility::geometry(&self.catalog.geometries, &self.matrices, submission) {
+                    Ok(geometry) => geometry,
+                    Err(error) => {
+                        error.count(&mut rejects);
+                        continue;
+                    }
+                };
             let Some(next_bone_count) = previous_bones.len().checked_add(previous.len()) else {
                 rejects.bone_capacity = rejects.bone_capacity.saturating_add(1);
                 continue;
@@ -790,6 +820,7 @@ fn outside_clip_plane(corners: &[Vec4; 8], outside: impl Fn(&Vec4) -> bool) -> b
     corners.iter().all(outside)
 }
 
+/// Builds finite affine rows, rejecting invalid inputs and overflow during composition.
 fn affine_matrix(transform: RenderBoneTransform, bind_pivot: [f32; 3]) -> Option<[[f32; 4]; 3]> {
     if !transform.is_finite() || bind_pivot.iter().any(|value| !value.is_finite()) {
         return None;
@@ -830,24 +861,38 @@ fn affine_matrix(transform: RenderBoneTransform, bind_pivot: [f32; 3]) -> Option
         rows.map(|row| row[0] * bind_pivot[0] + row[1] * bind_pivot[1] + row[2] * bind_pivot[2]);
     let translation: [f32; 3] =
         std::array::from_fn(|axis| transform.translation_scale[axis] - rotated_pivot[axis]);
-    Some(std::array::from_fn(|axis| {
+    let matrix = std::array::from_fn(|axis| {
         [
             rows[axis][0],
             rows[axis][1],
             rows[axis][2],
             translation[axis],
         ]
-    }))
+    });
+    matrix
+        .iter()
+        .flatten()
+        .all(|value| value.is_finite())
+        .then_some(matrix)
 }
 
 #[cfg(test)]
 #[path = "frame/build_tests.rs"]
 mod build_tests;
 
+#[cfg(test)]
+#[path = "frame/material_tests.rs"]
+mod material_tests;
+
 impl ActorMaterial {
     /// Shader kind and independently admitted raster states in the shared instance word.
     pub fn gpu_word(self) -> u32 {
         self.kind.word(self.state)
+            | if self.suppress_overlay {
+                assets::EntityRenderMaterialState::DISABLE_OVERLAY
+            } else {
+                0
+            }
             | if self.color_mask {
                 super::glint::ACTOR_COLOR_MASK_MATERIAL_FLAG
             } else {

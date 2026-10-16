@@ -1,4 +1,5 @@
 //! Captures post-send observations and finalizes poses after local interaction admission.
+mod shared_emotes;
 #[cfg(test)]
 use bevy::prelude::IntoScheduleConfigs;
 #[cfg(test)]
@@ -12,7 +13,7 @@ use client_presentation::actor_publication::ActorFramePartialTick;
 use client_presentation::actor_publication::{ActorFrameInput, ActorWorld};
 use client_shell::ui_resources::{UiPresentationResource, UiRuntimeResource};
 use {
-    crate::runtime::world::ClientWorld,
+    crate::runtime::{shutdown::FatalError, world::ClientWorld},
     client_interaction::movement::{
         LocalPhysicsController, MovementTicker, PhysicsCollisionRegistries,
     },
@@ -23,6 +24,7 @@ use launcher::menu::settings_options::SettingId;
 /// Projects local damage only after actor ticking, clearing it when the session leaves gameplay.
 pub(crate) fn publish_local_actor_damage(
     world: Res<ClientWorld>,
+    fatal_error: Res<FatalError>,
     mut ui: Option<ResMut<UiRuntimeResource>>,
 ) {
     let Some(ui) = ui.as_deref_mut() else {
@@ -31,7 +33,7 @@ pub(crate) fn publish_local_actor_damage(
     let actor = world
         .stream
         .as_ref()
-        .filter(|_| world.fatal_error.is_none() && world.transfer_notice.is_none())
+        .filter(|_| fatal_error.0.is_none() && world.transfer_notice.is_none())
         .and_then(|stream| stream.authority().actor(stream.local_player_runtime_id()));
     ui.publish_local_actor_health(actor);
 }
@@ -55,6 +57,7 @@ pub(crate) struct ActorObservations<'w> {
     movement: Option<Res<'w, MovementTicker>>,
     time: Res<'w, Time<Real>>,
     profiler: Option<Res<'w, render_scene::RuntimeStageProfiler>>,
+    account: Option<Res<'w, client_shell::menu::launcher_account::LauncherAccount>>,
 }
 
 /// Predicts remote actors at this frame's tick positions before interaction picks them.
@@ -75,6 +78,8 @@ pub(crate) fn advance_actor_frame(
     observations: ActorObservations,
     params: client_presentation::actor_publication::ActorFramePublication,
     mut java_blocking: Local<bool>,
+    mut emote_state: Local<shared_emotes::State>,
+    mut fluids: Local<client_presentation::actor_sampling::ActorFluidSampler>,
 ) {
     let ActorObservations {
         mut world,
@@ -93,6 +98,7 @@ pub(crate) fn advance_actor_frame(
         movement,
         time,
         profiler,
+        account,
     } = observations;
     let _timer = profiler
         .as_deref()
@@ -159,6 +165,13 @@ pub(crate) fn advance_actor_frame(
                     .map(|presentation| &presentation.0),
             )
         },
+        remote_emotes: shared_emotes::exchange(
+            stream,
+            ui.as_deref().map(|ui| &ui.0),
+            account.as_deref().map(|account| &account.0),
+            &time,
+            &mut emote_state,
+        ),
         custom_emote: ui
             .as_deref()
             .and_then(|ui| ui.emotes().playback())
@@ -206,7 +219,7 @@ pub(crate) fn advance_actor_frame(
         input,
         |stream| {
             if let Some(collisions) = collisions.as_deref() {
-                client_presentation::actor_sampling::sample_actor_world_state(stream, collisions);
+                fluids.sample(stream, collisions);
             }
         },
         |stream, _partial_tick| {
@@ -249,6 +262,21 @@ pub(crate) struct ActorFinalObservations<'w> {
 }
 
 /// Consumes admitted local ticks and builds their final poses with the pre-send capture.
+/// Lets the actor geometry catalog grow to this device's memory-tier budget, within what one
+/// storage binding of its GPU holds.
+pub(crate) fn initialize_actor_geometry_budget(
+    device: Option<Res<bevy::render::renderer::RenderDevice>>,
+    scene: Option<ResMut<render_scene::ActorRenderScene>>,
+) {
+    let (Some(device), Some(mut scene)) = (device, scene) else {
+        return;
+    };
+    scene.set_geometry_budget(
+        resource_pack::subpacks::device_memory_tier(launcher_host::memory::physical_bytes()),
+        render::actor_storage_binding_bytes(&device),
+    );
+}
+
 pub(crate) fn prepare_actor_render_frame(
     observations: ActorFinalObservations,
     params: client_presentation::actor_publication::ActorFramePublication,

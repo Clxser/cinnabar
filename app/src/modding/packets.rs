@@ -29,6 +29,7 @@ pub(crate) struct PacketMods {
     selected: Option<[u8; 32]>,
     environment: Option<PacketModSelection>,
     environment_selected: bool,
+    pub(super) menu: super::packet_menu::State,
 }
 
 /// Starts compilation for an explicitly selected developer packet mod before the first join.
@@ -52,6 +53,37 @@ pub(crate) fn from_environment() -> PacketMods {
 }
 
 impl PacketMods {
+    /// Whether a packet-owned panel still owns input or its closing animation.
+    pub(super) fn menu_owns_panel(&self) -> bool {
+        self.menu.owned
+    }
+
+    /// Current session menu input and output share the packet worker's serialized lane.
+    pub(super) fn native_menu(
+        &self,
+        input: mod_api::native_menu::Input,
+    ) -> Option<Arc<client_extensions::modding::packet_relay::MenuOutput>> {
+        self.loader.native_menu(input)
+    }
+
+    /// Menus remain unavailable until a granted guest starts successfully.
+    pub(super) fn native_menu_identity(&self) -> Option<u64> {
+        self.loader.native_menu_identity()
+    }
+
+    /// Whether snapshot construction is needed for this live packet session.
+    pub(super) fn native_frame_available(&self) -> bool {
+        self.loader.native_frame_available()
+    }
+
+    /// Exchanges native input and local effects without waiting for the packet worker.
+    pub(super) fn native_frame(
+        &self,
+        frame: Option<mod_api::native_frame::Frame>,
+    ) -> Option<mod_host::CameraDelta> {
+        self.loader.native_frame(frame)
+    }
+
     /// Records a developer-selected source as the fallback when Settings selects no packet mod.
     pub(super) fn select_environment(&mut self, selection: PacketModSelection) {
         self.environment = Some(selection.clone());

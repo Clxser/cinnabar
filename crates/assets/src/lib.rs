@@ -82,7 +82,7 @@ pub use atmosphere::{
     BiomeVisualProfile, CelestialBorderTexel, CelestialTile, CompiledAtmosphereAssets, FogDistance,
     FogDistanceMode, FogMedium, FogProfile, MAX_ENVIRONMENT_IDENTIFIER_BYTES,
     MAX_ENVIRONMENT_PROFILES, MAX_FOG_DISTANCES, ResolvedFog, RuntimeAtmosphereAssets,
-    composite_celestial, encode_atmosphere_blob,
+    atmosphere_texture_specs, composite_celestial, encode_atmosphere_blob,
 };
 pub use audio::{
     AUDIO_CARRIER_MAGIC, AudioAlternative, AudioCatalogError, AudioDefinition,
@@ -297,3 +297,6 @@ pub use ui::{
 };
 pub use vanilla_refs::{MAX_VANILLA_REFS_BYTES, VanillaEntityRefs, VanillaGeometryFile};
 pub use {fog_layers::resolve_fog_layers, fog_transition::FogTransition};
+
+mod outline_font;
+pub use outline_font::rasterize_outline_font;
