@@ -26,13 +26,44 @@ pub struct PreviewRequest {
     pub at: MediaTime,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+impl PreviewRequest {
+    /// Preview and export evaluate output frames on the same grid, including the final visible frame.
+    pub fn frame_time(&self) -> Result<MediaTime, String> {
+        let duration = self.project.duration();
+        let at = MediaTime(self.at.0.min(duration.0.saturating_sub(1)));
+        let frame = self
+            .project
+            .export
+            .fps
+            .frame_at(at)
+            .map_err(|error| error.to_string())?;
+        self.project
+            .export
+            .fps
+            .frame_time(frame)
+            .map_err(|error| error.to_string())
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PreviewStatus {
     pub loading: bool,
     pub ready: bool,
     pub at: MediaTime,
     pub error: Option<String>,
     pub notice: Option<String>,
+    pub camera: Option<CameraPreview>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CameraPreview {
+    pub epoch: [u64; 3],
+    pub source: Id,
+    pub source_time: MediaTime,
+    /// Rig pose before transient timeline shake/zoom, so creating a shot cannot apply an effect twice.
+    pub pose: crate::camera::CameraPose,
+    pub local_actor: u64,
+    pub targets: Arc<[crate::camera::CameraTarget]>,
 }
 
 pub struct RasterFrame {
@@ -92,7 +123,7 @@ impl RasterPreview {
             .as_ref()
             .ok_or("Preview timeline is unavailable.")?;
         let project = timeline.project();
-        let at = MediaTime(request.at.0.min(project.duration().0.saturating_sub(1)));
+        let at = request.frame_time()?;
         timeline
             .sample(at, &mut self.plan, |_, _, _| None)
             .map_err(|error| error.to_string())?;

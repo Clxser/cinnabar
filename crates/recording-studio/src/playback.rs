@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::{
     FrameRate, Id, MediaTime, PlaybackRate, Project, Span, StudioError,
-    camera::{ActorPose, CameraPose},
+    camera::{ActorPose, CameraPose, CameraTargetRef},
     effect::EffectSample,
     model::{Framing, TransitionKind},
 };
@@ -159,6 +159,8 @@ pub struct FramePlan {
     pub audio: Vec<AudioSample>,
     pub titles: Vec<usize>,
     pub camera: Option<CameraPose>,
+    pub base_camera: Option<CameraPose>,
+    pub shot: Option<Id>,
     pub hide_hud: bool,
     pub hide_hand: bool,
     pub effects: EffectSample,
@@ -190,13 +192,15 @@ impl CompiledTimeline {
         &self,
         time: MediaTime,
         out: &mut FramePlan,
-        actor: impl Fn(Id, u64, MediaTime) -> Option<ActorPose>,
+        actor: impl Fn(Id, CameraTargetRef, MediaTime) -> Option<ActorPose>,
     ) -> Result<(), StudioError> {
         out.time = time;
         out.visuals.clear();
         out.audio.clear();
         out.titles.clear();
         out.camera = None;
+        out.base_camera = None;
+        out.shot = None;
         out.hide_hud = false;
         out.hide_hand = false;
         out.effects = EffectSample::default();
@@ -266,6 +270,7 @@ impl CompiledTimeline {
             .sort_unstable_by_key(|visual| (visual.track, visual.clip));
         if let Some(index) = shot {
             let shot = &self.project.shots[index];
+            out.shot = Some(shot.id);
             let selected = out.visuals.last();
             out.camera = shot.sample(time, |id| {
                 selected.and_then(|source| actor(source.source, id, source.time))
@@ -273,13 +278,8 @@ impl CompiledTimeline {
             out.hide_hud = shot.hide_hud;
             out.hide_hand = shot.hide_hand;
         }
-        if let Some(pose) = &mut out.camera {
-            pose.fov = (pose.fov - out.effects.zoom_degrees).clamp(1.0, 178.0);
-            let seconds = time.seconds();
-            pose.yaw += out.effects.shake_degrees * (seconds * 53.0).sin() * (seconds * 19.0).cos();
-            pose.pitch = (pose.pitch + out.effects.shake_degrees * (seconds * 47.0).sin())
-                .clamp(-90.0, 90.0);
-        }
+        out.base_camera = out.camera;
+        out.camera = out.camera.map(|pose| out.effects.camera_pose(pose, time));
         Ok(())
     }
 

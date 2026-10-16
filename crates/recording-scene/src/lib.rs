@@ -11,6 +11,7 @@ pub mod journal;
 pub mod palette;
 pub mod playback;
 pub mod scene;
+pub mod targets;
 pub mod terrain;
 
 pub const TERRAIN_TRACK_SCHEMA: &str = "cinnabar.terrain/2";

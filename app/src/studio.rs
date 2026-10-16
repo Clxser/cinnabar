@@ -28,6 +28,7 @@ mod environment;
 mod frames;
 mod observations;
 mod preview;
+mod targets;
 mod terrain;
 
 #[derive(Resource, Default)]
@@ -51,6 +52,7 @@ struct Active {
     terrain: Option<terrain::NativeTerrain>,
     environment: Option<environment::NativeEnvironment>,
     actors: Option<actors::NativeActors>,
+    targets: Option<targets::NativeTargets>,
     started: f64,
     identity: (u64, i32, u64),
     stopping: Option<(f64, MediaTime)>,
@@ -148,6 +150,14 @@ fn update(world: &mut World) {
             active.failure.get_or_insert(error);
             stop(&mut active, now);
         }
+        if let Some(error) = active
+            .targets
+            .as_ref()
+            .and_then(|targets| targets.capture.error())
+        {
+            active.failure.get_or_insert(error);
+            stop(&mut active, now);
+        }
         if active
             .audio
             .as_ref()
@@ -166,6 +176,7 @@ fn update(world: &mut World) {
             if let Err(error) = observations::capture(world, &mut active, elapsed)
                 .and_then(|()| environment::sample(world, &mut active, elapsed))
                 .and_then(|()| actors::sample(world, &mut active, elapsed))
+                .and_then(|()| targets::sample(world, &mut active, elapsed))
                 .and_then(|()| frames::capture(world, &mut active, elapsed))
             {
                 active.failure.get_or_insert(error);
@@ -359,6 +370,13 @@ fn poll_start(
                 }
             };
             let requested_audio = session.settings().game_audio;
+            let targets = match targets::start(world, &session) {
+                Ok(targets) => targets,
+                Err(error) => {
+                    fail(state, error);
+                    return;
+                }
+            };
             let audio = if requested_audio {
                 world
                     .get_non_send_mut::<client_audio::named_audio::AudioDevice>()
@@ -397,6 +415,7 @@ fn poll_start(
                 terrain: Some(terrain),
                 environment: Some(environment),
                 actors: Some(actors),
+                targets: Some(targets),
                 started: now,
                 identity: identity.expect("checked world identity"),
                 stopping: None,
@@ -443,6 +462,20 @@ fn finalize(state: &mut NativeCapture, mut active: Active, duration: MediaTime) 
     let result = std::thread::Builder::new()
         .name("studio-capture-finish".into())
         .spawn(move || {
+            let targets_error = if let Some(targets) = active.targets {
+                let error = targets.capture.finish(duration).err();
+                let metadata = recording_studio::capture::CaptureTrack {
+                    schema: recording_scene::targets::TARGET_TRACK_SCHEMA.into(),
+                    directory: recording_scene::targets::TARGET_DIRECTORY.into(),
+                    complete: error.is_none(),
+                    error: error
+                        .as_ref()
+                        .map(|error| error.chars().take(512).collect()),
+                };
+                active.session.scene_track(metadata).err().or(error)
+            } else {
+                None
+            };
             let actors_error = if let Some(actors) = active.actors {
                 let error = actors.capture.finish(duration).err();
                 let metadata = recording_studio::capture::CaptureTrack {
@@ -511,7 +544,8 @@ fn finalize(state: &mut NativeCapture, mut active: Active, duration: MediaTime) 
                         .or(audio_error)
                         .or(terrain_error)
                         .or(environment_error)
-                        .or(actors_error),
+                        .or(actors_error)
+                        .or(targets_error),
                 ) {
                     (Ok(summary), None) => Ok(summary),
                     (Ok(_), Some(error)) => {

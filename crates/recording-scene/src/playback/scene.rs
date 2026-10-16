@@ -13,6 +13,7 @@ use crate::{
     actors::{ActorRecording, FrozenActors},
     environment::{EnvironmentRecording, FrozenEnvironment},
     journal::TerrainRecording,
+    targets::{TargetFrame, TargetRecording},
 };
 
 pub struct SceneFrame {
@@ -23,6 +24,7 @@ pub struct SceneFrame {
     pub environment: FrozenEnvironment,
     pub actors: FrozenActors,
     pub view: RecordedView,
+    pub targets: Option<TargetFrame>,
 }
 
 pub struct ScenePlayback {
@@ -30,6 +32,7 @@ pub struct ScenePlayback {
     environment: EnvironmentRecording,
     actors: ActorRecording,
     camera: CameraRecording,
+    targets: Option<TargetRecording>,
     duration: MediaTime,
     position: Option<MediaTime>,
 }
@@ -43,24 +46,32 @@ impl ScenePlayback {
         let terrain = TerrainRecording::open(parent)?.into_playback(terrain_bytes);
         let environment = EnvironmentRecording::open(parent)?;
         let actors = ActorRecording::open(parent)?;
+        let targets = TargetRecording::open_optional(parent)?;
         if !same_take(info, terrain.info())
             || !same_take(info, environment.info())
             || !same_take(info, actors.info())
+            || targets
+                .as_ref()
+                .is_some_and(|targets| !same_take(info, targets.info()))
         {
             return Err(ArchiveError::Invalid(
                 "native scene tracks belong to different recordings",
             ));
         }
-        let duration = terrain
+        let mut duration = terrain
             .duration()
             .min(environment.duration())
             .min(actors.duration())
             .min(camera.duration());
+        if let Some(targets) = &targets {
+            duration = duration.min(targets.duration());
+        }
         Ok(Self {
             terrain,
             environment,
             actors,
             camera,
+            targets,
             duration,
             position: None,
         })
@@ -74,6 +85,11 @@ impl ScenePlayback {
     /// Only completely admitted frames advance the coordinator's published source position.
     pub const fn position(&self) -> Option<MediaTime> {
         self.position
+    }
+
+    /// The local subject comes from the take's admitted metadata, never the current account/session.
+    pub fn local_actor(&self) -> u64 {
+        self.camera.info().local_actor
     }
 
     /// Builds one independent replacement frame from each track's nearest checkpoint.
@@ -105,6 +121,9 @@ impl ScenePlayback {
         self.environment.invalidate();
         self.actors.invalidate();
         self.camera.invalidate();
+        if let Some(targets) = &mut self.targets {
+            targets.invalidate();
+        }
         self.position = None;
     }
 
@@ -156,6 +175,17 @@ impl ScenePlayback {
         } else {
             self.camera.advance_to(at, cancelled)?
         };
+        let targets = self
+            .targets
+            .as_mut()
+            .map(|targets| {
+                if seek {
+                    targets.seek(at, cancelled)
+                } else {
+                    targets.advance_to(at, cancelled)
+                }
+            })
+            .transpose()?;
         if cancelled() {
             return Err(ArchiveError::Cancelled);
         }
@@ -166,6 +196,7 @@ impl ScenePlayback {
             environment,
             actors,
             view,
+            targets,
         })
     }
 }

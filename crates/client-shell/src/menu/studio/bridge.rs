@@ -67,6 +67,17 @@ impl crate::menu::MenuRuntime {
 
     /// Preview progress does not dirty the project or overwrite capture/editor errors.
     pub fn set_studio_preview_status(&mut self, status: recording_studio::preview::PreviewStatus) {
+        if let Some(camera) = &status.camera {
+            let view = Arc::make_mut(&mut self.studio.view);
+            if view.camera_target.is_none() {
+                view.camera_target = camera
+                    .targets
+                    .iter()
+                    .find(|target| target.runtime_id == camera.local_actor)
+                    .or_else(|| camera.targets.first())
+                    .map(recording_studio::camera::CameraTarget::reference);
+            }
+        }
         if self.studio.view.preview != status {
             Arc::make_mut(&mut self.studio.view).preview = status;
         }

@@ -155,6 +155,19 @@ pub struct EffectSample {
 }
 
 impl EffectSample {
+    /// Applies transient camera effects after the saved rig pose, identically for recorded and custom views.
+    pub fn camera_pose(
+        self,
+        mut pose: crate::camera::CameraPose,
+        at: MediaTime,
+    ) -> crate::camera::CameraPose {
+        pose.fov = (pose.fov - self.zoom_degrees).clamp(1.0, 178.0);
+        let seconds = at.seconds();
+        pose.yaw += self.shake_degrees * (seconds * 53.0).sin() * (seconds * 19.0).cos();
+        pose.pitch = (pose.pitch + self.shake_degrees * (seconds * 47.0).sin()).clamp(-90.0, 90.0);
+        pose
+    }
+
     /// Accumulates authored values without making opposing effects depend on track iteration order.
     pub fn add(&mut self, kind: EffectKind, value: f64) {
         let slot = match kind {

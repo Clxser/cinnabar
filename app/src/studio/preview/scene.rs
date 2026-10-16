@@ -10,10 +10,10 @@ use recording_scene::{
     actors::ActorCoverage, playback::ScenePlayback, scene::DEFAULT_RESIDENT_BYTES,
 };
 use recording_studio::{
-    Id, MediaTime,
+    Id,
     model::{Framing, MediaKind},
     playback::{CompiledTimeline, FramePlan},
-    preview::{PreviewRequest, fit_size},
+    preview::{CameraPreview, PreviewRequest, fit_size},
 };
 use render::replay::{ReplayRenderContext, ReplayRenderer};
 use render_model::{UI_STUDIO_PREVIEW_MAX_SIZE, UiTexturePage};
@@ -32,7 +32,7 @@ struct Source {
     id: Id,
     path: PathBuf,
     document: u64,
-    epoch: Option<[u64; 3]>,
+    epoch: Option<[u64; 2]>,
     playback: ScenePlayback,
     renderer: ReplayRenderer,
 }
@@ -70,12 +70,7 @@ impl NativeScene {
             .timeline
             .as_ref()
             .ok_or("The replay timeline is unavailable.")?;
-        let at = MediaTime(
-            request
-                .at
-                .0
-                .min(request.project.duration().0.saturating_sub(1)),
-        );
+        let at = request.frame_time()?;
         timeline
             .sample(at, &mut self.plan, |_, _, _| None)
             .map_err(|error| error.to_string())?;
@@ -94,6 +89,7 @@ impl NativeScene {
                 "Combining a native replay with another visual layer is not connected yet.".into(),
             );
         };
+        let visual = *visual;
         if visual.mix.is_some() || visual.framing != Framing::default() {
             return Err(
                 "Native replay crops, opacity and transitions are not connected yet.".into(),
@@ -142,7 +138,8 @@ impl NativeScene {
                 "This frame lies past the native scene tracks' common recorded duration.".into(),
             );
         }
-        let frame = if source.epoch != Some(request.epoch)
+        let source_epoch = [request.epoch[0], request.epoch[2]];
+        let frame = if source.epoch != Some(source_epoch)
             || source
                 .playback
                 .position()
@@ -153,10 +150,26 @@ impl NativeScene {
             source.playback.advance_to(visual.time, cancelled)
         }
         .map_err(|error| format!("Native replay admission failed: {error}"))?;
-        source.epoch = Some(request.epoch);
-        let pose = self.plan.camera.unwrap_or(frame.view.pose);
+        source.epoch = Some(source_epoch);
+        timeline
+            .sample(at, &mut self.plan, |id, reference, time| {
+                if id != visual.source || time != visual.time {
+                    return None;
+                }
+                let target = frame.targets.as_ref()?.target(reference.runtime_id)?;
+                target.matches(reference).then_some(target.pose)
+            })
+            .map_err(|error| error.to_string())?;
+        let missing_target = self.plan.shot.is_some() && self.plan.camera.is_none();
+        let pose = self
+            .plan
+            .camera
+            .unwrap_or_else(|| self.plan.effects.camera_pose(frame.view.pose, at));
         source.renderer.apply(&frame, pose)?;
         let mut notices = Vec::new();
+        if missing_target {
+            notices.push("Camera subject unavailable: showing the recorded view. Retarget or shorten the shot.");
+        }
         notices.push(
             "3D preview uses Vanilla shading and omits HUD, hand, particles and block entities.",
         );
@@ -165,8 +178,8 @@ impl NativeScene {
                 "Actors cover the recorded view only; other cameras can expose missing actors.",
             );
         }
-        if self.plan.camera.is_none() && !request.project.shots.is_empty() {
-            notices.push("Target camera tracking is not connected; showing the recorded camera.");
+        if frame.targets.is_none() {
+            notices.push("This take has no received-actor target track; actor tracking needs a newer recording.");
         }
         if !self.plan.audio.is_empty()
             || !self.plan.titles.is_empty()
@@ -206,6 +219,17 @@ impl NativeScene {
                 .clone(),
             image: Some(image),
             notice: (!notices.is_empty()).then(|| notices.join(" ")),
+            camera: Some(CameraPreview {
+                epoch: request.epoch,
+                source: visual.source,
+                source_time: visual.time,
+                pose: self.plan.base_camera.unwrap_or(frame.view.pose),
+                local_actor: source.playback.local_actor(),
+                targets: frame
+                    .targets
+                    .as_ref()
+                    .map_or_else(|| Arc::from([]), |frame| Arc::clone(&frame.targets)),
+            }),
         }))
     }
 }

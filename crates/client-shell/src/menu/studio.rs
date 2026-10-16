@@ -13,6 +13,7 @@ use recording_studio::{
 };
 
 mod bridge;
+mod camera;
 mod scene;
 
 pub(super) struct Studio {
@@ -125,7 +126,7 @@ impl Studio {
     /// Lists actual current controls for keyboard/gamepad fallback before painted focus is available.
     pub fn focus_actions(&self) -> Vec<launcher::menu::MenuAction> {
         use launcher::menu::MenuAction;
-        let actions = if self.view.discard.is_some() {
+        let mut actions = if self.view.discard.is_some() {
             vec![Action::CancelDiscard, Action::ConfirmDiscard]
         } else if self.view.loading {
             let mut actions = vec![Action::CancelOpen];
@@ -152,6 +153,13 @@ impl Studio {
                 Action::UseNativeReplay,
             ]
         };
+        if self.view.discard.is_none()
+            && !self.view.loading
+            && !self.view.show_library
+            && self.editor.is_some()
+        {
+            actions.extend(self.camera_focus_actions());
+        }
         let mut actions: Vec<_> = actions.into_iter().map(MenuAction::Studio).collect();
         if self.view.discard.is_none() && !self.view.loading {
             actions.push(MenuAction::Studio(Action::ToggleRecording));
@@ -232,7 +240,7 @@ impl Studio {
                     .seek(fps.snap(time).map_err(|e| e.to_string())?, duration);
             }
             Action::Scrub { .. } => {}
-            Action::Select(id) => Arc::make_mut(&mut self.view).selected = Some(id),
+            Action::Select(id) => self.select_timeline_item(id)?,
             Action::Split => {
                 let project = self.project()?;
                 let id = self
@@ -294,6 +302,20 @@ impl Studio {
                 Arc::make_mut(&mut self.view).selected = Some(id);
             }
             Action::UseNativeReplay => self.use_native_replay()?,
+            Action::CreateCamera(kind) => self.create_camera(kind)?,
+            Action::CycleCameraTarget(direction) => self.cycle_camera_target(direction),
+            Action::RetargetCamera => self.retarget_camera()?,
+            Action::AdjustCamera {
+                parameter,
+                direction,
+            } => self.adjust_camera(parameter, direction)?,
+            Action::AddCameraKey => self.add_camera_key()?,
+            Action::TrimCameraStart => self.trim_camera(true)?,
+            Action::TrimCameraEnd => self.trim_camera(false)?,
+            Action::ToggleCameraFine => {
+                let view = Arc::make_mut(&mut self.view);
+                view.camera_fine = !view.camera_fine;
+            }
             Action::Zoom(direction) => {
                 let view = Arc::make_mut(&mut self.view);
                 let current = view.visible_duration.0;
@@ -540,6 +562,8 @@ impl Studio {
         view.file = path;
         view.show_library = false;
         view.selected = None;
+        view.camera_target = None;
+        view.preview = Default::default();
         view.visible_start = MediaTime::ZERO;
         view.discard = None;
         view.notice = None;

@@ -9,6 +9,7 @@ use super::{
     widgets::{self, Variant},
 };
 
+mod camera;
 mod editor;
 mod library;
 mod recording;

@@ -2,10 +2,17 @@
 
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::{Id, MediaTime, Span, StudioError, effect::Easing, error::limit};
 
 pub const MAX_CAMERA_KEYS: usize = 8192;
+pub const MAX_CAMERA_TARGETS: usize = 4096;
+pub const MAX_TARGET_NAME_BYTES: usize = 256;
+const DEFAULT_FOV: f64 = 70.0;
+
+mod edit;
+pub use edit::{CameraParameter, CameraRigKind};
 
 /// Network-facing angles are degrees: yaw zero faces +Z and positive pitch looks down.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -25,7 +32,7 @@ impl Default for CameraPose {
             yaw: 0.0,
             pitch: 0.0,
             roll: 0.0,
-            fov: 70.0,
+            fov: DEFAULT_FOV,
         }
     }
 }
@@ -73,6 +80,8 @@ pub struct CameraKey {
 pub enum CameraMode {
     Player {
         actor: u64,
+        #[serde(default = "default_fov")]
+        fov: f64,
     },
     Free {
         pose: CameraPose,
@@ -106,16 +115,100 @@ pub struct CameraShot {
     pub mode: CameraMode,
     pub hide_hud: bool,
     pub hide_hand: bool,
+    #[serde(default)]
+    pub target_lifetime: Option<TargetLifetime>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetLifetime {
+    pub unique_id: i64,
+    pub spawn_revision: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CameraTargetRef {
+    pub runtime_id: u64,
+    pub lifetime: Option<TargetLifetime>,
 }
 
 /// A target sample comes from replay state; sampling never queries the live server.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ActorPose {
     pub position: [f64; 3],
     pub velocity: [f64; 3],
     pub yaw: f64,
     pub pitch: f64,
-    pub eye_height: f64,
+    pub roll: f64,
+    /// A missing eye offset allows root/centre tracking but never invents a first-person view.
+    pub eye_offset: Option<[f64; 3]>,
+}
+
+impl ActorPose {
+    /// Capture and playback reject invalid arithmetic before it can reach a camera matrix.
+    pub fn validate(self) -> Result<(), StudioError> {
+        if !self
+            .position
+            .into_iter()
+            .chain(self.velocity)
+            .chain([self.yaw, self.pitch, self.roll])
+            .chain(self.eye_offset.into_iter().flatten())
+            .all(f64::is_finite)
+            || self.pitch.abs() > 90.0
+        {
+            return Err(StudioError::Invalid(
+                "camera target pose is not finite or has an invalid pitch",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CameraTarget {
+    pub runtime_id: u64,
+    pub unique_id: i64,
+    pub spawn_revision: u64,
+    pub name: Arc<str>,
+    pub pose: ActorPose,
+    pub teleported: bool,
+}
+
+impl CameraTarget {
+    /// Labels are local media metadata with an explicit bound, independent of a server's text limits.
+    pub fn validate(&self) -> Result<(), StudioError> {
+        limit(
+            "camera target name bytes",
+            self.name.len(),
+            MAX_TARGET_NAME_BYTES,
+        )?;
+        self.pose.validate()
+    }
+
+    /// Runtime ID reuse never turns a camera's position difference into a false velocity sample.
+    pub fn same_lifetime(&self, other: &Self) -> bool {
+        (self.runtime_id, self.unique_id, self.spawn_revision)
+            == (other.runtime_id, other.unique_id, other.spawn_revision)
+    }
+
+    /// Editor-authored shots bind a spawn lifetime so runtime-ID reuse cannot select a different subject.
+    pub fn reference(&self) -> CameraTargetRef {
+        CameraTargetRef {
+            runtime_id: self.runtime_id,
+            lifetime: Some(TargetLifetime {
+                unique_id: self.unique_id,
+                spawn_revision: self.spawn_revision,
+            }),
+        }
+    }
+
+    /// Legacy runtime-only references remain readable; newly authored shots always carry their lifetime.
+    pub fn matches(&self, reference: CameraTargetRef) -> bool {
+        self.runtime_id == reference.runtime_id
+            && reference
+                .lifetime
+                .is_none_or(|lifetime| self.reference().lifetime == Some(lifetime))
+    }
 }
 
 impl CameraShot {
@@ -125,7 +218,13 @@ impl CameraShot {
         limit("camera name bytes", self.name.len(), 256)?;
         let valid_fov = |fov: f64| fov.is_finite() && (1.0..179.0).contains(&fov);
         match &self.mode {
-            CameraMode::Player { .. } => (),
+            CameraMode::Player { fov, actor: _ } => {
+                if !valid_fov(*fov) {
+                    return Err(StudioError::Invalid(
+                        "player camera field of view is invalid",
+                    ));
+                }
+            }
             CameraMode::Free { pose } => pose.validate()?,
             CameraMode::Path { keys, .. } => {
                 limit("camera keys", keys.len(), MAX_CAMERA_KEYS)?;
@@ -175,6 +274,13 @@ impl CameraShot {
                 }
             }
         }
+        if self.target_lifetime.is_some()
+            && matches!(self.mode, CameraMode::Free { .. } | CameraMode::Path { .. })
+        {
+            return Err(StudioError::Invalid(
+                "a camera without an actor cannot bind a target lifetime",
+            ));
+        }
         Ok(())
     }
 
@@ -182,7 +288,7 @@ impl CameraShot {
     pub fn sample(
         &self,
         time: MediaTime,
-        actor: impl Fn(u64) -> Option<ActorPose>,
+        actor: impl Fn(CameraTargetRef) -> Option<ActorPose>,
     ) -> Option<CameraPose> {
         if !self.span.contains(time) {
             return None;
@@ -194,15 +300,21 @@ impl CameraShot {
                 keys,
                 smooth_position,
             } => sample_path(keys, elapsed, *smooth_position),
-            CameraMode::Player { actor: target } => {
-                let actor = actor(*target)?;
+            CameraMode::Player { actor: target, fov } => {
+                let actor = actor(CameraTargetRef {
+                    runtime_id: *target,
+                    lifetime: self.target_lifetime,
+                })?;
                 let mut pose = CameraPose {
                     position: actor.position,
                     yaw: actor.yaw,
                     pitch: actor.pitch,
-                    ..CameraPose::default()
+                    roll: actor.roll,
+                    fov: *fov,
                 };
-                pose.position[1] += actor.eye_height;
+                pose.position = (DVec3::from_array(pose.position)
+                    + DVec3::from_array(actor.eye_offset?))
+                .to_array();
                 Some(pose)
             }
             CameraMode::Follow {
@@ -211,7 +323,10 @@ impl CameraShot {
                 look_ahead,
                 fov,
             } => {
-                let target = actor(*target)?;
+                let target = actor(CameraTargetRef {
+                    runtime_id: *target,
+                    lifetime: self.target_lifetime,
+                })?;
                 let yaw = target.yaw.to_radians();
                 let (sin, cos) = yaw.sin_cos();
                 let local = DVec3::new(
@@ -219,7 +334,8 @@ impl CameraShot {
                     offset[1],
                     offset[0] * sin + offset[2] * cos,
                 );
-                let centre = DVec3::from_array(target.position) + DVec3::Y * target.eye_height;
+                let centre = DVec3::from_array(target.position)
+                    + DVec3::from_array(target.eye_offset.unwrap_or([0.0; 3]));
                 let look = centre + DVec3::from_array(target.velocity) * *look_ahead;
                 Some(
                     CameraPose {
@@ -238,8 +354,12 @@ impl CameraShot {
                 turns,
                 fov,
             } => {
-                let actor = actor(*target)?;
-                let centre = DVec3::from_array(actor.position) + DVec3::Y * actor.eye_height;
+                let actor = actor(CameraTargetRef {
+                    runtime_id: *target,
+                    lifetime: self.target_lifetime,
+                })?;
+                let centre = DVec3::from_array(actor.position)
+                    + DVec3::from_array(actor.eye_offset.unwrap_or([0.0; 3]));
                 let progress = elapsed.0 as f64 / self.span.duration().0 as f64;
                 let angle = (start_degrees + progress * turns * 360.0).to_radians();
                 let position =
@@ -255,6 +375,11 @@ impl CameraShot {
             }
         }
     }
+}
+
+/// Older player-camera projects inherit the same default as an ordinary camera pose.
+fn default_fov() -> f64 {
+    DEFAULT_FOV
 }
 
 /// Interpolates angle wrap on the shorter arc rather than turning a camera almost 360 degrees.

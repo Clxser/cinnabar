@@ -7,7 +7,7 @@ use std::sync::{
 
 use bevy::prelude::*;
 use client_shell::{menu::MenuRuntime, ui_resources::UiPresentationResource};
-use recording_studio::preview::{PreviewRequest, PreviewStatus, RasterPreview};
+use recording_studio::preview::{CameraPreview, PreviewRequest, PreviewStatus, RasterPreview};
 use render::replay::ReplayRenderContext;
 use render_model::{UI_STUDIO_PREVIEW_MAX_SIZE, UiTexturePage};
 use render_scene::ui_preview::{PreviewImage, UiPreviewImage, UiPreviewSurface};
@@ -36,6 +36,7 @@ struct PreviewOutput {
     page: UiTexturePage,
     image: Option<Arc<PreviewImage>>,
     notice: Option<String>,
+    camera: Option<CameraPreview>,
 }
 
 struct Shared {
@@ -140,6 +141,7 @@ pub(super) fn update(
                         ready: true,
                         at: completed.at,
                         notice: output.notice,
+                        camera: output.camera,
                         ..Default::default()
                     }
                 } else {
@@ -288,6 +290,7 @@ fn run(shared: &Shared, context: Option<ReplayRenderContext>) {
                             page,
                             image: None,
                             notice: frame.notice,
+                            camera: None,
                         })
                         .map_err(|error| format!("Preview image admission failed: {error:?}"))
                 })
@@ -300,7 +303,7 @@ fn run(shared: &Shared, context: Option<ReplayRenderContext>) {
             .lock()
             .unwrap_or_else(|error| error.into_inner()) = Some(Completed {
             generation: job.generation,
-            at: job.request.at,
+            at: job.request.frame_time().unwrap_or(job.request.at),
             result,
         });
     }

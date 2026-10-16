@@ -100,14 +100,24 @@ pub(super) fn camera(world: &mut World) -> Option<CameraPose> {
     };
     let forward = *transform.forward();
     let up = *transform.up();
-    let right = forward.cross(Vec3::Y).normalize_or_zero();
-    let reference_up = right.cross(forward).normalize_or_zero();
+    let [yaw, pitch, roll] = angles(forward, up);
     let pose = CameraPose {
         position: transform.translation().to_array().map(f64::from),
-        yaw: f64::from((-forward.x).atan2(forward.z).to_degrees()),
-        pitch: f64::from((-forward.y).atan2(forward.x.hypot(forward.z)).to_degrees()),
-        roll: f64::from(up.dot(right).atan2(up.dot(reference_up)).to_degrees()),
+        yaw,
+        pitch,
+        roll,
         fov: f64::from(projection.fov.to_degrees()),
     };
     pose.validate().ok().map(|()| pose)
+}
+
+/// Shares the native camera-axis convention between the visible view and a local recorded subject.
+pub(super) fn angles(forward: Vec3, up: Vec3) -> [f64; 3] {
+    let right = forward.cross(Vec3::Y).normalize_or_zero();
+    let reference_up = right.cross(forward).normalize_or_zero();
+    [
+        f64::from((-forward.x).atan2(forward.z).to_degrees()),
+        f64::from((-forward.y).atan2(forward.x.hypot(forward.z)).to_degrees()),
+        f64::from(up.dot(right).atan2(up.dot(reference_up)).to_degrees()),
+    ]
 }

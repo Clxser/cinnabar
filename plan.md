@@ -9317,7 +9317,7 @@ Current implementation, not yet built or exercised:
   enumeration. The main-screen Recording Studio entry and native library/editor
   connect these services to project create/open/save, undo/redo, split/delete,
   speed changes, titles, frame stepping and pointer scrubbing. The preview viewport
-  is now connected to raster media in source, but not native 3D scene playback;
+  now connects raster media and a provisional native replay source in code;
   this UI remains unverified.
 - Native capture controls now arm recording from the launcher and start/stop or
   bookmark from pause/studio. Startup and finalization use workers; the live path
@@ -9393,10 +9393,25 @@ Current implementation, not yet built or exercised:
   completion leases avoid frame readbacks and target overwrite. Shared device
   faults retain the primary app's fatal-error path when the worker is idle/closed.
   This remains unbuilt and unrun. It supports one unframed replay layer and
-  free/path shot values; camera inspectors and actor target tracking, unculled
+  the camera authoring described below; unculled
   actor coverage, HUD/hand/particles/block entities, exact projection planes,
   shader modes, interpolation, audio, titles and complete visual composition
   remain incomplete. This does not establish replay parity or measured efficiency.
+- A separate bounded camera-target journal now captures received actor anchors,
+  names, angles and spawn identities, with the local subject's published eye offset.
+  Changed-only records, recycled capture buffers, worker serialization and periodic
+  checkpoints avoid full idle snapshots. Verified coordinated playback accepts
+  this optional track only from the same take; old takes remain readable without it.
+  This does not expand the original-view actor draw coverage.
+- Native camera controls now author player/free/path/follow/orbit shots, target
+  browsing with explicit retargeting, fine parameter adjustments, exact-playhead
+  path keys and boundary trims through ordinary undoable project edits. New actor
+  shots pin spawn identity; unavailable subjects disclose their recorded-view
+  fallback. Remote first-person eyes are not inferred. Both preview paths sample
+  the output frame grid, while camera metadata edits reuse admitted scene state.
+  Target interpolation, smooth camera motion, full actor coverage, visible key and
+  easing controls, narrow-layout inspector access, and runtime/render acceptance
+  remain incomplete. This source has not been compiled or exercised.
 
 Required work remains open:
 

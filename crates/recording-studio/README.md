@@ -100,10 +100,14 @@ geometry, records changes and unloads, and freezes exact local runtime render as
 on a bounded worker. A separate environment track retains prepared sky/weather,
 lighting and texture-animation inputs plus frozen sky assets. A prepared actor
 track retains rig poses, skins and artwork with explicit original-view coverage.
+An independent received-actor target track records anchors, angles, names and spawn
+identities, including the local subject's published eye position. Its changed-only
+records and periodic checkpoints share the take clock; target tracking does not
+expand the actor draw track's coverage.
 Track completion and failure are saved independently of POV completion.
-Opening a package still makes ordinary video/audio
-clips and editable highlights. The editor does not yet render this terrain track or
-allow changing the recorded camera; a raster video alone remains a POV recording.
+Opening a package makes ordinary video/audio clips and editable highlights. A
+captured clip can switch to its independent scene through **Use 3D replay**. A
+raster video alone remains a POV recording.
 
 ## Media preview
 
@@ -123,7 +127,7 @@ it is outside server and mod texture ranges. The page remains allocated while a
 seek is loading, avoiding repeated texture-plan changes during a drag.
 
 This is an unverified source implementation. Crop filtering, source frame accuracy,
-content-identity validation, audio, titles, camera changes and global effects still
+content-identity validation, audio, titles and global effects still
 need completion and acceptance. Missing camera/effect composition is disclosed in
 the raster preview. A selected captured clip can switch reversibly to a native
 scene source through **Use 3D replay**. The render edge owns its isolated GPU scene
@@ -131,8 +135,33 @@ and leased image publication; this domain owner retains no device or live world.
 That provisional path currently supports a single unframed replay layer and
 discloses its original-view actor coverage and missing composition features.
 
+## Replay cameras
+
+The native inspector creates player, free, path, follow and orbit shots from the
+displayed replay frame. Shot metadata uses normal undo/redo and project storage.
+Free/path controls edit position, angles and field of view; follow controls edit
+offset and velocity look-ahead; orbit controls edit radius, height, phase and turns.
+Fine adjustment uses smaller steps. Path adjustments insert or replace a key at
+the exact playhead, preserving an existing key's easing. Start/end trims retain
+boundary poses and interior keys or the orbit's phase; trimming a path can change
+its interior interpolation.
+
+Target browsing and retargeting are separate operations. Newly authored actor
+shots bind a recorded spawn lifetime, preventing runtime-ID reuse from selecting
+a different subject. Player mode requires a recorded native eye offset; received
+remote actors currently provide centre/root tracking only. Missing subjects show
+an explicit notice and the original view, with retargeting still available.
+Older takes without the optional target track can still use free/path shots.
+
+Both preview paths evaluate the same output-frame grid. Camera-only metadata edits
+retain admitted source cursors and terrain; explicit seeks reset temporal history.
+Target motion interpolation, camera smoothing, unculled actor draws (including the
+local first-person body), visible key markers/easing controls and inspector access
+in narrow layouts remain incomplete. These controls have not been run or visually
+accepted.
+
 The full scene schema, complete native replay rendering/preview composition, media
-import/recovery, camera/effect inspectors, recording options, export and linked
+import/recovery, complete camera/effect inspectors, recording options, export and linked
 automatic-effect retiming are still being implemented. The feature has not been
 built or exercised. Media preview and a limited native replay viewport are connected
 in source. These pieces do not complete the feature.

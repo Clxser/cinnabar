@@ -181,7 +181,19 @@ fn inspector(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<(
     let mut y = area[1] + pad;
     canvas.text_line("INSPECTOR", [left, y], right - left, HEADER5, TEXT)?;
     y += canvas.r(4.4);
+    let content_top = y;
+    let scroll = canvas.begin_scroll("studio_inspector", [left, y, right, area[3] - pad])?;
+    y -= scroll.offset;
     let project = view.studio.project.as_ref().expect("editor has a project");
+    if let Some(shot) = project
+        .shots
+        .iter()
+        .find(|shot| Some(shot.id) == view.studio.selected)
+    {
+        y = super::camera::inspector(canvas, view, [left, y, right, area[3] - pad], shot)?;
+        let height = (y - content_top + scroll.offset).max(0.0);
+        return canvas.end_scroll(scroll, height);
+    }
     let selected = project
         .clips
         .iter()
@@ -237,7 +249,7 @@ fn inspector(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<(
         })
         .and_then(recording_studio::capture::native_replay_directory)
         .is_some();
-    if y + canvas.r(4.4) <= area[3] - pad {
+    if native_available {
         control(
             canvas,
             view,
@@ -248,5 +260,8 @@ fn inspector(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<(
             Variant::Secondary,
         )?;
     }
-    Ok(())
+    y += canvas.r(6.0);
+    y = super::camera::creation(canvas, view, [left, y, right, area[3] - pad])?;
+    let height = (y - content_top + scroll.offset).max(0.0);
+    canvas.end_scroll(scroll, height)
 }

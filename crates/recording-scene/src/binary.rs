@@ -42,6 +42,11 @@ impl<'a> Reader<'a> {
         Ok(u32::from_le_bytes(self.bytes()?))
     }
 
+    /// Native tracking identities and floating-point bits use the same little-endian envelope.
+    pub fn u64(&mut self) -> Result<u64, ArchiveError> {
+        Ok(u64::from_le_bytes(self.bytes()?))
+    }
+
     /// Admits a byte stream before allocating it, then reads it in one bounded operation.
     pub fn blob(&mut self, maximum: usize) -> Result<Vec<u8>, ArchiveError> {
         let count = self.u32()? as usize;
@@ -129,6 +134,11 @@ pub(crate) fn packed<T, const N: usize>(
 
 /// Fixed typed fields use the same endian convention as the counted streams.
 pub(crate) fn u32(output: &mut dyn Write, value: u32) -> Result<(), ArchiveError> {
+    output.write_all(&value.to_le_bytes()).map_err(error)
+}
+
+/// Writes one fixed-width identity or floating-point bit pattern.
+pub(crate) fn u64(output: &mut dyn Write, value: u64) -> Result<(), ArchiveError> {
     output.write_all(&value.to_le_bytes()).map_err(error)
 }
 

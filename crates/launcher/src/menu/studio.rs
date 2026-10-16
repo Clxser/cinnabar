@@ -2,6 +2,7 @@
 
 use std::{path::PathBuf, sync::Arc};
 
+use recording_studio::camera::{CameraParameter, CameraRigKind, CameraTargetRef};
 use recording_studio::{Id, MediaTime, PlaybackRate, Project, storage::LibraryEntry};
 
 pub const TITLE: &str = "Recording Studio";
@@ -31,6 +32,17 @@ pub enum Action {
     SetRate(PlaybackRate),
     AddTitle,
     UseNativeReplay,
+    CreateCamera(CameraRigKind),
+    CycleCameraTarget(i8),
+    RetargetCamera,
+    AdjustCamera {
+        parameter: CameraParameter,
+        direction: i8,
+    },
+    AddCameraKey,
+    TrimCameraStart,
+    TrimCameraEnd,
+    ToggleCameraFine,
     Zoom(i8),
     Pan(i8),
     ConfirmDiscard,
@@ -60,6 +72,8 @@ pub struct Snapshot {
     pub undo: Option<String>,
     pub redo: Option<String>,
     pub selected: Option<Id>,
+    pub camera_target: Option<CameraTargetRef>,
+    pub camera_fine: bool,
     pub visible_start: MediaTime,
     pub visible_duration: MediaTime,
     pub saving: bool,
@@ -88,6 +102,8 @@ impl PartialEq for Snapshot {
             undo,
             redo,
             selected,
+            camera_target,
+            camera_fine,
             visible_start,
             visible_duration,
             saving,
@@ -112,6 +128,8 @@ impl PartialEq for Snapshot {
             undo: b_undo,
             redo: b_redo,
             selected: b_selected,
+            camera_target: b_camera_target,
+            camera_fine: b_camera_fine,
             visible_start: b_visible_start,
             visible_duration: b_visible_duration,
             saving: b_saving,
@@ -123,6 +141,8 @@ impl PartialEq for Snapshot {
             preview_icon: b_preview_icon,
         } = other;
         capture == b_capture
+            && camera_target == b_camera_target
+            && camera_fine == b_camera_fine
             && preview == b_preview
             && preview_icon == b_preview_icon
             && (Arc::ptr_eq(library, b_library) || library.is_empty() && b_library.is_empty())
