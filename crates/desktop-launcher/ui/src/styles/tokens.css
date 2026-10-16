@@ -1,0 +1,66 @@
+@font-face {
+  font-family: 'Cinnangles Ten';
+  src: url('../../../../../assets/fonts/CinnanglesTen.ttf') format('truetype');
+  font-display: block;
+}
+
+:root {
+  /* Host rock: the shell sits darkest, the working sheet one step up. */
+  --shell: #0e0f11;
+  --sheet: #16181b;
+  --raised: #1d1f23;
+  --raised-2: #24272c;
+  --hover: #2a2d33;
+  --line: #2c2f35;
+
+  --text: #ece7e2;
+  --text-2: #ada7a1;
+  --text-3: #958f8a;
+
+  /* Cinnabar, taken from the brand mark's three faces. */
+  --ore: #d23b2e;
+  --ore-hi: #e2483a;
+  --ore-lit: #f27a63;
+  --ore-deep: #8f1c14;
+  --ore-dormant: #3a201d;
+  --ore-ink: #ffffff;
+
+  --ok: #5cc28f;
+  --warn: #e9a83b;
+  --bad: #f2667e;
+  /* Opaque so notices stay legible over the launchpad art. */
+  --warn-wash: #312d25;
+  --bad-wash: #32262c;
+  --focus: #ffb4a4;
+
+  --font-ui: 'Onest Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Cinnangles Ten', var(--font-ui);
+  /* One design pixel of Cinnangles Ten is 0.07em; these sizes land it on whole CSS pixels. */
+  --display-2: 28.5714px;
+  --display-3: 42.8571px;
+
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+
+  --titlebar: 40px;
+  --rail: 84px;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --t-fast: 120ms;
+  --t-med: 220ms;
+}

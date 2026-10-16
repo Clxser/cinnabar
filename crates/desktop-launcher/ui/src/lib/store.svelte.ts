@@ -1,0 +1,109 @@
+import { api, type Channel, type FeaturedServer, type GameState, type InstallState, type News, type UpdateState } from '../api';
+
+export type Load<T> = { status: 'loading' } | { status: 'ready'; value: T } | { status: 'error' };
+export type Page = 'home' | 'servers' | 'settings';
+
+const PAGES: Page[] = ['home', 'servers', 'settings'];
+
+function pageFromHash(): Page {
+  const name = location.hash.replace(/^#\/?/, '');
+  return PAGES.find((p) => p === name) ?? 'home';
+}
+
+/** Fetches into `set`; a refresh keeps showing the previous value until the new one lands. */
+async function load<T>(fetch: () => Promise<T>, set: (v: Load<T>) => void, current: Load<T>) {
+  if (current.status === 'error') set({ status: 'loading' });
+  try {
+    set({ status: 'ready', value: await fetch() });
+  } catch {
+    if (current.status !== 'ready') set({ status: 'error' });
+  }
+}
+
+class LauncherStore {
+  page = $state<Page>(pageFromHash());
+  install = $state<Load<InstallState>>({ status: 'loading' });
+  update = $state<UpdateState>();
+  game = $state<GameState>();
+  news = $state<Load<News>>({ status: 'loading' });
+  servers = $state<Load<FeaturedServer[]>>({ status: 'loading' });
+  now = $state(Date.now());
+  /** Set by "Update & play" so a finished install launches the game. */
+  playAfterInstall = $state(false);
+  /** Which request a failed update came from, so Retry repeats it. */
+  private lastUpdateAction: 'check' | 'install' = 'check';
+
+  start(): () => void {
+    const offUpdate = api.onUpdateState((s) => this.applyUpdate(s));
+    const offGame = api.onGameState((s) => (this.game = s));
+    const tick = setInterval(() => (this.now = Date.now()), 30_000);
+    const onHash = () => (this.page = pageFromHash());
+    addEventListener('hashchange', onHash);
+
+    this.reloadInstall();
+    api.getUpdateState().then((s) => (this.update ??= s), () => (this.update ??= { kind: 'idle' }));
+    api.getGameState().then((s) => (this.game ??= s), () => (this.game ??= { kind: 'stopped' }));
+    this.reloadNews();
+    this.reloadServers();
+
+    return () => {
+      offUpdate();
+      offGame();
+      clearInterval(tick);
+      removeEventListener('hashchange', onHash);
+    };
+  }
+
+  private applyUpdate(next: UpdateState) {
+    const finishedInstall = this.update?.kind === 'installing' && (next.kind === 'upToDate' || next.kind === 'idle');
+    this.update = next;
+    if (next.kind === 'failed') this.playAfterInstall = false;
+    if (!finishedInstall) return;
+    this.reloadInstall();
+    if (this.playAfterInstall) {
+      this.playAfterInstall = false;
+      void api.launchGame();
+    }
+  }
+
+  /** News falls back to its cache when the network is down; that is the launcher's offline signal. */
+  get offline(): boolean {
+    return this.news.status === 'ready' && this.news.value.stale;
+  }
+
+  navigate(page: Page) {
+    location.hash = page === 'home' ? '' : `/${page}`;
+    this.page = page;
+  }
+
+  reloadInstall = () => load(api.getInstallState, (v) => (this.install = v), this.install);
+  reloadNews = () => load(api.getNews, (v) => (this.news = v), this.news);
+  reloadServers = () => load(api.getFeaturedServers, (v) => (this.servers = v), this.servers);
+
+  play = () => api.launchGame();
+
+  updateAndPlay = () => {
+    this.playAfterInstall = true;
+    this.lastUpdateAction = 'install';
+    return api.installUpdate();
+  };
+
+  check = () => {
+    this.lastUpdateAction = 'check';
+    return api.checkForUpdates();
+  };
+
+  retry = () => (this.lastUpdateAction === 'install' ? api.installUpdate() : api.checkForUpdates());
+
+  join = (server: FeaturedServer) => api.launchGame({ server: { address: server.address, port: server.port } });
+
+  setChannel = async (channel: Channel) => {
+    if (this.install.status === 'ready') this.install = { status: 'ready', value: { ...this.install.value, channel } };
+    await api.setChannel(channel);
+    await this.reloadInstall();
+  };
+
+  open = (url: string) => api.openExternal(url);
+}
+
+export const store = new LauncherStore();
