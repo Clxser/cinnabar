@@ -1,5 +1,8 @@
 import { api, type Channel, type FeaturedServer, type GameState, type InstallState, type News, type UpdateState } from '../api';
-import { getAccount, signIn, type Account, type Server } from '../api/proposed';
+import { getAccount, getChangelog, getRecentServers, signIn, type Account, type Changelog, type RecentServer, type Server } from '../api/proposed';
+import type { ActionIntent } from './play';
+import type { Platform } from '../api';
+import { platform as guessedPlatform } from './window';
 
 export type Load<T> = { status: 'loading' } | { status: 'ready'; value: T } | { status: 'error' };
 export type Page = 'home' | 'servers' | 'settings';
@@ -28,8 +31,15 @@ class LauncherStore {
   game = $state<GameState>();
   news = $state<Load<News>>({ status: 'loading' });
   servers = $state<Load<Server[]>>({ status: 'loading' });
+  /** Host platform: the installer's report once loaded, the user agent before that. */
+  get platform(): Platform {
+    return this.install.status === 'ready' ? this.install.value.platform : guessedPlatform;
+  }
+
   /** Undefined while loading or when the bridge has no account support yet. */
   account = $state<Account>();
+  recent = $state<RecentServer[]>([]);
+  changelog = $state<Changelog>();
   now = $state(Date.now());
   /** Set by "Update & play" so a finished install launches the game. */
   playAfterInstall = $state(false);
@@ -49,6 +59,8 @@ class LauncherStore {
     this.reloadNews();
     this.reloadServers();
     getAccount().then((a) => (this.account = a), () => undefined);
+    getRecentServers().then((r) => (this.recent = r ?? []), () => undefined);
+    getChangelog().then((c) => (this.changelog = c), () => undefined);
 
     return () => {
       offUpdate();
@@ -92,6 +104,13 @@ class LauncherStore {
     return api.installUpdate();
   };
 
+  /** Starts a manual install (a downgrade) without launching afterwards. */
+  installManually = () => {
+    this.playAfterInstall = false;
+    this.lastUpdateAction = 'install';
+    return api.installUpdate();
+  };
+
   check = () => {
     this.lastUpdateAction = 'check';
     return api.checkForUpdates();
@@ -114,6 +133,24 @@ class LauncherStore {
   open = (url: string) => api.openExternal(url);
 
   openLogs = () => api.openLogs();
+
+  /** Runs an action offered by a notice or the status line. */
+  act = (intent: ActionIntent) => {
+    switch (intent) {
+      case 'retry':
+        return this.retry();
+      case 'install':
+        return this.installManually();
+      case 'logs':
+        return this.openLogs();
+      case 'check':
+        return this.check();
+      case 'notes':
+        return this.update?.kind === 'available' && this.update.notesUrl ? this.open(this.update.notesUrl) : undefined;
+    }
+  };
+
+  rejoin = (server: RecentServer) => api.launchGame({ server: { address: server.address, port: server.port } });
 
   signIn = () => signIn();
 }

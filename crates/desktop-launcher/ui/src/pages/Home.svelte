@@ -1,19 +1,23 @@
 <script lang="ts">
-  import PlayCluster from '../components/PlayCluster.svelte';
-  import NewsList from '../components/NewsList.svelte';
-  import ServerShelf from '../components/ServerShelf.svelte';
-  import { PRODUCT_NAME } from '../lib/product';
+  import Hero from '../components/Hero.svelte';
+  import WhatsNew from '../components/WhatsNew.svelte';
+  import NewsCard from '../components/NewsCard.svelte';
+  import ServerList from '../components/ServerList.svelte';
+  import { store } from '../lib/store.svelte';
+
+  // News is optional garnish: cards appear only when there is a post to show.
+  const news = $derived(store.news.status === 'ready' ? store.news.value.items.slice(0, 2) : []);
+
 </script>
 
-<!-- The world fills the window; launch floats on the left and one glass shelf runs along the foot. -->
+<!-- The world fills the window. The player stands centre stage, launch sits left, and a dock of
+     what's new, news and servers runs along the foot. -->
 <div class="home">
-  <div class="hero">
-    <h1>{PRODUCT_NAME}</h1>
-    <PlayCluster />
-  </div>
-  <div class="shelf">
-    <NewsList limit={2} variant="lead" />
-    <ServerShelf limit={3} variant="card" row />
+  <div class="hero"><Hero /></div>
+  <div class="dock">
+    {#if store.changelog}<div class="slot notes"><WhatsNew log={store.changelog} /></div>{/if}
+    {#each news as item, i (item.id)}<div class="slot news" class:second={i === 1}><NewsCard {item} /></div>{/each}
+    <div class="slot servers"><ServerList /></div>
   </div>
 </div>
 
@@ -22,77 +26,89 @@
     display: grid;
     grid-template-rows: 1fr auto;
     height: 100%;
-    padding: 0 40px 28px;
+    padding: 0 32px 24px;
   }
 
   .hero {
-    align-self: center;
-    padding-bottom: 12px;
+    align-self: end;
+    padding: 0 0 28px 8px;
   }
 
-  h1 {
-    margin-bottom: 16px;
-    font: var(--t-hero);
-    font-stretch: 125%;
-    letter-spacing: -0.025em;
+  .dock {
+    display: flex;
+    gap: 14px;
+    height: 196px;
   }
 
-  .shelf {
-    display: grid;
-    grid-template-columns: minmax(250px, 0.85fr) minmax(0, 2.6fr);
-    gap: 32px;
-    padding: 20px 22px 22px 24px;
-    border-radius: var(--r-lg);
-    background: var(--glass);
-    -webkit-backdrop-filter: blur(24px) saturate(1.5);
-    backdrop-filter: blur(24px) saturate(1.5);
-    box-shadow: inset 0 0 0 1px var(--glass-edge);
+  .slot {
+    min-width: 0;
   }
 
-  /* One orchestrated arrival: title, launch, then the shelf, each a beat apart. */
+  .notes {
+    flex: 0 0 300px;
+  }
+
+  .news {
+    flex: 0 1 236px;
+  }
+
+  .servers {
+    flex: 1 1 280px;
+    min-width: 260px;
+  }
+
+  /* A first-run hint stays card-sized rather than stretching into an empty band. */
+  .servers:has(:global(.hint)) {
+    flex: 0 1 320px;
+    align-self: flex-end;
+  }
+
+
+  /* Small windows keep one news card and a shorter dock. */
+  @media (max-width: 1080px) {
+    .second {
+      display: none;
+    }
+  }
+
+  @media (max-height: 640px) {
+    .dock {
+      height: 164px;
+    }
+
+    .hero {
+      padding-bottom: 18px;
+    }
+  }
+
+  /* One orchestrated arrival: launch first, then the dock cards a beat apart. */
   @media (prefers-reduced-motion: no-preference) {
-    h1,
-    .hero :global(.cluster),
-    .shelf {
+    .hero,
+    .slot {
       animation: rise 700ms var(--ease-out) both;
     }
 
-    .hero :global(.cluster) {
-      animation-delay: 70ms;
+    .slot:nth-child(1) {
+      animation-delay: 90ms;
     }
 
-    .shelf {
-      animation-delay: 160ms;
-    }
-  }
-
-  /* Short or narrow windows: a smaller title, a tighter shelf, and news reduced to its headline. */
-  @media (max-height: 720px), (max-width: 1100px) {
-    .home {
-      padding: 0 28px 20px;
+    .slot:nth-child(2) {
+      animation-delay: 140ms;
     }
 
-    h1 {
-      font-size: 40px;
-      margin-bottom: 10px;
+    .slot:nth-child(3) {
+      animation-delay: 190ms;
     }
 
-    .shelf {
-      grid-template-columns: minmax(220px, 0.8fr) minmax(0, 2fr);
-      gap: 24px;
-      padding: 16px 18px;
-    }
-
-    .shelf :global(.news .summary),
-    .shelf :global(.news li + li) {
-      display: none;
+    .slot:nth-child(4) {
+      animation-delay: 240ms;
     }
   }
 
   @keyframes rise {
     from {
       opacity: 0;
-      transform: translateY(14px);
+      transform: translateY(12px);
     }
   }
 </style>

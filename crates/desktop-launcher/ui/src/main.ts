@@ -1,4 +1,4 @@
-import '@fontsource-variable/archivo/standard.css';
+import '@fontsource-variable/inter/opsz.css';
 import './styles/tokens.css';
 import './styles/base.css';
 import { mount } from 'svelte';

@@ -1,8 +1,10 @@
 // Synthetic data for design work and screenshots. Server names, addresses and news are invented.
-// Pick a state with `?scenario=<name>`; add `&freeze` to stop simulated progress for captures.
+// Pick a state with `?scenario=<name>`, a host with `?platform=`; `&freeze` stops simulated progress.
 import { mockSkin } from '../lib/diorama/textures';
-import type { Account, Server } from './proposed';
-import type { Api, Channel, GameState, InstallState, News, UpdateState } from './types';
+import type { Account, Changelog, RecentServer, Server } from './proposed';
+import nightArt from './mock-art/night.jpg';
+import dawnArt from './mock-art/dawn.jpg';
+import type { Api, Channel, GameState, InstallState, News, Platform, UpdateState } from './types';
 
 const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search);
 const scenario = params.get('scenario') ?? 'idle';
@@ -13,14 +15,23 @@ const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
 const NEXT_VERSION = '0.1.22';
 const UPDATE_BYTES = 118_437_120;
 
+function hostPlatform(): Platform {
+  const forced = params.get('platform');
+  if (forced === 'macos' || forced === 'windows' || forced === 'linux') return forced;
+  const ua = typeof navigator === 'undefined' ? '' : navigator.userAgent;
+  return /Mac/.test(ua) ? 'macos' : /Windows/.test(ua) ? 'windows' : 'linux';
+}
+
+// The downgrade scenario has a newer Nightly build installed while Beta is selected.
+const downgrading = scenario === 'downgrade';
 const install: InstallState = {
-  version: '0.1.21',
-  build: '5ef4062',
+  version: downgrading ? '0.1.23' : '0.1.21',
+  build: downgrading ? 'n412' : scenario === 'dev' || scenario === 'bare' ? 'dev' : '5ef4062',
   channel: scenario === 'nightly' ? 'nightly' : 'beta',
-  installedChannel: 'beta',
+  installedChannel: downgrading ? 'nightly' : 'beta',
   publishedChannels: ['beta', 'nightly'],
   launcherVersion: '0.1.21',
-  platform: 'macos',
+  platform: hostPlatform(),
   nativeApiVersion: 1,
 };
 
@@ -42,6 +53,8 @@ const initialUpdate: Record<string, UpdateState> = {
   downloading: { kind: 'downloading', version: NEXT_VERSION, receivedBytes: 50_593_792, totalBytes: UPDATE_BYTES },
   verifying: { kind: 'verifying', version: NEXT_VERSION },
   installing: { kind: 'installing', version: NEXT_VERSION },
+  handoff: { kind: 'installing', version: NEXT_VERSION },
+  downgrade: { kind: 'available', version: '0.1.21', channel: 'beta', sizeBytes: 112_400_000, required: false, downgrade: true },
   failed: {
     kind: 'failed',
     message: 'The download was interrupted (connection reset). Your installed version is unchanged.',
@@ -49,6 +62,8 @@ const initialUpdate: Record<string, UpdateState> = {
     retryable: true,
     canPlayInstalled: true,
   },
+  dev: { kind: 'unavailable', reason: 'This build is unsigned, so it doesn’t update itself.' },
+  bare: { kind: 'unavailable', reason: 'This build is unsigned, so it doesn’t update itself.' },
   'failed-blocking': {
     kind: 'failed',
     message: 'The installed files failed verification, so this version cannot start.',
@@ -109,6 +124,7 @@ const news: News = {
       url: 'https://example.com/cinnabar/news/0-1-21',
       publishedAt: ago(26 * 60 * MINUTE),
       tag: 'Release',
+      imageUrl: nightArt,
     },
     {
       id: 'n2',
@@ -123,6 +139,7 @@ const news: News = {
       title: 'Server owners: test your resource packs before the weekend',
       summary: 'Pack loading changed in 0.1.20. Join with a Nightly build and tell us what looks wrong.',
       url: 'https://example.com/cinnabar/news/packs',
+      imageUrl: dawnArt,
       publishedAt: ago(9 * 24 * 60 * MINUTE),
       tag: 'Servers',
     },
@@ -144,6 +161,7 @@ const servers: Server[] = [
   { id: 's5', name: 'Hollowmere', address: 'hollowmere.example', port: 19132, description: 'Story-driven adventure maps with a new chapter every Friday.', online: 412, tags: ['Adventure'], pingMs: 118 },
   { id: 's6', name: 'Brickyard Creative', address: 'build.brickyard.example', port: 19132, description: 'Plots, build battles and a monthly showcase.', online: 233, tags: ['Creative'], pingMs: 63 },
   { id: 's7', name: 'Lanternfall', address: 'lanternfall.example', port: 19140 },
+  { id: 's9', name: 'Skyward Trials', address: '8c0f3e52-6d1b-4f7a-9a21-3b5e9d7c4a10', port: 0, description: 'A parkour experience with weekly leaderboards.', online: 318, tags: ['Experience', 'Parkour'] },
   { id: 's8', name: 'Glasshouse SMP', address: 'glasshouse.example', port: 19132, description: 'Small whitelist-free survival. Be kind, build slow.', online: 57, tags: ['Survival', 'Small'], pingMs: 196 },
 ];
 
@@ -161,6 +179,8 @@ async function simulateInstall() {
   setUpdate({ kind: 'verifying', version });
   await wait(1100);
   setUpdate({ kind: 'installing', version });
+  // On Windows the real launcher hands off to the installer and quits here.
+  if (install.platform === 'windows') return;
   await wait(1400);
   install.version = version;
   install.build = '9c41d07';
@@ -168,12 +188,42 @@ async function simulateInstall() {
   setUpdate({ kind: 'upToDate', lastChecked: new Date().toISOString() });
 }
 
+/** Recent joins for the quick-rejoin row; empty on first run. */
+export async function mockRecentServers(): Promise<RecentServer[]> {
+  if (scenario === 'loading') return never();
+  await wait(140);
+  if (scenario === 'empty' || scenario === 'bare' || params.has('first-run')) return [];
+  return [
+    { name: 'Emberfall', address: 'play.emberfall.example', port: 19132, lastPlayedAt: ago(2 * 60 * MINUTE) },
+    { name: 'Northwind Duels', address: 'pvp.northwind.example', port: 19132, lastPlayedAt: ago(26 * 60 * MINUTE) },
+    { name: 'Skyward Trials', address: '8c0f3e52-6d1b-4f7a-9a21-3b5e9d7c4a10', port: 0, lastPlayedAt: ago(4 * 24 * 60 * MINUTE) },
+  ];
+}
+
+/** Notes for the installed build; `?new` marks it as the first launch of this version. */
+export async function mockChangelog(): Promise<Changelog | undefined> {
+  await wait(100);
+  if (scenario === 'bare') return undefined;
+  return {
+    version: install.version,
+    publishedAt: ago(26 * 60 * MINUTE),
+    highlights: [
+      'Optional frame limits in Video settings',
+      'Lower input latency on Apple GPUs',
+      'Empty buckets pick the block you aim at',
+    ],
+    url: 'https://example.com/cinnabar/notes/0.1.21',
+    unseen: params.has('new'),
+  };
+}
+
 /** Signed in by default; `?account=out` signs out, and the offline scenario keeps a cached identity. */
-export async function mockAccount(): Promise<Account> {
+export async function mockAccount(): Promise<Account | undefined> {
   if (scenario === 'loading') return never();
   await wait(120);
   const forced = params.get('account');
   if (forced === 'out') return { kind: 'signedOut' };
+  if (scenario === 'bare') return undefined;
   const skinUrl = mockSkin().toDataURL();
   return scenario === 'offline' ? { kind: 'offline', gamertag: 'Vermillion Fox', skinUrl } : { kind: 'signedIn', gamertag: 'Vermillion Fox', skinUrl };
 }
@@ -206,10 +256,10 @@ export const mockApi: Api = {
   getNews: () =>
     respond(() => {
       if (scenario === 'offline') return { ...news, stale: true, fetchedAt: ago(5 * 60 * MINUTE) };
-      if (scenario === 'empty') return { items: [], stale: false, fetchedAt: ago(MINUTE) };
+      if (scenario === 'empty' || scenario === 'bare') return { items: [], stale: scenario === 'bare', fetchedAt: ago(MINUTE) };
       return news;
     }, ['errors']),
-  getFeaturedServers: () => respond(() => (scenario === 'empty' ? [] : servers), ['errors', 'offline']),
+  getFeaturedServers: () => respond(() => (scenario === 'empty' || scenario === 'bare' ? [] : servers), ['errors', 'offline']),
   async openExternal(url: string) {
     window.open(url, '_blank', 'noopener');
   },

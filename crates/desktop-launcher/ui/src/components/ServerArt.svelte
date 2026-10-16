@@ -44,9 +44,9 @@
     position: absolute;
     right: 6%;
     bottom: -0.18em;
-    font: 800 120px / 1 var(--font);
+    font: 760 120px / 1 var(--font);
+    letter-spacing: -0.04em;
     font-size: min(78cqh, 46cqw);
-    font-stretch: 125%;
     color: hsl(var(--h) 62% 64%);
     opacity: 0.5;
     user-select: none;

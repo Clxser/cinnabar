@@ -24,15 +24,18 @@
   --bad: #ff7a8a;
   --focus: #ffd0c4;
 
-  --font: 'Archivo Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font: 'Inter Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
 
-  /* Type roles. Display sets Archivo expanded; UI text stays at normal width. */
-  --t-hero: 800 64px / 0.92 var(--font);
-  --t-page: 800 34px / 1 var(--font);
-  --t-title: 700 19px / 1.2 var(--font);
-  --t-body: 450 15px / 1.5 var(--font);
-  --t-label: 600 13px / 1.3 var(--font);
-  --t-meta: 500 12px / 1.35 var(--font);
+  /* Type roles. Inter's optical size axis gives display cuts at large sizes; tracking tightens
+     as size grows. */
+  --t-hero: 650 26px / 1.1 var(--font);
+  --t-page: 700 30px / 1.05 var(--font);
+  --t-title: 620 16px / 1.25 var(--font);
+  --t-body: 430 14px / 1.5 var(--font);
+  --t-label: 560 13px / 1.3 var(--font);
+  --t-meta: 480 12px / 1.35 var(--font);
+  --track-display: -0.028em;
+  --track-title: -0.012em;
 
   --r-sm: 8px;
   --r-md: 12px;

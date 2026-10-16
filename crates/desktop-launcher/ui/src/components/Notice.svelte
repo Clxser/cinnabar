@@ -1,10 +1,11 @@
 <script lang="ts">
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
   import CircleAlert from '@lucide/svelte/icons/circle-alert';
+  import Info from '@lucide/svelte/icons/info';
   import type { Snippet } from 'svelte';
 
   interface Props {
-    tone: 'warn' | 'error';
+    tone: 'info' | 'warn' | 'error';
     title: string;
     children: Snippet;
     action?: { label: string; run: () => void };
@@ -15,7 +16,7 @@
 
 <div class="notice" data-tone={tone} role={tone === 'error' ? 'alert' : 'status'}>
   <span class="icon">
-    {#if tone === 'error'}<CircleAlert size={18} strokeWidth={2} aria-hidden="true" />{:else}<TriangleAlert size={18} strokeWidth={2} aria-hidden="true" />{/if}
+    {#if tone === 'error'}<CircleAlert size={18} strokeWidth={2} aria-hidden="true" />{:else if tone === 'info'}<Info size={18} strokeWidth={2} aria-hidden="true" />{:else}<TriangleAlert size={18} strokeWidth={2} aria-hidden="true" />{/if}
   </span>
   <div class="copy">
     <p class="title">{title}</p>
@@ -38,6 +39,14 @@
     -webkit-backdrop-filter: blur(20px) saturate(1.4);
     backdrop-filter: blur(20px) saturate(1.4);
     box-shadow: inset 0 0 0 1px rgb(242 181 80 / 0.22);
+  }
+
+  .notice[data-tone='info'] {
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14);
+  }
+
+  [data-tone='info'] .icon {
+    color: var(--ink-2);
   }
 
   .notice[data-tone='error'] {

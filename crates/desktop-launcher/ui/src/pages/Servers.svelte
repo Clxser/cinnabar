@@ -10,7 +10,7 @@
   import Ping from '../components/Ping.svelte';
   import InlineState from '../components/InlineState.svelte';
   import { store } from '../lib/store.svelte';
-  import { formatAddress } from '../lib/format';
+  import { formatAddress, isExperience } from '../lib/format';
   import type { Server } from '../api/proposed';
 
   let query = $state(new URLSearchParams(location.search).get('q') ?? '');
@@ -79,7 +79,11 @@
   {:else if store.servers.status === 'error'}
     <InlineState message={store.offline ? 'You’re offline. Servers load when you reconnect.' : 'Featured servers didn’t load.'} onretry={() => void store.reloadServers()} />
   {:else if all.length === 0}
-    <InlineState message="No featured servers right now." />
+    <div class="first-run">
+      <h2>Servers appear after your first game</h2>
+      <p>Cinnabar lists featured servers once the game has signed you in. Play once, and they show up here.</p>
+      <button class="first-play" onclick={() => void store.play()}>Play Cinnabar</button>
+    </div>
   {:else if results.length === 0}
     <div class="none">
       <p>No servers match {query.trim() ? `“${query.trim()}”` : 'this filter'}.</p>
@@ -102,10 +106,14 @@
             </p>
             <div class="actions">
               <ServerPlay server={spotlight} emphasis />
-              <button class="address" title="Copy address" onclick={() => copyAddress(spotlight)}>
-                {formatAddress(spotlight.address, spotlight.port)}
-                {#if copied === spotlight.id}<Check size={13} strokeWidth={2.5} aria-label="Copied" />{:else}<Copy size={13} strokeWidth={2} aria-hidden="true" />{/if}
-              </button>
+              {#if isExperience(spotlight.port)}
+                <span class="address">Experience</span>
+              {:else}
+                <button class="address" title="Copy address" onclick={() => copyAddress(spotlight)}>
+                  {formatAddress(spotlight.address, spotlight.port)}
+                  {#if copied === spotlight.id}<Check size={13} strokeWidth={2.5} aria-label="Copied" />{:else}<Copy size={13} strokeWidth={2} aria-hidden="true" />{/if}
+                </button>
+              {/if}
             </div>
           </div>
         </article>
@@ -132,8 +140,7 @@
 
   h1 {
     font: var(--t-page);
-    font-stretch: 125%;
-    letter-spacing: -0.02em;
+    letter-spacing: var(--track-display);
   }
 
   .lede {
@@ -255,9 +262,8 @@
   }
 
   .spotlight h2 {
-    font: 800 30px / 1 var(--font);
-    font-stretch: 125%;
-    letter-spacing: -0.02em;
+    font: 700 28px / 1.05 var(--font);
+    letter-spacing: var(--track-display);
   }
 
   .motd {
@@ -316,6 +322,36 @@
     height: 260px;
   }
 
+  .first-run {
+    max-width: 460px;
+    margin-top: 48px;
+  }
+
+  .first-run h2 {
+    font: var(--t-title);
+    font-size: 22px;
+  }
+
+  .first-run p {
+    margin-top: 8px;
+    color: var(--ink-2);
+  }
+
+  .first-play {
+    height: 40px;
+    margin-top: 18px;
+    padding: 0 18px;
+    border-radius: 999px;
+    background: var(--cinnabar-fill);
+    color: var(--cinnabar-ink);
+    font: var(--t-label);
+    font-size: 14px;
+  }
+
+  .first-play:hover {
+    background: var(--cinnabar);
+  }
+
   .none {
     display: flex;
     align-items: center;
@@ -337,11 +373,12 @@
     }
 
     .spotlight {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr);
+      min-height: 210px;
     }
 
-    .spotlight .art {
-      aspect-ratio: 2 / 1;
+    .spotlight .copy {
+      padding: 22px 24px;
     }
   }
 </style>
