@@ -35,7 +35,7 @@ function stone(img: ImageData, ox: number, base: Rgb, seed: number, band = 0.06)
   const r = rng(seed);
   for (let y = 0; y < TILE; y++) {
     const strata = 1 + Math.sin(y * 1.3 + seed) * band;
-    for (let x = 0; x < TILE; x++) put(img, ox + x, y, shade(base, strata * (0.9 + r() * 0.16)));
+    for (let x = 0; x < TILE; x++) put(img, ox + x, y, shade(base, strata * (0.93 + r() * 0.1)));
   }
   // A few darker pits and pale flecks so faces read as rock at close range.
   for (let i = 0; i < 7; i++) put(img, ox + Math.floor(r() * TILE), Math.floor(r() * TILE), shade(base, 0.72));

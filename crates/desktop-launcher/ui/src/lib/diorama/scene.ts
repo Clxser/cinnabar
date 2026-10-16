@@ -186,9 +186,10 @@ export function createDiorama(canvas: HTMLCanvasElement, options: DioramaOptions
   scene.add(pool);
 
   const player = buildPlayer(options.skin ?? mockSkin());
-  const stand = [Math.round(half - 3), Math.round(half + 1)] as const;
+  // The player stands on a front terrace beside the mercury pool, turned toward the camera.
+  const stand = [world.pool[0] - 1, world.pool[1] + 3] as const;
   player.root.position.set(stand[0] + 0.5 - half, world.top(stand[0], stand[1]) + 1, stand[1] + 0.5 - half);
-  player.root.rotation.y = 0.5;
+  player.root.rotation.y = 0.75;
   scene.add(player.root);
 
   // Warm light pooled above the vein so nearby faces pick up its colour.
@@ -208,6 +209,18 @@ export function createDiorama(canvas: HTMLCanvasElement, options: DioramaOptions
   embersGeo.setAttribute('position', new BufferAttribute(emberPos, 3));
   const embers = new Points(embersGeo, new PointsMaterial({ color: 0xff7a55, size: 0.09, transparent: true, opacity: 0.9, blending: AdditiveBlending, depthWrite: false }));
   scene.add(embers);
+
+  // Stars for dusk and night: fixed points on a far shell, faded in by the mood.
+  const starPos = new Float32Array(500 * 3);
+  for (let i = 0; i < 500; i++) {
+    const u = Math.random() * Math.PI * 2;
+    const v = Math.random() * 0.9 + 0.1;
+    starPos.set([Math.cos(u) * Math.sqrt(1 - v * v) * 150, v * 150, Math.sin(u) * Math.sqrt(1 - v * v) * 150], i * 3);
+  }
+  const starGeo = new BufferGeometry();
+  starGeo.setAttribute('position', new BufferAttribute(starPos, 3));
+  const starMat = new PointsMaterial({ color: 0xdfe6ff, size: 1.4, sizeAttenuation: false, transparent: true, opacity: 0, depthWrite: false, fog: false });
+  scene.add(new Points(starGeo, starMat));
 
   const hemi = new HemisphereLight(0xffffff, 0x222222, 1);
   scene.add(hemi);
@@ -257,6 +270,7 @@ export function createDiorama(canvas: HTMLCanvasElement, options: DioramaOptions
     oreLight.intensity = m.oreLight;
     renderer.toneMappingExposure = m.exposure;
     bloom.strength = m.bloom;
+    starMat.opacity = m.stars;
   }
   applyMood(options.mood);
 

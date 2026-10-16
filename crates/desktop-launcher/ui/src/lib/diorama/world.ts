@@ -102,7 +102,7 @@ export function buildWorld(seed = 2026): World {
   ore.sort((a, b) => a[0] + a[2] - (b[0] + b[2]) || b[1] - a[1]);
 
   // Mercury pool: a shallow two-by-two basin on a low terrace in front.
-  const pool: [number, number] = [Math.round(c + 1.5), Math.round(c + 1.5)];
+  const pool: [number, number] = [Math.round(c + 2.5), Math.round(c + 0.5)];
   const poolTop = Math.min(...[0, 1].flatMap((dx) => [0, 1].map((dz) => tops[pool[0] + dx]![pool[1] + dz]!)));
   for (const dx of [0, 1]) {
     for (const dz of [0, 1]) {
