@@ -8,6 +8,11 @@ use ui::ChatEditor;
 
 /// Creates an empty text editor with the byte limit for its menu field.
 pub(in crate::menu) fn field_editor(field: MenuField) -> ChatEditor {
+    if field == MenuField::StudioTitle {
+        return ChatEditor::with_byte_budget(
+            std::num::NonZeroUsize::new(max_bytes(field)).expect("positive title budget"),
+        );
+    }
     ChatEditor::new(max_bytes(field)).expect("menu field budgets are valid editor bounds")
 }
 
@@ -22,5 +27,6 @@ fn max_bytes(field: MenuField) -> usize {
         MenuField::WorldSeed => MAX_SEED_CHARS,
         MenuField::SkinName => launcher::dressing_room::MAX_SKIN_NAME_BYTES,
         MenuField::MacroCommand(_) => ui::MAX_CHAT_INPUT_BYTES,
+        MenuField::StudioTitle => recording_studio::title::MAX_TITLE_TEXT_BYTES,
     }
 }

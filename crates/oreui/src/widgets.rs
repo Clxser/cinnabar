@@ -4,7 +4,9 @@
 
 mod art;
 mod choice;
+mod text_area;
 pub(super) use choice::{choice, choice_focus, choice_height};
+pub(super) use text_area::text_area;
 
 use super::icons::{self, Icon};
 use super::motion::{Kind, mix, opacity};
@@ -684,6 +686,7 @@ fn field(
         let letter_spacing_64 = request.wrap.letter_spacing_64;
         canvas.spots.push(TextSpot {
             field,
+            byte_range: None,
             bounds,
             left,
             factor,

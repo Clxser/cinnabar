@@ -90,6 +90,7 @@ pub enum MenuField {
     RealmCode,
     /// One command macro slot's command box.
     MacroCommand(usize),
+    StudioTitle,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -198,6 +199,7 @@ impl MenuAction {
     /// The text field a press on this control focuses.
     pub fn text_field(self) -> Option<MenuField> {
         match self {
+            Self::Studio(studio::Action::EditTitleText) => Some(MenuField::StudioTitle),
             Self::SettingsMacroCommand(slot) => Some(MenuField::MacroCommand(slot)),
             Self::RealmMembership(realm_membership::Action::EditCode) => Some(MenuField::RealmCode),
             Self::AddName => Some(MenuField::Name),

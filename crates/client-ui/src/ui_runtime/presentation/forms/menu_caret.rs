@@ -55,8 +55,14 @@ impl UiPresentationRuntime {
             .iter()
             .find(|spot| spot.field == field && spot.bounds.contains(point))?;
         let (layouts, font) = (&mut self.layouts, &self.font);
-        Some(nearest_boundary(text, point.x() - spot.left, |prefix| {
-            spot.width(layouts, font, prefix)
-        }))
+        let [start, end] = spot.byte_range.unwrap_or([0, text.len()]);
+        let start = ui_engine::caret::caret_byte(text, start);
+        let end = ui_engine::caret::caret_byte(text, end).max(start);
+        Some(
+            start
+                + nearest_boundary(&text[start..end], point.x() - spot.left, |prefix| {
+                    spot.width(layouts, font, prefix)
+                }),
+        )
     }
 }

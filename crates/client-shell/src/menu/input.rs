@@ -201,6 +201,13 @@ impl MenuModifiers {
 impl MenuRuntime {
     /// Focus `field` with its caret after the text, as a newly selected box.
     pub(super) fn focus_field(&mut self, field: MenuField) {
+        if field == MenuField::StudioTitle
+            && let Err(error) = self.studio.begin_title_text()
+        {
+            std::sync::Arc::make_mut(&mut self.studio.view).error = Some(error);
+            self.field = None;
+            return;
+        }
         self.field = Some(field);
         self.edit_field(|editor| editor.move_end(false));
     }
@@ -219,6 +226,7 @@ impl MenuRuntime {
             MenuField::WorldSeed => &self.local_ui.seed,
             MenuField::SkinName => &self.skin_name,
             MenuField::MacroCommand(slot) => &self.macro_commands[slot],
+            MenuField::StudioTitle => &self.studio.title_text,
         }
     }
 
@@ -232,6 +240,7 @@ impl MenuRuntime {
             MenuField::WorldSeed => &mut self.local_ui.seed,
             MenuField::SkinName => &mut self.skin_name,
             MenuField::MacroCommand(slot) => &mut self.macro_commands[slot],
+            MenuField::StudioTitle => &mut self.studio.title_text,
         }
     }
 
@@ -264,6 +273,9 @@ impl MenuRuntime {
             return;
         }
         edit(self.editor_mut(field));
+        if field == MenuField::StudioTitle {
+            self.studio.publish_title_text();
+        }
         if let MenuField::MacroCommand(slot) = field {
             self.sync_macro_command(slot);
         }
@@ -313,7 +325,9 @@ impl MenuRuntime {
             let mut insertion = String::new();
             for character in text
                 .chars()
-                .filter(|character| !character.is_control())
+                .filter(|character| {
+                    !character.is_control() || field == MenuField::StudioTitle && *character == '\n'
+                })
                 .filter(accepts)
             {
                 if insertion.len() + character.len_utf8() > capacity {

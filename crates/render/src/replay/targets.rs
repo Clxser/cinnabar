@@ -62,6 +62,7 @@ impl Targets {
             format: TextureFormat::Rgba8UnormSrgb,
             usage: TextureUsages::RENDER_ATTACHMENT
                 | TextureUsages::COPY_SRC
+                | TextureUsages::COPY_DST
                 | TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });

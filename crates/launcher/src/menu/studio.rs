@@ -33,6 +33,18 @@ pub enum Action {
     DeleteSelected,
     SetRate(PlaybackRate),
     AddTitle,
+    EditTitleText,
+    ApplyTitleText,
+    CancelTitleText,
+    CycleTitleStyle,
+    ToggleTitleShadow,
+    AdjustTitle {
+        parameter: recording_studio::title::TitleParameter,
+        direction: i8,
+    },
+    TrimTitleStart,
+    TrimTitleEnd,
+    MoveTitle(i8),
     AddEffect(recording_studio::effect::EffectKind),
     ToggleEffect,
     AdjustEffect(i8),
@@ -90,6 +102,7 @@ pub struct Snapshot {
     pub selected: Option<Id>,
     pub camera_target: Option<CameraTargetRef>,
     pub camera_fine: bool,
+    pub title_draft: Option<(Id, Arc<str>)>,
     pub visible_start: MediaTime,
     pub visible_duration: MediaTime,
     pub saving: bool,
@@ -122,6 +135,7 @@ impl PartialEq for Snapshot {
             selected,
             camera_target,
             camera_fine,
+            title_draft,
             visible_start,
             visible_duration,
             saving,
@@ -150,6 +164,7 @@ impl PartialEq for Snapshot {
             selected: b_selected,
             camera_target: b_camera_target,
             camera_fine: b_camera_fine,
+            title_draft: b_title_draft,
             visible_start: b_visible_start,
             visible_duration: b_visible_duration,
             saving: b_saving,
@@ -165,6 +180,7 @@ impl PartialEq for Snapshot {
             && export == b_export
             && camera_target == b_camera_target
             && camera_fine == b_camera_fine
+            && title_draft == b_title_draft
             && preview == b_preview
             && preview_icon == b_preview_icon
             && (Arc::ptr_eq(library, b_library) || library.is_empty() && b_library.is_empty())

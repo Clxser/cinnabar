@@ -1,6 +1,6 @@
 //! Content-addressed actor rasters with bounded, independent appearance metadata.
 
-use std::{io::Read, sync::Arc};
+use std::sync::Arc;
 
 use recording_studio::{
     archive::ArchiveError,

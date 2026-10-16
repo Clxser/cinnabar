@@ -136,7 +136,11 @@ impl Project {
         }
         for title in &self.titles {
             title.span.validate()?;
-            limit("title bytes", title.text.len(), 16_384)?;
+            limit(
+                "title bytes",
+                title.text.len(),
+                crate::title::MAX_TITLE_TEXT_BYTES,
+            )?;
             if !title
                 .anchor
                 .iter()

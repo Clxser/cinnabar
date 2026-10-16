@@ -31,6 +31,8 @@ mod readback;
 pub use readback::ReplayReadback;
 mod scene;
 mod targets;
+mod titles;
+pub use titles::{FrameTitles, TitleLayer};
 
 const TARGET: ManualTextureViewHandle = ManualTextureViewHandle(0);
 

@@ -42,6 +42,8 @@ pub fn nearest_boundary(text: &str, x: f32, mut width: impl FnMut(&str) -> f32) 
 /// Where a text box draws its text, to place a pressed caret by character.
 pub struct TextSpot<F> {
     pub field: F,
+    /// A drawn line's byte range in its shared editor; None covers the entire single-line field.
+    pub byte_range: Option<[usize; 2]>,
     /// The box's press area, window-logical px.
     pub bounds: UiRect,
     /// Where the text starts, window-logical px.

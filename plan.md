@@ -9295,7 +9295,7 @@ follows, an editable multi-track timeline, event-driven automatic effects, media
 and audio import, titles, transitions, project persistence and finished video
 export. Agent/MCP editing is a later stage and does not replace these native flows.
 
-Current implementation, not yet built or exercised:
+Current implementation; runtime acceptance remains incomplete:
 
 - A Bevy-free project owner admits bounded metadata and cross-references. Rational
   frame rates and integer media time drive preview and export plans. Transactional
@@ -9379,10 +9379,10 @@ Current implementation, not yet built or exercised:
   bounded slot outside server/mod texture ranges. Crops, opacity, ordered tracks,
   black gaps and grouped crossfades have source implementations; ordinary opaque
   single-source frames share decoded storage. This provisional raster path uses
-  point crop sampling, lacks source-identity/frame-accuracy acceptance, and does
-  not yet render titles, audio, cameras, global effects or native replay scenes.
-  Missing camera/effect composition is disclosed in the preview. No build, test
-  or rendered acceptance was performed; this does not close the Studio gate.
+  point crop sampling and lacks source-identity/frame-accuracy acceptance. Titles,
+  camera/scene effects and native replay scenes use the app adapters below;
+  synchronized audio preview remains missing. No automated tests or rendered
+  acceptance were performed; this does not close the Studio gate.
 - A provisional native replay viewport now consumes the coordinated scene frame
   in an independent headless app on the main device. Prepared terrain, actors,
   environment and animation clock stay separate from live authorities. The native
@@ -9392,10 +9392,10 @@ Current implementation, not yet built or exercised:
   A bounded four-target pool, GPU-only UI copies, retained-layer damage and queue
   completion leases avoid frame readbacks and target overwrite. Shared device
   faults retain the primary app's fatal-error path when the worker is idle/closed.
-  This remains unbuilt and unrun. It supports one unframed replay layer and
+  This remains unverified at runtime. It supports one unframed replay layer and
   the camera authoring described below; unculled
   actor coverage, HUD/hand/particles/block entities, exact projection planes,
-  shader modes, interpolation, audio, titles and complete visual composition
+  shader modes, interpolation, audio and complete visual composition
   remain incomplete. This does not establish replay parity or measured efficiency.
 - A separate bounded camera-target journal now captures received actor anchors,
   names, angles and spawn identities, with the local subject's published eye offset.
@@ -9411,7 +9411,7 @@ Current implementation, not yet built or exercised:
   the output frame grid, while camera metadata edits reuse admitted scene state.
   Target interpolation, smooth camera motion, full actor coverage, visible key and
   easing controls, narrow-layout inspector access, and runtime/render acceptance
-  remain incomplete. This source has not been compiled or exercised.
+  remain incomplete. Camera behavior has not been exercised at runtime.
 - Native Export now snapshots the current edit, evaluates each output frame on the
   shared rational grid and supervises exact-order hardware/software encoding on a
   worker. It connects raster composition and one isolated native replay layer,
@@ -9420,7 +9420,7 @@ Current implementation, not yet built or exercised:
   fades and silence derive from saved audio metadata. Progress/cancellation persist
   across library/editor views. Successful encoder/mux completion and file sync
   precede no-clobber publication; temporary export material is ignored.
-  This source is unbuilt and unrun. Preflight rejects titles,
+  This source has not had runtime acceptance. Preflight rejects
   native layering/crops/crossfades and camera shots outside replay
   coverage; missing subject payloads can still fail at a later frame. Full export
   composition, settings/destination controls, audio preview, source accuracy,
@@ -9442,9 +9442,18 @@ Current implementation, not yet built or exercised:
   and decimated key markers expose authored data. Cached interval packing separates
   overlapping camera/effect/audio/title items without changing render precedence;
   visible-row culling and source-name lookup avoid repeated offscreen text work.
-  Title rendering/editing, synchronized audio preview, automatic-effect retiming,
+  Title runtime acceptance, synchronized audio preview, automatic-effect retiming,
   full native visual composition, numeric/drag controls, narrow-layout interaction,
   capture/seek/export acceptance and measured resource/frame costs remain open.
+
+- Editorial title overlays now share worker-owned layout, installed font snapshots,
+  bounded immutable ink caches and GPU composition between preview and export.
+  Titles remain screen anchored after scene camera/color effects, with independent
+  opacity envelopes. Native multiline text drafts apply as one undoable edit;
+  font role, color, placement, size, shadow, fades, frame moves and trims use saved
+  metadata. Explicit-line caret navigation and pointer placement share the native
+  text editor. This is provisional source: font rendering, composition, editing,
+  cancellation and resource budgets still require runtime acceptance.
 
 Required work remains open:
 
@@ -9464,8 +9473,10 @@ Required work remains open:
   Validate capture limits for disk quota, long sessions, resize and shutdown.
 - Owning-crate regressions and rendered/runtime acceptance for recording, seeking,
   editing, saving/reopening, automatic PvP edits, cinematics and exported video.
-  Performance and long-recording resource bounds need measured validation. Builds,
-  tests and game launches remain unrun under the current user instruction.
+  Performance and long-recording resource bounds need measured validation. Native
+  Windows production Cargo checking has passed in the play profile for both
+  default and enhanced client configurations. Automated tests and game launches
+  remain unrun; these checks do not establish replay or editor runtime acceptance.
 
 This feature is incomplete. Domain APIs and storage code alone do not establish a
 working Recording Studio, replay visual parity or a performance acceptance result.

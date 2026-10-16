@@ -23,11 +23,8 @@ struct Counts {
 
 /// Unsupported composition fails before encoding; the immutable project remains available for editing.
 pub(super) fn prepare(project: &Project, has_device: bool) -> Result<(), String> {
-    if !project.titles.is_empty() {
-        return Err(
-            "Title rendering is not connected to export yet; remove titles to export this project."
-                .into(),
-        );
+    if !has_device && !project.titles.is_empty() {
+        return Err("Titles need an initialized graphics device.".into());
     }
     let kinds: BTreeMap<_, _> = project
         .sources

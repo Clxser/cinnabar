@@ -20,6 +20,7 @@ pub mod playback;
 pub mod preview;
 pub mod storage;
 pub mod time;
+pub mod title;
 pub mod video;
 pub mod wav;
 

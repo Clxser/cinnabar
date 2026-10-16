@@ -98,7 +98,7 @@ impl EnvironmentCapture {
             }
         }
         self.pinned
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |old| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |old| {
                 old.checked_add(bytes)
                     .filter(|&total| total <= MAX_PINNED_BYTES)
             })

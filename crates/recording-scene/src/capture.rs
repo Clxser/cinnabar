@@ -253,7 +253,7 @@ impl Drop for TerrainCapture {
 
 /// Byte admission is atomic, bounded and released automatically on send failure or worker completion.
 fn reserve(shared: &Arc<Shared>, bytes: usize) -> Result<Charge, String> {
-    shared.pinned.fetch_update(Ordering::AcqRel, Ordering::Acquire, |old| old.checked_add(bytes).filter(|&total| total <= MAX_PINNED_BYTES))
+    shared.pinned.try_update(Ordering::AcqRel, Ordering::Acquire, |old| old.checked_add(bytes).filter(|&total| total <= MAX_PINNED_BYTES))
         .map_err(|_| "Recorded scene buffers exceeded their memory budget; stopping instead of stalling gameplay.".to_owned())?;
     Ok(Charge {
         shared: Arc::clone(shared),

@@ -1,7 +1,7 @@
 //! Native export creates isolated replay rendering inside the domain export worker.
 
 use bevy::prelude::*;
-use client_shell::menu::MenuRuntime;
+use client_shell::{menu::MenuRuntime, ui_resources::UiPresentationResource};
 use recording_studio::{
     export::{Cancellation, ExportFrame, ExportRequest, ExportTask, FrameSource},
     playback::{CompiledTimeline, FramePlan},
@@ -23,6 +23,7 @@ pub(super) fn update(
     mut state: ResMut<NativeExport>,
     mut menu: ResMut<MenuRuntime>,
     context: Option<Res<ReplayRenderContext>>,
+    presentation: Res<UiPresentationResource>,
 ) {
     if let Some(request) = menu.take_studio_export_request() {
         if state
@@ -32,7 +33,8 @@ pub(super) fn update(
         {
             state.task.take();
             let context = context.as_deref().cloned();
-            match ExportTask::start(request, move || Ok(Frames::new(context))) {
+            let font = presentation.font_snapshot();
+            match ExportTask::start(request, move || Ok(Frames::new(context, font))) {
                 Ok(task) => state.task = Some(task),
                 Err(error) => {
                     menu.set_studio_export_status(recording_studio::export::ExportStatus {
@@ -67,12 +69,19 @@ struct Frames {
     plan: FramePlan,
     readback: Option<ReplayReadback>,
     effects: Option<FrameEffects>,
+    titles: super::titles::Titles,
 }
 
 impl Frames {
     /// No Bevy app crosses a thread boundary; its GPU scene is first constructed on frame evaluation.
-    fn new(context: Option<ReplayRenderContext>) -> Self {
+    fn new(
+        context: Option<ReplayRenderContext>,
+        font: std::sync::Arc<assets::RuntimeFontCatalog>,
+    ) -> Self {
+        let mut titles = super::titles::Titles::new(context.clone());
+        titles.set_font(font);
         Self {
+            titles,
             effects: context.clone().map(FrameEffects::new),
             native: context.clone().map(NativeScene::new),
             context,
@@ -119,9 +128,6 @@ impl FrameSource for Frames {
             .expect("export timeline admitted")
             .sample(at, &mut self.plan, |_, _, _| None)
             .map_err(|error| error.to_string())?;
-        if !self.plan.titles.is_empty() {
-            return Err("Title rendering is not connected to export yet; remove titles to export this project.".into());
-        }
         let wait = || std::thread::sleep(std::time::Duration::from_millis(10));
         let native = self
             .native
@@ -133,7 +139,10 @@ impl FrameSource for Frames {
             if native.missing_target {
                 return Err("A camera subject is missing at this export frame. Retarget or shorten its shot.".into());
             }
-            let size = native.image.target.size();
+            let image = self
+                .titles
+                .render(request, native.image, &cancelled, &wait)?;
+            let size = image.target.size();
             if self.readback.is_none() {
                 self.readback = Some(ReplayReadback::new(
                     self.context
@@ -146,7 +155,7 @@ impl FrameSource for Frames {
                 .readback
                 .as_mut()
                 .expect("export readback admitted")
-                .frame(native.image, cancelled)?;
+                .frame(image, cancelled)?;
             return Ok(ExportFrame { size, rgba8, notice: Some("Native replay export uses Vanilla shading and the recorded actor draw coverage; HUD, hand, particles and block entities are omitted.".into()) });
         }
         if self.plan.shot.is_some() {
@@ -155,7 +164,7 @@ impl FrameSource for Frames {
         let frame = self
             .raster
             .render(request, request.project.export.size, &cancelled)?;
-        if !frame.effects.neutral() {
+        if !frame.effects.neutral() || self.titles.active(request)? {
             let effects = self
                 .effects
                 .as_mut()
@@ -171,6 +180,7 @@ impl FrameSource for Frames {
                 }
                 wait();
             };
+            let image = self.titles.render(request, image, &cancelled, &wait)?;
             if self.readback.is_none() {
                 self.readback = Some(ReplayReadback::new(
                     self.context

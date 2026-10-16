@@ -20,11 +20,13 @@ pub(super) struct NativePreview {
     epoch: Option<[u64; 3]>,
     requested: Option<([u64; 3], u64)>,
     failed: Option<[u64; 3]>,
+    font: Option<Arc<assets::RuntimeFontCatalog>>,
 }
 
 struct Job {
     generation: u64,
     request: PreviewRequest,
+    font: Arc<assets::RuntimeFontCatalog>,
 }
 struct Completed {
     generation: u64,
@@ -64,6 +66,7 @@ pub(super) fn update(
             state.epoch = None;
             state.requested = None;
             state.failed = None;
+            state.font = None;
             presentation.set_studio_preview_page(None);
             surface.0 = None;
             menu.set_studio_preview_status(PreviewStatus::default());
@@ -108,7 +111,15 @@ pub(super) fn update(
             }
         }
     }
-    let changed_epoch = state.epoch != Some(request.epoch);
+    let font = presentation.font_snapshot();
+    let changed_font = state
+        .font
+        .as_ref()
+        .is_none_or(|old| !Arc::ptr_eq(old, &font));
+    if changed_font {
+        state.font = Some(font.clone());
+    }
+    let changed_epoch = state.epoch != Some(request.epoch) || changed_font;
     if changed_epoch {
         state.epoch = Some(request.epoch);
         state.requested = None;
@@ -169,6 +180,7 @@ pub(super) fn update(
     if worker.submit(Job {
         generation,
         request,
+        font,
     }) {
         state.requested = Some(key);
     }
@@ -240,6 +252,7 @@ impl Drop for Worker {
 fn run(shared: &Shared, context: Option<ReplayRenderContext>) {
     let mut preview = RasterPreview::default();
     let mut effects = context.clone().map(FrameEffects::new);
+    let mut titles = super::titles::Titles::new(context.clone());
     let mut native = context.map(scene::NativeScene::new);
     let mut native_page: Option<UiTexturePage> = None;
     loop {
@@ -282,19 +295,22 @@ fn run(shared: &Shared, context: Option<ReplayRenderContext>) {
             }
             None => Ok(None),
         };
+        titles.set_font(job.font);
         let result = scene.and_then(|scene| {
             if let Some(scene) = scene {
-                return gpu_output(&mut native_page, scene.image, scene.notice, Some(scene.camera));
+                let image = titles.render(&job.request, scene.image, &cancelled, &wait)?;
+                return gpu_output(&mut native_page, image, scene.notice, Some(scene.camera));
             }
             preview
                 .render(&job.request, UI_STUDIO_PREVIEW_MAX_SIZE, &cancelled)
                 .and_then(|frame| {
-                    if !frame.effects.neutral() {
+                    if !frame.effects.neutral() || titles.active(&job.request)? {
                         let effects = effects.as_mut().ok_or("Timeline effects need an initialized graphics device.")?;
                         let started = std::time::Instant::now();
                         loop {
                             if cancelled() { return Err("Preview cancelled.".into()); }
                             if let Some(image) = effects.raster(frame.size, &frame.rgba8, frame.effects, job.request.frame_time()?)? {
+                                let image = titles.render(&job.request, image, &cancelled, &wait)?;
                                 return gpu_output(&mut native_page, image, frame.notice, None);
                             }
                             if started.elapsed() >= std::time::Duration::from_secs(30) { return Err("The effect preview could not finish. Pause playback and seek again.".into()); }

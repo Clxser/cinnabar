@@ -15,6 +15,36 @@ pub(super) fn drive(
         if input.state != ButtonState::Pressed {
             continue;
         }
+        if menu.field == Some(MenuField::StudioTitle)
+            && matches!(input.key_code, KeyCode::ArrowUp | KeyCode::ArrowDown)
+        {
+            let direction = if input.key_code == KeyCode::ArrowUp {
+                -1
+            } else {
+                1
+            };
+            menu.edit_field(|editor| editor.move_line(direction, modifiers.shift()));
+            continue;
+        }
+        if menu.field == Some(MenuField::StudioTitle) && !input.repeat {
+            let action = match input.key_code {
+                KeyCode::Escape => Some(launcher::menu::studio::Action::CancelTitleText),
+                KeyCode::Enter | KeyCode::NumpadEnter if !modifiers.shift() => {
+                    Some(launcher::menu::studio::Action::ApplyTitleText)
+                }
+                KeyCode::Enter | KeyCode::NumpadEnter => {
+                    menu.edit_field(|editor| {
+                        let _ = editor.insert("\n");
+                    });
+                    continue;
+                }
+                _ => None,
+            };
+            if let Some(action) = action {
+                menu.activate(launcher::menu::MenuAction::Studio(action));
+                continue;
+            }
+        }
         if matches!(
             input.key_code,
             KeyCode::ArrowLeft

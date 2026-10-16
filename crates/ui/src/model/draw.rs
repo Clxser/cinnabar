@@ -1,4 +1,6 @@
-use crate::{BedrockColor, GlyphQuad, TEXT_BOLD_OFFSET_64, UiLimits, UiPoint, UiRect};
+use crate::{
+    BedrockColor, GlyphQuad, TEXT_BOLD_OFFSET_64, TEXT_ITALIC_SHEAR_PX, UiLimits, UiPoint, UiRect,
+};
 
 use super::{
     TextEffects, TextShadow, UI_STYLE_BILINEAR, UiBlendMode, UiDrawBatch, UiError, UiVertex,
@@ -13,10 +15,6 @@ pub(super) struct DrawSpace<'a> {
     pub(super) projection: Option<&'a UiWorldProjection>,
     pub(super) node: super::UiNodeId,
 }
-
-/// Design-pixel lean of an italic glyph's top edge, scaled by the layout
-/// scale. Native visual confirmation pending.
-const ITALIC_SHEAR_PX: f32 = 1.0;
 
 pub(super) fn emit_visual(
     visual: &UiVisual,
@@ -320,7 +318,7 @@ fn emit_text(
             // (so both passes agree) and animated across frames.
             let (page, uv) = obfuscated_raster(glyph, index, layout_id, effects);
             let shear = if glyph.style.italic {
-                ITALIC_SHEAR_PX * effect_scale
+                TEXT_ITALIC_SHEAR_PX * effect_scale
             } else {
                 0.0
             };

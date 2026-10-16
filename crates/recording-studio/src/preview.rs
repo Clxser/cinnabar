@@ -148,9 +148,6 @@ impl RasterPreview {
         if self.plan.shot.is_some() {
             pending.push("3D camera changes (use a replay clip)");
         }
-        if !self.plan.titles.is_empty() {
-            pending.push("titles");
-        }
         let notice =
             (!pending.is_empty()).then(|| format!("Not previewed yet: {}.", pending.join(", ")));
         let mut decode = |visual: &crate::playback::VisualSample| {

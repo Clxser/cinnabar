@@ -16,6 +16,7 @@ mod bridge;
 mod camera;
 mod effects;
 mod scene;
+mod titles;
 
 pub(super) struct Studio {
     pub view: Arc<Snapshot>,
@@ -32,6 +33,22 @@ pub(super) struct Studio {
     capture_request: Option<recording_studio::capture::CaptureRequest>,
     export_request: Option<recording_studio::export::ExportRequest>,
     export_cancel: bool,
+    pub(super) title_text: ui::ChatEditor,
+    title_edit: Option<(u64, Id, String)>,
+}
+
+impl std::fmt::Debug for Studio {
+    /// Reports compact control state without traversing projects, recorded assets or worker queues.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Studio")
+            .field("document", &self.document)
+            .field("has_project", &self.editor.is_some())
+            .field("position", &self.transport.position())
+            .field("loading", &self.view.loading)
+            .field("capture", &self.view.capture.phase)
+            .field("export", &self.view.export.phase)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Studio {
@@ -56,6 +73,8 @@ impl Studio {
             capture_request: None,
             export_request: None,
             export_cancel: false,
+            title_text: super::input::fields::field_editor(launcher::menu::MenuField::StudioTitle),
+            title_edit: None,
         }
     }
 
@@ -171,6 +190,7 @@ impl Studio {
         {
             actions.extend(self.camera_focus_actions());
             actions.extend(self.effect_focus_actions());
+            actions.extend(self.title_focus_actions());
         }
         let mut actions: Vec<_> = actions.into_iter().map(MenuAction::Studio).collect();
         if self.view.export.phase.busy()
@@ -321,6 +341,18 @@ impl Studio {
                 Arc::make_mut(&mut self.view).selected = Some(id);
             }
             Action::AddEffect(kind) => self.add_effect(kind)?,
+            Action::EditTitleText => self.begin_title_text()?,
+            Action::ApplyTitleText => self.apply_title_text()?,
+            Action::CancelTitleText => self.cancel_title_text(),
+            Action::CycleTitleStyle => self.cycle_title_style()?,
+            Action::ToggleTitleShadow => self.toggle_title_shadow()?,
+            Action::AdjustTitle {
+                parameter,
+                direction,
+            } => self.adjust_title(parameter, direction)?,
+            Action::TrimTitleStart => self.trim_title(true)?,
+            Action::TrimTitleEnd => self.trim_title(false)?,
+            Action::MoveTitle(frames) => self.move_title(frames)?,
             Action::ToggleEffect => self.toggle_effect()?,
             Action::AdjustEffect(direction) => self.adjust_effect(direction)?,
             Action::AddEffectKey => self.key_effect()?,
@@ -582,6 +614,7 @@ impl Studio {
 
     /// Replaces the active document only after the selected input has been fully admitted.
     fn install(&mut self, editor: Editor, path: Option<PathBuf>) {
+        self.cancel_title_text();
         self.document = self.document.wrapping_add(1);
         self.editor = Some(editor);
         self.replays.clear();

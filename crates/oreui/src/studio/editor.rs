@@ -203,6 +203,15 @@ fn inspector(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<(
         let height = (y - content_top + scroll.offset).max(0.0);
         return canvas.end_scroll(scroll, height);
     }
+    if let Some(title) = project
+        .titles
+        .iter()
+        .find(|title| Some(title.id) == view.studio.selected)
+    {
+        y = super::titles::inspector(canvas, view, [left, y, right, area[3] - pad], title)?;
+        let height = (y - content_top + scroll.offset).max(0.0);
+        return canvas.end_scroll(scroll, height);
+    }
     let selected = project
         .clips
         .iter()

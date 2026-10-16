@@ -256,6 +256,7 @@ impl UiPresentationRuntime {
                     | launcher::menu::MenuField::WorldSeed
                     | launcher::menu::MenuField::SkinName
                     | launcher::menu::MenuField::RealmCode
+                    | launcher::menu::MenuField::StudioTitle
                     | launcher::menu::MenuField::MacroCommand(_) => {
                         return None;
                     }
@@ -627,6 +628,7 @@ fn text_spot(
         .find(|text| text.key == region.key)?;
     Some(TextSpot {
         field,
+        byte_range: None,
         bounds,
         left: text.left,
         factor: text.scale,

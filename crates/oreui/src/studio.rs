@@ -16,6 +16,7 @@ mod export;
 mod library;
 mod recording;
 mod timeline;
+mod titles;
 
 /// Uses the existing OreUI font, focus, button and scroll primitives throughout the workspace.
 pub(super) fn draw(

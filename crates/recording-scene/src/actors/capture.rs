@@ -248,7 +248,7 @@ impl ActorCapture {
 /// Reserves only retained immutable allocations; queue bytes are charged separately by the archive.
 fn charge(pinned: &Arc<AtomicUsize>, bytes: usize) -> Result<Charge, String> {
     pinned
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |old| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |old| {
             old.checked_add(bytes)
                 .filter(|total| *total <= MAX_PINNED_BYTES)
         })

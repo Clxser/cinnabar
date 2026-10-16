@@ -195,11 +195,8 @@ impl NativeScene {
         if frame.targets.is_none() {
             notices.push("This take has no received-actor target track; actor tracking needs a newer recording.");
         }
-        match (!self.plan.audio.is_empty(), !self.plan.titles.is_empty()) {
-            (true, true) => notices.push("Audio and titles are not previewed yet."),
-            (true, false) => notices.push("Audio is not previewed yet."),
-            (false, true) => notices.push("Titles are not previewed yet."),
-            (false, false) => {}
+        if !self.plan.audio.is_empty() {
+            notices.push("Audio is not previewed yet.");
         }
         let started = Instant::now();
         let image = if let Some(base) = source

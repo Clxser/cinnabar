@@ -75,6 +75,9 @@ impl Studio {
 
     /// Selecting a camera/effect/title clip seeks into its range when the current playhead is outside it.
     pub(super) fn select_timeline_item(&mut self, id: Id) -> Result<(), String> {
+        if self.view.selected != Some(id) {
+            self.cancel_title_text();
+        }
         let project = self.project()?;
         let span = project
             .shots

@@ -5,7 +5,7 @@ use recording_studio::capture::{CapturePhase, CaptureRequest, CaptureStatus};
 
 impl Studio {
     /// Export freezes the current immutable project revision while further edits remain independent.
-    fn queue_export(&mut self) -> Result<(), String> {
+    pub(super) fn queue_export(&mut self) -> Result<(), String> {
         if self.export_request.is_some() || self.view.export.phase.busy() {
             return Ok(());
         }
@@ -39,7 +39,7 @@ impl Studio {
     }
 
     /// Coalesces button repeats and never replaces a pending stop with a bookmark.
-    fn queue_capture_toggle(&mut self) {
+    pub(super) fn queue_capture_toggle(&mut self) {
         self.capture_request = match self.view.capture.phase {
             CapturePhase::Idle | CapturePhase::Complete | CapturePhase::Failed => {
                 Some(CaptureRequest::Start)
@@ -98,7 +98,7 @@ impl crate::menu::MenuRuntime {
             return None;
         }
         let editor = self.studio.editor.as_ref()?;
-        if editor.project().sources.is_empty() || editor.project().duration() == MediaTime::ZERO {
+        if editor.project().duration() == MediaTime::ZERO {
             return None;
         }
         Some(recording_studio::preview::PreviewRequest {

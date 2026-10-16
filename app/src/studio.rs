@@ -31,6 +31,7 @@ mod observations;
 mod preview;
 mod targets;
 mod terrain;
+mod titles;
 
 #[derive(Resource, Default)]
 struct NativeCapture {

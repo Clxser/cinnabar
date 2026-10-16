@@ -15,6 +15,7 @@ use recording_studio::{
     },
     object_store::{AssetId, AssetWriter},
 };
+use serde::Serialize;
 
 use crate::{
     TERRAIN_TRACK_SCHEMA,

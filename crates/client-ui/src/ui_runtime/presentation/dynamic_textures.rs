@@ -319,6 +319,11 @@ pub(super) fn rebuild(runtime: &mut UiPresentationRuntime) {
 }
 
 impl UiPresentationRuntime {
+    /// Retains the installed font faces for worker-owned title layout without copying carrier pixels.
+    pub fn font_snapshot(&self) -> Arc<assets::RuntimeFontCatalog> {
+        Arc::clone(&self.font)
+    }
+
     /// Accepts an immutable worker-prepared preview page; rebuilding never copies or hashes frame pixels here.
     pub fn set_studio_preview_page(&mut self, page: Option<UiTexturePage>) -> bool {
         if page.is_none() && self.studio_preview_page.is_none() {

@@ -417,6 +417,7 @@ fn named_edit_metadata_places_caret_at_the_painted_character_boundary() {
                     );
                     let spot = TextSpot {
                         field: (),
+                        byte_range: None,
                         bounds: node.bounds(),
                         left: edit.left,
                         factor: edit.scale,
@@ -507,6 +508,7 @@ fn named_styled_font_effects_use_display_units_at_every_raster_resolution() {
                     .unwrap();
                 let spot = TextSpot {
                     field: (),
+                    byte_range: None,
                     bounds: node.bounds(),
                     left: edit.left,
                     factor: edit.scale,
