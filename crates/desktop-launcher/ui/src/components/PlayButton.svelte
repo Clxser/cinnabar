@@ -42,10 +42,10 @@
     isolation: isolate;
     display: flex;
     align-items: center;
-    width: 360px;
-    height: 76px;
-    padding: 0 26px;
-    border-radius: 16px;
+    width: 300px;
+    height: 62px;
+    padding: 0 22px;
+    border-radius: 14px;
     overflow: hidden;
     text-align: left;
     color: var(--cinnabar-ink);
@@ -152,18 +152,16 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    font: 800 23px / 1.05 var(--font);
-    font-stretch: 125%;
-    letter-spacing: -0.01em;
+    font: 680 20px / 1.05 var(--font);
+    letter-spacing: -0.02em;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
   .detail {
-    font: var(--t-label);
-    font-weight: 500;
-    opacity: 0.84;
+    font: var(--t-meta);
+    opacity: 0.82;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -172,13 +170,13 @@
   .pct {
     flex: none;
     margin-left: 16px;
-    font: 800 26px / 1 var(--font);
-    font-stretch: 112%;
+    font: 680 22px / 1 var(--font);
+    letter-spacing: -0.02em;
     font-variant-numeric: tabular-nums;
   }
 
   .pct small {
-    font-size: 15px;
+    font-size: 13px;
     margin-left: 1px;
     opacity: 0.8;
   }

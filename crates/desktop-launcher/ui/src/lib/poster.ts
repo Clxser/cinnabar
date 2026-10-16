@@ -19,3 +19,11 @@ export function posterFor(name: string): Poster {
   const initial = name.trim().charAt(0).toUpperCase() || '?';
   return { hue: HUES[h % HUES.length]!, initial };
 }
+
+/** Poster for a news post without artwork: release posts show their version, others their tag. */
+export function newsPoster(title: string, tag?: string): { hue: number; text: string } {
+  const version = /\b\d+\.\d+(?:\.\d+)?\b/.exec(title)?.[0];
+  if (version) return { hue: 6, text: version };
+  const word = tag ?? 'News';
+  return { hue: HUES[hashString(word) % HUES.length]!, text: word };
+}

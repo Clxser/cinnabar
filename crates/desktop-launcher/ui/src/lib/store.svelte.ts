@@ -1,5 +1,6 @@
 import { api, type Channel, type FeaturedServer, type GameState, type InstallState, type News, type UpdateState } from '../api';
-import { getAccount, signIn, type Account, type Server } from '../api/proposed';
+import { getAccount, getChangelog, getRecentServers, signIn, type Account, type Changelog, type RecentServer, type Server } from '../api/proposed';
+import type { ActionIntent } from './play';
 import type { Platform } from '../api';
 import { platform as guessedPlatform } from './window';
 
@@ -37,6 +38,8 @@ class LauncherStore {
 
   /** Undefined while loading or when the bridge has no account support yet. */
   account = $state<Account>();
+  recent = $state<RecentServer[]>([]);
+  changelog = $state<Changelog>();
   now = $state(Date.now());
   /** Set by "Update & play" so a finished install launches the game. */
   playAfterInstall = $state(false);
@@ -56,6 +59,8 @@ class LauncherStore {
     this.reloadNews();
     this.reloadServers();
     getAccount().then((a) => (this.account = a), () => undefined);
+    getRecentServers().then((r) => (this.recent = r ?? []), () => undefined);
+    getChangelog().then((c) => (this.changelog = c), () => undefined);
 
     return () => {
       offUpdate();
@@ -128,6 +133,24 @@ class LauncherStore {
   open = (url: string) => api.openExternal(url);
 
   openLogs = () => api.openLogs();
+
+  /** Runs an action offered by a notice or the status line. */
+  act = (intent: ActionIntent) => {
+    switch (intent) {
+      case 'retry':
+        return this.retry();
+      case 'install':
+        return this.installManually();
+      case 'logs':
+        return this.openLogs();
+      case 'check':
+        return this.check();
+      case 'notes':
+        return this.update?.kind === 'available' && this.update.notesUrl ? this.open(this.update.notesUrl) : undefined;
+    }
+  };
+
+  rejoin = (server: RecentServer) => api.launchGame({ server: { address: server.address, port: server.port } });
 
   signIn = () => signIn();
 }

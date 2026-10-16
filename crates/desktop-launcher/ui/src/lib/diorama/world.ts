@@ -9,9 +9,21 @@ export interface World {
   top(x: number, z: number): number;
   /** Ore voxels in the order the vein refines, back-left to front-right. */
   ore: [number, number, number][];
-  /** Column of the mercury pool's centre. */
-  pool: [number, number];
 }
+
+/** Shape of a generated island. */
+export interface IslandShape {
+  seed: number;
+  size: number;
+  radius: number;
+  /** Height of the terraced hill above the base. */
+  hill: number;
+  /** Depth of the hanging underside at the centre. */
+  keel: number;
+  vein: boolean;
+}
+
+export const MAIN_ISLAND: IslandShape = { seed: 2026, size: 16, radius: 6.6, hill: 5.2, keel: 5.5, vein: true };
 
 function rng(seed: number) {
   let a = seed >>> 0;
@@ -43,8 +55,8 @@ function valueNoise(seed: number) {
   };
 }
 
-export function buildWorld(seed = 2026): World {
-  const size = 16;
+export function buildWorld(shape: IslandShape = MAIN_ISLAND): World {
+  const { seed, size } = shape;
   const r = rng(seed);
   const c = (size - 1) / 2;
   const cells = new Map<string, Block>();
@@ -56,7 +68,7 @@ export function buildWorld(seed = 2026): World {
   const lobes = Array.from({ length: 5 }, () => ({ a: r() * Math.PI * 2, k: 0.7 + r() * 0.6 }));
   const radius = (x: number, z: number) => {
     const ang = Math.atan2(z - c, x - c);
-    let rad = 6.6;
+    let rad = shape.radius;
     for (const l of lobes) rad += Math.cos(ang - l.a) * 0.25 * l.k;
     return rad;
   };
@@ -71,10 +83,10 @@ export function buildWorld(seed = 2026): World {
         continue;
       }
       // Terraced hill rising toward the back-left; stepped so each terrace reads as a ledge.
-      const hill = Math.max(0, 1 - Math.hypot(x - c + 2.6, z - c + 2.8) / 7.4);
-      const h = Math.floor(1 + hill * 5.2);
+      const hill = Math.max(0, 1 - Math.hypot(x - c + shape.radius * 0.4, z - c + shape.radius * 0.42) / (shape.radius * 1.12));
+      const h = Math.floor(1 + hill * shape.hill);
       // Underside tapers into a hanging point.
-      const depth = Math.floor(1 + Math.pow(1 - d / rad, 1.2) * 5.5 + r() * 1.2);
+      const depth = Math.floor(1 + Math.pow(1 - d / rad, 1.2) * shape.keel + r() * 1.2);
       tops[x]![z] = h;
       // Moss gathers in patches on the lower terraces; the summit stays bare rock.
       const mossy = noise(x * 0.35, z * 0.35) > 0.42 && h < 6;
@@ -91,7 +103,7 @@ export function buildWorld(seed = 2026): World {
   // The vein: a slanted sheet through the hill, exposed on its terraces and front cliff.
   const ore: [number, number, number][] = [];
   for (const [k, block] of cells) {
-    if (block === 'deepslate') continue;
+    if (!shape.vein || block === 'deepslate') continue;
     const [x, y, z] = k.split(',').map(Number) as [number, number, number];
     const sheet = x * 0.62 - z * 0.48 + y * 0.55 - 1.0 + Math.sin(z * 0.8) * 0.7;
     if (Math.abs(sheet) < 0.62 && y > -4) {
@@ -101,24 +113,11 @@ export function buildWorld(seed = 2026): World {
   }
   ore.sort((a, b) => a[0] + a[2] - (b[0] + b[2]) || b[1] - a[1]);
 
-  // Mercury pool: a shallow two-by-two basin on a low terrace in front.
-  const pool: [number, number] = [Math.round(c + 2.5), Math.round(c + 0.5)];
-  const poolTop = Math.min(...[0, 1].flatMap((dx) => [0, 1].map((dz) => tops[pool[0] + dx]![pool[1] + dz]!)));
-  for (const dx of [0, 1]) {
-    for (const dz of [0, 1]) {
-      const x = pool[0] + dx;
-      const z = pool[1] + dz;
-      for (let y = poolTop; y <= tops[x]![z]!; y++) cells.delete(key(x, y, z));
-      tops[x]![z] = poolTop - 1;
-    }
-  }
-
   return {
     size,
     get: (x, y, z) => cells.get(key(x, y, z)),
     top: (x, z) => tops[x]?.[z] ?? -1,
     ore,
-    pool,
   };
 }
 
@@ -136,7 +135,7 @@ export function buildRock(seed: number): World {
       for (let y = -depth; y <= 0; y++) cells.set(key(x, y, z), y === 0 ? (r() < 0.5 ? 'mossTop' : 'dolomite') : 'slate');
     }
   }
-  return { size, get: (x, y, z) => cells.get(key(x, y, z)), top: () => 0, ore: [], pool: [0, 0] };
+  return { size, get: (x, y, z) => cells.get(key(x, y, z)), top: () => 0, ore: [] };
 }
 
 // Face definitions: normal, the four corners (counter-clockwise from outside), and the two

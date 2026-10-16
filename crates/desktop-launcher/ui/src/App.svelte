@@ -18,14 +18,36 @@
   // `?view=diorama` renders the world alone, for stills and generated art.
   const q = new URLSearchParams(location.search);
   const probe = q.get('view') === 'diorama';
-  const probeFrame = { x: Number(q.get('fx') ?? 0), y: Number(q.get('fy') ?? 0), zoom: Number(q.get('zoom') ?? 1) };
+  const probeFrame = {
+    x: Number(q.get('fx') ?? 0),
+    y: Number(q.get('fy') ?? 0),
+    zoom: Number(q.get('zoom') ?? 1),
+    figure: q.has('px') ? { x: Number(q.get('px')), y: Number(q.get('py') ?? 0.7) } : undefined,
+  };
   const probeOrbit = q.has('orbit') ? Number(q.get('orbit')) : undefined;
 
-  // The island sits right of centre and clear of the shelf, leaving the left third for launch.
-  const FRAME = { x: 0.2, y: 0.1, zoom: 0.94 };
+  // The island sits right of centre; the player stands just right of the launch column with their
+  // feet on the dock's top edge, at every window size.
+  let width = $state(innerWidth);
+  let height = $state(innerHeight);
+  const frame = $derived({
+    x: 0.27,
+    y: 0.1,
+    zoom: 0.84,
+    figure: { x: Math.max(0.56, 690 / width), y: 1 - (height < 640 ? 214 : 246) / height },
+  });
 
   const install = $derived(store.install.status === 'ready' ? store.install.value : undefined);
-  const refined = $derived(veinFill(playModel(install, store.install.status === 'error', store.update, store.game, store.now)));
+  // On the first launch of a new version the vein starts dark and re-ignites: the "what's new" moment.
+  let ignited = $state(true);
+  let celebrated = false;
+  $effect(() => {
+    if (celebrated || !store.changelog?.unseen) return;
+    celebrated = true;
+    ignited = false;
+    setTimeout(() => (ignited = true), 700);
+  });
+  const refined = $derived(ignited ? veinFill(playModel(install, store.install.status === 'error', store.update, store.game, store.now)) : 0);
   const home = $derived(store.page === 'home');
 
   // Native keyboard affordance: Mod+1..3 switch pages like tabs.
@@ -39,13 +61,13 @@
   }
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydown={onKey} bind:innerWidth={width} bind:innerHeight={height} />
 
 {#if probe}
   <div class="probe"><Diorama refined={1} paused={false} frame={probeFrame} orbit={probeOrbit} /></div>
 {:else}
 <div class="frame" data-platform={store.platform} class:home>
-  <Diorama {refined} frame={FRAME} veiled={!home} paused={!home || store.game?.kind === 'running'} />
+  <Diorama {refined} {frame} veiled={!home} paused={!home || store.game?.kind === 'running'} />
   <div class="scrim" aria-hidden="true"></div>
   <TitleBar />
   <main id="main" tabindex="-1">

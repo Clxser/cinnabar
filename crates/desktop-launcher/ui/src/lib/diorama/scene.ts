@@ -20,6 +20,8 @@ import {
   PointsMaterial,
   PointLight,
   Scene,
+  Sprite,
+  SpriteMaterial,
   ShaderMaterial,
   SRGBColorSpace,
   Vector2,
@@ -32,7 +34,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { buildAtlas, mockSkin } from './textures';
-import { buildMesh, buildRock, buildWorld } from './world';
+import { buildMesh, buildRock, buildWorld, type IslandShape } from './world';
 import { buildPlayer } from './player';
 import { MOODS, type Mood } from './mood';
 
@@ -51,10 +53,15 @@ export interface Frame {
   x: number;
   y: number;
   zoom: number;
+  /** Screen position (0..1 from the top left) of the player's feet; omit to hide the player. */
+  figure?: { x: number; y: number };
 }
 
-/** Foreground perch placement: distance toward the camera, sideways and vertical offsets. */
-const FOREGROUND = { near: 19, side: -3.4, lift: -0.6 };
+/** Camera distance of the foreground player: about a quarter of the frame's height tall. */
+const FIGURE_DISTANCE = 15;
+const ORBIT = 0.7;
+const ELEVATION = 0.27;
+const CAMERA_DISTANCE = 48;
 
 export interface Diorama {
   /** Fraction of the vein that glows, 0..1. */
@@ -91,6 +98,38 @@ const SKY_FRAGMENT = /* glsl */ `
     c += glow * exp(-d * d * 9.0) * 0.55;
     gl_FragColor = vec4(c, 1.0);
   }`;
+
+/**
+ * Paints a soft cumulus from overlapping gaussian puffs. Alpha is computed per pixel because
+ * WebKit dithers canvas gradients, which shows as coloured grain once the texture is magnified.
+ */
+function cloudCanvas(): HTMLCanvasElement {
+  const w = 256;
+  const h = 128;
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d')!;
+  const img = ctx.createImageData(w, h);
+  const puffs = [
+    [70, 78, 40], [118, 64, 50], [170, 74, 42], [96, 88, 36], [150, 90, 38], [200, 86, 30], [44, 90, 26],
+  ] as const;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let a = 0;
+      for (const [px, py, r] of puffs) a += Math.exp(-((x - px) ** 2 + (y - py) ** 2) / (r * r * 0.5));
+      // Flatten the base so the cloud sits on a level, like weather rather than a ball.
+      const base = Math.min(1, Math.max(0, (112 - y) / 18));
+      const i = (y * w + x) * 4;
+      img.data[i] = 255;
+      img.data[i + 1] = 255;
+      img.data[i + 2] = 255;
+      img.data[i + 3] = Math.round(Math.min(1, a * 0.55) * base * 255);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
 
 export function createDiorama(canvas: HTMLCanvasElement, options: DioramaOptions): Diorama {
   const renderer = new WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance', failIfMajorPerformanceCaveat: true });
@@ -165,6 +204,37 @@ export function createDiorama(canvas: HTMLCanvasElement, options: DioramaOptions
 
   const half = world.size / 2;
 
+  // Satellite islands at other depths turn one outcrop into a place.
+  // They are anchored to screen positions like the player, so they frame the layout at any size.
+  const SATELLITES: { shape: IslandShape; anchor: { x: number; y: number; distance: number }; scale: number }[] = [
+    { shape: { seed: 77, size: 10, radius: 4, hill: 3, keel: 4, vein: true }, anchor: { x: 0.36, y: 0.24, distance: 90 }, scale: 0.9 },
+    { shape: { seed: 91, size: 8, radius: 3.2, hill: 2, keel: 3.5, vein: false }, anchor: { x: 1.02, y: 0.5, distance: 62 }, scale: 0.8 },
+  ];
+  const satellites = SATELLITES.map((sat) => {
+    const m = new Mesh(buildMesh(buildWorld(sat.shape), atlas), terrainMat);
+    m.scale.setScalar(sat.scale);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    scene.add(m);
+    return { mesh: m, anchor: sat.anchor };
+  });
+
+  // A sea of soft cloud beneath the cluster and a few far banks behind it.
+  const cloudTex = new CanvasTexture(cloudCanvas());
+  cloudTex.colorSpace = SRGBColorSpace;
+  const cloudMat = new SpriteMaterial({ map: cloudTex, transparent: true, depthWrite: false, fog: false, toneMapped: false });
+  const CLOUDS: [number, number, number, number][] = [
+    [-24, -13, 6, 30], [-4, -15, 14, 34], [18, -12, 4, 28], [34, -14, -12, 32], [-30, -12, -20, 30],
+    [6, -16, -26, 36], [-44, -4, -46, 34], [40, -6, -52, 36],
+  ];
+  const clouds = CLOUDS.map(([x, y, z, size], i) => {
+    const sprite = new Sprite(cloudMat);
+    sprite.position.set(x, y, z);
+    sprite.scale.set(size, size * 0.45, 1);
+    scene.add(sprite);
+    return { sprite, x, phase: i * 1.7 };
+  });
+
   // Chunks drifting at other depths give the camera's slow orbit something to parallax against.
   const rocks = [
     { at: [-9.2, 1.5, -0.1], s: 0.5, seed: 3 },
@@ -179,22 +249,9 @@ export function createDiorama(canvas: HTMLCanvasElement, options: DioramaOptions
     scene.add(m);
     return { mesh: m, y: at[1]!, phase: seed };
   });
-  // Liquid mercury pooled in the basin: a mirror-bright metal surface.
-  const pool = new Mesh(
-    new PlaneGeometry(2, 2),
-    new MeshStandardMaterial({ color: 0xd9dee5, metalness: 1, roughness: 0.08, envMapIntensity: 1.6 }),
-  );
-  pool.rotation.x = -Math.PI / 2;
-  pool.position.set(world.pool[0] + 1 - half, world.top(world.pool[0], world.pool[1]) + 1 - 0.18, world.pool[1] + 1 - half);
-  pool.receiveShadow = true;
-  scene.add(pool);
-
   // The player stands on their own stone in the foreground: nearer the camera than the island, so
   // perspective makes them the scene's figure while the island stays the backdrop.
   const player = buildPlayer(options.skin ?? mockSkin());
-  const orbit = options.orbit ?? 0.7;
-  const toCamera = new Vector3(Math.sin(orbit) * 0.96, 0.27, Math.cos(orbit) * 0.96);
-  const right = new Vector3(Math.cos(orbit), 0, -Math.sin(orbit));
   const perch = new Mesh(buildMesh(buildRock(21), atlas), terrainMat);
   perch.castShadow = true;
   perch.receiveShadow = true;
@@ -204,10 +261,31 @@ export function createDiorama(canvas: HTMLCanvasElement, options: DioramaOptions
   const foreground = new Group();
   foreground.add(perch);
   player.root.position.set(0, 0.5, 0);
-  player.root.rotation.y = orbit + 0.35;
   foreground.add(player.root);
-  foreground.position.copy(toCamera.multiplyScalar(FOREGROUND.near)).addScaledVector(right, FOREGROUND.side).add(new Vector3(0, FOREGROUND.lift, 0));
   scene.add(foreground);
+
+  function placeCamera(az: number, el: number) {
+    camera.position.set(Math.sin(az) * Math.cos(el) * CAMERA_DISTANCE, Math.sin(el) * CAMERA_DISTANCE + 2, Math.cos(az) * Math.cos(el) * CAMERA_DISTANCE);
+    camera.lookAt(0, 1, 0);
+    camera.updateMatrixWorld();
+  }
+
+  // Anchors the player to a screen position from the resting camera, so the figure stays framed
+  // at every window size while drift still gives it parallax against the island.
+  const atScreen = (x: number, y: number, distance: number) => {
+    const ray = new Vector3(x * 2 - 1, 1 - y * 2, 0.5).unproject(camera).sub(camera.position).normalize();
+    return camera.position.clone().addScaledVector(ray, distance);
+  };
+
+  function placeFigure() {
+    placeCamera(options.orbit ?? ORBIT, ELEVATION);
+    for (const sat of satellites) sat.mesh.position.copy(atScreen(sat.anchor.x, sat.anchor.y, sat.anchor.distance));
+    foreground.visible = view.figure !== undefined;
+    if (!view.figure) return;
+    foreground.position.copy(atScreen(view.figure.x, view.figure.y, FIGURE_DISTANCE)).add(new Vector3(0, -0.5, 0));
+    const toCamera = camera.position.clone().sub(foreground.position);
+    player.root.rotation.y = Math.atan2(toCamera.x, toCamera.z) + 0.3;
+  }
 
   // Warm light pooled above the vein so nearby faces pick up its colour.
   const oreLight = new PointLight(0xff5a3c, 0, 9, 1.6);
@@ -288,6 +366,8 @@ export function createDiorama(canvas: HTMLCanvasElement, options: DioramaOptions
     renderer.toneMappingExposure = m.exposure;
     bloom.strength = m.bloom;
     starMat.opacity = m.stars;
+    cloudMat.color.set(m.cloud);
+    cloudMat.opacity = m.cloudOpacity;
   }
   applyMood(options.mood);
 
@@ -296,11 +376,7 @@ export function createDiorama(canvas: HTMLCanvasElement, options: DioramaOptions
     const drift = options.still ? 0 : Math.sin(t * 0.07) * 0.06;
     look.x += (look.tx - look.x) * 0.05;
     look.y += (look.ty - look.y) * 0.05;
-    const az = (options.orbit ?? 0.7) + drift + look.x * 0.05;
-    const el = 0.27 + look.y * 0.03;
-    const dist = 48;
-    camera.position.set(Math.sin(az) * Math.cos(el) * dist, Math.sin(el) * dist + 2, Math.cos(az) * Math.cos(el) * dist);
-    camera.lookAt(0, 1, 0);
+    placeCamera((options.orbit ?? ORBIT) + drift + look.x * 0.05, ELEVATION + look.y * 0.03);
 
     refine.value += (refinedTarget * world.ore.length - refine.value) * (options.still ? 1 : 0.12);
     if (!options.still) {
@@ -317,6 +393,7 @@ export function createDiorama(canvas: HTMLCanvasElement, options: DioramaOptions
       embers.visible = false;
     }
     player.update(options.still ? 0 : t, look);
+    for (const c of clouds) c.sprite.position.x = c.x + (options.still ? 0 : Math.sin(t * 0.02 + c.phase) * 3);
     for (const rock of rocks) {
       rock.mesh.position.y = rock.y + (options.still ? 0 : Math.sin(t * 0.35 + rock.phase) * 0.35);
       rock.mesh.rotation.y = options.still ? rock.phase : rock.phase + t * 0.02;
@@ -336,6 +413,7 @@ export function createDiorama(canvas: HTMLCanvasElement, options: DioramaOptions
     camera.setViewOffset(w, h, -view.x * w, view.y * h, w, h);
     camera.zoom = view.zoom;
     camera.updateProjectionMatrix();
+    placeFigure();
     if (options.still || paused) frame(0);
   }
 

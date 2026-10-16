@@ -140,8 +140,7 @@
 
   h1 {
     font: var(--t-page);
-    font-stretch: 125%;
-    letter-spacing: -0.02em;
+    letter-spacing: var(--track-display);
   }
 
   .lede {
@@ -263,9 +262,8 @@
   }
 
   .spotlight h2 {
-    font: 800 30px / 1 var(--font);
-    font-stretch: 125%;
-    letter-spacing: -0.02em;
+    font: 700 28px / 1.05 var(--font);
+    letter-spacing: var(--track-display);
   }
 
   .motd {
@@ -375,11 +373,12 @@
     }
 
     .spotlight {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr);
+      min-height: 210px;
     }
 
-    .spotlight .art {
-      aspect-ratio: 2 / 1;
+    .spotlight .copy {
+      padding: 22px 24px;
     }
   }
 </style>

@@ -17,6 +17,7 @@ body {
   font: var(--t-body);
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum' 1;
+  font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
   user-select: none;

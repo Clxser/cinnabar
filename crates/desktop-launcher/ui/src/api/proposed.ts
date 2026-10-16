@@ -1,5 +1,5 @@
-// Data the UI can show but the bridge contract does not carry yet. The launcher has no account
-// core, so in Tauri these resolve to nothing and the UI hides what is missing.
+// Data the UI can show but the bridge contract does not carry yet. In Tauri these resolve to
+// nothing until the builder adds them, and the UI leaves out whatever is missing.
 import { inTauri } from './index';
 import type { FeaturedServer } from './types';
 
@@ -9,20 +9,34 @@ export type Account =
   /** Cached identity while sign-in services are unreachable; the installed game still plays. */
   | { kind: 'offline'; gamertag: string; skinUrl?: string };
 
-/** Optional fields proposed for `FeaturedServer`. */
-export interface ServerExtras {
-  motd?: string;
-  tags?: string[];
-  /** Round trip measured by the launcher, in milliseconds. */
-  pingMs?: number;
+export type Server = FeaturedServer;
+
+/** A server the game joined recently, newest first. */
+export interface RecentServer {
+  name: string;
+  address: string;
+  port: number;
+  imageUrl?: string;
+  lastPlayedAt: string;
 }
 
-export type Server = FeaturedServer & ServerExtras;
+/** Release notes for the installed build, shipped with it so they work offline. */
+export interface Changelog {
+  version: string;
+  publishedAt: string;
+  highlights: string[];
+  url?: string;
+  /** True on the first launch of this version; the launcher clears it once shown. */
+  unseen: boolean;
+}
 
-export async function getAccount(): Promise<Account | undefined> {
+async function fromMock<T>(pick: (mock: typeof import('./mock')) => Promise<T>): Promise<T | undefined> {
   if (inTauri) return undefined;
-  const { mockAccount } = await import('./mock');
-  return mockAccount();
+  return pick(await import('./mock'));
 }
+
+export const getAccount = () => fromMock((m) => m.mockAccount());
+export const getRecentServers = () => fromMock((m) => m.mockRecentServers());
+export const getChangelog = () => fromMock((m) => m.mockChangelog());
 
 export async function signIn(): Promise<void> {}

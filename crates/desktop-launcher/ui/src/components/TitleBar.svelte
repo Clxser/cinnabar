@@ -65,9 +65,8 @@
   }
 
   .name {
-    font: 800 15px / 1 var(--font);
-    font-stretch: 125%;
-    letter-spacing: -0.01em;
+    font: 680 15px / 1 var(--font);
+    letter-spacing: var(--track-display);
   }
 
   .tabs {

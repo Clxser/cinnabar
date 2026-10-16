@@ -5,7 +5,7 @@
   import InlineState from '../components/InlineState.svelte';
   import Segmented from '../components/Segmented.svelte';
   import { store } from '../lib/store.svelte';
-  import { CHANNEL_LABEL, checkStatus } from '../lib/play';
+  import { CHANNEL_LABEL, updateStatus } from '../lib/play';
   import { DISCORD_URL, LICENSE_NAME, PRODUCT_NAME, SOURCE_URL } from '../lib/product';
   import type { Channel } from '../api';
 
@@ -20,7 +20,8 @@
   // Only channels with real releases are offered; Stable appears once it publishes.
   const channels = $derived(CHANNEL_ORDER.filter((c) => install?.publishedChannels.includes(c)).map((c) => ({ value: c, label: CHANNEL_LABEL[c] })));
   const busy = $derived(['checking', 'downloading', 'verifying', 'installing'].includes(store.update?.kind ?? ''));
-  const status = $derived(checkStatus(store.update, store.now));
+  // Dev and unsigned builds report why updates are off instead of a check result.
+  const status = $derived(store.update?.kind === 'unavailable' ? store.update.reason : updateStatus(store.update, store.now)?.text);
   const downgrade = $derived(store.update?.kind === 'available' && store.update.downgrade ? store.update : undefined);
 
   interface Notice {
@@ -81,7 +82,7 @@
             <span class="name">Game version</span>
             <span class="hint">{install ? `${install.version}, build ${install.build}, from ${CHANNEL_LABEL[install.installedChannel]}` : ' '}</span>
           </div>
-          <button class="button" disabled={busy || store.game?.kind !== 'stopped'} onclick={() => void store.check()}>
+          <button class="button" disabled={busy || store.game?.kind !== 'stopped' || store.update?.kind === 'unavailable'} onclick={() => void store.check()}>
             {#if store.update?.kind === 'checking'}<LoaderCircle class="spin" size={14} strokeWidth={2} aria-hidden="true" />{/if}
             Check for updates
           </button>
@@ -103,6 +104,9 @@
       <div class="row">
         <p class="about">{PRODUCT_NAME} is an independent, source-available client for Bedrock servers. It is not affiliated with or endorsed by the makers of the original game.</p>
       </div>
+      <button class="row link" onclick={() => void store.openLogs()}>
+        <span class="label"><span class="name">Logs</span><span class="hint">The launcher’s and the game’s logs, for bug reports</span></span><ArrowUpRight size={16} strokeWidth={2} aria-hidden="true" />
+      </button>
       <button class="row link" onclick={() => void store.open(SOURCE_URL)}>
         <span class="name">Source code</span><ArrowUpRight size={16} strokeWidth={2} aria-hidden="true" />
       </button>
@@ -146,8 +150,7 @@
 
   h1 {
     font: var(--t-page);
-    font-stretch: 125%;
-    letter-spacing: -0.02em;
+    letter-spacing: var(--track-display);
   }
 
   section {

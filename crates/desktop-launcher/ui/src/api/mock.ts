@@ -1,7 +1,9 @@
 // Synthetic data for design work and screenshots. Server names, addresses and news are invented.
 // Pick a state with `?scenario=<name>`, a host with `?platform=`; `&freeze` stops simulated progress.
 import { mockSkin } from '../lib/diorama/textures';
-import type { Account, Server } from './proposed';
+import type { Account, Changelog, RecentServer, Server } from './proposed';
+import nightArt from './mock-art/night.jpg';
+import dawnArt from './mock-art/dawn.jpg';
 import type { Api, Channel, GameState, InstallState, News, Platform, UpdateState } from './types';
 
 const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search);
@@ -24,7 +26,7 @@ function hostPlatform(): Platform {
 const downgrading = scenario === 'downgrade';
 const install: InstallState = {
   version: downgrading ? '0.1.23' : '0.1.21',
-  build: downgrading ? 'n412' : '5ef4062',
+  build: downgrading ? 'n412' : scenario === 'dev' || scenario === 'bare' ? 'dev' : '5ef4062',
   channel: scenario === 'nightly' ? 'nightly' : 'beta',
   installedChannel: downgrading ? 'nightly' : 'beta',
   publishedChannels: ['beta', 'nightly'],
@@ -60,6 +62,8 @@ const initialUpdate: Record<string, UpdateState> = {
     retryable: true,
     canPlayInstalled: true,
   },
+  dev: { kind: 'unavailable', reason: 'This build is unsigned, so it doesn’t update itself.' },
+  bare: { kind: 'unavailable', reason: 'This build is unsigned, so it doesn’t update itself.' },
   'failed-blocking': {
     kind: 'failed',
     message: 'The installed files failed verification, so this version cannot start.',
@@ -120,6 +124,7 @@ const news: News = {
       url: 'https://example.com/cinnabar/news/0-1-21',
       publishedAt: ago(26 * 60 * MINUTE),
       tag: 'Release',
+      imageUrl: nightArt,
     },
     {
       id: 'n2',
@@ -134,6 +139,7 @@ const news: News = {
       title: 'Server owners: test your resource packs before the weekend',
       summary: 'Pack loading changed in 0.1.20. Join with a Nightly build and tell us what looks wrong.',
       url: 'https://example.com/cinnabar/news/packs',
+      imageUrl: dawnArt,
       publishedAt: ago(9 * 24 * 60 * MINUTE),
       tag: 'Servers',
     },
@@ -182,12 +188,42 @@ async function simulateInstall() {
   setUpdate({ kind: 'upToDate', lastChecked: new Date().toISOString() });
 }
 
+/** Recent joins for the quick-rejoin row; empty on first run. */
+export async function mockRecentServers(): Promise<RecentServer[]> {
+  if (scenario === 'loading') return never();
+  await wait(140);
+  if (scenario === 'empty' || scenario === 'bare' || params.has('first-run')) return [];
+  return [
+    { name: 'Emberfall', address: 'play.emberfall.example', port: 19132, lastPlayedAt: ago(2 * 60 * MINUTE) },
+    { name: 'Northwind Duels', address: 'pvp.northwind.example', port: 19132, lastPlayedAt: ago(26 * 60 * MINUTE) },
+    { name: 'Skyward Trials', address: '8c0f3e52-6d1b-4f7a-9a21-3b5e9d7c4a10', port: 0, lastPlayedAt: ago(4 * 24 * 60 * MINUTE) },
+  ];
+}
+
+/** Notes for the installed build; `?new` marks it as the first launch of this version. */
+export async function mockChangelog(): Promise<Changelog | undefined> {
+  await wait(100);
+  if (scenario === 'bare') return undefined;
+  return {
+    version: install.version,
+    publishedAt: ago(26 * 60 * MINUTE),
+    highlights: [
+      'Optional frame limits in Video settings',
+      'Lower input latency on Apple GPUs',
+      'Empty buckets pick the block you aim at',
+    ],
+    url: 'https://example.com/cinnabar/notes/0.1.21',
+    unseen: params.has('new'),
+  };
+}
+
 /** Signed in by default; `?account=out` signs out, and the offline scenario keeps a cached identity. */
-export async function mockAccount(): Promise<Account> {
+export async function mockAccount(): Promise<Account | undefined> {
   if (scenario === 'loading') return never();
   await wait(120);
   const forced = params.get('account');
   if (forced === 'out') return { kind: 'signedOut' };
+  if (scenario === 'bare') return undefined;
   const skinUrl = mockSkin().toDataURL();
   return scenario === 'offline' ? { kind: 'offline', gamertag: 'Vermillion Fox', skinUrl } : { kind: 'signedIn', gamertag: 'Vermillion Fox', skinUrl };
 }
@@ -220,10 +256,10 @@ export const mockApi: Api = {
   getNews: () =>
     respond(() => {
       if (scenario === 'offline') return { ...news, stale: true, fetchedAt: ago(5 * 60 * MINUTE) };
-      if (scenario === 'empty') return { items: [], stale: false, fetchedAt: ago(MINUTE) };
+      if (scenario === 'empty' || scenario === 'bare') return { items: [], stale: scenario === 'bare', fetchedAt: ago(MINUTE) };
       return news;
     }, ['errors']),
-  getFeaturedServers: () => respond(() => (scenario === 'empty' ? [] : servers), ['errors', 'offline']),
+  getFeaturedServers: () => respond(() => (scenario === 'empty' || scenario === 'bare' ? [] : servers), ['errors', 'offline']),
   async openExternal(url: string) {
     window.open(url, '_blank', 'noopener');
   },
