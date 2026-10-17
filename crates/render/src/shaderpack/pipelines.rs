@@ -1,0 +1,631 @@
+//! Translated programs become raw wgpu pipelines.
+//!
+//! Bevy 0.20's `PipelineCache` only accepts WGSL, WESL or SPIR-V text and recomposes WGSL
+//! through naga_oil, so pack programs bypass it: the validated naga modules from
+//! `shaderpack` reach wgpu unchanged as `ShaderSource::Naga` (the `naga-ir` wgpu feature),
+//! and layouts come straight from each program's [`ProgramReflection`]. Pipelines are
+//! created on the load worker inside a validation error scope, so a pack the device rejects
+//! fails its load instead of raising a device error.
+
+use shaderpack::{
+    BlendFactor as PackFactor, BlendMode, BufferFormat, ProgramReflection, SampleType, ScalarType,
+    StageKind, StageMask, TextureDimension as PackDimension, ValueType, VertexAttribute,
+};
+use std::borrow::Cow;
+use wgpu::{
+    BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, BlendComponent,
+    BlendFactor, BlendOperation, BlendState, BufferBindingType, ColorTargetState, ColorWrites,
+    Device, Features, SamplerBindingType, ShaderStages, StorageTextureAccess, TextureFormat,
+    TextureSampleType, TextureViewDimension, VertexAttribute as WgpuAttribute, VertexBufferLayout,
+    VertexFormat, VertexStepMode,
+};
+
+/// Device features that decide which pack buffer formats need a fallback.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct FormatSupport {
+    /// `FLOAT32_FILTERABLE`: 32-bit float buffers can be sampled with the shared filtering
+    /// sampler; without it they fall back to 16-bit floats.
+    pub float32_filterable: bool,
+    /// `RG11B10UFLOAT_RENDERABLE`.
+    pub rg11b10_renderable: bool,
+    /// `TEXTURE_FORMAT_16BIT_NORM`: exact 16-bit unorm buffers; without it they use 32-bit
+    /// floats, which hold every 16-bit value exactly.
+    pub norm16: bool,
+}
+
+impl FormatSupport {
+    pub(crate) fn from_features(features: Features) -> Self {
+        Self {
+            float32_filterable: features.contains(Features::FLOAT32_FILTERABLE),
+            rg11b10_renderable: features.contains(Features::RG11B10UFLOAT_RENDERABLE),
+            norm16: features.contains(Features::TEXTURE_FORMAT_16BIT_NORM),
+        }
+    }
+
+    fn float32(self, format: TextureFormat, half: TextureFormat) -> TextureFormat {
+        if self.float32_filterable {
+            format
+        } else {
+            half
+        }
+    }
+}
+
+/// The renderable, sampleable wgpu format holding a pack buffer format. RGB formats gain
+/// an alpha channel; formats wgpu cannot render (snorm, shared exponent, packed 16-bit)
+/// widen to a float format with at least their range and precision.
+pub(crate) fn texture_format(format: BufferFormat, support: FormatSupport) -> TextureFormat {
+    use BufferFormat as B;
+    use TextureFormat as T;
+    let unorm16 = |exact: T, float: T, half: T| {
+        if support.norm16 {
+            exact
+        } else {
+            support.float32(float, half)
+        }
+    };
+    match format {
+        B::Rgba | B::Rgb8 | B::Rgba8 | B::Rgba2 | B::Rgba4 | B::R3G3B2 | B::Rgb5A1 | B::Rgb565 => {
+            T::Rgba8Unorm
+        }
+        B::R8 => T::R8Unorm,
+        B::Rg8 => T::Rg8Unorm,
+        B::R8Snorm | B::R16f => T::R16Float,
+        B::Rg8Snorm | B::Rg16f => T::Rg16Float,
+        B::Rgb8Snorm | B::Rgba8Snorm | B::Rgb16f | B::Rgba16f | B::Rgb9E5 => T::Rgba16Float,
+        B::R16 => unorm16(T::R16Unorm, T::R32Float, T::R16Float),
+        B::Rg16 => unorm16(T::Rg16Unorm, T::Rg32Float, T::Rg16Float),
+        B::Rgb16 | B::Rgba16 => unorm16(T::Rgba16Unorm, T::Rgba32Float, T::Rgba16Float),
+        B::R16Snorm => support.float32(T::R32Float, T::R16Float),
+        B::Rg16Snorm => support.float32(T::Rg32Float, T::Rg16Float),
+        B::Rgb16Snorm | B::Rgba16Snorm => support.float32(T::Rgba32Float, T::Rgba16Float),
+        B::R32f => support.float32(T::R32Float, T::R16Float),
+        B::Rg32f => support.float32(T::Rg32Float, T::Rg16Float),
+        B::Rgb32f | B::Rgba32f => support.float32(T::Rgba32Float, T::Rgba16Float),
+        B::R8i => T::R8Sint,
+        B::Rg8i => T::Rg8Sint,
+        B::Rgb8i | B::Rgba8i => T::Rgba8Sint,
+        B::R8ui => T::R8Uint,
+        B::Rg8ui => T::Rg8Uint,
+        B::Rgb8ui | B::Rgba8ui => T::Rgba8Uint,
+        B::R16i => T::R16Sint,
+        B::Rg16i => T::Rg16Sint,
+        B::Rgb16i | B::Rgba16i => T::Rgba16Sint,
+        B::R16ui => T::R16Uint,
+        B::Rg16ui => T::Rg16Uint,
+        B::Rgb16ui | B::Rgba16ui => T::Rgba16Uint,
+        B::R32i => T::R32Sint,
+        B::Rg32i => T::Rg32Sint,
+        B::Rgb32i | B::Rgba32i => T::Rgba32Sint,
+        B::R32ui => T::R32Uint,
+        B::Rg32ui => T::Rg32Uint,
+        B::Rgb32ui | B::Rgba32ui => T::Rgba32Uint,
+        B::Rgb10A2 => T::Rgb10a2Unorm,
+        B::Rgb10A2ui => T::Rgb10a2Uint,
+        B::R11fG11fB10f if support.rg11b10_renderable => T::Rg11b10Ufloat,
+        B::R11fG11fB10f => T::Rgba16Float,
+    }
+}
+
+/// Component kind a shader reads from or writes to a texture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Kind {
+    Float,
+    Sint,
+    Uint,
+}
+
+/// The kind of a colour format.
+pub(crate) fn format_kind(format: TextureFormat) -> Kind {
+    match format.sample_type(None, None) {
+        Some(TextureSampleType::Sint) => Kind::Sint,
+        Some(TextureSampleType::Uint) => Kind::Uint,
+        _ => Kind::Float,
+    }
+}
+
+/// The kind of a reflected scalar type.
+pub(crate) fn scalar_kind(ty: ValueType) -> Kind {
+    let scalar = match ty {
+        ValueType::Scalar(s) | ValueType::Vector { scalar: s, .. } => s,
+        ValueType::Matrix { scalar, .. } => scalar,
+    };
+    match scalar {
+        ScalarType::Int | ScalarType::Bool => Kind::Sint,
+        ScalarType::Uint => Kind::Uint,
+        ScalarType::Float | ScalarType::Double => Kind::Float,
+    }
+}
+
+/// The kind a sampled texture declaration expects.
+pub(crate) fn sample_kind(sample: SampleType) -> Option<Kind> {
+    match sample {
+        SampleType::Float => Some(Kind::Float),
+        SampleType::Sint => Some(Kind::Sint),
+        SampleType::Uint => Some(Kind::Uint),
+        SampleType::Depth => None,
+    }
+}
+
+pub(crate) fn view_dimension(dimension: PackDimension) -> TextureViewDimension {
+    match dimension {
+        PackDimension::D1 => TextureViewDimension::D1,
+        PackDimension::D2 => TextureViewDimension::D2,
+        PackDimension::D2Array => TextureViewDimension::D2Array,
+        PackDimension::D3 => TextureViewDimension::D3,
+        PackDimension::Cube => TextureViewDimension::Cube,
+        PackDimension::CubeArray => TextureViewDimension::CubeArray,
+    }
+}
+
+fn stages(mask: StageMask) -> ShaderStages {
+    let mut stages = ShaderStages::NONE;
+    if mask.vertex {
+        stages |= ShaderStages::VERTEX;
+    }
+    if mask.fragment {
+        stages |= ShaderStages::FRAGMENT;
+    }
+    if mask.compute {
+        stages |= ShaderStages::COMPUTE;
+    }
+    stages
+}
+
+/// The wgpu format of a GLSL image format qualifier.
+pub(crate) fn storage_format(format: naga::StorageFormat) -> Option<TextureFormat> {
+    use TextureFormat as T;
+    use naga::StorageFormat as S;
+    Some(match format {
+        S::R8Unorm => T::R8Unorm,
+        S::R8Snorm => T::R8Snorm,
+        S::R8Uint => T::R8Uint,
+        S::R8Sint => T::R8Sint,
+        S::R16Uint => T::R16Uint,
+        S::R16Sint => T::R16Sint,
+        S::R16Float => T::R16Float,
+        S::Rg8Unorm => T::Rg8Unorm,
+        S::Rg8Snorm => T::Rg8Snorm,
+        S::Rg8Uint => T::Rg8Uint,
+        S::Rg8Sint => T::Rg8Sint,
+        S::R32Uint => T::R32Uint,
+        S::R32Sint => T::R32Sint,
+        S::R32Float => T::R32Float,
+        S::Rg16Uint => T::Rg16Uint,
+        S::Rg16Sint => T::Rg16Sint,
+        S::Rg16Float => T::Rg16Float,
+        S::Rgba8Unorm => T::Rgba8Unorm,
+        S::Rgba8Snorm => T::Rgba8Snorm,
+        S::Rgba8Uint => T::Rgba8Uint,
+        S::Rgba8Sint => T::Rgba8Sint,
+        S::Bgra8Unorm => T::Bgra8Unorm,
+        S::Rgb10a2Uint => T::Rgb10a2Uint,
+        S::Rgb10a2Unorm => T::Rgb10a2Unorm,
+        S::Rg11b10Ufloat => T::Rg11b10Ufloat,
+        S::R64Uint => T::R64Uint,
+        S::Rg32Uint => T::Rg32Uint,
+        S::Rg32Sint => T::Rg32Sint,
+        S::Rg32Float => T::Rg32Float,
+        S::Rgba16Uint => T::Rgba16Uint,
+        S::Rgba16Sint => T::Rgba16Sint,
+        S::Rgba16Float => T::Rgba16Float,
+        S::Rgba32Uint => T::Rgba32Uint,
+        S::Rgba32Sint => T::Rgba32Sint,
+        S::Rgba32Float => T::Rgba32Float,
+        S::R16Unorm => T::R16Unorm,
+        S::R16Snorm => T::R16Snorm,
+        S::Rg16Unorm => T::Rg16Unorm,
+        S::Rg16Snorm => T::Rg16Snorm,
+        S::Rgba16Unorm => T::Rgba16Unorm,
+        S::Rgba16Snorm => T::Rgba16Snorm,
+    })
+}
+
+/// Sample type of a bound texture: its own format decides float filterability.
+pub(crate) fn texture_sample_type(format: TextureFormat) -> TextureSampleType {
+    match format {
+        TextureFormat::Depth32Float | TextureFormat::Depth24Plus => TextureSampleType::Depth,
+        f => f
+            .sample_type(None, None)
+            .unwrap_or(TextureSampleType::Float { filterable: true }),
+    }
+}
+
+/// The bind-group layout entries of one program, per group (0..=3), with each sampled
+/// texture typed by the format the host will bind (`texture_formats` is parallel to
+/// `reflection.textures`).
+pub(crate) fn layout_entries(
+    reflection: &ProgramReflection,
+    texture_formats: &[TextureFormat],
+) -> [Vec<BindGroupLayoutEntry>; 4] {
+    let mut groups: [Vec<BindGroupLayoutEntry>; 4] = Default::default();
+    let mut push = |group: u32, entry: BindGroupLayoutEntry| {
+        if let Some(entries) = groups.get_mut(group as usize) {
+            entries.push(entry);
+        }
+    };
+    if let Some(block) = &reflection.uniforms {
+        push(
+            block.group,
+            BindGroupLayoutEntry {
+                binding: block.binding,
+                visibility: stages(block.stages),
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: std::num::NonZeroU64::new(u64::from(block.size)),
+                },
+                count: None,
+            },
+        );
+    }
+    for (buffer, ty) in reflection
+        .uniform_buffers
+        .iter()
+        .map(|b| (b, BufferBindingType::Uniform))
+        .chain(reflection.storage_buffers.iter().map(|b| {
+            (
+                b,
+                BufferBindingType::Storage {
+                    read_only: b.read_only,
+                },
+            )
+        }))
+    {
+        push(
+            buffer.group,
+            BindGroupLayoutEntry {
+                binding: buffer.binding,
+                visibility: stages(buffer.stages),
+                ty: BindingType::Buffer {
+                    ty,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        );
+    }
+    for sampler in &reflection.samplers {
+        push(
+            sampler.group,
+            BindGroupLayoutEntry {
+                binding: sampler.binding,
+                visibility: stages(sampler.stages),
+                ty: BindingType::Sampler(if sampler.comparison {
+                    SamplerBindingType::Comparison
+                } else {
+                    SamplerBindingType::Filtering
+                }),
+                count: None,
+            },
+        );
+    }
+    for (texture, format) in reflection.textures.iter().zip(texture_formats) {
+        push(
+            texture.group,
+            BindGroupLayoutEntry {
+                binding: texture.binding,
+                visibility: stages(texture.stages),
+                ty: BindingType::Texture {
+                    sample_type: texture_sample_type(*format),
+                    view_dimension: view_dimension(texture.dimension),
+                    multisampled: false,
+                },
+                count: None,
+            },
+        );
+    }
+    for image in &reflection.storage_images {
+        let Some(format) = storage_format(image.format) else {
+            continue;
+        };
+        push(
+            image.group,
+            BindGroupLayoutEntry {
+                binding: image.binding,
+                visibility: stages(image.stages),
+                ty: BindingType::StorageTexture {
+                    access: match (image.read, image.write) {
+                        (true, true) => StorageTextureAccess::ReadWrite,
+                        (true, false) => StorageTextureAccess::ReadOnly,
+                        _ => StorageTextureAccess::WriteOnly,
+                    },
+                    format,
+                    view_dimension: view_dimension(image.dimension),
+                },
+                count: None,
+            },
+        );
+    }
+    for entries in &mut groups {
+        entries.sort_by_key(|e| e.binding);
+    }
+    groups
+}
+
+/// Creates the four bind-group layouts of a program; empty groups have no layout.
+pub(crate) fn bind_group_layouts(
+    device: &Device,
+    name: &str,
+    entries: &[Vec<BindGroupLayoutEntry>; 4],
+) -> [Option<BindGroupLayout>; 4] {
+    std::array::from_fn(|group| {
+        (!entries[group].is_empty()).then(|| {
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some(&format!("shader pack {name} group {group}")),
+                entries: &entries[group],
+            })
+        })
+    })
+}
+
+/// Bytes per supplied attribute in the shared full-screen quad buffer.
+pub(crate) const QUAD_ATTRIBUTE_BYTES: u64 = 16;
+/// Supplied attributes in the quad buffer, in [`VertexAttribute::location`] order.
+pub(crate) const QUAD_ATTRIBUTES: u64 = shaderpack::FIRST_OTHER_ATTRIBUTE_LOCATION as u64;
+
+/// The quad vertices (triangle strip) with every supplied attribute, 16 bytes each:
+/// position (0..1 square), white colour, +Z normal, texture coordinate equal to position;
+/// every other attribute is zero, which reads as 0 whether declared float or integer.
+pub(crate) fn quad_vertices() -> Vec<u8> {
+    let corners = [[0.0f32, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
+    let mut bytes =
+        Vec::with_capacity(corners.len() * (QUAD_ATTRIBUTES * QUAD_ATTRIBUTE_BYTES) as usize);
+    for [x, y] in corners {
+        for location in 0..QUAD_ATTRIBUTES {
+            let value: [f32; 4] = match location {
+                l if Some(l as u32) == VertexAttribute::Position.location() => [x, y, 0.0, 1.0],
+                l if Some(l as u32) == VertexAttribute::Color.location() => [1.0; 4],
+                l if Some(l as u32) == VertexAttribute::Normal.location() => [0.0, 0.0, 1.0, 0.0],
+                l if Some(l as u32) == VertexAttribute::TexCoord.location() => [x, y, 0.0, 1.0],
+                _ => [0.0; 4],
+            };
+            for v in value {
+                bytes.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+    }
+    bytes
+}
+
+/// The quad-buffer attributes a program's vertex stage declares. Inputs Iris does not
+/// supply (`Other`) are left unbound; wgpu then rejects the pipeline, failing the load.
+pub(crate) fn quad_attributes(reflection: &ProgramReflection) -> Vec<WgpuAttribute> {
+    reflection
+        .vertex_inputs
+        .iter()
+        .filter_map(|input| {
+            let slot = input.attribute.location()?;
+            let components = match input.ty {
+                ValueType::Scalar(_) => 1,
+                ValueType::Vector { size, .. } => size,
+                ValueType::Matrix { .. } => return None,
+            };
+            let format = match (scalar_kind(input.ty), components) {
+                (Kind::Float, 1) => VertexFormat::Float32,
+                (Kind::Float, 2) => VertexFormat::Float32x2,
+                (Kind::Float, 3) => VertexFormat::Float32x3,
+                (Kind::Float, _) => VertexFormat::Float32x4,
+                (Kind::Sint, 1) => VertexFormat::Sint32,
+                (Kind::Sint, 2) => VertexFormat::Sint32x2,
+                (Kind::Sint, 3) => VertexFormat::Sint32x3,
+                (Kind::Sint, _) => VertexFormat::Sint32x4,
+                (Kind::Uint, 1) => VertexFormat::Uint32,
+                (Kind::Uint, 2) => VertexFormat::Uint32x2,
+                (Kind::Uint, 3) => VertexFormat::Uint32x3,
+                (Kind::Uint, _) => VertexFormat::Uint32x4,
+            };
+            Some(WgpuAttribute {
+                format,
+                offset: u64::from(slot) * QUAD_ATTRIBUTE_BYTES,
+                shader_location: input.location,
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn quad_layout(attributes: &[WgpuAttribute]) -> VertexBufferLayout<'_> {
+    VertexBufferLayout {
+        array_stride: QUAD_ATTRIBUTES * QUAD_ATTRIBUTE_BYTES,
+        step_mode: VertexStepMode::Vertex,
+        attributes,
+    }
+}
+
+fn blend_factor(factor: PackFactor) -> BlendFactor {
+    match factor {
+        PackFactor::Zero => BlendFactor::Zero,
+        PackFactor::One => BlendFactor::One,
+        PackFactor::SrcColor => BlendFactor::Src,
+        PackFactor::OneMinusSrcColor => BlendFactor::OneMinusSrc,
+        PackFactor::DstColor => BlendFactor::Dst,
+        PackFactor::OneMinusDstColor => BlendFactor::OneMinusDst,
+        PackFactor::SrcAlpha => BlendFactor::SrcAlpha,
+        PackFactor::OneMinusSrcAlpha => BlendFactor::OneMinusSrcAlpha,
+        PackFactor::DstAlpha => BlendFactor::DstAlpha,
+        PackFactor::OneMinusDstAlpha => BlendFactor::OneMinusDstAlpha,
+        PackFactor::SrcAlphaSaturate => BlendFactor::SrcAlphaSaturated,
+    }
+}
+
+/// The wgpu blend state of a `blend.*` mode; `None` disables blending.
+pub(crate) fn blend_state(mode: BlendMode) -> Option<BlendState> {
+    match mode {
+        BlendMode::Off => None,
+        BlendMode::Factors {
+            src_color,
+            dst_color,
+            src_alpha,
+            dst_alpha,
+        } => Some(BlendState {
+            color: BlendComponent {
+                src_factor: blend_factor(src_color),
+                dst_factor: blend_factor(dst_color),
+                operation: BlendOperation::Add,
+            },
+            alpha: BlendComponent {
+                src_factor: blend_factor(src_alpha),
+                dst_factor: blend_factor(dst_alpha),
+                operation: BlendOperation::Add,
+            },
+        }),
+    }
+}
+
+/// Whether every device can filter (and blend) `format` without optional features.
+pub(crate) fn filterable(format: TextureFormat) -> bool {
+    matches!(
+        format.sample_type(None, None),
+        Some(TextureSampleType::Float { filterable: true })
+    )
+}
+
+/// A colour target for an output of `ty` into `format`, or `None` when the shader's
+/// component kind cannot write the format (the output is then discarded). Integer
+/// formats never blend.
+pub(crate) fn color_target(
+    format: TextureFormat,
+    ty: ValueType,
+    blend: Option<BlendState>,
+) -> Option<ColorTargetState> {
+    (scalar_kind(ty) == format_kind(format)).then(|| ColorTargetState {
+        format,
+        blend: blend.filter(|_| format_kind(format) == Kind::Float && filterable(format)),
+        write_mask: ColorWrites::ALL,
+    })
+}
+
+/// Shader modules of a program's stages in reflection entry-point order.
+pub(crate) fn shader_modules(
+    device: &Device,
+    name: &str,
+    stages: &[(StageKind, naga::Module)],
+) -> Vec<(StageKind, wgpu::ShaderModule)> {
+    stages
+        .iter()
+        .map(|(stage, module)| {
+            (
+                *stage,
+                device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some(&format!("shader pack {name} {}", stage.extension())),
+                    source: wgpu::ShaderSource::Naga(Cow::Owned(module.clone())),
+                }),
+            )
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_pack_format_maps_to_a_renderable_format_of_the_same_kind() {
+        let device_formats = [
+            FormatSupport::default(),
+            FormatSupport {
+                float32_filterable: true,
+                rg11b10_renderable: true,
+                norm16: true,
+            },
+        ];
+        for support in device_formats {
+            for &format in BufferFormat::ALL {
+                let mapped = texture_format(format, support);
+                let name = format.name();
+                let expected = if name.ends_with("UI") {
+                    Kind::Uint
+                } else if name.ends_with('I') {
+                    Kind::Sint
+                } else {
+                    Kind::Float
+                };
+                assert_eq!(format_kind(mapped), expected, "{name} → {mapped:?}");
+                if expected == Kind::Float {
+                    assert!(
+                        support.float32_filterable || filterable(mapped),
+                        "{name} must stay filterable without float32 filtering"
+                    );
+                }
+                assert!(!mapped.is_srgb(), "pack buffers hold raw values");
+            }
+        }
+    }
+
+    #[test]
+    fn missing_device_features_widen_formats_without_losing_precision() {
+        let none = FormatSupport::default();
+        assert_eq!(
+            texture_format(BufferFormat::R11fG11fB10f, none),
+            TextureFormat::Rgba16Float
+        );
+        assert_eq!(
+            texture_format(BufferFormat::Rgba16, none),
+            TextureFormat::Rgba16Float
+        );
+        let float = FormatSupport {
+            float32_filterable: true,
+            ..none
+        };
+        assert_eq!(
+            texture_format(BufferFormat::Rgba16, float),
+            TextureFormat::Rgba32Float
+        );
+        let all = FormatSupport {
+            float32_filterable: true,
+            rg11b10_renderable: true,
+            norm16: true,
+        };
+        assert_eq!(
+            texture_format(BufferFormat::Rgba16, all),
+            TextureFormat::Rgba16Unorm
+        );
+        assert_eq!(
+            texture_format(BufferFormat::R11fG11fB10f, all),
+            TextureFormat::Rg11b10Ufloat
+        );
+    }
+
+    #[test]
+    fn quad_buffer_places_each_supplied_attribute_at_its_fixed_location() {
+        let bytes = quad_vertices();
+        let stride = (QUAD_ATTRIBUTES * QUAD_ATTRIBUTE_BYTES) as usize;
+        assert_eq!(bytes.len(), stride * 4);
+        let read = |vertex: usize, attribute: VertexAttribute| -> [f32; 4] {
+            let start = vertex * stride
+                + attribute.location().unwrap() as usize * QUAD_ATTRIBUTE_BYTES as usize;
+            std::array::from_fn(|i| {
+                f32::from_le_bytes(bytes[start + i * 4..start + i * 4 + 4].try_into().unwrap())
+            })
+        };
+        assert_eq!(read(3, VertexAttribute::Position), [1.0, 1.0, 0.0, 1.0]);
+        assert_eq!(read(1, VertexAttribute::TexCoord), [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(read(2, VertexAttribute::Color), [1.0; 4]);
+        assert_eq!(read(0, VertexAttribute::BlockId), [0.0; 4]);
+    }
+
+    #[test]
+    fn colour_targets_require_matching_component_kinds_and_skip_integer_blending() {
+        let float4 = ValueType::Vector {
+            size: 4,
+            scalar: ScalarType::Float,
+        };
+        let uint4 = ValueType::Vector {
+            size: 4,
+            scalar: ScalarType::Uint,
+        };
+        let additive = blend_state(BlendMode::Factors {
+            src_color: PackFactor::One,
+            dst_color: PackFactor::One,
+            src_alpha: PackFactor::One,
+            dst_alpha: PackFactor::Zero,
+        });
+        assert!(color_target(TextureFormat::R32Uint, float4, None).is_none());
+        let target = color_target(TextureFormat::Rgba16Float, float4, additive).unwrap();
+        assert_eq!(target.blend, additive);
+        let integer = color_target(TextureFormat::Rgba8Uint, uint4, additive).unwrap();
+        assert_eq!(integer.blend, None);
+        assert_eq!(blend_state(BlendMode::Off), None);
+    }
+}

@@ -2297,6 +2297,7 @@ dependencies = [
  "serde_json",
  "server-experience",
  "sha2",
+ "shaderpack",
  "sim",
  "simulation-clock",
  "tempfile",
@@ -2783,6 +2784,8 @@ version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
 dependencies = [
+ "serde",
+ "termcolor",
  "unicode-width",
 ]
 
@@ -7497,12 +7500,14 @@ dependencies = [
  "objc2-quartz-core 0.3.2",
  "pack-compiler",
  "particles",
+ "png",
  "rayon",
  "render-api",
  "render-model",
  "render-scene",
  "serde_json",
  "sha2",
+ "shaderpack",
  "tempfile",
  "test-alloc",
  "test-time",
@@ -8092,6 +8097,7 @@ version = "0.1.20"
 dependencies = [
  "naga",
  "pp-rs",
+ "tempfile",
  "zip",
 ]
 
@@ -9914,6 +9920,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "js-sys",
  "log",
+ "naga",
  "portable-atomic",
  "profiling",
  "raw-window-handle",

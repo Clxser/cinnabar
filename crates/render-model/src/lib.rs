@@ -100,6 +100,10 @@ pub use visibility::{
 /// Default builds keep ordinary settings, launch flags and cameras on Vanilla.
 pub const ENHANCED_RENDERING_ENABLED: bool = cfg!(feature = "enhanced");
 
+/// The Java shader-pack render mode is opt-in at build time while it is experimental.
+/// Default builds keep settings, launch flags and cameras off it.
+pub const SHADER_PACKS_ENABLED: bool = cfg!(feature = "shaderpacks");
+
 #[cfg(feature = "enhanced-diagnostics")]
 static ENHANCED_DIAGNOSTIC: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);

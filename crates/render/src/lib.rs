@@ -94,6 +94,8 @@ mod shader_safety;
 #[cfg(test)]
 #[path = "../tests/it/support/shader_source.rs"]
 mod shader_source;
+mod shaderpack;
+pub use self::shaderpack::ShaderPackRenderPlugin;
 mod surface_capabilities;
 mod surface_lifecycle;
 mod transparent_phase;
