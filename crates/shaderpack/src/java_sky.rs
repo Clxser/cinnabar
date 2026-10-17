@@ -3,10 +3,11 @@
 //! computes for the frame (which Iris also clears `colortex0` to).
 //!
 //! Behaviour follows Java Edition as the Minecraft Wiki describes it:
-//! - Every biome has a sky colour (overworld biomes derive it from their temperature), a fog
-//!   colour (`#C0D8FF` in the overworld) and a water fog colour. The level blends each over
-//!   the biomes around the camera with a Gaussian kernel; the caller supplies that blend as
-//!   weighted biomes ([`BiomeColors::blend`]).
+//! - Biomes and dimension types set sky, fog and water fog colours through environment
+//!   attributes (the pinned Java mapping carrier keeps them); a biome's colour overrides its
+//!   dimension type's. The level blends each over the biomes around the camera with a
+//!   Gaussian kernel; the caller supplies that blend as weighted biomes
+//!   ([`BiomeColors::blend`]).
 //! - The sky colour dims with the time of day and greys out in rain and thunder.
 //! - The fog colour dims with the time of day, takes the sunrise/sunset glow when the camera
 //!   faces the sun's side of the sky, mixes towards the sky colour more the shorter the
@@ -16,52 +17,10 @@
 //! darkness fog, and the underwater colour easing between biomes and the water-vision ramp
 //! (the biome's water fog colour is used directly).
 
-use assets::facts::java_mapping::{JavaBiomeEntry, JavaBlockMapping};
+use assets::facts::java_mapping::{JavaBiomeEntry, JavaBlockMapping, JavaDimension};
 
-/// What Java reads unmapped biomes as (see [`crate::BiomeUniforms`]).
-const FALLBACK_BIOME: &str = "minecraft:the_void";
-/// The overworld's fog colour, shared by every overworld biome but the pale garden.
-const OVERWORLD_FOG: u32 = 0xC0_D8_FF;
-/// The default water fog colour.
+/// `minecraft:visual/water_fog_color`'s default, for biomes and dimensions that set none.
 const DEFAULT_WATER_FOG: u32 = 0x05_05_33;
-/// `(name, sky, fog, water fog)` overrides of one biome.
-type BiomeColourOverride = (&'static str, Option<u32>, Option<u32>, Option<u32>);
-/// Biomes whose colours are not the defaults; `None` keeps the default (sky from the
-/// temperature, [`OVERWORLD_FOG`], [`DEFAULT_WATER_FOG`]).
-const BIOME_COLOURS: &[BiomeColourOverride] = &[
-    (
-        "minecraft:pale_garden",
-        Some(0xB9_B9_B9),
-        Some(0x81_77_70),
-        Some(0x55_69_80),
-    ),
-    ("minecraft:swamp", None, None, Some(0x23_23_17)),
-    ("minecraft:mangrove_swamp", None, None, Some(0x4D_7A_60)),
-    ("minecraft:cherry_grove", None, None, Some(0x5D_B7_EF)),
-    ("minecraft:warm_ocean", None, None, Some(0x04_1F_33)),
-    ("minecraft:lukewarm_ocean", None, None, Some(0x04_16_33)),
-    (
-        "minecraft:deep_lukewarm_ocean",
-        None,
-        None,
-        Some(0x04_16_33),
-    ),
-    ("minecraft:nether_wastes", None, Some(0x33_08_08), None),
-    ("minecraft:soul_sand_valley", None, Some(0x1B_47_45), None),
-    ("minecraft:crimson_forest", None, Some(0x33_03_03), None),
-    ("minecraft:warped_forest", None, Some(0x1A_05_1A), None),
-    ("minecraft:basalt_deltas", None, Some(0x68_5F_70), None),
-    ("minecraft:the_end", Some(0), Some(0xA0_80_A0), None),
-    ("minecraft:end_highlands", Some(0), Some(0xA0_80_A0), None),
-    ("minecraft:end_midlands", Some(0), Some(0xA0_80_A0), None),
-    (
-        "minecraft:small_end_islands",
-        Some(0),
-        Some(0xA0_80_A0),
-        None,
-    ),
-    ("minecraft:end_barrens", Some(0), Some(0xA0_80_A0), None),
-];
 /// Fog colours in lava and in powder snow.
 const LAVA_FOG: [f32; 3] = [0.6, 0.1, 0.0];
 const POWDER_SNOW_FOG: [f32; 3] = [0.623, 0.734, 0.785];
@@ -80,29 +39,6 @@ fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t)
 }
 
-/// Java's sky colour for a biome temperature: a hue and saturation that shift with the
-/// clamped temperature, at full value, truncated to 8 bits per channel.
-fn temperature_sky(temperature: f32) -> [f32; 3] {
-    let t = (temperature / 3.0).clamp(-1.0, 1.0);
-    let (hue, saturation) = (0.622_222_24 - t * 0.05, 0.5 + t * 0.1);
-    let sector = (hue * 6.0).floor();
-    let f = hue * 6.0 - sector;
-    let (p, q, u) = (
-        1.0 - saturation,
-        1.0 - f * saturation,
-        1.0 - (1.0 - f) * saturation,
-    );
-    let colour = match sector as i32 % 6 {
-        0 => [1.0, u, p],
-        1 => [q, 1.0, p],
-        2 => [p, 1.0, u],
-        3 => [p, q, 1.0],
-        4 => [u, p, 1.0],
-        _ => [1.0, p, q],
-    };
-    quantize(colour)
-}
-
 /// A Java biome's sky, fog and water fog colours.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BiomeColors {
@@ -119,41 +55,45 @@ impl BiomeColors {
         water_fog: [0.0; 3],
     };
 
-    /// The colours of `entry`.
-    pub fn of(entry: &JavaBiomeEntry<'_>) -> Self {
-        let (sky, fog, water_fog) = BIOME_COLOURS
-            .iter()
-            .find(|(name, ..)| *name == entry.name)
-            .map_or((None, None, None), |(_, sky, fog, water)| {
-                (*sky, *fog, *water)
-            });
+    /// The colours of `entry` in `dimension`: each the biome's own, else the dimension
+    /// type's, else the attribute's default (black, and [`DEFAULT_WATER_FOG`]).
+    pub fn of(
+        entry: &JavaBiomeEntry<'_>,
+        mapping: &JavaBlockMapping,
+        dimension: SkyDimension,
+    ) -> Self {
+        let colours = entry
+            .colours
+            .over(mapping.java_dimension_colours(dimension.java()));
         Self {
-            sky: sky.map_or_else(|| temperature_sky(entry.temperature), rgb),
-            fog: rgb(fog.unwrap_or(OVERWORLD_FOG)),
-            water_fog: rgb(water_fog.unwrap_or(DEFAULT_WATER_FOG)),
+            sky: rgb(colours.sky.unwrap_or(0)),
+            fog: rgb(colours.fog.unwrap_or(0)),
+            water_fog: rgb(colours.water_fog.unwrap_or(DEFAULT_WATER_FOG)),
         }
     }
 
-    /// The colours of the Java biome of Bedrock biome `bedrock_biome`; unmapped biomes read
-    /// as the void, as for the biome uniforms. `None` without a Java biome registry.
-    pub fn at(mapping: &JavaBlockMapping, bedrock_biome: u32) -> Option<Self> {
-        let index = mapping.java_biome_index(bedrock_biome).or_else(|| {
-            mapping
-                .java_biomes()
-                .position(|biome| biome.name == FALLBACK_BIOME)
-                .and_then(|index| u16::try_from(index).ok())
-        })?;
+    /// The colours of the Java biome of Bedrock biome `bedrock_biome` in `dimension`;
+    /// unmapped biomes read as the void, as for the biome uniforms. `None` without a Java
+    /// biome registry.
+    pub fn at(
+        mapping: &JavaBlockMapping,
+        bedrock_biome: u32,
+        dimension: SkyDimension,
+    ) -> Option<Self> {
+        let index = mapping
+            .java_biome_index(bedrock_biome)
+            .or_else(|| crate::biomes::fallback_biome_index(mapping))?;
         mapping
             .java_biome_entry(index)
-            .map(|entry| Self::of(&entry))
+            .map(|entry| Self::of(&entry, mapping, dimension))
     }
 
-    /// The colours of the void: what a camera without streamed biomes sees.
-    pub fn fallback(mapping: &JavaBlockMapping) -> Option<Self> {
+    /// The colours of the void in `dimension`: what a camera without streamed biomes sees.
+    pub fn fallback(mapping: &JavaBlockMapping, dimension: SkyDimension) -> Option<Self> {
+        let index = crate::biomes::fallback_biome_index(mapping)?;
         mapping
-            .java_biomes()
-            .find(|biome| biome.name == FALLBACK_BIOME)
-            .map(|entry| Self::of(&entry))
+            .java_biome_entry(index)
+            .map(|entry| Self::of(&entry, mapping, dimension))
     }
 
     /// The weighted average of `samples`; `None` when no sample has weight.
@@ -197,6 +137,15 @@ impl SkyDimension {
         match self {
             Self::Overworld => -64.0,
             Self::Nether | Self::End => 0.0,
+        }
+    }
+
+    /// The Java dimension type whose colours apply.
+    const fn java(self) -> JavaDimension {
+        match self {
+            Self::Overworld => JavaDimension::Overworld,
+            Self::Nether => JavaDimension::Nether,
+            Self::End => JavaDimension::End,
         }
     }
 }
@@ -277,8 +226,10 @@ fn sky_color(inputs: &SkyFogInputs) -> [f32; 3] {
     quantize(colour)
 }
 
-/// The fog colour in air: the biome fog dimmed by the time of day, the sunrise glow towards
-/// the sun's side, then mixed towards the sky by the render distance.
+/// The fog colour in air: the biome fog dimmed by the time of day in the overworld, the
+/// sunrise glow towards the sun's side, then mixed towards the sky by the render distance.
+/// The nether's and the end's fog colours are used as they are (the end's attribute already
+/// carries its dimming).
 fn air_fog(inputs: &SkyFogInputs, sky: [f32; 3]) -> [f32; 3] {
     let light = daylight(inputs.celestial_angle);
     let mut fog = match inputs.dimension {
@@ -290,8 +241,7 @@ fn air_fog(inputs: &SkyFogInputs, sky: [f32; 3]) -> [f32; 3] {
                 b * (light * 0.91 + 0.09),
             ]
         }
-        SkyDimension::Nether => inputs.biome.fog,
-        SkyDimension::End => inputs.biome.fog.map(|c| c * 0.15),
+        SkyDimension::Nether | SkyDimension::End => inputs.biome.fog,
     };
     let chunks = inputs.render_distance_chunks;
     if inputs.dimension == SkyDimension::Overworld && chunks >= 4.0 {

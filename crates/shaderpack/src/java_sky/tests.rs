@@ -1,13 +1,20 @@
 use super::*;
 
+fn mapping() -> &'static JavaBlockMapping {
+    JavaBlockMapping::pinned().expect("the Java mapping carrier is compiled in")
+}
+
+/// The colours of the Java biome `name` in `dimension`.
+fn java(name: &str, dimension: SkyDimension) -> BiomeColors {
+    let entry = mapping()
+        .java_biomes()
+        .find(|biome| biome.name == name)
+        .unwrap_or_else(|| panic!("no Java biome {name}"));
+    BiomeColors::of(&entry, mapping(), dimension)
+}
+
 fn plains() -> BiomeColors {
-    BiomeColors::of(&JavaBiomeEntry {
-        name: "minecraft:plains",
-        temperature: 0.8,
-        downfall: 0.4,
-        has_precipitation: true,
-        frozen: false,
-    })
+    java("minecraft:plains", SkyDimension::Overworld)
 }
 
 fn inputs(celestial_angle: f32, look: [f32; 3]) -> SkyFogInputs {
@@ -30,28 +37,19 @@ fn close(a: [f32; 3], b: [f32; 3]) -> bool {
 }
 
 #[test]
-fn biome_skies_follow_the_temperature_and_fog_is_the_overworld_default() {
+fn biome_colours_come_from_the_biome_over_its_dimension_type() {
     let colours = plains();
     assert_eq!(colours.sky, rgb(0x78_A7_FF), "plains' sky is #78A7FF");
-    assert_eq!(colours.fog, rgb(0xC0_D8_FF));
-    assert_eq!(colours.water_fog, rgb(0x05_05_33));
-    let desert = BiomeColors::of(&JavaBiomeEntry {
-        name: "minecraft:desert",
-        temperature: 2.0,
-        downfall: 0.0,
-        has_precipitation: false,
-        frozen: false,
-    });
+    assert_eq!(colours.fog, rgb(0xC0_D8_FF), "the overworld's fog");
+    assert_eq!(colours.water_fog, rgb(0x05_05_33), "the attribute default");
+    let desert = java("minecraft:desert", SkyDimension::Overworld);
     assert_eq!(desert.sky, rgb(0x6E_B1_FF), "desert's sky is #6EB1FF");
-    let pale = BiomeColors::of(&JavaBiomeEntry {
-        name: "minecraft:pale_garden",
-        temperature: 0.7,
-        downfall: 0.8,
-        has_precipitation: true,
-        frozen: false,
-    });
+    let pale = java("minecraft:pale_garden", SkyDimension::Overworld);
     assert_eq!(pale.sky, rgb(0xB9_B9_B9));
     assert_eq!(pale.fog, rgb(0x81_77_70));
+    assert_eq!(pale.water_fog, rgb(0x55_69_80));
+    let end = java("minecraft:the_end", SkyDimension::End);
+    assert_eq!(end.fog, rgb(0x18_13_18), "the end's dimension fog");
 }
 
 #[test]
@@ -136,10 +134,7 @@ fn fluids_and_other_dimensions_replace_the_overworld_fog() {
     assert_eq!(lava.fog, LAVA_FOG);
     let nether = sky_fog(&SkyFogInputs {
         dimension: SkyDimension::Nether,
-        biome: BiomeColors {
-            fog: rgb(0x33_08_08),
-            ..plains()
-        },
+        biome: java("minecraft:nether_wastes", SkyDimension::Nether),
         ..inputs(0.25, [-1.0, 0.0, 0.0])
     });
     assert_eq!(nether.sky, [0.0; 3]);
@@ -163,17 +158,18 @@ fn biome_colours_blend_by_weight() {
 
 #[test]
 fn bedrock_biomes_read_their_java_colours() {
-    let Ok(mapping) = JavaBlockMapping::pinned() else {
-        eprintln!("skipping: missing Java mapping carrier fixture");
-        return;
-    };
+    let mapping = mapping();
     let plains_id = (0..u32::from(u16::MAX))
         .find(|id| mapping.java_biome(*id) == Some("minecraft:plains"))
         .expect("a Bedrock biome maps to plains");
-    assert_eq!(BiomeColors::at(mapping, plains_id), Some(plains()));
-    let void = BiomeColors::fallback(mapping).expect("the registry has the void");
+    let overworld = SkyDimension::Overworld;
     assert_eq!(
-        BiomeColors::at(mapping, u32::from(u16::MAX) + 7),
+        BiomeColors::at(mapping, plains_id, overworld),
+        Some(plains())
+    );
+    let void = BiomeColors::fallback(mapping, overworld).expect("the registry has the void");
+    assert_eq!(
+        BiomeColors::at(mapping, u32::from(u16::MAX) + 7, overworld),
         Some(void)
     );
 }
