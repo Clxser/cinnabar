@@ -42,6 +42,13 @@ impl TransformError {
     }
 }
 
+/// Converts the vertex stage's OpenGL clip position to wgpu's: depth `[-w, w]` becomes
+/// `[0, w]`, so window depth keeps GL's `(z + 1) / 2`, and Y flips, so rows are stored
+/// bottom-up exactly as GL stores them. Texture coordinates, `gl_FragCoord` and
+/// `texelFetch` then agree with the pack's GL assumptions; hosts flip Y when copying
+/// images into or out of pack buffers, and triangle winding is mirrored.
+const GL_CLIP_TO_WGPU: &str = "gl_Position = vec4(gl_Position.x, -gl_Position.y, (gl_Position.z + gl_Position.w) * 0.5, gl_Position.w);";
+
 /// One translated stage, waiting for the program's merged uniform block.
 pub(crate) struct StageDraft {
     header: String,
@@ -95,6 +102,9 @@ pub(crate) fn transform(
     }
     let items = specialize::specialize_opaque_params(items);
     let mut c = declare::collect(items, stage, iface, image_formats)?;
+    if stage == StageKind::Vertex {
+        c.after_main.push(GL_CLIP_TO_WGPU.to_string());
+    }
 
     let mut ubo: Vec<UboMember> = LEGACY_UNIFORMS
         .iter()

@@ -209,13 +209,21 @@ pub fn dimension_folder(source: &PackSource, dimension: &str) -> String {
             return folder;
         }
     }
-    match dimension {
-        "minecraft:the_nether" => "world-1",
-        "minecraft:the_end" => "world1",
+    match JAVA_DIMENSIONS.iter().position(|id| *id == dimension) {
+        Some(1) => "world-1",
+        Some(2) => "world1",
         _ => "world0",
     }
     .to_string()
 }
+
+/// Java ids of the built-in dimensions, indexed by Bedrock dimension id (Overworld, Nether,
+/// End); hosts pass these to [`dimension_folder`].
+pub const JAVA_DIMENSIONS: [&str; 3] = [
+    "minecraft:overworld",
+    "minecraft:the_nether",
+    "minecraft:the_end",
+];
 
 /// A program's stage files as (stage, `shaders/`-relative path).
 type StageFiles = Vec<(StageKind, String)>;

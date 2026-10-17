@@ -13,7 +13,9 @@
 
 mod buffers;
 mod compile;
+mod custom_uniforms;
 mod diagnostics;
+mod discover;
 mod environment;
 mod expr;
 mod options;
@@ -30,15 +32,17 @@ mod translate;
 
 pub use buffers::{BufferDirectives, BufferFormat, BufferId, BufferSettings};
 pub use compile::CompiledStage;
+pub use custom_uniforms::{CustomUniformError, CustomUniforms, UniformValue};
 pub use diagnostics::{Diagnostic, Phase, SourceLocation};
+pub use discover::{DiscoveredPack, discover_packs};
 pub use environment::{Environment, GpuVendor, HostOs};
 pub use expr::{BinaryOp, Expr, ExprError, UnaryOp};
 pub use options::{OptionKind, OptionValues, PackOption};
 pub use pack::{PackTranslation, ShaderPack, TranslateConfig};
 pub use preprocess::ConstDirective;
 pub use programs::{
-    GEOMETRY_FALLBACKS, ProgramGroup, ProgramKind, ProgramSource, StageKind, geometry_fallback,
-    program_group,
+    GEOMETRY_FALLBACKS, JAVA_DIMENSIONS, ProgramGroup, ProgramKind, ProgramSource, StageKind,
+    geometry_fallback, program_group,
 };
 pub use properties::{
     AlphaTest, AlphaTestRule, BlendFactor, BlendMode, BlendRule, BufferSize, CompareFunction,
