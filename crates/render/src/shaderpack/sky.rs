@@ -99,11 +99,7 @@ pub(crate) fn sky_geometry(inputs: SkyInputs) -> SkyGeometry {
         .flatten();
     if let Some([r, g, b, a]) = sunset_colour {
         let sun = (inputs.celestial_angle * std::f32::consts::TAU).sin();
-        let flip = if sun < 0.0 {
-            std::f32::consts::PI
-        } else {
-            0.0
-        };
+        let flip = if sun < 0.0 { std::f32::consts::PI } else { 0.0 };
         let rotation = Mat3::from_rotation_x(std::f32::consts::FRAC_PI_2)
             * Mat3::from_rotation_z(flip)
             * Mat3::from_rotation_z(std::f32::consts::FRAC_PI_2);
@@ -154,7 +150,10 @@ mod tests {
         for vertex in sky.discs.clone() {
             assert_eq!(f32::from_bits(vertex_word(&sky, vertex, 1)), 16.0);
         }
-        assert_eq!(vertex_word(&sky, 0, 3), u32::from_le_bytes([128, 179, 255, 255]));
+        assert_eq!(
+            vertex_word(&sky, 0, 3),
+            u32::from_le_bytes([128, 179, 255, 255])
+        );
     }
 
     #[test]
@@ -164,7 +163,10 @@ mod tests {
         assert_eq!(sky.sunset, 48..96, "sixteen fan triangles at sunset");
         assert!(sky.bytes.len() as u64 <= SKY_BUFFER_BYTES);
         let colour = sunrise_color(0.25).expect("the sun sets at a quarter day");
-        assert!((colour[3] - 1.0).abs() < 1e-3, "fully opaque at the horizon");
+        assert!(
+            (colour[3] - 1.0).abs() < 1e-3,
+            "fully opaque at the horizon"
+        );
         assert_eq!(sunrise_color(0.0), None);
     }
 }

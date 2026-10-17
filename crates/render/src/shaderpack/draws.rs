@@ -193,7 +193,10 @@ pub(crate) fn select_draws(
         };
         draws.push((kind, index));
     }
-    if !draws.iter().any(|(kind, _)| *kind == DrawKind::TerrainSolid) {
+    if !draws
+        .iter()
+        .any(|(kind, _)| *kind == DrawKind::TerrainSolid)
+    {
         return (vec![], vec![]);
     }
     (selected, draws)
@@ -281,7 +284,9 @@ pub(crate) fn draw_pipeline(
             .rev()
             .find(|r| {
                 r.program == inputs.name
-                    && r.buffer.as_deref().and_then(|b| rule_buffer(b, kind.shadow()))
+                    && r.buffer
+                        .as_deref()
+                        .and_then(|b| rule_buffer(b, kind.shadow()))
                         == Some(buffer)
             })
             .map(|r| r.mode);
@@ -293,6 +298,9 @@ pub(crate) fn draw_pipeline(
             outputs[output.location as usize] = Some(buffer);
         }
         targets[output.location as usize] = target;
+    }
+    if !kind.depth() && targets.iter().all(Option::is_none) {
+        return Err("it writes no buffer the frame has".into());
     }
     let alpha = kind.alpha_test(inputs.name, &inputs.properties.alpha_tests);
     let tested = alpha.and_then(|test| {
@@ -370,8 +378,14 @@ mod tests {
             "gbuffers_water",
             "gbuffers_skybasic",
         ];
-        assert_eq!(resolve(DrawKind::TerrainSolid, &bsl), Some("gbuffers_terrain"));
-        assert_eq!(resolve(DrawKind::TerrainCutout, &bsl), Some("gbuffers_terrain"));
+        assert_eq!(
+            resolve(DrawKind::TerrainSolid, &bsl),
+            Some("gbuffers_terrain")
+        );
+        assert_eq!(
+            resolve(DrawKind::TerrainCutout, &bsl),
+            Some("gbuffers_terrain")
+        );
         assert_eq!(resolve(DrawKind::Translucent, &bsl), Some("gbuffers_water"));
         assert_eq!(resolve(DrawKind::Sky, &bsl), Some("gbuffers_skybasic"));
         let textured = ["gbuffers_basic", "gbuffers_textured"];
@@ -386,7 +400,10 @@ mod tests {
             resolve(DrawKind::TerrainSolid, &photon),
             Some("gbuffers_terrain_solid")
         );
-        assert_eq!(resolve(DrawKind::TerrainCutout, &photon), Some("gbuffers_terrain"));
+        assert_eq!(
+            resolve(DrawKind::TerrainCutout, &photon),
+            Some("gbuffers_terrain")
+        );
         assert_eq!(resolve(DrawKind::TerrainSolid, &[]), None);
     }
 
@@ -402,7 +419,10 @@ mod tests {
 
     #[test]
     fn alpha_tests_default_by_kind_and_follow_the_resolved_programs_rule() {
-        assert_eq!(DrawKind::TerrainSolid.alpha_test("gbuffers_terrain", &[]), None);
+        assert_eq!(
+            DrawKind::TerrainSolid.alpha_test("gbuffers_terrain", &[]),
+            None
+        );
         assert_eq!(
             DrawKind::TerrainCutout.alpha_test("gbuffers_terrain", &[]),
             Some(ONE_TENTH_ALPHA)
@@ -425,7 +445,10 @@ mod tests {
             DrawKind::TerrainSolid.alpha_test("gbuffers_terrain", &rules),
             Some(half)
         );
-        assert_eq!(DrawKind::Translucent.alpha_test("gbuffers_water", &rules), None);
+        assert_eq!(
+            DrawKind::Translucent.alpha_test("gbuffers_water", &rules),
+            None
+        );
         assert_eq!(DrawKind::Translucent.default_blend(), TRANSLUCENT_BLEND);
         assert_eq!(DrawKind::TerrainSolid.default_blend(), BlendMode::Off);
     }

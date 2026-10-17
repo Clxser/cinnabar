@@ -573,7 +573,11 @@ impl<'a> ConstantBuilder<'a> {
             for block in 0..16 {
                 let b = brightness(block) * 1.5;
                 let s = brightness(sky);
-                let warm = [b, b * ((b * 0.6 + 0.4) * 0.6 + 0.4), b * (b * b * 0.6 + 0.4)];
+                let warm = [
+                    b,
+                    b * ((b * 0.6 + 0.4) * 0.6 + 0.4),
+                    b * (b * b * 0.6 + 0.4),
+                ];
                 for channel in warm {
                     let lit = (s * 0.96 + 0.04 + channel).min(1.0);
                     texels.push((lit * 255.0).round() as u8);

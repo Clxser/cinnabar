@@ -923,9 +923,15 @@ mod tests {
         );
         assert_eq!(
             draw.value("iris_TextureMat[1]"),
-            Some(HostValue::Mat4(super::super::geometry::LIGHTMAP_TEXTURE_MATRIX))
+            Some(HostValue::Mat4(
+                super::super::geometry::LIGHTMAP_TEXTURE_MATRIX
+            ))
         );
-        assert_eq!(draw.value("iris_TextureMat[0]"), None, "the frame's identity");
+        assert_eq!(
+            draw.value("iris_TextureMat[0]"),
+            None,
+            "the frame's identity"
+        );
         assert_eq!(draw.value("renderStage"), Some(HostValue::Int(8)));
     }
 

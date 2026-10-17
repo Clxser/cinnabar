@@ -113,7 +113,12 @@ fn record_kind(
     }
     let groups = &state.bindings.draws[index].groups;
     let depth = depth.and_then(|(view, _)| depth_attachment(view, false));
-    let render = pass(encoder, &format!("{} {kind:?}", pack.name), &attachments, depth);
+    let render = pass(
+        encoder,
+        &format!("{} {kind:?}", pack.name),
+        &attachments,
+        depth,
+    );
     let mut tracked = TrackedRenderPass::new(geometry.device, render);
     {
         let raw = tracked.wgpu_pass();
@@ -182,7 +187,12 @@ fn copy_depth_to_floats(
 
 /// Copies the geometry depth into `depthtex{indices}`: the float copies and, for the ones a
 /// program samples with the comparison sampler, the depth copies.
-fn copy_view_depth(device: &Device, encoder: &mut CommandEncoder, state: &ViewState, indices: &[usize]) {
+fn copy_view_depth(
+    device: &Device,
+    encoder: &mut CommandEncoder,
+    state: &ViewState,
+    indices: &[usize],
+) {
     let targets = &state.targets;
     let Some(depth) = targets.geometry_depth.as_ref() else {
         return;
@@ -202,7 +212,12 @@ fn copy_view_depth(device: &Device, encoder: &mut CommandEncoder, state: &ViewSt
 
 /// Copies the shadow depth into `shadowtex{index}` (and `shadowtex0` too when `index` is 1
 /// and nothing translucent follows).
-fn copy_shadow_depth(device: &Device, encoder: &mut CommandEncoder, pack: &PackGpu, indices: &[usize]) {
+fn copy_shadow_depth(
+    device: &Device,
+    encoder: &mut CommandEncoder,
+    pack: &PackGpu,
+    indices: &[usize],
+) {
     let Some(shadow) = pack.shadow.as_ref() else {
         return;
     };
@@ -254,7 +269,10 @@ pub(crate) fn record_shadow(
             drop(pass(
                 encoder,
                 "shader pack shadowcolor clear",
-                &[clear_attachment(&pack.constants.textures[*slot].view, *colour)],
+                &[clear_attachment(
+                    &pack.constants.textures[*slot].view,
+                    *colour,
+                )],
                 None,
             ));
         }

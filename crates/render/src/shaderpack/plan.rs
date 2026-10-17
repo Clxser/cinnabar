@@ -190,7 +190,10 @@ pub(crate) fn plan_frame(programs: &[PlannedProgram], flips: &[FlipRule]) -> Fra
     let mut post = vec![];
     let mut translucent = None;
     for (index, program) in programs.iter().enumerate() {
-        let geometry_done = !matches!(program.group, ProgramGroup::Prepare | ProgramGroup::Deferred);
+        let geometry_done = !matches!(
+            program.group,
+            ProgramGroup::Prepare | ProgramGroup::Deferred
+        );
         if geometry_done && translucent.is_none() {
             translucent = Some((post.len(), flipped));
         }
@@ -382,7 +385,10 @@ mod tests {
         ];
         let plan = plan_frame(&programs, &[]);
         assert_eq!(plan.composite_start, 2);
-        assert_eq!(plan.translucent_alt, 1, "colortex0 flipped once, colortex2 twice");
+        assert_eq!(
+            plan.translucent_alt, 1,
+            "colortex0 flipped once, colortex2 twice"
+        );
         assert_eq!(plan.post[2].read_alt, plan.translucent_alt);
         let mut water = program("gbuffers_water", ProgramGroup::Gbuffers, &[0, 5]);
         water.reads = vec![5];
@@ -400,7 +406,10 @@ mod tests {
             "a buffer a geometry program reads and writes gets a second side"
         );
         let plan = plan_frame(&programs[..2], &[]);
-        assert_eq!(plan.composite_start, 2, "no composite: translucents draw last");
+        assert_eq!(
+            plan.composite_start, 2,
+            "no composite: translucents draw last"
+        );
     }
 
     #[test]

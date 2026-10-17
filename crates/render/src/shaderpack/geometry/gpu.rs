@@ -575,6 +575,9 @@ pub(crate) fn record_geometry_expansion(
             continue;
         };
         let groups = dispatch.jobs.div_ceil(EXPAND_WORKGROUP_SIZE);
+        if groups == 0 {
+            continue;
+        }
         let x = groups.min(u16::MAX as u32);
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &dispatch.sources, &[]);

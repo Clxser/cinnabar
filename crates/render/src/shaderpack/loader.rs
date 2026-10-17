@@ -828,7 +828,12 @@ fn geometry_draws(
     gpu: &GpuContext,
     cache: Option<&wgpu::PipelineCache>,
     selected: &[(super::draws::DrawKind, usize)],
-    stages: &[(usize, wgpu::PipelineLayout, wgpu::ShaderModule, naga::Module)],
+    stages: &[(
+        usize,
+        wgpu::PipelineLayout,
+        wgpu::ShaderModule,
+        naga::Module,
+    )],
     programs: &[GpuProgram],
     properties: &shaderpack::ShaderProperties,
     buffer_formats: &[Option<TextureFormat>; MAX_COLOR_BUFFERS as usize],
