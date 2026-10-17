@@ -1484,7 +1484,8 @@ not close a parity or visual acceptance gate.
   The live Video control persists its choice and restores the normal style when disabled.
 - Incomplete: partial-model AO weights, biome blending, aliases and swamp noise,
   full foliage and water geometry matching, underground fog, torch flicker and lightning handling,
-  pack-override checks, matching Java captures, and frame/streaming budget checks.
+  pack-override checks, terrain light interpolation, End sky details,
+  matching Java captures, and frame/streaming budget checks.
   These are open work, not accepted approximations. No parity or performance gate closes.
 
 ## Java 1.7 animations
