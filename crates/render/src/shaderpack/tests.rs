@@ -199,7 +199,7 @@ fn render(gpu: &GpuContext, files: &[(&str, &str)]) -> Vec<u8> {
         },
         &mut state.history,
     );
-    state.write_uniforms(&gpu.queue, &frame, 0.016);
+    state.write_uniforms(&gpu.queue, &frame, 0.016, Vec3::ZERO);
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
     let clear = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -225,6 +225,7 @@ fn render(gpu: &GpuContext, files: &[(&str, &str)]) -> Vec<u8> {
         render_distance: game.render_distance,
         destination: &output.create_view(&Default::default()),
         destination_format: format,
+        geometry: None,
     };
     record_frame(&gpu.device, &gpu.queue, &mut encoder, &mut state, &io);
     let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {

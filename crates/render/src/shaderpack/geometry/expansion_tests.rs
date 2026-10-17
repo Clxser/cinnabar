@@ -672,11 +672,18 @@ fn translated_gbuffers_program_draws_expanded_terrain() {
         .iter()
         .find(|texture| texture.name == "gtexture")
         .expect("program samples gtexture");
+    // The atlas's sampler class (repeat/nearest) has its own binding.
+    let sampler_binding = reflection
+        .samplers
+        .iter()
+        .find(|sampler| !sampler.comparison)
+        .expect("program samples with a filtering sampler")
+        .binding;
     let group1_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: None,
         entries: &[
             wgpu::BindGroupLayoutEntry {
-                binding: shaderpack::SAMPLER_BINDING,
+                binding: sampler_binding,
                 visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
@@ -734,7 +741,7 @@ fn translated_gbuffers_program_draws_expanded_terrain() {
         layout: &group1_layout,
         entries: &[
             wgpu::BindGroupEntry {
-                binding: shaderpack::SAMPLER_BINDING,
+                binding: sampler_binding,
                 resource: wgpu::BindingResource::Sampler(&sampler),
             },
             wgpu::BindGroupEntry {

@@ -27,8 +27,6 @@ pub(crate) mod atlas;
 mod draws;
 #[cfg(feature = "shaderpacks")]
 mod frame_geometry;
-#[cfg(all(test, feature = "shaderpacks"))]
-mod frame_tests;
 #[cfg(feature = "shaderpacks")]
 pub(crate) mod geometry;
 #[cfg(feature = "shaderpacks")]
