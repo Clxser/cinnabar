@@ -82,13 +82,16 @@ The producer neither hashes pixels nor copies geometry. Startup, frame-cadence
 sampling, worker errors and manifest completion are connected in the app.
 
 Restore validates native instance/bone limits, matrix finiteness, geometry and
-raster references before returning a separate frame. These prepared draws retain
-the original camera's culling and omit its hidden first-person body. Coverage is
-explicitly `OriginalView`; this does not establish unrestricted replay cameras.
-Unculled actor preparation and pose interpolation remain incomplete. Native
-publication has source wiring without rendered acceptance. Appearance pinning is
-capped at 512 MiB; capture stops with an error if
-that limit is exceeded. Aggregate take budgets and performance remain unverified.
+raster references before returning a separate frame. New takes publish received
+actors and the local world body before camera culling; older `OriginalView` takes
+retain their original coverage. Continuous poses interpolate within compatible
+lifetimes. Rendered acceptance remains open.
+
+Queued asset epochs share charges for identical immutable allocations. A skin or
+wrapper change does not charge unchanged texture/vertex pages again. Dropping the
+last lease releases each charge before its corresponding allocation. Snapshot and
+total-pinned limits remain enforced; errors include retained, requested and limit
+bytes. Aggregate take budgets and performance remain unverified.
 
 ## Coordinated playback
 

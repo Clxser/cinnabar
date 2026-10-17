@@ -16,8 +16,18 @@ pub(super) struct NativeActors {
     geometry: Arc<PreparedGeometry>,
     appearance: Arc<PreparedAppearance>,
     geometry_key: (u64, u64, usize, usize, usize),
-    appearance_key: (usize, usize),
+    appearance_key: AppearanceKey,
     last_frame: u64,
+}
+
+#[derive(PartialEq, Eq)]
+struct AppearanceKey {
+    skins: usize,
+    identity: [u8; 32],
+    entity_identity: [u8; 32],
+    pages: usize,
+    actor_glint: Option<(u16, u16, usize)>,
+    item_glint: Option<(u16, u16, usize)>,
 }
 
 /// Retains the current prepared frame as the take's zero-time baseline.
@@ -148,10 +158,18 @@ fn geometry_key(frame: &ActorRenderFrame) -> (u64, u64, usize, usize, usize) {
     )
 }
 
-/// Native publications replace immutable raster storage when its contents change.
-fn appearance_key(frame: &ActorRenderFrame) -> (usize, usize) {
-    (
-        Arc::as_ptr(&frame.skins) as usize,
-        Arc::as_ptr(&frame.artwork) as usize,
-    )
+/// Recreated artwork wrappers reuse a lease when all serialized raster storage remains unchanged.
+fn appearance_key(frame: &ActorRenderFrame) -> AppearanceKey {
+    let artwork = &frame.artwork;
+    let raster_key = |raster: &render_model::EquipmentRaster| {
+        (raster.width, raster.height, raster.rgba8.as_ptr() as usize)
+    };
+    AppearanceKey {
+        skins: Arc::as_ptr(&frame.skins) as usize,
+        identity: artwork.identity,
+        entity_identity: artwork.entity_identity,
+        pages: Arc::as_ptr(&artwork.pages) as *const () as usize,
+        actor_glint: artwork.actor_glint.as_ref().map(raster_key),
+        item_glint: artwork.item_glint.as_ref().map(raster_key),
+    }
 }

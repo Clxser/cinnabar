@@ -2,10 +2,7 @@
 
 use std::{
     path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex, Weak,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::{Arc, Mutex, Weak},
 };
 
 use recording_studio::{
@@ -22,27 +19,18 @@ use render_model::{
 
 use super::{ACTOR_DIRECTORY, ACTOR_TRACK_SCHEMA, ActorSample, appearance, geometry, pose};
 
-const MAX_PINNED_BYTES: usize = geometry::MAX_BYTES + appearance::MAX_BYTES;
-
-struct Charge {
-    budget: Arc<AtomicUsize>,
-    bytes: usize,
-}
-impl Drop for Charge {
-    fn drop(&mut self) {
-        self.budget.fetch_sub(self.bytes, Ordering::AcqRel);
-    }
-}
+mod budget;
 
 pub struct PreparedGeometry {
+    // Release charges before their retained allocations can be freed and their addresses reused.
+    _charge: budget::Lease,
     vertices: ActorRigVertexSegments,
     spans: Arc<[ActorRigGeometrySpan]>,
-    _charge: Charge,
 }
 pub struct PreparedAppearance {
+    _charge: budget::Lease,
     skins: Arc<ActorSkinResidency>,
     artwork: Arc<ActorArtworkPages>,
-    _charge: Charge,
 }
 
 struct Worker {
@@ -55,7 +43,7 @@ pub struct ActorCapture {
     recording: Option<Recording>,
     root: PathBuf,
     worker: Arc<Mutex<Option<Worker>>>,
-    pinned: Arc<AtomicUsize>,
+    pinned: budget::Budget,
     last_checkpoint: Option<MediaTime>,
 }
 
@@ -77,14 +65,14 @@ impl ActorCapture {
             recording: Some(recording),
             root,
             worker: Arc::new(Mutex::new(None)),
-            pinned: Arc::default(),
+            pinned: budget::Budget::default(),
             last_checkpoint: None,
         })
     }
 
     /// Pins one immutable geometry epoch without copying its vertex pages on the producer.
     pub fn geometry(
-        &self,
+        &mut self,
         vertices: &ActorRigVertexSegments,
         spans: Arc<[ActorRigGeometrySpan]>,
     ) -> Result<Arc<PreparedGeometry>, String> {
@@ -100,25 +88,25 @@ impl ActorCapture {
             return Err("Recorded actor geometry exceeded its memory budget.".into());
         }
         Ok(Arc::new(PreparedGeometry {
+            _charge: self.pinned.geometry(vertices, &spans)?,
             vertices: vertices.clone(),
             spans,
-            _charge: charge(&self.pinned, bytes)?,
         }))
     }
 
     /// Pins skins and artwork separately so a changing skin does not charge static geometry again.
     pub fn appearance(
-        &self,
+        &mut self,
         skins: Arc<ActorSkinResidency>,
         artwork: Arc<ActorArtworkPages>,
     ) -> Result<Arc<PreparedAppearance>, String> {
-        let bytes = appearance::retained_bytes(&skins, &artwork)
+        appearance::retained_bytes(&skins, &artwork)
             .filter(|bytes| *bytes <= appearance::MAX_BYTES)
             .ok_or("Recorded actor appearance exceeded its memory budget.")?;
         Ok(Arc::new(PreparedAppearance {
+            _charge: self.pinned.appearance(&skins, &artwork)?,
             skins,
             artwork,
-            _charge: charge(&self.pinned, bytes)?,
         }))
     }
 
@@ -243,20 +231,6 @@ impl ActorCapture {
         }
         Ok(())
     }
-}
-
-/// Reserves only retained immutable allocations; queue bytes are charged separately by the archive.
-fn charge(pinned: &Arc<AtomicUsize>, bytes: usize) -> Result<Charge, String> {
-    pinned
-        .try_update(Ordering::AcqRel, Ordering::Acquire, |old| {
-            old.checked_add(bytes)
-                .filter(|total| *total <= MAX_PINNED_BYTES)
-        })
-        .map_err(|_| "Recorded actor assets exceeded their pinned memory budget.".to_owned())?;
-    Ok(Charge {
-        budget: Arc::clone(pinned),
-        bytes,
-    })
 }
 
 /// A weak identity cache never extends the lifetime of obsolete skin or geometry epochs.

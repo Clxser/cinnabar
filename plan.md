@@ -9513,6 +9513,13 @@ Current implementation; runtime acceptance remains incomplete:
   before readback; sustained cadence still depends on render/encode throughput,
   with missed slots reported explicitly. No measured high-FPS claim is made.
 
+- Actor recording now reuses unchanged raster snapshots even when the live
+  renderer replaces their outer artwork wrapper. Queued geometry and appearance
+  epochs charge shared immutable allocations once, retain the existing total
+  cap, and report retained/requested/limit bytes on real exhaustion. This addresses
+  immediate actor-budget interruptions; this follow-up is formatted only, with
+  compilation and live recording validation pending.
+
 Required work remains open:
 
 - Render and exercise recording options, library/editor, focus, scrolling,
