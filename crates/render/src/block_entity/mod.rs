@@ -2,6 +2,8 @@
 mod gpu;
 use bevy::render::render_resource::{BlendComponent, BlendFactor, BlendOperation, BlendState};
 pub use gpu::BlockEntityRenderPlugin;
+#[cfg(feature = "shaderpacks")]
+pub(crate) use gpu::shaderpack_block_entities;
 
 /// Straight-alpha additive composition used by the untextured death effect.
 pub const DRAGON_DEATH_BLEND: BlendState = BlendState {

@@ -7,7 +7,7 @@
 //! per-draw uniform buffers and every pass's bind groups. A resize or pack change replaces
 //! the whole set.
 
-use super::draws::{DrawKind, GeometryDraw};
+use super::draws::GeometryDraw;
 use super::loader::{PackGpu, ProgramPipeline, SCREEN_FORMAT};
 use super::plan::{MAX_COLOR_BUFFERS, PassStep};
 use super::resources::{AtlasLayer, ImageSource, TextureSource};
@@ -460,6 +460,8 @@ pub(crate) fn pass_bind_groups<'a>(
 /// matrices and render stage) and bind groups.
 pub(crate) struct DrawBinding {
     pub uniforms: Option<wgpu::Buffer>,
+    /// This frame's packed uniform block, which actor draws patch per actor.
+    pub base: Vec<u8>,
     pub groups: [Option<wgpu::BindGroup>; 4],
 }
 
@@ -492,8 +494,8 @@ fn uniform_buffer(device: &Device, name: &str, block: &shaderpack::UniformBlock)
 /// sample its own attachment.
 pub(crate) fn draw_read_alt(pack: &PackGpu, draw: &GeometryDraw) -> u32 {
     let base = match draw.kind {
-        DrawKind::Translucent => pack.frame.translucent_alt,
         kind if kind.shadow() => return 0,
+        kind if kind.after_deferred() => pack.frame.translucent_alt,
         _ => pack.frame.scene_alt,
     };
     let program = &pack.programs[draw.program];
@@ -552,6 +554,7 @@ impl ViewBindings {
                     .map(|block| uniform_buffer(device, &program.name, block));
                 DrawBinding {
                     uniforms,
+                    base: vec![],
                     groups: Default::default(),
                 }
             })

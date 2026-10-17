@@ -1,18 +1,22 @@
 //! Bevy wiring: the main-world load worker, extraction, the geometry adapter's settings and
-//! block ids, per-view preparation and the render-graph system.
+//! block ids, the actor adapter's id maps and Vanilla hand-off, per-view preparation and the
+//! render-graph system.
 
+use super::actors::{self, ActorSkinPipelines, ActorSources, RigSource};
 use super::atlas::{ShaderpackAtlas, ShaderpackAtlasPlugin};
+use super::draws::DrawKind;
 use super::frame_geometry::{FrameGeometry, TerrainDraws};
 use super::geometry::{
     GeometryCategory, ShaderpackBlockIds, ShaderpackGeometry, ShaderpackGeometryPlugin,
     ShaderpackGeometrySettings,
 };
 use super::loader::{GpuContext, PackGpu, load};
-use super::passes::{FrameIo, ViewState, record_frame};
+use super::passes::{DrawContext, FrameIo, ViewState, record_frame};
 use super::sky::SkyInputs;
 use super::targets::AtlasViews;
-use super::uniforms::{FrameClock, FrameUniforms, ViewCamera};
+use super::uniforms::{FAR_PLANE_SCALE, FrameClock, FrameUniforms, ViewCamera};
 use bevy::render::render_phase::TrackedRenderPass;
+use bevy::render::render_resource::PipelineCache;
 use bevy::{
     core_pipeline::{Core3d, Core3dSystems},
     prelude::*,
@@ -25,13 +29,17 @@ use bevy::{
     },
 };
 use render_scene::shaderpack::{
-    ShaderPackFrameInputs, ShaderPackRendering, ShaderPackRequest, ShaderPackStatus,
+    ShaderPackActorIds, ShaderPackDrawnCategories, ShaderPackFrameInputs, ShaderPackIdMaps,
+    ShaderPackRendering, ShaderPackRequest, ShaderPackStatus,
 };
 use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{Arc, Mutex, mpsc},
 };
+
+/// Java's first-person field of view, for the hand projection while no hand rig draws.
+const DEFAULT_HAND_FOV_DEGREES: f32 = 70.0;
 
 /// The loaded pack, shared with the render world.
 #[derive(Resource, ExtractResource, Clone, Default)]
@@ -149,12 +157,14 @@ struct ShaderPackViews(Mutex<HashMap<Entity, ViewState>>);
 type PreparedView = (Entity, &'static ExtractedView);
 
 /// Enables the geometry adapter while a pack with terrain programs is shown on some camera,
-/// with the pack's `separateAo`/`oldLighting`, and publishes its block ids.
+/// with the pack's `separateAo`/`oldLighting`, publishes its block ids, and tells the
+/// Vanilla actor, block-entity and hand passes which of them the pack draws itself.
 fn configure_geometry(
     mut commands: Commands,
     pack: Option<Res<LoadedShaderPack>>,
     cameras: Query<(), With<ShaderPackRendering>>,
     mut settings: ResMut<ShaderpackGeometrySettings>,
+    mut drawn: ResMut<ShaderPackDrawnCategories>,
     ids: Option<Res<ShaderpackBlockIds>>,
     mut shown: Local<Option<usize>>,
 ) {
@@ -170,6 +180,15 @@ fn configure_geometry(
     if *settings != wanted {
         *settings = wanted;
     }
+    let draws = |kind: DrawKind| {
+        pack.as_ref()
+            .is_some_and(|p| p.draws.iter().any(|d| d.kind == kind))
+    };
+    drawn.set_if_neq(ShaderPackDrawnCategories {
+        actors: draws(DrawKind::Entities),
+        block_entities: draws(DrawKind::Block),
+        hand: draws(DrawKind::Hand),
+    });
     let key = pack.as_ref().map(|p| Arc::as_ptr(p) as usize);
     if *shown == key {
         return;
@@ -202,7 +221,14 @@ fn prepare_views(
     time: Option<Res<Time>>,
     geometry: Option<Res<ShaderpackGeometry>>,
     atlas: Option<Res<ShaderpackAtlas>>,
+    hand: Option<Res<render_scene::HandRigScene>>,
 ) {
+    let hand_fov = hand
+        .as_ref()
+        .and_then(|hand| hand.frame.as_ref())
+        .map_or(DEFAULT_HAND_FOV_DEGREES.to_radians(), |frame| {
+            frame.fov_radians
+        });
     let states = views.0.get_mut().unwrap_or_else(|e| e.into_inner());
     let (Some(pack), Some(inputs)) = (pack.and_then(|p| p.0.clone()), inputs) else {
         states.clear();
@@ -248,13 +274,13 @@ fn prepare_views(
         let atlas_size = atlas.as_ref().map_or([0; 2], |atlas| {
             atlas.size.to_array().map(|side| side as i32)
         });
-        state.write_uniforms(
-            &queue,
-            &frame,
-            clock.delta_seconds,
+        let far = inputs.render_distance.max(16.0) * FAR_PLANE_SCALE;
+        let context = DrawContext {
             chunk_offset,
             atlas_size,
-        );
+            hand_projection: actors::hand_projection(hand_fov, screen, far),
+        };
+        state.write_uniforms(&queue, &frame, clock.delta_seconds, &context);
     }
 }
 
@@ -323,6 +349,24 @@ fn shaderpack_post(
             atlas.generation,
         )
     });
+    let actor_rig = crate::actor_render::shaderpack_source::shaderpack_actors(world);
+    let hand_rig = crate::hand_rig_render::shaderpack_source::shaderpack_hand(world);
+    let kernels = world
+        .get_resource::<ActorSkinPipelines>()
+        .zip(world.get_resource::<PipelineCache>())
+        .and_then(|(pipelines, cache)| pipelines.kernels(cache));
+    let actors = ActorSources {
+        kernels,
+        actors: actor_rig.as_ref().map(|rig| rig as &dyn RigSource),
+        hand: hand_rig.as_ref().map(|rig| rig as &dyn RigSource),
+        block_entities: crate::block_entity::shaderpack_block_entities(world),
+        entity_ids: world.get_resource::<ShaderPackActorIds>(),
+        held_items: [inputs.held_item_id, inputs.held_item_id2],
+        camera: view.world_from_view.translation(),
+        seconds: world
+            .get_resource::<Time>()
+            .map_or(0.0, |time| time.elapsed_secs()),
+    };
     let geometry = terrain.as_ref().map(|terrain| FrameGeometry {
         device: render_device,
         terrain,
@@ -334,6 +378,7 @@ fn shaderpack_post(
             sunrise: inputs.dimension == 0,
         },
         overlay_radius: terrain.geometry.complete_radius().unwrap_or(f32::MAX),
+        actors,
     });
     let post = target.post_process_write();
     let io = FrameIo {
@@ -383,38 +428,62 @@ fn install_graph(world: &mut World) {
     }
 }
 
+/// Publishes the loaded pack's entity and item ids for the app's actor and held-item ids.
+fn publish_id_maps(loaded: Res<LoadedShaderPack>, mut maps: ResMut<ShaderPackIdMaps>) {
+    if !loaded.is_changed() {
+        return;
+    }
+    let revision = maps.revision + 1;
+    *maps = match &loaded.0 {
+        Some(pack) => pack.actor_ids.lookups(revision),
+        None => {
+            let mut empty = ShaderPackIdMaps::default();
+            empty.revision = revision;
+            empty
+        }
+    };
+}
+
 pub(super) fn build(app: &mut App) {
+    actors::load_shaders(app);
     app.init_resource::<ShaderPackRequest>()
         .init_resource::<ShaderPackStatus>()
         .init_resource::<ShaderPackFrameInputs>()
+        .init_resource::<ShaderPackIdMaps>()
+        .init_resource::<ShaderPackActorIds>()
         .init_resource::<LoadedShaderPack>()
         .init_resource::<Loader>()
         .add_plugins((
             ExtractComponentPlugin::<ShaderPackRendering>::default(),
             ExtractResourcePlugin::<LoadedShaderPack>::default(),
             ExtractResourcePlugin::<ShaderPackFrameInputs>::default(),
+            ExtractResourcePlugin::<ShaderPackActorIds>::default(),
             ShaderpackGeometryPlugin,
             ShaderpackAtlasPlugin,
         ))
-        .add_systems(Update, drive_loader);
+        .add_systems(Update, (drive_loader, publish_id_maps).chain());
 }
 
 pub(super) fn finish(app: &mut App) {
     let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
         return;
     };
-    render_app.init_resource::<ShaderPackViews>().add_systems(
-        Render,
-        (
-            configure_geometry
-                .in_set(RenderSystems::PrepareResources)
-                .before(super::geometry::prepare_shaderpack_geometry),
-            prepare_views
-                .in_set(RenderSystems::PrepareResources)
-                .after(bevy::render::view::prepare_view_targets)
-                .after(super::geometry::prepare_shaderpack_geometry),
-            super::lightmap::update_lightmap.in_set(RenderSystems::PrepareResources),
-        ),
-    );
+    render_app
+        .init_resource::<ShaderPackViews>()
+        .init_resource::<ShaderPackDrawnCategories>()
+        .init_resource::<ActorSkinPipelines>()
+        .add_systems(
+            Render,
+            (
+                configure_geometry
+                    .in_set(RenderSystems::PrepareResources)
+                    .before(super::geometry::prepare_shaderpack_geometry),
+                prepare_views
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(bevy::render::view::prepare_view_targets)
+                    .after(super::geometry::prepare_shaderpack_geometry),
+                super::lightmap::update_lightmap.in_set(RenderSystems::PrepareResources),
+            ),
+        );
     install_graph(render_app.world_mut());
 }

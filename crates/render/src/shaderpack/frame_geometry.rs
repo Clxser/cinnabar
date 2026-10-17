@@ -1,7 +1,9 @@
 //! Recording the pack's geometry: the shadow pass, the sky, opaque and translucent terrain,
-//! the depth copies Iris's `depthtex*`/`shadowtex*` semantics need, and the Vanilla overlay
-//! that stands in for geometry the host does not draw yet (entities, particles, clouds).
+//! actors, block entities and the hand (through [`super::actors`]), the depth copies Iris's
+//! `depthtex*`/`shadowtex*` semantics need, and the Vanilla overlay that stands in for
+//! geometry the host does not draw yet (particles, clouds, weather).
 
+use super::actors::ActorSources;
 use super::draws::DrawKind;
 use super::geometry::{CONSTANT_VERTEX_BUFFER, GEOMETRY_VERTEX_BUFFER, GeometryCategory};
 use super::loader::PackGpu;
@@ -35,9 +37,11 @@ pub(crate) struct FrameGeometry<'a> {
     /// Eye distance within which every section is expanded (`f32::MAX` when all are); the
     /// Vanilla overlay passes nothing beyond it.
     pub overlay_radius: f32,
+    /// Actors, block entities and the hand the pack draws.
+    pub actors: ActorSources<'a>,
 }
 
-fn depth_attachment(
+pub(crate) fn depth_attachment(
     view: &TextureView,
     clear: bool,
 ) -> Option<wgpu::RenderPassDepthStencilAttachment<'_>> {
@@ -65,22 +69,19 @@ fn clear_depth(encoder: &mut CommandEncoder, view: &TextureView) {
     ));
 }
 
-/// Records every draw of `kind` (at most one), each in its own render pass over its
-/// outputs: `colortex` sides per `write_alt`, or `shadowcolor` targets in the shadow pass.
-/// Draws whose outputs differ in size from the depth attachment are skipped (logged once).
-fn record_kind(
-    encoder: &mut CommandEncoder,
+/// Opens the render pass of `kind`'s draw (the pack has at most one) over its outputs:
+/// `colortex` sides per `write_alt`, or `shadowcolor` targets in the shadow pass, with its
+/// pipeline set. `None` without such a draw, or when its outputs differ in size from the
+/// depth attachment (logged once). Returns the pass and the draw's index.
+pub(crate) fn open_kind<'e>(
+    encoder: &'e mut CommandEncoder,
     state: &mut ViewState,
-    geometry: &FrameGeometry<'_>,
     kind: DrawKind,
     write_alt: u32,
     depth: Option<(&TextureView, [u32; 2])>,
-    sky: Option<&SkyGeometry>,
-) {
+) -> Option<(wgpu::RenderPass<'e>, usize)> {
     let pack = std::sync::Arc::clone(&state.pack);
-    let Some(index) = pack.draws.iter().position(|d| d.kind == kind) else {
-        return;
-    };
+    let index = pack.draws.iter().position(|d| d.kind == kind)?;
     let draw = &pack.draws[index];
     let targets = &state.targets;
     let mut size = depth.map(|(_, size)| size);
@@ -112,21 +113,37 @@ fn record_kind(
                 "draw skipped: its outputs differ in size"
             );
         }
-        return;
+        return None;
     }
-    let groups = &state.bindings.draws[index].groups;
     let depth = depth.and_then(|(view, _)| depth_attachment(view, false));
-    let render = pass(
+    let mut render = pass(
         encoder,
         &format!("{} {kind:?}", pack.name),
         &attachments,
         depth,
     );
+    render.set_pipeline(&draw.pipeline);
+    Some((render, index))
+}
+
+/// Records the terrain or sky draw of `kind` with the draw's own bind groups.
+fn record_kind(
+    encoder: &mut CommandEncoder,
+    state: &mut ViewState,
+    geometry: &FrameGeometry<'_>,
+    kind: DrawKind,
+    write_alt: u32,
+    depth: Option<(&TextureView, [u32; 2])>,
+    sky: Option<&SkyGeometry>,
+) {
+    let pack = std::sync::Arc::clone(&state.pack);
+    let Some((render, index)) = open_kind(encoder, state, kind, write_alt, depth) else {
+        return;
+    };
     let mut tracked = TrackedRenderPass::new(geometry.device, render);
     {
         let raw = tracked.wgpu_pass();
-        raw.set_pipeline(&draw.pipeline);
-        for (i, group) in groups.iter().enumerate() {
+        for (i, group) in state.bindings.draws[index].groups.iter().enumerate() {
             if let Some(group) = group {
                 raw.set_bind_group(i as u32, group, &[]);
             }
@@ -137,7 +154,7 @@ fn record_kind(
             geometry.terrain.draw(&mut tracked, category, kind.shadow());
         }
         None => {
-            let (Some(sky), Some(buffer)) = (sky, targets.sky.as_ref()) else {
+            let (Some(sky), Some(buffer)) = (sky, state.targets.sky.as_ref()) else {
                 return;
             };
             let range = if kind == DrawKind::Sunset {
@@ -255,8 +272,9 @@ pub(crate) fn bind_geometry(device: &Device, state: &mut ViewState, geometry: &F
     state.atlas_generation = Some(generation);
 }
 
-/// The shadow pass: shadow colour clears, opaque shadow casters into `shadowtex1`, then
-/// translucent ones into `shadowtex0`, as Iris renders them.
+/// The shadow pass: shadow colour clears, opaque shadow casters (terrain, then actors and
+/// block entities) into `shadowtex1`, then translucent ones into `shadowtex0`, as Iris
+/// renders them.
 pub(crate) fn record_shadow(
     device: &Device,
     encoder: &mut CommandEncoder,
@@ -286,6 +304,9 @@ pub(crate) fn record_shadow(
     for kind in [DrawKind::ShadowSolid, DrawKind::ShadowCutout] {
         record_kind(encoder, state, geometry, kind, 0, depth, None);
     }
+    for kind in [DrawKind::ShadowEntities, DrawKind::ShadowBlock] {
+        super::actors::record(encoder, state, kind, 0, depth);
+    }
     let translucent = pack
         .draws
         .iter()
@@ -307,8 +328,9 @@ pub(crate) fn record_shadow(
     }
 }
 
-/// The sky (no depth), then opaque terrain against a cleared depth attachment, then the
-/// copies into `depthtex0..2`, which hold the same depth until translucents draw.
+/// The sky (no depth), then opaque terrain, actors and block entities against a cleared
+/// depth attachment, the copy into `depthtex2`, the solid hand, then the copies into
+/// `depthtex0` and `depthtex1`, which hold the same depth until translucents draw.
 pub(crate) fn record_opaque(
     device: &Device,
     queue: &Queue,
@@ -342,11 +364,28 @@ pub(crate) fn record_opaque(
             None,
         );
     }
-    copy_view_depth(device, encoder, state, &[0, 1, 2]);
+    for kind in [
+        DrawKind::Entities,
+        DrawKind::SpiderEyes,
+        DrawKind::ArmorGlint,
+        DrawKind::Block,
+    ] {
+        super::actors::record(encoder, state, kind, scene_alt, Some((&view, size)));
+    }
+    // Iris's `depthtex2` holds the depth before the hand, `depthtex1` before translucents.
+    copy_view_depth(device, encoder, state, &[2]);
+    super::actors::record(
+        encoder,
+        state,
+        DrawKind::Hand,
+        scene_alt,
+        Some((&view, size)),
+    );
+    copy_view_depth(device, encoder, state, &[0, 1]);
 }
 
-/// Translucent terrain after the deferred passes, then what Vanilla drew in front of the
-/// pack's geometry, then `depthtex0` with both.
+/// Translucent terrain, actors, block entities and hand after the deferred passes, then
+/// what Vanilla drew in front of the pack's geometry, then `depthtex0` with both.
 pub(crate) fn record_translucent(
     device: &Device,
     encoder: &mut CommandEncoder,
@@ -369,6 +408,14 @@ pub(crate) fn record_translucent(
         Some((&view, size)),
         None,
     );
+    for kind in [
+        DrawKind::EntitiesTranslucent,
+        DrawKind::BlockTranslucent,
+        DrawKind::BeaconBeam,
+        DrawKind::HandWater,
+    ] {
+        super::actors::record(encoder, state, kind, translucent_alt, Some((&view, size)));
+    }
     copy_view_depth(device, encoder, state, &[0]);
     record_vanilla_overlay(device, encoder, state, vanilla, &view);
     copy_view_depth(device, encoder, state, &[0]);

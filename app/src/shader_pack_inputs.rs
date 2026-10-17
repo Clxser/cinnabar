@@ -19,7 +19,10 @@ use client_shell::ui_resources::UiRuntimeResource;
 use meshing::CameraMedium;
 use protocol::NetworkItemStack;
 use render_model::celestial;
-use render_scene::{AtmosphereFrame, WorldLighting, shaderpack::ShaderPackFrameInputs};
+use render_scene::{
+    ActorRenderFrame, AtmosphereFrame, WorldLighting,
+    shaderpack::{ShaderPackActorIds, ShaderPackFrameInputs, ShaderPackIdMaps},
+};
 
 use crate::{
     environment::{
@@ -45,12 +48,18 @@ impl Plugin for ShaderPackInputsPlugin {
         if !render_model::SHADER_PACKS_ENABLED {
             return;
         }
-        app.init_resource::<ShaderPackFrameInputs>().add_systems(
-            Update,
-            publish_frame_inputs
-                .after(update_atmosphere_frame)
-                .after(LocalPlayerFrameSet::Interaction),
-        );
+        app.init_resource::<ShaderPackFrameInputs>()
+            .init_resource::<ShaderPackIdMaps>()
+            .init_resource::<ShaderPackActorIds>()
+            .add_systems(
+                Update,
+                (
+                    publish_frame_inputs
+                        .after(update_atmosphere_frame)
+                        .after(LocalPlayerFrameSet::Interaction),
+                    publish_actor_ids,
+                ),
+            );
     }
 }
 
@@ -82,6 +91,7 @@ fn publish_frame_inputs(
     environment: EnvironmentSources,
     player: PlayerSources,
     cameras: Query<&Transform, With<FlyCamera>>,
+    ids: Res<ShaderPackIdMaps>,
     mut inputs: ResMut<ShaderPackFrameInputs>,
 ) {
     let (clock, fixed_time, debug_time, visual_time, time, frame, lighting, medium) = environment;
@@ -169,10 +179,10 @@ fn publish_frame_inputs(
             next.on_ground = state.on_ground;
         }
         let main_hand = player_runtime.selected_stack();
-        next.held_item_id = held_item_id(stream, main_hand);
+        next.held_item_id = held_item_id(stream, &ids, main_hand);
         next.held_block_light = held_block_light(stream, main_hand);
         let off_hand = ui.gameplay_hud().offhand_stack();
-        next.held_item_id2 = held_item_id(stream, off_hand);
+        next.held_item_id2 = held_item_id(stream, &ids, off_hand);
         next.held_block_light2 = held_block_light(stream, off_hand);
     }
 
@@ -198,17 +208,43 @@ fn publish_world_inputs(
     next.biome_block_y = feet[1].floor() as i32;
 }
 
-/// `heldItemId` for a held stack, -1 when the hand is empty or the item is unmapped.
-fn held_item_id(stream: &WorldStream, stack: Option<&NetworkItemStack>) -> i32 {
-    stack
-        .and_then(|stack| stream.authority().item_identifier(stack.network_id))
-        .map_or(-1, |identifier| java_item_id(&identifier))
+/// The pack's `entityId` of every actor the rig renders this frame, by runtime id.
+fn publish_actor_ids(
+    ids: Res<ShaderPackIdMaps>,
+    frame: Res<ActorRenderFrame>,
+    client_world: Res<ClientWorld>,
+    mut actor_ids: ResMut<ShaderPackActorIds>,
+) {
+    let mut next = ShaderPackActorIds::default();
+    if let (true, Some(stream)) = (ids.is_loaded(), client_world.stream.as_ref()) {
+        for entry in frame.rig.manifest.iter() {
+            let runtime_id = entry.identity.runtime_id;
+            let Some(actor) = stream.authority().actor(runtime_id) else {
+                continue;
+            };
+            let identifier = match &actor.kind {
+                protocol::ActorKind::Player { .. } => "minecraft:player",
+                protocol::ActorKind::Entity { identifier } => identifier,
+            };
+            if let Some(id) = ids.entity_id(identifier) {
+                next.by_runtime_id.insert(runtime_id, id);
+            }
+        }
+    }
+    actor_ids.set_if_neq(next);
 }
 
-/// Seam for the pack's `item.properties` id of a Bedrock item identifier. Returns -1
-/// (unmapped) for every item until the Java↔Bedrock id mapping slice supplies the table.
-fn java_item_id(_identifier: &str) -> i32 {
-    -1
+/// `heldItemId` for a held stack: the pack's `item.properties` id of its Bedrock item through
+/// the Java mapping, -1 when the hand is empty or the item is unmapped.
+fn held_item_id(
+    stream: &WorldStream,
+    ids: &ShaderPackIdMaps,
+    stack: Option<&NetworkItemStack>,
+) -> i32 {
+    stack
+        .and_then(|stack| stream.authority().item_identifier(stack.network_id))
+        .and_then(|identifier| ids.item_id(&identifier))
+        .unwrap_or(-1)
 }
 
 /// Light the held stack's block emits, `0..=15`; 0 for empty hands, items that place no block
