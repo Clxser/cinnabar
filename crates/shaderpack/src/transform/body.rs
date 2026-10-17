@@ -27,9 +27,15 @@ pub(super) struct SamplerUse {
 
 /// Function parameters of combined sampler types become separate texture types, read with
 /// the shared repeat/linear sampler: calls with global textures were specialized already.
+/// Other parameters named like a global sampler shadow it. `const in` loses the `const`,
+/// which naga's parser rejects in that order (SEUS Renewed); the copy is read-only anyway.
 pub(super) fn rewrite_params(header: &[Tok], samplers: &mut SamplerKinds) -> Vec<Tok> {
     let mut out: Vec<Tok> = vec![];
     for (i, t) in header.iter().enumerate() {
+        if t.ident() == Some("const") && header.get(i + 1).is_some_and(|x| x.ident() == Some("in"))
+        {
+            continue;
+        }
         if let Some(n) = t.ident()
             && let Some((tex, shadow)) = sampler_info(n)
             && let Some(Tok {
@@ -47,16 +53,34 @@ pub(super) fn rewrite_params(header: &[Tok], samplers: &mut SamplerKinds) -> Vec
             out.push(id(tex).at(t.line));
             continue;
         }
+        if let Some(n) = t.ident()
+            && i > 0
+            && header[i - 1]
+                .ident()
+                .is_some_and(|ty| sampler_info(ty).is_none())
+            && header
+                .get(i + 1)
+                .is_some_and(|x| x.is(",") || x.is(")") || x.is("["))
+        {
+            samplers.remove(n);
+        }
         out.push(t.clone());
     }
     out
 }
 
 /// Pairs every texture use with its sampler (`sampler2D(colortex0, iris_samplerClampLinear)`)
-/// unless it is passed straight to a user function, and reads bool uniforms as bools.
+/// unless it is passed straight to a user function, and reads bool uniforms as bools. Locals
+/// that shadow a sampler or bool global (Complementary's `float specular`) are left alone in
+/// their block from the end of their declarator on, as GLSL scopes them: SEUS's
+/// `vec4 tex = texture2D(tex, …)` still samples the global in the initializer.
 pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut SamplerUse) -> Vec<Tok> {
     let mut out = vec![];
     let mut calls: Vec<Option<String>> = vec![];
+    // Names declared by each open block.
+    let mut scopes: Vec<Vec<&str>> = vec![vec![]];
+    // A shadowing declaration whose declarator is still open, with its paren depth.
+    let mut pending: Option<(&str, usize)> = None;
     for (i, t) in toks.iter().enumerate() {
         if t.is("(") {
             calls.push(
@@ -66,12 +90,33 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
             );
         } else if t.is(")") {
             calls.pop();
+        } else if t.is("{") {
+            scopes.push(vec![]);
+        } else if t.is("}") && scopes.len() > 1 {
+            scopes.pop();
+        } else if (t.is(";") || t.is(","))
+            && let Some((name, depth)) = pending
+            && depth == calls.len()
+        {
+            pending = None;
+            if let Some(scope) = scopes.last_mut() {
+                scope.push(name);
+            }
         }
         let TokKind::Ident(n) = &t.kind else {
             out.push(t.clone());
             continue;
         };
         if i > 0 && toks[i - 1].is(".") {
+            out.push(t.clone());
+            continue;
+        }
+        if (cx.samplers.contains_key(n) || cx.bools.contains_key(n)) && declares_local(toks, i) {
+            pending = Some((n, calls.len()));
+            out.push(t.clone());
+            continue;
+        }
+        if scopes.iter().any(|s| s.contains(&n.as_str())) {
             out.push(t.clone());
             continue;
         }
@@ -126,6 +171,16 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
         out.push(t.clone());
     }
     out
+}
+
+/// Whether the identifier at `i` is the name in a local declaration (`float specular = …`,
+/// `vec3 specular;`, `int n[2]`): a type name before it and a declarator end after it.
+fn declares_local(toks: &[Tok], i: usize) -> bool {
+    let ty = i.checked_sub(1).and_then(|j| toks[j].ident());
+    let ends = toks
+        .get(i + 1)
+        .is_some_and(|x| x.is("=") || x.is(";") || x.is(",") || x.is("["));
+    ends && ty.is_some_and(|ty| !matches!(ty, "return" | "else" | "do" | "case"))
 }
 
 /// Struct name → members as (type, name, array tokens).

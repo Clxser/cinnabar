@@ -145,6 +145,34 @@ fn a_custom_texture_only_reclasses_samplers_of_its_shape() {
 }
 
 #[test]
+fn locals_and_parameters_shadowing_a_sampler_stay_plain() {
+    // Complementary's GGX declares `float specular` while `specular` is the global sampler;
+    // SEUS's `vec4 tex = texture2D(tex, …)` reads the global in the initializer.
+    let fragment = "#version 120\n\
+        uniform sampler2D specular;\n\
+        varying vec2 uv;\n\
+        float ggx(float x) { float specular = x * 2.0; specular = specular / (specular + 1.0); return specular; }\n\
+        float scale(float specular) { return specular * 0.5; }\n\
+        void main() {\n\
+            float s = ggx(uv.x);\n\
+            { vec4 specular = texture2D(specular, uv) + vec4(s); s += specular.x; }\n\
+            gl_FragData[0] = texture2D(specular, uv) * scale(s);\n\
+        }\n";
+    let p = pack(fragment, "", &[]);
+    let t = p.translate(&TranslateConfig::default());
+    let glsl = fragment_glsl(program(&t, "composite"));
+    assert!(glsl.contains("float specular = x * 2.0;"), "{glsl}");
+    assert!(glsl.contains("return specular * 0.5;"), "{glsl}");
+    assert!(glsl.contains("s += specular.x;"), "{glsl}");
+    // The initializer and the last read both sample the global.
+    assert_eq!(
+        glsl.matches("sampler2D(specular, iris_sampler").count(),
+        2,
+        "{glsl}"
+    );
+}
+
+#[test]
 fn sampler_class_bindings_precede_textures_and_round_trip() {
     for class in SamplerClass::ALL {
         assert_eq!(SamplerClass::from_binding(class.binding()), Some(class));

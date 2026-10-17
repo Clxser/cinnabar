@@ -260,3 +260,61 @@ fn version_400_compatibility_ftransform_needs_only_the_position_matrices() {
         "without a directive gl_FragData[0] lands in colortex0"
     );
 }
+
+fn inline_pack(files: &[(&str, &str)]) -> shaderpack::ShaderPack {
+    shaderpack::ShaderPack::new(shaderpack::PackSource::from_files(
+        files
+            .iter()
+            .map(|(k, v)| (*k, (*v).to_owned()))
+            .collect::<Vec<_>>(),
+    ))
+}
+
+#[test]
+fn line_programs_get_the_core_matrices_and_attributes_iris_supplies() {
+    // Complementary's `gbuffers_line` uses the core names under `#version 130` without
+    // declaring them; Iris compiles line programs with its core-profile transformer.
+    let vertex = "#version 130\n\
+        void main() {\n\
+            vec4 a = projectionMatrix * modelViewMatrix * vec4(vaPosition, 1.0);\n\
+            vec4 b = projectionMatrix * modelViewMatrix * vec4(vaPosition + vaNormal, 1.0);\n\
+            gl_Position = gl_VertexID % 2 == 0 ? a : b;\n\
+        }\n";
+    let fragment = "#version 130\nvoid main() { gl_FragData[0] = vec4(1.0); }\n";
+    let pack = inline_pack(&[
+        ("gbuffers_line.vsh", vertex),
+        ("gbuffers_line.fsh", fragment),
+    ]);
+    let t = pack.translate(&TranslateConfig::default());
+    let r = reflection(program(&t, "gbuffers_line"));
+    let attributes: Vec<VertexAttribute> = r
+        .vertex_inputs
+        .iter()
+        .map(|i| i.attribute.clone())
+        .collect();
+    assert_eq!(
+        attributes,
+        [VertexAttribute::Position, VertexAttribute::Normal]
+    );
+    // Read as the compatibility matrices, as Iris's core transformer renames them.
+    assert_eq!(uniform_names(r), ["iris_ModelViewMat", "iris_ProjMat"]);
+}
+
+#[test]
+fn a_texture_sampler_is_gtexture_in_every_version_and_const_in_parameters_compile() {
+    // SEUS Renewed: `#version 130` gbuffers declare `uniform sampler2D texture` and take
+    // `const in int` parameters.
+    let vertex = "#version 130\nvarying vec2 uv;\nvoid main() { gl_Position = ftransform(); uv = gl_MultiTexCoord0.st; }\n";
+    let fragment = "#version 130\n\
+        uniform sampler2D texture;\n\
+        varying vec2 uv;\n\
+        float mask(in float id, const in int wanted) { return id == float(wanted) ? 1.0 : 0.0; }\n\
+        void main() { gl_FragData[0] = texture2D(texture, uv) * mask(1.0, 1); }\n";
+    let pack = inline_pack(&[
+        ("gbuffers_textured.vsh", vertex),
+        ("gbuffers_textured.fsh", fragment),
+    ]);
+    let t = pack.translate(&TranslateConfig::default());
+    let r = reflection(program(&t, "gbuffers_textured"));
+    assert_eq!(texture_names(r), ["gtexture"]);
+}
