@@ -40,6 +40,8 @@ default = ["acceptance"]
 acceptance = ["dep:acceptance"]
 enhanced = ["render/enhanced"]
 enhanced-diagnostics = ["enhanced", "developer-control", "acceptance", "render/enhanced-diagnostics"]
+# Experimental Java (OptiFine/Iris) shader packs as a third Video renderer.
+shaderpacks = ["render/shaderpacks", "dep:shaderpack"]
 # Loopback control endpoint for scripted driving and recording; never in release builds.
 developer-control = ["dep:developer-control", "dep:sadness-generator", "client-shell/developer-control"]
 # Records Bevy schedules, systems, render graph, submission and presentation spans as a
@@ -120,6 +122,7 @@ particles = { path = "../crates/particles" }
 protocol = { path = "../crates/protocol" }
 resource-pack = { path = "../crates/resource-pack" }
 server-experience = { path = "../crates/server-experience" }
+shaderpack = { path = "../crates/shaderpack", optional = true }
 rayon.workspace = true
 render = { path = "../crates/render" }
 render-api = { path = "../crates/render-api" }

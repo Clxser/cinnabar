@@ -55,6 +55,11 @@ normalizing authored layers to 512x512. Unknown Java channel formats are skipped
 Blocks without matching colors retain carrier textures; missing authored maps use neutral defaults.
 See [pack configuration and material coverage](crates/render/src/enhanced/README.md#authored-512x-pbr-packs).
 
+Experimental Java (OptiFine/Iris) shader packs build with `make play CLIENT_FEATURES=shaderpacks`.
+Put pack zips or folders in the `shaderpacks` folder of the client's data directory and pick one
+under Settings > Video > Renderer, or run a pack for one session with `--shader-pack <path>`.
+A pack that fails to load draws Vanilla.
+
 ## What's different
 
 Vanilla behaviour is the default. Everything below is extra:

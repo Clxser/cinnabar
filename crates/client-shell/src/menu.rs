@@ -31,6 +31,7 @@ mod minecraft_import;
 mod navigation;
 mod presence_targets;
 mod reconnect;
+mod renderer;
 pub mod screen_focus;
 #[cfg(test)]
 mod server_input_tests;
@@ -130,6 +131,11 @@ pub struct MenuRuntime {
     render_mode_request: Option<RenderMode>,
     enhanced_quality: EnhancedQuality,
     enhanced_quality_request: Option<EnhancedQuality>,
+    /// Discovered shader-pack names synced by the app; renderer choices index it.
+    shader_packs: std::sync::Arc<[String]>,
+    /// The applied pack name, retaining a pending menu choice until taken.
+    shader_pack: Option<String>,
+    shader_pack_request: Option<String>,
     vsync_override: Option<bool>,
     display_name: String,
     launcher: bool,
@@ -708,6 +714,7 @@ impl MenuRuntime {
             action @ (MenuAction::ToggleRenderMode
             | MenuAction::CycleEnhancedQuality
             | MenuAction::SetEnhancedQuality(_)) => self.activate_enhanced_settings(action),
+            MenuAction::SelectRenderer(choice) => self.select_renderer(choice),
             // The game menu opened from the death screen returns to it.
             MenuAction::PauseResume if self.death_shown => {
                 self.navigation_focus = navigation::NavigationFocus::default();

@@ -31,7 +31,8 @@ Options:
   --vsync                      Force FIFO presentation and disable driver workarounds
   --no-vsync                   Allow tearing and disable display-rate synchronization
   --frame-cap <FPS>            Cap acceptance updates to 1-1000 FPS
-  --render-mode <MODE>         vanilla or enhanced; CINNABAR_RENDER_MODE is the fallback
+  --render-mode <MODE>         vanilla, enhanced or shaderpack; CINNABAR_RENDER_MODE is the fallback
+  --shader-pack <PATH>         Draw this Java shader pack (zip or folder) for the session only
   --gui-scale <1-4|auto>       Fix the GUI scale (default: auto, the Bedrock desktop rule)
   --dev-debug-overlay          Compatibility alias; F3 debug controls are always available
   --language <ll_CC>           UI language (default: from LC_ALL/LC_MESSAGES/LANG, else en_US)
@@ -119,6 +120,9 @@ pub struct ClientArgs {
     pub gui_scale: Option<u8>,
     /// Session-only override of the saved rendering mode.
     pub render_mode: Option<RenderMode>,
+    /// Session-only shader pack, opened from this path instead of the saved selection;
+    /// implies `render_mode == Some(RenderMode::ShaderPack)`.
+    pub shader_pack: Option<PathBuf>,
     /// Enables F3 debug controls; the overlay starts hidden until F3 is pressed.
     /// `--dev-debug-overlay` remains accepted for older launch commands.
     pub dev_debug_overlay: bool,
@@ -152,6 +156,7 @@ impl Default for ClientArgs {
             frame_cap: None,
             gui_scale: None,
             render_mode: None,
+            shader_pack: None,
             dev_debug_overlay: true,
             language: None,
             full_view_teleport_gate: false,
@@ -201,8 +206,14 @@ pub enum ArgsError {
     #[error("--gui-scale must be an integer from 1 through 4, got {0:?}")]
     InvalidGuiScale(String),
 
-    #[error("--render-mode must be vanilla or enhanced, got {0:?}")]
+    #[error("--render-mode must be vanilla, enhanced or shaderpack, got {0:?}")]
     InvalidRenderMode(String),
+
+    #[error("--shader-pack requires a non-empty path")]
+    EmptyShaderPack,
+
+    #[error("--shader-pack selects the shaderpack render mode, but --render-mode is {0:?}")]
+    ConflictingShaderPackRenderMode(&'static str),
 
     #[error("--language must be a code like de_DE, got {0:?}")]
     InvalidLanguage(String),
@@ -414,6 +425,13 @@ impl ClientArgs {
                     parsed.render_mode =
                         Some(RenderMode::parse(&value).ok_or(ArgsError::InvalidRenderMode(value))?);
                 }
+                Some("--shader-pack") => {
+                    let value = next_value(&mut arguments, "--shader-pack")?;
+                    if value.is_empty() {
+                        return Err(ArgsError::EmptyShaderPack);
+                    }
+                    parsed.shader_pack = Some(PathBuf::from(value));
+                }
                 _ if resource_pack::is_pack_import_path(std::path::Path::new(&argument)) => {
                     parsed.import_packs.push(PathBuf::from(argument));
                 }
@@ -422,6 +440,16 @@ impl ClientArgs {
         }
         if parsed.movement_candidate_physics && parsed.movement_evidence_target.is_none() {
             return Err(ArgsError::MovementCandidateRequiresEvidence);
+        }
+        if parsed.shader_pack.is_some() {
+            match parsed.render_mode {
+                None | Some(RenderMode::ShaderPack) => {
+                    parsed.render_mode = Some(RenderMode::ShaderPack);
+                }
+                Some(mode) => {
+                    return Err(ArgsError::ConflictingShaderPackRenderMode(mode.as_str()));
+                }
+            }
         }
         if parsed.force_vsync && parsed.no_vsync {
             return Err(ArgsError::ConflictingVsyncFlags);
@@ -641,6 +669,55 @@ mod tests {
             ClientArgs::parse_from(["client", "--render-mode", "ultra"]),
             Err(ArgsError::InvalidRenderMode("ultra".to_owned()))
         );
+    }
+
+    #[test]
+    fn shader_pack_is_a_validated_session_override_of_the_shaderpack_mode() {
+        let ParseOutcome::Run(args) =
+            ClientArgs::parse_from(["client", "--render-mode", "ShaderPack"]).unwrap()
+        else {
+            panic!("expected run");
+        };
+        assert_eq!(args.render_mode, Some(ui::RenderMode::ShaderPack));
+        assert_eq!(args.shader_pack, None);
+        for arguments in [
+            &["client", "--shader-pack", "packs/Dusk.zip"][..],
+            &[
+                "client",
+                "--render-mode",
+                "shaderpack",
+                "--shader-pack",
+                "packs/Dusk.zip",
+            ][..],
+        ] {
+            let ParseOutcome::Run(args) = ClientArgs::parse_from(arguments).unwrap() else {
+                panic!("expected run");
+            };
+            assert_eq!(args.render_mode, Some(ui::RenderMode::ShaderPack));
+            assert_eq!(args.shader_pack, Some(PathBuf::from("packs/Dusk.zip")));
+        }
+        assert_eq!(
+            ClientArgs::parse_from([
+                "client",
+                "--shader-pack",
+                "Dusk",
+                "--render-mode",
+                "enhanced"
+            ]),
+            Err(ArgsError::ConflictingShaderPackRenderMode("enhanced"))
+        );
+        assert_eq!(
+            ClientArgs::parse_from(["client", "--shader-pack", ""]),
+            Err(ArgsError::EmptyShaderPack)
+        );
+        assert_eq!(
+            ClientArgs::parse_from(["client", "--shader-pack"]),
+            Err(ArgsError::MissingValue {
+                flag: "--shader-pack"
+            })
+        );
+        assert!(HELP.contains("--shader-pack <PATH>"));
+        assert!(HELP.contains("shaderpack"));
     }
 
     #[test]

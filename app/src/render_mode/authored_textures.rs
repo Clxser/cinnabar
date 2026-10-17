@@ -152,10 +152,12 @@ pub(super) fn update_authored_textures(
     let (Some(mut loading), Some(mut textures)) = (loading, textures) else {
         return;
     };
-    // A Vanilla fallback on an unsupported device never decodes or attaches authored maps.
+    // A Vanilla fallback on an unsupported device never decodes or attaches authored maps;
+    // shader-pack status never decides whether Enhanced draws.
     let mode = super::effective_render_mode(
         settings.user_settings_update().1.video.render_mode,
         support.as_deref(),
+        None,
     );
     let limits = device.as_ref().map(|device| device.limits());
     loading.begin(mode, |base, keys| spawn(base, keys, limits.clone()));

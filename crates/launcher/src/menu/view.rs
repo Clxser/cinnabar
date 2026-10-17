@@ -527,6 +527,10 @@ pub struct MenuView {
     pub fullscreen: bool,
     pub render_mode: ui::RenderMode,
     pub enhanced_quality: render_api::EnhancedQuality,
+    /// Names of the discovered shader packs that [`super::RendererChoice::ShaderPack`] indexes.
+    pub shader_packs: std::sync::Arc<[String]>,
+    /// The highlighted Video renderer; `None` while the selected shader pack is missing.
+    pub renderer: Option<super::RendererChoice>,
     /// Session VSync forced by a launch flag; the saved toggle is shown locked to it.
     pub vsync_override: Option<bool>,
     pub display_name: String,
@@ -787,6 +791,8 @@ impl MenuView {
             fullscreen: false,
             render_mode: ui::RenderMode::Vanilla,
             enhanced_quality: render_api::EnhancedQuality::default(),
+            shader_packs: std::sync::Arc::from([]),
+            renderer: Some(super::RendererChoice::Vanilla),
             vsync_override: None,
             display_name,
             servers: MenuList::default(),

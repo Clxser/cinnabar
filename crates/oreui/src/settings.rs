@@ -300,7 +300,7 @@ impl Content<'_, '_> {
             + extra;
         let b = [self.span[0], self.y, self.span[1], self.y + height];
         let is_switch = action.is_some_and(|action| match action {
-            MenuAction::SettingsFullscreen(_) | MenuAction::ToggleRenderMode => true,
+            MenuAction::SettingsFullscreen(_) => true,
             MenuAction::SettingsOption(index, _) => SETTINGS_OPTIONS
                 .get(usize::from(index))
                 .is_some_and(|option| matches!(option.kind, SettingKind::Toggle)),

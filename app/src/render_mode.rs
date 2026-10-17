@@ -1,5 +1,5 @@
 //! Render-mode setting: saved choice, session overrides, and the per-camera
-//! Enhanced opt-in. Vanilla stays the default and the evidence-run mode.
+//! Enhanced and shader-pack opt-ins. Vanilla stays the default and the evidence-run mode.
 
 use std::{
     ffi::OsStr,
@@ -16,13 +16,17 @@ use bevy::{
     prelude::*,
     render::render_resource::TextureUsages,
 };
-use render_model::enhanced_rendering_enabled;
+use render_model::{SHADER_PACKS_ENABLED, enhanced_rendering_enabled};
 use serde::{Deserialize, Serialize};
 use ui::RenderMode;
 use {
-    render::EnhancedRenderPlugin,
+    render::{EnhancedRenderPlugin, ShaderPackRenderPlugin},
     render_api::EnhancedQuality,
-    render_scene::{EnhancedRendering, enhanced::EnhancedShadowDebug},
+    render_scene::{
+        EnhancedRendering,
+        enhanced::EnhancedShadowDebug,
+        shaderpack::{ShaderPackRendering, ShaderPackRequest, ShaderPackStatus},
+    },
 };
 
 use {
@@ -31,6 +35,7 @@ use {
 };
 
 pub(crate) mod authored_textures;
+mod shader_pack;
 
 #[cfg(all(test, feature = "enhanced"))]
 mod input_tests;
@@ -62,10 +67,33 @@ struct GraphicsFile {
     render_mode: String,
     #[serde(default)]
     enhanced_quality: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shader_pack: Option<String>,
 }
 
-/// Missing quality in older files uses Balanced without losing the mode.
-fn load_graphics_settings(path: &Path) -> Option<(RenderMode, EnhancedQuality)> {
+/// The graphics extension choices saved in `graphics.json`.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct GraphicsSettings {
+    mode: RenderMode,
+    quality: EnhancedQuality,
+    /// Selected pack name inside the shader-pack directory.
+    shader_pack: Option<String>,
+}
+
+impl GraphicsSettings {
+    /// The choices currently applied in `video`.
+    fn of(video: &ui::VideoSettings) -> Self {
+        Self {
+            mode: video.render_mode,
+            quality: video.enhanced_quality,
+            shader_pack: video.shader_pack.clone(),
+        }
+    }
+}
+
+/// Missing quality in older files uses Balanced and a missing pack selects none, without
+/// losing the mode.
+fn load_graphics_settings(path: &Path) -> Option<GraphicsSettings> {
     let mut bytes = Vec::new();
     fs::File::open(path)
         .ok()?
@@ -76,17 +104,19 @@ fn load_graphics_settings(path: &Path) -> Option<(RenderMode, EnhancedQuality)> 
         return None;
     }
     let file = serde_json::from_slice::<GraphicsFile>(&bytes).ok()?;
-    Some((
-        RenderMode::parse(&file.render_mode)?,
-        file.enhanced_quality
+    Some(GraphicsSettings {
+        mode: RenderMode::parse(&file.render_mode)?,
+        quality: file
+            .enhanced_quality
             .as_deref()
             .and_then(EnhancedQuality::parse)
             .unwrap_or_default(),
-    ))
+        shader_pack: file.shader_pack.filter(|name| !name.is_empty()),
+    })
 }
 
 /// Atomically replace the small graphics extension settings file.
-fn save_graphics_settings(path: &Path, mode: RenderMode, quality: EnhancedQuality) -> Result<()> {
+fn save_graphics_settings(path: &Path, graphics: &GraphicsSettings) -> Result<()> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -96,8 +126,9 @@ fn save_graphics_settings(path: &Path, mode: RenderMode, quality: EnhancedQualit
         })?;
     }
     let bytes = serde_json::to_vec_pretty(&GraphicsFile {
-        render_mode: mode.as_str().to_owned(),
-        enhanced_quality: Some(quality.as_str().to_owned()),
+        render_mode: graphics.mode.as_str().to_owned(),
+        enhanced_quality: Some(graphics.quality.as_str().to_owned()),
+        shader_pack: graphics.shader_pack.clone(),
     })?;
     let temp = path.with_extension("json.tmp");
     Context::with_context(fs::write(&temp, bytes), || {
@@ -110,49 +141,67 @@ fn save_graphics_settings(path: &Path, mode: RenderMode, quality: EnhancedQualit
 
 #[cfg(test)]
 fn load_render_mode(path: &Path) -> Option<RenderMode> {
-    load_graphics_settings(path).map(|saved| saved.0)
+    load_graphics_settings(path).map(|saved| saved.mode)
 }
 
 #[cfg(test)]
 fn save_render_mode(path: &Path, mode: RenderMode) -> Result<()> {
-    let quality = load_graphics_settings(path)
-        .map(|saved| saved.1)
-        .unwrap_or_default();
-    save_graphics_settings(path, mode, quality)
+    let saved = load_graphics_settings(path).unwrap_or_default();
+    save_graphics_settings(path, &GraphicsSettings { mode, ..saved })
+}
+
+/// The mode itself when this build compiles it, else Vanilla.
+fn compiled_render_mode(mode: RenderMode) -> RenderMode {
+    match mode {
+        RenderMode::Enhanced if enhanced_rendering_enabled() => mode,
+        RenderMode::ShaderPack if SHADER_PACKS_ENABLED => mode,
+        _ => RenderMode::Vanilla,
+    }
 }
 
 /// CLI beats environment beats the saved file. Attributable evidence runs
-/// ignore the environment and saved file so captures stay vanilla.
+/// ignore the environment and saved file so captures stay vanilla. A mode this
+/// build does not compile resolves to Vanilla.
 pub(crate) fn startup_render_mode(
     cli: Option<RenderMode>,
     env: Option<&OsStr>,
     saved: Option<RenderMode>,
     attributable: bool,
 ) -> RenderMode {
-    if !enhanced_rendering_enabled() {
-        return RenderMode::Vanilla;
-    }
-    if let Some(mode) = cli {
-        return mode;
-    }
-    if attributable {
-        return RenderMode::Vanilla;
-    }
-    env.and_then(OsStr::to_str)
-        .and_then(RenderMode::parse)
-        .or(saved)
-        .unwrap_or_default()
+    let requested = if cli.is_some() {
+        cli
+    } else if attributable {
+        None
+    } else {
+        env.and_then(OsStr::to_str)
+            .and_then(RenderMode::parse)
+            .or(saved)
+    };
+    compiled_render_mode(requested.unwrap_or_default())
 }
 
 pub(crate) struct RenderModePlugin {
     cli: Option<RenderMode>,
     attributable: bool,
+    shader_pack: Option<PathBuf>,
 }
 
 impl RenderModePlugin {
     /// Configure session overrides and deterministic evidence runs.
     pub(crate) const fn new(cli: Option<RenderMode>, attributable: bool) -> Self {
-        Self { cli, attributable }
+        Self {
+            cli,
+            attributable,
+            shader_pack: None,
+        }
+    }
+
+    /// Draws this `--shader-pack` path instead of the saved selection while the session's
+    /// mode is Shader pack; it is never saved.
+    #[must_use]
+    pub(crate) fn with_shader_pack(mut self, shader_pack: Option<PathBuf>) -> Self {
+        self.shader_pack = shader_pack;
+        self
     }
 }
 
@@ -162,6 +211,10 @@ struct RenderModeConfig {
     attributable: bool,
     path: Option<PathBuf>,
     quality_override: Option<EnhancedQuality>,
+    /// The launch `--shader-pack`, until the player picks a renderer in the menu.
+    cli_shader_pack: Option<PathBuf>,
+    /// Shader-pack folders, known once the menu supplies the install layout.
+    shader_packs: Option<shader_pack::ShaderPackDirs>,
 }
 
 impl Plugin for RenderModePlugin {
@@ -169,19 +222,24 @@ impl Plugin for RenderModePlugin {
         let quality_override = std::env::var("CINNABAR_ENHANCED_QUALITY")
             .ok()
             .and_then(|value| EnhancedQuality::parse(&value));
-        app.add_plugins(EnhancedRenderPlugin)
+        app.add_plugins((EnhancedRenderPlugin, ShaderPackRenderPlugin))
             .insert_resource(RenderModeConfig {
                 cli: self.cli,
                 attributable: self.attributable,
                 path: None,
                 quality_override,
+                cli_shader_pack: self.shader_pack.clone(),
+                shader_packs: None,
             })
             .init_resource::<DebugTimeOverride>()
+            .init_resource::<ShaderPackRequest>()
             .add_systems(Startup, seed_render_mode)
             .add_systems(
                 Update,
                 (
+                    shader_pack::refresh_shader_packs,
                     apply_menu_render_mode,
+                    shader_pack::sync_shader_pack_request,
                     authored_textures::update_authored_textures,
                     apply_render_mode_to_cameras,
                     cycle_enhanced_shadow_debug,
@@ -195,18 +253,21 @@ impl Plugin for RenderModePlugin {
     }
 }
 
-/// Resolve the saved choice and session overrides at startup.
+/// Resolve the saved choice and session overrides at startup, and list the shader packs.
 fn seed_render_mode(
     mut config: ResMut<RenderModeConfig>,
-    menu: Option<Res<MenuRuntime>>,
+    mut menu: Option<ResMut<MenuRuntime>>,
     mut settings: ResMut<RuntimeSettings>,
 ) {
-    config.path = menu.map(|menu| menu.graphics_file());
+    config.path = menu.as_deref().map(MenuRuntime::graphics_file);
+    config.shader_packs = menu
+        .as_deref()
+        .map(|menu| shader_pack::ShaderPackDirs::new(menu.layout()));
     let saved = config.path.as_deref().and_then(load_graphics_settings);
     let mode = startup_render_mode(
         config.cli,
         std::env::var_os(RENDER_MODE_ENV).as_deref(),
-        saved.map(|saved| saved.0),
+        saved.as_ref().map(|saved| saved.mode),
         config.attributable,
     );
     let quality = if config.attributable {
@@ -214,42 +275,54 @@ fn seed_render_mode(
     } else {
         config
             .quality_override
-            .or(saved.map(|saved| saved.1))
+            .or(saved.as_ref().map(|saved| saved.quality))
             .unwrap_or_default()
     };
-    set_graphics_settings(&mut settings, mode, quality);
+    let pack = saved.and_then(|saved| saved.shader_pack);
+    set_graphics_settings(
+        &mut settings,
+        &GraphicsSettings {
+            mode,
+            quality,
+            shader_pack: pack,
+        },
+    );
+    if let Some(menu) = menu.as_deref_mut() {
+        shader_pack::refresh(&mut config, menu);
+    }
 }
 
-/// Update the shared settings authority only when the choice changes.
-fn set_graphics_settings(
-    settings: &mut RuntimeSettings,
-    mode: RenderMode,
-    quality: EnhancedQuality,
-) {
-    let mode = if enhanced_rendering_enabled() {
-        mode
-    } else {
-        RenderMode::Vanilla
-    };
+/// Update the shared settings authority only when a choice changes; modes this build does
+/// not compile fall back to Vanilla.
+fn set_graphics_settings(settings: &mut RuntimeSettings, graphics: &GraphicsSettings) {
+    let mode = compiled_render_mode(graphics.mode);
     let (_, current) = settings.user_settings_update();
-    if current.video.render_mode != mode || current.video.enhanced_quality != quality {
+    if current.video.render_mode != mode
+        || current.video.enhanced_quality != graphics.quality
+        || current.video.shader_pack != graphics.shader_pack
+    {
         let mut next = current.clone();
         next.video.render_mode = mode;
-        next.video.enhanced_quality = quality;
+        next.video.enhanced_quality = graphics.quality;
+        next.video.shader_pack.clone_from(&graphics.shader_pack);
         settings.replace_user_settings(next);
     }
 }
 
-/// Changes render mode while retaining the current quality setting.
+/// Changes render mode while retaining the current quality and pack.
 #[cfg(test)]
 fn set_render_mode(settings: &mut RuntimeSettings, mode: RenderMode) {
-    let quality = settings.user_settings_update().1.video.enhanced_quality;
-    set_graphics_settings(settings, mode, quality);
+    let graphics = GraphicsSettings {
+        mode,
+        ..GraphicsSettings::of(&settings.user_settings_update().1.video)
+    };
+    set_graphics_settings(settings, &graphics);
 }
 
-/// Persist menu changes and keep the displayed toggle synchronized.
+/// Persist menu changes and keep the displayed choices synchronized. A renderer pick ends
+/// the `--shader-pack` session override.
 fn apply_menu_render_mode(
-    config: Res<RenderModeConfig>,
+    mut config: ResMut<RenderModeConfig>,
     menu: Option<ResMut<MenuRuntime>>,
     mut settings: ResMut<RuntimeSettings>,
 ) {
@@ -258,23 +331,29 @@ fn apply_menu_render_mode(
     };
     let mode_request = menu.take_render_mode_request();
     let quality_request = menu.take_enhanced_quality_request();
-    if mode_request.is_some() || quality_request.is_some() {
-        let current = settings.user_settings_update().1.video;
-        set_graphics_settings(
-            &mut settings,
-            mode_request.unwrap_or(current.render_mode),
-            quality_request.unwrap_or(current.enhanced_quality),
-        );
-        let applied = settings.user_settings_update().1.video;
+    let pack_request = menu.take_shader_pack_request();
+    if (mode_request.is_some() || pack_request.is_some()) && config.cli_shader_pack.is_some() {
+        config.cli_shader_pack = None;
+    }
+    if mode_request.is_some() || quality_request.is_some() || pack_request.is_some() {
+        let current = GraphicsSettings::of(&settings.user_settings_update().1.video);
+        let next = GraphicsSettings {
+            mode: mode_request.unwrap_or(current.mode),
+            quality: quality_request.unwrap_or(current.quality),
+            shader_pack: pack_request.or(current.shader_pack),
+        };
+        set_graphics_settings(&mut settings, &next);
+        let applied = GraphicsSettings::of(&settings.user_settings_update().1.video);
         if let Some(path) = &config.path
-            && let Err(error) =
-                save_graphics_settings(path, applied.render_mode, applied.enhanced_quality)
+            && let Err(error) = save_graphics_settings(path, &applied)
         {
             warn!(?error, "graphics settings could not be saved");
         }
     }
-    menu.sync_render_mode(settings.user_settings_update().1.video.render_mode);
-    menu.sync_enhanced_quality(settings.user_settings_update().1.video.enhanced_quality);
+    let video = &settings.user_settings_update().1.video;
+    menu.sync_render_mode(video.render_mode);
+    menu.sync_enhanced_quality(video.enhanced_quality);
+    menu.sync_shader_pack(video.shader_pack.as_deref());
 }
 
 /// Retains launch-time diagnostic bounds when a camera's quality changes.
@@ -287,75 +366,91 @@ fn camera_settings(quality: EnhancedQuality) -> EnhancedRendering {
     settings
 }
 
-/// Original depth usage, restored when opting out of Enhanced.
+/// Original depth usage, restored once neither optional renderer samples the depth texture.
 #[derive(Component)]
 struct VanillaDepthUsage(Camera3dDepthTextureUsage);
 
-/// Camera state needed to apply or restore the optional mode.
+/// Camera state needed to apply or restore the optional modes.
 type RenderModeCameraQuery = (
     Entity,
     Write<Camera3d>,
     Option<Write<EnhancedRendering>>,
+    Has<ShaderPackRendering>,
     Option<Read<VanillaDepthUsage>>,
 );
 
-/// Keep the opt-in effects on gameplay cameras only.
 /// The mode the renderer actually draws: Enhanced only when compiled in and the device
-/// supports it, so every Enhanced resource follows the same fallback as the cameras.
+/// supports it, Shader pack only when compiled in and its pack has not failed, so every
+/// optional resource follows the same fallback as the cameras.
 pub(crate) fn effective_render_mode(
     requested: RenderMode,
     support: Option<&render::EnhancedRenderSupport>,
+    shader_pack: Option<&ShaderPackStatus>,
 ) -> RenderMode {
-    if enhanced_rendering_enabled() && support.is_none_or(|support| support.0) {
-        requested
-    } else {
-        RenderMode::Vanilla
+    match compiled_render_mode(requested) {
+        RenderMode::Enhanced if support.is_some_and(|support| !support.0) => RenderMode::Vanilla,
+        RenderMode::ShaderPack if matches!(shader_pack, Some(ShaderPackStatus::Failed { .. })) => {
+            RenderMode::Vanilla
+        }
+        mode => mode,
     }
 }
 
+/// Keep the opt-in effects on gameplay cameras only, never both at once. A shader pack
+/// opts in only once it is ready; while it loads the camera draws Vanilla.
 fn apply_render_mode_to_cameras(
     mut commands: Commands,
     settings: Res<RuntimeSettings>,
     support: Option<Res<render::EnhancedRenderSupport>>,
+    status: Option<Res<ShaderPackStatus>>,
     mut cameras: Query<RenderModeCameraQuery, With<FlyCamera>>,
 ) {
-    let video = settings.user_settings_update().1.video;
-    let enhanced =
-        effective_render_mode(video.render_mode, support.as_deref()) == RenderMode::Enhanced;
-    for (entity, mut camera, current_enhanced, vanilla_depth) in &mut cameras {
-        let has_enhanced = current_enhanced.is_some();
-        if enhanced != has_enhanced {
-            if enhanced {
-                let original = camera.depth_texture_usages;
-                camera.depth_texture_usages =
-                    (TextureUsages::from(original) | TextureUsages::TEXTURE_BINDING).into();
-                let enhanced_settings = camera_settings(video.enhanced_quality);
-                commands.entity(entity).insert((
-                    enhanced_settings,
-                    Hdr,
-                    VanillaDepthUsage(original),
-                ));
-            } else {
-                if let Some(VanillaDepthUsage(original)) = vanilla_depth {
-                    camera.depth_texture_usages = *original;
-                }
-                commands.entity(entity).remove::<(
+    let video = &settings.user_settings_update().1.video;
+    let mode = effective_render_mode(video.render_mode, support.as_deref(), status.as_deref());
+    let enhanced = mode == RenderMode::Enhanced;
+    let shader_pack =
+        mode == RenderMode::ShaderPack && status.as_deref().is_some_and(ShaderPackStatus::is_ready);
+    for (entity, mut camera, current_enhanced, has_shader_pack, vanilla_depth) in &mut cameras {
+        let mut entity_commands = commands.entity(entity);
+        match (enhanced, current_enhanced) {
+            (true, None) => {
+                entity_commands.insert((camera_settings(video.enhanced_quality), Hdr));
+            }
+            (true, Some(mut current)) if current.quality != video.enhanced_quality => {
+                let shadow_debug = current.shadow_debug;
+                *current = EnhancedRendering {
+                    shadow_debug,
+                    ..camera_settings(video.enhanced_quality)
+                };
+            }
+            (false, Some(_)) => {
+                entity_commands.remove::<(
                     EnhancedRendering,
                     bevy::render::camera::TemporalJitter,
                     Hdr,
                     Bloom,
-                    VanillaDepthUsage,
                 )>();
             }
-        } else if enhanced
-            && let Some(mut current) = current_enhanced
-            && current.quality != video.enhanced_quality
-        {
-            let shadow_debug = current.shadow_debug;
-            *current = EnhancedRendering {
-                shadow_debug,
-                ..camera_settings(video.enhanced_quality)
-            };
+            _ => {}
+        }
+        if shader_pack && !has_shader_pack {
+            entity_commands.insert(ShaderPackRendering);
+        } else if !shader_pack && has_shader_pack {
+            entity_commands.remove::<ShaderPackRendering>();
+        }
+        // Both optional renderers sample the depth texture.
+        match (enhanced || shader_pack, vanilla_depth) {
+            (true, None) => {
+                let original = camera.depth_texture_usages;
+                camera.depth_texture_usages =
+                    (TextureUsages::from(original) | TextureUsages::TEXTURE_BINDING).into();
+                entity_commands.insert(VanillaDepthUsage(original));
+            }
+            (false, Some(VanillaDepthUsage(original))) => {
+                camera.depth_texture_usages = *original;
+                entity_commands.remove::<VanillaDepthUsage>();
+            }
+            _ => {}
         }
     }
 }
@@ -406,10 +501,12 @@ fn cycle_enhanced_time(
     mut debug_time: ResMut<DebugTimeOverride>,
     mut next_preset: Local<usize>,
 ) {
-    // A Vanilla fallback must keep following server time.
+    // A Vanilla fallback must keep following server time. Shader-pack status never
+    // decides whether Enhanced draws.
     let mode = effective_render_mode(
         settings.user_settings_update().1.video.render_mode,
         support.as_deref(),
+        None,
     );
     if mode != RenderMode::Enhanced {
         *next_preset = 0;
@@ -481,6 +578,7 @@ fn cycle_enhanced_shadow_debug(
         effective_render_mode(
             settings.user_settings_update().1.video.render_mode,
             support.as_deref(),
+            None,
         ),
         focused,
         absorbs_input,
@@ -496,401 +594,4 @@ fn cycle_enhanced_shadow_debug(
 }
 
 #[cfg(test)]
-mod tests {
-    use {super::*, client_presentation::camera::FlyCamera};
-
-    #[test]
-    fn shadow_debug_cycles_all_views_and_returns_to_normal_lighting() {
-        let mut mode = EnhancedShadowDebug::Off;
-        let mut observed = Vec::new();
-        for _ in 0..6 {
-            mode = next_shadow_debug(mode).0;
-            observed.push(mode);
-        }
-        assert_eq!(
-            observed,
-            [
-                EnhancedShadowDebug::Cascades,
-                EnhancedShadowDebug::Visibility,
-                EnhancedShadowDebug::DepthNear,
-                EnhancedShadowDebug::DepthMiddle,
-                EnhancedShadowDebug::DepthFar,
-                EnhancedShadowDebug::Off,
-            ]
-        );
-    }
-
-    #[test]
-    fn shadow_debug_input_respects_render_mode_focus_and_menu() {
-        assert!(!shadow_debug_input_allowed(
-            RenderMode::Vanilla,
-            true,
-            false
-        ));
-        assert!(!shadow_debug_input_allowed(
-            RenderMode::Enhanced,
-            false,
-            false
-        ));
-        assert!(!shadow_debug_input_allowed(
-            RenderMode::Enhanced,
-            true,
-            true
-        ));
-        assert_eq!(
-            shadow_debug_input_allowed(RenderMode::Enhanced, true, false),
-            enhanced_rendering_enabled(),
-        );
-    }
-
-    #[cfg(feature = "enhanced")]
-    #[test]
-    fn shadow_key_changes_only_focused_enhanced_gameplay_cameras() {
-        let mut app = App::new();
-        app.init_resource::<RuntimeSettings>()
-            .insert_resource(client_state::PlayerRuntime(player_state::PlayerState::new(
-                0,
-            )))
-            .init_resource::<ButtonInput<KeyCode>>()
-            .add_systems(Update, cycle_enhanced_shadow_debug);
-        let camera = app
-            .world_mut()
-            .spawn((FlyCamera::default(), EnhancedRendering::default()))
-            .id();
-        let window = app
-            .world_mut()
-            .spawn((Window::default(), bevy::window::PrimaryWindow))
-            .id();
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(ENHANCED_SHADOW_KEY);
-        app.update();
-        assert_eq!(
-            app.world()
-                .get::<EnhancedRendering>(camera)
-                .unwrap()
-                .shadow_debug,
-            EnhancedShadowDebug::Off,
-        );
-        set_render_mode(
-            &mut app.world_mut().resource_mut::<RuntimeSettings>(),
-            RenderMode::Enhanced,
-        );
-        app.world_mut().get_mut::<Window>(window).unwrap().focused = false;
-        app.update();
-        assert_eq!(
-            app.world()
-                .get::<EnhancedRendering>(camera)
-                .unwrap()
-                .shadow_debug,
-            EnhancedShadowDebug::Off,
-        );
-        app.world_mut().get_mut::<Window>(window).unwrap().focused = true;
-        app.update();
-        assert_eq!(
-            app.world()
-                .get::<EnhancedRendering>(camera)
-                .unwrap()
-                .shadow_debug,
-            EnhancedShadowDebug::Cascades,
-        );
-    }
-
-    /// A Vanilla fallback on an unsupported device keeps server time; `]` sets no override.
-    #[test]
-    fn unsupported_adapter_ignores_the_time_shortcut_and_clears_overrides() {
-        let mut app = App::new();
-        app.init_resource::<RuntimeSettings>()
-            .insert_resource(client_state::PlayerRuntime(player_state::PlayerState::new(
-                0,
-            )))
-            .init_resource::<ButtonInput<KeyCode>>()
-            .init_resource::<DebugTimeOverride>()
-            .insert_resource(render::EnhancedRenderSupport(false))
-            .add_systems(Update, cycle_enhanced_time);
-        app.world_mut()
-            .spawn((Window::default(), bevy::window::PrimaryWindow));
-        set_render_mode(
-            &mut app.world_mut().resource_mut::<RuntimeSettings>(),
-            RenderMode::Enhanced,
-        );
-        app.world_mut().resource_mut::<DebugTimeOverride>().ticks = Some(6_000);
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(ENHANCED_TIME_KEY);
-        app.update();
-        assert_eq!(app.world().resource::<DebugTimeOverride>().ticks, None);
-    }
-
-    #[test]
-    fn enhanced_time_presets_cycle_through_daylight_and_server_clock() {
-        let mut index = 0;
-        let mut values = Vec::new();
-        for _ in 0..ENHANCED_TIME_PRESETS.len() {
-            values.push(ENHANCED_TIME_PRESETS[index]);
-            index = (index + 1) % ENHANCED_TIME_PRESETS.len();
-        }
-        assert_eq!(
-            values,
-            [
-                (Some(1_000), "Morning"),
-                (Some(6_000), "Noon"),
-                (Some(9_000), "Afternoon"),
-                (Some(12_000), "Sunset"),
-                (Some(12_500), "Twilight"),
-                (Some(15_000), "Night"),
-                (Some(18_000), "Midnight"),
-                (None, "Server"),
-            ]
-        );
-    }
-
-    /// Startup requests cannot enable Enhanced in a default build.
-    #[cfg(not(feature = "enhanced"))]
-    #[test]
-    fn disabled_enhanced_ignores_cli_environment_and_saved_settings() {
-        for cli in [None, Some(RenderMode::Vanilla), Some(RenderMode::Enhanced)] {
-            for env in [
-                None,
-                Some(OsStr::new("enhanced")),
-                Some(OsStr::new("vanilla")),
-            ] {
-                for saved in [None, Some(RenderMode::Vanilla), Some(RenderMode::Enhanced)] {
-                    for attributable in [false, true] {
-                        assert_eq!(
-                            startup_render_mode(cli, env, saved, attributable),
-                            RenderMode::Vanilla,
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    /// The opt-in feature permits explicit Enhanced requests while evidence runs stay vanilla.
-    #[cfg(feature = "enhanced")]
-    #[test]
-    fn enhanced_feature_respects_startup_precedence() {
-        assert_eq!(
-            startup_render_mode(
-                Some(RenderMode::Enhanced),
-                Some(OsStr::new("vanilla")),
-                Some(RenderMode::Vanilla),
-                true,
-            ),
-            RenderMode::Enhanced,
-        );
-        assert_eq!(
-            startup_render_mode(
-                None,
-                Some(OsStr::new("enhanced")),
-                Some(RenderMode::Vanilla),
-                false,
-            ),
-            RenderMode::Enhanced,
-        );
-        assert_eq!(
-            startup_render_mode(None, None, Some(RenderMode::Enhanced), false),
-            RenderMode::Enhanced,
-        );
-        assert_eq!(
-            startup_render_mode(
-                None,
-                Some(OsStr::new("enhanced")),
-                Some(RenderMode::Enhanced),
-                true,
-            ),
-            RenderMode::Vanilla,
-        );
-    }
-
-    #[test]
-    fn saved_render_mode_round_trips_and_rejects_malformed_files() {
-        let directory = std::env::temp_dir().join(format!(
-            "cinnabar-render-mode-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let path = directory.join("nested/graphics.json");
-        assert_eq!(load_render_mode(&path), None);
-        save_render_mode(&path, RenderMode::Enhanced).expect("save");
-        assert_eq!(load_render_mode(&path), Some(RenderMode::Enhanced));
-        save_render_mode(&path, RenderMode::Vanilla).expect("save");
-        assert_eq!(load_render_mode(&path), Some(RenderMode::Vanilla));
-        fs::write(&path, br#"{"render_mode":"ultra"}"#).expect("write");
-        assert_eq!(load_render_mode(&path), None);
-        fs::write(&path, vec![b' '; MAX_GRAPHICS_FILE_BYTES as usize + 1]).expect("write");
-        assert_eq!(load_render_mode(&path), None);
-        let _ = fs::remove_dir_all(directory);
-    }
-
-    /// Stale settings and camera components cannot enable the disabled renderer.
-    #[cfg(not(feature = "enhanced"))]
-    #[test]
-    fn disabled_enhanced_clears_camera_effects_and_rejects_runtime_requests() {
-        let mut app = App::new();
-        app.init_resource::<RuntimeSettings>().add_systems(
-            Update,
-            (apply_render_mode_to_cameras, sync_enhanced_bloom).chain(),
-        );
-        let original = Camera3d::default().depth_texture_usages;
-        let camera = app
-            .world_mut()
-            .spawn((
-                Camera3d {
-                    depth_texture_usages: (TextureUsages::from(original)
-                        | TextureUsages::TEXTURE_BINDING)
-                        .into(),
-                    ..default()
-                },
-                FlyCamera::default(),
-                EnhancedRendering::default(),
-                Hdr,
-                Bloom::default(),
-                VanillaDepthUsage(original),
-            ))
-            .id();
-        // Bypass the normal setting setter to simulate stale in-memory state.
-        let mut stale = ui::UserSettings::default();
-        stale.video.render_mode = RenderMode::Enhanced;
-        app.world_mut()
-            .resource_mut::<RuntimeSettings>()
-            .replace_user_settings(stale);
-        app.update();
-        assert!(app.world().get::<EnhancedRendering>(camera).is_none());
-        assert!(app.world().get::<Hdr>(camera).is_none());
-        assert!(app.world().get::<Bloom>(camera).is_none());
-        assert!(app.world().get::<VanillaDepthUsage>(camera).is_none());
-        assert_eq!(
-            TextureUsages::from(
-                app.world()
-                    .get::<Camera3d>(camera)
-                    .unwrap()
-                    .depth_texture_usages
-            ),
-            TextureUsages::from(original),
-        );
-        set_render_mode(
-            &mut app.world_mut().resource_mut::<RuntimeSettings>(),
-            RenderMode::Enhanced,
-        );
-        app.update();
-        assert_eq!(
-            app.world()
-                .resource::<RuntimeSettings>()
-                .user_settings_update()
-                .1
-                .video
-                .render_mode,
-            RenderMode::Vanilla
-        );
-        assert!(app.world().get::<EnhancedRendering>(camera).is_none());
-        assert!(app.world().get::<Hdr>(camera).is_none());
-        assert!(app.world().get::<Bloom>(camera).is_none());
-    }
-
-    #[cfg(feature = "enhanced")]
-    #[test]
-    fn unsupported_adapter_keeps_requested_enhanced_cameras_vanilla() {
-        let mut app = App::new();
-        app.init_resource::<RuntimeSettings>()
-            .insert_resource(render::EnhancedRenderSupport(false))
-            .add_systems(Update, apply_render_mode_to_cameras);
-        let camera = app
-            .world_mut()
-            .spawn((Camera3d::default(), FlyCamera::default()))
-            .id();
-        set_render_mode(
-            &mut app.world_mut().resource_mut::<RuntimeSettings>(),
-            RenderMode::Enhanced,
-        );
-        app.update();
-        assert!(app.world().get::<EnhancedRendering>(camera).is_none());
-        assert!(app.world().get::<Hdr>(camera).is_none());
-    }
-
-    /// Explicit Enhanced mode adds camera effects and Vanilla restores the original camera.
-    #[cfg(feature = "enhanced")]
-    #[test]
-    fn enhanced_mode_applies_and_clears_camera_effects() {
-        let mut app = App::new();
-        app.init_resource::<RuntimeSettings>().add_systems(
-            Update,
-            (apply_render_mode_to_cameras, sync_enhanced_bloom).chain(),
-        );
-        let original = Camera3d::default().depth_texture_usages;
-        let camera = app
-            .world_mut()
-            .spawn((Camera3d::default(), FlyCamera::default()))
-            .id();
-
-        set_render_mode(
-            &mut app.world_mut().resource_mut::<RuntimeSettings>(),
-            RenderMode::Enhanced,
-        );
-        app.update();
-        assert!(app.world().get::<EnhancedRendering>(camera).is_some());
-        assert!(app.world().get::<Hdr>(camera).is_some());
-        assert!(app.world().get::<Bloom>(camera).is_some());
-        let enhanced_depth = TextureUsages::from(
-            app.world()
-                .get::<Camera3d>(camera)
-                .unwrap()
-                .depth_texture_usages,
-        );
-        assert_eq!(
-            enhanced_depth,
-            TextureUsages::from(original) | TextureUsages::TEXTURE_BINDING,
-        );
-
-        set_render_mode(
-            &mut app.world_mut().resource_mut::<RuntimeSettings>(),
-            RenderMode::Vanilla,
-        );
-        app.update();
-        assert!(app.world().get::<EnhancedRendering>(camera).is_none());
-        assert!(app.world().get::<Hdr>(camera).is_none());
-        assert!(app.world().get::<Bloom>(camera).is_none());
-        assert_eq!(
-            TextureUsages::from(
-                app.world()
-                    .get::<Camera3d>(camera)
-                    .unwrap()
-                    .depth_texture_usages
-            ),
-            TextureUsages::from(original),
-        );
-    }
-
-    #[cfg(feature = "enhanced-diagnostics")]
-    #[test]
-    fn diagnostic_quality_changes_keep_cameras_within_the_launch_budget() {
-        render_model::enable_enhanced_diagnostics(render_model::ENHANCED_DIAGNOSTIC_MAX_VIEWPORT)
-            .unwrap();
-        let mut app = App::new();
-        app.init_resource::<RuntimeSettings>()
-            .add_systems(Update, apply_render_mode_to_cameras);
-        let camera = app
-            .world_mut()
-            .spawn((Camera3d::default(), FlyCamera::default()))
-            .id();
-        for quality in [
-            EnhancedQuality::Performance,
-            EnhancedQuality::Balanced,
-            EnhancedQuality::Ultra,
-        ] {
-            set_graphics_settings(
-                &mut app.world_mut().resource_mut::<RuntimeSettings>(),
-                RenderMode::Enhanced,
-                quality,
-            );
-            app.update();
-            let current = app.world().get::<EnhancedRendering>(camera).unwrap();
-            let bounded = EnhancedRendering::for_quality(quality).bounded_diagnostic();
-            assert_eq!(current.quality, quality);
-            assert!(current.shadow_resolution <= bounded.shadow_resolution);
-            assert!(current.shadow_distance <= bounded.shadow_distance);
-            assert!(!current.waving);
-        }
-    }
-}
+mod tests;
