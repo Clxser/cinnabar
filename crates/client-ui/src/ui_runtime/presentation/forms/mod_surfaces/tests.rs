@@ -15,3 +15,4 @@ mod mod_panel_transforms;
 mod mod_panel_transitions;
 mod mod_screens;
 mod mod_widgets;
+mod mod_text_plate;
