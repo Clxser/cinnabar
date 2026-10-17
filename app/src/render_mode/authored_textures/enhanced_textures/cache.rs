@@ -345,12 +345,12 @@ pub(super) fn save(key: &[u8; 32], payload: &Payload) {
         Ok(true) => {}
         Ok(false) => {
             if !OVERSIZED_CACHE_WARNED.swap(true, Ordering::Relaxed) {
-                eprintln!(
+                bevy::log::warn!(
                     "authored Enhanced texture cache exceeds {MAX_CACHE_BYTES} bytes; skipping cache write"
                 );
             }
         }
-        Err(error) => eprintln!("authored Enhanced texture cache: {error}"),
+        Err(error) => bevy::log::warn!("authored Enhanced texture cache: {error}"),
     }
 }
 

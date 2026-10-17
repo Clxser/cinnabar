@@ -184,7 +184,7 @@ fn load(
                 continue;
             }
             Err(error) => {
-                eprintln!("Enhanced PBR {alias}: {error}; retained carrier fallback");
+                bevy::log::warn!("Enhanced PBR {alias}: {error}; retained carrier fallback");
                 audit_alias.error = true;
                 audit_alias.fallback = true;
                 audit_aliases.push(audit_alias);
@@ -216,7 +216,7 @@ fn load(
                 let mip = match mip {
                     Ok(mip) => mip,
                     Err(error) => {
-                        eprintln!("Enhanced PBR {alias} frame {}: {error}", source.frame);
+                        bevy::log::warn!("Enhanced PBR {alias} frame {}: {error}", source.frame);
                         audit_alias.error = true;
                         continue;
                     }

@@ -98,20 +98,20 @@ fn attachment_support(
     ))
 }
 
+/// World cameras whose coverage depends on settings and the Enhanced depth path.
+type AntiAliasedCamera<'a> = (
+    Entity,
+    &'a mut Msaa,
+    Option<&'a Smaa>,
+    Has<render_scene::EnhancedRendering>,
+);
+
 /// Selects world-camera coverage before viewmodel publication, including Enhanced depth limits.
 pub fn apply_camera_antialiasing(
     mut commands: Commands,
     settings: Res<CameraSettingsAuthority>,
     support: Res<CameraAntiAliasingSupport>,
-    mut cameras: Query<
-        (
-            Entity,
-            &mut Msaa,
-            Option<&Smaa>,
-            Has<render_scene::EnhancedRendering>,
-        ),
-        With<FlyCamera>,
-    >,
+    mut cameras: Query<AntiAliasedCamera, With<FlyCamera>>,
 ) {
     for (entity, mut msaa, smaa, enhanced) in &mut cameras {
         let desired = if enhanced {

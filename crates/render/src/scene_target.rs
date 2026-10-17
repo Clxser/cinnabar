@@ -296,20 +296,20 @@ fn admit_copy_destination(mut cameras: Query<&mut CameraMainTextureUsages, With<
     }
 }
 
+/// Camera targets whose scene colour may need an Enhanced-sized allocation.
+type SceneTargetView<'a> = (
+    Entity,
+    &'a ViewTarget,
+    &'a Msaa,
+    Option<&'a SceneTarget>,
+    Option<&'a render_scene::EnhancedRendering>,
+);
+
 /// Keeps one bounded colour allocation per camera and drops stale camera resources.
 pub(crate) fn prepare_scene_targets(
     mut commands: Commands,
     device: Res<RenderDevice>,
-    views: Query<
-        (
-            Entity,
-            &ViewTarget,
-            &Msaa,
-            Option<&SceneTarget>,
-            Option<&render_scene::EnhancedRendering>,
-        ),
-        With<Camera3d>,
-    >,
+    views: Query<SceneTargetView, With<Camera3d>>,
     removed: Query<Entity, (With<SceneTarget>, Without<ViewTarget>)>,
 ) {
     for entity in &removed {

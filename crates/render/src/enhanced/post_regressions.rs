@@ -23,6 +23,10 @@ pub(super) fn execute_with_definitions(
 }
 
 /// Builds the fixture bindings for the selected regression entry point and reads its results.
+#[expect(
+    clippy::print_stderr,
+    reason = "named missing-fixture skip without a GPU adapter"
+)]
 fn execute_internal(
     source: &str,
     result_count: usize,

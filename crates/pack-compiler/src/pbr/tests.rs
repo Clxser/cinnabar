@@ -47,8 +47,10 @@ fn terrain_atlas_tint_reaches_authored_albedo_before_mip_filtering() {
     for mip in &mips.color {
         assert!(
             mip.rgba8
-                .chunks_exact(4)
-                .all(|pixel| pixel == [100, 40, 15, 128])
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|pixel| *pixel == [100, 40, 15, 128])
         );
     }
 }

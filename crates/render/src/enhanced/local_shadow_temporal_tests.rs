@@ -521,7 +521,7 @@ fn native_local_visibility_reprojects_camera_jitter_and_rejects_receiver_changes
     let (far_frame, far_motion) = camera(0.0, 0.0, 0.0, 0.0, 12.0);
     draw(30, far_frame, far_motion, false, true, 12.0, HALF / 2);
     let mut edge_history = vec![[0x3c00_u16, 0x3c00, 0x3c00, 0x4800]; (HALF * HALF) as usize];
-    for row in edge_history.chunks_exact_mut(HALF as usize) {
+    for row in edge_history.as_chunks_mut::<{ HALF as usize }>().0 {
         for texel in &mut row[..HALF as usize / 2] {
             texel[3] = 0x4400;
         }
@@ -537,7 +537,7 @@ fn native_local_visibility_reprojects_camera_jitter_and_rejects_receiver_changes
         history.size(),
     );
     let mut edge_metadata = vec![[0x3c00_u16, 0x4800, 0, 0]; (HALF * HALF) as usize];
-    for row in edge_metadata.chunks_exact_mut(HALF as usize) {
+    for row in edge_metadata.as_chunks_mut::<{ HALF as usize }>().0 {
         for texel in &mut row[..HALF as usize / 2] {
             texel[1] = 0x4400;
         }

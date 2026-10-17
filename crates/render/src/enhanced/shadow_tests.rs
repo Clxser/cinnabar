@@ -49,6 +49,10 @@ fn tilted_position(p:vec2<f32>)->vec3<f32>{return vec3(p.x,dot(TILTED_SLOPE,p),p
 fn tilted_normal()->vec3<f32>{return normalize(vec3(-TILTED_SLOPE.x,1.0,-TILTED_SLOPE.y));}
 "#;
 
+#[expect(
+    clippy::print_stderr,
+    reason = "named missing-fixture skip without a GPU adapter"
+)]
 fn sample_fixture(
     caster_source: &str,
     receiver_source: &str,

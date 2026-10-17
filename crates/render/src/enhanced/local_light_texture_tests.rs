@@ -565,7 +565,7 @@ fn native_point_shadow_face_and_embedded_viewport_reject_occluded_receivers() {
         &source,
         Some(RenderedWorld {
             session_generation: 2,
-            ..world.unwrap()
+            dimension: 0,
         }),
         Vec3::ZERO,
         clip,

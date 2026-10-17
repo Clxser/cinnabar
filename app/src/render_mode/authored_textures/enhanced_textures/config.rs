@@ -89,7 +89,7 @@ pub(super) fn selected_packs() -> Option<Vec<PbrPack>> {
         let path = Path::new(LOCAL_CONFIG);
         let bytes = fs::read(path).ok()?;
         if bytes.len() > 64 * 1024 {
-            eprintln!(
+            bevy::log::warn!(
                 "{} exceeds the optional PBR configuration budget",
                 path.display()
             );
@@ -98,7 +98,7 @@ pub(super) fn selected_packs() -> Option<Vec<PbrPack>> {
         match configuration(&bytes, path.parent().unwrap_or(Path::new("."))) {
             Ok(packs) => packs,
             Err(error) => {
-                eprintln!(
+                bevy::log::warn!(
                     "{}: {error}; authored Enhanced textures disabled",
                     path.display()
                 );
@@ -111,7 +111,7 @@ pub(super) fn selected_packs() -> Option<Vec<PbrPack>> {
         .filter(|pack: &PbrPack| pack.root().is_dir())
         .collect();
     if packs.is_empty() {
-        eprintln!("optional Enhanced PBR selection contains no existing pack directory");
+        bevy::log::warn!("optional Enhanced PBR selection contains no existing pack directory");
         return None;
     }
     Some(packs)

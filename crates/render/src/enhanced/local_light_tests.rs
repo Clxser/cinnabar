@@ -85,7 +85,9 @@ fn tiles_choose_visible_contributors_instead_of_camera_order_and_reuse_storage()
     );
     assert!(
         words[4..]
-            .chunks_exact(TILE_LIGHTS + 1)
+            .as_chunks::<{ TILE_LIGHTS + 1 }>()
+            .0
+            .iter()
             .all(|tile| tile[0] as usize <= TILE_LIGHTS)
     );
     let pointers = (words.as_ptr(), scores.as_ptr(), rays.as_ptr());

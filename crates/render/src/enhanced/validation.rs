@@ -285,6 +285,10 @@ pub(super) fn native_instance() -> wgpu::Instance {
     })
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "named missing-fixture skip and per-pipeline progress for native compiler crashes"
+)]
 fn build_native_pipelines() {
     let instance = native_instance();
     let Ok(adapter) =

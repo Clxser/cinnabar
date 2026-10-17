@@ -6,7 +6,8 @@ use render_scene::{ChunkTextureAssetIdentity, EnhancedTextureAssets};
 use super::bind_groups::{ChunkTextureUploadStats, PreparedChunkTextureAssets};
 
 pub(super) const FRAME_UPLOAD_BYTES: usize = 8 * 1024 * 1024;
-const _: () = assert!(std::mem::size_of::<u32>() as u64 % wgpu::COPY_BUFFER_ALIGNMENT == 0);
+const _: () =
+    assert!((std::mem::size_of::<u32>() as u64).is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT));
 const _: () = assert!(
     EnhancedTextureAssets::REFERENCE_BASE_WORDS * std::mem::size_of::<u32>() <= FRAME_UPLOAD_BYTES
 );

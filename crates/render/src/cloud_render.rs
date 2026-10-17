@@ -504,6 +504,16 @@ fn prepare_cloud_bind_group(
     }
 }
 
+/// Views that may draw native clouds, with Enhanced settings that can replace them.
+type CloudView<'a> = (
+    Entity,
+    &'a MainEntity,
+    &'a ExtractedView,
+    &'a bevy::render::camera::ExtractedCamera,
+    &'a Msaa,
+    Option<&'a render_scene::EnhancedRendering>,
+);
+
 fn queue_clouds(
     pipeline_cache: Res<PipelineCache>,
     mut pipeline: ResMut<CloudPipeline>,
@@ -511,14 +521,7 @@ fn queue_clouds(
     (atmosphere, visibility): (Res<AtmosphereFrame>, Res<CloudVisibility>),
     mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     draw_functions: Res<DrawFunctions<Transparent3d>>,
-    views: Query<(
-        Entity,
-        &MainEntity,
-        &ExtractedView,
-        &bevy::render::camera::ExtractedCamera,
-        &Msaa,
-        Option<&render_scene::EnhancedRendering>,
-    )>,
+    views: Query<CloudView>,
 ) {
     if !visibility.0 || !atmosphere.sky_kind().has_clouds() {
         return;

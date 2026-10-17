@@ -211,7 +211,7 @@ impl Report {
             || "none".to_owned(),
             |[high, low]| format!("{high}x{high} and {low}x{low}"),
         );
-        eprintln!(
+        bevy::log::info!(
             "Enhanced terrain audit ({}): {}/{} supplied color aliases, {} mapped texture refs, {} albedo layers; upload pages {}; {} normal, {} material, {} height, {} occlusion, {} subsurface; {} without normal, {} without material, {} without height; {} missing colors, {} errors, {} fallbacks; report {}",
             self.source,
             summary.color,
@@ -232,7 +232,7 @@ impl Report {
             summary.fallback,
             PATH,
         );
-        eprintln!(
+        bevy::log::info!(
             "Enhanced authored coverage: {}/{} complete authored normal/material aliases with color; {} authored color aliases, {} authored normals, {} height-derived normals; {} declared photorealistic color aliases, {} with native color frames at least {} pixels, {} with all three native maps at that resolution",
             summary.full_material,
             summary.aliases,
@@ -297,7 +297,7 @@ pub(super) fn save(report: &Report) {
         fs::rename(&temporary, PATH)
     })();
     if let Err(error) = result {
-        eprintln!("authored Enhanced texture audit: {error}");
+        bevy::log::warn!("authored Enhanced texture audit: {error}");
         let _ = fs::remove_file(temporary);
     }
 }

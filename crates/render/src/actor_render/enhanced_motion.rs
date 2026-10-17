@@ -67,6 +67,7 @@ fn upload(
     changed
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn prepare_actor_motion(
     frame: Res<ActorRenderFrame>,
     environment: Option<Res<render_scene::AtmosphereViewInputs>>,

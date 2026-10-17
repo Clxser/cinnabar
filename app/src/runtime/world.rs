@@ -222,6 +222,7 @@ pub(crate) fn synchronize_biome_tints(stream: &WorldStream, active: &mut ChunkBi
     true
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn update_camera_medium(
     client_world: Res<ClientWorld>,
     collisions: Option<Res<PhysicsCollisionRegistries>>,

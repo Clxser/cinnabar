@@ -14,23 +14,20 @@ pub fn configure_enhanced_shader_compiler(settings: &mut WgpuSettings) {
         return;
     }
     let mut directories = Vec::new();
-    if let Dx12Compiler::DynamicDxc { dxc_path, .. } = &settings.dx12_shader_compiler {
-        if let Ok(path) = std::fs::canonicalize(dxc_path) {
-            if let Some(path) = path.to_str() {
-                let path = path.to_owned();
-                if let Dx12Compiler::DynamicDxc { dxc_path, .. } =
-                    &mut settings.dx12_shader_compiler
-                {
-                    *dxc_path = path;
-                }
-                return;
-            }
+    if let Dx12Compiler::DynamicDxc { dxc_path, .. } = &settings.dx12_shader_compiler
+        && let Ok(path) = std::fs::canonicalize(dxc_path)
+        && let Some(path) = path.to_str()
+    {
+        let path = path.to_owned();
+        if let Dx12Compiler::DynamicDxc { dxc_path, .. } = &mut settings.dx12_shader_compiler {
+            *dxc_path = path;
         }
+        return;
     }
-    if let Ok(executable) = std::env::current_exe() {
-        if let Some(parent) = executable.parent() {
-            directories.push(parent.to_owned());
-        }
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(parent) = executable.parent()
+    {
+        directories.push(parent.to_owned());
     }
     if let Ok(directory) = std::env::current_dir() {
         directories.push(directory);

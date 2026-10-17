@@ -46,8 +46,9 @@ fn native_authored_stripes_publish_complete_mips_and_preserve_carrier_resources(
                     0,
                     255,
                 ];
-                for target in
-                    mip.rgba8[layer * layer_bytes..(layer + 1) * layer_bytes].chunks_exact_mut(4)
+                for target in mip.rgba8[layer * layer_bytes..(layer + 1) * layer_bytes]
+                    .as_chunks_mut::<4>()
+                    .0
                 {
                     target.copy_from_slice(&pixel);
                 }
