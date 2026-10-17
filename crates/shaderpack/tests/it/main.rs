@@ -5,9 +5,11 @@
 
 //! Whole-pack translation of the small original packs in `tests/fixtures`.
 
+mod bedrock_ids;
 mod compute;
 mod dimensions;
 mod draw_buffers;
+mod ids;
 mod includes;
 mod legacy;
 mod options;
