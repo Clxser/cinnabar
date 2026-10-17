@@ -106,6 +106,7 @@ pub struct ActorArtworkLocation {
     pub multitexture: Option<[u32; 2]>,
 }
 impl ActorArtworkLocation {
+    /// Returns the pose interpretation declared by this actor artwork.
     pub fn pose_mode(self) -> assets::actor::ActorPoseMode {
         self.pose_mode
     }

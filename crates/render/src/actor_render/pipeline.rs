@@ -211,6 +211,7 @@ pub(super) fn prepare_actor_pipelines(
     readiness.publish(has_view && ready);
 }
 
+/// Describes the actor artwork, geometry and pose bindings.
 pub(crate) fn actor_bind_group_layout() -> BindGroupLayoutDescriptor {
     BindGroupLayoutDescriptor::new(
         "instanced actor bind group layout",
@@ -363,6 +364,7 @@ pub(crate) fn actor_bind_group_layout() -> BindGroupLayoutDescriptor {
     )
 }
 
+/// Builds the actor pipeline for the requested material and view configuration.
 pub(crate) fn actor_pipeline_descriptor(
     bind_group_layout: BindGroupLayoutDescriptor,
 ) -> RenderPipelineDescriptor {

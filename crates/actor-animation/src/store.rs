@@ -345,6 +345,7 @@ impl ActorAnimationStore {
         self.stats
     }
 
+    /// Borrows the current rig state as an animation snapshot with shared owner context.
     pub(super) fn snapshot<'a>(
         &'a self,
         actor: ActorLifetimeId,

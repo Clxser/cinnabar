@@ -766,6 +766,7 @@ pub(crate) fn compiled_connected_bases(
     Ok(bases)
 }
 
+/// Checks texture dimensions, mip coverage and encoded lengths against carrier limits.
 fn validate_texture(
     index: usize,
     texture: &crate::texture::TextureArray,
@@ -814,6 +815,7 @@ fn optional_id(id: u32, len: usize, context: &str) -> Result<(), AssetError> {
     Ok(())
 }
 
+/// Hashes texture metadata and pixel bytes for carrier identity validation.
 fn texture_digest(texture: &crate::texture::TextureArray) -> [u8; 32] {
     let mut hasher = Sha256::new();
     for mip in &texture.mips {
@@ -822,6 +824,7 @@ fn texture_digest(texture: &crate::texture::TextureArray) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+/// Computes the validated encoded byte length of a texture array.
 fn texture_length(texture: &crate::texture::TextureArray) -> Result<usize, AssetError> {
     texture
         .mips

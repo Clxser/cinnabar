@@ -31,6 +31,7 @@ pub(super) fn page_pixels(
     pixels
 }
 
+/// Appends nearest-filtered source pixels to the destination artwork page.
 fn append_nearest(
     pixels: &mut Vec<u8>,
     texture: &assets::actor::ActorTexture,

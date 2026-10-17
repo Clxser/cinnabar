@@ -26,7 +26,7 @@ pub(crate) struct EffectTarget {
     pub view: TextureView,
 }
 
-/// Allocates a persistent effect texture with the requested size and format.
+/// Allocates a persistent HDR effect texture at the requested size.
 fn effect_texture(device: &RenderDevice, label: &'static str, size: [u32; 2]) -> Texture {
     device.create_texture(&TextureDescriptor {
         label: Some(label),
@@ -69,7 +69,7 @@ pub(crate) struct SceneTargets {
 }
 
 impl SceneTargets {
-    /// Allocates the atmospheric effect targets for one view size.
+    /// Allocates scene colour, depth, motion and receiver targets for one view size.
     pub fn new(device: &RenderDevice, size: [u32; 2], format: TextureFormat) -> Self {
         let descriptor = TextureDescriptor {
             label: Some("enhanced opaque colour snapshot"),
