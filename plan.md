@@ -9473,6 +9473,16 @@ Current implementation; runtime acceptance remains incomplete:
   instead of trimming them to audio packet timing. Playback and performance
   acceptance for these changes remain open.
 
+- Interactive video preview now uses bounded hardware-decoded read-ahead on
+  Windows, with a software fallback and a bilinear preview scaler. Export keeps
+  its existing quality path. The transport advances only within two admitted
+  output frames, discarding catch-up debt while decoding or rendering is late.
+  Video and native previews share retained GPU publication; per-frame raster
+  hashing no longer rebuilds the UI texture catalog when a GPU is available.
+  Preview source, decoder selection and preparation latency are logged separately
+  from capture misses. Existing-media decoding was inspected, but in-app playback
+  smoothness, fallback behavior and long-session budgets remain unverified.
+
 Required work remains open:
 
 - Complete recording options and the native OreUI library/editor, including full

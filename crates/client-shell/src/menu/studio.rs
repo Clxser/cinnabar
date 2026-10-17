@@ -136,8 +136,13 @@ impl Studio {
             && self.transport.playing()
             && let Ok(elapsed) = MediaTime::from_seconds(elapsed)
             && let Some(editor) = &self.editor
+            && let Some(available) = self.view.preview.playback_ceiling(
+                [self.document, editor.revision(), self.transport.epoch()],
+                editor.project().export.fps,
+            )
         {
-            self.transport.advance(elapsed, editor.project().duration());
+            self.transport
+                .advance_until(elapsed, editor.project().duration(), available);
         }
         if self.view.position != self.transport.position()
             || self.view.playing != self.transport.playing()

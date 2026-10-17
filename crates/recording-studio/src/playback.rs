@@ -91,6 +91,11 @@ impl Transport {
 
     /// Caller-supplied elapsed time advances with a retained rational remainder, avoiding drift.
     pub fn advance(&mut self, elapsed: MediaTime, duration: MediaTime) {
+        self.advance_until(elapsed, duration, MediaTime(u64::MAX));
+    }
+
+    /// Backpressure limits unseen preview time without seeking, rewinding or retaining catch-up debt.
+    pub fn advance_until(&mut self, elapsed: MediaTime, duration: MediaTime, available: MediaTime) {
         if !self.playing {
             return;
         }
@@ -98,7 +103,11 @@ impl Transport {
         let denominator = u128::from(self.rate.denominator);
         let delta = product / denominator;
         self.remainder = product % denominator;
-        let next = u128::from(self.position.0) + delta;
+        let requested = u128::from(self.position.0) + delta;
+        let next = requested.min(u128::from(available.0.max(self.position.0)));
+        if next != requested {
+            self.remainder = 0;
+        }
         if let Some(span) = self.looping.filter(|span| span.end <= duration) {
             if next >= u128::from(span.end.0) {
                 self.position = MediaTime(

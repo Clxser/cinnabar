@@ -12,6 +12,7 @@ use render::replay::{FrameEffects, ReplayRenderContext};
 use render_model::{UI_STUDIO_PREVIEW_MAX_SIZE, UiTexturePage};
 use render_scene::ui_preview::{PreviewImage, UiPreviewImage, UiPreviewSurface};
 
+mod metrics;
 pub(super) mod scene;
 
 #[derive(Resource, Default)]
@@ -151,6 +152,7 @@ pub(super) fn update(
                     PreviewStatus {
                         ready: true,
                         at: completed.at,
+                        epoch: Some(request.epoch),
                         notice: output.notice,
                         camera: output.camera,
                         ..Default::default()
@@ -250,11 +252,12 @@ impl Drop for Worker {
 
 /// All blocking waits, decoding, composition and page hashing are confined to this worker.
 fn run(shared: &Shared, context: Option<ReplayRenderContext>) {
-    let mut preview = RasterPreview::default();
+    let mut preview = RasterPreview::interactive();
     let mut effects = context.clone().map(FrameEffects::new);
     let mut titles = super::titles::Titles::new(context.clone());
     let mut native = context.map(scene::NativeScene::new);
     let mut native_page: Option<UiTexturePage> = None;
+    let mut metrics = metrics::PreviewMetrics::default();
     loop {
         let job = {
             let mut pending = shared
@@ -280,6 +283,7 @@ fn run(shared: &Shared, context: Option<ReplayRenderContext>) {
         if cancelled() {
             continue;
         }
+        let started = std::time::Instant::now();
         let wait = || {
             let pending = shared
                 .pending
@@ -295,6 +299,7 @@ fn run(shared: &Shared, context: Option<ReplayRenderContext>) {
             }
             None => Ok(None),
         };
+        let native_source = matches!(&scene, Ok(Some(_)));
         titles.set_font(job.font);
         let result = scene.and_then(|scene| {
             if let Some(scene) = scene {
@@ -304,7 +309,7 @@ fn run(shared: &Shared, context: Option<ReplayRenderContext>) {
             preview
                 .render(&job.request, UI_STUDIO_PREVIEW_MAX_SIZE, &cancelled)
                 .and_then(|frame| {
-                    if !frame.effects.neutral() || titles.active(&job.request)? {
+                    if effects.is_some() || !frame.effects.neutral() || titles.active(&job.request)? {
                         let effects = effects.as_mut().ok_or("Timeline effects need an initialized graphics device.")?;
                         let started = std::time::Instant::now();
                         loop {
@@ -330,6 +335,13 @@ fn run(shared: &Shared, context: Option<ReplayRenderContext>) {
         if cancelled() {
             continue;
         }
+        metrics.frame(
+            &job.request,
+            started.elapsed(),
+            native_source,
+            preview.decoder_counts(),
+            result.as_ref().err().map(String::as_str),
+        );
         *shared
             .completed
             .lock()

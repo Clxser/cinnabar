@@ -16,6 +16,7 @@ use crate::{
 mod raster;
 
 const MAX_PREVIEW_LAYERS: usize = 8;
+const PLAYBACK_LEAD_FRAMES: u64 = 2;
 
 #[derive(Clone)]
 pub struct PreviewRequest {
@@ -50,9 +51,25 @@ pub struct PreviewStatus {
     pub loading: bool,
     pub ready: bool,
     pub at: MediaTime,
+    /// Only an admitted frame from this exact document, edit and seek may pace its transport.
+    pub epoch: Option<[u64; 3]>,
     pub error: Option<String>,
     pub notice: Option<String>,
     pub camera: Option<CameraPreview>,
+}
+
+impl PreviewStatus {
+    /// A delayed preview may buffer two output frames, but cannot accumulate seconds of unseen playback.
+    pub fn playback_ceiling(&self, epoch: [u64; 3], fps: crate::FrameRate) -> Option<MediaTime> {
+        if !self.ready || self.epoch != Some(epoch) || self.error.is_some() {
+            return None;
+        }
+        let frame = fps
+            .frame_at(self.at)
+            .ok()?
+            .checked_add(PLAYBACK_LEAD_FRAMES)?;
+        fps.frame_time(frame).ok()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -81,6 +98,7 @@ pub struct RasterPreview {
     failures: BTreeMap<Id, String>,
     epoch: Option<[u64; 3]>,
     plan: FramePlan,
+    interactive: bool,
 }
 
 impl Default for RasterPreview {
@@ -92,11 +110,30 @@ impl Default for RasterPreview {
             failures: BTreeMap::new(),
             epoch: None,
             plan: FramePlan::default(),
+            interactive: false,
         }
     }
 }
 
 impl RasterPreview {
+    /// Selects bounded real-time decoding for the editor; exports retain the default quality path.
+    pub fn interactive() -> Self {
+        Self {
+            interactive: true,
+            ..Self::default()
+        }
+    }
+
+    /// Playback diagnostics distinguish hardware decode from a successful software fallback.
+    pub fn decoder_counts(&self) -> (usize, usize) {
+        let hardware = self
+            .decoders
+            .values()
+            .filter(|decoder| decoder.hardware())
+            .count();
+        (hardware, self.decoders.len() - hardware)
+    }
+
     /// Evaluates the saved timeline, reusing indexes and adjacent video decoding on a preview worker.
     pub fn render(
         &mut self,
@@ -106,6 +143,14 @@ impl RasterPreview {
     ) -> Result<RasterFrame, String> {
         if self.epoch != Some(request.epoch) {
             self.failures.clear();
+            if self
+                .epoch
+                .is_none_or(|old| old[0] != request.epoch[0] || old[2] != request.epoch[2])
+            {
+                for decoder in self.decoders.values_mut() {
+                    decoder.seek();
+                }
+            }
             self.epoch = Some(request.epoch);
         }
         if self
@@ -181,7 +226,11 @@ impl RasterPreview {
             {
                 self.decoders.insert(
                     source.id,
-                    VideoDecoder::new(&path, decoded_size, project.export.fps)?,
+                    if self.interactive {
+                        VideoDecoder::interactive(&path, decoded_size, project.export.fps)?
+                    } else {
+                        VideoDecoder::new(&path, decoded_size, project.export.fps)?
+                    },
                 );
             }
             let source_at = if source.kind == MediaKind::Image {
