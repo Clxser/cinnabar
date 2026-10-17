@@ -1,6 +1,6 @@
 //! Line-level reading of `shaders.properties`: the conditional preprocessor and the
-//! java.util.Properties key/value syntax, in one pass so that continuation lines are
-//! never mistaken for directives.
+//! java.util.Properties key/value syntax in one pass. As in Iris, whose preprocessor sees
+//! every `#` directive line before properties are joined, a directive ends a continued line.
 
 use std::collections::BTreeMap;
 
@@ -34,6 +34,11 @@ pub(crate) fn read_entries(
         let line = u32::try_from(index + 1).unwrap_or(u32::MAX);
         if let Some((start, mut logical)) = pending.take() {
             let piece = physical.trim_start();
+            if let Some(directive) = piece.strip_prefix('#').and_then(Directive::parse) {
+                entries.push(expand_entry(parse_entry(start, &logical), &conditionals));
+                conditionals.apply(directive, line, diagnostics);
+                continue;
+            }
             match strip_continuation(piece) {
                 Some(head) => {
                     logical.push_str(head);

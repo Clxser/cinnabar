@@ -345,6 +345,7 @@ fn shaderpack_post(
             view.clip_from_view.y_axis.y.recip(),
         ],
         render_distance: inputs.render_distance,
+        fog_color: inputs.fog_color,
         destination: post.destination,
         destination_format,
         geometry,

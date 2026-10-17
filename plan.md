@@ -1185,15 +1185,24 @@ screen-effect parity remain incomplete.
 - Expansion is nearest-first within the 1 GiB vertex budget; over budget, nearer sections evict
   the farthest. The Vanilla overlay (entities, particles, clouds, weather) passes nothing beyond
   `far` or the fully expanded radius, so unexpanded terrain shows the pack's sky or fog.
-- Developer captures pin the time with `--fixed-time <ticks>` (docs/agents/live-testing.md).
+- Developer captures pin the time with `--fixed-time <ticks>` (docs/agents/live-testing.md);
+  `CINNABAR_SHADERPACK_UNIFORM_DUMP=<file>` dumps every program's uniforms and the values
+  supplied, flagging unknown ones.
+- Biome uniforms (`biome`, `biome_category`, `biome_precipitation`, `temperature`,
+  `rainfall`) and Iris's `BIOME_*`/`CAT_*`/`PPT_*` macros come from the Java biome of the
+  Bedrock biome (java-mapping carrier). `biome`/`BIOME_*` number biomes in Java's network
+  registry order, not Iris's `Biomes.register` order; comparisons agree. The snow line omits
+  Java's temperature noise and the frozen modifier. Custom uniform expressions see macros
+  expanded, and `colortex0` clears to the fog colour, as in Iris.
 - Gaps against Iris references (same tick, 16-chunk render distance): entities, the hand,
   particles, clouds and weather are Vanilla-lit overlay pixels without gbuffer data; no pack
-  clouds (`gbuffers_clouds`), `skytextured` sun/moon or vanilla stars; `biome`,
-  `biome_category` and the Iris `CAT_*`/`BIOME_*`/`PPT_*` constants are not supplied, so custom
-  uniforms comparing them read 0 (Photon's biome weights then all read 1, a likely cause of its
-  pink haze); eye-located inputs (`eyeBrightness`) sample the player, not a scripted camera;
-  shadows cover every resident section without `shadowDistance` culling; translucents sort per
-  section; Vanilla terrain still renders underneath. Not a parity gate.
+  clouds (`gbuffers_clouds`), `skytextured` sun/moon or vanilla stars; `minecraft:` resource
+  textures are not resolved; `skyColor`/`fogColor` are Bedrock atmosphere values, not Java's;
+  `bedrockLevel` and `relativeEyePosition` read 0; Photon's day scenes stay darker than Java's
+  in sun-shadowed areas (cause open; its GTAO buffer is plausible); eye-located inputs sample
+  the player, so captures put the player at the camera; shadows cover every resident section
+  without `shadowDistance` culling; translucents sort per section; Vanilla terrain still
+  renders underneath. Not a parity gate.
 
 ## Anvil screen
 

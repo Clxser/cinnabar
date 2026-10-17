@@ -187,6 +187,8 @@ pub(crate) struct FrameIo<'a> {
     pub inverse_focal: [f32; 2],
     /// `far`: the render distance in blocks.
     pub render_distance: f32,
+    /// `fogColor`, which `colortex0` clears to by default.
+    pub fog_color: [f32; 3],
     /// Where the presented frame goes, and its format.
     pub destination: &'a TextureView,
     pub destination_format: TextureFormat,
@@ -256,12 +258,13 @@ pub(crate) fn record_frame(
     let pack = Arc::clone(&state.pack);
     write_depth_parameters(queue, &pack, io);
     for plan in &pack.buffers {
-        let (Some(colour), Some(buffer)) = (
+        let (Some(clear), Some(buffer)) = (
             plan.clear,
             state.targets.buffers[plan.index as usize].as_ref(),
         ) else {
             continue;
         };
+        let colour = clear.resolve(io.fog_color);
         for view in &buffer.attachment {
             pass(
                 encoder,

@@ -224,6 +224,7 @@ fn render(gpu: &GpuContext, files: &[(&str, &str)]) -> Vec<u8> {
         scene_near: 0.1,
         inverse_focal: [1.0, 1.0],
         render_distance: game.render_distance,
+        fog_color: game.fog_color,
         destination: &output.create_view(&Default::default()),
         destination_format: format,
         geometry: None,

@@ -39,13 +39,33 @@ pub(crate) struct BufferPlan {
     pub index: u32,
     pub format: BufferFormat,
     pub extent: Extent,
-    /// Colour both textures are cleared to at the start of each frame; `None` keeps the
+    /// What both textures are cleared to at the start of each frame; `None` keeps the
     /// previous frame's contents (`colortexNClear = false`).
-    pub clear: Option<[f64; 4]>,
+    pub clear: Option<BufferClear>,
     /// Some pass requests mipmaps, so the textures carry a full mip chain.
     pub mipmapped: bool,
     /// Some pass reads or writes the alternate texture.
     pub alternate: bool,
+}
+
+/// A colour buffer's per-frame clear value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum BufferClear {
+    /// A fixed colour (`colortexNClearColor`, or Iris's default for the buffer).
+    Color([f64; 4]),
+    /// This frame's `fogColor` with alpha 1, Iris's default for `colortex0` (vanilla's
+    /// clear colour).
+    Fog,
+}
+
+impl BufferClear {
+    /// The clear colour given this frame's fog colour.
+    pub(crate) fn resolve(self, fog: [f32; 3]) -> [f64; 4] {
+        match self {
+            BufferClear::Color(colour) => colour,
+            BufferClear::Fog => [f64::from(fog[0]), f64::from(fog[1]), f64::from(fog[2]), 1.0],
+        }
+    }
 }
 
 /// A program as the frame plan sees it.
@@ -95,9 +115,14 @@ pub(crate) struct FramePlan {
     pub swap_back: Vec<u32>,
 }
 
-/// Iris's default clear colour: `colortex1` (`gdepth`) clears to white, the rest to zero.
-fn default_clear(index: u32) -> [f64; 4] {
-    if index == 1 { [1.0; 4] } else { [0.0; 4] }
+/// Iris's default clear: `colortex0` to the fog colour, `colortex1` (`gdepth`) to white, the
+/// rest to zero.
+fn default_clear(index: u32) -> BufferClear {
+    match index {
+        0 => BufferClear::Fog,
+        1 => BufferClear::Color([1.0; 4]),
+        _ => BufferClear::Color([0.0; 4]),
+    }
 }
 
 /// Parses a `ClearColor` directive value: `vec4(r, g, b, a)`, `vec3(r, g, b)` (alpha 1) or
@@ -283,7 +308,7 @@ pub(crate) fn plan_buffers(
                     settings
                         .and_then(|s| s.clear_color.as_deref())
                         .and_then(parse_clear_color)
-                        .unwrap_or_else(|| default_clear(index)),
+                        .map_or_else(|| default_clear(index), BufferClear::Color),
                 ),
             };
             BufferPlan {
@@ -452,8 +477,12 @@ mod tests {
         assert_eq!(get(2).format, BufferFormat::Rgba16f);
         assert_eq!(get(2).clear, None);
         assert!(get(2).mipmapped && get(2).alternate);
-        assert_eq!(get(3).clear, Some([0.25, 0.5, 0.75, 1.0]));
-        assert_eq!(get(1).clear, Some([1.0; 4]));
+        assert_eq!(
+            get(3).clear,
+            Some(BufferClear::Color([0.25, 0.5, 0.75, 1.0]))
+        );
+        assert_eq!(get(1).clear, Some(BufferClear::Color([1.0; 4])));
+        assert_eq!(get(0).clear, Some(BufferClear::Fog));
         assert_eq!(get(0).format, BufferFormat::DEFAULT);
         assert!(!get(0).alternate);
         assert_eq!(get(6).extent.resolve([1920, 1080]), [960, 270]);
