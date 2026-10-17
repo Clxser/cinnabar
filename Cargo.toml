@@ -162,7 +162,9 @@ wit-component = "=0.247.0"
 # Keep Metal display-link delivery, bounded submissions and indirect validation on wgpu 30.0.1,
 # plus naga GLSL frontend fixes for Java shader packs (glsl-in builtins, overloads, barriers).
 [patch.crates-io]
-naga = { git = "https://github.com/bedrock-mc/wgpu", rev = "e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5" }
+# LOCAL ONLY: naga fixes for more packs (glsl-shaderpack-frontend-2 @ 4dc0319a7) are not yet
+# published to cinnabar-mc/wgpu; replace this path with that published rev before any PR.
+naga = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga2/naga" }
 wgpu = { git = "https://github.com/bedrock-mc/wgpu", rev = "e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5" }
 wgpu-core = { git = "https://github.com/bedrock-mc/wgpu", rev = "e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5" }
 wgpu-hal = { git = "https://github.com/bedrock-mc/wgpu", rev = "e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5" }
