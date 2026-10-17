@@ -53,14 +53,37 @@ pub struct ShaderPackRendering;
 /// lighter biomes beyond these are dropped.
 pub const SKY_BIOME_SLOTS: usize = 4;
 /// The Vanilla categories the loaded pack draws itself on [`ShaderPackRendering`] cameras.
-/// Written in the render world by the shader-pack host each frame; the Vanilla actor,
-/// block-entity and hand passes skip those cameras for what is set, so the pack's Vanilla
-/// overlay never carries a second, Vanilla-lit copy.
+/// Written in the render world by the shader-pack host each frame; the Vanilla terrain,
+/// far-terrain, actor, block-entity and hand passes skip those cameras for what is set, so
+/// the pack's Vanilla overlay never carries a second, Vanilla-lit copy.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ShaderPackDrawnCategories {
+    /// Terrain: a section the pack has not expanded yet shows nothing, as Iris draws no
+    /// unbuilt section, rather than Vanilla-lit terrain or far-terrain tiles.
+    pub terrain: bool,
     pub actors: bool,
     pub block_entities: bool,
     pub hand: bool,
+}
+
+/// Which render-world views the pack draws a Vanilla category for, for the Vanilla
+/// renderers' queue systems.
+#[derive(SystemParam)]
+pub struct ShaderPackDrawnViews<'w, 's> {
+    drawn: Option<Res<'w, ShaderPackDrawnCategories>>,
+    cameras: Query<'w, 's, (), With<ShaderPackRendering>>,
+}
+
+impl ShaderPackDrawnViews<'_, '_> {
+    /// Whether the pack draws the category `which` picks on render-world view `view`.
+    #[must_use]
+    pub fn replaces(
+        &self,
+        view: Entity,
+        which: impl Fn(&ShaderPackDrawnCategories) -> bool,
+    ) -> bool {
+        self.drawn.as_deref().is_some_and(which) && self.cameras.contains(view)
+    }
 }
 
 /// Game state behind the standard Iris uniforms that the render world cannot derive from
@@ -270,5 +293,37 @@ impl ShaderPackActorIds {
     #[must_use]
     pub fn entity_id(&self, runtime_id: u64) -> i32 {
         self.by_runtime_id.get(&runtime_id).copied().unwrap_or(-1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::{system::RunSystemOnce, world::World};
+
+    #[test]
+    fn only_pack_cameras_skip_the_terrain_the_pack_draws() {
+        let mut world = World::new();
+        let pack_view = world.spawn(ShaderPackRendering).id();
+        let vanilla_view = world.spawn_empty().id();
+        let skips = |world: &mut World| {
+            world
+                .run_system_once(move |pack: ShaderPackDrawnViews| {
+                    [pack_view, vanilla_view].map(|view| pack.replaces(view, |d| d.terrain))
+                })
+                .unwrap()
+        };
+        assert_eq!(skips(&mut world), [false, false], "no pack loaded");
+        world.insert_resource(ShaderPackDrawnCategories {
+            terrain: true,
+            ..Default::default()
+        });
+        assert_eq!(skips(&mut world), [true, false]);
+        world.insert_resource(ShaderPackDrawnCategories::default());
+        assert_eq!(
+            skips(&mut world),
+            [false, false],
+            "a pack without terrain keeps the Vanilla terrain it composites"
+        );
     }
 }

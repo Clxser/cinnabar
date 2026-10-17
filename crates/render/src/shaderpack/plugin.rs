@@ -168,14 +168,17 @@ type PreparedView = (Entity, &'static ExtractedView);
 
 /// Enables the geometry adapter while a pack with terrain programs is shown on some camera,
 /// with the pack's `separateAo`/`oldLighting`, publishes its block ids, tells the Vanilla
-/// actor, block-entity and hand passes which of them the pack draws itself, and publishes
-/// the effects it draws in place of Vanilla's.
+/// terrain, actor, block-entity and hand passes which of them the pack draws itself, and
+/// publishes the effects it draws in place of Vanilla's.
 #[allow(clippy::too_many_arguments, reason = "a render-world system's inputs")]
 fn configure_geometry(
     mut commands: Commands,
     pack: Option<Res<LoadedShaderPack>>,
     cameras: Query<(), With<ShaderPackRendering>>,
-    mut settings: ResMut<ShaderpackGeometrySettings>,
+    (mut settings, geometry): (
+        ResMut<ShaderpackGeometrySettings>,
+        Option<Res<ShaderpackGeometry>>,
+    ),
     mut drawn: ResMut<ShaderPackDrawnCategories>,
     ids: Option<Res<ShaderpackBlockIds>>,
     mut replaced: ResMut<ShaderPackEffects>,
@@ -201,7 +204,10 @@ fn configure_geometry(
         pack.as_ref()
             .is_some_and(|p| p.draws.iter().any(|d| d.kind == kind))
     };
+    let expands_terrain = geometry.is_some_and(|geometry| geometry.supported());
     drawn.set_if_neq(ShaderPackDrawnCategories {
+        terrain: expands_terrain
+            && (draws(DrawKind::TerrainSolid) || draws(DrawKind::TerrainCutout)),
         actors: draws(DrawKind::Entities),
         block_entities: draws(DrawKind::Block),
         hand: draws(DrawKind::Hand),

@@ -1194,7 +1194,8 @@ screen-effect parity remain incomplete.
 - Block-model quads keep their back faces by the template quad's two-sided flag, as the chunk
   renderer does, so cross plants draw through the pack.
 - Expansion is nearest-first within the 1 GiB vertex budget; over budget, nearer sections evict
-  the farthest, so unexpanded terrain shows the pack's sky or fog.
+  the farthest. Vanilla terrain and far-terrain tiles are not drawn on pack cameras, so a
+  section not expanded yet shows the pack's sky or fog, as Iris draws no unbuilt section.
 - Entities, block entities, the hand, armour glint, particles, weather, clouds, sun, moon,
   stars, lightning, block cracks and the selection outline draw through the pack's
   `gbuffers_*` programs (Iris fallback chains, render stages and default blend/alpha state);
@@ -1219,7 +1220,7 @@ screen-effect parity remain incomplete.
   Voxels' voxel shadow, Eclipse's grass); `bedrockLevel` and `relativeEyePosition` read 0;
   eye-located inputs sample the player, so captures put the player at the camera; shadows
   cover every resident section without `shadowDistance` culling; translucents sort per
-  section; Vanilla terrain still renders underneath. Not a parity gate.
+  section. Not a parity gate.
 
 ## Anvil screen
 
