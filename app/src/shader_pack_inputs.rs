@@ -223,7 +223,9 @@ fn publish_actor_ids(
                 continue;
             };
             let identifier = match &actor.kind {
-                protocol::ActorKind::Player { .. } => "minecraft:player",
+                protocol::ActorKind::Player { .. } => {
+                    assets::facts::VanillaEntity::Player.identifier()
+                }
                 protocol::ActorKind::Entity { identifier } => identifier,
             };
             if let Some(id) = ids.entity_id(identifier) {

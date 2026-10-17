@@ -1,5 +1,14 @@
-use super::*;
+use super::classify::{
+    DrawValues, ENTITY_GLINT_SCALE, classify, entity_colour, glint_texture_matrix, hand_projection,
+    vertex_colour,
+};
+use super::frame::{MAX_WORKGROUPS, linear_workgroups, rig_workgroups};
+use super::skin::SKIN_WORKGROUP_SIZE;
+use crate::shaderpack::draws::DrawKind;
+use crate::shaderpack::uniforms::patch_block;
+use assets::EntityRenderMaterial;
 use assets::EntityRenderMaterialState as State;
+use bevy::math::{Mat4, Vec3, Vec4};
 
 fn authored(flags: u32) -> u32 {
     State::AUTHORED | flags

@@ -15,16 +15,24 @@ use std::borrow::Cow;
 use wgpu::TextureFormat;
 
 /// Iris's `renderStage` values (`MC_RENDER_STAGE_*`) of the stages the host draws.
-mod render_stage {
-    pub(super) const SKY: i32 = 1;
-    pub(super) const SUNSET: i32 = 2;
-    pub(super) const TERRAIN_SOLID: i32 = 8;
-    pub(super) const TERRAIN_CUTOUT: i32 = 10;
-    pub(super) const ENTITIES: i32 = 11;
-    pub(super) const BLOCK_ENTITIES: i32 = 12;
-    pub(super) const HAND_SOLID: i32 = 16;
-    pub(super) const TERRAIN_TRANSLUCENT: i32 = 17;
-    pub(super) const HAND_TRANSLUCENT: i32 = 23;
+pub(super) mod render_stage {
+    pub(crate) const SKY: i32 = 1;
+    pub(crate) const SUNSET: i32 = 2;
+    pub(crate) const SUN: i32 = 4;
+    pub(crate) const MOON: i32 = 5;
+    pub(crate) const STARS: i32 = 6;
+    pub(crate) const TERRAIN_SOLID: i32 = 8;
+    pub(crate) const TERRAIN_CUTOUT: i32 = 10;
+    pub(crate) const ENTITIES: i32 = 11;
+    pub(crate) const BLOCK_ENTITIES: i32 = 12;
+    pub(crate) const DESTROY: i32 = 13;
+    pub(crate) const OUTLINE: i32 = 14;
+    pub(crate) const HAND_SOLID: i32 = 16;
+    pub(crate) const TERRAIN_TRANSLUCENT: i32 = 17;
+    pub(crate) const PARTICLES: i32 = 19;
+    pub(crate) const CLOUDS: i32 = 20;
+    pub(crate) const RAIN_SNOW: i32 = 21;
+    pub(crate) const HAND_TRANSLUCENT: i32 = 23;
 }
 
 /// One geometry draw of the frame, in recording order within its pass.

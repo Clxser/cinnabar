@@ -4,6 +4,7 @@ use super::frame::EffectCamera;
 use super::lines::{outline, outline_width, widen};
 use super::particles::{instance_light, particle_quads};
 use super::resources::{VanillaImage, VanillaTextures, bedrock_path};
+use super::settings::ParticleOrdering;
 use super::stars::{JavaRandom, STAR_QUADS};
 use super::vertices::{FULL_BRIGHT, Mesh};
 use super::weather::weather_quads;
@@ -14,6 +15,7 @@ use ::particles::ParticleInstance;
 use assets::atmosphere::{AtmosphereRole, AtmosphereTexture};
 use bevy::math::{DVec3, Mat4, Vec3};
 use render_model::{BlockEntityVertex, OcclusionGrid, PrecipitationLayerRecord};
+use shaderpack::ShaderProperties;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

@@ -441,13 +441,16 @@ pub(crate) fn build(
         log_program(name, program);
     }
     let (runnable, plans) = runnable_programs(&translation)?;
-    let id_maps = pack.id_maps(&config.environment, &config.options);
+    let (block_ids, actor_ids) =
+        super::actors::id_tables(pack.id_maps(&config.environment, &config.options), name);
     let effects = EffectSettings::read(
         &translation.properties,
         runnable
             .iter()
             .any(|p| p.program.group == ProgramGroup::Deferred),
-        id_maps.entities.id("minecraft:lightning_bolt"),
+        assets::facts::entity::NativeEntityClass::LightningBolt
+            .identifier()
+            .and_then(|lightning| actor_ids.entity_id(lightning)),
     );
     let (geometry, selected_draws) =
         select_draws(&translation.programs, |kind| kind.drawn_by(&effects));
@@ -724,7 +727,7 @@ pub(crate) fn build(
     let (block_ids, actor_ids) = if draws.is_empty() {
         (None, Arc::default())
     } else {
-        super::actors::id_tables(id_maps, name)
+        (block_ids, actor_ids)
     };
     let atlas_placeholder = constants
         .placeholder(ATLAS_FORMAT, shaderpack::TextureDimension::D2, false)

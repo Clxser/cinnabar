@@ -170,6 +170,7 @@ type PreparedView = (Entity, &'static ExtractedView);
 /// with the pack's `separateAo`/`oldLighting`, publishes its block ids, tells the Vanilla
 /// actor, block-entity and hand passes which of them the pack draws itself, and publishes
 /// the effects it draws in place of Vanilla's.
+#[allow(clippy::too_many_arguments, reason = "a render-world system's inputs")]
 fn configure_geometry(
     mut commands: Commands,
     pack: Option<Res<LoadedShaderPack>>,
