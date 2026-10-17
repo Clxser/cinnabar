@@ -141,6 +141,8 @@ pub(crate) struct PackGpu {
     pub shadow: Option<ShadowMaps>,
     /// `mc_Entity` id per Bedrock block state (by sequential id) from `block.properties`.
     pub block_ids: Option<Arc<Vec<i32>>>,
+    /// `entityId` and item ids per Bedrock identifier; empty without geometry draws.
+    pub actor_ids: Arc<super::actors::ActorIdMaps>,
     /// `separateAo` and `oldLighting` from `shaders.properties`.
     pub separate_ao: bool,
     pub old_lighting: bool,
@@ -719,9 +721,11 @@ pub(crate) fn build(
             mipmaps: vec![],
         })
         .collect();
-    let block_ids = (!draws.is_empty())
-        .then(|| block_ids(&id_maps, name))
-        .flatten();
+    let (block_ids, actor_ids) = if draws.is_empty() {
+        (None, Arc::default())
+    } else {
+        super::actors::id_tables(id_maps, name)
+    };
     let atlas_placeholder = constants
         .placeholder(ATLAS_FORMAT, shaderpack::TextureDimension::D2, false)
         .0;
@@ -805,6 +809,7 @@ pub(crate) fn build(
         shadowcomp,
         shadow,
         block_ids,
+        actor_ids,
         separate_ao: flag("separateAo"),
         old_lighting: flag("oldLighting"),
         atlas_placeholder,
@@ -884,29 +889,6 @@ fn geometry_draws(
         draws.clear();
     }
     draws
-}
-
-/// The pack's `block.properties` ids per Bedrock block state through the pinned Java block
-/// mapping; `None` (logged) when the mapping is unavailable.
-fn block_ids(maps: &shaderpack::IdMaps, name: &str) -> Option<Arc<Vec<i32>>> {
-    for diagnostic in &maps.diagnostics {
-        bevy::log::debug!(
-            target: "cinnabar::shaderpack",
-            pack = name, line = diagnostic.line,
-            "id maps: {}", diagnostic.message
-        );
-    }
-    match assets::facts::JavaBlockMapping::pinned() {
-        Ok(mapping) => Some(Arc::new(maps.blocks.bedrock_block_ids(mapping))),
-        Err(error) => {
-            bevy::log::warn!(
-                target: "cinnabar::shaderpack",
-                pack = name,
-                "no Java block mapping, every mc_Entity reads -1: {error}"
-            );
-            None
-        }
-    }
 }
 
 /// Colour targets per fragment output location. `final` writes the screen at location 0.

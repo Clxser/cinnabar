@@ -256,6 +256,59 @@ fn java_biome_tags_list_their_members() {
 }
 
 #[test]
+fn bedrock_entities_map_to_their_java_entity_types() {
+    let mapping = mapping();
+    for (bedrock, java) in [
+        ("minecraft:ender_crystal", "minecraft:end_crystal"),
+        ("minecraft:evocation_illager", "minecraft:evoker"),
+        ("minecraft:zombie_pigman", "minecraft:zombified_piglin"),
+        ("minecraft:cow", "minecraft:cow"),
+        ("minecraft:xp_orb", "minecraft:experience_orb"),
+        ("minecraft:minecart", "minecraft:minecart"),
+    ] {
+        assert_eq!(mapping.java_entity(bedrock), Some(java), "{bedrock}");
+    }
+    assert_eq!(
+        mapping
+            .java_entities("minecraft:evocation_illager")
+            .collect::<Vec<_>>(),
+        ["minecraft:evoker", "minecraft:illusioner"]
+    );
+    assert!(
+        mapping
+            .java_entities("minecraft:minecart")
+            .any(|java| java == "minecraft:furnace_minecart")
+    );
+    assert_eq!(mapping.java_entity("minecraft:no_such_entity"), None);
+    assert_eq!(mapping.java_entities("minecraft:no_such_entity").count(), 0);
+}
+
+#[test]
+fn bedrock_items_map_to_their_java_items() {
+    let mapping = mapping();
+    assert_eq!(mapping.java_item("minecraft:web"), Some("minecraft:cobweb"));
+    assert_eq!(
+        mapping.java_item("minecraft:brick_block"),
+        Some("minecraft:bricks")
+    );
+    assert_eq!(
+        mapping.java_item("minecraft:diamond_sword"),
+        Some("minecraft:diamond_sword")
+    );
+    assert_eq!(
+        mapping.java_item("minecraft:filled_map"),
+        Some("minecraft:filled_map")
+    );
+    let banners: Vec<&str> = mapping.java_items("minecraft:banner").collect();
+    assert_eq!(
+        mapping.java_item("minecraft:banner"),
+        banners.first().copied()
+    );
+    assert!(banners.contains(&"minecraft:white_banner"));
+    assert_eq!(mapping.java_item("minecraft:no_such_item"), None);
+}
+
+#[test]
 fn corrupt_or_unpinned_bytes_are_rejected() {
     let protocol = crate::active_content_registry_protocol();
     let mut corrupt = SOURCE_BYTES.to_vec();
@@ -294,4 +347,14 @@ fn payload_validation_rejects_bad_order_and_indices() {
     let mut duplicate_name = valid;
     duplicate_name.java_biomes[1].name = duplicate_name.java_biomes[0].name.clone();
     assert!(JavaBlockMapping::from_payload(duplicate_name).is_err());
+    let mut unsorted_entities = mapping().payload().clone();
+    unsorted_entities.entities.swap(0, 1);
+    assert!(JavaBlockMapping::from_payload(unsorted_entities).is_err());
+    let mut missing_inverse = mapping().payload().clone();
+    let last = missing_inverse.bedrock_items.len() - 1;
+    missing_inverse.bedrock_items = missing_inverse.bedrock_items[..last].into();
+    assert!(JavaBlockMapping::from_payload(missing_inverse).is_err());
+    let mut wrong_inverse = mapping().payload().clone();
+    wrong_inverse.bedrock_entities.swap(0, 1);
+    assert!(JavaBlockMapping::from_payload(wrong_inverse).is_err());
 }

@@ -15,11 +15,24 @@ use super::targets::{ViewBindings, ViewTargets, is_compute};
 use super::uniforms::{
     DrawUniforms, FAR_PLANE_SCALE, FrameUniforms, GL_NEAR, HostValue, pack_block,
 };
-use bevy::math::Vec3;
+use bevy::math::{Mat4, Vec3};
 use shaderpack::{CustomUniforms, ProgramGroup};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use wgpu::{CommandEncoder, Device, Queue, TextureFormat, TextureView};
+
+/// Per-view values the geometry draws need beyond the frame's uniforms.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DrawContext {
+    /// The terrain origin relative to the camera (terrain draws' `chunkOffset`).
+    pub chunk_offset: Vec3,
+    /// The block atlas's texel size (terrain draws' `atlasSize`).
+    pub atlas_size: [i32; 2],
+    /// The particle atlas's texel size (particle draws' `atlasSize`).
+    pub particle_atlas_size: [i32; 2],
+    /// The first-person hand's projection, its depth scaled by `MC_HAND_DEPTH`.
+    pub hand_projection: Mat4,
+}
 
 /// One view's resources and per-frame state for a loaded pack.
 pub(crate) struct ViewState {
@@ -27,6 +40,8 @@ pub(crate) struct ViewState {
     pub targets: ViewTargets,
     pub bindings: ViewBindings,
     pub history: super::uniforms::UniformHistory,
+    /// Actor, block-entity and hand geometry skinned for the pack, with its draw bindings.
+    pub actors: super::actors::ViewActors,
     custom: CustomUniforms,
     scratch: Vec<u8>,
     unknown: BTreeSet<String>,
@@ -59,6 +74,7 @@ impl ViewState {
             targets,
             bindings,
             history: Default::default(),
+            actors: Default::default(),
             custom,
             scratch: vec![],
             unknown: BTreeSet::new(),
@@ -76,16 +92,13 @@ impl ViewState {
     }
 
     /// Evaluates custom uniforms and writes every program's and geometry draw's uniform
-    /// block; `chunk_offset` is the terrain origin relative to the camera, `atlas_size` the
-    /// block atlas's texel size (terrain draws' `atlasSize`) and `particle_atlas_size` the
-    /// particle atlas's (particle draws').
+    /// block; each draw also keeps its packed bytes, which actor draws patch per actor.
     pub(crate) fn write_uniforms(
         &mut self,
         queue: &Queue,
         frame: &FrameUniforms,
         frame_time: f32,
-        chunk_offset: Vec3,
-        [atlas_size, particle_atlas_size]: [[i32; 2]; 2],
+        context: &DrawContext,
     ) {
         let builtin = |name: &str| -> Option<shaderpack::UniformValue> {
             if let Some(value) = frame.value(name) {
@@ -136,7 +149,7 @@ impl ViewState {
                 audit.block(&format!("program {}", program.name), block, &lookup);
             }
         }
-        for (draw, binding) in self.pack.draws.iter().zip(&self.bindings.draws) {
+        for (draw, binding) in self.pack.draws.iter().zip(&mut self.bindings.draws) {
             let program = &self.pack.programs[draw.program];
             let (Some(block), Some(buffer)) = (&program.reflection.uniforms, &binding.uniforms)
             else {
@@ -144,6 +157,9 @@ impl ViewState {
             };
             let (model_view, projection) = if draw.kind.shadow() {
                 (frame.shadow_model_view(), frame.shadow_projection())
+            } else if draw.kind.hand() {
+                // Hand vertices are in view space already, as Iris draws them.
+                (Mat4::IDENTITY, context.hand_projection)
             } else {
                 (frame.model_view(), frame.projection())
             };
@@ -155,16 +171,20 @@ impl ViewState {
             let values = DrawUniforms {
                 model_view,
                 projection,
-                chunk_offset: if terrain { chunk_offset } else { Vec3::ZERO },
+                chunk_offset: if terrain {
+                    context.chunk_offset
+                } else {
+                    Vec3::ZERO
+                },
                 render_stage: draw.kind.render_stage(),
                 lightmap_matrix: draw.kind.lightmap_matrix(),
                 atlas_size: match effect {
-                    _ if terrain => atlas_size,
+                    _ if terrain => context.atlas_size,
                     Some(
                         Effect::Particles
                         | Effect::ParticlesTranslucent
                         | Effect::ParticlesAdditive,
-                    ) => particle_atlas_size,
+                    ) => context.particle_atlas_size,
                     _ => [0; 2],
                 },
                 entity_id: effect.map_or(-1, |effect| self.pack.effects.entity_id(effect)),
@@ -172,6 +192,7 @@ impl ViewState {
             let lookup = |name: &str| values.value(name).or_else(|| lookup(name));
             pack_block(block, &lookup, &mut self.scratch, &mut self.unknown);
             queue.write_buffer(buffer, 0, &self.scratch);
+            binding.base.clone_from(&self.scratch);
             if let Some(audit) = &mut self.audit {
                 audit.block(
                     &format!("draw {:?} with {}", draw.kind, program.name),
@@ -296,6 +317,7 @@ pub(crate) fn record_frame(
     let geometry = io.geometry.as_ref().filter(|_| !pack.draws.is_empty());
     if let Some(geometry) = geometry {
         bind_geometry(device, state, geometry);
+        super::actors::prepare(device, queue, encoder, state, &geometry.actors);
         record_shadow(device, encoder, state, geometry);
         let shadow_size = pack
             .shadow

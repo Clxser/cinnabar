@@ -38,6 +38,35 @@
     "biomes": {
       "path": "mappings/biomes.json",
       "sha256": "b6011a937a6470816d42faf4cbcd819e12ad1eb190e78c898ab8c5dfb07af6e6"
+    },
+    "items": {
+      "path": "mappings/items.json",
+      "sha256": "89ec17a95b005e5dac170d7834a18da79952c914e8f29201f6fe9a1cdb992179"
+    }
+  },
+  "geyser": {
+    "repository": "https://github.com/GeyserMC/Geyser",
+    "commit": "8f6a9d20b05c302282f9496314b7c18cf6d4cc53",
+    "spdx": "MIT",
+    "files": {
+      "license": {
+        "path": "LICENSE",
+        "url": "https://raw.githubusercontent.com/GeyserMC/Geyser/8f6a9d20b05c302282f9496314b7c18cf6d4cc53/LICENSE",
+        "sha256": "7380cf017734f26977e907a07fd806e9dcba38023d522b7c6e56bd3a2482b08a",
+        "cache": ".local/assets/geyser-mappings/geyser-8f6a9d20b05c302282f9496314b7c18cf6d4cc53/LICENSE"
+      },
+      "vanilla_entities": {
+        "path": "core/src/main/java/org/geysermc/geyser/entity/VanillaEntities.java",
+        "url": "https://raw.githubusercontent.com/GeyserMC/Geyser/8f6a9d20b05c302282f9496314b7c18cf6d4cc53/core/src/main/java/org/geysermc/geyser/entity/VanillaEntities.java",
+        "sha256": "137361ddbd62f449263fc59f9a0a07d0988b07c991b6200466007af874cc9c8c",
+        "cache": ".local/assets/geyser-mappings/geyser-8f6a9d20b05c302282f9496314b7c18cf6d4cc53/VanillaEntities.java"
+      },
+      "bedrock_entity_definitions": {
+        "path": "core/src/main/java/org/geysermc/geyser/entity/BedrockEntityDefinitions.java",
+        "url": "https://raw.githubusercontent.com/GeyserMC/Geyser/8f6a9d20b05c302282f9496314b7c18cf6d4cc53/core/src/main/java/org/geysermc/geyser/entity/BedrockEntityDefinitions.java",
+        "sha256": "e1d9943fc14b4e4ac07fabb6bb3fa4c3653563b528980a5c95f9816fcefe71a8",
+        "cache": ".local/assets/geyser-mappings/geyser-8f6a9d20b05c302282f9496314b7c18cf6d4cc53/BedrockEntityDefinitions.java"
+      }
     }
   }
 }

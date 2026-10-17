@@ -1,5 +1,5 @@
-//! The dense Bedrock `mc_Entity` table composed from a pack's block.properties and the
-//! pinned Bedrock → Java block-state mapping.
+//! The dense Bedrock `mc_Entity` table composed from a pack's block.properties, and the pack
+//! ids of Bedrock entities and items, through the pinned Bedrock → Java mapping.
 
 use assets::facts::JavaBlockMapping;
 use shaderpack::{IdMaps, UNMAPPED_BLOCK_ID};
@@ -85,4 +85,40 @@ fn an_empty_map_leaves_every_state_unmapped() {
             .iter()
             .all(|&id| id == UNMAPPED_BLOCK_ID)
     );
+}
+
+#[test]
+fn bedrock_entities_take_the_pack_ids_of_their_java_types() {
+    let Ok(mapping) = JavaBlockMapping::pinned() else {
+        panic!("the checked-in Java mapping validates");
+    };
+    let entity = "entity.10=end_crystal\n\
+                  entity.11=minecraft:evoker\n\
+                  entity.12=cow\n\
+                  entity.13=wither_skull_dangerous\n";
+    let maps = IdMaps::parse(None, None, Some(entity), &BTreeMap::new());
+    let id = |bedrock| maps.entities.bedrock_entity_id(mapping, bedrock);
+    assert_eq!(id("minecraft:ender_crystal"), Some(10));
+    assert_eq!(id("minecraft:evocation_illager"), Some(11));
+    assert_eq!(id("minecraft:cow"), Some(12));
+    // Geyser spawns no Bedrock entity of this id, so it is looked up by its own name.
+    assert_eq!(id("minecraft:wither_skull_dangerous"), Some(13));
+    assert_eq!(id("minecraft:pig"), None);
+}
+
+#[test]
+fn bedrock_items_take_the_pack_ids_of_their_java_items() {
+    let Ok(mapping) = JavaBlockMapping::pinned() else {
+        panic!("the checked-in Java mapping validates");
+    };
+    let item = "item.20=cobweb\n\
+                item.21=diamond_sword\n\
+                item.22=custom:widget\n";
+    let maps = IdMaps::parse(None, Some(item), None, &BTreeMap::new());
+    let id = |bedrock| maps.items.bedrock_item_id(mapping, bedrock);
+    assert_eq!(id("minecraft:web"), Some(20));
+    assert_eq!(id("minecraft:diamond_sword"), Some(21));
+    // No Java item maps to this Bedrock id, so it is looked up by its own name.
+    assert_eq!(id("custom:widget"), Some(22));
+    assert_eq!(id("minecraft:stick"), None);
 }

@@ -491,6 +491,9 @@ impl FrameUniforms {
             "hasCeiling" => HostValue::bool(g.dimension == 1),
             "ambientLight" => Float(if g.dimension == 1 { 0.1 } else { 0.0 }),
             "cloudHeight" => Float(CLOUD_HEIGHT),
+            // Outside actor draws, which patch their own: no entity, block entity or item.
+            "entityId" | "blockEntityId" | "currentRenderedItemId" => Int(-1),
+            "entityColor" => HostValue::Vec(Vec4::ZERO, 4),
             _ => return None,
         })
     }
@@ -571,6 +574,28 @@ pub(crate) fn pack_block(
             let offset = member.offset as usize + (element * stride) as usize;
             write_value(out, offset, member.ty, &value);
         }
+    }
+}
+
+/// Overwrites, in `out` packed for `block`, the members `values` name: a member's name, or
+/// `member[element]` for one element of an array member. Unknown names are ignored.
+pub(crate) fn patch_block(block: &UniformBlock, values: &[(&str, HostValue)], out: &mut [u8]) {
+    for (name, value) in values {
+        let (base, element) = match name.split_once('[') {
+            Some((base, rest)) => (base, rest.trim_end_matches(']').parse::<u32>().ok()),
+            None => (*name, None),
+        };
+        let Some(member) = block.members.iter().find(|m| m.name == base) else {
+            continue;
+        };
+        let offset = match (member.array, element) {
+            (Some((count, stride)), Some(element)) if element < count => {
+                member.offset + element * stride
+            }
+            (_, None) => member.offset,
+            _ => continue,
+        };
+        write_value(out, offset as usize, member.ty, value);
     }
 }
 

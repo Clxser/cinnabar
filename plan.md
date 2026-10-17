@@ -1156,20 +1156,27 @@ screen-effect parity remain incomplete.
 
 - `crates/assets/data/java-mapping-v2193.bin` maps every block-registry state to one Java block
   state, lists Java block tags, the Java biome registry (temperature, downfall, precipitation,
-  frozen modifier, in network registry order) and Java biome tags, and maps Bedrock biome ids to
-  Java biomes. `registryc --kind java-mapping` generates it from the GeyserMC mappings pinned in
-  `assets/geyser-mappings-source.json` (Java 26.3, Bedrock 1.26.50).
+  frozen modifier, in network registry order) and Java biome tags, maps Bedrock biome ids to
+  Java biomes, and Bedrock entity and item identifiers to Java entity types and items.
+  `registryc --kind java-mapping` generates it from the GeyserMC mappings pinned in
+  `assets/geyser-mappings-source.json` (Java 26.3, Bedrock 1.26.50) and, for entities, from the
+  builder chains of Geyser's `VanillaEntities.java` at the commit pinned there.
 - Geyser maps Java states onto Bedrock; the inverse prefers the same-named Java block, then a
   dry (`waterlogged=false`) state, then Java text order. 5,434 Bedrock states Geyser never
   produces (leaves `update_bit`, extra hanging-sign and pressure-plate states, …) take the Java
   state of the same block's state sharing the most properties; they are flagged approximate.
   728 states have no Java counterpart (frames, border/allow/deny, deprecated and reserved blocks).
   Bedrock biomes absent from Java (27 of 89) are unmapped.
+- 155 Java entity types map to 128 Bedrock entities and 1,658 Java items to 1,606 Bedrock items;
+  a Bedrock id several Java ids share takes the same-named one, else the first Geyser registers
+  (entities) or the first by Java id (items), so `minecraft:banner` is `minecraft:black_banner`:
+  Bedrock item data values (banner colours, map kinds) are not distinguished.
 - `shaderpack` reads `block.properties`, `item.properties` and `entity.properties` with Iris
   precedence (plain entries before `%tag` entries, first match wins) and builds the dense
-  `mc_Entity` table per block-registry state. Incomplete: no Iris legacy-id fallback for packs
-  without `block.properties`; item and entity ids are not yet mapped from Bedrock identities;
-  files decode as UTF-8 rather than ISO-8859-1.
+  `mc_Entity` table per block-registry state; `NamedIdMap::bedrock_entity_id` and
+  `bedrock_item_id` give Bedrock identifiers the pack ids of their Java ids, a Bedrock id the
+  mapping lacks keeping its own name. Incomplete: no Iris legacy-id fallback for packs without
+  `block.properties`; files decode as UTF-8 rather than ISO-8859-1.
 
 ## Shader-pack render mode (experimental, incomplete)
 

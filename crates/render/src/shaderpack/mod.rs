@@ -5,14 +5,17 @@
 //! Flow: the app writes `ShaderPackRequest`; a worker thread translates the pack and builds
 //! raw wgpu pipelines from the naga modules (see `pipelines`, `draws`), publishing
 //! `ShaderPackStatus` and the loaded pack. Cameras marked `ShaderPackRendering` then run the
-//! frame as Iris does (see `passes`): the `shadow*` programs over resident terrain into the
-//! shadow maps, `shadowcomp*` compute passes, `prepare*`, `gbuffers_skybasic` over the sky
-//! discs, opaque terrain with the `gbuffers_terrain*` programs, `deferred*`, translucent
-//! terrain with `gbuffers_water`, `composite*` and `final`, before tonemapping and the UI.
-//! Terrain comes from the geometry adapter (`geometry`) and the block atlas (`atlas`).
-//! The pack also draws the sun, moon, stars, particles, clouds, weather, lightning, block
-//! cracks and the selection outline through its own programs (`effects`). What it does not
-//! draw yet (entities, block entities, the hand) is taken from the Vanilla scene, which still
+//! frame as Iris does (see `passes`): the `shadow*` programs over resident terrain, actors
+//! and block entities into the shadow maps, `shadowcomp*` compute passes, `prepare*`,
+//! `gbuffers_skybasic` over the sky discs, opaque terrain with the `gbuffers_terrain*`
+//! programs, actors (`gbuffers_entities`, `spidereyes`, `armor_glint`), block entities
+//! (`gbuffers_block`) and the hand (`gbuffers_hand`), `deferred*`, translucent terrain,
+//! actors, block entities and hand, `composite*` and `final`, before tonemapping and the UI.
+//! Terrain comes from the geometry adapter (`geometry`) and the block atlas (`atlas`);
+//! actors, block entities and the hand from the actor adapter (`actors`). The pack also
+//! draws the sun, moon, stars, particles, clouds, weather, lightning, block cracks and the
+//! selection outline through its own programs (`effects`). What it does not draw (block-entity
+//! portals) is taken from the Vanilla scene, which still
 //! renders underneath, where it is nearer than the pack's geometry. Packs without terrain
 //! programs get the Vanilla scene copied into `colortex0` instead.
 //!
@@ -20,6 +23,8 @@
 //! (the translator flips clip-space Y and remaps clip depth), uniforms use OpenGL matrices,
 //! and each texture is read with the sampler class Iris gives its name.
 
+#[cfg(feature = "shaderpacks")]
+pub(crate) mod actors;
 #[cfg(feature = "shaderpacks")]
 mod alpha_test;
 #[cfg(feature = "shaderpacks")]

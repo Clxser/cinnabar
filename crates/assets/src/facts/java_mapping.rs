@@ -1,8 +1,9 @@
 //! Java Edition identities of the pinned Bedrock registries, for Java shader packs: every block
 //! state of the block registry to one Java block state, Java block tags, the Java biome registry
-//! (climate values in network registry order), Java biome tags, and Bedrock biome ids to Java
-//! biomes. `registryc --kind java-mapping` generates the carrier from the pinned GeyserMC
-//! mappings named by [`SOURCE_MANIFEST`].
+//! (climate values in network registry order), Java biome tags, Bedrock biome ids to Java
+//! biomes, and Bedrock entity and item identifiers to Java entity types and items.
+//! `registryc --kind java-mapping` generates the carrier from the pinned GeyserMC mappings and
+//! Geyser sources named by [`SOURCE_MANIFEST`].
 //!
 //! The carrier is optional: consumers treat a carrier that fails validation as "nothing
 //! mapped" and keep running.
@@ -17,7 +18,7 @@ pub const SOURCE_PATH: &str = "crates/assets/data/java-mapping-v2193.bin";
 /// The pinned GeyserMC source the generator reads.
 pub const SOURCE_MANIFEST: &str = "assets/geyser-mappings-source.json";
 pub const MAX_BYTES: usize = 2 * 1024 * 1024;
-const MAGIC: &[u8; 8] = b"JAVAMAP2";
+const MAGIC: &[u8; 8] = b"JAVAMAP3";
 const SOURCE_BYTES: &[u8] = include_bytes!("../../data/java-mapping-v2193.bin");
 const SOURCE_SHA256: &str = include_str!("../../data/java-mapping-v2193.sha256");
 const BIOME_REGISTRY_BYTES: &[u8] = include_bytes!("../../data/biome-registry-v2193.bin");
@@ -62,7 +63,22 @@ pub struct JavaMappingPayload {
     pub biome_tags: Box<[JavaBiomeTag]>,
     /// Bedrock biome id to Java biome index, sorted by Bedrock id.
     pub biomes: Box<[JavaBiome]>,
+    /// Every Java entity type Geyser registers with the Bedrock entity id it spawns, sorted by
+    /// Java id, Java ids unique.
+    pub entities: Box<[JavaIdentity]>,
+    /// One index into `entities` per distinct Bedrock entity id, ascending by that id: the
+    /// Java type the Bedrock entity stands for (the same-named one, else the first Geyser
+    /// registers).
+    pub bedrock_entities: Box<[u16]>,
+    /// Every Java item with its Bedrock item identifier, sorted by Java id, Java ids unique.
+    pub items: Box<[JavaIdentity]>,
+    /// One index into `items` per distinct Bedrock item identifier, ascending by that id: the
+    /// Java item it stands for (the same-named one, else the first by Java id).
+    pub bedrock_items: Box<[u16]>,
 }
+
+/// A Java id (`namespace:path`) and the Bedrock identifier Geyser maps it to.
+pub type JavaIdentity = (Box<str>, Box<str>);
 
 /// A Java block tag id (`namespace:path`) and its member block indices, ascending.
 pub type JavaBlockTag = (Box<str>, Box<[u16]>);
@@ -346,6 +362,12 @@ impl JavaBlockMapping {
                     .all(|&(_, index)| usize::from(index) < java_biomes.len()),
             "biome table",
         )?;
+        validate_identities(
+            &payload.entities,
+            &payload.bedrock_entities,
+            "entity identities",
+        )?;
+        validate_identities(&payload.items, &payload.bedrock_items, "item identities")?;
         Ok(Self {
             payload,
             properties,
@@ -420,6 +442,38 @@ impl JavaBlockMapping {
             .is_ok_and(|found| tags[found].1.binary_search(&index).is_ok())
     }
 
+    /// The Java entity type (`namespace:path`) a Bedrock entity identifier stands for, e.g.
+    /// `minecraft:end_crystal` for `minecraft:ender_crystal`; `None` when Geyser spawns no
+    /// Bedrock entity of that identifier.
+    pub fn java_entity(&self, bedrock_identifier: &str) -> Option<&str> {
+        let payload = &self.payload;
+        preferred(
+            &payload.entities,
+            &payload.bedrock_entities,
+            bedrock_identifier,
+        )
+    }
+
+    /// Every Java entity type Geyser spawns as `bedrock_identifier`, by Java id.
+    pub fn java_entities<'a>(
+        &'a self,
+        bedrock_identifier: &'a str,
+    ) -> impl Iterator<Item = &'a str> {
+        java_ids(&self.payload.entities, bedrock_identifier)
+    }
+
+    /// The Java item (`namespace:path`) a Bedrock item identifier stands for, e.g.
+    /// `minecraft:cobweb` for `minecraft:web`; `None` when no Java item maps to it.
+    pub fn java_item(&self, bedrock_identifier: &str) -> Option<&str> {
+        let payload = &self.payload;
+        preferred(&payload.items, &payload.bedrock_items, bedrock_identifier)
+    }
+
+    /// Every Java item Geyser maps to `bedrock_identifier`, by Java id.
+    pub fn java_items<'a>(&'a self, bedrock_identifier: &'a str) -> impl Iterator<Item = &'a str> {
+        java_ids(&self.payload.items, bedrock_identifier)
+    }
+
     /// The decoded payload.
     pub fn payload(&self) -> &JavaMappingPayload {
         &self.payload
@@ -455,6 +509,51 @@ fn parse_properties(set: &str) -> Option<PropertyList> {
         .windows(2)
         .all(|pair| pair[0].0 < pair[1].0)
         .then_some(pairs)
+}
+
+/// Checks an identity table: Java ids namespaced, sorted and unique, Bedrock ids namespaced,
+/// and `inverse` naming one pair per distinct Bedrock id in ascending Bedrock order.
+fn validate_identities(
+    pairs: &[JavaIdentity],
+    inverse: &[u16],
+    what: &str,
+) -> Result<(), JavaMappingError> {
+    ensure(
+        pairs.len() <= usize::from(u16::MAX)
+            && pairs.windows(2).all(|pair| pair[0].0 < pair[1].0)
+            && pairs
+                .iter()
+                .all(|(java, bedrock)| namespaced(java) && namespaced(bedrock)),
+        what,
+    )?;
+    let mut bedrock: Vec<&str> = pairs.iter().map(|(_, bedrock)| bedrock.as_ref()).collect();
+    bedrock.sort_unstable();
+    bedrock.dedup();
+    let named = inverse
+        .iter()
+        .map(|&index| {
+            pairs
+                .get(usize::from(index))
+                .map(|(_, bedrock)| bedrock.as_ref())
+        })
+        .collect::<Option<Vec<&str>>>();
+    ensure(named.is_some_and(|named| named == bedrock), what)
+}
+
+/// The Java id `inverse` chooses for `bedrock`.
+fn preferred<'a>(pairs: &'a [JavaIdentity], inverse: &[u16], bedrock: &str) -> Option<&'a str> {
+    let found = inverse
+        .binary_search_by(|&index| pairs[usize::from(index)].1.as_ref().cmp(bedrock))
+        .ok()?;
+    Some(&pairs[usize::from(inverse[found])].0)
+}
+
+/// Every Java id of `pairs` mapped to `bedrock`, in table order.
+fn java_ids<'a>(pairs: &'a [JavaIdentity], bedrock: &'a str) -> impl Iterator<Item = &'a str> {
+    pairs
+        .iter()
+        .filter(move |(_, mapped)| mapped.as_ref() == bedrock)
+        .map(|(java, _)| java.as_ref())
 }
 
 fn namespaced(name: &str) -> bool {
