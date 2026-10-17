@@ -10,7 +10,10 @@
 use assets::facts::java_mapping::JavaBlockMapping;
 use bevy::math::{Mat3, Mat4, Quat, Vec3, Vec4};
 use render_scene::shaderpack::ShaderPackFrameInputs;
-use shaderpack::{BiomeUniforms, UniformBlock, UniformValue, ValueType};
+use shaderpack::{
+    BiomeColors, BiomeUniforms, FogMedium, SkyDimension, SkyFogColors, SkyFogInputs, UniformBlock,
+    UniformValue, ValueType,
+};
 use std::collections::BTreeSet;
 
 /// Near plane of every pack projection, as in Minecraft.
@@ -19,10 +22,18 @@ pub(crate) const GL_NEAR: f32 = 0.05;
 pub(crate) const FAR_PLANE_SCALE: f32 = 4.0;
 /// `frameCounter` wraps here, as in Iris.
 const FRAME_COUNTER_PERIOD: u64 = 720_720;
-/// `frameTimeCounter` wraps after an hour, as in Iris.
-const FRAME_TIME_COUNTER_PERIOD: f64 = 3600.0;
-/// Seconds per game tick, for the smoothing half-lives written in ticks.
-const SECONDS_PER_TICK: f32 = 0.05;
+/// `frameTimeCounter` restarts from 0 after an hour, as in Iris.
+const FRAME_TIME_COUNTER_PERIOD: f32 = 3600.0;
+/// Seconds per unit of the pack's smoothing half-lives: Iris reads `wetnessHalflife` and
+/// the others in tenths of a second.
+const SECONDS_PER_HALFLIFE_UNIT: f32 = 0.1;
+/// Iris's default shadow near and far planes, either side of the shadow camera.
+const SHADOW_NEAR_PLANE: f32 = -100.05;
+const SHADOW_FAR_PLANE: f32 = 156.0;
+/// A shadow plane of -1 means "the render distance", as Iris reads it.
+const RENDER_DISTANCE_PLANE: f32 = -1.0;
+/// Blocks per chunk, for the render distance in chunks.
+const CHUNK_BLOCKS: f32 = 16.0;
 /// `GL_LINEAR`, the fog mode packs see for vanilla's linear fog.
 const GL_LINEAR: i32 = 0x2601;
 /// Height of Bedrock's cloud layer.
@@ -125,10 +136,16 @@ pub(crate) struct PackSettings {
     pub shadow_distance: f32,
     /// `const float shadowIntervalSize`: shadow camera snapping, blocks.
     pub shadow_interval: f32,
-    /// `wetnessHalflife`, `drynessHalflife` and `eyeBrightnessHalflife`, seconds.
+    /// `wetnessHalflife`, `drynessHalflife`, `eyeBrightnessHalflife` and
+    /// `centerDepthHalflife`, seconds.
     pub wetness_halflife: f32,
     pub dryness_halflife: f32,
     pub eye_brightness_halflife: f32,
+    pub center_depth_halflife: f32,
+    /// `shadowNearPlane` and `shadowFarPlane`: the shadow projection's depth range around
+    /// the shadow camera, blocks; -1 stands for the render distance.
+    pub shadow_near_plane: f32,
+    pub shadow_far_plane: f32,
 }
 
 impl Default for PackSettings {
@@ -137,40 +154,49 @@ impl Default for PackSettings {
             sun_path_rotation: 0.0,
             shadow_distance: 160.0,
             shadow_interval: 2.0,
-            wetness_halflife: 600.0 * SECONDS_PER_TICK,
-            dryness_halflife: 200.0 * SECONDS_PER_TICK,
-            eye_brightness_halflife: 10.0 * SECONDS_PER_TICK,
+            wetness_halflife: 600.0 * SECONDS_PER_HALFLIFE_UNIT,
+            dryness_halflife: 200.0 * SECONDS_PER_HALFLIFE_UNIT,
+            eye_brightness_halflife: 10.0 * SECONDS_PER_HALFLIFE_UNIT,
+            center_depth_halflife: SECONDS_PER_HALFLIFE_UNIT,
+            shadow_near_plane: SHADOW_NEAR_PLANE,
+            shadow_far_plane: SHADOW_FAR_PLANE,
         }
     }
 }
 
 impl PackSettings {
-    /// Reads the settings from active `const` directives and `shaders.properties` entries.
-    pub(crate) fn read<'a>(
-        consts: impl Iterator<Item = &'a shaderpack::ConstDirective>,
-        properties: &shaderpack::ShaderProperties,
-    ) -> Self {
+    /// Reads the settings from active `const` directives, as Iris does. Iris's
+    /// `drynessHalflife` directive sets the wetness half-life (after `wetnessHalflife`, so it
+    /// wins) and leaves the dryness one at its default; packs tuned on Iris see that, so it
+    /// is kept.
+    pub(crate) fn read<'a>(consts: impl Iterator<Item = &'a shaderpack::ConstDirective>) -> Self {
         let mut s = Self::default();
         let number = |v: &str| v.trim().trim_end_matches(['f', 'F']).parse::<f32>().ok();
+        let mut dryness = None;
         for c in consts {
-            let slot = match c.name.as_str() {
-                "sunPathRotation" => &mut s.sun_path_rotation,
-                "shadowDistance" => &mut s.shadow_distance,
-                "shadowIntervalSize" => &mut s.shadow_interval,
+            let (slot, scale) = match c.name.as_str() {
+                "sunPathRotation" => (&mut s.sun_path_rotation, 1.0),
+                "shadowDistance" => (&mut s.shadow_distance, 1.0),
+                "shadowIntervalSize" => (&mut s.shadow_interval, 1.0),
+                "shadowNearPlane" => (&mut s.shadow_near_plane, 1.0),
+                "shadowFarPlane" => (&mut s.shadow_far_plane, 1.0),
+                "wetnessHalflife" => (&mut s.wetness_halflife, SECONDS_PER_HALFLIFE_UNIT),
+                "drynessHalflife" => {
+                    dryness = number(&c.value).or(dryness);
+                    continue;
+                }
+                "eyeBrightnessHalflife" => {
+                    (&mut s.eye_brightness_halflife, SECONDS_PER_HALFLIFE_UNIT)
+                }
+                "centerDepthHalflife" => (&mut s.center_depth_halflife, SECONDS_PER_HALFLIFE_UNIT),
                 _ => continue,
             };
             if let Some(v) = number(&c.value) {
-                *slot = v;
+                *slot = v * scale;
             }
         }
-        for (key, slot) in [
-            ("wetnessHalflife", &mut s.wetness_halflife),
-            ("drynessHalflife", &mut s.dryness_halflife),
-            ("eyeBrightnessHalflife", &mut s.eye_brightness_halflife),
-        ] {
-            if let Some(v) = properties.get(key).and_then(number) {
-                *slot = v * SECONDS_PER_TICK;
-            }
+        if let Some(dryness) = dryness {
+            s.wetness_halflife = dryness * SECONDS_PER_HALFLIFE_UNIT;
         }
         s
     }
@@ -186,12 +212,16 @@ pub(crate) struct ViewCamera {
     pub screen: [u32; 2],
 }
 
-/// Values that persist from frame to frame for one view.
+/// Values that persist from frame to frame for one view, from the pack's load on (Iris
+/// restarts them when it creates a pipeline).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct UniformHistory {
     pub previous: Option<(Mat4, Mat4, Vec3)>,
     pub wetness: f32,
     pub eye_brightness: [f32; 2],
+    pub center_depth: f32,
+    /// Seconds of frame time since the pack loaded, wrapped to 0 after an hour.
+    pub frame_time_counter: f32,
     pub frame: u64,
     pub started: bool,
 }
@@ -199,16 +229,62 @@ pub(crate) struct UniformHistory {
 /// Frame timing from the render-world clock.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct FrameClock {
-    pub elapsed_seconds: f64,
+    /// Seconds since the previous frame.
     pub delta_seconds: f32,
 }
 
-/// Exponential approach with a half-life, as OptiFine smooths wetness and eye brightness.
+/// Iris's exponential smoothing: each frame moves `current` towards `target` by the share
+/// that halves the gap every `halflife` seconds, interpolated as Iris writes it so the value
+/// settles exactly on a steady target.
 fn smooth(current: f32, target: f32, delta: f32, halflife: f32) -> f32 {
     if halflife <= 0.0 {
         return target;
     }
-    current + (target - current) * (1.0 - 0.5f32.powf(delta / halflife))
+    let share = 1.0 - (-std::f32::consts::LN_2 / halflife * delta).exp();
+    (1.0 - share) * current + share * target
+}
+
+/// Java's `skyColor` and `fogColor` for a camera with `rotation` at `position`.
+pub(crate) fn sky_fog(
+    game: &ShaderPackFrameInputs,
+    rotation: Quat,
+    position: Vec3,
+) -> SkyFogColors {
+    let mapping = JavaBlockMapping::pinned().ok();
+    let biome =
+        mapping
+            .and_then(|mapping| {
+                BiomeColors::blend(game.sky_biomes.iter().filter_map(|&(biome, weight)| {
+                    Some((BiomeColors::at(mapping, biome)?, weight))
+                }))
+                .or_else(|| BiomeColors::fallback(mapping))
+            })
+            .unwrap_or(BiomeColors {
+                sky: [0.0; 3],
+                fog: [0.0; 3],
+                water_fog: [0.0; 3],
+            });
+    shaderpack::sky_fog(&SkyFogInputs {
+        biome,
+        dimension: match game.dimension {
+            1 => SkyDimension::Nether,
+            2 => SkyDimension::End,
+            _ => SkyDimension::Overworld,
+        },
+        celestial_angle: game.celestial_angle,
+        rain: game.rain_strength,
+        thunder: game.thunder_strength,
+        render_distance_chunks: game.render_distance / CHUNK_BLOCKS,
+        look: (rotation * Vec3::NEG_Z).to_array(),
+        camera_y: position.y,
+        medium: match game.eye_medium {
+            1 => FogMedium::Water,
+            2 => FogMedium::Lava,
+            3 => FogMedium::PowderSnow,
+            _ => FogMedium::Air,
+        },
+        night_vision: game.night_vision,
+    })
 }
 
 /// The standard uniforms of one view for one frame.
@@ -228,10 +304,12 @@ pub(crate) struct FrameUniforms {
     shadow_angle: f32,
     wetness: f32,
     eye_brightness_smooth: [i32; 2],
+    center_depth_smooth: f32,
     frame_counter: i32,
     frame_time: f32,
     frame_time_counter: f32,
     biome: BiomeUniforms,
+    sky_fog: SkyFogColors,
 }
 
 impl FrameUniforms {
@@ -264,26 +342,19 @@ impl FrameUniforms {
         let sun = celestial.transform_vector3(Vec3::new(0.0, 100.0, 0.0));
         let moon = -sun;
         let up = model_view.transform_vector3(Vec3::new(0.0, 100.0, 0.0));
+        // Iris's shadow camera sits at the camera, looking down, turned with the shadow angle
+        // so that the direction to the shadow light (`shadowLightPosition`) is its +Z, and
+        // shifted by the camera's place within a shadow interval so the map moves in whole
+        // intervals. `shadowAngle` is 0.25 at noon, a quarter turn ahead of the sky angle.
         let interval = settings.shadow_interval;
         let snap = |v: f32| {
-            if interval <= 0.0 {
-                return 0.0;
-            }
-            let half = interval * 0.5;
-            let offset = v % interval;
-            if offset > half {
-                offset - interval
-            } else if offset < -half {
-                offset + interval
+            if interval == 0.0 {
+                0.0
             } else {
-                offset
+                v % interval - interval * 0.5
             }
         };
-        // Iris's shadow camera: 100 blocks back, looking down, turned with the shadow angle
-        // so that the direction to the shadow light (`shadowLightPosition`) is its +Z.
-        // `shadowAngle` is 0.25 at noon, a quarter turn ahead of the sky angle.
-        let shadow_model_view = Mat4::from_translation(Vec3::new(0.0, 0.0, -100.0))
-            * Mat4::from_rotation_x(90.0f32.to_radians())
+        let shadow_model_view = Mat4::from_rotation_x(90.0f32.to_radians())
             * Mat4::from_rotation_z(((shadow_angle - 0.25) * -360.0).to_radians())
             * Mat4::from_rotation_x(settings.sun_path_rotation.to_radians())
             * Mat4::from_translation(Vec3::new(
@@ -292,10 +363,29 @@ impl FrameUniforms {
                 snap(camera.position.z),
             ));
         let d = settings.shadow_distance;
-        let shadow_projection = gl_ortho(-d, d, -d, d, GL_NEAR, 256.0);
+        let plane = |plane: f32, sign: f32| {
+            if plane == RENDER_DISTANCE_PLANE {
+                sign * game.render_distance
+            } else {
+                plane
+            }
+        };
+        let shadow_projection = gl_ortho(
+            -d,
+            d,
+            -d,
+            d,
+            plane(settings.shadow_near_plane, -1.0),
+            plane(settings.shadow_far_plane, 1.0),
+        );
         let delta = clock.delta_seconds.max(0.0);
         let rain = game.rain_strength;
         let brightness = game.eye_brightness.map(|v| v as f32);
+        // `centerDepthSmooth` smooths the depth buffer value at the screen's centre.
+        let center_depth = game.center_distance.map_or(1.0, |distance| {
+            let clip = projection * Vec4::new(0.0, 0.0, -distance.max(GL_NEAR), 1.0);
+            (clip.z / clip.w * 0.5 + 0.5).clamp(0.0, 1.0)
+        });
         if history.started {
             let halflife = if rain > history.wetness {
                 settings.wetness_halflife
@@ -306,9 +396,20 @@ impl FrameUniforms {
             for (smoothed, target) in history.eye_brightness.iter_mut().zip(brightness) {
                 *smoothed = smooth(*smoothed, target, delta, settings.eye_brightness_halflife);
             }
+            history.center_depth = smooth(
+                history.center_depth,
+                center_depth,
+                delta,
+                settings.center_depth_halflife,
+            );
+            history.frame_time_counter += delta;
+            if history.frame_time_counter >= FRAME_TIME_COUNTER_PERIOD {
+                history.frame_time_counter = 0.0;
+            }
         } else {
             history.wetness = rain;
             history.eye_brightness = brightness;
+            history.center_depth = center_depth;
             history.started = true;
         }
         let previous = history
@@ -331,10 +432,14 @@ impl FrameUniforms {
             sun_angle,
             shadow_angle,
             wetness: history.wetness,
-            eye_brightness_smooth: history.eye_brightness.map(|v| v.round() as i32),
+            // Iris truncates the smoothed brightness to whole steps.
+            eye_brightness_smooth: history.eye_brightness.map(|v| v as i32),
+            center_depth_smooth: history.center_depth,
             frame_counter,
             frame_time: delta,
-            frame_time_counter: (clock.elapsed_seconds % FRAME_TIME_COUNTER_PERIOD) as f32,
+            frame_time_counter: game
+                .frame_time_counter
+                .unwrap_or(history.frame_time_counter),
             biome: game
                 .biome
                 .and_then(|biome| {
@@ -342,6 +447,7 @@ impl FrameUniforms {
                     BiomeUniforms::at(mapping, biome, game.biome_block_y)
                 })
                 .unwrap_or(BiomeUniforms::NONE),
+            sky_fog: sky_fog(game, camera.rotation, camera.position),
         }
     }
 
@@ -406,7 +512,7 @@ impl FrameUniforms {
             "chunkOffset" => HostValue::vec3(Vec3::ZERO),
             "renderStage" => Int(0),
             "atlasSize" => HostValue::IVec([0; 4], 2),
-            "iris_Fog.color" => HostValue::Vec(Vec3::from(g.fog_color).extend(1.0), 4),
+            "iris_Fog.color" => HostValue::Vec(Vec3::from(self.sky_fog.fog).extend(1.0), 4),
             "iris_Fog.density" | "fogDensity" => Float(fog_density),
             "iris_Fog.start" | "fogStart" => Float(g.fog_range[0]),
             "iris_Fog.end" | "fogEnd" => Float(g.fog_range[1]),
@@ -455,8 +561,9 @@ impl FrameUniforms {
                 2,
             ),
             "isEyeInWater" => Int(g.eye_medium),
-            "skyColor" => HostValue::vec3(Vec3::from(g.sky_color)),
-            "fogColor" => HostValue::vec3(Vec3::from(g.fog_color)),
+            "skyColor" => HostValue::vec3(Vec3::from(self.sky_fog.sky)),
+            "fogColor" => HostValue::vec3(Vec3::from(self.sky_fog.fog)),
+            "centerDepthSmooth" => Float(self.center_depth_smooth),
             "nightVision" => Float(g.night_vision),
             "blindness" => Float(g.blindness),
             "darknessFactor" => Float(g.darkness),

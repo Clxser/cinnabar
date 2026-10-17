@@ -209,16 +209,9 @@ fn prepare_views(
         return;
     };
     states.retain(|entity, _| cameras.contains(*entity));
-    let clock = time.map_or(
-        FrameClock {
-            elapsed_seconds: 0.0,
-            delta_seconds: 0.0,
-        },
-        |t| FrameClock {
-            elapsed_seconds: t.elapsed_secs_f64(),
-            delta_seconds: t.delta_secs(),
-        },
-    );
+    let clock = FrameClock {
+        delta_seconds: time.map_or(0.0, |t| t.delta_secs()),
+    };
     for (entity, view) in &cameras {
         let screen = [view.viewport.z.max(1), view.viewport.w.max(1)];
         let state = states
@@ -323,14 +316,16 @@ fn shaderpack_post(
             atlas.generation,
         )
     });
+    let (_, rotation, position) = view.world_from_view.to_scale_rotation_translation();
+    let colours = super::uniforms::sky_fog(&inputs, rotation, position);
     let geometry = terrain.as_ref().map(|terrain| FrameGeometry {
         device: render_device,
         terrain,
         atlas,
         sky: SkyInputs {
-            sky_color: inputs.sky_color,
+            sky_color: colours.sky,
             celestial_angle: inputs.celestial_angle,
-            camera_y: view.world_from_view.translation().y,
+            camera_y: position.y,
             sunrise: inputs.dimension == 0,
         },
         overlay_radius: terrain.geometry.complete_radius().unwrap_or(f32::MAX),
@@ -345,7 +340,7 @@ fn shaderpack_post(
             view.clip_from_view.y_axis.y.recip(),
         ],
         render_distance: inputs.render_distance,
-        fog_color: inputs.fog_color,
+        fog_color: colours.fog,
         destination: post.destination,
         destination_format,
         geometry,

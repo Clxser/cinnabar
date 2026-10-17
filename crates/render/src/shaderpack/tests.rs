@@ -194,7 +194,6 @@ fn render(gpu: &GpuContext, files: &[(&str, &str)]) -> Vec<u8> {
         &game,
         &pack.settings,
         FrameClock {
-            elapsed_seconds: 1.0,
             delta_seconds: 0.016,
         },
         &mut state.history,
@@ -224,7 +223,7 @@ fn render(gpu: &GpuContext, files: &[(&str, &str)]) -> Vec<u8> {
         scene_near: 0.1,
         inverse_focal: [1.0, 1.0],
         render_distance: game.render_distance,
-        fog_color: game.fog_color,
+        fog_color: super::uniforms::sky_fog(&game, Quat::IDENTITY, Vec3::new(0.0, 64.0, 0.0)).fog,
         destination: &output.create_view(&Default::default()),
         destination_format: format,
         geometry: None,

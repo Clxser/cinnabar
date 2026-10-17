@@ -508,7 +508,7 @@ pub(crate) fn build(
         TextureFormat::R16Float
     };
     let all_consts = all.iter().flat_map(|p| &p.consts);
-    let settings = PackSettings::read(all_consts, &translation.properties);
+    let settings = PackSettings::read(all_consts);
 
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
     let key = content_key(pack, &config);

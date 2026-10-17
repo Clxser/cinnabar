@@ -34,6 +34,7 @@ Options:
   --render-mode <MODE>         vanilla, enhanced or shaderpack; CINNABAR_RENDER_MODE is the fallback
   --shader-pack <PATH>         Draw this Java shader pack (zip or folder) for the session only
   --fixed-time <TICKS>         Developer builds: draw at this time of day (0 = sunrise), ignoring the server clock
+  --frame-time-counter <SECONDS>  Developer builds: freeze shader packs' frameTimeCounter (0 to <3600)
   --gui-scale <1-4|auto>       Fix the GUI scale (default: auto, the Bedrock desktop rule)
   --dev-debug-overlay          Compatibility alias; F3 debug controls are always available
   --language <ll_CC>           UI language (default: from LC_ALL/LC_MESSAGES/LANG, else en_US)
@@ -126,6 +127,9 @@ pub struct ClientArgs {
     pub shader_pack: Option<PathBuf>,
     /// Rendered time of day pinned for the whole session (developer-control builds only).
     pub fixed_time: Option<u32>,
+    /// Shader packs' `frameTimeCounter` frozen at this many milliseconds (developer-control
+    /// builds only), for captures that match a reference's animation phase.
+    pub frame_time_counter_ms: Option<u32>,
     /// Enables F3 debug controls; the overlay starts hidden until F3 is pressed.
     /// `--dev-debug-overlay` remains accepted for older launch commands.
     pub dev_debug_overlay: bool,
@@ -161,6 +165,7 @@ impl Default for ClientArgs {
             render_mode: None,
             shader_pack: None,
             fixed_time: None,
+            frame_time_counter_ms: None,
             dev_debug_overlay: true,
             language: None,
             full_view_teleport_gate: false,
@@ -222,6 +227,9 @@ pub enum ArgsError {
     #[error("--fixed-time must be a nonnegative integer tick count, got {0:?}")]
     InvalidFixedTime(String),
 
+    #[error("--frame-time-counter must be seconds from 0 up to 3600, got {0:?}")]
+    InvalidFrameTimeCounter(String),
+
     #[error("--shader-pack selects the shaderpack render mode, but --render-mode is {0:?}")]
     ConflictingShaderPackRenderMode(&'static str),
 
@@ -269,6 +277,11 @@ impl ClientArgs {
     pub(crate) fn validate_developer_support(&self, available: bool) -> Result<(), ArgsError> {
         if !available && self.fixed_time.is_some() {
             return Err(ArgsError::DeveloperControlFeatureRequired("--fixed-time"));
+        }
+        if !available && self.frame_time_counter_ms.is_some() {
+            return Err(ArgsError::DeveloperControlFeatureRequired(
+                "--frame-time-counter",
+            ));
         }
         Ok(())
     }
@@ -461,6 +474,19 @@ impl ClientArgs {
                             .parse::<u32>()
                             .map_err(|_| ArgsError::InvalidFixedTime(value.clone()))?,
                     );
+                }
+                Some("--frame-time-counter") => {
+                    let value = next_value(&mut arguments, "--frame-time-counter")?
+                        .into_string()
+                        .map_err(|_| ArgsError::InvalidUtf8 {
+                            flag: "--frame-time-counter",
+                        })?;
+                    let seconds = value
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|seconds| (0.0..3600.0).contains(seconds))
+                        .ok_or_else(|| ArgsError::InvalidFrameTimeCounter(value.clone()))?;
+                    parsed.frame_time_counter_ms = Some((seconds * 1000.0).round() as u32);
                 }
                 _ if resource_pack::is_pack_import_path(std::path::Path::new(&argument)) => {
                     parsed.import_packs.push(PathBuf::from(argument));
@@ -783,6 +809,42 @@ mod tests {
             Err(ArgsError::InvalidFixedTime("-1".to_owned()))
         );
         assert!(HELP.contains("--fixed-time <TICKS>"));
+    }
+
+    #[test]
+    fn frame_time_counter_is_a_validated_developer_only_pin() {
+        let args = ClientArgs {
+            frame_time_counter_ms: Some(12_500),
+            ..ClientArgs::default()
+        };
+        assert_eq!(args.validate_developer_support(true), Ok(()));
+        assert_eq!(
+            args.validate_developer_support(false),
+            Err(ArgsError::DeveloperControlFeatureRequired(
+                "--frame-time-counter"
+            ))
+        );
+        let parsed = ClientArgs::parse_from(["client", "--frame-time-counter", "12.5"]);
+        if cfg!(feature = "developer-control") {
+            let Ok(ParseOutcome::Run(args)) = parsed else {
+                panic!("expected run args, got {parsed:?}");
+            };
+            assert_eq!(args.frame_time_counter_ms, Some(12_500));
+        } else {
+            assert_eq!(
+                parsed,
+                Err(ArgsError::DeveloperControlFeatureRequired(
+                    "--frame-time-counter"
+                ))
+            );
+        }
+        for bad in ["-1", "3600", "NaN", "soon"] {
+            assert_eq!(
+                ClientArgs::parse_from(["client", "--frame-time-counter", bad]),
+                Err(ArgsError::InvalidFrameTimeCounter(bad.to_owned()))
+            );
+        }
+        assert!(HELP.contains("--frame-time-counter <SECONDS>"));
     }
 
     #[test]

@@ -29,6 +29,13 @@ The sky, lighting and shader-pack uniforms then draw at that time for the whole 
 the Enhanced time-preset key and any mod's time changer; the server clock, and so gameplay, keep
 running. Release builds reject the flag.
 
+Shader-pack animations driven by `frameTimeCounter` (BSL's clouds, water waves) depend on how long
+the pack has been loaded. `--frame-time-counter <SECONDS>` (0 up to 3600, `developer-control`
+builds only) freezes that uniform for the session so a capture shows the same phase as a reference
+taken at a known counter value. Iris has no such option; its counter starts at 0 when it creates
+the pipeline, so read the reference's value back from the pack (for example a stamp the pack
+writes into a corner pixel).
+
 Server compatibility tests can establish connection, transfer, or server-authority
 behavior. They do not by themselves establish version-matched Bedrock parity.
 Choose a reproducible scenario and distinguish server behavior from client output.

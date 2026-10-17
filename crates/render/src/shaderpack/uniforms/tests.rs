@@ -33,7 +33,6 @@ fn uniforms(game: &ShaderPackFrameInputs, history: &mut UniformHistory) -> Frame
         game,
         &PackSettings::default(),
         FrameClock {
-            elapsed_seconds: 3605.5,
             delta_seconds: 0.25,
         },
         history,
@@ -83,6 +82,7 @@ fn members_pack_by_reflected_name_offset_and_type() {
     let game = ShaderPackFrameInputs {
         world_time: 13_000,
         eye_brightness: [32, 240],
+        frame_time_counter: Some(5.5),
         ..ShaderPackFrameInputs::default()
     };
     let frame = uniforms(&game, &mut UniformHistory::default());
@@ -101,10 +101,7 @@ fn members_pack_by_reflected_name_offset_and_type() {
     }
     assert_eq!(read_f32(&bytes, 64), 10.5);
     assert_eq!(read_f32(&bytes, 72), -3.75);
-    assert!(
-        (read_f32(&bytes, 76) - 5.5).abs() < 1e-3,
-        "wraps after an hour"
-    );
+    assert_eq!(read_f32(&bytes, 76), 5.5, "a pinned frameTimeCounter");
     assert_eq!((read_i32(&bytes, 80), read_i32(&bytes, 84)), (32, 240));
     assert_eq!(read_i32(&bytes, 88), 13_000);
     assert_eq!(
@@ -162,10 +159,7 @@ fn celestial_positions_follow_the_time_of_day_in_view_space() {
             level,
             &game,
             &PackSettings::default(),
-            FrameClock {
-                elapsed_seconds: 0.0,
-                delta_seconds: 0.0,
-            },
+            FrameClock { delta_seconds: 0.0 },
             &mut UniformHistory::default(),
         )
     };
@@ -229,6 +223,98 @@ fn history_supplies_previous_matrices_and_smoothed_values() {
         second.value("cameraPositionInt"),
         Some(HostValue::IVec([10, 70, -4, 0], 3))
     );
+    assert_eq!(first.value("frameTimeCounter"), Some(HostValue::Float(0.0)));
+    assert_eq!(
+        second.value("frameTimeCounter"),
+        Some(HostValue::Float(0.25)),
+        "frameTimeCounter adds up frame times from the pack's load"
+    );
+}
+
+#[test]
+fn smoothed_uniforms_follow_iris_half_lives_in_tenths_of_a_second() {
+    let mut history = UniformHistory::default();
+    let settings = PackSettings::default();
+    let step = |game: &ShaderPackFrameInputs, history: &mut UniformHistory, delta: f32| {
+        FrameUniforms::new(
+            camera(),
+            game,
+            &settings,
+            FrameClock {
+                delta_seconds: delta,
+            },
+            history,
+        )
+    };
+    let indoors = ShaderPackFrameInputs {
+        eye_brightness: [0, 0],
+        center_distance: Some(2.0),
+        ..ShaderPackFrameInputs::default()
+    };
+    let first = step(&indoors, &mut history, 0.0);
+    assert_eq!(
+        first.value("eyeBrightnessSmooth"),
+        Some(HostValue::IVec([0, 0, 0, 0], 2))
+    );
+    let Some(HostValue::Float(near)) = first.value("centerDepthSmooth") else {
+        panic!("centerDepthSmooth is a float");
+    };
+    let outdoors = ShaderPackFrameInputs {
+        eye_brightness: [0, 240],
+        center_distance: None,
+        ..indoors
+    };
+    // eyeBrightnessHalflife 10 is one second: after one second half the way, truncated.
+    let later = step(&outdoors, &mut history, 1.0);
+    let Some(HostValue::IVec([0, sky, 0, 0], 2)) = later.value("eyeBrightnessSmooth") else {
+        panic!("eyeBrightnessSmooth is an ivec2");
+    };
+    assert!((119..=120).contains(&sky), "half of 240, truncated: {sky}");
+    // centerDepthHalflife 1 is a tenth of a second: a second later it has all but arrived.
+    let Some(HostValue::Float(far)) = later.value("centerDepthSmooth") else {
+        panic!("centerDepthSmooth is a float");
+    };
+    assert!(near > 0.9 && near < 1.0, "a block 2 away: {near}");
+    assert!(far > 0.999 && far <= 1.0, "the sky reads depth 1: {far}");
+    assert_eq!(later.value("frameTimeCounter"), Some(HostValue::Float(1.0)));
+    history.frame_time_counter = 3599.5;
+    let wrapped = step(&outdoors, &mut history, 1.0);
+    assert_eq!(
+        wrapped.value("frameTimeCounter"),
+        Some(HostValue::Float(0.0)),
+        "restarts from zero after an hour, as Iris does"
+    );
+}
+
+#[test]
+fn half_lives_and_shadow_planes_come_from_const_directives() {
+    let consts = [
+        ("wetnessHalflife", "70.0"),
+        ("drynessHalflife", "300.0"),
+        ("eyeBrightnessHalflife", "5.0f"),
+        ("shadowNearPlane", "-50.0"),
+        ("shadowFarPlane", "-1.0"),
+    ]
+    .map(|(name, value)| shaderpack::ConstDirective {
+        ty: "float".into(),
+        name: name.into(),
+        value: value.into(),
+    });
+    let settings = PackSettings::read(consts.iter());
+    assert!(
+        (settings.wetness_halflife - 30.0).abs() < 1e-4,
+        "Iris lets drynessHalflife set the wetness half-life"
+    );
+    assert!((settings.dryness_halflife - 20.0).abs() < 1e-4);
+    assert!((settings.eye_brightness_halflife - 0.5).abs() < 1e-5);
+    assert_eq!(settings.shadow_near_plane, -50.0);
+    let frame = at_time(0.1, settings, Vec3::ZERO);
+    let projection = frame.shadow_projection();
+    let far = projection * Vec4::new(0.0, 0.0, -256.0, 1.0);
+    assert!(
+        (far.z - 1.0).abs() < 1e-4,
+        "-1 is the render distance: {far}"
+    );
 }
 
 fn at_time(celestial_angle: f32, settings: PackSettings, position: Vec3) -> FrameUniforms {
@@ -243,10 +329,7 @@ fn at_time(celestial_angle: f32, settings: PackSettings, position: Vec3) -> Fram
         },
         &game,
         &settings,
-        FrameClock {
-            elapsed_seconds: 0.0,
-            delta_seconds: 0.0,
-        },
+        FrameClock { delta_seconds: 0.0 },
         &mut UniformHistory::default(),
     )
 }
@@ -301,10 +384,14 @@ fn the_shadow_camera_snaps_to_the_interval_and_spans_the_shadow_distance() {
     );
     let frame = at_time(0.1, settings, Vec3::ZERO);
     let projection = frame.shadow_projection();
-    let edge = projection * Vec4::new(120.0, -120.0, -0.05, 1.0);
+    let edge = projection * Vec4::new(120.0, -120.0, 100.05, 1.0);
     assert!((edge.x - 1.0).abs() < 1e-5 && (edge.y + 1.0).abs() < 1e-5);
-    let far = projection * Vec4::new(0.0, 0.0, -256.0, 1.0);
-    assert!((far.z - 1.0).abs() < 1e-4, "far plane at 256 blocks");
+    assert!(
+        (edge.z + 1.0).abs() < 1e-4,
+        "near plane 100 blocks towards the light"
+    );
+    let far = projection * Vec4::new(0.0, 0.0, -156.0, 1.0);
+    assert!((far.z - 1.0).abs() < 1e-4, "far plane 156 blocks away");
 }
 
 #[test]
@@ -395,5 +482,43 @@ fn biome_uniforms_read_the_java_biome_of_the_bedrock_biome() {
     assert_eq!(
         before_world.value("temperature"),
         Some(HostValue::Float(0.0))
+    );
+}
+
+#[test]
+fn sky_and_fog_colours_are_javas_for_the_blended_biomes() {
+    let Ok(mapping) = JavaBlockMapping::pinned() else {
+        eprintln!("skipping: missing Java mapping carrier fixture");
+        return;
+    };
+    let plains = (0..u32::from(u16::MAX))
+        .find(|id| mapping.java_biome(*id) == Some("minecraft:plains"))
+        .unwrap();
+    let mut sky_biomes = [(0, 0.0); render_scene::shaderpack::SKY_BIOME_SLOTS];
+    sky_biomes[0] = (plains, 1.0);
+    let game = ShaderPackFrameInputs {
+        celestial_angle: 0.0,
+        render_distance: 512.0,
+        sky_biomes,
+        ..ShaderPackFrameInputs::default()
+    };
+    let frame = uniforms(&game, &mut UniformHistory::default());
+    let rgb = |hex: u32| {
+        Vec3::new(
+            ((hex >> 16) & 0xFF) as f32 / 255.0,
+            ((hex >> 8) & 0xFF) as f32 / 255.0,
+            (hex & 0xFF) as f32 / 255.0,
+        )
+    };
+    assert_eq!(
+        frame.value("skyColor"),
+        Some(HostValue::vec3(rgb(0x78_A7_FF)))
+    );
+    let Some(HostValue::Vec(fog, 3)) = frame.value("fogColor") else {
+        panic!("fogColor is a vec3");
+    };
+    assert!(
+        (fog.truncate() - rgb(0xC0_D8_FF)).length() < 1e-3,
+        "noon fog at a 32-chunk render distance is the biome fog: {fog}"
     );
 }

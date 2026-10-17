@@ -4,8 +4,8 @@
 
 use bevy::{
     prelude::{
-        App, DetectChangesMut, IntoScheduleConfigs, Plugin, Query, Res, ResMut, Time, Transform,
-        Update, With,
+        App, DetectChangesMut, IntoScheduleConfigs, Plugin, Query, Res, ResMut, Resource, Time,
+        Transform, Update, Vec3, With,
     },
     time::Real,
 };
@@ -19,7 +19,10 @@ use client_shell::ui_resources::UiRuntimeResource;
 use meshing::CameraMedium;
 use protocol::NetworkItemStack;
 use render_model::celestial;
-use render_scene::{AtmosphereFrame, WorldLighting, shaderpack::ShaderPackFrameInputs};
+use render_scene::{
+    AtmosphereFrame, WorldLighting,
+    shaderpack::{SKY_BIOME_SLOTS, ShaderPackFrameInputs},
+};
 
 use crate::{
     environment::{
@@ -35,6 +38,19 @@ const MAX_LIGHT_LEVEL: u8 = 15;
 const EYE_BRIGHTNESS_PER_LEVEL: i32 = 16;
 /// Length of the lunar cycle in days; the phase advances once per day.
 const MOON_PHASES: i64 = 8;
+/// Java blends biome sky and fog colours with these Gaussian weights, one per quart (four
+/// blocks) along each axis; a sample's weight interpolates between neighbouring entries by
+/// the camera's place within its quart.
+const BIOME_BLEND_KERNEL: [f32; 7] = [0.0, 1.0, 4.0, 6.0, 4.0, 1.0, 0.0];
+/// Quarts sampled per axis around the camera.
+const BIOME_BLEND_SPAN: usize = 6;
+/// Blocks per quart, the resolution Java stores biomes at.
+const QUART_BLOCKS: i32 = 4;
+
+/// Developer-only `--frame-time-counter` pin: `frameTimeCounter` frozen at this many
+/// seconds so animations driven by it (BSL's clouds) match a reference capture.
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq)]
+pub(crate) struct FrameTimeCounterPin(pub(crate) Option<f32>);
 
 /// Keeps [`ShaderPackFrameInputs`] in step with the game each frame. Builds without the
 /// `shaderpacks` feature register nothing, so they do no work.
@@ -45,12 +61,14 @@ impl Plugin for ShaderPackInputsPlugin {
         if !render_model::SHADER_PACKS_ENABLED {
             return;
         }
-        app.init_resource::<ShaderPackFrameInputs>().add_systems(
-            Update,
-            publish_frame_inputs
-                .after(update_atmosphere_frame)
-                .after(LocalPlayerFrameSet::Interaction),
-        );
+        app.init_resource::<ShaderPackFrameInputs>()
+            .init_resource::<FrameTimeCounterPin>()
+            .add_systems(
+                Update,
+                publish_frame_inputs
+                    .after(update_atmosphere_frame)
+                    .after(LocalPlayerFrameSet::Interaction),
+            );
     }
 }
 
@@ -66,7 +84,8 @@ type EnvironmentSources<'w> = (
     Res<'w, CameraMediumState>,
 );
 
-/// World stream, local-player authority, HUD state and camera-selected status effects.
+/// World stream, local-player authority, HUD state, camera-selected status effects and the
+/// capture pin.
 type PlayerSources<'w> = (
     Res<'w, ClientWorld>,
     Res<'w, client_state::PlayerRuntime>,
@@ -74,6 +93,7 @@ type PlayerSources<'w> = (
     Res<'w, VisionEffects>,
     Option<Res<'w, ServerCameraView>>,
     Option<Res<'w, LocalPhysicsController>>,
+    Res<'w, FrameTimeCounterPin>,
 );
 
 /// Rebuilds the inputs from defaults and replaces the resource only when a value changed, so
@@ -85,8 +105,11 @@ fn publish_frame_inputs(
     mut inputs: ResMut<ShaderPackFrameInputs>,
 ) {
     let (clock, fixed_time, debug_time, visual_time, time, frame, lighting, medium) = environment;
-    let (client_world, player_runtime, ui, vision, server_camera, physics) = player;
-    let mut next = ShaderPackFrameInputs::default();
+    let (client_world, player_runtime, ui, vision, server_camera, physics, pin) = player;
+    let mut next = ShaderPackFrameInputs {
+        frame_time_counter: pin.0,
+        ..ShaderPackFrameInputs::default()
+    };
 
     // Same clock as the vanilla atmosphere draws with.
     let clock = rendered_clock(
@@ -104,8 +127,6 @@ fn publish_frame_inputs(
     let frame = *frame;
     next.rain_strength = frame.rain_level();
     next.thunder_strength = frame.thunder_level();
-    next.sky_color = frame.sky_zenith();
-    next.fog_color = frame.fog_color();
     next.fog_range = [frame.fog_start(), frame.fog_end()];
     next.dimension = frame.sky_kind() as i32;
     next.eye_medium = eye_medium(medium.0);
@@ -147,17 +168,18 @@ fn publish_frame_inputs(
     next.sprinting = sprinting;
 
     if let Some(stream) = client_world.stream.as_ref() {
-        let camera = cameras
-            .single()
-            .ok()
-            .map(|transform| transform.translation.to_array());
+        let camera = cameras.single().ok().copied();
+        let camera_position = camera.map(|transform| transform.translation.to_array());
         let eye = physics
             .and_then(|physics| physics.render_eye_position())
-            .or(camera);
+            .or(camera_position);
         let feet = physics
             .and_then(|physics| physics.render_feet_position())
-            .or(camera);
+            .or(camera_position);
         publish_world_inputs(&mut next, stream, eye, feet);
+        if let Some(camera) = camera {
+            publish_camera_inputs(&mut next, stream, &camera);
+        }
         if let Some(actor) = stream.authority().actor(stream.local_player_runtime_id()) {
             next.hurt = actor.status.hurt_time > 0;
             next.on_fire = actor.is_on_fire();
@@ -196,6 +218,72 @@ fn publish_world_inputs(
     };
     next.biome = stream.camera_biome_id(feet);
     next.biome_block_y = feet[1].floor() as i32;
+}
+
+/// Fills the values sampled along and around the rendered camera: the biomes Java blends
+/// the sky and fog colours over, and the distance to the block at the screen's centre.
+fn publish_camera_inputs(
+    next: &mut ShaderPackFrameInputs,
+    stream: &WorldStream,
+    camera: &Transform,
+) {
+    next.sky_biomes = sky_biomes(camera.translation.to_array(), |block| {
+        stream.camera_biome_id(block.map(|v| v as f32))
+    });
+    let forward = camera.rotation * Vec3::NEG_Z;
+    next.center_distance = stream.first_block_distance(
+        camera.translation.to_array(),
+        forward.to_array(),
+        next.render_distance,
+    );
+}
+
+/// The biomes around `position` with Java's Gaussian blend weights, heaviest first and
+/// normalised over the kept slots; `biome_at` reads the biome at a block.
+fn sky_biomes(
+    position: [f32; 3],
+    biome_at: impl Fn([i32; 3]) -> Option<u32>,
+) -> [(u32, f32); SKY_BIOME_SLOTS] {
+    // The kernel centres on the position shifted back half a quart, in quarts.
+    let axes = position.map(|v| {
+        let quart = (v - QUART_BLOCKS as f32 * 0.5) / QUART_BLOCKS as f32;
+        let base = quart.floor();
+        let fraction = quart - base;
+        let weights: [f32; BIOME_BLEND_SPAN] = std::array::from_fn(|i| {
+            BIOME_BLEND_KERNEL[i + 1]
+                + fraction * (BIOME_BLEND_KERNEL[i] - BIOME_BLEND_KERNEL[i + 1])
+        });
+        (base as i32 - 2, weights)
+    });
+    let mut totals: Vec<(u32, f32)> = Vec::new();
+    for x in 0..BIOME_BLEND_SPAN {
+        for y in 0..BIOME_BLEND_SPAN {
+            for z in 0..BIOME_BLEND_SPAN {
+                let quart = [x, y, z];
+                let weight: f32 = (0..3).map(|axis| axes[axis].1[quart[axis]]).product();
+                if weight <= 0.0 {
+                    continue;
+                }
+                let block =
+                    std::array::from_fn(|axis| (axes[axis].0 + quart[axis] as i32) * QUART_BLOCKS);
+                let Some(biome) = biome_at(block) else {
+                    continue;
+                };
+                match totals.iter_mut().find(|(id, _)| *id == biome) {
+                    Some((_, total)) => *total += weight,
+                    None => totals.push((biome, weight)),
+                }
+            }
+        }
+    }
+    totals.sort_by(|a, b| b.1.total_cmp(&a.1));
+    totals.truncate(SKY_BIOME_SLOTS);
+    let sum: f32 = totals.iter().map(|(_, w)| w).sum();
+    let mut slots = [(0, 0.0); SKY_BIOME_SLOTS];
+    for (slot, (biome, weight)) in slots.iter_mut().zip(totals) {
+        *slot = (biome, weight / sum);
+    }
+    slots
 }
 
 /// `heldItemId` for a held stack, -1 when the hand is empty or the item is unmapped.
@@ -361,5 +449,26 @@ mod tests {
         assert_eq!(fraction(0, 20), Some(0.0));
         assert_eq!(fraction(30, 20), Some(1.0));
         assert_eq!(fraction(1, 0), None);
+    }
+
+    #[test]
+    fn sky_biomes_weigh_the_quarts_around_the_camera_like_java() {
+        // One biome everywhere: all weight on it.
+        let uniform = sky_biomes([8.5, 74.0, 8.5], |_| Some(7));
+        assert_eq!(uniform[0], (7, 1.0));
+        assert!(uniform[1..].iter().all(|(_, w)| *w == 0.0));
+        // A border at x = 8: the kernel spans quarts -1..=4 along x with weights
+        // [0.375, 2.125, 4.75, 5.25, 2.875, 0.625] at the camera's x of 8.5, and the
+        // quarts from x = 8 on hold 8.75 of their 16.
+        let split = sky_biomes([8.5, 74.0, 8.5], |[x, ..]| Some(u32::from(x >= 8)));
+        assert_eq!(split[0].0, 1);
+        assert!((split[0].1 - 8.75 / 16.0).abs() < 1e-5, "{split:?}");
+        assert!((split[1].1 - 7.25 / 16.0).abs() < 1e-5, "{split:?}");
+        // Unstreamed biomes drop out; nothing streamed leaves every slot empty.
+        assert!(
+            sky_biomes([0.0; 3], |_| None)
+                .iter()
+                .all(|(_, w)| *w == 0.0)
+        );
     }
 }

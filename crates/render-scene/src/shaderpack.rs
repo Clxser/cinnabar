@@ -48,6 +48,10 @@ impl ShaderPackStatus {
 #[require(bevy::render::view::Msaa::Off)]
 pub struct ShaderPackRendering;
 
+/// The most biomes [`ShaderPackFrameInputs::sky_biomes`] carries; the Gaussian blend's
+/// lighter biomes beyond these are dropped.
+pub const SKY_BIOME_SLOTS: usize = 4;
+
 /// Game state behind the standard Iris uniforms that the render world cannot derive from
 /// the view. Published each frame by the app; camera matrices, positions, screen size and
 /// frame timing come from the extracted view and render-world clock instead.
@@ -71,10 +75,16 @@ pub struct ShaderPackFrameInputs {
     pub eye_brightness: [i32; 2],
     /// 0 air, 1 water, 2 lava, 3 powder snow (`isEyeInWater`).
     pub eye_medium: i32,
-    /// Linear sky colour at the zenith (`skyColor`).
-    pub sky_color: [f32; 3],
-    /// Linear fog colour (`fogColor`).
-    pub fog_color: [f32; 3],
+    /// Bedrock biomes around the camera with Java's Gaussian sky and fog blend weights, the
+    /// heaviest first; the weights sum to 1 over the used slots and unused slots weigh 0.
+    /// The render host derives `skyColor` and `fogColor` from their Java biomes.
+    pub sky_biomes: [(u32, f32); SKY_BIOME_SLOTS],
+    /// Frozen `frameTimeCounter` in seconds for captures (developer `--frame-time-counter`);
+    /// `None` counts real time.
+    pub frame_time_counter: Option<f32>,
+    /// Blocks from the camera along its view direction to the first non-air block, `None`
+    /// when nothing is in range; `centerDepthSmooth` smooths its depth-buffer value.
+    pub center_distance: Option<f32>,
     /// Fog start and end distances in blocks (`fogStart`, `fogEnd`).
     pub fog_range: [f32; 2],
     /// Render distance in blocks (`far`).
@@ -126,8 +136,9 @@ impl Default for ShaderPackFrameInputs {
             thunder_strength: 0.0,
             eye_brightness: [0, 240],
             eye_medium: 0,
-            sky_color: [0.47, 0.65, 1.0],
-            fog_color: [0.75, 0.85, 1.0],
+            sky_biomes: [(0, 0.0); SKY_BIOME_SLOTS],
+            frame_time_counter: None,
+            center_distance: None,
             fog_range: [0.0, 256.0],
             render_distance: 256.0,
             night_vision: 0.0,
