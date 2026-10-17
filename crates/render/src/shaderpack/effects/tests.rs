@@ -27,7 +27,9 @@ fn resolve(effect: Effect, provided: &[&str]) -> Option<&'static str> {
 
 fn positions(mesh: &Mesh) -> Vec<Vec3> {
     mesh.words
-        .chunks_exact(WORDS)
+        .as_chunks::<WORDS>()
+        .0
+        .iter()
         .map(|v| {
             Vec3::new(
                 f32::from_bits(v[0]),
@@ -40,7 +42,9 @@ fn positions(mesh: &Mesh) -> Vec<Vec3> {
 
 fn uvs(mesh: &Mesh) -> Vec<[f32; 2]> {
     mesh.words
-        .chunks_exact(WORDS)
+        .as_chunks::<WORDS>()
+        .0
+        .iter()
         .map(|v| {
             let unorm = |bits: u32| bits as f32 / 65535.0;
             [unorm(v[4] & 0xffff), unorm(v[4] >> 16)]

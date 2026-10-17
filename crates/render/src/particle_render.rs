@@ -480,6 +480,10 @@ fn prepare_particle_bind_group(
 }
 
 /// Queues compact translucent streams at their target-view depths from the extracted frame.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a queue system's render-world inputs"
+)]
 fn queue_particles(
     pipeline_cache: Res<PipelineCache>,
     mut pipeline: ResMut<ParticlePipeline>,

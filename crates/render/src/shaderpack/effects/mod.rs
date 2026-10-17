@@ -110,6 +110,7 @@ const CRUMBLING_BLEND: BlendMode = BlendMode::Factors {
 };
 
 impl Effect {
+    #[cfg(test)]
     pub(crate) const ALL: [Effect; 11] = [
         Effect::Sun,
         Effect::Moon,

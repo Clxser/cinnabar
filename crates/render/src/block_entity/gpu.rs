@@ -600,6 +600,10 @@ fn queue_overlay(
     );
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a queue system's render-world inputs"
+)]
 fn queue_outline(
     pipeline_cache: Res<PipelineCache>,
     pipeline: ResMut<BlockEntityPipeline>,
@@ -628,6 +632,10 @@ fn queue_outline(
     );
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a queue system's render-world inputs"
+)]
 fn queue_crack(
     pipeline_cache: Res<PipelineCache>,
     pipeline: ResMut<BlockEntityPipeline>,

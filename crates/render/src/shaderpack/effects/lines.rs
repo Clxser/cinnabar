@@ -83,7 +83,7 @@ pub(super) fn outline(
     let width = outline_width(camera.screen[0]);
     let point = |v: &BlockEntityVertex| Vec3::from_array(v.position) - camera.position;
     if !wire.is_empty() {
-        for pair in wire.chunks_exact(2) {
+        for pair in wire.as_chunks::<2>().0 {
             line(mesh, camera, point(&pair[0]), point(&pair[1]), width);
         }
         return;
@@ -91,7 +91,7 @@ pub(super) fn outline(
     // Highlight faces are lifted off the block, so neighbouring faces' shared edges differ
     // by that lift; a 1/64-block key merges them.
     let mut drawn = HashSet::new();
-    for face in highlight.chunks_exact(6) {
+    for face in highlight.as_chunks::<6>().0 {
         for (from, to) in boundary_edges(face) {
             if drawn.insert(edge_key(&from, &to, 64.0)) {
                 line(mesh, camera, point(&from), point(&to), width);
@@ -112,7 +112,7 @@ fn edge_key(a: &BlockEntityVertex, b: &BlockEntityVertex, resolution: f32) -> Ed
 /// The edges of a two-triangle face that are not its shared diagonal, in triangle order.
 fn boundary_edges(face: &[BlockEntityVertex]) -> Vec<(BlockEntityVertex, BlockEntityVertex)> {
     let mut edges: Vec<(EdgeKey, BlockEntityVertex, BlockEntityVertex)> = vec![];
-    for triangle in face.chunks_exact(3) {
+    for triangle in face.as_chunks::<3>().0 {
         for i in 0..3 {
             let (a, b) = (triangle[i], triangle[(i + 1) % 3]);
             edges.push((edge_key(&a, &b, 4096.0), a, b));
@@ -129,7 +129,7 @@ fn boundary_edges(face: &[BlockEntityVertex]) -> Vec<(BlockEntityVertex, BlockEn
 /// Crack faces: Cinnabar's crack triangles with their destroy-stage atlas coordinates,
 /// full-bright as Iris's `CRUMBLING` key.
 pub(super) fn cracks(mesh: &mut Mesh, vertices: &[BlockEntityVertex], camera: Vec3) {
-    for triangle in vertices.chunks_exact(3) {
+    for triangle in vertices.as_chunks::<3>().0 {
         let mid = triangle.iter().fold([0.0; 2], |acc, v| {
             [acc[0] + v.uv[0] / 3.0, acc[1] + v.uv[1] / 3.0]
         });

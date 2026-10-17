@@ -245,6 +245,10 @@ fn prepare_lightning_bind_group(
     gpu.view_buffer_id = Some(view_buffer.id());
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a queue system's render-world inputs"
+)]
 fn queue_lightning(
     pipeline_cache: Res<PipelineCache>,
     mut pipeline: ResMut<LightningPipeline>,

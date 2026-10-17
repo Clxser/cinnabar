@@ -514,6 +514,10 @@ type CloudView<'a> = (
     Option<&'a render_scene::EnhancedRendering>,
 );
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a queue system's render-world inputs"
+)]
 fn queue_clouds(
     pipeline_cache: Res<PipelineCache>,
     mut pipeline: ResMut<CloudPipeline>,

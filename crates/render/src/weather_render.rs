@@ -421,6 +421,10 @@ fn prepare_weather_bind_group(
     gpu.atmosphere_buffer_id = Some(atmosphere.buffer.id());
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a queue system's render-world inputs"
+)]
 fn queue_weather(
     pipeline_cache: Res<PipelineCache>,
     mut pipeline: ResMut<WeatherPipeline>,
