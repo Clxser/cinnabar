@@ -5779,7 +5779,7 @@ version = "0.1.20"
 dependencies = [
  "bytemuck",
  "mod-api",
- "naga 30.0.1",
+ "naga",
 ]
 
 [[package]]
@@ -5844,34 +5844,10 @@ dependencies = [
  "indexmap",
  "libm",
  "log",
- "naga-types 30.0.1",
+ "naga-types",
  "num-traits",
  "once_cell",
  "pp-rs",
- "rustc-hash 1.1.0",
- "thiserror 2.0.18",
- "unicode-ident",
-]
-
-[[package]]
-name = "naga"
-version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5#e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5"
-dependencies = [
- "arrayvec",
- "bit-set",
- "bitflags 2.13.0",
- "cfg-if",
- "cfg_aliases",
- "codespan-reporting",
- "half",
- "hashbrown 0.17.1",
- "indexmap",
- "libm",
- "log",
- "naga-types 30.0.1 (git+https://github.com/bedrock-mc/wgpu?rev=e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5)",
- "num-traits",
- "once_cell",
  "rustc-hash 1.1.0",
  "spirv",
  "thiserror 2.0.18",
@@ -5881,17 +5857,6 @@ dependencies = [
 [[package]]
 name = "naga-types"
 version = "30.0.1"
-dependencies = [
- "hashbrown 0.17.1",
- "indexmap",
- "rustc-hash 1.1.0",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "naga-types"
-version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5#e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5"
 dependencies = [
  "hashbrown 0.17.1",
  "indexmap",
@@ -7529,7 +7494,7 @@ dependencies = [
  "meshing",
  "mod-api",
  "mod-render",
- "naga 30.0.1",
+ "naga",
  "objc2 0.6.4",
  "objc2-metal 0.3.2",
  "objc2-quartz-core 0.3.2",
@@ -8131,7 +8096,7 @@ name = "shaderpack"
 version = "0.1.20"
 dependencies = [
  "assets",
- "naga 30.0.1",
+ "naga",
  "pp-rs",
  "tempfile",
  "zip",
@@ -9945,7 +9910,6 @@ dependencies = [
 [[package]]
 name = "wgpu"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5#e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5"
 dependencies = [
  "arrayvec",
  "bitflags 2.13.0",
@@ -9956,7 +9920,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "js-sys",
  "log",
- "naga 30.0.1 (git+https://github.com/bedrock-mc/wgpu?rev=e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5)",
+ "naga",
  "portable-atomic",
  "profiling",
  "raw-window-handle",
@@ -9973,7 +9937,6 @@ dependencies = [
 [[package]]
 name = "wgpu-core"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5#e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -9985,8 +9948,8 @@ dependencies = [
  "hashbrown 0.17.1",
  "indexmap",
  "log",
- "naga 30.0.1 (git+https://github.com/bedrock-mc/wgpu?rev=e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5)",
- "naga-types 30.0.1 (git+https://github.com/bedrock-mc/wgpu?rev=e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5)",
+ "naga",
+ "naga-types",
  "once_cell",
  "parking_lot",
  "portable-atomic",
@@ -10006,7 +9969,6 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-apple"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5#e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5"
 dependencies = [
  "wgpu-hal",
 ]
@@ -10014,7 +9976,6 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-emscripten"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5#e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5"
 dependencies = [
  "wgpu-hal",
 ]
@@ -10022,7 +9983,6 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5#e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5"
 dependencies = [
  "wgpu-hal",
 ]
@@ -10030,7 +9990,6 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5#e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -10050,8 +10009,8 @@ dependencies = [
  "libc",
  "libloading",
  "log",
- "naga 30.0.1 (git+https://github.com/bedrock-mc/wgpu?rev=e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5)",
- "naga-types 30.0.1 (git+https://github.com/bedrock-mc/wgpu?rev=e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5)",
+ "naga",
+ "naga-types",
  "ndk-sys 0.6.0+11769913",
  "objc2 0.6.4",
  "objc2-core-foundation",
@@ -10085,22 +10044,20 @@ dependencies = [
 [[package]]
 name = "wgpu-naga-bridge"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5#e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5"
 dependencies = [
- "naga 30.0.1 (git+https://github.com/bedrock-mc/wgpu?rev=e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5)",
+ "naga",
  "wgpu-types",
 ]
 
 [[package]]
 name = "wgpu-types"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5#e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5"
 dependencies = [
  "bitflags 2.13.0",
  "bytemuck",
  "js-sys",
  "log",
- "naga-types 30.0.1 (git+https://github.com/bedrock-mc/wgpu?rev=e863d9d0b2bd9b60a1e0fef5da7927bf3125f0c5)",
+ "naga-types",
  "raw-window-handle",
  "serde",
  "static_assertions",
