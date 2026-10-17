@@ -344,9 +344,10 @@ pub(crate) fn layout_entries(
                 binding: image.binding,
                 visibility: stages(image.stages),
                 ty: BindingType::StorageTexture {
-                    access: match (image.read, image.write) {
-                        (true, true) => StorageTextureAccess::ReadWrite,
-                        (true, false) => StorageTextureAccess::ReadOnly,
+                    access: match (image.atomic, image.read, image.write) {
+                        (true, ..) => StorageTextureAccess::Atomic,
+                        (_, true, true) => StorageTextureAccess::ReadWrite,
+                        (_, true, false) => StorageTextureAccess::ReadOnly,
                         _ => StorageTextureAccess::WriteOnly,
                     },
                     format,

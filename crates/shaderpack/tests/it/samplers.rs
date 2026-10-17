@@ -173,6 +173,33 @@ fn locals_and_parameters_shadowing_a_sampler_stay_plain() {
 }
 
 #[test]
+fn overloads_taking_a_sampler_each_get_a_specialized_copy() {
+    // Solas's water `Raytrace(depthtex1, …)` (10 parameters) calls its 9-parameter overload
+    // with the same sampler; both copies are `Raytrace__depthtex1`, told apart by arity.
+    // A `#====` banner line is an unknown directive Iris's preprocessor skips.
+    let fragment = "#version 120\n\
+        #====================#\n\
+        #   Copyright banner #\n\
+        uniform sampler2D depthtex1;\n\
+        varying vec2 uv;\n\
+        vec4 trace(sampler2D depth, vec2 p, float s) { return texture2D(depth, p) * s; }\n\
+        vec3 trace(sampler2D depth, vec2 p, float s, out float hit) { vec4 c = trace(depth, p, s); hit = c.a; return c.rgb; }\n\
+        void main() { float hit; vec3 c = trace(depthtex1, uv, 2.0, hit); gl_FragData[0] = vec4(c, hit); }\n";
+    let p = pack(fragment, "", &[]);
+    let t = p.translate(&TranslateConfig::default());
+    let glsl = fragment_glsl(program(&t, "composite"));
+    assert!(
+        glsl.contains("vec4 trace__depthtex1(vec2 p, float s)"),
+        "{glsl}"
+    );
+    assert!(
+        glsl.contains("vec3 trace__depthtex1(vec2 p, float s, out float hit)"),
+        "{glsl}"
+    );
+    assert!(!glsl.contains("Copyright"), "{glsl}");
+}
+
+#[test]
 fn sampler_class_bindings_precede_textures_and_round_trip() {
     for class in SamplerClass::ALL {
         assert_eq!(SamplerClass::from_binding(class.binding()), Some(class));
