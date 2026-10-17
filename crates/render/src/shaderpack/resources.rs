@@ -9,8 +9,8 @@ use super::pipelines::{
 };
 use super::plan::{MAX_COLOR_BUFFERS, color_buffer_of};
 use shaderpack::{
-    BufferFormat, BufferId, CustomImage, ProgramGroup, ProgramReflection, SampleType, ShaderPack,
-    TextureDimension, TextureSource as PackTexture,
+    BufferFormat, BufferId, CustomImage, ImageSize, ProgramGroup, ProgramReflection, SampleType,
+    ShaderPack, TextureDimension, TextureSource as PackTexture,
 };
 use std::collections::HashMap;
 use wgpu::{TextureFormat, TextureUsages};
@@ -67,7 +67,7 @@ pub(crate) struct ProgramBindings {
 }
 
 pub(crate) struct ConstantTexture {
-    _texture: wgpu::Texture,
+    texture: wgpu::Texture,
     pub view: wgpu::TextureView,
 }
 
@@ -80,7 +80,7 @@ pub(crate) struct ConstantTextures {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Key {
     Noise,
-    Custom(String, String),
+    Custom(String, String, TextureDimension),
     ShadowDepth(u32),
     ShadowFloat(u32),
     ShadowColor(u32),
@@ -144,10 +144,7 @@ impl<'a> ConstantBuilder<'a> {
     ) -> (usize, TextureFormat) {
         let format = texture.format();
         let index = self.out.textures.len();
-        self.out.textures.push(ConstantTexture {
-            _texture: texture,
-            view,
-        });
+        self.out.textures.push(ConstantTexture { texture, view });
         self.keys.insert(key, (index, format));
         (index, format)
     }
@@ -413,8 +410,17 @@ impl<'a> ConstantBuilder<'a> {
         Ok((texture, view))
     }
 
-    fn custom(&mut self, stage: &str, name: &str) -> Option<(usize, TextureFormat)> {
-        let key = Key::Custom(stage.to_string(), name.to_string());
+    /// The stage's custom texture for sampler `name` declared with `dimension`: OptiFine binds
+    /// each shape on its own target of the unit, so `texture.composite.colortex0 = x.dat
+    /// TEXTURE_3D` replaces only a `sampler3D colortex0` and a `sampler2D colortex0` still
+    /// reads the buffer.
+    fn custom(
+        &mut self,
+        stage: &str,
+        name: &str,
+        dimension: TextureDimension,
+    ) -> Option<(usize, TextureFormat)> {
+        let key = Key::Custom(stage.to_string(), name.to_string(), dimension);
         if let Some(found) = self.keys.get(&key) {
             return Some(*found);
         }
@@ -424,7 +430,7 @@ impl<'a> ConstantBuilder<'a> {
             .custom_textures
             .iter()
             .rev()
-            .find(|t| t.stage == stage && strip_unit(&t.sampler) == name)?
+            .find(|t| t.stage == stage && t.uniform() == name && t.source.dimension() == dimension)?
             .source
             .clone();
         let (texture, view) = self.decode(&source)?;
@@ -487,6 +493,11 @@ impl<'a> ConstantBuilder<'a> {
         found
     }
 
+    /// Whether pack-wide texture `index` has the shape a sampler of `dimension` reads.
+    fn has_shape(&self, index: usize, dimension: TextureDimension) -> bool {
+        self.out.textures[index].texture.dimension() == storage_shape(dimension)
+    }
+
     /// Clears the textures that start at a value other than zero and returns them.
     pub(crate) fn finish(self) -> ConstantTextures {
         if !self.clears.is_empty() {
@@ -535,27 +546,6 @@ impl<'a> ConstantBuilder<'a> {
             self.gpu.queue.submit([encoder.finish()]);
         }
         self.out
-    }
-}
-
-/// `colortex6.1` style sampler names bind `colortex6`.
-fn strip_unit(sampler: &str) -> &str {
-    match sampler.rsplit_once('.') {
-        Some((name, unit)) if unit.bytes().all(|b| b.is_ascii_digit()) => name,
-        _ => sampler,
-    }
-}
-
-/// `texture.<stage>.*` stage of a program group.
-fn stage_name(group: ProgramGroup) -> &'static str {
-    match group {
-        ProgramGroup::Prepare => "prepare",
-        ProgramGroup::Deferred => "deferred",
-        ProgramGroup::Composite | ProgramGroup::Final => "composite",
-        ProgramGroup::ShadowComposite => "shadowcomp",
-        ProgramGroup::Shadow => "shadow",
-        ProgramGroup::Setup | ProgramGroup::Begin => "begin",
-        ProgramGroup::Gbuffers | ProgramGroup::DistantHorizons => "gbuffers",
     }
 }
 
@@ -767,6 +757,19 @@ fn depth_index(name: &str) -> Option<usize> {
     }
 }
 
+/// The storage shape of a texture a sampler of `dimension` reads: arrays and cubes are 2D
+/// layers.
+fn storage_shape(dimension: TextureDimension) -> wgpu::TextureDimension {
+    match dimension {
+        TextureDimension::D1 => wgpu::TextureDimension::D1,
+        TextureDimension::D3 => wgpu::TextureDimension::D3,
+        TextureDimension::D2
+        | TextureDimension::D2Array
+        | TextureDimension::Cube
+        | TextureDimension::CubeArray => wgpu::TextureDimension::D2,
+    }
+}
+
 /// Resolves every texture and image binding of `reflection`.
 #[allow(
     clippy::too_many_arguments,
@@ -782,52 +785,60 @@ pub(crate) fn resolve_bindings(
     images: &[CustomImage],
     image_formats: &[TextureFormat],
 ) -> ProgramBindings {
-    let stage = stage_name(group);
+    let stage = group.texture_stage();
     let textures = reflection
         .textures
         .iter()
         .map(|t| {
             let wanted = sample_kind(t.sample_type);
             let fits = |format: TextureFormat| wanted.is_none_or(|k| k == format_kind(format));
-            let source = if let Some((index, format)) = constants.custom(stage, &t.name) {
-                Some(TextureSource::Constant { index, format })
-            } else if t.name == "noisetex" {
-                let (index, format) = constants.noise();
-                Some(TextureSource::Constant { index, format })
-            } else if let Some(index) = depth_index(&t.name) {
-                Some(if t.sample_type == SampleType::Depth {
-                    TextureSource::DepthCompare(index)
-                } else {
-                    TextureSource::Depth {
-                        index,
-                        format: depth_format,
-                    }
-                })
-            } else if let Some(index) = match t.name.as_str() {
-                "shadowtex0" | "shadow" | "watershadow" => Some(0),
-                "shadowtex1" => Some(1),
-                _ => None,
-            } {
-                let (index, format) = constants.shadow(index, t.sample_type);
-                Some(TextureSource::Constant { index, format })
-            } else if let Some(BufferId::ShadowColor(i)) = BufferId::parse(&t.name) {
-                let (index, format) = constants.shadow_color(i);
-                Some(TextureSource::Constant { index, format })
-            } else if let Some(index) = color_buffer_of(&t.name)
-                && let Some(format) = buffer_formats[index as usize]
-            {
-                Some(TextureSource::Buffer { index, format })
-            } else {
-                images
-                    .iter()
-                    .position(|i| i.sampler == t.name)
-                    .map(|index| TextureSource::Image {
-                        index,
-                        format: image_formats[index],
+            let source =
+                if let Some((index, format)) = constants.custom(stage, &t.name, t.dimension) {
+                    Some(TextureSource::Constant { index, format })
+                } else if t.name == "noisetex" {
+                    let (index, format) = constants.noise();
+                    Some(TextureSource::Constant { index, format })
+                } else if let Some(index) = depth_index(&t.name) {
+                    Some(if t.sample_type == SampleType::Depth {
+                        TextureSource::DepthCompare(index)
+                    } else {
+                        TextureSource::Depth {
+                            index,
+                            format: depth_format,
+                        }
                     })
-            };
-            let dimension_fits = |s: &TextureSource| match s {
-                TextureSource::Constant { .. } | TextureSource::Image { .. } => true,
+                } else if let Some(index) = match t.name.as_str() {
+                    "shadowtex0" | "shadow" | "watershadow" => Some(0),
+                    "shadowtex1" => Some(1),
+                    _ => None,
+                } {
+                    let (index, format) = constants.shadow(index, t.sample_type);
+                    Some(TextureSource::Constant { index, format })
+                } else if let Some(BufferId::ShadowColor(i)) = BufferId::parse(&t.name) {
+                    let (index, format) = constants.shadow_color(i);
+                    Some(TextureSource::Constant { index, format })
+                } else if let Some(index) = color_buffer_of(&t.name)
+                    && let Some(format) = buffer_formats[index as usize]
+                {
+                    Some(TextureSource::Buffer { index, format })
+                } else {
+                    images
+                        .iter()
+                        .position(|i| i.sampler == t.name)
+                        .map(|index| TextureSource::Image {
+                            index,
+                            format: image_formats[index],
+                        })
+                };
+            let dimension_fits = |s: &TextureSource| match *s {
+                TextureSource::Constant { index, .. } => constants.has_shape(index, t.dimension),
+                TextureSource::Image { index, .. } => {
+                    let image = match images[index].size {
+                        ImageSize::Absolute { depth: Some(_), .. } => TextureDimension::D3,
+                        _ => TextureDimension::D2,
+                    };
+                    storage_shape(image) == storage_shape(t.dimension)
+                }
                 _ => t.dimension == TextureDimension::D2,
             };
             match source {
@@ -979,10 +990,7 @@ mod tests {
     }
 
     #[test]
-    fn sampler_units_and_stage_names_follow_optifine() {
-        assert_eq!(strip_unit("colortex6.1"), "colortex6");
-        assert_eq!(strip_unit("noisetex"), "noisetex");
-        assert_eq!(stage_name(ProgramGroup::Final), "composite");
+    fn depth_names_and_generated_noise_follow_optifine() {
         assert_eq!(depth_index("gdepthtex"), Some(0));
         assert_eq!(depth_index("depthtex3"), None);
         let noise = generated_noise(4);

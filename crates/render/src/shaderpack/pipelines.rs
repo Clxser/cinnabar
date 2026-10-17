@@ -8,8 +8,9 @@
 //! fails its load instead of raising a device error.
 
 use shaderpack::{
-    BlendFactor as PackFactor, BlendMode, BufferFormat, ProgramReflection, SampleType, ScalarType,
-    StageKind, StageMask, TextureDimension as PackDimension, ValueType, VertexAttribute,
+    BlendFactor as PackFactor, BlendMode, BufferFormat, ProgramReflection, SampleType,
+    SamplerBinding, SamplerClass, ScalarType, StageKind, StageMask,
+    TextureDimension as PackDimension, ValueType, VertexAttribute,
 };
 use std::borrow::Cow;
 use wgpu::{
@@ -221,13 +222,33 @@ pub(crate) fn storage_format(format: naga::StorageFormat) -> Option<TextureForma
     })
 }
 
-/// Sample type of a bound texture: its own format decides float filterability.
-pub(crate) fn texture_sample_type(format: TextureFormat) -> TextureSampleType {
+/// Sample type of a bound texture: its own format and the device's features decide float
+/// filterability (32-bit floats filter with `FLOAT32_FILTERABLE`, which is why the host
+/// keeps them).
+pub(crate) fn texture_sample_type(
+    format: TextureFormat,
+    support: FormatSupport,
+) -> TextureSampleType {
+    let features = if support.float32_filterable {
+        Features::FLOAT32_FILTERABLE
+    } else {
+        Features::empty()
+    };
     match format {
         TextureFormat::Depth32Float | TextureFormat::Depth24Plus => TextureSampleType::Depth,
         f => f
-            .sample_type(None, None)
+            .sample_type(None, Some(features))
             .unwrap_or(TextureSampleType::Float { filterable: true }),
+    }
+}
+
+/// Binding type of a reflected sampler: depth comparison, or a filtering class. The
+/// clamp/nearest class is non-filtering, so it also reads unfilterable float textures.
+pub(crate) fn sampler_binding_type(sampler: &SamplerBinding) -> SamplerBindingType {
+    match sampler.class() {
+        None => SamplerBindingType::Comparison,
+        Some(SamplerClass::ClampNearest) => SamplerBindingType::NonFiltering,
+        Some(_) => SamplerBindingType::Filtering,
     }
 }
 
@@ -237,6 +258,7 @@ pub(crate) fn texture_sample_type(format: TextureFormat) -> TextureSampleType {
 pub(crate) fn layout_entries(
     reflection: &ProgramReflection,
     texture_formats: &[TextureFormat],
+    support: FormatSupport,
 ) -> [Vec<BindGroupLayoutEntry>; 4] {
     let mut groups: [Vec<BindGroupLayoutEntry>; 4] = Default::default();
     let mut push = |group: u32, entry: BindGroupLayoutEntry| {
@@ -292,11 +314,7 @@ pub(crate) fn layout_entries(
             BindGroupLayoutEntry {
                 binding: sampler.binding,
                 visibility: stages(sampler.stages),
-                ty: BindingType::Sampler(if sampler.comparison {
-                    SamplerBindingType::Comparison
-                } else {
-                    SamplerBindingType::Filtering
-                }),
+                ty: BindingType::Sampler(sampler_binding_type(sampler)),
                 count: None,
             },
         );
@@ -308,7 +326,7 @@ pub(crate) fn layout_entries(
                 binding: texture.binding,
                 visibility: stages(texture.stages),
                 ty: BindingType::Texture {
-                    sample_type: texture_sample_type(*format),
+                    sample_type: texture_sample_type(*format, support),
                     view_dimension: view_dimension(texture.dimension),
                     multisampled: false,
                 },
@@ -627,5 +645,42 @@ mod tests {
         let integer = color_target(TextureFormat::Rgba8Uint, uint4, additive).unwrap();
         assert_eq!(integer.blend, None);
         assert_eq!(blend_state(BlendMode::Off), None);
+    }
+
+    #[test]
+    fn float32_textures_filter_with_the_feature_and_depth_reads_never_filter() {
+        let with = FormatSupport {
+            float32_filterable: true,
+            ..FormatSupport::default()
+        };
+        for format in [TextureFormat::R32Float, TextureFormat::Rgba32Float] {
+            assert_eq!(
+                texture_sample_type(format, with),
+                TextureSampleType::Float { filterable: true }
+            );
+            assert_eq!(
+                texture_sample_type(format, FormatSupport::default()),
+                TextureSampleType::Float { filterable: false }
+            );
+        }
+        let sampler = |binding, comparison| SamplerBinding {
+            name: String::new(),
+            group: shaderpack::TEXTURE_GROUP,
+            binding,
+            comparison,
+            stages: StageMask::default(),
+        };
+        assert_eq!(
+            sampler_binding_type(&sampler(SamplerClass::ClampNearest.binding(), false)),
+            SamplerBindingType::NonFiltering
+        );
+        assert_eq!(
+            sampler_binding_type(&sampler(SamplerClass::ClampLinear.binding(), false)),
+            SamplerBindingType::Filtering
+        );
+        assert_eq!(
+            sampler_binding_type(&sampler(shaderpack::SHADOW_SAMPLER_BINDING, true)),
+            SamplerBindingType::Comparison
+        );
     }
 }

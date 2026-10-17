@@ -3,12 +3,12 @@
 
 use super::TransformError;
 use super::items::{arr_len, mat_cols, matching, sampler_info};
-use crate::reflection::{SAMPLER_NAME, SHADOW_SAMPLER_NAME};
+use crate::reflection::{SHADOW_SAMPLER_NAME, SamplerClass};
 use crate::token::{Tok, TokKind, id, int, p};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
-/// Sampler name → (combined sampler type to construct, compares depth).
-pub(super) type SamplerKinds = HashMap<String, (String, bool)>;
+/// Sampler name → (combined sampler type to construct, compares depth, filtering class).
+pub(super) type SamplerKinds = HashMap<String, (String, bool, SamplerClass)>;
 
 /// What body rewriting needs to know about the stage's globals.
 pub(super) struct BodyContext<'a> {
@@ -21,11 +21,12 @@ pub(super) struct BodyContext<'a> {
 /// Shared samplers the stage ended up referencing.
 #[derive(Default)]
 pub(super) struct SamplerUse {
-    pub filtering: bool,
+    pub filtering: BTreeSet<SamplerClass>,
     pub comparison: bool,
 }
 
-/// Function parameters of combined sampler types become separate texture types.
+/// Function parameters of combined sampler types become separate texture types, read with
+/// the shared repeat/linear sampler: calls with global textures were specialized already.
 pub(super) fn rewrite_params(header: &[Tok], samplers: &mut SamplerKinds) -> Vec<Tok> {
     let mut out: Vec<Tok> = vec![];
     for (i, t) in header.iter().enumerate() {
@@ -36,7 +37,10 @@ pub(super) fn rewrite_params(header: &[Tok], samplers: &mut SamplerKinds) -> Vec
                 ..
             }) = header.get(i + 1)
         {
-            samplers.insert(pname.clone(), (n.to_string(), shadow));
+            samplers.insert(
+                pname.clone(),
+                (n.to_string(), shadow, SamplerClass::RepeatLinear),
+            );
             if out.last().is_some_and(|l| l.ident() == Some("in")) {
                 out.pop();
             }
@@ -48,7 +52,7 @@ pub(super) fn rewrite_params(header: &[Tok], samplers: &mut SamplerKinds) -> Vec
     out
 }
 
-/// Pairs every texture use with the shared sampler (`sampler2D(colortex0, iris_sampler)`)
+/// Pairs every texture use with its sampler (`sampler2D(colortex0, iris_samplerClampLinear)`)
 /// unless it is passed straight to a user function, and reads bool uniforms as bools.
 pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut SamplerUse) -> Vec<Tok> {
     let mut out = vec![];
@@ -72,7 +76,7 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
             continue;
         }
         let line = t.line;
-        if let Some((ctor, shadow)) = cx.samplers.get(n) {
+        if let Some((ctor, shadow, class)) = cx.samplers.get(n) {
             let prev_ok = i > 0 && (toks[i - 1].is("(") || toks[i - 1].is(","));
             let next_ok = toks.get(i + 1).is_some_and(|x| x.is(")") || x.is(","));
             let in_user_call = calls
@@ -86,8 +90,8 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
                     used.comparison = true;
                     SHADOW_SAMPLER_NAME
                 } else {
-                    used.filtering = true;
-                    SAMPLER_NAME
+                    used.filtering.insert(*class);
+                    class.glsl_name()
                 };
                 out.extend([
                     id(ctor).at(line),
