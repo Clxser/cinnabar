@@ -298,7 +298,13 @@ pub fn enumerate_programs(source: &PackSource, folder: &str) -> Vec<ProgramSourc
         .collect();
     out.sort_by_key(|p| {
         let (family, index, suffix) = natural_key(&p.name);
-        (p.group, family, index, p.kind == ProgramKind::Render, suffix)
+        (
+            p.group,
+            family,
+            index,
+            p.kind == ProgramKind::Render,
+            suffix,
+        )
     });
     out
 }
