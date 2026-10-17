@@ -8077,6 +8077,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "shaderpack"
+version = "0.1.20"
+dependencies = [
+ "naga",
+ "pp-rs",
+ "zip",
+]
+
+[[package]]
 name = "sharded-slab"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
