@@ -404,6 +404,41 @@ fn a_3d_custom_texture_leaves_2d_reads_of_its_name_on_the_buffer() {
     });
 }
 
+/// Inverts `colortex0` in place: samples it and writes `colorimg0`, the same texture.
+const INVERT_IN_PLACE: &str = "#version 430
+layout(local_size_x = 4, local_size_y = 4) in;
+const ivec3 workGroups = ivec3(1, 1, 1);
+uniform sampler2D colortex0;
+layout(rgba8) uniform image2D colorimg0;
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    imageStore(colorimg0, p, vec4(1.0 - texelFetch(colortex0, p, 0).rgb, 1.0));
+}
+";
+
+#[test]
+fn a_buffer_sampled_and_written_as_an_image_reads_a_snapshot() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    let bytes = render(
+        &gpu,
+        &[
+            ("composite.csh", INVERT_IN_PLACE),
+            ("final.vsh", PASS_VERTEX),
+            ("final.fsh", FINAL),
+        ],
+    );
+    assert_pixels(&bytes, |row| {
+        if row < 2 {
+            [0, 255, 255]
+        } else {
+            [127, 127, 127]
+        }
+    });
+}
+
 #[test]
 fn sampler_classes_map_to_wrap_and_filter_modes() {
     for (index, class) in SamplerClass::ALL.into_iter().enumerate() {

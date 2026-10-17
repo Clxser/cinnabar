@@ -387,6 +387,7 @@ fn run_step(
         generate_mipmaps(encoder, pack, targets, bindings, index, step.read_alt);
     }
     let program = &pack.programs[step.program];
+    targets.take_snapshots(encoder, program, step.read_alt);
     match &program.pipeline {
         ProgramPipeline::Compute(pipeline) => {
             let Some(dispatch) = &program.reflection.compute else {
