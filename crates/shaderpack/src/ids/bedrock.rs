@@ -1,7 +1,8 @@
-//! The `mc_Entity` table for Cinnabar's Bedrock block states: each state's Java block state
-//! from the pinned mapping, looked up in the pack's [`BlockIdMap`].
+//! Pack ids for Cinnabar's Bedrock identities: the `mc_Entity` table of the Bedrock block
+//! states, each state's Java block state from the pinned mapping looked up in the pack's
+//! [`BlockIdMap`]; and the pack ids of Bedrock entities and items through their Java ids.
 
-use super::BlockIdMap;
+use super::{BlockIdMap, NamedIdMap};
 use assets::facts::JavaBlockMapping;
 
 /// The `mc_Entity` value of a block state no pack entry (or no Java state) matches.
@@ -27,5 +28,33 @@ impl BlockIdMap {
                     .unwrap_or(UNMAPPED_BLOCK_ID)
             })
             .collect()
+    }
+}
+
+impl NamedIdMap {
+    /// The entity.properties id of a Bedrock entity identifier (`minecraft:ender_crystal`):
+    /// the id of the Java entity type the mapping gives it (`minecraft:end_crystal`), or, for
+    /// an identifier the mapping lacks, the id of that same name.
+    pub fn bedrock_entity_id(
+        &self,
+        mapping: &JavaBlockMapping,
+        bedrock_identifier: &str,
+    ) -> Option<i32> {
+        self.id(mapping
+            .java_entity(bedrock_identifier)
+            .unwrap_or(bedrock_identifier))
+    }
+
+    /// The item.properties id of a Bedrock item identifier (`minecraft:web`): the id of the
+    /// Java item the mapping gives it (`minecraft:cobweb`), or, for an identifier the mapping
+    /// lacks, the id of that same name.
+    pub fn bedrock_item_id(
+        &self,
+        mapping: &JavaBlockMapping,
+        bedrock_identifier: &str,
+    ) -> Option<i32> {
+        self.id(mapping
+            .java_item(bedrock_identifier)
+            .unwrap_or(bedrock_identifier))
     }
 }

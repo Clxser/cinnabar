@@ -403,6 +403,7 @@ fn draw_uniforms_fold_the_chunk_offset_into_the_legacy_model_view() {
         render_stage: 8,
         lightmap_matrix: true,
         atlas_size: [512, 256],
+        entity_id: -1,
     };
     let Some(HostValue::Mat4(legacy)) = draw.value("iris_ModelViewMat") else {
         panic!("legacy model-view is a matrix");

@@ -514,6 +514,10 @@ type CloudView<'a> = (
     Option<&'a render_scene::EnhancedRendering>,
 );
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a queue system's render-world inputs"
+)]
 fn queue_clouds(
     pipeline_cache: Res<PipelineCache>,
     mut pipeline: ResMut<CloudPipeline>,
@@ -522,12 +526,16 @@ fn queue_clouds(
     mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     draw_functions: Res<DrawFunctions<Transparent3d>>,
     views: Query<CloudView>,
+    pack: render_scene::shaderpack::ShaderPackDrawnEffects,
 ) {
     if !visibility.0 || !atmosphere.sky_kind().has_clouds() {
         return;
     }
     let draw_function = draw_functions.read().id::<DrawCloudCommands>();
     for (view_entity, main_entity, view, extracted_camera, msaa, enhanced) in &views {
+        if pack.replaces(view_entity, |drawn| drawn.clouds) {
+            continue;
+        }
         if render_model::ENHANCED_RENDERING_ENABLED
             && atmosphere.physical_atmosphere_allowed()
             && enhanced

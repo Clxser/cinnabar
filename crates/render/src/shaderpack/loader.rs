@@ -7,6 +7,8 @@
 //! directory, keyed by the pack's content hash, the translation settings and the adapter.
 
 use super::draws::{DrawPipelineInputs, GeometryDraw, draw_pipeline, select_draws};
+use super::effects::EffectSettings;
+use super::effects::resources::VanillaTextures;
 use super::host_pipelines::{HostPipelines, host_pipelines};
 use super::pipelines::{
     FormatSupport, Kind, bind_group_layouts, blend_state, color_target, format_kind,
@@ -139,6 +141,8 @@ pub(crate) struct PackGpu {
     pub shadow: Option<ShadowMaps>,
     /// `mc_Entity` id per Bedrock block state (by sequential id) from `block.properties`.
     pub block_ids: Option<Arc<Vec<i32>>>,
+    /// `entityId` and item ids per Bedrock identifier; empty without geometry draws.
+    pub actor_ids: Arc<super::actors::ActorIdMaps>,
     /// `separateAo` and `oldLighting` from `shaders.properties`.
     pub separate_ao: bool,
     pub old_lighting: bool,
@@ -147,6 +151,8 @@ pub(crate) struct PackGpu {
     /// Pack-wide `lightmap` texture some geometry program samples; rewritten each frame the
     /// world lightmap changes.
     pub lightmap: Option<usize>,
+    /// The pack's effect directives (clouds, sun, moon, stars, weather, particle ordering).
+    pub effects: EffectSettings,
 }
 
 impl PackGpu {
@@ -368,19 +374,21 @@ fn planned(program: &ProgramTranslation, reflection: &ProgramReflection) -> Plan
     }
 }
 
-/// Opens, translates and builds `path` for `dimension` (a Java dimension id).
+/// Opens, translates and builds `path` for `dimension` (a Java dimension id); `vanilla`
+/// answers the pack's `minecraft:` texture references.
 pub(crate) fn load(
     path: &Path,
     dimension: &str,
     cache_dir: Option<&Path>,
     gpu: &GpuContext,
+    vanilla: &VanillaTextures,
 ) -> Result<PackGpu, String> {
     let pack = ShaderPack::open(path).map_err(|e| e.to_string())?;
     let name = path.file_name().map_or_else(
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
     );
-    build(&pack, &name, dimension, cache_dir, gpu)
+    build(&pack, &name, dimension, cache_dir, gpu, vanilla)
 }
 
 /// The enabled programs this host runs, in frame order, with their plans; an error names
@@ -417,6 +425,7 @@ pub(crate) fn build(
     dimension: &str,
     cache_dir: Option<&Path>,
     gpu: &GpuContext,
+    vanilla: &VanillaTextures,
 ) -> Result<PackGpu, String> {
     let config = translate_config(pack, dimension);
     let started = std::time::Instant::now();
@@ -432,7 +441,19 @@ pub(crate) fn build(
         log_program(name, program);
     }
     let (runnable, plans) = runnable_programs(&translation)?;
-    let (geometry, selected_draws) = select_draws(&translation.programs);
+    let (block_ids, actor_ids) =
+        super::actors::id_tables(pack.id_maps(&config.environment, &config.options), name);
+    let effects = EffectSettings::read(
+        &translation.properties,
+        runnable
+            .iter()
+            .any(|p| p.program.group == ProgramGroup::Deferred),
+        assets::facts::entity::NativeEntityClass::LightningBolt
+            .identifier()
+            .and_then(|lightning| actor_ids.entity_id(lightning)),
+    );
+    let (geometry, selected_draws) =
+        select_draws(&translation.programs, |kind| kind.drawn_by(&effects));
     let shadowcomp: Vec<&ProgramTranslation> = translation
         .programs
         .iter()
@@ -514,7 +535,7 @@ pub(crate) fn build(
     let key = content_key(pack, &config);
     let pipeline_cache = PipelineCacheFile::open(gpu, cache_dir, &key);
     let image_formats = image_formats(&translation.properties.images, &reflections, support);
-    let mut constants = ConstantBuilder::new(gpu, pack, &translation, support);
+    let mut constants = ConstantBuilder::new(gpu, pack, &translation, vanilla, support);
     let mut depth_compare = [false; 3];
     let mut programs = Vec::with_capacity(all.len());
     // Per geometry program: its pipeline layout, vertex module and fragment stage.
@@ -687,6 +708,7 @@ pub(crate) fn build(
         &geometry_stages,
         &programs,
         &translation.properties,
+        &effects,
         &buffer_formats,
         &shadow_slots,
     );
@@ -702,9 +724,11 @@ pub(crate) fn build(
             mipmaps: vec![],
         })
         .collect();
-    let block_ids = (!draws.is_empty())
-        .then(|| block_ids(pack, &config, name))
-        .flatten();
+    let (block_ids, actor_ids) = if draws.is_empty() {
+        (None, Arc::default())
+    } else {
+        (block_ids, actor_ids)
+    };
     let atlas_placeholder = constants
         .placeholder(ATLAS_FORMAT, shaderpack::TextureDimension::D2, false)
         .0;
@@ -788,10 +812,12 @@ pub(crate) fn build(
         shadowcomp,
         shadow,
         block_ids,
+        actor_ids,
         separate_ao: flag("separateAo"),
         old_lighting: flag("oldLighting"),
         atlas_placeholder,
         lightmap,
+        effects,
     })
 }
 
@@ -814,6 +840,7 @@ fn geometry_draws(
     )],
     programs: &[GpuProgram],
     properties: &shaderpack::ShaderProperties,
+    effects: &EffectSettings,
     buffer_formats: &[Option<TextureFormat>; MAX_COLOR_BUFFERS as usize],
     shadow: &ShadowSlots,
 ) -> Vec<GeometryDraw> {
@@ -841,6 +868,7 @@ fn geometry_draws(
             vertex,
             fragment,
             properties,
+            effects,
             target_format: &target_format,
         };
         match draw_pipeline(*kind, &inputs) {
@@ -864,30 +892,6 @@ fn geometry_draws(
         draws.clear();
     }
     draws
-}
-
-/// The pack's `block.properties` ids per Bedrock block state through the pinned Java block
-/// mapping; `None` (logged) when the mapping is unavailable.
-fn block_ids(pack: &ShaderPack, config: &TranslateConfig, name: &str) -> Option<Arc<Vec<i32>>> {
-    let maps = pack.id_maps(&config.environment, &config.options);
-    for diagnostic in &maps.diagnostics {
-        bevy::log::debug!(
-            target: "cinnabar::shaderpack",
-            pack = name, line = diagnostic.line,
-            "id maps: {}", diagnostic.message
-        );
-    }
-    match assets::facts::JavaBlockMapping::pinned() {
-        Ok(mapping) => Some(Arc::new(maps.blocks.bedrock_block_ids(mapping))),
-        Err(error) => {
-            bevy::log::warn!(
-                target: "cinnabar::shaderpack",
-                pack = name,
-                "no Java block mapping, every mc_Entity reads -1: {error}"
-            );
-            None
-        }
-    }
 }
 
 /// Colour targets per fragment output location. `final` writes the screen at location 0.

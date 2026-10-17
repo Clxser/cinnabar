@@ -3,6 +3,7 @@
 //! shadow maps (cleared until the geometry adapter renders them) and placeholders for names
 //! the host cannot supply.
 
+use super::effects::resources::VanillaTextures;
 use super::loader::GpuContext;
 use super::pipelines::{FormatSupport, Kind, format_kind, storage_format, texture_format};
 use super::plan::{MAX_COLOR_BUFFERS, color_buffer_of};
@@ -132,6 +133,8 @@ pub(crate) struct ConstantBuilder<'a> {
     gpu: &'a GpuContext,
     pack: &'a ShaderPack,
     translation: &'a shaderpack::PackTranslation,
+    /// What `minecraft:` resource references resolve to.
+    vanilla: &'a VanillaTextures,
     support: FormatSupport,
     shadow_resolution: u32,
     noise_resolution: u32,
@@ -156,6 +159,7 @@ impl<'a> ConstantBuilder<'a> {
         gpu: &'a GpuContext,
         pack: &'a ShaderPack,
         translation: &'a shaderpack::PackTranslation,
+        vanilla: &'a VanillaTextures,
         support: FormatSupport,
     ) -> Self {
         let number = |name: &str, default: u32| {
@@ -167,6 +171,7 @@ impl<'a> ConstantBuilder<'a> {
             gpu,
             pack,
             translation,
+            vanilla,
             support,
             shadow_resolution: number("shadowMapResolution", DEFAULT_SHADOW_RESOLUTION),
             noise_resolution: number("noiseTextureResolution", DEFAULT_NOISE_RESOLUTION),
@@ -356,14 +361,15 @@ impl<'a> ConstantBuilder<'a> {
         );
     }
 
-    /// Decodes a PNG or raw custom texture; `None` (logged) when it cannot be read.
+    /// Decodes a PNG, raw or vanilla resource custom texture; `None` (logged) when it cannot
+    /// be read.
     fn decode(&self, source: &PackTexture) -> Option<(wgpu::Texture, wgpu::TextureView)> {
         let result = match source {
             PackTexture::File(path) => self.decode_png(path),
             PackTexture::Raw { path, spec } => self.decode_raw(path, spec),
-            PackTexture::Resource(location) => {
-                Err(format!("resource textures are not supported: {location}"))
-            }
+            PackTexture::Resource(location) => self.vanilla.resolve(location).and_then(|image| {
+                self.rgba_texture(location, image.width, image.height, &image.rgba8)
+            }),
         };
         result
             .inspect_err(|error| {
@@ -385,12 +391,6 @@ impl<'a> ConstantBuilder<'a> {
         let info = reader
             .next_frame(&mut pixels)
             .map_err(|e| format!("{path}: {e}"))?;
-        let (width, height) = (info.width, info.height);
-        if width > MAX_CUSTOM_TEXTURE_SIDE || height > MAX_CUSTOM_TEXTURE_SIDE {
-            return Err(format!(
-                "{path}: {width}x{height} exceeds the texture limit"
-            ));
-        }
         let channels = info.color_type.samples();
         let rgba: Vec<u8> = pixels[..info.buffer_size()]
             .chunks_exact(channels)
@@ -402,11 +402,32 @@ impl<'a> ConstantBuilder<'a> {
                 _ => [0, 0, 0, 255],
             })
             .collect();
-        // Images are stored bottom-up in pack textures, as OpenGL uploads them.
+        self.rgba_texture(path, info.width, info.height, &rgba)
+    }
+
+    /// A texture of top-row-first RGBA8 `rgba`.
+    fn rgba_texture(
+        &self,
+        label: &str,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<(wgpu::Texture, wgpu::TextureView), String> {
+        if width > MAX_CUSTOM_TEXTURE_SIDE || height > MAX_CUSTOM_TEXTURE_SIDE {
+            return Err(format!(
+                "{label}: {width}x{height} exceeds the texture limit"
+            ));
+        }
         let row = 4 * width as usize;
+        if row == 0 || rgba.len() != row * height as usize {
+            return Err(format!(
+                "{label}: {width}x{height} does not match its pixels"
+            ));
+        }
+        // Images are stored bottom-up in pack textures, as OpenGL uploads them.
         let flipped: Vec<u8> = rgba.chunks_exact(row).rev().flatten().copied().collect();
         let (texture, view) = self.texture(
-            path,
+            label,
             TextureFormat::Rgba8Unorm,
             [width, height, 1],
             TextureDimension::D2,
@@ -720,7 +741,7 @@ fn half_to_f32(h: u16) -> f32 {
     }
 }
 
-fn f32_to_half(v: f32) -> u16 {
+pub(crate) fn f32_to_half(v: f32) -> u16 {
     let bits = v.to_bits();
     let sign = ((bits >> 16) & 0x8000) as u16;
     let exponent = ((bits >> 23) & 0xff) as i32 - 127 + 15;

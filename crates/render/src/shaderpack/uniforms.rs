@@ -598,13 +598,16 @@ impl FrameUniforms {
             "hasCeiling" => HostValue::bool(g.dimension == 1),
             "ambientLight" => Float(if g.dimension == 1 { 0.1 } else { 0.0 }),
             "cloudHeight" => Float(CLOUD_HEIGHT),
+            // Outside actor draws, which patch their own: no entity, block entity or item.
+            "entityId" | "blockEntityId" | "currentRenderedItemId" => Int(-1),
+            "entityColor" => HostValue::Vec(Vec4::ZERO, 4),
             _ => return None,
         })
     }
 }
 
 /// The fixed-function state Iris sets per geometry draw: its model-view and projection
-/// matrices, the terrain origin relative to the camera, and the render stage.
+/// matrices, the terrain origin relative to the camera, the render stage and the entity id.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct DrawUniforms {
     /// Model-view without the chunk offset (`gbufferModelView`, or `shadowModelView` in the
@@ -615,10 +618,12 @@ pub(crate) struct DrawUniforms {
     pub chunk_offset: Vec3,
     /// `renderStage`.
     pub render_stage: i32,
-    /// Terrain lightmap coordinates go through `gl_TextureMatrix[1]`.
+    /// Lightmap coordinates are raw `light × 16` values through `gl_TextureMatrix[1]`.
     pub lightmap_matrix: bool,
-    /// `atlasSize`: the bound block atlas's size, zero for draws without it.
+    /// `atlasSize`: the bound atlas's size, zero for draws without one.
     pub atlas_size: [i32; 2],
+    /// `entityId`: the drawn entity's `entity.properties` id, Iris's -1 outside entities.
+    pub entity_id: i32,
 }
 
 impl DrawUniforms {
@@ -645,6 +650,7 @@ impl DrawUniforms {
             "chunkOffset" => HostValue::vec3(self.chunk_offset),
             "renderStage" => HostValue::Int(self.render_stage),
             "atlasSize" => HostValue::IVec([self.atlas_size[0], self.atlas_size[1], 0, 0], 2),
+            "entityId" => HostValue::Int(self.entity_id),
             _ => return None,
         })
     }
@@ -675,6 +681,28 @@ pub(crate) fn pack_block(
             let offset = member.offset as usize + (element * stride) as usize;
             write_value(out, offset, member.ty, &value);
         }
+    }
+}
+
+/// Overwrites, in `out` packed for `block`, the members `values` name: a member's name, or
+/// `member[element]` for one element of an array member. Unknown names are ignored.
+pub(crate) fn patch_block(block: &UniformBlock, values: &[(&str, HostValue)], out: &mut [u8]) {
+    for (name, value) in values {
+        let (base, element) = match name.split_once('[') {
+            Some((base, rest)) => (base, rest.trim_end_matches(']').parse::<u32>().ok()),
+            None => (*name, None),
+        };
+        let Some(member) = block.members.iter().find(|m| m.name == base) else {
+            continue;
+        };
+        let offset = match (member.array, element) {
+            (Some((count, stride)), Some(element)) if element < count => {
+                member.offset + element * stride
+            }
+            (_, None) => member.offset,
+            _ => continue,
+        };
+        write_value(out, offset as usize, member.ty, value);
     }
 }
 

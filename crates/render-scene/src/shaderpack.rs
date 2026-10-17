@@ -3,10 +3,11 @@
 //! their standard uniforms. The renderer behind it compiles only with the `shaderpacks`
 //! feature; without it these types stay unused.
 
-use std::path::PathBuf;
+use std::{collections::HashMap, fmt, path::PathBuf, sync::Arc};
 
 use bevy::{
-    prelude::{Component, Resource},
+    ecs::system::SystemParam,
+    prelude::{Component, Entity, Query, Res, Resource, With},
     render::{extract_component::ExtractComponent, extract_resource::ExtractResource},
 };
 
@@ -51,6 +52,16 @@ pub struct ShaderPackRendering;
 /// The most biomes [`ShaderPackFrameInputs::sky_biomes`] carries; the Gaussian blend's
 /// lighter biomes beyond these are dropped.
 pub const SKY_BIOME_SLOTS: usize = 4;
+/// The Vanilla categories the loaded pack draws itself on [`ShaderPackRendering`] cameras.
+/// Written in the render world by the shader-pack host each frame; the Vanilla actor,
+/// block-entity and hand passes skip those cameras for what is set, so the pack's Vanilla
+/// overlay never carries a second, Vanilla-lit copy.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShaderPackDrawnCategories {
+    pub actors: bool,
+    pub block_entities: bool,
+    pub hand: bool,
+}
 
 /// Game state behind the standard Iris uniforms that the render world cannot derive from
 /// the view. Published each frame by the app; camera matrices, positions, screen size and
@@ -160,5 +171,104 @@ impl Default for ShaderPackFrameInputs {
             on_fire: false,
             on_ground: true,
         }
+    }
+}
+
+/// The effects the loaded pack draws itself on [`ShaderPackRendering`] cameras, through its
+/// own programs or not at all (`clouds=off`); the Vanilla renderers leave them out of those
+/// views. Written in the render world by the pack host.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShaderPackEffects {
+    pub particles: bool,
+    pub weather: bool,
+    pub lightning: bool,
+    pub clouds: bool,
+    /// The block selection outline.
+    pub selection: bool,
+    /// Block cracks (with the selection highlight, which shares their draw).
+    pub cracks: bool,
+}
+
+/// Which render-world views the pack draws an effect for, for the Vanilla renderers' queue
+/// systems.
+#[derive(SystemParam)]
+pub struct ShaderPackDrawnEffects<'w, 's> {
+    effects: Option<Res<'w, ShaderPackEffects>>,
+    cameras: Query<'w, 's, (), With<ShaderPackRendering>>,
+}
+
+impl ShaderPackDrawnEffects<'_, '_> {
+    /// Whether the pack draws the effect `which` picks on render-world view `view`.
+    #[must_use]
+    pub fn replaces(&self, view: Entity, which: impl Fn(&ShaderPackEffects) -> bool) -> bool {
+        self.effects.as_deref().is_some_and(which) && self.cameras.contains(view)
+    }
+}
+
+/// Resolves a Bedrock identifier (`minecraft:ender_crystal`) to the loaded pack's id.
+pub type ShaderPackIdLookup = Arc<dyn Fn(&str) -> Option<i32> + Send + Sync>;
+
+/// The loaded pack's `entity.properties` and `item.properties` ids by Bedrock identifier,
+/// through the pinned Java mapping. Published by the render host when a pack loads (empty
+/// without one); the app reads it to fill [`ShaderPackActorIds`] and the held-item ids.
+#[derive(Resource, Clone, Default)]
+pub struct ShaderPackIdMaps {
+    entity: Option<ShaderPackIdLookup>,
+    item: Option<ShaderPackIdLookup>,
+    /// Changes whenever the lookups do.
+    pub revision: u64,
+}
+
+impl ShaderPackIdMaps {
+    #[must_use]
+    pub fn new(entity: ShaderPackIdLookup, item: ShaderPackIdLookup, revision: u64) -> Self {
+        Self {
+            entity: Some(entity),
+            item: Some(item),
+            revision,
+        }
+    }
+
+    /// The pack's `entityId` of a Bedrock entity identifier.
+    #[must_use]
+    pub fn entity_id(&self, bedrock_identifier: &str) -> Option<i32> {
+        self.entity.as_ref()?(bedrock_identifier)
+    }
+
+    /// The pack's item id (`heldItemId`, `currentRenderedItemId`) of a Bedrock item identifier.
+    #[must_use]
+    pub fn item_id(&self, bedrock_identifier: &str) -> Option<i32> {
+        self.item.as_ref()?(bedrock_identifier)
+    }
+
+    /// Whether a pack's maps are loaded.
+    #[must_use]
+    pub fn is_loaded(&self) -> bool {
+        self.entity.is_some()
+    }
+}
+
+impl fmt::Debug for ShaderPackIdMaps {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ShaderPackIdMaps")
+            .field("loaded", &self.is_loaded())
+            .field("revision", &self.revision)
+            .finish()
+    }
+}
+
+/// The pack's `entityId` of every actor the rig renders, by runtime id; actors absent read
+/// Iris's -1. Published each frame by the app while a pack is loaded.
+#[derive(Resource, ExtractResource, Clone, Debug, Default, PartialEq, Eq)]
+#[extract_app(bevy::render::RenderApp)]
+pub struct ShaderPackActorIds {
+    pub by_runtime_id: HashMap<u64, i32>,
+}
+
+impl ShaderPackActorIds {
+    /// The `entityId` of the actor with `runtime_id`.
+    #[must_use]
+    pub fn entity_id(&self, runtime_id: u64) -> i32 {
+        self.by_runtime_id.get(&runtime_id).copied().unwrap_or(-1)
     }
 }

@@ -480,6 +480,10 @@ fn prepare_particle_bind_group(
 }
 
 /// Queues compact translucent streams at their target-view depths from the extracted frame.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a queue system's render-world inputs"
+)]
 fn queue_particles(
     pipeline_cache: Res<PipelineCache>,
     mut pipeline: ResMut<ParticlePipeline>,
@@ -494,6 +498,7 @@ fn queue_particles(
         &bevy::render::camera::ExtractedCamera,
         &Msaa,
     )>,
+    pack: render_scene::shaderpack::ShaderPackDrawnEffects,
 ) {
     for draws in pending.0.values_mut() {
         draws.clear_frame();
@@ -506,6 +511,9 @@ fn queue_particles(
     ];
     drop(functions);
     for (view_entity, main_entity, view, extracted_camera, msaa) in &views {
+        if pack.replaces(view_entity, |drawn| drawn.particles) {
+            continue;
+        }
         let Some(phase) = phases.get_mut(&view.retained_view_entity) else {
             continue;
         };

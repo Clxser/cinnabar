@@ -2,14 +2,16 @@
 //! mappings: Geyser maps every Java block state to one Bedrock state, so each Bedrock state
 //! of the block registry takes one Java state from the inverse, chosen by [`preference`]. The
 //! Java biome registry and the block and biome tags come from the generator's MCProtocolLib
-//! network exports in the same archive.
+//! network exports in the same archive. Java items come from the archive's `items.json`, and
+//! Java entity types from the pinned Geyser sources ([`entities`]).
 
+mod entities;
 mod nbt;
 mod source;
 
 use super::Result;
 use assets::facts::java_mapping::{
-    self, JavaBiome, JavaBiomeRecord, JavaBiomeTag, JavaBlockMapping, JavaBlockTag,
+    self, JavaBiome, JavaBiomeRecord, JavaBiomeTag, JavaBlockMapping, JavaBlockTag, JavaIdentity,
     JavaMappingPayload,
 };
 use serde::Deserialize;
@@ -35,6 +37,12 @@ pub struct Summary {
     pub mapped_biomes: usize,
     /// Entries of the Java biome registry.
     pub java_biomes: usize,
+    /// Java entity types and the distinct Bedrock entity ids they map to.
+    pub entities: usize,
+    pub bedrock_entities: usize,
+    /// Java items and the distinct Bedrock item identifiers they map to.
+    pub items: usize,
+    pub bedrock_items: usize,
 }
 
 /// Writes the carrier to `out` and its digest beside it (`.sha256`), reading the archive at
@@ -86,6 +94,12 @@ enum Scalar {
 #[serde(deny_unknown_fields)]
 struct GeyserBiome {
     bedrock_id: u32,
+}
+
+/// One `items.json` value; only the Bedrock identifier is read.
+#[derive(Deserialize)]
+struct GeyserItem {
+    bedrock_identifier: String,
 }
 
 /// The registry-typed Bedrock state of a canonical-state property (`{"type":..,"value":..}`).
@@ -172,6 +186,16 @@ pub fn compile(
     let java_biomes = java_biomes(files, &geyser_biomes)?;
     let biome_tags = biome_tags(files, java_biomes.len())?;
     let (biomes, biome_count) = biomes(&geyser_biomes, &java_biomes, biome_registry)?;
+    let entities =
+        entities::entity_pairs(&files.vanilla_entities, &files.bedrock_entity_definitions)?;
+    let (entities, bedrock_entities) = identities(entities)?;
+    let items: BTreeMap<String, GeyserItem> = serde_json::from_slice(&files.items)?;
+    let (items, bedrock_items) = identities(
+        items
+            .into_iter()
+            .map(|(java, item)| (java, item.bedrock_identifier))
+            .collect(),
+    )?;
     let summary = Summary {
         states: records.len(),
         mapped_states: states.iter().flatten().count(),
@@ -179,6 +203,10 @@ pub fn compile(
         biomes: biome_count,
         mapped_biomes: biomes.len(),
         java_biomes: java_biomes.len(),
+        entities: entities.len(),
+        bedrock_entities: bedrock_entities.len(),
+        items: items.len(),
+        bedrock_items: bedrock_items.len(),
     };
     let payload = JavaMappingPayload {
         protocol,
@@ -196,8 +224,51 @@ pub fn compile(
         java_biomes,
         biome_tags,
         biomes,
+        entities,
+        bedrock_entities,
+        items,
+        bedrock_items,
     };
     Ok((payload, summary))
+}
+
+/// An identity table sorted by Java id and its inverse's indices into it.
+type Identities = (Box<[JavaIdentity]>, Box<[u16]>);
+
+/// The identity table of `(Java id, Bedrock id)` pairs given in preference order, and its
+/// inverse: each distinct Bedrock id, ascending, takes the pair whose Java id equals it, else
+/// the first pair naming it.
+fn identities(pairs: Vec<(String, String)>) -> Result<Identities> {
+    let mut chosen: BTreeMap<&str, &str> = BTreeMap::new();
+    for (java, bedrock) in &pairs {
+        let entry = chosen.entry(bedrock.as_str()).or_insert(java.as_str());
+        if java == bedrock {
+            *entry = java.as_str();
+        }
+    }
+    let mut sorted: Vec<(&str, &str)> = pairs
+        .iter()
+        .map(|(java, bedrock)| (java.as_str(), bedrock.as_str()))
+        .collect();
+    sorted.sort_unstable();
+    if let Some(pair) = sorted.windows(2).find(|pair| pair[0].0 == pair[1].0) {
+        return Err(format!("{} is mapped twice", pair[0].0).into());
+    }
+    let index = |java: &str| -> Result<u16> {
+        let found = sorted
+            .binary_search_by(|(id, _)| (*id).cmp(java))
+            .expect("chosen Java ids are listed");
+        Ok(u16::try_from(found)?)
+    };
+    let inverse = chosen
+        .values()
+        .map(|java| index(java))
+        .collect::<Result<Box<[u16]>>>()?;
+    let table = sorted
+        .into_iter()
+        .map(|(java, bedrock)| (Box::from(java), Box::from(bedrock)))
+        .collect();
+    Ok((table, inverse))
 }
 
 /// Gives each Bedrock state Geyser never produces (such as leaves with `update_bit`, or

@@ -13,6 +13,11 @@ mod geometry;
 pub(crate) use geometry::SegmentedVertexBuffer;
 pub use geometry::storage_binding_bytes;
 
+/// The non-sRGB view sRGB actor, item and block-entity artwork also allows: shader packs read
+/// texels as the raw gamma bytes Java's textures hold.
+pub(crate) const ARTWORK_VIEW_FORMATS: &[bevy::render::render_resource::TextureFormat] =
+    &[bevy::render::render_resource::TextureFormat::Rgba8Unorm];
+
 #[derive(Default, Resource)]
 pub(crate) struct ActorDrawTracker {
     pending: Mutex<Option<PendingActorDraw>>,
