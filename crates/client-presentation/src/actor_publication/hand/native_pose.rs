@@ -174,6 +174,9 @@ impl NativePoseCache {
         #[cfg(test)]
         let allocated = test_alloc::thread_allocations();
         let mut frame = stream.authority().actor_render_frame(alpha);
+        if sample_skin {
+            frame = frame.with_world_body(runtime_id);
+        }
         self.skin_layers = None;
         let sampled = if sample_skin {
             frame.layers_with_skin(runtime_id)

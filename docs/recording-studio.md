@@ -47,6 +47,11 @@ missing artwork are reported. Weather uses the recorded climate/roof grid.
 Prepared HUD and item terrain-visibility publications can lag one rendered frame;
 particle, item and block geometry are sampled at the requested capture cadence.
 
+Orbit, follow and other external native cameras use a separately captured world
+body, including your skin, even when you recorded in first person. The recorded
+POV still hides that body. Takes recorded with hidden first-person body bones need
+to be recorded again; switching cameras cannot restore their omitted body pose.
+
 Older takes remain readable but cannot regain omitted visual channels. Use a new
 take to capture the expanded coverage. Interrupted POV video can be recovered to
 a separate file when decodable media remains; this does not recover incomplete

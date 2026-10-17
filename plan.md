@@ -9520,6 +9520,13 @@ Current implementation; runtime acceptance remains incomplete:
   immediate actor-budget interruptions; this follow-up is formatted only, with
   compilation and live recording validation pending.
 
+- External recording cameras now request a separate local world-body sample.
+  Native controller selection, bone visibility, skin layers and motion endpoints
+  use the world perspective without changing the live first-person hand state.
+  Previously hidden body poses cannot be recovered from existing takes. This
+  follow-up is formatted only; compilation, regression and rendered acceptance
+  for native/Java animation, skins and external cameras remain incomplete.
+
 Required work remains open:
 
 - Render and exercise recording options, library/editor, focus, scrolling,

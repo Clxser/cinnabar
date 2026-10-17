@@ -87,7 +87,14 @@ pub(super) fn sample<'a>(
     let mut native_body_sampled = false;
     let mut remote_skin_layers = std::collections::HashMap::new();
     let mut occlusion_work = occlusion::PreparationWork::default();
-    let mut render_frame = stream.map(|stream| stream.authority().actor_render_frame(partial_tick));
+    let mut render_frame = stream.map(|stream| {
+        let frame = stream.authority().actor_render_frame(partial_tick);
+        if first_person {
+            frame
+        } else {
+            frame.with_world_body(stream.local_player_runtime_id())
+        }
+    });
     let (local_runtime_id, actor_session_id, dimension, remotes, canonical_local, unrigged_actors) =
         stream
             .map(|stream| {

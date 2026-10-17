@@ -7,6 +7,8 @@ pub(super) struct ClipHistory<'a> {
     pub controllers: &'a [ControllerState],
     pub journal: &'a tick::controller::ControllerJournal,
     pub server_effects: &'a evaluation::MolangEffects,
+    /// A different perspective selects scratch states instead of replaying the source view.
+    pub reselect: bool,
 }
 
 /// Resamples weights on scratch controllers without committing transitions or advancing clip clocks.
@@ -25,9 +27,15 @@ pub(super) fn sample(
         controllers,
         journal,
         server_effects,
+        reselect,
     } = history;
     let mut journal = journal.clone();
     let mut controllers = controllers.to_vec();
+    if reselect {
+        for controller in &mut controllers {
+            controller.blend_from = None;
+        }
+    }
     let mut clips = tick::selection::select(
         evaluator,
         variables,
@@ -37,7 +45,7 @@ pub(super) fn sample(
             geometry: state.geometry_binding,
             blink: super::super::skin_layers::blink_controller(evaluator.assets, state),
             journal: &mut journal,
-            replay: true,
+            replay: !reselect,
             record: false,
         },
         budget,
