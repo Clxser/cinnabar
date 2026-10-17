@@ -67,6 +67,21 @@ pub enum ProgramGroup {
     Final,
 }
 
+impl ProgramGroup {
+    /// The `<stage>` of `texture.<stage>.<sampler>` bindings that apply to the group.
+    pub fn texture_stage(self) -> &'static str {
+        match self {
+            ProgramGroup::Prepare => "prepare",
+            ProgramGroup::Deferred => "deferred",
+            ProgramGroup::Composite | ProgramGroup::Final => "composite",
+            ProgramGroup::ShadowComposite => "shadowcomp",
+            ProgramGroup::Shadow => "shadow",
+            ProgramGroup::Setup | ProgramGroup::Begin => "begin",
+            ProgramGroup::Gbuffers | ProgramGroup::DistantHorizons => "gbuffers",
+        }
+    }
+}
+
 /// Whether a program is a draw (vertex + fragment, optional geometry/tessellation) or a
 /// compute dispatch. A composite-style pass may have both: its `.csh` files run first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

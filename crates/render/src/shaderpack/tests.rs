@@ -1,12 +1,12 @@
 //! Original fixture packs through planning and, with a GPU, through a whole frame.
 
-use super::loader::{GpuContext, build, runnable_programs, translate_config};
+use super::loader::{GpuContext, build, class_sampler, runnable_programs, translate_config};
 use super::passes::{FrameIo, ViewState, record_frame};
 use super::plan::plan_frame;
 use super::uniforms::{FrameClock, FrameUniforms, ViewCamera};
 use bevy::math::{Quat, Vec3};
 use render_scene::shaderpack::ShaderPackFrameInputs;
-use shaderpack::{JAVA_DIMENSIONS, PackSource, ProgramGroup, ShaderPack};
+use shaderpack::{JAVA_DIMENSIONS, PackSource, ProgramGroup, SamplerClass, ShaderPack};
 use std::sync::Arc;
 
 const PASS_VERTEX: &str = "#version 120
@@ -121,21 +121,16 @@ fn gpu() -> Option<GpuContext> {
     })
 }
 
-#[test]
-fn composite_and_final_transform_the_scene_and_present_it_upright() {
-    let Some(gpu) = gpu() else {
-        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
-        return;
-    };
-    let pack = pack(&[
-        ("composite.vsh", PASS_VERTEX),
-        ("composite.fsh", INVERT),
-        ("final.vsh", PASS_VERTEX),
-        ("final.fsh", FINAL),
-    ]);
+/// Side of the fixture frame.
+const SIZE: [u32; 2] = [4, 4];
+
+/// Runs `files` over a scene whose top half is red and bottom half mid grey; returns the
+/// output rows top-down, 256 bytes apart.
+fn render(gpu: &GpuContext, files: &[(&str, &str)]) -> Vec<u8> {
+    let pack = pack(files);
     let pack =
-        Arc::new(build(&pack, "fixture", JAVA_DIMENSIONS[0], None, &gpu).expect("fixture loads"));
-    let size = [4u32, 4];
+        Arc::new(build(&pack, "fixture", JAVA_DIMENSIONS[0], None, gpu).expect("fixture loads"));
+    let size = SIZE;
     let extent = wgpu::Extent3d {
         width: size[0],
         height: size[1],
@@ -260,16 +255,15 @@ fn composite_and_final_transform_the_scene_and_present_it_upright() {
     gpu.device
         .poll(wgpu::PollType::wait_indefinitely())
         .unwrap();
-    let bytes = readback.slice(..).get_mapped_range().unwrap().to_vec();
-    for row in 0..size[1] as usize {
-        for column in 0..size[0] as usize {
+    readback.slice(..).get_mapped_range().unwrap().to_vec()
+}
+
+fn assert_pixels(bytes: &[u8], expected: impl Fn(usize) -> [u8; 3]) {
+    for row in 0..SIZE[1] as usize {
+        for column in 0..SIZE[0] as usize {
             let at = row * 256 + column * 4;
             let pixel = &bytes[at..at + 4];
-            let expected: [u8; 3] = if row < 2 {
-                [0, 255, 255]
-            } else {
-                [127, 127, 127]
-            };
+            let expected = expected(row);
             for c in 0..3 {
                 assert!(
                     pixel[c].abs_diff(expected[c]) <= 1,
@@ -277,5 +271,161 @@ fn composite_and_final_transform_the_scene_and_present_it_upright() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn composite_and_final_transform_the_scene_and_present_it_upright() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    let bytes = render(
+        &gpu,
+        &[
+            ("composite.vsh", PASS_VERTEX),
+            ("composite.fsh", INVERT),
+            ("final.vsh", PASS_VERTEX),
+            ("final.fsh", FINAL),
+        ],
+    );
+    assert_pixels(&bytes, |row| {
+        if row < 2 {
+            [0, 255, 255]
+        } else {
+            [127, 127, 127]
+        }
+    });
+}
+
+/// Reads `colortex0` exactly on its top edge, where a repeating sampler would blend in the
+/// bottom row.
+const TOP_EDGE: &str = "#version 120
+uniform sampler2D colortex0;
+void main() {
+    gl_FragData[0] = texture2D(colortex0, vec2(0.5, 1.0));
+}
+";
+
+#[test]
+fn render_targets_clamp_at_their_edges() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    let bytes = render(
+        &gpu,
+        &[
+            ("composite.vsh", PASS_VERTEX),
+            ("composite.fsh", TOP_EDGE),
+            ("final.vsh", PASS_VERTEX),
+            ("final.fsh", FINAL),
+        ],
+    );
+    assert_pixels(&bytes, |_| [255, 0, 0]);
+}
+
+/// Multiplies a 32-bit float `colortex0` by `depthtex0` (1.0 at the cleared far plane).
+const FLOAT_AND_DEPTH: &str = "#version 120
+/*
+const int colortex0Format = RGBA32F;
+*/
+uniform sampler2D colortex0;
+uniform sampler2D depthtex0;
+varying vec2 texcoord;
+void main() {
+    gl_FragData[0] = vec4(texture2D(colortex0, texcoord).rgb * texture2D(depthtex0, texcoord).r, 1.0);
+}
+";
+
+#[test]
+fn float32_targets_and_depth_bind_with_their_samplers() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    let bytes = render(
+        &gpu,
+        &[
+            ("composite.vsh", PASS_VERTEX),
+            ("composite.fsh", FLOAT_AND_DEPTH),
+            ("final.vsh", PASS_VERTEX),
+            ("final.fsh", FINAL),
+        ],
+    );
+    assert_pixels(&bytes, |row| {
+        if row < 2 {
+            [255, 0, 0]
+        } else {
+            [128, 128, 128]
+        }
+    });
+}
+
+/// Reads `colortex0` through a 3D sampler, where the pack's 3D custom texture binds.
+const VOLUME: &str = "#version 120
+uniform sampler3D colortex0;
+void main() {
+/* DRAWBUFFERS:3 */
+    gl_FragData[0] = texture3D(colortex0, vec3(0.5));
+}
+";
+
+#[test]
+fn a_3d_custom_texture_leaves_2d_reads_of_its_name_on_the_buffer() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    // As Photon does: `colortex0` names both the scene buffer (sampler2D) and a 3D noise
+    // volume (sampler3D) in composite programs.
+    let bytes = render(
+        &gpu,
+        &[
+            (
+                "shaders.properties",
+                "texture.composite.colortex0 = volume.dat TEXTURE_3D R8 2 2 2 RED UNSIGNED_BYTE\n",
+            ),
+            ("volume.dat", "ABCDEFGH"),
+            ("composite.vsh", PASS_VERTEX),
+            ("composite.fsh", VOLUME),
+            ("composite1.vsh", PASS_VERTEX),
+            ("composite1.fsh", INVERT),
+            ("final.vsh", PASS_VERTEX),
+            ("final.fsh", FINAL),
+        ],
+    );
+    assert_pixels(&bytes, |row| {
+        if row < 2 {
+            [0, 255, 255]
+        } else {
+            [127, 127, 127]
+        }
+    });
+}
+
+#[test]
+fn sampler_classes_map_to_wrap_and_filter_modes() {
+    for (index, class) in SamplerClass::ALL.into_iter().enumerate() {
+        assert_eq!(
+            class as usize, index,
+            "PackGpu::filtering is indexed by class"
+        );
+        let d = class_sampler(class);
+        let wrap = if class.clamps() {
+            wgpu::AddressMode::ClampToEdge
+        } else {
+            wgpu::AddressMode::Repeat
+        };
+        assert_eq!(
+            [d.address_mode_u, d.address_mode_v, d.address_mode_w],
+            [wrap; 3]
+        );
+        let filter = if class.linear() {
+            wgpu::FilterMode::Linear
+        } else {
+            wgpu::FilterMode::Nearest
+        };
+        assert_eq!([d.mag_filter, d.min_filter], [filter; 2]);
     }
 }

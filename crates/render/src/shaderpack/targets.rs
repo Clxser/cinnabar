@@ -310,15 +310,10 @@ pub(crate) fn pass_bind_groups<'a>(
         }
     }
     for sampler in &reflection.samplers {
-        let s = if sampler.comparison {
-            &pack.comparison
-        } else {
-            &pack.filtering
-        };
         push(
             sampler.group,
             sampler.binding,
-            wgpu::BindingResource::Sampler(s),
+            wgpu::BindingResource::Sampler(pack.sampler(sampler)),
         );
     }
     for (texture, source) in reflection.textures.iter().zip(&program.textures) {

@@ -3,7 +3,7 @@
 use crate::{open_fixture, program, reflection, texture_names, uniform_names};
 use shaderpack::{
     CompiledStage, FIRST_TEXTURE_BINDING, LOOSE_UNIFORM_BINDING, LOOSE_UNIFORM_BLOCK, ProgramKind,
-    SAMPLER_BINDING, SHADOW_SAMPLER_BINDING, SampleType, ScalarType, StageKind, StageMask,
+    SHADOW_SAMPLER_BINDING, SampleType, SamplerClass, ScalarType, StageKind, StageMask,
     TEXTURE_GROUP, TranslateConfig, UNIFORM_GROUP, ValueType, VertexAttribute,
 };
 
@@ -164,8 +164,8 @@ fn version_120_terrain_maps_legacy_inputs_uniforms_and_samplers_to_fixed_binding
     assert_eq!(vertex.0, reflected);
     assert_eq!(vertex.1, ubo.size);
 
-    // Separate textures from binding 2; the shadow sampler is a depth texture compared with
-    // the shared comparison sampler.
+    // Separate textures after the shared samplers; the shadow sampler is a depth texture
+    // compared with the shared comparison sampler.
     assert_eq!(texture_names(r), ["gtexture", "lightmap", "shadowtex0"]);
     for (i, tex) in r.textures.iter().enumerate() {
         assert_eq!(tex.group, TEXTURE_GROUP);
@@ -185,16 +185,27 @@ fn version_120_terrain_maps_legacy_inputs_uniforms_and_samplers_to_fixed_binding
         sample_types,
         [SampleType::Float, SampleType::Float, SampleType::Depth]
     );
-    let samplers: Vec<(u32, u32, bool)> = r
+    // The atlas repeats without filtering and the lightmap clamps, as in Java.
+    let mut samplers: Vec<(u32, u32, Option<SamplerClass>)> = r
         .samplers
         .iter()
-        .map(|s| (s.group, s.binding, s.comparison))
+        .map(|s| (s.group, s.binding, s.class()))
         .collect();
+    samplers.sort_by_key(|s| s.1);
     assert_eq!(
         samplers,
         [
-            (TEXTURE_GROUP, SAMPLER_BINDING, false),
-            (TEXTURE_GROUP, SHADOW_SAMPLER_BINDING, true)
+            (TEXTURE_GROUP, SHADOW_SAMPLER_BINDING, None),
+            (
+                TEXTURE_GROUP,
+                SamplerClass::ClampLinear.binding(),
+                Some(SamplerClass::ClampLinear)
+            ),
+            (
+                TEXTURE_GROUP,
+                SamplerClass::RepeatNearest.binding(),
+                Some(SamplerClass::RepeatNearest)
+            ),
         ]
     );
 

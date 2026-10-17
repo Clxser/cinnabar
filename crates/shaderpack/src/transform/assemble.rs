@@ -2,8 +2,8 @@
 
 use super::StageDraft;
 use crate::reflection::{
-    LOOSE_UNIFORM_BINDING, LOOSE_UNIFORM_BLOCK, SAMPLER_BINDING, SAMPLER_NAME,
-    SHADOW_SAMPLER_BINDING, SHADOW_SAMPLER_NAME, TEXTURE_GROUP, UNIFORM_GROUP,
+    LOOSE_UNIFORM_BINDING, LOOSE_UNIFORM_BLOCK, SHADOW_SAMPLER_BINDING, SHADOW_SAMPLER_NAME,
+    TEXTURE_GROUP, UNIFORM_GROUP,
 };
 use crate::token::{Emitter, Tok};
 
@@ -51,9 +51,11 @@ pub(crate) fn assemble(draft: &StageDraft, ubo: &[UboMember]) -> (String, Vec<u3
         e.raw("};\n");
     }
     e.tokens(&draft.resources);
-    if draft.samplers.filtering {
+    for class in &draft.samplers.filtering {
         e.raw(&format!(
-            "layout(set = {TEXTURE_GROUP}, binding = {SAMPLER_BINDING}) uniform sampler {SAMPLER_NAME};\n"
+            "layout(set = {TEXTURE_GROUP}, binding = {}) uniform sampler {};\n",
+            class.binding(),
+            class.glsl_name()
         ));
     }
     if draft.samplers.comparison {

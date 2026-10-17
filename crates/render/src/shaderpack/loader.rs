@@ -21,7 +21,8 @@ use super::uniforms::PackSettings;
 use sha2::{Digest, Sha256};
 use shaderpack::{
     BlendMode, BufferId, CustomUniform, Environment, ProgramGroup, ProgramKind, ProgramReflection,
-    ProgramTranslation, ScaleRule, ShaderPack, StageKind, TranslateConfig,
+    ProgramTranslation, SamplerBinding, SamplerClass, ScaleRule, ShaderPack, StageKind,
+    TranslateConfig,
 };
 use std::path::{Path, PathBuf};
 use wgpu::{TextureFormat, TextureUsages};
@@ -29,7 +30,7 @@ use wgpu::{TextureFormat, TextureUsages};
 /// Format of the pack's screen, which `final` writes as Minecraft's 8-bit framebuffer.
 pub(crate) const SCREEN_FORMAT: TextureFormat = TextureFormat::Rgba8Unorm;
 /// Bumped when translated output or the cache layout changes, invalidating cached data.
-const CACHE_VERSION: u32 = 1;
+const CACHE_VERSION: u32 = 2;
 
 /// The device a pack is built for.
 #[derive(Clone)]
@@ -110,11 +111,53 @@ pub(crate) struct PackGpu {
     pub shader_storage: Vec<(u32, u64)>,
     pub settings: PackSettings,
     pub custom_uniforms: Vec<CustomUniform>,
-    pub filtering: wgpu::Sampler,
+    /// One filtering sampler per [`SamplerClass`], in [`SamplerClass::ALL`] order.
+    pub filtering: [wgpu::Sampler; SamplerClass::ALL.len()],
     pub comparison: wgpu::Sampler,
     pub zero_uniforms: wgpu::Buffer,
     pub quad: wgpu::Buffer,
     pub host: HostPipelines,
+}
+
+impl PackGpu {
+    /// The sampler bound for a reflected sampler binding.
+    pub fn sampler(&self, binding: &SamplerBinding) -> &wgpu::Sampler {
+        match binding.class() {
+            Some(class) => &self.filtering[class as usize],
+            None => &self.comparison,
+        }
+    }
+}
+
+/// The wgpu sampler of a [`SamplerClass`]. Linear classes also filter between mip levels,
+/// as Iris does for buffers with mipmaps enabled; repeat/nearest blends mip levels like
+/// Java's atlas (`NEAREST_MIPMAP_LINEAR`), which single-level custom textures never see.
+pub(crate) fn class_sampler(class: SamplerClass) -> wgpu::SamplerDescriptor<'static> {
+    let address = if class.clamps() {
+        wgpu::AddressMode::ClampToEdge
+    } else {
+        wgpu::AddressMode::Repeat
+    };
+    let filter = if class.linear() {
+        wgpu::FilterMode::Linear
+    } else {
+        wgpu::FilterMode::Nearest
+    };
+    let mipmap = if class == SamplerClass::ClampNearest {
+        wgpu::MipmapFilterMode::Nearest
+    } else {
+        wgpu::MipmapFilterMode::Linear
+    };
+    wgpu::SamplerDescriptor {
+        label: Some(class.glsl_name()),
+        address_mode_u: address,
+        address_mode_v: address,
+        address_mode_w: address,
+        mag_filter: filter,
+        min_filter: filter,
+        mipmap_filter: mipmap,
+        ..Default::default()
+    }
 }
 
 /// Groups whose programs this host runs; gbuffers, shadow and shadowcomp wait for the
@@ -419,7 +462,7 @@ pub(crate) fn build(
             }
         }
         let formats: Vec<TextureFormat> = bindings.textures.iter().map(|s| s.format()).collect();
-        let entries = layout_entries(reflection, &formats);
+        let entries = layout_entries(reflection, &formats, support);
         let layouts = bind_group_layouts(&gpu.device, &program.program.name, &entries);
         let layout_refs: Vec<Option<&wgpu::BindGroupLayout>> =
             layouts.iter().map(Option::as_ref).collect();
@@ -560,16 +603,7 @@ pub(crate) fn build(
         mapped_at_creation: false,
     });
     gpu.queue.write_buffer(&quad, 0, &quad_bytes);
-    let filtering = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("shader pack iris_sampler"),
-        address_mode_u: wgpu::AddressMode::Repeat,
-        address_mode_v: wgpu::AddressMode::Repeat,
-        address_mode_w: wgpu::AddressMode::Repeat,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Linear,
-        ..Default::default()
-    });
+    let filtering = SamplerClass::ALL.map(|class| gpu.device.create_sampler(&class_sampler(class)));
     let comparison = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("shader pack iris_samplerShadow"),
         mag_filter: wgpu::FilterMode::Linear,

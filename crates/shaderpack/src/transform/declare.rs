@@ -7,11 +7,11 @@ use super::items::{
     Decl, Item, arr_len, is_image, is_integer, is_opaque, layout_key, loc_size, mat_cols,
     parse_decl, sampler_info, split_items, strip_layout_keys,
 };
-use super::{ProgramInterface, TransformError, UboMember};
+use super::{ProgramInterface, ResourceNames, TransformError, UboMember};
 use crate::programs::StageKind;
 use crate::reflection::{
-    FIRST_OTHER_ATTRIBUTE_LOCATION, IMAGE_GROUP, STORAGE_BUFFER_GROUP, TEXTURE_GROUP,
-    UNIFORM_GROUP, VertexAttribute,
+    FIRST_OTHER_ATTRIBUTE_LOCATION, IMAGE_GROUP, STORAGE_BUFFER_GROUP, SamplerClass, TEXTURE_GROUP,
+    TextureDimension, UNIFORM_GROUP, VertexAttribute,
 };
 use crate::token::{Tok, id, lex, p};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -55,7 +55,7 @@ pub(super) fn collect(
     items: Vec<Item>,
     stage: StageKind,
     iface: &mut ProgramInterface,
-    image_formats: &HashMap<String, String>,
+    names: &ResourceNames<'_>,
 ) -> Result<Collected, TransformError> {
     let mut c = Collected::default();
     let mut structs: Structs = HashMap::new();
@@ -115,7 +115,7 @@ pub(super) fn collect(
             continue;
         }
         if d.has("uniform") {
-            uniforms(&mut c, &d, iface, image_formats, line)?;
+            uniforms(&mut c, &d, iface, names, line)?;
             continue;
         }
         let is_in =
@@ -250,7 +250,7 @@ fn uniforms(
     c: &mut Collected,
     d: &Decl,
     iface: &mut ProgramInterface,
-    image_formats: &HashMap<String, String>,
+    names: &ResourceNames<'_>,
     line: u32,
 ) -> Result<(), TransformError> {
     for (name, arr, _) in &d.decls {
@@ -258,7 +258,15 @@ fn uniforms(
             if let Some((tex_ty, shadow)) = sampler_info(&d.ty) {
                 let b = iface.texture_binding(name);
                 c.resource_names.push((TEXTURE_GROUP, b, name.clone()));
-                c.samplers.insert(name.clone(), (d.ty.clone(), shadow));
+                let classes = names.sampler_classes;
+                let shaped = (name.clone(), Some(texture_dimension(tex_ty)));
+                let class = classes
+                    .get(&shaped)
+                    .or_else(|| classes.get(&(name.clone(), None)))
+                    .copied()
+                    .unwrap_or_else(|| SamplerClass::for_name(name));
+                c.samplers
+                    .insert(name.clone(), (d.ty.clone(), shadow, class));
                 c.resources.extend(
                     lex(&format!(
                         "layout(set = {TEXTURE_GROUP}, binding = {b}) uniform {tex_ty} {name}"
@@ -275,7 +283,7 @@ fn uniforms(
                 if lay.is_empty() {
                     // OpenGL allows format-less write-only images; WebGPU needs the format,
                     // which Iris knows from `image.<name>` in shaders.properties.
-                    if let Some(f) = image_formats.get(name) {
+                    if let Some(f) = names.image_formats.get(name) {
                         lay.push(id(f));
                     }
                 }
@@ -319,6 +327,21 @@ fn uniforms(
         c.ubo.push(UboMember::new(name, toks));
     }
     Ok(())
+}
+
+/// Shape of a separate texture type (`texture3D`, `utexture2DArray` …).
+fn texture_dimension(tex_ty: &str) -> TextureDimension {
+    let shape = tex_ty
+        .trim_start_matches(['i', 'u'])
+        .trim_start_matches("texture");
+    match shape {
+        "1D" | "1DArray" => TextureDimension::D1,
+        "2DArray" => TextureDimension::D2Array,
+        "3D" => TextureDimension::D3,
+        "Cube" => TextureDimension::Cube,
+        "CubeArray" => TextureDimension::CubeArray,
+        _ => TextureDimension::D2,
+    }
 }
 
 /// Emits a vertex output or fragment input. Matrices, arrays and structs are not legal
