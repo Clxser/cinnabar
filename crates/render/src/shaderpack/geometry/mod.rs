@@ -66,7 +66,7 @@ pub use gpu::{
     ShaderpackGeometrySettings,
 };
 pub use jobs::GeometryCategory;
-pub(crate) use vertex::{CONSTANT_STREAM_WORDS, host_vertex};
+pub(crate) use vertex::{CONSTANT_STREAM_WORDS, host_vertex, textured_host_vertex};
 pub use vertex::{
     CONSTANT_VERTEX_BUFFER, GEOMETRY_VERTEX_BUFFER, IRIS_VERTEX_STRIDE, VertexLayoutError,
     vertex_buffer_layouts,

@@ -4,6 +4,8 @@
 //! variants), `final` into the screen, the copy-back of buffers that end flipped, and the
 //! screen's presentation into the view.
 
+use super::draws::DrawKind;
+use super::effects::Effect;
 use super::frame_geometry::{
     FrameGeometry, bind_geometry, record_opaque, record_shadow, record_translucent,
 };
@@ -33,9 +35,11 @@ pub(crate) struct ViewState {
     audit: Option<super::uniform_audit::UniformAudit>,
     /// Programs and draws already reported as skipped.
     pub skipped: BTreeSet<String>,
-    /// The atlas generation the draw bind groups were built over (`Some(None)`: the
-    /// placeholder); `None` before the first frame.
-    pub atlas_generation: Option<Option<u64>>,
+    /// The atlas and effect texture generations the draw bind groups were built over
+    /// (`None` inside: placeholders); `None` before the first frame.
+    pub atlas_generation: Option<(Option<u64>, Option<u64>)>,
+    /// This frame's effect geometry.
+    pub effects: super::effects::EffectBuffers,
 }
 
 impl ViewState {
@@ -62,6 +66,7 @@ impl ViewState {
             audit: super::uniform_audit::UniformAudit::from_env(),
             skipped: BTreeSet::new(),
             atlas_generation: None,
+            effects: Default::default(),
         }
     }
 
@@ -71,15 +76,16 @@ impl ViewState {
     }
 
     /// Evaluates custom uniforms and writes every program's and geometry draw's uniform
-    /// block; `chunk_offset` is the terrain origin relative to the camera and `atlas_size`
-    /// the block atlas's texel size (terrain draws' `atlasSize`).
+    /// block; `chunk_offset` is the terrain origin relative to the camera, `atlas_size` the
+    /// block atlas's texel size (terrain draws' `atlasSize`) and `particle_atlas_size` the
+    /// particle atlas's (particle draws').
     pub(crate) fn write_uniforms(
         &mut self,
         queue: &Queue,
         frame: &FrameUniforms,
         frame_time: f32,
         chunk_offset: Vec3,
-        atlas_size: [i32; 2],
+        [atlas_size, particle_atlas_size]: [[i32; 2]; 2],
     ) {
         let builtin = |name: &str| -> Option<shaderpack::UniformValue> {
             if let Some(value) = frame.value(name) {
@@ -142,13 +148,26 @@ impl ViewState {
                 (frame.model_view(), frame.projection())
             };
             let terrain = draw.kind.category().is_some();
+            let effect = match draw.kind {
+                DrawKind::Effect(effect) => Some(effect),
+                _ => None,
+            };
             let values = DrawUniforms {
                 model_view,
                 projection,
                 chunk_offset: if terrain { chunk_offset } else { Vec3::ZERO },
                 render_stage: draw.kind.render_stage(),
-                lightmap_matrix: terrain,
-                atlas_size: if terrain { atlas_size } else { [0; 2] },
+                lightmap_matrix: draw.kind.lightmap_matrix(),
+                atlas_size: match effect {
+                    _ if terrain => atlas_size,
+                    Some(
+                        Effect::Particles
+                        | Effect::ParticlesTranslucent
+                        | Effect::ParticlesAdditive,
+                    ) => particle_atlas_size,
+                    _ => [0; 2],
+                },
+                entity_id: effect.map_or(-1, |effect| self.pack.effects.entity_id(effect)),
             };
             let lookup = |name: &str| values.value(name).or_else(|| lookup(name));
             pack_block(block, &lookup, &mut self.scratch, &mut self.unknown);

@@ -2,6 +2,10 @@
 //! block ids, per-view preparation and the render-graph system.
 
 use super::atlas::{ShaderpackAtlas, ShaderpackAtlasPlugin};
+use super::draws::DrawKind;
+use super::effects::resources::VanillaTextures;
+use super::effects::textures::{ShaderpackEffectTextures, prepare_effect_textures};
+use super::effects::{Effect, EffectCamera, EffectInputs};
 use super::frame_geometry::{FrameGeometry, TerrainDraws};
 use super::geometry::{
     GeometryCategory, ShaderpackBlockIds, ShaderpackGeometry, ShaderpackGeometryPlugin,
@@ -25,7 +29,8 @@ use bevy::{
     },
 };
 use render_scene::shaderpack::{
-    ShaderPackFrameInputs, ShaderPackRendering, ShaderPackRequest, ShaderPackStatus,
+    ShaderPackEffects, ShaderPackFrameInputs, ShaderPackRendering, ShaderPackRequest,
+    ShaderPackStatus,
 };
 use std::{
     collections::HashMap,
@@ -56,6 +61,8 @@ type MainWorldGpu<'w> = (
 
 /// Starts a load when the requested pack or the dimension changes and publishes results.
 /// A dimension change of the shown pack keeps it on screen until the new folder is ready.
+/// The pack's `minecraft:` texture references resolve against the vanilla textures loaded
+/// when its load starts.
 fn drive_loader(
     request: Res<ShaderPackRequest>,
     inputs: Res<ShaderPackFrameInputs>,
@@ -63,6 +70,7 @@ fn drive_loader(
     mut loaded: ResMut<LoadedShaderPack>,
     mut loader: ResMut<Loader>,
     gpu: MainWorldGpu,
+    atmosphere: Option<Res<render_scene::AtmosphereTextureAssets>>,
 ) {
     let wanted = request
         .pack
@@ -92,12 +100,16 @@ fn drive_loader(
             loaded.0 = None;
         }
         let cache_dir = request.cache_dir.clone();
+        let vanilla = atmosphere
+            .as_deref()
+            .map(VanillaTextures::from_atmosphere)
+            .unwrap_or_default();
         let (send, receive) = mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("shader pack load".into())
             .spawn(move || {
                 let id = shaderpack::JAVA_DIMENSIONS[dimension as usize];
-                let _ = send.send(load(&path, id, cache_dir.as_deref(), &gpu));
+                let _ = send.send(load(&path, id, cache_dir.as_deref(), &gpu, &vanilla));
             });
         match spawned {
             Ok(_) => loader.job = Some(Mutex::new(receive)),
@@ -149,13 +161,15 @@ struct ShaderPackViews(Mutex<HashMap<Entity, ViewState>>);
 type PreparedView = (Entity, &'static ExtractedView);
 
 /// Enables the geometry adapter while a pack with terrain programs is shown on some camera,
-/// with the pack's `separateAo`/`oldLighting`, and publishes its block ids.
+/// with the pack's `separateAo`/`oldLighting`, publishes its block ids and the effects it
+/// draws in place of Vanilla's.
 fn configure_geometry(
     mut commands: Commands,
     pack: Option<Res<LoadedShaderPack>>,
     cameras: Query<(), With<ShaderPackRendering>>,
     mut settings: ResMut<ShaderpackGeometrySettings>,
     ids: Option<Res<ShaderpackBlockIds>>,
+    mut replaced: ResMut<ShaderPackEffects>,
     mut shown: Local<Option<usize>>,
 ) {
     let pack = pack
@@ -170,6 +184,10 @@ fn configure_geometry(
     if *settings != wanted {
         *settings = wanted;
     }
+    replaced.set_if_neq(
+        pack.as_deref()
+            .map_or_else(Default::default, replaced_effects),
+    );
     let key = pack.as_ref().map(|p| Arc::as_ptr(p) as usize);
     if *shown == key {
         return;
@@ -190,6 +208,28 @@ fn configure_geometry(
     }
 }
 
+/// The Vanilla effects `pack` replaces: those it draws, and clouds and weather its
+/// directives turn off.
+fn replaced_effects(pack: &PackGpu) -> ShaderPackEffects {
+    let draws = |effects: &[Effect]| {
+        pack.draws
+            .iter()
+            .any(|d| matches!(d.kind, DrawKind::Effect(e) if effects.contains(&e)))
+    };
+    ShaderPackEffects {
+        particles: draws(&[
+            Effect::Particles,
+            Effect::ParticlesTranslucent,
+            Effect::ParticlesAdditive,
+        ]),
+        weather: draws(&[Effect::Weather]) || !pack.effects.draws(Effect::Weather),
+        lightning: draws(&[Effect::Lightning]),
+        clouds: draws(&[Effect::Clouds]) || !pack.effects.draws(Effect::Clouds),
+        selection: draws(&[Effect::Outline]),
+        cracks: draws(&[Effect::DamagedBlock]),
+    }
+}
+
 /// Allocates or resizes view targets and writes this frame's uniforms.
 #[allow(clippy::too_many_arguments, reason = "one frame's view inputs")]
 fn prepare_views(
@@ -202,6 +242,7 @@ fn prepare_views(
     time: Option<Res<Time>>,
     geometry: Option<Res<ShaderpackGeometry>>,
     atlas: Option<Res<ShaderpackAtlas>>,
+    effect_textures: Option<Res<ShaderpackEffectTextures>>,
 ) {
     let states = views.0.get_mut().unwrap_or_else(|e| e.into_inner());
     let (Some(pack), Some(inputs)) = (pack.and_then(|p| p.0.clone()), inputs) else {
@@ -248,12 +289,15 @@ fn prepare_views(
         let atlas_size = atlas.as_ref().map_or([0; 2], |atlas| {
             atlas.size.to_array().map(|side| side as i32)
         });
+        let particle_atlas_size = effect_textures
+            .as_ref()
+            .map_or([0; 2], |t| t.particle_atlas_size());
         state.write_uniforms(
             &queue,
             &frame,
             clock.delta_seconds,
             chunk_offset,
-            atlas_size,
+            [atlas_size, particle_atlas_size],
         );
     }
 }
@@ -323,16 +367,44 @@ fn shaderpack_post(
             atlas.generation,
         )
     });
+    let effects = EffectInputs {
+        camera: EffectCamera {
+            position: view.world_from_view.translation(),
+            model_view: Mat4::from_quat(view.world_from_view.rotation().inverse()),
+            focal: [view.clip_from_view.x_axis.x, view.clip_from_view.y_axis.y],
+            screen: [view.viewport.z.max(1), view.viewport.w.max(1)],
+        },
+        frame: inputs,
+        atmosphere: world.get_resource::<render_scene::AtmosphereFrame>(),
+        atmosphere_view: world
+            .get_resource::<render_scene::AtmosphereViewInputs>()
+            .copied(),
+        atmosphere_textures: world.get_resource::<render_scene::AtmosphereTextureAssets>(),
+        clouds_visible: world
+            .get_resource::<render_scene::CloudVisibility>()
+            .is_some_and(|visible| visible.0),
+        particles: world.get_resource::<render_scene::ParticleGpuFrame>(),
+        precipitation: world.get_resource::<render_scene::PrecipitationScene>(),
+        lightning: world.get_resource::<render_scene::LightningScene>(),
+        selection: world
+            .get_resource::<render_scene::BlockSelectionFrameResource>()
+            .map(|frame| &frame.0),
+        block_entities: world
+            .get_resource::<render_scene::BlockEntityFrameResource>()
+            .map(|frame| &frame.0),
+    };
     let geometry = terrain.as_ref().map(|terrain| FrameGeometry {
         device: render_device,
         terrain,
         atlas,
+        effect_textures: world.get_resource::<ShaderpackEffectTextures>(),
         sky: SkyInputs {
             sky_color: inputs.sky_color,
             celestial_angle: inputs.celestial_angle,
             camera_y: view.world_from_view.translation().y,
             sunrise: inputs.dimension == 0,
         },
+        effects,
         overlay_radius: terrain.geometry.complete_radius().unwrap_or(f32::MAX),
     });
     let post = target.post_process_write();
@@ -403,18 +475,25 @@ pub(super) fn finish(app: &mut App) {
     let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
         return;
     };
-    render_app.init_resource::<ShaderPackViews>().add_systems(
-        Render,
-        (
-            configure_geometry
-                .in_set(RenderSystems::PrepareResources)
-                .before(super::geometry::prepare_shaderpack_geometry),
-            prepare_views
-                .in_set(RenderSystems::PrepareResources)
-                .after(bevy::render::view::prepare_view_targets)
-                .after(super::geometry::prepare_shaderpack_geometry),
-            super::lightmap::update_lightmap.in_set(RenderSystems::PrepareResources),
-        ),
-    );
+    render_app
+        .init_resource::<ShaderPackViews>()
+        .init_resource::<ShaderPackEffects>()
+        .init_resource::<ShaderpackEffectTextures>()
+        .add_systems(
+            Render,
+            (
+                configure_geometry
+                    .in_set(RenderSystems::PrepareResources)
+                    .before(super::geometry::prepare_shaderpack_geometry),
+                prepare_effect_textures
+                    .in_set(RenderSystems::PrepareResources)
+                    .before(prepare_views),
+                prepare_views
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(bevy::render::view::prepare_view_targets)
+                    .after(super::geometry::prepare_shaderpack_geometry),
+                super::lightmap::update_lightmap.in_set(RenderSystems::PrepareResources),
+            ),
+        );
     install_graph(render_app.world_mut());
 }

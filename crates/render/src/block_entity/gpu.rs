@@ -596,6 +596,7 @@ fn queue_overlay(
         pipeline,
         phases,
         &views,
+        |_| false,
     );
 }
 
@@ -612,6 +613,7 @@ fn queue_outline(
         &bevy::render::camera::ExtractedCamera,
         &Msaa,
     )>,
+    pack: render_scene::shaderpack::ShaderPackDrawnEffects,
 ) {
     let draw_function = draw_functions.read().id::<DrawOutlineCommands>();
     queue_blended(
@@ -622,6 +624,7 @@ fn queue_outline(
         pipeline,
         phases,
         &views,
+        |view| pack.replaces(view, |drawn| drawn.selection),
     );
 }
 
@@ -638,6 +641,7 @@ fn queue_crack(
         &bevy::render::camera::ExtractedCamera,
         &Msaa,
     )>,
+    pack: render_scene::shaderpack::ShaderPackDrawnEffects,
 ) {
     let draw_function = draw_functions.read().id::<DrawCrackCommands>();
     queue_blended(
@@ -648,6 +652,7 @@ fn queue_crack(
         pipeline,
         phases,
         &views,
+        |view| pack.replaces(view, |drawn| drawn.cracks),
     );
 }
 
@@ -674,9 +679,15 @@ fn queue_additive(
         pipeline,
         phases,
         &views,
+        |_| false,
     );
 }
 
+/// Queues `list` on every view `skip` does not reject (views whose shader pack draws it).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one blended list's queue inputs and its view filter"
+)]
 fn queue_blended(
     list: &VertexList,
     mode: PipelineMode,
@@ -691,11 +702,15 @@ fn queue_blended(
         &bevy::render::camera::ExtractedCamera,
         &Msaa,
     )>,
+    skip: impl Fn(Entity) -> bool,
 ) {
     if list.count == 0 || list.bind_group.is_none() {
         return;
     }
     for (view_entity, main_entity, view, extracted_camera, msaa) in views {
+        if skip(view_entity) {
+            continue;
+        }
         let Some(phase) = phases.get_mut(&view.retained_view_entity) else {
             continue;
         };

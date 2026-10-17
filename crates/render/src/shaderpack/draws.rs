@@ -4,6 +4,7 @@
 //! pipeline over the geometry adapter's vertex layout.
 
 use super::alpha_test::{ONE_TENTH_ALPHA, inject_alpha_test};
+use super::effects::{Effect, EffectSettings};
 use super::geometry::{GeometryCategory, vertex_buffer_layouts};
 use super::pipelines::{blend_state, color_target};
 use shaderpack::{
@@ -36,6 +37,8 @@ pub(crate) enum DrawKind {
     ShadowSolid,
     ShadowCutout,
     ShadowTranslucent,
+    /// Particles, weather, clouds, the sun and moon and the other effects.
+    Effect(Effect),
 }
 
 /// Vanilla's translucent blending: `SRC_ALPHA ONE_MINUS_SRC_ALPHA ONE ONE_MINUS_SRC_ALPHA`.
@@ -47,12 +50,23 @@ pub(crate) const TRANSLUCENT_BLEND: BlendMode = BlendMode::Factors {
 };
 
 impl DrawKind {
-    pub(crate) const ALL: [DrawKind; 8] = [
+    pub(crate) const ALL: [DrawKind; 19] = [
         DrawKind::Sky,
         DrawKind::Sunset,
+        DrawKind::Effect(Effect::Sun),
+        DrawKind::Effect(Effect::Moon),
+        DrawKind::Effect(Effect::Stars),
         DrawKind::TerrainSolid,
         DrawKind::TerrainCutout,
+        DrawKind::Effect(Effect::Lightning),
+        DrawKind::Effect(Effect::DamagedBlock),
+        DrawKind::Effect(Effect::Outline),
+        DrawKind::Effect(Effect::Particles),
         DrawKind::Translucent,
+        DrawKind::Effect(Effect::ParticlesTranslucent),
+        DrawKind::Effect(Effect::ParticlesAdditive),
+        DrawKind::Effect(Effect::Clouds),
+        DrawKind::Effect(Effect::Weather),
         DrawKind::ShadowSolid,
         DrawKind::ShadowCutout,
         DrawKind::ShadowTranslucent,
@@ -68,13 +82,22 @@ impl DrawKind {
             DrawKind::ShadowSolid => "shadow_solid",
             DrawKind::ShadowCutout => "shadow_cutout",
             DrawKind::ShadowTranslucent => "shadow_water",
+            DrawKind::Effect(effect) => effect.program(),
         }
     }
 
-    /// The terrain category it draws; `None` for the sky.
+    /// Whether the pack's directives let this draw happen (`clouds=off`, `sun=false`, …).
+    pub(crate) fn drawn_by(self, settings: &EffectSettings) -> bool {
+        match self {
+            DrawKind::Effect(effect) => settings.draws(effect),
+            _ => true,
+        }
+    }
+
+    /// The terrain category it draws; `None` for the sky and effects.
     pub(crate) fn category(self) -> Option<GeometryCategory> {
         match self {
-            DrawKind::Sky | DrawKind::Sunset => None,
+            DrawKind::Sky | DrawKind::Sunset | DrawKind::Effect(_) => None,
             DrawKind::TerrainSolid | DrawKind::ShadowSolid => Some(GeometryCategory::Solid),
             DrawKind::TerrainCutout | DrawKind::ShadowCutout => Some(GeometryCategory::Cutout),
             DrawKind::Translucent | DrawKind::ShadowTranslucent => {
@@ -91,17 +114,35 @@ impl DrawKind {
         )
     }
 
-    /// Tests and writes depth (the sky draws behind everything without depth).
+    /// Tests depth: terrain and effects outside the sky (the sky draws behind everything).
     pub(crate) fn depth(self) -> bool {
-        self.category().is_some()
+        match self {
+            DrawKind::Effect(effect) => !effect.sky(),
+            _ => self.category().is_some(),
+        }
     }
 
-    /// Culls back faces: camera terrain does, as Java; the sky and shadows draw both sides.
+    /// Writes depth when it tests it, except effects Java draws without depth writes.
+    pub(crate) fn depth_write(self, settings: &EffectSettings) -> bool {
+        match self {
+            DrawKind::Effect(effect) => effect.depth_write(settings.rain_depth),
+            _ => self.depth(),
+        }
+    }
+
+    /// Its lightmap coordinates are raw `light × 16` values for `gl_TextureMatrix[1]`.
+    pub(crate) fn lightmap_matrix(self) -> bool {
+        matches!(self, DrawKind::Effect(_)) || self.category().is_some()
+    }
+
+    /// Culls back faces: camera terrain and clouds do, as Java; the sky, shadows and other
+    /// effects draw both sides.
     pub(crate) fn culls(self) -> bool {
-        matches!(
-            self,
-            DrawKind::TerrainSolid | DrawKind::TerrainCutout | DrawKind::Translucent
-        )
+        match self {
+            DrawKind::TerrainSolid | DrawKind::TerrainCutout | DrawKind::Translucent => true,
+            DrawKind::Effect(effect) => effect.culls(),
+            _ => false,
+        }
     }
 
     /// Iris's `renderStage` during the draw.
@@ -114,13 +155,18 @@ impl DrawKind {
             DrawKind::Translucent | DrawKind::ShadowTranslucent => {
                 render_stage::TERRAIN_TRANSLUCENT
             }
+            DrawKind::Effect(effect) => effect.render_stage(),
         }
     }
 
-    /// Iris's alpha test without an `alphaTest.<program>` rule: cutout geometry keeps
-    /// `alpha > 0.1`, everything else is untested.
+    /// Iris's alpha test without an `alphaTest.<program>` rule: cutout geometry and the
+    /// effects whose shader key tests keep `alpha > 0.1`, everything else is untested.
     pub(crate) fn default_alpha_test(self) -> Option<AlphaTest> {
-        matches!(self, DrawKind::TerrainCutout | DrawKind::ShadowCutout).then_some(ONE_TENTH_ALPHA)
+        match self {
+            DrawKind::Effect(effect) => effect.default_alpha_test(),
+            _ => matches!(self, DrawKind::TerrainCutout | DrawKind::ShadowCutout)
+                .then_some(ONE_TENTH_ALPHA),
+        }
     }
 
     /// Vanilla's blending without a `blend.<program>` rule.
@@ -129,6 +175,7 @@ impl DrawKind {
             DrawKind::Sunset | DrawKind::Translucent | DrawKind::ShadowTranslucent => {
                 TRANSLUCENT_BLEND
             }
+            DrawKind::Effect(effect) => effect.default_blend(),
             _ => BlendMode::Off,
         }
     }
@@ -164,10 +211,12 @@ pub(crate) fn resolve_program(
 
 /// The geometry programs the frame's draws use, each once, with the program index of every
 /// draw that resolved. Only enabled render programs that translated count as provided, so a
-/// failed program falls back like a missing one. Without a camera terrain program nothing
-/// is selected: the host then keeps the Vanilla scene copy.
+/// failed program falls back like a missing one; draws `wanted` rejects (directives such as
+/// `clouds=off`) are left out. Without a camera terrain program nothing is selected: the
+/// host then keeps the Vanilla scene copy.
 pub(crate) fn select_draws(
     programs: &[shaderpack::ProgramTranslation],
+    wanted: impl Fn(DrawKind) -> bool,
 ) -> (Vec<&shaderpack::ProgramTranslation>, Vec<(DrawKind, usize)>) {
     let find = |name: &str| {
         programs.iter().find(|p| {
@@ -179,7 +228,7 @@ pub(crate) fn select_draws(
     };
     let mut selected: Vec<&shaderpack::ProgramTranslation> = vec![];
     let mut draws = vec![];
-    for kind in DrawKind::ALL {
+    for kind in DrawKind::ALL.into_iter().filter(|kind| wanted(*kind)) {
         let Some(program) = resolve_program(kind.program(), |n| find(n).is_some()).and_then(find)
         else {
             continue;
@@ -226,6 +275,8 @@ pub(crate) struct DrawPipelineInputs<'a> {
     /// The program's translated fragment stage, which the alpha test is injected into.
     pub fragment: &'a naga::Module,
     pub properties: &'a ShaderProperties,
+    /// The pack's effect directives (`rain.depth`).
+    pub effects: &'a EffectSettings,
     /// Format of the target an output's draw buffer names (`colortexN`, or `shadowcolorN`
     /// for shadow draws); `None` drops the output.
     pub target_format: &'a dyn Fn(u32) -> Option<TextureFormat>,
@@ -342,7 +393,7 @@ pub(crate) fn draw_pipeline(
             },
             depth_stencil: kind.depth().then_some(wgpu::DepthStencilState {
                 format: TextureFormat::Depth32Float,
-                depth_write_enabled: Some(true),
+                depth_write_enabled: Some(kind.depth_write(inputs.effects)),
                 depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: Default::default(),
                 bias: Default::default(),

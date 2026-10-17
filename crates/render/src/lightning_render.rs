@@ -258,12 +258,16 @@ fn queue_lightning(
         &bevy::render::camera::ExtractedCamera,
         &Msaa,
     )>,
+    pack: render_scene::shaderpack::ShaderPackDrawnEffects,
 ) {
     if scene.records.is_empty() {
         return;
     }
     let draw_function = draw_functions.read().id::<DrawLightningCommands>();
     for (view_entity, main_entity, view, extracted_camera, msaa) in &views {
+        if pack.replaces(view_entity, |drawn| drawn.lightning) {
+            continue;
+        }
         let Some(phase) = phases.get_mut(&view.retained_view_entity) else {
             continue;
         };

@@ -136,6 +136,28 @@ pub(crate) fn host_vertex(
     words
 }
 
+/// A host vertex that also carries texture coordinates `uv` (with `mid_uv` as
+/// `mc_midTexCoord`) and Java's raw lightmap coordinates `light` (block, sky; light level
+/// × 16, which `LIGHTMAP_TEXTURE_MATRIX` maps to texel centres).
+pub(crate) fn textured_host_vertex(
+    position: [f32; 3],
+    colour: [f32; 4],
+    normal: [f32; 3],
+    uv: [f32; 2],
+    mid_uv: [f32; 2],
+    light: [f32; 2],
+) -> [u32; IRIS_VERTEX_WORDS as usize] {
+    let unorm16 = |v: f32| (v.clamp(0.0, 1.0) * 65535.0).round() as u32;
+    let pair = |[a, b]: [u32; 2]| (a & 0xffff) | (b << 16);
+    let mut words = host_vertex(position, colour, normal);
+    words[UV0.word as usize] = pair(uv.map(unorm16));
+    words[MID_TEX.word as usize] = pair(mid_uv.map(unorm16));
+    words[LIGHTMAP_FLOAT.word as usize] =
+        pair(light.map(|v| u32::from(crate::shaderpack::resources::f32_to_half(v))));
+    words[LIGHTMAP_INT.word as usize] = pair(light.map(|v| v.round() as i16 as u16 as u32));
+    words
+}
+
 /// Why a translated program's vertex input cannot bind to terrain geometry.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VertexLayoutError {

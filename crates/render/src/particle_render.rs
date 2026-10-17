@@ -494,6 +494,7 @@ fn queue_particles(
         &bevy::render::camera::ExtractedCamera,
         &Msaa,
     )>,
+    pack: render_scene::shaderpack::ShaderPackDrawnEffects,
 ) {
     for draws in pending.0.values_mut() {
         draws.clear_frame();
@@ -506,6 +507,9 @@ fn queue_particles(
     ];
     drop(functions);
     for (view_entity, main_entity, view, extracted_camera, msaa) in &views {
+        if pack.replaces(view_entity, |drawn| drawn.particles) {
+            continue;
+        }
         let Some(phase) = phases.get_mut(&view.retained_view_entity) else {
             continue;
         };

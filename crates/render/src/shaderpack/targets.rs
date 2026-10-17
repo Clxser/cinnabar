@@ -493,6 +493,9 @@ fn uniform_buffer(device: &Device, name: &str, block: &shaderpack::UniformBlock)
 pub(crate) fn draw_read_alt(pack: &PackGpu, draw: &GeometryDraw) -> u32 {
     let base = match draw.kind {
         DrawKind::Translucent => pack.frame.translucent_alt,
+        DrawKind::Effect(effect) if pack.effects.after_deferred(effect) => {
+            pack.frame.translucent_alt
+        }
         kind if kind.shadow() => return 0,
         _ => pack.frame.scene_alt,
     };
@@ -632,13 +635,14 @@ impl ViewBindings {
         }
     }
 
-    /// Rebuilds every draw's bind groups over `atlas` (the placeholder while `None`).
-    pub(crate) fn bind_draws(
+    /// Rebuilds every draw's bind groups over the textures `views` gives its kind (the
+    /// placeholder while `None`): the block atlas for terrain, an effect's own texture.
+    pub(crate) fn bind_draws<'a>(
         &mut self,
         device: &Device,
         pack: &PackGpu,
         targets: &ViewTargets,
-        atlas: Option<AtlasViews<'_>>,
+        views: impl Fn(DrawKind) -> Option<AtlasViews<'a>>,
     ) {
         for (draw, binding) in pack.draws.iter().zip(&mut self.draws) {
             binding.groups = pass_bind_groups(
@@ -648,7 +652,7 @@ impl ViewBindings {
                 binding.uniforms.as_ref(),
                 draw.program,
                 draw_read_alt(pack, draw),
-                atlas,
+                views(draw.kind),
             );
         }
     }

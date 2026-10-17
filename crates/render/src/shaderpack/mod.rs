@@ -10,10 +10,11 @@
 //! discs, opaque terrain with the `gbuffers_terrain*` programs, `deferred*`, translucent
 //! terrain with `gbuffers_water`, `composite*` and `final`, before tonemapping and the UI.
 //! Terrain comes from the geometry adapter (`geometry`) and the block atlas (`atlas`).
-//! What the pack does not draw yet (entities, the hand, particles, clouds, weather) is taken
-//! from the Vanilla scene, which still renders underneath, where it is nearer than the
-//! pack's geometry. Packs without terrain programs get the Vanilla scene copied into
-//! `colortex0` instead.
+//! The pack also draws the sun, moon, stars, particles, clouds, weather, lightning, block
+//! cracks and the selection outline through its own programs (`effects`). What it does not
+//! draw yet (entities, block entities, the hand) is taken from the Vanilla scene, which still
+//! renders underneath, where it is nearer than the pack's geometry. Packs without terrain
+//! programs get the Vanilla scene copied into `colortex0` instead.
 //!
 //! Conventions: pack buffers are stored bottom-up and gamma-encoded as in OpenGL Minecraft
 //! (the translator flips clip-space Y and remaps clip depth), uniforms use OpenGL matrices,
@@ -25,6 +26,8 @@ mod alpha_test;
 pub(crate) mod atlas;
 #[cfg(feature = "shaderpacks")]
 mod draws;
+#[cfg(feature = "shaderpacks")]
+mod effects;
 #[cfg(feature = "shaderpacks")]
 mod frame_geometry;
 #[cfg(feature = "shaderpacks")]

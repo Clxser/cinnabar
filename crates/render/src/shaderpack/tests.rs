@@ -128,8 +128,17 @@ const SIZE: [u32; 2] = [4, 4];
 /// output rows top-down, 256 bytes apart.
 fn render(gpu: &GpuContext, files: &[(&str, &str)]) -> Vec<u8> {
     let pack = pack(files);
-    let pack =
-        Arc::new(build(&pack, "fixture", JAVA_DIMENSIONS[0], None, gpu).expect("fixture loads"));
+    let pack = Arc::new(
+        build(
+            &pack,
+            "fixture",
+            JAVA_DIMENSIONS[0],
+            None,
+            gpu,
+            &Default::default(),
+        )
+        .expect("fixture loads"),
+    );
     let size = SIZE;
     let extent = wgpu::Extent3d {
         width: size[0],
@@ -199,7 +208,7 @@ fn render(gpu: &GpuContext, files: &[(&str, &str)]) -> Vec<u8> {
         },
         &mut state.history,
     );
-    state.write_uniforms(&gpu.queue, &frame, 0.016, Vec3::ZERO, [0; 2]);
+    state.write_uniforms(&gpu.queue, &frame, 0.016, Vec3::ZERO, [[0; 2]; 2]);
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
     let clear = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

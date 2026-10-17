@@ -497,7 +497,7 @@ impl FrameUniforms {
 }
 
 /// The fixed-function state Iris sets per geometry draw: its model-view and projection
-/// matrices, the terrain origin relative to the camera, and the render stage.
+/// matrices, the terrain origin relative to the camera, the render stage and the entity id.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct DrawUniforms {
     /// Model-view without the chunk offset (`gbufferModelView`, or `shadowModelView` in the
@@ -508,10 +508,12 @@ pub(crate) struct DrawUniforms {
     pub chunk_offset: Vec3,
     /// `renderStage`.
     pub render_stage: i32,
-    /// Terrain lightmap coordinates go through `gl_TextureMatrix[1]`.
+    /// Lightmap coordinates are raw `light × 16` values through `gl_TextureMatrix[1]`.
     pub lightmap_matrix: bool,
-    /// `atlasSize`: the bound block atlas's size, zero for draws without it.
+    /// `atlasSize`: the bound atlas's size, zero for draws without one.
     pub atlas_size: [i32; 2],
+    /// `entityId`: the drawn entity's `entity.properties` id, Iris's -1 outside entities.
+    pub entity_id: i32,
 }
 
 impl DrawUniforms {
@@ -538,6 +540,7 @@ impl DrawUniforms {
             "chunkOffset" => HostValue::vec3(self.chunk_offset),
             "renderStage" => HostValue::Int(self.render_stage),
             "atlasSize" => HostValue::IVec([self.atlas_size[0], self.atlas_size[1], 0, 0], 2),
+            "entityId" => HostValue::Int(self.entity_id),
             _ => return None,
         })
     }
