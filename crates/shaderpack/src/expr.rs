@@ -79,6 +79,7 @@ pub struct ExprError {
 }
 
 impl ExprError {
+    /// Creates an expression error from a diagnostic message.
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -87,6 +88,7 @@ impl ExprError {
 }
 
 impl fmt::Display for ExprError {
+    /// Writes the expression error message.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.message)
     }
@@ -129,6 +131,7 @@ impl Expr {
         out
     }
 
+    /// Appends referenced names in first-use order without duplicates.
     fn collect_identifiers<'a>(&'a self, out: &mut Vec<&'a str>) {
         match self {
             Expr::Number(_) | Expr::Bool(_) => {}
@@ -199,10 +202,12 @@ pub(crate) fn macro_value(value: &str) -> f64 {
     }
 }
 
+/// Converts a boolean result to the numeric value used by expressions.
 fn bool_value(value: bool) -> f64 {
     if value { 1.0 } else { 0.0 }
 }
 
+/// Evaluates a binary expression, short-circuiting logical operators.
 fn eval_binary(op: BinaryOp, lhs: &Expr, rhs: &Expr, lookup: Lookup<'_>) -> Result<f64, ExprError> {
     let l = lhs.eval(lookup)?;
     Ok(match op {
@@ -222,6 +227,7 @@ fn eval_binary(op: BinaryOp, lhs: &Expr, rhs: &Expr, lookup: Lookup<'_>) -> Resu
     })
 }
 
+/// Evaluates a supported scalar function or reports its name or arity error.
 fn eval_call(name: &str, args: &[Expr], lookup: Lookup<'_>) -> Result<f64, ExprError> {
     match name {
         "if" => eval_if(args, lookup),
@@ -278,6 +284,7 @@ fn eval_if(args: &[Expr], lookup: Lookup<'_>) -> Result<f64, ExprError> {
     otherwise.eval(lookup)
 }
 
+/// Evaluates exactly N arguments, reporting a mismatched argument count.
 fn fixed_args<const N: usize>(
     name: &str,
     args: &[Expr],
@@ -296,6 +303,7 @@ fn fixed_args<const N: usize>(
     Ok(values)
 }
 
+/// Evaluates arguments after checking the minimum argument count.
 fn variadic_args(
     name: &str,
     args: &[Expr],
@@ -335,6 +343,7 @@ enum Token {
 }
 
 impl Token {
+    /// Describes a token for a parser diagnostic.
     fn describe(&self) -> String {
         let symbol = match self {
             Token::Number(value) => return format!("number `{value}`"),
@@ -361,6 +370,7 @@ impl Token {
     }
 }
 
+/// Tokenizes an expression, reporting unsupported characters and invalid numbers.
 fn lex(text: &str) -> Result<Vec<Token>, ExprError> {
     let bytes = text.as_bytes();
     let mut tokens = Vec::new();
@@ -429,6 +439,7 @@ fn ident_end(bytes: &[u8], start: usize) -> usize {
     end
 }
 
+/// Finds the first byte after a run of decimal digits.
 fn digits_end(bytes: &[u8], mut end: usize) -> usize {
     while bytes.get(end).is_some_and(u8::is_ascii_digit) {
         end += 1;
@@ -494,6 +505,7 @@ type Parsed = (Expr, u32);
 /// Binding level of the prefix operators, one past the tightest binary level.
 const UNARY_LEVEL: u8 = 6;
 
+/// Returns the operator only when it belongs to the requested precedence level.
 fn binary_op(token: &Token, level: u8) -> Option<BinaryOp> {
     let (op, op_level) = match token {
         Token::OrOr => (BinaryOp::Or, 0),
@@ -531,10 +543,12 @@ struct Parser {
 }
 
 impl Parser {
+    /// Borrows the next token without advancing the parser.
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.pos)
     }
 
+    /// Consumes the next token, returning None at the end of input.
     fn next_token(&mut self) -> Option<Token> {
         let token = self.tokens.get(self.pos).cloned();
         if token.is_some() {
@@ -543,6 +557,7 @@ impl Parser {
         token
     }
 
+    /// Consumes the next token only when it matches the requested token.
     fn eat(&mut self, token: &Token) -> bool {
         let matched = self.peek() == Some(token);
         if matched {
@@ -551,6 +566,7 @@ impl Parser {
         matched
     }
 
+    /// Consumes a required token or reports what appeared in its place.
     fn expect(&mut self, token: &Token, what: &str) -> Result<(), ExprError> {
         if self.eat(token) {
             return Ok(());
@@ -589,6 +605,7 @@ impl Parser {
         result
     }
 
+    /// Parses a prefix operator and its operand, or a primary expression.
     fn parse_prefixed(&mut self) -> Result<Parsed, ExprError> {
         let op = match self.peek() {
             Some(Token::Plus) => {
@@ -604,6 +621,7 @@ impl Parser {
         node(Expr::Unary(op, Box::new(operand)), depth)
     }
 
+    /// Parses a literal, identifier, call or parenthesised expression.
     fn parse_primary(&mut self) -> Result<Parsed, ExprError> {
         match self.next_token() {
             Some(Token::Number(value)) => Ok((Expr::Number(value), 1)),
@@ -621,6 +639,7 @@ impl Parser {
         }
     }
 
+    /// Parses a consumed name as a boolean, defined test, variable or function call.
     fn parse_ident(&mut self, name: String) -> Result<Parsed, ExprError> {
         match name.as_str() {
             "true" => return Ok((Expr::Bool(true), 1)),
@@ -647,6 +666,7 @@ impl Parser {
         node(Expr::Call(name, args), depth)
     }
 
+    /// Parses the macro name and optional parentheses following defined.
     fn parse_defined(&mut self) -> Result<Parsed, ExprError> {
         let parenthesised = self.eat(&Token::LParen);
         let Some(Token::Ident(name)) = self.next_token() else {
@@ -663,6 +683,7 @@ impl Parser {
 mod tests {
     use super::*;
 
+    /// Parses and evaluates a test expression using the supplied variable values.
     fn eval_with(text: &str, vars: &[(&str, f64)]) -> f64 {
         let expr = Expr::parse(text).unwrap_or_else(|err| panic!("parse `{text}`: {err}"));
         let lookup = |name: &str| {
@@ -674,10 +695,12 @@ mod tests {
             .unwrap_or_else(|err| panic!("eval `{text}`: {err}"))
     }
 
+    /// Evaluates a test expression with no defined variables.
     fn eval(text: &str) -> f64 {
         eval_with(text, &[])
     }
 
+    /// Builds a boxed identifier node for expression-tree assertions.
     fn ident(name: &str) -> Box<Expr> {
         Box::new(Expr::Ident(name.to_owned()))
     }

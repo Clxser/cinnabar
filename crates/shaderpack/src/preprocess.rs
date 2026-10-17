@@ -47,6 +47,7 @@ impl LineMap {
         })
     }
 
+    /// Finds or allocates the file index used by expanded-line mappings.
     fn file_index(&mut self, path: &str) -> u32 {
         match self.files.iter().position(|f| f == path) {
             Some(i) => i as u32,
@@ -119,6 +120,7 @@ pub(crate) fn expand(
 }
 
 impl Expander<'_> {
+    /// Expands a file and its includes, reporting missing files and include cycles.
     fn file(&mut self, path: &str, from: Option<SourceLocation>) -> Result<(), Diagnostic> {
         let Some(text) = self.source.text(path) else {
             return Err(Diagnostic::new(Phase::Include, format!("cannot find `{path}`")).at(from));
@@ -228,6 +230,7 @@ struct LineScan {
     block_comments: Vec<String>,
 }
 
+/// Finds comments and the trailing code boundary while tracking multiline comments.
 fn scan_line(line: &str, in_block: &mut bool) -> LineScan {
     let b = line.as_bytes();
     let mut i = 0;
@@ -310,6 +313,7 @@ fn parse_const(rest: &str) -> Option<ConstDirective> {
     })
 }
 
+/// Checks for a non-empty ASCII identifier with a valid first character.
 fn is_identifier(s: &str) -> bool {
     let mut chars = s.chars();
     chars
@@ -420,6 +424,7 @@ fn float_literal(v: f32) -> String {
     }
 }
 
+/// Returns the GLSL spelling of a preprocessor punctuation token.
 fn punct(p: Punct) -> &'static str {
     use Punct::*;
     match p {
@@ -475,6 +480,7 @@ fn punct(p: Punct) -> &'static str {
 mod tests {
     use super::*;
 
+    /// Expands and preprocesses in-memory test files with the supplied macros.
     fn run(files: &[(&str, &str)], entry: &str, defines: &[(&str, &str)]) -> Preprocessed {
         let source = PackSource::from_files(files.iter().copied());
         let expanded = expand(&source, entry, &[], &OptionValues::new()).expect("expands");

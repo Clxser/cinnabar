@@ -46,6 +46,7 @@ pub(super) struct Collected {
     pub resource_names: Vec<(u32, u32, String)>,
 }
 
+/// Returns the first known source line, or zero for generated tokens.
 fn first_line(toks: &[Tok]) -> u32 {
     toks.iter().map(|t| t.line).find(|l| *l != 0).unwrap_or(0)
 }
@@ -203,6 +204,7 @@ pub(super) fn collect(
     Ok(c)
 }
 
+/// Emits a uniform or storage block with a shared binding and default layout.
 fn block(
     c: &mut Collected,
     d: &Decl,
@@ -246,6 +248,7 @@ fn block(
     c.resources.push(p(";"));
 }
 
+/// Assigns opaque-resource bindings and collects ordinary uniforms for the shared block.
 fn uniforms(
     c: &mut Collected,
     d: &Decl,

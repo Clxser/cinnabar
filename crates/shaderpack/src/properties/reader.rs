@@ -202,10 +202,12 @@ struct Conditionals {
 }
 
 impl Conditionals {
+    /// Reports whether the current conditional branch accepts property entries.
     fn active(&self) -> bool {
         self.frames.last().is_none_or(|frame| frame.active)
     }
 
+    /// Pushes a conditional frame while preserving the parent branch state.
     fn open(&mut self, line: u32, parent_active: bool, active: bool) {
         self.frames.push(Frame {
             line,
@@ -215,6 +217,7 @@ impl Conditionals {
         });
     }
 
+    /// Updates macros or conditional state and records malformed directives.
     fn apply(
         &mut self,
         directive: Directive<'_>,

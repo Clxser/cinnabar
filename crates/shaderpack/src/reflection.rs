@@ -207,6 +207,7 @@ pub struct StageMask {
 }
 
 impl StageMask {
+    /// Marks a stage as visible, grouping pre-fragment graphics stages with vertex visibility.
     pub(crate) fn add(&mut self, stage: StageKind) {
         match stage {
             StageKind::Fragment => self.fragment = true,

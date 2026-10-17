@@ -6,6 +6,7 @@ use shaderpack::{
     TranslateConfig,
 };
 
+/// Builds owned option overrides from borrowed test values.
 fn values(pairs: &[(&str, &str)]) -> OptionValues {
     pairs
         .iter()
@@ -23,6 +24,7 @@ fn shadow_weights(r: &ProgramReflection) -> Option<(u32, u32)> {
         .array
 }
 
+/// Finds the active sunPathRotation constant value.
 fn sun_path_rotation(consts: &[ConstDirective]) -> Option<&str> {
     consts
         .iter()

@@ -10,6 +10,7 @@ use shaderpack::{ShaderPack, TranslateConfig};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+/// Translates the selected pack and reports each program and its diagnostics.
 #[expect(
     clippy::print_stdout,
     clippy::print_stderr,

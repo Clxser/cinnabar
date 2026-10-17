@@ -163,12 +163,14 @@ pub(crate) fn output_buffer(index: u32, shadow: bool) -> BufferId {
     }
 }
 
+/// Builds a visibility mask containing one shader stage.
 fn mask(stage: StageKind) -> StageMask {
     let mut m = StageMask::default();
     m.add(stage);
     m
 }
 
+/// Reflects a bound global variable or reports an unsupported resource type.
 fn resource(
     module: &naga::Module,
     var: &naga::GlobalVariable,
@@ -317,12 +319,14 @@ fn merge(existing: &mut Resource, new: Resource, rb: &naga::ResourceBinding) -> 
     Ok(())
 }
 
+/// Adds all stages from one visibility mask to another.
 fn union(a: &mut StageMask, b: StageMask) {
     a.vertex |= b.vertex;
     a.fragment |= b.fragment;
     a.compute |= b.compute;
 }
 
+/// Converts a naga image shape to the public texture dimension.
 fn dimension(dim: ImageDimension, arrayed: bool) -> TextureDimension {
     match (dim, arrayed) {
         (ImageDimension::D1, _) => TextureDimension::D1,
@@ -334,6 +338,7 @@ fn dimension(dim: ImageDimension, arrayed: bool) -> TextureDimension {
     }
 }
 
+/// Converts a naga scalar kind and width to the public scalar type.
 fn scalar(s: naga::Scalar) -> ScalarType {
     match (s.kind, s.width) {
         (ScalarKind::Bool, _) => ScalarType::Bool,
@@ -344,6 +349,7 @@ fn scalar(s: naga::Scalar) -> ScalarType {
     }
 }
 
+/// Reflects scalar, vector and matrix shapes, returning None for aggregate types.
 fn value_type(inner: &TypeInner) -> Option<ValueType> {
     Some(match inner {
         TypeInner::Scalar(s) => ValueType::Scalar(scalar(*s)),
@@ -449,6 +455,7 @@ fn locations(
     out
 }
 
+/// Checks a value or its immediate struct members for a built-in binding.
 fn has_builtin(
     module: &naga::Module,
     ty: naga::Handle<naga::Type>,
@@ -468,6 +475,7 @@ fn has_builtin(
 struct ConstValue(Vec<naga::Literal>);
 
 impl ConstValue {
+    /// Reads exactly N non-negative integer components from a constant.
     fn as_u32s<const N: usize>(&self) -> Option<[u32; N]> {
         let v: Option<Vec<u32>> = self
             .0
@@ -481,6 +489,7 @@ impl ConstValue {
         v?.try_into().ok()
     }
 
+    /// Reads exactly N floating-point components, narrowing double values if needed.
     fn as_f32s<const N: usize>(&self) -> Option<[f32; N]> {
         let v: Option<Vec<f32>> = self
             .0
@@ -506,6 +515,7 @@ fn constant(module: &naga::Module, name: &str) -> Option<ConstValue> {
     Some(ConstValue(out))
 }
 
+/// Appends constant literal components, returning None for unsupported expressions.
 fn literals(
     module: &naga::Module,
     expr: naga::Handle<naga::Expression>,

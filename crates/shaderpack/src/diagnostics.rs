@@ -10,6 +10,7 @@ pub struct SourceLocation {
 }
 
 impl fmt::Display for SourceLocation {
+    /// Formats the pack path and its one-based line number.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}", self.file, self.line)
     }
@@ -33,6 +34,7 @@ pub enum Phase {
 }
 
 impl fmt::Display for Phase {
+    /// Formats the translation phase as a short label.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Phase::Include => "include",
@@ -57,6 +59,7 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
+    /// Creates a diagnostic without a source location or generated-code snippet.
     pub(crate) fn new(phase: Phase, message: impl Into<String>) -> Diagnostic {
         Diagnostic {
             phase,
@@ -66,6 +69,7 @@ impl Diagnostic {
         }
     }
 
+    /// Attaches the optional pack location and returns the diagnostic.
     pub(crate) fn at(mut self, location: Option<SourceLocation>) -> Diagnostic {
         self.location = location;
         self
@@ -73,6 +77,7 @@ impl Diagnostic {
 }
 
 impl fmt::Display for Diagnostic {
+    /// Formats the phase, message and available source context.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.location {
             Some(loc) => write!(f, "{loc}: {}: {}", self.phase, self.message)?,

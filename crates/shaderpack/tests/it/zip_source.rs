@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 struct TempDir(PathBuf);
 
 impl TempDir {
+    /// Creates an empty temporary directory unique to this process and test sequence.
     fn new(label: &str) -> TempDir {
         static NEXT: AtomicU32 = AtomicU32::new(0);
         let n = NEXT.fetch_add(1, Ordering::Relaxed);
@@ -24,6 +25,7 @@ impl TempDir {
 }
 
 impl Drop for TempDir {
+    /// Removes the temporary directory and its files when the test guard is dropped.
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
@@ -90,6 +92,7 @@ fn assert_same_translation(folder: &PackTranslation, zipped: &PackTranslation) {
     }
 }
 
+/// Checks that a zipped fixture preserves the folder pack's files and translation.
 fn check_zip_matches_folder(name: &str, config: &TranslateConfig) {
     let Some(folder_pack) = open_fixture(name) else {
         return;

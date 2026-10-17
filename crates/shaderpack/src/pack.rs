@@ -31,6 +31,7 @@ pub struct TranslateConfig {
 }
 
 impl Default for TranslateConfig {
+    /// Selects world0 with the default environment and pack option values.
     fn default() -> TranslateConfig {
         TranslateConfig {
             folder: "world0".to_string(),
@@ -74,6 +75,7 @@ impl ShaderPack {
         ShaderPack { source, options }
     }
 
+    /// Borrows the loaded pack files and their origin.
     pub fn source(&self) -> &PackSource {
         &self.source
     }
@@ -174,6 +176,7 @@ impl ShaderPack {
         }
     }
 
+    /// Applies one program's enable rule and translates it with any requested option forcing.
     fn translate_one(
         &self,
         program: &ProgramSource,

@@ -187,6 +187,7 @@ enum Form<'a> {
     Const { ty: &'a str, value: &'a str },
 }
 
+/// Infers an option kind from its declaration, allowed values and conditional uses.
 fn option_kind(definition: &Definition<'_>, tested: &BTreeSet<&str>) -> Option<OptionKind> {
     let allowed = allowed_values(definition.comment);
     match definition.form {
@@ -234,6 +235,7 @@ fn allowed_values(comment: Option<&str>) -> Option<Vec<String>> {
     }
 }
 
+/// Reads a single-line option declaration, preserving indentation and its comment.
 fn parse_definition(line: &str) -> Option<Definition<'_>> {
     let body = line.trim_start();
     let indent = &line[..line.len() - body.len()];
@@ -313,6 +315,7 @@ fn split_comment(text: &str) -> (&str, Option<&str>) {
     }
 }
 
+/// Checks whether a byte can appear within a C-style identifier.
 fn is_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
@@ -378,6 +381,7 @@ fn collect_defined<'a>(text: &'a str, names: &mut BTreeSet<&'a str>) {
 mod tests {
     use super::*;
 
+    /// Builds owned option overrides from borrowed test values.
     fn values(pairs: &[(&str, &str)]) -> OptionValues {
         pairs
             .iter()
@@ -385,10 +389,12 @@ mod tests {
             .collect()
     }
 
+    /// Copies borrowed strings into an owned list for assertions.
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|item| (*item).to_owned()).collect()
     }
 
+    /// Finds the discovered option with the requested name.
     fn find<'a>(options: &'a [PackOption], name: &str) -> Option<&'a PackOption> {
         options.iter().find(|option| option.name == name)
     }

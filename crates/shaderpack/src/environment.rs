@@ -48,6 +48,7 @@ pub struct Environment {
 }
 
 impl Default for Environment {
+    /// Provides the default macro environment for standalone translation.
     fn default() -> Environment {
         Environment {
             mc_version: 12111,
@@ -211,6 +212,7 @@ impl Environment {
     }
 }
 
+/// Formats a macro value with a decimal point or exponent for GLSL.
 fn float(v: f32) -> String {
     let s = format!("{v:?}");
     if s.contains('.') || s.contains('e') {

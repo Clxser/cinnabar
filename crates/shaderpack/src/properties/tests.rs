@@ -2,10 +2,12 @@ use std::collections::BTreeMap;
 
 use super::*;
 
+/// Parses test properties without predefined macros.
 fn parse(text: &str) -> ShaderProperties {
     ShaderProperties::parse(text, &BTreeMap::new())
 }
 
+/// Parses test properties with the supplied macro definitions.
 fn parse_with(text: &str, defines: &[(&str, &str)]) -> ShaderProperties {
     let defines = defines
         .iter()
@@ -14,6 +16,7 @@ fn parse_with(text: &str, defines: &[(&str, &str)]) -> ShaderProperties {
     ShaderProperties::parse(text, &defines)
 }
 
+/// Returns property keys in source order for assertions.
 fn keys(properties: &ShaderProperties) -> Vec<&str> {
     properties
         .entries
@@ -22,6 +25,7 @@ fn keys(properties: &ShaderProperties) -> Vec<&str> {
         .collect()
 }
 
+/// Returns the source lines of property diagnostics in report order.
 fn diagnostic_lines(properties: &ShaderProperties) -> Vec<u32> {
     properties
         .diagnostics

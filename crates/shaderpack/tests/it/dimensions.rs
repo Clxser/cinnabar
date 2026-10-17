@@ -3,6 +3,7 @@
 use crate::{open_fixture, program, reflection, texture_names};
 use shaderpack::{ProgramGroup, StageKind, TranslateConfig};
 
+/// Borrows the source paths from the stages in enumeration order.
 fn stage_paths(stages: &[(StageKind, String)]) -> Vec<&str> {
     stages.iter().map(|(_, p)| p.as_str()).collect()
 }

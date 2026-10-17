@@ -21,6 +21,7 @@ pub enum PackError {
 }
 
 impl fmt::Display for PackError {
+    /// Formats the pack path and the reason it could not be opened.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PackError::Io { path, error } => write!(f, "{}: {error}", path.display()),
@@ -87,6 +88,7 @@ impl PackSource {
         }
     }
 
+    /// Loads decodable text files beneath a pack's shaders directory.
     fn open_dir(path: &Path) -> Result<PackSource, PackError> {
         let root = if path.join("shaders").is_dir() {
             path.join("shaders")
@@ -134,6 +136,7 @@ impl PackSource {
         })
     }
 
+    /// Loads decodable text entries under a zip pack's shaders prefix.
     fn open_zip(path: &Path) -> Result<PackSource, PackError> {
         let zip_err = |error| PackError::Zip {
             path: path.to_path_buf(),
@@ -237,11 +240,13 @@ fn shaders_prefix<'a>(names: impl Iterator<Item = &'a str>) -> Option<String> {
     best
 }
 
+/// Recognises binary asset extensions without regard to case.
 fn is_binary_name(path: &str) -> bool {
     path.rsplit_once('.')
         .is_some_and(|(_, ext)| BINARY_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
 }
 
+/// Rejects a NUL byte in the initial sample and decodes text after an optional UTF-8 BOM.
 fn decode_text(bytes: &[u8]) -> Option<String> {
     if bytes.iter().take(8192).any(|b| *b == 0) {
         return None;

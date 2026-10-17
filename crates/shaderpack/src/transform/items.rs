@@ -47,6 +47,7 @@ pub(super) struct Decl {
 }
 
 impl Decl {
+    /// Checks whether the declaration carries the requested qualifier.
     pub fn has(&self, q: &str) -> bool {
         self.quals.iter().any(|x| x == q)
     }
@@ -330,14 +331,17 @@ pub(super) fn sampler_info(ty: &str) -> Option<(&'static str, bool)> {
     })
 }
 
+/// Recognises floating-point, signed and unsigned GLSL image type prefixes.
 pub(super) fn is_image(ty: &str) -> bool {
     ty.starts_with("image") || ty.starts_with("iimage") || ty.starts_with("uimage")
 }
 
+/// Recognises sampler, image and atomic-counter types that need resource handling.
 pub(super) fn is_opaque(ty: &str) -> bool {
     sampler_info(ty).is_some() || is_image(ty) || ty.starts_with("sampler") || ty == "atomic_uint"
 }
 
+/// Recognises integer and boolean scalar or vector types for flat interpolation.
 pub(super) fn is_integer(ty: &str) -> bool {
     matches!(ty, "int" | "uint" | "bool")
         || ty.starts_with("ivec")

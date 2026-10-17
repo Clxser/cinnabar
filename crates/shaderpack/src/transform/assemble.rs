@@ -78,6 +78,7 @@ pub(crate) struct UboMember {
 }
 
 impl UboMember {
+    /// Stores a loose-uniform name and its complete declaration tokens.
     pub(super) fn new(name: &str, toks: Vec<Tok>) -> UboMember {
         UboMember {
             name: name.to_string(),
@@ -85,6 +86,7 @@ impl UboMember {
         }
     }
 
+    /// Joins declaration tokens for cross-stage type comparison.
     fn spelling(&self) -> String {
         self.toks
             .iter()

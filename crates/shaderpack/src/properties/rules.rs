@@ -18,6 +18,7 @@ pub(super) fn apply(properties: &mut ShaderProperties, line: u32, key: &str, val
     }
 }
 
+/// Parses a recognised property into its typed collection, returning malformed-value errors.
 fn apply_rule(
     properties: &mut ShaderProperties,
     line: u32,
@@ -102,6 +103,7 @@ fn first_of_two(value: &str) -> Result<(&str, &str), String> {
     }
 }
 
+/// Parses true or false without regard to case, rejecting other values.
 fn parse_bool(text: &str) -> Result<bool, String> {
     if text.eq_ignore_ascii_case("true") {
         Ok(true)
@@ -112,6 +114,7 @@ fn parse_bool(text: &str) -> Result<bool, String> {
     }
 }
 
+/// Parses a finite floating-point value.
 fn parse_f32(text: &str) -> Result<f32, String> {
     text.parse::<f32>()
         .ok()
@@ -119,6 +122,7 @@ fn parse_f32(text: &str) -> Result<f32, String> {
         .ok_or_else(|| format!("`{text}` is not a number"))
 }
 
+/// Parses a finite, strictly positive floating-point value.
 fn positive_f32(text: &str) -> Result<f32, String> {
     let value = parse_f32(text)?;
     if value > 0.0 {
@@ -128,6 +132,7 @@ fn positive_f32(text: &str) -> Result<f32, String> {
     }
 }
 
+/// Parses a non-zero unsigned integer.
 fn positive_u32(text: &str) -> Result<u32, String> {
     match text.parse::<u32>() {
         Ok(0) => Err(format!("`{text}` must be positive")),
@@ -136,6 +141,7 @@ fn positive_u32(text: &str) -> Result<u32, String> {
     }
 }
 
+/// Parses a program enable expression and its optional dimension prefix.
 fn program_rule(target: &str, value: &str, line: u32) -> Result<ProgramRule, String> {
     let (dimension, program) = match target.split_once('/') {
         Some((dimension, program)) => (Some(name(dimension, "dimension")?), program),
@@ -159,6 +165,7 @@ fn size_value(text: &str) -> Result<SizeValue, String> {
     }
 }
 
+/// Parses disabled blending or four factors for a program and optional buffer.
 fn blend_rule(target: &str, value: &str) -> Result<BlendRule, String> {
     let (program, buffer) = match target.split_once('.') {
         Some((program, buffer)) => (program, Some(name(buffer, "buffer")?)),
@@ -190,6 +197,7 @@ fn blend_rule(target: &str, value: &str) -> Result<BlendRule, String> {
     })
 }
 
+/// Resolves a supported blend factor name or reports an unknown factor.
 fn blend_factor(text: &str) -> Result<BlendFactor, String> {
     Ok(match text {
         "ZERO" => BlendFactor::Zero,
@@ -207,6 +215,7 @@ fn blend_factor(text: &str) -> Result<BlendFactor, String> {
     })
 }
 
+/// Parses an alpha comparison and reference value, or disabled testing.
 fn alpha_test(value: &str) -> Result<Option<AlphaTest>, String> {
     if value.eq_ignore_ascii_case("off") {
         return Ok(None);
@@ -229,6 +238,7 @@ fn alpha_test(value: &str) -> Result<Option<AlphaTest>, String> {
     }))
 }
 
+/// Parses a positive program scale with optional viewport offsets.
 fn scale_rule(program: &str, value: &str) -> Result<ScaleRule, String> {
     let numbers = value
         .split_whitespace()
@@ -253,6 +263,7 @@ fn scale_rule(program: &str, value: &str) -> Result<ScaleRule, String> {
     })
 }
 
+/// Parses a file, resource identifier or raw texture specification.
 fn texture_source(value: &str) -> Result<TextureSource, String> {
     let mut tokens = value.split_whitespace();
     let Some(first) = tokens.next() else {
@@ -272,6 +283,7 @@ fn texture_source(value: &str) -> Result<TextureSource, String> {
     Ok(TextureSource::File(name(path, "texture path")?))
 }
 
+/// Parses an image declaration with positive absolute or relative dimensions.
 fn custom_image(image: &str, value: &str) -> Result<CustomImage, String> {
     let tokens: Vec<&str> = value.split_whitespace().collect();
     let &[
@@ -314,6 +326,7 @@ fn custom_image(image: &str, value: &str) -> Result<CustomImage, String> {
     })
 }
 
+/// Describes the expected image declaration alongside the rejected value.
 fn image_usage(value: &str) -> String {
     format!(
         "expected `<sampler> <format> <internalFormat> <pixelType> <clear> <relative> \
@@ -321,6 +334,7 @@ fn image_usage(value: &str) -> String {
     )
 }
 
+/// Parses a typed custom uniform or variable and its expression.
 fn custom_uniform(
     kind: CustomUniformKind,
     target: &str,

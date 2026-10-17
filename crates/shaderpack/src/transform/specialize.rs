@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 /// Rounds of specialization; each round handles one more level of helper nesting.
 const MAX_ROUNDS: usize = 32;
 
+/// Specializes helper calls on global resources and removes unreferenced templates.
 pub(super) fn specialize_opaque_params(mut items: Vec<Item>) -> Vec<Item> {
     let globals: HashSet<String> = items
         .iter()

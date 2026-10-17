@@ -37,6 +37,7 @@ impl StageKind {
         }
     }
 
+    /// Finds the stage kind associated with a shader file extension.
     fn from_extension(ext: &str) -> Option<StageKind> {
         StageKind::ALL.into_iter().find(|s| s.extension() == ext)
     }

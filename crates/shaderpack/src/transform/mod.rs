@@ -34,6 +34,7 @@ pub(crate) struct TransformError {
 }
 
 impl TransformError {
+    /// Creates a transform error with its include-expanded source line.
     pub fn new(message: impl Into<String>, line: u32) -> TransformError {
         TransformError {
             message: message.into(),
@@ -252,6 +253,7 @@ pub(crate) fn transform(
     })
 }
 
+/// Emits and records a legacy vertex input when it has a fixed attribute location.
 fn vertex_input(io: &mut String, inputs: &mut Vec<(u32, String)>, name: &str, ty: &str) {
     if let Some(loc) = VertexAttribute::from_glsl_name(name).location() {
         io.push_str(&format!("layout(location = {loc}) in {ty} {name};\n"));
