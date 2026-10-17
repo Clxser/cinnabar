@@ -4,8 +4,10 @@
 //! A job is four words `[record, origin slot, first output face, flags]`. Cube jobs cover one
 //! block of a greedy quad (its width and height steps in flag bits 0-15); every job reserves an
 //! extra slot for a grass-side overlay ([`JOB_OVERLAY_FACE`]) and for the back of a two-sided
-//! face ([`JOB_REVERSE_FACE`]) when its material may need them, and the kernel leaves unneeded
-//! slots degenerate.
+//! face ([`JOB_REVERSE_FACE`]) when it may need them, and the kernel leaves unneeded slots
+//! degenerate. Cubes and liquids take their sidedness from the material or record; block-model
+//! quads from the template quad's own two-sided flag, as the chunk renderer's model fragment
+//! gate does.
 
 use std::ops::Range;
 
@@ -126,8 +128,9 @@ pub(crate) const fn job_slots(flags: u32) -> u32 {
     1 + (flags & JOB_OVERLAY_FACE != 0) as u32 + (flags & JOB_REVERSE_FACE != 0) as u32
 }
 
-/// The template quad a model draw ref draws, if its addresses are in range.
-fn model_material(
+/// Slots the template quad a model draw ref draws may need, if its addresses are in range: the
+/// material's overlay slot, and a back face when the quad itself is two-sided.
+fn model_flags(
     tables: &MaterialTables<'_>,
     model_refs: &[PackedModelRef],
     draw: PackedModelDrawRef,
@@ -139,7 +142,13 @@ fn model_material(
     let quad = tables
         .model_quads
         .get(template.quad_start.checked_add(quad_index)? as usize)?;
-    Some(quad.material)
+    let overlay = material_flags(tables.materials, quad.material) & JOB_OVERLAY_FACE;
+    let reverse = if quad.flags & assets::MODEL_QUAD_FLAG_TWO_SIDED != 0 {
+        JOB_REVERSE_FACE
+    } else {
+        0
+    };
+    Some(overlay | reverse)
 }
 
 #[derive(Default)]
@@ -195,8 +204,7 @@ pub(crate) fn plan_section(
         ),
     ] {
         for (index, draw) in draws.iter().enumerate() {
-            let flags = model_material(tables, section.model_refs, *draw)
-                .map_or(0, |material| material_flags(tables.materials, material));
+            let flags = model_flags(tables, section.model_refs, *draw).unwrap_or(0);
             categories[category.index()].push(JobKind::Model, base + index as u32, metadata, flags);
         }
     }

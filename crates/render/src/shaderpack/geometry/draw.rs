@@ -2,14 +2,14 @@
 
 use std::ops::Range;
 
-use bevy::math::{DVec3, IVec3};
+use bevy::math::DVec3;
 use bevy::render::render_phase::TrackedRenderPass;
 use bevy::render::render_resource::{Buffer, BufferInitDescriptor, BufferUsages, IndexFormat};
 use bevy::render::renderer::RenderDevice;
 use wgpu::util::DrawIndexedIndirectArgs;
 
 use super::jobs::GeometryCategory;
-use super::residency::ResidentFaces;
+use super::residency::{ResidentFaces, section_distance};
 use super::vertex::{CONSTANT_VERTEX_BUFFER, GEOMETRY_VERTEX_BUFFER};
 
 /// Indices of one quad face, counter-clockwise like its corners.
@@ -30,12 +30,6 @@ pub(crate) struct ViewDraws {
     /// The commands as indirect arguments, when the device draws terrain through
     /// multi-draw-indirect.
     pub(crate) indirect: Option<Buffer>,
-}
-
-/// Distance order key of a section from `eye`: its centre's squared distance.
-fn section_distance(origin: [i32; 3], eye: DVec3) -> f64 {
-    let centre = IVec3::from_array(origin).as_dvec3() + DVec3::splat(8.0);
-    centre.distance_squared(eye)
 }
 
 impl ViewDraws {

@@ -30,6 +30,10 @@ mod frame_geometry;
 #[cfg(feature = "shaderpacks")]
 pub(crate) mod geometry;
 #[cfg(feature = "shaderpacks")]
+mod host_pipelines;
+#[cfg(feature = "shaderpacks")]
+mod lightmap;
+#[cfg(feature = "shaderpacks")]
 mod loader;
 #[cfg(feature = "shaderpacks")]
 mod passes;
@@ -41,6 +45,8 @@ mod plan;
 mod plugin;
 #[cfg(feature = "shaderpacks")]
 mod resources;
+#[cfg(feature = "shaderpacks")]
+mod shadow_maps;
 #[cfg(feature = "shaderpacks")]
 mod sky;
 #[cfg(feature = "shaderpacks")]

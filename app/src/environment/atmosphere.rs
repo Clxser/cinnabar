@@ -193,13 +193,17 @@ type AtmospherePreferences<'w> = (
     Option<ResMut<'w, render_scene::SkyboxSettings>>,
 );
 
+/// The renderer-clock overrides, in [`super::rendered_clock`] precedence order.
+type TimeOverrides<'w> = (
+    Option<Res<'w, super::FixedTime>>,
+    Option<Res<'w, super::DebugTimeOverride>>,
+    Option<Res<'w, super::VisualTimeOverride>>,
+);
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_atmosphere_frame(
     clock: Res<WorldClock>,
-    time_overrides: (
-        Option<Res<super::VisualTimeOverride>>,
-        Option<Res<super::DebugTimeOverride>>,
-    ),
+    time_overrides: TimeOverrides,
     weather: Res<WeatherState>,
     medium: Res<CameraMediumState>,
     context: Res<EnvironmentContext>,
@@ -218,7 +222,7 @@ pub(crate) fn update_atmosphere_frame(
     preferences: AtmospherePreferences,
     cameras: Query<&Transform, With<client_presentation::camera::FlyCamera>>,
 ) {
-    let (time_override, debug_time_override) = time_overrides;
+    let (fixed_time, debug_time_override, time_override) = time_overrides;
     let vision = vision
         .1
         .as_deref()
@@ -227,15 +231,12 @@ pub(crate) fn update_atmosphere_frame(
         clock.server_time().map(|_| clock.session_generation),
         time.elapsed_secs_f64(),
     );
-    let clock = time_override
-        .as_ref()
-        .map_or(*clock, |value| value.rendering_clock(*clock));
-    let clock = debug_time_override
-        .as_ref()
-        .and_then(|value| value.ticks)
-        .map_or(clock, |ticks| {
-            super::VisualTimeOverride(Some(ticks)).rendering_clock(clock)
-        });
+    let clock = super::rendered_clock(
+        *clock,
+        fixed_time.as_deref(),
+        debug_time_override.as_deref(),
+        time_override.as_deref(),
+    );
     let (menu, clouds, skybox) = preferences;
     let options = menu.as_ref().map(|menu| menu.settings_snapshot().0);
     if let Some(mut clouds) = clouds {

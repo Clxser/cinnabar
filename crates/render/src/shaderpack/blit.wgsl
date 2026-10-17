@@ -8,7 +8,12 @@ struct DepthParameters {
     // Near and far planes of the pack's OpenGL projection.
     gl_near: f32,
     gl_far: f32,
-    _padding: f32,
+    // Eye distance within which the pack's terrain is fully expanded; beyond it Vanilla
+    // terrain the pack has not drawn must not show through the overlay.
+    overlay_radius: f32,
+    // 1 / the projection's x and y scales, to turn view depth into eye distance.
+    inverse_focal: vec2<f32>,
+    _padding: vec2<f32>,
 }
 
 @group(0) @binding(0) var source_colour: texture_2d<f32>;
@@ -135,7 +140,9 @@ struct OverlayOut {
 }
 
 // What the Vanilla scene drew clearly in front of the pack's geometry (entities, particles,
-// clouds, terrain not yet expanded), written into `colortex0` and the depth attachment.
+// clouds, terrain not yet re-expanded), written into `colortex0` and the depth attachment.
+// Nothing comes through beyond the fully expanded radius: there the pack's sky or fog stands
+// where its terrain waits, rather than Vanilla terrain without gbuffer data.
 @fragment
 fn vanilla_overlay(in: Fullscreen) -> OverlayOut {
     let size = textureDimensions(source_depth);
@@ -145,6 +152,10 @@ fn vanilla_overlay(in: Fullscreen) -> OverlayOut {
         discard;
     }
     let vanilla = depth_parameters.scene_near / reverse;
+    let ray = length(vec3<f32>((in.uv * 2.0 - 1.0) * depth_parameters.inverse_focal, 1.0));
+    if (vanilla * ray > depth_parameters.overlay_radius) {
+        discard;
+    }
     let pack = gl_distance(textureLoad(pack_depth_copy, vec2<i32>(in.position.xy), 0).r);
     // Both renderers draw the same terrain: only clearly nearer samples come through.
     if (vanilla > pack * 0.995 - 0.05) {

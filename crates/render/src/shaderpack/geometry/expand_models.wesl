@@ -57,6 +57,7 @@ fn expand_models(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_work
     source.chunk_origin = quad.chunk_origin.xyz;
     source.material_id = quad.selected_material_id;
     source.material = material;
-    source.two_sided = (material.flags & MATERIAL_TWO_SIDED_FLAG) != 0u;
+    // The chunk renderer's model fragment gate keeps back faces only of two-sided template quads.
+    source.two_sided = (quad.quad_flags & MODEL_QUAD_TWO_SIDED_FLAG) != 0u;
     write_job_faces(job, corners, source);
 }

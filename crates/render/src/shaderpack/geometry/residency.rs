@@ -20,6 +20,14 @@ pub(crate) const ORIGIN_GRID: i32 = 1024;
 /// Camera distance from the origin, in blocks, past which the origin moves and every section
 /// re-expands. f32 positions within this range keep sub-millimetre precision.
 pub(crate) const ORIGIN_REBASE_DISTANCE: f64 = 4096.0;
+/// Distance from a section's centre to its farthest corner, in blocks.
+pub(crate) const SECTION_RADIUS: f64 = 8.0 * 1.732_050_807_568_877_2;
+
+/// Squared distance from `eye` to the centre of the section at block `origin`.
+pub(crate) fn section_distance(origin: [i32; 3], eye: DVec3) -> f64 {
+    let centre = IVec3::from_array(origin).as_dvec3() + DVec3::splat(8.0);
+    centre.distance_squared(eye)
+}
 
 /// A resident section's faces: their page, the range they occupy and each category's range.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,6 +57,13 @@ pub(crate) struct Placement {
     pub(crate) grown_from: Option<u32>,
 }
 
+/// Resident sections by distance from the camera, nearest first, built on the first eviction
+/// of a frame and consumed from the far end.
+#[derive(Debug, Default)]
+pub(crate) struct Eviction {
+    residents: Option<Vec<(f64, Entity)>>,
+}
+
 /// CPU bookkeeping of the expanded arena.
 #[derive(Debug)]
 pub(crate) struct Residency {
@@ -56,6 +71,9 @@ pub(crate) struct Residency {
     pub(crate) sections: HashMap<Entity, ResidentFaces>,
     queue: VecDeque<Entity>,
     queued: HashSet<Entity>,
+    /// Sections that did not fit the budget and that nothing farther could make room for;
+    /// they are tried again once faces are freed or the camera moves.
+    waiting: HashSet<Entity>,
     /// Faces one page may hold.
     page_faces: u32,
     /// Faces all pages together may hold.
@@ -73,6 +91,7 @@ impl Residency {
             sections: HashMap::new(),
             queue: VecDeque::new(),
             queued: HashSet::new(),
+            waiting: HashSet::new(),
             page_faces,
             budget_faces: budget_bytes / FACE_BYTES,
             origin: None,
@@ -94,6 +113,7 @@ impl Residency {
 
     /// Queues `entity` for (re-)expansion once.
     pub(crate) fn enqueue(&mut self, entity: Entity) {
+        self.waiting.remove(&entity);
         if self.queued.insert(entity) {
             self.queue.push_back(entity);
         }
@@ -106,20 +126,35 @@ impl Residency {
         }
     }
 
-    pub(crate) fn queue_len(&self) -> usize {
-        self.queue.len()
+    /// Sections queued or waiting for room.
+    pub(crate) fn pending_len(&self) -> usize {
+        self.queue.len() + self.waiting.len()
     }
 
-    /// Next queued section.
-    pub(crate) fn pop(&mut self) -> Option<Entity> {
-        let entity = self.queue.pop_front()?;
-        self.queued.remove(&entity);
-        Some(entity)
+    /// Every section queued or waiting for room.
+    pub(crate) fn pending(&self) -> impl Iterator<Item = Entity> + '_ {
+        self.queue.iter().chain(&self.waiting).copied()
     }
 
-    /// Re-queues `entity` at the back after its placement did not fit.
-    pub(crate) fn defer(&mut self, entity: Entity) {
-        self.enqueue(entity);
+    /// Empties the queue, in arrival order.
+    pub(crate) fn take_queue(&mut self) -> Vec<Entity> {
+        self.queued.clear();
+        self.queue.drain(..).collect()
+    }
+
+    /// Parks `entity` until faces are freed or [`Self::retry_waiting`].
+    pub(crate) fn wait(&mut self, entity: Entity) {
+        if !self.queued.contains(&entity) {
+            self.waiting.insert(entity);
+        }
+    }
+
+    /// Queues every waiting section again.
+    pub(crate) fn retry_waiting(&mut self) {
+        let waiting: Vec<_> = self.waiting.drain().collect();
+        for entity in waiting {
+            self.enqueue(entity);
+        }
     }
 
     /// Frees a removed section's faces.
@@ -127,8 +162,17 @@ impl Residency {
         if let Some(resident) = self.sections.remove(&entity) {
             self.pages[resident.page].faces.release(resident.faces);
         }
+        self.waiting.remove(&entity);
         if self.queued.remove(&entity) {
             self.queue.retain(|queued| *queued != entity);
+        }
+    }
+
+    /// Frees a resident section's faces to make room for a nearer one; it waits for room.
+    pub(crate) fn evict(&mut self, entity: Entity) {
+        if let Some(resident) = self.sections.remove(&entity) {
+            self.pages[resident.page].faces.release(resident.faces);
+            self.wait(entity);
         }
     }
 
@@ -171,6 +215,45 @@ impl Residency {
             self.sections.insert(entity, previous);
         }
         placement
+    }
+
+    /// [`Self::place`], making room over budget by evicting resident sections farther from
+    /// the camera than this one, farthest first. `near` is the camera and this section's
+    /// squared distance from it; without it nothing is evicted. Evicted sections wait for
+    /// room. `eviction` carries the resident order across one frame's placements.
+    pub(crate) fn place_nearest(
+        &mut self,
+        entity: Entity,
+        plan: &SectionPlan,
+        near: Option<(DVec3, f64)>,
+        eviction: &mut Eviction,
+    ) -> Option<Placement> {
+        loop {
+            if let Some(placement) = self.place(entity, plan) {
+                return Some(placement);
+            }
+            let (eye, distance) = near?;
+            let residents = eviction.residents.get_or_insert_with(|| {
+                let mut residents: Vec<_> = self
+                    .sections
+                    .iter()
+                    .map(|(entity, faces)| (section_distance(faces.origin, eye), *entity))
+                    .collect();
+                residents.sort_by(|a, b| a.0.total_cmp(&b.0));
+                residents
+            });
+            let victim = loop {
+                let &(farthest, candidate) = residents.last()?;
+                if farthest <= distance {
+                    return None;
+                }
+                residents.pop();
+                if candidate != entity && self.sections.contains_key(&candidate) {
+                    break candidate;
+                }
+            };
+            self.evict(victim);
+        }
     }
 
     fn allocate(&mut self, faces: u32) -> Option<Placement> {
@@ -246,6 +329,7 @@ impl Residency {
         self.sections.clear();
         self.queue.clear();
         self.queued.clear();
+        self.waiting.clear();
         self.origin = None;
     }
 }

@@ -32,6 +32,9 @@ pub(crate) struct FrameGeometry<'a> {
     /// The block atlases and their generation, once built.
     pub atlas: Option<(AtlasViews<'a>, u64)>,
     pub sky: SkyInputs,
+    /// Eye distance within which every section is expanded (`f32::MAX` when all are); the
+    /// Vanilla overlay passes nothing beyond it.
+    pub overlay_radius: f32,
 }
 
 fn depth_attachment(

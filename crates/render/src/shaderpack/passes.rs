@@ -151,6 +151,8 @@ pub(crate) struct FrameIo<'a> {
     pub scene_depth: &'a TextureView,
     /// Near plane of the scene projection.
     pub scene_near: f32,
+    /// `1 /` the scene projection's x and y scales.
+    pub inverse_focal: [f32; 2],
     /// `far`: the render distance in blocks.
     pub render_distance: f32,
     /// Where the presented frame goes, and its format.
@@ -298,10 +300,26 @@ pub(crate) fn record_frame(
     }
 }
 
-/// Writes the planes the host's depth conversions use.
+/// Writes the planes and limits the host's depth conversions and the Vanilla overlay use.
 fn write_depth_parameters(queue: &Queue, pack: &PackGpu, io: &FrameIo<'_>) {
     let far = io.render_distance.max(16.0) * FAR_PLANE_SCALE;
-    let parameters = [io.scene_near, GL_NEAR, far, 0.0];
+    // Vanilla content beyond `far` (its far-terrain impostors) has no pack geometry behind it
+    // and never comes through; inside, only what lies within the fully expanded radius does.
+    let overlay_radius = io
+        .geometry
+        .as_ref()
+        .map_or(f32::MAX, |g| g.overlay_radius)
+        .min(io.render_distance.max(16.0));
+    let parameters = [
+        io.scene_near,
+        GL_NEAR,
+        far,
+        overlay_radius,
+        io.inverse_focal[0],
+        io.inverse_focal[1],
+        0.0,
+        0.0,
+    ];
     let bytes: Vec<u8> = parameters.iter().flat_map(|v| v.to_le_bytes()).collect();
     queue.write_buffer(&pack.host.depth_parameters, 0, &bytes);
 }

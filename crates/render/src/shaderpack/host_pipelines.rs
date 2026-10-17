@@ -1,0 +1,132 @@
+//! The host's own full-screen passes around a pack (`blit.wgsl`): scene copies, depth copies,
+//! the Vanilla overlay, presenting and mip downsampling.
+
+use super::loader::GpuContext;
+use super::plan::MAX_COLOR_BUFFERS;
+use wgpu::TextureFormat;
+
+/// Host passes around the pack's programs.
+pub(crate) struct HostPipelines {
+    pub scene_colour: wgpu::RenderPipeline,
+    pub scene_depth: wgpu::RenderPipeline,
+    pub scene_depth_compare: Option<wgpu::RenderPipeline>,
+    /// Copies the geometry depth attachment into a float `depthtex`/`shadowtex`.
+    pub depth_copy: wgpu::RenderPipeline,
+    /// Overlays what the Vanilla scene draws in front of the pack's geometry (actors,
+    /// particles, clouds) onto `colortex0` and the depth attachment.
+    pub vanilla_overlay: wgpu::RenderPipeline,
+    /// `present` per view target format.
+    pub present: Vec<(TextureFormat, wgpu::RenderPipeline)>,
+    /// `downsample` per mipmapped buffer format.
+    pub downsample: Vec<(TextureFormat, wgpu::RenderPipeline)>,
+    pub depth_parameters: wgpu::Buffer,
+    pub linear: wgpu::Sampler,
+    /// The geometry adapter's zero-stride constant stream, for host-built sky vertices.
+    pub constant_stream: wgpu::Buffer,
+}
+
+/// Builds the host passes for a pack's buffer and depth formats.
+pub(super) fn host_pipelines(
+    gpu: &GpuContext,
+    buffer_formats: &[Option<TextureFormat>; MAX_COLOR_BUFFERS as usize],
+    depth_format: TextureFormat,
+    depth_compare: [bool; 3],
+    mipmap_formats: &[TextureFormat],
+) -> HostPipelines {
+    let device = &gpu.device;
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("shader pack host passes"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("blit.wgsl").into()),
+    });
+    let pipeline = |entry: &str, targets: &[Option<wgpu::ColorTargetState>], depth: bool| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(entry),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("fullscreen"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: Default::default(),
+            depth_stencil: depth.then(|| wgpu::DepthStencilState {
+                format: TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                targets,
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    let target = |format: TextureFormat| {
+        Some(wgpu::ColorTargetState {
+            format,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+        })
+    };
+    let colour0 = buffer_formats[0].unwrap_or(TextureFormat::Rgba8Unorm);
+    let mut formats: Vec<TextureFormat> = mipmap_formats.to_vec();
+    formats.dedup();
+    HostPipelines {
+        scene_colour: pipeline("scene_colour", &[target(colour0)], false),
+        scene_depth: pipeline(
+            "scene_depth",
+            &[
+                target(depth_format),
+                target(depth_format),
+                target(depth_format),
+            ],
+            false,
+        ),
+        scene_depth_compare: depth_compare
+            .contains(&true)
+            .then(|| pipeline("scene_depth_compare", &[], true)),
+        depth_copy: pipeline("depth_copy", &[target(depth_format)], false),
+        vanilla_overlay: pipeline("vanilla_overlay", &[target(colour0)], true),
+        present: [
+            render_scene::SCENE_COLOR_FORMAT,
+            render_scene::SCENE_HDR_FORMAT,
+        ]
+        .into_iter()
+        .map(|f| (f, pipeline("present", &[target(f)], false)))
+        .collect(),
+        downsample: formats
+            .into_iter()
+            .map(|f| (f, pipeline("downsample", &[target(f)], false)))
+            .collect(),
+        depth_parameters: device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("shader pack depth parameters"),
+            size: 32,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }),
+        linear: device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("shader pack host linear"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        }),
+        constant_stream: {
+            let words = super::geometry::CONSTANT_STREAM_WORDS;
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("shader pack sky constants"),
+                size: std::mem::size_of_val(&words) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            gpu.queue
+                .write_buffer(&buffer, 0, bytemuck::cast_slice(&words));
+            buffer
+        },
+    }
+}

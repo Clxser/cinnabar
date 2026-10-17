@@ -24,8 +24,8 @@ use world::weather::{Precipitation, classify_precipitation};
 
 use crate::{
     environment::{
-        CameraMediumState, DebugTimeOverride, VisualTimeOverride, WorldClock,
-        update_atmosphere_frame, visual_world_time,
+        CameraMediumState, DebugTimeOverride, FixedTime, VisualTimeOverride, WorldClock,
+        rendered_clock, update_atmosphere_frame, visual_world_time,
     },
     runtime::world::ClientWorld,
 };
@@ -58,8 +58,9 @@ impl Plugin for ShaderPackInputsPlugin {
 /// The rendered clock, atmosphere frame and lightmap inputs the vanilla sky draws from.
 type EnvironmentSources<'w> = (
     Res<'w, WorldClock>,
-    Option<Res<'w, VisualTimeOverride>>,
+    Option<Res<'w, FixedTime>>,
     Option<Res<'w, DebugTimeOverride>>,
+    Option<Res<'w, VisualTimeOverride>>,
     Res<'w, Time<Real>>,
     Res<'w, AtmosphereFrame>,
     Res<'w, WorldLighting>,
@@ -84,20 +85,17 @@ fn publish_frame_inputs(
     cameras: Query<&Transform, With<FlyCamera>>,
     mut inputs: ResMut<ShaderPackFrameInputs>,
 ) {
-    let (clock, visual_time, debug_time, time, frame, lighting, medium) = environment;
+    let (clock, fixed_time, debug_time, visual_time, time, frame, lighting, medium) = environment;
     let (client_world, player_runtime, ui, vision, server_camera, physics) = player;
     let mut next = ShaderPackFrameInputs::default();
 
-    // Same override order as the vanilla atmosphere: mod output, then the local debug control.
-    let clock = visual_time
-        .as_deref()
-        .map_or(*clock, |value| value.rendering_clock(*clock));
-    let clock = debug_time
-        .as_deref()
-        .and_then(|value| value.ticks)
-        .map_or(clock, |ticks| {
-            VisualTimeOverride(Some(ticks)).rendering_clock(clock)
-        });
+    // Same clock as the vanilla atmosphere draws with.
+    let clock = rendered_clock(
+        *clock,
+        fixed_time.as_deref(),
+        debug_time.as_deref(),
+        visual_time.as_deref(),
+    );
     let day = DayClock::at(visual_world_time(clock, time.elapsed_secs_f64()));
     next.world_time = day.world_time;
     next.world_day = day.world_day;

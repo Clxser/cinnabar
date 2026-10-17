@@ -1170,6 +1170,30 @@ screen-effect parity remain incomplete.
   without `block.properties`; item and entity ids are not yet mapped from Bedrock identities;
   files decode as UTF-8 rather than ISO-8859-1.
 
+## Shader-pack render mode (experimental, incomplete)
+
+- `--features shaderpacks` runs Java OptiFine/Iris packs (checked: BSL v10.1.8, Photon v1.3b)
+  through their own `shadow`, `gbuffers_skybasic`/`terrain*`/`water`, `deferred`, `composite`
+  and `final` programs on Cinnabar terrain expanded into Iris's vertex format. Sky, sun path,
+  `sunAngle`/`shadowAngle` and the shadow camera follow Java's eased celestial angle.
+- `lightmap` is the world lightmap Cinnabar's own terrain uses (sky darkening, night vision,
+  darkness, brightness), rewritten when it changes; the Java `LightTexture` block-light flicker
+  is not modelled.
+- Block-model quads keep their back faces by the template quad's two-sided flag, as the chunk
+  renderer does, so cross plants draw through the pack.
+- Expansion is nearest-first within the 1 GiB vertex budget; over budget, nearer sections evict
+  the farthest. The Vanilla overlay (entities, particles, clouds, weather) passes nothing beyond
+  `far` or the fully expanded radius, so unexpanded terrain shows the pack's sky or fog.
+- Developer captures pin the time with `--fixed-time <ticks>` (docs/agents/live-testing.md).
+- Gaps against Iris references (same tick, 16-chunk render distance): entities, the hand,
+  particles, clouds and weather are Vanilla-lit overlay pixels without gbuffer data; no pack
+  clouds (`gbuffers_clouds`), `skytextured` sun/moon or vanilla stars; `biome`,
+  `biome_category` and the Iris `CAT_*`/`BIOME_*`/`PPT_*` constants are not supplied, so custom
+  uniforms comparing them read 0 (Photon's biome weights then all read 1, a likely cause of its
+  pink haze); eye-located inputs (`eyeBrightness`) sample the player, not a scripted camera;
+  shadows cover every resident section without `shadowDistance` culling; translucents sort per
+  section; Vanilla terrain still renders underneath. Not a parity gate.
+
 ## Anvil screen
 
 - The anvil predicts its result and cost: repair materials restore a

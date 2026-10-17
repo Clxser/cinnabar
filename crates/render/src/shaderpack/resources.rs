@@ -4,9 +4,7 @@
 //! the host cannot supply.
 
 use super::loader::GpuContext;
-use super::pipelines::{
-    FormatSupport, Kind, format_kind, sample_kind, storage_format, texture_format,
-};
+use super::pipelines::{FormatSupport, Kind, format_kind, storage_format, texture_format};
 use super::plan::{MAX_COLOR_BUFFERS, color_buffer_of};
 use shaderpack::{
     BufferFormat, BufferId, CustomImage, ImageSize, ProgramGroup, ProgramReflection, SampleType,
@@ -14,6 +12,8 @@ use shaderpack::{
 };
 use std::collections::HashMap;
 use wgpu::{TextureFormat, TextureUsages};
+
+pub(crate) mod bindings;
 
 /// Iris's default `noiseTextureResolution`.
 const DEFAULT_NOISE_RESOLUTION: u32 = 256;
@@ -556,44 +556,30 @@ impl<'a> ConstantBuilder<'a> {
         }
     }
 
-    /// The 16×16 `lightmap` geometry programs sample with `gl_TextureMatrix[1]`
-    /// coordinates: block light along U, sky light along V, through Java's brightness curve
-    /// at full daylight with warm block light. A static stand-in for Java's per-frame
-    /// lightmap, which also tracks the sky darkening, night vision and the gamma setting.
+    /// The 16×16 `lightmap` geometry programs sample with `gl_TextureMatrix[1]` coordinates,
+    /// block light along U and sky light along V. It starts as the daylight table;
+    /// [`super::lightmap::update_lightmap`] keeps it equal to the world lightmap.
     fn lightmap(&mut self) -> (usize, TextureFormat) {
         if let Some(found) = self.keys.get(&Key::Lightmap) {
             return *found;
         }
-        let brightness = |level: u32| {
-            let f = level as f32 / 15.0;
-            f / (4.0 - 3.0 * f)
-        };
-        let mut texels = Vec::with_capacity(16 * 16 * 4);
-        for sky in 0..16 {
-            for block in 0..16 {
-                let b = brightness(block) * 1.5;
-                let s = brightness(sky);
-                let warm = [
-                    b,
-                    b * ((b * 0.6 + 0.4) * 0.6 + 0.4),
-                    b * (b * b * 0.6 + 0.4),
-                ];
-                for channel in warm {
-                    let lit = (s * 0.96 + 0.04 + channel).min(1.0);
-                    texels.push((lit * 255.0).round() as u8);
-                }
-                texels.push(255);
-            }
-        }
+        let side = super::lightmap::LIGHTMAP_SIDE;
         let (texture, view) = self.texture(
             "shader pack lightmap",
             TextureFormat::Rgba8Unorm,
-            [16, 16, 1],
+            [side, side, 1],
             TextureDimension::D2,
             TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
         );
-        self.upload(&texture, &texels, 16 * 4, [16, 16, 1]);
+        let texels =
+            super::lightmap::lightmap_texels(Some(render_model::LightmapInputs::default()));
+        self.upload(&texture, &texels, side * 4, [side, side, 1]);
         self.push(Key::Lightmap, texture, view)
+    }
+
+    /// The `lightmap` texture, when some program samples it.
+    pub(crate) fn lightmap_slot(&self) -> Option<usize> {
+        self.keys.get(&Key::Lightmap).map(|(index, _)| *index)
     }
 
     /// Whether pack-wide texture `index` has the shape a sampler of `dimension` reads.
@@ -871,126 +857,6 @@ fn storage_shape(dimension: TextureDimension) -> wgpu::TextureDimension {
         | TextureDimension::Cube
         | TextureDimension::CubeArray => wgpu::TextureDimension::D2,
     }
-}
-
-/// Resolves every texture and image binding of `reflection`.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the pack-wide plan pieces a binding draws on"
-)]
-pub(crate) fn resolve_bindings(
-    constants: &mut ConstantBuilder<'_>,
-    group: ProgramGroup,
-    reflection: &ProgramReflection,
-    buffer_formats: &[Option<TextureFormat>; MAX_COLOR_BUFFERS as usize],
-    storage_buffers: u32,
-    depth_format: TextureFormat,
-    images: &[CustomImage],
-    image_formats: &[TextureFormat],
-) -> ProgramBindings {
-    let stage = group.texture_stage();
-    let geometry = matches!(group, ProgramGroup::Gbuffers | ProgramGroup::Shadow);
-    let textures = reflection
-        .textures
-        .iter()
-        .map(|t| {
-            let wanted = sample_kind(t.sample_type);
-            let fits = |format: TextureFormat| wanted.is_none_or(|k| k == format_kind(format));
-            let source =
-                if let Some((index, format)) = constants.custom(stage, &t.name, t.dimension) {
-                    Some(TextureSource::Constant { index, format })
-                } else if let Some(layer) = atlas_layer(&t.name).filter(|_| geometry) {
-                    Some(TextureSource::Atlas(layer))
-                } else if t.name == "lightmap" && geometry {
-                    let (index, format) = constants.lightmap();
-                    Some(TextureSource::Constant { index, format })
-                } else if t.name == "noisetex" {
-                    let (index, format) = constants.noise();
-                    Some(TextureSource::Constant { index, format })
-                } else if let Some(index) = depth_index(&t.name) {
-                    Some(if t.sample_type == SampleType::Depth {
-                        TextureSource::DepthCompare(index)
-                    } else {
-                        TextureSource::Depth {
-                            index,
-                            format: depth_format,
-                        }
-                    })
-                } else if let Some(index) = match t.name.as_str() {
-                    "shadowtex0" | "shadow" | "watershadow" => Some(0),
-                    "shadowtex1" => Some(1),
-                    _ => None,
-                } {
-                    let (index, format) = constants.shadow(index, t.sample_type);
-                    Some(TextureSource::Constant { index, format })
-                } else if let Some(BufferId::ShadowColor(i)) = BufferId::parse(&t.name) {
-                    let (index, format) = constants.shadow_color(i);
-                    Some(TextureSource::Constant { index, format })
-                } else if let Some(index) = color_buffer_of(&t.name)
-                    && let Some(format) = buffer_formats[index as usize]
-                {
-                    Some(TextureSource::Buffer { index, format })
-                } else {
-                    images
-                        .iter()
-                        .position(|i| i.sampler == t.name)
-                        .map(|index| TextureSource::Image {
-                            index,
-                            format: image_formats[index],
-                        })
-                };
-            let dimension_fits = |s: &TextureSource| match *s {
-                TextureSource::Constant { index, .. } => constants.has_shape(index, t.dimension),
-                TextureSource::Image { index, .. } => {
-                    let image = match images[index].size {
-                        ImageSize::Absolute { depth: Some(_), .. } => TextureDimension::D3,
-                        _ => TextureDimension::D2,
-                    };
-                    storage_shape(image) == storage_shape(t.dimension)
-                }
-                _ => t.dimension == TextureDimension::D2,
-            };
-            match source {
-                Some(s)
-                    if fits(s.format())
-                        && dimension_fits(&s)
-                        && (t.sample_type == SampleType::Depth)
-                            == s.format().is_depth_stencil_format() =>
-                {
-                    s
-                }
-                other => {
-                    bevy::log::debug!(
-                        target: "cinnabar::shaderpack",
-                        texture = %t.name, resolved = ?other,
-                        "binding a placeholder"
-                    );
-                    constants.placeholder_for(t.sample_type, t.dimension)
-                }
-            }
-        })
-        .collect();
-    let images = reflection
-        .storage_images
-        .iter()
-        .map(|image| {
-            let format = storage_format(image.format);
-            if let Some(b) = color_buffer_of(&image.name)
-                && storage_buffers & (1 << b) != 0
-                && buffer_formats[b as usize] == format
-            {
-                return ImageSource::Buffer(b);
-            }
-            if let Some(index) = images.iter().position(|i| i.name == image.name)
-                && Some(image_formats[index]) == format
-            {
-                return ImageSource::Image(index);
-            }
-            let format = format.unwrap_or(TextureFormat::Rgba8Unorm);
-            ImageSource::Constant(constants.placeholder(format, image.dimension, true).0)
-        })
-        .collect();
-    ProgramBindings { textures, images }
 }
 
 /// The texture format of each custom image: the format a program declares for it, else the

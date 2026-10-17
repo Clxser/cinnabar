@@ -811,6 +811,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         crate::render_mode::RenderModePlugin::new(args.render_mode, diagnostics_enabled)
             .with_shader_pack(args.shader_pack.clone()),
     );
+    app.insert_resource(crate::environment::FixedTime(args.fixed_time));
     app.add_plugins(crate::shader_pack_inputs::ShaderPackInputsPlugin);
     app.add_plugins(render::PanoramaRenderPlugin);
     if let Some(particle_assets) = &particle_assets {

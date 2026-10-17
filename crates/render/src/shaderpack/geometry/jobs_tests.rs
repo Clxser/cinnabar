@@ -52,8 +52,8 @@ fn greedy_quads_expand_to_one_job_per_covered_block_and_categories_stay_contiguo
     let model_quads = [ModelQuad {
         positions: [[0; 3]; 4],
         uvs: [[0; 2]; 4],
-        material: TWO_SIDED,
-        flags: 0,
+        material: PLAIN,
+        flags: assets::MODEL_QUAD_FLAG_TWO_SIDED,
     }];
     let tables = MaterialTables {
         materials: &materials,
@@ -86,7 +86,7 @@ fn greedy_quads_expand_to_one_job_per_covered_block_and_categories_stay_contiguo
 
     // Solid: the 2x3 quad's six blocks, then lava.
     // Cutout: the overlay quad (face + overlay), the two-sided quad (face + back), the quad whose
-    // positional variant is two-sided (face + back), then the two-sided opaque model.
+    // positional variant is two-sided (face + back), then the two-sided model quad.
     // Translucent: the same model drawn translucent, then two-sided water.
     assert_eq!(plan.categories, [0..7, 7..15, 15..19]);
     assert_eq!(plan.faces, 19);
@@ -145,6 +145,51 @@ fn greedy_quads_expand_to_one_job_per_covered_block_and_categories_stay_contiguo
         61,
         "lava is the second record"
     );
+}
+
+#[test]
+fn model_back_faces_follow_the_template_quads_sidedness_not_the_material() {
+    // Cross plants are two-sided template quads with an ordinary cutout material; a two-sided
+    // material on a one-sided quad keeps a single face, as the chunk renderer's model gate does.
+    let materials = materials();
+    let templates = [ModelTemplate {
+        quad_start: 0,
+        quad_count: 2,
+        flags: 0,
+    }];
+    let quad = |material, flags| ModelQuad {
+        positions: [[0; 3]; 4],
+        uvs: [[0; 2]; 4],
+        material,
+        flags,
+    };
+    let model_quads = [
+        quad(PLAIN, assets::MODEL_QUAD_FLAG_TWO_SIDED),
+        quad(TWO_SIDED, 0),
+    ];
+    let tables = MaterialTables {
+        materials: &materials,
+        model_templates: &templates,
+        model_quads: &model_quads,
+    };
+    let model_refs = [PackedModelRef::new(0, 0, 0, 0b11)];
+    let draws = [PackedModelDrawRef::new(0, 0), PackedModelDrawRef::new(0, 1)];
+    let section = SectionGeometry {
+        metadata_index: 0,
+        quad_base: 0,
+        cube_quads: &[],
+        solid_len: 0,
+        model_refs: &model_refs,
+        model_draw_base: 0,
+        model_draw_refs: &draws,
+        transparent_model_draw_base: 0,
+        transparent_model_draw_refs: &[],
+        liquid_base: 0,
+        liquid_quads: &[],
+    };
+    let plan = plan_section(&section, &tables);
+    assert_eq!(face_range(&plan, JobKind::Model), [(0, 2), (2, 1)]);
+    assert_eq!(plan.jobs[JobKind::Model as usize][0][3], JOB_REVERSE_FACE);
 }
 
 #[test]

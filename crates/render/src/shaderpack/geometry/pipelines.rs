@@ -48,6 +48,10 @@ pub(crate) fn expansion_shader_source(source: &str) -> String {
         .replace("ATLAS_PAGE_SLOTS", &format!("{page_slots}u"))
         .replace("JOB_OVERLAY_FACE", &format!("{JOB_OVERLAY_FACE}u"))
         .replace("JOB_REVERSE_FACE", &format!("{JOB_REVERSE_FACE}u"))
+        .replace(
+            "MODEL_QUAD_TWO_SIDED_FLAG",
+            &format!("{}u", assets::MODEL_QUAD_FLAG_TWO_SIDED),
+        )
 }
 
 fn shader(source: &str, path: impl Into<String>) -> Shader {

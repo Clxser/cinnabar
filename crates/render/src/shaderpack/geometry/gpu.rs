@@ -25,7 +25,9 @@ use super::pipelines::{
     EXPAND_PARAMS_BYTES, EXPAND_WORKGROUP_SIZE, ExpansionPipelines, output_layout, source_bindings,
     source_layout, storage_buffers_per_stage,
 };
-use super::residency::{FACE_BYTES, Placement, Residency};
+use super::residency::{
+    Eviction, FACE_BYTES, Placement, Residency, ResidentFaces, SECTION_RADIUS, section_distance,
+};
 use super::vertex::CONSTANT_STREAM_WORDS;
 use crate::chunk::shaderpack_sources::{
     PackedChunkBuffers, PackedChunkSources, ResidentSections, terrain_multi_draw_indirect,
@@ -36,6 +38,8 @@ use crate::shaderpack::atlas::ShaderpackAtlas;
 pub const FRAME_EXPANSION_FACES: u32 = 1 << 18;
 /// Default memory budget of the expanded vertex pages.
 pub const DEFAULT_GEOMETRY_BUDGET_BYTES: u64 = 1 << 30;
+/// Camera travel, in blocks, after which sections waiting for room are tried again.
+const RETRY_DISTANCE: f64 = 16.0;
 
 /// Host controls of the geometry adapter, in the render world.
 #[derive(Resource, Clone, Debug, PartialEq, Eq)]
@@ -113,6 +117,10 @@ pub struct ShaderpackGeometry {
     supported: bool,
     prepared: PreparedExpansion,
     overflow_reported: bool,
+    /// Eye distance within which every visible section is expanded; `None` when all are.
+    complete_radius: Option<f32>,
+    /// Camera position when waiting sections were last retried.
+    retry_eye: Option<DVec3>,
 }
 
 impl FromWorld for ShaderpackGeometry {
@@ -147,6 +155,8 @@ impl FromWorld for ShaderpackGeometry {
             supported,
             prepared: PreparedExpansion::default(),
             overflow_reported: false,
+            complete_radius: None,
+            retry_eye: None,
         }
     }
 }
@@ -169,6 +179,12 @@ impl ShaderpackGeometry {
         self.residency
             .origin
             .map(|origin| (origin.as_dvec3() - camera).as_vec3())
+    }
+
+    /// Eye distance within which every section the camera may see is expanded, or `None`
+    /// when nothing waits. Beyond it terrain may be missing from the pack's geometry.
+    pub fn complete_radius(&self) -> Option<f32> {
+        self.complete_radius
     }
 
     /// Records `category` for `view` (a render-world view entity with visible chunks), or for
@@ -203,6 +219,8 @@ impl ShaderpackGeometry {
         self.views.clear();
         self.resident = ViewDraws::default();
         self.prepared = PreparedExpansion::default();
+        self.complete_radius = None;
+        self.retry_eye = None;
     }
 
     /// Creates or grows vertex page `placement.page` to its new capacity, keeping its faces.
@@ -284,6 +302,8 @@ pub(crate) struct GeometryInputs<'w> {
     textures: Option<Res<'w, ChunkTextureAssets>>,
     atlas: Option<Res<'w, ShaderpackAtlas>>,
     block_ids: Option<Res<'w, ShaderpackBlockIds>>,
+    /// The pack's `far`, the client render distance in blocks.
+    frame: Option<Res<'w, render_scene::shaderpack::ShaderPackFrameInputs>>,
     pipelines: Res<'w, ExpansionPipelines>,
     cache: Res<'w, PipelineCache>,
     device: Res<'w, RenderDevice>,
@@ -311,18 +331,35 @@ pub(crate) fn prepare_shaderpack_geometry(
     geometry.prepared = PreparedExpansion::default();
     let settings = inputs.settings.as_deref().cloned().unwrap_or_default();
     if !settings.enabled || !geometry.supported {
-        if !geometry.pages.is_empty() || geometry.residency.queue_len() > 0 {
+        if !geometry.pages.is_empty() || geometry.residency.pending_len() > 0 {
             geometry.release_all();
         }
         return;
     }
     let geometry = &mut *geometry;
     geometry.residency.set_budget(settings.budget_bytes);
-    for removed in sections.take_removed() {
+    let removed = sections.take_removed();
+    let freed = !removed.is_empty();
+    for removed in removed {
         geometry.residency.remove(removed);
     }
     for changed in sections.changed().collect::<Vec<_>>() {
         geometry.residency.enqueue(changed);
+    }
+    let camera = views
+        .iter()
+        .find(|(.., camera)| *camera)
+        .map(|(_, view, ..)| view.world_from_view.translation().as_dvec3());
+    // Sections waiting for room get another chance once room is freed or the camera has moved
+    // enough that some of them may now be nearer than resident ones.
+    let moved = camera.is_some_and(|camera| {
+        geometry
+            .retry_eye
+            .is_none_or(|last| last.distance(camera) > RETRY_DISTANCE)
+    });
+    if freed || moved {
+        geometry.residency.retry_waiting();
+        geometry.retry_eye = camera.or(geometry.retry_eye);
     }
     // Everything below needs the chunk tables, the atlas and compiled kernels.
     let (Some(buffers), Some(textures), Some(atlas)) = (
@@ -354,10 +391,6 @@ pub(crate) fn prepare_shaderpack_geometry(
         separate_ao: settings.separate_ao,
         old_lighting: settings.old_lighting,
     };
-    let camera = views
-        .iter()
-        .find(|(.., camera)| *camera)
-        .map(|(_, view, ..)| view.world_from_view.translation().as_dvec3());
     let rebased = camera.is_some_and(|camera| geometry.residency.follow_camera(camera));
     if rebased || geometry.inputs.as_ref() != Some(&expansion_inputs) {
         let resident: Vec<_> = sections.entities().collect();
@@ -372,9 +405,24 @@ pub(crate) fn prepare_shaderpack_geometry(
         };
         plan_frame(
             geometry, &inputs, &buffers, &sections, textures, atlas, origin, &settings, budget,
+            camera,
         );
     }
-    build_draws(geometry, &inputs.device, &sources, &views);
+    geometry.complete_radius = camera.and_then(|eye| {
+        geometry
+            .residency
+            .pending()
+            .filter_map(|entity| sections.get(entity))
+            .map(|section| section_distance(section.origin, eye))
+            .min_by(f64::total_cmp)
+            .map(|nearest| (nearest.sqrt() - SECTION_RADIUS).max(0.0) as f32)
+    });
+    let far = inputs
+        .frame
+        .as_deref()
+        .map(|frame| frame.render_distance)
+        .filter(|far| *far > 0.0);
+    build_draws(geometry, &inputs.device, &sources, &views, far);
 }
 
 impl ShaderpackGeometry {
@@ -397,6 +445,7 @@ fn plan_frame(
     origin: IVec3,
     settings: &ShaderpackGeometrySettings,
     budget: u32,
+    eye: Option<DVec3>,
 ) {
     let tables = MaterialTables {
         materials: textures.assets.materials(),
@@ -407,12 +456,31 @@ fn plan_frame(
     // Jobs per (kind, page), with face indices relative to the page.
     let mut jobs: HashMap<(usize, usize), Vec<[u32; 4]>> = HashMap::new();
     let mut planned_faces = 0_u32;
-    let mut deferred = Vec::new();
     let mut overflow = false;
-    while planned_faces < budget {
-        let Some(entity) = geometry.residency.pop() else {
+    // Nearest first, so the budget and the frame's expansion go to what the camera sees most.
+    let mut queue: Vec<(f64, Entity)> = geometry
+        .residency
+        .take_queue()
+        .into_iter()
+        .filter_map(|entity| {
+            let section = sections.get(entity)?;
+            Some((
+                eye.map_or(0.0, |eye| section_distance(section.origin, eye)),
+                entity,
+            ))
+        })
+        .collect();
+    queue.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut eviction = Eviction::default();
+    let mut queue = queue.into_iter();
+    while let Some((distance, entity)) = queue.next() {
+        if planned_faces >= budget {
+            geometry.residency.enqueue(entity);
+            queue
+                .by_ref()
+                .for_each(|(_, rest)| geometry.residency.enqueue(rest));
             break;
-        };
+        }
         let Some(section) = sections.get(entity) else {
             continue;
         };
@@ -421,10 +489,21 @@ fn plan_frame(
             geometry.residency.remove(entity);
             continue;
         }
-        let Some(placement) = geometry.residency.place(entity, &plan) else {
+        let placement = geometry.residency.place_nearest(
+            entity,
+            &plan,
+            eye.map(|eye| (eye, distance)),
+            &mut eviction,
+        );
+        let Some(placement) = placement else {
+            // Nothing farther is left to give up its room: this and every farther section
+            // wait until room frees up or the camera moves.
             overflow = true;
-            deferred.push(entity);
-            continue;
+            geometry.residency.wait(entity);
+            queue
+                .by_ref()
+                .for_each(|(_, rest)| geometry.residency.wait(rest));
+            break;
         };
         geometry.grow_page(device, &placement);
         plan.place(placement.faces.start);
@@ -437,9 +516,6 @@ fn plan_frame(
                 .extend(planned);
         }
         planned_faces = planned_faces.saturating_add(plan.faces);
-    }
-    for entity in deferred {
-        geometry.residency.defer(entity);
     }
     if overflow && !geometry.overflow_reported {
         warn!(
@@ -510,24 +586,37 @@ fn plan_frame(
     }
 }
 
+/// Draw lists per camera view of its visible resident sections within `far` horizontally, as
+/// Java culls render sections by render distance, plus the shadow list of every resident one.
 fn build_draws(
     geometry: &mut ShaderpackGeometry,
     device: &RenderDevice,
     sources: &PackedChunkSources,
     views: &GeometryViews,
+    far: Option<f32>,
 ) {
     let epoch = geometry.residency.epoch;
     let mut max_faces = 0;
     geometry.views.clear();
+    let reach = far.map(|far| f64::from(far) + 8.0);
     for (entity, view, visible, _) in views.iter() {
         let eye = view.world_from_view.translation().as_dvec3();
+        let within = |faces: &ResidentFaces| {
+            reach.is_none_or(|reach| {
+                let [x, _, z] = faces.origin;
+                let dx = f64::from(x) + 8.0 - eye.x;
+                let dz = f64::from(z) + 8.0 - eye.z;
+                dx * dx + dz * dz <= reach * reach
+            })
+        };
         let sections = visible
             .get::<ChunkRenderInstance>()
             .into_iter()
             .flat_map(|class| class.iter_visible())
             .map(|(entity, _)| *entity)
             .filter(|entity| !sources.is_hidden(*entity))
-            .filter_map(|entity| geometry.residency.sections.get(&entity));
+            .filter_map(|entity| geometry.residency.sections.get(&entity))
+            .filter(|faces| within(faces));
         let mut draws = ViewDraws::build(sections, Some(eye), epoch);
         if draws.commands.is_empty() {
             continue;

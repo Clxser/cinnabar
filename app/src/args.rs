@@ -33,6 +33,7 @@ Options:
   --frame-cap <FPS>            Cap acceptance updates to 1-1000 FPS
   --render-mode <MODE>         vanilla, enhanced or shaderpack; CINNABAR_RENDER_MODE is the fallback
   --shader-pack <PATH>         Draw this Java shader pack (zip or folder) for the session only
+  --fixed-time <TICKS>         Developer builds: draw at this time of day (0 = sunrise), ignoring the server clock
   --gui-scale <1-4|auto>       Fix the GUI scale (default: auto, the Bedrock desktop rule)
   --dev-debug-overlay          Compatibility alias; F3 debug controls are always available
   --language <ll_CC>           UI language (default: from LC_ALL/LC_MESSAGES/LANG, else en_US)
@@ -123,6 +124,8 @@ pub struct ClientArgs {
     /// Session-only shader pack, opened from this path instead of the saved selection;
     /// implies `render_mode == Some(RenderMode::ShaderPack)`.
     pub shader_pack: Option<PathBuf>,
+    /// Rendered time of day pinned for the whole session (developer-control builds only).
+    pub fixed_time: Option<u32>,
     /// Enables F3 debug controls; the overlay starts hidden until F3 is pressed.
     /// `--dev-debug-overlay` remains accepted for older launch commands.
     pub dev_debug_overlay: bool,
@@ -157,6 +160,7 @@ impl Default for ClientArgs {
             gui_scale: None,
             render_mode: None,
             shader_pack: None,
+            fixed_time: None,
             dev_debug_overlay: true,
             language: None,
             full_view_teleport_gate: false,
@@ -181,6 +185,9 @@ pub enum ArgsError {
         "acceptance and evidence options require the app's `acceptance` feature; rebuild without --no-default-features or enable --features acceptance"
     )]
     AcceptanceFeatureRequired,
+
+    #[error("{0} needs a developer-control build; rebuild with --features developer-control")]
+    DeveloperControlFeatureRequired(&'static str),
 
     #[error("unknown argument {0:?}\n\n{HELP}")]
     Unknown(OsString),
@@ -211,6 +218,9 @@ pub enum ArgsError {
 
     #[error("--shader-pack requires a non-empty path")]
     EmptyShaderPack,
+
+    #[error("--fixed-time must be a nonnegative integer tick count, got {0:?}")]
+    InvalidFixedTime(String),
 
     #[error("--shader-pack selects the shaderpack render mode, but --render-mode is {0:?}")]
     ConflictingShaderPackRenderMode(&'static str),
@@ -251,6 +261,14 @@ impl ClientArgs {
             || self.movement_candidate_physics;
         if !available && requested {
             return Err(ArgsError::AcceptanceFeatureRequired);
+        }
+        Ok(())
+    }
+
+    /// Rejects developer-only options when this build omits the developer-control feature.
+    pub(crate) fn validate_developer_support(&self, available: bool) -> Result<(), ArgsError> {
+        if !available && self.fixed_time.is_some() {
+            return Err(ArgsError::DeveloperControlFeatureRequired("--fixed-time"));
         }
         Ok(())
     }
@@ -432,6 +450,18 @@ impl ClientArgs {
                     }
                     parsed.shader_pack = Some(PathBuf::from(value));
                 }
+                Some("--fixed-time") => {
+                    let value = next_value(&mut arguments, "--fixed-time")?
+                        .into_string()
+                        .map_err(|_| ArgsError::InvalidUtf8 {
+                            flag: "--fixed-time",
+                        })?;
+                    parsed.fixed_time = Some(
+                        value
+                            .parse::<u32>()
+                            .map_err(|_| ArgsError::InvalidFixedTime(value.clone()))?,
+                    );
+                }
                 _ if resource_pack::is_pack_import_path(std::path::Path::new(&argument)) => {
                     parsed.import_packs.push(PathBuf::from(argument));
                 }
@@ -460,6 +490,7 @@ impl ClientArgs {
             return Err(ArgsError::MovementEvidenceRequiresAttributableRun);
         }
         parsed.validate_acceptance_support(cfg!(feature = "acceptance"))?;
+        parsed.validate_developer_support(cfg!(feature = "developer-control"))?;
         Ok(ParseOutcome::Run(Box::new(parsed)))
     }
 
@@ -718,6 +749,40 @@ mod tests {
         );
         assert!(HELP.contains("--shader-pack <PATH>"));
         assert!(HELP.contains("shaderpack"));
+    }
+
+    #[test]
+    fn fixed_time_is_a_validated_developer_only_pin() {
+        let args = ClientArgs {
+            fixed_time: Some(6_000),
+            ..ClientArgs::default()
+        };
+        assert_eq!(args.validate_developer_support(true), Ok(()));
+        assert_eq!(
+            args.validate_developer_support(false),
+            Err(ArgsError::DeveloperControlFeatureRequired("--fixed-time"))
+        );
+        assert_eq!(
+            ClientArgs::default().validate_developer_support(false),
+            Ok(())
+        );
+        let parsed = ClientArgs::parse_from(["client", "--fixed-time", "13013"]);
+        if cfg!(feature = "developer-control") {
+            let Ok(ParseOutcome::Run(args)) = parsed else {
+                panic!("expected run args, got {parsed:?}");
+            };
+            assert_eq!(args.fixed_time, Some(13_013));
+        } else {
+            assert_eq!(
+                parsed,
+                Err(ArgsError::DeveloperControlFeatureRequired("--fixed-time"))
+            );
+        }
+        assert_eq!(
+            ClientArgs::parse_from(["client", "--fixed-time", "-1"]),
+            Err(ArgsError::InvalidFixedTime("-1".to_owned()))
+        );
+        assert!(HELP.contains("--fixed-time <TICKS>"));
     }
 
     #[test]

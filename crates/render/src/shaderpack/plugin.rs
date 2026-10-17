@@ -323,12 +323,17 @@ fn shaderpack_post(
             camera_y: view.world_from_view.translation().y,
             sunrise: inputs.dimension == 0,
         },
+        overlay_radius: terrain.geometry.complete_radius().unwrap_or(f32::MAX),
     });
     let post = target.post_process_write();
     let io = FrameIo {
         scene_colour: post.source,
         scene_depth: crate::scene_sampling::view_depth(depth),
         scene_near: view.clip_from_view.w_axis.z,
+        inverse_focal: [
+            view.clip_from_view.x_axis.x.recip(),
+            view.clip_from_view.y_axis.y.recip(),
+        ],
         render_distance: inputs.render_distance,
         destination: post.destination,
         destination_format,
@@ -397,6 +402,7 @@ pub(super) fn finish(app: &mut App) {
                 .in_set(RenderSystems::PrepareResources)
                 .after(bevy::render::view::prepare_view_targets)
                 .after(super::geometry::prepare_shaderpack_geometry),
+            super::lightmap::update_lightmap.in_set(RenderSystems::PrepareResources),
         ),
     );
     install_graph(render_app.world_mut());

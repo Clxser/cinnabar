@@ -108,7 +108,51 @@ fn the_queue_holds_each_section_once_and_forgets_removed_ones() {
     let mut residency = Residency::new(1 << 20, 1 << 20);
     residency.enqueue_all([entity(1), entity(2), entity(1)]);
     residency.remove(entity(2));
-    assert_eq!(residency.queue_len(), 1);
-    assert_eq!(residency.pop(), Some(entity(1)));
-    assert_eq!(residency.pop(), None);
+    assert_eq!(residency.pending_len(), 1);
+    assert_eq!(residency.take_queue(), [entity(1)]);
+    assert_eq!(residency.pending_len(), 0);
+    residency.wait(entity(3));
+    residency.enqueue(entity(3));
+    assert_eq!(
+        residency.pending_len(),
+        1,
+        "a queued section does not also wait"
+    );
+}
+
+#[test]
+fn over_budget_nearer_sections_evict_the_farthest_and_farther_ones_wait() {
+    // Room for exactly two sections of 100 faces.
+    let mut residency = Residency::new(1 << 30, 200 * FACE_BYTES);
+    let eye = DVec3::new(8.0, 8.0, 8.0);
+    let at = |x: i32| [x, 0, 0];
+    let place = |residency: &mut Residency, id: u32, x: i32, eviction: &mut Eviction| {
+        let near = Some((eye, section_distance(at(x), eye)));
+        let placement = residency.place_nearest(entity(id), &plan(100), near, eviction)?;
+        residency.commit(entity(id), &placement, &plan(100), at(x));
+        Some(placement)
+    };
+    let mut eviction = Eviction::default();
+    assert!(place(&mut residency, 1, 160, &mut eviction).is_some());
+    assert!(place(&mut residency, 2, 320, &mut eviction).is_some());
+    // A nearer section takes the farthest one's room; that one waits.
+    let mut eviction = Eviction::default();
+    assert!(place(&mut residency, 3, 0, &mut eviction).is_some());
+    assert!(residency.sections.contains_key(&entity(1)));
+    assert!(!residency.sections.contains_key(&entity(2)));
+    assert_eq!(residency.pending().collect::<Vec<_>>(), [entity(2)]);
+    // A farther section never evicts nearer ones.
+    let mut eviction = Eviction::default();
+    assert!(place(&mut residency, 4, 480, &mut eviction).is_none());
+    assert!(residency.sections.contains_key(&entity(1)));
+    assert!(residency.sections.contains_key(&entity(3)));
+    // Without a camera nothing is evicted.
+    assert_eq!(
+        residency.place_nearest(entity(5), &plan(100), None, &mut Eviction::default()),
+        None
+    );
+    // Freed room brings waiting sections back to the queue.
+    residency.remove(entity(1));
+    residency.retry_waiting();
+    assert_eq!(residency.take_queue(), [entity(2)]);
 }
