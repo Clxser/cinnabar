@@ -10,6 +10,17 @@ use ui_engine::text_metrics::TextMetrics;
 use ui_screens::player_list::PlayerList;
 
 impl UiPresentationRuntime {
+    /// Releases previous-session skin handles and their prepared atlas sources.
+    pub(in super::super) fn clear_player_list(&mut self) {
+        self.screens.player_list = None;
+        if let Some(engine) = self.engine.as_deref() {
+            engine
+                .textures
+                .lock()
+                .set_client_rasters(&Default::default());
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(in super::super) fn append_player_list(
         &mut self,
@@ -55,7 +66,7 @@ impl UiPresentationRuntime {
             next,
             renderers: &mut [],
         };
-        list.paint(renderer, runtime.known_player_names(), &mut paint_frame)?;
+        list.paint(renderer, runtime.player_roster.rows(), &mut paint_frame)?;
         Ok(())
     }
 }

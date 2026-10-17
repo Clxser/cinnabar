@@ -1,4 +1,5 @@
 //! Captures post-send observations and finalizes poses after local interaction admission.
+mod shared_players;
 #[cfg(test)]
 use bevy::prelude::IntoScheduleConfigs;
 #[cfg(test)]
@@ -56,18 +57,38 @@ pub(crate) struct ActorObservations<'w> {
     movement: Option<Res<'w, MovementTicker>>,
     time: Res<'w, Time<Real>>,
     profiler: Option<Res<'w, render_scene::RuntimeStageProfiler>>,
+    account: Option<Res<'w, client_shell::menu::launcher_account::LauncherAccount>>,
 }
 
-/// Predicts remote actors at this frame's tick positions before interaction picks them.
+/// Predicts remote actors from the completed local step, or the admitted frame interval.
 pub(crate) fn advance_actor_motion(
     mut world: ResMut<ClientWorld>,
     mut state: ResMut<client_presentation::actor_publication::ActorFrameState>,
     time: Res<Time<Real>>,
+    physics: Option<Res<client_interaction::movement::LocalPhysicsController>>,
+    effects: Option<Res<client_interaction::movement::LocalMovementEffectTimeline>>,
+    movement: Option<Res<MovementTicker>>,
 ) {
+    let local_step = physics
+        .as_ref()
+        .zip(effects.as_ref())
+        .filter(|(physics, _)| {
+            physics.state().is_some()
+                && movement
+                    .as_ref()
+                    .is_some_and(|movement| movement.physics_is_authorized())
+        })
+        .map(
+            |(physics, effects)| client_presentation::actor_clock::ActorFrameStep {
+                ticks: effects.recent_tick_count() as u32,
+                partial_tick: physics.tick_alpha(),
+            },
+        );
     client_presentation::actor_publication::advance_actor_motion(
         &mut state,
         world.stream.as_mut(),
-        time.delta(),
+        time.delta().min(simulation_clock::MAX_FRAME_ELAPSED),
+        local_step,
     );
 }
 
@@ -76,6 +97,8 @@ pub(crate) fn advance_actor_frame(
     observations: ActorObservations,
     params: client_presentation::actor_publication::ActorFramePublication,
     mut java_blocking: Local<bool>,
+    mut shared_state: Local<shared_players::State>,
+    mut fluids: Local<client_presentation::actor_sampling::ActorFluidSampler>,
 ) {
     let ActorObservations {
         mut world,
@@ -94,6 +117,7 @@ pub(crate) fn advance_actor_frame(
         movement,
         time,
         profiler,
+        account,
     } = observations;
     let _timer = profiler
         .as_deref()
@@ -140,7 +164,16 @@ pub(crate) fn advance_actor_frame(
         physics.render_eye_position(),
         physics.render_feet_position(),
     );
+    let shared = shared_players::exchange(
+        stream,
+        ui.as_deref().map(|ui| &ui.0),
+        &skin.cosmetics,
+        account.as_deref().map(|account| &account.0),
+        &time,
+        &mut shared_state,
+    );
     let input = ActorFrameInput {
+        cosmetics: skin.cosmetics.clone(),
         local_feed,
         predicted_eye,
         predicted_feet,
@@ -160,6 +193,8 @@ pub(crate) fn advance_actor_frame(
                     .map(|presentation| &presentation.0),
             )
         },
+        remote_emotes: shared.emotes,
+        remote_hats: shared.hats,
         custom_emote: ui
             .as_deref()
             .and_then(|ui| ui.emotes().playback())
@@ -207,7 +242,7 @@ pub(crate) fn advance_actor_frame(
         input,
         |stream| {
             if let Some(collisions) = collisions.as_deref() {
-                client_presentation::actor_sampling::sample_actor_world_state(stream, collisions);
+                fluids.sample(stream, collisions);
             }
         },
         |stream, _partial_tick| {

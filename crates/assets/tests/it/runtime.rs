@@ -7,7 +7,6 @@ use assets::{
     TexturePage, TextureRef, TintSource, VisualKind, VisualSupport,
     blob::{HEADER_BYTES, VISUAL_BYTES},
     encode_blob,
-    texture::{TextureArray, TextureMip},
 };
 use sha2::{Digest, Sha256};
 

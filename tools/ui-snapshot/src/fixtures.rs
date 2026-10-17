@@ -10,6 +10,7 @@ use launcher::menu::{
     MenuAction, MenuScreen, MenuView, settings_options::SettingId,
     settings_sections::SettingSection,
 };
+use ui_screens::player_list::RosterRow;
 
 /// A repeatable viewport and the runtime observations its screen paints.
 pub struct State {
@@ -29,6 +30,15 @@ pub enum Fixture {
         messages: std::collections::VecDeque<ui::ChatMessage>,
         options: Arc<launcher::menu::settings_options::SettingsOptions>,
     },
+    /// The held tab roster's rows.
+    TabList(Vec<RosterRow>),
+    /// Two original custom-form inputs after selection moves from the first to the second.
+    EditSelection,
+    /// Survival recipe-book inputs admitted by the inventory session and wire decoder.
+    #[cfg(feature = "test-support")]
+    CraftOverlap {
+        selected: bool,
+    },
 }
 
 const SIZE: [u32; 2] = [1280, 720];
@@ -40,6 +50,96 @@ const TALL_SIZE: [u32; 2] = [1280, 900];
 const KEYBOARD_SIZE: [u32; 2] = [SIZE[0], 2000];
 
 pub const STATES: &[State] = &[
+    #[cfg(feature = "test-support")]
+    State {
+        name: "dressing-room-cosmetics",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: wardrobe,
+    },
+    #[cfg(feature = "test-support")]
+    State {
+        name: "dressing-room-cosmetics-head",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || cosmetic_category(launcher::dressing_room::CosmeticCategory::Head),
+    },
+    #[cfg(feature = "test-support")]
+    State {
+        name: "dressing-room-cosmetics-filter",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: cosmetic_filter,
+    },
+    #[cfg(feature = "test-support")]
+    State {
+        name: "dressing-room-cosmetics-filter-narrow",
+        size: [320, 720],
+        gui_scale: GUI_SCALE,
+        fixture: cosmetic_filter,
+    },
+    #[cfg(feature = "test-support")]
+    State {
+        name: "dressing-room-cosmetics-back",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || cosmetic_category(launcher::dressing_room::CosmeticCategory::Back),
+    },
+    #[cfg(feature = "test-support")]
+    State {
+        name: "dressing-room-cosmetics-back-narrow",
+        size: [320, 720],
+        gui_scale: GUI_SCALE,
+        fixture: || cosmetic_category(launcher::dressing_room::CosmeticCategory::Back),
+    },
+    #[cfg(feature = "test-support")]
+    State {
+        name: "dressing-room-devil-horns",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: devil_horns,
+    },
+    #[cfg(feature = "test-support")]
+    State {
+        name: "dressing-room-dragon-wings",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: dragon_wings,
+    },
+    #[cfg(feature = "test-support")]
+    State {
+        name: "dressing-room-parrot",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: parrot,
+    },
+    #[cfg(feature = "test-support")]
+    State {
+        name: "dressing-room-parrot-narrow",
+        size: [360, 720],
+        gui_scale: GUI_SCALE,
+        fixture: parrot,
+    },
+    #[cfg(feature = "test-support")]
+    State {
+        name: "craft-overlap-ready",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || Fixture::CraftOverlap { selected: false },
+    },
+    #[cfg(feature = "test-support")]
+    State {
+        name: "craft-overlap-selected",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || Fixture::CraftOverlap { selected: true },
+    },
+    State {
+        name: "edit-selection-transfer",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || Fixture::EditSelection,
+    },
     State {
         name: "loading-connecting",
         size: SIZE,
@@ -69,6 +169,12 @@ pub const STATES: &[State] = &[
         size: SIZE,
         gui_scale: GUI_SCALE,
         fixture: out_of_game::disconnect_no_retry,
+    },
+    State {
+        name: "disconnect-device-clock",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: out_of_game::disconnect_device_clock,
     },
     State {
         name: "connect-failed",
@@ -149,6 +255,12 @@ pub const STATES: &[State] = &[
         fixture: out_of_game::play_worlds_importing,
     },
     State {
+        name: "world-edit-after-delete-back",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: out_of_game::world_edit_after_delete_back,
+    },
+    State {
         name: "chat-background-transparent",
         size: SIZE,
         gui_scale: GUI_SCALE,
@@ -165,6 +277,18 @@ pub const STATES: &[State] = &[
         size: SIZE,
         gui_scale: GUI_SCALE,
         fixture: || chat_background(100),
+    },
+    State {
+        name: "chat-history-width",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: chat_history_width,
+    },
+    State {
+        name: "chat-history-width-small",
+        size: SMALL_SIZE,
+        gui_scale: 1,
+        fixture: chat_history_width,
     },
     State {
         name: "chat-command-background-transparent",
@@ -226,22 +350,40 @@ pub const STATES: &[State] = &[
         fixture: chat_command_targets,
     },
     State {
+        name: "tab-list-badges",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || tab_list_badges(true),
+    },
+    State {
+        name: "tab-list-heads",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: tab_list_heads,
+    },
+    State {
+        name: "tab-list-heads-columns",
+        size: [640, 360],
+        gui_scale: 3,
+        fixture: tab_list_head_columns,
+    },
+    State {
+        name: "tab-list-expired-badges",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || tab_list_badges(false),
+    },
+    State {
         name: "settings-video",
         size: SIZE,
         gui_scale: GUI_SCALE,
         fixture: settings_video,
     },
     State {
-        name: "settings-video-distance",
+        name: "settings-storage",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || settings_video_option(SettingId::FarTerrain),
-    },
-    State {
-        name: "settings-video-full-detail",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: || settings_video_option(SettingId::FullDetailDistance),
+        fixture: settings_storage,
     },
     State {
         name: "settings-keyboard",
@@ -382,6 +524,22 @@ fn chat_command_background() -> Fixture {
     chat_completion("/", &["/give", "/help", "/say"])
 }
 
+/// Shows equal-width history backgrounds and a message that wraps inside them.
+fn chat_history_width() -> Fixture {
+    let mut fixture = chat_background(50);
+    if let Fixture::Chat { messages, .. } = &mut fixture {
+        messages.push_back(ui::ChatMessage {
+            fifo_sequence: messages.len() as u64 + 1,
+            received_millis: 0,
+            kind: ui::ChatMessageKind::System,
+            source: None,
+            message: "A longer chat message wraps inside the history box while every visible line keeps the same background width.".into(),
+            parameters: Arc::from([]),
+        });
+    }
+    fixture
+}
+
 /// Shows completions after an anonymous draft with transparent message backgrounds.
 fn chat_completion(draft: &'static str, suggestions: &[&str]) -> Fixture {
     use launcher::menu::settings_options::SettingsOptions;
@@ -394,6 +552,88 @@ fn chat_completion(draft: &'static str, suggestions: &[&str]) -> Fixture {
         messages: Default::default(),
         options: Arc::new(options),
     }
+}
+
+/// Badges two Cinnabar players, one of them sharing a name with an unbadged player.
+fn tab_list_badges(visible: bool) -> Fixture {
+    Fixture::TabList(
+        [
+            ("Alex", true),
+            ("Alex", false),
+            ("Riley", false),
+            ("Steve", visible),
+            ("Zoe", false),
+        ]
+        .map(|(name, badged)| RosterRow {
+            name: Arc::from(name),
+            badged,
+            skin: None,
+        })
+        .into(),
+    )
+}
+
+/// Distinct original head texels alongside missing and invalid skins that must show Steve.
+fn tab_list_heads() -> Fixture {
+    let Fixture::TabList(mut rows) = tab_list_badges(true) else {
+        unreachable!()
+    };
+    for (index, row) in rows
+        .iter_mut()
+        .enumerate()
+        .filter(|(i, _)| matches!(i, 0 | 2))
+    {
+        let side = assets::starter_skins::STARTER_SKIN_SIDE;
+        let mut pixels = vec![0; (side * side * 4) as usize];
+        for y in 8..16 {
+            for x in 8..16 {
+                let color = if (y == 11 || y == 12) && (x == 9 || x == 10 || x == 13 || x == 14) {
+                    [240, 240, 255, 255]
+                } else if index == 0 {
+                    [60, 155, 100, 255]
+                } else {
+                    [110, 80, 180, 255]
+                };
+                let offset = ((y * side + x) * 4) as usize;
+                pixels[offset..offset + 4].copy_from_slice(&color);
+                if y < 10 {
+                    let hat = ((y * side + x + 32) * 4) as usize;
+                    pixels[hat..hat + 4].copy_from_slice(&[35, 60, 110, 255]);
+                }
+            }
+        }
+        row.skin = Some(render_api::StandardSkin {
+            width: side,
+            height: side,
+            rgba8: pixels.into(),
+            cape: None,
+            geometry: None,
+        });
+    }
+    rows.last_mut().unwrap().skin = Some(render_api::StandardSkin {
+        width: 1,
+        height: 1,
+        rgba8: vec![0; 4].into(),
+        cape: None,
+        geometry: None,
+    });
+    Fixture::TabList(rows)
+}
+
+/// Exercises every roster column at the maximum list size and a larger GUI scale.
+fn tab_list_head_columns() -> Fixture {
+    let Fixture::TabList(rows) = tab_list_heads() else {
+        unreachable!()
+    };
+    Fixture::TabList(
+        (0..80)
+            .map(|index| {
+                let mut row = rows[index % rows.len()].clone();
+                row.name = format!("Player{index:02}").into();
+                row
+            })
+            .collect(),
+    )
 }
 
 /// Opens a settings category by its registered name rather than a copied index.
@@ -412,13 +652,10 @@ fn settings_video() -> Fixture {
     Fixture::Menu(Box::new(settings(SettingSection::Video.definition().name)))
 }
 
-/// Reveals the distance controls through the same focus scrolling as the client.
-fn settings_video_option(id: SettingId) -> Fixture {
-    let mut view = settings(SettingSection::Video.definition().name);
-    view.focused_action = Some(MenuAction::SettingsOption(
-        id.index() as u16,
-        view.settings_options.value(id),
-    ));
+/// Shows Storage as a desktop host fills it, with the folder buttons.
+fn settings_storage() -> Fixture {
+    let mut view = settings(SettingSection::StorageManagement.definition().name);
+    Arc::make_mut(&mut view.storage).opens_folders = true;
     Fixture::Menu(Box::new(view))
 }
 
@@ -470,4 +707,84 @@ fn settings_keyboard_layout(observed: bool) -> Fixture {
         settings.set_key_label(0x14, "a");
     }
     Fixture::Menu(Box::new(view))
+}
+
+/// Shows an anonymous wardrobe with the first original cosmetic equipped.
+#[cfg(feature = "test-support")]
+fn wardrobe() -> Fixture {
+    let mut view = MenuView::new(true, "Player".into());
+    view.screen = MenuScreen::DressingRoom;
+    let item = render_model::hats::fixture::bunny();
+    render_model::hats::fixture::crown();
+    render_model::hats::fixture::devil_horns();
+    render_model::hats::fixture::shoulder_parrot();
+    render_model::hats::fixture::dragon_wings();
+    Arc::make_mut(&mut view.dressing_room).section =
+        launcher::dressing_room::DressingRoomSection::Cosmetics;
+    Arc::make_mut(&mut view.dressing_room)
+        .selected_cosmetics
+        .insert(item.descriptor().slot.clone(), Some(item.id().into()));
+    Fixture::Menu(Box::new(view))
+}
+
+/// Shows a filtered cosmetic gallery without changing the equipped character.
+#[cfg(feature = "test-support")]
+fn cosmetic_category(category: launcher::dressing_room::CosmeticCategory) -> Fixture {
+    let mut fixture = wardrobe();
+    if let Fixture::Menu(view) = &mut fixture {
+        Arc::make_mut(&mut view.dressing_room).cosmetic_category = category;
+    }
+    fixture
+}
+
+/// Shows the anchored category choices with a selected filter.
+#[cfg(feature = "test-support")]
+fn cosmetic_filter() -> Fixture {
+    let mut fixture = cosmetic_category(launcher::dressing_room::CosmeticCategory::Head);
+    if let Fixture::Menu(view) = &mut fixture {
+        Arc::make_mut(&mut view.dressing_room).cosmetic_filter_open = true;
+    }
+    fixture
+}
+
+/// Shows the catalog gallery with the original devil horns selected.
+#[cfg(feature = "test-support")]
+fn devil_horns() -> Fixture {
+    let mut fixture = wardrobe();
+    if let Fixture::Menu(view) = &mut fixture {
+        let item = render_model::hats::fixture::devil_horns();
+        Arc::make_mut(&mut view.dressing_room)
+            .selected_cosmetics
+            .insert(item.descriptor().slot.clone(), Some(item.id().into()));
+    }
+    fixture
+}
+
+/// Shows independent head and back selections together in the compact catalog gallery.
+#[cfg(feature = "test-support")]
+fn dragon_wings() -> Fixture {
+    let mut fixture = devil_horns();
+    if let Fixture::Menu(view) = &mut fixture {
+        let item = render_model::hats::fixture::dragon_wings();
+        Arc::make_mut(&mut view.dressing_room)
+            .selected_cosmetics
+            .insert(item.descriptor().slot.clone(), Some(item.id().into()));
+    }
+    fixture
+}
+
+/// Shows the parrot alongside head and back items in the cosmetics gallery.
+#[cfg(feature = "test-support")]
+fn parrot() -> Fixture {
+    let mut fixture = dragon_wings();
+    if let Fixture::Menu(view) = &mut fixture {
+        let item = render_model::hats::fixture::shoulder_parrot();
+        let wardrobe = Arc::make_mut(&mut view.dressing_room);
+        wardrobe.section = launcher::dressing_room::DressingRoomSection::Cosmetics;
+        wardrobe.cosmetic_category = launcher::dressing_room::CosmeticCategory::Pet;
+        wardrobe
+            .selected_cosmetics
+            .insert(item.descriptor().slot.clone(), Some(item.id().into()));
+    }
+    fixture
 }

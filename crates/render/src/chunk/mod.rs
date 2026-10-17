@@ -105,13 +105,15 @@ pub(crate) use gpu_cull::{GpuCullLateLabel, admit_depth_sampling};
 
 pub(crate) mod pipeline;
 pub use pipeline::layouts::required_vertex_storage_buffers;
-mod plugin;
+mod coverage;
+pub(crate) mod plugin;
 mod presentation;
 #[cfg(feature = "publication-test-support")]
 mod publication_test_support;
 mod queue;
 #[cfg(feature = "enhanced")]
 pub(crate) mod resident_coverage;
+pub(crate) use coverage::TerrainCoverage;
 
 use render_scene::chunk::texture_reload::ChunkTextureReload;
 pub(crate) mod transparent;
@@ -208,7 +210,7 @@ use presentation::frame_probe::{
 #[cfg(feature = "publication-test-support")]
 pub use publication_test_support::{
     PublicationRenderTerminalSnapshot, publication_noop_render_plugin,
-    publication_render_terminal_snapshot, settle_publication_noop_frame,
+    publication_render_terminal_snapshot, publication_terrain_draws, settle_publication_noop_frame,
 };
 #[allow(unused_imports)]
 use queue::{apply_chunk_render_queue, update_chunk_animation_clock};

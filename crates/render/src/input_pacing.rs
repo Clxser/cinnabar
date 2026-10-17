@@ -1,17 +1,9 @@
-//! Frame admission: the single wait between one frame's handoff and the next frame's input.
-//!
-//! The main thread hands frame N to the render thread at the end of an update, then would start
-//! N+1 at once and block at the next handoff until N finishes rendering, so N+1's input goes stale
-//! by that whole wait. After each handoff this delays the next update until the later of two
-//! deadlines: the next slot of the requested frame-rate cadence, and the predicted render
-//! completion less the predicted main-thread time and a safety margin, from recent frame history
-//! (or that frame's actual completion if sooner). Render time includes drawable acquisition, so
-//! swapchain backpressure is folded in. The wait ends before the event loop collects the next
-//! frame's input, so events arriving meanwhile are read fresh, and since every update passes
-//! through it, input events can wake the loop but never admit an extra frame.
+//! Admits fresh input after frame handoff using the requested cadence and predicted CPU/GPU work.
 
 use bevy::prelude::IntoScheduleConfigs;
 mod frame_time;
+#[cfg(any(target_os = "macos", test))]
+mod gpu;
 mod wait;
 
 use std::{
@@ -93,6 +85,8 @@ pub struct FramePacing {
     pub rate: Option<FrameRate>,
     /// Spins briefly before each deadline for precision; only worth a core while focused.
     pub precise: bool,
+    /// Display-synchronized presentation owns GPU backpressure instead of queue prediction.
+    pub display_sync: bool,
 }
 
 /// Wall time and blocking for the pacer; tests substitute a deterministic clock.
@@ -208,6 +202,7 @@ impl History {
 struct PacingModel {
     main: History,
     render: History,
+    render_work: History,
 }
 
 impl PacingModel {
@@ -224,10 +219,15 @@ impl PacingModel {
 #[derive(Debug, Default)]
 struct PacerState {
     model: PacingModel,
+    #[cfg(any(target_os = "macos", test))]
+    gpu: gpu::GpuPacing,
+    rendering: u64,
     /// When the current update began, sampling input.
     update_started: Option<Instant>,
     /// When the render thread began its current frame.
     render_started: Option<Instant>,
+    surface_started: Option<Instant>,
+    surface_elapsed: Duration,
     /// Frames handed to the render thread and frames it has finished; it renders them in order.
     handed: u64,
     finished: u64,
@@ -267,13 +267,18 @@ impl InputPacer {
         self.epoch + Duration::from_nanos(nanos)
     }
 
-    /// Marks this update's input sample against the cadence; a new rate starts a new epoch.
-    fn update_started(&self, pacing: FramePacing) {
-        let now = self.clock.now();
-        let at = self.nanos(now);
+    /// Records input sampling before frame work, without retaining the previous focus policy.
+    fn update_started(&self) {
+        self.state().update_started = Some(self.clock.now());
+    }
+
+    /// Applies this frame's policy before waiting, anchoring cadence to its input sample.
+    fn prepare_wait(&self, pacing: FramePacing) {
         let mut state = self.state();
-        state.update_started = Some(now);
+        let at = self.nanos(state.update_started.unwrap_or_else(|| self.clock.now()));
         state.precise = pacing.precise;
+        #[cfg(any(target_os = "macos", test))]
+        state.gpu.set_display_sync(pacing.display_sync);
         state.cadence = pacing.rate.map(|rate| {
             let mut cadence = match state.cadence {
                 Some(cadence) if cadence.rate() == rate => cadence,
@@ -285,17 +290,48 @@ impl InputPacer {
     }
 
     fn render_started(&self) {
-        self.state().render_started = Some(self.clock.now());
+        let mut state = self.state();
+        state.rendering += 1;
+        state.render_started = Some(self.clock.now());
+        state.surface_elapsed = Duration::ZERO;
+    }
+
+    /// Separates drawable backpressure from CPU work needed to feed the GPU.
+    fn surface_started(&self) {
+        self.state().surface_started = Some(self.clock.now());
+    }
+
+    /// Accounts for surface preparation without retaining it as GPU feeding work.
+    fn surface_finished(&self) {
+        let now = self.clock.now();
+        let mut state = self.state();
+        if let Some(started) = state.surface_started.take() {
+            state.surface_elapsed += now.saturating_duration_since(started);
+        }
+    }
+
+    /// Predicts queue completion for a submission, without waiting on the GPU.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn gpu_submitted(&self) -> u64 {
+        let mut state = self.state();
+        let frame = state.rendering;
+        state.gpu.submit(frame, self.clock.now())
+    }
+
+    /// Corrects the queue prediction with completed Metal host timestamps.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn gpu_completed(&self, submission: u64, end: Instant, elapsed: Duration) {
+        self.state().gpu.complete(submission, end, elapsed);
     }
 
     fn render_finished(&self) {
         let now = self.clock.now();
         let mut state = self.state();
         if let Some(started) = state.render_started.take() {
-            state
-                .model
-                .render
-                .record(now.saturating_duration_since(started));
+            let elapsed = now.saturating_duration_since(started);
+            let work = elapsed.saturating_sub(state.surface_elapsed);
+            state.model.render.record(elapsed);
+            state.model.render_work.record(work);
             state.finished += 1;
         }
     }
@@ -310,7 +346,8 @@ impl InputPacer {
         let ready = self.clock.now();
         inner(main, render);
         let handed = self.clock.now();
-        let (update_started, delay, handed_frame, cadence, precise) = {
+        self.prepare_wait(*main.resource::<FramePacing>());
+        let (update_started, delay, handed_frame, cadence, precise, gpu_ready) = {
             let mut state = self.state();
             state.handed += 1;
             let update_started = state.update_started.take();
@@ -323,12 +360,20 @@ impl InputPacer {
             let cadence = state
                 .cadence
                 .map(|cadence| self.instant(cadence.next_admission_nanos()));
+            #[cfg(any(target_os = "macos", test))]
+            let gpu_ready = self
+                .enabled
+                .then(|| state.gpu.deadline(state.handed, handed, &state.model))
+                .flatten();
+            #[cfg(not(any(target_os = "macos", test)))]
+            let gpu_ready: Option<Instant> = None;
             (
                 update_started,
                 state.model.delay(),
                 state.handed,
                 cadence,
                 state.precise,
+                gpu_ready,
             )
         };
         let profiler = main.get_resource::<RuntimeStageProfiler>().cloned();
@@ -340,7 +385,7 @@ impl InputPacer {
             );
         }
         let render_ready = (self.enabled && !delay.is_zero()).then(|| handed + delay);
-        let Some(deadline) = cadence.max(render_ready) else {
+        let Some(deadline) = cadence.max(render_ready).max(gpu_ready) else {
             return;
         };
         let executor = main
@@ -354,6 +399,7 @@ impl InputPacer {
                 // Rendering may only cut the wait short once the cadence slot has opened.
                 render_ready.is_some()
                     && cadence.is_none_or(|slot| self.clock.now() >= slot)
+                    && gpu_ready.is_none_or(|slot| self.clock.now() >= slot)
                     && self.state().finished >= handed_frame
             },
             executor.as_deref(),
@@ -362,6 +408,7 @@ impl InputPacer {
 
     /// Without pipelined rendering only the cadence applies, at the end of the update.
     fn pace_unpipelined(&self, main: &World) {
+        self.prepare_wait(*main.resource::<FramePacing>());
         let (cadence, precise) = {
             let state = self.state();
             (state.cadence, state.precise)
@@ -456,14 +503,19 @@ impl Plugin for InputPacingPlugin {
                 (
                     mark_render_start.before(RenderSystems::ExtractCommands),
                     mark_render_end.in_set(RenderSystems::PostCleanup),
+                    (
+                        mark_surface_start.before(bevy::render::view::window::prepare_windows),
+                        mark_surface_end.after(bevy::render::view::window::prepare_windows),
+                    )
+                        .in_set(RenderSystems::PrepareViews),
                 ),
             );
         }
     }
 }
 
-fn mark_update_start(pacer: Res<InputPacer>, pacing: Res<FramePacing>) {
-    pacer.update_started(*pacing);
+fn mark_update_start(pacer: Res<InputPacer>) {
+    pacer.update_started();
 }
 
 fn pace_unpipelined(world: &mut World) {
@@ -478,6 +530,14 @@ fn mark_render_start(pacer: Res<InputPacer>) {
 
 fn mark_render_end(pacer: Res<InputPacer>) {
     pacer.render_finished();
+}
+
+fn mark_surface_start(pacer: Res<InputPacer>) {
+    pacer.surface_started();
+}
+
+fn mark_surface_end(pacer: Res<InputPacer>) {
+    pacer.surface_finished();
 }
 
 #[cfg(test)]

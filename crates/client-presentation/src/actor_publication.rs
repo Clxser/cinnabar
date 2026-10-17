@@ -1,9 +1,14 @@
+#[cfg(test)]
+mod armour_tests;
 mod bodies;
+#[cfg(test)]
+mod cape_tests;
 mod commit;
 mod culling;
 mod flames;
 mod geometry;
 mod hand_frame;
+mod hats;
 mod layers;
 mod occlusion;
 mod paintings;
@@ -56,6 +61,9 @@ pub struct ActorWorld<'a> {
 
 /// Gameplay and screen observations captured at the actor preparation boundary.
 pub struct ActorFrameInput {
+    pub cosmetics: Vec<cosmetics::Item>,
+    /// Authenticated nearby hats bound to current actor lifetimes.
+    pub remote_hats: Vec<RemoteHat>,
     pub local_feed: Option<LocalPlayerFeed>,
     pub predicted_eye: Option<[f32; 3]>,
     pub predicted_feet: Option<[f32; 3]>,
@@ -64,6 +72,25 @@ pub struct ActorFrameInput {
     pub renders_game: bool,
     pub hide_hand: bool,
     pub custom_emote: Option<(actor_animation::CustomEmote, f64)>,
+    /// API-authenticated playback already resolved to this session's actor lifetimes.
+    pub remote_emotes: Vec<RemoteEmote>,
+}
+
+/// Render-only remote playback bound to one spawned actor, preventing runtime-ID reuse.
+#[derive(Clone, Copy, Debug)]
+pub struct RemoteEmote {
+    pub runtime_id: u64,
+    pub spawn_revision: u64,
+    pub emote: actor_animation::CustomEmote,
+    pub elapsed: f64,
+}
+
+/// A built-in hat bound to one remote spawn, independent of server skin handling.
+#[derive(Clone, Copy, Debug)]
+pub struct RemoteHat {
+    pub runtime_id: u64,
+    pub spawn_revision: u64,
+    pub hat: cosmetics::Item,
 }
 
 /// Presentation-owned resources that determine the avatar's current view.
@@ -219,6 +246,7 @@ pub fn prepare_actor_render_frame(
         params.equipment.as_deref_mut(),
         &mut new_geometries,
     );
+    let local_flame_feet = flames::LocalFlameFeet::capture(local.as_ref(), visibility);
     let local = culling::with_local_shadow_body(
         local,
         local_shadows,
@@ -235,6 +263,8 @@ pub fn prepare_actor_render_frame(
         step.partial_tick,
     );
     let camera_position = cull_view.map(|view| view.camera_position.to_array());
+    // Remote bodies passed frame-model admission before bounded skin registration; the
+    // shadow view retains bodies outside the main view that still cast into it.
     let mut batch = select_actor_presentations_for_shadow_view(
         bodies.local_runtime_id,
         local_visible,
@@ -266,6 +296,7 @@ pub fn prepare_actor_render_frame(
             java_posed: &bodies.java_posed,
             combat_visuals: state.combat_visuals,
             local_emote_pose: bodies.local_emote_pose.as_ref(),
+            remote_emote_poses: &bodies.remote_emote_poses,
             native_body_sampled: bodies.native_body_sampled,
             remote_skin_layers: &bodies.remote_skin_layers,
             native_pose: &state.java_hand.native_pose,
@@ -288,6 +319,9 @@ pub fn prepare_actor_render_frame(
         ),
         &mut new_geometries,
     );
+    state
+        .hat_state
+        .attach(&mut batch, stream, &input.remote_hats, &mut params.scene);
     if actor_views.is_some_and(|views| views.casts_shadows) {
         culling::shadow_only_caster_layers(&mut batch);
     }
@@ -303,6 +337,7 @@ pub fn prepare_actor_render_frame(
             stream.map(WorldStream::authority),
             yaw,
             step.partial_tick,
+            local_flame_feet,
             &mut batch,
         );
     }
@@ -380,6 +415,9 @@ pub fn prepare_actor_render_frame(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod culling_capacity_tests;
 
 #[cfg(test)]
 mod xp_orb_tests;

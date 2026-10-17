@@ -41,7 +41,7 @@ fn playback(blending: bool) -> (Vec<WeightedClip>, f32) {
         clip.source += 1;
     }
     compiled.rig_bindings[0].entity_symbol += 1;
-    compiled.rig_bindings[0].render_controller += 1;
+    *compiled.rig_bindings[0].render_controller.as_mut().unwrap() += 1;
     for candidate in &mut compiled.render.candidates {
         candidate.source += 1;
     }
@@ -87,7 +87,7 @@ fn playback(blending: bool) -> (Vec<WeightedClip>, f32) {
         weight: Some(0),
     }; 2]
         .into();
-    let assets = RuntimeEntityAssets::from_compiled(compiled).unwrap();
+    let assets = Arc::new(RuntimeEntityAssets::from_compiled(compiled).unwrap());
     let layout = evaluation::VariableLayout::new(&assets);
     let actor = crate::tests::actor_with_metadata(HashMap::new());
     let input = ActorTickInput::default();

@@ -1,4 +1,3 @@
-use crate::queue_writes::ProfiledQueue as _;
 use bevy::render::render_resource::ShaderType;
 use bytemuck::Zeroable;
 use std::collections::HashMap;
@@ -75,6 +74,7 @@ pub(crate) fn install_atmosphere(app: &mut App) {
     app.init_resource::<render_scene::LightningScene>();
     app.init_resource::<render_scene::MediaScreenScene>();
     crate::pipeline_warmup::register::<AtmospherePipeline>(app);
+    crate::upload_staging::install(app);
     let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
         return;
     };
@@ -203,7 +203,7 @@ fn prepare_atmosphere_uniform(
     settings: Res<render_scene::SkyboxSettings>,
     assets: Res<AtmosphereTextureAssets>,
     mut gpu: ResMut<AtmosphereGpu>,
-    render_queue: Res<RenderQueue>,
+    uploads: crate::upload_staging::FrameUploads,
 ) {
     let gpu = &mut *gpu;
     let mask = assets
@@ -218,14 +218,14 @@ fn prepare_atmosphere_uniform(
         )
     });
     if frame_changed {
-        render_queue.profiled_write_buffer(&gpu.buffer, 0, bytemuck::bytes_of(&*frame));
+        uploads.write(&gpu.buffer, 0, bytemuck::bytes_of(&*frame));
         #[cfg(test)]
         {
             gpu.uniform_writes[0] += 1;
         }
     }
     if skybox_changed {
-        render_queue.profiled_write_buffer(&gpu.skybox, 0, bytemuck::bytes_of(&skybox));
+        uploads.write(&gpu.skybox, 0, bytemuck::bytes_of(&skybox));
         #[cfg(test)]
         {
             gpu.uniform_writes[1] += 1;

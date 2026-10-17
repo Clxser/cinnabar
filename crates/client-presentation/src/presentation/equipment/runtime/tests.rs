@@ -1,5 +1,8 @@
 //! Isolated camera-item routing tests; no optional installed carriers or native art.
 
+#[path = "geometry_admission_tests.rs"]
+mod geometry_admission_tests;
+
 #[path = "missing_artwork_tests.rs"]
 mod missing_artwork_tests;
 
@@ -14,6 +17,9 @@ mod held_block_entity_reload_tests;
 
 #[path = "block_reload_tests.rs"]
 mod block_reload_tests;
+
+#[path = "texture_artwork_tests.rs"]
+mod texture_artwork_tests;
 
 use actor_animation::ItemAnimationState;
 use bevy::math::Quat;
@@ -287,6 +293,7 @@ fn block_fixture_with_visuals(
         kind: HeldKind::Block(visual),
         dye_rgb: None,
         enchanted: false,
+        glint: Default::default(),
         variant: Default::default(),
     };
     (runtime, body, item)

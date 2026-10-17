@@ -5,6 +5,8 @@ use bevy::prelude::IntoScheduleConfigs;
 #[cfg(test)]
 use bevy::prelude::System;
 use bevy::render::render_resource::ShaderType;
+#[cfg(test)]
+use bevy::render::renderer::RenderQueue;
 use render_scene::EntityShadowScene;
 use std::num::NonZeroU64;
 
@@ -35,7 +37,7 @@ use bevy::{
             TextureSampleType, TextureUsages, TextureView, TextureViewDimension, TextureViewId,
             VertexAttribute, VertexFormat, VertexState, VertexStepMode,
         },
-        renderer::{RenderContext, RenderDevice, RenderQueue},
+        renderer::{RenderContext, RenderDevice},
         view::{
             ExtractedView, ViewDepthStencilTexture, ViewTarget, ViewUniform, ViewUniformOffset,
             ViewUniforms,
@@ -60,6 +62,7 @@ pub struct EntityShadowRenderPlugin;
 
 impl Plugin for EntityShadowRenderPlugin {
     fn build(&self, app: &mut App) {
+        crate::upload_staging::install(app);
         crate::pipeline_warmup::register::<EntityShadowGpu>(app);
         load_internal_asset!(
             app,

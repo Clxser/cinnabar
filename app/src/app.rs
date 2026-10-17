@@ -27,8 +27,6 @@ use client_state::ClientFrameSet;
 use launcher_host::core_process::{CoreProcessGuard, spawn_core_for_address, wait_for_core};
 use launcher_host::session_cleanup::reclaim_stale_session_directories;
 use render_api::PublicationServiceConfig;
-#[cfg(test)]
-use std::fs;
 use std::io::Write;
 use std::{ffi::OsStr, path::Path, sync::Arc};
 use {
@@ -61,7 +59,7 @@ use {
         local_player::{
             publish_local_player_frame, resolve_camera_pose, resolve_local_player_presentation,
         },
-        melee::produce_melee,
+        melee::produce_attacks,
         movement::{advance_local_physics, send_movement_prediction_sync},
         present_mode::PresentModeRuntime,
         runtime::{
@@ -85,7 +83,6 @@ use {
             SessionController, drive_session, follow_server_transfer, recover_session_failure,
         },
         shell_adapters::drive_menu_services,
-        survival_mining::produce_survival_mining,
         ui_runtime::{
             drain_inventory_authority, drive_chat_keyboard_input, drive_chat_ui_actions,
             drive_inventory_ui_actions, drive_server_form_input, drive_sign_editor,
@@ -124,7 +121,7 @@ const PHYSICS_REGISTRY_GENERATION_GUIDANCE: &str =
 
 mod authority;
 mod executor;
-mod interaction;
+pub(crate) mod interaction;
 pub(crate) use authority::{configure_client_authority_systems, configure_client_frame_schedule};
 
 pub(crate) fn configure_client_production_frame_systems(app: &mut App) {
@@ -202,6 +199,7 @@ pub(crate) fn configure_client_production_frame_systems(app: &mut App) {
             Update,
             crate::far_terrain::feed_far_terrain
                 .after(drive_world_stream)
+                .before(ChunkRenderApplySet)
                 .in_set(ClientFrameSet::WorldPublication),
         )
         .add_systems(
@@ -875,6 +873,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         network.shutdown();
     }
     drop(app);
+    bridge::latency_trace::finish();
     let _ = writeln!(
         diagnostics::console::stderr(),
         "{SHUTDOWN_COMPLETED} exit_code={}",

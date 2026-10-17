@@ -24,7 +24,7 @@ use render_scene::{
     VisibilityDiagnostics, VisibilityDiagnosticsInput,
 };
 
-mod publication_schedule;
+pub(crate) mod publication_schedule;
 use publication_schedule::{ChunkPublicationStage, configure_chunk_publication};
 
 #[derive(Resource, Default)]
@@ -97,6 +97,7 @@ impl Plugin for ChunkRenderPlugin {
         crate::upload_staging::install_terrain(app);
 
         crate::lighting::install(app);
+        crate::upload_staging::install(app);
         load_internal_asset!(
             app,
             BIOME_TINT_SHADER_HANDLE,
@@ -159,6 +160,7 @@ impl Plugin for ChunkRenderPlugin {
         let render_app = app.sub_app_mut(RenderApp);
         crate::device_poll::install(render_app);
         render_app
+            .init_resource::<super::coverage::TerrainCoverage>()
             .insert_resource(self.upload_budget)
             .insert_resource(acknowledgements)
             .insert_resource(presented_frame_gate)
@@ -207,6 +209,10 @@ impl Plugin for ChunkRenderPlugin {
             .add_systems(
                 Render,
                 (
+                    super::coverage::begin_terrain_coverage
+                        .in_set(ChunkPublicationStage::CoverageBegin),
+                    super::coverage::publish_terrain_coverage
+                        .in_set(ChunkPublicationStage::Coverage),
                     publish_graphics_runtime_metadata.in_set(GraphicsMetadataPublication),
                     track_terrain_batch_changes
                         .in_set(RenderSystems::Queue)
@@ -217,11 +223,11 @@ impl Plugin for ChunkRenderPlugin {
                     queue_transparent_chunks
                         .run_if(render_scene::panorama::world_passes_enabled)
                         .in_set(RenderSystems::Queue),
-                    prepare_chunk_texture_assets
-                        .in_set(RenderSystems::PrepareAssets)
-                        .before(RenderSystems::Queue),
+                    prepare_chunk_texture_assets.in_set(ChunkPublicationStage::Attributes),
                     prepare_chunk_animation_clock.in_set(ChunkPublicationStage::Attributes),
-                    prepare_chunk_biome_tints.in_set(ChunkPublicationStage::Attributes),
+                    prepare_chunk_biome_tints
+                        .in_set(ChunkPublicationStage::Attributes)
+                        .after(prepare_chunk_texture_assets),
                     prepare_gpu_chunks
                         .in_set(ChunkPublicationStage::Geometry)
                         .after(crate::dropped_item_render::terrain_items::TerrainItemSessionSet)

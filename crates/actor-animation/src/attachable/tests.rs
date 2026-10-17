@@ -401,7 +401,7 @@ fn owner_variables_copy_by_name_between_catalogs_with_different_slots() {
             *index += 1;
         }
     }
-    let owner = RuntimeEntityAssets::from_compiled(compiled).unwrap();
+    let owner = Arc::new(RuntimeEntityAssets::from_compiled(compiled).unwrap());
     let owner_layout = VariableLayout::new(&owner);
     let target_layout = VariableLayout::new(&target);
     let mut values = owner_layout.fresh(1);
@@ -677,7 +677,7 @@ fn standby_and_three_pulling_frames_choose_matching_geometry_texture_and_pose() 
     compiled.sources = sources.into_boxed_slice();
     compiled.geometries = geometries.into_boxed_slice();
     compiled.rig_bindings[0].entity_symbol = 10;
-    compiled.rig_bindings[0].render_controller = 5;
+    compiled.rig_bindings[0].render_controller = Some(5);
     let clip = compiled.animation_clips[0];
     let channel = compiled.animation_channels[0].clone();
     let keyframe = compiled.animation_keyframes[0];

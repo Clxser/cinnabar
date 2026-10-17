@@ -48,6 +48,7 @@ fn spawn_remotes(stream: &mut WorldStream) {
                             unique_id: id as i64,
                             username: "Remote".into(),
                             verified: true,
+                            xuid: "".into(),
                             skin: skin.clone(),
                         }]),
                     },
@@ -142,6 +143,7 @@ fn remote_body_and_persona_publish_sampled_clamps_and_preserve_java_overrides() 
         for java_mode in [false, true] {
             for alpha in [0.05, 0.75] {
                 let input = super::super::ActorFrameInput {
+                    cosmetics: Vec::new(),
                     local_feed: None,
                     predicted_eye: None,
                     predicted_feet: None,
@@ -149,6 +151,8 @@ fn remote_body_and_persona_publish_sampled_clamps_and_preserve_java_overrides() 
                     swing_progress: None,
                     renders_game: true,
                     hide_hand: false,
+                    remote_emotes: Vec::new(),
+                    remote_hats: Vec::new(),
                     custom_emote: None,
                 };
                 let mut poses = crate::presentation::actors::PoseConversions::default();
@@ -207,9 +211,11 @@ fn remote_body_and_persona_publish_sampled_clamps_and_preserve_java_overrides() 
                         java_posed: &bodies.java_posed,
                         combat_visuals: Default::default(),
                         local_emote_pose: None,
+                        remote_emote_poses: &bodies.remote_emote_poses,
                         native_body_sampled: false,
                         native_pose: &native_pose,
                         remote_skin_layers: &bodies.remote_skin_layers,
+                        local_shadows: false,
                     },
                     super::super::layers::LayerCaches {
                         layer_poses: &mut layer_poses,
@@ -318,6 +324,299 @@ fn remote_body_and_persona_publish_sampled_clamps_and_preserve_java_overrides() 
                     }
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn shared_emotes_override_only_the_matching_remote_lifetime_and_restore_native_or_java() {
+    let ((mut stream, _, artwork, local_equipment), _) =
+        super::native_tests::fixture_with_rotation(true);
+    spawn_remotes(&mut stream);
+    let rig = stream.authority().actor_rig(2).unwrap();
+    let native = rig.current.to_vec();
+    let revision = rig.actor.spawn_revision;
+    let clip = actor_animation::CustomEmote::Twerk;
+    for java_mode in [false, true] {
+        let ordinary =
+            sample_shared_bodies(&stream, &artwork, &local_equipment, java_mode, Vec::new());
+        for phase in [0.0, 0.1, 0.3] {
+            let expected = actor_animation::sample_custom_emote(&rig, clip, phase, phase).unwrap();
+            let sampled = sample_shared_bodies(
+                &stream,
+                &artwork,
+                &local_equipment,
+                java_mode,
+                vec![super::super::RemoteEmote {
+                    runtime_id: 2,
+                    spawn_revision: revision,
+                    emote: clip,
+                    elapsed: phase,
+                }],
+            );
+            let find = |bodies: &super::super::bodies::SampledBodies<'_>, id| {
+                bodies
+                    .remotes
+                    .iter()
+                    .find(|body| body.submission.input.identity.runtime_id == id)
+                    .unwrap()
+                    .submission
+                    .input
+                    .current_bones
+                    .clone()
+            };
+            assert_eq!(
+                find(&sampled, 2),
+                crate::presentation::actors::convert_bones(&expected.current).unwrap()
+            );
+            assert_eq!(
+                find(&sampled, 3),
+                find(&ordinary, 3),
+                "other players keep their own animation"
+            );
+            assert_eq!(
+                sampled
+                    .canonical_local
+                    .as_ref()
+                    .unwrap()
+                    .submission
+                    .input
+                    .current_bones,
+                ordinary
+                    .canonical_local
+                    .as_ref()
+                    .unwrap()
+                    .submission
+                    .input
+                    .current_bones
+            );
+            let published = super::super::emote_geometry::skin_layer_snapshot(
+                rig,
+                sampled.remote_emote_poses.get(&2),
+                None,
+                None,
+            );
+            assert_eq!(
+                published.skin_layers[0].current,
+                expected.skin_layers[0].current
+            );
+            let stale = sample_shared_bodies(
+                &stream,
+                &artwork,
+                &local_equipment,
+                java_mode,
+                vec![super::super::RemoteEmote {
+                    runtime_id: 2,
+                    spawn_revision: revision + 1,
+                    emote: clip,
+                    elapsed: phase,
+                }],
+            );
+            assert_eq!(
+                find(&stale, 2),
+                find(&ordinary, 2),
+                "a reused runtime ID cannot inherit playback"
+            );
+            assert!(stale.remote_emote_poses.is_empty());
+        }
+    }
+    assert_eq!(stream.authority().actor_rig(2).unwrap().current, native);
+}
+
+/// Runs the production body sampler with an explicit leased remote playback set.
+fn sample_shared_bodies<'a>(
+    stream: &'a WorldStream,
+    artwork: &render_model::ActorArtworkPages,
+    local_equipment: &ActorEquipmentInput,
+    java_mode: bool,
+    remote_emotes: Vec<super::super::RemoteEmote>,
+) -> super::super::bodies::SampledBodies<'a> {
+    let input = super::super::ActorFrameInput {
+        cosmetics: Vec::new(),
+        local_feed: None,
+        predicted_eye: None,
+        predicted_feet: None,
+        local_equipment: local_equipment.clone(),
+        swing_progress: None,
+        renders_game: true,
+        hide_hand: false,
+        custom_emote: None,
+        remote_emotes,
+        remote_hats: Vec::new(),
+    };
+    super::super::bodies::sample(
+        Some(stream),
+        &input,
+        (
+            super::super::bodies::PoseView {
+                partial_tick: 0.5,
+                first_person: true,
+                java_mode,
+                combat_visuals: Default::default(),
+                sampling_camera: None,
+                aspect: 1.0,
+            },
+            None,
+        ),
+        artwork,
+        super::super::bodies::BodyCaches {
+            poses: &mut Default::default(),
+            java_poses: &mut Default::default(),
+            native_pose: &mut Default::default(),
+            skin_rigs: &mut Default::default(),
+            equipment: None,
+            scratch: &mut Default::default(),
+        },
+        |_, _, _, _| false,
+        &mut Vec::new(),
+    )
+}
+
+#[test]
+fn shared_hats_follow_remote_heads_share_textures_and_reject_stale_spawns() {
+    let ((mut stream, _, artwork, local_equipment), _) =
+        super::native_tests::fixture_with_rotation(true);
+    spawn_remotes(&mut stream);
+    let selections: Vec<_> = [2, 3]
+        .map(|runtime_id| super::super::RemoteHat {
+            runtime_id,
+            spawn_revision: stream.authority().actor(runtime_id).unwrap().spawn_revision,
+            hat: render_model::hats::fixture::rigid(),
+        })
+        .into();
+    let mut hats = super::super::hats::HatState::default();
+    let mut scene = render_scene::ActorRenderScene::default();
+    for selected in [
+        selections.clone(),
+        vec![
+            super::super::RemoteHat {
+                spawn_revision: selections[0].spawn_revision + 1,
+                ..selections[0]
+            },
+            selections[1],
+        ],
+        Vec::new(),
+    ] {
+        let bodies = sample_shared_bodies(&stream, &artwork, &local_equipment, false, Vec::new());
+        let mut batch =
+            crate::presentation::actors::select_actor_presentations(1, false, None, bodies.remotes);
+        let body_count = batch.submissions.len();
+        let textures = batch.skin_layers.len();
+        hats.advance(&[], 0.0, 1.0 / 60.0);
+        hats.attach(&mut batch, Some(&stream), &selected, &mut scene);
+        let expected = selected
+            .iter()
+            .filter(|hat| {
+                stream
+                    .authority()
+                    .actor(hat.runtime_id)
+                    .unwrap()
+                    .spawn_revision
+                    == hat.spawn_revision
+            })
+            .count();
+        assert_eq!(batch.submissions.len(), body_count + expected);
+        assert_eq!(
+            batch.skin_layers.len(),
+            textures + usize::from(expected > 0)
+        );
+        for attachment in &batch.submissions[body_count..] {
+            let id = attachment.input.identity.runtime_id;
+            let head = stream
+                .authority()
+                .actor_rig(id)
+                .unwrap()
+                .bone_names
+                .iter()
+                .position(|name| name.eq_ignore_ascii_case("head"))
+                .unwrap();
+            let body = batch.submissions[..body_count]
+                .iter()
+                .find(|body| body.input.identity.runtime_id == id)
+                .unwrap();
+            assert_eq!(
+                attachment.input.current_bones[0],
+                body.input.current_bones[head]
+            );
+            assert_eq!(
+                attachment.input.previous_bones[0],
+                body.input.previous_bones[head]
+            );
+            assert_eq!(
+                attachment.input.rig,
+                render_model::hats::rig(render_model::hats::fixture::rigid())
+                    .geometry
+                    .id
+            );
+        }
+    }
+}
+
+#[test]
+fn shared_hats_render_multiple_catalog_slots_on_one_actor() {
+    let ((mut stream, _, artwork, local_equipment), _) =
+        super::native_tests::fixture_with_rotation(true);
+    spawn_remotes(&mut stream);
+    let items = [
+        render_model::hats::fixture::bunny(),
+        render_model::hats::fixture::dragon_wings(),
+        render_model::hats::fixture::shoulder_parrot(),
+    ];
+    let selections: Vec<_> = items
+        .into_iter()
+        .map(|hat| super::super::RemoteHat {
+            runtime_id: 2,
+            spawn_revision: stream.authority().actor(2).unwrap().spawn_revision,
+            hat,
+        })
+        .collect();
+    let bodies = sample_shared_bodies(&stream, &artwork, &local_equipment, false, Vec::new());
+    let mut batch =
+        crate::presentation::actors::select_actor_presentations(1, false, None, bodies.remotes);
+    let before = batch.submissions.len();
+    let mut state = super::super::hats::HatState::default();
+    state.advance(&[], 0.0, 0.0);
+    let mut scene = render_scene::ActorRenderScene::default();
+    state.attach(&mut batch, Some(&stream), &selections, &mut scene);
+    assert_eq!(batch.submissions.len(), before + items.len());
+    let layers: std::collections::HashSet<_> = batch.submissions[before..]
+        .iter()
+        .map(|draw| draw.input.identity.layer)
+        .collect();
+    assert_eq!(layers.len(), items.len());
+    for item in items {
+        assert!(
+            batch.submissions[before..]
+                .iter()
+                .any(|draw| draw.input.rig == render_model::hats::rig(item).geometry.id)
+        );
+    }
+    let initial: std::collections::HashMap<_, _> = batch.submissions[before..]
+        .iter()
+        .map(|draw| (draw.input.rig, draw.input.current_bones.clone()))
+        .collect();
+    let bodies = sample_shared_bodies(&stream, &artwork, &local_equipment, false, Vec::new());
+    let mut next =
+        crate::presentation::actors::select_actor_presentations(1, false, None, bodies.remotes);
+    let bodies = next.submissions.len();
+    state.advance(&[], 0.0, 0.7);
+    state.attach(&mut next, Some(&stream), &selections, &mut scene);
+    for item in items {
+        let model = render_model::hats::rig(item);
+        let draw = next.submissions[bodies..]
+            .iter()
+            .find(|draw| draw.input.rig == model.geometry.id)
+            .unwrap();
+        if ["back", "pet"].contains(&item.descriptor().slot.as_str()) {
+            assert_ne!(
+                initial[&model.geometry.id], draw.input.current_bones,
+                "a stationary remote player's cosmetic animations keep advancing"
+            );
+        } else {
+            assert_eq!(
+                initial[&model.geometry.id], draw.input.current_bones,
+                "animated cosmetics cannot move rigid headwear"
+            );
         }
     }
 }

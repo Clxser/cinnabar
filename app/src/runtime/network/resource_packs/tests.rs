@@ -511,6 +511,7 @@ fn overlay_cache_reuses_the_previous_session_compile() {
     let blocks = protocol::CustomBlocks {
         blocks: vec![protocol::CustomBlock {
             state_physics: Default::default(),
+            player_interact: false,
             name: "cache:test".into(),
             tags: Default::default(),
             state_count: 1,
@@ -704,7 +705,7 @@ pub(super) fn summary(application: &super::PackApplication) -> String {
     let glyphs = application
         .glyph_sheets
         .as_ref()
-        .map(|glyphs| format!("{:?} {:?}", glyphs.cells, glyphs.named));
+        .map(|glyphs| format!("{:?} {:?}", glyphs.cells(), glyphs.named()));
     let entities = application
         .entities
         .as_ref()

@@ -54,6 +54,7 @@ reports = []
 mimalloc = ["dep:mimalloc"]
 
 [dependencies]
+cosmetics = { path = "../crates/cosmetics" }
 test-alloc = { path = "../crates/test-alloc", optional = true }
 protocol-ids = { path = "../crates/protocol-ids" }
 mimalloc = { workspace = true, optional = true }
@@ -72,6 +73,7 @@ bootstrap-ui = { path = "../crates/bootstrap-ui" }
 crash-monitor = { path = "../crates/crash-monitor" }
 first-run = { path = "../crates/first-run" }
 launcher-host = { path = "../crates/launcher-host" }
+update-installer = { path = "../crates/update-installer" }
 bridge = { path = "../crates/bridge" }
 experience-sdk = { path = "../crates/experience-sdk", default-features = false, features = ["declarations"] }
 mod-api = { path = "../crates/mod-api" }
@@ -130,6 +132,7 @@ serde_json = "1"
 sha2.workspace = true
 thiserror.workspace = true
 url = "2"
+uuid.workspace = true
 tokio.workspace = true
 ui = { path = "../crates/ui" }
 ui-engine = { path = "../crates/ui-engine" }

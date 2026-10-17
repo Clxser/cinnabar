@@ -6,7 +6,7 @@ use crate as render_api;
 mod actor_raster;
 mod alpha_coverage;
 mod depth_smaa;
-#[cfg(test)]
+#[cfg(any(test, feature = "publication-test-support"))]
 #[path = "../tests/it/support/gpu_snapshot.rs"]
 mod gpu_snapshot;
 pub use depth_smaa::DepthSmaaPlugin;
@@ -41,6 +41,7 @@ mod entity_shadow_render;
 pub use entity_shadow_render::EntityShadowRenderPlugin;
 mod far_terrain;
 pub use far_terrain::FarTerrainRenderPlugin;
+mod gpu_allocation;
 mod gpu_timing;
 pub use gpu_timing::{DetailedGpuTiming, GpuTimingPlugin};
 
@@ -117,6 +118,14 @@ use meshing::{
 pub use actor::gpu::storage_binding_bytes as actor_storage_binding_bytes;
 pub use actor::material::blend_state as actor_material_blend_state;
 pub use actor_render::ActorRenderPlugin;
+#[cfg(feature = "publication-test-support")]
+pub use actor_render::equipment_test_support::{
+    EquipmentPreparation, PreparedEquipmentDraw, equipment_pixels,
+};
+#[cfg(feature = "publication-test-support")]
+pub use actor_render::publication_test_support::{
+    PublicationActorPreparation, publication_actor_preparation,
+};
 
 pub use atmosphere_render::AtmospherePlugin;
 pub use block_entity::{BlockEntityRenderPlugin, DRAGON_DEATH_BLEND};
@@ -133,7 +142,7 @@ pub use chunk::{
 #[cfg(feature = "publication-test-support")]
 pub use chunk::{
     PublicationRenderTerminalSnapshot, publication_noop_render_plugin,
-    publication_render_terminal_snapshot, settle_publication_noop_frame,
+    publication_render_terminal_snapshot, publication_terrain_draws, settle_publication_noop_frame,
 };
 
 pub use dropped_item_render::DroppedItemRenderPlugin;
@@ -159,3 +168,6 @@ pub mod startup_presentation;
 mod queue_review_support;
 
 mod runtime_profile_trace;
+
+#[cfg(feature = "publication-test-support")]
+pub use actor_render::publication_test_support::{PreparedActorDraw, prepare_actor_test_frame};

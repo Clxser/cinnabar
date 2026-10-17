@@ -1,6 +1,5 @@
 //! Composes actor layers in draw order and applies final visibility and cosmetic routes.
 use super::*;
-use crate::presentation::equipment::remote_input;
 use crate::presentation::{
     actors::ActorPresentationBatch, cape::CapeState, entity_layers::LayerPoseCache,
     equipment::ActorEquipmentInput, skin_layers::SkinLayerCache, skin_rig::SkinRigCache,
@@ -13,11 +12,24 @@ pub(super) struct LayerPoses<'a> {
     pub java_posed: &'a [java::Posed],
     pub combat_visuals: render_api::CombatVisuals,
     pub local_emote_pose: Option<&'a actor_animation::CustomEmotePose>,
+    pub remote_emote_poses:
+        &'a bevy::platform::collections::HashMap<u64, actor_animation::CustomEmotePose>,
     pub native_body_sampled: bool,
     pub remote_skin_layers: &'a super::bodies::RemoteSkinLayers,
     pub native_pose: &'a hand::NativePoseCache,
     /// The local actor draws its third-person world body as an Enhanced shadow caster.
     pub local_shadows: bool,
+}
+
+impl<'a> LayerPoses<'a> {
+    /// Selects one render-only overlay for body-dependent clothing, cape and equipment layers.
+    pub(super) fn emote(&self, runtime_id: u64) -> Option<&'a actor_animation::CustomEmotePose> {
+        if runtime_id == self.local_runtime_id {
+            self.local_emote_pose
+        } else {
+            self.remote_emote_poses.get(&runtime_id)
+        }
+    }
 }
 
 /// Retained layer geometry and pose conversions, borrowed only during layer assembly.
@@ -29,7 +41,7 @@ pub(super) struct LayerCaches<'a> {
     pub skin_rigs: &'a mut SkinRigCache,
 }
 
-/// Applies player controllers before equipment and capes, then entity controllers and skin layers.
+/// Attaches equipment to unmasked poses, then masks the body before composing capes.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn attach(
     batch: &mut ActorPresentationBatch,
@@ -45,10 +57,11 @@ pub(super) fn attach(
 ) {
     let LayerPoses {
         local_runtime_id,
-        local_equipment: local_equipment_input,
+        local_equipment: _,
         java_posed,
         combat_visuals: _,
-        local_emote_pose,
+        local_emote_pose: _,
+        remote_emote_poses: _,
         native_body_sampled,
         remote_skin_layers,
         native_pose,
@@ -56,49 +69,56 @@ pub(super) fn attach(
     } = poses;
     let LayerCaches {
         layer_poses,
-        mut equipment,
+        equipment,
         cape_state,
         skin_layers,
         skin_rigs,
     } = caches;
     let (partial_tick, delta_seconds, glint_settings) = frame;
-    if let (Some(stream), Some(render_frame)) = (stream, render_frame.as_mut()) {
-        crate::presentation::entity_layers::apply_render_layers_cached(
-            batch,
-            |runtime_id| {
-                if !stream
-                    .authority()
-                    .actor(runtime_id)
-                    .is_some_and(|actor| matches!(actor.kind, protocol::ActorKind::Player { .. }))
-                {
-                    return None;
-                }
-                // The local shadow body draws the third-person world rig's layers.
-                if local_shadows && runtime_id == local_runtime_id {
-                    return culling::world_rig(stream, runtime_id, local_runtime_id, true)
-                        .map(|rig| std::borrow::Cow::Borrowed(rig.render));
-                }
-                if runtime_id == local_runtime_id
-                    && let Some(pose) = local_emote_pose
-                {
-                    Some(std::borrow::Cow::Borrowed(pose.render.as_slice()))
-                } else {
-                    render_frame.layers(runtime_id)
-                }
-            },
-            artwork,
-            layer_poses,
-        );
-    }
-    if let (Some(equipment), Some(stream)) = (equipment.as_deref_mut(), stream) {
+    let mut layers_of = |runtime_id| {
+        // The local shadow body draws the third-person world rig's layers.
+        if local_shadows && runtime_id == local_runtime_id {
+            return culling::world_rig(stream?, runtime_id, local_runtime_id, true)
+                .map(|rig| std::borrow::Cow::Borrowed(rig.render));
+        }
+        let render_frame = render_frame.as_mut()?;
+        if let Some(pose) = poses.emote(runtime_id) {
+            Some(std::borrow::Cow::Borrowed(pose.render.as_slice()))
+        } else {
+            render_frame
+                .layers_with_skin(runtime_id)
+                .map(|layers| layers.render)
+        }
+    };
+    let wearing_elytra = if let (Some(equipment), Some(stream)) = (equipment, stream) {
         equipment_layers::attach(
             batch,
             equipment,
             stream,
             &poses,
             (partial_tick, delta_seconds, glint_settings),
-        );
-    }
+            |body, runtime_skin| {
+                layers_of(body.input.identity.runtime_id).map(|layers| {
+                    crate::presentation::entity_layers::controller_style(
+                        body,
+                        &layers,
+                        artwork,
+                        layer_poses,
+                        runtime_skin,
+                    )
+                })
+            },
+        )
+    } else {
+        Default::default()
+    };
+    // Equipment inherits animation poses before body-only visibility masks are applied.
+    crate::presentation::entity_layers::apply_render_layers_cached(
+        batch,
+        &mut layers_of,
+        artwork,
+        layer_poses,
+    );
     if let (Some(stream), Some((cape, preparation))) = (stream, cape_state.rig(entity_assets)) {
         if !scene.contains_geometry(cape.geometry.id) {
             let _ = scene.insert_geometry(cape.geometry.clone());
@@ -109,9 +129,7 @@ pub(super) fn attach(
             preparation,
             |runtime_id| {
                 culling::world_rig(stream, runtime_id, local_runtime_id, local_shadows).map(|rig| {
-                    if runtime_id == local_runtime_id
-                        && let Some(pose) = local_emote_pose
-                    {
+                    if let Some(pose) = poses.emote(runtime_id) {
                         pose.snapshot(rig)
                     } else {
                         rig
@@ -120,54 +138,17 @@ pub(super) fn attach(
             },
             |runtime_id| stream.authority().actor_player_profile(runtime_id),
             |runtime_id| java::posed(java_posed, runtime_id).map(|posed| posed.cape),
-            |runtime_id| {
-                let input = if runtime_id == local_runtime_id {
-                    local_equipment(stream, runtime_id, local_equipment_input)
-                } else {
-                    remote_input(stream, runtime_id)
-                };
-                input.armor[1].as_ref().is_some_and(|item| {
-                    equipment
-                        .as_deref()
-                        .is_some_and(|equipment| equipment.is_elytra(&item.identifier))
-                })
-            },
+            |runtime_id| wearing_elytra.contains(&runtime_id),
         );
     }
 
-    // Entity equipment rides the original rig even when a controller draws another model.
-    if let Some(render_frame) = render_frame.as_mut() {
-        crate::presentation::entity_layers::apply_render_layers_cached(
-            batch,
-            |runtime_id| {
-                if stream.is_some_and(|stream| {
-                    stream.authority().actor(runtime_id).is_some_and(|actor| {
-                        matches!(actor.kind, protocol::ActorKind::Player { .. })
-                    })
-                }) {
-                    return None;
-                }
-                if runtime_id == local_runtime_id
-                    && let Some(pose) = local_emote_pose
-                {
-                    Some(std::borrow::Cow::Borrowed(pose.render.as_slice()))
-                } else {
-                    render_frame.layers(runtime_id)
-                }
-            },
-            artwork,
-            layer_poses,
-        );
-    }
     if let Some(stream) = stream
         && let Some(pages) = skin_layers.apply(
             batch,
             artwork,
             |runtime_id| {
                 let rig = culling::world_rig(stream, runtime_id, local_runtime_id, local_shadows)?;
-                let emote = (runtime_id == local_runtime_id)
-                    .then_some(local_emote_pose)
-                    .flatten();
+                let emote = poses.emote(runtime_id);
                 let java_layers =
                     java::posed(java_posed, runtime_id).map(|posed| posed.skin_layers.as_slice());
                 let native_layers = if runtime_id == local_runtime_id && native_body_sampled {
@@ -212,7 +193,9 @@ pub(super) fn apply_style_and_visibility(
                 actor
             }
         };
-        if let Some(style) = style {
+        if !submission.material.allows_overlay() {
+            submission.overlay_rgba8 = 0;
+        } else if let Some(style) = style {
             let armor = (3..=6).contains(&identity.layer);
             let hurt = actor.is_some_and(|actor| actor.hurt_overlay_active());
             let attackable = style.attackable_actor == Some(identity.runtime_id)
@@ -231,6 +214,7 @@ pub(super) fn apply_style_and_visibility(
         // Hiding skin layers keeps armor and held items visible.
         if (identity.layer == render_model::ACTOR_LAYER_BODY
             || identity.layer == crate::presentation::cape::ACTOR_LAYER_CAPE
+            || render_model::hats::is_cosmetic_layer(identity.layer)
             || crate::presentation::skin_layers::is_skin_layer(identity.layer)
             || identity.layer >= crate::presentation::entity_layers::ACTOR_LAYER_TEXTURE_BASE)
             && actor.is_some_and(|actor| actor.is_invisible())

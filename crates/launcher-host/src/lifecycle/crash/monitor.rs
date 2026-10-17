@@ -73,6 +73,9 @@ struct Session {
 static SESSION: OnceLock<Session> = OnceLock::new();
 /// The monitor's process id once it started.
 static PID: OnceLock<u32> = OnceLock::new();
+/// Retains the Windows monitor's identity even after the child registry reaps it.
+#[cfg(windows)]
+static PROCESS: OnceLock<children::Spawned> = OnceLock::new();
 /// The monitor's stdin, held open for this process's lifetime; its end tells the monitor this
 /// process is gone.
 static LIFELINE: OnceLock<Mutex<ChildStdin>> = OnceLock::new();
@@ -120,6 +123,7 @@ fn try_start(
         token,
         restart,
         hang: hang.clone(),
+        staging: hello.staging.clone(),
     })?;
     launch.push(b'\n');
     let hello = serde_json::to_vec(hello)?;
@@ -143,6 +147,8 @@ fn try_start(
         }
     };
     let _ = PID.set(spawned.id());
+    #[cfg(windows)]
+    let spawned = PROCESS.get_or_init(|| spawned);
     let mut stdin = spawned
         .take_stdin()
         .ok_or_else(|| io::Error::other("no stdin"))?;
@@ -331,6 +337,15 @@ pub fn wait_for_connection(timeout: Duration) -> bool {
 /// The monitor's process id, once started.
 pub fn pid() -> Option<u32> {
     PID.get().copied()
+}
+
+/// Duplicates the retained Windows monitor handle, including when the monitor already exited.
+#[cfg(windows)]
+pub(crate) fn process_handle() -> io::Result<Option<std::os::windows::io::OwnedHandle>> {
+    PROCESS
+        .get()
+        .map(children::Spawned::process_handle)
+        .transpose()
 }
 
 /// The socket the monitor listens on, once started.

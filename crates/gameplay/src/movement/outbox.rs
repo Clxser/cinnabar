@@ -200,15 +200,21 @@ pub fn flush_player_auth_inputs<E>(
         ticker,
         budget,
         evidence_context,
-        |identity, packet, _guard| send(identity, packet),
+        |identity, packet, _guard, _sampled_at| send(identity, packet),
     )
 }
 
+/// Hands each tick to transport with its original sampling time, including retries.
 pub fn flush_player_auth_inputs_guarded<E>(
     ticker: &mut MovementTicker,
     budget: usize,
     evidence_context: Option<PhysicsTickEvidenceContext>,
-    mut send: impl FnMut(PhysicsSendIdentity, Packet, Option<InteractionPacketGuard>) -> Result<(), E>,
+    mut send: impl FnMut(
+        PhysicsSendIdentity,
+        Packet,
+        Option<InteractionPacketGuard>,
+        Option<std::time::Duration>,
+    ) -> Result<(), E>,
 ) -> Result<usize, MovementSendError<E>> {
     if !ticker.physics_is_authorized() {
         ticker.outbox_reconciliation = MovementOutboxReconciliation::NotAuthoritative;
@@ -275,12 +281,13 @@ pub fn flush_player_auth_inputs_guarded<E>(
             .pop_pending()
             .expect("encoded sample remains at the FIFO front");
         let identity = ticker.next_send_identity(&sample);
+        let sampled_at = sample.sampled_at;
         ticker.note_command_admitted(
             identity,
             sample,
             evidence_context.expect("nonempty outbox requires staged evidence context"),
         );
-        if let Err(error) = send(identity, packet, interaction_guard) {
+        if let Err(error) = send(identity, packet, interaction_guard, sampled_at) {
             let sample = ticker
                 .restore_admitted(identity)
                 .map_err(|_| MovementSendError::RestoreOverflow)?;
@@ -452,10 +459,17 @@ impl MovementTicker {
             .map(UnsentSampleView::from_queued)
     }
 
+    /// Whether an interaction precedes the first unsent input, without needing pose history.
+    pub fn is_first_unsent_tick(&self, tick: u64) -> bool {
+        self.outbox
+            .front()
+            .is_some_and(|sample| sample.snapshot.tick == tick)
+    }
+
     /// Pairs an attack with the state before the first input it precedes.
     /// Older unsent inputs must drain before an attack can use a later state.
     pub fn interaction_before_tick(&self, tick: u64) -> Option<InteractionSample> {
-        if self.outbox.front()?.snapshot.tick != tick {
+        if !self.is_first_unsent_tick(tick) {
             return None;
         }
         let previous = self.tick_ends.get(tick.checked_sub(1)?)?;
@@ -647,6 +661,13 @@ impl MovementTicker {
     /// Action flags for the tick being built; corrections keep them, authority changes drop them.
     pub(super) fn take_next_tick_flags(&mut self) -> protocol::PlayerInputFlags {
         std::mem::replace(&mut self.next_tick_flags, protocol::PlayerInputFlags::NONE)
+    }
+
+    /// Whether committed destroy maintenance already owns this unsent input.
+    pub(crate) fn carries_survival_mining(&self, tick: u64) -> bool {
+        self.outbox
+            .iter()
+            .any(|sample| sample.snapshot.tick == tick && sample.mining.is_some())
     }
 
     /// Attaches one destroy tick to its exact unsent sample; it is committed from then on.

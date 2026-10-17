@@ -67,6 +67,10 @@ pub(crate) fn drain_committed_ui_before_authority(
             |unique_id| stream.authority().actor_display_name(unique_id),
             known_player_names,
         );
+        ui_runtime
+            .player_roster
+            .set_entries(stream.authority().player_list_roster());
+        refresh_roster_skins(stream, &mut ui_runtime);
     }
     for committed in committed_ui {
         let result = match committed {
@@ -268,7 +272,21 @@ pub(super) fn refresh_player_list_cache_for_controls(
         |unique_id| stream.authority().actor_display_name(unique_id),
         stream.authority().player_list_usernames(),
     );
+    ui_runtime
+        .player_roster
+        .set_entries(stream.authority().player_list_roster());
+    refresh_roster_skins(stream, ui_runtime);
+}
+
+/// Copies admitted skin handles from the roster, without requiring a spawned actor.
+fn refresh_roster_skins(stream: &WorldStream, ui_runtime: &mut UiRuntime) {
+    ui_runtime
+        .player_roster
+        .set_skins(|uuid| match stream.authority().player_list_skin(uuid) {
+            Some(protocol::PlayerSkin::Standard(skin)) => Some(skin.clone()),
+            _ => None,
+        });
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

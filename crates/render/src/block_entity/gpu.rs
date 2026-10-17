@@ -105,6 +105,7 @@ fn install(app: &mut App) {
         render_scene::BlockSelectionFrameResource,
     >::default());
     crate::lighting::install(app);
+    crate::upload_staging::install(app);
     load_internal_asset!(app, SHADER_HANDLE, "block_entity.wesl", |source, path| {
         crate::shader_safety::from_block_entity_wesl(
             source,
@@ -144,134 +145,9 @@ fn install(app: &mut App) {
         );
 }
 
-/// One storage buffer of vertices with its live count and bind group.
-struct VertexList {
-    buffer: Option<Buffer>,
-    capacity_vertices: u64,
-    count: u32,
-    bind_group: Option<BindGroup>,
-    runs: Vec<render_model::block_entity::draw_ranges::DrawRun>,
-}
-
-impl VertexList {
-    const fn new() -> Self {
-        Self {
-            buffer: None,
-            capacity_vertices: 0,
-            count: 0,
-            bind_group: None,
-            runs: Vec::new(),
-        }
-    }
-
-    /// Leaves `vertices` in the buffer's live prefix. `previous` must be the slice passed to
-    /// the last call; only the vertex span whose bytes differ from it is written, and a newly
-    /// allocated buffer is written whole.
-    fn upload(
-        &mut self,
-        previous: &[BlockEntityVertex],
-        vertices: &[BlockEntityVertex],
-        render_device: &RenderDevice,
-        render_queue: &RenderQueue,
-        label: &'static str,
-    ) {
-        self.count = u32::try_from(vertices.len()).unwrap_or(0);
-        if vertices.is_empty() {
-            render_model::block_entity::draw_ranges::rebuild_runs(&mut self.runs, vertices);
-            return;
-        }
-        let needed = vertices.len() as u64;
-        let reallocated = self.buffer.is_none() || self.capacity_vertices < needed;
-        if reallocated {
-            let capacity = needed.next_power_of_two().max(MIN_BUFFER_VERTICES);
-            self.buffer = Some(render_device.create_buffer(&BufferDescriptor {
-                label: Some(label),
-                size: capacity * VERTEX_BYTES,
-                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }));
-            self.capacity_vertices = capacity;
-            self.bind_group = None;
-        }
-        let written = if reallocated {
-            0..vertices.len()
-        } else {
-            match changed_span(previous, vertices) {
-                Some(span) => span,
-                // The buffer and the runs built from `previous` already describe `vertices`.
-                None => return,
-            }
-        };
-        render_model::block_entity::draw_ranges::rebuild_runs(&mut self.runs, vertices);
-        if let (Some(buffer), false) = (&self.buffer, written.is_empty()) {
-            render_queue.profiled_write_buffer(
-                buffer,
-                written.start as u64 * VERTEX_BYTES,
-                bytemuck::cast_slice(&vertices[written]),
-            );
-        }
-    }
-}
-
-/// Vertices of `vertices` that must be written over a buffer holding `previous`, or `None`
-/// when both lists are bytewise identical. Bytes, not float values, are compared, so signed
-/// zeros and NaN payloads are never skipped.
-fn changed_span(
-    previous: &[BlockEntityVertex],
-    vertices: &[BlockEntityVertex],
-) -> Option<Range<usize>> {
-    let start = matching_prefix(previous, vertices);
-    if previous.len() != vertices.len() {
-        return Some(start..vertices.len());
-    }
-    if start == vertices.len() {
-        return None;
-    }
-    let end = vertices.len() - matching_suffix(&previous[start..], &vertices[start..]);
-    Some(start..end)
-}
-
-/// Number of leading vertices whose bytes are equal in both lists.
-fn matching_prefix(left: &[BlockEntityVertex], right: &[BlockEntityVertex]) -> usize {
-    let shared = left.len().min(right.len());
-    let left: &[u8] = bytemuck::cast_slice(&left[..shared]);
-    let right: &[u8] = bytemuck::cast_slice(&right[..shared]);
-    let mut start = 0;
-    while start < left.len() {
-        let end = (start + COMPARE_BLOCK_BYTES).min(left.len());
-        if left[start..end] != right[start..end] {
-            let byte = left[start..end]
-                .iter()
-                .zip(&right[start..end])
-                .position(|(a, b)| a != b)
-                .map_or(end, |offset| start + offset);
-            return byte / VERTEX_BYTES as usize;
-        }
-        start = end;
-    }
-    shared
-}
-
-/// Number of trailing vertices whose bytes are equal in two lists of the same length.
-fn matching_suffix(left: &[BlockEntityVertex], right: &[BlockEntityVertex]) -> usize {
-    debug_assert_eq!(left.len(), right.len());
-    let left: &[u8] = bytemuck::cast_slice(left);
-    let right: &[u8] = bytemuck::cast_slice(right);
-    let mut end = left.len();
-    while end > 0 {
-        let start = end.saturating_sub(COMPARE_BLOCK_BYTES);
-        if left[start..end] != right[start..end] {
-            let byte = left[start..end]
-                .iter()
-                .zip(&right[start..end])
-                .rposition(|(a, b)| a != b)
-                .map_or(start, |offset| start + offset);
-            return (left.len() - byte - 1) / VERTEX_BYTES as usize;
-        }
-        end = start;
-    }
-    left.len() / VERTEX_BYTES as usize
-}
+#[path = "gpu/vertices.rs"]
+mod vertices;
+use vertices::VertexList;
 
 /// The vertex lists last passed to each [`VertexList::upload`], shared rather than copied.
 #[derive(Default)]
@@ -355,8 +231,7 @@ fn prepare_resources(
     frame: Res<render_scene::BlockEntityFrameResource>,
     selection: Res<render_scene::BlockSelectionFrameResource>,
     atmosphere: Option<Res<render_scene::AtmosphereFrame>>,
-    render_device: Res<RenderDevice>,
-    render_queue: Res<RenderQueue>,
+    uploads: crate::upload_staging::FrameUploads,
     mut gpu: ResMut<BlockEntityGpu>,
 ) {
     let atmosphere = atmosphere.as_deref().copied().unwrap_or_default();
@@ -368,7 +243,7 @@ fn prepare_resources(
         [atmosphere.fog_end(), 0.0, 0.0, 0.0],
     ];
     if !frame.portal.is_empty() && gpu.portal_parameters != Some(portal_parameters) {
-        render_queue.profiled_write_buffer(
+        uploads.write(
             &gpu.portal_uniform,
             0,
             bytemuck::cast_slice(&portal_parameters),
@@ -385,7 +260,7 @@ fn prepare_resources(
         .unwrap_or_else(|| render_model::block_entity::selection::fallback_atlas());
     if gpu.atlas_identity != atlas.identity || gpu.atlas_size != atlas.size || gpu.texture.is_none()
     {
-        let texture = render_device.create_texture(&TextureDescriptor {
+        let texture = uploads.device.create_texture(&TextureDescriptor {
             label: Some("block-entity atlas"),
             size: Extent3d {
                 width: atlas.size[0],
@@ -400,7 +275,7 @@ fn prepare_resources(
             view_formats: &[],
         });
         write_rows(
-            &render_queue,
+            &uploads.queue,
             &texture,
             0,
             atlas.size[0],
@@ -425,7 +300,7 @@ fn prepare_resources(
     {
         if let Some(texture) = &gpu.texture {
             write_rows(
-                &render_queue,
+                &uploads.queue,
                 texture,
                 atlas.static_height,
                 atlas.size[0],
@@ -475,7 +350,7 @@ fn prepare_resources(
                 "block-entity overlay vertices",
             ),
         ] {
-            list.upload(previous, vertices, &render_device, &render_queue, label);
+            list.upload(previous, vertices, &uploads, label);
             *previous = Arc::clone(vertices);
         }
     }
@@ -483,8 +358,7 @@ fn prepare_resources(
         outline.upload(
             &uploaded.outline,
             &selection.outline,
-            &render_device,
-            &render_queue,
+            &uploads,
             "block selection line vertices",
         );
         uploaded.outline = Arc::clone(&selection.outline);
@@ -496,8 +370,7 @@ fn prepare_resources(
         crack.upload(
             &uploaded.crack,
             crack_scratch,
-            &render_device,
-            &render_queue,
+            &uploads,
             "block-entity crack vertices",
         );
         std::mem::swap(crack_scratch, &mut uploaded.crack);

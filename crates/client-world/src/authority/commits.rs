@@ -109,6 +109,13 @@ impl WorldAuthority {
                 assert!(self.committed_primitive_shapes.len() < MAX_ADMITTED_WORLD_EVENTS);
                 self.committed_primitive_shapes.push_back(event);
             }
+            WorldEvent::Camera(protocol::CameraEvent::InputLocks(locks)) => {
+                let sequence = sequence.expect("input locks commit through submit");
+                self.push_committed_control(CommittedControlEvent::ClientInputLocks {
+                    sequence,
+                    locks,
+                });
+            }
             WorldEvent::Camera(event) => {
                 self.audio_nondefault_camera_observed = true;
                 let sequence = sequence.expect("sequenced camera events commit through submit");
@@ -119,7 +126,8 @@ impl WorldAuthority {
                 if let ActorEvent::Move(movement) = &mut event {
                     self.resolve_actor_teleport(movement);
                 }
-                let player_list_changed = matches!(&event, ActorEvent::PlayerList(_));
+                let player_list_changed =
+                    matches!(&event, ActorEvent::PlayerList(_) | ActorEvent::Skin { .. });
                 let previous_mount = self.actors.ridden_unique_id(self.local_player_unique_id);
                 if let ActorEvent::Attributes(update) = &event
                     && update.runtime_id == self.local_player_runtime_id

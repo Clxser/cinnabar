@@ -1,5 +1,4 @@
 use super::*;
-use crate::queue_writes::ProfiledQueue as _;
 use render_scene::{AtmosphereFrame, EntityShadowScene};
 
 #[derive(Resource)]
@@ -254,8 +253,7 @@ pub(super) fn linear_to_srgb(value: f32) -> f32 {
 pub(crate) fn prepare_shadow_buffers(
     scene: Res<EntityShadowScene>,
     atmosphere: Option<Res<AtmosphereFrame>>,
-    device: Res<RenderDevice>,
-    queue: Res<RenderQueue>,
+    uploads: crate::upload_staging::FrameUploads,
     mut gpu: ResMut<EntityShadowGpu>,
 ) {
     let frame = &scene.0;
@@ -263,10 +261,10 @@ pub(crate) fn prepare_shadow_buffers(
         let needed = frame.shadows.len() as u64;
         if needed > gpu.capacity {
             gpu.capacity = needed.next_power_of_two();
-            gpu.instances = instance_buffer(&device, gpu.capacity);
+            gpu.instances = instance_buffer(&uploads.device, gpu.capacity);
         }
         if needed > 0 {
-            queue.profiled_write_buffer(&gpu.instances, 0, bytemuck::cast_slice(&frame.shadows));
+            uploads.write(&gpu.instances, 0, bytemuck::cast_slice(&frame.shadows));
             gpu.uploads += 1;
         }
         gpu.count = needed as u32;
@@ -274,7 +272,7 @@ pub(crate) fn prepare_shadow_buffers(
     }
     let params = shadow_params(&atmosphere.map(|frame| *frame).unwrap_or_default());
     if gpu.params_value != Some(params) {
-        queue.profiled_write_buffer(&gpu.params, 0, bytemuck::bytes_of(&params));
+        uploads.write(&gpu.params, 0, bytemuck::bytes_of(&params));
         gpu.params_value = Some(params);
         gpu.uploads += 1;
     }

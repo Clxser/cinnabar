@@ -1,3 +1,58 @@
+## Catalog cosmetics
+
+The wardrobe uses a fetched, ETag-cached catalog with namespaced item IDs and independent
+head, back, face, body, pet and aura slots. Geometry, textures and optional joint motion
+are loaded from bounded, SHA-256-checked assets. The catalog includes original bunny
+ears, the crown, rigid red devil horns, animated back-slot dragon wings and a pet-slot
+shoulder parrot; editable artwork and export conformance tests remain available.
+The parrot stays in Cosmetics, with its existing pet slot exposed by the category filter.
+Each attachment follows its declared bone and offset. World and HUD share local motion.
+Bounded transform clips and continuous span flex animate wings alongside independent hats.
+An optional intro and delayed repeating clip sequence animate the parrot flying in once
+and changing shoulders, using shared immutable geometry and caller-owned time.
+Unknown, unsupported and unowned items render nothing.
+
+The Cosmetics gallery offers All, Head, Back and Pet choices through a filter icon beside
+Remove all. Its menu closes on selection, outside click or Escape. Filtering preserves equipped
+items, retains separate scroll positions and limits thumbnails and keyboard navigation
+to the selected category.
+
+Saved hat choices migrate into the head slot. Gallery requests include visible thumbnails
+and prioritize equipped textures. Cosmetic motion retains the hand rasters, and unchanged
+gallery requests compare the catalog generation without cloning its items. Attachments use
+their declared preview bone and a separate range of render layers.
+
+Authenticated nearby players exchange revisioned session loadouts independently of leased
+emotes. The highest account revision wins across sockets. Disconnect, visibility opt-out
+and nearby departure withdraw the shared selection. The API validates slot placement and
+ownership before publication; all current catalog items are free.
+
+Deploy the API and original R2 assets before the client. Payments, additional catalog items,
+moderation, live authenticated multi-account acceptance and hardware qualification remain
+incomplete. No Bedrock parity or performance gate advances.
+
+## Fence gate targeting
+
+Gate picking uses the same thin directional bounds as its outline for closed, open
+and in-wall states. Rays can pass through empty cell space to the lower gate in a
+stack. Movement boxes and carried-block visuals keep their separate geometry.
+Regression coverage includes every registered gate state in both runtime ID modes.
+Broader block-family parity remains incomplete.
+
+## Restore and share custom emote playback
+
+The articulated emote snapshot now carries the matching prepared body and clothing meshes.
+The account API exchanges nearby watches, starts, phases and stops; authenticated identities
+resolve only to current actor lifetimes. Shared poses override native/Java body animation for
+their lifetime and also drive clothing, capes and equipment. Visibility opt-out and bounded
+leases retire playback without depending on a game server's emote relay. Local clips no longer
+send their owned identifiers as Bedrock emote packets.
+Regression coverage includes mesh/pose agreement, cached mesh reuse, remote pose isolation,
+start/stop, same-clock restarts, lease expiry, API identity, subscriptions and visibility.
+Linux Vulkan headless local-world frames show bent knees and planted level soles through the
+hip pulse. Sharing requires deployment of the API extension. Exact native/Lunar parity, Windows visual
+acceptance and hardware performance qualification remain incomplete.
+
 ## Held input across HUD toggles
 
 Display-setting replacements retain the controls revision when controls are unchanged.
@@ -49,8 +104,15 @@ Published form draw nodes share immutable snapshots. A bounded engine cache reta
 base texture paths and renderer names for the exact snapshot and omission values; overlays,
 renderer callbacks, source resolution and atlas residency still update every prepare.
 Oversized entries use uncached discovery. Regression coverage is written but unrun; compilation,
-rendered comparisons and measured dependency-discovery cost remain pending. Artwork generation,
-edit-text/report copies and other form work remain separate; no F4 or performance gate closes.
+rendered comparisons and measured dependency-discovery cost remain pending.
+
+Oversized artwork sources retain sorted, immutable metadata with shared encoded bytes. Painted
+frames reuse that metadata and request artwork only after source ownership changes. Provider
+replacement retires stale fallback artwork; image polling, page publication and completed
+gallery work continue independently. Focused artwork and atlas regressions pass (34 and 9
+cases), and touched-crate clippy passes. Rendered comparisons and measured artwork
+publication cost remain pending. Edit-text/report copies and other form work remain separate;
+no F4 or performance gate closes.
 
 ## Sleeper-only bed sampling
 
@@ -146,6 +208,10 @@ job costs remain unverified. No browser release or parity gate closes here.
 
 ## Far terrain (LOD)
 
+**Disabled, incomplete:** far terrain and the full-detail radius are off, with no Video settings,
+until their streaming bugs are fixed; values older builds saved are ignored. The design below is
+kept for re-enabling.
+
 `far-terrain` summarises each column the server sent: the height of every cell's highest
 visible block, its average texture colour tinted by biome, and any water depth, with water
 blended over its floor. World workers summarise a column when all of its sections have arrived,
@@ -178,7 +244,9 @@ Afterwards the first cached columns replaced by live ones are compared too: when
 differ, as for another lobby instance under the same identity, the visit drops the cached map
 and takes a new epoch. A disk read never replaces a newer column, and a retired session's late
 summaries never replace a later visit's. Every session, including a transfer to the same
-address, and every dimension change starts a fresh visit. An IO thread writes each region in
+address, and every committed dimension change starts a fresh visit, including a round trip
+between rendered frames. Dimension changes disconnect pending summary delivery before the
+destination can publish terrain. An IO thread writes each region in
 batches and evicts the least recently used regions past the per-server (64 MiB) and global
 (512 MiB) caps.
 
@@ -190,7 +258,21 @@ finest quads whole, coarser ones per fragment. Only finest tiles reach the near 
 meshes merge equal-height tops and runs of walls on worker threads, skirt their edges down to
 the lowest neighbouring surface, rebuild at most every 250 ms when their columns change, and
 keep a replaced tile drawn until its replacements are ready, never two over one area. The GPU holds only
-the selected tiles; a still camera uploads and rebuilds nothing. Encoded summaries share
+the selected tiles and covering fallbacks during bounded replacements; a still camera uploads
+and rebuilds nothing. Growth copies existing GPU data without replaying resident uploads.
+Near column admission and the far mask publish together before draw queues run. Delivered-air
+columns remain in the publication target outside the mesh radius. First delivery publishes
+zero-byte empty evidence through the same bounded queue at either radius, so its receipts
+hide cached terrain without requiring geometry work. Empty-section receipts survive feature
+toggles within their stream and dimension visit, stay bounded by retained sections, refresh
+on every section-membership change, and expire on replacement or
+withdrawal. Valid decoded summaries prove coverage per column; missing, invalid or partial
+summaries cannot prove an entire tile empty or retire its visible fallback. Resource geometry
+and material tables publish together after pending removals and their fences allow the swap;
+blocked candidates stay staged. The same admission is rechecked before replacement allocation
+components reach draw queues. Focused lifecycle regressions pass, including 15 app far-terrain
+cases after transfer and resource resets. Hardware performance and visual acceptance remain
+open. Encoded summaries share
 immutable bytes across caches and tile snapshots. Gathering includes skirt neighbours and
 resumes within column and byte limits. Cache completions and live or retiring summary
 admission share a per-frame budget; partial disk reads keep the highest queued version. Cells are lit as sky-lit
@@ -203,7 +285,7 @@ saved on/off reads as On/Auto.
 
 With far terrain on, only columns within the full-detail radius are lit, meshed and uploaded;
 the rest of what the server sends keeps its block data and is drawn by far terrain from its
-summary. The radius is Auto by device tier (24, 32 or 48 chunks) or set under Video › Full-Detail Distance
+summary. The radius is Auto by device tier (24, 32 or 48 chunks) or a full-detail distance
 (16–64), capped at the render distance, so large render distances cost far tiles rather than
 meshes. A column is promoted (relit and remeshed) inside the radius and demoted two chunks past
 it. Both hand-overs are two-phase: a promoted column passes to near terrain only once its
@@ -235,13 +317,17 @@ consent and runs headless first-run preparation; the NativeActivity then runs th
 the install layout under the app's private files. Gameplay touch controls are a built-in JSON-UI
 screen whose painted rectangles capture fingers; inventory and server forms take one finger as
 the pointer. The Android workflow builds the APK for Android packaging changes, on a schedule
-and on demand.
+and on demand. Tagged Beta and nightly releases also publish a release-profile APK with a
+persistent signing key and release checksums; Android installs updates through the APK installer.
+APKs compile the shared product icon into their launcher resources. Android 11+ relaunches offer
+copyable diagnostics after an unexpected process exit.
 
 Incomplete: the touch layout, its sizes, the look gain and the stick behaviour are provisional,
 not matched to the native touch schemes, safe areas or settings. There is no keyboard or IME,
 Back routing, clipboard, browser links, local worlds, Microsoft sign-in background service,
 menu touch scrolling or touch-mode form scrolling. Device frames, audio, suspend and resume,
 and performance have no Android acceptance. No parity gate closes here.
+Reported exits after resource setup on Galaxy S21 remain undiagnosed; device acceptance is open.
 
 ## Runtime terrain bindings
 
@@ -279,11 +365,20 @@ verification. No parity gate closes here.
 
 ## Launcher updates
 
+Windows runtime executables carry `asInvoker` manifests and refuse elevated game, core and
+crash-monitor startup or relaunch. Setup does not launch the game, and MSI Restart Manager
+relaunch is disabled. The machine-wide install identity and custom install folders remain supported.
+
 One client per install owns update checks, Beta/Nightly/Stable channel selection, explicit Restart and
 update / Later actions, and a separate default-off install-on-quit preference. Signed manifests
 carry monotonic build numbers, and digest-named partial downloads resume with HTTP ranges.
 An offline Rust helper waits for the old process, applies the verified native package, and
 restores failed macOS/Linux starts. Read-only installs offer the manual download action.
+Windows uses this helper even without direct write rights: Windows Installer handles any
+administrator authorization after shutdown, and the helper owns the client relaunch.
+Manual Windows downloads open their folder so they cannot start an installer over a running client.
+Each launch checks once startup completes; the fallback poll runs every six hours, and a Cinnabar
+API release notice for the selected channel checks immediately.
 
 Nightly checks both the nightly and beta signed manifests and offers the newer release while
 keeping the Nightly preference. Release ordering compares the version core, then the shared
@@ -291,8 +386,9 @@ publication number, then SemVer prerelease precedence. An unavailable or invalid
 leaves nightly usable. Cached offers and retained stages use the same order to prevent automatic
 downgrades when the winning publishing channel changes. Beta remains the default channel.
 
-Incomplete: CI must compile and run the written regression tests on all platforms. The package
-workflow publishes each channel's signed manifest. The `CINNABAR_UPDATE_SIGNING_KEY` secret in
+Incomplete: CI must compile and run the written regression tests on all platforms. A real Windows
+check must confirm permission consent, installation and one relaunch. The package workflow
+publishes each channel's signed manifest. The `CINNABAR_UPDATE_SIGNING_KEY` secret in
 the protected `release` environment and the `UPDATE_TRUSTED_KEYS` repository variable are
 configured. The first signed publication remains pending.
 The launcher owner must review the notice screenshots before merge.
@@ -311,6 +407,14 @@ Tests that drive actor authority live in `client-world`'s `actor_store::animatio
 using fixtures from the `test-support` feature. Animation unit tests use a plain actor
 double. Compilation and execution of this move remain unverified, and no actor
 animation parity gate closes.
+
+Finalized catalog layouts retain bounded immutable rig templates and motion-dependency plans.
+Actor-specific conditions still select geometry before lookup; variables, roots, controllers,
+poses, skin drivers and history remain private copies. Exact catalog ownership and topology
+keys prevent reuse across replacements. The shared cache admits at most 32 entries and 4 MiB
+of accounted payload; oversized or unmatched plans use complete uncached construction.
+Eight focused regressions pass. Per-actor copies, mutex contention and crowded-join gains
+remain unmeasured; no performance or parity gate closes.
 
 ## Render geometry and scene ownership
 
@@ -331,6 +435,15 @@ vector adds transient allocation and copying; fragmented commands can still publ
 span. Regression coverage is written but unrun, and lock/allocation measurements remain pending.
 Indexed receipt storage and span reuse remain separate; no performance or parity gate closes.
 
+Actor endpoint matrices retain bounded GPU slots independently of draw order. Exact byte
+comparisons upload changed previous/current ranges while instance scalars still update.
+The renderer projects matching instance and receipt offsets; CPU publications stay dense
+for motion history. One CPU mirror is bounded by the existing endpoint arena, with no GPU
+budget increase. Fragmented allocations compact without changing admission. Regression
+tests pass in the focused actor-render suite (75 tests), and render crate clippy passes.
+Rendered parity and measured performance remain pending. Dense CPU publication copies
+and other matrix-cache work remain separate.
+
 ## Player interaction ownership
 
 `client-interaction` owns the movement and interaction resource wrappers, item-use
@@ -344,6 +457,12 @@ use/place/mine/melee/pick, block selection, world-dependent camera publication a
 cursor focus remain in `app`. They still combine world, transport, menu and
 extension state at the app boundary. Existing tests remain with their owning code;
 compilation, test execution and the behavior/performance acceptance gates remain unverified.
+
+Entity-hover reports use the retained primary actor pick shared with attacks. Local
+ticks report a changed actor or held item before movement, and leaving the actor
+sends a positionless clear. Unchanged targets do not generate repeated reports.
+Remote actor motion shares completed local ticks and fractional progress during prediction;
+otherwise it uses the client frame elapsed cap.
 
 ## Client runtime ownership
 
@@ -437,6 +556,30 @@ crates only. `client-ui` keeps authority, item-icon and container projection, sc
 publication, and adapts runtime state into paint frames and typed inputs. This move has not been
 compiled or executed and closes no parity gate.
 
+## Mod surface motion
+
+Personal-panel and HUD-editor surfaces may declare `transitions` that ease numeric bindings
+from their displayed value toward each new value, with JSON-UI curves or cubic-bezier points,
+an optional opening value and an optional exit value that personal-panel surfaces ease to
+when they close (`docs/modding-spike.md`). Surface transitions, exits and `motion: true`
+feedback follow the Screen animations setting. Controls may declare `cinnabar_transform`
+to scale about an origin and rotate their drawing and hits without changing layout,
+bindable through `#cinnabar_scale`, `#cinnabar_rotation` and `#cinnabar_origin`; rotated
+subtrees cannot clip. `cinnabar_glass` panels show the world behind them blurred and
+filtered like CSS `backdrop-filter`, and the reserved `#world_blur`, `#world_brightness` and
+`#world_saturation` bindings blur and dim the world behind an open panel; one dual-Kawase
+pyramid of the post-processed scene serves every backdrop in a frame, built only while one
+is published. `cinnabar_filter` blurs a control's subtree as one image through an offscreen
+group, animatable through `#cinnabar_blur`. These are Cinnabar extensions for mod
+surfaces; server-pack JSON-UI is unchanged.
+
+Incomplete toward expressive mod menus:
+- The shared scene blur and element blur are unmeasured on the reference hardware tiers.
+- Backdrops blur only the 3-D scene: UI beneath a glass panel, including the HUD and nested
+  glass, stays sharp.
+- Exits between routes: replacing an open panel's surface swaps it at once without playing
+  the old surface's exit values.
+
 ## Extension crate ownership
 
 `client-extensions` owns local component loading and load-order merging, environment
@@ -492,6 +635,25 @@ server. Acceptance uses externally compiled carriers with production terrain
 consumers; runtime server-pack compilation and reported server-version placement
 remain unverified. No broader parity gate closes.
 
+## Redstone dust item sprite
+
+Redstone dust uses the pinned item-atlas sprite for its inventory icon and held
+item rather than the placed wire geometry. The reviewed default binding is
+checked against the pinned atlas and retail inventory. Original-sprite regressions
+cover entity/icon carrier roundtrips and preserve the redstone block's model.
+Other geometry reports and broader item-rendering parity remain incomplete.
+
+## Command-block terrain materials
+
+Command blocks select front, back and conditional side materials from their facing
+and conditional state, with full opaque boundary faces and oriented arrow UVs.
+Original-art compiler regressions cover all registered variants, side directions,
+cap orientation, neighbour culling, atlas-bound animation strips and carrier
+roundtrips. Local BDS rendered panels, arrows and animation phases pass against
+the official Android reference. Render admission remains provisional for broader
+pack and platform parity; hardware performance gates stay open. The command-block
+editor remains unimplemented.
+
 ## Lever terrain geometry
 
 Levers compile separate mounting bases and power-selected pitched handles for
@@ -541,6 +703,15 @@ and ordering, peer GUID generation, datagram batching, and outgoing split envelo
 Full transport parity remains incomplete. Host-resolver timing and address admission,
 absolute monotonic timestamp origin, and discovery-peer reuse remain provisional across
 platforms. These limits and the unresolved server-routing behavior remain open gates.
+
+## Liquid surfaces beneath opaque roofs
+
+Liquid tops below opaque roofs remain visible when any surface corner is below
+the roof boundary. Stacked compatible liquids and fully raised surfaces against
+opaque roofs retain their culling. Original-art meshing regressions cover water,
+lava, sloped surfaces and shared side insets. Local BDS rendering now matches the
+closed surfaces observed with the official Android client. Broader liquid parity
+and hardware performance gates remain open.
 
 ## Flowing water texels
 
@@ -611,6 +782,14 @@ Values are unchanged; compilation and test execution remain unverified until CI.
   server-supplied terrain; FeatureRegistry consumption and client-side terrain generation
   remain unsupported and incomplete. Server-routing parity remains open.
 
+## Embedded-block overlay
+
+Eyes inside scaffolding keep a clear view instead of receiving the solid-block
+overlay. Submerged eyes still select the liquid medium before the scaffolding
+exception, and ordinary solid blocks retain their overlay. Eligibility for other
+nonopaque blocks, scaffolding interior-face rendering, and complete native
+screen-effect parity remain incomplete.
+
 ## Totem activation
 
 - Local totem activation retains the equipped item before later inventory or equipment updates
@@ -643,6 +822,23 @@ Values are unchanged; compilation and test execution remain unverified until CI.
   fallback is provisional. Signed-in friends-visible validation is incomplete, and no
   Xbox presence parity gate closes. Discord presence is unchanged.
 
+## Cinnabar API
+
+- The account core keeps an optional WebSocket to the Cinnabar API (`core/cinnabarapi`). It dials
+  before minting and reuses unexpired key-bound credentials with fresh challenge proofs. Negotiated
+  limits, retry minima, reconnect jitter and bounded frame-rejection retries control its traffic.
+- Player lookups prioritize new joiners, drain coalesced refresh rounds, expire visible positives and discard
+  older-session replies. Release notices include manifest builds and schedule jittered checks with
+  bounded retries for older signed manifests. Packaging rejects placeholder origins and announces
+  only changed signed manifests.
+- Tab-list and name-tag badges share roster answers and the default-on General display toggle.
+  Name tags reuse the original gem in a retained atlas cell, widen the name plate and apply the
+  existing text visibility, depth and opacity passes.
+- Go tests cover the handshake, lookups, release identities, retry policy and schema conformance.
+  Rust tests cover roster-cache lifetimes, session changes and release-check scheduling.
+- Incomplete: an authenticated live run against the deployed API and
+  owner visual acceptance remain outstanding. No vanilla parity gate closes for this optional feature.
+
 ## Small-surface render safety
 
 - Explicit render scissors and viewports intersect their physical attachments; empty
@@ -652,6 +848,10 @@ Values are unchanged; compilation and test execution remain unverified until CI.
   differing DPI. Native offscreen validation covers nonzero small attachments.
 - The reported unfocused macOS startup panic remains incomplete until a matching
   headless startup capture reproduces it. No native parity or frame-budget gate closes.
+- Frame waits read the current focus policy after frame work, so focus restoration
+  removes the background limit before that frame waits. Background and occlusion
+  limits stay unchanged. Deterministic regression coverage exercises both rendering
+  paths; native focus-transition latency and the reported resize lag remain unverified.
 
 ## Graphics API startup recovery
 
@@ -775,8 +975,9 @@ Values are unchanged; compilation and test execution remain unverified until CI.
   separating the actor's colour for exposure remains incomplete.
 - Per-object blur remains incomplete for blended actors and other world renderers. Hidden background
   reconstruction, competing object velocities in a search neighbourhood, and matched flight acceptance
-  remain open. Enabled views retain a reduced actor velocity target. Hardware GPU cost and frame-budget
-  acceptance remain unmeasured; no performance gate closes.
+  remain open. Enabled views retain exact per-pixel motion/depth resolves and row/tile velocity targets.
+  Repeated exposure taps share those resolves; each reduction scans at most one tile edge per invocation.
+  Full-scene hardware frame-budget acceptance remains open; no performance gate closes.
 
 ## Item frames
 
@@ -925,6 +1126,9 @@ Values are unchanged; compilation and test execution remain unverified until CI.
   `.local/enhanced-pbr-audit.json` reports per-alias applied maps, errors and fallbacks,
   including cached loads and failed pack matches. Normal-variance specular filtering
   and categorical animation blending retain the authored material interpretation.
+  Incomplete: Java LabPBR files pair with Bedrock textures through a provisional hand-written
+  name table (`pack-compiler/src/pbr/sources/names.rs`, baselined in the architecture gate);
+  it must move to a generated Java/Bedrock mapping shared with shader-pack block IDs.
 - Nearby opaque authored height maps use bounded 12-step parallax and five-tap directional
   relief visibility; cutouts, translucency, animation and subpixel/distant relief retain
   geometry. Relief blocker visibility fades continuously. Normal bases follow UV
@@ -1066,6 +1270,21 @@ Values are unchanged; compilation and test execution remain unverified until CI.
 
 ## Movement and input audit fixes
 
+Ability updates retain the winning Flying value and its local-change authority
+independently of NoClip. Collision bypass uses the selected travel physics and
+survives correction replay. Higher fixed flight denials prevent local re-entry;
+NoClip alone grants no hunger or sprint exemption. Incomplete: matched trajectories,
+outgoing flight requests, hunger/sprint contexts, unloaded terrain, mounted movement
+and complete block-contact behavior still need acceptance; these changes do not close
+a movement parity gate.
+
+Server-enabled flight also remains active in ordinary modes without MayFly;
+that permission still controls starting flight locally. A native Android
+1.26.50.4 Swim.gg post-death comparison verifies upward flight for this server
+combination. A fresh fixed-client death cycle also verifies ascent and hovering
+after jump release. Other toggle edges and the full movement parity gate remain
+incomplete.
+
 Spectator mode now keeps forced flight without the ordinary flight-toggle grant,
 passes through solid terrain without ground contact or anchor depenetration, and
 suppresses block interactions and first-person hands. Player render queries follow
@@ -1157,6 +1376,8 @@ these changes do not close the movement, camera, or actor parity gates.
   placement line, and use fresh ray segments to continue beyond ledges or upward.
 - Repeats use resolved movement and stance; transactions carry their trigger,
   start/stop actions, local outcome, click position and survival inventory delta.
+- Repeat deadlines retain sub-millisecond clock precision so the first eligible
+  simulation tick can attempt placement.
 - Presses resolve when they arrive and held repeats only on frames that simulate a tick,
   both before the frame's physics and from the last completed tick's end state, so the next
   tick's movement collides with a placed block. Incomplete: a frame
@@ -1177,12 +1398,47 @@ these changes do not close the movement, camera, or actor parity gates.
 
 ## Frame attribution and unchanged GPU uploads
 
+- With VSync, macOS 14 and later reserve a third native drawable for display-link
+  prefetch; older systems and other backends keep one queued frame. The native
+  Metal backend delivers drawables through the display link on supported AppKit
+  surfaces at the configured latency, follows the hosting screen's refresh rate,
+  discards updates past their submission deadline and cancels before
+  reconfiguration. Smooth 120 Hz acceptance remains open.
+
+- Metal completion markers feed bounded GPU queue predictions into input admission,
+  delaying the next input sample until CPU work can feed the GPU without a frame
+  backlog. Completed host timestamps reanchor predictions; missing or stale samples
+  retain CPU pacing. Synchronized surfaces skip GPU extrapolation and reset stale
+  history on mode changes; display-dependent gaps must not become predicted work.
+  Incomplete: paired hardware responsiveness and frame-budget
+  acceptance remain open.
+- Conservative actor and block-entity occlusion projects each box's angular bounds
+  once, retaining complete slab coverage, rounding margins and bounded fail-open
+  probes. Geometry tests cover interior holes across axes and translated coordinates.
+  Incomplete: hardware frame-time and streaming hitch acceptance remain open.
+- Sorted transparency records its contiguous colour-space passes into one command
+  buffer, removing worker waits around draws serialized by the phase's shared lock.
+  Regression tests cover draw order, submission counts and empty viewports.
+- Block-model uploads compare bounded vertex pages and upload disjoint changed
+  ranges, retaining complete shifted tails and refilling grown buffers. Bytewise
+  comparisons preserve signed zero and NaN payloads. Sparse-update and native
+  staging-allocation regressions are written but unrun.
+- Empty retained UI pixels preserve scene colour exactly; opaque pixels skip the
+  scene read, while translucent pixels retain premultiplied gamma blending. Native
+  pixel tests cover colour, alpha and HDR values. Incomplete: fullscreen presentation,
+  paired hardware frame-time improvement and the 120 Hz acceptance gate remain open.
+
 - Simulation reads the current admitted frame clock. Deterministic FIFO tests at 60 and
   120 Hz and an uncapped test bound tick flush delay and 20 Hz send jitter to 3 ms;
   manual recording clocks keep their requested steps. Live movement acceptance remains open.
 
 - Actor catch-up uses `simulation_clock::MAX_TICKS_PER_FRAME`. Prediction and live per-tick actor
   advancement share one clock step, including server-defined interaction boxes after a stall.
+  Returning actors warm their previous tick in full-cap prefix waves on the existing pool,
+  with bounded helper launches, ordered actual charges and a serial partial-budget tail.
+  Differential and lifecycle regressions pass in the focused scheduling suite (32 tests).
+  Native crowd-turn timing,
+  first-visible-frame acceptance and measured gains remain incomplete.
   Deterministic regression coverage does not close live animation or movement acceptance.
 
 - Apple pipelined rendering keeps surface creation on the UI thread while render
@@ -1206,7 +1462,10 @@ these changes do not close the movement, camera, or actor parity gates.
 - Opt-in Tracy spans cover Bevy and owned streaming/render work; Metal pass
   durations are delayed plots. macOS zones alone cannot separate preemption from waits.
 - Per-packet ingress admission preserves queued events when consumer fan-out fills
-  headroom; regression tests cover resumption and zero steady-state drain allocations.
+  headroom. Bounded lookahead lets light events pass stalled terrain while the shared
+  conflict tracker keeps dependent mutations and barriers ordered. Latency echoes flush
+  when their control fence clears, preserving earlier movement ordering. Deterministic
+  regressions cover these paths; hardware join and transfer latency remain unverified.
 - Rolling frame recordings retain recent completed spans and received counters, carry input
   identities into render submission, and queue every hard-hitch window with completeness
   metadata. Slow reports format outside recorder locks on the console thread. Full exports move
@@ -1215,7 +1474,7 @@ these changes do not close the movement, camera, or actor parity gates.
 - Named schedule traces and bounded frame recordings separate main work, render
   handoff, drawable acquisition, command submission and presentation. Metal
   timestamp queries use owned render passes and leave uncovered stages absent.
-- Ordinary direct terrain draws retain CPU-selected units of at most 64 quads,
+- Ordinary direct terrain draws group retained CPU-selected units into indexed instances,
   retain unchanged section descriptors in stable GPU slots, and upload ordered
   visibility references separately after current occlusion results. Both regions
   share one storage binding. Changed sections update only their descriptor spans;
@@ -1255,7 +1514,8 @@ these changes do not close the movement, camera, or actor parity gates.
   remain cold costs. Synthetic crowds and headless screenshots do not
   establish native first-appearance timing, join latency, no-pop-in acceptance or release
   frame budgets; those gates remain open.
-- Recurring hand, UI viewport and particle writes share bounded retained GPU
+- Recurring hand, UI viewport, particle, actor, nametag, block-model, shadow, dropped-item,
+  atmosphere and animation-clock writes share bounded retained GPU
   staging. Terrain arena writes use a separate pool that starts at three 120 Hz
   frames of the publication target rate and grows after missed frames, at most
   2 MiB per frame, to a 32 MiB ceiling. Abutting records share one copy, batches
@@ -1306,6 +1566,15 @@ these changes do not close the movement, camera, or actor parity gates.
   Named and inline splines have independent progress/rotation tracks. Aim selection
   uses retained physics-tick poses, item categories, priorities and visibility,
   with separate interaction direction and action-triggered rotation.
+- Attachments belong to individual boom rigs. Selecting first person after an
+  attached tutorial returns to the player; attaching alone does not select a
+  camera. Clear and detach release only the selected rig's attachment.
+- Server input locks commit in packet order independently of camera selection.
+  Camera, movement, jump, sneak, dismount and directional locks filter input;
+  raw movement vectors remain available and unlocking restores held controls.
+  Mount permission routing and exact attachment actor-loss behavior remain incomplete.
+  Dimension, respawn, game-mode and initialization interactions, plus the full
+  current-version aim-assist and presentation-effects audit, remain unverified.
 - Incomplete parity: animated attachment anchors, definition-authored actor hitboxes,
   complete native block tags, touch pick-range remapping, equal-score actor order,
   historical remote geometry during catch-up, and fire-resistance lava fog remain
@@ -1315,6 +1584,8 @@ these changes do not close the movement, camera, or actor parity gates.
   spyglass); the swim-speed factor and underwater narrowing remain incomplete.
   Sprint transitions recalculate movement speed from attribute defaults and other
   modifiers, preventing FOV overshoot after attribute resends and sprint restarts.
+  Server Speed effect changes refresh that value while sprint stays held.
+  Local Speed modifier expiry without a server update remains incomplete.
   Gameplay angles provisionally apply the [5, 130] bound after effects, preserving
   authored camera overrides. Incomplete: the exact-version final-angle rule and
   live post-death distortion acceptance are unverified.
@@ -1404,6 +1675,8 @@ not close a parity or visual acceptance gate.
   clocks through swaps, authored first-person rigs retain ownership, and raster depth stays
   one sixteenth at any texture size. Emote skin layers follow the sampled body pose.
   Unchanged render layers sharing geometry retain their own completed pose allocations.
+  Held-item hand routing uses the owner's admitted definition, so rejected pack bows
+  retain the startup bow's Java placement in both views.
 - Focused regression suites and touched-crate checks pass. Windows/DX12 headless captures
   exercise held-item swaps, use, both third-person views, cape motion and local emotes.
 - Incomplete: swimming, crawling, gliding, sleeping and emoting stay vanilla (Java 1.7 has
@@ -1540,6 +1813,11 @@ not close a parity or visual acceptance gate.
 
 ## Worn server-pack armour textures
 
+- Item bindings retain owner-specific attachables and evaluate their item conditions
+  against the wearer. A stand-only chestplate or pair of leggings leaves players
+  using their own definition. Custom armour bones retain their authored pose, and
+  controller-selected geometry and visibility reach the worn draw. Skin visibility
+  masks are applied after equipment attachment so hiding a torso does not hide its armour.
 - Worn armour from server packs runs its attachable scripts with the wearer as
   `context.owning_entity` and draws the texture its render controller selects,
   such as owner-driven team variants. Each worn slot keeps its own retained state
@@ -1548,9 +1826,16 @@ not close a parity or visual acceptance gate.
   remain available to owner queries when the body pose is static.
   Attachable timing is independent of owner tick batching, and elytra scripts
   receive the actual render delta.
-- Incomplete: worn armour still uses the binding's default geometry on remapped
-  body bones. Attachable animations and controller-selected geometry or
-  materials are not applied, and vanilla armour keeps its static binding.
+- Cape composition retains the chest route used by the equipment draw. First-person
+  hand placement and drawing share one admitted definition, and preview atlas fallback
+  retains its startup choice and category. Predicate cache warming cannot change a
+  routing decision within those compositions. The routing table includes budget
+  exhaustion and armour-stand helmet and chest slots.
+- Incomplete: matching body bones still use the owner's pose without the attachable's
+  own animation channels. Worn bone-binding expressions, multiple armour material
+  groups, trim artwork, modern controller materials, and precedence among overlapping
+  owner mappings remain incomplete. Native humanoid models absent from the
+  resource pack still use the existing static player-model fallback.
 
 ## Tip text slot
 
@@ -1645,6 +1930,10 @@ not close a parity or visual acceptance gate.
 
 ## Block selection outlines and visual bounds
 
+- A nearer selectable actor suppresses the block outline behind it, using the
+  same rounded-intercept comparison as interactions. Blocks in front of actors
+  retain their outline. Local cow comparison matches Android Bedrock 1.26.50.4;
+  this bounded correction does not close the remaining outline parity gates.
 - Block shape compilation now belongs to `assets` and `asset-compiler`. The
   physics carrier stores final movement boxes, independent selection boxes,
   eligibility, outlines, tags, and typed context facts for both runtime ID spaces.
@@ -1778,6 +2067,21 @@ not close a parity or visual acceptance gate.
   Pose selection with unavailable terrain retains the preceding inferred mode;
   exact native fallback and packet scheduling remain open parity details.
 
+## Windowed Metal presentation
+
+- macOS enables bounded asynchronous presentation for opaque, windowed Immediate
+  surfaces on macOS 14 and later. Three reusable color targets decouple rendering
+  from display drawable recycling; a separate queue copies the newest GPU-completed
+  image at the original resolution and format. Superseded completed images are
+  reusable, while pending writes and presentation reads retain ownership.
+- Surface reconfiguration cancels and joins the display consumer. Allocation or
+  worker setup failure uses the existing direct surface path. FIFO and native
+  fullscreen retain direct presentation.
+- The optimized build and live maximized-window rendering capture pass on M3 Pro;
+  the owner confirms uncapped windowed play. Pool ownership regressions are authored
+  but unrun at the owner's request. Mode transitions, broader hardware, sustained
+  pacing and latency acceptance remain open.
+
 ## Entity shadows
 
 - Entity facts are compiled by `registryc` into a hash-checked carrier and installed by
@@ -1862,6 +2166,14 @@ not close a parity or visual acceptance gate.
   submitting what it hides.
 - Incomplete live visual acceptance: an in-game pass on the M3 Pro (no pop-in, no wrongly
   hidden terrain) and live `gpu_opaque` and render CPU stage captures are pending.
+
+- An opt-in same-frame path (`CINNABAR_TERRAIN_VISIBILITY=1`) draws a bounded near-first
+  solid depth subset, builds conservative Hi-Z verdicts, and writes unit visibility flags
+  on the GPU. Ordinary color draws keep their original order; strict depth rejection keeps
+  ties and current-frame depth handles disocclusion. Missing depth or pipelines clears the
+  flags. Metal indirect draws remain disabled. Native raster fixtures cover page tails,
+  camera changes and one-sample/2× MSAA output equality. Performance and presentation
+  acceptance remain incomplete; this path does not change the default.
 
 ## Bounded lighting CPU work
 
@@ -2076,6 +2388,11 @@ keeps its own binding.
   online roster.
 - Compact centered columns, bounded to 80 players with an explicit overflow count.
 - Roster changes refresh cached JSON-UI; binding release, focus loss and menus hide it.
+- Each name has its skin's front face and hat layer, with the runtime Steve skin for
+  missing or unsupported portraits. UUID-based skin updates refresh cached portraits;
+  stock, legacy, HD, custom cube UVs and static first-frame face animations are supported.
+  Rotated or otherwise unsupported head geometry uses the fallback. This is a
+  user-requested extension; native Bedrock parity and performance acceptance remain incomplete.
 - Input, rendered collection, focus/release, roster refresh and cache tests passed.
 - Incomplete live Windows acceptance: installed-client Tab capture pending.
 
@@ -2247,7 +2564,7 @@ player-turn parity remain incomplete.
 
 2026-10-04 user-requested custom emotes — **Incomplete native/Lunar parity**:
 the native four-slot JSON-UI wheel and remappable emote control select an original,
-local-only Twerk dance with a faster user-requested loop. The owned clip preserves skin
+owned Twerk dance with a faster user-requested loop. The owned clip preserves skin
 hierarchy and clothing; render-time body and player-preview sampling leave the
 native first-person hand and remote actor animations intact. Slot preferences
 persist through Change Emotes, and gameplay input cancels playback. Identified
@@ -3136,9 +3453,10 @@ remain visible; native behavior for that resource limit is unverified. Full pack
 and multi-bone preview parity remains open.
 2026-10-07 non-cube block items (slabs, stairs, walls, fences) also draw as GUI geometry at
 display resolution instead of a 32x32 thumbnail (icon carrier v3 names each thumbnail's world
-state). Cut-out cubes (glass, leaves) draw all six alpha-tested faces, including rear faces
-visible through holes. Non-blended face alpha uses the thumbnail threshold; fractional blended
-faces (stained glass) retain their composed thumbnail. Chests (a cube of their inventory tiles)
+state). Cut-out cube previews (glass, leaves) draw their camera-facing surfaces, so rear
+faces do not show through front texel holes. Their thumbnails use the same face selection.
+Non-blended face alpha uses the thumbnail threshold; fractional blended faces (stained glass)
+retain their composed thumbnail. Chests (a cube of their inventory tiles)
 and blend-flagged art that is only opaque or cut out (anvils) draw as GUI geometry too. Overlapping
 meshes keep their thumbnail when faded. Optional sources follow required atlas pages and fall
 back to thumbnails when the atlas is full. Incomplete: layered translucent cube GUI geometry is
@@ -3210,7 +3528,9 @@ completion, and live visual acceptance. This does not close the chat parity gate
 
 The built-in Java-look chat input spans the viewport with two GUI pixels of side
 padding. Completion rows share the longest text width and sit at the replaced
-token, shifting left near the right edge. History retains its configured width.
+token, shifting left near the right edge. HUD and open-chat history use a fixed
+320 GUI-unit width, scaled by the selected GUI scale, with text wrapped inside
+full-width backgrounds.
 
 2026-10-01 JSON-UI control rendering: images follow 1.26.50 `SpriteComponent`
 (keep_ratio on by default, fill, uv/uv_size defaults, control nine-slice, tiled
@@ -3733,6 +4053,28 @@ box separately, retaining all boxes of an actor admitted before its candidate
 threshold. Collision, placement obstruction and F3 retain collision geometry.
 Definition-authored boxes and multipart actor picking remain incomplete.
 
+2026-10-15 actor attacks run the ordinary pick once against the published frame's
+camera ray, ordered actor boxes and lifetime identities, using current admission policy.
+The selected frame also owns piercing direction and action-facing rotation. Assisted
+visibility follows the ray from that frame's eye to its selected point. Block presses
+wait behind older inputs without requiring a predecessor pose. Presses and their
+mining starts and predicted breaks share one ordered queue. Each pending entry has
+its own expiry; accepted carriers advance before later presses and survive their
+cancellation. Existing destroy progress, cancellation and held-input delay advance
+while new presses wait. One admission step resolves attacks and catch-up mining
+against the shared swing clock. Accepted item uses keep advancing
+while pending interaction presses suppress new use starts.
+Published inputs contain no cached hit or acceptance result. Assisted picks use that
+frame's selected point and box for their input-specific reach check. Removed, replaced
+or dead actors cannot receive an attack from old frame geometry. Position-authority
+changes use the current frame instead. The one pick result
+also owns mining/use vetoes; the explicit item-use timing override remains available. Attacks
+use the network pose before this frame's first movement input, including catch-up frames,
+and enter the queue before their swing and those inputs. Older queued inputs and held
+releases must drain first. Lowered visual eyes do not change the network anchor. Exact
+camera sampling, held-item user-data bytes, network batch boundaries and latency-reply
+timing remain incomplete pending a matched packet capture.
+
 2026-10-10 actor use: a use press on an actor always sends the Interact
 transaction, then falls through to item use (a throw, for example) unless the
 target offers an interaction. Players offer one only while the server's interact
@@ -3755,6 +4097,17 @@ dispatch and a fresh live check remain outstanding. New chat/loading regressions
 are authored but unrun at the user's request. Native
 `#item_name_text_offset` controller binding remains
 incomplete; this correction preserves the approved built-in pack geometry.
+
+Legacy lowercase `scalex`, `scaley` and `scalez` scripts use the same compiled scale
+programs as the modern spellings. Malformed optional values retain their counted
+fallback. The grown wither now uses its authored scale in the matched local fixture.
+Incomplete: native precedence when both spellings are supplied and the
+remaining wither spawn, armor and death behavior still need matched verification.
+
+Sulfur-cube body and shell material aliases retain their cutout and blended states.
+The pinned adult and baby shell rasters preserve fractional opacity through actor
+carrier admission. Incomplete: absorbed-block scale and attachment placement remain
+unverified; restoring the shell does not close the full sulfur-cube rendering gate.
 
 2026-10-05 custom actor lens materials: the Murder Mystery lens overrides its body's
 wildcard material with `slime_outer`. The compiler previously ignored bone-specific
@@ -3853,6 +4206,9 @@ resource packs), rigs depending on vanilla clips are attributed as fallbacks; se
 
 Texture-only equipment overrides replace artwork at validated startup texture paths;
 startup bindings, controllers and geometry remain active without loose resource files.
+Startup and session equipment artwork maps bind each placed raster's catalog index once.
+Draws reuse that index, including after missing placements and pack replacement, while
+retaining pack precedence and startup fallback. Hardware frame budgets remain unverified.
 Artwork-only layers support item textures with no entity symbols, create no pack attachable
 bindings and need no sidecar rebuild. Each item's authored dependencies decide whether it
 uses this path. Mixed texture and geometry, controller or material overrides retain the
@@ -3925,6 +4281,14 @@ range bypass and playback offset, camera preset starting rotation, dimension
 default biome, SetPlayerFurnaceOptions, RecordStarted); that parity work is
 incomplete. The account/auth cache is keyed on the game version, so the first
 join re-authenticates.
+
+Item-use request builders now carry an explicit logical hand through standalone
+transactions and embedded PlayerAuthInput block interactions. Offhand requests
+use transaction slot zero and retain the caller-supplied authoritative stack.
+Independent byte tests cover both hands, stack identity and the following fields.
+This is a request/builder foundation: gameplay still selects the main hotbar hand.
+Offhand gameplay selection, predicted inventory changes, item release and exact
+stable-target gameplay acceptance remain incomplete. Full inventory parity is open.
 
 2026-09-09 loading publication: the owner authorized publishing the completed
 loading/auth work; the broader track and unused solver experiments remain paused.
@@ -7097,6 +7461,20 @@ these); chat with Bedrock formatting codes; HUD (health/hunger/armor/air, bossba
 title/actionbar); Bedrock bitmap font rendering from pack `font/` assets. Taste bar applies:
 UI phases get fable-5/opus-4.8 review before merge.
 
+Empty vanilla buckets use a liquid-enabled block-use pick for source water and lava,
+with the selected item resolved through the negotiated registry. Mining and outline
+picks keep their ordinary eligibility. Flowing liquids and solid occluders retain
+their existing rules; inventory remains authoritative until the server updates it.
+Full bucket prediction and component-defined liquid picking remain incomplete.
+Source-water, source-lava, and powder-snow collection were observed against a
+local Bedrock server. Waterlogged-source acceptance remains unverified; this does
+not close the interaction parity gate.
+
+Middle-click picking includes mobs and paintings, and asks the server for the
+nearest eligible actor's item using its persistent ID. Mob spawn eggs remain
+server-authoritative; walls, reach, and mounted-actor exclusion still constrain
+the pick. This does not close the broader interaction parity gate.
+
 **Phase 5 roadmap (kept current as work lands):**
 
 **Approved gameplay-HUD presentation deviation (expanded 2026-07-19):** the
@@ -7109,6 +7487,14 @@ expose. Menus, inventories, containers, forms, controls, and resource-pack JSON
 UI remain Bedrock/resource-pack-driven. The current text/panel renderer is an
 incomplete scaffold until the full state matrix and native/live comparison gates
 below are green. See `AGENTS.md` for the repository-wide gameplay-HUD exception.
+
+Zero-timestamp local attribute updates may follow specified server ticks without
+ending the session or rewinding effect countdowns. The shared presentation clock
+preserves the last nonzero packet fence; FIFO, session, local-time and specified
+backward-tick rejection remain enforced. The captured CubeCraft failure sequence
+replays through its final zero-tick damage update without ending the session. A
+fresh live match remains pending; this bounded receive-path correction does not
+close the full HUD parity gate.
 
 Hunger shakes use renderer-local updates and neutral/upward offsets, independent of
 food packet ticks. The complete native HUD motion gallery, including heart timing,
@@ -7329,6 +7715,19 @@ reach, simultaneous-action priority, and repeat cadence are not yet established;
 generated encoder fixtures do not close those reference gaps. Server acceptance
 and a real chest interaction are required before shipping even this bounded path,
 and full native interaction parity remains open afterward.
+Generic server-container admission now retains nonempty inventories through the
+one-byte stack-request slot address range instead of requiring vanilla chest row
+counts. Storage artwork, hover-name capture, and JSON-UI collections use that same
+bound, including high-index custom menu controls. Jaya's 200-slot market has a
+native Android 1.26.50.4 witness: the menu stays open, while the earlier client
+requested an immediate close. The current client now retains that live menu;
+per-stack custom names also override localized item names in its collection data.
+Live input now opens the market with its authored title, search/sales controls,
+listing icons and pagination labels; the menu stays open until an explicit close.
+Price/quantity text, panel art and exact layout still differ from native.
+Incomplete: inventories beyond the retained address range, full custom binding and
+visual parity, and platform/version coverage beyond this witnessed server route.
+This does not close the storage or JSON-UI parity gates.
 Missing block-item artwork is a separate route gap: compiled block visuals exist,
 but the icon carrier emits only sprite routes and inventory publication reduces
 the canonical route to an identifier. Preserve the visual route and design a
@@ -8062,9 +8461,10 @@ hotbar, retaining the inherited Bedrock label and animation. Bare block stacks
 can split/restack without rejecting nonzero block identity; ingredient plainness
 no longer requires zero aux/block identity. Supported recipe shapes are retained
 independently of discovery metadata, including high-bit result block identities.
-Personal/workbench closes explicitly return crafting inputs and cursor items to
-player inventory, dropping only overflow, with sparse dependency preservation
-and rejected-return recovery. References and scoped acceptance are in
+Personal/workbench closes explicitly return crafting inputs, and all storage
+closes return cursor items to player inventory, dropping only overflow, with
+sparse dependency preservation and rejected-return recovery. References and
+scoped acceptance are in
 `docs/reference/selected-item-hud-label.md`, `inventory-block-restacking.md`,
 `inventory-recipe-admission.md` and `inventory-crafting-close.md`.
 
@@ -8078,6 +8478,11 @@ Full structural-NBT merge parity, descriptor-dependent capacity/variant rules,
 limited-crafting/unlocked-recipe client gating, recipe-book discovery state,
 arbitrary container return flags and exact native close/flush timing remain open.
 These corrections do not close the overall Phase 5 inventory parity gate.
+
+Storage-close regressions cover empty/full player inventories, pending/accepted
+takes, both close-acknowledgement orders, inactive personal inputs, and later inventory gestures. The
+close-with-cursor lock is reproduced in the owning ledger. Live kit-server
+acceptance and an overflow-only trigger remain unverified.
 
 Incremental recipe replacements now retire obsolete station and multi-recipe
 views. Station inputs outside the supported slot counts, or with quantities
@@ -8563,6 +8968,12 @@ does not close the broader native body-motion or live visual parity gate. See
 
 ## Server pack compatibility
 
+Manifest format numbers accept integral decimal and exponent notation, including
+`2.0`, within the existing supported range. Fractional and unsupported formats
+remain rejected. Native Android 1.26.50.4 admits the observed decimal-format pack;
+the fixed client reaches the Motaz world and the Veltrix rules form with their
+required packs applied. Broader admission and rendering parity remain pending.
+
 Resource-pack admission accepts corrected chunk-transfer sizes within its archive
 and selected-stack byte limits. Repeated offer identities consume the count and
 byte budgets once, retaining the first entry's size estimate. Required packs retain
@@ -8781,11 +9192,22 @@ Attacks at actors, air or blocks send the item-directed transaction with aim and
 allowing the server to apply damage and Lunge movement. Component, admission,
 catalog/reset and real-carrier animation regressions pass. Matched live captures
 show the jab, charged hold and default-Java third-person arm; server-confirmed
-Lunge moves the fixed client without movement input. The complete matched-version
-native comparison remains incomplete. See
+Lunge moves the fixed client without movement input. Hotbar shading now follows
+admitted attack-category cooldowns, including other displayed stacks in the same
+category. The complete matched-version native comparison remains incomplete. See
 [spear actions](docs/reference/spear-actions.md).
 
 ## Third-person held attachables
+
+Incomplete: held attachables publish one selected layer per hand. Authored
+dissolve depth/color passes use a drawable ordinary-material fallback, retaining
+overlay suppression; coupled multi-pass coverage remains unsupported in both
+first and third person. This does not close a material or held-item parity gate.
+
+Selected tint, overlay, UV animation and lighting modifiers are retained in both
+view submissions. Incomplete: the first-person hand shader does not yet consume
+those fields. Projection regressions verify published values; first-person styled
+rendering remains incomplete and does not close a material parity gate.
 
 Held models evaluate authored scripts and texture meshes against the owner's
 posed bones, including aiming skeleton bows. Third-person bow draws supply the
@@ -8834,11 +9256,12 @@ furnace UI options remain incomplete; the full furnace parity gate stays open.
 
 Entity-use presses now send the selected stack and fresh actor hit in the input
 frame, with block occlusion and bounded queue retries. A live cow interaction
-produces a server-confirmed milk bucket. Selecting an equipped emote sends its
-catalog identifier and duration once in that frame; idle and cancellation send
-no start packet. Marketplace clip ownership/playback, remote custom-emote
-synchronization, and the complete villager trade UI remain incomplete. These
-producer fixes do not close those parity gates.
+produces a server-confirmed milk bucket. Selecting an equipped custom emote starts
+local playback and reports its catalog identifier and phase over the authenticated
+Cinnabar API. Stops, visibility and bounded leases retire shared playback without
+sending custom identifiers to a Bedrock server. Marketplace clip ownership/playback
+and the complete villager trade UI remain incomplete. These producer fixes do not
+close those parity gates.
 
 The pinned bamboo visual gate is covered for all twelve admitted states. Stalks,
 radial leaves, column UVs and offsets, selection and breaking overlays, picking,
@@ -9611,3 +10034,31 @@ captures and measured renderer work remain outstanding; no speedup is claimed.
 Explicit default collision and selection components retain their bounds before state transformations. Empty pixel boxes remain empty instead of becoming full cubes, asymmetric X bounds follow the block coordinate convention, and collision boxes retain their supported taller Y range. Movement, targeting and outlines keep their independent component bounds in both palette modes.
 
 Incomplete parity: the original report does not identify the affected block definitions. In-world acceptance of the component cases remains open.
+
+## Actor GPU allocation recovery
+
+Actor page and buffer allocations now check out-of-memory errors before publishing
+resources. A failed page replacement retains a compatible previous page; a fresh
+page retries progressively smaller normalized-UV rasters down to 1×1. Failed
+geometry, skin or frame-buffer preparation skips that publication's draw. Unused
+previous pages are released before replacement uploads. The existing actor pixel
+ceiling remains unchanged.
+
+Incomplete parity: retaining current resources on failed replacement and coarse
+fallback through 1×1 are verified recovery behavior. Per-texture mip demand,
+residency and idle demotion remain unimplemented. Windows-specific texture memory
+allowances, initial allocation policy and adapter pressure thresholds remain
+unverified. This recovery change does not close the streaming or hardware frame
+budget acceptance gates.
+
+## Cutout cube contact depth
+
+Two-sided cutout cubes use a small receding slope depth offset so their back
+faces do not fight coplanar opaque stair/slab faces seen through alpha holes.
+Ordinary and retained-unit draws share the policy. Opaque cubes, model geometry,
+blended terrain and liquids retain their existing depth state.
+
+Incomplete parity: the installed native cutout material supports this offset,
+but exact-current seasonal material selection remains unverified. Mixed model
+materials are outside this change. The raster and descriptor regressions are
+written but unrun; this does not close a renderer parity or frame-budget gate.

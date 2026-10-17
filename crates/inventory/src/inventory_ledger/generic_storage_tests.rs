@@ -11,6 +11,8 @@ use protocol::{
     StackResponseStatus,
 };
 
+mod cursor_close;
+
 fn stack(network_id: i32, count: u16, stack_network_id: i32) -> NetworkItemStack {
     NetworkItemStack {
         network_id,
@@ -172,14 +174,26 @@ fn full_storage_refresh_prevents_rejection_from_restoring_an_empty_taken_slot() 
 }
 
 #[test]
-fn only_exact_27_and_54_slot_level_entity_windows_become_authoritative() {
-    for count in [27, 54] {
+fn generic_storage_accepts_addressable_lengths_and_rejects_unaddressable_lengths() {
+    for count in [
+        1,
+        9,
+        26,
+        27,
+        28,
+        54,
+        55,
+        200,
+        protocol::MAX_GENERIC_STORAGE_SLOTS,
+    ] {
         let ledger = ready(count, 700 + count as u32);
         assert_eq!(ledger.storage_slot_count(), Some(count));
-        assert_eq!(ledger.storage_stack(2).unwrap().stack_network_id, 91);
+        if count > 2 {
+            assert_eq!(ledger.storage_stack(2).unwrap().stack_network_id, 91);
+        }
     }
 
-    for count in [0, 26, 28, 53, 55] {
+    for count in [0, protocol::MAX_GENERIC_STORAGE_SLOTS + 1] {
         let ledger = ready(count, 9);
         assert_eq!(ledger.storage_slot_count(), None);
         assert!(ledger.pending_batch().unwrap().is_some());
@@ -472,7 +486,7 @@ fn foreign_storage_content_and_mismatched_slot_updates_are_fenced() {
 }
 
 #[test]
-fn local_close_with_held_cursor_requires_player_and_cursor_authority() {
+fn local_close_with_held_cursor_and_unknown_player_inventory_requires_authority() {
     let mut ledger = ready(27, 800);
     let request = ledger.begin_storage_click(2).unwrap();
     ledger.mark_transport_enqueued(10);
@@ -487,11 +501,10 @@ fn local_close_with_held_cursor_requires_player_and_cursor_authority() {
 }
 
 /// A storage gesture whose admitted prediction awaits its response, followed
-/// by a local close request: the exact window that must retain its
-/// generation and journal until authority settles.
+/// by a local close without player inventory authority to plan a cursor return.
+/// The window must retain its generation and journal until authority settles.
 fn closing_with_pending(dynamic_id: u32) -> (PlayerInventoryLedger, i32) {
     let mut ledger = ready(27, dynamic_id);
-    ledger.apply(&player_content_with_first(stack(8, 2, 44)));
     let request = ledger.begin_storage_click(2).unwrap();
     ledger.mark_transport_enqueued(10);
     ledger.request_storage_close();

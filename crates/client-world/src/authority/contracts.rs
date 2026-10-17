@@ -89,6 +89,11 @@ impl ViewCohort {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CommittedControlEvent {
+    /// Replacement input permissions, independent of camera activation.
+    ClientInputLocks {
+        sequence: u64,
+        locks: protocol::ClientInputLocks,
+    },
     /// An ordered server probe ready to echo after earlier controls are applied.
     NetworkStackLatency {
         sequence: u64,
@@ -151,7 +156,7 @@ pub enum CommittedControlEvent {
         sequence: u64,
         source_direction: Option<[f32; 2]>,
     },
-    /// The retained authoritative player list changed and Tab/rawtext identity
+    /// The retained player roster or a skin changed and Tab/rawtext identity
     /// consumers must refresh even when no ordinary UI packet committed.
     PlayerListChanged {
         sequence: u64,

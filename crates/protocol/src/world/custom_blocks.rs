@@ -43,6 +43,9 @@ pub struct CustomBlock {
     /// `minecraft:friction` value; surface friction is one minus it, and `None` keeps the default.
     pub friction: Option<f32>,
     pub visual: Arc<CustomBlockVisuals>,
+    /// `minecraft:custom_components` declares a player-interact handler, so using the block
+    /// interacts with it rather than placing the held block against it.
+    pub player_interact: bool,
     /// Resolved palette-order component sets; empty until session preparation.
     pub state_physics: Arc<[CustomBlockPhysics]>,
 }
@@ -405,6 +408,10 @@ impl CustomBlocks {
         let mut vanilla_blocks = Vec::new();
         let mut skipped = 0;
         for (name, bytes) in definitions {
+            if name.is_empty() {
+                skipped += 1;
+                continue;
+            }
             let Some(root) = read_root(bytes) else {
                 skipped += 1;
                 continue;
@@ -427,6 +434,7 @@ impl CustomBlocks {
                         collision_boxes: definition.collision_boxes,
                         selection: definition.selection,
                         friction: definition.friction,
+                        player_interact: definition.player_interact,
                         visual: Arc::new(definition.visual),
                         state_physics: Arc::default(),
                     });
@@ -480,6 +488,7 @@ struct Definition {
     collision_boxes: Option<Arc<[CustomBox]>>,
     selection: CustomSelection,
     friction: Option<f32>,
+    player_interact: bool,
     visual: CustomBlockVisuals,
 }
 
@@ -606,6 +615,7 @@ fn parse_definition(root: &Nbt) -> Option<Definition> {
         collision_boxes,
         selection,
         friction,
+        player_interact: player_interact(components),
         visual: CustomBlockVisuals {
             base: visual_components(components),
             permutations,
@@ -614,6 +624,14 @@ fn parse_definition(root: &Nbt) -> Option<Definition> {
             materialization_disabled: false,
         },
     })
+}
+
+/// Whether `minecraft:custom_components` declares a player-interact handler.
+fn player_interact(components: Option<&Nbt>) -> bool {
+    let flag = components
+        .and_then(|set| set.field("minecraft:custom_components"))
+        .and_then(|component| component.field("hasPlayerInteract"));
+    matches!(flag, Some(Nbt::Byte(value)) if *value != 0)
 }
 
 /// Reads geometry, material instances, and transformation; odd values are

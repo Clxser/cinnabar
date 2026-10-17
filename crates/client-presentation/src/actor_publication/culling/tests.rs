@@ -17,7 +17,8 @@ fn views(casts_shadows: bool) -> ActorPublicationViews {
 
 /// Places a diagnostic remote actor at the requested world position.
 fn remote(id: u64, feet: [f32; 3]) -> crate::presentation::actors::ActorRigPresentation {
-    local_diagnostic_presentation(1, 0, id, 1, feet, 0.0, 0.0).unwrap()
+    local_diagnostic_presentation(1, 0, id, render_api::PoseGeneration::new(1), feet, 0.0, 0.0)
+        .unwrap()
 }
 
 #[test]
@@ -144,6 +145,7 @@ fn rig() -> ActorRigSnapshot<'static> {
         animation_variables: actor_animation::ActorAnimationVariables::default(),
         java: actor_animation::JavaMotion::default(),
         java_equipped: None,
+        main_hand_equipped: None,
     }
 }
 
@@ -154,6 +156,7 @@ fn voxel_hidden_actor_can_cast_without_bypassing_vanilla_occlusion() {
         pitch: 0.0,
         yaw: 0.0,
         head_yaw: 0.0,
+        y_origin: Default::default(),
     };
     let mut world = client_world::WorldAuthority::new(
         protocol::WorldBootstrap {
@@ -162,7 +165,7 @@ fn voxel_hidden_actor_can_cast_without_bypassing_vanilla_occlusion() {
             local_player_unique_id: 999,
             player_position: [0.0; 3],
             world_spawn_position: [0; 3],
-            air_network_id: protocol::SEQUENTIAL_AIR_NETWORK_ID,
+            air_network_id: protocol_ids::SEQUENTIAL_AIR_NETWORK_ID,
             block_network_ids_are_hashes: false,
         },
         Arc::new(assets::RuntimeAssets::diagnostic()),

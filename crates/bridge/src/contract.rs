@@ -32,6 +32,9 @@ pub const KIND_DISCONNECT: u8 = 6;
 /// Archive bytes in one resource-pack data frame.
 pub const PACK_CHUNK_BYTES: usize = 4194304;
 
+/// Names the directory both processes write packet latency traces to; unset disables tracing.
+pub const LATENCY_TRACE_ENV: &str = "CINNABAR_LATENCY_TRACE";
+
 /// Vanilla's player limit for a hosted local world, the host included.
 pub const HOSTED_WORLD_MAX_PLAYERS: u32 = 8;
 
@@ -227,6 +230,27 @@ pub const RPC_INVALID_TARGET: i64 = -32022;
 /// Control error code for services disabled.
 pub const RPC_SERVICES_DISABLED: i64 = -32023;
 
+/// Control error code for a Cinnabar lookup the API rate-limited.
+pub const RPC_CINNABAR_RATE_LIMITED: i64 = -32024;
+
+/// Control method for the Cinnabar API identity and visibility.
+pub const METHOD_CINNABAR_API: &str = "cinnabar_api.v1";
+
+/// Control method for nearby Cinnabar emotes and cosmetics.
+pub const METHOD_CINNABAR_PLAYERS: &str = "cinnabar_players.v1";
+
+/// Control method for a Cinnabar player lookup.
+pub const METHOD_CINNABAR_LOOKUP: &str = "cinnabar_lookup.v1";
+
+/// Cinnabar API origin; the package workflow reads it from this manifest.
+pub const CINNABAR_API_BASE_URL: &str = "https://cinnabar-api.cinnabar-api.workers.dev";
+
+/// Most XUIDs in one Cinnabar player lookup.
+pub const CINNABAR_API_MAX_LOOKUP_XUIDS: usize = 128;
+
+/// Fallback lifetime of a Cinnabar lookup answer.
+pub const CINNABAR_API_CACHE_TTL_MS: u32 = 120000;
+
 /// Xbox presence game mode for survival.
 pub const PRESENCE_GAME_MODE_SURVIVAL: i32 = 0;
 
@@ -296,6 +320,30 @@ pub const MESSAGE_ART_FORE: &str = "fore";
 /// Image id marker for fg artwork.
 pub const MESSAGE_ART_FG: &str = "fg";
 
+/// Core disconnect message: The core could not join the server.
+pub const DISCONNECT_KEY_CANT_CONNECT: &str = "disconnectionScreen.cantConnect";
+
+/// Core disconnect message: The core could not join the Realm.
+pub const DISCONNECT_KEY_CANT_CONNECT_TO_REALM: &str = "disconnectionScreen.cantConnectToRealm";
+
+/// Core disconnect message: The server's resource packs could not be admitted.
+pub const DISCONNECT_KEY_RESOURCE_PACK: &str = "disconnectionScreen.resourcePack";
+
+/// Core disconnect message: The client's protocol or game version is older than the core's.
+pub const DISCONNECT_KEY_OUTDATED_CLIENT: &str = "disconnectionScreen.outdatedClient";
+
+/// Core disconnect message: The client's protocol is newer than the core's.
+pub const DISCONNECT_KEY_OUTDATED_SERVER: &str = "disconnectionScreen.outdatedServer";
+
+/// Core disconnect message: The client's login data is invalid only because of its skin.
+pub const DISCONNECT_KEY_INVALID_SKIN: &str = "disconnectionScreen.invalidSkin";
+
+/// Core disconnect message: The client's login data is invalid only because of its player name.
+pub const DISCONNECT_KEY_INVALID_NAME: &str = "disconnectionScreen.invalidName";
+
+/// Core disconnect message: The sign-in token was rejected because this device's clock is behind.
+pub const DISCONNECT_KEY_DEVICE_CLOCK: &str = "cinnabar.disconnect.deviceClock";
+
 /// Inbox category names in display order.
 pub const INBOX_CATEGORIES: [&str; 4] = ["News", "Realms", "Invites", "Feedback"];
 
@@ -308,6 +356,18 @@ pub const MESSAGE_EVENT_TYPES: [&str; 7] = [
     "Click",
     "Dismiss",
     "ControlImpression",
+];
+
+/// Every lang key the core sends as a whole disconnect message.
+pub const CORE_DISCONNECT_KEYS: [&str; 8] = [
+    "disconnectionScreen.cantConnect",
+    "disconnectionScreen.cantConnectToRealm",
+    "disconnectionScreen.resourcePack",
+    "disconnectionScreen.outdatedClient",
+    "disconnectionScreen.outdatedServer",
+    "disconnectionScreen.invalidSkin",
+    "disconnectionScreen.invalidName",
+    "cinnabar.disconnect.deviceClock",
 ];
 
 /// Game mode a world starts players in.
@@ -482,4 +542,81 @@ pub enum ConnectStage {
     #[serde(rename = "connecting")]
     #[serde(other)]
     Connecting,
+}
+
+/// One namespaced cosmetic item in a supported slot.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CinnabarCosmeticSlot {
+    /// Catalog slot name.
+    pub slot: String,
+    /// Namespaced item identifier.
+    pub item_id: String,
+}
+
+/// A release the Cinnabar API announced on the client's channel.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CinnabarRelease {
+    /// Release channel name.
+    pub channel: String,
+    /// App version; rolling channels reuse one across builds.
+    pub version: String,
+    /// Signed manifest build number; absent in older v1 notices.
+    #[serde(default)]
+    pub build: u64,
+    /// When the API recorded the release.
+    pub published_at: String,
+}
+
+/// Nearby subscriptions, local playback and the selected slot loadout.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CinnabarPlayerState {
+    /// Nearby Xbox account identifiers.
+    pub xuids: Vec<String>,
+    /// Nearby UUIDs when the server omitted Xbox identifiers.
+    pub uuids: Vec<String>,
+    /// Owned clip identifier; empty stops playback.
+    pub emote_id: String,
+    /// Elapsed playback time at this report.
+    pub elapsed_ms: u32,
+    /// Local start identity, including same-clip restarts.
+    pub playback_id: u64,
+    /// Persistent selected items by slot; empty clears the loadout.
+    pub slots: Vec<CinnabarCosmeticSlot>,
+}
+
+/// An authenticated nearby player animation with a remaining lease.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CinnabarRemoteEmote {
+    /// Authenticated Xbox account identifier.
+    pub xuid: String,
+    /// Account UUID derived by the API.
+    pub uuid: String,
+    /// Owned clip identifier.
+    pub emote_id: String,
+    /// Playback time at this snapshot.
+    pub elapsed_ms: u64,
+    /// Remaining playback lease.
+    pub valid_for_ms: u64,
+}
+
+/// An authenticated nearby session loadout without an emote lease.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CinnabarRemoteLoadout {
+    /// Authenticated Xbox account identifier.
+    pub xuid: String,
+    /// Account UUID derived by the API.
+    pub uuid: String,
+    /// Newest accepted account revision.
+    pub revision: u64,
+    /// Equipped items; empty withdraws the loadout.
+    pub slots: Vec<CinnabarCosmeticSlot>,
+}
+
+/// Current authenticated nearby playback and session loadouts.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CinnabarPlayerUpdates {
+    /// Nearby custom emotes.
+    pub emotes: Vec<CinnabarRemoteEmote>,
+    /// Nearby authenticated loadouts.
+    pub loadouts: Vec<CinnabarRemoteLoadout>,
 }

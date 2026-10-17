@@ -1,5 +1,8 @@
 //! Production screen painting into the JSON-UI editor's existing CPU target.
 
+#[cfg(feature = "test-support")]
+mod crafting;
+mod edit_selection;
 mod panorama;
 
 use std::{
@@ -20,7 +23,10 @@ use ui_engine::{
     sources::{ImageWork, RemoteImage, RemoteSource},
     text_metrics::TextMetrics,
 };
-use ui_screens::chat_screen::{ChatInput, ChatScreen};
+use ui_screens::{
+    chat_screen::{ChatInput, ChatScreen},
+    player_list::PlayerList,
+};
 
 use crate::{
     carriers::{self, Error},
@@ -32,6 +38,12 @@ pub const CAPTURE_SECONDS: f64 = 1.0;
 static REGISTRY: LazyLock<ScreenRegistry> = LazyLock::new(|| {
     let mut registry = ScreenRegistry::new(ui_screens::menu_screens::retail_context());
     registry.screen(ui_screens::chat_screen::CHAT_SCREEN);
+    #[cfg(feature = "test-support")]
+    registry.screen(
+        ui_screens::containers::ScreenLayout::Personal { book: true }
+            .screen()
+            .0,
+    );
     ui_screens::hud::register(&mut registry);
     ui_screens::chat_screen::register(&mut registry);
     registry
@@ -53,9 +65,15 @@ pub fn png(state: &State, dir: &Path) -> Result<Vec<u8>, Error> {
     let show_panorama = match &fixture {
         Fixture::Menu(view) => view.out_of_game(),
         Fixture::Loading(stage) => stage.is_world_entry(),
-        Fixture::Chat { .. } => false,
+        Fixture::Chat { .. } | Fixture::TabList(_) | Fixture::EditSelection => false,
+        #[cfg(feature = "test-support")]
+        Fixture::CraftOverlap { .. } => false,
     };
     let mut carriers = carriers::load(dir, menu)?;
+    #[cfg(feature = "test-support")]
+    let craft_icons = matches!(&fixture, Fixture::CraftOverlap { .. })
+        .then(|| crafting::icons(&mut carriers.pages))
+        .transpose()?;
     let size = state.size.map(|value| value as f32);
     let metrics = TextMetrics::for_viewport(
         state.size,
@@ -81,6 +99,23 @@ pub fn png(state: &State, dir: &Path) -> Result<Vec<u8>, Error> {
         renderers: &mut [],
     };
     match fixture {
+        #[cfg(feature = "test-support")]
+        Fixture::CraftOverlap { selected } => {
+            let mut engine = json_engine(&carriers)?;
+            crafting::paint(
+                &engine,
+                &carriers.lang,
+                &craft_icons.unwrap(),
+                selected,
+                &mut frame,
+            )?;
+            add_server_pages(&mut engine, &mut carriers.pages);
+        }
+        Fixture::EditSelection => {
+            let mut engine = json_engine(&carriers)?;
+            edit_selection::paint(&mut engine, &mut frame)?;
+            add_server_pages(&mut engine, &mut carriers.pages);
+        }
         Fixture::Menu(view) => {
             carriers::validate_oreui(dir)?;
             let images = oreui::images::load_optional_oreui_images(dir)
@@ -105,6 +140,7 @@ pub fn png(state: &State, dir: &Path) -> Result<Vec<u8>, Error> {
                 height: page.dimensions[1],
                 rgba: Arc::clone(&page.pixels),
             }));
+            cosmetic_icons(&mut artwork, &mut carriers.pages);
             mod_icons(&view, &mut artwork, &mut carriers.pages)?;
             let mut screen = oreui_screen(first, images);
             let mut scrolls = ui_engine::menu_scroll::MenuScrolls::default();
@@ -128,11 +164,15 @@ pub fn png(state: &State, dir: &Path) -> Result<Vec<u8>, Error> {
                         &mut frame,
                     )
                     .map_err(|error| error.to_string())?;
-                screen
-                    .take_paint()
-                    .unwrap()
+                let paint = screen.take_paint().unwrap();
+                paint
                     .apply_entrance(frame.nodes, size)
                     .map_err(|error| error.to_string())?;
+                if view.dressing_room.editor.is_some() || view.dressing_room.cosmetic_filter_open {
+                    screen
+                        .paint_dressing_overlay(&paint, &view, size, &artwork, &mut frame)
+                        .map_err(|error| error.to_string())?;
+                }
                 let popup = if let Some(prompt) = view.server_trust_prompt() {
                     Some(launcher::menu::dialogs::server_trust(
                         &prompt.url,
@@ -165,6 +205,19 @@ pub fn png(state: &State, dir: &Path) -> Result<Vec<u8>, Error> {
                         .map_err(|error| error.to_string())?;
                 }
             }
+        }
+        Fixture::TabList(rows) => {
+            carriers::install_default_skin(dir)?;
+            let mut engine = json_engine(&carriers)?;
+            let mut list = PlayerList::default();
+            for now in [0.0, CAPTURE_SECONDS] {
+                frame.nodes.clear();
+                *frame.next = 1;
+                frame.now = now;
+                list.paint(&engine, &rows, &mut frame)
+                    .map_err(|error| error.to_string())?;
+            }
+            add_server_pages(&mut engine, &mut carriers.pages);
         }
         Fixture::Loading(stage) => {
             carriers::validate_oreui(dir)?;
@@ -203,27 +256,8 @@ pub fn png(state: &State, dir: &Path) -> Result<Vec<u8>, Error> {
             messages,
             options,
         } => {
-            let catalog = json_ui::Catalog::from_files(
-                carriers
-                    .ui
-                    .ui_files()
-                    .iter()
-                    .map(|file| (&*file.path, &*file.bytes)),
-            )
-            .map_err(|error| error.to_string())?;
-            let mut engine = FormEngine::new(
-                Arc::clone(&carriers.ui),
-                catalog,
-                carriers.ui_page,
-                &REGISTRY,
-                Arc::new(Offline),
-                ImageWork::inline(),
-            );
-            engine.set_server_atlas(
-                ui_engine::atlas::ServerAtlas::new(&[], None, ui_engine::pages::SERVER_UI_PAGES)
-                    .with_image_work(ImageWork::inline()),
-                carriers.pages.len() as u16,
-            );
+            let mut engine = json_engine(&carriers)?;
+
             let mut editor = ui::ChatEditor::new(ui::MAX_CHAT_INPUT_BYTES)
                 .map_err(|error| format!("{error:?}"))?;
             editor.set_text(draft);
@@ -254,17 +288,7 @@ pub fn png(state: &State, dir: &Path) -> Result<Vec<u8>, Error> {
             if screen.nodes().is_empty() {
                 return Err(Error::Invalid("native chat screen did not resolve".into()));
             }
-            if let Some(pages) = engine.take_server_pages() {
-                // The inline image work finishes before painting; page order comes from the atlas.
-                carriers.pages.extend(pages.iter().map(|page| {
-                    let [width, height] = page.dimensions();
-                    Page {
-                        width,
-                        height,
-                        rgba: page.pixels().into(),
-                    }
-                }));
-            }
+            add_server_pages(&mut engine, &mut carriers.pages);
         }
     }
     if nodes.is_empty() {
@@ -317,6 +341,46 @@ pub fn png(state: &State, dir: &Path) -> Result<Vec<u8>, Error> {
     Ok(png)
 }
 
+/// A JSON-UI engine over the vanilla carrier whose server atlas loads built-in images inline.
+fn json_engine(carriers: &carriers::Carriers) -> Result<FormEngine, Error> {
+    let catalog = json_ui::Catalog::from_files(
+        carriers
+            .ui
+            .ui_files()
+            .iter()
+            .map(|file| (&*file.path, &*file.bytes)),
+    )
+    .map_err(|error| error.to_string())?;
+    let mut engine = FormEngine::new(
+        Arc::clone(&carriers.ui),
+        catalog,
+        carriers.ui_page,
+        &REGISTRY,
+        Arc::new(Offline),
+        ImageWork::inline(),
+    );
+    engine.set_server_atlas(
+        ui_engine::atlas::ServerAtlas::new(&[], None, ui_engine::pages::SERVER_UI_PAGES)
+            .with_image_work(ImageWork::inline()),
+        carriers.pages.len() as u16,
+    );
+    Ok(engine)
+}
+
+/// Appends the server atlas pages after painting; page order comes from the atlas.
+fn add_server_pages(engine: &mut FormEngine, pages: &mut Vec<Page>) {
+    if let Some(server) = engine.take_server_pages() {
+        pages.extend(server.iter().map(|page| {
+            let [width, height] = page.dimensions();
+            Page {
+                width,
+                height,
+                rgba: page.pixels().into(),
+            }
+        }));
+    }
+}
+
 /// Gives each Mods-tab icon its own page under the key its card draws, as the client's
 /// artwork worker does.
 fn mod_icons(
@@ -360,3 +424,25 @@ pub(crate) fn oreui_screen(first: u16, images: oreui::images::OreUiImages) -> or
 
 #[cfg(test)]
 mod tests;
+
+/// Uses the production cosmetic gallery renderer for original fixture artwork.
+fn cosmetic_icons(artwork: &mut HashMap<String, ui::IconRef>, pages: &mut Vec<Page>) {
+    for item in cosmetics::Item::all() {
+        let Some(image) = render_model::hats::thumbnail::render(item, 128, 128) else {
+            continue;
+        };
+        artwork.insert(
+            item.thumbnail_key(),
+            ui::IconRef {
+                page: pages.len() as u16,
+                uv: [0, 0, 128, 128],
+                glint: false,
+            },
+        );
+        pages.push(Page {
+            width: image.width,
+            height: image.height,
+            rgba: image.rgba8,
+        });
+    }
+}

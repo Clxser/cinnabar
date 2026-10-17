@@ -1,4 +1,4 @@
-// Cinnabar's Java-style roster overlay. Names fill down columns, at most 20 rows.
+// Cinnabar's Java-style roster overlay. Names fill down columns, at most 20 rows; Cinnabar players carry a badge.
 {
   "namespace": "cinnabar_tab",
   "screen": {
@@ -35,11 +35,21 @@
         "type": "image", "texture": "textures/ui/Black", "alpha": 0.25,
         "size": ["100% - 5px", "$row_background_height"], "anchor_from": "top_left", "anchor_to": "top_left"
       }},
+      {"head": {
+        "type": "image", "texture": "#player_head", "size": ["$head_size", "$head_size"], "offset": [2, 0],
+        "anchor_from": "top_left", "anchor_to": "top_left", "layer": 1,
+        "bindings": [{"binding_name": "#player_head", "binding_type": "collection", "binding_collection_name": "online_players", "binding_name_override": "#texture"}]
+      }},
       {"name": {
-        "type": "label", "size": ["100% - 8px", "$row_height"], "offset": [2, 0],
+        "type": "label", "size": ["$name_width", "$row_height"], "offset": ["$name_offset", 0],
         "anchor_from": "top_left", "anchor_to": "top_left", "layer": 1,
         "text": "#player_name", "localize": false, "color": [1, 1, 1], "shadow": true,
         "bindings": [{"binding_name": "#player_name", "binding_type": "collection", "binding_collection_name": "online_players"}]
+      }},
+      {"cinnabar_badge": {
+        "type": "image", "texture": "$cinnabar_badge_texture", "size": [7, 7], "offset": [-6, 0],
+        "anchor_from": "top_right", "anchor_to": "top_right", "layer": 2,
+        "bindings": [{"binding_name": "#cinnabar_badge", "binding_type": "collection", "binding_collection_name": "online_players", "binding_name_override": "#visible"}]
       }}
     ],
     "bindings": [{"binding_name": "#row_visible", "binding_type": "collection", "binding_collection_name": "online_players", "binding_name_override": "#visible"}]

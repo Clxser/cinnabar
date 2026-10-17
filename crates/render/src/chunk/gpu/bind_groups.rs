@@ -3,10 +3,12 @@ use super::texture_upload::build_carrier_texture_assets;
 #[cfg(feature = "enhanced")]
 use super::{authored_upload, authored_upload::AuthoredUpload};
 use crate::chunk::*;
-use crate::queue_writes::ProfiledQueue as _;
 use bevy::color::ColorToPacked;
 #[cfg(feature = "enhanced")]
 use bevy::render::render_resource::TextureViewId;
+
+mod reload;
+pub(in crate::chunk) use reload::prepare_chunk_texture_assets;
 
 #[cfg(feature = "enhanced")]
 use render_scene::EnhancedTextureAssets;
@@ -163,7 +165,17 @@ pub(in crate::chunk) fn prepare_chunk_biome_tints(
     render_device: Res<RenderDevice>,
     source: Res<ChunkBiomeTints>,
     mut gpu: ResMut<ChunkGpuBiomeTints>,
+    textures: Option<Res<ChunkGpuTextureAssets>>,
+    assets: Option<Res<ChunkTextureAssets>>,
 ) {
+    if let (Some(textures), Some(assets)) = (textures, assets)
+        && textures
+            .prepared
+            .as_ref()
+            .is_none_or(|prepared| prepared.identity != assets.identity())
+    {
+        return;
+    }
     let identity = source.resource_identity();
     if !biome_tint_gpu_buffer_needs_rebuild(
         gpu.prepared.as_ref().map(|prepared| prepared.identity),
@@ -238,9 +250,9 @@ pub(in crate::chunk) fn init_chunk_gpu_animation_clock(
 pub(in crate::chunk) fn prepare_chunk_animation_clock(
     clock: Res<ChunkAnimationClock>,
     gpu_clock: Res<ChunkGpuAnimationClock>,
-    render_queue: Res<RenderQueue>,
+    uploads: crate::upload_staging::FrameUploads,
 ) {
-    render_queue.profiled_write_buffer(&gpu_clock.buffer, 0, bytemuck::bytes_of(&*clock));
+    uploads.write(&gpu_clock.buffer, 0, bytemuck::bytes_of(&*clock));
 }
 
 type PreparedReplacement = (
@@ -296,218 +308,6 @@ pub struct ChunkTextureUploadStats {
     pub animation_frame_bytes: u64,
     pub texture_bytes_including_mips: u64,
     pub queue_upload_bytes: u64,
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(in crate::chunk) fn prepare_chunk_texture_assets(
-    mut commands: Commands,
-    instances: Query<(Entity, &ChunkRenderInstance)>,
-    views: Query<
-        (Entity, &ExtractedView, Has<render_scene::EnhancedRendering>),
-        With<ExtractedCamera>,
-    >,
-    mut arena: ResMut<ChunkGpuArena>,
-    assets: Res<ChunkTextureAssets>,
-    render_device: Res<RenderDevice>,
-    render_queue: Res<RenderQueue>,
-    mut gpu_assets: ResMut<ChunkGpuTextureAssets>,
-    mut stats: ResMut<ChunkTextureUploadStats>,
-    reload: Res<ChunkTextureReload>,
-) {
-    let identity = assets.identity();
-    let completed = gpu_assets.pending.as_ref().and_then(|pending| {
-        match pending
-            .result
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .try_recv()
-        {
-            Ok(result) => Some(result),
-            Err(std::sync::mpsc::TryRecvError::Empty) => None,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(None),
-        }
-    });
-    if let Some(completed) = completed {
-        let pending = gpu_assets.pending.take().expect("completed worker");
-        if reload.finish(&pending.request, completed.is_some()) {
-            gpu_assets.staged = completed.map(|replacement| StagedTextures {
-                request: pending.request,
-                replacement,
-            });
-        }
-    }
-    let requested = reload.preparation();
-    // A newer request cannot retire resources the CPU has already selected but the renderer
-    // has not consumed yet. Publishing that snapshot leaves the newer mailbox attempt intact.
-    if gpu_assets.staged.as_ref().is_some_and(|staged| {
-        staged.replacement.0.identity != identity && !reload.is_current(&staged.request)
-    }) {
-        gpu_assets.staged = None;
-    }
-    if gpu_assets
-        .staged
-        .as_ref()
-        .is_some_and(|staged| staged.replacement.0.identity == identity)
-    {
-        let StagedTextures {
-            request,
-            replacement: (prepared, uploaded, geometry),
-        } = gpu_assets.staged.take().expect("matching staged atlas");
-        // Geometry built for chunks a session reset retired cannot publish. The main world
-        // already meshes against this atlas, so it still installs and the reload completes.
-        if let Some(geometry) = geometry
-            && !geometry.publish(&mut commands, &instances, &mut arena)
-        {
-            bevy::log::warn!("discarding resource geometry with retired chunk keys");
-        }
-        reload.published(&request);
-        gpu_assets.prepared = Some(prepared);
-        gpu_assets.attempted_identity = Some(identity);
-        gpu_assets._attempted_assets = Some(Arc::clone(assets.assets()));
-        *stats = uploaded;
-        #[cfg(feature = "enhanced")]
-        {
-            gpu_assets.authored_pending = AuthoredUpload::for_assets(
-                &assets,
-                gpu_assets
-                    .prepared
-                    .as_ref()
-                    .expect("published carrier atlas"),
-                &render_device,
-            );
-        }
-    }
-    // Bootstrap may publish without an optional reload transaction.
-    #[cfg(feature = "enhanced")]
-    if gpu_assets
-        .authored_pending
-        .as_ref()
-        .is_some_and(|pending| !pending.matches(identity))
-    {
-        gpu_assets.authored_pending = None;
-    }
-    #[cfg(not(feature = "enhanced"))]
-    if texture_asset_needs_rebuild(gpu_assets.attempted_identity, identity) {
-        gpu_assets.attempted_identity = Some(identity);
-        gpu_assets._attempted_assets = Some(Arc::clone(assets.assets()));
-        if let Some((prepared, uploaded)) =
-            build_carrier_texture_assets(&assets, None, &render_device, &render_queue)
-        {
-            gpu_assets.prepared = Some(prepared);
-            *stats = uploaded;
-        }
-    }
-    #[cfg(feature = "enhanced")]
-    if texture_asset_needs_rebuild(gpu_assets.attempted_identity, identity) {
-        gpu_assets.attempted_identity = Some(identity);
-        gpu_assets._attempted_assets = Some(Arc::clone(assets.assets()));
-        if gpu_assets
-            .prepared
-            .as_ref()
-            .is_some_and(|prepared| authored_upload::same_carrier(prepared.identity, identity))
-        {
-            if let Some(authored) = assets.enhanced() {
-                gpu_assets.authored_pending =
-                    AuthoredUpload::new(identity, authored.clone(), &render_device);
-                if gpu_assets.authored_pending.is_none() {
-                    bevy::log::warn!("invalid authored terrain upload; retained previous bindings");
-                }
-            } else {
-                authored_upload::detach(
-                    gpu_assets
-                        .prepared
-                        .as_mut()
-                        .expect("existing carrier atlas"),
-                    identity,
-                    &render_device,
-                    &mut stats,
-                );
-            }
-        } else {
-            gpu_assets.authored_pending = None;
-            if let Some((prepared, uploaded)) = build_carrier_texture_assets(
-                &assets,
-                gpu_assets.prepared.as_ref(),
-                &render_device,
-                &render_queue,
-            ) {
-                gpu_assets.prepared = Some(prepared);
-                *stats = uploaded;
-                gpu_assets.authored_pending = AuthoredUpload::for_assets(
-                    &assets,
-                    gpu_assets
-                        .prepared
-                        .as_ref()
-                        .expect("published carrier atlas"),
-                    &render_device,
-                );
-            }
-        }
-    }
-    #[cfg(feature = "enhanced")]
-    if let Some(pending) = gpu_assets.authored_pending.as_mut() {
-        pending.step(&render_queue, authored_upload::FRAME_UPLOAD_BYTES);
-        if pending.complete() {
-            let completed = gpu_assets
-                .authored_pending
-                .take()
-                .expect("complete authored upload");
-            completed.publish(
-                gpu_assets
-                    .prepared
-                    .as_mut()
-                    .expect("retained carrier atlas"),
-                &mut stats,
-            );
-        }
-    }
-    let Some(request) = requested else {
-        return;
-    };
-    let candidate = request.assets().clone();
-    if candidate.identity() == identity
-        || gpu_assets.pending.is_some()
-        || reload.status(candidate.identity()).is_some()
-    {
-        return;
-    }
-    let device = render_device.clone();
-    let queue = render_queue.clone();
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    let geometry = request.geometry().cloned();
-    gpu_assets.pending = Some(PendingTextures {
-        request,
-        result: std::sync::Mutex::new(receiver),
-    });
-    let view = views
-        .iter()
-        .min_by_key(|(entity, ..)| *entity)
-        .map(
-            |(entity, view, enhanced)| super::resource_sorts::ResourceView {
-                entity,
-                transform: view.world_from_view,
-                sort_order_independent: view_displaces_water(enhanced),
-            },
-        );
-    let previous = gpu_assets.prepared.clone();
-    std::thread::spawn(move || {
-        let result = build_carrier_texture_assets(&candidate, previous.as_ref(), &device, &queue)
-            .and_then(|(atlas, stats)| {
-                let geometry = match geometry {
-                    Some(instances) => Some({
-                        let _zone = bevy::log::info_span!(
-                            "pack_apply.gpu_geometry",
-                            chunks = instances.len()
-                        )
-                        .entered();
-                        PreparedResourceGeometry::build(&instances, candidate, device, queue, view)?
-                    }),
-                    None => None,
-                };
-                Some((atlas, stats, geometry))
-            });
-        let _ = sender.send(result);
-    });
 }
 
 pub(in crate::chunk) fn chunk_sampler_descriptor() -> SamplerDescriptor<'static> {

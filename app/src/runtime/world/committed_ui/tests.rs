@@ -68,7 +68,7 @@ enum InputCase {
 }
 
 /// Builds a complete authority schedule with independent player and UI owners.
-fn fixture_app() -> (App, Entity) {
+pub(crate) fn fixture_app() -> (App, Entity) {
     let mut player_runtime = PlayerRuntime(player_state::PlayerState::new(1));
     let mut clock = WorldClock::default();
     let mut weather = WeatherState::default();
@@ -124,6 +124,7 @@ fn fixture_app() -> (App, Entity) {
         .init_resource::<Time<Real>>()
         .init_resource::<ChunkUploadBudget>()
         .init_resource::<CameraSettingsAuthority>()
+        .init_resource::<client_presentation::camera::look::LookSmoother>()
         .init_resource::<LocalViewPose>()
         .init_resource::<LocalPlayerFrameCarrier>()
         .init_resource::<InteractionOriginSnapshot>()

@@ -83,8 +83,21 @@ fn inspect_executed_frame(world: &mut World) {
     let gpu = world.resource::<ActorGpu>();
     let frame = world.resource::<ActorRenderFrame>();
     assert_eq!(gpu.frame_generation, frame.rig.frame_generation);
-    for (prepared, source) in gpu.instances.iter().zip(frame.rig.instances.iter()) {
+    for (index, (prepared, source)) in gpu
+        .instances
+        .iter()
+        .zip(frame.rig.instances.iter())
+        .enumerate()
+    {
+        let mut receipt = gpu.manifest[index].clone();
+        assert_eq!(receipt.previous_bone_base, prepared.previous_bone_base);
+        assert_eq!(receipt.current_bone_base, prepared.current_bone_base);
+        receipt.previous_bone_base = frame.rig.manifest[index].previous_bone_base;
+        receipt.current_bone_base = frame.rig.manifest[index].current_bone_base;
+        assert_eq!(receipt, frame.rig.manifest[index]);
         let mut prepared = *prepared;
+        prepared.previous_bone_base = source.previous_bone_base;
+        prepared.current_bone_base = source.current_bone_base;
         prepared.material &= !crate::actor::material::LATE_DISSOLVE_COLOR;
         assert_eq!(&prepared, source);
     }
@@ -145,7 +158,7 @@ fn inspect_executed_frame(world: &mut World) {
         .take_drawn()
         .expect("all current spans were executed");
     assert_eq!(drawn.frame_generation, frame.rig.frame_generation);
-    assert_eq!(drawn.manifest.as_ref(), frame.rig.manifest.as_ref());
+    assert_eq!(drawn.manifest.as_ref(), gpu.manifest.as_ref());
     assert!(drawn.is_exact());
     world.resource_mut::<PreviousReceipt>().0 = Some((batch, executed));
     world
@@ -499,4 +512,20 @@ fn a_depth_writing_blend_cannot_split_a_sorted_dissolve_pair() {
         [0, 2, 1],
         "the color finishes before the intervening blend can write depth"
     );
+}
+
+#[test]
+fn actor_instances_and_both_bone_endpoints_take_one_pool_lock() {
+    use crate::upload_staging::BufferUploadStaging;
+    let mut app = render_app();
+    let world = app.sub_app_mut(RenderApp).world_mut();
+    let staging = BufferUploadStaging::new(world.resource());
+    world.insert_resource(staging);
+    world.insert_resource(frame(&[false, false, true]));
+    let before = world.resource::<BufferUploadStaging>().stats();
+    world.run_system_once(prepare_actor_resources).unwrap();
+    let after = world.resource::<BufferUploadStaging>().stats();
+    assert_eq!(after.staged_writes - before.staged_writes, 3);
+    assert_eq!(after.batches - before.batches, 1);
+    assert_eq!(after.fallback_writes, 0);
 }
