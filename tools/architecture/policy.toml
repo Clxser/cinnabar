@@ -50,6 +50,10 @@ ownership_record = "docs/architecture/workspace.md"
 path = "crates/assets/data/item-facts-v2193.bin"
 ownership_record = "docs/architecture/workspace.md"
 
+[[owned_artifacts]]
+path = "crates/assets/data/java-mapping-v2193.bin"
+ownership_record = "docs/architecture/workspace.md"
+
 # The vendored contract codec (`bedrock-protocol-1-26-51`) is a dependency of `protocol` only.
 [[vendored]]
 path = "crates/protocol/vendor/"
@@ -438,7 +442,7 @@ forbidden_transitive_dependencies = ["bevy", "bevy_*", "wgpu*"]
 [[crates]]
 name = "shaderpack"
 path = "crates/shaderpack"
-allowed_dependencies = []
+allowed_dependencies = ["assets"]
 forbidden_dependencies = ["bevy", "wgpu", "protocol", "world"]
 forbidden_transitive_dependencies = ["bevy", "bevy_*", "wgpu*"]
 
@@ -1351,8 +1355,8 @@ vocabularies = [
     { path = "crates/protocol/data/item_tags_dragonfly.tsv", column = 0 },
 ]
 block_registries = ["crates/assets/data/block-registry-v2193.bin"]
-# The Enhanced PBR loader's Bedrock-to-Java texture-name map is a provisional hand table; it
-# moves to a generated Java/Bedrock mapping with the shader-pack block mapping (plan.md).
+# The Enhanced PBR loader's Bedrock-to-Java texture-name map is a provisional hand table: the
+# pinned Java/Bedrock mapping has no texture names, so it waits for a model-derived source (plan.md).
 baselines = [
     { path = "crates/pack-compiler/src/pbr/sources/names.rs", max = 55 },
 ]

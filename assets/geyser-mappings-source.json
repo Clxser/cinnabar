@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "id": "geysermc-mappings",
+  "repository": "https://github.com/GeyserMC/mappings",
+  "commit": "81700ab543c1f4e9f9041f58dac4154ecb0d0c8b",
+  "java_edition": "26.3",
+  "bedrock_edition": "1.26.50",
+  "license": {
+    "spdx": "MIT",
+    "path": "LICENSE",
+    "sha256": "4f49de5134b13de98672e8f870aae5d36f5b415086fb1c6fdf832b78c47c7094"
+  },
+  "archive": {
+    "repository": "https://github.com/GeyserMC/mappings-generator",
+    "release": "2.1.0-build.1",
+    "url": "https://github.com/GeyserMC/mappings-generator/releases/download/2.1.0-build.1/mappings-v2.1.0-full.zip",
+    "sha256": "f837627ef75863461fbf51bd43c66a4292b6d7d719c7103284694da263f36600",
+    "size_bytes": 567947,
+    "cache": ".local/assets/geyser-mappings/mappings-v2.1.0-full.zip"
+  },
+  "files": {
+    "blocks": {
+      "path": "data/blocks_debug.json",
+      "sha256": "7289cf442e32189986eb9bf3ba94ac402a9c77c097f60c10071e5d1b25127b1a"
+    },
+    "java_blocks": {
+      "path": "javaclass/Blocks.java",
+      "sha256": "54eb08595047b75e7535af9bc3d71e351370c0745f504c87a3182d51ca510d25"
+    },
+    "block_tags": {
+      "path": "mcpl/data/networkTags.nbt",
+      "sha256": "1522fa3851e889a235e93a3a0a76ba62796c3154a24afc65936ab19394001d0b"
+    },
+    "biomes": {
+      "path": "mappings/biomes.json",
+      "sha256": "b6011a937a6470816d42faf4cbcd819e12ad1eb190e78c898ab8c5dfb07af6e6"
+    }
+  }
+}

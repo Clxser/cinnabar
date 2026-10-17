@@ -1128,8 +1128,12 @@ screen-effect parity remain incomplete.
   including cached loads and failed pack matches. Normal-variance specular filtering
   and categorical animation blending retain the authored material interpretation.
   Incomplete: Java LabPBR files pair with Bedrock textures through a provisional hand-written
-  name table (`pack-compiler/src/pbr/sources/names.rs`, baselined in the architecture gate);
-  it must move to a generated Java/Bedrock mapping shared with shader-pack block IDs.
+  name table (`pack-compiler/src/pbr/sources/names.rs`, baselined in the architecture gate).
+  The pinned GeyserMC mappings (below) carry block states, biomes, items and sounds but no
+  texture names, and a Java block state does not determine its texture files without the Java
+  block models, which are Mojang assets we do not pin. Every row stays: wood/colour renames,
+  per-face suffixes (`_top`, `_side`, door halves), legacy Bedrock file names (`stonebrick`,
+  `grass_carried`) and Java spelling quirks (`santstone`) need a model-derived source.
 - Nearby opaque authored height maps use bounded 12-step parallax and five-tap directional
   relief visibility; cutouts, translucency, animation and subpixel/distant relief retain
   geometry. Relief blocker visibility fades continuously. Normal bases follow UV
@@ -1147,6 +1151,24 @@ screen-effect parity remain incomplete.
   Custom animation order/maps are sampled into the carrier clock; independent authored timing
   remains incomplete. Full split-screen viewport support and cross-backend acceptance remain open.
 - Details and primary references: [Enhanced renderer](crates/render/src/enhanced/README.md).
+
+## Java Edition identities for shader packs
+
+- `crates/assets/data/java-mapping-v2193.bin` maps every block-registry state to one Java block
+  state, lists Java block tags and maps Bedrock biome ids to Java biomes. `registryc --kind
+  java-mapping` generates it from the GeyserMC mappings pinned in
+  `assets/geyser-mappings-source.json` (Java 26.3, Bedrock 1.26.50).
+- Geyser maps Java states onto Bedrock; the inverse prefers the same-named Java block, then a
+  dry (`waterlogged=false`) state, then Java text order. 5,434 Bedrock states Geyser never
+  produces (leaves `update_bit`, extra hanging-sign and pressure-plate states, …) take the Java
+  state of the same block's state sharing the most properties; they are flagged approximate.
+  728 states have no Java counterpart (frames, border/allow/deny, deprecated and reserved blocks).
+  Bedrock biomes absent from Java (27 of 89) are unmapped.
+- `shaderpack` reads `block.properties`, `item.properties` and `entity.properties` with Iris
+  precedence (plain entries before `%tag` entries, first match wins) and builds the dense
+  `mc_Entity` table per block-registry state. Incomplete: no Iris legacy-id fallback for packs
+  without `block.properties`; item and entity ids are not yet mapped from Bedrock identities;
+  files decode as UTF-8 rather than ISO-8859-1.
 
 ## Anvil screen
 
