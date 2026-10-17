@@ -2,13 +2,15 @@
 //!
 //! Like Enhanced's persistent post targets, everything here lives as long as the view keeps
 //! its size and pack: colour buffers (main and, when the plan ping-pongs them, alternate
-//! textures with optional mip chains), the `depthtex*` copies, the screen `final` draws,
-//! custom images, storage buffers, per-program uniform buffers and every pass's bind groups.
-//! A resize or pack change replaces the whole set.
+//! textures with optional mip chains), the geometry depth attachment and the `depthtex*`
+//! copies, the screen `final` draws, custom images, storage buffers, per-program and
+//! per-draw uniform buffers and every pass's bind groups. A resize or pack change replaces
+//! the whole set.
 
-use super::loader::{PackGpu, SCREEN_FORMAT};
+use super::draws::{DrawKind, GeometryDraw};
+use super::loader::{PackGpu, ProgramPipeline, SCREEN_FORMAT};
 use super::plan::{MAX_COLOR_BUFFERS, PassStep};
-use super::resources::{ImageSource, TextureSource};
+use super::resources::{AtlasLayer, ImageSource, TextureSource};
 use shaderpack::{ImageSize, ProgramKind};
 use std::sync::Arc;
 use wgpu::{Device, TextureFormat, TextureUsages, TextureView};
@@ -39,7 +41,7 @@ impl ColorBuffer {
 
 /// A texture with its default view.
 pub(crate) struct Target {
-    _texture: wgpu::Texture,
+    pub texture: wgpu::Texture,
     pub view: TextureView,
 }
 
@@ -66,7 +68,7 @@ fn target(
     });
     let view = texture.create_view(&Default::default());
     Target {
-        _texture: texture,
+        texture,
         view,
     }
 }
@@ -77,6 +79,11 @@ pub(crate) struct ViewTargets {
     pub buffers: Vec<Option<ColorBuffer>>,
     pub depth: [Target; 3],
     pub depth_compare: [Option<Target>; 3],
+    /// The depth attachment geometry draws test against (OpenGL window depth, bottom-up);
+    /// copied into `depthtex*` after the opaque and translucent geometry.
+    pub geometry_depth: Option<Target>,
+    /// This frame's sky vertices.
+    pub sky: Option<wgpu::Buffer>,
     pub screen: Target,
     pub images: Vec<(wgpu::Texture, TextureView)>,
     pub storage: Vec<(u32, wgpu::Buffer)>,
@@ -167,8 +174,25 @@ impl ViewTargets {
                     &format!("shader pack depthtex{i} comparison"),
                     TextureFormat::Depth32Float,
                     screen_size,
-                    sampled,
+                    sampled | TextureUsages::COPY_DST,
                 )
+            })
+        });
+        let geometry_depth = (!pack.draws.is_empty()).then(|| {
+            target(
+                device,
+                "shader pack geometry depth",
+                TextureFormat::Depth32Float,
+                screen_size,
+                sampled | TextureUsages::COPY_SRC,
+            )
+        });
+        let sky = (!pack.draws.is_empty()).then(|| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("shader pack sky vertices"),
+                size: super::sky::SKY_BUFFER_BYTES,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             })
         });
         let screen = target(
@@ -241,6 +265,8 @@ impl ViewTargets {
             buffers,
             depth,
             depth_compare,
+            geometry_depth,
+            sky,
             screen,
             images,
             storage,
@@ -253,6 +279,7 @@ impl ViewTargets {
         pack: &'a PackGpu,
         source: TextureSource,
         read_alt: u32,
+        atlas: Option<AtlasViews<'a>>,
     ) -> &'a TextureView {
         match source {
             TextureSource::Buffer { index, .. } => {
@@ -270,19 +297,39 @@ impl ViewTargets {
             }
             TextureSource::Image { index, .. } => &self.images[index].1,
             TextureSource::Constant { index, .. } => &pack.constants.textures[index].view,
+            TextureSource::Atlas(layer) => match atlas {
+                Some(atlas) => match layer {
+                    AtlasLayer::Color => atlas.color,
+                    AtlasLayer::Normals => atlas.normals,
+                    AtlasLayer::Specular => atlas.specular,
+                },
+                None => &pack.constants.textures[pack.atlas_placeholder].view,
+            },
         }
     }
 }
 
-/// Builds the bind groups of one pass.
+/// Views of Cinnabar's block atlases, bound to geometry programs' `gtexture`, `normals` and
+/// `specular`.
+#[derive(Clone, Copy)]
+pub(crate) struct AtlasViews<'a> {
+    pub color: &'a TextureView,
+    pub normals: &'a TextureView,
+    pub specular: &'a TextureView,
+}
+
+/// Builds the bind groups of program `program` for a pass whose buffer reads use
+/// `read_alt`.
 pub(crate) fn pass_bind_groups<'a>(
     device: &Device,
     pack: &'a PackGpu,
     targets: &'a ViewTargets,
     uniforms: Option<&'a wgpu::Buffer>,
-    step: &PassStep,
+    program: usize,
+    read_alt: u32,
+    atlas: Option<AtlasViews<'a>>,
 ) -> [Option<wgpu::BindGroup>; 4] {
-    let program = &pack.programs[step.program];
+    let program = &pack.programs[program];
     let reflection = &program.reflection;
     let mut entries: [Vec<wgpu::BindGroupEntry<'a>>; 4] = Default::default();
     let mut push = |group: u32, binding: u32, resource: wgpu::BindingResource<'a>| {
@@ -320,7 +367,9 @@ pub(crate) fn pass_bind_groups<'a>(
         push(
             texture.group,
             texture.binding,
-            wgpu::BindingResource::TextureView(targets.texture_view(pack, *source, step.read_alt)),
+            wgpu::BindingResource::TextureView(targets.texture_view(
+                pack, *source, read_alt, atlas,
+            )),
         );
     }
     for (image, source) in reflection.storage_images.iter().zip(&program.images) {
@@ -329,7 +378,7 @@ pub(crate) fn pass_bind_groups<'a>(
                 let buffer = targets.buffers[index as usize]
                     .as_ref()
                     .expect("planned buffers are allocated");
-                &buffer.attachment[buffer.side(step.read_alt & (1 << index) != 0)]
+                &buffer.attachment[buffer.side(read_alt & (1 << index) != 0)]
             }
             ImageSource::Image(index) => &targets.images[index].1,
             ImageSource::Constant(index) => &pack.constants.textures[index].view,
@@ -350,16 +399,58 @@ pub(crate) fn pass_bind_groups<'a>(
     })
 }
 
+/// One geometry draw's uniform buffer (its own, since draws sharing a program differ in
+/// matrices and render stage) and bind groups.
+pub(crate) struct DrawBinding {
+    pub uniforms: Option<wgpu::Buffer>,
+    pub groups: [Option<wgpu::BindGroup>; 4],
+}
+
 /// A view's uniform buffer per program and bind groups per pass.
 pub(crate) struct ViewBindings {
     pub uniforms: Vec<Option<wgpu::Buffer>>,
     pub prepare: Vec<[Option<wgpu::BindGroup>; 4]>,
     pub post: Vec<[Option<wgpu::BindGroup>; 4]>,
+    pub shadowcomp: Vec<[Option<wgpu::BindGroup>; 4]>,
+    /// Parallel to `PackGpu::draws`; groups follow the atlas through [`Self::bind_draws`].
+    pub draws: Vec<DrawBinding>,
     /// Per mipmapped buffer and side: one bind group per level after the first, reading
     /// the level above.
     pub downsample: Vec<(u32, usize, Vec<wgpu::BindGroup>)>,
     /// Per view target format, as `PackGpu::host.present`.
     pub present: Vec<(TextureFormat, wgpu::BindGroup)>,
+}
+
+fn uniform_buffer(device: &Device, name: &str, block: &shaderpack::UniformBlock) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(&format!("shader pack {name} uniforms")),
+        size: u64::from(block.size).max(16).next_multiple_of(16),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+/// The buffer sides a geometry draw reads: the side it writes (as Iris's gbuffer samplers
+/// do), except buffers it also draws into, which read the other side because a pass cannot
+/// sample its own attachment.
+pub(crate) fn draw_read_alt(pack: &PackGpu, draw: &GeometryDraw) -> u32 {
+    let base = match draw.kind {
+        DrawKind::Translucent => pack.frame.translucent_alt,
+        kind if kind.shadow() => return 0,
+        _ => pack.frame.scene_alt,
+    };
+    let program = &pack.programs[draw.program];
+    let mut read_alt = base;
+    for buffer in draw.outputs.iter().flatten() {
+        let read = program
+            .textures
+            .iter()
+            .any(|t| matches!(t, TextureSource::Buffer { index, .. } if index == buffer));
+        if read {
+            read_alt ^= 1 << buffer;
+        }
+    }
+    read_alt
 }
 
 impl ViewBindings {
@@ -368,26 +459,46 @@ impl ViewBindings {
             .programs
             .iter()
             .map(|p| {
-                p.reflection.uniforms.as_ref().map(|block| {
-                    device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some(&format!("shader pack {} uniforms", p.name)),
-                        size: u64::from(block.size).max(16).next_multiple_of(16),
-                        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    })
-                })
+                let fullscreen = !matches!(p.pipeline, ProgramPipeline::Geometry);
+                let block = p.reflection.uniforms.as_ref().filter(|_| fullscreen)?;
+                Some(uniform_buffer(device, &p.name, block))
             })
             .collect();
         let groups = |steps: &[PassStep]| {
             steps
                 .iter()
                 .map(|step| {
-                    pass_bind_groups(device, pack, targets, uniforms[step.program].as_ref(), step)
+                    pass_bind_groups(
+                        device,
+                        pack,
+                        targets,
+                        uniforms[step.program].as_ref(),
+                        step.program,
+                        step.read_alt,
+                        None,
+                    )
                 })
                 .collect()
         };
         let prepare = groups(&pack.frame.prepare);
         let post = groups(&pack.frame.post);
+        let shadowcomp = groups(&pack.shadowcomp);
+        let draws = pack
+            .draws
+            .iter()
+            .map(|draw| {
+                let program = &pack.programs[draw.program];
+                let uniforms = program
+                    .reflection
+                    .uniforms
+                    .as_ref()
+                    .map(|block| uniform_buffer(device, &program.name, block));
+                DrawBinding {
+                    uniforms,
+                    groups: Default::default(),
+                }
+            })
+            .collect();
         let mut downsample = vec![];
         for plan in pack.buffers.iter().filter(|b| b.mipmapped) {
             let Some(buffer) = targets.buffers[plan.index as usize].as_ref() else {
@@ -457,8 +568,31 @@ impl ViewBindings {
             uniforms,
             prepare,
             post,
+            shadowcomp,
+            draws,
             downsample,
             present,
+        }
+    }
+
+    /// Rebuilds every draw's bind groups over `atlas` (the placeholder while `None`).
+    pub(crate) fn bind_draws(
+        &mut self,
+        device: &Device,
+        pack: &PackGpu,
+        targets: &ViewTargets,
+        atlas: Option<AtlasViews<'_>>,
+    ) {
+        for (draw, binding) in pack.draws.iter().zip(&mut self.draws) {
+            binding.groups = pass_bind_groups(
+                device,
+                pack,
+                targets,
+                binding.uniforms.as_ref(),
+                draw.program,
+                draw_read_alt(pack, draw),
+                atlas,
+            );
         }
     }
 }

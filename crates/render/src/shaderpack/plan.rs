@@ -75,16 +75,22 @@ pub(crate) struct PassStep {
     pub mipmaps: Vec<u32>,
 }
 
-/// The passes of one frame around the scene copy.
+/// The passes of one frame around the geometry.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FramePlan {
     /// `prepare*` passes, before the scene.
     pub prepare: Vec<PassStep>,
-    /// Bit per buffer: the side the scene copy and geometry write (the current side after
-    /// the prepare passes, as Iris's gbuffer framebuffers do).
+    /// Bit per buffer: the side the sky, opaque geometry (or the scene copy) write (the
+    /// current side after the prepare passes, as Iris's gbuffer framebuffers do).
     pub scene_alt: u32,
     /// `deferred*`, `composite*` and `final`, in order.
     pub post: Vec<PassStep>,
+    /// Index in `post` of the first pass after the deferred ones; translucent geometry draws
+    /// there.
+    pub composite_start: usize,
+    /// Bit per buffer: the side translucent geometry writes (the current side after the
+    /// deferred passes).
+    pub translucent_alt: u32,
     /// Buffers that end the frame flipped; their alternate texture is copied to main.
     pub swap_back: Vec<u32>,
 }
@@ -182,7 +188,12 @@ pub(crate) fn plan_frame(programs: &[PlannedProgram], flips: &[FlipRule]) -> Fra
     };
     let mut prepare = vec![];
     let mut post = vec![];
+    let mut translucent = None;
     for (index, program) in programs.iter().enumerate() {
+        let geometry_done = !matches!(program.group, ProgramGroup::Prepare | ProgramGroup::Deferred);
+        if geometry_done && translucent.is_none() {
+            translucent = Some((post.len(), flipped));
+        }
         let s = step(index, program, &mut flipped);
         if program.group == ProgramGroup::Prepare {
             prepare.push(s);
@@ -190,6 +201,7 @@ pub(crate) fn plan_frame(programs: &[PlannedProgram], flips: &[FlipRule]) -> Fra
             post.push(s);
         }
     }
+    let (composite_start, translucent_alt) = translucent.unwrap_or((post.len(), flipped));
     // Scene writes happen between prepare and deferred: recompute the side at that point.
     let mut scene_alt = 0u32;
     let mut state = 0u32;
@@ -204,15 +216,20 @@ pub(crate) fn plan_frame(programs: &[PlannedProgram], flips: &[FlipRule]) -> Fra
         prepare,
         scene_alt,
         post,
+        composite_start,
+        translucent_alt,
         swap_back: (0..MAX_COLOR_BUFFERS)
             .filter(|b| flipped & (1 << b) != 0)
             .collect(),
     }
 }
 
-/// Plans the colour buffers the passes touch (plus buffer 0, which receives the scene).
+/// Plans the colour buffers the passes and the `gbuffers_*` programs in `geometry` touch
+/// (plus buffer 0, which receives the scene). A geometry program that samples a buffer it
+/// also draws into reads the buffer's other side, so such buffers get an alternate texture.
 pub(crate) fn plan_buffers(
     programs: &[PlannedProgram],
+    geometry: &[PlannedProgram],
     frame: &FramePlan,
     directives: &BufferDirectives,
     sizes: &[shaderpack::BufferSize],
@@ -220,12 +237,22 @@ pub(crate) fn plan_buffers(
     let mut used = 1u32;
     let mut mipmapped = 0u32;
     let mut alternate = frame.scene_alt;
-    for program in programs {
+    for program in programs.iter().chain(geometry) {
         for b in program.outputs.iter().flatten().chain(&program.reads) {
             used |= 1 << b;
         }
         for b in &program.mipmaps {
             mipmapped |= 1 << b;
+        }
+    }
+    if !geometry.is_empty() {
+        alternate |= frame.translucent_alt;
+    }
+    for program in geometry {
+        for b in program.outputs.iter().flatten() {
+            if program.reads.contains(b) {
+                alternate |= 1 << b;
+            }
         }
     }
     for step in frame.prepare.iter().chain(&frame.post) {
@@ -346,6 +373,37 @@ mod tests {
     }
 
     #[test]
+    fn translucent_geometry_writes_the_side_current_after_deferred() {
+        let programs = [
+            program("deferred", ProgramGroup::Deferred, &[0, 2]),
+            program("deferred1", ProgramGroup::Deferred, &[2]),
+            program("composite", ProgramGroup::Composite, &[0]),
+            program("final", ProgramGroup::Final, &[0]),
+        ];
+        let plan = plan_frame(&programs, &[]);
+        assert_eq!(plan.composite_start, 2);
+        assert_eq!(plan.translucent_alt, 1, "colortex0 flipped once, colortex2 twice");
+        assert_eq!(plan.post[2].read_alt, plan.translucent_alt);
+        let mut water = program("gbuffers_water", ProgramGroup::Gbuffers, &[0, 5]);
+        water.reads = vec![5];
+        let buffers = plan_buffers(
+            &programs,
+            &[water],
+            &plan,
+            &BufferDirectives::default(),
+            &[],
+        );
+        let indices: Vec<u32> = buffers.iter().map(|b| b.index).collect();
+        assert_eq!(indices, [0, 2, 5]);
+        assert!(
+            buffers[2].alternate,
+            "a buffer a geometry program reads and writes gets a second side"
+        );
+        let plan = plan_frame(&programs[..2], &[]);
+        assert_eq!(plan.composite_start, 2, "no composite: translucents draw last");
+    }
+
+    #[test]
     fn buffer_plan_applies_formats_sizes_clears_and_mipmaps() {
         let mut directives = BufferDirectives::default();
         for (name, value) in [
@@ -378,7 +436,7 @@ mod tests {
             },
         ];
         let frame = plan_frame(&programs, &[]);
-        let buffers = plan_buffers(&programs, &frame, &directives, &sizes);
+        let buffers = plan_buffers(&programs, &[], &frame, &directives, &sizes);
         let indices: Vec<u32> = buffers.iter().map(|b| b.index).collect();
         assert_eq!(indices, [0, 1, 2, 3, 6]);
         let get = |i| buffers.iter().find(|b| b.index == i).unwrap();

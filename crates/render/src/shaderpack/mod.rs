@@ -1,20 +1,34 @@
 //! Experimental "Shader pack" render mode: runs a Java OptiFine/Iris shader pack, translated
-//! by the `shaderpack` crate, over Cinnabar's scene. Compiled with the `shaderpacks` feature;
+//! by the `shaderpack` crate, on Cinnabar's world. Compiled with the `shaderpacks` feature;
 //! without it [`ShaderPackRenderPlugin`] does nothing.
 //!
 //! Flow: the app writes `ShaderPackRequest`; a worker thread translates the pack and builds
-//! raw wgpu pipelines from the naga modules (see `pipelines`), publishing `ShaderPackStatus`
-//! and the loaded pack; cameras marked `ShaderPackRendering` then render the Vanilla scene,
-//! copy it into `colortex0`/`depthtex*`, and run `prepare*`, `deferred*`, `composite*` and
-//! `final` (with their compute variants) before tonemapping and the UI. `gbuffers_*` and
-//! `shadow` programs wait for the geometry adapter at the `ShaderpackGbuffers` system set.
+//! raw wgpu pipelines from the naga modules (see `pipelines`, `draws`), publishing
+//! `ShaderPackStatus` and the loaded pack. Cameras marked `ShaderPackRendering` then run the
+//! frame as Iris does (see `passes`): the `shadow*` programs over resident terrain into the
+//! shadow maps, `shadowcomp*` compute passes, `prepare*`, `gbuffers_skybasic` over the sky
+//! discs, opaque terrain with the `gbuffers_terrain*` programs, `deferred*`, translucent
+//! terrain with `gbuffers_water`, `composite*` and `final`, before tonemapping and the UI.
+//! Terrain comes from the geometry adapter (`geometry`) and the block atlas (`atlas`).
+//! What the pack does not draw yet (entities, the hand, particles, clouds, weather) is taken
+//! from the Vanilla scene, which still renders underneath, where it is nearer than the
+//! pack's geometry. Packs without terrain programs get the Vanilla scene copied into
+//! `colortex0` instead.
 //!
 //! Conventions: pack buffers are stored bottom-up and gamma-encoded as in OpenGL Minecraft
 //! (the translator flips clip-space Y and remaps clip depth), uniforms use OpenGL matrices,
-//! and every texture shares the translator's single repeat/linear sampler.
+//! and each texture is read with the sampler class Iris gives its name.
 
 #[cfg(feature = "shaderpacks")]
+mod alpha_test;
+#[cfg(feature = "shaderpacks")]
 pub(crate) mod atlas;
+#[cfg(feature = "shaderpacks")]
+mod draws;
+#[cfg(feature = "shaderpacks")]
+mod frame_geometry;
+#[cfg(all(test, feature = "shaderpacks"))]
+mod frame_tests;
 #[cfg(feature = "shaderpacks")]
 pub(crate) mod geometry;
 #[cfg(feature = "shaderpacks")]
@@ -29,6 +43,8 @@ mod plan;
 mod plugin;
 #[cfg(feature = "shaderpacks")]
 mod resources;
+#[cfg(feature = "shaderpacks")]
+mod sky;
 #[cfg(feature = "shaderpacks")]
 mod targets;
 #[cfg(all(test, feature = "shaderpacks"))]

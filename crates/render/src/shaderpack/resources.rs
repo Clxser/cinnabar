@@ -35,7 +35,21 @@ pub(crate) enum TextureSource {
     Image { index: usize, format: TextureFormat },
     /// A pack-wide texture.
     Constant { index: usize, format: TextureFormat },
+    /// The block atlas Cinnabar builds for geometry programs (`gtexture`, `normals`,
+    /// `specular`).
+    Atlas(AtlasLayer),
 }
+
+/// One of the block atlases.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AtlasLayer {
+    Color,
+    Normals,
+    Specular,
+}
+
+/// The format every atlas view has.
+pub(crate) const ATLAS_FORMAT: TextureFormat = TextureFormat::Rgba8Unorm;
 
 impl TextureSource {
     pub(crate) fn format(&self) -> TextureFormat {
@@ -45,7 +59,18 @@ impl TextureSource {
             | TextureSource::Image { format, .. }
             | TextureSource::Constant { format, .. } => format,
             TextureSource::DepthCompare(_) => TextureFormat::Depth32Float,
+            TextureSource::Atlas(_) => ATLAS_FORMAT,
         }
+    }
+}
+
+/// The atlas layer a geometry program's sampler name reads, as Iris binds them.
+fn atlas_layer(name: &str) -> Option<AtlasLayer> {
+    match name {
+        "gtexture" | "texture" | "tex" => Some(AtlasLayer::Color),
+        "normals" => Some(AtlasLayer::Normals),
+        "specular" => Some(AtlasLayer::Specular),
+        _ => None,
     }
 }
 
@@ -67,8 +92,22 @@ pub(crate) struct ProgramBindings {
 }
 
 pub(crate) struct ConstantTexture {
-    texture: wgpu::Texture,
+    pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
+}
+
+/// The shadow maps some program binds, as indices of pack-wide textures. The shadow pass
+/// renders into them each frame.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ShadowSlots {
+    /// Side of every shadow map.
+    pub resolution: u32,
+    /// `shadowtex0`/`shadowtex1` read through the comparison sampler (depth formats).
+    pub depth: [Option<usize>; 2],
+    /// `shadowtex0`/`shadowtex1` read as floats.
+    pub float: [Option<usize>; 2],
+    /// `shadowcolorN` by N, with its format.
+    pub color: Vec<(u32, usize, TextureFormat)>,
 }
 
 /// Pack-wide textures, indexed by [`TextureSource::Constant`] and [`ImageSource::Constant`].
@@ -84,6 +123,7 @@ enum Key {
     ShadowDepth(u32),
     ShadowFloat(u32),
     ShadowColor(u32),
+    Lightmap,
     Placeholder(TextureFormat, TextureDimension, bool),
 }
 
@@ -216,7 +256,7 @@ impl<'a> ConstantBuilder<'a> {
 
     /// A zero (depth: 1.0) texture of `format` and shape, shared by every unknown binding of
     /// the same type.
-    fn placeholder(
+    pub(crate) fn placeholder(
         &mut self,
         format: TextureFormat,
         dimension: TextureDimension,
@@ -459,7 +499,9 @@ impl<'a> ConstantBuilder<'a> {
             format,
             [side, side, 1],
             TextureDimension::D2,
-            TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT,
+            TextureUsages::TEXTURE_BINDING
+                | TextureUsages::RENDER_ATTACHMENT
+                | TextureUsages::COPY_DST,
         );
         let found = self.push(key, texture, view);
         self.clears.push((
@@ -470,7 +512,8 @@ impl<'a> ConstantBuilder<'a> {
         found
     }
 
-    fn shadow_color(&mut self, index: u32) -> (usize, TextureFormat) {
+    /// `shadowcolorN`, created on first use; the shadow pass draws into it.
+    pub(crate) fn shadow_color(&mut self, index: u32) -> (usize, TextureFormat) {
         if let Some(found) = self.keys.get(&Key::ShadowColor(index)) {
             return *found;
         }
@@ -491,6 +534,62 @@ impl<'a> ConstantBuilder<'a> {
         let found = self.push(Key::ShadowColor(index), texture, view);
         self.clears.push((found.0, wgpu::LoadOp::Clear(1.0), false));
         found
+    }
+
+    /// The shadow maps created so far: call after every program is resolved.
+    pub(crate) fn shadow_slots(&self) -> ShadowSlots {
+        let found = |key: Key| self.keys.get(&key).map(|(index, _)| *index);
+        let mut color: Vec<_> = self
+            .keys
+            .iter()
+            .filter_map(|(key, (index, format))| match key {
+                Key::ShadowColor(i) => Some((*i, *index, *format)),
+                _ => None,
+            })
+            .collect();
+        color.sort_unstable_by_key(|(i, ..)| *i);
+        ShadowSlots {
+            resolution: self.shadow_resolution,
+            depth: [0, 1].map(|i| found(Key::ShadowDepth(i))),
+            float: [0, 1].map(|i| found(Key::ShadowFloat(i))),
+            color,
+        }
+    }
+
+    /// The 16×16 `lightmap` geometry programs sample with `gl_TextureMatrix[1]`
+    /// coordinates: block light along U, sky light along V, through Java's brightness curve
+    /// at full daylight with warm block light. A static stand-in for Java's per-frame
+    /// lightmap, which also tracks the sky darkening, night vision and the gamma setting.
+    fn lightmap(&mut self) -> (usize, TextureFormat) {
+        if let Some(found) = self.keys.get(&Key::Lightmap) {
+            return *found;
+        }
+        let brightness = |level: u32| {
+            let f = level as f32 / 15.0;
+            f / (4.0 - 3.0 * f)
+        };
+        let mut texels = Vec::with_capacity(16 * 16 * 4);
+        for sky in 0..16 {
+            for block in 0..16 {
+                let b = brightness(block) * 1.5;
+                let s = brightness(sky);
+                let warm = [b, b * ((b * 0.6 + 0.4) * 0.6 + 0.4), b * (b * b * 0.6 + 0.4)];
+                for channel in warm {
+                    let lit = (s * 0.96 + 0.04 + channel).min(1.0);
+                    texels.push((lit * 255.0).round() as u8);
+                }
+                texels.push(255);
+            }
+        }
+        let (texture, view) = self.texture(
+            "shader pack lightmap",
+            TextureFormat::Rgba8Unorm,
+            [16, 16, 1],
+            TextureDimension::D2,
+            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        );
+        self.upload(&texture, &texels, 16 * 4, [16, 16, 1]);
+        self.push(Key::Lightmap, texture, view)
     }
 
     /// Whether pack-wide texture `index` has the shape a sampler of `dimension` reads.
@@ -786,6 +885,7 @@ pub(crate) fn resolve_bindings(
     image_formats: &[TextureFormat],
 ) -> ProgramBindings {
     let stage = group.texture_stage();
+    let geometry = matches!(group, ProgramGroup::Gbuffers | ProgramGroup::Shadow);
     let textures = reflection
         .textures
         .iter()
@@ -794,6 +894,11 @@ pub(crate) fn resolve_bindings(
             let fits = |format: TextureFormat| wanted.is_none_or(|k| k == format_kind(format));
             let source =
                 if let Some((index, format)) = constants.custom(stage, &t.name, t.dimension) {
+                    Some(TextureSource::Constant { index, format })
+                } else if let Some(layer) = atlas_layer(&t.name).filter(|_| geometry) {
+                    Some(TextureSource::Atlas(layer))
+                } else if t.name == "lightmap" && geometry {
+                    let (index, format) = constants.lightmap();
                     Some(TextureSource::Constant { index, format })
                 } else if t.name == "noisetex" {
                     let (index, format) = constants.noise();

@@ -108,6 +108,34 @@ const OVERLAY_FLOAT_WORD: u32 = 11;
 /// Java's `OverlayTexture.NO_OVERLAY` coordinates (`vaUV1`): no hurt tint, no flash.
 const NO_OVERLAY: [i32; 2] = [0, 10];
 
+/// One vertex the host builds on the CPU (sky geometry) in the expanded stream's layout:
+/// `position`, gamma `colour` and `normal`; texture and lightmap coordinates read zero, the
+/// block id reads Iris's -1 and `at_midBlock` zero.
+pub(crate) fn host_vertex(
+    position: [f32; 3],
+    colour: [f32; 4],
+    normal: [f32; 3],
+) -> [u32; IRIS_VERTEX_WORDS as usize] {
+    let unorm8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+    let snorm8 = |v: f32| ((v.clamp(-1.0, 1.0) * 127.0).round() as i32 as u32) & 0xff;
+    let mut words = [0_u32; IRIS_VERTEX_WORDS as usize];
+    for (axis, value) in position.into_iter().enumerate() {
+        words[POSITION.word as usize + axis] = value.to_bits();
+    }
+    words[COLOR.word as usize] = colour
+        .into_iter()
+        .enumerate()
+        .map(|(channel, v)| unorm8(v) << (8 * channel))
+        .sum();
+    words[NORMAL.word as usize] = normal
+        .into_iter()
+        .enumerate()
+        .map(|(axis, v)| snorm8(v) << (8 * axis))
+        .sum();
+    words[BLOCK_ID.word as usize] = (-1.0_f32).to_bits();
+    words
+}
+
 /// Why a translated program's vertex input cannot bind to terrain geometry.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VertexLayoutError {

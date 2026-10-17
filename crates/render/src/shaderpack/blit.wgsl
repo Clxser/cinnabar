@@ -15,6 +15,10 @@ struct DepthParameters {
 @group(0) @binding(1) var source_depth: texture_depth_2d;
 @group(0) @binding(2) var<uniform> depth_parameters: DepthParameters;
 @group(0) @binding(3) var source_sampler: sampler;
+// The pack's geometry depth (OpenGL window depth, bottom-up like the pack's buffers), as
+// the depth attachment and as its `depthtex0` float copy.
+@group(0) @binding(4) var pack_depth: texture_depth_2d;
+@group(0) @binding(5) var pack_depth_copy: texture_2d<f32>;
 
 struct Fullscreen {
     @builtin(position) position: vec4<f32>,
@@ -108,4 +112,47 @@ fn present(in: Fullscreen) -> @location(0) vec4<f32> {
 @fragment
 fn downsample(in: Fullscreen) -> @location(0) vec4<f32> {
     return textureSampleLevel(source_colour, source_sampler, in.uv, 0.0);
+}
+
+// The geometry depth attachment into a float `depthtex`/`shadowtex`, texel for texel.
+@fragment
+fn depth_copy(in: Fullscreen) -> @location(0) vec4<f32> {
+    let depth = textureLoad(pack_depth, vec2<i32>(in.position.xy), 0);
+    return vec4<f32>(depth, 0.0, 0.0, 1.0);
+}
+
+// Eye distance of an OpenGL window depth under the pack's projection.
+fn gl_distance(depth: f32) -> f32 {
+    let n = depth_parameters.gl_near;
+    let f = depth_parameters.gl_far;
+    let ndc = depth * 2.0 - 1.0;
+    return 2.0 * f * n / ((f + n) - ndc * (f - n));
+}
+
+struct OverlayOut {
+    @location(0) colour: vec4<f32>,
+    @builtin(frag_depth) depth: f32,
+}
+
+// What the Vanilla scene drew clearly in front of the pack's geometry (entities, particles,
+// clouds, terrain not yet expanded), written into `colortex0` and the depth attachment.
+@fragment
+fn vanilla_overlay(in: Fullscreen) -> OverlayOut {
+    let size = textureDimensions(source_depth);
+    let texel = flipped_texel(in.uv, size);
+    let reverse = textureLoad(source_depth, texel, 0);
+    if (reverse <= 0.0) {
+        discard;
+    }
+    let vanilla = depth_parameters.scene_near / reverse;
+    let pack = gl_distance(textureLoad(pack_depth_copy, vec2<i32>(in.position.xy), 0).r);
+    // Both renderers draw the same terrain: only clearly nearer samples come through.
+    if (vanilla > pack * 0.995 - 0.05) {
+        discard;
+    }
+    let colour = textureLoad(source_colour, texel, 0);
+    var out: OverlayOut;
+    out.colour = vec4<f32>(linear_to_srgb(colour.rgb), 1.0);
+    out.depth = gl_depth(in);
+    return out;
 }

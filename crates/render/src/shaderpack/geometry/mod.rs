@@ -60,11 +60,13 @@ use bevy::prelude::{App, IntoScheduleConfigs, Plugin, World};
 use bevy::render::{Render, RenderApp, RenderSystems};
 
 pub use block_ids::{BlockEntityIdFn, ShaderpackBlockIds, UNASSIGNED_BLOCK_ID};
+pub(crate) use gpu::prepare_shaderpack_geometry;
 pub use gpu::{
     DEFAULT_GEOMETRY_BUDGET_BYTES, FRAME_EXPANSION_FACES, ShaderpackGeometry,
     ShaderpackGeometrySettings,
 };
 pub use jobs::GeometryCategory;
+pub(crate) use vertex::{CONSTANT_STREAM_WORDS, host_vertex};
 pub use vertex::{
     CONSTANT_VERTEX_BUFFER, GEOMETRY_VERTEX_BUFFER, IRIS_VERTEX_STRIDE, VertexLayoutError,
     vertex_buffer_layouts,

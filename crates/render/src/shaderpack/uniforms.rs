@@ -277,9 +277,12 @@ impl FrameUniforms {
                 offset
             }
         };
+        // Iris's shadow camera: 100 blocks back, looking down, turned with the shadow angle
+        // so that the direction to the shadow light (`shadowLightPosition`) is its +Z.
+        // `shadowAngle` is 0.25 at noon, a quarter turn ahead of the sky angle.
         let shadow_model_view = Mat4::from_translation(Vec3::new(0.0, 0.0, -100.0))
             * Mat4::from_rotation_x(90.0f32.to_radians())
-            * Mat4::from_rotation_z((shadow_angle * -360.0).to_radians())
+            * Mat4::from_rotation_z(((shadow_angle - 0.25) * -360.0).to_radians())
             * Mat4::from_rotation_x(settings.sun_path_rotation.to_radians())
             * Mat4::from_translation(Vec3::new(
                 snap(camera.position.x),
@@ -333,15 +336,30 @@ impl FrameUniforms {
         }
     }
 
+    /// `gbufferModelView`: the camera rotation.
+    pub(crate) fn model_view(&self) -> Mat4 {
+        self.model_view
+    }
+
     /// `gbufferProjection`.
-    #[cfg(test)]
     pub(crate) fn projection(&self) -> Mat4 {
         self.projection
     }
 
+    /// `shadowModelView`.
+    pub(crate) fn shadow_model_view(&self) -> Mat4 {
+        self.shadow_model_view
+    }
+
+    /// `shadowProjection`.
+    pub(crate) fn shadow_projection(&self) -> Mat4 {
+        self.shadow_projection
+    }
+
     /// The value of a standard uniform, or `None` for names outside the standard set.
-    /// Legacy matrices take their full-screen pass values (identity model-view, unit-square
-    /// orthographic projection).
+    /// Legacy and core-profile matrices take their full-screen pass values (identity
+    /// model-view, unit-square orthographic projection); geometry draws override them with
+    /// [`DrawUniforms`].
     pub(crate) fn value(&self, name: &str) -> Option<HostValue> {
         use HostValue::{Float, Int, Mat3 as M3, Mat4 as M4};
         let g = &self.game;
@@ -365,11 +383,19 @@ impl FrameUniforms {
             "shadowModelViewInverse" => M4(self.shadow_model_view.inverse()),
             "shadowProjection" => M4(self.shadow_projection),
             "shadowProjectionInverse" => M4(self.shadow_projection.inverse()),
-            "iris_ModelViewMat" | "iris_ModelViewMatInverse" => M4(Mat4::IDENTITY),
-            "iris_TextureMat" => M4(Mat4::IDENTITY),
-            "iris_ProjMat" => M4(gl_ortho(0.0, 1.0, 0.0, 1.0, -1.0, 1.0)),
-            "iris_ProjMatInverse" => M4(gl_ortho(0.0, 1.0, 0.0, 1.0, -1.0, 1.0).inverse()),
-            "iris_NormalMat" => M3(Mat3::IDENTITY),
+            "iris_ModelViewMat"
+            | "iris_ModelViewMatInverse"
+            | "modelViewMatrix"
+            | "modelViewMatrixInverse"
+            | "iris_TextureMat"
+            | "textureMatrix" => M4(Mat4::IDENTITY),
+            "iris_ProjMat" | "projectionMatrix" => M4(gl_ortho(0.0, 1.0, 0.0, 1.0, -1.0, 1.0)),
+            "iris_ProjMatInverse" | "projectionMatrixInverse" => {
+                M4(gl_ortho(0.0, 1.0, 0.0, 1.0, -1.0, 1.0).inverse())
+            }
+            "iris_NormalMat" | "normalMatrix" => M3(Mat3::IDENTITY),
+            "chunkOffset" => HostValue::vec3(Vec3::ZERO),
+            "renderStage" => Int(0),
             "iris_Fog.color" => HostValue::Vec(Vec3::from(g.fog_color).extend(1.0), 4),
             "iris_Fog.density" | "fogDensity" => Float(fog_density),
             "iris_Fog.start" | "fogStart" => Float(g.fog_range[0]),
@@ -451,6 +477,50 @@ impl FrameUniforms {
             "hasCeiling" => HostValue::bool(g.dimension == 1),
             "ambientLight" => Float(if g.dimension == 1 { 0.1 } else { 0.0 }),
             "cloudHeight" => Float(CLOUD_HEIGHT),
+            _ => return None,
+        })
+    }
+}
+
+/// The fixed-function state Iris sets per geometry draw: its model-view and projection
+/// matrices, the terrain origin relative to the camera, and the render stage.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DrawUniforms {
+    /// Model-view without the chunk offset (`gbufferModelView`, or `shadowModelView` in the
+    /// shadow pass): the core profile's `modelViewMatrix`.
+    pub model_view: Mat4,
+    pub projection: Mat4,
+    /// `chunkOffset`: where vertex positions are relative to, from the camera.
+    pub chunk_offset: Vec3,
+    /// `renderStage`.
+    pub render_stage: i32,
+    /// Terrain lightmap coordinates go through `gl_TextureMatrix[1]`.
+    pub lightmap_matrix: bool,
+}
+
+impl DrawUniforms {
+    /// The value this draw gives `name`, or `None` to use the frame's.
+    ///
+    /// The legacy `gl_ModelViewMatrix` folds in the chunk offset so `gl_ModelViewMatrix *
+    /// gl_Vertex` places origin-relative vertices; the core `modelViewMatrix` does not, as
+    /// core programs add `chunkOffset` to `vaPosition` themselves.
+    pub(crate) fn value(&self, name: &str) -> Option<HostValue> {
+        use HostValue::{Mat3 as M3, Mat4 as M4};
+        let legacy = self.model_view * Mat4::from_translation(self.chunk_offset);
+        let normal = Mat3::from_mat4(self.model_view).inverse().transpose();
+        Some(match name {
+            "iris_ModelViewMat" => M4(legacy),
+            "iris_ModelViewMatInverse" => M4(legacy.inverse()),
+            "modelViewMatrix" => M4(self.model_view),
+            "modelViewMatrixInverse" => M4(self.model_view.inverse()),
+            "iris_ProjMat" | "projectionMatrix" => M4(self.projection),
+            "iris_ProjMatInverse" | "projectionMatrixInverse" => M4(self.projection.inverse()),
+            "iris_NormalMat" | "normalMatrix" => M3(normal),
+            "iris_TextureMat[1]" if self.lightmap_matrix => {
+                M4(super::geometry::LIGHTMAP_TEXTURE_MATRIX)
+            }
+            "chunkOffset" => HostValue::vec3(self.chunk_offset),
+            "renderStage" => HostValue::Int(self.render_stage),
             _ => return None,
         })
     }
@@ -750,6 +820,113 @@ mod tests {
             second.value("cameraPositionInt"),
             Some(HostValue::IVec([10, 70, -4, 0], 3))
         );
+    }
+
+    fn at_time(celestial_angle: f32, settings: PackSettings, position: Vec3) -> FrameUniforms {
+        let game = ShaderPackFrameInputs {
+            celestial_angle,
+            ..ShaderPackFrameInputs::default()
+        };
+        FrameUniforms::new(
+            ViewCamera {
+                position,
+                ..camera()
+            },
+            &game,
+            &settings,
+            FrameClock {
+                elapsed_seconds: 0.0,
+                delta_seconds: 0.0,
+            },
+            &mut UniformHistory::default(),
+        )
+    }
+
+    #[test]
+    fn the_shadow_camera_looks_from_the_shadow_light() {
+        for sun_path_rotation in [0.0, 25.0] {
+            let settings = PackSettings {
+                sun_path_rotation,
+                ..PackSettings::default()
+            };
+            for angle in [0.0, 0.1, 0.2, 0.3, 0.6, 0.8, 0.95] {
+                let frame = at_time(angle, settings, Vec3::new(0.25, 64.0, -7.5));
+                let Some(HostValue::Vec(light, 3)) = frame.value("shadowLightPosition") else {
+                    panic!("shadowLightPosition is a vec3");
+                };
+                let world = frame
+                    .model_view()
+                    .inverse()
+                    .transform_vector3(light.truncate())
+                    .normalize();
+                let towards = frame.shadow_model_view().transform_vector3(world);
+                assert!(
+                    (towards - Vec3::Z).length() < 1e-3,
+                    "angle {angle}, rotation {sun_path_rotation}: light maps to {towards}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_shadow_camera_snaps_to_the_interval_and_spans_the_shadow_distance() {
+        let settings = PackSettings {
+            shadow_distance: 120.0,
+            shadow_interval: 4.0,
+            ..PackSettings::default()
+        };
+        let snapped = |x: f32| {
+            let frame = at_time(0.1, settings, Vec3::new(x, 70.0, 0.0));
+            // A fixed world point, relative to the camera, in shadow view space.
+            frame
+                .shadow_model_view()
+                .transform_point3(Vec3::new(10.0 - x, -70.0, 0.0))
+        };
+        assert!(
+            (snapped(1.0) - snapped(1.5)).length() < 1e-4,
+            "camera moves within an interval keep the shadow map still"
+        );
+        assert!(
+            (snapped(1.0) - snapped(5.0)).length() > 3.9,
+            "a whole interval moves it"
+        );
+        let frame = at_time(0.1, settings, Vec3::ZERO);
+        let projection = frame.shadow_projection();
+        let edge = projection * Vec4::new(120.0, -120.0, -0.05, 1.0);
+        assert!((edge.x - 1.0).abs() < 1e-5 && (edge.y + 1.0).abs() < 1e-5);
+        let far = projection * Vec4::new(0.0, 0.0, -256.0, 1.0);
+        assert!((far.z - 1.0).abs() < 1e-4, "far plane at 256 blocks");
+    }
+
+    #[test]
+    fn draw_uniforms_fold_the_chunk_offset_into_the_legacy_model_view() {
+        let draw = DrawUniforms {
+            model_view: Mat4::from_rotation_y(0.5),
+            projection: gl_perspective([1.0, 1.0], 0.05, 100.0),
+            chunk_offset: Vec3::new(-3.0, 1.0, 2.0),
+            render_stage: 8,
+            lightmap_matrix: true,
+        };
+        let Some(HostValue::Mat4(legacy)) = draw.value("iris_ModelViewMat") else {
+            panic!("legacy model-view is a matrix");
+        };
+        let vertex = Vec3::new(1.0, 2.0, 3.0);
+        assert!(
+            (legacy.transform_point3(vertex)
+                - draw.model_view.transform_point3(vertex + draw.chunk_offset))
+            .length()
+                < 1e-5
+        );
+        assert_eq!(
+            draw.value("modelViewMatrix"),
+            Some(HostValue::Mat4(draw.model_view))
+        );
+        assert_eq!(
+            draw.value("iris_TextureMat[1]"),
+            Some(HostValue::Mat4(super::super::geometry::LIGHTMAP_TEXTURE_MATRIX))
+        );
+        assert_eq!(draw.value("iris_TextureMat[0]"), None, "the frame's identity");
+        assert_eq!(draw.value("renderStage"), Some(HostValue::Int(8)));
     }
 
     #[test]
