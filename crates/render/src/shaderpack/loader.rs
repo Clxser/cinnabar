@@ -81,6 +81,24 @@ pub(crate) struct GpuProgram {
     pub color_targets: Vec<bool>,
 }
 
+impl GpuProgram {
+    /// Bit per colour buffer the program both samples (`colortexN`) and writes as a storage
+    /// image (`colorimgN`). Both bind the same side, which OpenGL allows and wgpu forbids
+    /// within one pass, so the host samples a copy taken just before the pass.
+    pub fn sampled_while_written(&self) -> u32 {
+        let bits = |indices: &mut dyn Iterator<Item = u32>| indices.fold(0, |b, i| b | 1 << i);
+        let sampled = bits(&mut self.textures.iter().filter_map(|s| match *s {
+            TextureSource::Buffer { index, .. } => Some(index),
+            _ => None,
+        }));
+        let written = bits(&mut self.images.iter().filter_map(|s| match *s {
+            ImageSource::Buffer(index) => Some(index),
+            _ => None,
+        }));
+        sampled & written
+    }
+}
+
 /// Host passes around the pack's programs.
 pub(crate) struct HostPipelines {
     pub scene_colour: wgpu::RenderPipeline,

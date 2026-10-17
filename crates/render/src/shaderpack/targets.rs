@@ -67,10 +67,7 @@ fn target(
         view_formats: &[],
     });
     let view = texture.create_view(&Default::default());
-    Target {
-        texture,
-        view,
-    }
+    Target { texture, view }
 }
 
 /// Every view-sized resource of a pack.
@@ -87,6 +84,8 @@ pub(crate) struct ViewTargets {
     pub screen: Target,
     pub images: Vec<(wgpu::Texture, TextureView)>,
     pub storage: Vec<(u32, wgpu::Buffer)>,
+    /// Per colour buffer, the copy sampled by programs that also write it as an image.
+    pub snapshots: Vec<Option<Target>>,
 }
 
 impl ViewTargets {
@@ -260,6 +259,26 @@ impl ViewTargets {
                 )
             })
             .collect();
+        let snapshotted = pack
+            .programs
+            .iter()
+            .fold(0, |bits, p| bits | p.sampled_while_written());
+        let snapshots = buffers
+            .iter()
+            .enumerate()
+            .map(|(index, buffer)| {
+                let buffer = buffer
+                    .as_ref()
+                    .filter(|_| snapshotted & (1 << index) != 0)?;
+                Some(target(
+                    device,
+                    &format!("shader pack colortex{index} snapshot"),
+                    buffer.texture(0).format(),
+                    buffer.size,
+                    TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                ))
+            })
+            .collect();
         Self {
             screen_size,
             buffers,
@@ -270,6 +289,36 @@ impl ViewTargets {
             screen,
             images,
             storage,
+            snapshots,
+        }
+    }
+
+    /// Copies the side a pass reads of each buffer it samples while writing into its
+    /// snapshot; [`pass_bind_groups`] binds the snapshot for those samplers.
+    pub(crate) fn take_snapshots(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        program: &super::loader::GpuProgram,
+        read_alt: u32,
+    ) {
+        let mask = program.sampled_while_written();
+        for (index, snapshot) in self.snapshots.iter().enumerate() {
+            let (Some(snapshot), Some(buffer)) = (snapshot, &self.buffers[index]) else {
+                continue;
+            };
+            if mask & (1 << index) == 0 {
+                continue;
+            }
+            let side = buffer.side(read_alt & (1 << index) != 0);
+            encoder.copy_texture_to_texture(
+                buffer.texture(side).as_image_copy(),
+                snapshot.texture.as_image_copy(),
+                wgpu::Extent3d {
+                    width: buffer.size[0],
+                    height: buffer.size[1],
+                    depth_or_array_layers: 1,
+                },
+            );
         }
     }
 
@@ -363,13 +412,21 @@ pub(crate) fn pass_bind_groups<'a>(
             wgpu::BindingResource::Sampler(pack.sampler(sampler)),
         );
     }
+    let snapshotted = program.sampled_while_written();
     for (texture, source) in reflection.textures.iter().zip(&program.textures) {
+        let view = match *source {
+            TextureSource::Buffer { index, .. } if snapshotted & (1 << index) != 0 => {
+                &targets.snapshots[index as usize]
+                    .as_ref()
+                    .expect("snapshots are allocated for every such buffer")
+                    .view
+            }
+            source => targets.texture_view(pack, source, read_alt, atlas),
+        };
         push(
             texture.group,
             texture.binding,
-            wgpu::BindingResource::TextureView(targets.texture_view(
-                pack, *source, read_alt, atlas,
-            )),
+            wgpu::BindingResource::TextureView(view),
         );
     }
     for (image, source) in reflection.storage_images.iter().zip(&program.images) {

@@ -477,6 +477,7 @@ fn run_step(
         generate_mipmaps(encoder, pack, targets, bindings, index, step.read_alt);
     }
     let program = &pack.programs[step.program];
+    targets.take_snapshots(encoder, program, step.read_alt);
     match &program.pipeline {
         ProgramPipeline::Geometry => {}
         ProgramPipeline::Compute(pipeline) => {
