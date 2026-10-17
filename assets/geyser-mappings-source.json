@@ -27,9 +27,13 @@
       "path": "javaclass/Blocks.java",
       "sha256": "54eb08595047b75e7535af9bc3d71e351370c0745f504c87a3182d51ca510d25"
     },
-    "block_tags": {
+    "tags": {
       "path": "mcpl/data/networkTags.nbt",
       "sha256": "1522fa3851e889a235e93a3a0a76ba62796c3154a24afc65936ab19394001d0b"
+    },
+    "codec": {
+      "path": "mcpl/data/networkCodec.nbt",
+      "sha256": "66b5e794896fe8b9013be22e5d565828ff973298baa27abb03bea0412b54fb8d"
     },
     "biomes": {
       "path": "mappings/biomes.json",

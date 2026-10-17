@@ -7,9 +7,10 @@
 //! final clip position to wgpu's. As in Minecraft, `gbufferModelView` holds only the camera
 //! rotation and positions are relative to `cameraPosition`.
 
+use assets::facts::java_mapping::JavaBlockMapping;
 use bevy::math::{Mat3, Mat4, Quat, Vec3, Vec4};
 use render_scene::shaderpack::ShaderPackFrameInputs;
-use shaderpack::{UniformBlock, UniformValue, ValueType};
+use shaderpack::{BiomeUniforms, UniformBlock, UniformValue, ValueType};
 use std::collections::BTreeSet;
 
 /// Near plane of every pack projection, as in Minecraft.
@@ -230,6 +231,7 @@ pub(crate) struct FrameUniforms {
     frame_counter: i32,
     frame_time: f32,
     frame_time_counter: f32,
+    biome: BiomeUniforms,
 }
 
 impl FrameUniforms {
@@ -333,6 +335,13 @@ impl FrameUniforms {
             frame_counter,
             frame_time: delta,
             frame_time_counter: (clock.elapsed_seconds % FRAME_TIME_COUNTER_PERIOD) as f32,
+            biome: game
+                .biome
+                .and_then(|biome| {
+                    let mapping = JavaBlockMapping::pinned().ok()?;
+                    BiomeUniforms::at(mapping, biome, game.biome_block_y)
+                })
+                .unwrap_or(BiomeUniforms::NONE),
         }
     }
 
@@ -396,6 +405,7 @@ impl FrameUniforms {
             "iris_NormalMat" | "normalMatrix" => M3(Mat3::IDENTITY),
             "chunkOffset" => HostValue::vec3(Vec3::ZERO),
             "renderStage" => Int(0),
+            "atlasSize" => HostValue::IVec([0; 4], 2),
             "iris_Fog.color" => HostValue::Vec(Vec3::from(g.fog_color).extend(1.0), 4),
             "iris_Fog.density" | "fogDensity" => Float(fog_density),
             "iris_Fog.start" | "fogStart" => Float(g.fog_range[0]),
@@ -461,9 +471,13 @@ impl FrameUniforms {
             "maxPlayerHealth" => Float(20.0),
             "maxPlayerHunger" => Float(20.0),
             "maxPlayerAir" => Float(300.0),
-            "temperature" => Float(g.temperature),
-            "rainfall" => Float(g.rainfall),
-            "biome_precipitation" => Int(g.precipitation),
+            "biome" => Int(self.biome.biome),
+            "biome_category" => Int(self.biome.category),
+            "biome_precipitation" => Int(self.biome.precipitation),
+            "temperature" => Float(self.biome.temperature),
+            "rainfall" => Float(self.biome.rainfall),
+            "relativeEyePosition" => HostValue::vec3(Vec3::ZERO),
+            "lightningBoltPosition" => HostValue::Vec(Vec4::ZERO, 4),
             "is_sneaking" => HostValue::bool(g.sneaking),
             "is_sprinting" => HostValue::bool(g.sprinting),
             "is_hurt" => HostValue::bool(g.hurt),
@@ -496,6 +510,8 @@ pub(crate) struct DrawUniforms {
     pub render_stage: i32,
     /// Terrain lightmap coordinates go through `gl_TextureMatrix[1]`.
     pub lightmap_matrix: bool,
+    /// `atlasSize`: the bound block atlas's size, zero for draws without it.
+    pub atlas_size: [i32; 2],
 }
 
 impl DrawUniforms {
@@ -521,6 +537,7 @@ impl DrawUniforms {
             }
             "chunkOffset" => HostValue::vec3(self.chunk_offset),
             "renderStage" => HostValue::Int(self.render_stage),
+            "atlasSize" => HostValue::IVec([self.atlas_size[0], self.atlas_size[1], 0, 0], 2),
             _ => return None,
         })
     }
@@ -906,6 +923,7 @@ mod tests {
             chunk_offset: Vec3::new(-3.0, 1.0, 2.0),
             render_stage: 8,
             lightmap_matrix: true,
+            atlas_size: [512, 256],
         };
         let Some(HostValue::Mat4(legacy)) = draw.value("iris_ModelViewMat") else {
             panic!("legacy model-view is a matrix");
@@ -951,5 +969,40 @@ mod tests {
             HostValue::Int(1)
         );
         assert_eq!(HostValue::Mat4(Mat4::IDENTITY).to_custom(), None);
+    }
+
+    #[test]
+    fn biome_uniforms_read_the_java_biome_of_the_bedrock_biome() {
+        let Ok(mapping) = JavaBlockMapping::pinned() else {
+            eprintln!("skipping: missing Java mapping carrier fixture");
+            return;
+        };
+        let desert = (0..u32::from(u16::MAX))
+            .find(|id| mapping.java_biome(*id) == Some("minecraft:desert"))
+            .unwrap();
+        let game = ShaderPackFrameInputs {
+            biome: Some(desert),
+            ..ShaderPackFrameInputs::default()
+        };
+        let frame = uniforms(&game, &mut UniformHistory::default());
+        assert_eq!(frame.value("temperature"), Some(HostValue::Float(2.0)));
+        assert_eq!(frame.value("rainfall"), Some(HostValue::Float(0.0)));
+        assert_eq!(frame.value("biome_precipitation"), Some(HostValue::Int(0)));
+        assert_eq!(
+            frame.value("biome_category"),
+            Some(HostValue::Int(shaderpack::BiomeCategory::Desert.ordinal()))
+        );
+        let before_world = uniforms(
+            &ShaderPackFrameInputs::default(),
+            &mut UniformHistory::default(),
+        );
+        assert_eq!(
+            before_world.value("biome_category"),
+            Some(HostValue::Int(0))
+        );
+        assert_eq!(
+            before_world.value("temperature"),
+            Some(HostValue::Float(0.0))
+        );
     }
 }

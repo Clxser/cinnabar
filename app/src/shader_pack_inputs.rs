@@ -20,7 +20,6 @@ use meshing::CameraMedium;
 use protocol::NetworkItemStack;
 use render_model::celestial;
 use render_scene::{AtmosphereFrame, WorldLighting, shaderpack::ShaderPackFrameInputs};
-use world::weather::{Precipitation, classify_precipitation};
 
 use crate::{
     environment::{
@@ -180,8 +179,8 @@ fn publish_frame_inputs(
     inputs.set_if_neq(next);
 }
 
-/// Fills the values sampled from the world around the player: light at the eye, the biome
-/// climate and precipitation at the feet, and the render distance.
+/// Fills the values sampled from the world around the player: light at the eye, the biome at
+/// the feet, and the render distance.
 fn publish_world_inputs(
     next: &mut ShaderPackFrameInputs,
     stream: &WorldStream,
@@ -195,19 +194,8 @@ fn publish_world_inputs(
     let Some(feet) = feet else {
         return;
     };
-    let biome = stream
-        .camera_biome_id(feet)
-        .and_then(|raw_id| stream.authority().resolved_biome_tints().biome(raw_id));
-    if let Some(biome) = biome {
-        next.temperature = biome.temperature;
-        next.rainfall = biome.downfall;
-        // Like Java's `getPrecipitationAt`, the lapse rate applies at the player's own height.
-        next.precipitation = precipitation_kind(classify_precipitation(
-            biome.temperature,
-            biome.downfall,
-            feet[1].floor() as i32,
-        ));
-    }
+    next.biome = stream.camera_biome_id(feet);
+    next.biome_block_y = feet[1].floor() as i32;
 }
 
 /// `heldItemId` for a held stack, -1 when the hand is empty or the item is unmapped.
@@ -282,15 +270,6 @@ fn eye_medium(medium: CameraMedium) -> i32 {
         CameraMedium::Water => 1,
         CameraMedium::Lava => 2,
         CameraMedium::PowderSnow => 3,
-    }
-}
-
-/// Iris `biome_precipitation`: 0 none, 1 rain, 2 snow.
-fn precipitation_kind(precipitation: Precipitation) -> i32 {
-    match precipitation {
-        Precipitation::None => 0,
-        Precipitation::Rain => 1,
-        Precipitation::Snow => 2,
     }
 }
 
@@ -373,13 +352,6 @@ mod tests {
         assert_eq!(eye_medium(CameraMedium::Water), 1);
         assert_eq!(eye_medium(CameraMedium::Lava), 2);
         assert_eq!(eye_medium(CameraMedium::PowderSnow), 3);
-    }
-
-    #[test]
-    fn precipitation_uses_iris_codes() {
-        assert_eq!(precipitation_kind(classify_precipitation(2.0, 0.0, 64)), 0);
-        assert_eq!(precipitation_kind(classify_precipitation(0.8, 0.4, 64)), 1);
-        assert_eq!(precipitation_kind(classify_precipitation(0.0, 0.5, 64)), 2);
     }
 
     #[test]

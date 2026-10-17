@@ -201,6 +201,7 @@ fn prepare_views(
     queue: Res<RenderQueue>,
     time: Option<Res<Time>>,
     geometry: Option<Res<ShaderpackGeometry>>,
+    atlas: Option<Res<ShaderpackAtlas>>,
 ) {
     let states = views.0.get_mut().unwrap_or_else(|e| e.into_inner());
     let (Some(pack), Some(inputs)) = (pack.and_then(|p| p.0.clone()), inputs) else {
@@ -244,7 +245,16 @@ fn prepare_views(
             .as_ref()
             .and_then(|g| g.chunk_offset(position.as_dvec3()))
             .unwrap_or(Vec3::ZERO);
-        state.write_uniforms(&queue, &frame, clock.delta_seconds, chunk_offset);
+        let atlas_size = atlas.as_ref().map_or([0; 2], |atlas| {
+            atlas.size.to_array().map(|side| side as i32)
+        });
+        state.write_uniforms(
+            &queue,
+            &frame,
+            clock.delta_seconds,
+            chunk_offset,
+            atlas_size,
+        );
     }
 }
 

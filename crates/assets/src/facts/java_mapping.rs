@@ -1,7 +1,8 @@
 //! Java Edition identities of the pinned Bedrock registries, for Java shader packs: every block
-//! state of the block registry to one Java block state, Java block tags, and Bedrock biome ids
-//! to Java biome names. `registryc --kind java-mapping` generates the carrier from the pinned
-//! GeyserMC mappings named by [`SOURCE_MANIFEST`].
+//! state of the block registry to one Java block state, Java block tags, the Java biome registry
+//! (climate values in network registry order), Java biome tags, and Bedrock biome ids to Java
+//! biomes. `registryc --kind java-mapping` generates the carrier from the pinned GeyserMC
+//! mappings named by [`SOURCE_MANIFEST`].
 //!
 //! The carrier is optional: consumers treat a carrier that fails validation as "nothing
 //! mapped" and keep running.
@@ -16,7 +17,7 @@ pub const SOURCE_PATH: &str = "crates/assets/data/java-mapping-v2193.bin";
 /// The pinned GeyserMC source the generator reads.
 pub const SOURCE_MANIFEST: &str = "assets/geyser-mappings-source.json";
 pub const MAX_BYTES: usize = 2 * 1024 * 1024;
-const MAGIC: &[u8; 8] = b"JAVAMAP1";
+const MAGIC: &[u8; 8] = b"JAVAMAP2";
 const SOURCE_BYTES: &[u8] = include_bytes!("../../data/java-mapping-v2193.bin");
 const SOURCE_SHA256: &str = include_str!("../../data/java-mapping-v2193.sha256");
 const BIOME_REGISTRY_BYTES: &[u8] = include_bytes!("../../data/biome-registry-v2193.bin");
@@ -29,7 +30,7 @@ const SOURCE_MANIFEST_BYTES: &[u8] =
 pub struct JavaMappingError(String);
 
 /// The serialized carrier content, exactly as the generator writes it.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct JavaMappingPayload {
     pub protocol: u32,
@@ -53,15 +54,64 @@ pub struct JavaMappingPayload {
     /// Java block tags (`namespace:path`, sorted, unique) with their member block indices,
     /// ascending; only blocks some state maps to are listed.
     pub tags: Box<[JavaBlockTag]>,
-    /// Bedrock biome id to Java biome id, sorted by Bedrock id.
+    /// The Java biome registry in network registry order: an entry's index is its Java registry
+    /// id. Names are unique.
+    pub java_biomes: Box<[JavaBiomeRecord]>,
+    /// Java biome tags (`namespace:path`, sorted, unique) with their member Java biome indices,
+    /// ascending.
+    pub biome_tags: Box<[JavaBiomeTag]>,
+    /// Bedrock biome id to Java biome index, sorted by Bedrock id.
     pub biomes: Box<[JavaBiome]>,
 }
 
 /// A Java block tag id (`namespace:path`) and its member block indices, ascending.
 pub type JavaBlockTag = (Box<str>, Box<[u16]>);
 
-/// A Bedrock biome id and its Java biome id (`namespace:path`).
-pub type JavaBiome = (u32, Box<str>);
+/// A Java biome tag id (`namespace:path`) and its member Java biome indices, ascending.
+pub type JavaBiomeTag = (Box<str>, Box<[u16]>);
+
+/// A Bedrock biome id and the index of its Java biome in [`JavaMappingPayload::java_biomes`].
+pub type JavaBiome = (u32, u16);
+
+/// One serialized Java biome registry entry; [`JavaBiomeEntry`] is its borrowed view.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct JavaBiomeRecord {
+    /// The biome id, e.g. `minecraft:plains`.
+    pub name: Box<str>,
+    /// The base temperature, before any temperature modifier.
+    pub temperature: f32,
+    pub downfall: f32,
+    pub has_precipitation: bool,
+    /// Whether the biome's temperature modifier is `frozen`.
+    pub frozen: bool,
+}
+
+/// One Java biome of the pinned registry; its index is Java's network registry id (the
+/// `minecraft:worldgen/biome` entry order of the generator's `networkCodec.nbt`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct JavaBiomeEntry<'a> {
+    /// The biome id, e.g. `minecraft:plains`.
+    pub name: &'a str,
+    /// The base temperature, before any temperature modifier.
+    pub temperature: f32,
+    pub downfall: f32,
+    pub has_precipitation: bool,
+    /// Whether the biome's temperature modifier is `frozen`.
+    pub frozen: bool,
+}
+
+impl<'a> From<&'a JavaBiomeRecord> for JavaBiomeEntry<'a> {
+    fn from(record: &'a JavaBiomeRecord) -> Self {
+        Self {
+            name: &record.name,
+            temperature: record.temperature,
+            downfall: record.downfall,
+            has_precipitation: record.has_precipitation,
+            frozen: record.frozen,
+        }
+    }
+}
 
 /// One Java property list as `(key, value)` pairs sorted by key.
 type PropertyList = Box<[(Box<str>, Box<str>)]>;
@@ -255,9 +305,45 @@ impl JavaBlockMapping {
                 tags.push(index as u32);
             }
         }
+        let java_biomes = &payload.java_biomes;
+        ensure(
+            java_biomes.len() <= usize::from(u16::MAX),
+            "Java biome count",
+        )?;
+        ensure(
+            java_biomes.iter().all(|biome| {
+                namespaced(&biome.name)
+                    && biome.temperature.is_finite()
+                    && biome.downfall.is_finite()
+            }),
+            "Java biome entry",
+        )?;
+        let mut names: Vec<&str> = java_biomes
+            .iter()
+            .map(|biome| biome.name.as_ref())
+            .collect();
+        names.sort_unstable();
+        ensure(strictly_sorted(&names), "Java biome names unique")?;
+        ensure(
+            payload
+                .biome_tags
+                .windows(2)
+                .all(|pair| pair[0].0 < pair[1].0)
+                && payload.biome_tags.iter().all(|(name, members)| {
+                    namespaced(name)
+                        && strictly_sorted(members)
+                        && members
+                            .last()
+                            .is_none_or(|&last| usize::from(last) < java_biomes.len())
+                }),
+            "biome tags",
+        )?;
         ensure(
             payload.biomes.windows(2).all(|pair| pair[0].0 < pair[1].0)
-                && payload.biomes.iter().all(|(_, name)| namespaced(name)),
+                && payload
+                    .biomes
+                    .iter()
+                    .all(|&(_, index)| usize::from(index) < java_biomes.len()),
             "biome table",
         )?;
         Ok(Self {
@@ -299,11 +385,39 @@ impl JavaBlockMapping {
 
     /// The Java biome id of a Bedrock biome id.
     pub fn java_biome(&self, bedrock_biome: u32) -> Option<&str> {
+        self.java_biome_index(bedrock_biome)
+            .and_then(|index| self.java_biome_entry(index))
+            .map(|entry| entry.name)
+    }
+
+    /// The Java registry index of the Java biome a Bedrock biome id maps to.
+    pub fn java_biome_index(&self, bedrock_biome: u32) -> Option<u16> {
         let biomes = &self.payload.biomes;
         biomes
-            .binary_search_by_key(&bedrock_biome, |(id, _)| *id)
+            .binary_search_by_key(&bedrock_biome, |&(id, _)| id)
             .ok()
-            .map(|index| biomes[index].1.as_ref())
+            .map(|index| biomes[index].1)
+    }
+
+    /// Every Java biome in network registry order, so the position is the registry index.
+    pub fn java_biomes(&self) -> impl ExactSizeIterator<Item = JavaBiomeEntry<'_>> + '_ {
+        self.payload.java_biomes.iter().map(JavaBiomeEntry::from)
+    }
+
+    /// The Java biome at registry index `index`.
+    pub fn java_biome_entry(&self, index: u16) -> Option<JavaBiomeEntry<'_>> {
+        self.payload
+            .java_biomes
+            .get(usize::from(index))
+            .map(JavaBiomeEntry::from)
+    }
+
+    /// Whether the Java biome at registry index `index` belongs to the Java biome tag `tag`
+    /// (`namespace:path`, e.g. `minecraft:is_ocean`); false for unknown tags and indices.
+    pub fn java_biome_has_tag(&self, index: u16, tag: &str) -> bool {
+        let tags = &self.payload.biome_tags;
+        tags.binary_search_by(|(name, _)| name.as_ref().cmp(tag))
+            .is_ok_and(|found| tags[found].1.binary_search(&index).is_ok())
     }
 
     /// The decoded payload.

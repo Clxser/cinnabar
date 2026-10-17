@@ -1,13 +1,16 @@
 //! Generates the Java mapping carrier (`assets::facts::java_mapping`) from the pinned GeyserMC
 //! mappings: Geyser maps every Java block state to one Bedrock state, so each Bedrock state
-//! of the block registry takes one Java state from the inverse, chosen by [`preference`].
+//! of the block registry takes one Java state from the inverse, chosen by [`preference`]. The
+//! Java biome registry and the block and biome tags come from the generator's MCProtocolLib
+//! network exports in the same archive.
 
 mod nbt;
 mod source;
 
 use super::Result;
 use assets::facts::java_mapping::{
-    self, JavaBiome, JavaBlockMapping, JavaBlockTag, JavaMappingPayload,
+    self, JavaBiome, JavaBiomeRecord, JavaBiomeTag, JavaBlockMapping, JavaBlockTag,
+    JavaMappingPayload,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -30,6 +33,8 @@ pub struct Summary {
     pub approximate_states: usize,
     pub biomes: usize,
     pub mapped_biomes: usize,
+    /// Entries of the Java biome registry.
+    pub java_biomes: usize,
 }
 
 /// Writes the carrier to `out` and its digest beside it (`.sha256`), reading the archive at
@@ -163,13 +168,17 @@ pub fn compile(
         .collect::<Box<[_]>>();
 
     let tags = block_tags(files, &geyser, &block_index)?;
-    let (biomes, biome_count) = biomes(files, biome_registry)?;
+    let geyser_biomes: BTreeMap<String, GeyserBiome> = serde_json::from_slice(&files.biomes)?;
+    let java_biomes = java_biomes(files, &geyser_biomes)?;
+    let biome_tags = biome_tags(files, java_biomes.len())?;
+    let (biomes, biome_count) = biomes(&geyser_biomes, &java_biomes, biome_registry)?;
     let summary = Summary {
         states: records.len(),
         mapped_states: states.iter().flatten().count(),
         approximate_states: approximate.len(),
         biomes: biome_count,
         mapped_biomes: biomes.len(),
+        java_biomes: java_biomes.len(),
     };
     let payload = JavaMappingPayload {
         protocol,
@@ -184,6 +193,8 @@ pub fn compile(
         states,
         approximate,
         tags,
+        java_biomes,
+        biome_tags,
         biomes,
     };
     Ok((payload, summary))
@@ -304,7 +315,7 @@ fn block_tags(
     if mapped != listed || listed.len() != registry.len() {
         return Err("Blocks.java does not list exactly the blocks of blocks_debug.json".into());
     }
-    let tags = nbt::block_tags(&files.block_tags)?;
+    let tags = nbt::tags(&files.tags, nbt::BLOCK_REGISTRY)?;
     let mut result = Vec::new();
     for (tag, members) in tags {
         let mut indices = members
@@ -348,11 +359,81 @@ fn java_block_registry(source: &str) -> Result<Vec<String>> {
         .collect()
 }
 
-/// Bedrock biome id to Java biome: Geyser maps Java biomes to Bedrock ids, so a Bedrock id
-/// several Java biomes share takes the one named like the Bedrock biome, else the first by
-/// name. Returns the table and the registry's biome count.
-fn biomes(files: &SourceFiles, biome_registry: &[u8]) -> Result<(Box<[JavaBiome]>, usize)> {
-    let geyser: BTreeMap<String, GeyserBiome> = serde_json::from_slice(&files.biomes)?;
+/// The Java biome registry of the network codec, in network registry order. Its ids must run
+/// 0..n in file order and its names must be exactly the Java biomes `biomes.json` maps, so the
+/// Bedrock table indexes every Java biome Geyser knows.
+fn java_biomes(
+    files: &SourceFiles,
+    geyser: &BTreeMap<String, GeyserBiome>,
+) -> Result<Box<[JavaBiomeRecord]>> {
+    let codec = nbt::biomes(&files.codec)?;
+    if codec.len() > usize::from(u16::MAX) {
+        return Err("the Java biome registry exceeds u16 indices".into());
+    }
+    if let Some((index, biome)) = codec
+        .iter()
+        .enumerate()
+        .find(|(index, biome)| usize::try_from(biome.id).ok() != Some(*index))
+    {
+        return Err(format!(
+            "Java biome {} has registry id {}, not its position {index}",
+            biome.name, biome.id
+        )
+        .into());
+    }
+    let names: BTreeSet<&str> = codec.iter().map(|biome| biome.name.as_str()).collect();
+    if names.len() != codec.len() || !names.iter().copied().eq(geyser.keys().map(String::as_str)) {
+        return Err("networkCodec.nbt does not list exactly the Java biomes of biomes.json".into());
+    }
+    Ok(codec
+        .into_iter()
+        .map(|biome| JavaBiomeRecord {
+            name: biome.name.into_boxed_str(),
+            temperature: biome.temperature,
+            downfall: biome.downfall,
+            has_precipitation: biome.has_precipitation,
+            frozen: biome.frozen,
+        })
+        .collect())
+}
+
+/// Java biome tags from the network tag export, members as Java biome registry indices
+/// (ascending, unique); tags without members are left out.
+fn biome_tags(files: &SourceFiles, java_biomes: usize) -> Result<Box<[JavaBiomeTag]>> {
+    let mut result = Vec::new();
+    for (tag, members) in nbt::tags(&files.tags, nbt::BIOME_REGISTRY)? {
+        let mut indices = members
+            .into_iter()
+            .map(|id| {
+                u16::try_from(id)
+                    .ok()
+                    .filter(|&index| usize::from(index) < java_biomes)
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| format!("biome tag {tag} names an unknown Java biome id"))?;
+        indices.sort_unstable();
+        indices.dedup();
+        if !indices.is_empty() {
+            result.push((tag.into_boxed_str(), indices.into_boxed_slice()));
+        }
+    }
+    result.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(result.into_boxed_slice())
+}
+
+/// Bedrock biome id to Java biome index: Geyser maps Java biomes to Bedrock ids, so a Bedrock
+/// id several Java biomes share takes the one named like the Bedrock biome, else the first by
+/// name. Returns the table and the Bedrock registry's biome count.
+fn biomes(
+    geyser: &BTreeMap<String, GeyserBiome>,
+    java_biomes: &[JavaBiomeRecord],
+    biome_registry: &[u8],
+) -> Result<(Box<[JavaBiome]>, usize)> {
+    let java_index: HashMap<&str, u16> = java_biomes
+        .iter()
+        .enumerate()
+        .map(|(index, biome)| (biome.name.as_ref(), index as u16))
+        .collect();
     let records = assets::read_biome_registry(biome_registry)?;
     let mut table = Vec::new();
     for record in records.iter() {
@@ -367,10 +448,13 @@ fn biomes(files: &SourceFiles, biome_registry: &[u8]) -> Result<(Box<[JavaBiome]
             .find(|name| *name == record.name.as_ref())
             .or(first);
         if let Some(name) = chosen {
-            table.push((record.id, Box::from(name)));
+            let index = *java_index
+                .get(name)
+                .ok_or_else(|| format!("biomes.json maps {name}, absent from the registry"))?;
+            table.push((record.id, index));
         }
     }
-    table.sort_by_key(|(id, _)| *id);
+    table.sort_by_key(|&(id, _)| id);
     Ok((table.into_boxed_slice(), records.len()))
 }
 

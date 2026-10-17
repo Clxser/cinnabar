@@ -184,6 +184,77 @@ fn biomes_map_to_the_java_biome_of_the_same_name() {
     }
 }
 
+/// The Java registry entry named `name`.
+fn java_entry(name: &str) -> (u16, JavaBiomeEntry<'static>) {
+    let (index, entry) = mapping()
+        .java_biomes()
+        .enumerate()
+        .find(|(_, entry)| entry.name == name)
+        .unwrap_or_else(|| panic!("no Java biome {name}"));
+    (index as u16, entry)
+}
+
+#[test]
+fn java_biomes_carry_their_registry_climate() {
+    let (_, plains) = java_entry("minecraft:plains");
+    assert_eq!(
+        (
+            plains.temperature,
+            plains.downfall,
+            plains.has_precipitation,
+            plains.frozen
+        ),
+        (0.8, 0.4, true, false)
+    );
+    let (_, desert) = java_entry("minecraft:desert");
+    assert_eq!(
+        (
+            desert.temperature,
+            desert.downfall,
+            desert.has_precipitation
+        ),
+        (2.0, 0.0, false)
+    );
+    assert!(java_entry("minecraft:frozen_ocean").1.frozen);
+    assert!(!java_entry("minecraft:ocean").1.frozen);
+}
+
+#[test]
+fn java_biome_indices_follow_registry_order() {
+    let mapping = mapping();
+    let count = mapping.java_biomes().len();
+    assert_eq!(count, mapping.payload().java_biomes.len());
+    for (index, entry) in mapping.java_biomes().enumerate() {
+        assert_eq!(mapping.java_biome_entry(index as u16), Some(entry));
+    }
+    assert!(mapping.java_biome_entry(count as u16).is_none());
+    let records = read_biome_registry(BIOME_REGISTRY_BYTES).unwrap();
+    let plains = records
+        .iter()
+        .find(|record| record.name.as_ref() == "minecraft:plains")
+        .unwrap()
+        .id;
+    let index = mapping.java_biome_index(plains).unwrap();
+    assert_eq!(
+        mapping.java_biome_entry(index).unwrap().name,
+        "minecraft:plains"
+    );
+    assert!(mapping.java_biome_index(u32::MAX).is_none());
+}
+
+#[test]
+fn java_biome_tags_list_their_members() {
+    let mapping = mapping();
+    let (swamp, _) = java_entry("minecraft:swamp");
+    let (plains, _) = java_entry("minecraft:plains");
+    let (ocean, _) = java_entry("minecraft:ocean");
+    assert!(mapping.java_biome_has_tag(swamp, "minecraft:allows_surface_slime_spawns"));
+    assert!(!mapping.java_biome_has_tag(plains, "minecraft:allows_surface_slime_spawns"));
+    assert!(mapping.java_biome_has_tag(ocean, "minecraft:is_ocean"));
+    assert!(!mapping.java_biome_has_tag(ocean, "minecraft:no_such_tag"));
+    assert!(!mapping.java_biome_has_tag(u16::MAX, "minecraft:is_ocean"));
+}
+
 #[test]
 fn corrupt_or_unpinned_bytes_are_rejected() {
     let protocol = crate::active_content_registry_protocol();
@@ -192,7 +263,7 @@ fn corrupt_or_unpinned_bytes_are_rejected() {
     assert!(JavaBlockMapping::decode(&corrupt, protocol).is_err());
     assert!(JavaBlockMapping::validate_pinned(&corrupt).is_err());
     assert!(JavaBlockMapping::decode(SOURCE_BYTES, protocol + 1).is_err());
-    assert!(JavaBlockMapping::decode(b"JAVAMAP1", protocol).is_err());
+    assert!(JavaBlockMapping::decode(MAGIC, protocol).is_err());
 }
 
 #[test]
@@ -205,7 +276,22 @@ fn payload_validation_rejects_bad_order_and_indices() {
     let mut out_of_range = valid.clone();
     out_of_range.states[0] = Some((u16::MAX, 0));
     assert!(JavaBlockMapping::from_payload(out_of_range).is_err());
-    let mut bad_properties = valid;
+    let mut bad_properties = valid.clone();
     bad_properties.property_sets = Box::from([Box::from("b=1,a=2")]);
     assert!(JavaBlockMapping::from_payload(bad_properties).is_err());
+    let mut bad_biome = valid.clone();
+    bad_biome.biomes[0].1 = valid.java_biomes.len() as u16;
+    assert!(JavaBlockMapping::from_payload(bad_biome).is_err());
+    let mut unsorted_tag = valid.clone();
+    let members = &mut unsorted_tag
+        .biome_tags
+        .iter_mut()
+        .find(|(_, m)| m.len() > 1)
+        .unwrap()
+        .1;
+    members.swap(0, 1);
+    assert!(JavaBlockMapping::from_payload(unsorted_tag).is_err());
+    let mut duplicate_name = valid;
+    duplicate_name.java_biomes[1].name = duplicate_name.java_biomes[0].name.clone();
+    assert!(JavaBlockMapping::from_payload(duplicate_name).is_err());
 }

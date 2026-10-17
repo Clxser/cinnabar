@@ -1155,8 +1155,9 @@ screen-effect parity remain incomplete.
 ## Java Edition identities for shader packs
 
 - `crates/assets/data/java-mapping-v2193.bin` maps every block-registry state to one Java block
-  state, lists Java block tags and maps Bedrock biome ids to Java biomes. `registryc --kind
-  java-mapping` generates it from the GeyserMC mappings pinned in
+  state, lists Java block tags, the Java biome registry (temperature, downfall, precipitation,
+  frozen modifier, in network registry order) and Java biome tags, and maps Bedrock biome ids to
+  Java biomes. `registryc --kind java-mapping` generates it from the GeyserMC mappings pinned in
   `assets/geyser-mappings-source.json` (Java 26.3, Bedrock 1.26.50).
 - Geyser maps Java states onto Bedrock; the inverse prefers the same-named Java block, then a
   dry (`waterlogged=false`) state, then Java text order. 5,434 Bedrock states Geyser never

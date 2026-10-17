@@ -43,7 +43,8 @@ struct Archive {
 struct Files {
     blocks: File,
     java_blocks: File,
-    block_tags: File,
+    tags: File,
+    codec: File,
     biomes: File,
 }
 
@@ -60,8 +61,11 @@ pub struct SourceFiles {
     pub blocks: Vec<u8>,
     /// `Blocks.java`: Java blocks in registry order.
     pub java_blocks: String,
-    /// `networkTags.nbt`: Java registry tags by registry id.
-    pub block_tags: Vec<u8>,
+    /// `networkTags.nbt`: Java registry tags (blocks, biomes, ...) by registry id.
+    pub tags: Vec<u8>,
+    /// `networkCodec.nbt`: Java's synchronized data-driven registries, the biome registry
+    /// among them, in network registry order.
+    pub codec: Vec<u8>,
     /// `biomes.json`: Java biome to Bedrock biome id.
     pub biomes: Vec<u8>,
 }
@@ -107,7 +111,8 @@ pub(super) fn load(root: &Path, manifest: &[u8], archive: Option<&Path>) -> Resu
             &files.java_blocks.path,
             &files.java_blocks.sha256,
         )?)?,
-        block_tags: extract(&files.block_tags.path, &files.block_tags.sha256)?,
+        tags: extract(&files.tags.path, &files.tags.sha256)?,
+        codec: extract(&files.codec.path, &files.codec.sha256)?,
         biomes: extract(&files.biomes.path, &files.biomes.sha256)?,
     })
 }

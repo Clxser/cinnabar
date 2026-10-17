@@ -29,6 +29,8 @@ pub(crate) struct ViewState {
     scratch: Vec<u8>,
     unknown: BTreeSet<String>,
     unknown_logged: bool,
+    /// The developer uniform dump, when [`super::uniform_audit::DUMP_ENV`] names a file.
+    audit: Option<super::uniform_audit::UniformAudit>,
     /// Programs and draws already reported as skipped.
     pub skipped: BTreeSet<String>,
     /// The atlas generation the draw bind groups were built over (`Some(None)`: the
@@ -57,6 +59,7 @@ impl ViewState {
             scratch: vec![],
             unknown: BTreeSet::new(),
             unknown_logged: false,
+            audit: super::uniform_audit::UniformAudit::from_env(),
             skipped: BTreeSet::new(),
             atlas_generation: None,
         }
@@ -68,13 +71,15 @@ impl ViewState {
     }
 
     /// Evaluates custom uniforms and writes every program's and geometry draw's uniform
-    /// block; `chunk_offset` is the terrain origin relative to the camera.
+    /// block; `chunk_offset` is the terrain origin relative to the camera and `atlas_size`
+    /// the block atlas's texel size (terrain draws' `atlasSize`).
     pub(crate) fn write_uniforms(
         &mut self,
         queue: &Queue,
         frame: &FrameUniforms,
         frame_time: f32,
         chunk_offset: Vec3,
+        atlas_size: [i32; 2],
     ) {
         let builtin = |name: &str| -> Option<shaderpack::UniformValue> {
             if let Some(value) = frame.value(name) {
@@ -94,6 +99,19 @@ impl ViewState {
                 _ => None,
             }
         };
+        let auditing = self
+            .audit
+            .as_mut()
+            .is_some_and(|audit| audit.begin(&self.pack.name, self.history.frame));
+        let missing_inputs: Vec<String> = if auditing {
+            self.custom
+                .inputs()
+                .filter(|name| builtin(name).is_none())
+                .map(str::to_owned)
+                .collect()
+        } else {
+            Vec::new()
+        };
         let custom = self.custom.evaluate(&builtin, frame_time);
         let lookup = |name: &str| {
             custom
@@ -108,6 +126,9 @@ impl ViewState {
             };
             pack_block(block, &lookup, &mut self.scratch, &mut self.unknown);
             queue.write_buffer(buffer, 0, &self.scratch);
+            if let Some(audit) = &mut self.audit {
+                audit.block(&format!("program {}", program.name), block, &lookup);
+            }
         }
         for (draw, binding) in self.pack.draws.iter().zip(&self.bindings.draws) {
             let program = &self.pack.programs[draw.program];
@@ -127,10 +148,21 @@ impl ViewState {
                 chunk_offset: if terrain { chunk_offset } else { Vec3::ZERO },
                 render_stage: draw.kind.render_stage(),
                 lightmap_matrix: terrain,
+                atlas_size: if terrain { atlas_size } else { [0; 2] },
             };
             let lookup = |name: &str| values.value(name).or_else(|| lookup(name));
             pack_block(block, &lookup, &mut self.scratch, &mut self.unknown);
             queue.write_buffer(buffer, 0, &self.scratch);
+            if let Some(audit) = &mut self.audit {
+                audit.block(
+                    &format!("draw {:?} with {}", draw.kind, program.name),
+                    block,
+                    &lookup,
+                );
+            }
+        }
+        if let Some(audit) = &mut self.audit {
+            audit.finish(custom, missing_inputs.iter().map(String::as_str));
         }
         if !self.unknown_logged && !self.unknown.is_empty() {
             self.unknown_logged = true;

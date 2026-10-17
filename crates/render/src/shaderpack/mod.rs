@@ -54,6 +54,8 @@ mod targets;
 #[cfg(all(test, feature = "shaderpacks"))]
 mod tests;
 #[cfg(feature = "shaderpacks")]
+mod uniform_audit;
+#[cfg(feature = "shaderpacks")]
 mod uniforms;
 
 use bevy::prelude::{App, Plugin};

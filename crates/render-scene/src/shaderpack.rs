@@ -98,11 +98,12 @@ pub struct ShaderPackFrameInputs {
     pub player_health: f32,
     pub player_hunger: f32,
     pub player_air: f32,
-    /// Camera biome temperature and downfall (`temperature`, `rainfall`).
-    pub temperature: f32,
-    pub rainfall: f32,
-    /// Iris precipitation kind: 0 none, 1 rain, 2 snow (`biome_precipitation`).
-    pub precipitation: i32,
+    /// Bedrock biome id at the camera entity's block, `None` before the world streams; the
+    /// biome uniforms (`biome`, `biome_category`, `temperature`, `rainfall`,
+    /// `biome_precipitation`) read it through its Java biome.
+    pub biome: Option<u32>,
+    /// Block Y the biome was sampled at, for the snow line of `biome_precipitation`.
+    pub biome_block_y: i32,
     /// Sky dimension: 0 Overworld, 1 Nether, 2 End; selects the pack's `world*` folder.
     pub dimension: i32,
     /// Local player is sneaking, sprinting, hurt, burning (`is_sneaking` …).
@@ -139,9 +140,8 @@ impl Default for ShaderPackFrameInputs {
             player_health: -1.0,
             player_hunger: -1.0,
             player_air: -1.0,
-            temperature: 0.8,
-            rainfall: 0.4,
-            precipitation: 1,
+            biome: None,
+            biome_block_y: 64,
             dimension: 0,
             sneaking: false,
             sprinting: false,

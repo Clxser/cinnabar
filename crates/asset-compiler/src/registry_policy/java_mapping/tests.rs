@@ -146,19 +146,159 @@ fn network_tags_yield_block_tags_and_skip_other_registries() {
     nbt.extend_from_slice(&0_i32.to_be_bytes());
     nbt.push(0);
     nbt.push(0);
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(&nbt).unwrap();
-    let compressed = encoder.finish().unwrap();
     assert_eq!(
-        nbt::block_tags(&compressed).unwrap(),
+        nbt::tags(&gzip(&nbt), nbt::BLOCK_REGISTRY).unwrap(),
         vec![
             ("minecraft:glowing".to_owned(), vec![3, 1]),
             ("minecraft:empty".to_owned(), vec![]),
         ]
     );
-    let mut truncated = GzEncoder::new(Vec::new(), Compression::default());
-    truncated.write_all(&nbt[..nbt.len() - 3]).unwrap();
-    assert!(nbt::block_tags(&truncated.finish().unwrap()).is_err());
+    assert!(nbt::tags(&gzip(&nbt[..nbt.len() - 3]), nbt::BLOCK_REGISTRY).is_err());
+    assert!(nbt::tags(&gzip(&nbt), nbt::BIOME_REGISTRY).is_err());
+}
+
+fn gzip(bytes: &[u8]) -> Vec<u8> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(bytes).unwrap();
+    encoder.finish().unwrap()
+}
+
+/// Writes one codec biome entry `{name, id, element}`; `modifier` adds `temperature_modifier`.
+fn codec_biome(out: &mut Vec<u8>, biome: &str, id: i32, climate: (f32, f32, u8), modifier: &str) {
+    out.push(8);
+    name(out, "name");
+    name(out, biome);
+    out.push(3);
+    name(out, "id");
+    out.extend_from_slice(&id.to_be_bytes());
+    out.push(10);
+    name(out, "element");
+    out.push(5);
+    name(out, "temperature");
+    out.extend_from_slice(&climate.0.to_be_bytes());
+    out.push(5);
+    name(out, "downfall");
+    out.extend_from_slice(&climate.1.to_be_bytes());
+    out.push(1);
+    name(out, "has_precipitation");
+    out.push(climate.2);
+    if !modifier.is_empty() {
+        out.push(8);
+        name(out, "temperature_modifier");
+        name(out, modifier);
+    }
+    out.push(10);
+    name(out, "effects");
+    out.push(8);
+    name(out, "water_color");
+    name(out, "#3f76e4");
+    out.push(0);
+    out.push(0);
+    out.push(0);
+}
+
+/// A test codec entry: name, registry id, `(temperature, downfall, has_precipitation)` and
+/// temperature modifier (empty for none).
+type TestBiome<'a> = (&'a str, i32, (f32, f32, u8), &'a str);
+
+/// A codec export with a skipped registry, then a biome registry of `entries`.
+fn codec(entries: &[TestBiome]) -> Vec<u8> {
+    let mut nbt = vec![10];
+    name(&mut nbt, "");
+    nbt.push(10);
+    name(&mut nbt, "minecraft:chat_type");
+    nbt.push(8);
+    name(&mut nbt, "type");
+    name(&mut nbt, "minecraft:chat_type");
+    nbt.push(0);
+    nbt.push(10);
+    name(&mut nbt, nbt::BIOME_REGISTRY);
+    nbt.push(8);
+    name(&mut nbt, "type");
+    name(&mut nbt, nbt::BIOME_REGISTRY);
+    nbt.push(9);
+    name(&mut nbt, "value");
+    nbt.push(10);
+    nbt.extend_from_slice(&(entries.len() as i32).to_be_bytes());
+    for &(biome, id, climate, modifier) in entries {
+        codec_biome(&mut nbt, biome, id, climate, modifier);
+    }
+    nbt.push(0);
+    nbt.push(0);
+    gzip(&nbt)
+}
+
+#[test]
+fn the_network_codec_yields_biome_climate_in_registry_order() {
+    let biomes = nbt::biomes(&codec(&[
+        ("minecraft:plains", 0, (0.8, 0.4, 1), ""),
+        ("minecraft:frozen_ocean", 1, (0.0, 0.5, 1), "frozen"),
+        ("minecraft:desert", 2, (2.0, 0.0, 0), "none"),
+    ]))
+    .unwrap();
+    let entry =
+        |name: &str, id, temperature, downfall, has_precipitation, frozen| nbt::CodecBiome {
+            name: name.to_owned(),
+            id,
+            temperature,
+            downfall,
+            has_precipitation,
+            frozen,
+        };
+    assert_eq!(
+        biomes,
+        vec![
+            entry("minecraft:plains", 0, 0.8, 0.4, true, false),
+            entry("minecraft:frozen_ocean", 1, 0.0, 0.5, true, true),
+            entry("minecraft:desert", 2, 2.0, 0.0, false, false),
+        ]
+    );
+    assert!(nbt::biomes(&codec(&[("minecraft:plains", 0, (0.8, 0.4, 1), "warm")])).is_err());
+    assert!(nbt::biomes(&codec(&[("minecraft:plains", 0, (0.8, 0.4, 2), "")])).is_err());
+}
+
+/// The pinned source files, or `None` (with the missing-fixture notice) without the archive.
+fn pinned_files() -> Option<SourceFiles> {
+    let archive = pinned_archive()?;
+    let manifest = std::fs::read(root().join(java_mapping::SOURCE_MANIFEST)).unwrap();
+    Some(source::load(&root(), &manifest, Some(&archive)).unwrap())
+}
+
+#[test]
+fn the_java_biome_registry_is_the_geyser_biome_set_with_its_climate_and_tags() {
+    let Some(files) = pinned_files() else {
+        return;
+    };
+    let geyser: BTreeMap<String, GeyserBiome> = serde_json::from_slice(&files.biomes).unwrap();
+    let registry = java_biomes(&files, &geyser).unwrap();
+    assert_eq!(registry.len(), geyser.len());
+    let index = |name: &str| {
+        registry
+            .iter()
+            .position(|biome| biome.name.as_ref() == name)
+            .unwrap_or_else(|| panic!("no Java biome {name}"))
+    };
+    let plains = &registry[index("minecraft:plains")];
+    assert_eq!(
+        (
+            plains.temperature,
+            plains.downfall,
+            plains.has_precipitation,
+            plains.frozen
+        ),
+        (0.8, 0.4, true, false)
+    );
+    assert!(registry[index("minecraft:frozen_ocean")].frozen);
+    let tags = biome_tags(&files, registry.len()).unwrap();
+    let members = |tag: &str| {
+        &tags
+            .iter()
+            .find(|(name, _)| name.as_ref() == tag)
+            .unwrap_or_else(|| panic!("no biome tag {tag}"))
+            .1
+    };
+    assert!(members("minecraft:is_ocean").contains(&(index("minecraft:ocean") as u16)));
+    assert!(!members("minecraft:is_ocean").contains(&(index("minecraft:plains") as u16)));
 }
 
 #[test]

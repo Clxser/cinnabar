@@ -299,8 +299,10 @@ SOFTWARE.
 - Upstream license SHA-256:
   `4f49de5134b13de98672e8f870aae5d36f5b415086fb1c6fdf832b78c47c7094`
 - Use: `crates/assets/data/java-mapping-v2193.bin` is generated from its Java-to-Bedrock
-  block-state, block-tag and biome mappings. GeyserMC licenses only its contributors' own
-  work; it does not relicense Minecraft data owned by Mojang or Microsoft.
+  block-state and biome mappings and from the archive's MCProtocolLib network exports
+  (`mcpl/data/networkTags.nbt` block and biome tags, `mcpl/data/networkCodec.nbt` Java biome
+  registry). GeyserMC licenses only its contributors' own work; it does not relicense
+  Minecraft data owned by Mojang or Microsoft.
 
 <!-- BEGIN GEYSERMC-MAPPINGS-MIT -->
 The MIT License

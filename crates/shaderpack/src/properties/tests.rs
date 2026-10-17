@@ -457,6 +457,38 @@ fn custom_uniforms_and_variables_keep_file_order() {
 }
 
 #[test]
+fn custom_uniform_expressions_see_macros_expanded_like_iris() {
+    let properties = parse_with(
+        "#define LOCAL_SCALE 2.0\n\
+         uniform.float.swampy = if(biome_category == CAT_SWAMP, 1.0, 0.0)\n\
+         variable.float.scaled = LOCAL_SCALE * SELF + frameTime\n\
+         screen = CAT_SWAMP\n",
+        &[
+            ("CAT_SWAMP", "14"),
+            ("SELF", "SELF + ALIAS"),
+            ("ALIAS", "SELF"),
+        ],
+    );
+    let expressions: Vec<_> = properties
+        .entries
+        .iter()
+        .map(|(_, value)| value.as_str())
+        .collect();
+    assert_eq!(
+        expressions,
+        [
+            "if(biome_category == 14, 1.0, 0.0)",
+            "2.0 * SELF + SELF + frameTime",
+            "CAT_SWAMP",
+        ]
+    );
+    assert_eq!(
+        properties.custom_uniforms[0].expr.identifiers(),
+        ["biome_category"]
+    );
+}
+
+#[test]
 fn unknown_keys_stay_only_in_entries() {
     let properties = parse("sun=true\nshadow.culling=reversed\nscreen=[MAIN] SPEED\n");
     assert_eq!(keys(&properties), ["sun", "shadow.culling", "screen"]);

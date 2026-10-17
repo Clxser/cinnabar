@@ -1,12 +1,14 @@
-//! Reads the Java block tags from the generator's gzip-compressed, big-endian network tag
-//! export: a root compound of registries, `minecraft:block` mapping tag ids to integer
-//! arrays of Java block registry ids.
+//! Reads the generator's gzip-compressed, big-endian network exports: `networkTags.nbt`, a root
+//! compound of registries each mapping tag ids to integer arrays of registry ids, and
+//! `networkCodec.nbt`, a root compound of registries each holding `{type, value: [{name, id,
+//! element}]}`, of which the biome registry is read.
 
 use super::Result;
 use flate2::read::GzDecoder;
 use std::io::Read;
 
-const BLOCK_REGISTRY: &str = "minecraft:block";
+pub(super) const BLOCK_REGISTRY: &str = "minecraft:block";
+pub(super) const BIOME_REGISTRY: &str = "minecraft:worldgen/biome";
 const MAX_INFLATED_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_DEPTH: usize = 32;
 
@@ -24,37 +26,67 @@ const COMPOUND: u8 = 10;
 const INT_ARRAY: u8 = 11;
 const LONG_ARRAY: u8 = 12;
 
-/// Every block tag with its member registry ids, in file order.
-pub(super) fn block_tags(compressed: &[u8]) -> Result<Vec<(String, Vec<i32>)>> {
+/// One `minecraft:worldgen/biome` entry of the network codec.
+#[derive(Debug, PartialEq)]
+pub(super) struct CodecBiome {
+    pub name: String,
+    pub id: i32,
+    pub temperature: f32,
+    pub downfall: f32,
+    pub has_precipitation: bool,
+    /// `temperature_modifier` is `frozen` (absent or `none` otherwise).
+    pub frozen: bool,
+}
+
+/// Every tag of `registry` in a network tag export with its member registry ids, in file order.
+pub(super) fn tags(compressed: &[u8], registry: &str) -> Result<Vec<(String, Vec<i32>)>> {
+    registry_entry(compressed, registry, |reader| reader.int_lists())
+}
+
+/// The biome registry of a network codec export, in file order.
+pub(super) fn biomes(compressed: &[u8]) -> Result<Vec<CodecBiome>> {
+    registry_entry(compressed, BIOME_REGISTRY, |reader| reader.biome_registry())
+}
+
+/// Inflates an export and reads the compound value of `registry` in its root compound with
+/// `read`, skipping every other registry; errors when the registry is missing or repeated, the
+/// export is malformed, or bytes trail the root.
+fn registry_entry<T>(
+    compressed: &[u8],
+    registry: &str,
+    read: impl Fn(&mut Reader) -> Result<T>,
+) -> Result<T> {
     let mut bytes = Vec::new();
     GzDecoder::new(compressed)
         .take(MAX_INFLATED_BYTES + 1)
         .read_to_end(&mut bytes)?;
     if bytes.len() as u64 > MAX_INFLATED_BYTES {
-        return Err("network tag export exceeds its size limit".into());
+        return Err("network export exceeds its size limit".into());
     }
     let mut reader = Reader { bytes: &bytes };
     if reader.u8()? != COMPOUND {
-        return Err("network tag export has no root compound".into());
+        return Err("network export has no root compound".into());
     }
     reader.string()?;
-    let mut tags = None;
+    let mut found = None;
     loop {
         let kind = reader.u8()?;
         if kind == END {
             break;
         }
         let name = reader.string()?;
-        if kind == COMPOUND && name == BLOCK_REGISTRY {
-            tags = Some(reader.int_lists()?);
-        } else {
+        if kind != COMPOUND || name != registry {
             reader.skip(kind, 0)?;
+        } else if found.is_none() {
+            found = Some(read(&mut reader)?);
+        } else {
+            return Err(format!("network export repeats {registry}").into());
         }
     }
     if !reader.bytes.is_empty() {
-        return Err("trailing bytes after the network tag export".into());
+        return Err("trailing bytes after the network export".into());
     }
-    tags.ok_or_else(|| format!("network tag export has no {BLOCK_REGISTRY} registry").into())
+    found.ok_or_else(|| format!("network export has no {registry} registry").into())
 }
 
 struct Reader<'a> {
@@ -64,7 +96,7 @@ struct Reader<'a> {
 impl<'a> Reader<'a> {
     fn take(&mut self, count: usize) -> Result<&'a [u8]> {
         if self.bytes.len() < count {
-            return Err("truncated network tag export".into());
+            return Err("truncated network export".into());
         }
         let (head, tail) = self.bytes.split_at(count);
         self.bytes = tail;
@@ -77,6 +109,10 @@ impl<'a> Reader<'a> {
 
     fn i32(&mut self) -> Result<i32> {
         Ok(i32::from_be_bytes(self.take(4)?.try_into()?))
+    }
+
+    fn f32(&mut self) -> Result<f32> {
+        Ok(f32::from_be_bytes(self.take(4)?.try_into()?))
     }
 
     fn length(&mut self) -> Result<usize> {
@@ -105,19 +141,117 @@ impl<'a> Reader<'a> {
                     let element = self.u8()?;
                     let count = self.length()?;
                     if element != INT && count > 0 {
-                        return Err(format!("block tag {name} is not a list of ints").into());
+                        return Err(format!("tag {name} is not a list of ints").into());
                     }
                     (0..count).map(|_| self.i32()).collect::<Result<_>>()?
                 }
-                _ => return Err(format!("block tag {name} is not an int array").into()),
+                _ => return Err(format!("tag {name} is not an int array").into()),
             };
             entries.push((name, values));
         }
     }
 
+    /// The biome registry compound: `type` names the registry and `value` lists its entries.
+    fn biome_registry(&mut self) -> Result<Vec<CodecBiome>> {
+        let mut kind_name = None;
+        let mut entries = None;
+        loop {
+            let kind = self.u8()?;
+            if kind == END {
+                break;
+            }
+            match (kind, self.string()?.as_str()) {
+                (STRING, "type") => kind_name = Some(self.string()?),
+                (LIST, "value") => {
+                    let element = self.u8()?;
+                    let count = self.length()?;
+                    if element != COMPOUND && count > 0 {
+                        return Err("biome registry value is not a list of compounds".into());
+                    }
+                    entries = Some(
+                        (0..count)
+                            .map(|_| self.biome_entry())
+                            .collect::<Result<Vec<_>>>()?,
+                    );
+                }
+                (_, field) => return Err(format!("unexpected biome registry field {field}").into()),
+            }
+        }
+        if kind_name.as_deref() != Some(BIOME_REGISTRY) {
+            return Err(format!("biome registry type is not {BIOME_REGISTRY}").into());
+        }
+        entries.ok_or_else(|| "biome registry has no value list".into())
+    }
+
+    /// One registry entry `{name, id, element}` with the climate fields of its element; the
+    /// element's `effects` and `attributes` are skipped and any other field is rejected.
+    fn biome_entry(&mut self) -> Result<CodecBiome> {
+        let (mut name, mut id) = (None, None);
+        let (mut temperature, mut downfall, mut precipitation) = (None, None, None);
+        let mut frozen = false;
+        loop {
+            let kind = self.u8()?;
+            if kind == END {
+                break;
+            }
+            match (kind, self.string()?.as_str()) {
+                (STRING, "name") => name = Some(self.string()?),
+                (INT, "id") => id = Some(self.i32()?),
+                (COMPOUND, "element") => loop {
+                    let kind = self.u8()?;
+                    if kind == END {
+                        break;
+                    }
+                    match (kind, self.string()?.as_str()) {
+                        (FLOAT, "temperature") => temperature = Some(self.f32()?),
+                        (FLOAT, "downfall") => downfall = Some(self.f32()?),
+                        (BYTE, "has_precipitation") => {
+                            precipitation = Some(match self.u8()? {
+                                0 => false,
+                                1 => true,
+                                other => {
+                                    return Err(format!(
+                                        "has_precipitation is {other}, not 0 or 1"
+                                    )
+                                    .into());
+                                }
+                            });
+                        }
+                        (STRING, "temperature_modifier") => {
+                            frozen = match self.string()?.as_str() {
+                                "none" => false,
+                                "frozen" => true,
+                                other => {
+                                    return Err(
+                                        format!("unknown temperature_modifier {other}").into()
+                                    );
+                                }
+                            };
+                        }
+                        (COMPOUND, "effects" | "attributes") => self.skip(COMPOUND, 1)?,
+                        (_, field) => {
+                            return Err(format!("unexpected biome element field {field}").into());
+                        }
+                    }
+                },
+                (_, field) => return Err(format!("unexpected biome entry field {field}").into()),
+            }
+        }
+        let name = name.ok_or("biome entry without a name")?;
+        let missing = |field: &str| format!("biome {name} has no {field}");
+        Ok(CodecBiome {
+            id: id.ok_or_else(|| missing("id"))?,
+            temperature: temperature.ok_or_else(|| missing("temperature"))?,
+            downfall: downfall.ok_or_else(|| missing("downfall"))?,
+            has_precipitation: precipitation.ok_or_else(|| missing("has_precipitation"))?,
+            frozen,
+            name,
+        })
+    }
+
     fn skip(&mut self, kind: u8, depth: usize) -> Result<()> {
         if depth > MAX_DEPTH {
-            return Err("network tag export nests too deeply".into());
+            return Err("network export nests too deeply".into());
         }
         match kind {
             BYTE => {

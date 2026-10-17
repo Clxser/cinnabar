@@ -199,7 +199,7 @@ fn render(gpu: &GpuContext, files: &[(&str, &str)]) -> Vec<u8> {
         },
         &mut state.history,
     );
-    state.write_uniforms(&gpu.queue, &frame, 0.016, Vec3::ZERO);
+    state.write_uniforms(&gpu.queue, &frame, 0.016, Vec3::ZERO, [0; 2]);
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
     let clear = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
