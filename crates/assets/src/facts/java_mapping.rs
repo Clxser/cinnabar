@@ -24,6 +24,21 @@ const BIOME_REGISTRY_BYTES: &[u8] = include_bytes!("../../data/biome-registry-v2
 const SOURCE_MANIFEST_BYTES: &[u8] =
     include_bytes!("../../../../assets/geyser-mappings-source.json");
 
+/// The Java Edition release the pinned mappings describe: `java_edition` of
+/// [`SOURCE_MANIFEST`], e.g. `26.3`. Java shader packs see it as `MC_VERSION`.
+pub fn java_edition() -> &'static str {
+    #[derive(Deserialize)]
+    struct Manifest {
+        java_edition: Box<str>,
+    }
+    static EDITION: LazyLock<Box<str>> = LazyLock::new(|| {
+        serde_json::from_slice::<Manifest>(SOURCE_MANIFEST_BYTES)
+            .map(|m| m.java_edition)
+            .expect("the checked-in GeyserMC source manifest names its Java edition")
+    });
+    &EDITION
+}
+
 /// A carrier error always names the failed validation.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[error("invalid Java mapping carrier ({0}); rebuild with registryc --kind java-mapping")]
