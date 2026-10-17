@@ -8,16 +8,16 @@ use super::PropertiesDiagnostic;
 use crate::expr::{Expr, macro_value};
 
 /// One key/value pair from an active logical line.
-pub(super) struct RawEntry {
+pub(crate) struct RawEntry {
     /// 1-based line where the logical line starts.
-    pub(super) line: u32,
-    pub(super) key: String,
-    pub(super) value: String,
+    pub(crate) line: u32,
+    pub(crate) key: String,
+    pub(crate) value: String,
 }
 
 /// Reads the key/value pairs of `text` that survive conditional preprocessing, in file
 /// order. Malformed directives are reported to `diagnostics` and reading continues.
-pub(super) fn read_entries(
+pub(crate) fn read_entries(
     text: &str,
     defines: &BTreeMap<String, String>,
     diagnostics: &mut Vec<PropertiesDiagnostic>,

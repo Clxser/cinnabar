@@ -4,7 +4,7 @@
 //! then read as java.util.Properties, and recognised keys are parsed into typed rules.
 //! Malformed input never fails the whole file: it becomes a [`PropertiesDiagnostic`].
 
-mod reader;
+pub(crate) mod reader;
 mod rules;
 #[cfg(test)]
 mod tests;
