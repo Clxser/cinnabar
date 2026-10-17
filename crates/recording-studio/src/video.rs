@@ -114,7 +114,6 @@ pub fn mux_arguments(video: &Path, audio: &Path, output: &Path) -> Vec<String> {
             "aac",
             "-b:a",
             "192k",
-            "-shortest",
             "-movflags",
             "+faststart",
         ]
@@ -333,7 +332,7 @@ impl Recorder {
         self.expected_frames.store(frames, Ordering::Release);
     }
 
-    /// Closes every [`FrameSink`] clone and waits for ffmpeg; then muxes `audio` (a WAV) in.
+    /// Closes every producer, waits for encoding, and muxes audio without trimming encoded video packets.
     pub fn finish(mut self, audio: Option<&Path>) -> Result<Summary, String> {
         self.sink.close();
         let summary = match self.writer.take() {

@@ -154,8 +154,7 @@ impl CaptureManifest {
         for track in &self.scene_tracks {
             if !track.complete {
                 let message = format!(
-                    "Scene track {} is incomplete: {} The POV video remains editable.",
-                    track.schema,
+                    "Native replay is incomplete: {} The recorded video remains editable.",
                     track.error.as_deref().unwrap_or("storage did not finish")
                 );
                 if let Some(notice) = &mut notice {

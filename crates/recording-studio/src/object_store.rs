@@ -1,9 +1,11 @@
 //! Immutable, hash-addressed recording assets. All filesystem work belongs on capture/seek workers.
 
 use std::{
+    collections::BTreeMap,
     fs::{self, File},
     io::{self, BufReader, BufWriter, Read, Write},
     path::{Path, PathBuf},
+    sync::{Arc, Weak},
 };
 
 use serde::{Deserialize, Serialize};
@@ -13,6 +15,7 @@ use crate::archive::ArchiveError;
 
 const DIRECTORY: &str = "objects";
 const EXTENSION: &str = "cinasset";
+const MAX_SHARED_PIXELS: usize = 4096;
 pub const MAX_ASSET_BYTES: u64 = 1024 * 1024 * 1024;
 pub const MAX_RECORDING_ASSETS: usize = 65_536;
 
@@ -112,6 +115,7 @@ pub struct AssetWriter {
     maximum: u64,
     stored: u64,
     objects: usize,
+    shared_pixels: BTreeMap<usize, (Weak<[u8]>, AssetId)>,
 }
 
 impl AssetWriter {
@@ -181,11 +185,37 @@ impl AssetWriter {
             maximum,
             stored,
             objects,
+            shared_pixels: BTreeMap::new(),
         })
     }
 
     pub const fn stored_bytes(&self) -> u64 {
         self.stored
+    }
+
+    /// Reuses an already published immutable pixel allocation without rehashing or staging its bytes.
+    /// Weak leases guard pointer reuse; expired allocation handles are pruned before a cache miss writes.
+    pub fn put_shared_pixels(&mut self, bytes: &Arc<[u8]>) -> Result<AssetId, ArchiveError> {
+        if bytes.is_empty() {
+            return Err(ArchiveError::Invalid("empty recorded pixel allocation"));
+        }
+        let key = Arc::as_ptr(bytes) as *const u8 as usize;
+        if let Some((old, id)) = self.shared_pixels.get(&key)
+            && old.upgrade().is_some_and(|old| Arc::ptr_eq(&old, bytes))
+        {
+            return Ok(*id);
+        }
+        self.shared_pixels
+            .retain(|_, (pixels, _)| pixels.strong_count() != 0);
+        let directory = self.reader.directory.clone();
+        let id = self.put(bytes.len() as u64, |out| {
+            out.write_all(bytes)
+                .map_err(|error| file_error(&directory, error))
+        })?;
+        if self.shared_pixels.len() < MAX_SHARED_PIXELS {
+            self.shared_pixels.insert(key, (Arc::downgrade(bytes), id));
+        }
+        Ok(id)
     }
 
     /// Streams one object through bounded hashing and atomic no-clobber publication.

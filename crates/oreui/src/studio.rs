@@ -138,14 +138,15 @@ pub(super) fn draw(
         top += canvas.r(5.2);
     }
     if let Some(notice) = &studio.notice {
-        canvas.text_line(
+        let height = canvas.text(
             notice,
             [pad, top],
             size[0] - pad * 2.0,
             CAPTION,
             TEXT_DIMMER,
+            false,
         )?;
-        top += canvas.r(3.2);
+        top += height + canvas.r(1.2);
     }
     top = recording::draw(canvas, view, [pad, top, size[0] - pad, size[1] - pad])?;
     top = export::draw(canvas, view, [pad, top, size[0] - pad, size[1] - pad])?;

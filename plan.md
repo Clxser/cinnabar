@@ -9464,6 +9464,15 @@ Current implementation; runtime acceptance remains incomplete:
   storage failures now retain diagnostics, and unfinished takes explain their
   missing manifest. Runtime acceptance of these recovery paths remains open.
 
+- Frozen runtime animation spans now repack shared or reordered frame ranges
+  without changing animation indices, texture order or timing. Carrier validation
+  remains strict. Live video capture uses three ordered readback slots within a
+  byte budget, transfers the final screenshot consumer's allocation directly and
+  publishes progress on its quantized clock. Immutable actor pixels reuse bounded
+  weak publication leases. Recording/export muxing retains encoded video packets
+  instead of trimming them to audio packet timing. Playback and performance
+  acceptance for these changes remain open.
+
 Required work remains open:
 
 - Complete recording options and the native OreUI library/editor, including full

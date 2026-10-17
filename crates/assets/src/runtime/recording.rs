@@ -10,7 +10,10 @@ use block_transform::random_offset::{RandomOffsetAxis, RandomOffsetComponent};
 use serde::{Deserialize, Serialize};
 
 use super::RuntimeAssets;
-use crate::{AssetError, MAX_MODEL_TEMPLATES, compiled::CompiledAssetsRef};
+use crate::{
+    Animation, AssetError, MAX_ANIMATION_FRAMES, MAX_MODEL_TEMPLATES, TextureRef,
+    compiled::CompiledAssetsRef,
+};
 
 const MAGIC: [u8; 8] = *b"CIRWLD01";
 const HEADER_BYTES: usize = MAGIC.len() + std::mem::size_of::<u64>() + std::mem::size_of::<u32>();
@@ -81,6 +84,8 @@ impl RuntimeAssets {
         let maximum_body = maximum_bytes
             .checked_sub(HEADER_BYTES + metadata.len())
             .ok_or_else(|| invalid("runtime recording byte budget is too small"))?;
+        let (recorded_animations, recorded_frames) =
+            recording_animation_spans(animations, animation_frames)?;
         let compiled = CompiledAssetsRef {
             visuals,
             light_properties,
@@ -88,8 +93,8 @@ impl RuntimeAssets {
             materials,
             model_templates,
             model_quads,
-            animations,
-            animation_frames,
+            animations: &recorded_animations,
+            animation_frames: &recorded_frames,
             texture_pages,
             biomes,
             provenance,
@@ -216,6 +221,42 @@ impl RuntimeAssets {
                 .map(|rule| rule.name.len())
                 .sum::<usize>()
     }
+}
+
+/// Runtime overlays may share or reorder frame spans; the frozen carrier owns contiguous copies.
+/// Animation indices, frame order and timing stay unchanged, and startup carrier validation stays strict.
+fn recording_animation_spans<'a>(
+    animations: &'a [Animation],
+    frames: &'a [TextureRef],
+) -> Result<(Cow<'a, [Animation]>, Cow<'a, [TextureRef]>), AssetError> {
+    let mut count = 0_usize;
+    let mut contiguous = true;
+    for animation in animations {
+        let start = animation.frame_start as usize;
+        let end = start
+            .checked_add(animation.frame_count as usize)
+            .filter(|&end| end <= frames.len())
+            .ok_or_else(|| invalid("recorded animation refers outside its runtime frame table"))?;
+        contiguous &= start == count;
+        count = count
+            .checked_add(end - start)
+            .filter(|&count| count <= MAX_ANIMATION_FRAMES)
+            .ok_or_else(|| invalid("recorded animation frames exceed their byte budget"))?;
+    }
+    if contiguous && count == frames.len() {
+        return Ok((Cow::Borrowed(animations), Cow::Borrowed(frames)));
+    }
+    let mut recorded = Vec::with_capacity(animations.len());
+    let mut packed = Vec::with_capacity(count);
+    for animation in animations {
+        let start = animation.frame_start as usize;
+        recorded.push(Animation {
+            frame_start: packed.len() as u32,
+            ..*animation
+        });
+        packed.extend_from_slice(&frames[start..start + animation.frame_count as usize]);
+    }
+    Ok((Cow::Owned(recorded), Cow::Owned(packed)))
 }
 
 /// Reuses overlay source admission and the authored random-offset owner's validation contract.

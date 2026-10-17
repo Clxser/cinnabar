@@ -111,7 +111,7 @@ pub(super) fn store(
                                 admission,
                             } = resident;
                             Ok(Skin {
-                                source: pixels(store, skin)?,
+                                source: pixels(store, skin.pixels())?,
                                 source_bytes: skin.len(),
                                 texels: pixels(store, texels)?,
                                 admission: *admission,
@@ -277,13 +277,11 @@ pub(super) fn load(
 }
 
 /// Raw pixels are already framed by the typed metadata and addressed by their full SHA-256.
-fn pixels(store: &mut AssetWriter, bytes: &[u8]) -> Result<AssetId, ArchiveError> {
+fn pixels(store: &mut AssetWriter, bytes: &Arc<[u8]>) -> Result<AssetId, ArchiveError> {
     if bytes.is_empty() {
         return Err(ArchiveError::Invalid("empty recorded actor raster"));
     }
-    store.put(MAX_BYTES as u64, |out| {
-        out.write_all(bytes).map_err(io_error)
-    })
+    store.put_shared_pixels(bytes)
 }
 
 /// Glint rasters use the same immutable pixel objects as ordinary artwork pages.

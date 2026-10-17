@@ -198,12 +198,11 @@ fn filter(clip: &crate::model::AudioClip, frames: u64) -> String {
     stages.join(",")
 }
 
-/// AAC muxing reads exact stereo float PCM and retains the video's planned duration, including silent tails.
+/// AAC muxing retains every encoded video packet; the PCM mix already owns its exact sample extent.
 pub(super) fn mux(
     video: &Path,
     audio: &Path,
     output: &Path,
-    duration: MediaTime,
     cancellation: &Cancellation,
 ) -> Result<(), String> {
     let executable = crate::video::find_ffmpeg()?;
@@ -231,9 +230,8 @@ pub(super) fn mux(
         ])
         .arg(audio)
         .args([
-            "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-t",
+            "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
         ])
-        .arg(seconds(duration))
         .args(["-movflags", "+faststart"])
         .arg(output)
         .stdin(Stdio::null())

@@ -51,9 +51,16 @@ impl Studio {
         };
     }
 
-    /// Publishes compact progress only when it changed, preserving immutable menu snapshots.
+    /// Publishes phase and diagnostics immediately; frame counters follow the quantized capture clock.
     fn capture_status(&mut self, status: CaptureStatus) {
-        if self.view.capture == status {
+        let old = &self.view.capture;
+        if old == &status
+            || old.phase == status.phase
+                && old.elapsed == status.elapsed
+                && old.audio == status.audio
+                && old.path == status.path
+                && old.message == status.message
+        {
             return;
         }
         let completed = (status.phase == CapturePhase::Complete

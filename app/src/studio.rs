@@ -3,7 +3,7 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -59,10 +59,8 @@ struct Active {
     started: f64,
     identity: (u64, i32, u64),
     stopping: Option<(f64, MediaTime)>,
-    pending: Arc<AtomicBool>,
+    video_readbacks: frames::Readbacks,
     captured: Arc<AtomicU64>,
-    failed: Receiver<String>,
-    errors: crossbeam_channel::Sender<String>,
     last_frame: Option<u64>,
     last_attack: u64,
     last_combat: u64,
@@ -126,6 +124,10 @@ fn update(world: &mut World) {
     }
     if let Some(mut active) = state.active.take() {
         let elapsed = MediaTime::from_seconds((now - active.started).max(0.0));
+        if let Err(error) = frames::drain(&mut active) {
+            active.failure.get_or_insert(error);
+            stop(&mut active, now);
+        }
         if active.terrain_failure.is_none()
             && let Some(error) = active
                 .terrain
@@ -149,12 +151,7 @@ fn update(world: &mut World) {
             active.failure.get_or_insert(error);
             stop(&mut active, now);
         }
-        if let Some(error) = active
-            .failed
-            .try_recv()
-            .ok()
-            .or_else(|| active.session.error())
-        {
+        if let Some(error) = active.session.error() {
             active.failure.get_or_insert(error);
             stop(&mut active, now);
         }
@@ -211,7 +208,10 @@ fn update(world: &mut World) {
         if let Some((since, duration)) = active.stopping {
             state.status.phase = CapturePhase::Finishing;
             state.status.elapsed = duration;
-            if !active.pending.load(Ordering::Acquire) || now - since >= 5.0 {
+            if active.video_readbacks.pending() == 0 || now - since >= 5.0 {
+                if active.video_readbacks.pending() != 0 {
+                    active.failure.get_or_insert_with(|| "Video readback timed out while saving; the captured prefix was retained.".into());
+                }
                 finalize(&mut state, active, duration);
             } else {
                 state.active = Some(active);
@@ -425,7 +425,6 @@ fn poll_start(
             state.status.path = Some(session.directory().to_path_buf());
             state.status.audio = audio.is_some();
             bevy::log::info!(game_audio = state.status.audio, "Studio recording started");
-            let (errors, failed) = bounded(1);
             state.active = Some(Active {
                 session,
                 audio,
@@ -437,10 +436,8 @@ fn poll_start(
                 started: now,
                 identity: identity.expect("checked world identity"),
                 stopping: None,
-                pending: Arc::default(),
+                video_readbacks: frames::Readbacks::default(),
                 captured: Arc::default(),
-                failed,
-                errors,
                 last_frame: None,
                 last_attack: observations::attack_revision(world),
                 last_combat: observations::combat_revision(world),
@@ -604,6 +601,7 @@ fn poll_finish(state: &mut NativeCapture) {
         Ok(summary) => {
             bevy::log::info!(
                 frames = summary.video.frames,
+                missed_frames = summary.manifest.missed_video_frames,
                 duration_us = summary.manifest.duration.0,
                 "Studio recording saved"
             );
@@ -617,8 +615,7 @@ fn poll_finish(state: &mut NativeCapture) {
                 .find(|track| !track.complete)
                 .map(|track| {
                     format!(
-                        "Video saved; {} is incomplete: {}",
-                        track.schema,
+                        "Video saved; 3D replay is incomplete: {}",
                         track
                             .error
                             .as_deref()

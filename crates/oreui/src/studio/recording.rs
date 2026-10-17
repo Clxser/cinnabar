@@ -73,12 +73,13 @@ pub(super) fn draw(
         CapturePhase::Complete => "Recording saved in your studio.".into(),
         CapturePhase::Failed => "Recording stopped. Your saved media has been retained.".into(),
     });
-    canvas.text_line(
+    let message_height = canvas.text(
         &message,
         [area[0], top + canvas.r(5.6)],
         area[2] - area[0],
         CAPTION,
         TEXT_DIMMER,
+        false,
     )?;
-    Ok(top + canvas.r(9.2))
+    Ok((top + canvas.r(5.6) + message_height + pad).max(top + canvas.r(9.2)))
 }

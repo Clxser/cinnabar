@@ -28,22 +28,31 @@ mod offscreen;
 
 type SaveResult = Result<String, String>;
 type CaptureConsumer = Box<dyn FnOnce(&Image) + Send + Sync>;
+type OwnedCaptureConsumer = Box<dyn FnOnce(Image) + Send + Sync>;
 
 /// Everything that wants this frame's pixels. Bevy silently drops a second capture of one
 /// window in a frame, so a single readback serves every consumer.
 #[derive(Resource, Default)]
-pub(crate) struct FrameCapture(Vec<CaptureConsumer>);
+pub(crate) struct FrameCapture {
+    shared: Vec<CaptureConsumer>,
+    owned: Vec<OwnedCaptureConsumer>,
+}
 
 impl FrameCapture {
     /// Queues a consumer of this frame's shared readback.
+    #[cfg(any(feature = "developer-control", test))]
     pub(crate) fn request(&mut self, consumer: impl FnOnce(&Image) + Send + Sync + 'static) {
-        self.0.push(Box::new(consumer));
+        self.shared.push(Box::new(consumer));
+    }
+
+    /// The last owned consumer receives the readback allocation without another full-image copy.
+    pub(crate) fn request_owned(&mut self, consumer: impl FnOnce(Image) + Send + Sync + 'static) {
+        self.owned.push(Box::new(consumer));
     }
 
     /// Runs image conversion and encoding on the existing I/O task pool after readback.
     pub(crate) fn request_encoded(&mut self, consumer: impl FnOnce(Image) + Send + Sync + 'static) {
-        self.request(move |image| {
-            let image = image.clone();
+        self.request_owned(move |image| {
             bevy::tasks::IoTaskPool::get()
                 .spawn(async move { consumer(image) })
                 .detach();
@@ -67,10 +76,11 @@ fn spawn_frame_capture(
     target: Res<offscreen::FrameTarget>,
     mut commands: Commands,
 ) {
-    if capture.0.is_empty() {
+    if capture.shared.is_empty() && capture.owned.is_empty() {
         return;
     }
-    let mut consumers = std::mem::take(&mut capture.0);
+    let mut consumers = std::mem::take(&mut capture.shared);
+    let mut owned = std::mem::take(&mut capture.owned);
     let screenshot = target
         .0
         .as_ref()
@@ -79,9 +89,15 @@ fn spawn_frame_capture(
         });
     commands
         .spawn(screenshot)
-        .observe(move |captured: On<ScreenshotCaptured>| {
+        .observe(move |mut captured: On<ScreenshotCaptured>| {
             for consumer in consumers.drain(..) {
                 consumer(&captured.image);
+            }
+            if let Some(last) = owned.pop() {
+                for consumer in owned.drain(..) {
+                    consumer(captured.image.clone());
+                }
+                last(std::mem::take(&mut captured.event_mut().image));
             }
         });
 }
@@ -297,7 +313,7 @@ mod tests {
             true,
             Default::default(),
         );
-        capture.0.pop().unwrap()(&frame);
+        capture.owned.pop().unwrap()(frame);
         let mut result = None;
         test_time::eventually("off-thread image encoding", || {
             result = receiver.try_recv().ok();

@@ -332,7 +332,7 @@ fn run<S: FrameSource>(
         let mix = audio::mix(&request, duration, scratch.path(), cancellation)?;
         update(status, |status| status.phase = ExportPhase::Muxing);
         let muxed = files::staging(&parent)?;
-        audio::mux(&staged, &mix, &muxed, duration, cancellation)?;
+        audio::mux(&staged, &mix, &muxed, cancellation)?;
         files::check_bytes(&muxed, VIDEO_BYTE_LIMIT)?;
         staged = muxed;
     }
