@@ -245,7 +245,9 @@ type StageFiles = Vec<(StageKind, String)>;
 
 /// Every program Iris would load for dimension folder `folder`: a program found in the
 /// folder takes all its stages from there, otherwise from the `shaders/` root. Files whose
-/// stem is not an Iris program name are ignored. Sorted by group, then name, render first.
+/// stem is not an Iris program name are ignored. Sorted in frame order: by group, then pass
+/// index, with a pass's compute programs (`<pass>.csh`, then `<pass>_a`…`_z`) dispatched
+/// before its draw, as Iris does.
 pub fn enumerate_programs(source: &PackSource, folder: &str) -> Vec<ProgramSource> {
     // (name, kind) -> folder -> stages
     let mut found: BTreeMap<(String, ProgramKind), BTreeMap<String, StageFiles>> = BTreeMap::new();
@@ -294,8 +296,9 @@ pub fn enumerate_programs(source: &PackSource, folder: &str) -> Vec<ProgramSourc
             })
         })
         .collect();
-    out.sort_by(|a, b| {
-        (a.group, natural_key(&a.name), a.kind).cmp(&(b.group, natural_key(&b.name), b.kind))
+    out.sort_by_key(|p| {
+        let (family, index, suffix) = natural_key(&p.name);
+        (p.group, family, index, p.kind == ProgramKind::Render, suffix)
     });
     out
 }
@@ -371,18 +374,44 @@ mod tests {
         assert_eq!(
             names,
             [
-                ("composite", "world0", ProgramKind::Render),
                 ("composite_a", "world0", ProgramKind::Compute),
+                ("composite", "world0", ProgramKind::Render),
                 ("final", "", ProgramKind::Render),
             ]
         );
         assert_eq!(
-            programs[0].stages,
+            programs[1].stages,
             [
                 (StageKind::Vertex, "world0/composite.vsh".to_string()),
                 (StageKind::Fragment, "world0/composite.fsh".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn a_pass_dispatches_its_computes_before_its_draw() {
+        let source = PackSource::from_files([
+            ("deferred4.vsh", ""),
+            ("deferred4.fsh", ""),
+            ("deferred4_a.csh", ""),
+            ("deferred4.csh", ""),
+            ("deferred3.fsh", ""),
+            ("deferred3.vsh", ""),
+            ("deferred10_b.csh", ""),
+        ]);
+        let order: Vec<(String, ProgramKind)> = enumerate_programs(&source, "world0")
+            .into_iter()
+            .map(|p| (p.name, p.kind))
+            .collect();
+        let expected = [
+            ("deferred3", ProgramKind::Render),
+            ("deferred4", ProgramKind::Compute),
+            ("deferred4_a", ProgramKind::Compute),
+            ("deferred4", ProgramKind::Render),
+            ("deferred10_b", ProgramKind::Compute),
+        ]
+        .map(|(n, k)| (n.to_string(), k));
+        assert_eq!(order, expected);
     }
 
     #[test]
