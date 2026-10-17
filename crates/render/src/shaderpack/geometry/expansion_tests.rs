@@ -782,7 +782,9 @@ fn translated_gbuffers_program_draws_expanded_terrain() {
             compilation_options: Default::default(),
             buffers: &buffers,
         },
+        // The translator flips clip-space Y, mirroring the counter-clockwise front faces.
         primitive: wgpu::PrimitiveState {
+            front_face: wgpu::FrontFace::Cw,
             cull_mode: Some(wgpu::Face::Back),
             ..Default::default()
         },
@@ -899,7 +901,8 @@ fn translated_gbuffers_program_draws_expanded_terrain() {
         ]
     };
     // Block (2,5,3)'s top centre sits on its faces' shared diagonal, between AO 1.0 and 0.8.
-    let albedo = pixel(0, 24, 32);
+    // Rows are stored bottom-up (the translator flips clip-space Y), so it lands on row 31.
+    let albedo = pixel(0, 24, 31);
     let expected = SPRITE_RGBA.map(|channel| (f32::from(channel) * 0.9).round() as u8);
     assert!(
         albedo[..3]
@@ -910,7 +913,7 @@ fn translated_gbuffers_program_draws_expanded_terrain() {
         "albedo {albedo:?} vs {expected:?}"
     );
     // Lightmap (48,240)..(96,232) midway, through gl_TextureMatrix[1]: (72 + 8) / 256, (236 + 8) / 256.
-    let data = pixel(1, 24, 32);
+    let data = pixel(1, 24, 31);
     let lightmap = [80.0 / 256.0 * 255.0, 244.0 / 256.0 * 255.0];
     assert!(
         (f32::from(data[0]) - lightmap[0]).abs() <= 2.0
