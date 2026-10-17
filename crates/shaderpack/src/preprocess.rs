@@ -147,7 +147,11 @@ impl Expander<'_> {
                 rewrite_option_line(line, self.options, self.values)
             };
             let line = rewritten.as_deref().unwrap_or(line);
-            let line = if trimmed.starts_with("#error") {
+            let line = if !self.in_block && is_unknown_directive(trimmed) {
+                // Iris's preprocessor (JCPP) warns about and skips unknown directives,
+                // which some packs use as `#====` banner comments.
+                String::new()
+            } else if trimmed.starts_with("#error") {
                 // pp-rs tokenizes lines inside skipped groups and rejects the `"` of `#error "…"`.
                 line.replace('"', "")
             } else {
@@ -194,6 +198,38 @@ impl Expander<'_> {
         out.push_str(&line[scan.code_end..]);
         out
     }
+}
+
+/// A `#` line whose directive name GLSL doesn't define. A lone `#` is the null directive.
+fn is_unknown_directive(trimmed: &str) -> bool {
+    const KNOWN: [&str; 14] = [
+        "define",
+        "undef",
+        "if",
+        "ifdef",
+        "ifndef",
+        "else",
+        "elif",
+        "endif",
+        "include",
+        "line",
+        "error",
+        "pragma",
+        "extension",
+        "version",
+    ];
+    let Some(rest) = trimmed.strip_prefix('#') else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    let end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    let word = &rest[..end];
+    if word.is_empty() {
+        return !rest.is_empty() && !rest.starts_with("//") && !rest.starts_with("/*");
+    }
+    !KNOWN.contains(&word)
 }
 
 /// `shaders/`-relative target of an `#include` argument written in `from`.

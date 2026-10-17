@@ -11,6 +11,7 @@ mod declare;
 mod interface;
 mod items;
 mod legacy;
+mod narrow;
 mod specialize;
 
 use crate::preprocess::Preprocessed;
@@ -86,7 +87,8 @@ pub(crate) fn transform(
     iface: &mut ProgramInterface,
     names: &ResourceNames<'_>,
 ) -> Result<StageDraft, TransformError> {
-    let lg = legacy::rewrite(&pp.tokens, stage, pp.version)?;
+    let wide = narrow::lower(&pp.tokens);
+    let lg = legacy::rewrite(wide.as_deref().unwrap_or(&pp.tokens), stage, pp.version)?;
     let mut items: Vec<Item> = vec![];
     let mut user_funcs: HashSet<String> = HashSet::new();
     for it in split_items(&lg.toks) {

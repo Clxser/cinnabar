@@ -24,7 +24,9 @@ pub(super) fn specialize_opaque_params(mut items: Vec<Item>) -> Vec<Item> {
         })
         .flatten()
         .collect();
-    let mut created: HashSet<String> = HashSet::new();
+    // Specialized name and template arity: overloads of one helper share the specialized
+    // name (they stay overloads) but each needs its own copy.
+    let mut created: HashSet<(String, usize)> = HashSet::new();
     let mut template_names: HashSet<String> = HashSet::new();
     for _ in 0..MAX_ROUNDS {
         let mut templates: HashMap<String, Vec<(usize, Vec<Param>)>> = HashMap::new();
@@ -103,7 +105,7 @@ pub(super) fn specialize_opaque_params(mut items: Vec<Item>) -> Vec<Item> {
                         }
                         repl.push(p(")").at(line));
                         toks.splice(i..=close, repl);
-                        if created.insert(sname.clone()) {
+                        if created.insert((sname.clone(), params.len())) {
                             new_funcs.push((tidx, sname, params, opaque_args));
                         }
                         changed = true;
