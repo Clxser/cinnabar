@@ -21,6 +21,7 @@ reads = [
     "assets/cinnangles-sans-source.json",
     "assets/fonts/CinnanglesSans.ttf",
     "assets/hud-source-v2193.json",
+    "assets/licenses/GeyserMC-Geyser-MIT.txt",
     "assets/licenses/GeyserMC-mappings-MIT.txt",
     "assets/licenses/Monocraft-OFL-1.1.txt",
     "assets/licenses/NotoSansCJK-OFL-1.1.txt",

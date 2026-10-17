@@ -6,20 +6,30 @@ fn root() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// The manifest's archive cache, or `None` (with the missing-fixture notice) when absent.
+/// The manifest's archive cache, or `None` (with the missing-fixture notice) when it or a
+/// cached Geyser source file is absent.
 fn pinned_archive() -> Option<std::path::PathBuf> {
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(root().join(java_mapping::SOURCE_MANIFEST)).unwrap())
             .unwrap();
+    let geyser = manifest["geyser"]["files"].as_object().unwrap();
     let path = root().join(manifest["archive"]["cache"].as_str().unwrap());
-    if path.is_file() {
-        Some(path)
-    } else {
-        eprintln!(
-            "missing fixture: {}; skipping Java mapping regeneration (registryc --kind java-mapping downloads it)",
-            path.display()
-        );
-        None
+    let missing = std::iter::once(path.clone())
+        .chain(
+            geyser
+                .values()
+                .map(|file| root().join(file["cache"].as_str().unwrap())),
+        )
+        .find(|path| !path.is_file());
+    match missing {
+        None => Some(path),
+        Some(missing) => {
+            eprintln!(
+                "missing fixture: {}; skipping Java mapping regeneration (registryc --kind java-mapping downloads it)",
+                missing.display()
+            );
+            None
+        }
     }
 }
 
@@ -54,6 +64,48 @@ fn an_unpinned_archive_cannot_supply_the_mapping() {
     let out = scratch.path().join("out.bin");
     assert!(write(&root(), Some(&archive), &out).is_err());
     assert!(!out.exists());
+}
+
+#[test]
+fn identities_prefer_the_same_name_then_the_first_given() {
+    let pairs = [
+        ("minecraft:illusioner", "minecraft:evocation_illager"),
+        ("minecraft:evoker", "minecraft:evocation_illager"),
+        ("minecraft:spectral_arrow", "minecraft:arrow"),
+        ("minecraft:arrow", "minecraft:arrow"),
+        ("minecraft:cow", "minecraft:cow"),
+    ]
+    .map(|(java, bedrock)| (java.to_owned(), bedrock.to_owned()));
+    let (table, inverse) = identities(pairs.to_vec()).unwrap();
+    let java: Vec<&str> = table.iter().map(|(java, _)| java.as_ref()).collect();
+    assert_eq!(
+        java,
+        [
+            "minecraft:arrow",
+            "minecraft:cow",
+            "minecraft:evoker",
+            "minecraft:illusioner",
+            "minecraft:spectral_arrow"
+        ]
+    );
+    let chosen: Vec<(&str, &str)> = inverse
+        .iter()
+        .map(|&index| {
+            let (java, bedrock) = &table[usize::from(index)];
+            (bedrock.as_ref(), java.as_ref())
+        })
+        .collect();
+    assert_eq!(
+        chosen,
+        [
+            ("minecraft:arrow", "minecraft:arrow"),
+            ("minecraft:cow", "minecraft:cow"),
+            ("minecraft:evocation_illager", "minecraft:illusioner"),
+        ]
+    );
+    let mut duplicate = pairs.to_vec();
+    duplicate.push(("minecraft:cow".into(), "minecraft:mooshroom".into()));
+    assert!(identities(duplicate).is_err());
 }
 
 #[test]
@@ -302,13 +354,22 @@ fn the_java_biome_registry_is_the_geyser_biome_set_with_its_climate_and_tags() {
 }
 
 #[test]
-fn the_shipped_license_is_the_pinned_upstream_license() {
+fn the_shipped_licenses_are_the_pinned_upstream_licenses() {
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(root().join(java_mapping::SOURCE_MANIFEST)).unwrap())
             .unwrap();
-    let shipped = std::fs::read(root().join("assets/licenses/GeyserMC-mappings-MIT.txt")).unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&shipped)),
-        manifest["license"]["sha256"].as_str().unwrap()
-    );
+    for (shipped, pinned) in [
+        ("GeyserMC-mappings-MIT.txt", &manifest["license"]["sha256"]),
+        (
+            "GeyserMC-Geyser-MIT.txt",
+            &manifest["geyser"]["files"]["license"]["sha256"],
+        ),
+    ] {
+        let bytes = std::fs::read(root().join("assets/licenses").join(shipped)).unwrap();
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&bytes)),
+            pinned.as_str().unwrap(),
+            "{shipped}"
+        );
+    }
 }

@@ -58,13 +58,17 @@ fn main() -> Result<()> {
         let summary =
             registry_policy::java_mapping::write(&args.root, args.archive.as_deref(), &args.out)?;
         println!(
-            "Mapped {} of {} block states ({} from a similar state) and {} of {} biomes to the {} Java Edition biomes",
+            "Mapped {} of {} block states ({} from a similar state) and {} of {} biomes to the {} Java Edition biomes, {} Java entity types to {} Bedrock entities and {} Java items to {} Bedrock items",
             summary.mapped_states,
             summary.states,
             summary.approximate_states,
             summary.mapped_biomes,
             summary.biomes,
-            summary.java_biomes
+            summary.java_biomes,
+            summary.entities,
+            summary.bedrock_entities,
+            summary.items,
+            summary.bedrock_items
         );
         if args.check {
             let expected = args.root.join(assets::facts::java_mapping::SOURCE_PATH);
