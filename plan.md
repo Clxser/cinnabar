@@ -9483,28 +9483,58 @@ Current implementation; runtime acceptance remains incomplete:
   from capture misses. Existing-media decoding was inspected, but in-app playback
   smoothness, fallback behavior and long-session budgets remain unverified.
 
+- Native replay coverage now publishes received actors before camera culling,
+  interpolates actor/target poses across continuous samples, restores dimension and
+  renderer settings, and records optional hand/HUD plus prepared particles,
+  weather, overlays and independent received-column block models. Explicit legacy,
+  warmup, capacity and unreceived-world limits remain visible; new tracks cannot
+  restore inputs omitted from older takes. Runtime visual parity remains open.
+
+- Cinematic paths now support time-aware smoothing, shortest-angle rotation,
+  editable keys/easing and typed camera values. Shared source-time speed ramps
+  drive visual sampling, linked game audio, transitions and source-anchored
+  generated effects/markers. Ramp audio currently changes pitch. Native/raster
+  layers share a linear premultiplied preview/export compositor with crop,
+  opacity and crossfades. These implementations still need rendered acceptance.
+
+- The editor now has horizontal wheel panning, pointer-centered zoom, a project
+  overview, track scrollbars, drag moves/trims, optional playhead following and
+  compact Preview/Media/Inspector panels. Repeated unchanged pointer seeks no
+  longer invalidate preview preparation. Looks and additional color/detail
+  effects remain editable curves; generated hit edits use bounded, varied recipes.
+  Import/relink, bounded source thumbnails, capture/output settings and destination
+  editing run through the existing worker and undo owners. Interrupted POV video
+  can be remuxed to a separate recovered file; incomplete native journals are not
+  reported recovered. Interaction and long-session acceptance remain open.
+
+- Requested capture/output cadence includes 120/240 FPS. Capture preparation is
+  admitted at the selected cadence rather than every uncapped client frame. New
+  capture sizing preserves native scene coordinates and scales final GPU output
+  before readback; sustained cadence still depends on render/encode throughput,
+  with missed slots reported explicitly. No measured high-FPS claim is made.
+
 Required work remains open:
 
-- Complete recording options and the native OreUI library/editor, including full
-  keyboard/pointer timeline gestures, inspectors, accessible focus,
-  loading/error/recovery states and confirmation before discarding dirty edits.
-- Complete and validate capture of received terrain, actors and appearance,
-  lighting/weather/time, camera, audio and committed gameplay evidence. Scene schemas,
-  session/dimension boundaries, periodic checkpoints and asset identities must
-  support independent offline playback without sending live network input.
-- Incremental replay playback, scrubbing, seek cancellation and temporal resets;
-  player/free/path/follow/orbit camera preview; preview/export composition parity.
-- Linked track edits, audio/video/image import and relinking, waveform/thumbnail
-  caches, speed ramps, editable automatic camera/effect proposals and audio mixing.
-- Finish the shared preview/export compositor, hardware/software export,
-  progress/cancellation, completed-file publication and interrupted-media recovery.
-  Validate capture limits for disk quota, long sessions, resize and shutdown.
-- Owning-crate regressions and rendered/runtime acceptance for recording, seeking,
-  editing, saving/reopening, automatic PvP edits, cinematics and exported video.
-  Performance and long-recording resource bounds need measured validation. Native
-  Windows production Cargo checking has passed in the play profile for both
-  default and enhanced client configurations. Automated tests and game launches
-  remain unrun; these checks do not establish replay or editor runtime acceptance.
+- Render and exercise recording options, library/editor, focus, scrolling,
+  numeric/drag timeline edits, loading/error/recovery states and dirty-edit
+  confirmation on wide, narrow and short windows.
+- Validate received terrain/actors/appearance, native visuals, lighting, time,
+  camera and gameplay evidence across session/dimension boundaries. Independent
+  playback must preserve identities and explain omitted, stale or limited data.
+- Exercise continuous playback, seeks, cancellation and temporal resets with
+  player/free/path/follow/orbit cameras and mixed native/raster compositions.
+  New visual tracks cannot reconstruct data omitted from older takes.
+- Validate linked edits, imports/relinks, speed ramps, generated event anchors,
+  thumbnails/waveforms and audio export. Interactive audio preview/mixing and
+  additional assisted editing workflows remain separate unfinished work.
+- Validate hardware/software export, progress/cancellation, destination safety,
+  completed-file publication and interrupted POV recovery. Native journal repair,
+  long-session disk quotas, resize and shutdown acceptance remain open.
+- Owning-crate regressions and rendered/runtime acceptance are still required.
+  Performance, sustained capture cadence and resource bounds need measurement.
+  Default and Enhanced production Cargo checking pass for this expansion.
+  Automated tests and game launches remain unrun, and production compilation
+  does not close these acceptance gates.
 
 This feature is incomplete. Domain APIs and storage code alone do not establish a
 working Recording Studio, replay visual parity or a performance acceptance result.

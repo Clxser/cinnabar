@@ -31,8 +31,13 @@ impl OwnedChild {
         &mut self,
         cancellation: &Cancellation,
         stop: &AtomicBool,
+        timeout: Option<Duration>,
     ) -> Result<ExitStatus, String> {
+        let started = std::time::Instant::now();
         loop {
+            if timeout.is_some_and(|limit| started.elapsed() >= limit) {
+                return Err("The media process exceeded its time limit.".into());
+            }
             if stop.load(Ordering::Acquire) || cancellation.cancelled() {
                 let _ = self.0.kill();
                 let _ = self.0.wait();
@@ -56,7 +61,25 @@ impl Drop for OwnedChild {
 
 impl MediaChild {
     /// Called only on an IO worker. No shell interprets argv and no background console is opened.
-    pub fn start(mut command: Command, cancellation: Cancellation) -> Result<Self, String> {
+    pub fn start(command: Command, cancellation: Cancellation) -> Result<Self, String> {
+        Self::start_inner(command, cancellation, None)
+    }
+
+    /// Bounded probes and recovery jobs reap their process when either cancellation or timeout wins.
+    pub fn start_timed(
+        command: Command,
+        cancellation: Cancellation,
+        timeout: Duration,
+    ) -> Result<Self, String> {
+        Self::start_inner(command, cancellation, Some(timeout))
+    }
+
+    /// Transfers process ownership before exposing its bounded pipes to an IO worker.
+    fn start_inner(
+        mut command: Command,
+        cancellation: Cancellation,
+        timeout: Option<Duration>,
+    ) -> Result<Self, String> {
         cancellation.check()?;
         super::hide_console(&mut command);
         let mut child = OwnedChild(command.spawn().map_err(|error| error.to_string())?);
@@ -68,7 +91,7 @@ impl MediaChild {
         let watcher = std::thread::Builder::new()
             .name("studio-media-process".into())
             .spawn(move || {
-                let result = child.supervise(&cancellation, &stop);
+                let result = child.supervise(&cancellation, &stop, timeout);
                 let _ = completed.send(result);
             })
             .map_err(|error| error.to_string())?;

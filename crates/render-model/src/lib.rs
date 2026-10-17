@@ -77,10 +77,10 @@ pub use presentation::{
 pub use ui::{
     MAX_UI_BATCHES, MAX_UI_DRAW_BYTES, MAX_UI_FIXED_TEXTURE_BYTES, MAX_UI_INDICES,
     MAX_UI_TEXTURE_BYTES, MAX_UI_TEXTURE_LAYERS, MAX_UI_TEXTURE_SIDE, MAX_UI_VERTICES,
-    UI_BLEND_ALPHA, UI_BLEND_INVERT, UI_STYLE_ALPHA_TEST, UI_STYLE_COLOR_MASK, UI_STYLE_GLINT,
-    UI_STYLE_RADIAL_GRADIENT, UiRenderBatch, UiRenderInput, UiRenderReject, UiRenderRejectReason,
-    UiRenderScene, UiRenderStats, UiRenderStatsSnapshot, UiRenderTextureArray, UiRenderVertex,
-    UiScissor,
+    PreparedUiFrame, UI_BLEND_ALPHA, UI_BLEND_INVERT, UI_STYLE_ALPHA_TEST, UI_STYLE_COLOR_MASK,
+    UI_STYLE_GLINT, UI_STYLE_RADIAL_GRADIENT, UiRenderBatch, UiRenderInput, UiRenderReject,
+    UiRenderRejectReason, UiRenderScene, UiRenderStats, UiRenderStatsSnapshot,
+    UiRenderTextureArray, UiRenderVertex, UiScissor,
 };
 pub use ui_textures::{
     MAX_UI_ART_PAGES, MAX_UI_DYNAMIC_PAGES, MAX_UI_MODEL_ATLAS_PAGES, MAX_UI_NATIVE_SHEET_BYTES,
@@ -88,8 +88,9 @@ pub use ui_textures::{
     MAX_UI_TEXTURE_BUCKETS, UI_ART_PAGE_SIDE, UI_DYNAMIC_PAGE_SIDE, UI_LOCAL_FONT_PAGE_OFFSET,
     UI_LOCAL_FONT_PAGE_SIDE, UI_MODEL_ATLAS_PAGE_OFFSET, UI_MODEL_ATLAS_SIDE,
     UI_NATIVE_SHEET_PAGE_OFFSET, UI_PLAYER_SKIN_PAGE_OFFSET, UI_SESSION_ICON_PAGE_OFFSET,
-    UI_STUDIO_PREVIEW_MAX_SIZE, UI_STUDIO_PREVIEW_PAGE_OFFSET, UiTextureBucket, UiTextureCatalog,
-    UiTextureFormat, UiTextureLocation, UiTexturePage, UiTexturePlan,
+    UI_STUDIO_LIBRARY_PAGE_OFFSET, UI_STUDIO_PREVIEW_MAX_SIZE, UI_STUDIO_PREVIEW_PAGE_OFFSET,
+    UiTextureBucket, UiTextureCatalog, UiTextureFormat, UiTextureLocation, UiTexturePage,
+    UiTexturePlan,
 };
 pub use visibility::{
     ExtractedCameraIdentity, GraphicsAdapterMetadata, OpaqueDrawMode, VisibilityDiagnosticSnapshot,

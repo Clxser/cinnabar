@@ -6,17 +6,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use recording_scene::{
-    actors::ActorCoverage, playback::ScenePlayback, scene::DEFAULT_RESIDENT_BYTES,
-};
+use recording_scene::{actors::ActorCoverage, playback::ScenePlayback};
 use recording_studio::{
     Id, MediaTime,
     camera::CameraPose,
-    model::{Framing, MediaKind},
-    playback::{CompiledTimeline, FramePlan},
+    playback::{CompiledTimeline, FramePlan, VisualSample},
     preview::{CameraPreview, PreviewRequest, fit_size},
 };
-use render::replay::{FrameEffects, ReplayRenderContext, ReplayRenderer};
+use render::replay::{ReplayRenderContext, ReplayRenderer};
 use render_scene::ui_preview::PreviewImage;
 
 pub(in crate::studio) struct NativeScene {
@@ -24,12 +21,12 @@ pub(in crate::studio) struct NativeScene {
     timeline: Option<CompiledTimeline>,
     plan: FramePlan,
     source: Option<Source>,
-    effects: FrameEffects,
+    resident_bytes: usize,
 }
 
 pub(in crate::studio) struct NativeFrame {
     pub image: Arc<PreviewImage>,
-    pub notice: Option<String>,
+    pub notices: Vec<&'static str>,
     pub camera: CameraPreview,
     pub missing_target: bool,
 }
@@ -48,13 +45,14 @@ struct BaseFrame {
     at: MediaTime,
     pose: CameraPose,
     image: Arc<PreviewImage>,
+    visibility: [bool; 3],
 }
 
 impl NativeScene {
     /// Scene and GPU contexts are created only on the existing preview worker.
-    pub(in crate::studio) fn new(context: ReplayRenderContext) -> Self {
+    pub(in crate::studio) fn new(context: ReplayRenderContext, resident_bytes: usize) -> Self {
         Self {
-            effects: FrameEffects::new(context.clone()),
+            resident_bytes,
             context,
             timeline: None,
             plan: FramePlan::default(),
@@ -62,14 +60,17 @@ impl NativeScene {
         }
     }
 
-    /// Returns `None` for a raster-only frame; mixed replay composition remains explicitly unsupported.
-    pub(in crate::studio) fn render(
+    /// Renders one isolated visual before crop, blending, post effects and titles.
+    /// Actor rigs resolve against this visual's source, retaining independent crossfade cursors.
+    pub(in crate::studio) fn render_visual(
         &mut self,
         request: &PreviewRequest,
+        visual: VisualSample,
+        media: &recording_studio::model::MediaSource,
         maximum: [u32; 2],
         cancelled: &impl Fn() -> bool,
         wait: &impl Fn(),
-    ) -> Result<Option<NativeFrame>, String> {
+    ) -> Result<NativeFrame, String> {
         if self
             .timeline
             .as_ref()
@@ -88,39 +89,12 @@ impl NativeScene {
         timeline
             .sample(at, &mut self.plan, |_, _, _| None)
             .map_err(|error| error.to_string())?;
-        if !self.plan.visuals.iter().any(|visual| {
-            request
-                .project
-                .sources
-                .iter()
-                .any(|source| source.id == visual.source && source.kind == MediaKind::Replay)
-        }) {
-            self.source = None;
-            return Ok(None);
-        }
-        let [visual] = &self.plan.visuals[..] else {
-            return Err(
-                "Combining a native replay with another visual layer is not connected yet.".into(),
-            );
-        };
-        let visual = *visual;
-        if visual.mix.is_some() || visual.framing != Framing::default() {
-            return Err(
-                "Native replay crops, opacity and transitions are not connected yet.".into(),
-            );
-        }
-        let media = request
-            .project
-            .sources
-            .iter()
-            .find(|source| source.id == visual.source)
-            .ok_or("The replay source is missing.")?;
         let path = if media.path.is_absolute() {
             media.path.clone()
         } else {
             request.source_base.join(&media.path)
         };
-        let size = fit_size(request.project.export.size, maximum)?;
+        let size = fit_size(media.size, maximum)?;
         if self.source.as_ref().is_none_or(|source| {
             source.id != media.id
                 || source.path != path
@@ -131,7 +105,7 @@ impl NativeScene {
             if cancelled() {
                 return Err("Preview cancelled.".into());
             }
-            let playback = ScenePlayback::open(&path, DEFAULT_RESIDENT_BYTES)
+            let playback = ScenePlayback::open(&path, self.resident_bytes)
                 .map_err(|error| format!("Cannot open native replay: {error}"))?;
             let renderer = ReplayRenderer::new(self.context.clone(), size)?;
             self.source = Some(Source {
@@ -167,10 +141,7 @@ impl NativeScene {
         .map_err(|error| format!("Native replay admission failed: {error}"))?;
         source.epoch = Some(source_epoch);
         timeline
-            .sample(at, &mut self.plan, |id, reference, time| {
-                if id != visual.source || time != visual.time {
-                    return None;
-                }
+            .sample(at, &mut self.plan, |_, reference, _| {
                 let target = frame.targets.as_ref()?.target(reference.runtime_id)?;
                 target.matches(reference).then_some(target.pose)
             })
@@ -180,13 +151,70 @@ impl NativeScene {
             .plan
             .camera
             .unwrap_or_else(|| self.plan.effects.camera_pose(frame.view.pose, at));
+        let source_view = self.plan.base_camera.is_none();
+        let visibility = [source_view, self.plan.hide_hud, self.plan.hide_hand];
         let mut notices = Vec::new();
         if missing_target {
             notices.push("Camera subject unavailable: showing the recorded view. Retarget or shorten the shot.");
         }
-        notices.push(
-            "3D preview uses Vanilla shading and omits HUD, hand, particles and block entities.",
-        );
+        if let Some(visuals) = &frame.visuals {
+            if visuals.particles.received.is_none() {
+                notices.push(
+                    "This older take retains source-view particle visibility and billboard facing.",
+                );
+            }
+            if let Some(coverage) = visuals.block_coverage {
+                if !coverage.artwork_available {
+                    notices
+                        .push("Block-model artwork was unavailable while recording this sample.");
+                }
+                if coverage.pending_columns > 0 {
+                    notices.push(
+                        "Received block-model coverage was still warming up at this source moment.",
+                    );
+                }
+                if coverage.cache_limit || coverage.submission_limit || coverage.vertex_limit {
+                    notices.push(
+                        "Block-model coverage reached a native preparation limit while recording.",
+                    );
+                }
+            } else {
+                notices.push("This older take retains source-view block-model visibility.");
+            }
+            if visuals.atmosphere.is_none() {
+                notices.push("This older take has no prepared weather and screen-overlay inputs.");
+            }
+            if let Some(items) = &visuals.items {
+                if items.coverage.model_failures > 0 {
+                    notices.push(
+                        "Some native item models were unavailable while recording this sample.",
+                    );
+                }
+                if items.coverage.instance_limit || items.coverage.rope_limit {
+                    notices.push("Item or rope capture reached its native preparation limit.");
+                }
+                if items.coverage.terrain_pending {
+                    notices.push(
+                        "Falling-block terrain visibility was still awaiting source publication.",
+                    );
+                }
+            } else {
+                notices.push("This take has no prepared item, falling-block or rope track.");
+            }
+            if !visuals.hud_enabled {
+                notices.push("HUD and chat were not recorded for this take.");
+            } else if !source_view || self.plan.hide_hud {
+                notices.push("Recorded HUD and chat are hidden for this camera shot.");
+            }
+            if !visuals.hand_enabled {
+                notices.push("The first-person hand was not recorded for this take.");
+            } else if !source_view || self.plan.hide_hand {
+                notices.push("The recorded first-person hand is hidden for this camera shot.");
+            }
+        } else {
+            notices
+                .push("This older take has no prepared particle, block model, hand or HUD track.");
+        }
         if frame.actors.sample.coverage == ActorCoverage::OriginalView {
             notices.push(
                 "Actors cover the recorded view only; other cameras can expose missing actors.",
@@ -195,19 +223,23 @@ impl NativeScene {
         if frame.targets.is_none() {
             notices.push("This take has no received-actor target track; actor tracking needs a newer recording.");
         }
-        if !self.plan.audio.is_empty() {
-            notices.push("Audio is not previewed yet.");
-        }
         let started = Instant::now();
-        let image = if let Some(base) = source
-            .base
-            .as_ref()
-            .filter(|base| !frame.temporal_reset && base.at == visual.time && base.pose == pose)
-        {
+        let image = if let Some(base) = source.base.as_ref().filter(|base| {
+            !frame.temporal_reset
+                && base.at == visual.time
+                && base.pose == pose
+                && base.visibility == visibility
+        }) {
             Arc::clone(&base.image)
         } else {
             source.base = None;
-            if let Err(error) = source.renderer.apply(&frame, pose) {
+            if let Err(error) = source.renderer.apply_view(
+                &frame,
+                pose,
+                source_view,
+                self.plan.hide_hud,
+                self.plan.hide_hand,
+            ) {
                 source.playback.invalidate();
                 source.epoch = None;
                 return Err(error);
@@ -234,30 +266,14 @@ impl NativeScene {
                 at: visual.time,
                 pose,
                 image: Arc::clone(&image),
+                visibility,
             });
             image
         };
-        let image = loop {
-            if cancelled() {
-                return Err("Preview cancelled.".into());
-            }
-            if let Some(composed) =
-                self.effects
-                    .native(Arc::clone(&image), self.plan.effects, at)?
-            {
-                break composed;
-            }
-            if started.elapsed() >= Duration::from_secs(30) {
-                return Err(
-                    "The effect preview could not finish. Pause playback and seek again.".into(),
-                );
-            }
-            wait();
-        };
-        Ok(Some(NativeFrame {
+        Ok(NativeFrame {
             image,
             missing_target,
-            notice: (!notices.is_empty()).then(|| notices.join(" ")),
+            notices,
             camera: CameraPreview {
                 epoch: request.epoch,
                 source: visual.source,
@@ -269,6 +285,6 @@ impl NativeScene {
                     .as_ref()
                     .map_or_else(|| Arc::from([]), |frame| Arc::clone(&frame.targets)),
             },
-        }))
+        })
     }
 }

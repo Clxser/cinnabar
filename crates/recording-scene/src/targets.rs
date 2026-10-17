@@ -1,17 +1,19 @@
 //! Small received-actor camera targets, independent of the original view's prepared draw coverage.
 
-use std::{collections::BTreeMap, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 use recording_studio::{
     MediaTime,
     archive::{
-        ArchiveError, RecordInput, RecordKind, Recording, RecordingConfig, RecordingCursor,
-        RecordingInfo, RecordingReader, RecordingState, SCENE_CHECKPOINT_INTERVAL,
+        RecordInput, RecordKind, Recording, RecordingConfig, RecordingInfo, RecordingState,
+        SCENE_CHECKPOINT_INTERVAL,
     },
     camera::{CameraTarget, MAX_CAMERA_TARGETS},
 };
 
 mod codec;
+mod playback;
+pub use playback::TargetRecording;
 
 pub const TARGET_TRACK_SCHEMA: &str = "cinnabar.camera-targets/1";
 pub const TARGET_DIRECTORY: &str = "camera-targets.cinreplay";
@@ -185,137 +187,6 @@ impl TargetCapture {
                 .error
                 .unwrap_or_else(|| "Camera target recording did not finish.".into()))
         }
-    }
-}
-
-pub struct TargetRecording {
-    cursor: RecordingCursor,
-    state: BTreeMap<u64, CameraTarget>,
-    current: Option<TargetFrame>,
-}
-
-impl TargetRecording {
-    /// Older takes can lack targets. A present but invalid target directory is an error, not a fallback.
-    pub fn open_optional(parent: &Path) -> Result<Option<Self>, ArchiveError> {
-        let root = parent.join(TARGET_DIRECTORY);
-        match std::fs::symlink_metadata(&root) {
-            Ok(metadata) if metadata.is_dir() => {}
-            Ok(_) => {
-                return Err(ArchiveError::Invalid(
-                    "camera target track is not a directory",
-                ));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(source) => return Err(ArchiveError::Io { path: root, source }),
-        }
-        let reader = RecordingReader::open(&root)?;
-        if reader.info().scene_schema != TARGET_TRACK_SCHEMA {
-            return Err(ArchiveError::Invalid(
-                "unsupported camera target track schema",
-            ));
-        }
-        Ok(Some(Self {
-            cursor: reader.into_cursor(),
-            state: BTreeMap::new(),
-            current: None,
-        }))
-    }
-
-    pub fn info(&self) -> &RecordingInfo {
-        self.cursor.reader().info()
-    }
-    pub fn duration(&self) -> MediaTime {
-        self.cursor.reader().duration()
-    }
-
-    /// Checkpoint seeks reconstruct a private target set before publishing its sorted immutable array.
-    pub fn seek(
-        &mut self,
-        at: MediaTime,
-        cancelled: &impl Fn() -> bool,
-    ) -> Result<TargetFrame, ArchiveError> {
-        self.update(at, true, cancelled)
-    }
-
-    /// Forward playback consumes only crossed deltas and reuses unchanged published target arrays.
-    pub fn advance_to(
-        &mut self,
-        at: MediaTime,
-        cancelled: &impl Fn() -> bool,
-    ) -> Result<TargetFrame, ArchiveError> {
-        self.update(at, false, cancelled)
-    }
-
-    /// A failed sibling source invalidates this draft until a complete scene seek succeeds.
-    pub fn invalidate(&mut self) {
-        self.cursor.invalidate();
-        self.state.clear();
-        self.current = None;
-    }
-
-    /// Invalid/cancelled drafts cannot seed a later frame after the renderer retained an older publication.
-    fn update(
-        &mut self,
-        at: MediaTime,
-        seek: bool,
-        cancelled: &impl Fn() -> bool,
-    ) -> Result<TargetFrame, ArchiveError> {
-        if seek {
-            self.state.clear();
-        }
-        let state = &mut self.state;
-        let mut changed = seek;
-        let mut apply = |record: recording_studio::archive::ReplayRecord<'_>| {
-            match record.kind {
-                RecordKind::CheckpointStart => {
-                    state.clear();
-                    changed = true;
-                }
-                RecordKind::CheckpointEnd => {}
-                RecordKind::CheckpointPart | RecordKind::Scene => {
-                    let delta = codec::read(&mut &record.payload[..])?;
-                    if record.kind == RecordKind::CheckpointPart && !delta.removed.is_empty() {
-                        return Err(ArchiveError::Invalid("target checkpoint contains removals"));
-                    }
-                    for id in delta.removed {
-                        state.remove(&id);
-                    }
-                    for target in delta.upserts {
-                        if state.len() == MAX_CAMERA_TARGETS
-                            && !state.contains_key(&target.runtime_id)
-                        {
-                            return Err(ArchiveError::Quota);
-                        }
-                        state.insert(target.runtime_id, target);
-                    }
-                    changed = true;
-                }
-                _ => return Err(ArchiveError::Invalid("unexpected camera target record")),
-            }
-            Ok(())
-        };
-        let result = if seek {
-            self.cursor.seek(at, cancelled, &mut apply)
-        } else {
-            self.cursor.advance_to(at, cancelled, &mut apply)
-        };
-        if let Err(error) = result {
-            self.invalidate();
-            return Err(error);
-        }
-        if cancelled() {
-            self.invalidate();
-            return Err(ArchiveError::Cancelled);
-        }
-        if changed {
-            self.current = Some(TargetFrame {
-                at,
-                targets: self.state.values().cloned().collect::<Vec<_>>().into(),
-            });
-        }
-        self.current.clone().ok_or(ArchiveError::Invalid(
-            "camera targets need a successful baseline",
-        ))
     }
 }
 

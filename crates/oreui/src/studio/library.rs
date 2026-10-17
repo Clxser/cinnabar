@@ -43,6 +43,31 @@ pub(super) fn draw(
         !view.studio.library_loading,
         Variant::Secondary,
     )?;
+    let import_left = left + canvas.r(32.4);
+    if right - import_left > canvas.r(14.0) {
+        control(
+            canvas,
+            view,
+            [
+                import_left,
+                button_top,
+                right.min(import_left + canvas.r(20.0)),
+                button_top + canvas.r(4.8),
+            ],
+            if view.studio.workflow.media_busy {
+                "Cancel import"
+            } else {
+                "Import media..."
+            },
+            if view.studio.workflow.media_busy {
+                Action::CancelMedia
+            } else {
+                Action::ImportMedia
+            },
+            true,
+            Variant::Secondary,
+        )?;
+    }
     let content_top = button_top + canvas.r(7.2);
     if view.studio.library_loading {
         canvas.text_line(
@@ -83,23 +108,56 @@ pub(super) fn draw(
                 view,
                 bounds,
                 false,
-                Some(MenuAction::Studio(Action::Open(index))),
+                (!entry.interrupted || !view.studio.capture.phase.busy())
+                    .then_some(MenuAction::Studio(Action::Open(index))),
             )?;
+            let thumbnail = view
+                .studio
+                .workflow
+                .thumbnail_slots
+                .get(index)
+                .copied()
+                .flatten()
+                .zip(view.studio.workflow.thumbnail_icon)
+                .map(|(uv, mut icon)| {
+                    icon.uv = uv;
+                    icon
+                });
+            let image_right = left + canvas.r(11.6);
+            if let Some(icon) = thumbnail {
+                canvas.fitted_media(
+                    icon,
+                    [
+                        left + canvas.r(0.5),
+                        top + canvas.r(0.5),
+                        image_right,
+                        bounds[3] - canvas.r(0.5),
+                    ],
+                )?;
+            }
+            let text_left = if thumbnail.is_some() {
+                image_right + pad
+            } else {
+                left + pad
+            };
             canvas.text_line(
                 &entry.name,
-                [left + pad, top + canvas.r(0.8)],
-                right - left - pad * 2.0,
+                [text_left, top + canvas.r(0.8)],
+                right - text_left - pad,
                 BODY,
                 TEXT,
             )?;
             let kind = match entry.kind {
                 LibraryKind::Project => "Project",
+                LibraryKind::Recording if entry.interrupted => {
+                    "Interrupted take - open to attempt video recovery"
+                }
                 LibraryKind::Recording => "Recording",
             };
             canvas.text_line(
                 kind,
-                [left + pad, top + canvas.r(3.4)],
-                right - left - pad * 2.0,
+                [text_left, top + canvas.r(3.4)],
+                right - text_left - pad,
                 CAPTION,
                 TEXT_DIMMER,
             )?;

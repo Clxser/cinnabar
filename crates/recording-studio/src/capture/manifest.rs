@@ -60,6 +60,10 @@ pub struct CaptureManifest {
 }
 
 impl CaptureManifest {
+    /// Only the manifest's existence is inspected when listing; media is verified when opened.
+    pub fn exists(directory: &Path) -> bool {
+        directory.join(MANIFEST_FILE).is_file()
+    }
     /// Builds an ordinary editable project on the storage worker, with independent game audio.
     /// Observed highlights become reversible metadata effects rather than baked video pixels.
     pub fn project(
@@ -89,6 +93,7 @@ impl CaptureManifest {
             kind: MediaKind::Video,
             duration: self.duration,
             size: self.size,
+            frame_rate: Some(self.settings.fps),
             sha256: None,
         });
         project.clips.push(Clip {
@@ -97,6 +102,7 @@ impl CaptureManifest {
             source_range: range,
             at: MediaTime::ZERO,
             rate: PlaybackRate::default(),
+            speed_ramp: None,
             track: 0,
             framing: Framing::default(),
             enabled: true,
@@ -109,6 +115,7 @@ impl CaptureManifest {
                 kind: MediaKind::Audio,
                 duration: self.duration,
                 size: [0, 0],
+                frame_rate: None,
                 sha256: None,
             });
             project.audio.push(AudioClip {
@@ -118,6 +125,7 @@ impl CaptureManifest {
                 source_range: range,
                 at: MediaTime::ZERO,
                 rate: PlaybackRate::default(),
+                speed_ramp: None,
                 role: AudioRole::Game,
                 gain: 1.0,
                 fade_in: MediaTime::ZERO,

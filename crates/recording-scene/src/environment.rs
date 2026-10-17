@@ -20,11 +20,22 @@ mod capture;
 mod sky_assets;
 pub use capture::{EnvironmentCapture, PreparedEnvironmentAssets};
 
-pub const ENVIRONMENT_TRACK_SCHEMA: &str = "cinnabar.environment/1";
+pub const ENVIRONMENT_TRACK_SCHEMA: &str = "cinnabar.environment/2";
+const LEGACY_TRACK_SCHEMA: &str = "cinnabar.environment/1";
 pub const ENVIRONMENT_DIRECTORY: &str = "environment.cinreplay";
-const FRAME_MAGIC: [u8; 8] = *b"CINEFR01";
+const FRAME_MAGIC: [u8; 8] = *b"CINEFR02";
+const LEGACY_FRAME_MAGIC: [u8; 8] = *b"CINEFR01";
 const MAX_ASSET_BYTES: u64 = 128 * 1024 * 1024;
 type Skyboxes = [PackSkybox; SkyboxDimension::ALL.len()];
+
+/// Boolean fields reject all encodings except the two defined wire values.
+fn flag(reader: &mut Reader<'_>) -> Result<bool, ArchiveError> {
+    match reader.u32()? {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(ArchiveError::Invalid("invalid environment presence flag")),
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EnvironmentState {
@@ -33,6 +44,28 @@ pub struct EnvironmentState {
     pub fullbright: bool,
     pub animation_tick: u32,
     pub animation_partial: f32,
+    /// Older recordings did not preserve dimension or camera shader settings.
+    pub view: Option<RecordedEnvironmentView>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RecordedEnvironmentView {
+    pub dimension: i32,
+    pub enhanced: Option<RecordedEnhanced>,
+    pub local_body_visible: bool,
+}
+
+/// Camera options are stored independently of Bevy and replayed without consulting live settings.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RecordedEnhanced {
+    pub shadows: bool,
+    pub shadow_resolution: u32,
+    pub shadow_cascades: u32,
+    pub shadow_distance: f32,
+    pub bloom: bool,
+    pub light_shafts: bool,
+    pub waving: bool,
+    pub water_reflections: bool,
 }
 
 impl EnvironmentState {
@@ -42,6 +75,11 @@ impl EnvironmentState {
             && LightmapSnapshot::from_words(self.lightmap.words()).is_some()
             && self.animation_partial.is_finite()
             && (0.0..1.0).contains(&self.animation_partial)
+            && self.view.is_none_or(|view| {
+                view.enhanced.is_none_or(|options| {
+                    options.shadow_distance.is_finite() && options.shadow_distance > 0.0
+                })
+            })
     }
 }
 
@@ -73,13 +111,36 @@ fn write_frame(
     binary::packed(output, &[state.lightmap], |value| value.words())?;
     binary::u32(output, u32::from(state.fullbright))?;
     binary::u32(output, state.animation_tick)?;
-    binary::u32(output, state.animation_partial.to_bits())
+    binary::u32(output, state.animation_partial.to_bits())?;
+    binary::u32(output, u32::from(state.view.is_some()))?;
+    if let Some(view) = state.view {
+        binary::u32(output, view.dimension as u32)?;
+        binary::u32(output, u32::from(view.local_body_visible))?;
+        binary::u32(output, u32::from(view.enhanced.is_some()))?;
+        if let Some(options) = view.enhanced {
+            let flags = u32::from(options.shadows)
+                | (u32::from(options.bloom) << 1)
+                | (u32::from(options.light_shafts) << 2)
+                | (u32::from(options.waving) << 3)
+                | (u32::from(options.water_reflections) << 4);
+            for value in [
+                flags,
+                options.shadow_resolution,
+                options.shadow_cascades,
+                options.shadow_distance.to_bits(),
+            ] {
+                binary::u32(output, value)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Fixed records use counted arrays so truncated, appended or incorrectly sized states are rejected.
 fn read_frame(input: &mut dyn Read) -> Result<(AssetId, EnvironmentState), ArchiveError> {
     let mut reader = Reader::new(input);
-    if reader.bytes::<8>()? != FRAME_MAGIC {
+    let magic = reader.bytes::<8>()?;
+    if magic != FRAME_MAGIC && magic != LEGACY_FRAME_MAGIC {
         return Err(ArchiveError::Invalid(
             "unsupported environment frame schema",
         ));
@@ -97,13 +158,41 @@ fn read_frame(input: &mut dyn Read) -> Result<(AssetId, EnvironmentState), Archi
         1 => true,
         _ => return Err(ArchiveError::Invalid("invalid environment fullbright flag")),
     };
-    let state = EnvironmentState {
+    let mut state = EnvironmentState {
         atmosphere: atmosphere[0],
         lightmap: lightmap[0],
         fullbright,
         animation_tick: reader.u32()?,
         animation_partial: f32::from_bits(reader.u32()?),
+        view: None,
     };
+    if magic == FRAME_MAGIC && flag(&mut reader)? {
+        let dimension = reader.u32()? as i32;
+        let local_body_visible = flag(&mut reader)?;
+        let enhanced = if flag(&mut reader)? {
+            let flags = reader.u32()?;
+            if flags & !31 != 0 {
+                return Err(ArchiveError::Invalid("invalid recorded shader flags"));
+            }
+            Some(RecordedEnhanced {
+                shadows: flags & 1 != 0,
+                bloom: flags & 2 != 0,
+                light_shafts: flags & 4 != 0,
+                waving: flags & 8 != 0,
+                water_reflections: flags & 16 != 0,
+                shadow_resolution: reader.u32()?,
+                shadow_cascades: reader.u32()?,
+                shadow_distance: f32::from_bits(reader.u32()?),
+            })
+        } else {
+            None
+        };
+        state.view = Some(RecordedEnvironmentView {
+            dimension,
+            enhanced,
+            local_body_visible,
+        });
+    }
     drop(reader);
     binary::finish(input)?;
     if !state.valid() {
@@ -124,7 +213,9 @@ impl EnvironmentRecording {
     pub fn open(parent: &Path) -> Result<Self, ArchiveError> {
         let root = parent.join(ENVIRONMENT_DIRECTORY);
         let reader = RecordingReader::open(&root)?;
-        if reader.info().scene_schema != ENVIRONMENT_TRACK_SCHEMA {
+        if ![ENVIRONMENT_TRACK_SCHEMA, LEGACY_TRACK_SCHEMA]
+            .contains(&reader.info().scene_schema.as_str())
+        {
             return Err(ArchiveError::Invalid(
                 "recording has no supported environment track",
             ));

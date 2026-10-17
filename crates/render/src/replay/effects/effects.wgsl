@@ -17,6 +17,28 @@ fn scene(uv: vec2<f32>) -> vec3<f32> {
     return textureSampleLevel(source, linear_sampler, moved, 0.0).rgb * settings.tone.x;
 }
 
+fn detail(uv: vec2<f32>) -> vec3<f32> {
+    var value = scene(uv);
+    if settings.detail.x > 0.0 {
+        let radial = (uv - 0.5) * settings.detail.x;
+        value.r = scene(uv + radial).r;
+        value.b = scene(uv - radial).b;
+    }
+    if settings.detail.y > 0.0 || settings.detail.z > 0.0 {
+        let offset = settings.step.zw * mix(1.0, 5.0, settings.detail.y);
+        let neighbors = (scene(uv + vec2<f32>(offset.x, 0.0)) + scene(uv - vec2<f32>(offset.x, 0.0))
+            + scene(uv + vec2<f32>(0.0, offset.y)) + scene(uv - vec2<f32>(0.0, offset.y))) * 0.25;
+        value = mix(value, neighbors, settings.detail.y) + (value - neighbors) * settings.detail.z * 0.35;
+    }
+    return max(value, vec3<f32>(0.0));
+}
+
+fn noise(uv: vec2<f32>) -> f32 {
+    let pixel = floor(uv / settings.step.zw);
+    let frame = floor(settings.detail.w * 120.0);
+    return fract(sin(dot(pixel + vec2<f32>(frame, frame * 0.71), vec2<f32>(12.9898, 78.233))) * 43758.5453) - 0.5;
+}
+
 fn bright(uv: vec2<f32>) -> vec3<f32> {
     let value = scene(uv);
     let luminance = dot(value, vec3<f32>(0.2126, 0.7152, 0.0722));
@@ -48,10 +70,17 @@ fn blur(uv: vec2<f32>, step: vec2<f32>) -> vec3<f32> {
 
 @fragment fn grade(input: VertexOutput) -> @location(0) vec4<f32> {
     let uv = input.uv;
-    var color = scene(uv);
+    var color = detail(uv);
     if settings.tone.w > 0.0 { color += blur(uv, vec2<f32>(0.0, settings.step.y)) * settings.tone.w; }
     let luminance = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
     color = mix(vec3<f32>(luminance), color, settings.tone.y);
+    color *= vec3<f32>(1.0 + settings.color.y * 0.18 + settings.color.z * 0.06,
+        1.0 - settings.color.z * 0.12, 1.0 - settings.color.y * 0.18 + settings.color.z * 0.06);
+    color = max((color - vec3<f32>(0.18)) * exp2(settings.color.x * 1.5) + vec3<f32>(0.18), vec3<f32>(0.0));
+    if settings.color.w > 0.0 {
+        let midtone = sqrt(clamp(dot(color, vec3<f32>(0.2126, 0.7152, 0.0722)), 0.0, 1.0));
+        color += vec3<f32>(noise(uv) * settings.color.w * 0.12 * midtone);
+    }
     let radius = dot(uv - 0.5, uv - 0.5) * 2.0;
     color *= 1.0 - settings.tone.z * smoothstep(0.15, 1.0, radius);
     color = mix(color, vec3<f32>(1.0), settings.overlay.x);

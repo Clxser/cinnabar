@@ -71,6 +71,41 @@ impl RecordingCursor {
         self.run_to(at, &cancelled, &mut visit)
     }
 
+    /// Peeks the next verified record without advancing the published position or visiting its payload.
+    pub fn next_time(
+        &mut self,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Option<MediaTime>, ArchiveError> {
+        if self.position.is_none() {
+            return Err(ArchiveError::Invalid(
+                "replay cursor needs a successful seek",
+            ));
+        }
+        let result = (|| loop {
+            if cancelled() {
+                return Err(ArchiveError::Cancelled);
+            }
+            if let Some(segment) = &mut self.segment
+                && let Some(at) = segment.next_time()?
+            {
+                return Ok(Some(at));
+            }
+            let Some(segment) = self.reader.segments.get(self.next_segment) else {
+                return Ok(None);
+            };
+            self.segment = Some(VerifiedSegment::load(
+                &self.reader.root,
+                *segment,
+                &cancelled,
+            )?);
+            self.next_segment += 1;
+        })();
+        if result.is_err() {
+            self.invalidate();
+        }
+        result
+    }
+
     /// Progress is published only after every crossed segment and visitor has succeeded.
     fn run_to(
         &mut self,

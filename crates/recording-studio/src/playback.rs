@@ -1,16 +1,20 @@
 //! Allocation-reusing preview plans and a caller-driven transport shared by playback and export.
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
     FrameRate, Id, MediaTime, PlaybackRate, Project, Span, StudioError,
     camera::{ActorPose, CameraPose, CameraTargetRef},
     effect::EffectSample,
     model::{Framing, TransitionKind},
+    retime::TimeMap,
 };
 
 mod index;
 use index::{IntervalIndex, Slot};
+
+/// Each admitted visual track can expose both members of its active dissolve.
+pub const MAX_VISUAL_LAYERS: usize = crate::model::MAX_VIDEO_TRACKS as usize * 2;
 
 /// The timeline clock is deliberately independent of the application's live world clock.
 pub struct Transport {
@@ -156,7 +160,7 @@ pub struct AudioSample {
     pub clip: Id,
     pub source: Id,
     pub time: MediaTime,
-    pub rate: PlaybackRate,
+    pub rate: f64,
     pub gain: f64,
 }
 
@@ -180,6 +184,9 @@ pub struct FramePlan {
 pub struct CompiledTimeline {
     project: Arc<Project>,
     index: IntervalIndex,
+    visual_maps: Vec<TimeMap>,
+    audio_maps: Vec<TimeMap>,
+    clip_indices: BTreeMap<Id, usize>,
 }
 
 impl CompiledTimeline {
@@ -188,6 +195,22 @@ impl CompiledTimeline {
         project.validate()?;
         Ok(Self {
             index: IntervalIndex::new(&project)?,
+            visual_maps: project
+                .clips
+                .iter()
+                .map(|clip| clip.time_map())
+                .collect::<Result<_, _>>()?,
+            audio_maps: project
+                .audio
+                .iter()
+                .map(|clip| clip.time_map())
+                .collect::<Result<_, _>>()?,
+            clip_indices: project
+                .clips
+                .iter()
+                .enumerate()
+                .map(|(index, clip)| (clip.id, index))
+                .collect(),
             project,
         })
     }
@@ -219,7 +242,7 @@ impl CompiledTimeline {
             Slot::Clip(index) => {
                 let clip = &self.project.clips[index];
                 if clip.enabled
-                    && let Ok(source_time) = clip.source_time(time)
+                    && let Ok(source_time) = self.visual_maps[index].source_time(time)
                 {
                     out.visuals.push(VisualSample {
                         clip: clip.id,
@@ -242,25 +265,27 @@ impl CompiledTimeline {
             }
             Slot::Effect(index) => {
                 let effect = &self.project.effects[index];
-                out.effects.add(effect.kind, effect.sample(time));
+                let enabled = effect
+                    .origin
+                    .and_then(|origin| origin.clip_id)
+                    .and_then(|id| self.clip_indices.get(&id))
+                    .is_none_or(|&index| self.project.clips[index].enabled);
+                if enabled {
+                    out.effects.add(effect.kind, effect.sample(time));
+                }
             }
             Slot::Audio(index) => {
                 let clip = &self.project.audio[index];
-                let gain = clip.gain_at(time);
+                let map = &self.audio_maps[index];
+                let gain = clip.gain_in_span(time, map.span());
                 if gain > 0.0
-                    && let Ok(offset) = clip.rate.source_offset(time.saturating_sub(clip.at))
+                    && let Ok(source_time) = map.source_time(time)
                 {
                     out.audio.push(AudioSample {
                         clip: clip.id,
                         source: clip.source,
-                        time: MediaTime(
-                            clip.source_range
-                                .start
-                                .0
-                                .saturating_add(offset.0)
-                                .min(clip.source_range.end.0 - 1),
-                        ),
-                        rate: clip.rate,
+                        time: source_time,
+                        rate: map.rate_at(time),
                         gain,
                     });
                 }
@@ -348,7 +373,8 @@ impl CompiledTimeline {
                 time: if source.kind == crate::model::MediaKind::Image {
                     MediaTime::ZERO
                 } else {
-                    clip.transition_time(time, source.duration)?
+                    self.visual_maps[self.clip_indices[&clip.id]]
+                        .transition_time(time, source.duration)?
                 },
                 track: clip.track,
                 framing,

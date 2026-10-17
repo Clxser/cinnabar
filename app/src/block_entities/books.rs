@@ -8,7 +8,7 @@ use render_model::{BookPose, EnchantingBook};
 /// Most ticks one frame catches up on, so a long hitch does not spin every book.
 const MAX_CATCH_UP_TICKS: u64 = 20;
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct TableBooks {
     books: HashMap<[i32; 3], EnchantingBook>,
     seen: HashSet<[i32; 3]>,

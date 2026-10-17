@@ -178,6 +178,15 @@ pub struct UiRenderInput {
     pub textures: Arc<UiRenderTextureArray>,
 }
 
+/// The last admitted HUD publication and the exact shader phase prepared for that draw.
+#[derive(Clone, Debug)]
+pub struct PreparedUiFrame {
+    pub input: Arc<UiRenderInput>,
+    pub glint: Option<Arc<crate::UiTexturePage>>,
+    pub time_seconds: f32,
+    pub glint_strength: f32,
+}
+
 impl UiRenderInput {
     pub fn validate(&self) -> Result<(), UiRenderRejectReason> {
         validate_limit(self.vertices.len(), MAX_UI_VERTICES, |actual, limit| {

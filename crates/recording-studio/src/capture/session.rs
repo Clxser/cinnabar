@@ -46,6 +46,7 @@ impl CaptureSession {
         settings: CaptureSettings,
     ) -> Result<Self, String> {
         settings.validate()?;
+        settings.size.fit(info.viewport)?;
         info.scene_schema = POV_SCENE_SCHEMA.into();
         crate::video::find_ffmpeg()?;
         std::fs::create_dir_all(root).map_err(|error| error.to_string())?;
@@ -131,6 +132,13 @@ impl CaptureSession {
     }
     pub fn settings(&self) -> CaptureSettings {
         self.settings
+    }
+    /// Video can be smaller than the viewport retained by native scene and HUD tracks.
+    pub fn video_size(&self) -> [u32; 2] {
+        self.settings
+            .size
+            .fit(self.info.viewport)
+            .expect("capture size was admitted before creating the session")
     }
     /// Records a scene owner's final status before the manifest is published with finished POV media.
     pub fn scene_track(&mut self, track: CaptureTrack) -> Result<(), String> {

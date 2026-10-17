@@ -13,7 +13,7 @@ pub(super) fn creation(
     area: Bounds,
 ) -> Result<f32, PaintError> {
     let [left, mut y, right, _] = area;
-    canvas.text_line("ADD EFFECT", [left, y], right - left, HEADER5, TEXT)?;
+    canvas.text_line("LOOKS", [left, y], right - left, HEADER5, TEXT)?;
     y += canvas.r(3.8);
     let enabled = view
         .studio
@@ -22,6 +22,30 @@ pub(super) fn creation(
         .is_some_and(|project| project.duration() > MediaTime::ZERO);
     let pad = canvas.r(0.8);
     let width = (right - left - pad) * 0.5;
+    for (index, look) in recording_studio::effect::preset::Look::ALL
+        .iter()
+        .copied()
+        .enumerate()
+    {
+        let x = left + (index % 2) as f32 * (width + pad);
+        let top = y + (index / 2) as f32 * canvas.r(4.8);
+        control(
+            canvas,
+            view,
+            [x, top, x + width, top + canvas.r(4.0)],
+            look.label(),
+            Action::AddLook(look),
+            enabled,
+            Variant::Secondary,
+        )?;
+    }
+    y += recording_studio::effect::preset::Look::ALL
+        .len()
+        .div_ceil(2) as f32
+        * canvas.r(4.8)
+        + canvas.r(2.0);
+    canvas.text_line("ADD EFFECT", [left, y], right - left, HEADER5, TEXT)?;
+    y += canvas.r(3.8);
     for (index, kind) in EffectKind::ALL.iter().copied().enumerate() {
         let x = left + (index % 2) as f32 * (width + pad);
         let top = y + (index / 2) as f32 * canvas.r(4.8);

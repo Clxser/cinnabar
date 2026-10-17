@@ -1,8 +1,12 @@
 //! Camera inspector controls share the saved rig's parameter definitions and native menu primitives.
 
-use recording_studio::camera::{CameraMode, CameraRigKind, CameraShot};
+use recording_studio::camera::{
+    CameraMode, CameraParameter, CameraRigKind, CameraShot, CameraTargetRef,
+};
 
 use super::*;
+
+mod keys;
 
 /// New rigs are offered only after a native source has published an admitted camera/target snapshot.
 pub(super) fn creation(
@@ -78,6 +82,33 @@ pub(super) fn inspector(
         CameraMode::Player { .. } | CameraMode::Follow { .. } | CameraMode::Orbit { .. }
     );
     if targeted {
+        let runtime_id = match &shot.mode {
+            CameraMode::Player { actor, .. }
+            | CameraMode::Follow { actor, .. }
+            | CameraMode::Orbit { actor, .. } => *actor,
+            _ => unreachable!(),
+        };
+        let reference = CameraTargetRef {
+            runtime_id,
+            lifetime: shot.target_lifetime,
+        };
+        let subject = view.studio.preview.camera.as_ref().and_then(|preview| {
+            preview
+                .targets
+                .iter()
+                .find(|target| target.matches(reference))
+        });
+        canvas.text_line(
+            &subject.map_or_else(
+                || "Subject unavailable at this frame".into(),
+                |target| format!("Subject: {}", target.name),
+            ),
+            [left, y],
+            right - left,
+            CAPTION,
+            TEXT_DIMMER,
+        )?;
+        y += canvas.r(3.4);
         y = target(canvas, view, [left, y, right, area[3]])?;
         control(
             canvas,
@@ -85,7 +116,10 @@ pub(super) fn inspector(
             [left, y, right, y + canvas.r(4.0)],
             "Retarget shot",
             Action::RetargetCamera,
-            selected_target(view).is_some(),
+            view.studio.preview.ready
+                && selected_target(view).is_some_and(|target| {
+                    shot.kind() != CameraRigKind::Player || target.pose.eye_offset.is_some()
+                }),
             Variant::Secondary,
         )?;
         y += canvas.r(5.2);
@@ -109,58 +143,11 @@ pub(super) fn inspector(
     )?;
     y += canvas.r(5.0);
     let at = view.studio.position;
-    for &parameter in shot.parameters() {
-        let value = shot
-            .parameter(parameter, at)
-            .map_or_else(|| "--".into(), |value| format!("{value:.2}"));
-        let button = canvas.r(3.6);
-        canvas.text_line(
-            &format!("{}  {value}", parameter.label()),
-            [left, y + canvas.r(0.7)],
-            (right - left - button * 2.0 - canvas.r(1.2)).max(0.0),
-            CAPTION,
-            TEXT,
-        )?;
-        for (index, (label, direction)) in [("-", -1), ("+", 1)].into_iter().enumerate() {
-            let x = right - button * (2 - index) as f32;
-            control(
-                canvas,
-                view,
-                [x, y, x + button - canvas.r(0.4), y + canvas.r(3.6)],
-                label,
-                Action::AdjustCamera {
-                    parameter,
-                    direction,
-                },
-                shot.span.contains(at),
-                Variant::Secondary,
-            )?;
-        }
-        y += canvas.r(4.4);
+    if shot.kind() == CameraRigKind::Path {
+        y = keys::draw(canvas, view, [left, y, right, area[3]], shot)?;
     }
-    if let CameraMode::Path {
-        keys,
-        smooth_position: _,
-    } = &shot.mode
-    {
-        canvas.text_line(
-            &format!("{} path keys", keys.len()),
-            [left, y],
-            right - left,
-            CAPTION,
-            TEXT_DIMMER,
-        )?;
-        y += canvas.r(2.8);
-        control(
-            canvas,
-            view,
-            [left, y, right, y + canvas.r(4.0)],
-            "Add / update key",
-            Action::AddCameraKey,
-            view.studio.preview.ready && shot.span.contains(at),
-            Variant::Secondary,
-        )?;
-        y += canvas.r(5.2);
+    for &parameter in shot.parameters() {
+        y = numeric(canvas, view, [left, y, right, area[3]], shot, parameter)?;
     }
     let width = (right - left - canvas.r(0.8)) * 0.5;
     for (index, (label, action)) in [
@@ -182,6 +169,105 @@ pub(super) fn inspector(
         )?;
     }
     Ok(y + canvas.r(5.2))
+}
+
+/// Decimal input and coarse/fine nudges share the same validated camera parameter edit.
+fn numeric(
+    canvas: &mut Canvas<'_>,
+    view: &MenuView,
+    area: Bounds,
+    shot: &CameraShot,
+    parameter: CameraParameter,
+) -> Result<f32, PaintError> {
+    let [left, mut y, right, _] = area;
+    let at = view.studio.position;
+    let enabled = at >= shot.span.start && at <= shot.span.end;
+    let label = if shot.kind() == CameraRigKind::Follow
+        && matches!(
+            parameter,
+            CameraParameter::X | CameraParameter::Y | CameraParameter::Z
+        ) {
+        format!("Offset {}", parameter.label())
+    } else {
+        parameter.label().into()
+    };
+    canvas.text_line(&label, [left, y], right - left, CAPTION, TEXT_DIMMER)?;
+    y += canvas.r(2.8);
+    let value = shot
+        .parameter(parameter, at)
+        .map_or_else(|| "--".into(), |value| format!("{value:.3}"));
+    let draft = view
+        .studio
+        .camera_draft
+        .as_ref()
+        .filter(|(id, time, field, _)| *id == shot.id && *time == at && *field == parameter)
+        .map(|(_, _, _, value)| value.as_ref());
+    let button = canvas.r(3.6);
+    widgets::text_field(
+        canvas,
+        view,
+        [
+            left,
+            y,
+            right - button * 2.0 - canvas.r(0.8),
+            y + canvas.r(3.8),
+        ],
+        draft.unwrap_or(&value),
+        parameter.label(),
+        draft.is_some() && view.field == Some(launcher::menu::MenuField::StudioCamera(parameter)),
+        enabled.then_some(MenuAction::Studio(Action::EditCameraValue(parameter))),
+    )?;
+    for (index, (label, direction)) in [("-", -1), ("+", 1)].into_iter().enumerate() {
+        let x = right - button * (2 - index) as f32;
+        control(
+            canvas,
+            view,
+            [x, y, x + button - canvas.r(0.4), y + canvas.r(3.8)],
+            label,
+            Action::AdjustCamera {
+                parameter,
+                direction,
+            },
+            enabled,
+            Variant::Secondary,
+        )?;
+    }
+    y += canvas.r(4.8);
+    if draft.is_some() {
+        y = pair(
+            canvas,
+            view,
+            [left, y, right, area[3]],
+            [
+                ("Apply", Action::ApplyCameraValue, enabled),
+                ("Cancel", Action::CancelCameraValue, true),
+            ],
+        )?;
+    }
+    Ok(y)
+}
+
+/// Paired inspector actions retain the native focus and disabled-control treatment.
+fn pair(
+    canvas: &mut Canvas<'_>,
+    view: &MenuView,
+    area: Bounds,
+    actions: [(&str, Action, bool); 2],
+) -> Result<f32, PaintError> {
+    let width = (area[2] - area[0] - canvas.r(0.8)) * 0.5;
+    for (index, (label, action, enabled)) in actions.into_iter().enumerate() {
+        let x = area[0] + index as f32 * (width + canvas.r(0.8));
+        control(
+            canvas,
+            view,
+            [x, area[1], x + width, area[1] + canvas.r(3.8)],
+            label,
+            action,
+            enabled,
+            Variant::Secondary,
+        )?;
+    }
+    Ok(area[1] + canvas.r(4.8))
 }
 
 /// A compact target browser supports large recorded actor sets without painting thousands of controls.

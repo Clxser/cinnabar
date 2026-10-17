@@ -18,6 +18,7 @@ pub(super) fn synchronize(project: &mut Project, id: Id) -> Result<(), StudioErr
             audio.at = visual.at;
             audio.source_range = visual.source_range;
             audio.rate = visual.rate;
+            audio.speed_ramp.clone_from(&visual.speed_ramp);
             audio.fade_in = audio.fade_in.min(duration);
             audio.fade_out = audio.fade_out.min(duration);
         }
@@ -56,6 +57,7 @@ pub(super) fn split(project: &mut Project, left: Id, right: Id) -> Result<(), St
         second.at = visual.at;
         second.source_range = visual.source_range;
         second.rate = visual.rate;
+        second.speed_ramp.clone_from(&visual.speed_ramp);
         second.fade_in = MediaTime::ZERO;
         additions.push(second);
     }

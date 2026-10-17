@@ -8,6 +8,7 @@ pub const MAX_CURVE_KEYS: usize = 4096;
 pub const MAX_EFFECT_VALUE: f64 = 1_000_000.0;
 
 mod edit;
+pub mod preset;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -46,18 +47,37 @@ impl Easing {
     /// Maps bounded linear progress to a deterministic transition with exact endpoints.
     pub fn sample(self, value: f64) -> f64 {
         let t = value.clamp(0.0, 1.0);
+        if self == Self::Hold {
+            return if t >= 1.0 { 1.0 } else { 0.0 };
+        }
+        self.polynomial()
+            .into_iter()
+            .rev()
+            .fold(0.0, |value, coefficient| value * t + coefficient)
+            .clamp(0.0, 1.0)
+    }
+
+    /// Analytic curve area derives from the same polynomial as sampling, keeping speed-map integrals in sync.
+    pub fn integral(self, value: f64) -> f64 {
+        let t = value.clamp(0.0, 1.0);
+        self.polynomial()
+            .into_iter()
+            .enumerate()
+            .rev()
+            .fold(0.0, |value, (power, coefficient)| {
+                value * t + coefficient / (power + 1) as f64
+            })
+            * t
+    }
+
+    /// One coefficient definition owns both curve evaluation and its source-clock integral.
+    fn polynomial(self) -> [f64; 4] {
         match self {
-            Self::Linear => t,
-            Self::Smooth => t * t * (3.0 - 2.0 * t),
-            Self::EaseIn => t * t * t,
-            Self::EaseOut => 1.0 - (1.0 - t).powi(3),
-            Self::Hold => {
-                if t >= 1.0 {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
+            Self::Linear => [0.0, 1.0, 0.0, 0.0],
+            Self::Smooth => [0.0, 0.0, 3.0, -2.0],
+            Self::EaseIn => [0.0, 0.0, 0.0, 1.0],
+            Self::EaseOut => [0.0, 3.0, -3.0, 1.0],
+            Self::Hold => [0.0; 4],
         }
     }
 }
@@ -145,6 +165,13 @@ effects! {
     Flash => ("Flash", 0.5, 0.05, 0.0, 1.0),
     Letterbox => ("Letterbox", 0.1, 0.01, 0.0, 0.4),
     Fade => ("Fade", 0.5, 0.05, 0.0, 1.0),
+    Contrast => ("Contrast", 0.2, 0.05, -1.0, 1.0),
+    Warmth => ("Warmth", 0.2, 0.05, -1.0, 1.0),
+    Tint => ("Tint", 0.15, 0.05, -1.0, 1.0),
+    Grain => ("Film grain", 0.15, 0.025, 0.0, 1.0),
+    Chromatic => ("RGB split", 0.003, 0.001, 0.0, 0.03),
+    SoftFocus => ("Soft focus", 0.25, 0.05, 0.0, 1.0),
+    Sharpen => ("Sharpen", 0.25, 0.05, 0.0, 2.0),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -153,6 +180,10 @@ pub struct AutomationOrigin {
     pub source: Id,
     pub event_sequence: u64,
     pub template_revision: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip_id: Option<Id>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_time: Option<MediaTime>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -188,6 +219,13 @@ pub struct EffectSample {
     pub flash: f64,
     pub letterbox: f64,
     pub fade: f64,
+    pub contrast: f64,
+    pub warmth: f64,
+    pub tint: f64,
+    pub grain: f64,
+    pub chromatic: f64,
+    pub soft_focus: f64,
+    pub sharpen: f64,
 }
 
 impl EffectSample {
@@ -241,6 +279,13 @@ impl EffectSample {
             EffectKind::Flash => &mut self.flash,
             EffectKind::Letterbox => &mut self.letterbox,
             EffectKind::Fade => &mut self.fade,
+            EffectKind::Contrast => &mut self.contrast,
+            EffectKind::Warmth => &mut self.warmth,
+            EffectKind::Tint => &mut self.tint,
+            EffectKind::Grain => &mut self.grain,
+            EffectKind::Chromatic => &mut self.chromatic,
+            EffectKind::SoftFocus => &mut self.soft_focus,
+            EffectKind::Sharpen => &mut self.sharpen,
         };
         *slot += value;
     }
@@ -256,5 +301,12 @@ impl EffectSample {
         self.flash = EffectKind::Flash.constrain(self.flash);
         self.letterbox = EffectKind::Letterbox.constrain(self.letterbox);
         self.fade = EffectKind::Fade.constrain(self.fade);
+        self.contrast = EffectKind::Contrast.constrain(self.contrast);
+        self.warmth = EffectKind::Warmth.constrain(self.warmth);
+        self.tint = EffectKind::Tint.constrain(self.tint);
+        self.grain = EffectKind::Grain.constrain(self.grain);
+        self.chromatic = EffectKind::Chromatic.constrain(self.chromatic);
+        self.soft_focus = EffectKind::SoftFocus.constrain(self.soft_focus);
+        self.sharpen = EffectKind::Sharpen.constrain(self.sharpen);
     }
 }

@@ -10,6 +10,13 @@ pub(super) fn apply(project: &mut Project, command: &Command) -> Result<(), Stud
     match command {
         Command::Rename { name } => project.name.clone_from(name),
         Command::AddSource { source } => project.sources.push(source.clone()),
+        Command::ReplaceSource { source } => replace(
+            &mut project.sources,
+            source.id,
+            |value| value.id,
+            source.clone(),
+            "media source",
+        )?,
         Command::AddClip { clip } => project.clips.push(clip.clone()),
         Command::ReplaceClip { clip } => {
             *clip_mut(project, clip.id)? = clip.clone();
@@ -56,6 +63,24 @@ pub(super) fn apply(project: &mut Project, command: &Command) -> Result<(), Stud
             }
         }
         Command::SetFraming { id, framing } => clip_mut(project, *id)?.framing = *framing,
+        Command::SetSpeedRamp { id, ramp, ripple } => {
+            let clip = clip_mut(project, *id)?;
+            if let Some(ramp) = ramp {
+                ramp.validate(clip.rate)?;
+            }
+            let before = clip.span()?.end;
+            clip.speed_ramp.clone_from(ramp);
+            let after = clip.span()?.end;
+            linked::synchronize(project, *id)?;
+            if *ripple {
+                ripple_after(
+                    project,
+                    before,
+                    i128::from(after.0) - i128::from(before.0),
+                    *id,
+                )?;
+            }
+        }
         Command::AddShot { shot } => project.shots.push(shot.clone()),
         Command::ReplaceShot { shot } => replace(
             &mut project.shots,
@@ -228,13 +253,15 @@ fn ripple_after(
         shift_span(&mut shot.span, boundary, delta)?;
     }
     for effect in &mut project.effects {
-        shift_span(&mut effect.span, boundary, delta)?;
+        if effect.origin.is_none_or(|origin| origin.clip_id.is_none()) {
+            shift_span(&mut effect.span, boundary, delta)?;
+        }
     }
     for title in &mut project.titles {
         shift_span(&mut title.span, boundary, delta)?;
     }
     for marker in &mut project.markers {
-        if marker.at >= boundary {
+        if marker.at >= boundary && marker.origin.is_none_or(|origin| origin.clip_id.is_none()) {
             marker.at = shift(marker.at, delta)?;
         }
     }

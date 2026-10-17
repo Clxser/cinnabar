@@ -3,6 +3,10 @@
 use ui::UiPoint;
 
 impl super::UiPresentationRuntime {
+    /// Named editor gestures use actual painted geometry and remain correct across GUI scale changes.
+    pub fn menu_scroll_viewport(&self, key: &str) -> Option<ui::UiRect> {
+        self.menu_scrolls.viewport(key)
+    }
     /// Scrolls the menu view under `point`; `true` when one took the wheel.
     pub fn scroll_menu(&mut self, point: UiPoint, notches: f32, pixels: bool) -> bool {
         self.menu_scrolls.wheel(point, notches, pixels)

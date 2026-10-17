@@ -8,7 +8,7 @@ use std::sync::{
 use bevy::prelude::*;
 use client_shell::{menu::MenuRuntime, ui_resources::UiPresentationResource};
 use recording_studio::preview::{CameraPreview, PreviewRequest, PreviewStatus, RasterPreview};
-use render::replay::{FrameEffects, ReplayRenderContext};
+use render::replay::ReplayRenderContext;
 use render_model::{UI_STUDIO_PREVIEW_MAX_SIZE, UiTexturePage};
 use render_scene::ui_preview::{PreviewImage, UiPreviewImage, UiPreviewSurface};
 
@@ -253,9 +253,10 @@ impl Drop for Worker {
 /// All blocking waits, decoding, composition and page hashing are confined to this worker.
 fn run(shared: &Shared, context: Option<ReplayRenderContext>) {
     let mut preview = RasterPreview::interactive();
-    let mut effects = context.clone().map(FrameEffects::new);
+    let mut composition = context
+        .clone()
+        .map(|context| super::composition::Composition::new(context, true));
     let mut titles = super::titles::Titles::new(context.clone());
-    let mut native = context.map(scene::NativeScene::new);
     let mut native_page: Option<UiTexturePage> = None;
     let mut metrics = metrics::PreviewMetrics::default();
     loop {
@@ -293,34 +294,25 @@ fn run(shared: &Shared, context: Option<ReplayRenderContext>) {
                 .changed
                 .wait_timeout(pending, std::time::Duration::from_millis(10));
         };
-        let scene = match &mut native {
-            Some(native) => {
-                native.render(&job.request, UI_STUDIO_PREVIEW_MAX_SIZE, &cancelled, &wait)
-            }
-            None => Ok(None),
-        };
-        let native_source = matches!(&scene, Ok(Some(_)));
+        let mut native_source = false;
         titles.set_font(job.font);
-        let result = scene.and_then(|scene| {
-            if let Some(scene) = scene {
-                let image = titles.render(&job.request, scene.image, &cancelled, &wait)?;
-                return gpu_output(&mut native_page, image, scene.notice, Some(scene.camera));
-            }
+        let result = if let Some(composition) = &mut composition {
+            composition
+                .render(&job.request, UI_STUDIO_PREVIEW_MAX_SIZE, &cancelled, &wait)
+                .and_then(|frame| {
+                    native_source = frame.native;
+                    let image = titles.render(&job.request, frame.image, &cancelled, &wait)?;
+                    gpu_output(&mut native_page, image, frame.notice, frame.camera)
+                })
+        } else {
             preview
                 .render(&job.request, UI_STUDIO_PREVIEW_MAX_SIZE, &cancelled)
                 .and_then(|frame| {
-                    if effects.is_some() || !frame.effects.neutral() || titles.active(&job.request)? {
-                        let effects = effects.as_mut().ok_or("Timeline effects need an initialized graphics device.")?;
-                        let started = std::time::Instant::now();
-                        loop {
-                            if cancelled() { return Err("Preview cancelled.".into()); }
-                            if let Some(image) = effects.raster(frame.size, &frame.rgba8, frame.effects, job.request.frame_time()?)? {
-                                let image = titles.render(&job.request, image, &cancelled, &wait)?;
-                                return gpu_output(&mut native_page, image, frame.notice, None);
-                            }
-                            if started.elapsed() >= std::time::Duration::from_secs(30) { return Err("The effect preview could not finish. Pause playback and seek again.".into()); }
-                            wait();
-                        }
+                    if !frame.effects.neutral() || titles.active(&job.request)? {
+                        return Err(
+                            "Timeline effects and titles need an initialized graphics device."
+                                .into(),
+                        );
                     }
                     UiTexturePage::owned(frame.size, frame.rgba8)
                         .map(|page| PreviewOutput {
@@ -331,7 +323,7 @@ fn run(shared: &Shared, context: Option<ReplayRenderContext>) {
                         })
                         .map_err(|error| format!("Preview image admission failed: {error:?}"))
                 })
-        });
+        };
         if cancelled() {
             continue;
         }
@@ -339,7 +331,10 @@ fn run(shared: &Shared, context: Option<ReplayRenderContext>) {
             &job.request,
             started.elapsed(),
             native_source,
-            preview.decoder_counts(),
+            composition.as_ref().map_or_else(
+                || preview.decoder_counts(),
+                super::composition::Composition::decoder_counts,
+            ),
             result.as_ref().err().map(String::as_str),
         );
         *shared

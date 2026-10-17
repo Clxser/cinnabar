@@ -26,7 +26,7 @@ const MAX_RAW_BYTES: usize = MAX_ACTOR_BONE_ARENA_BYTES + MAX_METADATA + 1024 * 
 type Bone = [[f32; 4]; 3];
 const BONE_WORDS: usize = std::mem::size_of::<Bone>() / std::mem::size_of::<u32>();
 
-pub(super) struct PendingPose {
+pub(crate) struct PendingPose {
     pub geometry: AssetId,
     pub appearance: AssetId,
     metadata: Metadata,
@@ -37,7 +37,7 @@ pub(super) struct PendingPose {
 }
 
 /// Compression stays on the journal worker. Dynamic poses never consume one object file per frame.
-pub(super) fn write(
+pub(crate) fn write(
     output: &mut dyn Write,
     geometry: AssetId,
     appearance: AssetId,
@@ -82,7 +82,7 @@ pub(super) fn write(
 }
 
 /// Both compressed and decompressed envelopes reject trailing bytes, counts and incomplete streams.
-pub(super) fn read(input: &mut dyn Read) -> Result<PendingPose, ArchiveError> {
+pub(crate) fn read(input: &mut dyn Read) -> Result<PendingPose, ArchiveError> {
     let mut decoded = ZlibDecoder::new(BufReader::new(input));
     let mut reader = Reader::with_limit(&mut decoded, MAX_RAW_BYTES);
     if reader.bytes::<8>()? != MAGIC {
@@ -129,14 +129,54 @@ pub(super) fn read(input: &mut dyn Read) -> Result<PendingPose, ArchiveError> {
 
 impl PendingPose {
     /// Checks every GPU address and raster reference before independently publishing a prepared frame.
-    pub fn admit(
+    pub(super) fn admit(
         self,
         geometry: &LoadedGeometry,
         appearance: &LoadedAppearance,
     ) -> Result<FrozenActors, ArchiveError> {
+        let geometry_identity = self.geometry;
+        let appearance_identity = self.appearance;
+        let sample = self.admit_rig(geometry, |instance, page| {
+            if page == 0 {
+                if appearance.skins.resident(instance.texture_layer).is_none() {
+                    return Err(ArchiveError::Invalid(
+                        "recorded actor skin slot is not resident",
+                    ));
+                }
+            } else {
+                let raster = appearance.artwork.pages.get(usize::from(page) - 1).ok_or(
+                    ArchiveError::Invalid("recorded actor artwork page is missing"),
+                )?;
+                if instance.texture_layer >= raster.layers
+                    || instance.multitexture_layers.iter().any(|&layer| {
+                        layer != u32::MAX && (!raster.multitexture || layer >= raster.layers)
+                    })
+                {
+                    return Err(ArchiveError::Invalid(
+                        "recorded actor texture layer exceeds its page",
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        Ok(FrozenActors {
+            geometry_identity,
+            appearance_identity,
+            sample,
+            skins: Arc::clone(&appearance.skins),
+            artwork: Arc::clone(&appearance.artwork),
+        })
+    }
+
+    /// Shared rig admission checks GPU addresses before its draw owner admits each texture selector.
+    pub(crate) fn admit_rig(
+        self,
+        geometry: &LoadedGeometry,
+        texture: impl Fn(&ActorGpuInstance, u16) -> Result<(), ArchiveError>,
+    ) -> Result<ActorSample, ArchiveError> {
         let Self {
-            geometry: geometry_identity,
-            appearance: appearance_identity,
+            geometry: _,
+            appearance: _,
             metadata,
             instances,
             previous_bones,
@@ -208,52 +248,25 @@ impl PendingPose {
                     "recorded actor draw references invalid identity, geometry or pose",
                 ));
             }
-            if page == 0 {
-                if appearance.skins.resident(instance.texture_layer).is_none() {
-                    return Err(ArchiveError::Invalid(
-                        "recorded actor skin slot is not resident",
-                    ));
-                }
-            } else {
-                let Some(raster) = appearance.artwork.pages.get(usize::from(page) - 1) else {
-                    return Err(ArchiveError::Invalid(
-                        "recorded actor artwork page is missing",
-                    ));
-                };
-                if instance.texture_layer >= raster.layers
-                    || instance.multitexture_layers.iter().any(|&layer| {
-                        layer != u32::MAX && (!raster.multitexture || layer >= raster.layers)
-                    })
-                {
-                    return Err(ArchiveError::Invalid(
-                        "recorded actor texture layer exceeds its page",
-                    ));
-                }
-            }
+            texture(instance, page)?;
         }
-        Ok(FrozenActors {
-            geometry_identity,
-            appearance_identity,
-            skins: Arc::clone(&appearance.skins),
-            artwork: Arc::clone(&appearance.artwork),
-            sample: ActorSample {
-                coverage: metadata.coverage,
-                instances: metadata.instances.into(),
-                instance_revision: metadata.instance_revision,
-                skin_revision: metadata.skin_revision,
-                instance_pages: pages.into(),
-                rig: ActorRigRenderFrame {
-                    frame_generation: metadata.frame_generation,
-                    geometry_revision: metadata.geometry_revision,
-                    instances: instances.into(),
-                    previous_bones: previous_bones.into(),
-                    current_bones: current_bones.into(),
-                    geometry_vertices: geometry.vertices.clone(),
-                    geometry_spans: Arc::clone(&geometry.spans),
-                    manifest: manifest.into(),
-                    maximum_vertex_count: metadata.maximum_vertex_count,
-                    rejects: metadata.rejects.restore(),
-                },
+        Ok(ActorSample {
+            coverage: metadata.coverage,
+            instances: metadata.instances.into(),
+            instance_revision: metadata.instance_revision,
+            skin_revision: metadata.skin_revision,
+            instance_pages: pages.into(),
+            rig: ActorRigRenderFrame {
+                frame_generation: metadata.frame_generation,
+                geometry_revision: metadata.geometry_revision,
+                instances: instances.into(),
+                previous_bones: previous_bones.into(),
+                current_bones: current_bones.into(),
+                geometry_vertices: geometry.vertices.clone(),
+                geometry_spans: Arc::clone(&geometry.spans),
+                manifest: manifest.into(),
+                maximum_vertex_count: metadata.maximum_vertex_count,
+                rejects: metadata.rejects.restore(),
             },
         })
     }

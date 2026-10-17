@@ -16,6 +16,7 @@ use crate::{
 
 mod files;
 mod library;
+mod preferences;
 
 pub use library::{LibraryEntry, LibraryKind, LibraryListing};
 
@@ -66,6 +67,21 @@ pub enum StorageRequest {
     OpenRecording {
         path: PathBuf,
     },
+    RecoverRecording {
+        path: PathBuf,
+        cancellation: crate::export::Cancellation,
+    },
+    LoadCaptureSettings {
+        root: PathBuf,
+    },
+    SaveCaptureSettings {
+        root: PathBuf,
+        settings: crate::capture::CaptureSettings,
+    },
+    Thumbnails {
+        entries: Arc<[LibraryEntry]>,
+        cancellation: crate::export::Cancellation,
+    },
 }
 
 pub enum StorageValue {
@@ -78,6 +94,11 @@ pub enum StorageValue {
         revision: u64,
     },
     Library(LibraryListing),
+    CaptureSettings(crate::capture::CaptureSettings),
+    Thumbnails {
+        sheet: Arc<crate::media::ThumbnailSheet>,
+        slots: Vec<Option<[u16; 4]>>,
+    },
     Recording {
         path: PathBuf,
         reader: Arc<RecordingReader>,
@@ -195,6 +216,30 @@ fn execute(request: StorageRequest) -> Result<StorageValue, StorageError> {
             Ok(StorageValue::SavedProject { path, revision })
         }
         StorageRequest::ListLibrary { root } => Ok(StorageValue::Library(library::list(&root)?)),
+        StorageRequest::Thumbnails {
+            entries,
+            cancellation,
+        } => library::thumbnails(&entries, &cancellation),
+        StorageRequest::LoadCaptureSettings { root } => {
+            preferences::load(&root).map(StorageValue::CaptureSettings)
+        }
+        StorageRequest::SaveCaptureSettings { root, settings } => {
+            preferences::save(&root, settings)?;
+            Ok(StorageValue::CaptureSettings(settings))
+        }
+        StorageRequest::RecoverRecording { path, cancellation } => {
+            let path = files::absolute(&path)?;
+            let info = crate::archive::RecordingInfo::read(&path)?;
+            if info.scene_schema != crate::capture::POV_SCENE_SCHEMA {
+                return Err(io(
+                    &path,
+                    std::io::Error::other("This recording has no recoverable POV track."),
+                ));
+            }
+            let editor = crate::capture::recover_project(&path, &info.name, &cancellation)
+                .map_err(|error| io(&path, std::io::Error::other(error)))?;
+            Ok(StorageValue::CapturedVideo { editor, notice: Some("Recovered a verified video prefix into a separate file. Scene tracks, unfinished audio, event markers and missing fragments were not recovered. Save this project to keep the edit.".into()) })
+        }
         StorageRequest::OpenRecording { path } => {
             let path = files::absolute(&path)?;
             let reader = Arc::new(RecordingReader::open(&path)?);

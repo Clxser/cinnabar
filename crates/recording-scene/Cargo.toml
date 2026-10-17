@@ -10,7 +10,9 @@ assets = { path = "../assets" }
 bytemuck = { version = "1", features = ["min_const_generics"] }
 crossbeam-channel = "0.5"
 flate2 = "1"
+glam.workspace = true
 meshing = { path = "../meshing" }
+particles = { path = "../particles" }
 recording-studio = { path = "../recording-studio" }
 render-model = { path = "../render-model" }
 render-api = { path = "../render-api" }

@@ -25,10 +25,12 @@ use crossbeam_channel::{Receiver, Sender};
 use client_shell::ui_resources::UiRuntimeResource;
 
 mod offscreen;
+mod scale;
 
 type SaveResult = Result<String, String>;
 type CaptureConsumer = Box<dyn FnOnce(&Image) + Send + Sync>;
 type OwnedCaptureConsumer = Box<dyn FnOnce(Image) + Send + Sync>;
+type SizedCaptureConsumer = Box<dyn FnOnce(Result<Image, String>) + Send + Sync>;
 
 /// Everything that wants this frame's pixels. Bevy silently drops a second capture of one
 /// window in a frame, so a single readback serves every consumer.
@@ -36,6 +38,13 @@ type OwnedCaptureConsumer = Box<dyn FnOnce(Image) + Send + Sync>;
 pub(crate) struct FrameCapture {
     shared: Vec<CaptureConsumer>,
     owned: Vec<OwnedCaptureConsumer>,
+    sized: Option<SizedCapture>,
+}
+
+struct SizedCapture {
+    size: [u32; 2],
+    source: [u32; 2],
+    consumers: Vec<SizedCaptureConsumer>,
 }
 
 impl FrameCapture {
@@ -48,6 +57,33 @@ impl FrameCapture {
     /// The last owned consumer receives the readback allocation without another full-image copy.
     pub(crate) fn request_owned(&mut self, consumer: impl FnOnce(Image) + Send + Sync + 'static) {
         self.owned.push(Box::new(consumer));
+    }
+
+    /// Scales the final GPU output before readback; native screenshot requests take frame priority.
+    pub(crate) fn request_sized(
+        &mut self,
+        size: [u32; 2],
+        source: [u32; 2],
+        consumer: impl FnOnce(Result<Image, String>) + Send + Sync + 'static,
+    ) -> Result<(), String> {
+        recording_studio::video::frame_byte_len(size)?;
+        if size
+            .iter()
+            .zip(source)
+            .any(|(&side, original)| side < 2 || side > original)
+        {
+            return Err("The recording output must fit inside the original viewport.".into());
+        }
+        let request = self.sized.get_or_insert_with(|| SizedCapture {
+            size,
+            source,
+            consumers: Vec::new(),
+        });
+        if request.size != size || request.source != source {
+            return Err("Only one recording size can be captured in a frame.".into());
+        }
+        request.consumers.push(Box::new(consumer));
+        Ok(())
     }
 
     /// Runs image conversion and encoding on the existing I/O task pool after readback.
@@ -69,6 +105,7 @@ pub(crate) fn configure_frame_capture(app: &mut App) {
         .init_resource::<offscreen::FrameTarget>()
         .add_systems(bevy::prelude::PreUpdate, offscreen::prepare)
         .add_systems(Last, spawn_frame_capture.in_set(FrameCaptureSet));
+    scale::configure(app);
 }
 
 fn spawn_frame_capture(
@@ -79,6 +116,9 @@ fn spawn_frame_capture(
     if capture.shared.is_empty() && capture.owned.is_empty() {
         return;
     }
+    // Two screenshot owners cannot redirect the same camera output in Bevy's preparation phase.
+    // Dropping the recording callback releases its slot as missed; the user's native shot wins.
+    capture.sized = None;
     let mut consumers = std::mem::take(&mut capture.shared);
     let mut owned = std::mem::take(&mut capture.owned);
     let screenshot = target

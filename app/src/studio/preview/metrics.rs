@@ -28,9 +28,11 @@ impl PreviewMetrics {
         decoders: (usize, usize),
         error: Option<&str>,
     ) {
-        let (hardware, software) = if native { (0, 0) } else { decoders };
+        let (hardware, software) = decoders;
         let identity = (request.epoch, native, hardware, software);
-        let source = if native {
+        let source = if native && hardware + software > 0 {
+            "native replay and raster media"
+        } else if native {
             "native replay"
         } else {
             "recorded video"

@@ -114,6 +114,9 @@ struct UiRenderInstalled;
 fn install_ui_render(app: &mut App) {
     crate::upload_staging::install(app);
     app.init_resource::<UiRenderSceneResource>()
+        .init_resource::<render_scene::ui::UiHudCaptureScope>()
+        .init_resource::<render_scene::ui::RecordedUiTime>()
+        .init_resource::<render_scene::ui::UiPreparedHud>()
         .init_resource::<UiGlintSettings>()
         .init_resource::<UiItemGlintTexture>()
         .init_resource::<UiRenderStatsResource>();
@@ -128,8 +131,14 @@ fn install_ui_render(app: &mut App) {
     crate::pipeline_warmup::register::<pipeline::UiPipeline>(app);
     crate::pipeline_warmup::register::<composite::UiCompositePipeline>(app);
     let stats = app.world().resource::<UiRenderStatsResource>().clone();
+    let hud = app
+        .world()
+        .resource::<render_scene::ui::UiPreparedHud>()
+        .clone();
     app.add_plugins((
         ExtractResourcePlugin::<UiRenderSceneResource>::default(),
+        ExtractResourcePlugin::<render_scene::ui::UiHudCaptureScope>::default(),
+        ExtractResourcePlugin::<render_scene::ui::RecordedUiTime>::default(),
         ExtractResourcePlugin::<UiGlintSettings>::default(),
         ExtractResourcePlugin::<UiItemGlintTexture>::default(),
         ExtractResourcePlugin::<render_scene::ui_preview::UiPreviewSurface>::default(),
@@ -146,6 +155,7 @@ fn install_ui_render(app: &mut App) {
         .init_resource::<pipeline::UiPipeline>()
         .init_resource::<composite::UiCompositePipeline>()
         .insert_resource(stats)
+        .insert_resource(hud)
         .init_resource::<UiHandCoverage>()
         .init_resource::<composite::UiLayerStore>()
         .init_resource::<model_depth::UiModelDepths>()
@@ -221,6 +231,30 @@ pub(crate) struct UiGpu {
         (Entity, bool, bool),
         (CachedRenderPipelineId, CachedRenderPipelineId),
     >,
+}
+
+/// Independent replay texture epochs may change across source seeks without inheriting a live UI pack.
+pub(crate) fn reset_replay(world: &mut World) {
+    if let Some(mut gpu) = world.get_resource_mut::<UiGpu>() {
+        gpu.textures = UiGpuTextures::default();
+        gpu.accepted_revision = None;
+        gpu.last_admitted_revision = None;
+        gpu.last_admitted_publication = Weak::new();
+        gpu.uploads = uploads::BufferUploads::default();
+    }
+}
+
+/// A completed replay image cannot omit HUD geometry while its texture or vertex upload is pending.
+pub(crate) fn replay_ready(world: &World) -> bool {
+    let Some(scene) = world.get_resource::<UiRenderSceneResource>() else {
+        return false;
+    };
+    let Some(input) = &scene.input else {
+        return true;
+    };
+    world.get_resource::<UiGpu>().is_some_and(|gpu| {
+        gpu.accepted_revision == Some(input.revision) && gpu.textures.resident(&input.textures)
+    })
 }
 
 #[cfg(test)]

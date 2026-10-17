@@ -129,6 +129,30 @@ fn basis_for(
     }
 }
 
+/// Live and recorded particles share native facing axes and authored roll, including direction modes.
+pub(crate) fn billboard_axes(
+    facing: Facing,
+    view: &ParticleView,
+    emitter_basis: &[[f32; 3]; 3],
+    position: [f32; 3],
+    direction: Option<[f32; 3]>,
+    rotation: f32,
+) -> ([f32; 3], [f32; 3]) {
+    let (mut right, mut up) = basis_for(facing, view, emitter_basis, position, direction);
+    if rotation != 0.0
+        && !matches!(
+            facing,
+            Facing::DirectionX | Facing::DirectionY | Facing::DirectionZ
+        )
+    {
+        let (sin, cos) = rotation.to_radians().sin_cos();
+        let (r, u) = (right, up);
+        right = std::array::from_fn(|i| r[i] * cos + u[i] * sin);
+        up = std::array::from_fn(|i| u[i] * cos - r[i] * sin);
+    }
+    (right, up)
+}
+
 fn eval_color(
     programs: &[Program; 4],
     vars: &mut Vec<f32>,
@@ -266,6 +290,7 @@ fn emit_emitter(
     out: &mut Vec<(f32, ParticleInstance, Material)>,
     hides_box: &mut impl FnMut([f32; 3], [f32; 3]) -> bool,
     cave_hidden: &mut usize,
+    replay: &mut Option<Vec<crate::replay::PreparedParticle>>,
 ) {
     let def = std::sync::Arc::clone(&emitter.def);
     let local = def.emitter.local_position;
@@ -277,6 +302,7 @@ fn emit_emitter(
         0.0
     };
     let rng = &mut emitter.rng;
+    let mut hidden_vars = Vec::new();
     for p in &mut emitter.particles {
         let position: [f32; 3] = if local {
             let rotated = transform(&basis, p.pos);
@@ -286,18 +312,26 @@ fn emit_emitter(
         };
         let relative = sub(position, view.position);
         let distance_sq = dot(relative, relative);
-        if distance_sq > MAX_DRAW_DISTANCE * MAX_DRAW_DISTANCE {
+        let in_view = !(distance_sq > MAX_DRAW_DISTANCE * MAX_DRAW_DISTANCE
+            || (distance_sq > 4.0 && dot(relative, view.forward) < cos_limit * distance_sq.sqrt()));
+        if !in_view && replay.is_none() {
             continue;
         }
-        if distance_sq > 4.0 && dot(relative, view.forward) < cos_limit * distance_sq.sqrt() {
-            continue;
-        }
+        // Hidden candidates are sampled from a fork so recording cannot change the live emitter's
+        // random stream or the particle variables its next simulation tick reads.
+        let mut hidden_rng = (*rng).clone();
+        let (vars, sampled_rng) = if in_view {
+            (&mut p.vars, &mut *rng)
+        } else {
+            hidden_vars.clone_from(&p.vars);
+            (&mut hidden_vars, &mut hidden_rng)
+        };
         if let Some(per_render) = &def.particle.per_render {
-            per_render.eval(&mut p.vars, rng, &queries);
+            per_render.eval(vars, sampled_rng, &queries);
         }
         let size = [
-            def.particle.billboard.size[0].eval(&mut p.vars, rng, &queries),
-            def.particle.billboard.size[1].eval(&mut p.vars, rng, &queries),
+            def.particle.billboard.size[0].eval(vars, sampled_rng, &queries),
+            def.particle.billboard.size[1].eval(vars, sampled_rng, &queries),
         ];
         if !(size[0].abs() > 1e-5 && size[1].abs() > 1e-5) {
             continue;
@@ -316,37 +350,27 @@ fn emit_emitter(
                     .flatten()
             }
             DirectionMode::Custom(vector) => unit([
-                vector[0].eval(&mut p.vars, rng, &queries),
-                vector[1].eval(&mut p.vars, rng, &queries),
-                vector[2].eval(&mut p.vars, rng, &queries),
+                vector[0].eval(vars, sampled_rng, &queries),
+                vector[1].eval(vars, sampled_rng, &queries),
+                vector[2].eval(vars, sampled_rng, &queries),
             ]),
         };
-        let (mut right, mut up) = basis_for(
+        let (right, up) = billboard_axes(
             def.particle.billboard.facing,
             view,
             &basis,
             position,
             direction,
+            p.rotation,
         );
-        if p.rotation != 0.0
-            && !matches!(
-                def.particle.billboard.facing,
-                Facing::DirectionX | Facing::DirectionY | Facing::DirectionZ
-            )
-        {
-            let (sin, cos) = p.rotation.to_radians().sin_cos();
-            let (r, u) = (right, up);
-            right = std::array::from_fn(|i| r[i] * cos + u[i] * sin);
-            up = std::array::from_fn(|i| u[i] * cos - r[i] * sin);
-        }
-        let mut color = tint_of(&def.particle.tint, &mut p.vars, rng, &queries);
+        let mut color = tint_of(&def.particle.tint, vars, sampled_rng, &queries);
         let uv = uv_of(
             &def.particle.billboard,
             &def,
             placement,
             (p.age, p.lifetime),
-            &mut p.vars,
-            rng,
+            vars,
+            sampled_rng,
             &queries,
         );
         color[3] = color[3].clamp(0.0, 1.0);
@@ -360,9 +384,11 @@ fn emit_emitter(
         // Round outward so a corner on a section boundary cannot lose its neighbour.
         let low = std::array::from_fn(|i| (position[i] - extent[i]).next_down());
         let high = std::array::from_fn(|i| (position[i] + extent[i]).next_up());
-        if low.iter().chain(&high).all(|value| value.is_finite()) && hides_box(low, high) {
+        let cave_occluded = in_view
+            && low.iter().chain(&high).all(|value| value.is_finite())
+            && hides_box(low, high);
+        if cave_occluded {
             *cave_hidden += 1;
-            continue;
         }
         let instance = ParticleInstance {
             center_light: [position[0], position[1], position[2], 0.0],
@@ -386,6 +412,24 @@ fn emit_emitter(
                 color[3],
             ],
         };
+        if let Some(replay) = replay {
+            let direction = direction.map_or([0.0; 4], |v| [v[0], v[1], v[2], 1.0]);
+            replay.push(crate::replay::PreparedParticle {
+                instance,
+                emitter_basis: basis,
+                direction,
+                size_rotation: [size[0], size[1], p.rotation, 0.0],
+                facing: def.particle.billboard.facing as u32,
+                material: match def.material {
+                    Material::Alpha | Material::Opaque => 0,
+                    Material::Blend => 1,
+                    Material::Add => 2,
+                },
+            });
+        }
+        if !in_view || cave_occluded {
+            continue;
+        }
         let depth = dot(relative, view.forward);
         out.push((depth, instance, def.material));
     }
@@ -408,6 +452,7 @@ impl ParticleSystem {
         let cos_limit = (view.half_diagonal + 0.15).min(3.0).cos();
         let mut collected = Vec::new();
         let mut cave_hidden = 0;
+        let mut replay = self.recording_enabled().then(Vec::new);
         for emitter in self.emitters_mut() {
             emit_emitter(
                 emitter,
@@ -416,9 +461,21 @@ impl ParticleSystem {
                 &mut collected,
                 &mut hides_box,
                 &mut cave_hidden,
+                &mut replay,
             );
         }
         let (light_lookups, light_cache_hits) = sample_particle_light(world, &mut collected);
+        if let Some(replay) = &mut replay {
+            let mut lights = replay
+                .iter()
+                .map(|p| (0.0, p.instance, Material::Opaque))
+                .collect::<Vec<_>>();
+            sample_particle_light(world, &mut lights);
+            for (prepared, (_, instance, _)) in replay.iter_mut().zip(lights) {
+                prepared.instance.center_light[3] = instance.center_light[3];
+            }
+        }
+        self.publish_recording_frame(replay.map(std::sync::Arc::from));
         collected.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
         let mut lists = DrawLists {
             cave_hidden,

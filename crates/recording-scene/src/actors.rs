@@ -14,9 +14,10 @@ use serde::{Deserialize, Serialize};
 
 mod appearance;
 mod capture;
-mod geometry;
+pub(crate) mod geometry;
+mod interpolate;
 mod metadata;
-mod pose;
+pub(crate) mod pose;
 pub use capture::{ActorCapture, PreparedAppearance, PreparedGeometry};
 
 pub const ACTOR_TRACK_SCHEMA: &str = "cinnabar.prepared-actors/1";
@@ -79,7 +80,10 @@ pub struct ActorRecording {
     geometry: Option<(AssetId, Arc<geometry::LoadedGeometry>)>,
     appearance: Option<(AssetId, Arc<appearance::LoadedAppearance>)>,
     pending_bytes: Vec<u8>,
-    current: Option<FrozenActors>,
+    current: Option<(MediaTime, FrozenActors)>,
+    next: Option<(MediaTime, FrozenActors)>,
+    sampled: Option<FrozenActors>,
+    position: Option<MediaTime>,
 }
 
 impl ActorRecording {
@@ -97,6 +101,9 @@ impl ActorRecording {
             appearance: None,
             pending_bytes: Vec::new(),
             current: None,
+            next: None,
+            sampled: None,
+            position: None,
         })
     }
 
@@ -106,63 +113,57 @@ impl ActorRecording {
         at: MediaTime,
         cancelled: impl Fn() -> bool,
     ) -> Result<FrozenActors, ArchiveError> {
-        let mut found = false;
-        let bytes = &mut self.pending_bytes;
-        let result = self
-            .cursor
-            .seek(at, &cancelled, |record| {
-                latest_pose(record, &mut found, bytes)
-            })
-            .and_then(|()| {
-                if found {
-                    self.load_pending(&cancelled)
-                } else {
-                    Err(ArchiveError::Invalid(
-                        "actor recording has no prepared frame",
-                    ))
-                }
-            });
-        match result {
-            Ok(frame) => {
-                self.current = Some(frame.clone());
-                Ok(frame)
-            }
-            Err(error) => {
-                self.cursor.invalidate();
-                Err(error)
-            }
+        let result = (|| {
+            self.current = Some(self.read_pose(at, true, &cancelled)?.ok_or(
+                ArchiveError::Invalid("actor recording has no prepared frame"),
+            )?);
+            self.read_next(&cancelled)?;
+            self.publish(at, &cancelled)
+        })();
+        if let Err(error) = result {
+            self.invalidate();
+            return Err(error);
         }
+        self.sampled.clone().ok_or(ArchiveError::Invalid(
+            "actor playback needs a successful seek",
+        ))
     }
 
-    /// Advances only new pose records, decoding the last crossed pose once even after a playback jump.
+    /// Advances adjacent source poses once and samples the requested time between compatible draws.
     pub fn advance_to(
         &mut self,
         at: MediaTime,
         cancelled: impl Fn() -> bool,
     ) -> Result<&FrozenActors, ArchiveError> {
-        let mut found = false;
-        let bytes = &mut self.pending_bytes;
-        let result = self
-            .cursor
-            .advance_to(at, &cancelled, |record| {
-                latest_pose(record, &mut found, bytes)
-            })
-            .and_then(|()| {
-                if found {
-                    self.load_pending(&cancelled).map(Some)
-                } else {
-                    Ok(None)
-                }
-            });
-        match result {
-            Ok(Some(frame)) => self.current = Some(frame),
-            Ok(None) => {}
-            Err(error) => {
-                self.cursor.invalidate();
-                return Err(error);
-            }
+        if cancelled() {
+            self.invalidate();
+            return Err(ArchiveError::Cancelled);
         }
-        self.current.as_ref().ok_or(ArchiveError::Invalid(
+        if self.position.is_none_or(|previous| at < previous) || at > self.duration() {
+            return Err(ArchiveError::Invalid(
+                "actor playback needs a seek before advancing",
+            ));
+        }
+        if self.position == Some(at) {
+            return self.sampled.as_ref().ok_or(ArchiveError::Invalid(
+                "actor playback needs a successful seek",
+            ));
+        }
+        let result = (|| {
+            if self.next.as_ref().is_some_and(|(time, _)| *time <= at) {
+                self.current = self.next.take();
+                if let Some(frame) = self.read_pose(at, false, &cancelled)? {
+                    self.current = Some(frame);
+                }
+                self.read_next(&cancelled)?;
+            }
+            self.publish(at, &cancelled)
+        })();
+        if let Err(error) = result {
+            self.invalidate();
+            return Err(error);
+        }
+        self.sampled.as_ref().ok_or(ArchiveError::Invalid(
             "actor playback needs a successful seek",
         ))
     }
@@ -170,6 +171,10 @@ impl ActorRecording {
     /// Scene admission and journal progress share one validity boundary.
     pub fn invalidate(&mut self) {
         self.cursor.invalidate();
+        self.current = None;
+        self.next = None;
+        self.sampled = None;
+        self.position = None;
     }
 
     /// Track duration comes from its verified completion or recoverable committed prefix.
@@ -180,6 +185,63 @@ impl ActorRecording {
     /// A scene coordinator checks that every track belongs to the same take before playback.
     pub fn info(&self) -> &recording_studio::archive::RecordingInfo {
         self.cursor.reader().info()
+    }
+
+    /// One cursor retains only the admitted current pose, one future pose and a reusable payload.
+    fn read_pose(
+        &mut self,
+        at: MediaTime,
+        seek: bool,
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<Option<(MediaTime, FrozenActors)>, ArchiveError> {
+        let mut found = None;
+        let bytes = &mut self.pending_bytes;
+        let mut visit = |record: ReplayRecord<'_>| latest_pose(record, &mut found, bytes);
+        if seek {
+            self.cursor.seek(at, cancelled, &mut visit)?;
+        } else {
+            self.cursor.advance_to(at, cancelled, &mut visit)?;
+        }
+        found
+            .map(|time| self.load_pending(cancelled).map(|frame| (time, frame)))
+            .transpose()
+    }
+
+    /// Multipart checkpoints and any non-pose boundaries are consumed at their complete timestamp.
+    fn read_next(&mut self, cancelled: &impl Fn() -> bool) -> Result<(), ArchiveError> {
+        self.next = None;
+        while let Some(at) = self.cursor.next_time(cancelled)? {
+            if let Some(frame) = self.read_pose(at, false, cancelled)? {
+                self.next = Some(frame);
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Source-time revisions invalidate GPU uploads identically for seeks, playback and offline exports.
+    fn publish(
+        &mut self,
+        at: MediaTime,
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<(), ArchiveError> {
+        let (time, current) = self.current.as_ref().ok_or(ArchiveError::Invalid(
+            "actor playback needs a successful seek",
+        ))?;
+        let mut frame = if let Some((next_at, next)) = &self.next {
+            let amount = at.saturating_sub(*time).0 as f64 / next_at.saturating_sub(*time).0 as f64;
+            interpolate::sample(current, next, amount as f32, cancelled)?
+        } else {
+            current.clone()
+        };
+        if cancelled() {
+            return Err(ArchiveError::Cancelled);
+        }
+        frame.sample.instance_revision = at.0 + 1;
+        frame.sample.rig.frame_generation = at.0 + 1;
+        self.sampled = Some(frame);
+        self.position = Some(at);
+        Ok(())
     }
 
     /// Only the selected pose is decoded; immutable geometry and appearance epochs reuse validated caches.
@@ -219,19 +281,19 @@ impl ActorRecording {
 /// Copies bounded compressed bytes rather than repeatedly decoding every skipped frame during a seek.
 fn latest_pose(
     record: ReplayRecord<'_>,
-    found: &mut bool,
+    found: &mut Option<MediaTime>,
     bytes: &mut Vec<u8>,
 ) -> Result<(), ArchiveError> {
     match record.kind {
         RecordKind::CheckpointStart => {
-            *found = false;
+            *found = None;
             bytes.clear();
         }
         RecordKind::CheckpointEnd => {}
         RecordKind::CheckpointPart | RecordKind::Scene => {
             bytes.clear();
             bytes.extend_from_slice(record.payload);
-            *found = true;
+            *found = Some(record.at);
         }
         _ => return Err(ArchiveError::Invalid("unexpected prepared-actor record")),
     }

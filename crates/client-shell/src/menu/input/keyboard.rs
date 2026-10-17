@@ -15,6 +15,37 @@ pub(super) fn drive(
         if input.state != ButtonState::Pressed {
             continue;
         }
+        if !input.repeat
+            && matches!(
+                menu.field,
+                Some(
+                    MenuField::StudioDestination
+                        | MenuField::StudioCamera(_)
+                        | MenuField::StudioClip(_)
+                )
+            )
+        {
+            use launcher::menu::studio::Action;
+            let actions = if menu.field == Some(MenuField::StudioDestination) {
+                (
+                    Action::ApplyExportDestination,
+                    Action::CancelExportDestination,
+                )
+            } else if matches!(menu.field, Some(MenuField::StudioClip(_))) {
+                (Action::ApplyClipTime, Action::CancelClipTime)
+            } else {
+                (Action::ApplyCameraValue, Action::CancelCameraValue)
+            };
+            let action = match input.key_code {
+                KeyCode::Escape => Some(actions.1),
+                KeyCode::Enter | KeyCode::NumpadEnter => Some(actions.0),
+                _ => None,
+            };
+            if let Some(action) = action {
+                menu.activate(launcher::menu::MenuAction::Studio(action));
+                continue;
+            }
+        }
         if menu.field == Some(MenuField::StudioTitle)
             && matches!(input.key_code, KeyCode::ArrowUp | KeyCode::ArrowDown)
         {
@@ -135,7 +166,25 @@ fn studio_shortcut(
     {
         return false;
     }
-    let editing = !menu.studio.view.show_library && menu.studio.view.project.is_some();
+    let editing = !menu.studio.view.show_library
+        && !menu.studio.view.workflow.show_settings
+        && menu.studio.view.project.is_some();
+    let timeline_focus = matches!(
+        menu.focus_actions().get(menu.focused),
+        Some(launcher::menu::MenuAction::Studio(
+            Action::Select(_)
+                | Action::DragItem { .. }
+                | Action::Scrub { .. }
+                | Action::TimelineOverview { .. }
+                | Action::Step(_)
+                | Action::Seek(_)
+                | Action::Zoom(_)
+                | Action::Pan(_)
+                | Action::FitTimeline
+                | Action::RevealPlayhead
+        ))
+    );
+    let timeline_keys = editing && timeline_focus;
     let action = match input.key_code {
         KeyCode::KeyS if modifiers.shortcut() => Action::Save,
         KeyCode::KeyN if modifiers.shortcut() => Action::NewProject,
@@ -143,10 +192,25 @@ fn studio_shortcut(
         KeyCode::KeyZ if modifiers.shortcut() => Action::Undo,
         KeyCode::KeyY if modifiers.shortcut() => Action::Redo,
         KeyCode::Space if editing => Action::TogglePlayback,
-        KeyCode::ArrowLeft if editing => Action::Step(-1),
-        KeyCode::ArrowRight if editing => Action::Step(1),
+        KeyCode::ArrowLeft if timeline_keys => Action::Step(-1),
+        KeyCode::ArrowRight if timeline_keys => Action::Step(1),
         KeyCode::KeyS if editing && !modifiers.shortcut() => Action::Split,
-        KeyCode::Delete if editing => Action::DeleteSelected,
+        KeyCode::Delete if timeline_keys => Action::DeleteSelected,
+        KeyCode::KeyF if editing && !modifiers.shortcut() => Action::FitTimeline,
+        KeyCode::Equal if editing => Action::Zoom(1),
+        KeyCode::Minus if editing => Action::Zoom(-1),
+        KeyCode::PageUp if editing => Action::Pan(-1),
+        KeyCode::PageDown if editing => Action::Pan(1),
+        KeyCode::Home if timeline_keys => Action::Seek(recording_studio::MediaTime::ZERO),
+        KeyCode::End if timeline_keys => Action::Seek(
+            menu.studio
+                .view
+                .project
+                .as_ref()
+                .map_or(recording_studio::MediaTime::ZERO, |project| {
+                    project.duration()
+                }),
+        ),
         _ => return false,
     };
     if !input.repeat || matches!(action, Action::Step(_)) {

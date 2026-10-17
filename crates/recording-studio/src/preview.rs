@@ -10,12 +10,14 @@ use crate::{
     Id, MediaTime, Project,
     decode::VideoDecoder,
     model::MediaKind,
-    playback::{CompiledTimeline, FramePlan},
+    playback::{CompiledTimeline, FramePlan, MAX_VISUAL_LAYERS},
 };
 
 mod raster;
 
-const MAX_PREVIEW_LAYERS: usize = 8;
+/// Active decoded/native source frames share a byte budget before allocation or GPU upload begins.
+pub const MAX_VISUAL_FRAME_BYTES: usize = 4 * crate::video::MAX_FRAME_BYTES;
+
 const PLAYBACK_LEAD_FRAMES: u64 = 2;
 
 #[derive(Clone)]
@@ -174,8 +176,10 @@ impl RasterPreview {
         timeline
             .sample(at, &mut self.plan, |_, _, _| None)
             .map_err(|error| error.to_string())?;
-        if self.plan.visuals.len() > MAX_PREVIEW_LAYERS {
-            return Err("Preview supports at most eight simultaneous visual layers.".into());
+        if self.plan.visuals.len() > MAX_VISUAL_LAYERS {
+            return Err(format!(
+                "Preview supports at most {MAX_VISUAL_LAYERS} simultaneous visual layers."
+            ));
         }
         let active = self
             .plan
@@ -186,6 +190,19 @@ impl RasterPreview {
         self.decoders.retain(|id, _| active.contains(id));
         self.failures.retain(|id, _| active.contains(id));
         let size = fit_size(project.export.size, maximum)?;
+        let mut frame_bytes = 0_usize;
+        for visual in &self.plan.visuals {
+            let source = project
+                .sources
+                .iter()
+                .find(|source| source.id == visual.source)
+                .ok_or("Preview source is missing.")?;
+            let bytes = crate::video::frame_byte_len(fit_size(source.size, size)?)?;
+            frame_bytes = frame_bytes
+                .checked_add(bytes)
+                .filter(|bytes| *bytes <= MAX_VISUAL_FRAME_BYTES)
+                .ok_or("Visual layers exceed their combined frame byte budget.")?;
+        }
         let mut pending = Vec::new();
         if !self.plan.audio.is_empty() {
             pending.push("audio");
@@ -205,7 +222,7 @@ impl RasterPreview {
                 .find(|source| source.id == visual.source)
                 .ok_or("Preview source is missing.")?;
             if source.kind == MediaKind::Replay {
-                return Err("Native replay camera preview is still being connected.".into());
+                return Err("Native replay layers need an initialized graphics device.".into());
             }
             if !matches!(source.kind, MediaKind::Video | MediaKind::Image) {
                 return Err("This visual source is not video or an image.".into());
@@ -218,18 +235,19 @@ impl RasterPreview {
             } else {
                 self.source_base.join(&source.path)
             };
-            let decoded_size = fit_size(source.size, maximum)?;
+            let decoded_size = fit_size(source.size, size)?;
+            let fps = source.frame_rate.unwrap_or(project.export.fps);
             if self
                 .decoders
                 .get(&source.id)
-                .is_none_or(|decoder| !decoder.matches(&path, decoded_size, project.export.fps))
+                .is_none_or(|decoder| !decoder.matches(&path, decoded_size, fps))
             {
                 self.decoders.insert(
                     source.id,
                     if self.interactive {
-                        VideoDecoder::interactive(&path, decoded_size, project.export.fps)?
+                        VideoDecoder::interactive(&path, decoded_size, fps)?
                     } else {
-                        VideoDecoder::new(&path, decoded_size, project.export.fps)?
+                        VideoDecoder::new(&path, decoded_size, fps)?
                     },
                 );
             }

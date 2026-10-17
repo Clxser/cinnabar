@@ -13,10 +13,14 @@ use crate::{
 
 mod manifest;
 mod playback;
+mod recovery;
 mod session;
+mod size;
 pub use manifest::{CaptureManifest, CaptureTrack};
 pub use playback::{CameraRecording, RecordedView};
+pub use recovery::recover_project;
 pub use session::{CaptureSession, CaptureSummary};
+pub use size::CaptureSize;
 
 /// Versioned camera checkpoints bound seeks without replaying every camera sample in a long take.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -74,6 +78,8 @@ pub struct CaptureStatus {
     pub elapsed: MediaTime,
     pub captured_frames: u64,
     pub missed_frames: u64,
+    /// The requested slot cadence; missed slots repeat the preceding encoded frame.
+    pub fps: FrameRate,
     pub audio: bool,
     pub path: Option<PathBuf>,
     pub message: Option<String>,
@@ -81,29 +87,41 @@ pub struct CaptureStatus {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CaptureRequest {
-    Start,
+    Start(CaptureSettings),
     Stop,
     Bookmark,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CaptureSettings {
     pub fps: FrameRate,
+    /// Missing fields retain native-sized legacy captures; new preferences use 1080p.
+    #[serde(default)]
+    pub size: CaptureSize,
     pub codec: ExportCodec,
     pub encoder: Encoder,
     pub quality: u8,
     pub game_audio: bool,
+    /// Prepared first-person hand geometry is optional; older take settings leave it disabled.
+    #[serde(default)]
+    pub hand: bool,
+    /// Prepared HUD and chat are recorded only when explicitly requested for the next take.
+    #[serde(default)]
+    pub hud: bool,
 }
 
 impl Default for CaptureSettings {
     fn default() -> Self {
         Self {
             fps: FrameRate::default(),
+            size: CaptureSize::P1080,
             codec: ExportCodec::H264,
             encoder: Encoder::Auto,
             quality: 20,
             game_audio: true,
+            hand: false,
+            hud: false,
         }
     }
 }

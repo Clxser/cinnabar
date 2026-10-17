@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::StudioError;
 
 pub const MICROS_PER_SECOND: u64 = 1_000_000;
+pub const MAX_PLAYBACK_RATE: u32 = 16;
 pub const MAX_MEDIA_MICROS: u64 = 7 * 24 * 60 * 60 * MICROS_PER_SECOND;
 
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -190,7 +191,8 @@ impl PlaybackRate {
     /// Bounds supported speed changes to 1/16x..=16x and excludes zero rates.
     pub fn validate(self) -> Result<(), StudioError> {
         let (n, d) = (u64::from(self.numerator), u64::from(self.denominator));
-        if n == 0 || d == 0 || n * 16 < d || n > d * 16 {
+        let maximum = u64::from(MAX_PLAYBACK_RATE);
+        if n == 0 || d == 0 || n * maximum < d || n > d * maximum {
             return Err(StudioError::Invalid(
                 "playback speed must be between 1/16x and 16x",
             ));

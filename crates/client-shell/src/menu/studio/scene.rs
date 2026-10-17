@@ -31,6 +31,7 @@ impl Studio {
             kind: MediaKind::Replay,
             duration: video.duration,
             size: video.size,
+            frame_rate: None,
             sha256: None,
         };
         let mut clip = clip.clone();

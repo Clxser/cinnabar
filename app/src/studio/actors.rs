@@ -22,9 +22,7 @@ pub(super) struct NativeActors {
 
 /// Retains the current prepared frame as the take's zero-time baseline.
 pub(super) fn start(world: &World, session: &CaptureSession) -> Result<NativeActors, String> {
-    let frame = world
-        .get_resource::<ActorRenderFrame>()
-        .ok_or("Prepared actors are unavailable for recording.")?;
+    let frame = recording_frame(world)?;
     let mut capture = ActorCapture::start(session.directory(), session.info().clone())?;
     let geometry = capture.geometry(
         &frame.rig.geometry_vertices,
@@ -61,9 +59,7 @@ pub(super) fn sample(world: &World, active: &mut Active, at: MediaTime) -> Resul
     if actors.last_frame == number {
         return Ok(());
     }
-    let frame = world
-        .get_resource::<ActorRenderFrame>()
-        .ok_or("Recorded actor publication was removed.")?;
+    let frame = recording_frame(world)?;
     let geometry_key = geometry_key(frame);
     if actors.geometry_key != geometry_key {
         actors.geometry = actors.capture.geometry(
@@ -89,7 +85,7 @@ pub(super) fn sample(world: &World, active: &mut Active, at: MediaTime) -> Resul
     Ok(())
 }
 
-/// This source was culled for the original view; it cannot claim off-camera or first-person body coverage.
+/// Uses the recording-only native publication, which includes received actors and the local world body.
 fn snapshot(frame: &ActorRenderFrame) -> ActorSample {
     let ActorRenderFrame {
         instances,
@@ -123,13 +119,22 @@ fn snapshot(frame: &ActorRenderFrame) -> ActorSample {
         .collect::<Vec<_>>()
         .into();
     ActorSample {
-        coverage: ActorCoverage::OriginalView,
+        coverage: ActorCoverage::ReceivedWorld,
         instances,
         instance_revision: *instance_revision,
         skin_revision: *skin_revision,
         rig: rig.clone(),
         instance_pages: Arc::clone(instance_pages),
     }
+}
+
+/// Missing complete publication interrupts capture rather than relabeling a culled live frame.
+fn recording_frame(world: &World) -> Result<&ActorRenderFrame, String> {
+    world
+        .get_resource::<client_presentation::actor_publication::recording::ReplayActors>()
+        .filter(|actors| actors.enabled)
+        .and_then(|actors| actors.frame.as_ref())
+        .ok_or_else(|| "The received-world actor recording frame is unavailable.".into())
 }
 
 /// Leases retain the old allocations, so pointer identity cannot be reused before epoch replacement.

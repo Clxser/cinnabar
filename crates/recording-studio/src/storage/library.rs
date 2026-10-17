@@ -28,6 +28,7 @@ pub struct LibraryEntry {
     pub name: String,
     pub kind: LibraryKind,
     pub modified_unix_ms: u64,
+    pub interrupted: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -91,8 +92,12 @@ fn inspect(path: &Path) -> Result<Option<LibraryEntry>, StorageError> {
     {
         return Ok(None);
     }
+    let mut interrupted = false;
     let name = if kind == LibraryKind::Recording {
-        RecordingInfo::read(path)?.name
+        let info = RecordingInfo::read(path)?;
+        interrupted = info.scene_schema == crate::capture::POV_SCENE_SCHEMA
+            && !crate::capture::CaptureManifest::exists(path);
+        info.name
     } else {
         path.file_stem()
             .and_then(|stem| stem.to_str())
@@ -111,5 +116,73 @@ fn inspect(path: &Path) -> Result<Option<LibraryEntry>, StorageError> {
         name,
         kind,
         modified_unix_ms,
+        interrupted,
     }))
+}
+
+/// Builds only the newest bounded sheet; unavailable thumbnails keep the entry's textual identity.
+pub(super) fn thumbnails(
+    entries: &[LibraryEntry],
+    cancellation: &crate::export::Cancellation,
+) -> Result<super::StorageValue, StorageError> {
+    use crate::media::{MAX_THUMBNAILS, THUMBNAIL_COLUMNS, THUMBNAIL_SIZE, ThumbnailSheet};
+    let [width, height] = THUMBNAIL_SIZE;
+    let rows = entries
+        .len()
+        .min(MAX_THUMBNAILS)
+        .div_ceil(THUMBNAIL_COLUMNS)
+        .max(1);
+    let size = [width * THUMBNAIL_COLUMNS as u32, height * rows as u32];
+    let mut rgba = vec![0_u8; (size[0] * size[1] * 4) as usize];
+    let mut slots = vec![None; entries.len()];
+    for (index, entry) in entries.iter().take(MAX_THUMBNAILS).enumerate() {
+        if cancellation.cancelled() {
+            break;
+        }
+        let source = match entry.kind {
+            LibraryKind::Recording => Some(entry.path.join(crate::capture::VIDEO_FILE)),
+            LibraryKind::Project => super::files::load(&entry.path)
+                .ok()
+                .and_then(|project| {
+                    project.sources.into_iter().find(|source| {
+                        matches!(
+                            source.kind,
+                            crate::model::MediaKind::Video | crate::model::MediaKind::Image
+                        )
+                    })
+                })
+                .map(|source| {
+                    if source.path.is_absolute() {
+                        source.path
+                    } else {
+                        entry
+                            .path
+                            .parent()
+                            .unwrap_or(Path::new("."))
+                            .join(source.path)
+                    }
+                }),
+        };
+        let Some(pixels) =
+            source.and_then(|path| crate::media::thumbnail(&path, cancellation).ok())
+        else {
+            continue;
+        };
+        let x = (index % THUMBNAIL_COLUMNS) as u32 * width;
+        let y = (index / THUMBNAIL_COLUMNS) as u32 * height;
+        for row in 0..height {
+            let from = (row * width * 4) as usize;
+            let to = ((y + row) * size[0] * 4 + x * 4) as usize;
+            rgba[to..to + (width * 4) as usize]
+                .copy_from_slice(&pixels[from..from + (width * 4) as usize]);
+        }
+        slots[index] = Some([x as u16, y as u16, (x + width) as u16, (y + height) as u16]);
+    }
+    Ok(super::StorageValue::Thumbnails {
+        sheet: std::sync::Arc::new(ThumbnailSheet {
+            size,
+            rgba8: rgba.into(),
+        }),
+        slots,
+    })
 }

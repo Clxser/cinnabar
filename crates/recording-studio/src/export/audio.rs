@@ -6,10 +6,15 @@ use std::{
 };
 
 use super::*;
-use crate::{media_process::MediaChild, model::MediaKind, time::MICROS_PER_SECOND};
+use crate::{
+    media_process::MediaChild,
+    model::MediaKind,
+    retime::pcm::{self, StereoWarp},
+    time::MICROS_PER_SECOND,
+};
 
 const SAMPLE_RATE: u64 = 48_000;
-const CHANNELS: usize = 2;
+const CHANNELS: usize = pcm::CHANNELS;
 const SAMPLE_BYTES: usize = std::mem::size_of::<f32>();
 const FRAME_BYTES: usize = CHANNELS * SAMPLE_BYTES;
 const BLOCK_FRAMES: usize = 16_384;
@@ -48,7 +53,8 @@ pub(super) fn mix(
         if clip.muted || clip.gain == 0.0 {
             continue;
         }
-        let span = clip.span().map_err(|error| error.to_string())?;
+        let map = clip.time_map().map_err(|error| error.to_string())?;
+        let span = map.span();
         let start = sample_frame(span.start)?.min(frames);
         let end = sample_frame(span.end)?.min(frames);
         if end <= start {
@@ -99,7 +105,16 @@ pub(super) fn mix(
                 "1",
                 "-af",
             ])
-            .arg(filter(clip, count))
+            .arg(if clip.speed_ramp.is_some() {
+                let samples = sample_frame(clip.source_range.duration())?
+                    .checked_add(pcm::PADDING_FRAMES as u64)
+                    .ok_or("Audio source padding overflows its sample clock.")?;
+                format!(
+                    "aresample={SAMPLE_RATE},apad=whole_len={samples},atrim=end_sample={samples}"
+                )
+            } else {
+                filter(clip, count)
+            })
             .args([
                 "-ac",
                 &CHANNELS.to_string(),
@@ -118,14 +133,22 @@ pub(super) fn mix(
                 .stdout
                 .as_mut()
                 .ok_or("Audio decoder output is unavailable.")?;
+            let mut samples = if clip.speed_ramp.is_some() {
+                Decoded::Ramped(StereoWarp::new(
+                    output as &mut dyn Read,
+                    map,
+                    clip.source_range.start,
+                    SAMPLE_RATE as u32,
+                )?)
+            } else {
+                Decoded::Uniform(output as &mut dyn Read)
+            };
             let mut position = start;
             while position < end {
                 cancellation.check()?;
                 let block_frames = (end - position).min(BLOCK_FRAMES as u64) as usize;
                 let length = block_frames * FRAME_BYTES;
-                output
-                    .read_exact(&mut decoded[..length])
-                    .map_err(|error| format!("Audio decode ended early: {error}"))?;
+                samples.read(&mut decoded[..length], position, cancellation)?;
                 mixed
                     .seek(SeekFrom::Start(position * FRAME_BYTES as u64))
                     .map_err(|error| error.to_string())?;
@@ -137,7 +160,7 @@ pub(super) fn mix(
                         ((u128::from(position) + frame as u128) * u128::from(MICROS_PER_SECOND)
                             / u128::from(SAMPLE_RATE)) as u64,
                     );
-                    let gain = clip.gain_at(at) as f32;
+                    let gain = clip.gain_in_span(at, span) as f32;
                     for channel in 0..CHANNELS {
                         let offset = frame * FRAME_BYTES + channel * SAMPLE_BYTES;
                         let value = f32::from_le_bytes(
@@ -172,6 +195,42 @@ pub(super) fn mix(
     }
     mixed.sync_all().map_err(|error| error.to_string())?;
     Ok(path)
+}
+
+enum Decoded<'a> {
+    Uniform(&'a mut dyn Read),
+    Ramped(StereoWarp<&'a mut dyn Read>),
+}
+
+impl Decoded<'_> {
+    /// Uniform audio retains pitch-preserving tempo; ramps sample the shared clock for every output PCM frame.
+    fn read(
+        &mut self,
+        output: &mut [u8],
+        start: u64,
+        cancellation: &Cancellation,
+    ) -> Result<(), String> {
+        cancellation.check()?;
+        match self {
+            Self::Uniform(input) => input
+                .read_exact(output)
+                .map_err(|error| format!("Audio decode ended early: {error}")),
+            Self::Ramped(warp) => {
+                for (index, bytes) in output.chunks_exact_mut(FRAME_BYTES).enumerate() {
+                    if index % 256 == 0 {
+                        cancellation.check()?;
+                    }
+                    let sample = warp.sample(start + index as u64)?;
+                    for (value, bytes) in
+                        sample.into_iter().zip(bytes.chunks_exact_mut(SAMPLE_BYTES))
+                    {
+                        bytes.copy_from_slice(&value.to_le_bytes());
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 /// Pitch-preserving tempo is factored into [0.5, 2] stages to avoid atempo's sample-skipping range.

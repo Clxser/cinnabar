@@ -65,6 +65,7 @@ use {
 
 const ITEM_SHADER_HANDLE: Handle<Shader> = uuid_handle!("6b7c1b0e-2f3d-4a61-9d1e-7a8f2c4e5b13");
 mod glint;
+pub(crate) mod replay;
 pub(crate) mod terrain_items;
 use terrain_items::{TerrainItemMeshGenerations, TerrainItemSessionSet};
 
@@ -89,6 +90,7 @@ struct Installed;
 
 fn install(app: &mut App) {
     app.init_resource::<DroppedItemScene>();
+    app.init_resource::<render_scene::dropped_item::recording::ItemReplayVisibility>();
     crate::lighting::install(app);
     let Some(render_app) = app.get_sub_app(RenderApp) else {
         return;
@@ -97,6 +99,9 @@ fn install(app: &mut App) {
         return;
     }
     app.add_plugins(ExtractResourcePlugin::<DroppedItemScene>::default());
+    app.add_plugins(ExtractResourcePlugin::<
+        render_scene::dropped_item::recording::ItemReplayVisibility,
+    >::default());
     load_internal_asset!(app, ITEM_SHADER_HANDLE, "dropped_item.wesl", item_shader);
     crate::pipeline_warmup::register::<ItemPipeline>(app);
     crate::install_opaque_phase_reset(app.sub_app_mut(RenderApp));
@@ -342,7 +347,11 @@ fn prepare_items(
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     mut gpu: ResMut<ItemGpu>,
+    recording: Option<Res<render_scene::dropped_item::recording::ItemReplayVisibility>>,
 ) {
+    if let Some(recording) = recording {
+        terrain.publish_recording(&recording);
+    }
     let current = current_models(&scene);
     let priority_changed = current != gpu.prioritized_models;
     let missing_current = current.iter().enumerate().any(|(slot, &required)| {

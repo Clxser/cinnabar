@@ -91,6 +91,9 @@ pub enum MenuField {
     /// One command macro slot's command box.
     MacroCommand(usize),
     StudioTitle,
+    StudioDestination,
+    StudioCamera(recording_studio::camera::CameraParameter),
+    StudioClip(studio::ClipTimeField),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -200,6 +203,13 @@ impl MenuAction {
     pub fn text_field(self) -> Option<MenuField> {
         match self {
             Self::Studio(studio::Action::EditTitleText) => Some(MenuField::StudioTitle),
+            Self::Studio(studio::Action::EditExportDestination) => {
+                Some(MenuField::StudioDestination)
+            }
+            Self::Studio(studio::Action::EditCameraValue(parameter)) => {
+                Some(MenuField::StudioCamera(parameter))
+            }
+            Self::Studio(studio::Action::EditClipTime(field)) => Some(MenuField::StudioClip(field)),
             Self::SettingsMacroCommand(slot) => Some(MenuField::MacroCommand(slot)),
             Self::RealmMembership(realm_membership::Action::EditCode) => Some(MenuField::RealmCode),
             Self::AddName => Some(MenuField::Name),

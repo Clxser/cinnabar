@@ -12,8 +12,9 @@ use crate::{
     model::{Confidence, Marker, MarkerKind},
 };
 
-const TEMPLATE_REVISION: u32 = 1;
+const TEMPLATE_REVISION: u32 = 2;
 const MAX_HIGHLIGHTS: usize = 100_000;
+const MAX_EVENT_EFFECTS: usize = 3;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -102,12 +103,14 @@ pub fn suggest(
         .iter()
         .filter(|clip| clip.source == source && clip.enabled)
     {
+        let map = clip.time_map()?;
+        let span = map.span();
+        let mut last_emphasis: Option<MediaTime> = None;
         for event in strongest.values() {
-            let Some(at) = clip.timeline_time(event.at)? else {
+            let Some(at) = map.timeline_time(event.at)? else {
                 continue;
             };
-            // Each observed event can introduce a marker and up to three effects.
-            if proposal.commands.len() + 4 > MAX_EDIT_COMMANDS {
+            if proposal.commands.len() + 1 + MAX_EVENT_EFFECTS > MAX_EDIT_COMMANDS {
                 proposal.omitted += 1;
                 continue;
             }
@@ -115,6 +118,8 @@ pub fn suggest(
                 source,
                 event_sequence: event.sequence,
                 template_revision: TEMPLATE_REVISION,
+                clip_id: Some(clip.id),
+                source_time: Some(event.at),
             };
             let marker = Marker {
                 id: take_id(&mut next_id)?,
@@ -138,43 +143,63 @@ pub fn suggest(
                 } else {
                     0.35
                 };
-                if options.zooms {
-                    add_pulse(
-                        &mut proposal,
-                        &mut next_id,
-                        origin,
-                        at,
-                        clip.span()?,
-                        EffectKind::Zoom,
-                        emphasis * options.intensity * 10.0,
-                    )?;
+                let spacing = if event.kind == MarkerKind::Hit {
+                    650_000
+                } else {
+                    300_000
+                };
+                if last_emphasis.is_some_and(|last| at.saturating_sub(last).0 < spacing) {
+                    continue;
                 }
-                if options.style == EditStyle::Pvp && options.camera_shake {
+                last_emphasis = Some(at);
+                let recipe = recipe(event, options);
+                for (kind, amount) in recipe {
+                    if kind == EffectKind::Zoom && !options.zooms {
+                        continue;
+                    }
                     add_pulse(
                         &mut proposal,
                         &mut next_id,
                         origin,
                         at,
-                        clip.span()?,
-                        EffectKind::Shake,
-                        emphasis * options.intensity * 0.6,
-                    )?;
-                }
-                if options.style == EditStyle::Cinematic && event.kind == MarkerKind::Kill {
-                    add_pulse(
-                        &mut proposal,
-                        &mut next_id,
-                        origin,
-                        at,
-                        clip.span()?,
-                        EffectKind::Vignette,
-                        options.intensity * 0.2,
+                        span,
+                        kind,
+                        amount * emphasis * options.intensity,
                     )?;
                 }
             }
         }
     }
     Ok(proposal)
+}
+
+/// Event identity chooses a repeatable variation; cooldowns leave quiet beats instead of stacking every hit.
+fn recipe(event: &Highlight, options: &AutoEditOptions) -> [(EffectKind, f64); MAX_EVENT_EFFECTS] {
+    use EffectKind::*;
+    let variation = (event.sequence ^ event.sequence.rotate_right(13) ^ u64::from(event.combo)) % 3;
+    match options.style {
+        EditStyle::Clean => match variation {
+            0 => [(Zoom, 5.0), (Contrast, 0.12), (Sharpen, 0.10)],
+            1 => [(Contrast, 0.16), (Saturation, 0.08), (Sharpen, 0.12)],
+            _ => [(Zoom, 3.5), (Vignette, 0.10), (Contrast, 0.08)],
+        },
+        EditStyle::Pvp => {
+            let mut values = match variation {
+                0 => [(Zoom, 7.0), (Contrast, 0.20), (Chromatic, 0.003)],
+                1 => [(Zoom, 4.0), (Sharpen, 0.20), (Contrast, 0.16)],
+                _ => [(Contrast, 0.18), (Vignette, 0.12), (Saturation, 0.10)],
+            };
+            if options.camera_shake {
+                values[2] = (Shake, 0.35);
+            }
+            values
+        }
+        EditStyle::Cinematic => match variation {
+            0 => [(Zoom, 2.5), (Bloom, 0.15), (Vignette, 0.12)],
+            1 => [(Warmth, 0.10), (Contrast, 0.12), (Bloom, 0.10)],
+            _ => [(Zoom, 3.0), (SoftFocus, 0.06), (Vignette, 0.14)],
+        },
+    }
 }
 
 /// Gives stronger observations priority over a hit emitted for the same combo-completing event.
@@ -208,13 +233,24 @@ fn add_pulse(
     kind: EffectKind,
     amount: f64,
 ) -> Result<(), StudioError> {
-    let start = MediaTime(event.0.saturating_sub(80_000).max(clip.start.0));
-    let end = MediaTime(event.0.saturating_add(420_000).min(clip.end.0));
+    let (lead, tail) = match kind {
+        EffectKind::Contrast | EffectKind::Flash | EffectKind::Chromatic => (20_000, 220_000),
+        EffectKind::Warmth | EffectKind::Bloom | EffectKind::SoftFocus => (180_000, 800_000),
+        EffectKind::Shake => (30_000, 280_000),
+        _ => (80_000, 520_000),
+    };
+    let start = MediaTime(event.0.saturating_sub(lead).max(clip.start.0));
+    let end = MediaTime(event.0.saturating_add(tail).min(clip.end.0));
     if end.0.saturating_sub(start.0) < 3 || amount <= 0.0 {
         return Ok(());
     }
     let span = Span::new(start, end)?;
-    let peak = MediaTime((span.duration().0 / 3).max(1));
+    let peak = MediaTime(
+        event
+            .0
+            .saturating_sub(start.0)
+            .clamp(1, span.duration().0 - 1),
+    );
     let effect = EffectClip {
         id: take_id(next)?,
         span,

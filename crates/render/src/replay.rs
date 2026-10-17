@@ -24,13 +24,19 @@ use render_scene::{
     ui_preview::{PreviewImage, PreviewTarget},
 };
 
+mod atmosphere;
 mod effects;
 mod faults;
+mod hud;
+mod items;
+mod particles;
 pub use effects::FrameEffects;
 mod readback;
 pub use readback::ReplayReadback;
+mod compositor;
 mod scene;
 mod targets;
+pub use compositor::{CompositeInput, CompositeLayer, FrameCompositor};
 mod titles;
 pub use titles::{FrameTitles, TitleLayer};
 
@@ -111,6 +117,8 @@ pub struct ReplayRenderer {
     chunks: BTreeMap<ChunkId, Entity>,
     palette: Option<recording_studio::object_store::AssetId>,
     environment: Option<recording_studio::object_store::AssetId>,
+    hud_palette: Option<[u8; 32]>,
+    atmosphere_visual_assets: Option<Arc<recording_scene::visuals::atmosphere::AtmosphereAssets>>,
     terrain_dirty: bool,
     generation: u64,
     size: [u32; 2],
@@ -153,6 +161,13 @@ impl ReplayRenderer {
                 CorePipelinePlugin,
                 crate::ChunkRenderPlugin::default(),
                 crate::ActorRenderPlugin,
+                crate::ParticleRenderPlugin,
+                crate::BlockEntityRenderPlugin,
+                crate::DroppedItemRenderPlugin,
+                crate::HandRigRenderPlugin,
+                crate::UiRenderPlugin,
+                crate::ScreenOverlayRenderPlugin,
+                crate::EnhancedRenderPlugin,
             ))
             .init_resource::<RecordedClock>()
             .add_systems(Last, restore_clock);
@@ -169,6 +184,8 @@ impl ReplayRenderer {
             chunks: BTreeMap::new(),
             palette: None,
             environment: None,
+            hud_palette: None,
+            atmosphere_visual_assets: None,
             terrain_dirty: true,
             generation: 0,
             size,
@@ -181,14 +198,53 @@ impl ReplayRenderer {
 
     /// Publishes one fully admitted source frame before drawing. A seek creates fresh view histories.
     pub fn apply(&mut self, frame: &SceneFrame, pose: CameraPose) -> Result<(), String> {
+        self.apply_view(frame, pose, pose == frame.view.pose, false, false)
+    }
+
+    /// Source-camera overlays remain anchored to their recording when editor camera effects move its pose.
+    pub fn apply_view(
+        &mut self,
+        frame: &SceneFrame,
+        pose: CameraPose,
+        source_view: bool,
+        hide_hud: bool,
+        hide_hand: bool,
+    ) -> Result<(), String> {
         pose.validate().map_err(|error| error.to_string())?;
         let transform = scene::camera_transform(pose)?;
         if frame.temporal_reset {
+            crate::particle_render::reset_replay(self.app.sub_app_mut(RenderApp).world_mut());
+            crate::dropped_item_render::replay::reset(self.app.sub_app_mut(RenderApp).world_mut());
             self.app.world_mut().despawn(self.camera);
             self.camera = camera(self.app.world_mut());
         }
-        self.apply_scene(frame)?;
+        self.apply_scene(frame, source_view, !hide_hand)?;
+        self.apply_items(frame, transform, source_view)?;
+        self.reproject_particles(frame, transform, pose.fov, source_view);
+        self.apply_atmosphere_visuals(frame, transform, source_view)?;
+        self.apply_hud(frame, source_view && !hide_hud)?;
+        let options = frame.environment.state.view.and_then(|view| view.enhanced);
         let mut camera = self.app.world_mut().entity_mut(self.camera);
+        if let Some(options) = options {
+            if !render_model::enhanced_rendering_enabled() {
+                return Err(
+                    "This take requires Enhanced rendering, which is unavailable in this client."
+                        .into(),
+                );
+            }
+            camera.insert(render_scene::EnhancedRendering {
+                shadows: options.shadows,
+                shadow_resolution: options.shadow_resolution,
+                shadow_cascades: options.shadow_cascades,
+                shadow_distance: options.shadow_distance,
+                bloom: options.bloom,
+                light_shafts: options.light_shafts,
+                waving: options.waving,
+                water_reflections: options.water_reflections,
+            });
+        } else {
+            camera.remove::<render_scene::EnhancedRendering>();
+        }
         camera.insert((
             transform,
             Projection::Perspective(PerspectiveProjection {
@@ -239,6 +295,8 @@ impl ReplayRenderer {
             self.terrain_dirty = !crate::chunk::replay::ready(render);
         }
         let ready = !self.terrain_dirty
+            && crate::dropped_item_render::replay::ready(self.app.sub_app(RenderApp).world())?
+            && crate::ui_render::replay_ready(self.app.sub_app(RenderApp).world())
             && crate::actor_render::replay_ready(self.app.sub_app(RenderApp).world())
             && self
                 .app

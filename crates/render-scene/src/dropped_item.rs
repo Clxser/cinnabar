@@ -5,6 +5,7 @@ use render_model::{
     MAX_DROPPED_ITEM_INSTANCES, MAX_DYNAMIC_ITEM_VERTICES, TerrainItemInstance,
 };
 use std::sync::Arc;
+pub mod recording;
 /// The frame's dropped items. `models_revision` must change whenever `models` changes.
 #[derive(Clone, Debug, Default, Resource, ExtractResource)]
 #[extract_app(bevy::render::RenderApp)]

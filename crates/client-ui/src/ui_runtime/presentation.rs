@@ -36,6 +36,7 @@ pub mod menu_branding;
 pub mod menu_scroll;
 mod mod_panel_font;
 mod runtime_assets;
+mod studio_library;
 
 pub mod nametag_atlas;
 pub mod nametags;
@@ -119,6 +120,8 @@ pub struct UiPresentationRuntime {
     item_glint: item_glint::ItemGlintTextures,
     blank_dynamic_page: render_model::UiTexturePage,
     studio_preview_page: Option<render_model::UiTexturePage>,
+    studio_library_page: Option<render_model::UiTexturePage>,
+    studio_library_pixels: Option<std::sync::Arc<[u8]>>,
     solid_texture_page: u16,
     hud_textures: Option<HudTexturePages>,
     icon_catalog: Option<Arc<RuntimeIconCatalog>>,

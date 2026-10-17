@@ -80,6 +80,7 @@ impl UiPresentationRuntime {
                 .ready
                 .then(|| self.studio_preview_icon())
                 .flatten();
+            self.prepare_studio_library(&mut studio.workflow);
         }
         if view.screen == launcher::menu::MenuScreen::Death {
             Arc::make_mut(&mut view).death_reason = runtime.death_reason().to_owned();
@@ -257,6 +258,9 @@ impl UiPresentationRuntime {
                     | launcher::menu::MenuField::SkinName
                     | launcher::menu::MenuField::RealmCode
                     | launcher::menu::MenuField::StudioTitle
+                    | launcher::menu::MenuField::StudioDestination
+                    | launcher::menu::MenuField::StudioCamera(_)
+                    | launcher::menu::MenuField::StudioClip(_)
                     | launcher::menu::MenuField::MacroCommand(_) => {
                         return None;
                     }

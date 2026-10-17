@@ -4,6 +4,40 @@ use super::*;
 use recording_studio::effect::{Curve, Easing, EffectClip, EffectKind};
 
 impl Studio {
+    /// A look is one undoable transaction of ordinary curves that the user can edit independently.
+    pub(super) fn add_look(
+        &mut self,
+        look: recording_studio::effect::preset::Look,
+    ) -> Result<(), String> {
+        let project = self.project()?;
+        let start = self
+            .transport
+            .position()
+            .min(MediaTime(project.duration().0.saturating_sub(4)));
+        let end = MediaTime(
+            start
+                .0
+                .saturating_add(if look == recording_studio::effect::preset::Look::Impact {
+                    600_000
+                } else {
+                    3_000_000
+                })
+                .min(project.duration().0),
+        );
+        let span = Span::new(start, end).map_err(|error| error.to_string())?;
+        let clips = look
+            .clips(project.next_id().map_err(|error| error.to_string())?, span)
+            .map_err(|error| error.to_string())?;
+        let selected = clips.first().map(|clip| clip.id);
+        let commands = clips
+            .into_iter()
+            .map(|effect| Command::AddEffect { effect })
+            .collect::<Vec<_>>();
+        self.edit(look.label(), &commands)?;
+        Arc::make_mut(&mut self.view).selected = selected;
+        Ok(())
+    }
+
     /// Focus fallback follows the currently selected effect instead of indexing every curve key.
     pub(super) fn effect_focus_actions(&self) -> Vec<Action> {
         let mut actions = EffectKind::ALL
@@ -11,6 +45,12 @@ impl Studio {
             .copied()
             .map(Action::AddEffect)
             .collect::<Vec<_>>();
+        actions.extend(
+            recording_studio::effect::preset::Look::ALL
+                .iter()
+                .copied()
+                .map(Action::AddLook),
+        );
         if self.selected_effect().is_ok() {
             actions.extend([
                 Action::ToggleEffect,

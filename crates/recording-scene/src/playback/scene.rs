@@ -14,10 +14,12 @@ use crate::{
     environment::{EnvironmentRecording, FrozenEnvironment},
     journal::TerrainRecording,
     targets::{TargetFrame, TargetRecording},
+    visuals::{FrozenVisuals, VisualRecording},
 };
 
 pub struct SceneFrame {
     pub at: MediaTime,
+    pub local_actor: u64,
     /// A seek changes interpolation, shadow, temporal antialiasing and audio history together.
     pub temporal_reset: bool,
     pub terrain: TerrainPatch,
@@ -25,6 +27,7 @@ pub struct SceneFrame {
     pub actors: FrozenActors,
     pub view: RecordedView,
     pub targets: Option<TargetFrame>,
+    pub visuals: Option<FrozenVisuals>,
 }
 
 pub struct ScenePlayback {
@@ -33,6 +36,7 @@ pub struct ScenePlayback {
     actors: ActorRecording,
     camera: CameraRecording,
     targets: Option<TargetRecording>,
+    visuals: Option<VisualRecording>,
     duration: MediaTime,
     position: Option<MediaTime>,
 }
@@ -47,12 +51,16 @@ impl ScenePlayback {
         let environment = EnvironmentRecording::open(parent)?;
         let actors = ActorRecording::open(parent)?;
         let targets = TargetRecording::open_optional(parent)?;
+        let visuals = VisualRecording::open_optional(parent)?;
         if !same_take(info, terrain.info())
             || !same_take(info, environment.info())
             || !same_take(info, actors.info())
             || targets
                 .as_ref()
                 .is_some_and(|targets| !same_take(info, targets.info()))
+            || visuals
+                .as_ref()
+                .is_some_and(|visuals| !same_take(info, visuals.info()))
         {
             return Err(ArchiveError::Invalid(
                 "native scene tracks belong to different recordings",
@@ -66,12 +74,16 @@ impl ScenePlayback {
         if let Some(targets) = &targets {
             duration = duration.min(targets.duration());
         }
+        if let Some(visuals) = &visuals {
+            duration = duration.min(visuals.duration());
+        }
         Ok(Self {
             terrain,
             environment,
             actors,
             camera,
             targets,
+            visuals,
             duration,
             position: None,
         })
@@ -123,6 +135,9 @@ impl ScenePlayback {
         self.camera.invalidate();
         if let Some(targets) = &mut self.targets {
             targets.invalidate();
+        }
+        if let Some(visuals) = &mut self.visuals {
+            visuals.invalidate();
         }
         self.position = None;
     }
@@ -186,17 +201,30 @@ impl ScenePlayback {
                 }
             })
             .transpose()?;
+        let visuals = self
+            .visuals
+            .as_mut()
+            .map(|visuals| {
+                if seek {
+                    visuals.restore(at, cancelled)
+                } else {
+                    visuals.advance_to(at, cancelled)
+                }
+            })
+            .transpose()?;
         if cancelled() {
             return Err(ArchiveError::Cancelled);
         }
         Ok(SceneFrame {
             at,
+            local_actor: self.camera.info().local_actor,
             temporal_reset: seek,
             terrain,
             environment,
             actors,
             view,
             targets,
+            visuals,
         })
     }
 }

@@ -33,13 +33,16 @@ impl Project {
             effect.amount.validate(effect.span.duration())?;
             keys += effect.amount.keys.len();
         }
-        limit("project curve keys", keys, MAX_PROJECT_KEYS)?;
         let sources: BTreeMap<_, _> = self
             .sources
             .iter()
             .map(|source| (source.id, source))
             .collect();
+        let clips: BTreeMap<_, _> = self.clips.iter().map(|clip| (clip.id, clip)).collect();
         for source in &self.sources {
+            if let Some(fps) = source.frame_rate {
+                fps.validate()?;
+            }
             limit("source name bytes", source.name.len(), 256)?;
             if source.path.as_os_str().is_empty()
                 || source.path.as_os_str().len() > 32_768
@@ -60,12 +63,42 @@ impl Project {
             .chain(self.markers.iter().filter_map(|marker| marker.origin))
         {
             source(&sources, origin.source)?;
+            match (origin.clip_id, origin.source_time) {
+                (None, None) => {}
+                (Some(id), Some(at)) => {
+                    let clip = clips.get(&id).ok_or(StudioError::Missing {
+                        kind: "generated item clip",
+                        id: id.0,
+                    })?;
+                    if clip.source != origin.source || !clip.source_range.contains(at) {
+                        return Err(StudioError::Invalid(
+                            "generated item anchor must belong to its retained source clip",
+                        ));
+                    }
+                }
+                _ => {
+                    return Err(StudioError::Invalid(
+                        "generated items need both clip and source-time anchors",
+                    ));
+                }
+            }
         }
         let mut lanes: BTreeMap<u16, Vec<Span>> = BTreeMap::new();
         for clip in &self.clips {
             let source = source(&sources, clip.source)?;
             clip.source_range.validate()?;
             clip.rate.validate()?;
+            if let Some(ramp) = &clip.speed_ramp {
+                ramp.validate(clip.rate)?;
+                keys += ramp.keys.len();
+                if source.kind != MediaKind::Image
+                    && ramp.keys.iter().any(|key| key.at > source.duration)
+                {
+                    return Err(StudioError::Invalid(
+                        "speed ramp keys extend beyond their source media",
+                    ));
+                }
+            }
             if source.kind == MediaKind::Audio || clip.track >= MAX_VIDEO_TRACKS {
                 return Err(StudioError::Invalid(
                     "a visual clip needs a visual source and valid track",
@@ -102,11 +135,19 @@ impl Project {
                 ));
             }
         }
-        let clips: BTreeMap<_, _> = self.clips.iter().map(|clip| (clip.id, clip)).collect();
         for clip in &self.audio {
             let source = source(&sources, clip.source)?;
             clip.source_range.validate()?;
             clip.rate.validate()?;
+            if let Some(ramp) = &clip.speed_ramp {
+                ramp.validate(clip.rate)?;
+                keys += ramp.keys.len();
+                if ramp.keys.iter().any(|key| key.at > source.duration) {
+                    return Err(StudioError::Invalid(
+                        "audio speed ramp keys extend beyond their source media",
+                    ));
+                }
+            }
             let duration = clip.span()?.duration();
             if let Some(linked) = clip.linked_clip {
                 let visual = clips.get(&linked).ok_or(StudioError::Missing {
@@ -116,6 +157,7 @@ impl Project {
                 if clip.at != visual.at
                     || clip.source_range != visual.source_range
                     || clip.rate != visual.rate
+                    || clip.speed_ramp != visual.speed_ramp
                 {
                     return Err(StudioError::Invalid(
                         "linked audio must retain its visual clip's source interval, position and rate",
@@ -134,6 +176,7 @@ impl Project {
                 ));
             }
         }
+        limit("project curve keys", keys, MAX_PROJECT_KEYS)?;
         for title in &self.titles {
             title.span.validate()?;
             limit(

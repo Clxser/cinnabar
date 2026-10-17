@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use bevy::prelude::*;
 use recording_scene::environment::{
-    EnvironmentCapture, EnvironmentState, PreparedEnvironmentAssets,
+    EnvironmentCapture, EnvironmentState, PreparedEnvironmentAssets, RecordedEnhanced,
+    RecordedEnvironmentView,
 };
 use recording_studio::{MediaTime, capture::CaptureSession};
 use render_model::environment_snapshot::LightmapSnapshot;
@@ -106,5 +107,52 @@ fn state(world: &World) -> Result<EnvironmentState, String> {
         fullbright,
         animation_tick: tick,
         animation_partial: partial_tick,
+        view: Some(recorded_view(world)?),
+    })
+}
+
+/// Captures the actual gameplay camera component and the authoritative world dimension.
+fn recorded_view(world: &World) -> Result<RecordedEnvironmentView, String> {
+    let dimension = world
+        .get_resource::<crate::runtime::world::ClientWorld>()
+        .and_then(|world| world.stream.as_ref())
+        .map(|stream| stream.current_dimension())
+        .ok_or("The recorded dimension is unavailable.")?;
+    let camera = world
+        .iter_entities()
+        .find(|entity| entity.contains::<client_presentation::camera::FlyCamera>())
+        .ok_or("The recorded gameplay camera is unavailable.")?;
+    let enhanced = camera
+        .get::<render_scene::EnhancedRendering>()
+        .map(|options| {
+            let &render_scene::EnhancedRendering {
+                shadows,
+                shadow_resolution,
+                shadow_cascades,
+                shadow_distance,
+                bloom,
+                light_shafts,
+                waving,
+                water_reflections,
+            } = options;
+            RecordedEnhanced {
+                shadows,
+                shadow_resolution,
+                shadow_cascades,
+                shadow_distance,
+                bloom,
+                light_shafts,
+                waving,
+                water_reflections,
+            }
+        });
+    let local_body_visible = world
+        .get_resource::<client_presentation::local_player::LocalAvatarVisibilityCarrier>()
+        .and_then(|carrier| carrier.snapshot())
+        .is_some_and(|snapshot| snapshot.visible());
+    Ok(RecordedEnvironmentView {
+        dimension,
+        enhanced,
+        local_body_visible,
     })
 }

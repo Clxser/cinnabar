@@ -29,7 +29,7 @@ macro_rules! parameters {
         }
     };
 }
-parameters!(tone, overlay, motion, step);
+parameters!(tone, overlay, motion, step, color, detail);
 
 pub struct FrameEffects {
     context: ReplayRenderContext,
@@ -68,7 +68,22 @@ impl FrameEffects {
         effects: EffectSample,
         at: MediaTime,
     ) -> Result<Option<Arc<PreviewImage>>, String> {
-        let effects = effects.without_camera();
+        self.composed(image, effects, at, true)
+    }
+
+    /// Final composition preserves image motion only when source cameras have not already applied it.
+    pub fn composed(
+        &mut self,
+        image: Arc<PreviewImage>,
+        effects: EffectSample,
+        at: MediaTime,
+        camera_applied: bool,
+    ) -> Result<Option<Arc<PreviewImage>>, String> {
+        let effects = if camera_applied {
+            effects.without_camera()
+        } else {
+            effects
+        };
         if effects.neutral() {
             return Ok(Some(image));
         }
@@ -238,6 +253,13 @@ impl FrameEffects {
             flash,
             letterbox,
             fade,
+            contrast,
+            warmth,
+            tint,
+            grain,
+            chromatic,
+            soft_focus,
+            sharpen,
         } = effects;
         let parameters = Parameters {
             tone: [
@@ -258,6 +280,13 @@ impl FrameEffects {
                 1.0 / bloom_size[1] as f32,
                 1.0 / surfaces.size[0] as f32,
                 1.0 / surfaces.size[1] as f32,
+            ],
+            color: [contrast as f32, warmth as f32, tint as f32, grain as f32],
+            detail: [
+                chromatic as f32,
+                soft_focus as f32,
+                sharpen as f32,
+                (at.0 % 1_000_000_000) as f32 / 1_000_000.0,
             ],
         };
         let pipelines = self.pipelines.as_ref().expect("effects pipelines admitted");

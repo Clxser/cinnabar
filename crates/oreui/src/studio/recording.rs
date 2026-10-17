@@ -57,29 +57,61 @@ pub(super) fn draw(
             Variant::Neutral,
         )?;
     }
+    let settings_width = canvas.r(20.0);
+    let settings_left = (area[2] - settings_width).max(bookmark_left + canvas.r(17.2));
+    let stacked = settings_left > area[2] - settings_width;
+    let settings_top = if stacked { top + canvas.r(5.6) } else { top };
+    let settings_left = if stacked { area[0] } else { settings_left };
+    control(
+        canvas,
+        view,
+        [
+            settings_left,
+            settings_top,
+            area[2],
+            settings_top + canvas.r(4.8),
+        ],
+        if view.studio.workflow.show_settings {
+            "Back to workspace"
+        } else {
+            "Recording / export"
+        },
+        Action::ToggleSettings,
+        true,
+        Variant::Secondary,
+    )?;
+    let message_top = settings_top + canvas.r(5.6);
     let seconds = status.elapsed.0 / recording_studio::time::MICROS_PER_SECOND;
-    let message = status.message.clone().unwrap_or_else(|| match phase {
+    let mut message = status.message.clone().unwrap_or_else(|| match phase {
         CapturePhase::Idle => "Records your current view and game audio.".into(),
         CapturePhase::Armed => "Ready: recording starts when you enter a world.".into(),
         CapturePhase::Starting => "Preparing capture and video encoding...".into(),
-        CapturePhase::Recording => format!(
-            "Recording {:02}:{:02}  |  {} captured, {} missed",
-            seconds / 60,
-            seconds % 60,
-            status.captured_frames,
-            status.missed_frames
-        ),
+        CapturePhase::Recording => format!("Recording {:02}:{:02}", seconds / 60, seconds % 60),
         CapturePhase::Finishing => "Saving video, game audio and event markers...".into(),
         CapturePhase::Complete => "Recording saved in your studio.".into(),
         CapturePhase::Failed => "Recording stopped. Your saved media has been retained.".into(),
     });
+    if matches!(
+        phase,
+        CapturePhase::Recording | CapturePhase::Finishing | CapturePhase::Complete
+    ) {
+        let actual = if status.elapsed.0 == 0 {
+            0.0
+        } else {
+            status.captured_frames as f64 / status.elapsed.seconds()
+        };
+        message.push_str(&format!(
+            "  |  target {} FPS, {actual:.1} captured FPS, {} missed/repeated slots",
+            status.fps, status.missed_frames
+        ));
+    }
     let message_height = canvas.text(
         &message,
-        [area[0], top + canvas.r(5.6)],
+        [area[0], message_top],
         area[2] - area[0],
         CAPTION,
         TEXT_DIMMER,
         false,
     )?;
-    Ok((top + canvas.r(5.6) + message_height + pad).max(top + canvas.r(9.2)))
+    Ok((message_top + message_height + pad).max(message_top + canvas.r(3.6)))
 }

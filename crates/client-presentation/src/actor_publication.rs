@@ -8,6 +8,7 @@ mod paintings;
 mod views;
 use geometry::{SessionGeometryReady, apply_session_pack, register_geometries};
 mod preparation;
+pub mod recording;
 pub use preparation::{ActorFrameState, advance_actor_frame, advance_actor_motion};
 mod emote_geometry;
 mod equipment_layers;
@@ -110,6 +111,7 @@ pub struct ActorFramePublication<'w, 's> {
     dropped_items: DroppedItemPublisher<'w, 's>,
     profiler: Option<Res<'w, render_scene::RuntimeStageProfiler>>,
     partial_tick: ResMut<'w, ActorFramePartialTick>,
+    replay: Option<ResMut<'w, recording::ReplayActors>>,
 }
 
 /// Builds final actor and hand poses after admission, without advancing remote actor ticks.
@@ -262,6 +264,24 @@ pub fn prepare_actor_render_frame(
         new_geometries,
         params.profiler.as_deref(),
     );
+    if let Some(replay) = params.replay.as_deref_mut() {
+        recording::prepare(
+            replay,
+            stream,
+            &input,
+            pose_view,
+            visibility,
+            artwork,
+            client_world.entity_assets,
+            client_world.pack_entities.as_deref(),
+            params.equipment.as_deref_mut(),
+            &mut state.skin_rigs,
+            &mut params.scene,
+            &mut params.hand_builder.0,
+            params.glint_settings.as_deref(),
+            params.profiler.as_deref(),
+        );
+    }
     params.prepared.0 = Some(commit::PendingActorPublication::new(
         batch,
         step.partial_tick,

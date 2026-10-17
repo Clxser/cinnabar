@@ -50,8 +50,7 @@ pub(super) fn draw(
     for (label, action) in [
         ("+", Action::Zoom(1)),
         ("-", Action::Zoom(-1)),
-        ("Later", Action::Pan(1)),
-        ("Earlier", Action::Pan(-1)),
+        ("Fit", Action::FitTimeline),
     ] {
         let width = canvas.r(if label.len() == 1 { 4.0 } else { 8.4 });
         if right - width <= x {
@@ -68,10 +67,51 @@ pub(super) fn draw(
         )?;
         right -= width + pad;
     }
-    let ruler_top = top + canvas.r(4.6);
+    let options_top = top + canvas.r(4.6);
+    let mut option_left = area[0] + pad;
+    for (label, action, active) in [
+        ("Playhead", Action::RevealPlayhead, false),
+        ("Ripple", Action::ToggleRipple, view.studio.workspace.ripple),
+        (
+            "Follow",
+            Action::ToggleFollowPlayhead,
+            view.studio.workspace.follow_playhead,
+        ),
+    ] {
+        let width = canvas.r(9.2);
+        control(
+            canvas,
+            view,
+            [
+                option_left,
+                options_top,
+                option_left + width,
+                options_top + canvas.r(3.4),
+            ],
+            label,
+            action,
+            true,
+            if active {
+                Variant::Primary
+            } else {
+                Variant::Secondary
+            },
+        )?;
+        option_left += width + pad;
+    }
+    if area[2] - option_left > canvas.r(54.0) {
+        canvas.text_line(
+            "Scroll tracks · Shift+wheel pan · Ctrl+wheel zoom",
+            [option_left + pad, options_top + canvas.r(0.4)],
+            area[2] - option_left - pad * 2.0,
+            CAPTION,
+            TEXT_DIMMER,
+        )?;
+    }
+    let ruler_top = options_top + canvas.r(4.0);
     let label_width = canvas.r(14.0).min((area[2] - area[0]) * 0.25);
     let left = area[0] + label_width;
-    let right = area[2] - pad;
+    let right = area[2] - pad - canvas.r(1.4);
     let start = view.studio.visible_start;
     let duration = view.studio.visible_duration.0.max(1);
     let ruler_bottom = ruler_top + canvas.r(2.8);
@@ -80,7 +120,7 @@ pub(super) fn draw(
         right,
         start,
         duration,
-        vertical: [ruler_bottom, area[3] - pad],
+        vertical: [ruler_bottom, area[3] - canvas.r(3.6)],
     };
     canvas.fill([left, ruler_top, right, ruler_bottom], NEUTRAL90)?;
     for index in 0..=6 {
@@ -117,8 +157,15 @@ pub(super) fn draw(
     let titles_row = audio_row + lanes.audio.rows();
     let rows = titles_row + lanes.titles.rows();
     let row_height = canvas.r(3.6);
-    let body = [area[0] + pad, ruler_bottom, right, area[3] - pad];
-    let scroll = canvas.begin_scroll("studio_timeline", body)?;
+    let body = [
+        area[0] + pad,
+        ruler_bottom,
+        area[2] - pad,
+        window.vertical[1],
+    ];
+    let previous_scrollbars = canvas.settings_scrollbars;
+    canvas.settings_scrollbars = true;
+    let scroll = canvas.begin_scroll(launcher::menu::studio::TIMELINE_SCROLL_ID, body)?;
     let row_y = |row: usize| ruler_bottom - scroll.offset + row as f32 * row_height;
     let first_row = (scroll.offset.max(0.0) / row_height).floor() as usize;
     let last_row = ((scroll.offset.max(0.0) + body[3] - body[1]) / row_height)
@@ -183,6 +230,15 @@ pub(super) fn draw(
             &shot.name,
             CAMERA,
         )?;
+        if view.studio.selected == Some(shot.id) {
+            camera_keys(
+                canvas,
+                &window,
+                shot,
+                row_y(cameras_row + lanes.cameras.row(shot.id).unwrap_or(0)),
+                row_height,
+            )?;
+        }
     }
     for effect in &project.effects {
         item(
@@ -247,6 +303,12 @@ pub(super) fn draw(
         )?;
     }
     canvas.end_scroll(scroll, rows as f32 * row_height)?;
+    canvas.settings_scrollbars = previous_scrollbars;
+    overview(
+        canvas,
+        view,
+        [left, area[3] - canvas.r(2.8), right, area[3] - pad],
+    )?;
     Ok(())
 }
 
@@ -283,6 +345,12 @@ fn item(
     if y + height <= window.vertical[0] || y >= window.vertical[1] {
         return Ok(());
     }
+    let span = view
+        .studio
+        .workspace
+        .drag
+        .filter(|(item, _)| *item == id)
+        .map_or(span, |(_, span)| span);
     let left = window.x(span.start).max(window.left);
     let right = window.x(span.end).min(window.right);
     if left >= right {
@@ -303,7 +371,147 @@ fn item(
             TEXT,
         )?;
     }
-    canvas.hit(MenuAction::Studio(Action::Select(id)), bounds)
+    let linked = view.studio.project.as_ref().is_some_and(|project| {
+        project
+            .audio
+            .iter()
+            .any(|audio| audio.id == id && audio.linked_clip.is_some())
+    });
+    if linked {
+        return canvas.hit(MenuAction::Studio(Action::Select(id)), bounds);
+    }
+    let geometry = (
+        window.left.round() as i32,
+        (window.right - window.left).round().max(1.0) as u32,
+    );
+    canvas.hit(
+        MenuAction::Studio(Action::DragItem {
+            id,
+            mode: recording_studio::timeline::DragMode::Move,
+            left: geometry.0,
+            width: geometry.1,
+        }),
+        bounds,
+    )?;
+    let visual = view
+        .studio
+        .project
+        .as_ref()
+        .is_some_and(|project| project.clips.iter().any(|clip| clip.id == id));
+    if visual && right - left > canvas.r(2.4) {
+        let handle = canvas.r(0.8).max(5.0).min((right - left) * 0.25);
+        for (x, mode, visible) in [
+            (
+                left,
+                recording_studio::timeline::DragMode::TrimStart,
+                window.x(span.start) >= window.left,
+            ),
+            (
+                right - handle,
+                recording_studio::timeline::DragMode::TrimEnd,
+                window.x(span.end) <= window.right,
+            ),
+        ] {
+            if !visible {
+                continue;
+            }
+            let edge = [x, bounds[1], x + handle, bounds[3]];
+            canvas.fill(
+                edge,
+                if view.studio.selected == Some(id) {
+                    PLAYHEAD
+                } else {
+                    [112, 137, 114, 255]
+                },
+            )?;
+            canvas.hit(
+                MenuAction::Studio(Action::DragItem {
+                    id,
+                    mode,
+                    left: geometry.0,
+                    width: geometry.1,
+                }),
+                edge,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// The overview exposes the whole project and a large draggable viewport thumb for long recordings.
+fn overview(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<(), PaintError> {
+    let duration = view
+        .studio
+        .project
+        .as_ref()
+        .map_or(0, |project| project.duration().0);
+    let end = recording_studio::timeline::overview_end(MediaTime(duration)).0;
+    let width = (area[2] - area[0]).max(1.0);
+    canvas.fill(area, [24, 28, 32, 255])?;
+    let left = area[0] + width * (view.studio.visible_start.0 as f64 / end as f64) as f32;
+    let right = area[0]
+        + width
+            * ((view
+                .studio
+                .visible_start
+                .0
+                .saturating_add(view.studio.visible_duration.0)
+                .min(end)) as f64
+                / end as f64) as f32;
+    canvas.fill(
+        [
+            left,
+            area[1],
+            right.max(left + canvas.r(2.0)).min(area[2]),
+            area[3],
+        ],
+        [99, 113, 124, 255],
+    )?;
+    let playhead = area[0] + width * (view.studio.position.0 as f64 / end as f64) as f32;
+    canvas.fill([playhead, area[1], playhead + 1.0, area[3]], PLAYHEAD)?;
+    canvas.hit(
+        MenuAction::Studio(Action::TimelineOverview {
+            left: area[0].round() as i32,
+            width: width.round().max(1.0) as u32,
+        }),
+        area,
+    )
+}
+
+/// Path keys use absolute timeline hits while retaining their relative saved offsets.
+fn camera_keys(
+    canvas: &mut Canvas<'_>,
+    window: &Window,
+    shot: &recording_studio::camera::CameraShot,
+    y: f32,
+    height: f32,
+) -> Result<(), PaintError> {
+    if y + height <= window.vertical[0] || y >= window.vertical[1] {
+        return Ok(());
+    }
+    let mut previous = window.left - canvas.r(1.0);
+    for key in shot.path_keys() {
+        let Ok(at) = shot.span.start.checked_add(key.at) else {
+            continue;
+        };
+        let x = window.x(at);
+        if x < window.left || x > window.right || x - previous < canvas.r(0.7).max(3.0) {
+            continue;
+        }
+        let bounds = [
+            (x - 2.0).max(window.left),
+            (y + height * 0.25).max(window.vertical[0]),
+            (x + 2.0).min(window.right),
+            (y + height * 0.8).min(window.vertical[1]),
+        ];
+        canvas.fill(bounds, [190, 218, 248, 255])?;
+        canvas.hit(
+            MenuAction::Studio(Action::SelectCameraKey { shot: shot.id, at }),
+            bounds,
+        )?;
+        previous = x;
+    }
+    Ok(())
 }
 
 /// Dense keys share visible marker columns; previous/next navigation still reaches every authored key.

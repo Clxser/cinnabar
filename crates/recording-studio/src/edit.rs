@@ -27,6 +27,9 @@ pub enum Command {
     AddSource {
         source: MediaSource,
     },
+    ReplaceSource {
+        source: MediaSource,
+    },
     AddClip {
         clip: Clip,
     },
@@ -54,6 +57,11 @@ pub enum Command {
     SetRate {
         id: Id,
         rate: PlaybackRate,
+        ripple: bool,
+    },
+    SetSpeedRamp {
+        id: Id,
+        ramp: Option<crate::retime::SpeedRamp>,
         ripple: bool,
     },
     SetFraming {
@@ -104,6 +112,7 @@ pub enum Command {
 #[derive(Clone)]
 struct Revision {
     project: Arc<Project>,
+    duration: MediaTime,
     bytes: usize,
     label: String,
 }
@@ -122,11 +131,13 @@ impl Editor {
     /// Opens admitted metadata. Source decoding and scene/archive caches are owned elsewhere.
     pub fn new(project: Project) -> Result<Self, StudioError> {
         let bytes = project.to_json()?.len();
+        let duration = project.duration();
         let project = Arc::new(project);
         Ok(Self {
             saved_project: Arc::clone(&project),
             current: Revision {
                 project,
+                duration,
                 bytes,
                 label: String::new(),
             },
@@ -140,6 +151,11 @@ impl Editor {
     pub fn project(&self) -> &Arc<Project> {
         &self.current.project
     }
+    /// Admission computes duration once; playback and undo use the matching immutable revision.
+    pub const fn duration(&self) -> MediaTime {
+        self.current.duration
+    }
+
     pub const fn revision(&self) -> u64 {
         self.revision
     }
@@ -167,6 +183,7 @@ impl Editor {
         for command in commands {
             operations::apply(&mut next, command)?;
         }
+        crate::retime::anchors::synchronize(&self.current.project, &mut next)?;
         next.validate()?;
         Ok(next)
     }
@@ -184,6 +201,7 @@ impl Editor {
             return Ok(false);
         }
         let bytes = next.to_json()?.len();
+        let duration = next.duration();
         let revision = self
             .revision
             .checked_add(1)
@@ -198,6 +216,7 @@ impl Editor {
             &mut self.current,
             Revision {
                 project: Arc::new(next),
+                duration,
                 bytes,
                 label,
             },

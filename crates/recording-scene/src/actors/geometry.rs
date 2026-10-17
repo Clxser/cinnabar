@@ -19,14 +19,14 @@ pub(super) const MAX_BYTES: usize = actor_catalog_budget_bytes(u32::MAX) + 16 * 
 const MAX_TABLE_BYTES: usize = MAX_BYTES - actor_catalog_budget_bytes(u32::MAX);
 const VERTEX_WORDS: usize = std::mem::size_of::<ActorRigVertex>() / std::mem::size_of::<u32>();
 
-pub(super) struct LoadedGeometry {
+pub(crate) struct LoadedGeometry {
     pub vertices: ActorRigVertexSegments,
     pub spans: Arc<[ActorRigGeometrySpan]>,
     pub bone_counts: Vec<u32>,
 }
 
 /// Writes canonical little-endian POD words rather than platform-dependent struct bytes.
-pub(super) fn store(
+pub(crate) fn store(
     store: &mut AssetWriter,
     vertices: &ActorRigVertexSegments,
     spans: &[ActorRigGeometrySpan],
@@ -62,7 +62,7 @@ pub(super) fn store(
 }
 
 /// Every span and referenced vertex is admitted once, before per-frame pose or bone cross-references.
-pub(super) fn load(
+pub(crate) fn load(
     store: &AssetReader,
     id: AssetId,
     cancelled: &impl Fn() -> bool,

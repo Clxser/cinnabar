@@ -267,6 +267,12 @@ pub(super) fn rebuild(runtime: &mut UiPresentationRuntime) {
             .unwrap_or_else(|| runtime.blank_dynamic_page.clone()),
     );
     // Unused art pages keep their old pixels; nothing references them.
+    dynamic.push(
+        runtime
+            .studio_library_page
+            .clone()
+            .unwrap_or_else(|| runtime.blank_dynamic_page.clone()),
+    );
     let art_pages = previous
         .len()
         .saturating_sub(art_start)

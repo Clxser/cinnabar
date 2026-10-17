@@ -23,15 +23,19 @@ use recording_studio::{
 use crate::{hud_tools::FrameCaptureSet, runtime::world::ClientWorld};
 
 mod actors;
+mod atmosphere;
 mod audio;
+mod composition;
 mod environment;
 mod export;
 mod frames;
 mod observations;
+mod preparation;
 mod preview;
 mod targets;
 mod terrain;
 mod titles;
+mod visuals;
 
 #[derive(Resource, Default)]
 struct NativeCapture {
@@ -40,6 +44,7 @@ struct NativeCapture {
     finishing: Option<Receiver<Result<CaptureSummary, String>>>,
     status: CaptureStatus,
     armed: bool,
+    settings: CaptureSettings,
     cancel_start: bool,
 }
 
@@ -56,6 +61,7 @@ struct Active {
     environment: Option<environment::NativeEnvironment>,
     actors: Option<actors::NativeActors>,
     targets: Option<targets::NativeTargets>,
+    visuals: Option<visuals::NativeVisuals>,
     started: f64,
     identity: (u64, i32, u64),
     stopping: Option<(f64, MediaTime)>,
@@ -69,6 +75,8 @@ struct Active {
 
 /// Installs a normal feature, independent of developer-control and its fixed-clock recording mode.
 pub(crate) fn configure(app: &mut App) {
+    app.init_resource::<client_presentation::actor_publication::recording::ReplayActors>();
+    app.init_resource::<client_presentation::dropped_items::recording::ReplayItems>();
     app.add_plugins(render::replay::ReplayPreviewPlugin);
     app.init_resource::<render_scene::ui_preview::UiPreviewSurface>();
     app.init_resource::<export::NativeExport>().add_systems(
@@ -87,6 +95,8 @@ pub(crate) fn configure(app: &mut App) {
         Last,
         (update, terrain::observe).chain().before(FrameCaptureSet),
     );
+    app.init_resource::<preparation::Cadence>()
+        .add_systems(PreUpdate, preparation::request);
 }
 
 /// One short exclusive update transfers resource ownership; it never waits for worker completion.
@@ -96,6 +106,13 @@ fn update(world: &mut World) {
             .get_resource::<MenuRuntime>()
             .is_some_and(MenuRuntime::studio_capture_pending)
     {
+        world
+            .resource_mut::<client_presentation::actor_publication::recording::ReplayActors>()
+            .set_enabled(false);
+        if let Some(mut particles) = world.get_resource_mut::<render_scene::ParticleSimulation>() {
+            particles.set_recording(false);
+        }
+        visuals::scope(world, false);
         return;
     }
     let Some(mut state) = world.remove_resource::<NativeCapture>() else {
@@ -109,6 +126,16 @@ fn update(world: &mut World) {
     if let Some(request) = request {
         handle_request(world, &mut state, request, now);
     }
+    world
+        .resource_mut::<client_presentation::actor_publication::recording::ReplayActors>()
+        .set_enabled(state.armed || state.startup.is_some() || state.active.is_some());
+    if let Some(mut particles) = world.get_resource_mut::<render_scene::ParticleSimulation>() {
+        particles.set_recording(state.armed || state.startup.is_some() || state.active.is_some());
+    }
+    visuals::scope(
+        world,
+        state.settings.hud && (state.armed || state.startup.is_some() || state.active.is_some()),
+    );
     poll_start(world, &mut state, identity, now);
     poll_finish(&mut state);
     if state.armed
@@ -171,6 +198,14 @@ fn update(world: &mut World) {
             active.failure.get_or_insert(error);
             stop(&mut active, now);
         }
+        if let Some(error) = active
+            .visuals
+            .as_ref()
+            .and_then(|visuals| visuals.capture.error())
+        {
+            active.failure.get_or_insert(error);
+            stop(&mut active, now);
+        }
         if active
             .audio
             .as_ref()
@@ -190,6 +225,7 @@ fn update(world: &mut World) {
                 .and_then(|()| environment::sample(world, &mut active, elapsed))
                 .and_then(|()| actors::sample(world, &mut active, elapsed))
                 .and_then(|()| targets::sample(world, &mut active, elapsed))
+                .and_then(|()| visuals::sample(world, &mut active, elapsed))
                 .and_then(|()| frames::capture(world, &mut active, elapsed))
             {
                 active.failure.get_or_insert(error);
@@ -201,9 +237,10 @@ fn update(world: &mut World) {
                 .session
                 .settings()
                 .fps
-                .frame_at(elapsed)
+                .frames_covering(elapsed)
                 .unwrap_or(0)
-                .saturating_sub(state.status.captured_frames);
+                .saturating_sub(state.status.captured_frames)
+                .saturating_sub(active.video_readbacks.pending() as u64);
         }
         if let Some((since, duration)) = active.stopping {
             state.status.phase = CapturePhase::Finishing;
@@ -229,11 +266,17 @@ fn update(world: &mut World) {
 /// Arming from the launcher retains the current editor and uses the normal world-selection flow.
 fn handle_request(world: &mut World, state: &mut NativeCapture, request: CaptureRequest, now: f64) {
     match request {
-        CaptureRequest::Start if !state.status.phase.busy() => {
+        CaptureRequest::Start(settings) if !state.status.phase.busy() => {
+            if let Err(error) = settings.validate() {
+                fail(state, error);
+                return;
+            }
+            state.settings = settings;
             state.armed = true;
             state.cancel_start = false;
             state.status = CaptureStatus {
                 phase: CapturePhase::Armed,
+                fps: settings.fps,
                 ..Default::default()
             };
             if let Some(mut menu) = world.get_resource_mut::<MenuRuntime>() {
@@ -272,7 +315,7 @@ fn handle_request(world: &mut World, state: &mut NativeCapture, request: Capture
                 }
             }
         }
-        CaptureRequest::Start => {}
+        CaptureRequest::Start(_) => {}
     }
 }
 
@@ -310,14 +353,11 @@ fn start(world: &mut World, state: &mut NativeCapture) -> Result<(), String> {
         local_actor,
     };
     let (completed, startup) = bounded(1);
+    let settings = state.settings;
     std::thread::Builder::new()
         .name("studio-capture-start".into())
         .spawn(move || {
-            let _ = completed.send(CaptureSession::create(
-                &root,
-                info,
-                CaptureSettings::default(),
-            ));
+            let _ = completed.send(CaptureSession::create(&root, info, settings));
         })
         .map_err(|error| error.to_string())?;
     state.startup = Some(Starting {
@@ -386,6 +426,13 @@ fn poll_start(
                 }
             };
             let requested_audio = session.settings().game_audio;
+            let visuals = match visuals::start(world, &session) {
+                Ok(visuals) => visuals,
+                Err(error) => {
+                    fail(state, error);
+                    return;
+                }
+            };
             let targets = match targets::start(world, &session) {
                 Ok(targets) => targets,
                 Err(error) => {
@@ -433,6 +480,7 @@ fn poll_start(
                 environment: Some(environment),
                 actors: Some(actors),
                 targets: Some(targets),
+                visuals: Some(visuals),
                 started: now,
                 identity: identity.expect("checked world identity"),
                 stopping: None,
@@ -478,6 +526,20 @@ fn finalize(state: &mut NativeCapture, mut active: Active, duration: MediaTime) 
     let result = std::thread::Builder::new()
         .name("studio-capture-finish".into())
         .spawn(move || {
+            let visuals_error = if let Some(visuals) = active.visuals {
+                let error = visuals.capture.finish(duration).err();
+                let metadata = recording_studio::capture::CaptureTrack {
+                    schema: recording_scene::visuals::VISUAL_TRACK_SCHEMA.into(),
+                    directory: recording_scene::visuals::VISUAL_DIRECTORY.into(),
+                    complete: error.is_none(),
+                    error: error
+                        .as_ref()
+                        .map(|error| error.chars().take(512).collect()),
+                };
+                active.session.scene_track(metadata).err().or(error)
+            } else {
+                None
+            };
             let targets_error = if let Some(targets) = active.targets {
                 let error = targets.capture.finish(duration).err();
                 let metadata = recording_studio::capture::CaptureTrack {
@@ -561,7 +623,8 @@ fn finalize(state: &mut NativeCapture, mut active: Active, duration: MediaTime) 
                         .or(terrain_metadata_error)
                         .or(environment_error)
                         .or(actors_error)
-                        .or(targets_error),
+                        .or(targets_error)
+                        .or(visuals_error),
                 ) {
                     (Ok(summary), None) => Ok(summary),
                     (Ok(_), Some(error)) => {
@@ -606,6 +669,12 @@ fn poll_finish(state: &mut NativeCapture) {
                 "Studio recording saved"
             );
             state.status.phase = CapturePhase::Complete;
+            state.status.captured_frames = summary
+                .manifest
+                .frames
+                .saturating_sub(summary.manifest.missed_video_frames);
+            state.status.missed_frames = summary.manifest.missed_video_frames;
+            state.status.fps = summary.manifest.settings.fps;
             state.status.path = Some(summary.directory);
             state.status.elapsed = summary.manifest.duration;
             state.status.message = summary

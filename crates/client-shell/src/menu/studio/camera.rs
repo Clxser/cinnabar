@@ -7,6 +7,16 @@ use recording_studio::{
 
 use super::*;
 
+mod values;
+
+pub(super) struct CameraValueEdit {
+    document: u64,
+    revision: u64,
+    shot: Id,
+    at: MediaTime,
+    parameter: CameraParameter,
+}
+
 impl Studio {
     /// Bounded focus fallback exposes the same camera intents as the painted inspector.
     pub(super) fn camera_focus_actions(&self) -> Vec<Action> {
@@ -28,9 +38,22 @@ impl Studio {
                 actions.push(Action::RetargetCamera);
             }
             if shot.kind() == CameraRigKind::Path {
-                actions.push(Action::AddCameraKey);
+                actions.extend([
+                    Action::AddCameraKey,
+                    Action::DeleteCameraKey,
+                    Action::CycleCameraEasing,
+                    Action::ToggleCameraSmoothing,
+                    Action::StepCameraKey(-1),
+                    Action::StepCameraKey(1),
+                    Action::MoveCameraKey(-1),
+                    Action::MoveCameraKey(1),
+                ]);
+            }
+            if self.view.camera_draft.is_some() {
+                actions.extend([Action::ApplyCameraValue, Action::CancelCameraValue]);
             }
             for &parameter in shot.parameters() {
+                actions.push(Action::EditCameraValue(parameter));
                 actions.extend([-1, 1].map(|direction| Action::AdjustCamera {
                     parameter,
                     direction,
@@ -77,6 +100,8 @@ impl Studio {
     pub(super) fn select_timeline_item(&mut self, id: Id) -> Result<(), String> {
         if self.view.selected != Some(id) {
             self.cancel_title_text();
+            self.cancel_camera_value();
+            Arc::make_mut(&mut self.view).speed_key = None;
         }
         let project = self.project()?;
         let span = project
@@ -213,6 +238,117 @@ impl Studio {
             .map_err(|error| error.to_string())?;
         self.transport.pause();
         self.edit("Add camera key", &[Command::ReplaceShot { shot }])
+    }
+
+    /// Deletion requires an exact playhead key and leaves at least one path pose.
+    pub(super) fn delete_camera_key(&mut self) -> Result<(), String> {
+        let shot = self
+            .camera_shot()?
+            .without_key(self.transport.position())
+            .map_err(|error| error.to_string())?;
+        self.transport.pause();
+        self.edit("Delete camera key", &[Command::ReplaceShot { shot }])
+    }
+
+    /// A key's easing controls the segment arriving at that key.
+    pub(super) fn cycle_camera_easing(&mut self) -> Result<(), String> {
+        let shot = self.camera_shot()?;
+        let at = self.transport.position();
+        let key = shot
+            .key_at(at)
+            .ok_or("Select a path key before changing easing.")?;
+        let shot = shot
+            .with_key_easing(at, key.easing.next())
+            .map_err(|error| error.to_string())?;
+        self.transport.pause();
+        self.edit("Change camera easing", &[Command::ReplaceShot { shot }])
+    }
+
+    /// A rail's smoothing choice changes its saved position sampler, not its target or key timings.
+    pub(super) fn toggle_camera_smoothing(&mut self) -> Result<(), String> {
+        let shot = self.camera_shot()?;
+        let recording_studio::camera::CameraMode::Path {
+            smooth_position, ..
+        } = &shot.mode
+        else {
+            return Err("Select a path camera first.".into());
+        };
+        let shot = shot
+            .with_path_smoothing(!*smooth_position)
+            .map_err(|error| error.to_string())?;
+        self.transport.pause();
+        self.edit("Change camera smoothing", &[Command::ReplaceShot { shot }])
+    }
+
+    /// Key browsing visits actual stored media times, including the legal final boundary key.
+    pub(super) fn step_camera_key(&mut self, direction: i8) -> Result<(), String> {
+        let shot = self.camera_shot()?;
+        let at = self.transport.position();
+        let times = shot
+            .path_keys()
+            .iter()
+            .map(|key| {
+                shot.span
+                    .start
+                    .checked_add(key.at)
+                    .map_err(|error| error.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let destination = if direction < 0 {
+            times.into_iter().rev().find(|time| *time < at)
+        } else {
+            times.into_iter().find(|time| *time > at)
+        }
+        .ok_or("There is no further camera key in that direction.")?;
+        self.select_camera_key(shot.id, destination)
+    }
+
+    /// Key selection shares the timeline's shot identity and clears unrelated uncommitted drafts.
+    pub(super) fn select_camera_key(&mut self, id: Id, at: MediaTime) -> Result<(), String> {
+        let project = self.project()?;
+        let shot = project
+            .shots
+            .iter()
+            .find(|shot| shot.id == id)
+            .ok_or("This camera shot is no longer present.")?;
+        shot.key_at(at)
+            .ok_or("This camera key is no longer present.")?;
+        let duration = project.duration();
+        self.cancel_camera_value();
+        self.cancel_title_text();
+        self.transport.pause();
+        self.transport.seek(at, duration);
+        Arc::make_mut(&mut self.view).selected = Some(id);
+        Ok(())
+    }
+
+    /// Key nudging uses the project's rational output frame cadence and rejects occupied timestamps.
+    pub(super) fn move_camera_key(&mut self, direction: i8) -> Result<(), String> {
+        let shot = self.camera_shot()?;
+        let at = self.transport.position();
+        let project = self.project()?;
+        let frame = project
+            .export
+            .fps
+            .frame_at(at)
+            .map_err(|error| error.to_string())?;
+        let frame = frame
+            .checked_add_signed(i64::from(direction.signum()))
+            .ok_or("The camera key cannot move before the timeline starts.")?;
+        let destination = project
+            .export
+            .fps
+            .frame_time(frame)
+            .map_err(|error| error.to_string())?;
+        let duration = project.duration();
+        let shot = shot
+            .with_key_time(at, destination)
+            .map_err(|error| error.to_string())?;
+        self.cancel_camera_value();
+        self.transport.pause();
+        self.edit("Move camera key", &[Command::ReplaceShot { shot }])?;
+        self.transport.seek(destination, duration);
+        Ok(())
     }
 
     /// Trimming retains path poses and orbit phase at both new boundaries.

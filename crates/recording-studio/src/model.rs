@@ -43,6 +43,9 @@ pub struct MediaSource {
     pub kind: MediaKind,
     pub duration: MediaTime,
     pub size: [u32; 2],
+    /// Source cadence is independent of output FPS, preserving high-rate frames during slow motion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_rate: Option<FrameRate>,
     /// Optional immutable content identity, checked by the storage edge when opening media.
     pub sha256: Option<[u8; 32]>,
 }
@@ -72,33 +75,32 @@ pub struct Clip {
     pub source_range: Span,
     pub at: MediaTime,
     pub rate: PlaybackRate,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_ramp: Option<crate::retime::SpeedRamp>,
     pub track: u16,
     pub framing: Framing,
     pub enabled: bool,
 }
 
 impl Clip {
-    /// Computes the half-open output range from the retained source and rational speed.
-    pub fn span(&self) -> Result<Span, StudioError> {
-        self.source_range.validate()?;
-        Span::new(
+    /// Compiles one source clock for visual sampling, event anchors and transition handles.
+    pub fn time_map(&self) -> Result<crate::retime::TimeMap, StudioError> {
+        crate::retime::TimeMap::new(
+            self.source_range,
             self.at,
-            self.at
-                .checked_add(self.rate.timeline_duration(self.source_range.duration())?)?,
+            self.rate,
+            self.speed_ramp.as_ref(),
         )
+    }
+
+    /// Computes the half-open output range from the retained source and authored speed map.
+    pub fn span(&self) -> Result<Span, StudioError> {
+        self.time_map().map(|map| map.span())
     }
 
     /// Maps an admitted clip timestamp to its retained source range.
     pub fn source_time(&self, at: MediaTime) -> Result<MediaTime, StudioError> {
-        self.source_range.validate()?;
-        let offset = self.rate.source_offset(at.saturating_sub(self.at))?;
-        let micros = self
-            .source_range
-            .start
-            .0
-            .saturating_add(offset.0)
-            .min(self.source_range.end.0 - 1);
-        Ok(MediaTime(micros))
+        self.time_map()?.source_time(at)
     }
 
     /// Continues motion through a transition using source handles outside the trimmed interval.
@@ -108,28 +110,12 @@ impl Clip {
         at: MediaTime,
         source_duration: MediaTime,
     ) -> Result<MediaTime, StudioError> {
-        self.source_range.validate()?;
-        self.rate.validate()?;
-        if source_duration == MediaTime::ZERO {
-            return Err(StudioError::Invalid("transition source has no frames"));
-        }
-        let delta = i128::from(at.0) - i128::from(self.at.0);
-        let offset = delta * i128::from(self.rate.numerator) / i128::from(self.rate.denominator);
-        let source = i128::from(self.source_range.start.0) + offset;
-        Ok(MediaTime(
-            source.clamp(0, i128::from(source_duration.0 - 1)) as u64,
-        ))
+        self.time_map()?.transition_time(at, source_duration)
     }
 
     /// Maps retained source evidence to this clip's current position after trimming and retiming.
     pub fn timeline_time(&self, source: MediaTime) -> Result<Option<MediaTime>, StudioError> {
-        if !self.source_range.contains(source) {
-            return Ok(None);
-        }
-        let offset = self
-            .rate
-            .timeline_duration(source.saturating_sub(self.source_range.start))?;
-        Ok(Some(self.at.checked_add(offset)?))
+        self.time_map()?.timeline_time(source)
     }
 }
 
@@ -152,6 +138,8 @@ pub struct AudioClip {
     pub source_range: Span,
     pub at: MediaTime,
     pub rate: PlaybackRate,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_ramp: Option<crate::retime::SpeedRamp>,
     pub role: AudioRole,
     pub gain: f64,
     pub fade_in: MediaTime,
@@ -160,14 +148,19 @@ pub struct AudioClip {
 }
 
 impl AudioClip {
+    /// Linked and independent sound compile the same map used by visual clips.
+    pub fn time_map(&self) -> Result<crate::retime::TimeMap, StudioError> {
+        crate::retime::TimeMap::new(
+            self.source_range,
+            self.at,
+            self.rate,
+            self.speed_ramp.as_ref(),
+        )
+    }
+
     /// Audio owns the same rate mapping as visual clips, with independent gain automation.
     pub fn span(&self) -> Result<Span, StudioError> {
-        self.source_range.validate()?;
-        Span::new(
-            self.at,
-            self.at
-                .checked_add(self.rate.timeline_duration(self.source_range.duration())?)?,
-        )
+        self.time_map().map(|map| map.span())
     }
 
     /// Evaluates fades without tying gain to wall time or the real-time audio device.
@@ -175,6 +168,11 @@ impl AudioClip {
         let Ok(span) = self.span() else {
             return 0.0;
         };
+        self.gain_in_span(at, span)
+    }
+
+    /// Per-sample mixers reuse an admitted span instead of recompiling ramp keys for every PCM frame.
+    pub fn gain_in_span(&self, at: MediaTime, span: Span) -> f64 {
         if self.muted || !span.contains(at) {
             return 0.0;
         }

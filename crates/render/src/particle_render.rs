@@ -124,6 +124,14 @@ struct ParticleGpu {
     bound: (Option<BufferId>, Option<BufferId>, u64),
 }
 
+/// Historical atlas patches must replay from their baseline after a backward seek.
+pub(crate) fn reset_replay(world: &mut World) {
+    if let Some(mut gpu) = world.get_resource_mut::<ParticleGpu>() {
+        gpu.base = None;
+        gpu.uploaded_seq = 0;
+    }
+}
+
 fn init_particle_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
     let sampler = render_device.create_sampler(&SamplerDescriptor {
         label: Some("particle atlas sampler"),

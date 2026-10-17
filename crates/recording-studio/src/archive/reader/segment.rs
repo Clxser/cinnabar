@@ -233,6 +233,21 @@ impl VerifiedSegment {
         }
         Ok(true)
     }
+
+    /// Peeks one admitted timestamp while retaining its header for the next payload visit.
+    pub fn next_time(&mut self) -> Result<Option<MediaTime>, ArchiveError> {
+        if self.remaining == 0 {
+            return Ok(None);
+        }
+        if self.pending.is_none() {
+            let mut bytes = [0; RECORD_HEADER_BYTES];
+            self.source
+                .read_exact(&mut bytes)
+                .map_err(|error| io(&self.path, error))?;
+            self.pending = Some(Header::decode(bytes)?);
+        }
+        Ok(self.pending.map(|header| header.at))
+    }
 }
 
 enum Staging {

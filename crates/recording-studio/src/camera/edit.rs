@@ -190,7 +190,7 @@ impl CameraShot {
         parameter: CameraParameter,
         steps: f64,
     ) -> Result<Self, StudioError> {
-        if !self.span.contains(at) || !steps.is_finite() {
+        if !steps.is_finite() {
             return Err(StudioError::Invalid(
                 "camera adjustment is outside its shot",
             ));
@@ -208,6 +208,25 @@ impl CameraShot {
             P::LookAhead => value.clamp(0.0, 10.0),
             _ => value,
         };
+        self.with_parameter(at, parameter, value)
+    }
+
+    /// Assigns a finite numeric value exactly; invalid projection and rig bounds produce an error.
+    pub fn with_parameter(
+        &self,
+        at: MediaTime,
+        parameter: CameraParameter,
+        value: f64,
+    ) -> Result<Self, StudioError> {
+        if at < self.span.start || at > self.span.end || !value.is_finite() {
+            return Err(StudioError::Invalid(
+                "camera value is outside its shot or is not finite",
+            ));
+        }
+        self.parameter(parameter, at).ok_or(StudioError::Invalid(
+            "this rig does not own that camera parameter",
+        ))?;
+        use CameraParameter as P;
         let mut next = self.clone();
         match &mut next.mode {
             CameraMode::Free { pose } => set_pose(pose, parameter, value)?,
@@ -264,7 +283,7 @@ impl CameraShot {
 
     /// Records the current preview pose as a path key; an existing key keeps its easing choice.
     pub fn keyed(&self, at: MediaTime, pose: CameraPose) -> Result<Self, StudioError> {
-        if !self.span.contains(at) {
+        if at < self.span.start || at > self.span.end {
             return Err(StudioError::Invalid("camera key is outside its shot"));
         }
         let mut next = self.clone();

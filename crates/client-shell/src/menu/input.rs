@@ -32,7 +32,6 @@ use ui::{ChatClipboard, ChatEditor, ToastPress, UiPoint};
 
 use crate::ui_resources::{UiPresentationResource, UiRuntimeResource};
 use client_ui::ui_runtime::{PlatformClipboard, presentation::UiPresentationRuntime};
-use launcher::menu::view::MenuCaret;
 use {super::MenuRuntime, launcher::menu::MenuField};
 
 /// Vanilla's fixed desktop option hotkeys.
@@ -201,6 +200,26 @@ impl MenuModifiers {
 impl MenuRuntime {
     /// Focus `field` with its caret after the text, as a newly selected box.
     pub(super) fn focus_field(&mut self, field: MenuField) {
+        if !matches!(field, MenuField::StudioClip(_)) {
+            self.studio.cancel_clip_time();
+        }
+        if let MenuField::StudioClip(parameter) = field
+            && let Err(error) = self.studio.begin_clip_time(parameter)
+        {
+            std::sync::Arc::make_mut(&mut self.studio.view).error = Some(error);
+            self.field = None;
+            return;
+        }
+        if field == MenuField::StudioDestination {
+            self.studio.begin_destination();
+        }
+        if let MenuField::StudioCamera(parameter) = field
+            && let Err(error) = self.studio.begin_camera_value(parameter)
+        {
+            std::sync::Arc::make_mut(&mut self.studio.view).error = Some(error);
+            self.field = None;
+            return;
+        }
         if field == MenuField::StudioTitle
             && let Err(error) = self.studio.begin_title_text()
         {
@@ -216,53 +235,6 @@ impl MenuRuntime {
         self.field.is_some()
     }
 
-    fn editor(&self, field: MenuField) -> &ChatEditor {
-        match field {
-            MenuField::RealmCode => &self.realm_membership.code,
-            MenuField::Name => &self.name,
-            MenuField::Address => &self.address,
-            MenuField::Port => &self.port,
-            MenuField::WorldName => &self.local_ui.name,
-            MenuField::WorldSeed => &self.local_ui.seed,
-            MenuField::SkinName => &self.skin_name,
-            MenuField::MacroCommand(slot) => &self.macro_commands[slot],
-            MenuField::StudioTitle => &self.studio.title_text,
-        }
-    }
-
-    fn editor_mut(&mut self, field: MenuField) -> &mut ChatEditor {
-        match field {
-            MenuField::RealmCode => &mut self.realm_membership.code,
-            MenuField::Name => &mut self.name,
-            MenuField::Address => &mut self.address,
-            MenuField::Port => &mut self.port,
-            MenuField::WorldName => &mut self.local_ui.name,
-            MenuField::WorldSeed => &mut self.local_ui.seed,
-            MenuField::SkinName => &mut self.skin_name,
-            MenuField::MacroCommand(slot) => &mut self.macro_commands[slot],
-            MenuField::StudioTitle => &mut self.studio.title_text,
-        }
-    }
-
-    /// `field`'s current text.
-    pub fn field_text(&self, field: MenuField) -> &str {
-        self.editor(field).as_str()
-    }
-
-    pub(super) fn caret(&self) -> MenuCaret {
-        MenuCaret {
-            byte: self
-                .field
-                .map_or(0, |field| self.editor(field).cursor_byte()),
-            selection: self
-                .field
-                .and_then(|field| self.editor(field).selection())
-                .map(|range| [range.start, range.end]),
-            revision: self.caret_revision,
-            shown: true,
-        }
-    }
-
     /// Apply `edit` to the focused field; every edit or caret move restarts the blink,
     /// as vanilla's text edit box shows its caret again after typing.
     fn edit_field(&mut self, edit: impl FnOnce(&mut ChatEditor)) {
@@ -273,8 +245,17 @@ impl MenuRuntime {
             return;
         }
         edit(self.editor_mut(field));
+        if field == MenuField::StudioDestination {
+            self.studio.publish_destination();
+        }
         if field == MenuField::StudioTitle {
             self.studio.publish_title_text();
+        }
+        if matches!(field, MenuField::StudioCamera(_)) {
+            self.studio.publish_camera_value();
+        }
+        if matches!(field, MenuField::StudioClip(_)) {
+            self.studio.publish_clip_time();
         }
         if let MenuField::MacroCommand(slot) = field {
             self.sync_macro_command(slot);
@@ -451,12 +432,12 @@ pub fn drive_menu_input(
             }
         }
     }
-    let wheel: Vec<(f32, bool)> = wheel_messages
+    let wheel: Vec<([f32; 2], bool)> = wheel_messages
         .as_deref()
         .map(|messages| {
             wheel_cursor
                 .read(messages)
-                .map(|wheel| (wheel.y, wheel.unit == MouseScrollUnit::Pixel))
+                .map(|wheel| ([wheel.x, wheel.y], wheel.unit == MouseScrollUnit::Pixel))
                 .collect()
         })
         .unwrap_or_default();
@@ -648,6 +629,9 @@ pub fn drive_menu_input(
     } else {
         false
     };
+    if studio_owns_pointer {
+        menu.field = None;
+    }
     let server_list_owns_pointer = studio_owns_pointer
         || server_list::drive(
             &mut presentation,
@@ -706,8 +690,29 @@ pub fn drive_menu_input(
         gui_scale_drag.captured = false;
     }
     if let Some(point) = pointer {
-        for (notches, pixels) in wheel {
-            presentation.scroll_menu(point, notches, pixels);
+        for ([horizontal, vertical], pixels) in wheel {
+            let studio = menu.screen() == launcher::menu::MenuScreen::RecordingStudio;
+            let ruler = matches!(
+                menu.hovered,
+                Some(launcher::menu::MenuAction::Studio(
+                    launcher::menu::studio::Action::Scrub { .. }
+                        | launcher::menu::studio::Action::TimelineOverview { .. }
+                ))
+            );
+            let handled = studio
+                && menu.studio.timeline_wheel(
+                    point,
+                    presentation.menu_scroll_viewport(launcher::menu::studio::TIMELINE_SCROLL_ID),
+                    ruler,
+                    horizontal,
+                    vertical,
+                    pixels,
+                    modifiers.shift(),
+                    modifiers.shortcut(),
+                );
+            if !handled {
+                presentation.scroll_menu(point, vertical, pixels);
+            }
         }
     }
     // A scrollbar press or drag scrolls instead of pressing what lies beneath.

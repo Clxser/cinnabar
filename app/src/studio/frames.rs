@@ -143,20 +143,23 @@ pub(super) fn capture(world: &mut World, active: &mut Active, at: MediaTime) -> 
     {
         return Ok(());
     }
-    let Some(slot) = active
-        .video_readbacks
-        .reserve(active.session.info().viewport)?
-    else {
+    let expected_size = active.session.video_size();
+    let source_size = active.session.info().viewport;
+    let Some(slot) = active.video_readbacks.reserve(expected_size)? else {
         return Ok(());
     };
     if let Some(pose) = observations::camera(world) {
         active.session.camera(at, pose)?;
     }
     active.last_frame = Some(index);
-    let expected_size = active.session.info().viewport;
-    world
-        .resource_mut::<crate::hud_tools::FrameCapture>()
-        .request_owned(move |image| slot.complete(frame(image, index, expected_size)));
+    let mut capture = world.resource_mut::<crate::hud_tools::FrameCapture>();
+    if expected_size == source_size {
+        capture.request_owned(move |image| slot.complete(frame(image, index, expected_size)));
+    } else {
+        capture.request_sized(expected_size, source_size, move |image| {
+            slot.complete(image.and_then(|image| frame(image, index, expected_size)));
+        })?;
+    }
     Ok(())
 }
 

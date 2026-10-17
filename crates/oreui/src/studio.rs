@@ -10,11 +10,15 @@ use super::{
 };
 
 mod camera;
+mod clips;
 mod editor;
 mod effects;
 mod export;
 mod library;
+mod media;
 mod recording;
+mod settings;
+mod speed;
 mod timeline;
 mod titles;
 
@@ -151,7 +155,9 @@ pub(super) fn draw(
     top = recording::draw(canvas, view, [pad, top, size[0] - pad, size[1] - pad])?;
     top = export::draw(canvas, view, [pad, top, size[0] - pad, size[1] - pad])?;
     let area = [pad, top, size[0] - pad, size[1] - pad];
-    if studio.show_library || studio.project.is_none() {
+    if studio.workflow.show_settings {
+        settings::draw(canvas, view, area)?;
+    } else if studio.show_library || studio.project.is_none() {
         library::draw(canvas, view, area)?;
     } else {
         editor::draw(canvas, view, area)?;

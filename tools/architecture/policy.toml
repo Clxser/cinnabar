@@ -61,7 +61,7 @@ forbidden_dependencies = ["bevy", "wgpu", "launcher", "client-world", "protocol"
 [[crates]]
 name = "recording-scene"
 path = "crates/recording-scene"
-allowed_dependencies = ["assets", "meshing", "recording-studio", "render-api", "render-model", "world"]
+allowed_dependencies = ["assets", "meshing", "particles", "recording-studio", "render-api", "render-model", "world"]
 forbidden_transitive_dependencies = ["bevy", "wgpu", "client-world", "protocol", "launcher", "asset-compiler"]
 
 [[crates]]

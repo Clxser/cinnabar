@@ -24,6 +24,8 @@ pub struct ParticleGpuFrame {
     pub add: Arc<[ParticleInstance]>,
     /// Drawable particles hidden by the current cave graph this frame.
     pub cave_hidden: usize,
+    /// Recording-only samples before camera and cave selection; absent during ordinary play.
+    pub received: Option<Arc<[particles::replay::PreparedParticle]>>,
 }
 
 impl ParticleGpuFrame {
@@ -94,6 +96,7 @@ pub fn update_particle_frame(
         lists
     };
     frame.set_lists(lists);
+    frame.received = system.recording_frame().cloned();
     let base = system.atlas_base();
     if frame
         .base

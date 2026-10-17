@@ -12,7 +12,11 @@ pub const MAX_TARGET_NAME_BYTES: usize = 256;
 const DEFAULT_FOV: f64 = 70.0;
 
 mod edit;
+mod keys;
 pub use edit::{CameraParameter, CameraRigKind};
+
+/// Numeric drafts allow ordinary decimal and scientific notation while retaining a fixed input bound.
+pub const MAX_CAMERA_VALUE_BYTES: usize = 64;
 
 /// Network-facing angles are degrees: yaw zero faces +Z and positive pitch looks down.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -38,6 +42,26 @@ impl Default for CameraPose {
 }
 
 impl CameraPose {
+    /// Samples finite admitted poses with the shortest yaw and roll arcs and exact endpoints.
+    pub fn interpolated(self, other: Self, amount: f64) -> Self {
+        let t = amount.clamp(0.0, 1.0);
+        if t == 0.0 {
+            return self;
+        }
+        if t == 1.0 {
+            return other;
+        }
+        Self {
+            position: DVec3::from_array(self.position)
+                .lerp(DVec3::from_array(other.position), t)
+                .to_array(),
+            yaw: angle(self.yaw, other.yaw, t),
+            pitch: self.pitch + (other.pitch - self.pitch) * t,
+            roll: angle(self.roll, other.roll, t),
+            fov: self.fov + (other.fov - self.fov) * t,
+        }
+    }
+
     /// Rejects values which cannot form a finite view or projection.
     pub fn validate(self) -> Result<(), StudioError> {
         if !self
@@ -145,6 +169,36 @@ pub struct ActorPose {
 }
 
 impl ActorPose {
+    /// Interpolates recorded target motion without deriving a view from a missing native eye offset.
+    pub fn interpolated(self, other: Self, amount: f64) -> Self {
+        let t = amount.clamp(0.0, 1.0);
+        if t == 0.0 {
+            return self;
+        }
+        if t == 1.0 {
+            return other;
+        }
+        Self {
+            position: DVec3::from_array(self.position)
+                .lerp(DVec3::from_array(other.position), t)
+                .to_array(),
+            velocity: DVec3::from_array(self.velocity)
+                .lerp(DVec3::from_array(other.velocity), t)
+                .to_array(),
+            yaw: angle(self.yaw, other.yaw, t),
+            pitch: self.pitch + (other.pitch - self.pitch) * t,
+            roll: angle(self.roll, other.roll, t),
+            eye_offset: match (self.eye_offset, other.eye_offset) {
+                (Some(a), Some(b)) => Some(
+                    DVec3::from_array(a)
+                        .lerp(DVec3::from_array(b), t)
+                        .to_array(),
+                ),
+                _ => self.eye_offset,
+            },
+        }
+    }
+
     /// Capture and playback reject invalid arithmetic before it can reach a camera matrix.
     pub fn validate(self) -> Result<(), StudioError> {
         if !self
@@ -384,7 +438,7 @@ fn default_fov() -> f64 {
 
 /// Interpolates angle wrap on the shorter arc rather than turning a camera almost 360 degrees.
 fn angle(a: f64, b: f64, amount: f64) -> f64 {
-    a + ((b - a + 180.0).rem_euclid(360.0) - 180.0) * amount
+    a + ((b.rem_euclid(360.0) - a.rem_euclid(360.0) + 180.0).rem_euclid(360.0) - 180.0) * amount
 }
 
 /// Samples bounded path keys using eased orientation and optional clamped Hermite positions.
@@ -400,26 +454,50 @@ fn sample_path(keys: &[CameraKey], time: MediaTime, smooth: bool) -> Option<Came
     let t = b
         .easing
         .sample((time.0 - a.at.0) as f64 / (b.at.0 - a.at.0) as f64);
-    let mut position =
-        DVec3::from_array(a.pose.position).lerp(DVec3::from_array(b.pose.position), t);
+    let mut pose = a.pose.interpolated(b.pose, t);
     if smooth {
-        let p0 = DVec3::from_array(keys[next.saturating_sub(2)].pose.position);
-        let p1 = DVec3::from_array(a.pose.position);
-        let p2 = DVec3::from_array(b.pose.position);
-        let p3 = DVec3::from_array(keys[(next + 1).min(keys.len() - 1)].pose.position);
-        position = 0.5
-            * ((2.0 * p1)
-                + (-p0 + p2) * t
-                + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t
-                + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t * t * t);
-        // A rail may curve, but never leave the segment's bounding box at a sharp key turn.
-        position = position.clamp(p1.min(p2), p1.max(p2));
+        pose.position = std::array::from_fn(|axis| {
+            let p1 = a.pose.position[axis];
+            let p2 = b.pose.position[axis];
+            let duration = b.at.saturating_sub(a.at).seconds();
+            let slope = (p2 - p1) / duration;
+            let first = next.checked_sub(2).map_or(slope, |index| {
+                let previous = &keys[index];
+                let before = a.at.saturating_sub(previous.at).seconds();
+                tangent(
+                    (p1 - previous.pose.position[axis]) / before,
+                    slope,
+                    before,
+                    duration,
+                )
+            });
+            let last = keys.get(next + 1).map_or(slope, |following| {
+                let after = following.at.saturating_sub(b.at).seconds();
+                tangent(
+                    slope,
+                    (following.pose.position[axis] - p2) / after,
+                    duration,
+                    after,
+                )
+            });
+            let t2 = t * t;
+            let t3 = t2 * t;
+            ((2.0 * t3 - 3.0 * t2 + 1.0) * p1
+                + (t3 - 2.0 * t2 + t) * first * duration
+                + (-2.0 * t3 + 3.0 * t2) * p2
+                + (t3 - t2) * last * duration)
+                .clamp(p1.min(p2), p1.max(p2))
+        });
     }
-    Some(CameraPose {
-        position: position.to_array(),
-        yaw: angle(a.pose.yaw, b.pose.yaw, t),
-        pitch: a.pose.pitch + (b.pose.pitch - a.pose.pitch) * t,
-        roll: angle(a.pose.roll, b.pose.roll, t),
-        fov: a.pose.fov + (b.pose.fov - a.pose.fov) * t,
-    })
+    Some(pose)
+}
+
+/// Time-weighted monotone tangents keep unevenly spaced rail keys smooth without overshoot at turns.
+fn tangent(before: f64, after: f64, before_time: f64, after_time: f64) -> f64 {
+    if before == 0.0 || after == 0.0 || before.signum() != after.signum() {
+        return 0.0;
+    }
+    let first_weight = 2.0 * after_time + before_time;
+    let last_weight = after_time + 2.0 * before_time;
+    (first_weight + last_weight) / (first_weight / before + last_weight / after)
 }
