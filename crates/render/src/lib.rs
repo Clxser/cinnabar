@@ -91,6 +91,17 @@ mod scene_target;
 mod queue_writes;
 mod screen_overlay_render;
 mod shader_safety;
+#[cfg(feature = "shaderpacks")]
+mod shaderpack;
+#[cfg(feature = "shaderpacks")]
+pub use shaderpack::atlas::{ShaderpackAtlas, ShaderpackAtlasPlugin};
+#[cfg(feature = "shaderpacks")]
+pub use shaderpack::geometry::{
+    BlockEntityIdFn, CONSTANT_VERTEX_BUFFER, DEFAULT_GEOMETRY_BUDGET_BYTES, FRAME_EXPANSION_FACES,
+    GEOMETRY_VERTEX_BUFFER, GeometryCategory, IRIS_VERTEX_STRIDE, LIGHTMAP_TEXTURE_MATRIX,
+    ShaderpackBlockIds, ShaderpackGeometry, ShaderpackGeometryPlugin, ShaderpackGeometrySettings,
+    UNASSIGNED_BLOCK_ID, VertexLayoutError, vertex_buffer_layouts,
+};
 #[cfg(test)]
 #[path = "../tests/it/support/shader_source.rs"]
 mod shader_source;

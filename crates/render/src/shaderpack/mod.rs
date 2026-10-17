@@ -14,6 +14,10 @@
 //! and every texture shares the translator's single repeat/linear sampler.
 
 #[cfg(feature = "shaderpacks")]
+pub(crate) mod atlas;
+#[cfg(feature = "shaderpacks")]
+pub(crate) mod geometry;
+#[cfg(feature = "shaderpacks")]
 mod loader;
 #[cfg(feature = "shaderpacks")]
 mod passes;

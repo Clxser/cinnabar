@@ -113,6 +113,8 @@ mod publication_test_support;
 mod queue;
 #[cfg(feature = "enhanced")]
 pub(crate) mod resident_coverage;
+#[cfg(feature = "shaderpacks")]
+pub(crate) mod shaderpack_sources;
 pub(crate) use coverage::TerrainCoverage;
 
 use render_scene::chunk::texture_reload::ChunkTextureReload;

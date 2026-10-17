@@ -31,6 +31,17 @@ pub(in crate::chunk) struct ChunkHiddenEntities {
     pub(super) changed: Vec<Entity>,
 }
 
+impl ChunkHiddenEntities {
+    /// Whether the cave culler hides render entity `entity`.
+    #[cfg_attr(
+        not(feature = "shaderpacks"),
+        expect(dead_code, reason = "read by shader-pack draws")
+    )]
+    pub(in crate::chunk) fn contains(&self, entity: Entity) -> bool {
+        self.hidden.contains(&entity)
+    }
+}
+
 pub(super) struct PreparedPyramid {
     pub(super) pyramid: HizPyramid,
     pub(super) depth: TextureViewId,
