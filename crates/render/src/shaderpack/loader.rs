@@ -60,6 +60,14 @@ impl GpuContext {
             .allowed_usages
             .contains(usages)
     }
+
+    /// Whether the device has image atomics on `format` (`TEXTURE_ATOMIC`, `r32ui`/`r32i`).
+    fn supports_atomics(&self, format: TextureFormat) -> bool {
+        self.device
+            .features()
+            .contains(wgpu::Features::TEXTURE_ATOMIC)
+            && self.supports(format, TextureUsages::STORAGE_ATOMIC)
+    }
 }
 
 /// The GPU pipeline of one program.
@@ -114,6 +122,8 @@ pub(crate) struct PackGpu {
     pub buffer_formats: [Option<TextureFormat>; MAX_COLOR_BUFFERS as usize],
     /// Buffers some program binds as `colorimgN`.
     pub storage_buffers: u32,
+    /// Buffers some program uses with image atomics (`STORAGE_ATOMIC`).
+    pub atomic_buffers: u32,
     /// Format of the `depthtex*` copies sampled as floats.
     pub depth_format: TextureFormat,
     /// `depthtex0..2` some program samples with the comparison sampler.
@@ -122,6 +132,8 @@ pub(crate) struct PackGpu {
     pub custom_images: Vec<shaderpack::CustomImage>,
     /// Texture format of each custom image.
     pub image_formats: Vec<TextureFormat>,
+    /// Whether some program uses each custom image with image atomics (`STORAGE_ATOMIC`).
+    pub atomic_images: Vec<bool>,
     /// Storage-buffer bindings with their byte sizes.
     pub shader_storage: Vec<(u32, u64)>,
     pub settings: PackSettings,
@@ -508,6 +520,7 @@ pub(crate) fn build(
         buffer_formats[buffer.index as usize] = Some(texture_format(buffer.format, support));
     }
     let mut storage_buffers = 0u32;
+    let mut atomic_buffers = 0u32;
     for reflection in &reflections {
         for image in &reflection.storage_images {
             if let Some(b) = color_buffer_of(&image.name)
@@ -516,6 +529,9 @@ pub(crate) fn build(
                 && storage_format(image.format) == Some(format)
             {
                 storage_buffers |= 1 << b;
+                if image.atomic && gpu.supports_atomics(format) {
+                    atomic_buffers |= 1 << b;
+                }
             }
         }
     }
@@ -535,6 +551,19 @@ pub(crate) fn build(
     let key = content_key(pack, &config);
     let pipeline_cache = PipelineCacheFile::open(gpu, cache_dir, &key);
     let image_formats = image_formats(&translation.properties.images, &reflections, support);
+    let atomic_images = translation
+        .properties
+        .images
+        .iter()
+        .zip(&image_formats)
+        .map(|(custom, &format)| {
+            gpu.supports_atomics(format)
+                && reflections
+                    .iter()
+                    .flat_map(|r| &r.storage_images)
+                    .any(|image| image.atomic && image.name == custom.name)
+        })
+        .collect();
     let mut constants = ConstantBuilder::new(gpu, pack, &translation, vanilla, support);
     let mut depth_compare = [false; 3];
     let mut programs = Vec::with_capacity(all.len());
@@ -795,11 +824,13 @@ pub(crate) fn build(
         buffers,
         buffer_formats,
         storage_buffers,
+        atomic_buffers,
         depth_format,
         depth_compare,
         constants,
         custom_images: translation.properties.images.clone(),
         image_formats,
+        atomic_images,
         shader_storage,
         settings,
         custom_uniforms: translation.properties.custom_uniforms.clone(),
