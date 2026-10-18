@@ -556,6 +556,49 @@ fn a_draw_pipeline_the_device_rejects_drops_only_that_draw() {
     assert!(kept.is_empty(), "rejected entities draws kept: {kept:?}");
 }
 
+/// BSL's hash argument `dot(p, vec2(12.9898, 4.1414))` at large `p`, scaled so the red
+/// channel resolves the last bits of the dot product.
+const HASH_DOT: &str = "#version 120
+void main() {
+    float d = dot(floor(gl_FragCoord.xy) + 3000.0, vec2(12.9898, 4.1414));
+    gl_FragColor = vec4(fract(d * 64.0), 0.0, 0.0, 1.0);
+}
+";
+
+/// `dot` rounds like the reference OpenGL driver, `fma(a.y, b.y, a.x * b.x)`, so hash noise
+/// built on it matches Java Iris instead of the device's own `dot` rounding.
+#[test]
+fn dot_rounds_like_the_reference_opengl_driver() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    let bytes = render(&gpu, &[("final.vsh", PASS_VERTEX), ("final.fsh", HASH_DOT)]);
+    let red = |d: f32| ((f64::from(d) * 64.0).fract() * 255.0).round() as f32;
+    let mut discriminating = 0;
+    for row in 0..SIZE[1] as usize {
+        for column in 0..SIZE[0] as usize {
+            // Rows come back top-down; gl_FragCoord.y counts from the bottom.
+            let x = column as f32 + 3000.0;
+            let y = (SIZE[1] as usize - 1 - row) as f32 + 3000.0;
+            let reference = y.mul_add(4.1414, x * 12.9898);
+            let other = x.mul_add(12.9898, y * 4.1414);
+            if (red(reference) - red(other)).abs() > 2.0 {
+                discriminating += 1;
+            }
+            let got = f32::from(bytes[row * 256 + column * 4]);
+            assert!(
+                (got - red(reference)).abs() <= 1.0,
+                "row {row} column {column}: red {got}, reference {}, other order {} ({:?})",
+                red(reference),
+                red(other),
+                gpu.adapter.get_info().backend
+            );
+        }
+    }
+    assert!(discriminating > 0, "no pixel tells the two roundings apart");
+}
+
 #[test]
 fn sampler_classes_map_to_wrap_and_filter_modes() {
     for (index, class) in SamplerClass::ALL.into_iter().enumerate() {
