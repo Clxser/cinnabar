@@ -38,7 +38,7 @@ fn celestial_time_moves_the_star_mesh_on_the_gpu() {
     ];
     let stars = gpu.buffer(&stars, wgpu::BufferUsages::STORAGE);
     let atmosphere = gpu.buffer(
-        &[0.0; 32],
+        &[0.0; std::mem::size_of::<render_scene::AtmosphereFrame>() / std::mem::size_of::<f32>()],
         wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     );
     let mut centers = Vec::new();

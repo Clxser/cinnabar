@@ -25,8 +25,7 @@ fn native_liquid_faces_admit_only_their_original_and_marked_reverse_windings() {
             include_str!("../../src/liquid.wesl"),
             &["NATIVE_GAMMA_BLEND"]
         )
-    )
-    .replace("@group(1) @binding(0)", "@group(0) @binding(27)");
+    );
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("liquid winding white-texel witness"),
         size: wgpu::Extent3d {
@@ -69,6 +68,10 @@ fn native_liquid_faces_admit_only_their_original_and_marked_reverse_windings() {
         .build()
         .map(|_| [1.0_f32; 4]);
     let lightmap = gpu.lightmap(bytemuck::cast_slice(&table));
+    let clock = gpu.words(&[0; 4], wgpu::BufferUsages::UNIFORM);
+    let water_info = gpu.water_info();
+    let lighting =
+        gpu_snapshot::lighting_bindings(&lightmap, &atmosphere, &atlas, &sampler, &water_info);
     let mut failures = Vec::new();
     for face in Face::ALL {
         // The ordinary top duplicates its reverse; sides do so only
@@ -139,8 +142,8 @@ fn native_liquid_faces_admit_only_their_original_and_marked_reverse_windings() {
                             resource: atmosphere.as_entire_binding(),
                         },
                         wgpu::BindGroupEntry {
-                            binding: 27,
-                            resource: lightmap.as_entire_binding(),
+                            binding: 11,
+                            resource: clock.as_entire_binding(),
                         },
                         wgpu::BindGroupEntry {
                             binding: 28,
@@ -150,7 +153,12 @@ fn native_liquid_faces_admit_only_their_original_and_marked_reverse_windings() {
                     for (fragment, fragment_depth_route) in
                         [("fragment", false), ("fragment_depth", true)]
                     {
-                        let pixels = gpu.render_with_state(
+                        let bindings = bindings
+                            .iter()
+                            .filter(|entry| fragment == "fragment" || entry.binding != 11)
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        let pixels = gpu.render_with_bind_groups(
                             &source,
                             "raster_witness",
                             &[Draw {
@@ -171,6 +179,11 @@ fn native_liquid_faces_admit_only_their_original_and_marked_reverse_windings() {
                                     | wgpu::ColorWrites::BLUE,
                                 ..Default::default()
                             },
+                            &[if fragment == "fragment" {
+                                &lighting[..]
+                            } else {
+                                &lighting[..2]
+                            }],
                         );
                         let side = (pixels.len() / 4).isqrt();
                         let actual = &pixels[(side / 2 * side + side / 2) * 4..][..4];

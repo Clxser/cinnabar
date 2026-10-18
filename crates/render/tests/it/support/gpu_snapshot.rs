@@ -26,6 +26,24 @@ pub struct Gpu {
     pub backend: wgpu::Backend,
 }
 
+/// Lists the shared world-lighting resources in the production bind-group order.
+pub fn lighting_bindings<'a>(
+    lightmap: &'a wgpu::Buffer,
+    atmosphere: &'a wgpu::Buffer,
+    water: &'a wgpu::TextureView,
+    sampler: &'a wgpu::Sampler,
+    water_info: &'a wgpu::Buffer,
+) -> [wgpu::BindGroupEntry<'a>; 5] {
+    [
+        (0, lightmap.as_entire_binding()),
+        (1, atmosphere.as_entire_binding()),
+        (2, wgpu::BindingResource::TextureView(water)),
+        (3, wgpu::BindingResource::Sampler(sampler)),
+        (4, water_info.as_entire_binding()),
+    ]
+    .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource })
+}
+
 pub struct Draw<'a> {
     pub fragment: &'a str,
     pub vertices: Range<u32>,
@@ -62,6 +80,8 @@ struct RasterConfiguration<'a> {
     pipelines: &'a [DrawPipeline<'a>],
     /// Per-draw shader sources; empty when every draw shares the one source.
     sources: &'a [&'a str],
+    /// Shared resources after each draw's group zero, in bind-group order.
+    additional_bindings: &'a [&'a [wgpu::BindGroupEntry<'a>]],
 }
 
 impl Default for RasterState {
@@ -109,6 +129,14 @@ fn fixture_adapter<T>(name: &str, result: Result<T, wgpu::RequestAdapterError>) 
 }
 
 impl Gpu {
+    /// Binds one unanimated texel for each optional water kind in ordinary-path fixtures.
+    pub fn water_info(&self) -> wgpu::Buffer {
+        self.words(
+            &[[0, 1, 1, 1]; assets::java_world::WATER_TEXTURE_PATHS.len()].concat(),
+            wgpu::BufferUsages::UNIFORM,
+        )
+    }
+
     /// Uploads both the raw and byte-truncated tables using the production lightmap layout.
     pub fn lightmap(&self, values: &[f32]) -> wgpu::Buffer {
         let raw: &[[f32; 4]; 256] = bytemuck::cast_slice(values)
@@ -191,6 +219,38 @@ impl Gpu {
             })
     }
 
+    /// Uploads one solid RGBA texel per layer for distinct material witnesses.
+    pub fn colour_texture_array(&self, colours: &[[u8; 4]]) -> wgpu::TextureView {
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("fixture colour layers"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: colours.len() as u32,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            texture.as_image_copy(),
+            bytemuck::cast_slice(colours),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            texture.size(),
+        );
+        texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        })
+    }
+
     /// A zeroed 1x1 2D texture for bindings a draw never samples.
     pub fn blank_texture_view(&self) -> wgpu::TextureView {
         self.device
@@ -224,6 +284,18 @@ impl Gpu {
         draws: &[Draw<'_>],
         state: RasterState,
     ) -> Vec<u8> {
+        self.render_with_bind_groups(source, vertex, draws, state, &[])
+    }
+
+    /// Binds shared lighting resources after each draw's own group-zero resources.
+    pub fn render_with_bind_groups(
+        &self,
+        source: &str,
+        vertex: &str,
+        draws: &[Draw<'_>],
+        state: RasterState,
+        additional_bindings: &[&[wgpu::BindGroupEntry<'_>]],
+    ) -> Vec<u8> {
         self.render_to_format(
             source,
             vertex,
@@ -233,6 +305,7 @@ impl Gpu {
                 state,
                 pipelines: &[],
                 sources: &[],
+                additional_bindings,
             },
         )
     }
@@ -254,6 +327,7 @@ impl Gpu {
                 state: RasterState::default(),
                 pipelines,
                 sources: &[],
+                additional_bindings: &[],
             },
         )
     }
@@ -278,6 +352,7 @@ impl Gpu {
                 state,
                 pipelines,
                 sources,
+                additional_bindings: &[],
             },
         )
     }
@@ -300,6 +375,7 @@ impl Gpu {
                 state: RasterState::default(),
                 pipelines,
                 sources,
+                additional_bindings: &[],
             },
         )
     }
@@ -326,6 +402,7 @@ impl Gpu {
                 state,
                 pipelines: &[],
                 sources: &[],
+                additional_bindings: &[],
             },
         )
     }
@@ -353,6 +430,7 @@ impl Gpu {
                 },
                 pipelines: &[],
                 sources: &[],
+                additional_bindings: &[],
             },
         )
     }
@@ -369,6 +447,7 @@ impl Gpu {
             state,
             pipelines,
             sources,
+            additional_bindings,
         } = configuration;
         let module = |source: &str| {
             self.device
@@ -464,11 +543,17 @@ impl Gpu {
                     multiview_mask: None,
                     cache: None,
                 });
-            let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &pipeline.get_bind_group_layout(0),
-                entries: draw.bindings,
-            });
+            let groups = std::iter::once(draw.bindings)
+                .chain(additional_bindings.iter().copied())
+                .enumerate()
+                .map(|(index, entries)| {
+                    self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: None,
+                        layout: &pipeline.get_bind_group_layout(index as u32),
+                        entries,
+                    })
+                })
+                .collect::<Vec<_>>();
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -501,7 +586,9 @@ impl Gpu {
                 multiview_mask: None,
             });
             pass.set_pipeline(&pipeline);
-            pass.set_bind_group(0, &group, &[]);
+            for (index, group) in groups.iter().enumerate() {
+                pass.set_bind_group(index as u32, group, &[]);
+            }
             pass.draw(draw.vertices.clone(), 0..1);
         }
         let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -544,15 +631,16 @@ impl Gpu {
     }
 }
 
-/// Saves diagnostic pixels outside git when an offline snapshot run requests them.
+/// Saves square diagnostic pixels outside git when an offline snapshot run requests them.
 #[cfg(test)]
 pub fn save(name: &str, pixels: &[u8]) {
     if let Some(directory) = std::env::var_os("CINNABAR_REVIEW_SNAPSHOT_DIR") {
+        let side = (pixels.len() / 4).isqrt() as u32;
         image::save_buffer(
             std::path::PathBuf::from(directory).join(format!("{name}.png")),
             pixels,
-            SNAPSHOT_SIDE,
-            SNAPSHOT_SIDE,
+            side,
+            side,
             image::ColorType::Rgba8,
         )
         .unwrap();

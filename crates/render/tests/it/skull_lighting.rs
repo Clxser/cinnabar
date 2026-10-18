@@ -152,7 +152,8 @@ fn raster_model_from(
     let texture = texture.create_view(&Default::default());
     let sampler = gpu.device.create_sampler(&Default::default());
     let lightmap = gpu.lightmap(bytemuck::cast_slice(&inputs.build()));
-    let mut atmosphere = [0.0; 32];
+    let mut atmosphere =
+        [0.0; std::mem::size_of::<render_scene::AtmosphereFrame>() / std::mem::size_of::<f32>()];
     atmosphere[20] = 1000.0;
     atmosphere[19] = 999.0;
     let atmosphere = gpu.buffer(&atmosphere, wgpu::BufferUsages::UNIFORM);

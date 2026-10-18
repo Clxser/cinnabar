@@ -161,7 +161,8 @@ fn culled_solid_runs_match_the_two_sided_discard_path_from_every_side() {
         &meshing::biome_lattice::query_table_words(),
         wgpu::BufferUsages::UNIFORM,
     );
-    let mut atmosphere = [0.0; 32];
+    let mut atmosphere =
+        [0.0; std::mem::size_of::<render_scene::AtmosphereFrame>() / std::mem::size_of::<f32>()];
     atmosphere[16..19].copy_from_slice(&[0.6, 0.7, 0.9]);
     atmosphere[19] = 8.0;
     atmosphere[20] = 60.0;
@@ -181,6 +182,7 @@ fn culled_solid_runs_match_the_two_sided_discard_path_from_every_side() {
         ),
     )
     .replace("@group(1) @binding(0)", "@group(0) @binding(27)");
+    let source = shader_source::bind_atmosphere(&source);
 
     let origin_point = Vec3::from_array(ORIGIN.map(|value| value as f32));
     let cameras = [
@@ -214,6 +216,10 @@ fn culled_solid_runs_match_the_two_sided_discard_path_from_every_side() {
             (11, clock.as_entire_binding()),
             (13, streams.as_entire_binding()),
             (15, atmosphere.as_entire_binding()),
+            (
+                shader_source::FIXTURE_ATMOSPHERE_BINDING,
+                atmosphere.as_entire_binding(),
+            ),
             (
                 crate::material_shader::BIOME_QUERY_TABLES_BINDING,
                 query_tables.as_entire_binding(),

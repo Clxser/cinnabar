@@ -226,12 +226,13 @@ impl Shaders {
             .map(|index| format!("{index}u"))
             .join(", ");
         let prepare = |source: &str, entries: &str| {
-            format!(
+            let source = format!(
                 "{}\n{}",
                 shader_source::standalone(source, &[]),
                 entries.replace("INDICES", &indices)
             )
-            .replace("@group(1) @binding(0)", "@group(0) @binding(27)")
+            .replace("@group(1) @binding(0)", "@group(0) @binding(27)");
+            shader_source::bind_atmosphere(&source)
         };
         Self {
             cube: prepare(include_str!("../../src/chunk.wesl"), CUBE_ENTRIES),
@@ -297,7 +298,7 @@ impl Fixture {
         streams: &'a Streams,
         uniform: &'a wgpu::Buffer,
         geometry: &'a wgpu::Buffer,
-    ) -> [(u32, wgpu::BindingResource<'a>); 24] {
+    ) -> [(u32, wgpu::BindingResource<'a>); 25] {
         [
             (0, uniform.as_entire_binding()),
             (1, streams.cube_quads.as_entire_binding()),
@@ -319,6 +320,10 @@ impl Fixture {
             (13, geometry.as_entire_binding()),
             (14, self.zeros.as_entire_binding()),
             (15, self.atmosphere.as_entire_binding()),
+            (
+                shader_source::FIXTURE_ATMOSPHERE_BINDING,
+                self.atmosphere.as_entire_binding(),
+            ),
             (
                 material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[0],
                 wgpu::BindingResource::TextureView(&self.atlas),

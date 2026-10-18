@@ -5,6 +5,16 @@
 )]
 use crate::material_shader;
 
+pub const FIXTURE_ATMOSPHERE_BINDING: u32 = 31;
+
+/// Keeps the shared atmosphere in group zero for fixtures that flatten the lightmap binding.
+pub fn bind_atmosphere(source: &str) -> String {
+    source.replace(
+        "@group(1) @binding(1)",
+        &format!("@group(0) @binding({FIXTURE_ATMOSPHERE_BINDING})"),
+    )
+}
+
 pub(crate) const VIEW: &str = "struct View { clip_from_world: mat4x4<f32>, unjittered_clip_from_world: mat4x4<f32>, view_from_world: mat4x4<f32>, world_from_view: mat4x4<f32>, clip_from_view: mat4x4<f32>, view_from_clip: mat4x4<f32>, world_position: vec3<f32>, exposure: f32, viewport: vec4<f32>, }";
 const FULLSCREEN: &str = "struct FullscreenVertexOutput { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, }";
 const FULLSCREEN_VERTEX: &str = "@vertex fn fullscreen(@builtin(vertex_index) index: u32) -> FullscreenVertexOutput { var out: FullscreenVertexOutput; out.uv = vec2(f32((index << 1u) & 2u), f32(index & 2u)); out.position = vec4(out.uv * vec2(2.0, -2.0) + vec2(-1.0, 1.0), 0.0, 1.0); return out; }";

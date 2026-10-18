@@ -50,19 +50,59 @@ fn one_sorted_item_draws_exact_quad_vertices_and_one_window_instance() {
 
 #[test]
 fn cloud_colour_and_fade_are_native_vertex_work_not_reinvented_fragment_weather() {
-    let source = include_str!("../../src/cloud.wesl");
-    let fragment = source.split("fn cloud_fragment").nth(1).unwrap();
-    assert!(!fragment.contains("distance_fade"));
-    assert!(!fragment.contains("cloud_colour"));
-    assert!(fragment.contains("tint_to_linear(in.colour)"));
-    assert!(
-        source
-            .contains("colour.a *= distance_fade(distance(world_position, view.world_position));")
-    );
-    assert!(!source.contains("cos("));
-    assert!(!source.contains("RAIN_CLOUD_COLOUR"));
-    assert!(!source.contains("fog_color_start.rgb"));
-    assert!(!source.contains("textureSample"));
+    use gpu_snapshot::{Draw, Gpu};
+    let Some(gpu) = Gpu::for_fixture("default cloud fragment colour and fade") else {
+        return;
+    };
+    let mut atmosphere =
+        [0.0; std::mem::size_of::<render_scene::AtmosphereFrame>() / std::mem::size_of::<f32>()];
+    atmosphere[11] = 1.0;
+    atmosphere[15] = 1.0;
+    atmosphere[23] = 1.0;
+    let atmosphere = gpu.buffer(&atmosphere, wgpu::BufferUsages::UNIFORM);
+    for encoded in [false, true] {
+        let mut source = shader_source::standalone(
+            include_str!("../../src/cloud.wesl"),
+            if encoded { &["JAVA_ENCODED"] } else { &[] },
+        );
+        source.push_str(
+            r#"
+@vertex fn colour_probe(@builtin(vertex_index) index: u32) -> VertexOutput {
+    let uv = vec2(f32((index << 1u) & 2u), f32(index & 2u));
+    return VertexOutput(vec4(uv * 2.0 - vec2(1.0), 0.5, 1.0),
+        vec4(0.25, 0.5, 0.75, 0.4), 10000.0);
+}
+"#,
+        );
+        let pixels = gpu.render(
+            &source,
+            "colour_probe",
+            &[Draw {
+                fragment: "cloud_fragment",
+                vertices: 0..3,
+                bindings: &[wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: atmosphere.as_entire_binding(),
+                }],
+                blend: None,
+                write_depth: false,
+            }],
+        );
+        let mut expected = [0.25_f32, 0.5, 0.75, 0.4].map(|value| (value * 255.0).round() as u8);
+        if !encoded {
+            for (channel, value) in [0.25_f32, 0.5, 0.75].into_iter().enumerate() {
+                expected[channel] = (((value + 0.055) / 1.055).powf(2.4) * 255.0).round() as u8;
+            }
+        }
+        let actual = &pixels[(128 * 256 + 128) * 4..][..4];
+        assert!(
+            actual
+                .iter()
+                .zip(expected)
+                .all(|(&actual, expected)| actual.abs_diff(expected) <= 1),
+            "encoded {encoded}: vertex colour and faded alpha must survive: {actual:?} != {expected:?}"
+        );
+    }
 }
 
 #[test]
@@ -75,7 +115,7 @@ fn native_cloud_vertices_preserve_negative_cells_subpixel_scroll_rgba_and_fade_o
     source.push_str(r#"
 @vertex fn probe_vertex(@builtin(vertex_index) index: u32) -> VertexOutput {
     let position = vec2(f32(index & 1u), f32((index >> 1u) & 1u)) * 4.0 - vec2(1.0);
-    return VertexOutput(vec4(position, 0.0, 1.0), vec4(0.0));
+    return VertexOutput(vec4(position, 0.0, 1.0), vec4(0.0), 0.0);
 }
 @fragment fn probe_fragment(input: VertexOutput) -> @location(0) vec4<f32> {
     let column = u32(input.position.x / view.viewport.z * 4.0);
@@ -105,7 +145,8 @@ fn native_cloud_vertices_preserve_negative_cells_subpixel_scroll_rgba_and_fade_o
         &gpu_snapshot::view(Mat4::IDENTITY, Vec3::ZERO),
         wgpu::BufferUsages::UNIFORM,
     );
-    let mut atmosphere = [0.0_f32; 32];
+    let mut atmosphere =
+        [0.0; std::mem::size_of::<render_scene::AtmosphereFrame>() / std::mem::size_of::<f32>()];
     atmosphere[22] = -0.125 / meshing::CLOUD_WORLD_PERIOD;
     atmosphere[23] = 100.0;
     let frame = gpu.buffer(&atmosphere, wgpu::BufferUsages::UNIFORM);

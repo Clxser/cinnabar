@@ -168,6 +168,7 @@ fn source(reference: bool) -> String {
     }
     let mut source = shader_source::standalone(&module.to_string(), &[])
         .replace("@group(1) @binding(0)", "@group(0) @binding(27)");
+    source = shader_source::bind_atmosphere(&source);
     source.push_str(
         &VERTEX
             .replace(
@@ -401,7 +402,8 @@ fn render_fixture(cache_admission: bool) {
     let frames = gpu.words(&[0, 1], storage);
     let clock = gpu.words(&[1, 0.25_f32.to_bits(), 0, 0], uniform);
     let streams = gpu.words(&crate::solid_terrain_raster::lighting_words(CASES), storage);
-    let mut atmosphere = [0.0; 32];
+    let mut atmosphere =
+        [0.0; std::mem::size_of::<render_scene::AtmosphereFrame>() / std::mem::size_of::<f32>()];
     atmosphere[16..19].copy_from_slice(&[0.13, 0.22, 0.31]);
     atmosphere[20] = 64.0;
     let atmosphere = gpu.buffer(&atmosphere, uniform);
@@ -426,6 +428,10 @@ fn render_fixture(cache_admission: bool) {
         (11, clock.as_entire_binding()),
         (13, streams.as_entire_binding()),
         (15, atmosphere.as_entire_binding()),
+        (
+            shader_source::FIXTURE_ATMOSPHERE_BINDING,
+            atmosphere.as_entire_binding(),
+        ),
         (
             crate::material_shader::BIOME_QUERY_TABLES_BINDING,
             query_tables.as_entire_binding(),

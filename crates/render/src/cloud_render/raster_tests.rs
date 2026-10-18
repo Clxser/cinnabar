@@ -12,7 +12,8 @@ fn draw(gpu: &Gpu, records: &wgpu::Buffer, count: u32, eye: Vec3) -> Vec<u8> {
         &gpu_snapshot::view(matrix, eye),
         wgpu::BufferUsages::UNIFORM,
     );
-    let mut atmosphere = [0.0_f32; 32];
+    let mut atmosphere =
+        [0.0; std::mem::size_of::<render_scene::AtmosphereFrame>() / std::mem::size_of::<f32>()];
     atmosphere[23] = 160.0;
     let frame = gpu.buffer(&atmosphere, wgpu::BufferUsages::UNIFORM);
     let colour = gpu.buffer(

@@ -240,7 +240,8 @@ impl Fixture {
     fn new(name: &str) -> Option<Self> {
         let gpu = Gpu::for_fixture(name)?;
         let storage = wgpu::BufferUsages::STORAGE;
-        let mut atmosphere = [0.0; 32];
+        let mut atmosphere = [0.0; std::mem::size_of::<render_scene::AtmosphereFrame>()
+            / std::mem::size_of::<f32>()];
         atmosphere[16..19].copy_from_slice(&[0.6, 0.7, 0.9]);
         atmosphere[19] = 1.0e6;
         atmosphere[20] = 2.0e6;
@@ -256,6 +257,7 @@ impl Fixture {
             ),
         )
         .replace("@group(1) @binding(0)", "@group(0) @binding(27)");
+        let source = shader_source::bind_atmosphere(&source);
         Some(Self {
             materials: gpu.words(&[0, 0, u32::MAX, 0, 0, 0], storage),
             animations: gpu.words(&[0; 8], storage),
@@ -307,6 +309,10 @@ impl Fixture {
             (11, self.clock.as_entire_binding()),
             (13, streams.geometry.as_entire_binding()),
             (15, self.atmosphere.as_entire_binding()),
+            (
+                shader_source::FIXTURE_ATMOSPHERE_BINDING,
+                self.atmosphere.as_entire_binding(),
+            ),
             (27, self.lightmap.as_entire_binding()),
             (
                 material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[0],

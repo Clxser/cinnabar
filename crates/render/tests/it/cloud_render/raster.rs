@@ -45,7 +45,10 @@ fn draw(
         &super::gpu_snapshot::view(matrix, eye),
         wgpu::BufferUsages::UNIFORM,
     );
-    let frame = gpu.buffer(&[0.0; 32], wgpu::BufferUsages::UNIFORM);
+    let frame = gpu.buffer(
+        &[0.0; std::mem::size_of::<render_scene::AtmosphereFrame>() / std::mem::size_of::<f32>()],
+        wgpu::BufferUsages::UNIFORM,
+    );
     let colour = gpu.buffer(
         &[
             1.0,
