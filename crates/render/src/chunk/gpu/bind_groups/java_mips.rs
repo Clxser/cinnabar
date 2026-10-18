@@ -6,6 +6,7 @@ use bevy::{
     prelude::Local,
     tasks::{AsyncComputeTaskPool, Task, block_on},
 };
+use render_scene::ChunkTextureAssetIdentity;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Default)]

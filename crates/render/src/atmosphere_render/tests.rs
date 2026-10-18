@@ -85,6 +85,7 @@ fn app_with_noop_render_sub_app() -> App {
     let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
     let mut render_app = SubApp::new();
     render_app
+        .init_resource::<render_scene::JavaWorldVisuals>()
         .insert_resource(RenderDevice::from(device))
         .insert_resource(RenderQueue::new(queue))
         .insert_resource(RenderAdapter::new(adapter))
