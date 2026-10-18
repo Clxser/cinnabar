@@ -14,10 +14,11 @@ use super::vertex::IRIS_VERTEX_STRIDE;
 /// Bytes of one expanded face: four vertices.
 pub(crate) const FACE_BYTES: u64 = 4 * IRIS_VERTEX_STRIDE;
 /// Size of a vertex page. Pages are created at this size (or what the budget has left) and
-/// never grow, so filling the budget allocates whole pages once and copies nothing; it is
-/// small enough that the last page wastes little of the budget and that running out of
-/// memory costs at most one page of terrain.
-pub(crate) const PAGE_BYTES: u64 = 128 << 20;
+/// never grow, so filling the budget allocates whole pages once and copies nothing; the
+/// device allocates a page memory of its own, and 64 MiB is small enough that the last,
+/// partly filled page wastes little and that running out of memory costs at most one page
+/// of terrain.
+pub(crate) const PAGE_BYTES: u64 = 64 << 20;
 /// Grid the geometry origin snaps to, in blocks.
 pub(crate) const ORIGIN_GRID: i32 = 1024;
 /// Camera distance from the origin, in blocks, past which the origin moves and every section

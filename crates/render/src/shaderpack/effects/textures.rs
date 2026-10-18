@@ -1,5 +1,6 @@
-//! The textures effect draws bind as `gtexture`, uploaded from the CPU copies Cinnabar's own
-//! renderers keep, as plain `Rgba8Unorm` so packs read the stored (gamma) bytes as GL does:
+//! The textures effect draws bind as `gtexture`, as plain `Rgba8Unorm` so packs read the
+//! stored (gamma) bytes as GL does: uploaded from the CPU copies Cinnabar's own renderers
+//! keep, or for the atlases those renderers upload, an `Rgba8Unorm` view of theirs:
 //!
 //! | effect | texture | source |
 //! |---|---|---|
@@ -7,8 +8,8 @@
 //! | moon | `textures/environment/moon_phases.png` | `AtmosphereTextureAssets` |
 //! | clouds | `textures/environment/clouds.png` | `AtmosphereTextureAssets` |
 //! | weather | `textures/environment/weather.png` | `WeatherTextureAssets` |
-//! | particles | the particle atlas and its dynamic tiles | `ParticleGpuFrame` |
-//! | cracks | the block-entity atlas (destroy stages) | `BlockEntityFrameResource` |
+//! | particles | the particle atlas and its dynamic tiles | `ParticleGpu` (a view) |
+//! | cracks | the block-entity atlas (destroy stages) | `BlockEntityGpu` (a view) |
 //! | stars, lightning, outline | 1×1 white | |
 //!
 //! `normals` binds a flat normal and `specular` zero, Iris's defaults without PBR maps.
@@ -17,20 +18,26 @@ use super::super::plugin::LoadedShaderPack;
 use super::super::resources::ATLAS_FORMAT;
 use super::super::targets::AtlasViews;
 use super::Effect;
+use crate::block_entity::BlockEntityGpu;
+use crate::particle_render::ParticleGpu;
 use crate::shaderpack::draws::DrawKind;
 use assets::atmosphere::AtmosphereRole;
 use bevy::prelude::*;
+use bevy::render::render_resource::{Texture, TextureId};
 use bevy::render::renderer::{RenderDevice, RenderQueue};
-use render_scene::{
-    AtmosphereTextureAssets, BlockEntityFrameResource, ParticleGpuFrame, WeatherTextureAssets,
-};
+use render_scene::{AtmosphereTextureAssets, WeatherTextureAssets};
 use std::sync::Arc;
 use wgpu::{TextureUsages, TextureView};
 
-/// One uploaded texture and the identity of what it holds.
+/// One uploaded texture (its view holds it) and the identity of what it holds.
 struct Uploaded<K> {
     key: K,
-    texture: wgpu::Texture,
+    view: TextureView,
+}
+
+/// A gamma-byte view of a texture another renderer owns and keeps current.
+struct Shared {
+    texture: TextureId,
     view: TextureView,
 }
 
@@ -45,12 +52,9 @@ pub(crate) struct ShaderpackEffectTextures {
     clouds: Option<Uploaded<[u8; 32]>>,
     /// Keyed by the sheet's allocation.
     weather: Option<Uploaded<usize>>,
-    /// Keyed by the atlas allocation; `particle_seq` is the last dynamic tile applied.
-    particles: Option<Uploaded<usize>>,
-    particle_seq: u64,
+    particles: Option<Shared>,
     particle_side: u32,
-    cracks: Option<Uploaded<([u8; 32], [u32; 2])>>,
-    crack_revision: u64,
+    cracks: Option<Shared>,
 }
 
 const WHITE: usize = 0;
@@ -133,15 +137,37 @@ fn upload<K: PartialEq>(
     }
     let (texture, view) = texture(device, label, size);
     write(queue, &texture, [0, 0], [size[0], rows.min(size[1])], rgba);
-    *slot = Some(Uploaded { key, texture, view });
+    *slot = Some(Uploaded { key, view });
+    true
+}
+
+/// Points `slot` at an `Rgba8Unorm` view of `texture` when it is not already one; returns
+/// whether it changed. Without a texture the slot keeps what it had.
+fn share(slot: &mut Option<Shared>, label: &str, texture: Option<&Texture>) -> bool {
+    let Some(texture) = texture else {
+        return false;
+    };
+    if slot.as_ref().is_some_and(|s| s.texture == texture.id()) {
+        return false;
+    }
+    let view = wgpu::Texture::create_view(
+        texture,
+        &wgpu::TextureViewDescriptor {
+            label: Some(label),
+            format: Some(ATLAS_FORMAT),
+            ..Default::default()
+        },
+    );
+    *slot = Some(Shared {
+        texture: texture.id(),
+        view,
+    });
     true
 }
 
 impl ShaderpackEffectTextures {
-    fn view<'a, K>(&'a self, slot: &'a Option<Uploaded<K>>) -> Option<&'a TextureView> {
-        slot.as_ref()
-            .map(|s| &s.view)
-            .or_else(|| self.constants.as_ref().map(|c| &c[WHITE].1))
+    fn view<'a>(&'a self, view: Option<&'a TextureView>) -> Option<&'a TextureView> {
+        view.or_else(|| self.constants.as_ref().map(|c| &c[WHITE].1))
     }
 
     /// The views `effect`'s draw binds as `gtexture`, `normals` and `specular`; `None` until
@@ -149,14 +175,14 @@ impl ShaderpackEffectTextures {
     pub(crate) fn views(&self, effect: Effect) -> Option<AtlasViews<'_>> {
         let constants = self.constants.as_ref()?;
         let color = match effect {
-            Effect::Sun => self.view(&self.sun),
-            Effect::Moon => self.view(&self.moon),
-            Effect::Clouds => self.view(&self.clouds),
-            Effect::Weather => self.view(&self.weather),
+            Effect::Sun => self.view(self.sun.as_ref().map(|s| &s.view)),
+            Effect::Moon => self.view(self.moon.as_ref().map(|s| &s.view)),
+            Effect::Clouds => self.view(self.clouds.as_ref().map(|s| &s.view)),
+            Effect::Weather => self.view(self.weather.as_ref().map(|s| &s.view)),
             Effect::Particles | Effect::ParticlesTranslucent | Effect::ParticlesAdditive => {
-                self.view(&self.particles)
+                self.view(self.particles.as_ref().map(|s| &s.view))
             }
-            Effect::DamagedBlock => self.view(&self.cracks),
+            Effect::DamagedBlock => self.view(self.cracks.as_ref().map(|s| &s.view)),
             Effect::Stars | Effect::Lightning | Effect::Outline => Some(&constants[WHITE].1),
         }?;
         Some(AtlasViews {
@@ -181,8 +207,8 @@ impl ShaderpackEffectTextures {
 type Sources<'w> = (
     Option<Res<'w, AtmosphereTextureAssets>>,
     Option<Res<'w, WeatherTextureAssets>>,
-    Option<Res<'w, ParticleGpuFrame>>,
-    Option<Res<'w, BlockEntityFrameResource>>,
+    Option<Res<'w, ParticleGpu>>,
+    Option<Res<'w, BlockEntityGpu>>,
 );
 
 /// Keeps the effect textures equal to their sources while the shown pack draws effects;
@@ -266,76 +292,20 @@ pub(crate) fn prepare_effect_textures(
             &image.rgba8,
         );
     }
-    if let Some(frame) = particles.as_ref()
-        && let Some(base) = &frame.base
-        && base.len() == (frame.atlas_side as usize).pow(2) * 4
-    {
-        let key = Arc::as_ptr(base).cast::<u8>() as usize;
-        if upload(
-            device,
-            queue,
-            &mut textures.particles,
-            key,
-            "shader pack particle atlas",
-            [frame.atlas_side; 2],
-            frame.atlas_side,
-            base,
-        ) {
-            textures.particle_seq = 0;
-            textures.particle_side = frame.atlas_side;
-            changed = true;
-        }
-        if frame.patch_seq != textures.particle_seq
-            && let Some(uploaded) = &textures.particles
-        {
-            for patch in frame
-                .patches
-                .iter()
-                .filter(|p| p.seq > textures.particle_seq)
-            {
-                write(
-                    queue,
-                    &uploaded.texture,
-                    [patch.x, patch.y],
-                    [patch.width, patch.height],
-                    &patch.rgba8,
-                );
-            }
-            textures.particle_seq = frame.patch_seq;
-        }
+    let particle_atlas = particles.as_ref().and_then(|gpu| gpu.atlas_texture());
+    if share(
+        &mut textures.particles,
+        "shader pack particle atlas view",
+        particle_atlas,
+    ) {
+        textures.particle_side = particle_atlas.map_or(0, |atlas| atlas.width());
+        changed = true;
     }
-    if let Some(frame) = blocks.as_ref()
-        && let Some(atlas) = &frame.atlas
-    {
-        let key = (atlas.identity, atlas.size);
-        let static_rows = atlas.static_height.min(atlas.size[1]);
-        if upload(
-            device,
-            queue,
-            &mut textures.cracks,
-            key,
-            "shader pack block-entity atlas",
-            atlas.size,
-            static_rows,
-            &atlas.static_rgba8,
-        ) {
-            textures.crack_revision = u64::MAX;
-            changed = true;
-        }
-        let dynamic_rows = atlas.size[1].saturating_sub(static_rows);
-        if textures.crack_revision != frame.dynamic_revision
-            && let Some(uploaded) = &textures.cracks
-        {
-            write(
-                queue,
-                &uploaded.texture,
-                [0, static_rows],
-                [atlas.size[0], dynamic_rows],
-                &frame.dynamic_rgba8,
-            );
-            textures.crack_revision = frame.dynamic_revision;
-        }
-    }
+    changed |= share(
+        &mut textures.cracks,
+        "shader pack block-entity atlas view",
+        blocks.as_ref().and_then(|gpu| gpu.atlas_texture()),
+    );
     if changed {
         textures.generation += 1;
     }

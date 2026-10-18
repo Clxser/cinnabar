@@ -19,9 +19,13 @@ pub(super) fn configure_render_settings(settings: &mut WgpuSettings) {
         .max(render::required_vertex_storage_buffers());
     // Bevy's default (`Performance`) sub-allocates from 128–256 MiB blocks the allocator
     // keeps while any allocation in them lives; on a 2 GiB working set that left about
-    // 1 GiB reserved but unused. Smaller blocks pack tighter and free sooner, and buffers
-    // larger than a block (shader-pack vertex pages) get memory of their own.
-    settings.memory_hints = wgpu::MemoryHints::MemoryUsage;
+    // 1 GiB reserved but unused, and `MemoryUsage`'s 64 MiB blocks still left a few hundred
+    // MiB (one or two 15 MiB targets in a 64 MiB block). Blocks of at most 16 MiB hold a
+    // full-screen target with little to spare, and anything larger (shader-pack vertex pages,
+    // HDR targets, the chunk arena) gets memory of its own.
+    settings.memory_hints = wgpu::MemoryHints::Manual {
+        suballocated_device_memory_block_size: (4 << 20)..(16 << 20),
+    };
 }
 
 /// Converts the policy's backend to wgpu's flags without keeping a separate order table.

@@ -109,7 +109,7 @@ impl Plugin for ParticleRenderPlugin {
 }
 
 #[derive(Resource)]
-struct ParticleGpu {
+pub(crate) struct ParticleGpu {
     sampler: Sampler,
     texture_view: Option<TextureView>,
     texture: Option<Texture>,
@@ -122,6 +122,15 @@ struct ParticleGpu {
     add_range: Range<u32>,
     bind_group: Option<BindGroup>,
     bound: (Option<BufferId>, Option<BufferId>, u64),
+}
+
+#[cfg(feature = "shaderpacks")]
+impl ParticleGpu {
+    /// The uploaded particle atlas with its dynamic tiles, which shader-pack particle draws
+    /// read through a gamma-byte view rather than a copy of their own.
+    pub(crate) fn atlas_texture(&self) -> Option<&Texture> {
+        self.texture.as_ref()
+    }
 }
 
 fn init_particle_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
@@ -151,7 +160,7 @@ fn init_particle_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
     });
 }
 
-fn prepare_particle_resources(
+pub(crate) fn prepare_particle_resources(
     frame: Res<ParticleGpuFrame>,
     uploads: crate::upload_staging::FrameUploads,
     mut gpu: ResMut<ParticleGpu>,
@@ -176,7 +185,8 @@ fn prepare_particle_resources(
             dimension: TextureDimension::D2,
             format: TextureFormat::Rgba8UnormSrgb,
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-            view_formats: &[],
+            // Shader packs read the stored gamma bytes through an `Rgba8Unorm` view.
+            view_formats: crate::actor::gpu::ARTWORK_VIEW_FORMATS,
         });
         write_rect(
             &uploads.queue,

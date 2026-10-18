@@ -610,6 +610,8 @@ pub(super) fn finish(app: &mut App) {
                     .before(super::geometry::prepare_shaderpack_geometry),
                 prepare_effect_textures
                     .in_set(RenderSystems::PrepareResources)
+                    .after(crate::particle_render::prepare_particle_resources)
+                    .after(crate::block_entity::prepare_block_entity_resources)
                     .before(prepare_views),
                 prepare_views
                     .in_set(RenderSystems::PrepareResources)
