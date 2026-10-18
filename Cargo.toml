@@ -162,18 +162,17 @@ wit-component = "=0.247.0"
 # Keep Metal display-link delivery, bounded submissions and indirect validation on wgpu 30.0.1,
 # plus naga GLSL frontend fixes for Java shader packs (glsl-in builtins, overloads, barriers).
 [patch.crates-io]
-# LOCAL ONLY: naga fixes for more packs (glsl-shaderpack-frontend-2 @ 4dc0319a7, based on
-# e863d9d0b) are not yet published to cinnabar-mc/wgpu. Every wgpu crate must come from the same
-# checkout so wgpu and the shaderpack crate share one naga; restore the git rev before any PR.
-# This checkout is branch wp2-fma-nocontraction: d1c39c7a1 plus `NoContraction` on SPIR-V `fma`,
-# which the shader-pack `dot` rounding needs.
-naga = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga-wp2/naga" }
-wgpu = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga-wp2/wgpu" }
-wgpu-core = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga-wp2/wgpu-core" }
-wgpu-hal = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga-wp2/wgpu-hal" }
-wgpu-types = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga-wp2/wgpu-types" }
+# LOCAL ONLY: branch shaderpack-naga-next (cinnabar-mc/wgpu b9611d40 plus the GLSL frontend and
+# SPIR-V `fma` NoContraction fixes shader packs need) is not yet published to cinnabar-mc/wgpu.
+# Every wgpu crate must come from the same checkout so wgpu and the shaderpack crate share one
+# naga; restore the git rev before any PR.
+naga = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga-next/naga" }
+wgpu = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga-next/wgpu" }
+wgpu-core = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga-next/wgpu-core" }
+wgpu-hal = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga-next/wgpu-hal" }
+wgpu-types = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga-next/wgpu-types" }
 
-wgpu-naga-bridge = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga-wp2/wgpu-naga-bridge" }
+wgpu-naga-bridge = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga-next/wgpu-naga-bridge" }
 
 [profile.dev]
 opt-level = 1

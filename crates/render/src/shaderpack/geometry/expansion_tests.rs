@@ -649,10 +649,10 @@ fn liquid_faces_carry_the_fluid_render_type() {
     for corner in 0..4 {
         let vertex = decode(&expanded.words, corner);
         assert_eq!(
-            vertex.render_type, 1.0,
+            vertex.render_type, 1,
             "fluids read Iris's FLUID_RENDER_TYPE in mc_Entity.y"
         );
-        assert_eq!(vertex.block_id, GRASS_BLOCK_ID as f32);
+        assert_eq!(i32::from(vertex.block_id), GRASS_BLOCK_ID);
         assert!(
             (vertex.position.y - surface).abs() < 1e-3,
             "the surface sits at the record's height: {}",
