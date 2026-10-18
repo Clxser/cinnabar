@@ -40,13 +40,16 @@ impl OutputMap<'_> {
     /// from it, otherwise carrying the generated line as its snippet.
     pub fn diagnostic(&self, phase: Phase, message: String, line: Option<u32>) -> Diagnostic {
         let mut d = Diagnostic::new(phase, message);
-        let Some(line) = line else {
+        let Some(index) = line
+            .and_then(|line| line.checked_sub(1))
+            .map(|line| line as usize)
+        else {
             return d;
         };
-        let origin = self.origins.get(line as usize - 1).copied().unwrap_or(0);
+        let origin = self.origins.get(index).copied().unwrap_or(0);
         d.location = self.lines.locate(origin);
         if d.location.is_none() {
-            d.snippet = self.glsl.lines().nth(line as usize - 1).map(str::to_string);
+            d.snippet = self.glsl.lines().nth(index).map(str::to_string);
         }
         d
     }

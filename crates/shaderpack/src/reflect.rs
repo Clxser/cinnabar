@@ -28,6 +28,13 @@ enum Resource {
     Image(StorageImageBinding),
 }
 
+/// A resource together with its defining module for structural cross-stage type checks.
+struct SeenResource<'a> {
+    resource: Resource,
+    module: &'a naga::Module,
+    ty: naga::Handle<naga::Type>,
+}
+
 /// Reflects `stages` (pipeline order). `draw_buffers` maps output locations to buffer
 /// indices. Formats start at the default; the caller sets them from pack-wide directives.
 /// Errors describe cross-stage binding conflicts.
@@ -36,6 +43,12 @@ pub(crate) fn reflect(
     stages: &[(&CompiledStage, StageNames<'_>)],
     draw_buffers: &[u32],
 ) -> Result<ProgramReflection, String> {
+    crate::reflect_link::validate(
+        &stages
+            .iter()
+            .map(|(compiled, _)| *compiled)
+            .collect::<Vec<_>>(),
+    )?;
     let mut out = ProgramReflection {
         kind,
         entry_points: vec![],
@@ -50,7 +63,7 @@ pub(crate) fn reflect(
         writes_depth: false,
         compute: None,
     };
-    let mut resources: BTreeMap<(u32, u32), Resource> = BTreeMap::new();
+    let mut resources: BTreeMap<(u32, u32), SeenResource<'_>> = BTreeMap::new();
     for (compiled, names) in stages {
         let module = &compiled.module;
         let Some(ep) = module.entry_points.first() else {
@@ -75,9 +88,29 @@ pub(crate) fn reflect(
                 .unwrap_or_default();
             let res = resource(module, var, name, rb.group, rb.binding, compiled.stage)?;
             match resources.get_mut(&(rb.group, rb.binding)) {
-                Some(existing) => merge(existing, res, rb)?,
+                Some(existing) => {
+                    if !crate::reflect_link::same_resource_type(
+                        existing.module,
+                        existing.ty,
+                        module,
+                        var.ty,
+                    ) {
+                        return Err(format!(
+                            "stages disagree on resource types at group {} binding {}",
+                            rb.group, rb.binding
+                        ));
+                    }
+                    merge(&mut existing.resource, res, rb)?;
+                }
                 None => {
-                    resources.insert((rb.group, rb.binding), res);
+                    resources.insert(
+                        (rb.group, rb.binding),
+                        SeenResource {
+                            resource: res,
+                            module,
+                            ty: var.ty,
+                        },
+                    );
                 }
             }
         }
@@ -137,8 +170,8 @@ pub(crate) fn reflect(
             _ => {}
         }
     }
-    for (_, res) in resources {
-        match res {
+    for (_, seen) in resources {
+        match seen.resource {
             Resource::Uniform(b, Some(block))
                 if b.group == UNIFORM_GROUP && b.binding == LOOSE_UNIFORM_BINDING =>
             {
@@ -350,7 +383,7 @@ fn scalar(s: naga::Scalar) -> ScalarType {
 }
 
 /// Reflects scalar, vector and matrix shapes, returning None for aggregate types.
-fn value_type(inner: &TypeInner) -> Option<ValueType> {
+pub(crate) fn value_type(inner: &TypeInner) -> Option<ValueType> {
     Some(match inner {
         TypeInner::Scalar(s) => ValueType::Scalar(scalar(*s)),
         TypeInner::Vector { size, scalar: s } => ValueType::Vector {

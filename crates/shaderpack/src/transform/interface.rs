@@ -1,14 +1,21 @@
 //! Location and binding numbering shared by a program's stages.
 
+use super::TransformError;
 use crate::reflection::{FIRST_TEXTURE_BINDING, LOOSE_UNIFORM_BINDING};
 use std::collections::BTreeMap;
+
+/// One cross-stage varying awaiting program-wide location allocation.
+struct Varying {
+    symbol: String,
+    size: u32,
+    explicit: Option<u32>,
+}
 
 /// Interface numbering shared by a program's stages: varying name → (first location,
 /// count), and resource name → binding, so the vertex and fragment stages agree.
 #[derive(Default)]
 pub(crate) struct ProgramInterface {
-    varyings: BTreeMap<String, (u32, u32)>,
-    next_varying: u32,
+    varyings: BTreeMap<String, Varying>,
     textures: BTreeMap<String, u32>,
     images: BTreeMap<String, u32>,
     uniform_blocks: BTreeMap<String, u32>,
@@ -16,15 +23,72 @@ pub(crate) struct ProgramInterface {
 }
 
 impl ProgramInterface {
-    /// First location of varying `name`, allocating `size` locations on first use.
-    pub(super) fn varying(&mut self, name: &str, size: u32) -> u32 {
-        if let Some((l, _)) = self.varyings.get(name) {
-            return *l;
+    /// Registers a varying before allocation so later explicit locations reserve their slots.
+    pub(super) fn varying(
+        &mut self,
+        name: &str,
+        size: u32,
+        explicit: Option<u32>,
+    ) -> Result<String, TransformError> {
+        let next = self.varyings.len();
+        let varying = self
+            .varyings
+            .entry(name.to_string())
+            .or_insert_with(|| Varying {
+                symbol: format!("__shaderpack_location_{next}"),
+                size,
+                explicit,
+            });
+        if varying.size != size
+            || (varying.explicit.is_some() && explicit.is_some() && varying.explicit != explicit)
+        {
+            return Err(TransformError::new(
+                format!("stages disagree on varying `{name}` locations"),
+                0,
+            ));
         }
-        let l = self.next_varying;
-        self.varyings.insert(name.to_string(), (l, size));
-        self.next_varying += size;
-        l
+        if explicit.is_some() {
+            varying.explicit = explicit;
+        }
+        Ok(varying.symbol.clone())
+    }
+
+    /// Allocates non-overlapping implicit locations after reserving every explicit range.
+    pub(crate) fn location_defines(&self) -> Result<String, String> {
+        let mut used = Vec::new();
+        for varying in self.varyings.values() {
+            if let Some(start) = varying.explicit {
+                let end = start
+                    .checked_add(varying.size)
+                    .ok_or("varying location overflow")?;
+                used.push(start..end);
+            }
+        }
+        let mut definitions = String::new();
+        for varying in self.varyings.values() {
+            let start = if let Some(explicit) = varying.explicit {
+                explicit
+            } else {
+                let mut start = 0u32;
+                loop {
+                    let end = start
+                        .checked_add(varying.size)
+                        .ok_or("varying location overflow")?;
+                    match used
+                        .iter()
+                        .find(|range| start < range.end && range.start < end)
+                    {
+                        Some(range) => start = range.end,
+                        None => {
+                            used.push(start..end);
+                            break start;
+                        }
+                    }
+                }
+            };
+            definitions.push_str(&format!("#define {} {start}\n", varying.symbol));
+        }
+        Ok(definitions)
     }
 
     /// Binding of sampled texture `name`, after the two shared samplers.

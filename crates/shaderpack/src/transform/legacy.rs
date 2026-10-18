@@ -1,7 +1,7 @@
 //! Token-level rewrites of compatibility-profile and GLSL 1.20 constructs.
 
 use super::TransformError;
-use super::items::{matching, size_unsized_arrays, split_args};
+use super::items::{matching, size_unsized_arrays, split_args, validate_delimiters};
 use crate::programs::StageKind;
 use crate::token::{Tok, TokKind, id, lex, p};
 use std::collections::BTreeSet;
@@ -91,6 +91,7 @@ pub(super) fn rewrite(
     stage: StageKind,
     version: u32,
 ) -> Result<Legacy, TransformError> {
+    validate_delimiters(src)?;
     let legacy = version < 130;
     let sized = size_unsized_arrays(src);
     let src = &sized;
@@ -126,25 +127,27 @@ pub(super) fn rewrite(
             i += 1;
             continue;
         };
-        if i > 0 && src[i - 1].is(".") {
-            toks.push(t.clone());
-            i += 1;
-            continue;
-        }
         let name = name.as_str();
+        let member = i > 0 && src[i - 1].is(".");
         let called = src.get(i + 1).is_some_and(|n| n.is("("));
-        if legacy && name == "texture" && !called {
-            toks.push(id("gtexture").at(line));
-            i += 1;
-            continue;
-        }
         if (legacy && RESERVED_SINCE_130.contains(&name)) || RESERVED_VULKAN.contains(&name) {
             toks.push(id(&format!("_r_{name}")).at(line));
             i += 1;
             continue;
         }
+        if legacy && name == "texture" && !called {
+            toks.push(id("gtexture").at(line));
+            i += 1;
+            continue;
+        }
+        if member {
+            toks.push(t.clone());
+            i += 1;
+            continue;
+        }
         if called && let Some(f) = texture_function(name) {
-            let close = matching(src, i + 1, "(", ")");
+            let close = matching(src, i + 1, "(", ")")
+                .ok_or_else(|| TransformError::new("unclosed texture call", line))?;
             // Implicit derivatives only exist in fragment shaders; GL samples LOD 0 elsewhere.
             if f == "texture"
                 && stage != StageKind::Fragment
@@ -170,12 +173,18 @@ pub(super) fn rewrite(
                 _ => "texture",
             };
             // shadow2D returned vec4 in 1.20; the extra `)` follows the call's own.
-            pending_close.push(matching(src, i + 1, "(", ")"));
+            pending_close.push(
+                matching(src, i + 1, "(", ")")
+                    .ok_or_else(|| TransformError::new("unclosed shadow call", line))?,
+            );
             toks.extend([id("vec4").at(line), p("(").at(line), id(f).at(line)]);
             i += 1;
             continue;
         }
         if name == "ftransform" && called {
+            if !src.get(i + 2).is_some_and(|token| token.is(")")) {
+                return Err(TransformError::new("ftransform takes no arguments", line));
+            }
             for b in ["gl_Vertex", "gl_ModelViewMatrix", "gl_ProjectionMatrix"] {
                 out.builtins.insert(b.to_string());
             }

@@ -2,7 +2,7 @@
 //! structs, the loose-uniform block, resources with fixed bindings, and interface variables
 //! with locations shared between a program's stages.
 
-use super::body::{SamplerKinds, Structs, flatten_leaves};
+use super::body::{BoolUniform, SamplerKinds, Structs, flatten_leaves};
 use super::items::{
     Decl, Item, arr_len, is_image, is_integer, is_opaque, layout_key, loc_size, mat_cols,
     parse_decl, sampler_info, split_items, strip_layout_keys,
@@ -13,7 +13,7 @@ use crate::reflection::{
     FIRST_OTHER_ATTRIBUTE_LOCATION, IMAGE_GROUP, STORAGE_BUFFER_GROUP, TEXTURE_GROUP,
     UNIFORM_GROUP, VertexAttribute,
 };
-use crate::token::{Tok, id, lex, p};
+use crate::token::{Tok, id, lex, p, resource_symbol};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// The sorted declarations of one stage.
@@ -27,7 +27,8 @@ pub(super) struct Collected {
     /// Functions and remaining statements.
     pub body: Vec<Item>,
     pub samplers: SamplerKinds,
-    pub bools: HashMap<String, String>,
+    pub opaque: HashSet<String>,
+    pub bools: HashMap<String, BoolUniform>,
     /// Statements run after the user's `main` (vertex varying packing, output widening).
     pub after_main: Vec<String>,
     /// Statements run before the user's `main` (fragment varying unpacking).
@@ -124,13 +125,20 @@ pub(super) fn collect(
         let is_out = d.has("out") || (d.has("varying") && stage == StageKind::Vertex);
         if stage == StageKind::Vertex && is_in && !d.has("varying") {
             for (name, arr, _) in &d.decls {
-                let loc = VertexAttribute::from_glsl_name(name)
-                    .location()
-                    .unwrap_or_else(|| {
-                        let l = next_attr;
-                        next_attr += loc_size(&d.ty, arr_len(arr).unwrap_or(1));
-                        l
-                    });
+                let size = loc_size(&d.ty, arr_len(arr).unwrap_or(1)).ok_or_else(|| {
+                    TransformError::new("vertex attribute location size overflow", line)
+                })?;
+                let loc = if let Some(location) = layout_key(&d.layout, "location")
+                    .or_else(|| VertexAttribute::from_glsl_name(name).location())
+                {
+                    location
+                } else {
+                    let location = next_attr;
+                    next_attr = next_attr.checked_add(size).ok_or_else(|| {
+                        TransformError::new("vertex attribute location overflow", line)
+                    })?;
+                    location
+                };
                 c.vertex_inputs.push((loc, name.clone()));
                 c.io.extend(
                     lex(&format!("layout(location = {loc}) in {} {name}", d.ty))
@@ -148,12 +156,21 @@ pub(super) fn collect(
             } else {
                 "in"
             };
+            let mut explicit = layout_key(&d.layout, "location");
             for (name, arr, _) in &d.decls {
                 let mut a = d.ty_arr.clone();
                 a.extend(arr.iter().cloned());
                 varying(
-                    &mut c, iface, &structs, name, &d.ty, &a, &d.quals, dir, line,
+                    &mut c, iface, &structs, name, &d.ty, &a, &d.quals, dir, explicit, line,
                 )?;
+                if let Some(location) = explicit {
+                    let mut leaves = Vec::new();
+                    flatten_leaves(name.clone(), &d.ty, &a, &structs, line, &mut leaves)?;
+                    explicit =
+                        Some(location.checked_add(leaves.len() as u32).ok_or_else(|| {
+                            TransformError::new("varying location overflow", line)
+                        })?);
+                }
             }
             continue;
         }
@@ -258,13 +275,15 @@ fn uniforms(
 ) -> Result<(), TransformError> {
     for (name, arr, _) in &d.decls {
         if is_opaque(&d.ty) {
+            c.opaque.insert(name.clone());
             if let Some((tex_ty, shadow)) = sampler_info(&d.ty) {
                 let b = iface.texture_binding(name);
                 c.resource_names.push((TEXTURE_GROUP, b, name.clone()));
                 c.samplers.insert(name.clone(), (d.ty.clone(), shadow));
                 c.resources.extend(
                     lex(&format!(
-                        "layout(set = {TEXTURE_GROUP}, binding = {b}) uniform {tex_ty} {name}"
+                        "layout(set = {TEXTURE_GROUP}, binding = {b}) uniform {tex_ty} {}",
+                        resource_symbol(name)
                     ))
                     .into_iter()
                     .map(|t| t.at(line)),
@@ -292,7 +311,7 @@ fn uniforms(
                 for q in &d.quals {
                     c.resources.push(id(q));
                 }
-                c.resources.extend([id(&d.ty), id(name)]);
+                c.resources.extend([id(&d.ty), id(&resource_symbol(name))]);
                 c.resources.extend(arr.iter().cloned());
                 c.resources.push(p(";"));
             } else {
@@ -305,11 +324,23 @@ fn uniforms(
         }
         let ty = match d.ty.as_str() {
             "bool" => {
-                c.bools.insert(name.clone(), "bool".into());
+                c.bools.insert(
+                    name.clone(),
+                    BoolUniform {
+                        constructor: "bool".into(),
+                        dimensions: d.ty_arr.iter().chain(arr).filter(|t| t.is("[")).count(),
+                    },
+                );
                 "int".to_string()
             }
             b if b.starts_with("bvec") => {
-                c.bools.insert(name.clone(), b.to_string());
+                c.bools.insert(
+                    name.clone(),
+                    BoolUniform {
+                        constructor: b.to_string(),
+                        dimensions: d.ty_arr.iter().chain(arr).filter(|t| t.is("[")).count(),
+                    },
+                );
                 format!("i{}", &b[1..])
             }
             t => t.to_string(),
@@ -336,12 +367,18 @@ fn varying(
     arr: &[Tok],
     quals: &[String],
     dir: &str,
+    explicit: Option<u32>,
     line: u32,
 ) -> Result<(), TransformError> {
     let interp: Vec<&str> = quals
         .iter()
         .map(String::as_str)
-        .filter(|q| matches!(*q, "flat" | "smooth" | "noperspective" | "centroid"))
+        .filter(|q| {
+            matches!(
+                *q,
+                "flat" | "smooth" | "noperspective" | "centroid" | "sample"
+            )
+        })
         .collect();
     let qualifiers = |leaf_ty: &str| {
         let mut q = interp.clone();
@@ -351,7 +388,12 @@ fn varying(
         q.join(" ")
     };
     if arr.is_empty() && mat_cols(ty).is_none() && !structs.contains_key(ty) {
-        let loc = iface.varying(name, loc_size(ty, 1));
+        let loc = iface.varying(
+            name,
+            loc_size(ty, 1)
+                .ok_or_else(|| TransformError::new("varying location size overflow", line))?,
+            explicit,
+        )?;
         let q = if dir == "in" {
             qualifiers(ty)
         } else {
@@ -369,10 +411,10 @@ fn varying(
     c.split_globals.extend([id(ty).at(line), id(name).at(line)]);
     c.split_globals.extend_from_slice(arr);
     c.split_globals.push(p(";"));
-    let base = iface.varying(name, leaves.len() as u32);
+    let base = iface.varying(name, leaves.len() as u32, explicit)?;
     for (k, (path, leaf_ty)) in leaves.iter().enumerate() {
         let vname = format!("iris_v_{name}_{k}");
-        let loc = base + k as u32;
+        let loc = format!("{base} + {k}");
         c.io.extend(
             lex(&format!(
                 "layout(location = {loc}) {} {dir} {leaf_ty} {vname};",

@@ -5,6 +5,11 @@
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum TokKind {
     Ident(String),
+    /// A resolved opaque global, immune to capture when copied into a helper's local scope.
+    BoundResource {
+        original: String,
+        symbol: String,
+    },
     Int(String),
     Float(String),
     Punct(&'static str),
@@ -28,6 +33,7 @@ impl Tok {
     pub fn ident(&self) -> Option<&str> {
         match &self.kind {
             TokKind::Ident(s) => Some(s),
+            TokKind::BoundResource { original, .. } => Some(original),
             _ => None,
         }
     }
@@ -37,6 +43,7 @@ impl Tok {
         match &self.kind {
             TokKind::Ident(s) | TokKind::Int(s) | TokKind::Float(s) => s,
             TokKind::Punct(p) => p,
+            TokKind::BoundResource { symbol, .. } => symbol,
         }
     }
 
@@ -51,6 +58,22 @@ impl Tok {
 pub(crate) fn id(s: &str) -> Tok {
     Tok {
         kind: TokKind::Ident(s.to_string()),
+        line: 0,
+    }
+}
+
+/// An internal, collision-free symbol for a source pack's opaque global.
+pub(crate) fn resource_symbol(name: &str) -> String {
+    format!("__shaderpack_resource_{}_{name}", name.len())
+}
+
+/// A resolved opaque reference that retains its source binding through specialization.
+pub(crate) fn bound_resource(name: &str) -> Tok {
+    Tok {
+        kind: TokKind::BoundResource {
+            original: name.to_string(),
+            symbol: resource_symbol(name),
+        },
         line: 0,
     }
 }
@@ -199,26 +222,32 @@ impl Emitter {
 
 /// Decides whether adjacent emitted tokens need separating whitespace.
 fn needs_space(prev: &Tok, t: &Tok) -> bool {
-    let tight = t.is(";")
-        || t.is(",")
-        || t.is(")")
-        || t.is("]")
-        || t.is(".")
-        || prev.is("(")
-        || prev.is("[")
-        || prev.is(".")
-        || (t.is("(") && matches!(prev.kind, TokKind::Ident(_)))
-        || (t.is("[") && !prev.is("="))
-        || t.is("++")
-        || t.is("--")
-        || prev.is("!")
-        || prev.is("~");
-    !tight
+    // Spaces between all token pairs preserve maximal-munch tokenization. Only these
+    // separators cannot combine with a neighbour into another GLSL token or comment.
+    !(t.is(";") || t.is(",") || t.is(")") || t.is("]") || prev.is("(") || prev.is("["))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn emission_preserves_adjacent_operator_tokens() {
+        for (left, right) in [("+", "++"), ("-", "--"), ("!", "="), ("/", "*")] {
+            let tokens = [id("a"), p(left), p(right), id("b")];
+            let mut emitter = Emitter::default();
+            emitter.tokens(&tokens);
+            let (text, _) = emitter.finish();
+            let emitted: Vec<_> = pp_rs::pp::Preprocessor::new(&text)
+                .map(|t| t.expect("valid emitted tokens").value)
+                .collect();
+            let expected = format!("a {left} {right} b");
+            let original: Vec<_> = pp_rs::pp::Preprocessor::new(&expected)
+                .map(|t| t.expect("valid original tokens").value)
+                .collect();
+            assert_eq!(emitted, original, "operators {left} and {right}");
+        }
+    }
 
     #[test]
     fn emitter_records_the_first_source_line_of_each_output_line() {

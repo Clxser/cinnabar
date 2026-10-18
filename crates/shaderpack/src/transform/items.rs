@@ -1,6 +1,10 @@
 //! Top-level item splitting, the light declaration parser, and GLSL type helpers.
 
+use super::TransformError;
 use crate::token::{Tok, TokKind, int};
+
+/// Maximum balanced delimiter nesting accepted by the translator.
+const MAX_NESTING: usize = 256;
 
 /// Storage, interpolation and precision qualifiers recognised before a declaration's type.
 pub(super) const QUALIFIERS: &[&str] = &[
@@ -89,20 +93,55 @@ pub(super) fn split_items(toks: &[Tok]) -> Vec<Vec<Tok>> {
     items
 }
 
-/// Index of the token closing the bracket opened at `open_idx` (last index if unbalanced).
-pub(super) fn matching(toks: &[Tok], open_idx: usize, open: &str, close: &str) -> usize {
-    let mut d = 0;
-    for (i, t) in toks.iter().enumerate().skip(open_idx) {
-        if t.is(open) {
-            d += 1;
-        } else if t.is(close) {
-            d -= 1;
-            if d == 0 {
-                return i;
+/// Rejects unbalanced delimiter kinds before any transformation consumes token ranges.
+pub(super) fn validate_delimiters(toks: &[Tok]) -> Result<(), TransformError> {
+    let mut stack: Vec<&Tok> = Vec::new();
+    for token in toks {
+        if token.is("(") || token.is("[") || token.is("{") {
+            if stack.len() >= MAX_NESTING {
+                return Err(TransformError::new(
+                    "shader nesting is too deep",
+                    token.line,
+                ));
+            }
+            stack.push(token);
+        } else if token.is(")") || token.is("]") || token.is("}") {
+            let expected = match token.text() {
+                ")" => "(",
+                "]" => "[",
+                _ => "{",
+            };
+            if !stack.pop().is_some_and(|open| open.is(expected)) {
+                return Err(TransformError::new(
+                    "mismatched shader delimiter",
+                    token.line,
+                ));
             }
         }
     }
-    toks.len().saturating_sub(1)
+    if let Some(open) = stack.last() {
+        return Err(TransformError::new("unclosed shader delimiter", open.line));
+    }
+    Ok(())
+}
+
+/// Finds the closing token of a delimiter pair, returning None for malformed ranges.
+pub(super) fn matching(toks: &[Tok], open_idx: usize, open: &str, close: &str) -> Option<usize> {
+    if !toks.get(open_idx)?.is(open) {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (i, token) in toks.iter().enumerate().skip(open_idx) {
+        if token.is(open) {
+            depth += 1;
+        } else if token.is(close) {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+    }
+    None
 }
 
 /// Splits call arguments at top-level commas.
@@ -133,27 +172,35 @@ pub(super) struct Param {
     pub toks: Vec<Tok>,
     pub opaque: bool,
     pub name: String,
+    pub ty: String,
 }
 
 /// The `(` index and parameters of a function definition's tokens.
 pub(super) fn func_params(toks: &[Tok]) -> Option<(usize, Vec<Param>)> {
     let lp = toks.iter().position(|t| t.is("("))?;
-    let rp = matching(toks, lp, "(", ")");
+    let rp = matching(toks, lp, "(", ")")?;
     let mut params = vec![];
     for a in split_args(&toks[lp + 1..rp]) {
         if a.len() == 1 && a[0].ident() == Some("void") {
             continue;
         }
-        let opaque = a.iter().any(|t| t.ident().is_some_and(is_opaque));
-        let name = a
+        let type_index = a
             .iter()
-            .rev()
-            .find_map(|t| t.ident())
+            .position(|t| t.ident().is_some_and(|n| !QUALIFIERS.contains(&n)))?;
+        let ty = a[type_index].ident()?.to_string();
+        let mut name_index = type_index + 1;
+        while a.get(name_index).is_some_and(|t| t.is("[")) {
+            name_index = matching(&a, name_index, "[", "]")? + 1;
+        }
+        let name = a
+            .get(name_index)
+            .and_then(Tok::ident)
             .unwrap_or("")
             .to_string();
         params.push(Param {
+            opaque: is_opaque(&ty),
+            ty,
             toks: a,
-            opaque,
             name,
         });
     }
@@ -165,7 +212,7 @@ pub(super) fn func_params(toks: &[Tok]) -> Option<(usize, Vec<Param>)> {
 pub(super) fn size_unsized_arrays(src: &[Tok]) -> Vec<Tok> {
     let ctor_len = |open: usize| -> usize {
         let close = matching(src, open, "(", ")");
-        split_args(&src[open + 1..close]).len()
+        close.map_or(0, |close| split_args(&src[open + 1..close]).len())
     };
     let mut out = Vec::with_capacity(src.len());
     for i in 0..src.len() {
@@ -201,7 +248,7 @@ pub(super) fn parse_decl(toks: &[Tok]) -> Option<Decl> {
     loop {
         match toks.get(i)?.ident() {
             Some("layout") => {
-                let close = matching(toks, i + 1, "(", ")");
+                let close = matching(toks, i + 1, "(", ")")?;
                 layout.extend_from_slice(toks.get(i + 2..close)?);
                 i = close + 1;
             }
@@ -229,7 +276,7 @@ pub(super) fn parse_decl(toks: &[Tok]) -> Option<Decl> {
         if !toks.get(i + 2)?.is("{") {
             return None;
         }
-        let close = matching(toks, i + 2, "{", "}");
+        let close = matching(toks, i + 2, "{", "}")?;
         let members = toks.get(i + 3..close)?.to_vec();
         let inst = toks.get(close + 1..last)?.to_vec();
         return Some(empty("struct", Some((name, members, inst))));
@@ -237,14 +284,14 @@ pub(super) fn parse_decl(toks: &[Tok]) -> Option<Decl> {
     let ty = toks[i].ident()?.to_string();
     i += 1;
     if toks.get(i)?.is("{") {
-        let close = matching(toks, i, "{", "}");
+        let close = matching(toks, i, "{", "}")?;
         let members = toks.get(i + 1..close)?.to_vec();
         let inst = toks.get(close + 1..last)?.to_vec();
         return Some(empty("block", Some((ty, members, inst))));
     }
     let mut ty_arr = vec![];
     while toks.get(i)?.is("[") {
-        let close = matching(toks, i, "[", "]");
+        let close = matching(toks, i, "[", "]")?;
         ty_arr.extend_from_slice(&toks[i..=close]);
         i = close + 1;
     }
@@ -257,7 +304,7 @@ pub(super) fn parse_decl(toks: &[Tok]) -> Option<Decl> {
         }
         let mut arr = vec![];
         while toks.get(i)?.is("[") {
-            let close = matching(toks, i, "[", "]");
+            let close = matching(toks, i, "[", "]")?;
             arr.extend_from_slice(&toks[i..=close]);
             i = close + 1;
         }
@@ -301,9 +348,18 @@ pub(super) fn arr_len(arr: &[Tok]) -> Option<u32> {
     if arr.len() == 3
         && let TokKind::Int(s) = &arr[1].kind
     {
-        return s.trim_end_matches(['u', 'U']).parse().ok();
+        return unsigned_literal(s);
     }
     None
+}
+
+/// Reads the decimal or hexadecimal spelling of an unsigned interface integer.
+fn unsigned_literal(text: &str) -> Option<u32> {
+    let text = text.trim_end_matches(['u', 'U']);
+    match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        Some(digits) => u32::from_str_radix(digits, 16).ok(),
+        None => text.parse().ok(),
+    }
 }
 
 /// The separate texture type for a combined sampler type, and whether it compares depth.
@@ -350,12 +406,12 @@ pub(super) fn is_integer(ty: &str) -> bool {
 }
 
 /// Interface locations a value of `ty` occupies (`arr` elements).
-pub(super) fn loc_size(ty: &str, arr: u32) -> u32 {
-    let base = match ty {
+pub(super) fn loc_size(ty: &str, arr: u32) -> Option<u32> {
+    let base: u32 = match ty {
         "dvec3" | "dvec4" => 2,
         t => mat_cols(t).map(|(c, _)| c).unwrap_or(1),
     };
-    base * arr.max(1)
+    base.checked_mul(arr.max(1))
 }
 
 /// (columns, column type) of a `matC[xR]` type.
@@ -368,6 +424,9 @@ pub(super) fn mat_cols(ty: &str) -> Option<(u32, &'static str)> {
             (n, n)
         }
     };
+    if !(2..=4).contains(&c) {
+        return None;
+    }
     let col = match r {
         2 => "vec2",
         3 => "vec3",
@@ -389,7 +448,7 @@ pub(super) fn layout_key(layout: &[Tok], key: &str) -> Option<u32> {
     ) = (layout.get(i + 1), layout.get(i + 2))
         && e.is("=")
     {
-        return n.trim_end_matches(['u', 'U']).parse().ok();
+        return unsigned_literal(n);
     }
     None
 }

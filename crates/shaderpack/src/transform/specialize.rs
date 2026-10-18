@@ -1,194 +1,259 @@
-//! Monomorphizes helper functions that take samplers or images.
-//!
-//! OpenGL code passes samplers and images to helpers. With separate textures and samplers,
-//! naga needs to see each global resource where it is sampled (depth comparison and storage
-//! details cannot flow through parameters), so every call whose opaque arguments are global
-//! uniforms is specialized: `f(colortex0, uv)` becomes `f__colortex0(uv)`. Iterating lets
-//! nested helpers specialize too.
+//! Specializes opaque arguments while leaving value overload resolution to naga.
 
+use super::TransformError;
+use super::bindings::Bindings;
 use super::items::{Item, Param, func_params, is_opaque, matching, split_args};
-use crate::token::{Tok, TokKind, id, p};
+use crate::token::{Tok, TokKind, bound_resource, id, p};
 use std::collections::{HashMap, HashSet};
 
-/// Rounds of specialization; each round handles one more level of helper nesting.
+/// Maximum resource-helper nesting expanded before reporting an unsupported call graph.
 const MAX_ROUNDS: usize = 32;
 
-/// Specializes helper calls on global resources and removes unreferenced templates.
-pub(super) fn specialize_opaque_params(mut items: Vec<Item>) -> Vec<Item> {
-    let globals: HashSet<String> = items
+/// One stable source overload, independent of insertion positions in the output item list.
+struct Template {
+    name: String,
+    toks: Vec<Tok>,
+    params: Vec<Param>,
+}
+
+/// An instantiated source overload and the global resource bound to each opaque parameter.
+#[derive(Clone, Hash, PartialEq, Eq)]
+struct Instance {
+    template: usize,
+    resources: Vec<(usize, String)>,
+}
+
+/// Specializes every compatible opaque overload, preserving value signatures for naga.
+pub(super) fn specialize_opaque_params(
+    items: Vec<Item>,
+    types: &HashSet<String>,
+) -> Result<Vec<Item>, TransformError> {
+    let globals: HashMap<String, String> = items
         .iter()
-        .filter_map(|it| match it {
+        .filter_map(|item| match item {
             Item::Decl(d, _) if d.has("uniform") && is_opaque(&d.ty) => {
-                Some(d.decls.iter().map(|x| x.0.clone()).collect::<Vec<_>>())
+                Some(d.decls.iter().map(|decl| (decl.0.clone(), d.ty.clone())))
             }
             _ => None,
         })
         .flatten()
         .collect();
-    let mut created: HashSet<String> = HashSet::new();
-    let mut template_names: HashSet<String> = HashSet::new();
-    for _ in 0..MAX_ROUNDS {
-        let mut templates: HashMap<String, Vec<(usize, Vec<Param>)>> = HashMap::new();
-        for (idx, it) in items.iter().enumerate() {
-            if let Item::Func { name, toks } = it
-                && let Some((_, params)) = func_params(toks)
-                && params.iter().any(|p| p.opaque)
-            {
-                templates
-                    .entry(name.clone())
-                    .or_default()
-                    .push((idx, params));
-                template_names.insert(name.clone());
-            }
-        }
-        if templates.is_empty() {
-            break;
-        }
-        // (template index, specialized name, params, opaque argument names)
-        let mut new_funcs: Vec<(usize, String, Vec<Param>, Vec<String>)> = vec![];
-        let mut changed = false;
-        for it in items.iter_mut() {
-            let (toks, start) = match it {
-                Item::Func { toks, .. } => {
-                    let b = toks.iter().position(|t| t.is("{")).unwrap_or(toks.len());
-                    (toks, b)
-                }
-                Item::Decl(_, toks) | Item::Other(toks) => (toks, 0),
-            };
-            let mut i = start;
-            while i < toks.len() {
-                let callee = match &toks[i].kind {
-                    TokKind::Ident(n)
-                        if templates.contains_key(n)
-                            && toks.get(i + 1).is_some_and(|t| t.is("("))
-                            && !(i > 0 && toks[i - 1].is(".")) =>
-                    {
-                        n.clone()
-                    }
-                    _ => {
-                        i += 1;
-                        continue;
-                    }
-                };
-                let close = matching(toks, i + 1, "(", ")");
-                let args = split_args(&toks[i + 2..close]);
-                let found = templates[&callee]
-                    .iter()
-                    .find(|(_, ps)| ps.len() == args.len())
-                    .cloned();
-                if let Some((tidx, params)) = found {
-                    let ok = params.iter().zip(&args).all(|(p, a)| {
-                        !p.opaque
-                            || (a.len() == 1 && a[0].ident().is_some_and(|x| globals.contains(x)))
-                    });
-                    if ok {
-                        let opaque_args: Vec<String> = params
-                            .iter()
-                            .zip(&args)
-                            .filter(|(p, _)| p.opaque)
-                            .map(|(_, a)| a[0].text().to_string())
-                            .collect();
-                        let sname = format!("{callee}__{}", opaque_args.join("_"));
-                        let line = toks[i].line;
-                        let mut repl = vec![id(&sname).at(line), p("(").at(line)];
-                        let mut first = true;
-                        for (pa, a) in params.iter().zip(&args) {
-                            if pa.opaque {
-                                continue;
-                            }
-                            if !first {
-                                repl.push(p(",").at(line));
-                            }
-                            first = false;
-                            repl.extend(a.iter().cloned());
-                        }
-                        repl.push(p(")").at(line));
-                        toks.splice(i..=close, repl);
-                        if created.insert(sname.clone()) {
-                            new_funcs.push((tidx, sname, params, opaque_args));
-                        }
-                        changed = true;
-                    }
-                }
-                i += 1;
-            }
-        }
-        new_funcs.sort_by_key(|f| std::cmp::Reverse(f.0));
-        for (tidx, sname, params, opaque_args) in new_funcs {
-            let Item::Func { toks, .. } = &items[tidx] else {
-                continue;
-            };
-            let Some((lp, _)) = func_params(toks) else {
-                continue;
-            };
-            let Some(brace) = toks.iter().position(|t| t.is("{")) else {
-                continue;
-            };
-            let line = toks[lp].line;
-            let mut out: Vec<Tok> = toks[..lp.saturating_sub(1)].to_vec();
-            out.extend([id(&sname).at(line), p("(").at(line)]);
-            let mut first = true;
-            let mut subst: HashMap<String, String> = HashMap::new();
-            let mut oa = opaque_args.iter();
-            for pa in &params {
-                if pa.opaque {
-                    if let Some(arg) = oa.next() {
-                        subst.insert(pa.name.clone(), arg.clone());
-                    }
-                    continue;
-                }
-                if !first {
-                    out.push(p(",").at(line));
-                }
-                first = false;
-                out.extend(pa.toks.iter().cloned());
-            }
-            out.push(p(")").at(line));
-            for (k, t) in toks[brace..].iter().enumerate() {
-                let after_dot = k > 0 && toks[brace + k - 1].is(".");
-                match &t.kind {
-                    TokKind::Ident(n) if !after_dot && subst.contains_key(n) => {
-                        out.push(id(&subst[n]).at(t.line))
-                    }
-                    _ => out.push(t.clone()),
-                }
-            }
-            items.insert(
-                tidx + 1,
-                Item::Func {
-                    name: sname,
-                    toks: out,
-                },
-            );
-        }
-        if !changed {
-            break;
+    let mut templates = Vec::new();
+    let mut output = Vec::new();
+    for item in items {
+        if let Item::Func { name, toks } = &item
+            && let Some((_, params)) = func_params(toks)
+            && params.iter().any(|p| p.opaque)
+        {
+            templates.push(Template {
+                name: name.clone(),
+                toks: toks.clone(),
+                params,
+            });
+        } else if let Item::Other(toks) = &item
+            && func_params(toks).is_some_and(|(_, params)| params.iter().any(|p| p.opaque))
+        {
+            // The generated definitions replace resource-helper forward declarations too.
+        } else {
+            output.push(item);
         }
     }
-    // Drop templates nothing calls any more.
-    let referenced = |name: &str, items: &[Item]| {
-        items.iter().any(|it| {
-            let toks = match it {
-                Item::Func { name: n, .. } if n == name => return false,
-                Item::Func { toks, .. } | Item::Decl(_, toks) | Item::Other(toks) => toks,
-            };
-            toks.windows(2)
-                .any(|w| w[0].ident() == Some(name) && w[1].is("("))
-        })
+    let mut created = HashSet::new();
+    let mut pending = Vec::new();
+    for _ in 0..MAX_ROUNDS {
+        for item in &mut output {
+            rewrite_calls(
+                item,
+                &templates,
+                &globals,
+                types,
+                &mut created,
+                &mut pending,
+            )?;
+        }
+        if pending.is_empty() {
+            return Ok(output);
+        }
+        // Put each instantiated function before its callers; a later round handles its helpers.
+        let mut definitions = Vec::new();
+        for instance in pending.drain(..) {
+            let template = &templates[instance.template];
+            definitions.push(instantiate(template, &instance, types)?);
+        }
+        definitions.append(&mut output);
+        output = definitions;
+    }
+    Err(TransformError::new(
+        "opaque helper nesting exceeds the translation limit",
+        0,
+    ))
+}
+
+/// Rewrites calls using exact opaque argument types, retaining all matching value overloads.
+fn rewrite_calls(
+    item: &mut Item,
+    templates: &[Template],
+    globals: &HashMap<String, String>,
+    types: &HashSet<String>,
+    created: &mut HashSet<Instance>,
+    pending: &mut Vec<Instance>,
+) -> Result<(), TransformError> {
+    let (toks, start) = match item {
+        Item::Func { toks, .. } => {
+            let start = toks.iter().position(|t| t.is("{")).unwrap_or(toks.len());
+            (toks, start)
+        }
+        Item::Decl(_, toks) | Item::Other(toks) => (toks, 0),
     };
-    let keep: Vec<bool> = items
-        .iter()
-        .map(|it| match it {
-            Item::Func { name, toks }
-                if template_names.contains(name)
-                    && func_params(toks).is_some_and(|(_, ps)| ps.iter().any(|p| p.opaque)) =>
-            {
-                referenced(name, &items)
+    let params = func_params(toks).map(|(_, p)| p).unwrap_or_default();
+    let mut i = start;
+    while i < toks.len() {
+        let Some(callee) = toks[i].ident() else {
+            i += 1;
+            continue;
+        };
+        if !templates.iter().any(|t| t.name == callee)
+            || !toks.get(i + 1).is_some_and(|t| t.is("("))
+            || (i > 0 && toks[i - 1].is("."))
+        {
+            i += 1;
+            continue;
+        }
+        let close = matching(toks, i + 1, "(", ")")
+            .ok_or_else(|| TransformError::new("unclosed helper call", toks[i].line))?;
+        let args = split_args(&toks[i + 2..close]);
+        let bindings = Bindings::new(&toks[start..], &params, types);
+        let mut matches = Vec::new();
+        for (index, template) in templates.iter().enumerate() {
+            if template.name != callee || template.params.len() != args.len() {
+                continue;
             }
-            _ => true,
-        })
-        .collect();
-    let mut keep = keep.into_iter();
-    items.retain(|_| keep.next().unwrap_or(true));
-    items
+            let mut resources = Vec::new();
+            let mut arg_start = i + 2;
+            let mut compatible = true;
+            for (position, (param, arg)) in template.params.iter().zip(&args).enumerate() {
+                if param.opaque {
+                    let name = (arg.len() == 1).then(|| arg[0].ident()).flatten();
+                    if let Some(name) = name.filter(|name| {
+                        globals.get(*name) == Some(&param.ty)
+                            && (matches!(arg[0].kind, TokKind::BoundResource { .. })
+                                || bindings.global(name, arg_start - start))
+                    }) {
+                        resources.push((position, name.to_string()));
+                    } else {
+                        compatible = false;
+                        break;
+                    }
+                } else if arg.len() == 1
+                    && arg[0].ident().is_some_and(|name| {
+                        globals.contains_key(name)
+                            && (matches!(arg[0].kind, TokKind::BoundResource { .. })
+                                || bindings.global(name, arg_start - start))
+                    })
+                {
+                    compatible = false;
+                    break;
+                }
+                arg_start += arg.len() + 1;
+            }
+            if compatible {
+                matches.push(Instance {
+                    template: index,
+                    resources,
+                });
+            }
+        }
+        let Some(first) = matches.first() else {
+            // Value-only overloads keep their original calls and naga resolves their types.
+            i += 1;
+            continue;
+        };
+        if matches
+            .iter()
+            .any(|instance| instance.resources != first.resources)
+        {
+            return Err(TransformError::new(
+                format!("ambiguous opaque arguments to `{callee}`"),
+                toks[i].line,
+            ));
+        }
+        let name = instance_name(&templates[first.template].name, &first.resources);
+        let line = toks[i].line;
+        let retained: Vec<_> = args
+            .into_iter()
+            .enumerate()
+            .filter(|(position, _)| !first.resources.iter().any(|(p, _)| p == position))
+            .collect();
+        let mut replacement = vec![id(&name).at(line), p("(").at(line)];
+        for (j, (_, arg)) in retained.into_iter().enumerate() {
+            if j != 0 {
+                replacement.push(p(",").at(line));
+            }
+            replacement.extend(arg);
+        }
+        replacement.push(p(")").at(line));
+        toks.splice(i..=close, replacement);
+        for instance in matches {
+            if created.insert(instance.clone()) {
+                pending.push(instance);
+            }
+        }
+        i += 1;
+    }
+    Ok(())
+}
+
+/// Names a resource-bound overload family; value parameter types remain overloaded normally.
+fn instance_name(name: &str, resources: &[(usize, String)]) -> String {
+    let mut out = format!("__shaderpack_fn_{}_{name}", name.len());
+    for (position, resource) in resources {
+        out.push_str(&format!("_{position}_{}_{}", resource.len(), resource));
+    }
+    out
+}
+
+/// Copies a stable template, substituting only references bound to its opaque parameters.
+fn instantiate(
+    template: &Template,
+    instance: &Instance,
+    types: &HashSet<String>,
+) -> Result<Item, TransformError> {
+    let toks = &template.toks;
+    let (lp, _) =
+        func_params(toks).ok_or_else(|| TransformError::new("invalid helper parameters", 0))?;
+    let brace = toks
+        .iter()
+        .position(|t| t.is("{"))
+        .ok_or_else(|| TransformError::new("helper has no body", 0))?;
+    let name = instance_name(&template.name, &instance.resources);
+    let mut out = toks[..lp - 1].to_vec();
+    out.extend([id(&name), p("(")]);
+    let mut first = true;
+    for param in template.params.iter().filter(|p| !p.opaque) {
+        if !first {
+            out.push(p(","));
+        }
+        first = false;
+        out.extend(param.toks.iter().cloned());
+    }
+    out.push(p(")"));
+    let bindings = Bindings::new(&toks[brace..], &template.params, types);
+    for (i, token) in toks[brace..].iter().enumerate() {
+        let resource = token
+            .ident()
+            .filter(|_| i == 0 || !toks[brace + i - 1].is("."))
+            .filter(|name| !bindings.local(name, i))
+            .and_then(|name| {
+                instance
+                    .resources
+                    .iter()
+                    .find(|(position, _)| template.params[*position].name == name)
+            });
+        if let Some((_, resource)) = resource {
+            out.push(bound_resource(resource).at(token.line));
+        } else {
+            out.push(token.clone());
+        }
+    }
+    Ok(Item::Func { name, toks: out })
 }

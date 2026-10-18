@@ -1,17 +1,19 @@
 //! Compatibility-profile / GLSL 1.20 → Vulkan-flavoured GLSL 4.50 for naga's GLSL frontend.
 //!
 //! Works on the fully preprocessed token stream (no macros left), so a light parser over
-//! top-level declarations is enough; function bodies are only rewritten at identifier level.
+//! top-level declarations and lexical scopes preserves the bindings used by body rewrites.
 //! Each stage becomes a [`StageDraft`]; a program's drafts are assembled with one shared
 //! loose-uniform block so every stage binds the same layout.
 
 mod assemble;
+mod bindings;
 mod body;
 mod declare;
 mod interface;
 mod items;
 mod legacy;
 mod specialize;
+mod uniforms;
 
 use crate::preprocess::Preprocessed;
 use crate::programs::StageKind;
@@ -20,11 +22,16 @@ use crate::reflection::{
     TEXTURE_GROUP, VertexAttribute,
 };
 use crate::token::{Tok, lex};
-pub(crate) use assemble::{UboMember, assemble, merge_uniforms};
-use body::{BodyContext, SamplerUse, rewrite_body, rewrite_params};
+pub(crate) use assemble::{UboMember, assemble};
+pub(crate) use uniforms::merge_uniforms;
+
+use body::{BodyContext, SamplerUse, rewrite_body};
 pub(crate) use interface::ProgramInterface;
-use items::{Item, parse_decl, split_items};
+use items::{Item, func_params, parse_decl, split_items};
 use std::collections::{HashMap, HashSet};
+
+/// Instance name of the shared loose-uniform block in generated stages.
+const UNIFORM_INSTANCE: &str = "__shaderpack_uniforms";
 
 /// A transform failure at a 1-based line of the include-expanded source (0 if unknown).
 #[derive(Debug)]
@@ -72,7 +79,6 @@ pub(crate) fn transform(
 ) -> Result<StageDraft, TransformError> {
     let lg = legacy::rewrite(&pp.tokens, stage, pp.version)?;
     let mut items: Vec<Item> = vec![];
-    let mut user_funcs: HashSet<String> = HashSet::new();
     for it in split_items(&lg.toks) {
         let first_brace = it.iter().position(|t| t.is("{"));
         let is_func = it.last().is_some_and(|t| t.is("}"))
@@ -83,18 +89,21 @@ pub(crate) fn transform(
             .and_then(|lp| it[lp - 1].ident())
             .map(str::to_string);
         if is_func && let Some(name) = fname {
-            user_funcs.insert(name.clone());
             items.push(Item::Func { name, toks: it });
         } else if let Some(d) = parse_decl(&it) {
             items.push(Item::Decl(d, it));
         } else {
-            if let Some(name) = fname {
-                user_funcs.insert(name);
-            }
             items.push(Item::Other(it));
         }
     }
-    let items = specialize::specialize_opaque_params(items);
+    let types: HashSet<String> = items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Decl(d, _) if d.ty == "struct" => d.block.as_ref().map(|b| b.0.clone()),
+            _ => None,
+        })
+        .collect();
+    let items = specialize::specialize_opaque_params(items, &types)?;
     let mut c = declare::collect(items, stage, iface, image_formats)?;
 
     let mut ubo: Vec<UboMember> = LEGACY_UNIFORMS
@@ -104,6 +113,7 @@ pub(crate) fn transform(
         .collect();
     ubo.append(&mut c.ubo);
 
+    let uniform_names: HashSet<String> = ubo.iter().map(|member| member.name.clone()).collect();
     let mut builtin_io = String::new();
     if stage == StageKind::Vertex {
         // Inputs Iris supplies without the pack declaring them.
@@ -134,18 +144,19 @@ pub(crate) fn transform(
     if let Some(dir) = varying_dir {
         let front = (stage == StageKind::Vertex && lg.builtins.contains("gl_FrontColor"))
             || (stage == StageKind::Fragment && lg.builtins.contains("gl_Color"));
-        let mut varying = |name: &str, ty: &str| {
-            let loc = iface.varying(name, 1);
+        let mut varying = |name: &str, ty: &str| -> Result<(), TransformError> {
+            let loc = iface.varying(name, 1, None)?;
             builtin_io.push_str(&format!("layout(location = {loc}) {dir} {ty} {name};\n"));
+            Ok(())
         };
         if front {
-            varying("iris_FrontColor", "vec4");
+            varying("iris_FrontColor", "vec4")?;
         }
         if lg.builtins.contains("gl_FogFragCoord") {
-            varying("iris_FogFragCoord", "float");
+            varying("iris_FogFragCoord", "float")?;
         }
         for t in &lg.tex_coords {
-            varying(&format!("iris_TexCoord{t}"), "vec4");
+            varying(&format!("iris_TexCoord{t}"), "vec4")?;
         }
     }
     if stage == StageKind::Fragment {
@@ -170,8 +181,10 @@ pub(crate) fn transform(
         match item {
             Item::Func { name, toks } => {
                 let brace = toks.iter().position(|t| t.is("{")).unwrap_or(toks.len());
-                let mut local = c.samplers.clone();
-                let mut header = rewrite_params(&toks[..brace], &mut local);
+                let params = func_params(&toks)
+                    .map(|(_, params)| params)
+                    .unwrap_or_default();
+                let mut header = toks[..brace].to_vec();
                 if name == "main"
                     && wrapper
                     && let Some(lp) = header.iter().position(|t| t.is("("))
@@ -181,17 +194,23 @@ pub(crate) fn transform(
                 }
                 out_body.extend(header);
                 let cx = BodyContext {
-                    samplers: &local,
+                    samplers: &c.samplers,
+                    opaque: &c.opaque,
+                    parameters: &params,
+                    types: &types,
                     bools: &c.bools,
-                    user_funcs: &user_funcs,
+                    uniforms: &uniform_names,
                 };
                 out_body.extend(rewrite_body(&toks[brace..], &cx, &mut used));
             }
             Item::Decl(_, toks) | Item::Other(toks) => {
                 let cx = BodyContext {
                     samplers: &c.samplers,
+                    opaque: &c.opaque,
+                    parameters: &[],
+                    types: &types,
                     bools: &c.bools,
-                    user_funcs: &user_funcs,
+                    uniforms: &uniform_names,
                 };
                 out_body.extend(rewrite_body(&toks, &cx, &mut used));
             }
@@ -206,8 +225,11 @@ pub(crate) fn transform(
         out_body.extend(lex(&w));
         let cx = BodyContext {
             samplers: &c.samplers,
+            opaque: &c.opaque,
+            parameters: &[],
+            types: &types,
             bools: &c.bools,
-            user_funcs: &user_funcs,
+            uniforms: &uniform_names,
         };
         out_body.extend(rewrite_body(&c.global_inits, &cx, &mut used));
         let mut w = String::from("iris_user_main();\n");
