@@ -8,6 +8,7 @@ use bevy::prelude::IntoSystemSet;
 mod categories;
 pub(crate) use categories::draw_categories;
 mod health;
+mod memory;
 pub(crate) use health::requested as query_health_requested;
 #[cfg(target_os = "macos")]
 mod metal_frame;
@@ -71,6 +72,27 @@ pub(crate) fn within_span<R>(
     result
 }
 
+/// Brackets `record` with its own span of `stage` on frames that time every node; other
+/// frames record it untimed, inside the whole-frame span.
+pub(crate) fn within_stage<R>(
+    timestamps: Option<&GpuTimestamps>,
+    stage: RuntimeStage,
+    encoder: &mut wgpu::CommandEncoder,
+    record: impl FnOnce(&mut wgpu::CommandEncoder) -> R,
+) -> R {
+    let span = timestamps
+        .filter(|timestamps| timestamps.pass_detail && timestamps.graph_span_enabled(stage))
+        .and_then(|timestamps| timestamps.open_pass(stage));
+    if let Some(span) = &span {
+        mark(encoder, span.queries, span.begin);
+    }
+    let result = record(encoder);
+    if let Some(span) = &span {
+        mark(encoder, span.queries, span.begin + 1);
+    }
+    result
+}
+
 /// Without Tracy, no section span is ever claimed; see `nodes::SectionSpan`.
 #[cfg(not(feature = "tracy"))]
 #[derive(Clone, Copy)]
@@ -123,6 +145,7 @@ impl Plugin for GpuTimingPlugin {
             return;
         };
         crate::device_poll::install(render_app);
+        memory::install(render_app);
         #[cfg(target_os = "macos")]
         metal_frame::install(render_app);
         if overdraw::requested() {

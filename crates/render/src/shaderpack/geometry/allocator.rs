@@ -86,6 +86,24 @@ impl FaceAllocator {
             self.release(tail);
         }
     }
+
+    /// Undoes growth back to `capacity` faces; everything past it must be free.
+    pub(crate) fn truncate(&mut self, capacity: u32) {
+        if capacity >= self.capacity {
+            return;
+        }
+        debug_assert!(
+            self.capacity - self.tail_free() <= capacity,
+            "truncating used faces"
+        );
+        if let Some((&start, _)) = self.free.iter().next_back() {
+            self.free.remove(&start);
+            if start < capacity {
+                self.free.insert(start, capacity);
+            }
+        }
+        self.capacity = capacity;
+    }
 }
 
 #[cfg(test)]

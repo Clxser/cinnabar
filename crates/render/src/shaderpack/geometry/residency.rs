@@ -8,13 +8,16 @@ use bevy::math::{DVec3, IVec3};
 use bevy::prelude::Entity;
 
 use super::allocator::FaceAllocator;
-use super::jobs::SectionPlan;
+use super::jobs::{FACING_GROUPS, SectionPlan};
 use super::vertex::IRIS_VERTEX_STRIDE;
 
 /// Bytes of one expanded face: four vertices.
 pub(crate) const FACE_BYTES: u64 = 4 * IRIS_VERTEX_STRIDE;
 /// Faces a new vertex page starts with before it grows.
 pub(crate) const INITIAL_PAGE_FACES: u32 = 1 << 16;
+/// Largest vertex page. Growing a page copies it into a buffer twice its size, so a cap keeps
+/// that transient allocation and copy small; beyond it, faces go to further pages.
+pub(crate) const MAX_PAGE_BYTES: u64 = 128 << 20;
 /// Grid the geometry origin snaps to, in blocks.
 pub(crate) const ORIGIN_GRID: i32 = 1024;
 /// Camera distance from the origin, in blocks, past which the origin moves and every section
@@ -35,6 +38,8 @@ pub(crate) struct ResidentFaces {
     pub(crate) page: usize,
     pub(crate) faces: Range<u32>,
     pub(crate) categories: [Range<u32>; 3],
+    /// Each category's faces by facing group (`jobs::FACING_GROUPS`).
+    pub(crate) facing: [[Range<u32>; FACING_GROUPS]; 3],
     /// Section origin in blocks.
     pub(crate) origin: [i32; 3],
     /// Origin epoch the positions were written against; stale faces are not drawn.
@@ -80,12 +85,18 @@ pub(crate) struct Residency {
     budget_faces: u64,
     pub(crate) origin: Option<IVec3>,
     pub(crate) epoch: u64,
+    /// Bumped whenever the resident sections or their faces change, so draw lists built from
+    /// them know when to rebuild.
+    pub(crate) revision: u64,
 }
 
 impl Residency {
     /// `binding_bytes` is the largest buffer a kernel may bind; `budget_bytes` the memory budget.
+    /// Pages stop growing at [`MAX_PAGE_BYTES`] and further faces open new pages, so growth
+    /// never needs a large allocation next to the page it replaces.
     pub(crate) fn new(binding_bytes: u64, budget_bytes: u64) -> Self {
-        let page_faces = (binding_bytes / FACE_BYTES).min(u64::from(u32::MAX / 4)) as u32;
+        let page_faces =
+            (binding_bytes.min(MAX_PAGE_BYTES) / FACE_BYTES).min(u64::from(u32::MAX / 4)) as u32;
         Self {
             pages: Vec::new(),
             sections: HashMap::new(),
@@ -96,6 +107,7 @@ impl Residency {
             budget_faces: budget_bytes / FACE_BYTES,
             origin: None,
             epoch: 0,
+            revision: 0,
         }
     }
 
@@ -104,11 +116,33 @@ impl Residency {
         self.budget_faces = budget_bytes / FACE_BYTES;
     }
 
-    fn capacity_faces(&self) -> u64 {
+    /// Undoes an uncommitted `placement` of `entity` whose page could not be allocated: the
+    /// section waits without faces, and the page returns to its previous capacity.
+    pub(crate) fn revoke(&mut self, entity: Entity, placement: &Placement) {
+        self.pages[placement.page]
+            .faces
+            .release(placement.faces.clone());
+        match placement.grown_from {
+            Some(0) => {
+                debug_assert_eq!(placement.page + 1, self.pages.len(), "new pages come last");
+                self.pages.pop();
+            }
+            Some(previous) => self.pages[placement.page].faces.truncate(previous),
+            None => {}
+        }
+        self.wait(entity);
+    }
+
+    pub(crate) fn capacity_faces(&self) -> u64 {
         self.pages
             .iter()
             .map(|page| u64::from(page.faces.capacity()))
             .sum()
+    }
+
+    /// Sections waiting for room in the budget.
+    pub(crate) fn waiting_len(&self) -> usize {
+        self.waiting.len()
     }
 
     /// Queues `entity` for (re-)expansion once.
@@ -161,6 +195,7 @@ impl Residency {
     pub(crate) fn remove(&mut self, entity: Entity) {
         if let Some(resident) = self.sections.remove(&entity) {
             self.pages[resident.page].faces.release(resident.faces);
+            self.revision += 1;
         }
         self.waiting.remove(&entity);
         if self.queued.remove(&entity) {
@@ -172,6 +207,7 @@ impl Residency {
     pub(crate) fn evict(&mut self, entity: Entity) {
         if let Some(resident) = self.sections.remove(&entity) {
             self.pages[resident.page].faces.release(resident.faces);
+            self.revision += 1;
             self.wait(entity);
         }
     }
@@ -186,6 +222,7 @@ impl Residency {
             _ => {
                 self.origin = Some(snapped);
                 self.epoch += 1;
+                self.revision += 1;
                 true
             }
         }
@@ -317,10 +354,12 @@ impl Residency {
                 page: placement.page,
                 faces: placement.faces.clone(),
                 categories: plan.categories.clone(),
+                facing: plan.facing.clone(),
                 origin,
                 epoch: self.epoch,
             },
         );
+        self.revision += 1;
     }
 
     /// Drops every page and section, as when the mode turns off.
@@ -331,6 +370,7 @@ impl Residency {
         self.queued.clear();
         self.waiting.clear();
         self.origin = None;
+        self.revision += 1;
     }
 }
 

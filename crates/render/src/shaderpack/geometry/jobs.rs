@@ -77,21 +77,31 @@ pub(crate) struct MaterialTables<'a> {
     pub(crate) model_quads: &'a [ModelQuad],
 }
 
+/// Groups of a category's faces: single-sided cube faces by the axis direction they face, in
+/// `meshing::Face` order, then every other face (two-sided cubes, models, liquids), as
+/// [`FACING_REST`]. A view only needs the axis groups whose faces it can see from the front.
+pub(crate) const FACING_GROUPS: usize = 7;
+/// Group of the faces that face no single axis direction.
+pub(crate) const FACING_REST: usize = 6;
+
 /// A planned section: its face count, per-category face ranges and kernel jobs, with output
 /// faces relative to the section's first face until [`SectionPlan::place`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SectionPlan {
     pub(crate) faces: u32,
     pub(crate) categories: [Range<u32>; 3],
+    /// Each category's faces by [`FACING_GROUPS`] group, consecutive within the category.
+    pub(crate) facing: [[Range<u32>; FACING_GROUPS]; 3],
     pub(crate) jobs: [Vec<[u32; 4]>; 3],
 }
 
 impl SectionPlan {
     /// Moves every output face to start at arena face `first_face`.
     pub(crate) fn place(&mut self, first_face: u32) {
-        for range in &mut self.categories {
-            *range = range.start + first_face..range.end + first_face;
-        }
+        let shift =
+            |range: &mut Range<u32>| *range = range.start + first_face..range.end + first_face;
+        self.categories.iter_mut().for_each(shift);
+        self.facing.iter_mut().flatten().for_each(shift);
         for jobs in &mut self.jobs {
             for job in jobs {
                 job[2] += first_face;
@@ -151,17 +161,17 @@ fn model_flags(
     Some(overlay | reverse)
 }
 
+/// One category's jobs by facing group, each job's output face relative to its group.
 #[derive(Default)]
 struct CategoryJobs {
-    jobs: Vec<(JobKind, [u32; 4])>,
-    faces: u32,
+    groups: [Vec<(JobKind, [u32; 4])>; FACING_GROUPS],
+    faces: [u32; FACING_GROUPS],
 }
 
 impl CategoryJobs {
-    fn push(&mut self, kind: JobKind, record: u32, metadata_index: u32, flags: u32) {
-        self.jobs
-            .push((kind, [record, metadata_index, self.faces, flags]));
-        self.faces += job_slots(flags);
+    fn push(&mut self, group: usize, kind: JobKind, record: u32, metadata_index: u32, flags: u32) {
+        self.groups[group].push((kind, [record, metadata_index, self.faces[group], flags]));
+        self.faces[group] += job_slots(flags);
     }
 }
 
@@ -180,9 +190,16 @@ pub(crate) fn plan_section(
         } else {
             GeometryCategory::Cutout
         };
+        // A two-sided face's back faces the other way, in the same job.
+        let group = if flags & JOB_REVERSE_FACE == 0 {
+            quad.face() as usize
+        } else {
+            FACING_REST
+        };
         for height in 0..u32::from(quad.height()) {
             for width in 0..u32::from(quad.width()) {
                 categories[category.index()].push(
+                    group,
                     JobKind::Cube,
                     section.quad_base + index as u32,
                     metadata,
@@ -205,7 +222,13 @@ pub(crate) fn plan_section(
     ] {
         for (index, draw) in draws.iter().enumerate() {
             let flags = model_flags(tables, section.model_refs, *draw).unwrap_or(0);
-            categories[category.index()].push(JobKind::Model, base + index as u32, metadata, flags);
+            categories[category.index()].push(
+                FACING_REST,
+                JobKind::Model,
+                base + index as u32,
+                metadata,
+                flags,
+            );
         }
     }
     for (index, liquid) in section.liquid_quads.iter().enumerate() {
@@ -220,6 +243,7 @@ pub(crate) fn plan_section(
             0
         };
         categories[category.index()].push(
+            FACING_REST,
             JobKind::Liquid,
             section.liquid_base + index as u32,
             metadata,
@@ -230,12 +254,16 @@ pub(crate) fn plan_section(
     let mut plan = SectionPlan::default();
     for (category, planned) in categories.into_iter().enumerate() {
         let first = plan.faces;
-        plan.faces += planned.faces;
-        plan.categories[category] = first..plan.faces;
-        for (kind, mut job) in planned.jobs {
-            job[2] += first;
-            plan.jobs[kind as usize].push(job);
+        for (group, jobs) in planned.groups.into_iter().enumerate() {
+            let start = plan.faces;
+            plan.faces += planned.faces[group];
+            plan.facing[category][group] = start..plan.faces;
+            for (kind, mut job) in jobs {
+                job[2] += start;
+                plan.jobs[kind as usize].push(job);
+            }
         }
+        plan.categories[category] = first..plan.faces;
     }
     plan
 }

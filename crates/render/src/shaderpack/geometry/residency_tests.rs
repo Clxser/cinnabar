@@ -4,12 +4,40 @@ fn plan(faces: u32) -> SectionPlan {
     SectionPlan {
         faces,
         categories: [0..faces, faces..faces, faces..faces],
+        facing: Default::default(),
         jobs: Default::default(),
     }
 }
 
 fn entity(index: u32) -> Entity {
     Entity::from_raw_u32(index).unwrap()
+}
+
+#[test]
+fn pages_stop_growing_at_the_page_cap() {
+    let residency = Residency::new(u64::MAX / 2, 1 << 30);
+    assert_eq!(u64::from(residency.page_faces), MAX_PAGE_BYTES / FACE_BYTES);
+}
+
+#[test]
+fn revoking_a_failed_growth_restores_the_page_and_parks_the_section() {
+    let mut residency = Residency::new(1 << 30, 1 << 30);
+    let first = residency
+        .place(entity(1), &plan(INITIAL_PAGE_FACES))
+        .unwrap();
+    residency.commit(entity(1), &first, &plan(INITIAL_PAGE_FACES), [0; 3]);
+    let grown = residency.place(entity(2), &plan(10)).unwrap();
+    assert_eq!(grown.grown_from, Some(INITIAL_PAGE_FACES));
+    residency.revoke(entity(2), &grown);
+    assert_eq!(residency.pages[0].faces.capacity(), INITIAL_PAGE_FACES);
+    assert_eq!(residency.waiting_len(), 1);
+    assert!(!residency.sections.contains_key(&entity(2)));
+    // A revoked new page is dropped entirely.
+    let mut fresh = Residency::new(1 << 30, 1 << 30);
+    let opened = fresh.place(entity(3), &plan(5)).unwrap();
+    fresh.revoke(entity(3), &opened);
+    assert!(fresh.pages.is_empty());
+    assert_eq!(fresh.capacity_faces(), 0);
 }
 
 #[test]

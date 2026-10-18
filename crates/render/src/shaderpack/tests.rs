@@ -242,6 +242,7 @@ fn render(gpu: &GpuContext, files: &[(&str, &str)]) -> Vec<u8> {
         destination: &output.create_view(&Default::default()),
         destination_format: format,
         geometry: None,
+        timestamps: None,
     };
     record_frame(&gpu.device, &gpu.queue, &mut encoder, &mut state, &io);
     let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
