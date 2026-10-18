@@ -17,6 +17,7 @@ pub struct LiquidShaderContract {
 impl LiquidShaderContract {
     pub fn parse(shader: &str) -> Self {
         validate_structural_wiring(shader);
+        let uv = crate::shader_source::function_source(shader, "liquid_uv");
         Self {
             face_xz: parse_vec2_table(shader, "LIQUID_FACE_XZ"),
             base_uv: parse_vec2_table(shader, "LIQUID_BASE_UV"),
@@ -30,9 +31,9 @@ impl LiquidShaderContract {
             ),
             flow_face: parse_u32(shader, "FLOW_FACE") as usize,
             side_face_mask: parse_u32(shader, "SIDE_FACE_MASK"),
-            flow_direction_operator: parse_flow_direction_operator(shader),
-            flow_offset_operator: parse_flow_offset_operator(shader),
-            side_scale_operator: parse_side_scale_operator(shader),
+            flow_direction_operator: parse_flow_direction_operator(uv),
+            flow_offset_operator: parse_flow_offset_operator(uv),
+            side_scale_operator: parse_side_scale_operator(uv),
         }
     }
 
@@ -136,49 +137,64 @@ fn compact(shader: &str) -> String {
 }
 
 fn validate_structural_wiring(shader: &str) {
-    let shader = compact(shader);
+    let corner = compact(crate::shader_source::function_source(
+        shader,
+        "liquid_corner",
+    ));
+    let uv = compact(crate::shader_source::function_source(shader, "liquid_uv"));
+    let vertex = compact(crate::shader_source::function_source(
+        shader,
+        "vertex_for_record",
+    ));
+    let signed = compact(crate::shader_source::function_source(shader, "signed_i8"));
     let requirements = [
         (
+            &corner,
             "LIQUID_FACE_XZ[face*4u+corner]",
             "face/corner geometry-table addressing",
             1,
         ),
         (
+            &uv,
             "LIQUID_BASE_UV[face*4u+corner]",
             "face/corner UV-table addressing",
             1,
         ),
-        ("((SIDE_FACE_MASK>>face)&1u)!=0u", "side-face mask test", 1),
         (
+            &uv,
+            "((SIDE_FACE_MASK>>face)&1u)!=0u",
+            "side-face mask test",
+            1,
+        ),
+        (
+            &uv,
             "(uv-vec2(0.5))/(abs(cosine)+abs(sine))",
             "rotated flow fit",
             1,
         ),
-        ("face==FLOW_FACE", "flow-face test", 1),
+        (&uv, "face==FLOW_FACE", "flow-face test", 1),
         (
-            "local_position.y-f32(block_coordinate.y)",
-            "side UV uses already-inset upper heights",
+            &vertex,
+            "out.uv=liquid_uv(face,corner,local_position.y-f32(block_coordinate.y),signed_i8(geometry,16u),signed_i8(geometry,24u),)",
+            "native UV uses inset heights and signed X/Z flow",
             1,
         ),
         (
+            &corner,
             "f32((height_word>>(corner*8u))&255u)/255.0",
             "packed u8 height decode",
             1,
         ),
         (
-            "signed_i8(geometry,16u),signed_i8(geometry,24u)",
-            "signed X/Z flow call wiring",
-            1,
-        ),
-        (
+            &signed,
             "bitcast<i32>((word>>shift)<<24u)>>24u",
             "signed i8 sign extension",
             1,
         ),
     ];
-    for (expression, label, expected_count) in requirements {
+    for (source, expression, label, expected_count) in requirements {
         assert_eq!(
-            shader.matches(expression).count(),
+            source.matches(expression).count(),
             expected_count,
             "liquid shader changed required {label}: expected {expected_count} occurrence(s) of {expression}",
         );

@@ -5,6 +5,20 @@
 )]
 use crate::material_shader;
 
+/// Returns one parsed function's source without including unrelated shader helpers.
+pub fn function_source<'a>(source: &'a str, name: &str) -> &'a str {
+    let module: wesl::syntax::TranslationUnit = source.parse().expect("WESL parses");
+    let declaration = module
+        .global_declarations
+        .iter()
+        .find(|declaration| {
+            matches!(declaration.node(), wesl::syntax::GlobalDeclaration::Function(function)
+                if function.ident.to_string() == name)
+        })
+        .unwrap_or_else(|| panic!("missing shader function {name}"));
+    &source[declaration.span().range()]
+}
+
 /// Relocates every shared lighting resource together for single-group raster probes.
 pub fn bind_lighting(source: &str) -> String {
     let marker = "@group(1) @binding(";

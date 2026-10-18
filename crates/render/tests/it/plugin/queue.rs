@@ -387,11 +387,31 @@ fn packed_chunk_shader_parses_and_validates() {
         );
     }
     assert!(shader.contains("@group(0) @binding(15)"));
-    assert_eq!(shader.matches("textureSample(").count(), 0);
-    assert_eq!(
-        shader.matches("textureSampleGrad(").count(),
-        material_shader::CHUNK_SAMPLED_TEXTURE_BINDINGS as usize
-    );
+    let (_, sampling) = module
+        .functions
+        .iter()
+        .find(|(_, function)| function.name.as_deref() == Some("sample_texture_ref"))
+        .expect("terrain texture sampling helper");
+    let sampled = sampling
+        .expressions
+        .iter()
+        .filter_map(|(_, expression)| {
+            let naga::Expression::ImageSample { image, level, .. } = expression else {
+                return None;
+            };
+            assert!(matches!(level, naga::SampleLevel::Gradient { .. }));
+            let naga::Expression::GlobalVariable(image) = sampling.expressions[*image] else {
+                panic!("terrain samples must address bound texture pages");
+            };
+            let binding = module.global_variables[image].binding.as_ref().unwrap();
+            assert_eq!(binding.group, 0);
+            Some(binding.binding)
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected = material_shader::NATIVE_LEAF_TEXTURE_BINDINGS
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(sampled, expected);
     assert!(shader.contains("fn sample_texture_ref("));
     assert!(shader.contains("texture_page(texture_ref)"));
     assert!(shader.contains("let uv_dx = dpdx(in.uv);"));
