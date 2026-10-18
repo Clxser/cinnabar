@@ -55,6 +55,30 @@ struct FaceSource {
     fluid: bool,
 }
 
+/// One job's decoded face: its corners and what they share. `valid` is false for a record
+/// that failed validation, whose slots stay degenerate.
+struct JobFace {
+    corners: FaceCorners,
+    source: FaceSource,
+    valid: bool,
+}
+
+/// One Iris vertex as the expanded stream stores it, before packing: `light` is Java's raw
+/// lightmap coordinate (level × 16), `block` is `mc_Entity.xy` and `mid_block` `at_midBlock`.
+/// Shader-pack programs that read the arena directly (`pull.rs`) receive these values with
+/// the stream's precision.
+struct IrisVertex {
+    position: vec3<f32>,
+    colour: vec4<f32>,
+    uv: vec2<f32>,
+    mid_uv: vec2<f32>,
+    light: vec2<f32>,
+    normal: vec3<f32>,
+    tangent: vec4<f32>,
+    block: vec2<i32>,
+    mid_block: vec4<f32>,
+}
+
 /// Linear job index of a dispatch that may span a second dimension.
 fn expand_job_index(id: vec3<u32>, groups: vec3<u32>) -> u32 {
     return id.x + id.y * groups.x * EXPAND_WORKGROUP_SIZE;
@@ -118,114 +142,110 @@ fn face_tangent(positions: array<vec3<f32>, 4>, uvs: array<vec2<f32>, 4>, normal
     return vec4(direction, select(1.0, -1.0, dot(cross(normal, direction), bitangent) < 0.0));
 }
 
-fn write_vertex(
-    index: u32,
-    position: vec3<f32>,
-    colour: vec4<f32>,
-    uv: vec2<f32>,
-    mid_uv: vec2<f32>,
-    light: vec2<f32>,
-    normal: vec3<f32>,
-    tangent: vec4<f32>,
-    block_id: i32,
-    render_type: i32,
-    mid_block: vec4<f32>,
-) {
+fn write_vertex(index: u32, vertex: IrisVertex) {
     let base = index * IRIS_VERTEX_WORDS;
-    let raw_light = clamp(light, vec2(0.0), vec2(15.0)) * 16.0;
-    vertices[base + IRIS_WORD_POSITION] = bitcast<u32>(position.x);
-    vertices[base + IRIS_WORD_POSITION + 1u] = bitcast<u32>(position.y);
-    vertices[base + IRIS_WORD_POSITION + 2u] = bitcast<u32>(position.z);
-    vertices[base + IRIS_WORD_COLOR] = pack4x8unorm(colour);
-    vertices[base + IRIS_WORD_UV0] = pack2x16unorm(uv);
-    vertices[base + IRIS_WORD_MID_TEX] = pack2x16unorm(mid_uv);
-    vertices[base + IRIS_WORD_LIGHTMAP] = pack2x16float(raw_light);
-    vertices[base + IRIS_WORD_NORMAL] = pack4x8snorm(vec4(normal, 0.0));
-    vertices[base + IRIS_WORD_TANGENT] = pack4x8snorm(tangent);
+    vertices[base + IRIS_WORD_POSITION] = bitcast<u32>(vertex.position.x);
+    vertices[base + IRIS_WORD_POSITION + 1u] = bitcast<u32>(vertex.position.y);
+    vertices[base + IRIS_WORD_POSITION + 2u] = bitcast<u32>(vertex.position.z);
+    vertices[base + IRIS_WORD_COLOR] = pack4x8unorm(vertex.colour);
+    vertices[base + IRIS_WORD_UV0] = pack2x16unorm(vertex.uv);
+    vertices[base + IRIS_WORD_MID_TEX] = pack2x16unorm(vertex.mid_uv);
+    vertices[base + IRIS_WORD_LIGHTMAP] = pack2x16float(vertex.light);
+    vertices[base + IRIS_WORD_NORMAL] = pack4x8snorm(vec4(vertex.normal, 0.0));
+    vertices[base + IRIS_WORD_TANGENT] = pack4x8snorm(vertex.tangent);
     // Signed shorts and bytes, as Iris stores `mc_Entity` and `at_midBlock`; the mid-block
     // offset truncates towards zero like Iris's `(int)` cast.
     vertices[base + IRIS_WORD_BLOCK_ID] =
-        (bitcast<u32>(block_id) & 0xffffu) | (bitcast<u32>(render_type) << 16u);
-    let mid = bitcast<vec4<u32>>(vec4<i32>(mid_block)) & vec4(0xffu);
+        (bitcast<u32>(vertex.block.x) & 0xffffu) | (bitcast<u32>(vertex.block.y) << 16u);
+    let mid = bitcast<vec4<u32>>(vec4<i32>(vertex.mid_block)) & vec4(0xffu);
     vertices[base + IRIS_WORD_MID_BLOCK] = mid.x | (mid.y << 8u) | (mid.z << 16u) | (mid.w << 24u);
 }
 
-/// Writes face slot `face` as four coincident vertices, which rasterize nothing.
-fn write_degenerate_face(face: u32, position: vec3<f32>) {
-    for (var corner = 0u; corner < 4u; corner += 1u) {
-        write_vertex(face * 4u + corner, position, vec4(0.0), vec2(0.0), vec2(0.0), vec2(0.0),
-            vec3(0.0), vec4(0.0), -1, BLOCK_RENDER_TYPE, vec4(0.0));
-    }
+/// A vertex of a face slot that rasterizes nothing: all four corners at `position`.
+fn degenerate_vertex(position: vec3<f32>) -> IrisVertex {
+    var vertex: IrisVertex;
+    vertex.position = position;
+    vertex.block = vec2(-1, BLOCK_RENDER_TYPE);
+    return vertex;
 }
 
-/// Writes one face with `tint` and the sprite in remap slot `slot`; `reversed` writes the back
-/// side of a two-sided face, with its corners in the opposite order.
-fn write_face(face: u32, source_corners: FaceCorners, source: FaceSource, tint: vec4<f32>, slot: u32, reversed: bool) {
+/// Corner `corner` of one face with `tint` and the sprite in remap slot `slot`; `reversed`
+/// gives the back side of a two-sided face, with its corners in the opposite order.
+fn face_vertex(source_corners: FaceCorners, source: FaceSource, tint: vec4<f32>, slot: u32, reversed: bool, corner: u32) -> IrisVertex {
     var corners = source_corners;
     var order = array<u32, 4>(0u, 1u, 2u, 3u);
     if (reversed) {
         order = array<u32, 4>(0u, 3u, 2u, 1u);
     }
     let normal = select(source.normal, -source.normal, reversed);
-    let offset = vec3<f32>(source.chunk_origin - params.anchor.xyz);
     var positions: array<vec3<f32>, 4>;
     var local_uvs: array<vec2<f32>, 4>;
-    var uvs: array<vec2<f32>, 4>;
     var mid_uv = vec2(0.0);
-    for (var corner = 0u; corner < 4u; corner += 1u) {
-        positions[corner] = corners.positions[order[corner]];
-        local_uvs[corner] = corners.uvs[order[corner]];
-        uvs[corner] = atlas_uv(slot, local_uvs[corner]);
-        mid_uv += uvs[corner] * 0.25;
+    for (var index = 0u; index < 4u; index += 1u) {
+        positions[index] = corners.positions[order[index]];
+        local_uvs[index] = corners.uvs[order[index]];
+        mid_uv += atlas_uv(slot, local_uvs[index]) * 0.25;
     }
-    let tangent = face_tangent(positions, local_uvs, normal);
     let attributes = block_attributes(source.material_id);
     let separate_ao = params.flags.x != 0u;
     let shade = select(1.0, source.face_shade, params.flags.y != 0u);
-    let centre = source.block + vec3(0.5);
-    for (var corner = 0u; corner < 4u; corner += 1u) {
-        let ao = corners.ao[order[corner]];
-        let colour = vec4(
-            tint.rgb * shade * select(ao, 1.0, separate_ao),
-            select(tint.a, ao, separate_ao),
-        );
-        write_vertex(face * 4u + corner, offset + positions[corner], colour, uvs[corner], mid_uv,
-            corners.light[order[corner]], normal, tangent, attributes.x,
-            select(BLOCK_RENDER_TYPE, FLUID_RENDER_TYPE, source.fluid),
-            vec4((centre - positions[corner]) * 64.0, f32(attributes.y)));
-    }
+    let ao = corners.ao[order[corner]];
+    let position = positions[corner];
+    var vertex: IrisVertex;
+    vertex.position = vec3<f32>(source.chunk_origin - params.anchor.xyz) + position;
+    vertex.colour = vec4(
+        tint.rgb * shade * select(ao, 1.0, separate_ao),
+        select(tint.a, ao, separate_ao),
+    );
+    vertex.uv = atlas_uv(slot, local_uvs[corner]);
+    vertex.mid_uv = mid_uv;
+    vertex.light = clamp(corners.light[order[corner]], vec2(0.0), vec2(15.0)) * 16.0;
+    vertex.normal = normal;
+    vertex.tangent = face_tangent(positions, local_uvs, normal);
+    vertex.block = vec2(attributes.x, select(BLOCK_RENDER_TYPE, FLUID_RENDER_TYPE, source.fluid));
+    vertex.mid_block = vec4((source.block + vec3(0.5) - position) * 64.0, f32(attributes.y));
+    return vertex;
 }
 
-/// Writes every face slot `job` reserved: the face, then an overlay slot when `JOB_OVERLAY_FACE`
-/// is set and a back side when `JOB_REVERSE_FACE` is set. Grass-side overlay materials draw an
-/// untinted opaque base under a tinted cutout overlay, as Java's overlay quads do; slots the
-/// material does not need stay degenerate.
-fn write_job_faces(job: vec4<u32>, corners: FaceCorners, source: FaceSource) {
-    var face = job.z;
-    let overlay = material_uses_overlay_mask(source.material.flags) && (job.w & JOB_OVERLAY_FACE) != 0u;
-    if (overlay) {
-        write_face(face, corners, source, vec4(vec3(1.0), source.tint.a), sprite_slot(source.material, true), false);
-        write_face(face + 1u, corners, source, source.tint, sprite_slot(source.material, false), false);
-    } else {
-        write_face(face, corners, source, source.tint, sprite_slot(source.material, false), false);
-        if ((job.w & JOB_OVERLAY_FACE) != 0u) {
-            write_degenerate_face(face + 1u, vec3<f32>(source.chunk_origin - params.anchor.xyz) + corners.positions[0]);
-        }
+/// Corner `corner` of slot `slot` of the face slots `job` reserved: the face, then an overlay
+/// slot when `JOB_OVERLAY_FACE` is set and a back side when `JOB_REVERSE_FACE` is set.
+/// Grass-side overlay materials draw an untinted opaque base under a tinted cutout overlay, as
+/// Java's overlay quads do; slots the material does not need, and every slot of an invalid
+/// record, are degenerate.
+fn job_slot_vertex(job: vec4<u32>, slot: u32, face: JobFace, corner: u32) -> IrisVertex {
+    let corners = face.corners;
+    let source = face.source;
+    if (!face.valid) {
+        return degenerate_vertex(vec3(0.0));
     }
-    face += select(1u, 2u, (job.w & JOB_OVERLAY_FACE) != 0u);
-    if ((job.w & JOB_REVERSE_FACE) != 0u) {
-        if (source.two_sided) {
-            write_face(face, corners, source, source.tint, sprite_slot(source.material, false), true);
-        } else {
-            write_degenerate_face(face, vec3<f32>(source.chunk_origin - params.anchor.xyz) + corners.positions[0]);
+    let degenerate = degenerate_vertex(vec3<f32>(source.chunk_origin - params.anchor.xyz) + corners.positions[0]);
+    let overlay_slot = (job.w & JOB_OVERLAY_FACE) != 0u;
+    let overlay = material_uses_overlay_mask(source.material.flags) && overlay_slot;
+    let front = sprite_slot(source.material, false);
+    if (slot == 0u) {
+        if (overlay) {
+            return face_vertex(corners, source, vec4(vec3(1.0), source.tint.a), sprite_slot(source.material, true), false, corner);
         }
+        return face_vertex(corners, source, source.tint, front, false, corner);
     }
+    if (slot == 1u && overlay_slot) {
+        if (overlay) {
+            return face_vertex(corners, source, source.tint, front, false, corner);
+        }
+        return degenerate;
+    }
+    if ((job.w & JOB_REVERSE_FACE) != 0u && source.two_sided) {
+        return face_vertex(corners, source, source.tint, front, true, corner);
+    }
+    return degenerate;
 }
 
-/// Writes degenerate faces into every slot of a job whose record failed validation.
-fn write_invalid_job(job: vec4<u32>) {
+/// Writes every face slot `job` reserved, from its first output face `job.z`.
+fn write_job_faces(job: vec4<u32>, face: JobFace) {
     let slots = 1u + select(0u, 1u, (job.w & JOB_OVERLAY_FACE) != 0u) + select(0u, 1u, (job.w & JOB_REVERSE_FACE) != 0u);
     for (var slot = 0u; slot < slots; slot += 1u) {
-        write_degenerate_face(job.z + slot, vec3(0.0));
+        for (var corner = 0u; corner < 4u; corner += 1u) {
+            write_vertex((job.z + slot) * 4u + corner, job_slot_vertex(job, slot, face, corner));
+        }
     }
 }

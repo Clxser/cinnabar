@@ -124,7 +124,9 @@ impl ViewDraws {
     /// The lists `inputs` describe: solid and cutout page by page (one vertex buffer bind per
     /// page), each page's sections near to far from the eye like Sodium's, so early depth
     /// testing skips the pack's fragment shading of hidden faces; translucent far to near.
-    pub(crate) fn build(inputs: &DrawInputs<'_>) -> Self {
+    /// `instanced` draws face-ref pages (`pull.rs`): one quad per instance, the faces as
+    /// instances.
+    pub(crate) fn build(inputs: &DrawInputs<'_>, instanced: bool) -> Self {
         let mut by_page = inputs.sections.clone();
         by_page.sort_unstable_by_key(|section| (section.page, section.faces.start));
         let mut opaque = by_page.clone();
@@ -186,27 +188,44 @@ impl ViewDraws {
                         Some(open) if open.end == faces.start => open.end = faces.end,
                         _ => {
                             if let Some(done) = pending.replace(faces.clone()) {
-                                draws.push(category, section.page, done);
+                                draws.push(category, section.page, done, instanced);
                             }
                         }
                     }
                 }
                 if let Some(done) = pending {
-                    draws.push(category, section.page, done);
+                    draws.push(category, section.page, done, instanced);
                 }
             }
         }
         draws
     }
 
-    fn push(&mut self, category: GeometryCategory, page: usize, faces: Range<u32>) {
+    fn push(
+        &mut self,
+        category: GeometryCategory,
+        page: usize,
+        faces: Range<u32>,
+        instanced: bool,
+    ) {
         let command = self.commands.len() as u32;
-        self.commands.push(DrawIndexedIndirectArgs {
-            index_count: (faces.end - faces.start) * FACE_INDICES.len() as u32,
-            instance_count: 1,
-            first_index: 0,
-            base_vertex: (faces.start * 4) as i32,
-            first_instance: 0,
+        let count = faces.end - faces.start;
+        self.commands.push(if instanced {
+            DrawIndexedIndirectArgs {
+                index_count: FACE_INDICES.len() as u32,
+                instance_count: count,
+                first_index: 0,
+                base_vertex: 0,
+                first_instance: faces.start,
+            }
+        } else {
+            DrawIndexedIndirectArgs {
+                index_count: count * FACE_INDICES.len() as u32,
+                instance_count: 1,
+                first_index: 0,
+                base_vertex: (faces.start * 4) as i32,
+                first_instance: 0,
+            }
         });
         let runs = &mut self.runs[category.index()];
         match runs.last_mut() {
@@ -305,7 +324,11 @@ impl ViewDraws {
                     for command in
                         &self.commands[run.commands.start as usize..run.commands.end as usize]
                     {
-                        pass.draw_indexed(0..command.index_count, command.base_vertex, 0..1);
+                        pass.draw_indexed(
+                            command.first_index..command.first_index + command.index_count,
+                            command.base_vertex,
+                            command.first_instance..command.first_instance + command.instance_count,
+                        );
                     }
                 }
             }
@@ -362,12 +385,15 @@ mod tests {
         let far = section(0, 4..8, 6..8, [64, 0, 0]);
         let mut stale = section(1, 0..2, 2..2, [0, 16, 0]);
         stale.epoch = 0;
-        let draws = ViewDraws::build(&DrawInputs::new(
-            [&near, &far, &stale].into_iter(),
-            Some(DVec3::ZERO),
-            1,
-            None,
-        ));
+        let draws = ViewDraws::build(
+            &DrawInputs::new(
+                [&near, &far, &stale].into_iter(),
+                Some(DVec3::ZERO),
+                1,
+                None,
+            ),
+            false,
+        );
         let translucent: Vec<_> = draws.runs[GeometryCategory::Translucent.index()]
             .iter()
             .flat_map(|run| run.commands.clone())
@@ -390,12 +416,10 @@ mod tests {
         });
         // Above and beyond +X and +Z of the section: -X, -Y and -Z faces face away.
         let eye = DVec3::new(40.0, 40.0, 40.0);
-        let draws = ViewDraws::build(&DrawInputs::new(
-            [&section].into_iter(),
-            Some(eye),
-            1,
-            Some(eye),
-        ));
+        let draws = ViewDraws::build(
+            &DrawInputs::new([&section].into_iter(), Some(eye), 1, Some(eye)),
+            false,
+        );
         let solid: Vec<_> = draws
             .commands
             .iter()
@@ -406,14 +430,35 @@ mod tests {
             [(2, 2), (6, 2), (10, 2)],
             "+X, +Y and +Z groups only"
         );
+        // Face-ref pages draw the same faces as instances of one quad.
+        let pulled = ViewDraws::build(
+            &DrawInputs::new([&section].into_iter(), Some(eye), 1, Some(eye)),
+            true,
+        );
+        let instances: Vec<_> = pulled
+            .commands
+            .iter()
+            .map(|c| {
+                (
+                    c.index_count,
+                    c.base_vertex,
+                    c.first_instance,
+                    c.instance_count,
+                )
+            })
+            .collect();
+        assert_eq!(instances, [(6, 0, 2, 2), (6, 0, 6, 2), (6, 0, 10, 2)]);
+        assert_eq!(
+            pulled.max_faces(),
+            1,
+            "one quad's indices serve every command"
+        );
         // Inside the section every group may face the eye: one merged command.
         let inside = DVec3::splat(8.0);
-        let draws = ViewDraws::build(&DrawInputs::new(
-            [&section].into_iter(),
-            Some(inside),
-            1,
-            Some(inside),
-        ));
+        let draws = ViewDraws::build(
+            &DrawInputs::new([&section].into_iter(), Some(inside), 1, Some(inside)),
+            false,
+        );
         assert_eq!(draws.commands.len(), 1);
         assert_eq!(draws.max_faces(), 12);
     }
@@ -438,7 +483,7 @@ mod tests {
             .collect();
         let listed = |eye: DVec3| {
             let inputs = DrawInputs::new(sections.iter(), Some(eye), 1, Some(eye));
-            let commands: Vec<_> = ViewDraws::build(&inputs)
+            let commands: Vec<_> = ViewDraws::build(&inputs, false)
                 .commands
                 .iter()
                 .map(|command| (command.base_vertex, command.index_count))

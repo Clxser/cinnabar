@@ -26,8 +26,10 @@ use super::pipelines::{
     EXPAND_PARAMS_BYTES, EXPAND_WORKGROUP_SIZE, ExpansionPipelines, output_layout, source_bindings,
     source_layout, storage_buffers_per_stage,
 };
+use super::pull::{FACE_REF_BYTES, PULL_PAGE_BYTES, section_face_refs};
+use super::pulled_arena::PulledArena;
 use super::residency::{
-    Eviction, FACE_BYTES, Placement, Residency, ResidentFaces, SECTION_RADIUS, section_distance,
+    Eviction, Placement, Residency, ResidentFaces, SECTION_RADIUS, section_distance,
 };
 use super::shadow_cull::ShadowFrustum;
 use super::vertex::CONSTANT_STREAM_WORDS;
@@ -69,6 +71,9 @@ pub struct ShaderpackGeometrySettings {
     /// Bytes the expanded vertex pages may use; sections beyond it wait, undrawn, until
     /// others leave.
     pub budget_bytes: u64,
+    /// Pages hold face refs that pulled pack pipelines decode (`pull.rs`) instead of
+    /// expanded vertices.
+    pub pulled: bool,
 }
 
 impl Default for ShaderpackGeometrySettings {
@@ -78,6 +83,7 @@ impl Default for ShaderpackGeometrySettings {
             separate_ao: false,
             old_lighting: false,
             budget_bytes: DEFAULT_GEOMETRY_BUDGET_BYTES,
+            pulled: false,
         }
     }
 }
@@ -126,6 +132,11 @@ pub struct ShaderpackGeometry {
     attributes: Vec<u32>,
     attribute_key: Option<AttributeKey>,
     inputs: Option<ExpansionInputs>,
+    /// Pages hold face refs (`pull.rs`); see [`ShaderpackGeometrySettings::pulled`].
+    pulled: bool,
+    /// What pulled pipelines bind, kept current each frame in pull mode.
+    pulled_arena: PulledArena,
+    binding_bytes: u64,
     /// Camera draw lists by render-world view entity.
     views: HashMap<Entity, ViewDraws>,
     /// Shadow-pass draw lists by the camera view they cast shadows for.
@@ -173,6 +184,9 @@ impl FromWorld for ShaderpackGeometry {
             attributes: Vec::new(),
             attribute_key: None,
             inputs: None,
+            pulled: false,
+            pulled_arena: PulledArena::default(),
+            binding_bytes,
             views: HashMap::new(),
             shadows: HashMap::new(),
             multi_draw: draw_mode == Some(true),
@@ -221,6 +235,11 @@ impl ShaderpackGeometry {
         self.budget_horizon
     }
 
+    /// What pulled pipelines bind, once the arenas, atlas and origin exist.
+    pub(crate) fn pulled_arena(&self) -> Option<&PulledArena> {
+        self.pulled_arena.ready().then_some(&self.pulled_arena)
+    }
+
     /// Records `category` for `view` (a render-world view entity with visible chunks): its
     /// camera list, or with `shadow` its shadow-pass list from
     /// [`Self::prepare_shadow_view`]. The pass must already hold a pipeline built with
@@ -266,7 +285,7 @@ impl ShaderpackGeometry {
         if draws.is_current(key) {
             return;
         }
-        let built = ViewDraws::build(&inputs);
+        let built = ViewDraws::build(&inputs, self.pulled);
         let max_faces = built.max_faces();
         draws.replace(built, key, self.multi_draw.then_some((device, queue)));
         if max_faces > 0 {
@@ -292,6 +311,22 @@ impl ShaderpackGeometry {
         self.budget_horizon = None;
         self.retry_eye = None;
         self.memory_cap = None;
+        self.pulled_arena = PulledArena::default();
+    }
+
+    /// Switches pages between expanded vertices and face refs, dropping every page.
+    fn set_pulled(&mut self, pulled: bool) {
+        self.release_all();
+        self.pulled = pulled;
+        self.residency = if pulled {
+            Residency::with_faces(
+                self.binding_bytes.min(PULL_PAGE_BYTES),
+                DEFAULT_GEOMETRY_BUDGET_BYTES,
+                FACE_REF_BYTES,
+            )
+        } else {
+            Residency::new(self.binding_bytes, DEFAULT_GEOMETRY_BUDGET_BYTES)
+        };
     }
 
     /// Creates vertex page `placement.page` when the placement opened it. Returns false when
@@ -301,12 +336,23 @@ impl ShaderpackGeometry {
             return true;
         }
         let capacity = self.residency.pages[placement.page].faces.capacity();
+        let (label, usage) = if self.pulled {
+            (
+                "shader-pack terrain face refs",
+                BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            )
+        } else {
+            (
+                "shader-pack terrain vertices",
+                BufferUsages::VERTEX | BufferUsages::STORAGE,
+            )
+        };
         let Some(buffer) = crate::gpu_allocation::buffer(
             device,
             &BufferDescriptor {
-                label: Some("shader-pack terrain vertices"),
-                size: u64::from(capacity) * FACE_BYTES,
-                usage: BufferUsages::VERTEX | BufferUsages::STORAGE,
+                label: Some(label),
+                size: u64::from(capacity) * self.residency.face_bytes(),
+                usage,
                 mapped_at_creation: false,
             },
         ) else {
@@ -411,6 +457,9 @@ pub(crate) fn prepare_shaderpack_geometry(
         }
         return;
     }
+    if settings.pulled != geometry.pulled {
+        geometry.set_pulled(settings.pulled);
+    }
     let geometry = &mut *geometry;
     geometry.residency.set_budget(
         settings
@@ -477,7 +526,9 @@ pub(crate) fn prepare_shaderpack_geometry(
         geometry.inputs = Some(expansion_inputs);
     }
     let mut expanded = 0;
-    if kernels_ready && let Some(origin) = geometry.residency.origin {
+    if (geometry.pulled || kernels_ready)
+        && let Some(origin) = geometry.residency.origin
+    {
         let budget = if rebased {
             u32::MAX
         } else {
@@ -487,6 +538,17 @@ pub(crate) fn prepare_shaderpack_geometry(
             geometry, &inputs, &buffers, &sections, textures, atlas, origin, &settings, budget,
             camera,
         );
+        if geometry.pulled {
+            let params = expand_params(origin, &settings, &geometry.attributes);
+            geometry.pulled_arena.update(
+                &inputs.device,
+                &inputs.queue,
+                &buffers,
+                &atlas.remap,
+                &geometry.attributes,
+                &params,
+            );
+        }
     }
     geometry.complete_radius = camera.and_then(|eye| {
         geometry
@@ -604,7 +666,7 @@ fn plan_frame(
             // Out of device memory: keep the pages there are, and let nearer sections take
             // room from farther ones from now on.
             geometry.residency.revoke(entity, &placement);
-            let cap = geometry.residency.capacity_faces() * FACE_BYTES;
+            let cap = geometry.residency.capacity_faces() * geometry.residency.face_bytes();
             geometry.memory_cap = Some(cap);
             geometry
                 .residency
@@ -618,10 +680,19 @@ fn plan_frame(
         geometry
             .residency
             .commit(entity, &placement, &plan, section.origin);
-        for (kind, planned) in plan.jobs.into_iter().enumerate() {
-            jobs.entry((kind, placement.page))
-                .or_default()
-                .extend(planned);
+        if geometry.pulled {
+            let refs = section_face_refs(&plan, placement.faces.start);
+            inputs.queue.write_buffer(
+                &geometry.pages[placement.page],
+                u64::from(placement.faces.start) * FACE_REF_BYTES,
+                bytemuck::cast_slice(&refs),
+            );
+        } else {
+            for (kind, planned) in plan.jobs.into_iter().enumerate() {
+                jobs.entry((kind, placement.page))
+                    .or_default()
+                    .extend(planned);
+            }
         }
         planned_faces = planned_faces.saturating_add(plan.faces);
     }
@@ -635,12 +706,7 @@ fn plan_frame(
     if jobs.is_empty() {
         return planned_faces;
     }
-    let mut params = [0_u32; (EXPAND_PARAMS_BYTES / 4) as usize];
-    params[..3].copy_from_slice(&origin.to_array().map(|axis| axis as u32));
-    params[4] = u32::from(settings.separate_ao);
-    params[5] = u32::from(settings.old_lighting);
-    params[6] = geometry.attributes.len() as u32;
-    params[7] = (geometry.attributes.len() / 2) as u32;
+    let params = expand_params(origin, settings, &geometry.attributes);
     let params = device.create_buffer_with_data(&BufferInitDescriptor {
         label: Some("shader-pack expansion parameters"),
         contents: bytemuck::cast_slice(&params),
@@ -695,6 +761,22 @@ fn plan_frame(
     planned_faces
 }
 
+/// The kernels' `ExpandParams` words: the origin, `separateAo`, `oldLighting`, the first job
+/// word and the materials in the attribute table.
+fn expand_params(
+    origin: IVec3,
+    settings: &ShaderpackGeometrySettings,
+    attributes: &[u32],
+) -> [u32; (EXPAND_PARAMS_BYTES / 4) as usize] {
+    let mut params = [0_u32; (EXPAND_PARAMS_BYTES / 4) as usize];
+    params[..3].copy_from_slice(&origin.to_array().map(|axis| axis as u32));
+    params[4] = u32::from(settings.separate_ao);
+    params[5] = u32::from(settings.old_lighting);
+    params[6] = attributes.len() as u32;
+    params[7] = (attributes.len() / 2) as u32;
+    params
+}
+
 /// Draw lists per camera view of its visible resident sections within `far` horizontally of
 /// the camera's section, as Java culls render sections by render distance from it, leaving
 /// out faces the camera sees only from behind. A view's list is rebuilt only when the
@@ -745,7 +827,7 @@ fn build_draws(
         {
             continue;
         }
-        let built = ViewDraws::build(&inputs);
+        let built = ViewDraws::build(&inputs, geometry.pulled);
         max_faces = max_faces.max(built.max_faces());
         geometry.views.entry(entity).or_default().replace(
             built,
@@ -840,8 +922,8 @@ impl ResidencyLog {
         debug!(
             target: "cinnabar::shaderpack",
             sections = residency.sections.len(),
-            resident_mib = (resident_faces * FACE_BYTES) >> 20,
-            allocated_mib = (residency.capacity_faces() * FACE_BYTES) >> 20,
+            resident_mib = (resident_faces * residency.face_bytes()) >> 20,
+            allocated_mib = (residency.capacity_faces() * residency.face_bytes()) >> 20,
             pending,
             waiting = residency.waiting_len(),
             complete_radius,

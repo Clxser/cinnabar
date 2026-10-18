@@ -4,7 +4,7 @@ import render::chunk_bindings::{LIQUID_DEPTH_WRITE_BIT, LIQUID_TWO_SIDED_BIT};
 import render::material::materials;
 import render::biome_tint::blended_biome_tint;
 import render::lighting::{face_shade, tint_to_gamma};
-import render::shaderpack::geometry::expand_common::{FaceCorners, FaceSource, expand_job, expand_job_count, expand_job_index, write_job_faces, EXPAND_WORKGROUP_SIZE};
+import render::shaderpack::geometry::expand_common::{FaceCorners, FaceSource, JobFace, expand_job, expand_job_count, expand_job_index, write_job_faces, EXPAND_WORKGROUP_SIZE};
 
 /// Job: x = liquid record, y = origin slot, z = first output face, w = reserved face flags.
 @compute @workgroup_size(EXPAND_WORKGROUP_SIZE)
@@ -14,6 +14,11 @@ fn expand_liquids(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_wor
         return;
     }
     let job = expand_job(index);
+    write_job_faces(job, liquid_face(job));
+}
+
+/// The liquid surface face of `job`'s record.
+fn liquid_face(job: vec4<u32>) -> JobFace {
     // Packed liquid corners wind clockwise; Iris faces wind counter-clockwise.
     var winding = array<u32, 4>(0u, 3u, 2u, 1u);
     var corners: FaceCorners;
@@ -43,5 +48,5 @@ fn expand_liquids(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_wor
     source.material = material;
     source.two_sided = (first.packed_material & LIQUID_TWO_SIDED_BIT) != 0u;
     source.fluid = true;
-    write_job_faces(job, corners, source);
+    return JobFace(corners, source, true);
 }

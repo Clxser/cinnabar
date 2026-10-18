@@ -5,6 +5,7 @@ use super::jobs::{JobKind, MaterialTables, SectionGeometry, plan_section};
 use super::pipelines::{
     EXPAND_PARAMS_BYTES, expansion_shader_source, output_layout, source_layout,
 };
+use super::pull::PulledResource;
 use super::vertex::{
     BLOCK_ID, COLOR, CONSTANT_STREAM_WORDS, IRIS_VERTEX_WORDS, LIGHTMAP, MID_BLOCK, MID_TEX,
     NORMAL, POSITION, TANGENT, UV0,
@@ -114,6 +115,10 @@ struct Expanded {
     words: Vec<u32>,
     faces: u32,
     categories: [std::ops::Range<u32>; 3],
+    /// What the kernel read, which pulled draws of the same section bind instead.
+    sources: Vec<(PulledResource, wgpu::Buffer)>,
+    /// The section's face refs, from face 0.
+    refs: Vec<[u32; 4]>,
 }
 
 fn words_of(samples: [u16; 4]) -> [u32; 2] {
@@ -162,9 +167,9 @@ fn layout(
 /// Expands the fixture section's cube quads with the production kernel and layouts.
 fn expand_fixture(name: &str) -> Option<Expanded> {
     let limits = wgpu::Limits {
-        max_storage_buffers_per_shader_stage: super::pipelines::storage_buffers_per_stage(
-            JobKind::Cube,
-        ),
+        // The kernel's storage buffers, and what the pulled vertex stage of the fixture
+        // program binds.
+        max_storage_buffers_per_shader_stage: 12,
         ..wgpu::Limits::default()
     };
     let gpu = Gpu::for_fixture_with_limits(name, wgpu::Features::empty(), limits)?;
@@ -286,10 +291,12 @@ fn expand_fixture(name: &str) -> Option<Expanded> {
         (3, storage(&material_words)),
         (7, storage(&[0; 64])),
         (8, storage(&[0; 64])),
+        (12, storage(&[0; 64])),
         (13, storage(&stream_words)),
     ];
     let mut source_entries: Vec<_> = source_buffers
         .iter()
+        .filter(|(binding, _)| super::pipelines::source_bindings(JobKind::Cube).contains(binding))
         .map(|(binding, buffer)| wgpu::BindGroupEntry {
             binding: *binding,
             resource: buffer.as_entire_binding(),
@@ -342,12 +349,33 @@ fn expand_fixture(name: &str) -> Option<Expanded> {
     }
     gpu.queue.submit([encoder.finish()]);
     let bytes = read_buffer(&gpu, &vertices, vertex_bytes);
+    let resource = |binding| match binding {
+        1 => PulledResource::Quads,
+        2 => PulledResource::Origins,
+        3 => PulledResource::Materials,
+        7 => PulledResource::BiomeRecords,
+        8 => PulledResource::BiomeTints,
+        12 => PulledResource::ModelTemplates,
+        _ => PulledResource::GeometryStreams,
+    };
+    let mut sources: Vec<_> = source_buffers
+        .into_iter()
+        .map(|(binding, buffer)| (resource(binding), buffer))
+        .collect();
+    sources.extend([
+        (PulledResource::BiomeQuery, world_uniform),
+        (PulledResource::Attributes, storage(&attributes)),
+        (PulledResource::AtlasRemap, remap),
+        (PulledResource::Params, params),
+    ]);
     Some(Expanded {
         gpu,
         vertices,
         words: bytemuck::cast_slice(&bytes).to_vec(),
         faces: plan.faces,
-        categories: plan.categories,
+        categories: plan.categories.clone(),
+        refs: super::pull::section_face_refs(&plan, 0),
+        sources,
     })
 }
 
@@ -596,11 +624,10 @@ fn uniform_words(block: &shaderpack::UniformBlock, model_view: Mat4, projection:
     bytes
 }
 
-#[test]
-fn translated_gbuffers_program_draws_expanded_terrain() {
-    let Some(expanded) = expand_fixture("shader-pack terrain draw") else {
-        return;
-    };
+/// Draws the fixture section's solid faces with the translated `gbuffers_terrain` program:
+/// from the expanded vertices, or with `pulled` through its wrapped vertex stage reading the
+/// arenas. Returns both colour targets' pixels.
+fn draw_fixture(expanded: &Expanded, pulled: bool) -> Vec<Vec<u8>> {
     let program = translate_fixture();
     let reflection = program.reflection.as_ref().expect("reflection");
     let gpu = &expanded.gpu;
@@ -767,19 +794,73 @@ fn translated_gbuffers_program_draws_expanded_terrain() {
         })
         .collect();
     assert_eq!(targets.len(), 2, "DRAWBUFFERS:01");
+    let vertex_stage = program
+        .stages
+        .iter()
+        .find(|translated| translated.stage == shaderpack::StageKind::Vertex)
+        .and_then(|translated| translated.result.as_ref().ok())
+        .expect("vertex stage compiled");
+    let wrapped = super::pull::pulled_vertex_stage(
+        &vertex_stage.module,
+        &entry(shaderpack::StageKind::Vertex),
+        &reflection.vertex_inputs,
+        0,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let group3_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &wrapped.layout_entries().collect::<Vec<_>>(),
+    });
+    let group3 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &group3_layout,
+        entries: &wrapped
+            .resources
+            .iter()
+            .map(|(binding, resource)| wgpu::BindGroupEntry {
+                binding: *binding,
+                resource: expanded
+                    .sources
+                    .iter()
+                    .find(|(r, _)| r == resource)
+                    .map(|(_, buffer)| buffer.as_entire_binding())
+                    .expect("the fixture supplies every arena resource"),
+            })
+            .collect::<Vec<_>>(),
+    });
+    let pulled_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(wrapped.module)),
+    });
+    let pulled_buffers = [Some(super::pull::face_ref_buffer_layout())];
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: None,
-        bind_group_layouts: &[Some(&group0_layout), Some(&group1_layout)],
+        bind_group_layouts: &[
+            Some(&group0_layout),
+            Some(&group1_layout),
+            None,
+            pulled.then_some(&group3_layout),
+        ],
         immediate_size: 0,
     });
+    let vertex_entry = entry(shaderpack::StageKind::Vertex);
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: None,
         layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &vertex_module,
-            entry_point: Some(&entry(shaderpack::StageKind::Vertex)),
-            compilation_options: Default::default(),
-            buffers: &buffers,
+        vertex: if pulled {
+            wgpu::VertexState {
+                module: &pulled_module,
+                entry_point: Some(super::pull::PULLED_ENTRY),
+                compilation_options: Default::default(),
+                buffers: &pulled_buffers,
+            }
+        } else {
+            wgpu::VertexState {
+                module: &vertex_module,
+                entry_point: Some(&vertex_entry),
+                compilation_options: Default::default(),
+                buffers: &buffers,
+            }
         },
         // The translator flips clip-space Y, mirroring the counter-clockwise front faces.
         primitive: wgpu::PrimitiveState {
@@ -836,6 +917,11 @@ fn translated_gbuffers_program_draws_expanded_terrain() {
         contents: bytemuck::cast_slice(&super::draw::face_indices(expanded.faces)),
         usage: wgpu::BufferUsages::INDEX,
     });
+    let refs = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::cast_slice(&expanded.refs),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
     let constants = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
         contents: bytemuck::cast_slice(&CONSTANT_STREAM_WORDS),
@@ -875,21 +961,35 @@ fn translated_gbuffers_program_draws_expanded_terrain() {
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &group0, &[]);
         pass.set_bind_group(1, &group1, &[]);
-        pass.set_vertex_buffer(super::GEOMETRY_VERTEX_BUFFER, expanded.vertices.slice(..));
-        pass.set_vertex_buffer(super::CONSTANT_VERTEX_BUFFER, constants.slice(..));
         pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         let solid = &expanded.categories[0];
-        pass.draw_indexed(
-            0..(solid.end - solid.start) * 6,
-            (solid.start * 4) as i32,
-            0..1,
-        );
+        if pulled {
+            pass.set_bind_group(3, &group3, &[]);
+            pass.set_vertex_buffer(0, refs.slice(..));
+            pass.draw_indexed(0..6, 0, solid.clone());
+        } else {
+            pass.set_vertex_buffer(super::GEOMETRY_VERTEX_BUFFER, expanded.vertices.slice(..));
+            pass.set_vertex_buffer(super::CONSTANT_VERTEX_BUFFER, constants.slice(..));
+            pass.draw_indexed(
+                0..(solid.end - solid.start) * 6,
+                (solid.start * 4) as i32,
+                0..1,
+            );
+        }
     }
     gpu.queue.submit([encoder.finish()]);
-    let pixels: Vec<_> = colortex
+    colortex
         .iter()
         .map(|texture| read_target(gpu, texture))
-        .collect();
+        .collect()
+}
+
+#[test]
+fn translated_gbuffers_program_draws_expanded_terrain() {
+    let Some(expanded) = expand_fixture("shader-pack terrain draw") else {
+        return;
+    };
+    let pixels = draw_fixture(&expanded, false);
     let pixel = |target: usize, x: u32, y: u32| {
         let index = ((y * TARGET_SIDE + x) * 4) as usize;
         [
@@ -924,6 +1024,25 @@ fn translated_gbuffers_program_draws_expanded_terrain() {
         "mc_Entity.x reaches the program"
     );
     assert_eq!(pixel(0, 4, 4), [0; 4], "nothing draws outside the faces");
+}
+
+#[test]
+fn pulled_terrain_draws_the_pixels_expanded_terrain_draws() {
+    let Some(expanded) = expand_fixture("shader-pack pulled terrain draw") else {
+        return;
+    };
+    let expanded_pixels = draw_fixture(&expanded, false);
+    let pulled_pixels = draw_fixture(&expanded, true);
+    for (target, (pulled, reference)) in pulled_pixels.iter().zip(&expanded_pixels).enumerate() {
+        let drawn = reference.chunks(4).filter(|texel| texel[3] != 0).count();
+        assert!(drawn > 0, "colortex{target} draws the section");
+        let differing = pulled
+            .iter()
+            .zip(reference)
+            .filter(|(a, b)| a.abs_diff(**b) > 1)
+            .count();
+        assert_eq!(differing, 0, "colortex{target}: pulled and expanded differ");
+    }
 }
 
 fn read_target(gpu: &Gpu, texture: &wgpu::Texture) -> Vec<u8> {

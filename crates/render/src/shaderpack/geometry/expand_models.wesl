@@ -3,7 +3,7 @@ import render::model::{model_quad, model_corner_position, model_corner_uv, model
 import render::material::materials;
 import render::biome_tint::blended_biome_tint_gamma;
 import render::lighting::{light_ao_factor, material_ambient_occlusion, material_face_shade};
-import render::shaderpack::geometry::expand_common::{FaceCorners, FaceSource, expand_job, expand_job_count, expand_job_index, write_job_faces, write_invalid_job, EXPAND_WORKGROUP_SIZE};
+import render::shaderpack::geometry::expand_common::{FaceCorners, FaceSource, JobFace, expand_job, expand_job_count, expand_job_index, write_job_faces, EXPAND_WORKGROUP_SIZE};
 
 /// Job: x = model draw-ref record, y = origin slot, z = first output face, w = reserved face flags.
 @compute @workgroup_size(EXPAND_WORKGROUP_SIZE)
@@ -13,10 +13,16 @@ fn expand_models(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_work
         return;
     }
     let job = expand_job(index);
+    write_job_faces(job, model_face(job));
+}
+
+/// The face of the template quad `job`'s draw ref places; invalid when the ref's addresses
+/// fail validation.
+fn model_face(job: vec4<u32>) -> JobFace {
     let quad = model_quad(job.x, job.y);
     if (!quad.valid) {
-        write_invalid_job(job);
-        return;
+        var invalid: JobFace;
+        return invalid;
     }
     let material = materials[quad.selected_material_id];
     var corners: FaceCorners;
@@ -59,5 +65,5 @@ fn expand_models(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_work
     source.material = material;
     // The chunk renderer's model fragment gate keeps back faces only of two-sided template quads.
     source.two_sided = (quad.quad_flags & MODEL_QUAD_TWO_SIDED_FLAG) != 0u;
-    write_job_faces(job, corners, source);
+    return JobFace(corners, source, true);
 }

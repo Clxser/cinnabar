@@ -198,6 +198,7 @@ fn configure_geometry(
         separate_ao: pack.as_ref().is_some_and(|p| p.separate_ao),
         old_lighting: pack.as_ref().is_some_and(|p| p.old_lighting),
         budget_bytes: device_geometry_budget(memory.map_or(0, |memory| memory.0)),
+        pulled: pack.as_ref().is_some_and(|p| p.pulled_terrain),
     };
     if *settings != wanted {
         *settings = wanted;
@@ -393,6 +394,10 @@ impl TerrainDraws for ViewTerrain<'_> {
         shadow: bool,
     ) -> u32 {
         self.geometry.draw(pass, category, self.view, shadow)
+    }
+
+    fn pulled_arena(&self) -> Option<&super::geometry::PulledArena> {
+        self.geometry.pulled_arena()
     }
 }
 

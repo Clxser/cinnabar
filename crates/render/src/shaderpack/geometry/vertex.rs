@@ -259,6 +259,44 @@ fn constant_format(attribute: &VertexAttribute, class: Class, size: u8) -> (u32,
     (word, format)
 }
 
+/// Where one program input is fetched from: `buffer` is [`GEOMETRY_VERTEX_BUFFER`] (the
+/// expanded stream) or [`CONSTANT_VERTEX_BUFFER`], read at `word` in `format`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct InputFetch {
+    pub(crate) location: u32,
+    pub(crate) buffer: u32,
+    pub(crate) word: u32,
+    pub(crate) format: VertexFormat,
+}
+
+/// The fetch of every input in `inputs`, as [`vertex_buffer_layouts`] binds them.
+pub(crate) fn input_fetches(inputs: &[VertexInput]) -> Result<Vec<InputFetch>, VertexLayoutError> {
+    inputs
+        .iter()
+        .map(|input| {
+            let unsupported = || VertexLayoutError::UnsupportedType {
+                name: input.name.clone(),
+                ty: input.ty,
+            };
+            let (class, size) = class_and_size(input.ty).ok_or_else(unsupported)?;
+            let (buffer, (word, format)) =
+                match stored_format(&input.attribute, class).ok_or_else(unsupported)? {
+                    Some(stored) => (GEOMETRY_VERTEX_BUFFER, stored),
+                    None => (
+                        CONSTANT_VERTEX_BUFFER,
+                        constant_format(&input.attribute, class, size),
+                    ),
+                };
+            Ok(InputFetch {
+                location: input.location,
+                buffer,
+                word,
+                format,
+            })
+        })
+        .collect()
+}
+
 /// Vertex buffer layouts binding a translated program's `inputs` (from
 /// `ProgramReflection::vertex_inputs`) to terrain geometry: slot [`GEOMETRY_VERTEX_BUFFER`]
 /// is the expanded stream and slot [`CONSTANT_VERTEX_BUFFER`] the zero-stride constant stream.
@@ -268,26 +306,16 @@ pub fn vertex_buffer_layouts(
 ) -> Result<[VertexBufferLayout; 2], VertexLayoutError> {
     let mut geometry = Vec::new();
     let mut constant = Vec::new();
-    for input in inputs {
-        let unsupported = || VertexLayoutError::UnsupportedType {
-            name: input.name.clone(),
-            ty: input.ty,
+    for fetch in input_fetches(inputs)? {
+        let attribute = GpuVertexAttribute {
+            format: fetch.format,
+            offset: u64::from(fetch.word) * 4,
+            shader_location: fetch.location,
         };
-        let (class, size) = class_and_size(input.ty).ok_or_else(unsupported)?;
-        match stored_format(&input.attribute, class).ok_or_else(unsupported)? {
-            Some((word, format)) => geometry.push(GpuVertexAttribute {
-                format,
-                offset: u64::from(word) * 4,
-                shader_location: input.location,
-            }),
-            None => {
-                let (word, format) = constant_format(&input.attribute, class, size);
-                constant.push(GpuVertexAttribute {
-                    format,
-                    offset: u64::from(word) * 4,
-                    shader_location: input.location,
-                });
-            }
+        if fetch.buffer == GEOMETRY_VERTEX_BUFFER {
+            geometry.push(attribute);
+        } else {
+            constant.push(attribute);
         }
     }
     Ok([

@@ -5,8 +5,13 @@
 
 use super::alpha_test::{ONE_TENTH_ALPHA, inject_alpha_test};
 use super::effects::{Effect, EffectSettings};
+use super::geometry::pull::{PULLED_ENTRY, face_ref_buffer_layout};
 use super::geometry::{GeometryCategory, vertex_buffer_layouts};
+use super::loader::{GpuContext, GpuProgram};
 use super::pipelines::{blend_state, color_target};
+use super::plan::MAX_COLOR_BUFFERS;
+use super::pulled_draws::{PulledBindings, PulledProgram};
+use super::resources::ShadowSlots;
 use shaderpack::{
     AlphaTest, AlphaTestRule, BlendFactor, BlendMode, BufferId, ProgramReflection,
     ShaderProperties, StageKind, geometry_fallback,
@@ -396,6 +401,21 @@ pub(crate) struct GeometryDraw {
     /// Per fragment output location: the `colortex` (shadow pass: `shadowcolor`) index it
     /// writes, when the pipeline has a target there.
     pub outputs: Vec<Option<u32>>,
+    /// The arena bindings a pulled terrain draw adds to its program's group 3.
+    pub pulled: Option<std::sync::Arc<PulledBindings>>,
+}
+
+/// A geometry program's pipeline pieces, from which its draws' pipelines are built.
+pub(crate) struct GeometryStage {
+    /// Index of the program in `PackGpu::programs`.
+    pub program: usize,
+    pub layout: wgpu::PipelineLayout,
+    pub vertex: wgpu::ShaderModule,
+    /// The translated vertex stage, which pulled terrain draws wrap.
+    pub vertex_ir: naga::Module,
+    pub fragment: naga::Module,
+    /// The program's bind group layout entries per group.
+    pub entries: [Vec<wgpu::BindGroupLayoutEntry>; 4],
 }
 
 /// What building one draw's pipeline needs from its program.
@@ -416,6 +436,8 @@ pub(crate) struct DrawPipelineInputs<'a> {
     /// Format of the target an output's draw buffer names (`colortexN`, or `shadowcolorN`
     /// for shadow draws); `None` drops the output.
     pub target_format: &'a dyn Fn(u32) -> Option<TextureFormat>,
+    /// The program's pulled vertex stage, for terrain draws that read the arenas.
+    pub pulled: Option<&'a PulledProgram>,
 }
 
 /// The draw buffer a `blend.<program>.<buffer>` rule names, in the draw's buffer space.
@@ -435,16 +457,19 @@ pub(crate) fn draw_pipeline(
 ) -> Result<(wgpu::RenderPipeline, Vec<Option<u32>>), String> {
     let reflection = inputs.reflection;
     let layouts = vertex_buffer_layouts(&reflection.vertex_inputs).map_err(|e| e.to_string())?;
-    let buffers: Vec<_> = layouts
-        .iter()
-        .map(|layout| {
-            Some(wgpu::VertexBufferLayout {
-                array_stride: layout.array_stride,
-                step_mode: layout.step_mode,
-                attributes: &layout.attributes,
+    let buffers: Vec<_> = match inputs.pulled {
+        Some(_) => vec![Some(face_ref_buffer_layout())],
+        None => layouts
+            .iter()
+            .map(|layout| {
+                Some(wgpu::VertexBufferLayout {
+                    array_stride: layout.array_stride,
+                    step_mode: layout.step_mode,
+                    attributes: &layout.attributes,
+                })
             })
-        })
-        .collect();
+            .collect(),
+    };
     let rules = &inputs.properties.blends;
     let program_blend = rules
         .iter()
@@ -510,14 +535,18 @@ pub(crate) fn draw_pipeline(
             .map(|(_, e)| e.as_str())
     };
     let label = format!("shader pack {} {kind:?}", inputs.name);
+    let (layout, vertex, vertex_entry) = match inputs.pulled {
+        Some(pulled) => (&pulled.layout, &pulled.module, Some(PULLED_ENTRY)),
+        None => (inputs.layout, inputs.vertex, entry(StageKind::Vertex)),
+    };
     let pipeline = inputs
         .device
         .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(&label),
-            layout: Some(inputs.layout),
+            layout: Some(layout),
             vertex: wgpu::VertexState {
-                module: inputs.vertex,
-                entry_point: entry(StageKind::Vertex),
+                module: vertex,
+                entry_point: vertex_entry,
                 compilation_options: Default::default(),
                 buffers: &buffers,
             },
@@ -545,6 +574,89 @@ pub(crate) fn draw_pipeline(
             cache: inputs.cache,
         });
     Ok((pipeline, outputs))
+}
+
+/// Builds every resolved draw's pipeline. Draws whose program cannot bind terrain vertices,
+/// or whose pipeline the device rejects, are dropped (logged); without a solid terrain draw
+/// none remain, so the Vanilla scene copy stays in place.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the pack-wide plan pieces a draw pipeline draws on"
+)]
+pub(crate) fn geometry_draws(
+    gpu: &GpuContext,
+    cache: Option<&wgpu::PipelineCache>,
+    selected: &[(DrawKind, usize)],
+    (stages, pulled): (&[GeometryStage], &[Option<PulledProgram>]),
+    programs: &[GpuProgram],
+    properties: &shaderpack::ShaderProperties,
+    effects: &EffectSettings,
+    buffer_formats: &[Option<TextureFormat>; MAX_COLOR_BUFFERS as usize],
+    shadow: &ShadowSlots,
+) -> Vec<GeometryDraw> {
+    let mut draws = vec![];
+    for (kind, selected) in selected {
+        let stage = &stages[*selected];
+        let program = &programs[stage.program];
+        let pulled = pulled[*selected]
+            .as_ref()
+            .filter(|_| kind.category().is_some());
+        let target_format = |buffer: u32| -> Option<TextureFormat> {
+            if kind.shadow() {
+                shadow
+                    .color
+                    .iter()
+                    .find(|(i, ..)| *i == buffer)
+                    .map(|(.., format)| *format)
+            } else {
+                buffer_formats.get(buffer as usize).copied().flatten()
+            }
+        };
+        let inputs = DrawPipelineInputs {
+            device: &gpu.device,
+            cache,
+            layout: &stage.layout,
+            name: &program.name,
+            reflection: &program.reflection,
+            vertex: &stage.vertex,
+            fragment: &stage.fragment,
+            properties,
+            effects,
+            target_format: &target_format,
+            pulled,
+        };
+        // Each draw gets its own error scope: a pipeline the device rejects drops only that
+        // draw, as Iris falls back per program, instead of the pack-wide scope failing.
+        let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let built = draw_pipeline(*kind, &inputs);
+        let rejected = bevy::tasks::block_on(scope.pop());
+        match (built, rejected) {
+            (Ok((pipeline, outputs)), None) => draws.push(GeometryDraw {
+                kind: *kind,
+                program: stage.program,
+                pipeline,
+                outputs,
+                pulled: pulled.map(|p| std::sync::Arc::clone(&p.bindings)),
+            }),
+            (Err(error), _) => bevy::log::warn!(
+                target: "cinnabar::shaderpack",
+                program = %program.name, draw = ?kind,
+                "draw skipped: {error}"
+            ),
+            (Ok(_), Some(error)) => bevy::log::warn!(
+                target: "cinnabar::shaderpack",
+                program = %program.name, draw = ?kind,
+                "draw skipped: the device rejected its pipeline: {error}"
+            ),
+        }
+    }
+    if !draws
+        .iter()
+        .any(|d| d.kind == super::draws::DrawKind::TerrainSolid)
+    {
+        draws.clear();
+    }
+    draws
 }
 
 #[cfg(test)]

@@ -87,6 +87,8 @@ pub(crate) struct Residency {
     page_faces: u32,
     /// Faces all pages together may hold.
     budget_faces: u64,
+    /// Bytes one face takes in a page.
+    face_bytes: u64,
     pub(crate) origin: Option<IVec3>,
     pub(crate) epoch: u64,
     /// Stamp the next committed placement takes.
@@ -95,10 +97,14 @@ pub(crate) struct Residency {
 
 impl Residency {
     /// `binding_bytes` is the largest buffer a kernel may bind; `budget_bytes` the memory budget.
-    /// Pages hold [`PAGE_BYTES`] (less when the binding limit is smaller).
+    /// Pages hold [`PAGE_BYTES`] (less when the binding limit is smaller) of expanded faces.
     pub(crate) fn new(binding_bytes: u64, budget_bytes: u64) -> Self {
-        let page_faces =
-            (binding_bytes.min(PAGE_BYTES) / FACE_BYTES).min(u64::from(u32::MAX / 4)) as u32;
+        Self::with_faces(binding_bytes.min(PAGE_BYTES), budget_bytes, FACE_BYTES)
+    }
+
+    /// Pages of `page_bytes` holding faces of `face_bytes` each.
+    pub(crate) fn with_faces(page_bytes: u64, budget_bytes: u64, face_bytes: u64) -> Self {
+        let page_faces = (page_bytes / face_bytes).min(u64::from(u32::MAX / 4)) as u32;
         Self {
             pages: Vec::new(),
             sections: HashMap::new(),
@@ -106,16 +112,22 @@ impl Residency {
             queued: HashSet::new(),
             waiting: HashSet::new(),
             page_faces,
-            budget_faces: budget_bytes / FACE_BYTES,
+            budget_faces: budget_bytes / face_bytes,
+            face_bytes,
             origin: None,
             epoch: 0,
             next_stamp: 0,
         }
     }
 
+    /// Bytes one face takes in a page.
+    pub(crate) fn face_bytes(&self) -> u64 {
+        self.face_bytes
+    }
+
     /// Changes the memory budget; pages already open stay.
     pub(crate) fn set_budget(&mut self, budget_bytes: u64) {
-        self.budget_faces = budget_bytes / FACE_BYTES;
+        self.budget_faces = budget_bytes / self.face_bytes;
     }
 
     /// Undoes an uncommitted `placement` of `entity` whose new page could not be allocated:

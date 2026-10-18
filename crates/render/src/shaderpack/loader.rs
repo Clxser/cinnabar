@@ -6,7 +6,7 @@
 //! dominates the load, so the cache keeps the backend pipeline cache (Vulkan) in a private
 //! directory, keyed by the pack's content hash, the translation settings and the adapter.
 
-use super::draws::{DrawPipelineInputs, GeometryDraw, draw_pipeline, select_draws};
+use super::draws::{GeometryDraw, GeometryStage, geometry_draws, select_draws};
 use super::effects::EffectSettings;
 use super::effects::resources::VanillaTextures;
 use super::host_pipelines::{HostPipelines, host_pipelines};
@@ -20,8 +20,7 @@ use super::plan::{
 };
 use super::resources::bindings::resolve_bindings;
 use super::resources::{
-    ATLAS_FORMAT, ConstantBuilder, ConstantTextures, ImageSource, ShadowSlots, TextureSource,
-    image_formats,
+    ATLAS_FORMAT, ConstantBuilder, ConstantTextures, ImageSource, TextureSource, image_formats,
 };
 use super::shadow_maps::{ShadowMaps, shadow_maps};
 use super::uniforms::PackSettings;
@@ -147,6 +146,9 @@ pub(crate) struct PackGpu {
     /// Geometry draws in recording order; empty when the pack has no terrain program, in
     /// which case the Vanilla scene stands in for the gbuffers.
     pub draws: Vec<GeometryDraw>,
+    /// Terrain draws read the arenas directly (`geometry::pull`), so the geometry adapter
+    /// keeps face refs instead of expanded vertices.
+    pub pulled_terrain: bool,
     /// `shadowcomp*` compute passes after the shadow pass.
     pub shadowcomp: Vec<PassStep>,
     /// Present when some shadow draw resolved.
@@ -637,6 +639,8 @@ pub(crate) fn build(
                     constants.shadow_color(buffer);
                 }
             }
+            let vertex_ir = stages.iter().find(|(s, _)| *s == StageKind::Vertex);
+            let vertex_ir = vertex_ir.map(|(_, m)| m.clone());
             let vertex = modules
                 .into_iter()
                 .find(|(s, _)| *s == StageKind::Vertex)
@@ -645,13 +649,21 @@ pub(crate) fn build(
                 .into_iter()
                 .find(|(s, _)| *s == StageKind::Fragment)
                 .map(|(_, m)| m);
-            let (Some(vertex), Some(fragment)) = (vertex, fragment) else {
+            let (Some(vertex), Some(vertex_ir), Some(fragment)) = (vertex, vertex_ir, fragment)
+            else {
                 return Err(format!(
                     "{} needs a vertex and a fragment stage",
                     program.program.name
                 ));
             };
-            geometry_stages.push((programs.len(), pipeline_layout, vertex, fragment));
+            geometry_stages.push(GeometryStage {
+                program: programs.len(),
+                layout: pipeline_layout,
+                vertex,
+                vertex_ir,
+                fragment,
+                entries,
+            });
             programs.push(GpuProgram {
                 name: program.program.name.clone(),
                 group: program.program.group,
@@ -754,11 +766,18 @@ pub(crate) fn build(
         });
     }
     let shadow_slots = constants.shadow_slots();
+    let pulled = super::pulled_draws::pulled_programs(
+        &gpu.device,
+        name,
+        &selected_draws,
+        &geometry_stages,
+        &programs,
+    );
     let draws = geometry_draws(
         gpu,
         pipeline_cache.as_ref().map(|c| &c.cache),
         &selected_draws,
-        &geometry_stages,
+        (&geometry_stages, &pulled),
         &programs,
         &translation.properties,
         &effects,
@@ -863,6 +882,7 @@ pub(crate) fn build(
         zero_uniforms,
         quad,
         host,
+        pulled_terrain: draws.iter().any(|d| d.pulled.is_some()),
         draws,
         shadowcomp,
         shadow,
@@ -877,89 +897,6 @@ pub(crate) fn build(
         lightmap,
         effects,
     })
-}
-
-/// Builds every resolved draw's pipeline. Draws whose program cannot bind terrain vertices,
-/// or whose pipeline the device rejects, are dropped (logged); without a solid terrain draw
-/// none remain, so the Vanilla scene copy stays in place.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the pack-wide plan pieces a draw pipeline draws on"
-)]
-fn geometry_draws(
-    gpu: &GpuContext,
-    cache: Option<&wgpu::PipelineCache>,
-    selected: &[(super::draws::DrawKind, usize)],
-    stages: &[(
-        usize,
-        wgpu::PipelineLayout,
-        wgpu::ShaderModule,
-        naga::Module,
-    )],
-    programs: &[GpuProgram],
-    properties: &shaderpack::ShaderProperties,
-    effects: &EffectSettings,
-    buffer_formats: &[Option<TextureFormat>; MAX_COLOR_BUFFERS as usize],
-    shadow: &ShadowSlots,
-) -> Vec<GeometryDraw> {
-    let mut draws = vec![];
-    for (kind, selected) in selected {
-        let (index, layout, vertex, fragment) = &stages[*selected];
-        let program = &programs[*index];
-        let target_format = |buffer: u32| -> Option<TextureFormat> {
-            if kind.shadow() {
-                shadow
-                    .color
-                    .iter()
-                    .find(|(i, ..)| *i == buffer)
-                    .map(|(.., format)| *format)
-            } else {
-                buffer_formats.get(buffer as usize).copied().flatten()
-            }
-        };
-        let inputs = DrawPipelineInputs {
-            device: &gpu.device,
-            cache,
-            layout,
-            name: &program.name,
-            reflection: &program.reflection,
-            vertex,
-            fragment,
-            properties,
-            effects,
-            target_format: &target_format,
-        };
-        // Each draw gets its own error scope: a pipeline the device rejects drops only that
-        // draw, as Iris falls back per program, instead of the pack-wide scope failing.
-        let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let built = draw_pipeline(*kind, &inputs);
-        let rejected = bevy::tasks::block_on(scope.pop());
-        match (built, rejected) {
-            (Ok((pipeline, outputs)), None) => draws.push(GeometryDraw {
-                kind: *kind,
-                program: *index,
-                pipeline,
-                outputs,
-            }),
-            (Err(error), _) => bevy::log::warn!(
-                target: "cinnabar::shaderpack",
-                program = %program.name, draw = ?kind,
-                "draw skipped: {error}"
-            ),
-            (Ok(_), Some(error)) => bevy::log::warn!(
-                target: "cinnabar::shaderpack",
-                program = %program.name, draw = ?kind,
-                "draw skipped: the device rejected its pipeline: {error}"
-            ),
-        }
-    }
-    if !draws
-        .iter()
-        .any(|d| d.kind == super::draws::DrawKind::TerrainSolid)
-    {
-        draws.clear();
-    }
-    draws
 }
 
 /// Colour targets per fragment output location. `final` writes the screen at location 0.
