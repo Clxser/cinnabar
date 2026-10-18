@@ -34,6 +34,9 @@ first. `capture_key` lets the guest handle Escape and the panel's toggle key whi
 open. The toggle key reopens the retained menu while closed. Other screens and
 unfocused windows receive no guest menu keys.
 
+Text controls are rejected before the panel is published. Version one delivers
+numeric control events; committed text values need a separate input contract.
+
 Output is bounded to 512 KiB. JSON `null` retains the current menu. A changed
 output contains `open`, optional `panel` using `ui::mod_panel::Panel`, and optional `keys`:
 

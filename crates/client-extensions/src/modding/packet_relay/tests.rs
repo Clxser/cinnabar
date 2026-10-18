@@ -31,7 +31,7 @@ fn identity() -> protocol::session_wire::SessionIdentity {
 #[test]
 fn a_selected_packet_mod_relays_each_session() {
     let directory = tempfile::tempdir().unwrap();
-    let loader = PacketModLoader::new(Some(directory.path().join("cache")));
+    let loader = PacketModLoader::default();
     assert!(loader.session_relay().is_none(), "nothing is selected");
     loader.select(Some(selection(guest(directory.path()))));
     for _ in 0..2 {
@@ -59,7 +59,7 @@ fn a_selected_packet_mod_relays_each_session() {
 #[test]
 fn a_failing_packet_mod_passes_everything_through() {
     let directory = tempfile::tempdir().unwrap();
-    let loader = PacketModLoader::new(None);
+    let loader = PacketModLoader::default();
     loader.select(Some(selection(directory.path().join("missing.wasm"))));
     let relay = loader.session_relay().expect("the selection still relays");
     assert!(relay.start(&identity(), "{}", &[]).is_empty());
@@ -82,7 +82,7 @@ fn clearing_or_replacing_the_selection_revokes_existing_sessions() {
     let directory = tempfile::tempdir().unwrap();
     let path = guest(directory.path());
     let selected = selection(path.clone());
-    let program = Arc::new(CompiledPacketMod::load(&path, &selected.grants, None).unwrap());
+    let program = Arc::new(CompiledPacketMod::load(&path, &selected.grants).unwrap());
     let loader = PacketModLoader::default();
     loader.select_prepared(selected.clone(), Arc::clone(&program));
     let old = loader.session_relay().unwrap();
@@ -108,7 +108,7 @@ fn a_session_created_before_reselection_never_starts_the_replacement() {
     let directory = tempfile::tempdir().unwrap();
     let path = guest(directory.path());
     let selected = selection(path.clone());
-    let program = Arc::new(CompiledPacketMod::load(&path, &selected.grants, None).unwrap());
+    let program = Arc::new(CompiledPacketMod::load(&path, &selected.grants).unwrap());
     let loader = PacketModLoader::default();
     loader.select_prepared(selected.clone(), Arc::clone(&program));
     let stale = loader.session_relay().unwrap();
@@ -133,8 +133,7 @@ fn reconnecting_the_same_mod_replaces_the_native_menu_identity() {
     std::fs::write(&path, source).unwrap();
     let mut selected = selection(path);
     selected.grants.controls = true;
-    let program =
-        Arc::new(CompiledPacketMod::load(&selected.path, &selected.grants, None).unwrap());
+    let program = Arc::new(CompiledPacketMod::load(&selected.path, &selected.grants).unwrap());
     let loader = PacketModLoader::default();
     loader.select_prepared(selected, program);
     let first = loader.session_relay().unwrap();

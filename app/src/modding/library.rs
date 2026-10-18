@@ -392,7 +392,7 @@ fn import(mods: &Path, source: &Path) -> Result<String, String> {
     }
     let bytes =
         mod_host::read_source(source).map_err(|error| format!("Could not read {name}: {error}"))?;
-    mod_host::validate_source(&bytes, Some(&super::packets::cache_directory(mods)))
+    mod_host::validate_source(&bytes)
         .map_err(|error| format!("{name} is not a valid mod: {error:#}"))?;
     publish_component(mods, name, &bytes)?;
     Ok(name.to_owned())

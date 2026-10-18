@@ -77,12 +77,14 @@ trait Guest: Send {
 
 /// The two accepted binary forms: a `packet-mod` component, or a WASI preview 1 reactor core
 /// module exporting the world's canonical ABI.
+#[derive(Clone)]
 enum Program {
     Component(component::Program),
     Core(core::Program),
 }
 
 /// A compiled and linked packet mod; each session instantiates it afresh.
+#[derive(Clone)]
 pub struct CompiledPacketMod {
     engine: Engine,
     ticker: Arc<execution::EpochTicker>,
@@ -91,32 +93,39 @@ pub struct CompiledPacketMod {
 
 impl CompiledPacketMod {
     /// Reads a bounded local file without following a linked final entry, then compiles it,
-    /// reusing compiled code from `cache` when given.
-    pub fn load(path: &Path, grants: &ModGrants, cache: Option<&Path>) -> Result<Self> {
+    /// reusing an admitted program retained in this process when available.
+    pub fn load(path: &Path, grants: &ModGrants) -> Result<Self> {
         let bytes = local_files::read(path, MAX_PACKET_MOD_BYTES)
             .with_context(|| format!("read packet mod {}", path.display()))?;
-        Self::compile(&bytes, grants, cache)
+        Self::compile(&bytes, grants)
     }
 
     /// Compiles and links a component or core module under `grants`; WASI is linked only with
-    /// the `wasi` grant. `cache` names a directory of this user's compiled packet mods.
-    pub fn compile(bytes: &[u8], grants: &ModGrants, cache: Option<&Path>) -> Result<Self> {
+    /// the `wasi` grant. Compiled programs remain in host memory and never load native files.
+    pub fn compile(bytes: &[u8], grants: &ModGrants) -> Result<Self> {
         ensure!(grants.packets, "packet mods need the packets grant");
         ensure!(
             bytes.len() <= MAX_PACKET_MOD_BYTES,
             "packet mod exceeds {MAX_PACKET_MOD_BYTES} bytes"
         );
         grants.validate()?;
-        let (engine, ticker) = execution::trusted_engine()?;
-        let program = if wasmparser::Parser::is_component(bytes) {
-            Program::Component(component::Program::new(&engine, bytes, grants, cache)?)
-        } else {
-            Program::Core(core::Program::new(&engine, bytes, grants, cache)?)
-        };
-        Ok(Self {
-            engine,
-            ticker: Arc::new(ticker),
-            program,
+        cache::load(bytes, grants, || {
+            let (engine, ticker) = execution::trusted_engine()?;
+            let (program, image_bytes) = if wasmparser::Parser::is_component(bytes) {
+                let (program, size) = component::Program::new(&engine, bytes, grants)?;
+                (Program::Component(program), size)
+            } else {
+                let (program, size) = core::Program::new(&engine, bytes, grants)?;
+                (Program::Core(program), size)
+            };
+            Ok((
+                Self {
+                    engine,
+                    ticker: Arc::new(ticker),
+                    program,
+                },
+                image_bytes,
+            ))
         })
     }
 

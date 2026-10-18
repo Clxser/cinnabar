@@ -2,11 +2,11 @@
 
 use super::{
     Direction, Guest, Outbound, PACKET_MOD_LOAD_DEADLINE, PACKET_MOD_TRANSFER_BYTES,
-    SessionIdentity, SessionPack, cache, limits::PacketLimits, wasi,
+    SessionIdentity, SessionPack, limits::PacketLimits, wasi,
 };
 use crate::{ModGrants, execution};
 use anyhow::{Context, Result};
-use std::{path::Path, time::Duration};
+use std::time::Duration;
 use wasmtime::{
     Engine, Store,
     component::{Component, Linker, ResourceTable},
@@ -44,29 +44,26 @@ impl WasiView for State {
 }
 
 /// A compiled component linked against WASI preview 2 only with the `wasi` grant.
+#[derive(Clone)]
 pub(super) struct Program {
     pre: bindings::PacketModPre<State>,
 }
 
 impl Program {
-    /// Compiles or reuses the component and checks its imports and exports.
-    pub(super) fn new(
-        engine: &Engine,
-        bytes: &[u8],
-        grants: &ModGrants,
-        cache: Option<&Path>,
-    ) -> Result<Self> {
-        cache::load(engine, bytes, cache, |component: &Component| {
-            let mut linker = Linker::new(engine);
-            if grants.wasi {
-                wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
-            }
-            let pre = linker
-                .instantiate_pre(component)
-                .context("link packet mod")?;
-            let pre = bindings::PacketModPre::new(pre).context("packet mod exports")?;
-            Ok(Self { pre })
-        })
+    /// Compiles the component, checks its imports and exports, and reports its native image size.
+    pub(super) fn new(engine: &Engine, bytes: &[u8], grants: &ModGrants) -> Result<(Self, usize)> {
+        let component = Component::new(engine, bytes).context("compile packet mod")?;
+        let image = component.image_range();
+        let image_bytes = image.end as usize - image.start as usize;
+        let mut linker = Linker::new(engine);
+        if grants.wasi {
+            wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+        }
+        let pre = linker
+            .instantiate_pre(&component)
+            .context("link packet mod")?;
+        let pre = bindings::PacketModPre::new(pre).context("packet mod exports")?;
+        Ok((Self { pre }, image_bytes))
     }
 
     /// Instantiates the component; its start function runs under the load deadline.

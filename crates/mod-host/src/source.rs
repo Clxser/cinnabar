@@ -38,20 +38,20 @@ pub fn read_source(path: &Path) -> Result<Vec<u8>> {
 }
 
 /// Validates a source without running it; larger reactors use the packet host's ABI and cache.
-pub fn validate_source(bytes: &[u8], cache: Option<&Path>) -> Result<()> {
+pub fn validate_source(bytes: &[u8]) -> Result<()> {
     check_size(bytes)?;
     match SourceKind::of(bytes) {
         SourceKind::Component => ModHost::validate_component(bytes).or_else(|component_error| {
-            validate_packet_source(bytes, cache).map_err(|packet_error| {
+            validate_packet_source(bytes).map_err(|packet_error| {
                 component_error.context(format!("packet mod validation: {packet_error:#}"))
             })
         }),
-        SourceKind::Packet => validate_packet_source(bytes, cache),
+        SourceKind::Packet => validate_packet_source(bytes),
     }
 }
 
 /// Checks the packet world's ABI without executing guest code or granting a live instance.
-fn validate_packet_source(bytes: &[u8], cache: Option<&Path>) -> Result<()> {
+fn validate_packet_source(bytes: &[u8]) -> Result<()> {
     packet_mod::CompiledPacketMod::compile(
         bytes,
         &ModGrants {
@@ -59,7 +59,6 @@ fn validate_packet_source(bytes: &[u8], cache: Option<&Path>) -> Result<()> {
             wasi: true,
             ..Default::default()
         },
-        cache,
     )
     .map(|_| ())
 }
@@ -90,7 +89,7 @@ mod tests {
         assert!(read_source(&path).is_err());
         bytes[..8].copy_from_slice(b"\0asm\x01\0\0\0");
         assert!(
-            validate_source(&bytes, None).is_err(),
+            validate_source(&bytes).is_err(),
             "size admission must not admit invalid reactors"
         );
     }

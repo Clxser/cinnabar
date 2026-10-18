@@ -54,20 +54,11 @@ fn main() -> Result<()> {
         }
         [command, path] if command == "bench" => benchmark(Path::new(path))?,
         [command, component, capture] if command == "bench-packets" => {
-            packet_bench::run(Path::new(component), Path::new(capture), None)?
-        }
-        [command, component, capture, flag, cache]
-            if command == "bench-packets" && flag == "--cache" =>
-        {
-            packet_bench::run(
-                Path::new(component),
-                Path::new(capture),
-                Some(Path::new(cache)),
-            )?
+            packet_bench::run(Path::new(component), Path::new(capture))?
         }
         [command, path] if command == "probe-render" => probe_render(Path::new(path))?,
         _ => bail!(
-            "usage: mod-host pack [--world packet-mod] CORE.wasm COMPONENT.wasm | probe[-environment] COMPONENT.wasm | probe-render COMPONENT.wasm | bench COMPONENT.wasm | bench-packets COMPONENT.wasm CAPTURE [--cache DIR]"
+            "usage: mod-host pack [--world packet-mod] CORE.wasm COMPONENT.wasm | probe[-environment] COMPONENT.wasm | probe-render COMPONENT.wasm | bench COMPONENT.wasm | bench-packets COMPONENT.wasm CAPTURE"
         ),
     }
     Ok(())

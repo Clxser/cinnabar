@@ -108,7 +108,7 @@ mod tests {
             camera,
             ..Default::default()
         };
-        CompiledPacketMod::compile(&module(output, length), &grants, None)
+        CompiledPacketMod::compile(&module(output, length), &grants)
             .unwrap()
             .instantiate()
             .unwrap()
@@ -171,7 +171,7 @@ mod tests {
             camera: true,
             ..Default::default()
         };
-        let mut guest = CompiledPacketMod::compile(&wat::parse_str(source).unwrap(), &grants, None)
+        let mut guest = CompiledPacketMod::compile(&wat::parse_str(source).unwrap(), &grants)
             .unwrap()
             .instantiate()
             .unwrap();
@@ -210,7 +210,7 @@ mod tests {
             camera: true,
             ..Default::default()
         };
-        let mut guest = CompiledPacketMod::load(&wasm, &grants, None)
+        let mut guest = CompiledPacketMod::load(&wasm, &grants)
             .expect("compile LUNAR_NATIVE_WASM fixture")
             .instantiate()
             .expect("initialize real Go reactor");

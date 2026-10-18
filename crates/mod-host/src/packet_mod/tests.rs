@@ -62,7 +62,7 @@ fn identity() -> SessionIdentity {
 }
 
 fn instance(bytes: &[u8], wasi: bool) -> PacketMod {
-    CompiledPacketMod::compile(bytes, &grants(wasi), None)
+    CompiledPacketMod::compile(bytes, &grants(wasi))
         .unwrap()
         .instantiate()
         .unwrap()
@@ -198,17 +198,17 @@ fn stop_ends_relaying() {
 #[test]
 fn admission_needs_the_packets_grant_and_bounds_size() {
     let bytes = core_module(false, "");
-    let denied = CompiledPacketMod::compile(&bytes, &ModGrants::default(), None);
+    let denied = CompiledPacketMod::compile(&bytes, &ModGrants::default());
     assert!(format!("{:#}", denied.err().unwrap()).contains("packets grant"));
     let oversized = vec![0; MAX_PACKET_MOD_BYTES + 1];
-    let error = CompiledPacketMod::compile(&oversized, &grants(true), None).err();
+    let error = CompiledPacketMod::compile(&oversized, &grants(true)).err();
     assert!(format!("{:#}", error.unwrap()).contains("exceeds"));
 }
 
 #[test]
 fn wasi_stays_unlinked_without_its_grant() {
     for (form, bytes) in programs(true) {
-        let error = CompiledPacketMod::compile(&bytes, &grants(false), None)
+        let error = CompiledPacketMod::compile(&bytes, &grants(false))
             .err()
             .expect("WASI must be unlinked");
         assert!(format!("{error:#}").contains("wasi"), "{form}: {error:#}");
@@ -226,12 +226,10 @@ fn granted_wasi_has_no_files_environment_or_sockets() {
 
 #[test]
 fn source_admission_accepts_packet_components_with_wasi() {
-    let directory = tempfile::tempdir().unwrap();
     for (form, bytes) in programs(true) {
-        crate::validate_source(&bytes, Some(directory.path()))
-            .unwrap_or_else(|error| panic!("{form}: {error:#}"));
+        crate::validate_source(&bytes).unwrap_or_else(|error| panic!("{form}: {error:#}"));
     }
-    assert!(crate::validate_source(b"(component)", None).is_err());
+    assert!(crate::validate_source(b"(component)").is_err());
 }
 
 #[test]
@@ -274,58 +272,66 @@ fn granted_wasi_refuses_sockets() {
 }
 
 #[test]
-fn compiled_code_is_cached_and_a_corrupt_artifact_recompiles() {
-    let directory = tempfile::tempdir().unwrap();
-    for (form, bytes) in programs(false) {
-        for _ in 0..2 {
-            let compiled =
-                CompiledPacketMod::compile(&bytes, &grants(false), Some(directory.path())).unwrap();
+fn untrusted_cache_artifacts_cannot_replace_the_selected_source() {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+
+    use sha2::{Digest, Sha256};
+
+    let replacement = wat::parse_str(
+        include_str!("tests/guest.wat")
+            .replace("$IMPORTS", "")
+            .replace("$START", "")
+            .replace("\"c\"", "\"x\""),
+    )
+    .unwrap();
+    for (form, source) in programs(false) {
+        let (engine, _ticker) = execution::trusted_engine().unwrap();
+        let artifact = match form {
+            "core" => wasmtime::Module::new(&engine, &replacement)
+                .unwrap()
+                .serialize()
+                .unwrap(),
+            "component" => wasmtime::component::Component::new(
+                &engine,
+                packet_mod_component(&replacement).unwrap(),
+            )
+            .unwrap()
+            .serialize()
+            .unwrap(),
+            _ => unreachable!(),
+        };
+        // Seed the legacy source-adjacent filename with different, compatible native code.
+        let mut settings = DefaultHasher::new();
+        engine.precompile_compatibility_hash().hash(&mut settings);
+        let mut digest = Sha256::new();
+        digest.update(&source);
+        digest.update(settings.finish().to_le_bytes());
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("mod.wasm");
+        std::fs::write(&path, &source).unwrap();
+        let cache = directory.path().join(".packet-cache");
+        std::fs::create_dir(&cache).unwrap();
+        let cached = cache.join(format!("packet-mod-{:x}.cwasm", digest.finalize()));
+        std::fs::write(&cached, &artifact).unwrap();
+        for linked in [false, true] {
+            if linked {
+                #[cfg(unix)]
+                {
+                    let target = directory.path().join("replacement.cwasm");
+                    std::fs::write(&target, &artifact).unwrap();
+                    std::fs::remove_file(&cached).unwrap();
+                    std::os::unix::fs::symlink(target, &cached).unwrap();
+                }
+                #[cfg(not(unix))]
+                continue;
+            }
+            let compiled = CompiledPacketMod::load(&path, &grants(false)).unwrap();
             let mut guest = compiled.instantiate().unwrap();
             assert_eq!(
-                guest.on_batch(Direction::FromServer, &[1]).unwrap(),
-                Some(vec![1]),
-                "{form}"
+                guest.tick().unwrap().to_client,
+                b"c",
+                "{form}, linked={linked}"
             );
         }
-        let artifacts: Vec<_> = std::fs::read_dir(directory.path())
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .collect();
-        assert_eq!(artifacts.len(), 1, "{form}: older artifacts are pruned");
-        std::fs::write(&artifacts[0], b"not compiled code").unwrap();
-        let compiled =
-            CompiledPacketMod::compile(&bytes, &grants(false), Some(directory.path())).unwrap();
-        assert!(compiled.instantiate().is_ok(), "{form}");
-    }
-}
-
-/// Rejecting an incompatible ABI must leave the last admitted compiled artifact intact.
-#[test]
-fn rejected_programs_leave_the_compiled_cache_unchanged() {
-    for (form, bytes) in programs(false) {
-        let directory = tempfile::tempdir().unwrap();
-        CompiledPacketMod::compile(&bytes, &grants(false), Some(directory.path())).unwrap();
-        let path = std::fs::read_dir(directory.path())
-            .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
-            .path();
-        let previous = std::fs::read(&path).unwrap();
-        let invalid = wat::parse_str(match form {
-            "core" => "(module)",
-            "component" => "(component)",
-            _ => unreachable!(),
-        })
-        .unwrap();
-        assert!(
-            CompiledPacketMod::compile(&invalid, &grants(false), Some(directory.path())).is_err()
-        );
-        assert_eq!(
-            std::fs::read_dir(directory.path()).unwrap().count(),
-            1,
-            "{form}"
-        );
-        assert_eq!(std::fs::read(&path).unwrap(), previous, "{form}");
     }
 }

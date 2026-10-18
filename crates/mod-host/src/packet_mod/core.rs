@@ -4,14 +4,14 @@
 
 use super::{
     Direction, Guest, Outbound, PACKET_MOD_LOAD_DEADLINE, PACKET_MOD_TRANSFER_BYTES,
-    SessionIdentity, SessionPack, cache,
+    SessionIdentity, SessionPack,
     limits::PacketLimits,
     native_capabilities::{FRAME, MENU, NATIVE_INIT, NativeExports},
     wasi,
 };
 use crate::{ModGrants, execution};
 use anyhow::{Context, Result, bail, ensure};
-use std::{path::Path, time::Duration};
+use std::time::Duration;
 use wasmtime::{Engine, ExternType, InstancePre, Memory, Module, Store, TypedFunc};
 use wasmtime_wasi::preview1::WasiP1Ctx;
 
@@ -47,50 +47,50 @@ struct State {
 }
 
 /// A compiled module linked against WASI preview 1 only with the `wasi` grant.
+#[derive(Clone)]
 pub(super) struct Program {
     pre: InstancePre<State>,
     native_capabilities: u32,
 }
 
 impl Program {
-    /// Compiles or reuses the module and checks every canonical export's signature.
-    pub(super) fn new(
-        engine: &Engine,
-        bytes: &[u8],
-        grants: &ModGrants,
-        cache: Option<&Path>,
-    ) -> Result<Self> {
-        cache::load(engine, bytes, cache, |module: &Module| {
-            for (name, params, results) in SIGNATURES {
-                let required = name != INITIALIZE;
-                match module.get_export(name) {
-                    Some(ExternType::Func(ty)) => ensure!(
-                        ty.params().len() == params
-                            && ty.results().len() == results
-                            && ty.params().chain(ty.results()).all(|ty| ty.is_i32()),
-                        "packet mod export {name} has the wrong signature"
-                    ),
-                    None if !required => {}
-                    _ => bail!("packet mod does not export function {name}"),
-                }
+    /// Compiles the module, checks its ABI, and reports its native image size.
+    pub(super) fn new(engine: &Engine, bytes: &[u8], grants: &ModGrants) -> Result<(Self, usize)> {
+        let module = Module::new(engine, bytes).context("compile packet mod")?;
+        let image = module.image_range();
+        let image_bytes = image.end as usize - image.start as usize;
+        for (name, params, results) in SIGNATURES {
+            let required = name != INITIALIZE;
+            match module.get_export(name) {
+                Some(ExternType::Func(ty)) => ensure!(
+                    ty.params().len() == params
+                        && ty.results().len() == results
+                        && ty.params().chain(ty.results()).all(|ty| ty.is_i32()),
+                    "packet mod export {name} has the wrong signature"
+                ),
+                None if !required => {}
+                _ => bail!("packet mod does not export function {name}"),
             }
-            let native_capabilities = NativeExports::from_module(module).negotiate(grants)?;
-            ensure!(
-                matches!(module.get_export(MEMORY), Some(ExternType::Memory(_))),
-                "packet mod does not export its memory"
-            );
-            let mut linker = wasmtime::Linker::new(engine);
-            if grants.wasi {
-                wasmtime_wasi::preview1::add_to_linker_async(&mut linker, |state: &mut State| {
-                    &mut state.wasi
-                })?;
-            }
-            let pre = linker.instantiate_pre(module).context("link packet mod")?;
-            Ok(Self {
+        }
+        let native_capabilities = NativeExports::from_module(&module).negotiate(grants)?;
+        ensure!(
+            matches!(module.get_export(MEMORY), Some(ExternType::Memory(_))),
+            "packet mod does not export its memory"
+        );
+        let mut linker = wasmtime::Linker::new(engine);
+        if grants.wasi {
+            wasmtime_wasi::preview1::add_to_linker_async(&mut linker, |state: &mut State| {
+                &mut state.wasi
+            })?;
+        }
+        let pre = linker.instantiate_pre(&module).context("link packet mod")?;
+        Ok((
+            Self {
                 pre,
                 native_capabilities,
-            })
-        })
+            },
+            image_bytes,
+        ))
     }
 
     /// Instantiates the module and runs its `_initialize` under the load deadline.

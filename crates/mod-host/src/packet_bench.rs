@@ -11,7 +11,7 @@ use std::{
 };
 
 /// Loads the component with packet and WASI authority, then replays every capture record.
-pub(crate) fn run(component: &Path, capture: &Path, cache: Option<&Path>) -> Result<()> {
+pub(crate) fn run(component: &Path, capture: &Path) -> Result<()> {
     let records = capture::parse(&std::fs::read(capture)?)?;
     let grants = ModGrants {
         packets: true,
@@ -19,7 +19,7 @@ pub(crate) fn run(component: &Path, capture: &Path, cache: Option<&Path>) -> Res
         ..Default::default()
     };
     let started = Instant::now();
-    let loaded = CompiledPacketMod::load(component, &grants, cache)?;
+    let loaded = CompiledPacketMod::load(component, &grants)?;
     let compile = started.elapsed();
     let started = Instant::now();
     let mut instance = loaded.instantiate()?;

@@ -38,18 +38,9 @@ pub(super) fn build_candidate_with_settings(
     if mod_host::SourceKind::of(&component) == mod_host::SourceKind::Packet
         || registration.grants.packets
     {
-        let cache = crate::modding::packets::cache_directory(
-            registration
-                .component
-                .parent()
-                .unwrap_or_else(|| std::path::Path::new(".")),
-        );
-        let compiled = mod_host::packet_mod::CompiledPacketMod::compile(
-            &component,
-            &registration.grants,
-            Some(&cache),
-        )
-        .map_err(|error| format!("{error:#}"))?;
+        let compiled =
+            mod_host::packet_mod::CompiledPacketMod::compile(&component, &registration.grants)
+                .map_err(|error| format!("{error:#}"))?;
         return Ok(Candidate {
             runtime: Runtime::Packet(Arc::new(compiled)),
             identity,

@@ -67,6 +67,13 @@ impl PacketMod {
                 if let Some(output) = &output {
                     if let Some(panel) = &output.panel {
                         panel.validate().map_err(anyhow::Error::msg)?;
+                        ensure!(
+                            !panel.controls.iter().any(|control| matches!(
+                                control,
+                                ui::mod_panel::Control::Text { .. }
+                            )),
+                            "native menu text controls are not supported"
+                        );
                     }
                     if let Some(bindings) = &output.hud_bindings {
                         bindings.validate().map_err(anyhow::Error::msg)?;
@@ -140,7 +147,6 @@ mod tests {
                 controls,
                 ..Default::default()
             },
-            None,
         )
         .unwrap()
         .instantiate()
@@ -176,6 +182,22 @@ mod tests {
         assert!(!denied.has_native_menu());
         assert_eq!(denied.menu(&Input::default()).unwrap(), None);
         assert!(denied.is_active());
+    }
+
+    #[test]
+    fn text_controls_are_rejected_before_publication() {
+        let mut output: serde_json::Value = serde_json::from_str(&output()).unwrap();
+        output["panel"]["controls"][0] = serde_json::json!({
+            "kind":"text","id":"name","label":"Name","value":"Main",
+            "min_chars":1,"max_chars":8
+        });
+        let panel: ui::mod_panel::Panel = serde_json::from_value(output["panel"].clone()).unwrap();
+        panel.validate().unwrap();
+        let output = output.to_string();
+        let mut guest = instance(&output, output.len(), true);
+        let error = guest.menu(&Input::default()).unwrap_err();
+        assert!(format!("{error:#}").contains("text controls"), "{error:#}");
+        assert!(!guest.is_active());
     }
 
     #[test]
@@ -234,7 +256,6 @@ mod tests {
                 controls: true,
                 ..Default::default()
             },
-            None,
         )
         .unwrap();
         let input = Input {
@@ -353,7 +374,6 @@ mod tests {
                 controls: true,
                 ..Default::default()
             },
-            None,
         )
         .unwrap()
         .instantiate()

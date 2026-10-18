@@ -10,11 +10,6 @@ use std::{
     sync::Arc,
 };
 
-/// Compiled code stays beside the user's installed mods, outside component and settings files.
-pub(super) fn cache_directory(mods: &Path) -> PathBuf {
-    mods.join(".packet-cache")
-}
-
 struct Prepared {
     registration: RegisteredHost,
     program: Arc<CompiledPacketMod>,
@@ -34,13 +29,7 @@ pub(crate) struct PacketMods {
 
 /// Starts compilation for an explicitly selected developer packet mod before the first join.
 pub(crate) fn from_environment() -> PacketMods {
-    let cache = launcher::install_layout::InstallLayout::discover()
-        .ok()
-        .map(|layout| cache_directory(&layout.mods_dir()));
-    let mut mods = PacketMods {
-        loader: PacketModLoader::new(cache),
-        ..Default::default()
-    };
+    let mut mods = PacketMods::default();
     if let Some(selection) = client_extensions::modding::grants::environment_packet_mod() {
         mods.select_environment(selection);
     } else if let Some(set) = std::env::var_os(client_extensions::modding::multi::SET_ENV)

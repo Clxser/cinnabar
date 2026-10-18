@@ -42,7 +42,6 @@ pub struct PacketModLoader {
 
 #[derive(Default)]
 struct Inner {
-    cache: Option<PathBuf>,
     state: Mutex<LoaderState>,
     ready: Condvar,
     native_frame: Mutex<std::sync::Weak<FrameLink>>,
@@ -59,16 +58,6 @@ struct LoaderState {
 }
 
 impl PacketModLoader {
-    /// A loader that keeps compiled code in `cache`, a directory this user owns.
-    pub fn new(cache: Option<PathBuf>) -> Self {
-        Self {
-            inner: Arc::new(Inner {
-                cache,
-                ..Inner::default()
-            }),
-        }
-    }
-
     /// Selects the packet mod later sessions use and compiles it on a background thread; `None`
     /// clears it. Selecting the current source again keeps its compiled code.
     pub fn select(&self, selection: Option<PacketModSelection>) {
@@ -89,8 +78,7 @@ impl PacketModLoader {
         drop(state);
         let loader = self.clone();
         let compile = move || {
-            let cache = loader.inner.cache.as_deref();
-            let result = CompiledPacketMod::load(&selection.path, &selection.grants, cache)
+            let result = CompiledPacketMod::load(&selection.path, &selection.grants)
                 .map(Arc::new)
                 .map_err(|error| format!("{error:#}"));
             if let Err(error) = &result {

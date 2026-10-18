@@ -1361,6 +1361,11 @@ Go `wasip1` reactors, up to the packet host's 256 MiB source limit. Ordinary
 component mods retain their existing limits. Import validates the packet ABI
 without starting the guest; permission toggles remain off by default.
 
+The host retains one admitted compiled program in memory, keyed by its source
+and exact grants, with a native image no larger than the source byte limit.
+It never reads compiled native artifacts from disk. Restarting the client
+requires compiling the selected reactor again.
+
 Grant Packets and, for WASI reactors, WASI before enabling the mod. Only one
 packet mod can be enabled at a time. “Ready for your next server join” means
 the compiled source will start in a fresh instance when you next join a server.

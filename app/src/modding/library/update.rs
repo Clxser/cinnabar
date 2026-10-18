@@ -20,13 +20,8 @@ pub(super) fn install(mods: &Path, download: &Downloaded) -> Result<Installed, S
         read_source(&path).map_err(|error| format!("Could not read {}: {error}", item.file))?;
     let bytes = read_source(download.path())
         .map_err(|error| format!("Could not read mod update: {error}"))?;
-    validate(
-        &old,
-        &bytes,
-        download,
-        &super::super::packets::cache_directory(mods),
-    )
-    .map_err(|error| format!("Could not update {}: {error}", item.file))?;
+    validate(&old, &bytes, download)
+        .map_err(|error| format!("Could not update {}: {error}", item.file))?;
     let permissions = fs::symlink_metadata(&path)
         .map_err(|error| error.to_string())?
         .permissions();
@@ -142,7 +137,7 @@ fn selected(
 }
 
 /// Requires both snapshots to retain the exact opted-in source and the promised newer version.
-fn validate(old: &[u8], bytes: &[u8], download: &Downloaded, cache: &Path) -> Result<(), String> {
+fn validate(old: &[u8], bytes: &[u8], download: &Downloaded) -> Result<(), String> {
     let previous = declarations_snapshot(old)
         .map_err(|error| error.to_string())?
         .metadata;
@@ -173,7 +168,7 @@ fn validate(old: &[u8], bytes: &[u8], download: &Downloaded, cache: &Path) -> Re
     {
         return Err("The downloaded version does not match a newer release.".into());
     }
-    validate_source(bytes, Some(cache)).map_err(|error| format!("invalid mod: {error:#}"))
+    validate_source(bytes).map_err(|error| format!("invalid mod: {error:#}"))
 }
 
 #[cfg(test)]

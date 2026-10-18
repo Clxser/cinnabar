@@ -6,6 +6,11 @@ provide hover, toggle and scroll transitions. Camera styling uses a bounded temp
 override that resets on omission, unload or a guest trap. Indexed meshes, coverage
 fonts and shared vector passes keep existing frame and texture-byte limits.
 
+Packet reactors reuse one bounded compiled program in host memory under its
+exact grants; native compilation artifacts on disk are never loaded. Native
+packet menus reject text controls before publication until committed text has
+a supported guest input contract.
+
 Owning contract tests cover the native APIs and UI admission. Displayed-frame pacing,
 complete rendering acceptance and final review remain incomplete.
 ## Custom block and item texture inheritance
