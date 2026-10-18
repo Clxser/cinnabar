@@ -25,7 +25,7 @@ use crate::token::{Tok, lex};
 pub(crate) use assemble::{UboMember, assemble};
 pub(crate) use uniforms::merge_uniforms;
 
-use body::{BodyContext, SamplerUse, rewrite_body};
+use body::{BodyContext, BodyUse, rewrite_body};
 pub(crate) use interface::ProgramInterface;
 use items::{Item, func_params, parse_decl, split_items};
 use std::collections::{HashMap, HashSet};
@@ -56,7 +56,8 @@ pub(crate) struct StageDraft {
     hoisted: Vec<Tok>,
     pub ubo: Vec<UboMember>,
     resources: Vec<Tok>,
-    samplers: SamplerUse,
+    uses: BodyUse,
+    bools: HashMap<String, body::BoolUniform>,
     builtin_io: String,
     io: Vec<Tok>,
     split_globals: Vec<Tok>,
@@ -144,19 +145,18 @@ pub(crate) fn transform(
     if let Some(dir) = varying_dir {
         let front = (stage == StageKind::Vertex && lg.builtins.contains("gl_FrontColor"))
             || (stage == StageKind::Fragment && lg.builtins.contains("gl_Color"));
-        let mut varying = |name: &str, ty: &str| -> Result<(), TransformError> {
-            let loc = iface.varying(name, 1, None)?;
+        let mut varying = |name: &str, ty: &str| {
+            let loc = iface.varying(stage, name, 1, None);
             builtin_io.push_str(&format!("layout(location = {loc}) {dir} {ty} {name};\n"));
-            Ok(())
         };
         if front {
-            varying("iris_FrontColor", "vec4")?;
+            varying("iris_FrontColor", "vec4");
         }
         if lg.builtins.contains("gl_FogFragCoord") {
-            varying("iris_FogFragCoord", "float")?;
+            varying("iris_FogFragCoord", "float");
         }
         for t in &lg.tex_coords {
-            varying(&format!("iris_TexCoord{t}"), "vec4")?;
+            varying(&format!("iris_TexCoord{t}"), "vec4");
         }
     }
     if stage == StageKind::Fragment {
@@ -173,7 +173,7 @@ pub(crate) fn transform(
         }
     }
 
-    let mut used = SamplerUse::default();
+    let mut used = BodyUse::default();
     let mut out_body: Vec<Tok> = vec![];
     let wrapper =
         !c.after_main.is_empty() || !c.before_main.is_empty() || !c.global_inits.is_empty();
@@ -264,7 +264,8 @@ pub(crate) fn transform(
         hoisted: c.hoisted,
         ubo,
         resources: c.resources,
-        samplers: used,
+        uses: used,
+        bools: c.bools,
         builtin_io,
         io: c.io,
         split_globals: c.split_globals,

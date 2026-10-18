@@ -22,6 +22,39 @@ fn success(vertex: &str, fragment: &str) -> PackTranslation {
     translation
 }
 
+/// Collects named interface locations from direct values and result structures.
+fn interface_locations(module: &naga::Module, output: bool) -> Vec<(&str, u32)> {
+    let function = &module.entry_points[0].function;
+    let values: Vec<_> = if output {
+        function
+            .result
+            .iter()
+            .map(|value| (None, value.ty, value.binding.as_ref()))
+            .collect()
+    } else {
+        function
+            .arguments
+            .iter()
+            .map(|value| (value.name.as_deref(), value.ty, value.binding.as_ref()))
+            .collect()
+    };
+    let mut locations = Vec::new();
+    for (name, ty, binding) in values {
+        if let Some(naga::Binding::Location { location, .. }) = binding {
+            locations.push((name.unwrap_or_default(), *location));
+        } else if let naga::TypeInner::Struct { members, .. } = &module.types[ty].inner {
+            locations.extend(members.iter().filter_map(|member| match member.binding {
+                Some(naga::Binding::Location { location, .. }) => {
+                    Some((member.name.as_deref().unwrap_or_default(), location))
+                }
+                _ => None,
+            }));
+        }
+    }
+    locations.sort_unstable();
+    locations
+}
+
 #[test]
 fn malformed_delimiters_are_isolated_to_their_program() {
     for broken in [
@@ -135,11 +168,11 @@ fn stage_interface_requires_compatible_vertex_outputs() {
 #[test]
 fn explicit_varying_locations_link_different_names_and_skip_implicit_slots() {
     let translation = success(
-        "#version 330
+        "#version 450
         out vec2 automaticUv;
         layout(location=0) out vec2 sourceUv;
         void main() { automaticUv = vec2(0.5); sourceUv = vec2(1.0); gl_Position = vec4(0.0); }",
-        "#version 330
+        "#version 450
         layout(location=0) in vec2 uv;
         in vec2 automaticUv;
         out vec4 color;
@@ -148,37 +181,76 @@ fn explicit_varying_locations_link_different_names_and_skip_implicit_slots() {
     let translated = program(&translation, "composite");
     let vertex = &translated.stages[0].result.as_ref().unwrap().module;
     let fragment = &translated.stages[1].result.as_ref().unwrap().module;
-    let locations = |module: &naga::Module, result: bool| {
-        let function = &module.entry_points[0].function;
-        let values: Vec<_> = if result {
-            function
-                .result
-                .iter()
-                .map(|value| (value.ty, value.binding.as_ref()))
-                .collect()
-        } else {
-            function
-                .arguments
-                .iter()
-                .map(|value| (value.ty, value.binding.as_ref()))
-                .collect()
-        };
-        let mut out = Vec::new();
-        for (ty, binding) in values {
-            if let Some(naga::Binding::Location { location, .. }) = binding {
-                out.push(*location);
-            } else if let naga::TypeInner::Struct { members, .. } = &module.types[ty].inner {
-                out.extend(members.iter().filter_map(|member| match member.binding {
-                    Some(naga::Binding::Location { location, .. }) => Some(location),
-                    _ => None,
-                }));
-            }
-        }
-        out.sort_unstable();
-        out
+    let locations = |module: &naga::Module, output: bool| {
+        let mut locations: Vec<_> = interface_locations(module, output)
+            .into_iter()
+            .map(|(_, location)| location)
+            .collect();
+        locations.sort_unstable();
+        locations
     };
     assert_eq!(locations(vertex, true), locations(fragment, false));
     assert!(locations(vertex, true).contains(&0));
+}
+
+#[test]
+fn explicit_locations_override_crossed_names() {
+    let translation = success(
+        "#version 450
+        layout(location=0) out vec2 a; layout(location=1) out vec2 b;
+        void main() { a = vec2(0.25); b = vec2(0.75); gl_Position = vec4(0.0); }",
+        "#version 450
+        layout(location=1) in vec2 a; layout(location=0) in vec2 b;
+        out vec4 color; void main() { color = vec4(a, b); }",
+    );
+    let translated = program(&translation, "composite");
+    let vertex = &translated.stages[0].result.as_ref().unwrap().module;
+    let fragment = &translated.stages[1].result.as_ref().unwrap().module;
+    assert_eq!(interface_locations(vertex, true), [("a", 0), ("b", 1)]);
+    assert_eq!(interface_locations(fragment, false), [("a", 1), ("b", 0)]);
+}
+
+#[test]
+fn mixed_locations_link_by_name_and_reserve_explicit_slots() {
+    for (vertex_location, fragment_location) in
+        [("layout(location=2)", ""), ("", "layout(location=2)")]
+    {
+        success(
+            &format!("#version 450\n{vertex_location} out vec3 sharedUv; out vec2 automaticUv;
+            void main() {{ sharedUv = vec3(0.5); automaticUv = vec2(0.25); gl_Position = vec4(0.0); }}"),
+            &format!("#version 450\n{fragment_location} in vec3 sharedUv; in vec2 automaticUv;
+            out vec4 color; void main() {{ color = vec4(sharedUv + automaticUv.x, 1.0); }}"),
+        );
+    }
+}
+
+#[test]
+fn whole_boolean_uniform_arrays_keep_their_value_types() {
+    success(
+        VERTEX,
+        "#version 450
+        const int N = 2; uniform bool flags[N]; uniform bvec2 pairs[N];
+        bool choose(bool values[2]) { return values[0]; }
+        bool choosePair(bvec2 values[2]) { return values[1].x; }
+        out vec4 color;
+        void main() { color = vec4((choose(flags) && choosePair(pairs)) ? 1.0 : 0.0); }",
+    );
+}
+
+#[test]
+fn partial_boolean_uniform_arrays_keep_their_value_types() {
+    success(
+        VERTEX,
+        "#version 450
+        uniform bool flags[2][2]; uniform bool selected; uniform uint row;
+        bool choose(bool values[2]) { return values[0]; }
+        bool chooseGrid(bool values[2][2]) { return values[1][0]; }
+        out vec4 color;
+        void main() {
+            bool saved[2] = flags[selected ? row : 0u];
+            color = vec4((choose(saved) && chooseGrid(flags)) ? 1.0 : 0.0);
+        }",
+    );
 }
 
 #[test]

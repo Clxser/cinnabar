@@ -151,17 +151,12 @@ pub(super) fn collect(
             continue;
         }
         if (stage == StageKind::Vertex && is_out) || (stage == StageKind::Fragment && is_in) {
-            let dir = if stage == StageKind::Vertex {
-                "out"
-            } else {
-                "in"
-            };
             let mut explicit = layout_key(&d.layout, "location");
             for (name, arr, _) in &d.decls {
                 let mut a = d.ty_arr.clone();
                 a.extend(arr.iter().cloned());
                 varying(
-                    &mut c, iface, &structs, name, &d.ty, &a, &d.quals, dir, explicit, line,
+                    &mut c, iface, &structs, name, &d.ty, &a, &d.quals, stage, explicit, line,
                 )?;
                 if let Some(location) = explicit {
                     let mut leaves = Vec::new();
@@ -366,10 +361,15 @@ fn varying(
     ty: &str,
     arr: &[Tok],
     quals: &[String],
-    dir: &str,
+    stage: StageKind,
     explicit: Option<u32>,
     line: u32,
 ) -> Result<(), TransformError> {
+    let dir = if stage == StageKind::Vertex {
+        "out"
+    } else {
+        "in"
+    };
     let interp: Vec<&str> = quals
         .iter()
         .map(String::as_str)
@@ -389,11 +389,12 @@ fn varying(
     };
     if arr.is_empty() && mat_cols(ty).is_none() && !structs.contains_key(ty) {
         let loc = iface.varying(
+            stage,
             name,
             loc_size(ty, 1)
                 .ok_or_else(|| TransformError::new("varying location size overflow", line))?,
             explicit,
-        )?;
+        );
         let q = if dir == "in" {
             qualifiers(ty)
         } else {
@@ -411,7 +412,7 @@ fn varying(
     c.split_globals.extend([id(ty).at(line), id(name).at(line)]);
     c.split_globals.extend_from_slice(arr);
     c.split_globals.push(p(";"));
-    let base = iface.varying(name, leaves.len() as u32, explicit)?;
+    let base = iface.varying(stage, name, leaves.len() as u32, explicit);
     for (k, (path, leaf_ty)) in leaves.iter().enumerate() {
         let vname = format!("iris_v_{name}_{k}");
         let loc = format!("{base} + {k}");

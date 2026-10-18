@@ -1,21 +1,20 @@
 //! Location and binding numbering shared by a program's stages.
 
-use super::TransformError;
+use crate::programs::StageKind;
 use crate::reflection::{FIRST_TEXTURE_BINDING, LOOSE_UNIFORM_BINDING};
 use std::collections::BTreeMap;
 
-/// One cross-stage varying awaiting program-wide location allocation.
+/// One stage-local varying awaiting program-wide location allocation.
 struct Varying {
     symbol: String,
     size: u32,
     explicit: Option<u32>,
 }
 
-/// Interface numbering shared by a program's stages: varying name → (first location,
-/// count), and resource name → binding, so the vertex and fragment stages agree.
+/// Stage-local varying declarations and program-wide resource bindings.
 #[derive(Default)]
 pub(crate) struct ProgramInterface {
-    varyings: BTreeMap<String, Varying>,
+    varyings: BTreeMap<(StageKind, String), Varying>,
     textures: BTreeMap<String, u32>,
     images: BTreeMap<String, u32>,
     uniform_blocks: BTreeMap<String, u32>,
@@ -26,31 +25,21 @@ impl ProgramInterface {
     /// Registers a varying before allocation so later explicit locations reserve their slots.
     pub(super) fn varying(
         &mut self,
+        stage: StageKind,
         name: &str,
         size: u32,
         explicit: Option<u32>,
-    ) -> Result<String, TransformError> {
+    ) -> String {
         let next = self.varyings.len();
         let varying = self
             .varyings
-            .entry(name.to_string())
+            .entry((stage, name.to_string()))
             .or_insert_with(|| Varying {
                 symbol: format!("__shaderpack_location_{next}"),
                 size,
                 explicit,
             });
-        if varying.size != size
-            || (varying.explicit.is_some() && explicit.is_some() && varying.explicit != explicit)
-        {
-            return Err(TransformError::new(
-                format!("stages disagree on varying `{name}` locations"),
-                0,
-            ));
-        }
-        if explicit.is_some() {
-            varying.explicit = explicit;
-        }
-        Ok(varying.symbol.clone())
+        varying.symbol.clone()
     }
 
     /// Allocates non-overlapping implicit locations after reserving every explicit range.
@@ -64,10 +53,28 @@ impl ProgramInterface {
                 used.push(start..end);
             }
         }
+        let mut implicit = BTreeMap::new();
         let mut definitions = String::new();
-        for varying in self.varyings.values() {
-            let start = if let Some(explicit) = varying.explicit {
+        for ((stage, name), varying) in &self.varyings {
+            let other_stage = match stage {
+                StageKind::Vertex => StageKind::Fragment,
+                _ => StageKind::Vertex,
+            };
+            let peer = self.varyings.get(&(other_stage, name.clone()));
+            // Explicit declarations own their locations independently of names. A name
+            // links stages only when at least one declaration needs an implicit location.
+            let fixed = varying
+                .explicit
+                .or_else(|| peer.and_then(|peer| peer.explicit));
+            if varying.explicit.is_none() && peer.is_some_and(|peer| peer.size != varying.size) {
+                return Err(format!(
+                    "stages disagree on varying `{name}` location count"
+                ));
+            }
+            let start = if let Some(explicit) = fixed {
                 explicit
+            } else if let Some(start) = implicit.get(name) {
+                *start
             } else {
                 let mut start = 0u32;
                 loop {
@@ -81,6 +88,7 @@ impl ProgramInterface {
                         Some(range) => start = range.end,
                         None => {
                             used.push(start..end);
+                            implicit.insert(name, start);
                             break start;
                         }
                     }

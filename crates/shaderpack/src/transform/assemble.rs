@@ -22,12 +22,12 @@ pub(crate) fn assemble(
     }
     ubo.emit(draft, &mut e);
     e.tokens(&draft.resources);
-    if draft.samplers.filtering {
+    if draft.uses.filtering {
         e.raw(&format!(
             "layout(set = {TEXTURE_GROUP}, binding = {SAMPLER_BINDING}) uniform sampler {SAMPLER_NAME};\n"
         ));
     }
-    if draft.samplers.comparison {
+    if draft.uses.comparison {
         e.raw(&format!(
             "layout(set = {TEXTURE_GROUP}, binding = {SHADOW_SAMPLER_BINDING}) uniform samplerShadow {SHADOW_SAMPLER_NAME};\n"
         ));

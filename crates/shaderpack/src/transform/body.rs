@@ -5,8 +5,8 @@ use super::TransformError;
 use super::bindings::Bindings;
 use super::items::{Param, arr_len, mat_cols, matching};
 use crate::reflection::{SAMPLER_NAME, SHADOW_SAMPLER_NAME};
-use crate::token::{Tok, TokKind, bound_resource, id, int, p, resource_symbol};
-use std::collections::{HashMap, HashSet};
+use crate::token::{Tok, TokKind, bound_resource, id, p, resource_symbol};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Bound on generated inter-stage scalar/vector locations.
 const MAX_VARYING_LOCATIONS: usize = 4096;
@@ -31,16 +31,36 @@ pub(super) struct BoolUniform {
     pub dimensions: usize,
 }
 
-/// Shared samplers the stage ended up referencing.
+/// A logical boolean read after consuming a prefix of its array indices.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct BoolRead {
+    pub name: String,
+    pub indexed: usize,
+}
+
+impl BoolRead {
+    /// Returns the reserved helper symbol for this uniform and consumed index count.
+    pub fn function_name(&self) -> String {
+        format!(
+            "__shaderpack_bool_{}_{}_{}",
+            self.name.len(),
+            self.name,
+            self.indexed
+        )
+    }
+}
+
+/// Resources and logical uniform reads referenced by the stage's bodies.
 #[derive(Default)]
-pub(super) struct SamplerUse {
+pub(super) struct BodyUse {
     pub filtering: bool,
     pub comparison: bool,
+    pub bools: BTreeSet<BoolRead>,
 }
 
 /// Pairs every texture use with the shared sampler (`sampler2D(colortex0, iris_sampler)`)
 /// after resource specialization, and reads integer-backed bool uniforms as bools.
-pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut SamplerUse) -> Vec<Tok> {
+pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut BodyUse) -> Vec<Tok> {
     let bindings = Bindings::new(toks, cx.parameters, cx.types);
     rewrite_range(toks, 0, &bindings, cx, used)
 }
@@ -51,7 +71,7 @@ fn rewrite_range(
     base: usize,
     bindings: &Bindings,
     cx: &BodyContext<'_>,
-    used: &mut SamplerUse,
+    used: &mut BodyUse,
 ) -> Vec<Tok> {
     let mut out = vec![];
     let mut cursor = 0;
@@ -100,44 +120,35 @@ fn rewrite_range(
         }
         if let Some(uniform) = cx.bools.get(n).filter(|_| bindings.global(n, base + i)) {
             let mut end = i + 1;
-            let mut dimensions = 0;
-            while toks.get(end).is_some_and(|t| t.is("[")) && dimensions < uniform.dimensions {
+            let mut indices = Vec::new();
+            while toks.get(end).is_some_and(|t| t.is("[")) && indices.len() < uniform.dimensions {
                 let Some(close) = matching(toks, end, "[", "]") else {
                     break;
                 };
+                indices.push(end + 1..close);
                 end = close + 1;
-                dimensions += 1;
             }
-            if dimensions < uniform.dimensions {
-                // Array values need conversion at their element reads, not at the array name.
-                out.extend([
-                    id(super::UNIFORM_INSTANCE).at(line),
-                    p(".").at(line),
-                    t.clone(),
-                ]);
-                continue;
-            }
-            let ctor = &uniform.constructor;
-            let scalar = ctor == "bool";
-            if !scalar {
-                out.push(id(ctor).at(line));
-            }
-            out.push(p("(").at(line));
-            out.extend([
-                id(super::UNIFORM_INSTANCE).at(line),
-                p(".").at(line),
-                t.clone(),
-            ]);
-            // Rewrite index expressions too, using their original lexical binding positions.
-            out.extend(rewrite_range(
-                &toks[i + 1..end],
-                base + i + 1,
-                bindings,
-                cx,
-                used,
-            ));
-            if scalar {
-                out.extend([p("!=").at(line), int(0).at(line)]);
+            let read = BoolRead {
+                name: n.clone(),
+                indexed: indices.len(),
+            };
+            out.extend([id(&read.function_name()).at(line), p("(").at(line)]);
+            used.bools.insert(read);
+            for (index, range) in indices.into_iter().enumerate() {
+                if index > 0 {
+                    out.push(p(",").at(line));
+                }
+                // Array indices may be signed or unsigned. Each expression is evaluated
+                // once, in the caller's lexical scope, before the logical value is read.
+                out.extend([id("int").at(line), p("(").at(line)]);
+                out.extend(rewrite_range(
+                    &toks[range.clone()],
+                    base + range.start,
+                    bindings,
+                    cx,
+                    used,
+                ));
+                out.push(p(")").at(line));
             }
             out.push(p(")").at(line));
             cursor = end;

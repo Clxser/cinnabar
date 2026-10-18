@@ -32,7 +32,7 @@ pub(crate) struct UniformLayout {
 }
 
 impl UniformLayout {
-    /// Writes canonical types and the common block using an instance to avoid global collisions.
+    /// Writes the shared block and logical boolean accessors, preserving local nominal types.
     pub(super) fn emit(&self, draft: &StageDraft, emitter: &mut Emitter) {
         if self.members.is_empty() {
             return;
@@ -61,7 +61,63 @@ impl UniformLayout {
             }
         }
         emitter.raw(&format!("}} {};\n", super::UNIFORM_INSTANCE));
+        for read in &draft.uses.bools {
+            let member = self
+                .members
+                .iter()
+                .find(|member| member.name == read.name)
+                .expect("boolean reads refer to collected uniforms");
+            let mut sizes = Vec::new();
+            let mut ty = &member.ty;
+            while let UniformType::Array(base, size) = ty {
+                sizes.push(*size);
+                ty = base;
+            }
+            emit_bool_read(read, &draft.bools[&read.name].constructor, &sizes, emitter);
+        }
     }
+}
+
+/// Emits one typed logical read, converting array values with loops over resolved extents.
+fn emit_bool_read(
+    read: &super::body::BoolRead,
+    constructor: &str,
+    sizes: &[u32],
+    emitter: &mut Emitter,
+) {
+    let remaining = &sizes[read.indexed..];
+    let suffix: String = remaining.iter().map(|size| format!("[{size}]")).collect();
+    let parameters: Vec<_> = (0..read.indexed).map(|i| format!("int index{i}")).collect();
+    let mut source = format!(
+        "{constructor}{suffix} {}({}) {{\n",
+        read.function_name(),
+        parameters.join(", ")
+    );
+    let mut storage = format!("{}.{}", super::UNIFORM_INSTANCE, read.name);
+    for i in 0..read.indexed {
+        storage.push_str(&format!("[index{i}]"));
+    }
+    if remaining.is_empty() {
+        source.push_str(&format!("return {constructor}({storage});\n"));
+    } else {
+        source.push_str(&format!("{constructor} value{suffix};\n"));
+        let mut value = String::from("value");
+        for (i, size) in remaining.iter().enumerate() {
+            source.push_str(&format!(
+                "for (int element{i} = 0; element{i} < {size}; ++element{i}) {{\n"
+            ));
+            let index = format!("[element{i}]");
+            value.push_str(&index);
+            storage.push_str(&index);
+        }
+        source.push_str(&format!("{value} = {constructor}({storage});\n"));
+        for _ in remaining {
+            source.push_str("}\n");
+        }
+        source.push_str("return value;\n");
+    }
+    source.push_str("}\n");
+    emitter.raw(&source);
 }
 
 impl UniformType {
