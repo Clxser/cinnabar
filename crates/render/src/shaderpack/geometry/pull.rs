@@ -1,6 +1,8 @@
 //! Vertex pulling: pack vertex stages that read Cinnabar's packed arenas directly instead of
-//! expanded vertices. A prototype measured against expansion, enabled with
-//! `CINNABAR_SHADERPACK_PULL=1` when a pack loads.
+//! expanded vertices. Opt-in with `CINNABAR_SHADERPACK_PULL=1` when a pack loads; expansion
+//! stays the default because the full arena decode runs for every corner in every pass. At
+//! render distance 16 on an RTX 4070 Laptop it saved about 550 MiB of VRAM but raised GPU frame
+//! time from 9.5 to 15.1 ms in BSL (shadow 1.9 → 5.4 ms) and from 7.8 to 10.9 ms in Photon.
 //!
 //! - **Pages** hold one 16-byte face ref per face slot instead of four 44-byte vertices:
 //!   `[record, origin slot, the job's covered block and reserved-face flags, slot | kind << 8]`
