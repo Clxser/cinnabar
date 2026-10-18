@@ -401,6 +401,31 @@ impl TerrainDraws for ViewTerrain<'_> {
     }
 }
 
+/// The terrain the pack's frames draw, once it has an origin; until then frames copy the
+/// Vanilla scene instead (`passes::copy_scene`).
+fn pack_terrain(world: &World) -> Option<&ShaderpackGeometry> {
+    world
+        .get_resource::<ShaderpackGeometry>()
+        .filter(|geometry| geometry.supported() && geometry.origin().is_some())
+}
+
+/// Whether the pack draws `view`'s sky and world itself this frame, so nothing of the Vanilla
+/// scene behind its geometry reaches the screen: [`shaderpack_post`] takes the geometry
+/// path, and the Vanilla overlay only keeps what is nearer than the pack's depth.
+pub(crate) fn draws_world(world: &World, view: Entity) -> bool {
+    pack_terrain(world).is_some()
+        && world
+            .get_resource::<ShaderPackViews>()
+            .is_some_and(|views| {
+                views
+                    .0
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(&view)
+                    .is_some_and(|state| !state.pack.draws.is_empty())
+            })
+}
+
 /// Runs the pack over the frame: its shadow pass, geometry and full-screen chain, and
 /// presents `final`.
 fn shaderpack_post(
@@ -428,13 +453,10 @@ fn shaderpack_post(
     let device = render_device.wgpu_device().clone();
     let queue: wgpu::Queue = (**world.resource::<RenderQueue>()).clone();
     let destination_format = target.main_texture_format();
-    let terrain = world
-        .get_resource::<ShaderpackGeometry>()
-        .filter(|g| g.supported() && g.origin().is_some())
-        .map(|geometry| ViewTerrain {
-            geometry,
-            view: entity,
-        });
+    let terrain = pack_terrain(world).map(|geometry| ViewTerrain {
+        geometry,
+        view: entity,
+    });
     let atlas = world.get_resource::<ShaderpackAtlas>().map(|atlas| {
         (
             AtlasViews {

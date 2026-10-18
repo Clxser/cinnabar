@@ -56,6 +56,8 @@ mod plan;
 #[cfg(feature = "shaderpacks")]
 mod plugin;
 #[cfg(feature = "shaderpacks")]
+pub(crate) use plugin::draws_world;
+#[cfg(feature = "shaderpacks")]
 mod pulled_draws;
 #[cfg(feature = "shaderpacks")]
 mod resources;
