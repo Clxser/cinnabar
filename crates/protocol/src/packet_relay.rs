@@ -6,7 +6,7 @@ use crate::session_wire::SessionIdentity;
 use bridge::{BridgeError, FrameQueue, FrameWritten};
 use bytes::{BufMut, Bytes, BytesMut};
 use std::{sync::Arc, time::Duration};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, OwnedMutexGuard, mpsc};
 
 /// How often a relay's timed work runs: one client tick.
 pub const RELAY_TICK: Duration = Duration::from_millis(50);
@@ -60,7 +60,13 @@ pub struct RelayOutput {
 /// The relay and the gate that keeps its view of client batches in write order.
 struct Shared {
     relay: Arc<dyn PacketRelay>,
-    gate: Mutex<()>,
+    gate: Arc<Mutex<()>>,
+}
+
+/// A relay's final frame, retaining its write-order gate until queue admission.
+pub(crate) struct PreparedBatch {
+    pub(crate) frame: Bytes,
+    _gate: Option<OwnedMutexGuard<()>>,
 }
 
 /// Writes whole client batch frames to the core, through the relay when one is set.
@@ -111,20 +117,34 @@ impl BatchWriter {
 
     /// Accepts one final frame and records it once, retaining the flush ticket across cancellation.
     pub(crate) async fn accept(&self, frame: Bytes) -> Result<Option<FrameWritten>, BridgeError> {
-        let Some(shared) = &self.relay else {
-            let written = self.frames.accept(frame.clone()).await?;
-            self.record(&frame);
-            return Ok(Some(written));
+        let Some(prepared) = self.prepare(frame).await else {
+            return Ok(None);
         };
-        let _gate = shared.gate.lock().await;
+        self.accept_prepared(prepared.frame.clone()).await.map(Some)
+    }
+
+    /// Runs the relay once, keeping its replacement and FIFO gate separate from capacity waits.
+    pub(crate) async fn prepare(&self, frame: Bytes) -> Option<PreparedBatch> {
+        let Some(shared) = &self.relay else {
+            return Some(PreparedBatch { frame, _gate: None });
+        };
+        let gate = Arc::clone(&shared.gate).lock_owned().await;
         let frame = match shared.relay.outbound(&frame[1..]) {
             None => frame,
-            Some(body) if body.is_empty() => return Ok(None),
+            Some(body) if body.is_empty() => return None,
             Some(body) => batch_frame_from_body(&body),
         };
+        Some(PreparedBatch {
+            frame,
+            _gate: Some(gate),
+        })
+    }
+
+    /// Admits and records already relayed bytes without invoking the guest again.
+    pub(crate) async fn accept_prepared(&self, frame: Bytes) -> Result<FrameWritten, BridgeError> {
         let written = self.frames.accept(frame.clone()).await?;
         self.record(&frame);
-        Ok(Some(written))
+        Ok(written)
     }
 
     /// Accepts a relay's own server-bound body in write order, without relaying it again.
@@ -155,7 +175,7 @@ impl RelayLink {
     ) -> (Self, BatchWriter) {
         let shared = Arc::new(Shared {
             relay: Arc::clone(&relay),
-            gate: Mutex::new(()),
+            gate: Arc::new(Mutex::new(())),
         });
         let writer = BatchWriter {
             frames,

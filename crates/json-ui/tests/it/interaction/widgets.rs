@@ -592,6 +592,58 @@ fn toggles_publish_their_grid_collection_name() {
 }
 
 #[test]
+fn standalone_widgets_keep_explicit_collection_indices() {
+    for (kind, property) in [
+        ("toggle", "toggle_grid_collection_name"),
+        ("dropdown", "toggle_grid_collection_name"),
+        ("slider", "slider_collection_name"),
+        ("edit_box", "text_edit_box_grid_collection_name"),
+    ] {
+        for (index, unrelated_scope) in [(0, false), (7, false), (0, true)] {
+            let properties = json!({property:"settings", "collection_index":index,
+                "size":[30,20], "always_listening":true});
+            let mut child = match kind {
+                "toggle" | "dropdown" => toggle("setting", properties),
+                "slider" => slider(properties, vec![]),
+                "edit_box" => edit_box(properties),
+                _ => unreachable!(),
+            };
+            child.name = "setting".into();
+            child.control_type = Some(kind.into());
+            if unrelated_scope {
+                child = ctrl(
+                    "outer",
+                    "panel",
+                    json!({"collection_scope":"unrelated", "collection_index":7,
+                        "size":[50,30]}),
+                    vec![child],
+                );
+            }
+            let mut screen = Screen::new(page(vec![child]));
+            let hits = screen.regions();
+            let setting = hits.iter().find(|hit| hit.name == "setting").unwrap();
+            assert_eq!(setting.collection_index, Some(index), "{kind}");
+            let events = if kind == "edit_box" {
+                screen
+                    .dispatcher
+                    .text(&hits, &mut screen.view, "x", None)
+                    .events
+            } else {
+                screen.click([5.0, 5.0])
+            };
+            assert!(
+                events.iter().any(|event| matches!(event,
+                    ScreenEvent::Toggle { index: Some(found), .. }
+                    | ScreenEvent::Slider { index: Some(found), .. }
+                    | ScreenEvent::TextEdit { index: Some(found), .. } if *found == index
+                )),
+                "{kind}: {events:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn nested_factories_keep_the_named_widget_collection_index() {
     for (kind, property) in [
         ("toggle", "toggle_grid_collection_name"),
@@ -621,6 +673,32 @@ fn nested_factories_keep_the_named_widget_collection_index() {
         let setting = hits.iter().find(|hit| hit.name == "setting").unwrap();
         assert_eq!(setting.collection.as_deref(), Some("settings"), "{kind}");
         assert_eq!(setting.collection_index, Some(7), "{kind}");
+    }
+}
+
+#[test]
+fn widgets_do_not_adopt_an_unrelated_collection_index() {
+    for (kind, property) in [
+        ("toggle", "toggle_grid_collection_name"),
+        ("slider", "slider_collection_name"),
+        ("edit_box", "text_edit_box_grid_collection_name"),
+    ] {
+        let child = ctrl(
+            "setting",
+            kind,
+            json!({property:"settings", "size":[30,20]}),
+            vec![],
+        );
+        let row = ctrl(
+            "row",
+            "panel",
+            json!({"collection_scope":"unrelated", "collection_index":7, "size":[50,30]}),
+            vec![child],
+        );
+        let screen = Screen::new(page(vec![row]));
+        let hits = screen.regions();
+        let setting = hits.iter().find(|hit| hit.name == "setting").unwrap();
+        assert_eq!(setting.collection_index, None, "{kind}");
     }
 }
 

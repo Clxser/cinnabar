@@ -4,8 +4,10 @@ use std::pin::Pin;
 use std::sync::Mutex;
 use std::task::{Context, Poll, ready};
 
-use crate::packet_relay::BatchWriter;
+use crate::packet_relay::{BatchWriter, PreparedBatch};
+use bedrock_protocol_1_26_51::{packets::PacketId, wire};
 use bridge::{BridgeError, FrameWritten};
+use bytes::Bytes;
 use simulation_clock::Moment;
 
 use super::PlaySession;
@@ -23,28 +25,38 @@ pub struct PlayOutbound {
 #[cfg(test)]
 mod tests;
 
-type AcceptFrame = Pin<Box<dyn Future<Output = Result<Option<FrameWritten>, BridgeError>> + Send>>;
+type PrepareFrame = Pin<Box<dyn Future<Output = Option<PreparedBatch>> + Send>>;
+type AcceptFrame = Pin<Box<dyn Future<Output = Result<FrameWritten, BridgeError>> + Send>>;
+
+enum BatchState {
+    Queued {
+        packets: Vec<Packet>,
+        opportunity: Option<Moment>,
+    },
+    Preparing(Mutex<PrepareFrame>),
+    Prepared {
+        batch: PreparedBatch,
+        accepting: Option<Mutex<AcceptFrame>>,
+    },
+    Written(FrameWritten),
+    Done,
+}
 
 /// An entire submitted batch, retained until its exact frame flushes across cancelled waits.
 struct PendingBatch {
-    packets: Vec<Packet>,
-    opportunity: Option<Moment>,
-    prepared: bool,
+    state: BatchState,
     status_epoch: Option<u64>,
-    accepting: Option<Mutex<AcceptFrame>>,
-    written: Option<FrameWritten>,
 }
 
 impl PendingBatch {
     /// Transfers ordinary packet ownership before the first capacity or flush wait.
     fn new(packets: Vec<Packet>, opportunity: Option<Moment>) -> Self {
         Self {
-            packets,
-            opportunity,
-            prepared: false,
+            state: BatchState::Queued {
+                packets,
+                opportunity,
+            },
             status_epoch: None,
-            accepting: None,
-            written: None,
         }
     }
 
@@ -55,52 +67,92 @@ impl PendingBatch {
         status: &SharedCacheStatus,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), BridgeError>> {
-        if self.written.is_none() {
-            let mut status = status.lock().expect("cache status lock");
-            if !self.prepared {
-                if let Some(now) = self.opportunity.take()
-                    && let Some(packet) = status.select(now)
-                {
-                    self.status_epoch = Some(status.epoch);
-                    self.packets.push(Packet::new(packet));
+        let mut status = status.lock().expect("cache status lock");
+        loop {
+            match &mut self.state {
+                BatchState::Queued {
+                    packets,
+                    opportunity,
+                } => {
+                    if let Some(now) = opportunity.take()
+                        && let Some(packet) = status.select(now)
+                    {
+                        self.status_epoch = Some(status.epoch);
+                        packets.push(Packet::new(packet));
+                    }
+                    let Some(frame) = crate::session_transport::batch_frame(packets) else {
+                        self.state = BatchState::Done;
+                        continue;
+                    };
+                    let writer = writer.clone();
+                    self.state = BatchState::Preparing(Mutex::new(Box::pin(async move {
+                        writer.prepare(frame).await
+                    })));
                 }
-                self.prepared = true;
+                BatchState::Preparing(preparing) => {
+                    self.state = match ready!(
+                        preparing
+                            .get_mut()
+                            .expect("relay preparation lock")
+                            .as_mut()
+                            .poll(cx)
+                    ) {
+                        Some(batch) => BatchState::Prepared {
+                            batch,
+                            accepting: None,
+                        },
+                        None => BatchState::Done,
+                    };
+                }
+                BatchState::Prepared { batch, accepting } => {
+                    if self.status_epoch.is_some_and(|epoch| epoch != status.epoch) {
+                        batch.frame = without_cache_status(&batch.frame)?;
+                        self.status_epoch = None;
+                        *accepting = None;
+                    }
+                    if batch.frame.len() == 1 {
+                        self.state = BatchState::Done;
+                        continue;
+                    }
+                    if accepting.is_none() {
+                        let frame = batch.frame.clone();
+                        let writer = writer.clone();
+                        *accepting = Some(Mutex::new(Box::pin(async move {
+                            writer.accept_prepared(frame).await
+                        })));
+                    }
+                    // Admission cannot suspend after committing its permit. Keep the epoch
+                    // check and ticket under one lock; resets only rebuild the capacity wait.
+                    let written = ready!(
+                        accepting
+                            .as_mut()
+                            .expect("prepared admission")
+                            .get_mut()
+                            .expect("batch admission lock")
+                            .as_mut()
+                            .poll(cx)
+                    )?;
+                    self.state = BatchState::Written(written);
+                }
+                BatchState::Written(written) => return Pin::new(written).poll(cx),
+                BatchState::Done => return Poll::Ready(Ok(())),
             }
-            if self.status_epoch.is_some_and(|epoch| epoch != status.epoch) {
-                // The trailing status is still ours until admission. Ordinary packets survive.
-                self.packets.pop();
-                self.status_epoch = None;
-                self.accepting = None;
-            }
-            if self.accepting.is_none() {
-                let Some(frame) = crate::session_transport::batch_frame(&self.packets) else {
-                    return Poll::Ready(Ok(()));
-                };
-                let writer = writer.clone();
-                self.accepting = Some(Mutex::new(Box::pin(
-                    async move { writer.accept(frame).await },
-                )));
-            }
-            // `accept` never suspends after committing its permit. Record its ticket under the
-            // same lock as the epoch check, so reset cannot retract an accepted frame.
-            let written = ready!(
-                self.accepting
-                    .as_mut()
-                    .expect("prepared admission")
-                    .get_mut()
-                    .expect("batch admission lock")
-                    .as_mut()
-                    .poll(cx)
-            )?;
-            let Some(written) = written else {
-                return Poll::Ready(Ok(()));
-            };
-            self.written = Some(written);
-            self.accepting = None;
-            self.packets.clear();
         }
-        Pin::new(self.written.as_mut().expect("accepted write")).poll(cx)
     }
+}
+
+/// Retires stale status entries while preserving the relay's other bytes and packet order.
+fn without_cache_status(frame: &Bytes) -> Result<Bytes, BridgeError> {
+    let mut retained = vec![bridge::contract::KIND_BATCH];
+    for entry in wire::Frames::new(frame.slice(1..), usize::MAX) {
+        let entry = entry.map_err(|_| BridgeError::InvalidSessionMessage {
+            reason: "malformed relayed outbound batch",
+        })?;
+        if entry.header().id != PacketId::ClientCacheBlobStatus as u32 {
+            retained.extend_from_slice(entry.frame());
+        }
+    }
+    Ok(retained.into())
 }
 
 impl<R: bridge::FrameRead> PlaySession<R> {

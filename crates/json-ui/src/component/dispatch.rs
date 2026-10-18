@@ -934,7 +934,13 @@ fn collection_index(region: &HitRegion, collection: Option<&str>) -> Option<usiz
         .find(|(found, _)| found == name)
     {
         Some((_, index)) => Some(*index),
-        None if region.collection.is_none() => region.collection_index,
+        None if region
+            .collection
+            .as_deref()
+            .is_none_or(|collection| collection == name) =>
+        {
+            region.collection_index
+        }
         None => None,
     }
 }

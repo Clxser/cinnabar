@@ -43,6 +43,10 @@ mod terrain;
 #[derive(Resource, Default)]
 pub(crate) struct ModCueFeed(pub Vec<mod_host::ModCue>);
 
+/// Physical controls consumed by mods before gameplay samples this frame's ordered events.
+#[derive(Resource, Default)]
+pub(crate) struct ReservedControls(pub Vec<String>);
+
 #[derive(Resource)]
 struct ModRuntime {
     hosts: ModHosts,
@@ -347,6 +351,7 @@ fn install(app: &mut App, mut hosts: Vec<ModHost>) {
 }
 
 fn configure_systems(app: &mut App, watching: bool) {
+    app.init_resource::<ReservedControls>();
     app.init_resource::<client_presentation::actor_publication::ActorPresentationStyle>();
     app.add_systems(Update, environment_loader::poll.before(begin_mod_frame));
     ghost::configure(app);

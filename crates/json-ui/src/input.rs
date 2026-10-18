@@ -338,6 +338,7 @@ pub(crate) fn region(
     }
     .filter(|name| !name.is_empty());
     // A nested renderer has its own index; the widget still edits the named enclosing list.
+    // Without a matching item, the widget may declare its own explicit index.
     let collection_index = named_collection.map_or(inner.index, |name| {
         inner
             .chain
@@ -345,6 +346,14 @@ pub(crate) fn region(
             .rev()
             .find(|(collection, _)| collection == name)
             .map(|(_, index)| *index)
+            .or_else(|| {
+                control
+                    .properties
+                    .get("collection_index")
+                    .and_then(Value::as_u64)
+                    .map(|index| index as usize)
+            })
+            .or_else(|| inner.collection.is_none().then_some(inner.index).flatten())
     });
     let collection = named_collection
         .map(str::to_owned)
