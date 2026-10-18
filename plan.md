@@ -1,3 +1,13 @@
+## Native extension UI and HUD support (in progress)
+
+Personal extensions can publish retained module collections, editable profile fields,
+measured text plates, compass markers and confirmed totem annotations. Native controls
+provide hover, toggle and scroll transitions. Camera styling uses a bounded temporary
+override that resets on omission, unload or a guest trap. Indexed meshes, coverage
+fonts and shared vector passes keep existing frame and texture-byte limits.
+
+Owning contract tests cover the native APIs and UI admission. Displayed-frame pacing,
+complete rendering acceptance and final review remain incomplete.
 ## Custom block and item texture inheritance
 
 Custom terrain aliases resolve their selected filenames against server packs and the
