@@ -559,6 +559,56 @@ fn image_atomics_count_into_a_custom_image() {
     assert_pixels(&bytes, |_| [16, 0, 0]);
 }
 
+/// A pack's switched-off pass, as Noble's `deferred` is without a LOD mod: no output, and a
+/// target nothing else writes.
+const SWITCHED_OFF: &str = "#version 430
+/* RENDERTARGETS: 10 */
+void main() {}
+";
+
+/// Writes no colour buffer, only magenta into a custom image.
+const STORE_ONLY: &str = "#version 430
+writeonly uniform image2D marker;
+void main() {
+    imageStore(marker, ivec2(0), vec4(1.0, 0.0, 1.0, 1.0));
+}
+";
+
+/// Writes the marker's texel to every pixel.
+const SHOW_MARKER: &str = "#version 430
+uniform sampler2D markerSampler;
+void main() {
+/* DRAWBUFFERS:0 */
+    gl_FragData[0] = vec4(texelFetch(markerSampler, ivec2(0), 0).rgb, 1.0);
+}
+";
+
+#[test]
+fn programs_without_colour_outputs_load_and_keep_their_stores() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    let bytes = render(
+        &gpu,
+        &[
+            (
+                "shaders.properties",
+                "image.marker = markerSampler RGBA RGBA8 UNSIGNED_BYTE true false 1 1\n",
+            ),
+            ("deferred.vsh", PASS_VERTEX),
+            ("deferred.fsh", SWITCHED_OFF),
+            ("composite.vsh", PASS_VERTEX),
+            ("composite.fsh", STORE_ONLY),
+            ("composite1.vsh", PASS_VERTEX),
+            ("composite1.fsh", SHOW_MARKER),
+            ("final.vsh", PASS_VERTEX),
+            ("final.fsh", FINAL),
+        ],
+    );
+    assert_pixels(&bytes, |_| [255, 0, 255]);
+}
+
 #[test]
 fn a_draw_pipeline_the_device_rejects_drops_only_that_draw() {
     let Some(gpu) = gpu() else {

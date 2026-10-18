@@ -616,7 +616,7 @@ fn run_step(
     let program = &pack.programs[step.program];
     targets.take_snapshots(encoder, program, step.read_alt);
     match &program.pipeline {
-        ProgramPipeline::Geometry => {}
+        ProgramPipeline::Geometry | ProgramPipeline::Inert => {}
         ProgramPipeline::Compute(pipeline) => {
             let Some(dispatch) = &program.reflection.compute else {
                 return;
@@ -647,32 +647,37 @@ fn run_step(
             }
             compute.dispatch_workgroups(groups_count[0], groups_count[1], groups_count[2]);
         }
-        ProgramPipeline::Render(pipeline) => {
+        ProgramPipeline::Render(pipeline) | ProgramPipeline::StoreOnly(pipeline) => {
             debug_assert!(!is_compute(pack, step));
             let mut size = None;
             let mut consistent = true;
-            let attachments: Vec<_> = program
-                .color_targets
-                .iter()
-                .enumerate()
-                .map(|(location, present)| {
-                    if !present {
-                        return None;
-                    }
-                    let (view, extent) = if program.group == ProgramGroup::Final {
-                        if location != 0 {
+            let attachments: Vec<_> = if matches!(program.pipeline, ProgramPipeline::StoreOnly(_)) {
+                size = Some(targets.screen_size);
+                vec![load_attachment(&targets.screen.view)]
+            } else {
+                program
+                    .color_targets
+                    .iter()
+                    .enumerate()
+                    .map(|(location, present)| {
+                        if !present {
                             return None;
                         }
-                        (&targets.screen.view, targets.screen_size)
-                    } else {
-                        let (index, alt) = step.writes.get(location).copied().flatten()?;
-                        let buffer = targets.buffers[index as usize].as_ref()?;
-                        (&buffer.attachment[buffer.side(alt)], buffer.size)
-                    };
-                    consistent &= *size.get_or_insert(extent) == extent;
-                    load_attachment(view)
-                })
-                .collect();
+                        let (view, extent) = if program.group == ProgramGroup::Final {
+                            if location != 0 {
+                                return None;
+                            }
+                            (&targets.screen.view, targets.screen_size)
+                        } else {
+                            let (index, alt) = step.writes.get(location).copied().flatten()?;
+                            let buffer = targets.buffers[index as usize].as_ref()?;
+                            (&buffer.attachment[buffer.side(alt)], buffer.size)
+                        };
+                        consistent &= *size.get_or_insert(extent) == extent;
+                        load_attachment(view)
+                    })
+                    .collect()
+            };
             let Some(extent) = size.filter(|_| consistent) else {
                 if skipped.insert(program.name.clone()) {
                     bevy::log::warn!(

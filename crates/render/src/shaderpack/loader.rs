@@ -12,8 +12,9 @@ use super::effects::resources::VanillaTextures;
 use super::host_pipelines::{HostPipelines, host_pipelines};
 use super::pipeline_cache::PipelineCacheFile;
 use super::pipelines::{
-    FormatSupport, Kind, bind_group_layouts, blend_state, color_target, format_kind,
-    layout_entries, quad_attributes, quad_layout, shader_modules, storage_format, texture_format,
+    FormatSupport, Kind, MASKED_TARGET, bind_group_layouts, color_targets, format_kind,
+    layout_entries, quad_attributes, quad_layout, shader_modules, storage_format, stores,
+    texture_format,
 };
 use super::plan::{
     BufferPlan, FramePlan, MAX_COLOR_BUFFERS, PassStep, PlannedProgram, color_buffer_of,
@@ -28,7 +29,7 @@ use super::shadow_maps::{ShadowMaps, shadow_maps};
 use super::uniforms::PackSettings;
 use sha2::{Digest, Sha256};
 use shaderpack::{
-    BlendMode, BufferId, CustomUniform, Environment, ProgramGroup, ProgramKind, ProgramReflection,
+    BufferId, CustomUniform, Environment, ProgramGroup, ProgramKind, ProgramReflection,
     ProgramTranslation, SamplerBinding, SamplerClass, ScaleRule, ShaderPack, StageKind,
     TranslateConfig,
 };
@@ -74,6 +75,14 @@ impl GpuContext {
 /// The GPU pipeline of one program.
 pub(crate) enum ProgramPipeline {
     Render(wgpu::RenderPipeline),
+    /// A full-screen program that writes no colour buffer the frame has but stores to images
+    /// or storage buffers. WebGPU needs an attachment where OpenGL does not, so it draws into
+    /// the screen with every channel masked off; only its stores take effect.
+    StoreOnly(wgpu::RenderPipeline),
+    /// A full-screen program with no colour buffer to write and nothing to store, such as
+    /// a pack's switched-off pass (`void main() {}`): Iris runs it to no effect, so it
+    /// has no pipeline.
+    Inert,
     Compute(wgpu::ComputePipeline),
     /// A geometry program: its pipelines are per draw, in [`PackGpu::draws`].
     Geometry,
@@ -671,33 +680,47 @@ pub(crate) fn build(
                         program.program.name
                     ));
                 };
-                let attributes = quad_attributes(reflection);
-                ProgramPipeline::Render(gpu.device.create_render_pipeline(
-                    &wgpu::RenderPipelineDescriptor {
-                        label: Some(&program.program.name),
-                        layout: Some(&pipeline_layout),
-                        vertex: wgpu::VertexState {
-                            module: vertex,
-                            entry_point: entry(StageKind::Vertex),
-                            compilation_options: Default::default(),
-                            buffers: &[Some(quad_layout(&attributes))],
-                        },
-                        primitive: wgpu::PrimitiveState {
-                            topology: wgpu::PrimitiveTopology::TriangleStrip,
-                            ..Default::default()
-                        },
-                        depth_stencil: None,
-                        multisample: Default::default(),
-                        fragment: Some(wgpu::FragmentState {
-                            module: fragment,
-                            entry_point: entry(StageKind::Fragment),
-                            compilation_options: Default::default(),
-                            targets: &targets,
-                        }),
-                        multiview_mask: None,
-                        cache,
-                    },
-                ))
+                let no_targets = targets.iter().all(Option::is_none);
+                if no_targets && !stores(reflection) {
+                    ProgramPipeline::Inert
+                } else {
+                    let attributes = quad_attributes(reflection);
+                    let pipeline =
+                        gpu.device
+                            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                                label: Some(&program.program.name),
+                                layout: Some(&pipeline_layout),
+                                vertex: wgpu::VertexState {
+                                    module: vertex,
+                                    entry_point: entry(StageKind::Vertex),
+                                    compilation_options: Default::default(),
+                                    buffers: &[Some(quad_layout(&attributes))],
+                                },
+                                primitive: wgpu::PrimitiveState {
+                                    topology: wgpu::PrimitiveTopology::TriangleStrip,
+                                    ..Default::default()
+                                },
+                                depth_stencil: None,
+                                multisample: Default::default(),
+                                fragment: Some(wgpu::FragmentState {
+                                    module: fragment,
+                                    entry_point: entry(StageKind::Fragment),
+                                    compilation_options: Default::default(),
+                                    targets: if no_targets {
+                                        &MASKED_TARGET
+                                    } else {
+                                        targets.as_slice()
+                                    },
+                                }),
+                                multiview_mask: None,
+                                cache,
+                            });
+                    if no_targets {
+                        ProgramPipeline::StoreOnly(pipeline)
+                    } else {
+                        ProgramPipeline::Render(pipeline)
+                    }
+                }
             }
         };
         programs.push(GpuProgram {
@@ -925,52 +948,6 @@ fn geometry_draws(
         draws.clear();
     }
     draws
-}
-
-/// Colour targets per fragment output location. `final` writes the screen at location 0.
-fn color_targets(
-    group: ProgramGroup,
-    name: &str,
-    reflection: &ProgramReflection,
-    buffer_formats: &[Option<TextureFormat>; MAX_COLOR_BUFFERS as usize],
-    blends: &[shaderpack::BlendRule],
-) -> Vec<Option<wgpu::ColorTargetState>> {
-    let len = reflection
-        .color_outputs
-        .iter()
-        .map(|o| o.location as usize + 1)
-        .max()
-        .unwrap_or(0);
-    let mut targets = vec![None; len];
-    let program_blend = blends
-        .iter()
-        .rev()
-        .find(|b| b.program == name && b.buffer.is_none())
-        .map(|b| b.mode);
-    for output in &reflection.color_outputs {
-        let format = if group == ProgramGroup::Final {
-            (output.location == 0).then_some(SCREEN_FORMAT)
-        } else {
-            output
-                .buffer
-                .and_then(|b| buffer_formats.get(b as usize).copied().flatten())
-        };
-        let Some(format) = format else {
-            continue;
-        };
-        let buffer_blend = output.buffer.and_then(|b| {
-            blends
-                .iter()
-                .rev()
-                .find(|r| {
-                    r.program == name && r.buffer.as_deref().and_then(color_buffer_of) == Some(b)
-                })
-                .map(|r| r.mode)
-        });
-        let mode = buffer_blend.or(program_blend).unwrap_or(BlendMode::Off);
-        targets[output.location as usize] = color_target(format, output.ty, blend_state(mode));
-    }
-    targets
 }
 
 /// Storage-buffer sizes: the reflected minimum, raised by `bufferObject.<binding>=<size>`.

@@ -7,9 +7,11 @@
 //! created on the load worker inside a validation error scope, so a pack the device rejects
 //! fails its load instead of raising a device error.
 
+use super::loader::SCREEN_FORMAT;
+use super::plan::{MAX_COLOR_BUFFERS, color_buffer_of};
 use shaderpack::{
-    BlendFactor as PackFactor, BlendMode, BufferFormat, ProgramReflection, SampleType,
-    SamplerBinding, SamplerClass, ScalarType, StageKind, StageMask,
+    BlendFactor as PackFactor, BlendMode, BlendRule, BufferFormat, ProgramGroup, ProgramReflection,
+    SampleType, SamplerBinding, SamplerClass, ScalarType, StageKind, StageMask,
     TextureDimension as PackDimension, ValueType, VertexAttribute,
 };
 use std::borrow::Cow;
@@ -513,6 +515,70 @@ pub(crate) fn color_target(
         blend: blend.filter(|_| format_kind(format) == Kind::Float && filterable(format)),
         write_mask: ColorWrites::ALL,
     })
+}
+
+/// Colour targets per fragment output location. `final` writes the screen at location 0.
+pub(crate) fn color_targets(
+    group: ProgramGroup,
+    name: &str,
+    reflection: &ProgramReflection,
+    buffer_formats: &[Option<TextureFormat>; MAX_COLOR_BUFFERS as usize],
+    blends: &[BlendRule],
+) -> Vec<Option<ColorTargetState>> {
+    let len = reflection
+        .color_outputs
+        .iter()
+        .map(|o| o.location as usize + 1)
+        .max()
+        .unwrap_or(0);
+    let mut targets = vec![None; len];
+    let program_blend = blends
+        .iter()
+        .rev()
+        .find(|b| b.program == name && b.buffer.is_none())
+        .map(|b| b.mode);
+    for output in &reflection.color_outputs {
+        let format = if group == ProgramGroup::Final {
+            (output.location == 0).then_some(SCREEN_FORMAT)
+        } else {
+            output
+                .buffer
+                .and_then(|b| buffer_formats.get(b as usize).copied().flatten())
+        };
+        let Some(format) = format else {
+            continue;
+        };
+        let buffer_blend = output.buffer.and_then(|b| {
+            blends
+                .iter()
+                .rev()
+                .find(|r| {
+                    r.program == name && r.buffer.as_deref().and_then(color_buffer_of) == Some(b)
+                })
+                .map(|r| r.mode)
+        });
+        let mode = buffer_blend.or(program_blend).unwrap_or(BlendMode::Off);
+        targets[output.location as usize] = color_target(format, output.ty, blend_state(mode));
+    }
+    targets
+}
+
+/// The target of a program that writes no colour buffer the frame has but stores to images
+/// or storage buffers: the screen with every channel masked off. WebGPU needs an attachment
+/// to draw where OpenGL does not.
+pub(crate) const MASKED_TARGET: [Option<ColorTargetState>; 1] = [Some(ColorTargetState {
+    format: SCREEN_FORMAT,
+    blend: None,
+    write_mask: ColorWrites::empty(),
+})];
+
+/// Whether any stage of the program stores to an image or a storage buffer.
+pub(crate) fn stores(reflection: &ProgramReflection) -> bool {
+    reflection
+        .storage_images
+        .iter()
+        .any(|i| i.write || i.atomic)
+        || reflection.storage_buffers.iter().any(|b| !b.read_only)
 }
 
 /// Shader modules of a program's stages in reflection entry-point order.
