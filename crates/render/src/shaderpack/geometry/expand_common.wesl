@@ -14,10 +14,13 @@ struct ExpandParams {
     /// `LAYOUT_ABSENT` for fields the layout leaves out. x: stride, float position, packed
     /// position, colour; y: uv, mid uv, lightmap, normal; z: tangent, block, mid block.
     words: vec4<u32>,
+    /// x: jobs of this dispatch, from word `flags.z` on.
+    jobs: vec4<u32>,
 }
 
-// The material attribute table (two words per material) followed by four-word jobs; one
-// buffer keeps every kernel within the baseline storage-buffer count per stage.
+// The material attribute table (two words per material) followed by every dispatch's
+// four-word jobs; one buffer keeps every kernel within the baseline storage-buffer count
+// per stage.
 @group(1) @binding(0) var<storage, read> job_words: array<u32>;
 @group(1) @binding(1) var<storage, read_write> vertices: array<u32>;
 @group(1) @binding(2) var<storage, read> atlas_remap: array<vec2<u32>>;
@@ -97,7 +100,7 @@ fn expand_job_index(id: vec3<u32>, groups: vec3<u32>) -> u32 {
 }
 
 fn expand_job_count() -> u32 {
-    return (arrayLength(&job_words) - params.flags.z) / 4u;
+    return params.jobs.x;
 }
 
 fn expand_job(index: u32) -> vec4<u32> {

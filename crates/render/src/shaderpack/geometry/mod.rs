@@ -57,6 +57,7 @@
 mod allocator;
 mod block_ids;
 mod draw;
+mod expansion_buffers;
 mod gpu;
 pub(crate) mod jobs;
 mod pipelines;
@@ -150,5 +151,7 @@ fn install_expansion_recording(world: &mut World) {
     });
 }
 
+#[cfg(test)]
+mod expansion_draw_tests;
 #[cfg(test)]
 mod expansion_tests;

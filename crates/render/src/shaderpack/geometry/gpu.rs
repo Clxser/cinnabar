@@ -18,12 +18,13 @@ use render_scene::{ChunkRenderInstance, ChunkTextureAssets, RuntimeStage, Runtim
 
 use super::block_ids::{ShaderpackBlockIds, material_attribute_words};
 use super::draw::{DrawInputs, ViewDraws, eye_section_centre, face_indices};
+use super::expansion_buffers::{ExpansionBuffers, PARAM_WORDS};
 use super::jobs::{
     GeometryCategory, JOB_KINDS, JobKind, MaterialTables, SectionPlan, plan_section,
 };
 use super::pipelines::{
-    EXPAND_PARAMS_BYTES, EXPAND_WORKGROUP_SIZE, ExpansionPipelines, output_layout, source_bindings,
-    source_layout, storage_buffers_per_stage,
+    EXPAND_WORKGROUP_SIZE, ExpansionPipelines, output_layout, source_bindings, source_layout,
+    storage_buffers_per_stage,
 };
 use super::pull::{FACE_REF_BYTES, PULL_PAGE_BYTES, section_face_refs};
 use super::pulled_arena::PulledArena;
@@ -138,6 +139,8 @@ pub struct ShaderpackGeometry {
     multi_draw: bool,
     supported: bool,
     prepared: PreparedExpansion,
+    /// The attribute table, jobs and parameters of each frame's expansion.
+    expansion: ExpansionBuffers,
     overflow_reported: bool,
     /// Eye distance within which every visible section is expanded; `None` when all are.
     complete_radius: Option<f32>,
@@ -193,6 +196,7 @@ impl FromWorld for ShaderpackGeometry {
             multi_draw: draw_mode == Some(true),
             supported,
             prepared: PreparedExpansion::default(),
+            expansion: ExpansionBuffers::default(),
             overflow_reported: false,
             complete_radius: None,
             budget_horizon: None,
@@ -549,6 +553,9 @@ pub(crate) fn prepare_shaderpack_geometry(
     if changed.len() > 512 {
         debug!(target: "cinnabar::shaderpack", sections = changed.len(), "shader-pack terrain sections changed");
     }
+    geometry
+        .residency
+        .observe_frame(freed || !changed.is_empty());
     for changed in changed {
         geometry.residency.enqueue(changed);
     }
@@ -814,26 +821,21 @@ fn plan_frame(
     if jobs.is_empty() {
         return planned_faces;
     }
-    let params = expand_params(origin, settings, &geometry.attributes);
-    let params = device.create_buffer_with_data(&BufferInitDescriptor {
-        label: Some("shader-pack expansion parameters"),
-        contents: bytemuck::cast_slice(&params),
-        usage: BufferUsages::UNIFORM,
-    });
-    let output_layout = inputs.cache.get_bind_group_layout(&output_layout());
-    let mut source_groups: [Option<BindGroup>; 3] = Default::default();
     let mut keys: Vec<_> = jobs.keys().copied().collect();
     keys.sort_unstable();
-    for (kind_index, page) in keys {
-        let planned = &jobs[&(kind_index, page)];
+    let planned: Vec<&[[u32; 4]]> = keys.iter().map(|key| jobs[key].as_slice()).collect();
+    geometry.expansion.write(
+        device,
+        &inputs.queue,
+        &geometry.attributes,
+        expand_params(origin, settings, &geometry.attributes),
+        &planned,
+    );
+    let job_buffer = geometry.expansion.jobs().expect("written above");
+    let output_layout = inputs.cache.get_bind_group_layout(&output_layout());
+    let mut source_groups: [Option<BindGroup>; 3] = Default::default();
+    for (index, (kind_index, page)) in keys.into_iter().enumerate() {
         let kind = JOB_KINDS[kind_index];
-        let mut words = geometry.attributes.clone();
-        words.extend(planned.iter().flatten());
-        let job_buffer = device.create_buffer_with_data(&BufferInitDescriptor {
-            label: Some("shader-pack expansion jobs"),
-            contents: bytemuck::cast_slice(&words),
-            usage: BufferUsages::STORAGE,
-        });
         let output = device.create_bind_group(
             "shader-pack expansion output",
             &output_layout,
@@ -852,7 +854,7 @@ fn plan_frame(
                 },
                 BindGroupEntry {
                     binding: 3,
-                    resource: params.as_entire_binding(),
+                    resource: geometry.expansion.params(index).expect("written above"),
                 },
             ],
         );
@@ -863,7 +865,7 @@ fn plan_frame(
             kind,
             sources,
             output,
-            jobs: planned.len() as u32,
+            jobs: planned[index].len() as u32,
         });
     }
     planned_faces
@@ -875,8 +877,8 @@ fn expand_params(
     origin: IVec3,
     settings: &ShaderpackGeometrySettings,
     attributes: &[u32],
-) -> [u32; (EXPAND_PARAMS_BYTES / 4) as usize] {
-    let mut params = [0_u32; (EXPAND_PARAMS_BYTES / 4) as usize];
+) -> [u32; PARAM_WORDS] {
+    let mut params = [0_u32; PARAM_WORDS];
     params[..3].copy_from_slice(&origin.to_array().map(|axis| axis as u32));
     params[4] = u32::from(settings.separate_ao);
     params[5] = u32::from(settings.old_lighting);

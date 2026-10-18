@@ -21,7 +21,7 @@ const EXPAND_LIQUIDS_SHADER: Handle<Shader> = uuid_handle!("6a0f5d0e-4c3b-4f43-9
 /// Invocations per expansion workgroup; matches `EXPAND_WORKGROUP_SIZE` in the kernels.
 pub(crate) const EXPAND_WORKGROUP_SIZE: u32 = 64;
 /// Bytes of the kernels' `ExpandParams` uniform.
-pub(crate) const EXPAND_PARAMS_BYTES: u64 = 48;
+pub(crate) const EXPAND_PARAMS_BYTES: u64 = 64;
 
 /// Resolves every generated constant of an expansion module: the packed-material constants,
 /// the expanded vertex layout, the atlas remap slots and the job flags.

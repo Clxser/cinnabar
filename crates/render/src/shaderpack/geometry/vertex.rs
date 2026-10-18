@@ -150,7 +150,7 @@ pub(crate) fn textured_host_vertex(
     words[UV0.word as usize] = pair(uv.map(unorm16));
     words[MID_TEX.word as usize] = pair(mid_uv.map(unorm16));
     words[LIGHTMAP.word as usize] =
-        pair(light.map(|v| u32::from(crate::shaderpack::resources::f32_to_half(v))));
+        pair(light.map(|v| u32::from(crate::shaderpack::resources::raw::f32_to_half(v))));
     words
 }
 

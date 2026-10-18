@@ -45,6 +45,9 @@ pub(crate) const ORIGIN_GRID: i32 = 1024;
 pub(crate) const ORIGIN_REBASE_DISTANCE: f64 = 4096.0;
 /// Distance from a section's centre to its farthest corner, in blocks.
 pub(crate) const SECTION_RADIUS: f64 = 8.0 * 1.732_050_807_568_877_2;
+/// Frames in a row without a section arriving, changing or leaving before a page may start
+/// draining ([`Residency::observe_frame`]).
+pub(crate) const DRAIN_SETTLED_FRAMES: u32 = 120;
 
 /// Squared distance from `eye` to the centre of the section at block `origin`.
 pub(crate) fn section_distance(origin: [i32; 3], eye: DVec3) -> f64 {
@@ -122,6 +125,8 @@ pub(crate) struct Residency {
     /// The page being emptied so its memory can go: placements land elsewhere while
     /// anything else fits, and its sections are queued to move.
     draining: Option<usize>,
+    /// Frames in a row in which no section arrived, changed or left.
+    settled_frames: u32,
 }
 
 impl Residency {
@@ -154,6 +159,7 @@ impl Residency {
             free_slots: Vec::new(),
             slot_count: 0,
             draining: None,
+            settled_frames: 0,
         }
     }
 
@@ -418,11 +424,28 @@ impl Residency {
             .count()
     }
 
-    /// Starts emptying the page with the fewest faces once nothing waits and the other
-    /// pages' free faces hold its faces with a quarter to spare, queueing its sections to
-    /// move. Returns whether it started.
+    /// Counts a frame in which sections arrived, changed or left (`streamed`), or none did.
+    /// Draining waits for [`DRAIN_SETTLED_FRAMES`] settled frames: while the camera streams
+    /// terrain in and out, removals keep fragmenting the pages and new sections fill the
+    /// holes, so moving a page's faces would re-expand them only to be undone by the next
+    /// removals.
+    pub(crate) fn observe_frame(&mut self, streamed: bool) {
+        self.settled_frames = if streamed {
+            0
+        } else {
+            self.settled_frames.saturating_add(1)
+        };
+    }
+
+    /// Starts emptying the page with the fewest faces once streaming has settled, nothing
+    /// waits and the other pages' free faces hold its faces with a quarter to spare, queueing
+    /// its sections to move. Returns whether it started.
     pub(crate) fn start_draining(&mut self) -> bool {
-        if self.draining.is_some() || self.pending_len() > 0 || self.pages.len() < 2 {
+        if self.draining.is_some()
+            || self.settled_frames < DRAIN_SETTLED_FRAMES
+            || self.pending_len() > 0
+            || self.pages.len() < 2
+        {
             return false;
         }
         let free: u64 = self

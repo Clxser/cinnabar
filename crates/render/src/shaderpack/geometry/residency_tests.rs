@@ -17,6 +17,13 @@ fn entity(index: u32) -> Entity {
     Entity::from_raw_u32(index).unwrap()
 }
 
+/// Frames without streaming, enough for draining to start.
+fn settle(residency: &mut Residency) {
+    for _ in 0..DRAIN_SETTLED_FRAMES {
+        residency.observe_frame(false);
+    }
+}
+
 #[test]
 fn pages_hold_the_page_size_or_the_binding_limit() {
     let residency = Residency::new(u64::MAX / 2, 1 << 30, STRIDE);
@@ -217,6 +224,7 @@ fn a_page_whose_faces_fit_elsewhere_drains_and_goes() {
     // Freeing 60 faces of page 0 leaves 60 + 10 + 50 free: page 0's 40 fit elsewhere.
     residency.remove(entity(1));
     residency.enqueue(entity(3));
+    settle(&mut residency);
     assert!(!residency.start_draining(), "nothing may be pending");
     assert_eq!(residency.take_queue(), [entity(3)]);
     assert!(residency.start_draining());
@@ -248,6 +256,7 @@ fn a_draining_page_takes_a_placement_nothing_else_has_room_for_and_stays() {
         residency.commit(entity(id), &placement, &plan(faces), [0; 3]);
     }
     residency.remove(entity(1));
+    settle(&mut residency);
     assert!(
         residency.start_draining(),
         "page 1's 20 faces fit in page 0's 50"
@@ -257,4 +266,26 @@ fn a_draining_page_takes_a_placement_nothing_else_has_room_for_and_stays() {
     let fallback = residency.place(entity(4), &plan(70)).unwrap();
     assert_eq!((fallback.page, fallback.new_page), (1, false));
     assert_eq!(residency.finish_draining(), None, "draining was given up");
+}
+
+#[test]
+fn pages_drain_only_once_streaming_settles() {
+    let mut residency = Residency::new(100 * FACE_BYTES, 1 << 30, STRIDE);
+    for (id, faces) in [(1, 60), (2, 40), (3, 30)] {
+        let placement = residency.place(entity(id), &plan(faces)).unwrap();
+        residency.commit(entity(id), &placement, &plan(faces), [0; 3]);
+    }
+    residency.remove(entity(1));
+    settle(&mut residency);
+    residency.observe_frame(true);
+    for _ in 1..DRAIN_SETTLED_FRAMES {
+        residency.observe_frame(false);
+    }
+    assert!(
+        !residency.start_draining(),
+        "a section arrived or left within the last DRAIN_SETTLED_FRAMES frames"
+    );
+    residency.observe_frame(false);
+    assert!(residency.start_draining());
+    assert_eq!(residency.take_queue(), [entity(3)]);
 }
