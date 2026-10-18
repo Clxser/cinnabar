@@ -318,3 +318,140 @@ fn a_texture_sampler_is_gtexture_in_every_version_and_const_in_parameters_compil
     let r = reflection(program(&t, "gbuffers_textured"));
     assert_eq!(texture_names(r), ["gtexture"]);
 }
+
+/// (location, type) of each user-location input or output of `stage`'s entry point.
+fn interface_locations(stage: &CompiledStage, outputs: bool) -> Vec<(u32, naga::TypeInner)> {
+    let module = &stage.module;
+    let entry = &module.entry_points[0].function;
+    let mut found = vec![];
+    let mut push = |binding: &Option<naga::Binding>, ty: naga::Handle<naga::Type>| {
+        if let Some(naga::Binding::Location { location, .. }) = binding {
+            found.push((*location, module.types[ty].inner.clone()));
+        }
+    };
+    let mut visit = |binding: &Option<naga::Binding>, ty: naga::Handle<naga::Type>| match &module
+        .types[ty]
+        .inner
+    {
+        naga::TypeInner::Struct { members, .. } => {
+            for m in members {
+                push(&m.binding, m.ty);
+            }
+        }
+        _ => push(binding, ty),
+    };
+    if outputs {
+        if let Some(result) = &entry.result {
+            visit(&result.binding, result.ty);
+        }
+    } else {
+        for argument in &entry.arguments {
+            visit(&argument.binding, argument.ty);
+        }
+    }
+    found.sort_by_key(|(l, _)| *l);
+    found
+}
+
+#[test]
+fn fragment_inputs_no_vertex_output_feeds_become_zero_and_the_rest_pair_by_name() {
+    // SEUS Renewed's `gbuffers_entities`: the fragment declares `varying vec3 worldNormal`
+    // the vertex stage never writes, and the two stages declare their varyings in different
+    // orders. GL links that; WebGPU rejects a fragment input the vertex stage lacks.
+    let vertex = "#version 120\n\
+        varying vec4 color;\n\
+        varying vec2 waves;\n\
+        varying mat3 tbnMatrix;\n\
+        varying vec4 texcoord;\n\
+        void main() {\n\
+            color = gl_Color; waves = vec2(0.5); texcoord = gl_MultiTexCoord0;\n\
+            tbnMatrix = mat3(1.0);\n\
+            gl_Position = ftransform();\n\
+        }\n";
+    let fragment = "#version 120\n\
+        varying vec4 texcoord;\n\
+        varying vec3 worldNormal;\n\
+        varying mat3 tbnMatrix;\n\
+        varying vec4 color;\n\
+        varying float unwritten[2];\n\
+        void main() {\n\
+            gl_FragData[0] = color * texcoord + vec4(worldNormal + tbnMatrix[2], unwritten[1]);\n\
+            gl_FragData[1] = gl_Color;\n\
+        }\n";
+    let pack = inline_pack(&[
+        ("gbuffers_entities.vsh", vertex),
+        ("gbuffers_entities.fsh", fragment),
+    ]);
+    let t = pack.translate(&TranslateConfig::default());
+    let entities = program(&t, "gbuffers_entities");
+    reflection(entities);
+    let compiled: Vec<&CompiledStage> = entities
+        .stages
+        .iter()
+        .map(|s| s.result.as_ref().expect("stage compiles"))
+        .collect();
+    let written = interface_locations(compiled[0], true);
+    let read = interface_locations(compiled[1], false);
+    // texcoord, tbnMatrix's three columns and color: every one at the location and type
+    // the vertex stage writes it.
+    assert_eq!(read.len(), 5, "fragment inputs {read:?}");
+    for input in &read {
+        assert!(
+            written.contains(input),
+            "fragment input {input:?} is not among the vertex outputs {written:?}"
+        );
+    }
+    // The unfed inputs are zeroed before the pack's main runs.
+    let glsl = &compiled[1].glsl;
+    for zeroed in [
+        "worldNormal = vec3(0);",
+        "unwritten[1] = float(0);",
+        "iris_FrontColor = vec4(0);",
+    ] {
+        assert!(glsl.contains(zeroed), "missing `{zeroed}` in\n{glsl}");
+    }
+}
+
+#[test]
+fn an_integer_lightmap_declaration_reads_the_float_lightmap_and_converts() {
+    // Core-profile packs declare `in ivec2 vaUV2`; the vertex stream stores the lightmap
+    // once, as floats, so the stage reads a float input and rounds it.
+    let vertex = "#version 330\n\
+        in vec3 vaPosition;\n\
+        in ivec2 vaUV2;\n\
+        flat out ivec2 light;\n\
+        void main() { light = vaUV2; gl_Position = vec4(vaPosition, 1.0); }\n";
+    let fragment = "#version 330\n\
+        flat in ivec2 light;\n\
+        layout(location = 0) out vec4 color;\n\
+        void main() { color = vec4(vec2(light) / 240.0, 0.0, 1.0); }\n";
+    let pack = inline_pack(&[
+        ("gbuffers_terrain.vsh", vertex),
+        ("gbuffers_terrain.fsh", fragment),
+    ]);
+    let t = pack.translate(&TranslateConfig::default());
+    let terrain = program(&t, "gbuffers_terrain");
+    let r = reflection(terrain);
+    let lightmap = r
+        .vertex_inputs
+        .iter()
+        .find(|i| i.attribute == VertexAttribute::Lightmap)
+        .expect("vaUV2 is a vertex input");
+    assert_eq!(lightmap.name, "vaUV2");
+    assert_eq!(
+        lightmap.ty,
+        ValueType::Vector {
+            size: 2,
+            scalar: ScalarType::Float
+        }
+    );
+    let glsl = &terrain.stages[0]
+        .result
+        .as_ref()
+        .expect("vertex compiles")
+        .glsl;
+    assert!(
+        glsl.contains("vaUV2 = ivec2(round(iris_float_vaUV2));"),
+        "{glsl}"
+    );
+}

@@ -1,14 +1,17 @@
 //! Location and binding numbering shared by a program's stages.
 
 use crate::reflection::{FIRST_TEXTURE_BINDING, LOOSE_UNIFORM_BINDING};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Interface numbering shared by a program's stages: varying name → (first location,
-/// count), and resource name → binding, so the vertex and fragment stages agree.
+/// count), and resource name → binding, so the vertex and fragment stages agree. Stages
+/// are transformed vertex first, so `written` holds every varying the vertex stage writes
+/// by the time the fragment stage asks for its inputs.
 #[derive(Default)]
 pub(crate) struct ProgramInterface {
     varyings: BTreeMap<String, (u32, u32)>,
     next_varying: u32,
+    written: BTreeSet<String>,
     textures: BTreeMap<String, u32>,
     images: BTreeMap<String, u32>,
     uniform_blocks: BTreeMap<String, u32>,
@@ -25,6 +28,18 @@ impl ProgramInterface {
         self.varyings.insert(name.to_string(), (l, size));
         self.next_varying += size;
         l
+    }
+
+    /// Records that the vertex stage writes varying `name`.
+    pub(super) fn write(&mut self, name: &str) {
+        self.written.insert(name.to_string());
+    }
+
+    /// Whether the vertex stage writes varying `name`. GLSL links a fragment input no
+    /// vertex output feeds when the fragment never reads it, but WebGPU rejects the
+    /// pipeline, so such inputs become zeroed private globals instead.
+    pub(super) fn written(&self, name: &str) -> bool {
+        self.written.contains(name)
     }
 
     /// Binding of sampled texture `name`, after the shared samplers.

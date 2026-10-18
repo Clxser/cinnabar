@@ -33,32 +33,25 @@ pub(crate) const UV0: StoredField = field("IRIS_WORD_UV0", 4, VertexFormat::Unor
 /// Mean atlas coordinates of the face (`mc_midTexCoord`).
 pub(crate) const MID_TEX: StoredField = field("IRIS_WORD_MID_TEX", 5, VertexFormat::Unorm16x2);
 /// Java lightmap coordinates, light level × 16 for block then sky (`gl_MultiTexCoord1/2`).
-pub(crate) const LIGHTMAP_FLOAT: StoredField =
-    field("IRIS_WORD_LIGHTMAP_FLOAT", 6, VertexFormat::Float16x2);
-/// The same coordinates rounded, for the core profile's `ivec2 vaUV2`.
-pub(crate) const LIGHTMAP_INT: StoredField =
-    field("IRIS_WORD_LIGHTMAP_INT", 7, VertexFormat::Sint16x2);
+/// Half floats hold them exactly; the translator converts integer declarations
+/// (`in ivec2 vaUV2`) from this one copy.
+pub(crate) const LIGHTMAP: StoredField = field("IRIS_WORD_LIGHTMAP", 6, VertexFormat::Float16x2);
 /// Face normal (`gl_Normal` / `vaNormal`).
-pub(crate) const NORMAL: StoredField = field("IRIS_WORD_NORMAL", 8, VertexFormat::Snorm8x4);
+pub(crate) const NORMAL: StoredField = field("IRIS_WORD_NORMAL", 7, VertexFormat::Snorm8x4);
 /// Tangent with handedness in `w` (`at_tangent`).
-pub(crate) const TANGENT: StoredField = field("IRIS_WORD_TANGENT", 9, VertexFormat::Snorm8x4);
-/// `block.properties` id, -1 when unmapped (`mc_Entity.x`; `.y` reads 0).
-pub(crate) const BLOCK_ID: StoredField = field("IRIS_WORD_BLOCK_ID", 10, VertexFormat::Float32);
+pub(crate) const TANGENT: StoredField = field("IRIS_WORD_TANGENT", 8, VertexFormat::Snorm8x4);
+/// `block.properties` id, -1 when unmapped, and Iris's render type: 1 for fluids, -1 for
+/// every other block (`mc_Entity.xy`).
+pub(crate) const BLOCK_ID: StoredField = field("IRIS_WORD_BLOCK_ID", 9, VertexFormat::Float32x2);
 /// Offset to the block centre in 1/64 blocks, and the block's emission (`at_midBlock`).
 pub(crate) const MID_BLOCK: StoredField = field("IRIS_WORD_MID_BLOCK", 11, VertexFormat::Float16x4);
+/// Iris's `mc_Entity.y` for everything but fluids (`ExtendedDataHelper.BLOCK_RENDER_TYPE`);
+/// the liquid kernel writes `FLUID_RENDER_TYPE`, 1.
+const BLOCK_RENDER_TYPE: f32 = -1.0;
 
 /// Every stored field, in word order.
-pub(crate) const STORED_FIELDS: [StoredField; 10] = [
-    POSITION,
-    COLOR,
-    UV0,
-    MID_TEX,
-    LIGHTMAP_FLOAT,
-    LIGHTMAP_INT,
-    NORMAL,
-    TANGENT,
-    BLOCK_ID,
-    MID_BLOCK,
+pub(crate) const STORED_FIELDS: [StoredField; 9] = [
+    POSITION, COLOR, UV0, MID_TEX, LIGHTMAP, NORMAL, TANGENT, BLOCK_ID, MID_BLOCK,
 ];
 
 /// Words of one expanded vertex.
@@ -109,8 +102,8 @@ const OVERLAY_FLOAT_WORD: u32 = 11;
 const NO_OVERLAY: [i32; 2] = [0, 10];
 
 /// One vertex the host builds on the CPU (sky geometry) in the expanded stream's layout:
-/// `position`, gamma `colour` and `normal`; texture and lightmap coordinates read zero, the
-/// block id reads Iris's -1 and `at_midBlock` zero.
+/// `position`, gamma `colour` and `normal`; texture and lightmap coordinates read zero,
+/// `mc_Entity` Iris's (-1, -1) and `at_midBlock` zero.
 pub(crate) fn host_vertex(
     position: [f32; 3],
     colour: [f32; 4],
@@ -133,6 +126,7 @@ pub(crate) fn host_vertex(
         .map(|(axis, v)| snorm8(v) << (8 * axis))
         .sum();
     words[BLOCK_ID.word as usize] = (-1.0_f32).to_bits();
+    words[BLOCK_ID.word as usize + 1] = BLOCK_RENDER_TYPE.to_bits();
     words
 }
 
@@ -152,9 +146,8 @@ pub(crate) fn textured_host_vertex(
     let mut words = host_vertex(position, colour, normal);
     words[UV0.word as usize] = pair(uv.map(unorm16));
     words[MID_TEX.word as usize] = pair(mid_uv.map(unorm16));
-    words[LIGHTMAP_FLOAT.word as usize] =
+    words[LIGHTMAP.word as usize] =
         pair(light.map(|v| u32::from(crate::shaderpack::resources::f32_to_half(v))));
-    words[LIGHTMAP_INT.word as usize] = pair(light.map(|v| v.round() as i16 as u16 as u32));
     words
 }
 
@@ -210,13 +203,7 @@ fn stored_format(attribute: &VertexAttribute, class: Class) -> Option<Option<(u3
         (VertexAttribute::MidTexCoord, Class::Float) => stored(MID_TEX),
         // Iris documents gl_MultiTexCoord2 as a second name for the lightmap coordinates.
         (VertexAttribute::Lightmap | VertexAttribute::MultiTexCoord2, Class::Float) => {
-            stored(LIGHTMAP_FLOAT)
-        }
-        (VertexAttribute::Lightmap | VertexAttribute::MultiTexCoord2, Class::Sint) => {
-            stored(LIGHTMAP_INT)
-        }
-        (VertexAttribute::Lightmap | VertexAttribute::MultiTexCoord2, Class::Uint) => {
-            Some(Some((LIGHTMAP_INT.word, VertexFormat::Uint16x2)))
+            stored(LIGHTMAP)
         }
         (VertexAttribute::Normal, Class::Float) => stored(NORMAL),
         (VertexAttribute::Tangent, Class::Float) => stored(TANGENT),

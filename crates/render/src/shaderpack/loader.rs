@@ -852,9 +852,9 @@ pub(crate) fn build(
     })
 }
 
-/// Builds every resolved draw's pipeline. Draws whose program cannot bind terrain vertices
-/// are dropped (logged); without a solid terrain draw none remain, so the Vanilla scene
-/// copy stays in place.
+/// Builds every resolved draw's pipeline. Draws whose program cannot bind terrain vertices,
+/// or whose pipeline the device rejects, are dropped (logged); without a solid terrain draw
+/// none remain, so the Vanilla scene copy stays in place.
 #[allow(
     clippy::too_many_arguments,
     reason = "the pack-wide plan pieces a draw pipeline draws on"
@@ -902,17 +902,27 @@ fn geometry_draws(
             effects,
             target_format: &target_format,
         };
-        match draw_pipeline(*kind, &inputs) {
-            Ok((pipeline, outputs)) => draws.push(GeometryDraw {
+        // Each draw gets its own error scope: a pipeline the device rejects drops only that
+        // draw, as Iris falls back per program, instead of the pack-wide scope failing.
+        let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let built = draw_pipeline(*kind, &inputs);
+        let rejected = bevy::tasks::block_on(scope.pop());
+        match (built, rejected) {
+            (Ok((pipeline, outputs)), None) => draws.push(GeometryDraw {
                 kind: *kind,
                 program: *index,
                 pipeline,
                 outputs,
             }),
-            Err(error) => bevy::log::warn!(
+            (Err(error), _) => bevy::log::warn!(
                 target: "cinnabar::shaderpack",
                 program = %program.name, draw = ?kind,
                 "draw skipped: {error}"
+            ),
+            (Ok(_), Some(error)) => bevy::log::warn!(
+                target: "cinnabar::shaderpack",
+                program = %program.name, draw = ?kind,
+                "draw skipped: the device rejected its pipeline: {error}"
             ),
         }
     }

@@ -136,18 +136,18 @@ fn write_vertex(
 ) {
     let base = index * IRIS_VERTEX_WORDS;
     let raw_light = clamp(light, vec2(0.0), vec2(15.0)) * 16.0;
-    let int_light = vec2<u32>(round(raw_light));
     vertices[base + IRIS_WORD_POSITION] = bitcast<u32>(position.x);
     vertices[base + IRIS_WORD_POSITION + 1u] = bitcast<u32>(position.y);
     vertices[base + IRIS_WORD_POSITION + 2u] = bitcast<u32>(position.z);
     vertices[base + IRIS_WORD_COLOR] = colour;
     vertices[base + IRIS_WORD_UV0] = pack2x16unorm(uv);
     vertices[base + IRIS_WORD_MID_TEX] = pack2x16unorm(mid_uv);
-    vertices[base + IRIS_WORD_LIGHTMAP_FLOAT] = pack2x16float(raw_light);
-    vertices[base + IRIS_WORD_LIGHTMAP_INT] = int_light.x | (int_light.y << 16u);
+    vertices[base + IRIS_WORD_LIGHTMAP] = pack2x16float(raw_light);
     vertices[base + IRIS_WORD_NORMAL] = pack4x8snorm(vec4(normal, 0.0));
     vertices[base + IRIS_WORD_TANGENT] = pack4x8snorm(tangent);
     vertices[base + IRIS_WORD_BLOCK_ID] = bitcast<u32>(f32(block_id));
+    // Iris's render type for non-fluid geometry (`mc_Entity.y`).
+    vertices[base + IRIS_WORD_BLOCK_ID + 1u] = bitcast<u32>(-1.0f);
     vertices[base + IRIS_WORD_MID_BLOCK] = 0u;
     vertices[base + IRIS_WORD_MID_BLOCK + 1u] = 0u;
 }
