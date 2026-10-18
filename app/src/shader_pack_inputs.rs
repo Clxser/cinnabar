@@ -21,7 +21,10 @@ use protocol::NetworkItemStack;
 use render_model::celestial;
 use render_scene::{
     ActorRenderFrame, AtmosphereFrame, WorldLighting,
-    shaderpack::{SKY_BIOME_SLOTS, ShaderPackActorIds, ShaderPackFrameInputs, ShaderPackIdMaps},
+    shaderpack::{
+        SKY_BIOME_SLOTS, ShaderPackActorIds, ShaderPackFrameInputs, ShaderPackIdMaps,
+        ShaderPackStatus,
+    },
 };
 
 use crate::{
@@ -72,8 +75,27 @@ impl Plugin for ShaderPackInputsPlugin {
                         .after(update_atmosphere_frame)
                         .after(LocalPlayerFrameSet::Interaction),
                     publish_actor_ids,
+                    mesh_cutout_leaves_for_shader_packs,
                 ),
             );
+    }
+}
+
+/// Meshes leaves the way Java's fancy leaves draw (every leaf cutout, none opaque) while a
+/// shader pack is loaded, as Iris renders them; Bedrock's opaque deep leaves otherwise.
+fn mesh_cutout_leaves_for_shader_packs(
+    status: Option<Res<ShaderPackStatus>>,
+    mut client_world: ResMut<ClientWorld>,
+) {
+    let cutout = status.as_deref().is_some_and(ShaderPackStatus::is_ready);
+    // Borrowed mutably only on a change, so the world is not marked changed every frame.
+    if client_world
+        .stream
+        .as_ref()
+        .is_some_and(|stream| stream.cutout_leaves() != cutout)
+        && let Some(stream) = client_world.stream.as_mut()
+    {
+        stream.set_cutout_leaves(cutout);
     }
 }
 
@@ -216,6 +238,9 @@ fn publish_world_inputs(
     feet: Option<[f32; 3]>,
 ) {
     next.render_distance = stream.render_distance_blocks();
+    if let Some(range) = stream.dimension_range(stream.current_dimension()) {
+        next.bedrock_level = range.base_sub_chunk_y * world::SUB_CHUNK_SIDE as i32;
+    }
     if let Some(light) = eye.and_then(|eye| stream.solved_light_at(eye)) {
         next.eye_brightness = eye_brightness(light);
     }

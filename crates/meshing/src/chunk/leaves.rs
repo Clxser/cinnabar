@@ -2,6 +2,7 @@
 //!
 //! Vanilla leaves test six neighbours for depth and keep only one of the
 //! two coincident non-deep leaf faces, whose material disables backface culling.
+//! Java-style cutout leaves have no deep leaves, so every leaf is cutout.
 
 use std::cell::Cell;
 
@@ -22,14 +23,20 @@ pub(crate) struct LeafOcclusion<'assets, 'chunks> {
     bits: &'assets NeighbourhoodBlockBits<'assets, 'chunks>,
     known: [Cell<u64>; CACHE_WORDS],
     deep: [Cell<u64>; CACHE_WORDS],
+    cutout_only: bool,
 }
 
 impl<'assets, 'chunks> LeafOcclusion<'assets, 'chunks> {
-    pub(crate) fn new(bits: &'assets NeighbourhoodBlockBits<'assets, 'chunks>) -> Self {
+    /// `cutout_only` treats no leaf as deep, as Java's fancy leaves do.
+    pub(crate) fn new(
+        bits: &'assets NeighbourhoodBlockBits<'assets, 'chunks>,
+        cutout_only: bool,
+    ) -> Self {
         Self {
             bits,
             known: std::array::from_fn(|_| Cell::new(0)),
             deep: std::array::from_fn(|_| Cell::new(0)),
+            cutout_only,
         }
     }
 
@@ -39,6 +46,9 @@ impl<'assets, 'chunks> LeafOcclusion<'assets, 'chunks> {
     }
 
     pub(crate) fn is_deep(&self, coordinate: [i32; 3]) -> bool {
+        if self.cutout_only {
+            return false;
+        }
         let Some(index) = cache_index(coordinate) else {
             return false;
         };

@@ -100,4 +100,25 @@ impl WorldStream {
             self.mark_dirty_exact(key, now);
         }
     }
+
+    /// Meshes every leaf with its cutout, two-sided material, as Java's fancy leaves do,
+    /// while a shader pack renders the world; off restores Bedrock's opaque deep leaves.
+    /// A change remeshes every resident sub-chunk.
+    pub fn set_cutout_leaves(&mut self, enabled: bool) {
+        if self.cutout_leaves == enabled {
+            return;
+        }
+        self.cutout_leaves = enabled;
+        let now = Instant::now();
+        let resident: Vec<_> = self.resident.iter().copied().collect();
+        for key in resident {
+            self.mark_dirty_exact(key, now);
+        }
+    }
+
+    /// Whether leaves mesh cutout ([`Self::set_cutout_leaves`]).
+    #[must_use]
+    pub const fn cutout_leaves(&self) -> bool {
+        self.cutout_leaves
+    }
 }

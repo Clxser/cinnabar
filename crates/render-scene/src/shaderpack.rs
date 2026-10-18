@@ -150,6 +150,8 @@ pub struct ShaderPackFrameInputs {
     pub biome_block_y: i32,
     /// Sky dimension: 0 Overworld, 1 Nether, 2 End; selects the pack's `world*` folder.
     pub dimension: i32,
+    /// Lowest block Y of the current dimension (`bedrockLevel`, Iris's dimension `minY`).
+    pub bedrock_level: i32,
     /// Local player is sneaking, sprinting, hurt, burning (`is_sneaking` …).
     pub sneaking: bool,
     pub sprinting: bool,
@@ -188,6 +190,7 @@ impl Default for ShaderPackFrameInputs {
             biome: None,
             biome_block_y: 64,
             dimension: 0,
+            bedrock_level: 0,
             sneaking: false,
             sprinting: false,
             hurt: false,

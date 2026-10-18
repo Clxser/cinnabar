@@ -451,6 +451,17 @@ fn custom_uniform_values_round_trip_through_host_values() {
     assert_eq!(HostValue::Mat4(Mat4::IDENTITY).to_custom(), None);
 }
 
+/// `bedrockLevel` is the dimension's lowest block Y, as Iris reads `dimensionType().minY()`.
+#[test]
+fn bedrock_level_is_the_dimension_minimum_y() {
+    let game = ShaderPackFrameInputs {
+        bedrock_level: -64,
+        ..ShaderPackFrameInputs::default()
+    };
+    let frame = uniforms(&game, &mut UniformHistory::default());
+    assert_eq!(frame.value("bedrockLevel"), Some(HostValue::Int(-64)));
+}
+
 #[test]
 fn biome_uniforms_read_the_java_biome_of_the_bedrock_biome() {
     let Ok(mapping) = JavaBlockMapping::pinned() else {

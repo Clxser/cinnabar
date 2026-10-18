@@ -597,6 +597,7 @@ impl FrameUniforms {
             "hasSkylight" => HostValue::bool(g.dimension == 0),
             "hasCeiling" => HostValue::bool(g.dimension == 1),
             "ambientLight" => Float(if g.dimension == 1 { 0.1 } else { 0.0 }),
+            "bedrockLevel" => Int(g.bedrock_level),
             "cloudHeight" => Float(CLOUD_HEIGHT),
             // Outside actor draws, which patch their own: no entity, block entity or item.
             "entityId" | "blockEntityId" | "currentRenderedItemId" => Int(-1),

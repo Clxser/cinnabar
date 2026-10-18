@@ -418,6 +418,7 @@ fn mesh_snapshot_bakes_solved_halo_channels_into_cube_sidecars() {
         column: None,
         center_y: key.y,
         light_halo,
+        cutout_leaves: false,
     };
 
     let mesh = snapshot.mesh(

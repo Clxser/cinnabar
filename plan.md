@@ -1193,6 +1193,9 @@ screen-effect parity remain incomplete.
   is not modelled.
 - Block-model quads keep their back faces by the template quad's two-sided flag, as the chunk
   renderer does, so cross plants draw through the pack.
+- While a pack is loaded, leaves mesh as Java's fancy leaves: every leaf takes its cutout,
+  two-sided material and goes through `gbuffers_terrain_cutout`, instead of Bedrock's opaque
+  deep leaves; loading or unloading a pack remeshes resident terrain.
 - Expansion is nearest-first within the 1 GiB vertex budget; over budget, nearer sections evict
   the farthest. Vanilla terrain and far-terrain tiles are not drawn on pack cameras, so a
   section not expanded yet shows the pack's sky or fog, as Iris draws no unbuilt section.
@@ -1217,7 +1220,7 @@ screen-effect parity remain incomplete.
   cells; effects cast no shadows; block entities read `blockEntityId` -1 and
   `entities_glowing` is never selected; worn armour and mob-held items read
   `currentRenderedItemId` -1; geometry and tessellation stages are unsupported (Rethinking
-  Voxels' voxel shadow, Eclipse's grass); `bedrockLevel` and `relativeEyePosition` read 0;
+  Voxels' voxel shadow, Eclipse's grass); `relativeEyePosition` reads 0;
   eye-located inputs sample the player, so captures put the player at the camera; shadows
   cover every resident section without `shadowDistance` culling; translucents sort per
   section. Not a parity gate.

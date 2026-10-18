@@ -74,6 +74,9 @@ pub struct MeshOptions {
     /// Keeps every biome-tinted cube face one block wide. Set when the sub-chunk's biome
     /// record is mixed, so the renderer can blend its tint once per face instead of per pixel.
     pub split_tinted_faces: bool,
+    /// Draws every leaf with its cutout, two-sided material, as Java's fancy leaves do,
+    /// instead of Bedrock's opaque deep leaves. Set while a shader pack renders the world.
+    pub cutout_leaves: bool,
 }
 
 /// Greedy-mesh the bounded palette snapshot with solved block/sky light.
@@ -178,7 +181,7 @@ fn mesh_sub_chunk_core<S: crate::lighting::MeshLightSampler + ?Sized>(
             .seasonal_foliage
             .then(|| super::seasonal_foliage::SeasonalCoverage::new(palette_context));
 
-    let leaves = super::leaves::LeafOcclusion::new(&block_bits);
+    let leaves = super::leaves::LeafOcclusion::new(&block_bits, options.cutout_leaves);
     let mut cube_streams = CubeQuadStreams::default();
     let mut diagnostic_geometry = DiagnosticGeometryAccumulator::default();
     // Greedy merging reads lighting only at the current slice's visible cells, which are
