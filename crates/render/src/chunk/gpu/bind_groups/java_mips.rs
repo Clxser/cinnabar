@@ -31,7 +31,7 @@ pub(in crate::chunk) fn prepare_java_terrain_mips(
     let Some(prepared) = &gpu.prepared else {
         return;
     };
-    if prepared.identity != source.identity() {
+    if prepared.identity.carrier != source.identity() {
         return;
     }
     let wanted = (

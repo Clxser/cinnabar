@@ -101,7 +101,11 @@ fn tint_to_linear(rgba: vec4<f32>) -> vec4<f32> {
     return vec4(select(gamma / 12.92, pow((gamma + 0.055) / 1.055, vec3(2.4)), gamma > vec3(0.04045)), rgba.a);
 }
 
-@group(1) @binding(0) var<uniform> world_lightmap: array<vec4<f32>, 256>;
+struct LightmapUniform {
+    raw: array<vec4<f32>, 256>,
+    native: array<vec4<f32>, 256>,
+}
+@group(1) @binding(0) var<uniform> world_lightmap: LightmapUniform;
 
 // Both nibbles address the same environment table in every ordinary world pass.
 fn light_colour(sample: u32) -> vec3<f32> {
@@ -111,10 +115,10 @@ fn light_colour(sample: u32) -> vec3<f32> {
         let upper = min(lower + vec2(1u), vec2(15u));
         let blend = fract(levels);
         return mix(
-            mix(world_lightmap[lower.x | (lower.y << 4u)].rgb, world_lightmap[upper.x | (lower.y << 4u)].rgb, blend.x),
-            mix(world_lightmap[lower.x | (upper.y << 4u)].rgb, world_lightmap[upper.x | (upper.y << 4u)].rgb, blend.x), blend.y);
+            mix(world_lightmap.raw[lower.x | (lower.y << 4u)].rgb, world_lightmap.raw[upper.x | (lower.y << 4u)].rgb, blend.x),
+            mix(world_lightmap.raw[lower.x | (upper.y << 4u)].rgb, world_lightmap.raw[upper.x | (upper.y << 4u)].rgb, blend.x), blend.y);
     }
-    return world_lightmap[sample & 255u].rgb;
+    return world_lightmap.raw[sample & 255u].rgb;
 }
 
 // Old and replacement meshes carry their own sample format during a style transition.
@@ -127,10 +131,9 @@ fn sample_emits(sample: u32) -> bool {
     return (sample & JAVA_PACKED_LIGHT_FLAG) == 0u && (sample & 2048u) != 0u;
 }
 
-// The vanilla classic light texture stores RGB truncated to bytes before
-// lookups read it.
+// Native consumers read the byte-truncated table prepared once at upload.
 fn native_light_texel(sample: u32) -> vec3<f32> {
-    return floor(clamp(light_colour(sample), vec3(0.0), vec3(1.0)) * 255.0) / 255.0;
+    return world_lightmap.native[sample & 255u].rgb;
 }
 
 // Current terrain emitters pack two four-bit levels. Installed near-version

@@ -77,6 +77,7 @@ fn world() -> World {
     world.insert_resource(RenderDevice::from(device));
     world.insert_resource(RenderQueue::new(queue));
     world.init_resource::<CloudVisibility>();
+    world.init_resource::<render_scene::JavaWorldVisuals>();
     world.insert_resource(AtmosphereFrame::from_bedrock_time(0.0, 0.0, 0.0));
     world.insert_resource(AtmosphereTextureAssets::new(runtime(255), [0x41; 32]));
     world.run_system_once(init_cloud_gpu).unwrap();
@@ -384,12 +385,15 @@ fn worker_records_match_direct_meshing_above_inside_and_below_the_layer() {
         );
         let mut gpu = world.resource_mut::<CloudGpu>();
         let prepared = gpu.views.get_mut(&view).unwrap();
-        let (mesh, waited) = prepared.mesh_cache.get(
-            &runtime,
-            prepared.viewport,
-            y >= CLOUD_UNDERSIDE_Y.ceil(),
-            false,
-        );
+        let (mesh, waited) = prepared
+            .mesh_cache
+            .get(
+                &runtime,
+                prepared.viewport,
+                y >= CLOUD_UNDERSIDE_Y.ceil(),
+                false,
+            )
+            .unwrap();
         assert!(!waited);
         assert_ne!(mesh.worker_thread, std::thread::current().id());
         assert_eq!(

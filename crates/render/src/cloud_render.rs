@@ -260,9 +260,20 @@ pub(crate) fn prepare_cloud_records(
                 uploaded_bytes = work.uploaded_bytes
             );
             let _guard = span.enter();
-            let (mesh, waited) = prepared
-                .mesh_cache
-                .get(runtime, viewport, above, *diagnostics);
+            let Some((mesh, waited)) =
+                prepared
+                    .mesh_cache
+                    .get(runtime, viewport, above, *diagnostics)
+            else {
+                prepared.record_count = 0;
+                prepared.prepared_identity = None;
+                prepared.geometry_diagnostic = None;
+                prepared.bind_group = None;
+                prepared
+                    .mesh_cache
+                    .prefetch(runtime, viewport, *diagnostics);
+                continue;
+            };
             upload_records(prepared, &mesh.records, &uploads, work);
             prepared.geometry_diagnostic = mesh.diagnostic.clone();
             if let Some(diagnostic) = &prepared.geometry_diagnostic {

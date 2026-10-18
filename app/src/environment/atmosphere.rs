@@ -184,12 +184,16 @@ pub(crate) fn derive_profiled_atmosphere_frame(
 }
 
 /// Menu options and optional sky settings consumed by atmosphere updates.
-type AtmospherePreferences<'w> = (
-    Option<ResMut<'w, client_shell::menu::MenuRuntime>>,
-    Option<ResMut<'w, render_scene::CloudVisibility>>,
-    Option<ResMut<'w, render_scene::SkyboxSettings>>,
-    Option<ResMut<'w, render_scene::JavaWorldVisuals>>,
-);
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct AtmospherePreferences<'w> {
+    #[cfg(not(target_arch = "wasm32"))]
+    menu: Option<ResMut<'w, client_shell::menu::MenuRuntime>>,
+    #[cfg(target_arch = "wasm32")]
+    options: Res<'w, crate::browser_input::BrowserOptions>,
+    clouds: Option<ResMut<'w, render_scene::CloudVisibility>>,
+    skybox: Option<ResMut<'w, render_scene::SkyboxSettings>>,
+    java: Option<ResMut<'w, render_scene::JavaWorldVisuals>>,
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_atmosphere_frame(
@@ -228,11 +232,16 @@ pub(crate) fn update_atmosphere_frame(
     let clock = time_override
         .as_ref()
         .map_or(*clock, |value| value.rendering_clock(*clock));
-    let (mut menu, clouds, skybox, mut java) = preferences;
-    if let Some(menu) = menu.as_mut() {
+    let mut java = preferences.java;
+    #[cfg(not(target_arch = "wasm32"))]
+    let options = preferences.menu.map(|mut menu| {
         menu.sync_java_world_visuals_available(java.as_ref().is_some_and(|java| java.available()));
-    }
-    let options = menu.as_ref().map(|menu| menu.settings_snapshot().0);
+        menu.settings_snapshot().0
+    });
+    #[cfg(target_arch = "wasm32")]
+    let options = Some(std::sync::Arc::clone(&preferences.options.0));
+    let clouds = preferences.clouds;
+    let skybox = preferences.skybox;
     if let Some(java) = java.as_mut() {
         java.set_enabled(options.as_ref().map_or_else(
             || settings.user_settings_update().1.video.java_world_visuals,

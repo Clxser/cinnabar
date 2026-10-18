@@ -32,7 +32,7 @@ pub(crate) fn update_seasonal_foliage(
     };
     let java_enabled = java.as_ref().is_some_and(|java| java.enabled());
     if stream.java_world_lighting() != java_enabled {
-        stream.set_java_world_lighting(java_enabled, std::time::Instant::now());
+        stream.set_java_world_lighting(java_enabled, web_time::Instant::now());
     }
     if ticks.dimension != stream.current_dimension() {
         return;
