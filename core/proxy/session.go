@@ -359,7 +359,7 @@ func forwardStartupRest(session *sessionConn, rest [][]byte, intercept SessionIn
 				raw.Decoded = []packet.Packet{value}
 			}
 		}
-		if err := forwardPacket(session, raw, login.IdentityData{}, intercept, FromServer); err != nil {
+		if _, err := forwardPacket(session, raw, login.IdentityData{}, intercept, FromServer); err != nil {
 			return err
 		}
 	}

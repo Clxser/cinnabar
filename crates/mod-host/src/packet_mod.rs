@@ -27,7 +27,7 @@ use wasmtime::Engine;
 pub const MAX_PACKET_MOD_BYTES: usize = 256 * 1024 * 1024;
 /// Largest linear memory a packet mod may grow.
 pub const PACKET_MOD_MEMORY_BYTES: usize = 1024 * 1024 * 1024;
-/// Bytes one call may move from the guest to the host, such as a replacement batch or packs.
+/// Per-call returned data budget; core modules also charge each native session pack entry.
 pub const PACKET_MOD_TRANSFER_BYTES: usize = 256 * 1024 * 1024;
 /// Wall-clock budget for instantiation, including the guest runtime's own initialization.
 pub const PACKET_MOD_LOAD_DEADLINE: Duration = Duration::from_secs(60);

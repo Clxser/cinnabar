@@ -530,11 +530,12 @@ func pumpPacketsWithDelay(ctx context.Context, delay *PacketDelay, intercept Ses
 			intercept.BeginBatch(direction)
 		}
 		for _, raw := range batch {
-			if err := forwardPacket(destination, raw, upstreamIdentity, intercept, direction); err != nil {
+			forwarded, err := forwardPacket(destination, raw, upstreamIdentity, intercept, direction)
+			if err != nil {
 				return attributeRelayError(err, fromDownstream)
 			}
 			if tracking && fromDownstream {
-				if candidate := ownMovementPosition(raw, ownID); candidate != nil {
+				if candidate := ownMovementPosition(forwarded, ownID); candidate != nil {
 					position = candidate
 				}
 			}
@@ -564,8 +565,9 @@ func inspectsUpstreamIdentity(id uint32, identity login.IdentityData) bool {
 }
 
 // forwardPacket writes raw's received bytes unless the proxy rewrote one of its decoded packets or an
-// intercept changed or dropped one. intercept is optional.
-func forwardPacket(destination packetSession, raw minecraft.RawPacket, identity login.IdentityData, intercept SessionInterceptor, direction Direction) error {
+// intercept changed or dropped one. It returns only decoded packets actually written, reusing raw's
+// decoded slice. intercept is optional.
+func forwardPacket(destination packetSession, raw minecraft.RawPacket, identity login.IdentityData, intercept SessionInterceptor, direction Direction) ([]packet.Packet, error) {
 	intercepted := intercept != nil && len(raw.Decoded) != 0 && intercept.Intercepts(direction, raw.ID)
 	var verdictBuffer [4]Verdict
 	verdicts := verdictBuffer[:0]
@@ -575,24 +577,30 @@ func forwardPacket(destination packetSession, raw minecraft.RawPacket, identity 
 		if intercepted {
 			var err error
 			if verdict, err = intercept.HandlePacket(direction, value); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		verdicts = append(verdicts, verdict)
 		rewritten = rewritten || verdict != Forward || normalizeUpstreamIdentity(value, identity) != value
 	}
 	if !rewritten {
-		return destination.WritePacketRaw(raw.Data)
+		if err := destination.WritePacketRaw(raw.Data); err != nil {
+			return nil, err
+		}
+		return raw.Decoded, nil
 	}
+	forwarded := raw.Decoded[:0]
 	for index, value := range raw.Decoded {
 		if verdicts[index] == Drop {
 			continue
 		}
-		if err := destination.WritePacket(normalizeUpstreamIdentity(value, identity)); err != nil {
-			return err
+		value = normalizeUpstreamIdentity(value, identity)
+		if err := destination.WritePacket(value); err != nil {
+			return nil, err
 		}
+		forwarded = append(forwarded, value)
 	}
-	return nil
+	return forwarded, nil
 }
 
 // relayIdleFlush bounds how long a packet written outside a forwarded batch stays buffered;

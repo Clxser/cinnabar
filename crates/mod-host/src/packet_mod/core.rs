@@ -262,21 +262,7 @@ impl Guest for CoreGuest {
             .deadline
             .run(self.calls.start.call_async(&mut self.store, params))?;
         self.lift(0, result, |reader, at| {
-            reader.result(at, |reader, at| {
-                let (pointer, count) = (reader.u32(at)?, reader.u32(at + 4)?);
-                ensure!(pointer.is_multiple_of(4), "misaligned session pack list");
-                let size = u64::from(count) * u64::from(SESSION_PACK_BYTES);
-                reader.range(pointer, size)?;
-                (0..count)
-                    .map(|index| {
-                        let pack = pointer + index * SESSION_PACK_BYTES;
-                        Ok(SessionPack {
-                            archive: reader.list(pack)?,
-                            above_server: reader.u8(pack + 8)? != 0,
-                        })
-                    })
-                    .collect()
-            })
+            reader.result(at, Reader::session_packs)
         })
     }
 
@@ -363,13 +349,44 @@ impl Guest for CoreGuest {
     }
 }
 
-/// Bounds-checked canonical reads from guest memory with a per-call copy budget.
+/// Bounds-checked canonical reads from guest memory with a per-call host allocation budget.
 struct Reader<'a> {
     memory: &'a [u8],
     budget: usize,
 }
 
 impl Reader<'_> {
+    /// Copies a session pack list, charging its native entries before allocating or reading archives.
+    fn session_packs(&mut self, address: u32) -> Result<Vec<SessionPack>> {
+        let (pointer, count) = (self.u32(address)?, self.u32(address + 4)?);
+        ensure!(pointer.is_multiple_of(4), "misaligned session pack list");
+        let capacity = usize::try_from(count)?;
+        self.charge::<SessionPack>(capacity)?;
+        let size = u64::from(count) * u64::from(SESSION_PACK_BYTES);
+        self.range(pointer, size)?;
+        let mut packs = Vec::with_capacity(capacity);
+        for index in 0..count {
+            let pack = pointer + index * SESSION_PACK_BYTES;
+            packs.push(SessionPack {
+                archive: self.list(pack)?,
+                above_server: self.u8(pack + 8)? != 0,
+            });
+        }
+        Ok(packs)
+    }
+
+    /// Reserves the host allocation for `count` values before their vector is created.
+    fn charge<T>(&mut self, count: usize) -> Result<()> {
+        let bytes = count
+            .checked_mul(size_of::<T>())
+            .context("packet mod returned too many bytes")?;
+        self.budget = self
+            .budget
+            .checked_sub(bytes)
+            .context("packet mod returned too many bytes")?;
+        Ok(())
+    }
+
     /// Returns `length` bytes at `address`, refusing ranges outside guest memory.
     fn range(&self, address: u32, length: u64) -> Result<&[u8]> {
         let start = usize::try_from(address)?;
@@ -394,10 +411,7 @@ impl Reader<'_> {
     fn list(&mut self, address: u32) -> Result<Vec<u8>> {
         let (pointer, length) = (self.u32(address)?, self.u32(address + 4)?);
         let length = usize::try_from(length)?;
-        self.budget = self
-            .budget
-            .checked_sub(length)
-            .context("packet mod returned too many bytes")?;
+        self.charge::<u8>(length)?;
         Ok(self.range(pointer, length as u64)?.to_vec())
     }
 
@@ -419,3 +433,6 @@ impl Reader<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
