@@ -192,7 +192,7 @@ fn refresh_visible(
     let generation = stream.connectivity_generation();
     if cache.camera == Some(camera_key)
         && cache.graph_generation == Some(generation)
-        && cache.scratch.outward_only() == outward_only
+        && cache.scratch.built_outward_only() == outward_only
         && cache.initialized
     {
         return CaveVisibilityWork::default();

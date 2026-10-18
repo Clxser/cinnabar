@@ -63,7 +63,7 @@ fn atmosphere(world: &World, query: ViewQuery<AtmosphereQuery>, mut context: Ren
         return;
     }
     #[cfg(feature = "shaderpacks")]
-    if crate::shaderpack::draws_world(world, view) {
+    if crate::shaderpack::plugin::draws_world(world, view) {
         return;
     }
     let Some(gpu) = world.get_resource::<AtmosphereGpu>() else {

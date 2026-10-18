@@ -629,7 +629,9 @@ impl RuntimeStageProfiler {
         if frame.iter().any(|(stage, _)| {
             !matches!(
                 stage,
-                RuntimeStage::GpuFrame | RuntimeStage::GpuIdle | RuntimeStage::GpuFrameCompletionLatency
+                RuntimeStage::GpuFrame
+                    | RuntimeStage::GpuIdle
+                    | RuntimeStage::GpuFrameCompletionLatency
             )
         }) {
             *self

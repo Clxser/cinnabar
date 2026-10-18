@@ -2,7 +2,6 @@
 //! recording the expansion before any camera draws.
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
 
 use bevy::log::{debug, warn};
 use bevy::math::{DVec3, IVec3, Vec3};
@@ -29,7 +28,8 @@ use super::pipelines::{
 use super::pull::{FACE_REF_BYTES, PULL_PAGE_BYTES, section_face_refs};
 use super::pulled_arena::PulledArena;
 use super::residency::{
-    Eviction, Placement, Residency, ResidentFaces, SECTION_RADIUS, section_distance,
+    DEFAULT_GEOMETRY_BUDGET_BYTES, Eviction, Placement, Residency, ResidencyLog, ResidentFaces,
+    SECTION_RADIUS, section_distance,
 };
 use super::shadow_cull::ShadowFrustum;
 use super::vertex::{CONSTANT_STREAM_WORDS, DRAW_ORIGIN_BYTES, TerrainLayout, draw_origin};
@@ -40,22 +40,6 @@ use crate::shaderpack::atlas::ShaderpackAtlas;
 
 /// Faces expanded per frame outside an origin move, bounding the frame's expansion work.
 pub const FRAME_EXPANSION_FACES: u32 = 1 << 18;
-/// Default memory budget of the expanded vertex pages, the most any device gets.
-pub const DEFAULT_GEOMETRY_BUDGET_BYTES: u64 = 1 << 30;
-/// Smallest device-sized budget.
-const MIN_GEOMETRY_BUDGET_BYTES: u64 = 256 << 20;
-/// Budget when the device does not report dedicated memory (shared-memory adapters).
-const SHARED_MEMORY_GEOMETRY_BUDGET_BYTES: u64 = 512 << 20;
-
-/// The vertex budget for an adapter with `dedicated` bytes of graphics memory (0 when it
-/// reports none): an eighth of it, within 256 MiB and [`DEFAULT_GEOMETRY_BUDGET_BYTES`].
-pub fn device_geometry_budget(dedicated: u64) -> u64 {
-    if dedicated == 0 {
-        return SHARED_MEMORY_GEOMETRY_BUDGET_BYTES;
-    }
-    (dedicated / 8).clamp(MIN_GEOMETRY_BUDGET_BYTES, DEFAULT_GEOMETRY_BUDGET_BYTES)
-}
-
 /// Camera travel, in blocks, after which sections waiting for room are tried again.
 const RETRY_DISTANCE: f64 = 16.0;
 
@@ -1004,61 +988,4 @@ pub(crate) fn record_geometry_expansion(
             }
         },
     );
-}
-
-/// Once-a-second residency report, and the moment the expansion queue drains, as evidence of
-/// how long terrain takes to fill in.
-#[derive(Default)]
-struct ResidencyLog {
-    window_start: Option<Instant>,
-    expanded_faces: u64,
-    frames: u32,
-    filling_since: Option<Instant>,
-}
-
-impl ResidencyLog {
-    fn observe(&mut self, residency: &Residency, expanded: u32, complete_radius: Option<f32>) {
-        let now = Instant::now();
-        self.expanded_faces += u64::from(expanded);
-        self.frames += 1;
-        let pending = residency.undrawn_len();
-        match (pending, self.filling_since) {
-            (0, Some(since)) => {
-                self.filling_since = None;
-                debug!(
-                    target: "cinnabar::shaderpack",
-                    seconds = now.duration_since(since).as_secs_f32(),
-                    sections = residency.sections.len(),
-                    "shader-pack terrain complete"
-                );
-            }
-            (1.., None) => self.filling_since = Some(now),
-            _ => {}
-        }
-        let start = *self.window_start.get_or_insert(now);
-        if now.duration_since(start) < Duration::from_secs(1) {
-            return;
-        }
-        let resident_faces: u64 = residency
-            .sections
-            .values()
-            .map(|section| u64::from(section.faces.end - section.faces.start))
-            .sum();
-        debug!(
-            target: "cinnabar::shaderpack",
-            sections = residency.sections.len(),
-            resident_mib = (resident_faces * residency.face_bytes()) >> 20,
-            allocated_mib = (residency.capacity_faces() * residency.face_bytes()) >> 20,
-            pending,
-            waiting = residency.waiting_len(),
-            complete_radius,
-            expanded_faces = self.expanded_faces,
-            frames = self.frames,
-            "shader-pack terrain residency"
-        );
-        *self = Self {
-            filling_since: self.filling_since,
-            ..Self::default()
-        };
-    }
 }

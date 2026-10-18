@@ -72,12 +72,10 @@ use bevy::render::{Render, RenderApp, RenderSystems};
 
 pub use block_ids::{BlockEntityIdFn, ShaderpackBlockIds, UNASSIGNED_BLOCK_ID};
 pub(crate) use gpu::prepare_shaderpack_geometry;
-pub use gpu::{
-    DEFAULT_GEOMETRY_BUDGET_BYTES, FRAME_EXPANSION_FACES, ShaderpackGeometry,
-    ShaderpackGeometrySettings, device_geometry_budget,
-};
+pub use gpu::{FRAME_EXPANSION_FACES, ShaderpackGeometry, ShaderpackGeometrySettings};
 pub use jobs::GeometryCategory;
 pub(crate) use pulled_arena::PulledArena;
+pub use residency::{DEFAULT_GEOMETRY_BUDGET_BYTES, device_geometry_budget};
 pub(crate) use shadow_cull::{ShadowCullSettings, ShadowCulling, ShadowFrustum};
 #[cfg(test)]
 pub(crate) use vertex::{BLOCK_ID, IRIS_VERTEX_WORDS, LIGHTMAP, NORMAL, POSITION, UV0};

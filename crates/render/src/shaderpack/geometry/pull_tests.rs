@@ -114,7 +114,7 @@ fn a_wrapped_pack_vertex_stage_reads_the_arenas_in_group_three() {
         .global_variables
         .iter()
         .skip(pack_globals)
-        .filter_map(|(_, global)| global.binding.clone())
+        .filter_map(|(_, global)| global.binding)
         .collect();
     assert!(!added.is_empty());
     assert!(

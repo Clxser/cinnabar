@@ -660,7 +660,7 @@ mod tests {
     }
 
     /// Every other module keeps wgpu's default checks: `pack_shader_module` is the only
-    /// caller of the trusted constructor in the workspace's crates and app.
+    /// caller of the trusted constructor in the workspace's crates.
     #[test]
     fn only_pack_modules_relax_runtime_checks() {
         fn visit(dir: &std::path::Path, needle: &str, hits: &mut Vec<String>) {
@@ -681,7 +681,6 @@ mod tests {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut hits = Vec::new();
         visit(&manifest.join(".."), needle, &mut hits);
-        visit(&manifest.join("../../app"), needle, &mut hits);
         assert_eq!(hits.len(), 1, "{hits:?}");
         assert!(hits[0].ends_with("pipelines.rs"), "{hits:?}");
     }

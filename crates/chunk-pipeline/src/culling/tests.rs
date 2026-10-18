@@ -531,7 +531,7 @@ fn sodium_rule_never_steps_back_toward_the_camera_and_keeps_no_shell() {
 
     scratch.set_outward_only(true);
     fill_visible(camera, &graph, &mut scratch, &mut visible);
-    assert!(scratch.outward_only());
+    assert!(scratch.built_outward_only());
     assert_eq!(
         visible.iter().collect::<HashSet<_>>(),
         [camera, away, up].into(),

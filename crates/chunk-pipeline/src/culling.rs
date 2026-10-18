@@ -101,7 +101,7 @@ impl CaveVisibilityScratch {
     }
 
     /// The rule the latest update used.
-    pub fn outward_only(&self) -> bool {
+    pub fn built_outward_only(&self) -> bool {
         self.built_outward_only
     }
 

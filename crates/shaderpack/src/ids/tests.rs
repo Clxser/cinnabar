@@ -229,7 +229,10 @@ fn without_block_properties_blocks_get_iris_legacy_ids() {
     assert_eq!(id(&legacy, "minecraft:oak_leaves", &[]), Some(18));
     assert_eq!(id(&legacy, "minecraft:water", &[("level", "0")]), Some(9));
     assert_eq!(id(&legacy, "minecraft:emerald_block", &[]), Some(-123));
-    assert_eq!(id(&legacy, "minecraft:red_stained_glass_pane", &[]), Some(160));
+    assert_eq!(
+        id(&legacy, "minecraft:red_stained_glass_pane", &[]),
+        Some(160)
+    );
     assert_eq!(id(&legacy, "minecraft:cherry_leaves", &[]), None);
     // An empty file is still a file: no legacy ids, as in Iris.
     let empty = blocks("");
