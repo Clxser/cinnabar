@@ -32,6 +32,19 @@ fn linear(value: f32) -> f32 {
 
 #[test]
 fn snow_and_other_world_models_use_native_terrain_colour_at_day_and_night() {
+    // Validate the fixture interface even when a GPU is unavailable.
+    let source = format!(
+        "{}\n{VERTEX}",
+        shader_source::standalone(include_str!("../../src/model.wesl"), &[])
+    )
+    .replace("@group(1) @binding(0)", "@group(0) @binding(27)")
+    .replace("GRID_COLUMNS", &format!("{}.0", CASE_COUNT + 1))
+    .replace("NEXT_FRAME", &format!("{NEXT_FRAME}u"));
+    let source = shader_source::bind_atmosphere(&source);
+    shader_source::assert_single_bind_group(
+        &source.replace("MATERIAL_FLAGS", "0u"),
+        &["model_witness_vertex", "fragment", "fragment_blend"],
+    );
     let Some(gpu) = Gpu::for_fixture("world-model native colour") else {
         return;
     };
@@ -64,14 +77,6 @@ fn snow_and_other_world_models_use_native_terrain_colour_at_day_and_night() {
         ..Default::default()
     });
     let sampler = gpu.device.create_sampler(&Default::default());
-    // Actual model entry points, not a reproduction of their arithmetic.
-    let source = format!(
-        "{}\n{VERTEX}",
-        shader_source::standalone(include_str!("../../src/model.wesl"), &[])
-    )
-    .replace("@group(1) @binding(0)", "@group(0) @binding(27)")
-    .replace("GRID_COLUMNS", &format!("{}.0", CASE_COUNT + 1))
-    .replace("NEXT_FRAME", &format!("{NEXT_FRAME}u"));
     let view = gpu.buffer(&[0.0; 104], wgpu::BufferUsages::UNIFORM);
     for (light, fog_amount, blend_frames, ao_face) in [
         ([1.0, 1.0, 1.0], 0.0, false, 1.0),
@@ -134,6 +139,10 @@ fn snow_and_other_world_models_use_native_terrain_colour_at_day_and_night() {
             },
             wgpu::BindGroupEntry {
                 binding: 15,
+                resource: atmosphere.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: shader_source::FIXTURE_ATMOSPHERE_BINDING,
                 resource: atmosphere.as_entire_binding(),
             },
             wgpu::BindGroupEntry {

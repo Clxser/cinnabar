@@ -15,6 +15,35 @@ pub fn bind_atmosphere(source: &str) -> String {
     )
 }
 
+/// Checks that the selected entry points can run with only the fixture's group zero.
+pub fn assert_single_bind_group(source: &str, entries: &[&str]) {
+    let module = naga::front::wgsl::parse_str(source).expect("fixture shader parses");
+    let info = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("fixture shader validates");
+    for name in entries {
+        let index = module
+            .entry_points
+            .iter()
+            .position(|entry| entry.name == *name)
+            .expect("fixture entry point exists");
+        for (handle, global) in module.global_variables.iter() {
+            if let Some(binding) = &global.binding
+                && !info.get_entry_point(index)[handle].is_empty()
+            {
+                assert_eq!(
+                    binding.group, 0,
+                    "{name} needs an unbound group for {:?}",
+                    global.name
+                );
+            }
+        }
+    }
+}
+
 pub(crate) const VIEW: &str = "struct View { clip_from_world: mat4x4<f32>, unjittered_clip_from_world: mat4x4<f32>, view_from_world: mat4x4<f32>, world_from_view: mat4x4<f32>, clip_from_view: mat4x4<f32>, view_from_clip: mat4x4<f32>, world_position: vec3<f32>, exposure: f32, viewport: vec4<f32>, }";
 const FULLSCREEN: &str = "struct FullscreenVertexOutput { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, }";
 const FULLSCREEN_VERTEX: &str = "@vertex fn fullscreen(@builtin(vertex_index) index: u32) -> FullscreenVertexOutput { var out: FullscreenVertexOutput; out.uv = vec2(f32((index << 1u) & 2u), f32(index & 2u)); out.position = vec4(out.uv * vec2(2.0, -2.0) + vec2(-1.0, 1.0), 0.0, 1.0); return out; }";

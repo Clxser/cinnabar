@@ -39,6 +39,32 @@ fn native_sample(table: &[[f32; 4]], levels: [f32; 2]) -> [f32; 3] {
 
 #[test]
 fn terrain_fragments_sample_interpolated_levels_not_interpolated_light_rgb() {
+    let shaders = [
+        (
+            "model",
+            include_str!("../../src/model.wesl"),
+            MODEL_VERTEX,
+            &["fragment", "fragment_blend"][..],
+        ),
+        (
+            "cube",
+            include_str!("../../src/chunk.wesl"),
+            CUBE_VERTEX,
+            &["fragment"][..],
+        ),
+    ]
+    .map(|(kind, shader, vertex, fragments)| {
+        let source = format!(
+            "{}\n{VERTEX}\n{vertex}",
+            shader_source::standalone(shader, &[])
+        )
+        .replace("@group(1) @binding(0)", "@group(0) @binding(27)")
+        .replace("WITNESS_BINDING", &WITNESS_BINDING.to_string());
+        let source = shader_source::bind_atmosphere(&source);
+        shader_source::assert_single_bind_group(&source, &["terrain_witness_vertex"]);
+        shader_source::assert_single_bind_group(&source, fragments);
+        (kind, source, fragments)
+    });
     let Some(gpu) = Gpu::for_fixture("terrain light coordinate witness") else {
         return;
     };
@@ -101,29 +127,7 @@ fn terrain_fragments_sample_interpolated_levels_not_interpolated_light_rgb() {
     }
     let lightmap = gpu.lightmap(bytemuck::cast_slice(&table));
     let mut failures = Vec::new();
-    for (kind, shader, fragments) in [
-        (
-            "model",
-            include_str!("../../src/model.wesl"),
-            &["fragment", "fragment_blend"][..],
-        ),
-        (
-            "cube",
-            include_str!("../../src/chunk.wesl"),
-            &["fragment"][..],
-        ),
-    ] {
-        let vertex = if kind == "model" {
-            MODEL_VERTEX
-        } else {
-            CUBE_VERTEX
-        };
-        let source = format!(
-            "{}\n{VERTEX}\n{vertex}",
-            shader_source::standalone(shader, &[])
-        )
-        .replace("@group(1) @binding(0)", "@group(0) @binding(27)")
-        .replace("WITNESS_BINDING", &WITNESS_BINDING.to_string());
+    for (kind, source, fragments) in shaders {
         for (lower, upper) in [
             ([0.0, 13.0], [0.0, 15.0]),
             ([0.0, 0.0], [15.0, 15.0]),
@@ -166,6 +170,10 @@ fn terrain_fragments_sample_interpolated_levels_not_interpolated_light_rgb() {
                 },
                 wgpu::BindGroupEntry {
                     binding: 15,
+                    resource: atmosphere.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: shader_source::FIXTURE_ATMOSPHERE_BINDING,
                     resource: atmosphere.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
