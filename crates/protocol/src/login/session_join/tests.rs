@@ -653,7 +653,7 @@ async fn a_relay_starts_with_the_session_and_adds_its_packs() {
     use crate::session_transport::tests::{RecordingTap, TapEvent};
     let dir = SocketDir::new("relay");
     let settings = LoginSettings {
-        server_address: "donutsmp.net:19132".into(),
+        server_address: "game.example.test:19132".into(),
         ..Default::default()
     };
     let listener = listen(dir.path());
@@ -699,34 +699,38 @@ async fn a_relay_starts_with_the_session_and_adds_its_packs() {
         (packs[0].archive.as_slice(), packs[0].above_server),
         (&b"pack"[..], true)
     );
-    let state = relay.state();
-    let (identity, client_data, body) = state.started.as_ref().expect("the relay started");
-    assert_eq!(identity.display_name, "Fixture");
-    let client_data: serde_json::Value = serde_json::from_str(client_data).unwrap();
-    assert_eq!(client_data["ThirdPartyName"], "Fixture");
-    assert_eq!(client_data["ServerAddress"], "donutsmp.net:19132");
-    let expected = batch_frame(&startup);
-    assert_eq!(
-        &body[..],
-        &expected[1..],
-        "the startup arrives as one batch body"
-    );
-    assert_eq!(
-        state.inbound.first().map(Vec::as_slice),
-        Some(&expected[1..]),
-        "startup must pass through the inbound handler before the spawn sequence"
-    );
-    let spawn_batch = batch_frame(&spawn_prerequisites());
-    assert_eq!(
-        state.startup_inbound,
-        vec![body.clone(), spawn_batch[1..].to_vec()],
-        "registry and spawn packets after the handoff still belong to login"
-    );
-    assert!(
-        !state.outbound.is_empty() && !state.inbound.is_empty(),
-        "the relay sees the spawn sequence both ways"
-    );
-    drop(state);
+    {
+        let state = relay.state();
+        let (identity, client_data, body) = state.started.as_ref().expect("the relay started");
+        assert_eq!(identity.display_name, "Fixture");
+        let client_data: serde_json::Value = serde_json::from_str(client_data).unwrap();
+        assert_eq!(client_data["ThirdPartyName"], "Fixture");
+        assert_eq!(
+            client_data["ServerAddress"],
+            settings.server_address.as_str()
+        );
+        let expected = batch_frame(&startup);
+        assert_eq!(
+            &body[..],
+            &expected[1..],
+            "the startup arrives as one batch body"
+        );
+        assert_eq!(
+            state.inbound.first().map(Vec::as_slice),
+            Some(&expected[1..]),
+            "startup must pass through the inbound handler before the spawn sequence"
+        );
+        let spawn_batch = batch_frame(&spawn_prerequisites());
+        assert_eq!(
+            state.startup_inbound,
+            vec![body.clone(), spawn_batch[1..].to_vec()],
+            "registry and spawn packets after the handoff still belong to login"
+        );
+        assert!(
+            !state.outbound.is_empty() && !state.inbound.is_empty(),
+            "the relay sees the spawn sequence both ways"
+        );
+    }
 
     let live = [crate::Packet::new(SetTime {
         time: wire::ZigZag32(99),

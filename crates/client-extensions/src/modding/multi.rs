@@ -122,7 +122,9 @@ pub fn packet_mod_entry(mods: &[(ModSource, ModGrants)]) -> Option<PacketModSele
     });
     for (source, _) in entries {
         let path = source.path().display();
-        eprintln!("Cinnabar packet mod {path} ignored: a session relays through one packet mod");
+        tracing::warn!(
+            "Cinnabar packet mod {path} ignored: a session relays through one packet mod"
+        );
     }
     selected
 }

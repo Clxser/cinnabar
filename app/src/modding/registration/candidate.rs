@@ -3,7 +3,7 @@
 use super::*;
 
 pub(super) enum Runtime {
-    Frame(crate::modding::admission::PreparedMod),
+    Frame(Box<crate::modding::admission::PreparedMod>),
     Packet(Arc<mod_host::packet_mod::CompiledPacketMod>),
 }
 
@@ -69,7 +69,7 @@ pub(super) fn build_candidate_with_settings(
         drawing.clone(),
     )?;
     Ok(Candidate {
-        runtime: Runtime::Frame(prepared),
+        runtime: Runtime::Frame(Box::new(prepared)),
         identity,
         registration,
         drawing,

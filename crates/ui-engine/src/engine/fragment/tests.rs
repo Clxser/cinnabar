@@ -419,7 +419,7 @@ fn rejects_filter_fragments_as_a_whole_and_bounds_replay() {
     }
     assert!(matches!(
         replay(
-            &[ordinary.clone()],
+            std::slice::from_ref(&ordinary),
             [10.0; 2],
             [0.0, 0.0, 10.0, 10.0],
             [0.0, 0.0, 10.0, 10.0],

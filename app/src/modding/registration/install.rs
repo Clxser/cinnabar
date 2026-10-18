@@ -134,7 +134,7 @@ fn publish(world: &mut World, candidate: Candidate) -> Result<(), Box<Candidate>
         return Err(Box::new(candidate));
     }
     let Candidate {
-        runtime: CandidateRuntime::Frame(mut prepared),
+        runtime: CandidateRuntime::Frame(prepared),
         registration,
         identity,
         ..
@@ -142,6 +142,7 @@ fn publish(world: &mut World, candidate: Candidate) -> Result<(), Box<Candidate>
     else {
         unreachable!()
     };
+    let mut prepared = *prepared;
     let owner =
         mod_ui::PanelUiOwner::Registration(selection::component_id(&registration.component));
     let old_packet = world

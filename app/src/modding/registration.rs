@@ -182,7 +182,7 @@ struct Admitted {
 
 /// Off-frame disposal owns both frame guests and compiled packet programs.
 pub(super) enum Retired {
-    Frame(ModHost),
+    Frame(Box<ModHost>),
     Packet(Arc<mod_host::packet_mod::CompiledPacketMod>),
 }
 
@@ -198,7 +198,7 @@ impl Retired {
 
 impl From<ModHost> for Retired {
     fn from(host: ModHost) -> Self {
-        Self::Frame(host)
+        Self::Frame(Box::new(host))
     }
 }
 

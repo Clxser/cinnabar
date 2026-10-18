@@ -10,7 +10,7 @@ use wit_parser::Resolve;
 
 /// The WIT packages the `packet-mod` world resolves against, dependencies first; the same
 /// directories the host bindings read.
-const WIT_SOURCES: [(&str, &str); 3] = [
+const WIT_SOURCES: [(&str, &str); 4] = [
     (
         "server-experience/capabilities.wit",
         include_str!("../../../experience-sdk/wit/client/deps/server-experience/capabilities.wit"),
@@ -18,6 +18,10 @@ const WIT_SOURCES: [(&str, &str); 3] = [
     (
         "session/session.wit",
         include_str!("../../../experience-sdk/wit/session/session.wit"),
+    ),
+    (
+        "world-draw/drawing.wit",
+        include_str!("../../../mod-api/wit/deps/world-draw/drawing.wit"),
     ),
     (
         "mod-api/extension.wit",
