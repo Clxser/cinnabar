@@ -9,7 +9,7 @@ use std::{
     ops::Range,
     task::{Context, Poll, Waker},
 };
-use wgpu::util::DeviceExt;
+use wgpu::{naga, util::DeviceExt};
 
 pub const SNAPSHOT_SIDE: u32 = 256;
 /// Color retained by pixels where a fixture fragment is discarded.

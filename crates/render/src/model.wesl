@@ -10,7 +10,7 @@ import render::material::{MaterialGpu, materials, positional_material, texture_l
 import render::enhanced::caster::caster_clip;
 import render::world_projection::{section_camera_offset, camera_offset_clip};
 import render::biome_tint::{blended_biome_tint, blended_biome_tint_gamma};
-import render::lighting::{light_ao_factor, sample_ao, sample_emits, light_colour, material_ambient_occlusion, material_face_shade, tint_to_gamma, tint_to_linear, terrain_light_levels, terrain_light_colour};
+import render::lighting::{light_ao_factor, sample_ao, sample_emits, light_colour, material_ambient_occlusion, material_face_shade, tint_to_gamma, tint_to_linear, terrain_light_levels, terrain_light_colour, distance_fog_weight};
 @if(ALPHA_TO_COVERAGE)
 import render::lighting::{CutoutSample, cutout_alpha_array, cutout_mix};
 @if(ENHANCED)
@@ -558,13 +558,8 @@ sampled: vec4<f32>) -> CutoutSample {
 }
 
 fn distance_fog_amount(world_position: vec3<f32>) -> f32 {
-    let distance_to_camera = distance(world_position, view.world_position);
-    return clamp(
-        (distance_to_camera - atmosphere.fog_color_start.w)
-            / max(atmosphere.fog_end_time.x - atmosphere.fog_color_start.w, 0.0001),
-        0.0,
-        1.0,
-    );
+    return distance_fog_weight(world_position - view.world_position,
+        atmosphere.fog_color_start.w, atmosphere.fog_end_time.x, atmosphere.java_fog);
 }
 
 fn apply_distance_fog(colour: vec3<f32>, world_position: vec3<f32>) -> vec3<f32> {

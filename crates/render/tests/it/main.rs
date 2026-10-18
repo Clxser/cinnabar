@@ -98,5 +98,6 @@ mod ui_textures;
 mod water_material;
 #[path = "support/world_fixture_tests.rs"]
 mod world_fixture_tests;
+mod world_fog;
 mod world_model_colour;
 mod world_seams;

@@ -215,7 +215,7 @@ pub(crate) fn update_atmosphere_frame(
     mut display: Local<WeatherDisplay>,
     renderer_state: (
         Local<super::renderer_clock::RendererClock>,
-        Local<render_model::java_world::JavaVisualState>,
+        Local<Option<render_model::java_world::JavaVisualState>>,
     ),
     preferences: AtmospherePreferences,
     cameras: Query<&Transform, With<client_presentation::camera::FlyCamera>>,
@@ -342,7 +342,9 @@ pub(crate) fn update_atmosphere_frame(
         ),
         ..Default::default()
     };
-    if let Some(java) = java.as_ref().and_then(|java| java.assets()) {
+    let java_assets = java.as_ref().and_then(|java| java.assets());
+    let java_state = active_java_state(&mut java_state, java_assets.is_some());
+    if let Some((java, java_state)) = java_assets.zip(java_state) {
         let identifier = context.camera_biome_identifier.as_deref();
         let environment = java.environment(
             context.dimension,
@@ -407,6 +409,19 @@ pub(crate) fn update_atmosphere_frame(
     *route = next_route;
 }
 
+/// Starts adaptation when the preset is active and discards state while it is disabled.
+fn active_java_state(
+    state: &mut Option<render_model::java_world::JavaVisualState>,
+    enabled: bool,
+) -> Option<&mut render_model::java_world::JavaVisualState> {
+    if enabled {
+        Some(state.get_or_insert_default())
+    } else {
+        *state = None;
+        None
+    }
+}
+
 /// Explicit environment requests retained by active boss bars.
 ///
 /// The pinned protocol-2168 `BossEvent` wire carries no sky-darkening or
@@ -448,6 +463,64 @@ pub(crate) fn apply_boss_environment(
     match medium {
         CameraMedium::Air => frame.with_boss_environment(state.darken_sky, state.world_fog),
         CameraMedium::Water | CameraMedium::Lava => frame,
+    }
+}
+
+#[cfg(test)]
+mod java_state_tests {
+    use super::active_java_state;
+    use assets::java_world::JavaEnvironment;
+    use render_model::java_world::JavaCameraInputs;
+
+    #[test]
+    fn disabled_preset_time_cannot_become_underwater_adaptation() {
+        let environment = JavaEnvironment::default();
+        let mut camera = JavaCameraInputs {
+            render_distance: 256.0,
+            forward: [0.0, 0.0, 1.0],
+            rain: 0.0,
+            thunder: 0.0,
+            water: false,
+            lava: false,
+            spectator: false,
+            fire_resistance: false,
+            brightness: 0.0,
+            night_vision: 0.0,
+            blindness: 0.0,
+            fog_darkness: 0.0,
+            darkness: 0.0,
+            darkness_pulse: 0.0,
+            sky_exposure: 1.0,
+            precipitation: true,
+        };
+        let mut state = None;
+        active_java_state(&mut state, true)
+            .unwrap()
+            .evaluate(1, 0.0, environment, camera);
+        assert!(active_java_state(&mut state, false).is_none());
+
+        camera.water = true;
+        let resumed =
+            active_java_state(&mut state, true)
+                .unwrap()
+                .evaluate(1, 600.0, environment, camera);
+        assert_eq!(resumed.water_vision, 0.0);
+        let adapting =
+            active_java_state(&mut state, true)
+                .unwrap()
+                .evaluate(1, 601.0, environment, camera);
+        assert!((adapting.water_vision - 0.006).abs() < 1.0e-6);
+        let adapted =
+            active_java_state(&mut state, true)
+                .unwrap()
+                .evaluate(1, 1200.0, environment, camera);
+        assert!((adapted.water_vision - 1.0).abs() < f32::EPSILON);
+        assert!(active_java_state(&mut state, false).is_none());
+        let restarted =
+            active_java_state(&mut state, true)
+                .unwrap()
+                .evaluate(1, 1200.0, environment, camera);
+        assert_eq!(restarted.water_vision, 0.0);
     }
 }
 
