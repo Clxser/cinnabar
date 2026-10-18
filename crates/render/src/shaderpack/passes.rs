@@ -529,7 +529,7 @@ fn copy_scene(
     let attachments: Vec<_> = targets
         .depth
         .iter()
-        .map(|d| load_attachment(&d.view))
+        .map(|d| d.as_ref().and_then(|d| load_attachment(&d.view)))
         .collect();
     let mut render = pass(encoder, "shader pack scene depth", &attachments, None);
     render.set_pipeline(&host.scene_depth);

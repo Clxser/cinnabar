@@ -40,6 +40,14 @@ impl ColorBuffer {
     }
 }
 
+/// Which float `depthtexN` copies a pack allocates, only where something reads them:
+/// `depthtex0` when there is no geometry depth (`no_draws`) to read instead, `depthtex1`
+/// always (it stands in for `depthtex0` in draws into the geometry depth and the Vanilla
+/// overlay tests against it), `depthtex2` when some program samples it.
+pub(crate) fn float_depths(no_draws: bool, sampled: [bool; 3]) -> [bool; 3] {
+    [no_draws && sampled[0], true, sampled[2]]
+}
+
 /// A texture with its default view.
 pub(crate) struct Target {
     pub texture: wgpu::Texture,
@@ -75,7 +83,8 @@ fn target(
 pub(crate) struct ViewTargets {
     pub screen_size: [u32; 2],
     pub buffers: Vec<Option<ColorBuffer>>,
-    pub depth: [Target; 3],
+    /// Float `depthtexN` copies where [`float_depths`] allocates them.
+    pub depth: [Option<Target>; 3],
     pub depth_compare: [Option<Target>; 3],
     /// The depth attachment geometry draws test against (OpenGL window depth, bottom-up);
     /// copied into `depthtex*` after the opaque and translucent geometry.
@@ -163,14 +172,17 @@ impl ViewTargets {
             });
         }
         let sampled = TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING;
+        let allocated = float_depths(pack.draws.is_empty(), pack.depth_sampled);
         let depth = std::array::from_fn(|i| {
-            target(
-                device,
-                &format!("shader pack depthtex{i}"),
-                pack.depth_format,
-                screen_size,
-                sampled,
-            )
+            allocated[i].then(|| {
+                target(
+                    device,
+                    &format!("shader pack depthtex{i}"),
+                    pack.depth_format,
+                    screen_size,
+                    sampled,
+                )
+            })
         });
         let depth_compare = std::array::from_fn(|i| {
             pack.depth_compare[i].then(|| {
@@ -403,11 +415,11 @@ impl ViewTargets {
                 &buffer.sampled[buffer.side(read_alt & (1 << index) != 0)]
             }
             TextureSource::Depth { index: 0, .. } => match &self.geometry_depth {
-                Some(_) if geometry_attached => &self.depth[1].view,
+                Some(_) if geometry_attached => self.depth_view(1),
                 Some(depth) => &depth.view,
-                None => &self.depth[0].view,
+                None => self.depth_view(0),
             },
-            TextureSource::Depth { index, .. } => &self.depth[index].view,
+            TextureSource::Depth { index, .. } => self.depth_view(index),
             TextureSource::DepthCompare(index) => {
                 &self.depth_compare[index]
                     .as_ref()
@@ -425,6 +437,14 @@ impl ViewTargets {
                 None => &pack.constants.textures[pack.atlas_placeholder].view,
             },
         }
+    }
+
+    /// The float `depthtex{index}` copy; [`Self::depth`] says when each exists.
+    pub(crate) fn depth_view(&self, index: usize) -> &TextureView {
+        &self.depth[index]
+            .as_ref()
+            .expect("a depthtex copy is allocated wherever it is read")
+            .view
     }
 }
 

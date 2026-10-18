@@ -266,7 +266,7 @@ fn copy_view_depth(
     let Some(depth) = targets.geometry_depth.as_ref() else {
         return;
     };
-    let floats: Vec<&TextureView> = floats.iter().map(|i| &targets.depth[*i].view).collect();
+    let floats: Vec<&TextureView> = floats.iter().map(|i| targets.depth_view(*i)).collect();
     copy_depth_to_floats(device, encoder, &state.pack, &depth.view, &floats);
     for index in compares {
         if let Some(compare) = &targets.depth_compare[*index] {
@@ -609,7 +609,7 @@ fn record_vanilla_overlay(
             },
             wgpu::BindGroupEntry {
                 binding: 5,
-                resource: wgpu::BindingResource::TextureView(&targets.depth[1].view),
+                resource: wgpu::BindingResource::TextureView(targets.depth_view(1)),
             },
         ],
     });

@@ -28,12 +28,14 @@ pub(crate) struct HostPipelines {
 }
 
 /// Builds the host passes for a pack's buffer and depth formats; `depth_targets` when the
-/// pack has a geometry depth or comparison `depthtex*` for the scene depth to fill.
+/// pack has a geometry depth or comparison `depthtex*` for the scene depth to fill, and
+/// `float_depths` the float `depthtex*` copies it allocates (`targets::float_depths`).
 pub(super) fn host_pipelines(
     gpu: &GpuContext,
     buffer_formats: &[Option<TextureFormat>; MAX_COLOR_BUFFERS as usize],
     depth_format: TextureFormat,
     depth_targets: bool,
+    float_depths: [bool; 3],
     mipmap_formats: &[TextureFormat],
 ) -> HostPipelines {
     let device = &gpu.device;
@@ -84,11 +86,7 @@ pub(super) fn host_pipelines(
         scene_colour: pipeline("scene_colour", &[target(colour0)], false),
         scene_depth: pipeline(
             "scene_depth",
-            &[
-                target(depth_format),
-                target(depth_format),
-                target(depth_format),
-            ],
+            &float_depths.map(|allocated| target(depth_format).filter(|_| allocated)),
             false,
         ),
         scene_depth_attachment: depth_targets

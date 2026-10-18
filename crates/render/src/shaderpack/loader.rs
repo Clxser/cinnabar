@@ -816,6 +816,7 @@ pub(crate) fn build(
         &buffer_formats,
         depth_format,
         depth_compare.contains(&true) || !draws.is_empty(),
+        super::targets::float_depths(draws.is_empty(), depth_sampled),
         &mipmap_formats,
     );
     let shader_storage = storage_sizes(&reflections, &translation.properties);
