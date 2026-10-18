@@ -584,6 +584,16 @@ fn prepare_cloud_bind_group(
     }
 }
 
+/// Camera and target inputs used to queue clouds for one render view.
+type CloudQueueView = (
+    Entity,
+    &'static MainEntity,
+    &'static ExtractedView,
+    &'static bevy::render::camera::ExtractedCamera,
+    &'static Msaa,
+    Option<&'static crate::scene_target::SceneTarget>,
+);
+
 fn queue_clouds(
     pipeline_cache: Res<PipelineCache>,
     mut pipeline: ResMut<CloudPipeline>,
@@ -591,14 +601,7 @@ fn queue_clouds(
     (atmosphere, visibility): (Res<AtmosphereFrame>, Res<CloudVisibility>),
     mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     draw_functions: Res<DrawFunctions<Transparent3d>>,
-    views: Query<(
-        Entity,
-        &MainEntity,
-        &ExtractedView,
-        &bevy::render::camera::ExtractedCamera,
-        &Msaa,
-        Option<&crate::scene_target::SceneTarget>,
-    )>,
+    views: Query<CloudQueueView>,
 ) {
     if !visibility.0 || !atmosphere.sky_kind().has_clouds() {
         return;

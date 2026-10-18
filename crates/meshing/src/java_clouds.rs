@@ -88,7 +88,7 @@ pub fn mesh(texture: &AtmosphereTexture, viewport: JavaCloudViewport) -> Vec<Vie
             if z > viewport.radius || x * x + z * z > viewport.radius * viewport.radius {
                 continue;
             }
-            for z in [Some(-z).filter(|_| z != 0), Some(z)].into_iter().flatten() {
+            for z in [(z != 0).then_some(-z), Some(z)].into_iter().flatten() {
                 let cell = [viewport.center[0] + x, viewport.center[1] + z];
                 if !occupied(cell[0], cell[1]) {
                     continue;

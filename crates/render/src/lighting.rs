@@ -142,13 +142,16 @@ pub(crate) fn install(app: &mut App) {
 /// Rebuilds the small table only when an environment input changes.
 fn prepare(
     mut commands: Commands,
-    (input, fullbright): (Res<WorldLighting>, Res<WorldFullbright>),
+    (input, fullbright, java): (
+        Res<WorldLighting>,
+        Res<WorldFullbright>,
+        Option<Res<render_scene::JavaWorldVisuals>>,
+    ),
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     cache: Res<PipelineCache>,
     gpu: Option<ResMut<LightmapGpu>>,
     atmosphere: Option<Res<crate::atmosphere_render::AtmosphereGpu>>,
-    java: Option<Res<render_scene::JavaWorldVisuals>>,
 ) {
     let inputs = (!fullbright.0).then_some(input.0);
     if let Some(mut gpu) = gpu {
