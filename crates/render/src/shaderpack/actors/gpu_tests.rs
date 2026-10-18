@@ -36,8 +36,7 @@ fn layout(
 /// Skins the fixture rig at `ACTOR` and returns the kernel's Iris vertex words.
 fn skin(name: &str) -> Option<Vec<u32>> {
     let gpu = Gpu::for_fixture(name)?;
-    let instance_words = ACTOR_GPU_INSTANCE_WORDS as usize;
-    let mut instance = vec![0_u32; instance_words];
+    let mut instance = vec![0_u32; ACTOR_GPU_INSTANCE_WORDS];
     // `world_from_actor` rows: a translation to ACTOR.
     for (row, translation) in ACTOR.to_array().into_iter().enumerate() {
         instance[row * 4 + row] = 1.0_f32.to_bits();
@@ -47,9 +46,9 @@ fn skin(name: &str) -> Option<Vec<u32>> {
     instance[16] = 1.0_f32.to_bits();
     instance[22] = 1.0_f32.to_bits();
     instance[23] = 1.0_f32.to_bits();
-    let mut vertices = vec![0_u32; CORNERS.len() * ACTOR_RIG_VERTEX_WORDS as usize];
+    let mut vertices = vec![0_u32; CORNERS.len() * ACTOR_RIG_VERTEX_WORDS];
     for (index, (position, uv, back_uv)) in CORNERS.into_iter().enumerate() {
-        let base = index * ACTOR_RIG_VERTEX_WORDS as usize;
+        let base = index * ACTOR_RIG_VERTEX_WORDS;
         let floats = [
             position[0],
             position[1],
