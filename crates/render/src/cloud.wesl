@@ -36,6 +36,15 @@ struct VertexOutput {
     @location(1) distance: f32,
 }
 
+/// Initializes cloud varyings by name so new fields have zero defaults in every caller.
+fn cloud_vertex_output(position: vec4<f32>, colour: vec4<f32>, distance: f32) -> VertexOutput {
+    var out: VertexOutput;
+    out.position = position;
+    out.colour = colour;
+    out.distance = distance;
+    return out;
+}
+
 fn distance_fade(world_distance: f32) -> f32 {
     let fade_distance = atmosphere.fog_end_time.w;
     if (fade_distance <= 0.0) {
@@ -120,7 +129,7 @@ fn native_cloud_vertex_colour(record: ViewportCloudQuad, world_position: vec3<f3
         if (face == FACE_DOWN) { shade = 0.7; }
         else if (face == FACE_NORTH || face == FACE_SOUTH) { shade = 0.8; }
         else if (face == FACE_WEST || face == FACE_EAST) { shade = 0.9; }
-        colour = vec4(native_cloud.colour.rgb * shade, native_cloud.colour.a);
+        colour = vec4(colour.rgb * shade, native_cloud.colour.a);
     } else {
         colour.a *= distance_fade(distance(world_position, view.world_position));
     }
@@ -142,7 +151,7 @@ fn cloud_vertex(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
         if (face == FACE_DOWN || face == FACE_SOUTH || face == FACE_WEST) { corner = vec2(1.0 - uv.y, uv.x); }
     }
     let world_position = reconstruct_world_position(record, corner);
-    return VertexOutput(
+    return cloud_vertex_output(
         view.clip_from_world * vec4(world_position, 1.0),
         native_cloud_vertex_colour(record, world_position),
         distance(world_position, view.world_position),

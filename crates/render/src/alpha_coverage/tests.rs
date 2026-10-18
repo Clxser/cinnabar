@@ -149,7 +149,7 @@ fn cutout_raster(gpu: &Gpu, samples: u32, coverage: bool, square: bool) -> Vec<u
         wgpu::BufferUsages::UNIFORM,
     );
     let atmosphere = gpu.buffer(
-        &[0.0; std::mem::size_of::<render_scene::AtmosphereFrame>() / std::mem::size_of::<f32>()],
+        &crate::gpu_snapshot::atmosphere(),
         wgpu::BufferUsages::UNIFORM,
     );
     let bindings = [

@@ -26,6 +26,44 @@ pub struct Gpu {
     pub backend: wgpu::Backend,
 }
 
+/// Starts an isolated shader probe with every production atmosphere field zeroed.
+pub fn atmosphere() -> Vec<f32> {
+    atmosphere_words(&bytemuck::Zeroable::zeroed())
+}
+
+/// Copies a typed production frame without repeating its size or field count.
+pub fn atmosphere_words(frame: &render_scene::AtmosphereFrame) -> Vec<f32> {
+    bytemuck::cast_slice(std::slice::from_ref(frame)).to_vec()
+}
+
+/// Supplies the ordinary cloud colour and geometry from their owning constants.
+pub fn cloud_uniform() -> [f32; 8] {
+    [
+        1.0,
+        1.0,
+        1.0,
+        render_scene::CLOUD_ALPHA,
+        meshing::CLOUD_CELL_BLOCKS,
+        meshing::CLOUD_UNDERSIDE_Y,
+        meshing::CLOUD_TOP_Y,
+        meshing::CLOUD_WORLD_PERIOD,
+    ]
+}
+
+/// Lists cloud resources once so every cloud raster fixture uses the same layout.
+pub fn cloud_bindings<'a>(
+    view: &'a wgpu::Buffer,
+    atmosphere: &'a wgpu::Buffer,
+    records: &'a wgpu::Buffer,
+    cloud: &'a wgpu::Buffer,
+) -> [wgpu::BindGroupEntry<'a>; 4] {
+    let buffers = [view, atmosphere, records, cloud];
+    std::array::from_fn(|binding| wgpu::BindGroupEntry {
+        binding: binding as u32,
+        resource: buffers[binding].as_entire_binding(),
+    })
+}
+
 /// Lists the shared world-lighting resources in the production bind-group order.
 pub fn lighting_bindings<'a>(
     lightmap: &'a wgpu::Buffer,
@@ -42,6 +80,111 @@ pub fn lighting_bindings<'a>(
         (4, water_info.as_entire_binding()),
     ]
     .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource })
+}
+
+/// Reserves one range for all flattened production lighting resources.
+pub const FIXTURE_LIGHTING_BASE: u32 = 64;
+
+/// Reuses the production-order lighting constructor in flattened raster fixtures.
+pub fn flat_lighting_bindings<'a>(
+    lightmap: &'a wgpu::Buffer,
+    atmosphere: &'a wgpu::Buffer,
+    water: &'a wgpu::TextureView,
+    sampler: &'a wgpu::Sampler,
+    water_info: &'a wgpu::Buffer,
+) -> impl Iterator<Item = wgpu::BindGroupEntry<'a>> {
+    lighting_bindings(lightmap, atmosphere, water, sampler, water_info)
+        .into_iter()
+        .map(|mut entry| {
+            entry.binding += FIXTURE_LIGHTING_BASE;
+            entry
+        })
+}
+
+/// Owns neutral lighting resources for probes that only customize the lightmap or atmosphere.
+pub struct WorldLighting {
+    atmosphere: wgpu::Buffer,
+    water: wgpu::TextureView,
+    sampler: wgpu::Sampler,
+    water_info: wgpu::Buffer,
+}
+
+impl WorldLighting {
+    /// Supplies all optional world resources without requiring game assets.
+    pub fn new(gpu: &Gpu) -> Self {
+        Self {
+            atmosphere: gpu.buffer(&atmosphere(), wgpu::BufferUsages::UNIFORM),
+            water: gpu.colour_texture_array(&[[255; 4]; 2]),
+            sampler: gpu.device.create_sampler(&Default::default()),
+            water_info: gpu.water_info(),
+        }
+    }
+
+    /// Uses the common lighting table with an optional probe-specific atmosphere.
+    pub fn flat_bindings<'a>(
+        &'a self,
+        lightmap: &'a wgpu::Buffer,
+        atmosphere: Option<&'a wgpu::Buffer>,
+    ) -> impl Iterator<Item = wgpu::BindGroupEntry<'a>> {
+        flat_lighting_bindings(
+            lightmap,
+            atmosphere.unwrap_or(&self.atmosphere),
+            &self.water,
+            &self.sampler,
+            &self.water_info,
+        )
+    }
+}
+
+/// Selects only resources actually read by the requested shader stages.
+pub fn bindings_for<'a>(
+    source: &str,
+    stages: &[&str],
+    group: u32,
+    entries: &[wgpu::BindGroupEntry<'a>],
+) -> Vec<wgpu::BindGroupEntry<'a>> {
+    let module = naga::front::wgsl::parse_str(source).expect("fixture shader parses");
+    let info = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("fixture shader validates");
+    let stages = stages
+        .iter()
+        .map(|name| {
+            let index = module
+                .entry_points
+                .iter()
+                .position(|entry| entry.name == *name)
+                .expect("fixture entry point exists");
+            info.get_entry_point(index)
+        })
+        .collect::<Vec<_>>();
+    let used = module
+        .global_variables
+        .iter()
+        .filter_map(|(handle, global)| {
+            global
+                .binding
+                .as_ref()
+                .filter(|binding| {
+                    binding.group == group && stages.iter().any(|stage| !stage[handle].is_empty())
+                })
+                .map(|binding| binding.binding)
+        })
+        .collect::<Vec<_>>();
+    for binding in &used {
+        assert!(
+            entries.iter().any(|entry| entry.binding == *binding),
+            "missing fixture resource at group {group}, binding {binding}"
+        );
+    }
+    entries
+        .iter()
+        .filter(|entry| used.contains(&entry.binding))
+        .cloned()
+        .collect()
 }
 
 pub struct Draw<'a> {
@@ -546,11 +689,21 @@ impl Gpu {
             let groups = std::iter::once(draw.bindings)
                 .chain(additional_bindings.iter().copied())
                 .enumerate()
-                .map(|(index, entries)| {
+                .map(|(group, entries)| {
+                    let entries = if state.layout.is_some() {
+                        entries.to_vec()
+                    } else {
+                        bindings_for(
+                            sources.get(index).copied().unwrap_or(source),
+                            &[entry.map_or(vertex, |entry| entry.vertex), draw.fragment],
+                            group as u32,
+                            entries,
+                        )
+                    };
                     self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: None,
-                        layout: &pipeline.get_bind_group_layout(index as u32),
-                        entries,
+                        layout: &pipeline.get_bind_group_layout(group as u32),
+                        entries: &entries,
                     })
                 })
                 .collect::<Vec<_>>();

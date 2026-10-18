@@ -76,11 +76,12 @@ pub fn mesh(texture: &AtmosphereTexture, viewport: JavaCloudViewport) -> Vec<Vie
     if width == 0 || height == 0 || texture.rgba8.len() != width as usize * height as usize * 4 {
         return Vec::new();
     }
-    let occupied = |x: i32, z: i32| {
+    let pixel = |x: i32, z: i32| {
         let offset =
             (z.rem_euclid(height) as usize * width as usize + x.rem_euclid(width) as usize) * 4;
-        texture.rgba8[offset + 3] >= 10
+        &texture.rgba8[offset..offset + 4]
     };
+    let occupied = |x, z| pixel(x, z)[3] >= 10;
     let mut records = Vec::new();
     for ring in 0..=viewport.radius * 2 {
         for x in -ring..=ring {
@@ -93,11 +94,13 @@ pub fn mesh(texture: &AtmosphereTexture, viewport: JavaCloudViewport) -> Vec<Vie
                 if !occupied(cell[0], cell[1]) {
                     continue;
                 }
+                let rgba = pixel(cell[0], cell[1]);
+                let colour = u32::from_le_bytes([rgba[0], rgba[1], rgba[2], 255]);
                 let mut push = |face: CloudFace, inside: bool| {
                     records.push(ViewportCloudQuad {
                         cell,
                         face: face as u32 | if inside { INSIDE_FACE } else { 0 },
-                        colour: u32::MAX,
+                        colour,
                     })
                 };
                 if viewport.vertical >= 0 {
@@ -174,6 +177,39 @@ mod tests {
         let mut transparent = texture.clone();
         transparent.rgba8[3] = 9;
         assert!(mesh(&transparent, view).is_empty());
+    }
+
+    #[test]
+    fn mesh_preserves_wrapped_texel_rgb_on_every_face() {
+        let texture = AtmosphereTexture {
+            role: AtmosphereRole::Clouds,
+            source_path: "fixture/coloured-clouds.png".into(),
+            source_bytes: 16,
+            source_sha256: [0; 32],
+            pixels_sha256: [0; 32],
+            width: 2,
+            height: 2,
+            rgba8: vec![
+                32, 96, 192, 10, 16, 64, 128, 255, 0, 0, 0, 9, 224, 160, 80, 128,
+            ]
+            .into_boxed_slice(),
+        };
+        for camera_y in [99.0, 102.0, 105.0] {
+            let view = JavaCloudViewport::try_new([-0.1, -12.1], camera_y, 100.0, 36.0).unwrap();
+            let records = mesh(&texture, view);
+            assert!(!records.is_empty());
+            for record in records {
+                let [x, z] = record
+                    .cell
+                    .map(|coordinate| coordinate.rem_euclid(2) as usize);
+                let pixel = &texture.rgba8[(z * 2 + x) * 4..][..4];
+                assert!(pixel[3] >= 10, "transparent cells must remain empty");
+                assert_eq!(
+                    record.colour.to_le_bytes(),
+                    [pixel[0], pixel[1], pixel[2], 255]
+                );
+            }
+        }
     }
 
     #[test]

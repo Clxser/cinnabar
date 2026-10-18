@@ -166,9 +166,8 @@ fn source(reference: bool) -> String {
             .expect("cube shade helper");
         *shade = replacement.global_declarations.remove(0);
     }
-    let mut source = shader_source::standalone(&module.to_string(), &[])
-        .replace("@group(1) @binding(0)", "@group(0) @binding(27)");
-    source = shader_source::bind_atmosphere(&source);
+    let mut source = shader_source::standalone(&module.to_string(), &[]);
+    source = shader_source::bind_lighting(&source);
     source.push_str(
         &VERTEX
             .replace(
@@ -402,8 +401,7 @@ fn render_fixture(cache_admission: bool) {
     let frames = gpu.words(&[0, 1], storage);
     let clock = gpu.words(&[1, 0.25_f32.to_bits(), 0, 0], uniform);
     let streams = gpu.words(&crate::solid_terrain_raster::lighting_words(CASES), storage);
-    let mut atmosphere =
-        [0.0; std::mem::size_of::<render_scene::AtmosphereFrame>() / std::mem::size_of::<f32>()];
+    let mut atmosphere = crate::gpu_snapshot::atmosphere();
     atmosphere[16..19].copy_from_slice(&[0.13, 0.22, 0.31]);
     atmosphere[20] = 64.0;
     let atmosphere = gpu.buffer(&atmosphere, uniform);
@@ -429,14 +427,9 @@ fn render_fixture(cache_admission: bool) {
         (13, streams.as_entire_binding()),
         (15, atmosphere.as_entire_binding()),
         (
-            shader_source::FIXTURE_ATMOSPHERE_BINDING,
-            atmosphere.as_entire_binding(),
-        ),
-        (
             crate::material_shader::BIOME_QUERY_TABLES_BINDING,
             query_tables.as_entire_binding(),
         ),
-        (27, lightmap.as_entire_binding()),
         (
             material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[0],
             wgpu::BindingResource::TextureView(&native_atlas),
@@ -463,6 +456,17 @@ fn render_fixture(cache_admission: bool) {
         ),
     ]
     .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource });
+    let water_info = gpu.water_info();
+    let bindings = bindings
+        .into_iter()
+        .chain(gpu_snapshot::flat_lighting_bindings(
+            &lightmap,
+            &atmosphere,
+            &native_atlas,
+            &sampler,
+            &water_info,
+        ))
+        .collect::<Vec<_>>();
     let draw = |fragment| Draw {
         fragment,
         vertices: 0..CASES as u32 * 6,

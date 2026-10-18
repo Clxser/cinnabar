@@ -61,7 +61,7 @@ fn native_liquid_faces_admit_only_their_original_and_marked_reverse_windings() {
         "fixture must remain outside distance fog"
     );
     let atmosphere = gpu.buffer(
-        bytemuck::cast_slice(std::slice::from_ref(&frame)),
+        &crate::gpu_snapshot::atmosphere_words(&frame),
         wgpu::BufferUsages::UNIFORM,
     );
     let table = render_model::LightmapInputs::default()

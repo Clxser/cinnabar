@@ -58,9 +58,8 @@ fn terrain_fragments_sample_interpolated_levels_not_interpolated_light_rgb() {
             "{}\n{VERTEX}\n{vertex}",
             shader_source::standalone(shader, &[])
         )
-        .replace("@group(1) @binding(0)", "@group(0) @binding(27)")
         .replace("WITNESS_BINDING", &WITNESS_BINDING.to_string());
-        let source = shader_source::bind_atmosphere(&source);
+        let source = shader_source::bind_lighting(&source);
         shader_source::assert_single_bind_group(&source, &["terrain_witness_vertex"]);
         shader_source::assert_single_bind_group(&source, fragments);
         (kind, source, fragments)
@@ -107,8 +106,7 @@ fn terrain_fragments_sample_interpolated_levels_not_interpolated_light_rgb() {
         &meshing::biome_lattice::query_table_words(),
         wgpu::BufferUsages::UNIFORM,
     );
-    let mut atmosphere =
-        [0.0; std::mem::size_of::<render_scene::AtmosphereFrame>() / std::mem::size_of::<f32>()];
+    let mut atmosphere = crate::gpu_snapshot::atmosphere();
     atmosphere[20] = 100.0;
     let atmosphere = gpu.buffer(&atmosphere, wgpu::BufferUsages::UNIFORM);
     let mut table = render_model::LightmapInputs::default().build();
@@ -173,18 +171,18 @@ fn terrain_fragments_sample_interpolated_levels_not_interpolated_light_rgb() {
                     resource: atmosphere.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: shader_source::FIXTURE_ATMOSPHERE_BINDING,
-                    resource: atmosphere.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
                     binding: WITNESS_BINDING,
                     resource: case.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
-                    binding: 27,
-                    resource: lightmap.as_entire_binding(),
-                },
             ];
+            let water_info = gpu.water_info();
+            bindings.extend(gpu_snapshot::flat_lighting_bindings(
+                &lightmap,
+                &atmosphere,
+                &atlas,
+                &sampler,
+                &water_info,
+            ));
             if kind == "model" {
                 bindings.push(wgpu::BindGroupEntry {
                     binding: material_shader::NATIVE_LEAF_SAMPLER_BINDING,

@@ -37,10 +37,9 @@ fn snow_and_other_world_models_use_native_terrain_colour_at_day_and_night() {
         "{}\n{VERTEX}",
         shader_source::standalone(include_str!("../../src/model.wesl"), &[])
     )
-    .replace("@group(1) @binding(0)", "@group(0) @binding(27)")
     .replace("GRID_COLUMNS", &format!("{}.0", CASE_COUNT + 1))
     .replace("NEXT_FRAME", &format!("{NEXT_FRAME}u"));
-    let source = shader_source::bind_atmosphere(&source);
+    let source = shader_source::bind_lighting(&source);
     shader_source::assert_single_bind_group(
         &source.replace("MATERIAL_FLAGS", "0u"),
         &["model_witness_vertex", "fragment", "fragment_blend"],
@@ -92,8 +91,7 @@ fn snow_and_other_world_models_use_native_terrain_colour_at_day_and_night() {
             .map(|_| [light[0], light[1], light[2], 1.0]);
         let lightmap = gpu.lightmap(bytemuck::cast_slice(&table));
         let fog = [0.5, 0.6, 0.7];
-        let mut atmosphere = [0.0; std::mem::size_of::<render_scene::AtmosphereFrame>()
-            / std::mem::size_of::<f32>()];
+        let mut atmosphere = crate::gpu_snapshot::atmosphere();
         atmosphere[16..19].copy_from_slice(&fog.map(linear));
         atmosphere[20] = 100.0;
         let atmosphere = gpu.buffer(&atmosphere, wgpu::BufferUsages::UNIFORM);
@@ -142,18 +140,21 @@ fn snow_and_other_world_models_use_native_terrain_colour_at_day_and_night() {
                 resource: atmosphere.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
-                binding: shader_source::FIXTURE_ATMOSPHERE_BINDING,
-                resource: atmosphere.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
                 binding: 28,
                 resource: cases.as_entire_binding(),
             },
-            wgpu::BindGroupEntry {
-                binding: 27,
-                resource: lightmap.as_entire_binding(),
-            },
         ];
+        let water_info = gpu.water_info();
+        let bindings = bindings
+            .into_iter()
+            .chain(gpu_snapshot::flat_lighting_bindings(
+                &lightmap,
+                &atmosphere,
+                &atlas,
+                &sampler,
+                &water_info,
+            ))
+            .collect::<Vec<_>>();
         for (material, fragment, flags) in [
             ("opaque", "fragment", 0),
             ("cutout", "fragment", assets::MATERIAL_FLAG_ALPHA_CUTOUT),

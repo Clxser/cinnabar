@@ -5,14 +5,26 @@
 )]
 use crate::material_shader;
 
-pub const FIXTURE_ATMOSPHERE_BINDING: u32 = 31;
-
-/// Keeps the shared atmosphere in group zero for fixtures that flatten the lightmap binding.
-pub fn bind_atmosphere(source: &str) -> String {
-    source.replace(
-        "@group(1) @binding(1)",
-        &format!("@group(0) @binding({FIXTURE_ATMOSPHERE_BINDING})"),
-    )
+/// Relocates every shared lighting resource together for single-group raster probes.
+pub fn bind_lighting(source: &str) -> String {
+    let marker = "@group(1) @binding(";
+    let mut result = source.to_owned();
+    for suffix in source.split(marker).skip(1) {
+        let binding: u32 = suffix
+            .split(')')
+            .next()
+            .expect("binding number")
+            .parse()
+            .expect("numeric binding");
+        result = result.replace(
+            &format!("{marker}{binding})"),
+            &format!(
+                "@group(0) @binding({})",
+                crate::gpu_snapshot::FIXTURE_LIGHTING_BASE + binding
+            ),
+        );
+    }
+    result
 }
 
 /// Checks that the selected entry points can run with only the fixture's group zero.

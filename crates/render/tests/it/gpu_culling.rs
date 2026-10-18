@@ -819,15 +819,13 @@ impl Raster {
         let source = format!(
             "{}\n{UNSEALED_VERTEX}",
             shader_source::standalone(include_str!("../../src/chunk.wesl"), &definitions)
-        )
-        .replace("@group(1) @binding(0)", "@group(0) @binding(27)");
-        let source = shader_source::bind_atmosphere(&source);
-        let depth_bindings = vertex_bindings(&source, vertex);
+        );
+        let source = shader_source::bind_lighting(&source);
         let module = gpu
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
-                source: wgpu::ShaderSource::Wgsl(source.into()),
+                source: wgpu::ShaderSource::Wgsl(source.clone().into()),
             });
         let offsets = [Some(wgpu::VertexBufferLayout {
             array_stride: model::OFFSET_ENTRY_BYTES,
@@ -935,8 +933,7 @@ impl Raster {
             &meshing::biome_lattice::query_table_words(),
             wgpu::BufferUsages::UNIFORM,
         );
-        let mut atmosphere = [0.0; std::mem::size_of::<render_scene::AtmosphereFrame>()
-            / std::mem::size_of::<f32>()];
+        let mut atmosphere = crate::gpu_snapshot::atmosphere();
         atmosphere[16..19].copy_from_slice(&[0.6, 0.7, 0.9]);
         atmosphere[19] = 8.0;
         atmosphere[20] = 60.0;
@@ -953,7 +950,8 @@ impl Raster {
             &gpu_snapshot::view(camera.clip_from_world, camera.eye),
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
-        let group = |pipeline: &wgpu::RenderPipeline, depth_only: bool| {
+        let water_info = gpu.water_info();
+        let group = |pipeline: &wgpu::RenderPipeline, depth_only: bool, fragment: &str| {
             let entries = [
                 (0, view.as_entire_binding()),
                 (1, quads.as_entire_binding()),
@@ -968,14 +966,9 @@ impl Raster {
                 (13, streams.as_entire_binding()),
                 (15, atmosphere.as_entire_binding()),
                 (
-                    shader_source::FIXTURE_ATMOSPHERE_BINDING,
-                    atmosphere.as_entire_binding(),
-                ),
-                (
                     crate::material_shader::BIOME_QUERY_TABLES_BINDING,
                     query_tables.as_entire_binding(),
                 ),
-                (27, lightmap.as_entire_binding()),
                 (
                     material_shader::NATIVE_LEAF_TEXTURE_BINDINGS[0],
                     wgpu::BindingResource::TextureView(&atlas),
@@ -1004,8 +997,21 @@ impl Raster {
             .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource });
             let entries = entries
                 .into_iter()
-                .filter(|entry| !depth_only || depth_bindings.contains(&entry.binding))
+                .chain(gpu_snapshot::flat_lighting_bindings(
+                    &lightmap,
+                    &atmosphere,
+                    &atlas,
+                    &sampler,
+                    &water_info,
+                ))
                 .collect::<Vec<_>>();
+            let stages = [vertex, fragment];
+            let entries = gpu_snapshot::bindings_for(
+                &source,
+                &stages[..if depth_only { 1 } else { 2 }],
+                0,
+                &entries,
+            );
             gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &pipeline.get_bind_group_layout(0),
@@ -1016,10 +1022,12 @@ impl Raster {
             .flat_map(|vertex| [vertex, 0])
             .collect::<Vec<_>>();
         Self {
-            depth_group: depth_only.as_ref().map(|pipeline| group(pipeline, true)),
+            depth_group: depth_only
+                .as_ref()
+                .map(|pipeline| group(pipeline, true, "fragment_solid")),
             depth_only,
-            solid_group: group(&solid, false),
-            cutout_group: group(&cutout, false),
+            solid_group: group(&solid, false, "fragment_solid"),
+            cutout_group: group(&cutout, false, "fragment"),
             solid,
             cutout,
             identity: gpu.words(&identity, wgpu::BufferUsages::VERTEX),
@@ -1060,32 +1068,4 @@ impl Raster {
             );
         }
     }
-}
-
-/// Finds group-zero globals used transitively by the vertex entry, excluding fragment-only bindings.
-fn vertex_bindings(source: &str, vertex: &str) -> BTreeSet<u32> {
-    let module = naga::front::wgsl::parse_str(source).expect("terrain fixture WGSL");
-    let info = naga::valid::Validator::new(
-        naga::valid::ValidationFlags::all(),
-        naga::valid::Capabilities::all(),
-    )
-    .validate(&module)
-    .expect("terrain fixture shader interface");
-    let index = module
-        .entry_points
-        .iter()
-        .position(|entry| entry.name == vertex)
-        .expect("terrain fixture vertex entry");
-    let usage = info.get_entry_point(index);
-    module
-        .global_variables
-        .iter()
-        .filter_map(|(handle, global)| {
-            global
-                .binding
-                .as_ref()
-                .filter(|binding| binding.group == 0 && !usage[handle].is_empty())
-                .map(|binding| binding.binding)
-        })
-        .collect()
 }

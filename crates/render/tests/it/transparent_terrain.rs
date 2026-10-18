@@ -157,7 +157,7 @@ impl Fixture {
             java,
             "the fixture must select the requested world style"
         );
-        let atmosphere = gpu.buffer(bytemuck::cast_slice(std::slice::from_ref(&frame)), uniform);
+        let atmosphere = gpu.buffer(&crate::gpu_snapshot::atmosphere_words(&frame), uniform);
         let lightmap = gpu.lightmap(bytemuck::cast_slice(
             &render_model::LightmapInputs::default().build(),
         ));

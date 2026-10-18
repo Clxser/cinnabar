@@ -220,9 +220,8 @@ fn atlas(gpu: &Gpu) -> wgpu::TextureView {
 
 /// Calls the production vertex decoder with the renderer's actual indexed quad order.
 fn fixture_source(definitions: &[&str], reference: bool) -> String {
-    let mut source = shader_source::standalone(include_str!("../../src/model.wesl"), definitions)
-        .replace("@group(1) @binding(0)", "@group(0) @binding(27)");
-    source = shader_source::bind_atmosphere(&source);
+    let mut source = shader_source::standalone(include_str!("../../src/model.wesl"), definitions);
+    source = shader_source::bind_lighting(&source);
     if reference {
         let start = source
             .find("fn ordinary_world_model_gamma_colour(")
@@ -399,8 +398,7 @@ fn model_tint_pixels_match_fragment_biome_reference() {
     );
     let templates = gpu.words(&template_words(), storage);
     let geometry = gpu.words(&geometry_words(), storage);
-    let mut atmosphere =
-        [0.0; std::mem::size_of::<render_scene::AtmosphereFrame>() / std::mem::size_of::<f32>()];
+    let mut atmosphere = crate::gpu_snapshot::atmosphere();
     atmosphere[16..19].copy_from_slice(&[0.24, 0.31, 0.47]);
     atmosphere[19] = 4.0;
     atmosphere[20] = 180.0;
@@ -448,16 +446,22 @@ fn model_tint_pixels_match_fragment_biome_reference() {
         (13, geometry.as_entire_binding()),
         (15, atmosphere.as_entire_binding()),
         (
-            shader_source::FIXTURE_ATMOSPHERE_BINDING,
-            atmosphere.as_entire_binding(),
-        ),
-        (
             crate::material_shader::BIOME_QUERY_TABLES_BINDING,
             query_tables.as_entire_binding(),
         ),
-        (27, lightmap.as_entire_binding()),
     ]
     .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource });
+    let water_info = gpu.water_info();
+    let bindings = bindings
+        .into_iter()
+        .chain(gpu_snapshot::flat_lighting_bindings(
+            &lightmap,
+            &atmosphere,
+            &atlas,
+            &sampler,
+            &water_info,
+        ))
+        .collect::<Vec<_>>();
     for (definitions, reference, candidate) in shaders {
         for clock_words in [[1, 0.25_f32.to_bits(), 0, 0], [2, 0, 0, 0]] {
             gpu.queue
