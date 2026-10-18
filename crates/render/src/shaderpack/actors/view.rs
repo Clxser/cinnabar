@@ -32,7 +32,8 @@ pub(super) struct ActorDraw {
 pub(super) struct Slot {
     pub(super) uniforms: wgpu::Buffer,
     pub(super) texture: Option<TextureKey>,
-    pub(super) groups: [Option<wgpu::BindGroup>; 4],
+    /// Per [`crate::shaderpack::targets::ViewTargets::parity`].
+    pub(super) groups: [crate::shaderpack::targets::Groups; 2],
 }
 
 /// A storage buffer that grows to the largest size asked of it.

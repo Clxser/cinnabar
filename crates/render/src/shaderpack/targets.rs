@@ -10,7 +10,7 @@
 use super::draws::{DrawKind, GeometryDraw};
 use super::geometry::PulledArena;
 use super::loader::{PackGpu, ProgramPipeline, SCREEN_FORMAT};
-use super::plan::{MAX_COLOR_BUFFERS, PassStep};
+use super::plan::{BufferReads, MAX_COLOR_BUFFERS, PassStep};
 use super::resources::{AtlasLayer, ImageSource, TextureSource};
 use shaderpack::{ImageSize, ProgramKind};
 use std::sync::Arc;
@@ -98,6 +98,33 @@ pub(crate) struct ViewTargets {
     pub snapshots: Vec<Option<Target>>,
     /// Per custom image, the copy sampled by programs that also write it as an image.
     pub image_snapshots: Vec<Option<Target>>,
+    /// Flips each time [`Self::swap_sides`] exchanges the textures of the pack's
+    /// `frame.exchange` buffers; indexes the bind groups built over that arrangement.
+    pub parity: usize,
+}
+
+/// Bind groups of one pass or draw, by group index.
+pub(crate) type Groups = [Option<wgpu::BindGroup>; 4];
+
+/// The buffers of the pack's `frame.exchange` that program `program` binds, whose
+/// arrangement its bind groups depend on.
+pub(crate) fn exchanged_by(pack: &PackGpu, program: usize) -> Vec<u32> {
+    let program = &pack.programs[program];
+    pack.frame
+        .exchange
+        .iter()
+        .copied()
+        .filter(|&b| {
+            program
+                .textures
+                .iter()
+                .any(|t| matches!(t, TextureSource::Buffer { index, .. } if *index == b))
+                || program
+                    .images
+                    .iter()
+                    .any(|i| matches!(i, ImageSource::Buffer(index) if *index == b))
+        })
+        .collect()
 }
 
 impl ViewTargets {
@@ -348,6 +375,56 @@ impl ViewTargets {
             storage,
             snapshots,
             image_snapshots,
+            parity: 0,
+        }
+    }
+
+    /// Exchanges the main and alternate textures of `buffers` at the end of a frame, so a
+    /// buffer that ended flipped starts the next one with its last side as main, as Iris's
+    /// copy of that side back to main does (a full-screen copy per buffer per frame).
+    pub(crate) fn swap_sides(&mut self, buffers: &[u32]) {
+        if buffers.is_empty() {
+            return;
+        }
+        self.exchange_textures(buffers);
+        self.parity ^= 1;
+    }
+
+    fn exchange_textures(&mut self, buffers: &[u32]) {
+        for &index in buffers {
+            let Some(buffer) = self.buffers[index as usize]
+                .as_mut()
+                .filter(|b| b.textures.len() > 1)
+            else {
+                continue;
+            };
+            buffer.textures.swap(0, 1);
+            buffer.sampled.swap(0, 1);
+            buffer.attachment.swap(0, 1);
+            if !buffer.levels.is_empty() {
+                buffer.levels.swap(0, 1);
+            }
+        }
+    }
+
+    /// `build` over both arrangements of the textures of `buffers` (some of the exchanged
+    /// ones), indexed by parity; built once when `buffers` is empty.
+    pub(crate) fn per_parity<T: Clone>(
+        &mut self,
+        buffers: &[u32],
+        mut build: impl FnMut(&Self) -> T,
+    ) -> [T; 2] {
+        let current = build(self);
+        if buffers.is_empty() {
+            return [current.clone(), current];
+        }
+        self.exchange_textures(buffers);
+        let other = build(self);
+        self.exchange_textures(buffers);
+        if self.parity == 0 {
+            [current, other]
+        } else {
+            [other, current]
         }
     }
 
@@ -395,7 +472,8 @@ impl ViewTargets {
         }
     }
 
-    /// The view a texture binding reads during a pass whose reads use `read_alt`.
+    /// The view a texture binding reads during a pass or draw with `reads`: a buffer side
+    /// whose mips are visible reads every level, else its base level only.
     /// `depthtex0` is the geometry depth itself, as in Iris, unless `geometry_attached`: draws
     /// into it read `depthtex1`'s copy instead, which holds the same depth from the end of
     /// the opaque geometry until translucents draw.
@@ -403,7 +481,7 @@ impl ViewTargets {
         &'a self,
         pack: &'a PackGpu,
         source: TextureSource,
-        read_alt: u32,
+        reads: BufferReads,
         atlas: Option<AtlasViews<'a>>,
         geometry_attached: bool,
     ) -> &'a TextureView {
@@ -412,7 +490,12 @@ impl ViewTargets {
                 let buffer = self.buffers[index as usize]
                     .as_ref()
                     .expect("planned buffers are allocated");
-                &buffer.sampled[buffer.side(read_alt & (1 << index) != 0)]
+                let side = buffer.side(reads.alt & (1 << index) != 0);
+                if reads.mipmapped & (1 << index) != 0 {
+                    &buffer.sampled[side]
+                } else {
+                    &buffer.attachment[side]
+                }
             }
             TextureSource::Depth { index: 0, .. } => match &self.geometry_depth {
                 Some(_) if geometry_attached => self.depth_view(1),
@@ -457,8 +540,8 @@ pub(crate) struct AtlasViews<'a> {
     pub specular: &'a TextureView,
 }
 
-/// Builds the bind groups of program `program` for a pass whose buffer reads use
-/// `read_alt`; `geometry_attached` when the pass draws into the geometry depth
+/// Builds the bind groups of program `program` for a pass whose buffer reads are `reads`;
+/// `geometry_attached` when the pass draws into the geometry depth
 /// ([`draws_into_geometry_depth`]).
 #[allow(
     clippy::too_many_arguments,
@@ -470,7 +553,7 @@ pub(crate) fn pass_bind_groups<'a>(
     targets: &'a ViewTargets,
     uniforms: Option<&'a wgpu::Buffer>,
     program: usize,
-    read_alt: u32,
+    reads: BufferReads,
     atlas: Option<AtlasViews<'a>>,
     geometry_attached: bool,
 ) -> [Option<wgpu::BindGroup>; 4] {
@@ -479,7 +562,7 @@ pub(crate) fn pass_bind_groups<'a>(
         targets,
         uniforms,
         program,
-        read_alt,
+        reads,
         atlas,
         geometry_attached,
     );
@@ -506,7 +589,7 @@ fn pass_bind_entries<'a>(
     targets: &'a ViewTargets,
     uniforms: Option<&'a wgpu::Buffer>,
     program: usize,
-    read_alt: u32,
+    reads: BufferReads,
     atlas: Option<AtlasViews<'a>>,
     geometry_attached: bool,
 ) -> [Vec<wgpu::BindGroupEntry<'a>>; 4] {
@@ -559,7 +642,7 @@ fn pass_bind_entries<'a>(
                     .expect("snapshots are allocated for every such image")
                     .view
             }
-            source => targets.texture_view(pack, source, read_alt, atlas, geometry_attached),
+            source => targets.texture_view(pack, source, reads, atlas, geometry_attached),
         };
         push(
             texture.group,
@@ -573,7 +656,7 @@ fn pass_bind_entries<'a>(
                 let buffer = targets.buffers[index as usize]
                     .as_ref()
                     .expect("planned buffers are allocated");
-                &buffer.attachment[buffer.side(read_alt & (1 << index) != 0)]
+                &buffer.attachment[buffer.side(reads.alt & (1 << index) != 0)]
             }
             ImageSource::Image(index) => &targets.images[index].1,
             ImageSource::Constant(index) => &pack.constants.textures[index].view,
@@ -593,22 +676,28 @@ pub(crate) struct DrawBinding {
     pub uniforms: Option<wgpu::Buffer>,
     /// This frame's packed uniform block, which actor draws patch per actor.
     pub base: Vec<u8>,
-    pub groups: [Option<wgpu::BindGroup>; 4],
+    /// Per [`ViewTargets::parity`].
+    pub groups: [Groups; 2],
 }
 
-/// A view's uniform buffer per program and bind groups per pass.
+/// One mipmapped buffer side's downsample bind groups: one per level after the first,
+/// reading the level above.
+pub(crate) type Downsample = (u32, usize, Vec<wgpu::BindGroup>);
+
+/// A view's uniform buffer per program and bind groups per pass. Everything binding a
+/// buffer's textures is built for both [`ViewTargets::parity`] arrangements and indexed by
+/// it.
 pub(crate) struct ViewBindings {
     pub uniforms: Vec<Option<wgpu::Buffer>>,
-    pub prepare: Vec<[Option<wgpu::BindGroup>; 4]>,
-    pub post: Vec<[Option<wgpu::BindGroup>; 4]>,
-    pub shadowcomp: Vec<[Option<wgpu::BindGroup>; 4]>,
+    pub prepare: Vec<[Groups; 2]>,
+    pub post: Vec<[Groups; 2]>,
+    pub shadowcomp: Vec<[Groups; 2]>,
     /// Parallel to `PackGpu::draws`; groups follow the atlas through [`Self::bind_draws`].
     pub draws: Vec<DrawBinding>,
-    /// Per mipmapped buffer and side: one bind group per level after the first, reading
-    /// the level above.
-    pub downsample: Vec<(u32, usize, Vec<wgpu::BindGroup>)>,
+    /// Per mipmapped buffer and side.
+    pub downsample: [Vec<Downsample>; 2],
     /// Per view target format, as `PackGpu::host.present`.
-    pub present: Vec<(TextureFormat, wgpu::BindGroup)>,
+    pub present: [Vec<(TextureFormat, wgpu::BindGroup)>; 2],
 }
 
 fn uniform_buffer(device: &Device, name: &str, block: &shaderpack::UniformBlock) -> wgpu::Buffer {
@@ -623,14 +712,15 @@ fn uniform_buffer(device: &Device, name: &str, block: &shaderpack::UniformBlock)
 /// The buffer sides a geometry draw reads: the side it writes (as Iris's gbuffer samplers
 /// do), except buffers it also draws into, which read the other side because a pass cannot
 /// sample its own attachment.
-pub(crate) fn draw_read_alt(pack: &PackGpu, draw: &GeometryDraw) -> u32 {
-    let base = match draw.kind {
+pub(crate) fn draw_reads(pack: &PackGpu, draw: &GeometryDraw) -> BufferReads {
+    let frame = &pack.frame;
+    let (base, mips) = match draw.kind {
         DrawKind::Effect(effect) if pack.effects.after_deferred(effect) => {
-            pack.frame.translucent_alt
+            (frame.translucent_alt, frame.translucent_mips)
         }
-        kind if kind.shadow() => return 0,
-        kind if kind.after_deferred() => pack.frame.translucent_alt,
-        _ => pack.frame.scene_alt,
+        kind if kind.shadow() => return BufferReads::default(),
+        kind if kind.after_deferred() => (frame.translucent_alt, frame.translucent_mips),
+        _ => (frame.scene_alt, frame.scene_mips),
     };
     let program = &pack.programs[draw.program];
     let mut read_alt = base;
@@ -643,11 +733,11 @@ pub(crate) fn draw_read_alt(pack: &PackGpu, draw: &GeometryDraw) -> u32 {
             read_alt ^= 1 << buffer;
         }
     }
-    read_alt
+    BufferReads::new(read_alt, mips)
 }
 
 impl ViewBindings {
-    pub(crate) fn new(device: &Device, pack: &Arc<PackGpu>, targets: &ViewTargets) -> Self {
+    pub(crate) fn new(device: &Device, pack: &Arc<PackGpu>, targets: &mut ViewTargets) -> Self {
         let uniforms: Vec<Option<wgpu::Buffer>> = pack
             .programs
             .iter()
@@ -657,20 +747,22 @@ impl ViewBindings {
                 Some(uniform_buffer(device, &p.name, block))
             })
             .collect();
-        let groups = |steps: &[PassStep]| {
+        let mut groups = |steps: &[PassStep]| {
             steps
                 .iter()
                 .map(|step| {
-                    pass_bind_groups(
-                        device,
-                        pack,
-                        targets,
-                        uniforms[step.program].as_ref(),
-                        step.program,
-                        step.read_alt,
-                        None,
-                        false,
-                    )
+                    targets.per_parity(&exchanged_by(pack, step.program), |targets| {
+                        pass_bind_groups(
+                            device,
+                            pack,
+                            targets,
+                            uniforms[step.program].as_ref(),
+                            step.program,
+                            step.reads(),
+                            None,
+                            false,
+                        )
+                    })
                 })
                 .collect()
         };
@@ -694,71 +786,22 @@ impl ViewBindings {
                 }
             })
             .collect();
-        let mut downsample = vec![];
-        for plan in pack.buffers.iter().filter(|b| b.mipmapped) {
-            let Some(buffer) = targets.buffers[plan.index as usize].as_ref() else {
-                continue;
-            };
-            let Some(format) = pack.buffer_formats[plan.index as usize] else {
-                continue;
-            };
-            let Some((_, pipeline)) = pack.host.downsample.iter().find(|(f, _)| *f == format)
-            else {
-                continue;
-            };
-            let layout = pipeline.get_bind_group_layout(0);
-            for (side, levels) in buffer.levels.iter().enumerate() {
-                let groups = levels
-                    .iter()
-                    .take(levels.len().saturating_sub(1))
-                    .map(|source| {
-                        device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("shader pack downsample"),
-                            layout: &layout,
-                            entries: &[
-                                wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: wgpu::BindingResource::TextureView(source),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 3,
-                                    resource: wgpu::BindingResource::Sampler(&pack.host.linear),
-                                },
-                            ],
-                        })
-                    })
-                    .collect();
-                downsample.push((plan.index, side, groups));
-            }
-        }
-        let present_source = if pack
+        let exchanged = |keep: &dyn Fn(u32) -> bool| -> Vec<u32> {
+            pack.frame
+                .exchange
+                .iter()
+                .copied()
+                .filter(|&b| keep(b))
+                .collect()
+        };
+        let mipmapped = exchanged(&|b| pack.buffers.iter().any(|p| p.index == b && p.mipmapped));
+        let downsample = targets.per_parity(&mipmapped, |t| downsample_groups(device, pack, t));
+        let presents_colortex0 = !pack
             .programs
             .iter()
-            .any(|p| p.group == shaderpack::ProgramGroup::Final)
-        {
-            &targets.screen.view
-        } else {
-            let buffer = targets.buffers[0]
-                .as_ref()
-                .expect("colortex0 is always planned");
-            &buffer.sampled[0]
-        };
-        let present = pack
-            .host
-            .present
-            .iter()
-            .map(|(format, pipeline)| {
-                let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("shader pack present"),
-                    layout: &pipeline.get_bind_group_layout(0),
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(present_source),
-                    }],
-                });
-                (*format, group)
-            })
-            .collect();
+            .any(|p| p.group == shaderpack::ProgramGroup::Final);
+        let presented = exchanged(&|b| presents_colortex0 && b == 0);
+        let present = targets.per_parity(&presented, |t| present_groups(device, pack, t));
         Self {
             uniforms,
             prepare,
@@ -778,53 +821,135 @@ impl ViewBindings {
         &mut self,
         device: &Device,
         pack: &PackGpu,
-        targets: &ViewTargets,
+        targets: &mut ViewTargets,
         views: impl Fn(DrawKind) -> Option<AtlasViews<'a>>,
         arena: Option<&PulledArena>,
     ) {
         for (draw, binding) in pack.draws.iter().zip(&mut self.draws) {
             let uniforms = binding.uniforms.as_ref();
-            let read_alt = draw_read_alt(pack, draw);
+            let reads = draw_reads(pack, draw);
             let attached = draws_into_geometry_depth(draw.kind);
+            let exchanged = exchanged_by(pack, draw.program);
             let Some(pulled) = &draw.pulled else {
-                binding.groups = pass_bind_groups(
-                    device,
+                binding.groups = targets.per_parity(&exchanged, |targets| {
+                    pass_bind_groups(
+                        device,
+                        pack,
+                        targets,
+                        uniforms,
+                        draw.program,
+                        reads,
+                        views(draw.kind),
+                        attached,
+                    )
+                });
+                continue;
+            };
+            let arena_entries = arena.and_then(|arena| pulled.entries(arena));
+            let program = &pack.programs[draw.program];
+            binding.groups = targets.per_parity(&exchanged, |targets| {
+                let mut entries = pass_bind_entries(
                     pack,
                     targets,
                     uniforms,
                     draw.program,
-                    read_alt,
+                    reads,
                     views(draw.kind),
                     attached,
                 );
-                continue;
-            };
-            let mut entries = pass_bind_entries(
-                pack,
-                targets,
-                uniforms,
-                draw.program,
-                read_alt,
-                views(draw.kind),
-                attached,
-            );
-            let arena_entries = arena.and_then(|arena| pulled.entries(arena));
-            let program = &pack.programs[draw.program];
-            binding.groups = std::array::from_fn(|group| {
-                let layout = if group == 3 {
-                    entries[3].extend(arena_entries.clone()?);
-                    &pulled.layout
-                } else {
-                    program.layouts[group].as_ref()?
-                };
-                Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(&program.name),
-                    layout,
-                    entries: &entries[group],
-                }))
+                std::array::from_fn(|group| {
+                    let layout = if group == 3 {
+                        entries[3].extend(arena_entries.clone()?);
+                        &pulled.layout
+                    } else {
+                        program.layouts[group].as_ref()?
+                    };
+                    Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some(&program.name),
+                        layout,
+                        entries: &entries[group],
+                    }))
+                })
             });
         }
     }
+}
+
+/// The downsample bind groups of every mipmapped buffer side.
+fn downsample_groups(device: &Device, pack: &PackGpu, targets: &ViewTargets) -> Vec<Downsample> {
+    let mut downsample = vec![];
+    for plan in pack.buffers.iter().filter(|b| b.mipmapped) {
+        let Some(buffer) = targets.buffers[plan.index as usize].as_ref() else {
+            continue;
+        };
+        let Some(format) = pack.buffer_formats[plan.index as usize] else {
+            continue;
+        };
+        let Some((_, pipeline)) = pack.host.downsample.iter().find(|(f, _)| *f == format) else {
+            continue;
+        };
+        let layout = pipeline.get_bind_group_layout(0);
+        for (side, levels) in buffer.levels.iter().enumerate() {
+            let groups = levels
+                .iter()
+                .take(levels.len().saturating_sub(1))
+                .map(|source| {
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("shader pack downsample"),
+                        layout: &layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(source),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: wgpu::BindingResource::Sampler(&pack.host.linear),
+                            },
+                        ],
+                    })
+                })
+                .collect();
+            downsample.push((plan.index, side, groups));
+        }
+    }
+    downsample
+}
+
+/// The present bind group per view target format: the screen `final` drew, else
+/// `colortex0`'s main texture.
+fn present_groups(
+    device: &Device,
+    pack: &PackGpu,
+    targets: &ViewTargets,
+) -> Vec<(TextureFormat, wgpu::BindGroup)> {
+    let present_source = if pack
+        .programs
+        .iter()
+        .any(|p| p.group == shaderpack::ProgramGroup::Final)
+    {
+        &targets.screen.view
+    } else {
+        let buffer = targets.buffers[0]
+            .as_ref()
+            .expect("colortex0 is always planned");
+        &buffer.sampled[0]
+    };
+    pack.host
+        .present
+        .iter()
+        .map(|(format, pipeline)| {
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("shader pack present"),
+                layout: &pipeline.get_bind_group_layout(0),
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(present_source),
+                }],
+            });
+            (*format, group)
+        })
+        .collect()
 }
 
 /// Whether a program dispatches compute work.

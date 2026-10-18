@@ -6,9 +6,10 @@
 //! the frame unflipped (reads main). A deferred/composite pass reads each buffer's current
 //! side and draws into the other side; afterwards each buffer it wrote flips, unless
 //! `flip.<program>.<buffer>=false`, and `flip.<program>.<buffer>=true` also flips a buffer
-//! the pass did not write. The plan is identical every frame, and buffers that end the frame
-//! flipped are copied back to main after `final` unless the next frame clears them anyway,
-//! so the next frame starts unflipped.
+//! the pass did not write. The plan is identical every frame. Buffers that end the frame
+//! flipped either exchange their two textures (when the next frame never observes the
+//! difference) or are copied back to main after `final` unless the next frame clears them
+//! anyway, so the next frame starts unflipped.
 
 use shaderpack::{BufferDirectives, BufferFormat, BufferId, FlipRule, ProgramGroup, SizeValue};
 
@@ -80,6 +81,33 @@ pub(crate) struct PlannedProgram {
     pub reads: Vec<u32>,
     /// Buffers whose `MipmapEnabled` directive this program declares.
     pub mipmaps: Vec<u32>,
+    /// Bit per buffer: a draw of this program may leave pixels of that output unwritten
+    /// (a blended output, or every output of a program that discards fragments or draws a
+    /// scaled viewport).
+    pub partial: u32,
+}
+
+/// Which side of every buffer a pass or draw samples, and which of those sides show their
+/// mip levels.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct BufferReads {
+    /// Bit per buffer: samplers and images read the alternate texture.
+    pub alt: u32,
+    /// Bit per buffer: the side read had its mip chain generated earlier in the frame, so
+    /// samplers filter between its levels. Iris enables mipmap filtering on a texture when it
+    /// generates the texture's mips and resets it at the end of the frame; reads before that
+    /// see the base level only.
+    pub mipmapped: u32,
+}
+
+impl BufferReads {
+    /// Reads of the sides `alt` picks, given per side the buffers whose mips were generated.
+    pub(crate) fn new(alt: u32, generated: [u32; 2]) -> Self {
+        Self {
+            alt,
+            mipmapped: (generated[0] & !alt) | (generated[1] & alt),
+        }
+    }
 }
 
 /// One pass of the frame.
@@ -94,6 +122,17 @@ pub(crate) struct PassStep {
     pub writes: Vec<Option<(u32, bool)>>,
     /// Buffers whose current side gets its mip chain regenerated before the pass.
     pub mipmaps: Vec<u32>,
+    /// Bit per buffer: the side read shows its mip levels ([`BufferReads::mipmapped`]).
+    pub mipmapped: u32,
+}
+
+impl PassStep {
+    pub(crate) fn reads(&self) -> BufferReads {
+        BufferReads {
+            alt: self.read_alt,
+            mipmapped: self.mipmapped,
+        }
+    }
 }
 
 /// The passes of one frame around the geometry.
@@ -104,6 +143,8 @@ pub(crate) struct FramePlan {
     /// Bit per buffer: the side the sky, opaque geometry (or the scene copy) write (the
     /// current side after the prepare passes, as Iris's gbuffer framebuffers do).
     pub scene_alt: u32,
+    /// Per side, bit per buffer: mip chains the prepare passes generated.
+    pub scene_mips: [u32; 2],
     /// `deferred*`, `composite*` and `final`, in order.
     pub post: Vec<PassStep>,
     /// Index in `post` of the first pass after the deferred ones; translucent geometry draws
@@ -112,8 +153,13 @@ pub(crate) struct FramePlan {
     /// Bit per buffer: the side translucent geometry writes (the current side after the
     /// deferred passes).
     pub translucent_alt: u32,
-    /// Buffers that end the frame flipped; their alternate texture is copied to main.
+    /// Per side, bit per buffer: mip chains generated before translucent geometry.
+    pub translucent_mips: [u32; 2],
+    /// Buffers that end the frame flipped and whose alternate texture is copied to main.
     pub swap_back: Vec<u32>,
+    /// Buffers that end the frame flipped and exchange their main and alternate textures
+    /// instead ([`exchange_swap_back`]).
+    pub exchange: Vec<u32>,
 }
 
 /// Iris's default clear: `colortex0` to the fog colour, `colortex1` (`gdepth`) to white, the
@@ -177,9 +223,13 @@ pub(crate) fn color_buffer_of(name: &str) -> Option<u32> {
 /// Plans the passes of a frame; `programs` are the runnable prepare/deferred/composite/final
 /// programs in frame order.
 pub(crate) fn plan_frame(programs: &[PlannedProgram], flips: &[FlipRule]) -> FramePlan {
-    let mut flipped = 0u32;
-    let step = |index: usize, program: &PlannedProgram, flipped: &mut u32| {
+    // The side each buffer reads, and per side the mip chains generated so far.
+    type State = (u32, [u32; 2]);
+    let step = |index: usize, program: &PlannedProgram, (flipped, mips): &mut State| {
         let read_alt = *flipped;
+        for &b in &program.mipmaps {
+            mips[usize::from(read_alt & (1 << b) != 0)] |= 1 << b;
+        }
         let is_final = program.group == ProgramGroup::Final;
         let writes: Vec<Option<(u32, bool)>> = program
             .outputs
@@ -210,8 +260,11 @@ pub(crate) fn plan_frame(programs: &[PlannedProgram], flips: &[FlipRule]) -> Fra
             read_alt,
             writes,
             mipmaps: program.mipmaps.clone(),
+            mipmapped: BufferReads::new(read_alt, *mips).mipmapped,
         }
     };
+    let mut state: State = (0, [0; 2]);
+    let mut scene = state;
     let mut prepare = vec![];
     let mut post = vec![];
     let mut translucent = None;
@@ -221,35 +274,31 @@ pub(crate) fn plan_frame(programs: &[PlannedProgram], flips: &[FlipRule]) -> Fra
             ProgramGroup::Prepare | ProgramGroup::Deferred
         );
         if geometry_done && translucent.is_none() {
-            translucent = Some((post.len(), flipped));
+            translucent = Some((post.len(), state));
         }
-        let s = step(index, program, &mut flipped);
+        let s = step(index, program, &mut state);
         if program.group == ProgramGroup::Prepare {
             prepare.push(s);
+            // Scene writes happen between prepare and deferred.
+            scene = state;
         } else {
             post.push(s);
         }
     }
-    let (composite_start, translucent_alt) = translucent.unwrap_or((post.len(), flipped));
-    // Scene writes happen between prepare and deferred: recompute the side at that point.
-    let mut scene_alt = 0u32;
-    let mut state = 0u32;
-    for (index, program) in programs.iter().enumerate() {
-        if program.group != ProgramGroup::Prepare {
-            break;
-        }
-        step(index, program, &mut state);
-        scene_alt = state;
-    }
+    let (composite_start, (translucent_alt, translucent_mips)) =
+        translucent.unwrap_or((post.len(), state));
     FramePlan {
         prepare,
-        scene_alt,
+        scene_alt: scene.0,
+        scene_mips: scene.1,
         post,
         composite_start,
         translucent_alt,
+        translucent_mips,
         swap_back: (0..MAX_COLOR_BUFFERS)
-            .filter(|b| flipped & (1 << b) != 0)
+            .filter(|b| state.0 & (1 << b) != 0)
             .collect(),
+        exchange: vec![],
     }
 }
 
@@ -269,6 +318,67 @@ pub(crate) fn skip_cleared_swap_back(
                 .find(|buffer| buffer.index == index)
                 .is_none_or(|buffer| buffer.clear.is_none())
     });
+}
+
+/// Moves into `frame.exchange` the buffers of `frame.swap_back` whose copy-back an exchange
+/// of their two textures can replace. After the exchange main holds what the copy would
+/// give it, while alternate holds an older content than the copy's; that is invisible when
+/// every frame overwrites the whole alternate side before reading it. So a buffer stays
+/// copied when geometry draws into it (draws cover part of the target and read the side
+/// they do not write), or when some pass or draw reads its alternate side, or the frame
+/// ends on that side, while only partial writes (`PlannedProgram::partial`) or none have
+/// replaced the older content.
+pub(crate) fn exchange_swap_back(
+    frame: &mut FramePlan,
+    programs: &[PlannedProgram],
+    geometry: &[PlannedProgram],
+) {
+    let mut geometry_reads = 0u32;
+    let mut copied = 0u32;
+    for program in geometry {
+        for b in program.outputs.iter().flatten() {
+            copied |= 1 << b;
+        }
+        for b in &program.reads {
+            geometry_reads |= 1 << b;
+        }
+    }
+    // Per side, bit per buffer: the side may differ from what the copy-back gives it.
+    let mut stale = [0u32, u32::MAX];
+    let mut read = |buffers: u32, read_alt: u32, stale: &[u32; 2]| {
+        copied |= buffers & ((stale[0] & !read_alt) | (stale[1] & read_alt));
+    };
+    let mut run = |steps: &[PassStep], stale: &mut [u32; 2]| {
+        for step in steps {
+            let program = &programs[step.program];
+            let reads = program
+                .reads
+                .iter()
+                .chain(&step.mipmaps)
+                .fold(0u32, |mask, b| mask | (1 << b));
+            read(reads, step.read_alt, stale);
+            for &(b, alt) in step.writes.iter().flatten() {
+                if program.partial & (1 << b) == 0 {
+                    stale[usize::from(alt)] &= !(1 << b);
+                }
+            }
+        }
+    };
+    run(&frame.prepare, &mut stale);
+    let scene = stale;
+    run(&frame.post[..frame.composite_start], &mut stale);
+    let translucent = stale;
+    run(&frame.post[frame.composite_start..], &mut stale);
+    copied |= geometry_reads & ((scene[0] & !frame.scene_alt) | (scene[1] & frame.scene_alt));
+    copied |= geometry_reads
+        & ((translucent[0] & !frame.translucent_alt) | (translucent[1] & frame.translucent_alt));
+    copied |= stale[1];
+    let (copy, exchange) = frame
+        .swap_back
+        .iter()
+        .partition(|&&b| copied & (1 << b) != 0);
+    frame.swap_back = copy;
+    frame.exchange = exchange;
 }
 
 /// Plans the colour buffers the passes and the `gbuffers_*` programs in `geometry` touch
@@ -353,6 +463,7 @@ mod tests {
             outputs: outputs.iter().map(|b| Some(*b)).collect(),
             reads: vec![],
             mipmaps: vec![],
+            partial: 0,
         }
     }
 
@@ -447,6 +558,74 @@ mod tests {
     }
 
     #[test]
+    fn buffers_rewritten_whole_every_frame_exchange_instead_of_copying() {
+        let reads = |mut p: PlannedProgram, reads: &[u32]| {
+            p.reads = reads.to_vec();
+            p
+        };
+        let mut blended = program("composite1", ProgramGroup::Composite, &[4]);
+        blended.partial = 1 << 4;
+        let programs = [
+            // Temporal buffers: last frame's result in main, this frame's into alternate.
+            reads(
+                program("deferred", ProgramGroup::Deferred, &[5, 6]),
+                &[5, 6],
+            ),
+            program("composite", ProgramGroup::Composite, &[2, 4]),
+            blended,
+            // colortex7 flips unwritten, so its alternate side is read and ends current.
+            reads(program("composite2", ProgramGroup::Composite, &[]), &[7]),
+            program("final", ProgramGroup::Final, &[0]),
+        ];
+        let rules = [flip("composite1", "colortex7", true)];
+        let mut water = program("gbuffers_water", ProgramGroup::Gbuffers, &[6]);
+        water.reads = vec![2];
+        let mut plan = plan_frame(&programs, &rules);
+        assert_eq!(plan.swap_back, [2, 5, 6, 7]);
+        exchange_swap_back(&mut plan, &programs, &[water]);
+        assert_eq!(
+            plan.exchange,
+            [2, 5],
+            "written whole before any read of alternate"
+        );
+        assert_eq!(
+            plan.swap_back,
+            [6, 7],
+            "geometry draws into colortex6; colortex7's alternate is never written"
+        );
+        let plan_without = |programs: &[PlannedProgram]| {
+            let mut plan = plan_frame(programs, &rules);
+            exchange_swap_back(&mut plan, programs, &[]);
+            plan
+        };
+        let plan = plan_without(&programs[1..3]);
+        assert!(
+            !plan.exchange.contains(&4) && !plan.swap_back.contains(&4),
+            "colortex4 is written twice and ends unflipped"
+        );
+        let mut programs = programs[..2].to_vec();
+        programs[1].partial = 1 << 2;
+        assert_eq!(
+            plan_without(&programs).swap_back,
+            [2],
+            "a partial write leaves alternate's older content visible"
+        );
+        let programs = [
+            program("deferred", ProgramGroup::Deferred, &[5]),
+            reads(program("composite", ProgramGroup::Composite, &[2]), &[2]),
+            program("composite1", ProgramGroup::Composite, &[2]),
+        ];
+        let mut plan = plan_frame(&programs, &[flip("deferred", "colortex2", true)]);
+        exchange_swap_back(&mut plan, &programs, &[]);
+        assert_eq!(
+            plan.swap_back,
+            [2],
+            "composite reads colortex2's alternate side before composite1 rewrites it"
+        );
+        assert_eq!(plan.exchange, [5]);
+    }
+
+    #[test]
     fn translucent_geometry_writes_the_side_current_after_deferred() {
         let programs = [
             program("deferred", ProgramGroup::Deferred, &[0, 2]),
@@ -481,6 +660,27 @@ mod tests {
             plan.composite_start, 2,
             "no composite: translucents draw last"
         );
+    }
+
+    #[test]
+    fn mip_levels_show_only_on_the_side_generated_earlier_in_the_frame() {
+        let mut programs = [
+            program("deferred", ProgramGroup::Deferred, &[3]),
+            program("deferred1", ProgramGroup::Deferred, &[3]),
+            program("composite", ProgramGroup::Composite, &[0]),
+            program("composite1", ProgramGroup::Composite, &[3]),
+        ];
+        programs[1].mipmaps = vec![0];
+        let plan = plan_frame(&programs, &[]);
+        let mipmapped: Vec<u32> = plan.post.iter().map(|s| s.mipmapped & 1).collect();
+        assert_eq!(
+            mipmapped,
+            [0, 1, 1, 0],
+            "before generation, then main generated, then composite flips to alternate"
+        );
+        assert_eq!(plan.scene_mips, [0, 0]);
+        let translucent = BufferReads::new(plan.translucent_alt, plan.translucent_mips);
+        assert_eq!(translucent.mipmapped & 1, 1);
     }
 
     #[test]

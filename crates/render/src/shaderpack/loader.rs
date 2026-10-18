@@ -18,7 +18,7 @@ use super::pipelines::{
 };
 use super::plan::{
     BufferPlan, FramePlan, MAX_COLOR_BUFFERS, PassStep, PlannedProgram, color_buffer_of,
-    plan_buffers, plan_frame, skip_cleared_swap_back,
+    exchange_swap_back, plan_buffers, plan_frame, skip_cleared_swap_back,
 };
 use super::resources::bindings::resolve_bindings;
 use super::resources::{
@@ -28,9 +28,9 @@ use super::shadow_maps::{ShadowMaps, shadow_maps};
 use super::uniforms::PackSettings;
 use sha2::{Digest, Sha256};
 use shaderpack::{
-    BufferId, CustomUniform, Environment, ProgramGroup, ProgramKind, ProgramReflection,
-    ProgramTranslation, SamplerBinding, SamplerClass, ScaleRule, ShaderPack, StageKind,
-    TranslateConfig,
+    BlendMode, BufferId, CustomUniform, Environment, ProgramGroup, ProgramKind, ProgramReflection,
+    ProgramTranslation, SamplerBinding, SamplerClass, ScaleRule, ShaderPack, ShaderProperties,
+    StageKind, TranslateConfig,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -342,7 +342,30 @@ fn outputs_by_location(reflection: &ProgramReflection) -> Vec<Option<u32>> {
     outputs
 }
 
-fn planned(program: &ProgramTranslation, reflection: &ProgramReflection) -> PlannedProgram {
+/// Whether some function of `module` can discard a fragment.
+fn discards(module: &naga::Module) -> bool {
+    fn kills(block: &naga::Block) -> bool {
+        block.iter().any(|statement| match statement {
+            naga::Statement::Kill => true,
+            naga::Statement::Block(inner) => kills(inner),
+            naga::Statement::If { accept, reject, .. } => kills(accept) || kills(reject),
+            naga::Statement::Switch { cases, .. } => cases.iter().any(|c| kills(&c.body)),
+            naga::Statement::Loop {
+                body, continuing, ..
+            } => kills(body) || kills(continuing),
+            _ => false,
+        })
+    }
+    module.functions.iter().any(|(_, f)| kills(&f.body))
+        || module.entry_points.iter().any(|e| kills(&e.function.body))
+}
+
+fn planned(
+    program: &ProgramTranslation,
+    reflection: &ProgramReflection,
+    properties: &ShaderProperties,
+) -> PlannedProgram {
+    let name = program.program.name.as_str();
     let mipmaps = program
         .consts
         .iter()
@@ -353,14 +376,40 @@ fn planned(program: &ProgramTranslation, reflection: &ProgramReflection) -> Plan
             _ => None,
         })
         .collect();
+    let outputs = if reflection.kind == ProgramKind::Render {
+        outputs_by_location(reflection)
+    } else {
+        vec![]
+    };
+    let whole = properties.scales.iter().all(|s| s.program != name)
+        && !program
+            .stages
+            .iter()
+            .filter_map(|s| s.result.as_ref().ok())
+            .any(|c| c.stage == StageKind::Fragment && discards(&c.module));
+    let blends = |buffer: u32| {
+        let rule = |per_buffer: bool| {
+            properties.blends.iter().rev().find(|r| {
+                r.program == name
+                    && match r.buffer.as_deref() {
+                        Some(b) => per_buffer && color_buffer_of(b) == Some(buffer),
+                        None => !per_buffer,
+                    }
+            })
+        };
+        rule(true)
+            .or_else(|| rule(false))
+            .is_some_and(|r| r.mode != BlendMode::Off)
+    };
+    let partial = outputs
+        .iter()
+        .flatten()
+        .filter(|&&b| !whole || blends(b))
+        .fold(0u32, |mask, b| mask | (1 << b));
     PlannedProgram {
-        name: program.program.name.clone(),
+        name: name.to_owned(),
         group: program.program.group,
-        outputs: if reflection.kind == ProgramKind::Render {
-            outputs_by_location(reflection)
-        } else {
-            vec![]
-        },
+        outputs,
         reads: reflection
             .textures
             .iter()
@@ -369,6 +418,7 @@ fn planned(program: &ProgramTranslation, reflection: &ProgramReflection) -> Plan
             .filter_map(color_buffer_of)
             .collect(),
         mipmaps,
+        partial,
     }
 }
 
@@ -403,7 +453,7 @@ pub(crate) fn runnable_programs(
         }
         match &program.reflection {
             Some(reflection) => {
-                plans.push(planned(program, reflection));
+                plans.push(planned(program, reflection, &translation.properties));
                 runnable.push(program);
             }
             None => failed.push(program.program.name.clone()),
@@ -490,7 +540,7 @@ pub(crate) fn build(
     let geometry_plans: Vec<PlannedProgram> = geometry
         .iter()
         .filter(|p| p.program.group == ProgramGroup::Gbuffers)
-        .filter_map(|p| Some(planned(p, p.reflection.as_ref()?)))
+        .filter_map(|p| Some(planned(p, p.reflection.as_ref()?, &translation.properties)))
         .collect();
     let mut frame = plan_frame(&plans, &translation.properties.flips);
     let buffers = plan_buffers(
@@ -501,6 +551,7 @@ pub(crate) fn build(
         &translation.properties.buffer_sizes,
     );
     skip_cleared_swap_back(&mut frame, &buffers, &plans);
+    exchange_swap_back(&mut frame, &plans, &geometry_plans);
     let support = gpu.support();
     let mut buffer_formats = [None; MAX_COLOR_BUFFERS as usize];
     for buffer in &buffers {
@@ -794,6 +845,7 @@ pub(crate) fn build(
             read_alt: 0,
             writes: vec![],
             mipmaps: vec![],
+            mipmapped: 0,
         })
         .collect();
     let (block_ids, actor_ids) = if draws.is_empty() {

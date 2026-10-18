@@ -15,7 +15,7 @@ use crate::shaderpack::geometry::{
 };
 use crate::shaderpack::passes::ViewState;
 use crate::shaderpack::targets::{
-    AtlasViews, draw_read_alt, draws_into_geometry_depth, pass_bind_groups,
+    AtlasViews, draw_reads, draws_into_geometry_depth, exchanged_by, pass_bind_groups,
 };
 use crate::shaderpack::uniforms::patch_block;
 
@@ -109,20 +109,23 @@ pub(crate) fn prepare(
             let Some((view, _)) = actors.views.get(&draw.texture) else {
                 continue;
             };
-            slot.groups = pass_bind_groups(
-                device,
-                &pack,
-                targets,
-                Some(&slot.uniforms),
-                geometry.program,
-                draw_read_alt(&pack, geometry),
-                Some(AtlasViews {
-                    color: view,
-                    normals: &neutral.normals,
-                    specular: &neutral.specular,
-                }),
-                draws_into_geometry_depth(geometry.kind),
-            );
+            let atlas = AtlasViews {
+                color: view,
+                normals: &neutral.normals,
+                specular: &neutral.specular,
+            };
+            slot.groups = targets.per_parity(&exchanged_by(&pack, geometry.program), |targets| {
+                pass_bind_groups(
+                    device,
+                    &pack,
+                    targets,
+                    Some(&slot.uniforms),
+                    geometry.program,
+                    draw_reads(&pack, geometry),
+                    Some(atlas),
+                    draws_into_geometry_depth(geometry.kind),
+                )
+            });
             slot.texture = Some(draw.texture);
         }
     }
@@ -316,6 +319,7 @@ pub(crate) fn record(
     render.set_vertex_buffer(GEOMETRY_VERTEX_BUFFER, output.slice(..));
     render.set_vertex_buffer(CONSTANT_VERTEX_BUFFER, constant.slice(..));
     let actors = &state.actors;
+    let parity = state.targets.parity;
     let Some(slots) = actors.slots.get(&kind) else {
         return;
     };
@@ -329,7 +333,7 @@ pub(crate) fn record(
         else {
             continue;
         };
-        for (index, group) in slot.groups.iter().enumerate() {
+        for (index, group) in slot.groups[parity].iter().enumerate() {
             if let Some(group) = group {
                 render.set_bind_group(index as u32, group, &[]);
             }

@@ -164,7 +164,7 @@ fn record_kind(
         return;
     };
     let mut tracked = TrackedRenderPass::new(geometry.device, render);
-    let groups = &state.bindings.draws[index].groups;
+    let groups = &state.bindings.draws[index].groups[state.targets.parity];
     if pack.draws[index].pulled.is_some() && groups[3].is_none() {
         // The arenas a pulled draw reads do not exist yet.
         return;
@@ -321,7 +321,7 @@ pub(crate) fn bind_geometry(device: &Device, state: &mut ViewState, geometry: &F
     state.bindings.bind_draws(
         device,
         &pack,
-        &state.targets,
+        &mut state.targets,
         |kind| match kind {
             DrawKind::Effect(effect) => geometry.effect_textures?.views(effect),
             _ => atlas,

@@ -127,6 +127,15 @@ const SIZE: [u32; 2] = [4, 4];
 /// Runs `files` over a scene whose top half is red and bottom half mid grey; returns the
 /// output rows top-down, 256 bytes apart.
 fn render(gpu: &GpuContext, files: &[(&str, &str)]) -> Vec<u8> {
+    render_frames(gpu, files, 1).1
+}
+
+/// [`render`] over `frames` frames of one view; also returns the loaded pack.
+fn render_frames(
+    gpu: &GpuContext,
+    files: &[(&str, &str)],
+    frames: usize,
+) -> (Arc<super::loader::PackGpu>, Vec<u8>) {
     let pack = pack(files);
     let pack = Arc::new(
         build(
@@ -244,7 +253,9 @@ fn render(gpu: &GpuContext, files: &[(&str, &str)]) -> Vec<u8> {
         geometry: None,
         timestamps: None,
     };
-    record_frame(&gpu.device, &gpu.queue, &mut encoder, &mut state, &io);
+    for _ in 0..frames {
+        record_frame(&gpu.device, &gpu.queue, &mut encoder, &mut state, &io);
+    }
     let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: 256 * u64::from(size[1]),
@@ -273,7 +284,8 @@ fn render(gpu: &GpuContext, files: &[(&str, &str)]) -> Vec<u8> {
     gpu.device
         .poll(wgpu::PollType::wait_indefinitely())
         .unwrap();
-    readback.slice(..).get_mapped_range().unwrap().to_vec()
+    let bytes = readback.slice(..).get_mapped_range().unwrap().to_vec();
+    (pack, bytes)
 }
 
 fn assert_pixels(bytes: &[u8], expected: impl Fn(usize) -> [u8; 3]) {
@@ -314,6 +326,47 @@ fn composite_and_final_transform_the_scene_and_present_it_upright() {
             [127, 127, 127]
         }
     });
+}
+
+/// Adds a quarter to `colortex5`, which keeps its contents across frames.
+const ACCUMULATE: &str = "#version 120
+/* DRAWBUFFERS:5 */
+const bool colortex5Clear = false;
+uniform sampler2D colortex5;
+varying vec2 texcoord;
+void main() {
+    gl_FragData[0] = texture2D(colortex5, texcoord) + vec4(0.25);
+}
+";
+
+/// Presents `colortex5`.
+const SHOW_5: &str = "#version 120
+uniform sampler2D colortex5;
+varying vec2 texcoord;
+void main() {
+    gl_FragColor = texture2D(colortex5, texcoord);
+}
+";
+
+#[test]
+fn a_buffer_kept_across_frames_exchanges_its_sides_instead_of_copying_back() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    let (pack, bytes) = render_frames(
+        &gpu,
+        &[
+            ("composite.vsh", PASS_VERTEX),
+            ("composite.fsh", ACCUMULATE),
+            ("final.vsh", PASS_VERTEX),
+            ("final.fsh", SHOW_5),
+        ],
+        3,
+    );
+    assert_eq!(pack.frame.exchange, [5]);
+    assert!(pack.frame.swap_back.is_empty());
+    assert_pixels(&bytes, |_| [191, 191, 191]);
 }
 
 /// Reads `colortex0` exactly on its top edge, where a repeating sampler would blend in the

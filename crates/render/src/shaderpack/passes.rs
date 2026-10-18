@@ -1,8 +1,8 @@
 //! Records a frame of a pack: clears, the shadow pass, `prepare*`, the sky and opaque
 //! geometry (or the Vanilla scene copy into `colortex0` and `depthtex*` for packs without
 //! terrain programs), `deferred*`, translucent geometry, `composite*` (with compute
-//! variants), `final` into the screen, the copy-back of buffers that end flipped, and the
-//! screen's presentation into the view.
+//! variants), `final` into the screen, the copy-back (or exchange of textures) of buffers
+//! that end flipped, and the screen's presentation into the view.
 
 use super::draws::DrawKind;
 use super::effects::Effect;
@@ -11,7 +11,7 @@ use super::frame_geometry::{
 };
 use super::loader::{PackGpu, ProgramPipeline};
 use super::plan::PassStep;
-use super::targets::{ViewBindings, ViewTargets, is_compute};
+use super::targets::{Groups, ViewBindings, ViewTargets, is_compute};
 use super::uniforms::{
     DrawUniforms, FAR_PLANE_SCALE, FrameUniforms, GL_NEAR, HostValue, pack_block,
 };
@@ -62,8 +62,8 @@ pub(crate) struct ViewState {
 
 impl ViewState {
     pub(crate) fn new(device: &Device, pack: Arc<PackGpu>, screen: [u32; 2]) -> Self {
-        let targets = ViewTargets::new(device, &pack, screen);
-        let bindings = ViewBindings::new(device, &pack, &targets);
+        let mut targets = ViewTargets::new(device, &pack, screen);
+        let bindings = ViewBindings::new(device, &pack, &mut targets);
         let (custom, errors) = CustomUniforms::new(&pack.custom_uniforms);
         for error in errors {
             bevy::log::debug!(
@@ -382,8 +382,8 @@ pub(crate) fn record_frame(
     );
 }
 
-/// `composite*` and `final`, the copy-back of buffers that end flipped, and the screen's
-/// presentation into the view.
+/// `composite*` and `final`, the copy-back of buffers that end flipped (or the exchange of
+/// their textures), and the screen's presentation into the view.
 fn record_composite(encoder: &mut CommandEncoder, state: &mut ViewState, io: &FrameIo<'_>) {
     let pack = Arc::clone(&state.pack);
     run_steps(encoder, state, Steps::Composite, state.targets.screen_size);
@@ -404,9 +404,7 @@ fn record_composite(encoder: &mut CommandEncoder, state: &mut ViewState, io: &Fr
         .present
         .iter()
         .find(|(f, _)| *f == io.destination_format);
-    let group = state
-        .bindings
-        .present
+    let group = state.bindings.present[targets.parity]
         .iter()
         .find(|(f, _)| *f == io.destination_format);
     if let (Some((_, pipeline)), Some((_, group))) = (present, group) {
@@ -420,6 +418,7 @@ fn record_composite(encoder: &mut CommandEncoder, state: &mut ViewState, io: &Fr
         render.set_bind_group(0, group, &[]);
         render.draw(0..3, 0..1);
     }
+    state.targets.swap_sides(&pack.frame.exchange);
 }
 
 /// Writes the planes and limits the host's depth conversions and the Vanilla overlay use.
@@ -465,6 +464,7 @@ fn run_steps(encoder: &mut CommandEncoder, state: &mut ViewState, steps: Steps, 
         Steps::Deferred => (&pack.frame.post[..start], &state.bindings.post[..start]),
         Steps::Composite => (&pack.frame.post[start..], &state.bindings.post[start..]),
     };
+    let parity = state.targets.parity;
     for (step, groups) in steps.iter().zip(groups) {
         run_step(
             encoder,
@@ -472,7 +472,7 @@ fn run_steps(encoder: &mut CommandEncoder, state: &mut ViewState, steps: Steps, 
             &state.targets,
             &state.bindings,
             step,
-            groups,
+            &groups[parity],
             &mut state.skipped,
             size,
         );
@@ -580,8 +580,7 @@ fn generate_mipmaps(
     let Some((_, pipeline)) = pack.host.downsample.iter().find(|(f, _)| *f == format) else {
         return;
     };
-    let Some((_, _, groups)) = bindings
-        .downsample
+    let Some((_, _, groups)) = bindings.downsample[targets.parity]
         .iter()
         .find(|(b, s, _)| *b == index && *s == side)
     else {
@@ -611,7 +610,7 @@ fn run_step(
     targets: &ViewTargets,
     bindings: &ViewBindings,
     step: &PassStep,
-    groups: &[Option<wgpu::BindGroup>; 4],
+    groups: &Groups,
     skipped: &mut BTreeSet<String>,
     size: [u32; 2],
 ) {
