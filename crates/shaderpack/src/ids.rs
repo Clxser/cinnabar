@@ -10,6 +10,7 @@
 
 mod bedrock;
 mod block;
+mod legacy;
 #[cfg(test)]
 mod tests;
 
@@ -32,8 +33,8 @@ pub(crate) const ENTITY_FILE: &str = "entity.properties";
 /// Parsed block.properties / item.properties / entity.properties of a pack.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct IdMaps {
-    /// Block-state ids and render-layer overrides from block.properties (empty without the
-    /// file: Iris's built-in legacy-id fallback for such packs is not provided).
+    /// Block-state ids and render-layer overrides from block.properties; without the file,
+    /// Iris's legacy numeric ids (`LegacyIdMap`).
     pub blocks: BlockIdMap,
     /// Item ids from item.properties (empty without the file).
     pub items: NamedIdMap,
@@ -53,10 +54,11 @@ impl IdMaps {
         defines: &BTreeMap<String, String>,
     ) -> IdMaps {
         let mut diagnostics = Vec::new();
-        let blocks = block.map_or_else(BlockIdMap::default, |text| {
+        let blocks = {
+            let text = block.unwrap_or(legacy::BLOCK_PROPERTIES);
             let entries = load(BLOCK_FILE, text, defines, &mut diagnostics);
             BlockIdMap::parse(&entries, &mut diagnostics)
-        });
+        };
         let mut named = |file: &str, prefix: &str, text: Option<&str>| {
             text.map_or_else(NamedIdMap::default, |text| {
                 let entries = load(file, text, defines, &mut diagnostics);

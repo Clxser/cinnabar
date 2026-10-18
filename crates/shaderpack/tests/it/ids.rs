@@ -59,17 +59,16 @@ fn option_gated_block_entries_follow_the_chosen_options() {
 }
 
 #[test]
-fn a_pack_without_block_properties_assigns_no_block_ids() {
+fn a_pack_without_block_properties_gets_iris_legacy_block_ids() {
     let pack = ShaderPack::new(PackSource::from_files([(
         "item.properties",
         "item.3=cobalt:ember_rod\n",
     )]));
     let maps = pack.id_maps(&Environment::default(), &OptionValues::new());
     let no_tags = |_: &str| false;
-    assert!(maps.blocks.is_empty());
     assert_eq!(
         maps.blocks.block_id("minecraft:glowstone", &[], &no_tags),
-        None
+        Some(89)
     );
     assert!(maps.entities.is_empty());
     assert_eq!(maps.items.id("cobalt:ember_rod"), Some(3));

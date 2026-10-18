@@ -223,15 +223,19 @@ fn missing_item_and_entity_files_give_empty_maps() {
 }
 
 #[test]
-fn without_block_properties_no_block_has_an_id() {
-    for map in [
-        IdMaps::parse(None, None, None, &BTreeMap::new()),
-        blocks(""),
-    ] {
-        assert!(map.blocks.is_empty());
-        assert_eq!(id(&map, "minecraft:stone", &[]), None);
-        assert_eq!(map.blocks.tags().count(), 0);
-    }
+fn without_block_properties_blocks_get_iris_legacy_ids() {
+    let legacy = IdMaps::parse(None, None, None, &BTreeMap::new());
+    assert!(legacy.diagnostics.is_empty());
+    assert_eq!(id(&legacy, "minecraft:oak_leaves", &[]), Some(18));
+    assert_eq!(id(&legacy, "minecraft:water", &[("level", "0")]), Some(9));
+    assert_eq!(id(&legacy, "minecraft:emerald_block", &[]), Some(-123));
+    assert_eq!(id(&legacy, "minecraft:red_stained_glass_pane", &[]), Some(160));
+    assert_eq!(id(&legacy, "minecraft:cherry_leaves", &[]), None);
+    // An empty file is still a file: no legacy ids, as in Iris.
+    let empty = blocks("");
+    assert!(empty.blocks.is_empty());
+    assert_eq!(id(&empty, "minecraft:oak_leaves", &[]), None);
+    assert_eq!(empty.blocks.tags().count(), 0);
 }
 
 #[test]

@@ -1177,8 +1177,9 @@ screen-effect parity remain incomplete.
   precedence (plain entries before `%tag` entries, first match wins) and builds the dense
   `mc_Entity` table per block-registry state; `NamedIdMap::bedrock_entity_id` and
   `bedrock_item_id` give Bedrock identifiers the pack ids of their Java ids, a Bedrock id the
-  mapping lacks keeping its own name. Incomplete: no Iris legacy-id fallback for packs without
-  `block.properties`; files decode as UTF-8 rather than ISO-8859-1.
+  mapping lacks keeping its own name. A pack without `block.properties` gets Iris's legacy
+  numeric ids (`LegacyIdMap`: leaves 18, water 9 …). Incomplete: files decode as UTF-8 rather
+  than ISO-8859-1.
 
 ## Shader-pack render mode (experimental, incomplete)
 
