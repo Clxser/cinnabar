@@ -15,7 +15,9 @@ use super::targets::{ViewBindings, ViewTargets, is_compute};
 use super::uniforms::{
     DrawUniforms, FAR_PLANE_SCALE, FrameUniforms, GL_NEAR, HostValue, pack_block,
 };
+use crate::gpu_timing::{GpuTimestamps, within_stage};
 use bevy::math::{Mat4, Vec3};
+use render_scene::RuntimeStage;
 use shaderpack::{CustomUniforms, ProgramGroup};
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -235,6 +237,8 @@ pub(crate) struct FrameIo<'a> {
     /// Terrain, atlas and sky for the pack's geometry programs; without it (or without
     /// terrain programs) the Vanilla scene is copied into `colortex0` instead.
     pub geometry: Option<FrameGeometry<'a>>,
+    /// GPU timestamps, which time the pack's pass groups during aggregate profiling.
+    pub timestamps: Option<&'a GpuTimestamps>,
 }
 
 pub(crate) fn clear_attachment(
@@ -315,31 +319,70 @@ pub(crate) fn record_frame(
         }
     }
     let geometry = io.geometry.as_ref().filter(|_| !pack.draws.is_empty());
+    let timestamps = io.timestamps;
     if let Some(geometry) = geometry {
         bind_geometry(device, state, geometry);
         super::actors::prepare(device, queue, encoder, state, &geometry.actors);
-        record_shadow(device, encoder, state, geometry);
-        let shadow_size = pack
-            .shadow
-            .as_ref()
-            .map_or(state.targets.screen_size, |s| [s.slots.resolution; 2]);
-        run_steps(encoder, state, Steps::Shadowcomp, shadow_size);
-    }
-    run_steps(encoder, state, Steps::Prepare, state.targets.screen_size);
-    match geometry {
-        Some(geometry) => record_opaque(device, queue, encoder, state, geometry),
-        None => copy_scene(device, encoder, &pack, &state.targets, io),
-    }
-    run_steps(encoder, state, Steps::Deferred, state.targets.screen_size);
-    if let Some(geometry) = geometry {
-        record_translucent(
-            device,
+        within_stage(
+            timestamps,
+            RuntimeStage::GpuShaderpackShadow,
             encoder,
-            state,
-            geometry,
-            (io.scene_colour, io.scene_depth),
+            |encoder| {
+                record_shadow(device, encoder, state, geometry);
+                let shadow_size = pack
+                    .shadow
+                    .as_ref()
+                    .map_or(state.targets.screen_size, |s| [s.slots.resolution; 2]);
+                run_steps(encoder, state, Steps::Shadowcomp, shadow_size);
+            },
         );
     }
+    within_stage(
+        timestamps,
+        RuntimeStage::GpuShaderpackOpaque,
+        encoder,
+        |encoder| {
+            run_steps(encoder, state, Steps::Prepare, state.targets.screen_size);
+            match geometry {
+                Some(geometry) => record_opaque(device, queue, encoder, state, geometry),
+                None => copy_scene(device, encoder, &pack, &state.targets, io),
+            }
+        },
+    );
+    within_stage(
+        timestamps,
+        RuntimeStage::GpuShaderpackDeferred,
+        encoder,
+        |encoder| run_steps(encoder, state, Steps::Deferred, state.targets.screen_size),
+    );
+    if let Some(geometry) = geometry {
+        within_stage(
+            timestamps,
+            RuntimeStage::GpuShaderpackTranslucent,
+            encoder,
+            |encoder| {
+                record_translucent(
+                    device,
+                    encoder,
+                    state,
+                    geometry,
+                    (io.scene_colour, io.scene_depth),
+                );
+            },
+        );
+    }
+    within_stage(
+        timestamps,
+        RuntimeStage::GpuShaderpackComposite,
+        encoder,
+        |encoder| record_composite(encoder, state, io),
+    );
+}
+
+/// `composite*` and `final`, the copy-back of buffers that end flipped, and the screen's
+/// presentation into the view.
+fn record_composite(encoder: &mut CommandEncoder, state: &mut ViewState, io: &FrameIo<'_>) {
+    let pack = Arc::clone(&state.pack);
     run_steps(encoder, state, Steps::Composite, state.targets.screen_size);
     let targets = &state.targets;
     for &index in &pack.frame.swap_back {

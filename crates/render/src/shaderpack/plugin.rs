@@ -11,7 +11,7 @@ use super::effects::{Effect, EffectCamera, EffectInputs};
 use super::frame_geometry::{FrameGeometry, TerrainDraws};
 use super::geometry::{
     GeometryCategory, ShaderpackBlockIds, ShaderpackGeometry, ShaderpackGeometryPlugin,
-    ShaderpackGeometrySettings,
+    ShaderpackGeometrySettings, device_geometry_budget,
 };
 use super::loader::{GpuContext, PackGpu, load};
 use super::passes::{DrawContext, FrameIo, ViewState, record_frame};
@@ -31,10 +31,12 @@ use bevy::{
         view::{ExtractedView, ViewDepthStencilTexture, ViewTarget},
     },
 };
+use render_scene::device_memory::DedicatedGraphicsMemory;
 use render_scene::shaderpack::{
     ShaderPackActorIds, ShaderPackDrawnCategories, ShaderPackEffects, ShaderPackFrameInputs,
     ShaderPackIdMaps, ShaderPackRendering, ShaderPackRequest, ShaderPackStatus,
 };
+use render_scene::{RuntimeStage, RuntimeStageProfiler};
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -167,9 +169,9 @@ struct ShaderPackViews(Mutex<HashMap<Entity, ViewState>>);
 type PreparedView = (Entity, &'static ExtractedView);
 
 /// Enables the geometry adapter while a pack with terrain programs is shown on some camera,
-/// with the pack's `separateAo`/`oldLighting`, publishes its block ids, tells the Vanilla
-/// actor, block-entity and hand passes which of them the pack draws itself, and publishes
-/// the effects it draws in place of Vanilla's.
+/// with the pack's `separateAo`/`oldLighting` and a vertex budget sized to the device,
+/// publishes its block ids, tells the Vanilla actor, block-entity and hand passes which of
+/// them the pack draws itself, and publishes the effects it draws in place of Vanilla's.
 #[allow(clippy::too_many_arguments, reason = "a render-world system's inputs")]
 fn configure_geometry(
     mut commands: Commands,
@@ -179,6 +181,7 @@ fn configure_geometry(
     mut drawn: ResMut<ShaderPackDrawnCategories>,
     ids: Option<Res<ShaderpackBlockIds>>,
     mut replaced: ResMut<ShaderPackEffects>,
+    memory: Option<Res<DedicatedGraphicsMemory>>,
     mut shown: Local<Option<usize>>,
 ) {
     let pack = pack
@@ -188,7 +191,7 @@ fn configure_geometry(
         enabled: pack.is_some(),
         separate_ao: pack.as_ref().is_some_and(|p| p.separate_ao),
         old_lighting: pack.as_ref().is_some_and(|p| p.old_lighting),
-        ..settings.clone()
+        budget_bytes: device_geometry_budget(memory.map_or(0, |memory| memory.0)),
     };
     if *settings != wanted {
         *settings = wanted;
@@ -262,7 +265,11 @@ fn prepare_views(
     atlas: Option<Res<ShaderpackAtlas>>,
     effect_textures: Option<Res<ShaderpackEffectTextures>>,
     hand: Option<Res<render_scene::HandRigScene>>,
+    profiler: Option<Res<RuntimeStageProfiler>>,
 ) {
+    let _timer = profiler
+        .as_deref()
+        .map(|profiler| profiler.time(RuntimeStage::ShaderpackUniforms));
     let hand_fov = hand
         .as_ref()
         .and_then(|hand| hand.frame.as_ref())
@@ -460,7 +467,11 @@ fn shaderpack_post(
         destination: post.destination,
         destination_format,
         geometry,
+        timestamps: world.get_resource::<crate::gpu_timing::GpuTimestamps>(),
     };
+    let _timer = world
+        .get_resource::<RuntimeStageProfiler>()
+        .map(|profiler| profiler.time(RuntimeStage::ShaderpackRecord));
     record_frame(&device, &queue, context.command_encoder(), state, &io);
     Ok(())
 }
@@ -524,6 +535,7 @@ pub(super) fn build(app: &mut App) {
             ExtractResourcePlugin::<LoadedShaderPack>::default(),
             ExtractResourcePlugin::<ShaderPackFrameInputs>::default(),
             ExtractResourcePlugin::<ShaderPackActorIds>::default(),
+            ExtractResourcePlugin::<DedicatedGraphicsMemory>::default(),
             ShaderpackGeometryPlugin,
             ShaderpackAtlasPlugin,
         ))

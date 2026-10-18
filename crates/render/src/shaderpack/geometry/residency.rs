@@ -15,6 +15,9 @@ use super::vertex::IRIS_VERTEX_STRIDE;
 pub(crate) const FACE_BYTES: u64 = 4 * IRIS_VERTEX_STRIDE;
 /// Faces a new vertex page starts with before it grows.
 pub(crate) const INITIAL_PAGE_FACES: u32 = 1 << 16;
+/// Largest vertex page. Growing a page copies it into a buffer twice its size, so a cap keeps
+/// that transient allocation and copy small; beyond it, faces go to further pages.
+pub(crate) const MAX_PAGE_BYTES: u64 = 128 << 20;
 /// Grid the geometry origin snaps to, in blocks.
 pub(crate) const ORIGIN_GRID: i32 = 1024;
 /// Camera distance from the origin, in blocks, past which the origin moves and every section
@@ -84,8 +87,11 @@ pub(crate) struct Residency {
 
 impl Residency {
     /// `binding_bytes` is the largest buffer a kernel may bind; `budget_bytes` the memory budget.
+    /// Pages stop growing at [`MAX_PAGE_BYTES`] and further faces open new pages, so growth
+    /// never needs a large allocation next to the page it replaces.
     pub(crate) fn new(binding_bytes: u64, budget_bytes: u64) -> Self {
-        let page_faces = (binding_bytes / FACE_BYTES).min(u64::from(u32::MAX / 4)) as u32;
+        let page_faces =
+            (binding_bytes.min(MAX_PAGE_BYTES) / FACE_BYTES).min(u64::from(u32::MAX / 4)) as u32;
         Self {
             pages: Vec::new(),
             sections: HashMap::new(),
@@ -104,11 +110,33 @@ impl Residency {
         self.budget_faces = budget_bytes / FACE_BYTES;
     }
 
-    fn capacity_faces(&self) -> u64 {
+    /// Undoes an uncommitted `placement` of `entity` whose page could not be allocated: the
+    /// section waits without faces, and the page returns to its previous capacity.
+    pub(crate) fn revoke(&mut self, entity: Entity, placement: &Placement) {
+        self.pages[placement.page]
+            .faces
+            .release(placement.faces.clone());
+        match placement.grown_from {
+            Some(0) => {
+                debug_assert_eq!(placement.page + 1, self.pages.len(), "new pages come last");
+                self.pages.pop();
+            }
+            Some(previous) => self.pages[placement.page].faces.truncate(previous),
+            None => {}
+        }
+        self.wait(entity);
+    }
+
+    pub(crate) fn capacity_faces(&self) -> u64 {
         self.pages
             .iter()
             .map(|page| u64::from(page.faces.capacity()))
             .sum()
+    }
+
+    /// Sections waiting for room in the budget.
+    pub(crate) fn waiting_len(&self) -> usize {
+        self.waiting.len()
     }
 
     /// Queues `entity` for (re-)expansion once.
