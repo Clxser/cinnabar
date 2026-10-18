@@ -1,7 +1,10 @@
 //! Pixel witnesses through the production actor vertex and velocity calculation.
 
 use super::{ActorHistory, CameraHistory, tests::shader_source};
-use crate::gpu_snapshot::{Draw, Gpu, SNAPSHOT_SIDE};
+use crate::{
+    gpu_snapshot::{Draw, Gpu, SNAPSHOT_SIDE, WorldLighting},
+    shader_source as fixture_shader,
+};
 use bevy::math::{Mat4, UVec4, Vec3};
 use render_model::{ActorRigGeometrySpan, ActorRigVertex};
 use wgpu::util::DeviceExt;
@@ -16,9 +19,7 @@ fn velocity_shader() -> String {
     return vec4(actor_motion_velocity(input) * {VELOCITY_SCALE} + vec2(0.5), 1.0, 1.0);
 }}
 "#,
-        shader_source(&["ACTOR_MOTION"])
-            .replace("@group(1) @binding(0)", "@group(0) @binding(20)")
-            .replace("@group(1) @binding(1)", "@group(0) @binding(21)")
+        fixture_shader::bind_lighting(&shader_source(&["ACTOR_MOTION"]))
             .replace("@group(2) @binding(0)", "@group(0) @binding(22)")
             .replace("@group(2) @binding(1)", "@group(0) @binding(23)")
     )
@@ -98,6 +99,7 @@ fn velocity_pixel(
     let motion = storage(bytemuck::cast_slice(&history.instances));
     let rendered_bones = storage(bytemuck::cast_slice(&history.bones));
     let lightmap = gpu.lightmap(&[1.0; 256 * 4]);
+    let lighting = WorldLighting::new(gpu, &lightmap, None);
     let bindings = [
         (0, &view),
         (1, &instances),
@@ -105,7 +107,6 @@ fn velocity_pixel(
         (3, &spans),
         (4, &previous_bones),
         (5, &current_bones),
-        (20, &lightmap),
         (22, &motion),
         (23, &rendered_bones),
     ]
@@ -113,6 +114,10 @@ fn velocity_pixel(
         binding,
         resource: buffer.as_entire_binding(),
     });
+    let bindings = bindings
+        .into_iter()
+        .chain(lighting.flat_bindings())
+        .collect::<Vec<_>>();
     let pixels = gpu.render(
         source,
         "actor_vertex",
