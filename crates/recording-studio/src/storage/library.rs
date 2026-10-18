@@ -12,6 +12,9 @@ use crate::{
     model::PROJECT_EXTENSION,
 };
 
+mod query;
+pub use query::{LibraryQuery, LibrarySort, MAX_LIBRARY_SEARCH_BYTES};
+
 const MAX_LIBRARY_ENTRIES: usize = 256;
 const MAX_DIRECTORY_ENTRIES: usize = 4096;
 const MAX_LIBRARY_ISSUES: usize = 32;
@@ -39,8 +42,9 @@ pub struct LibraryListing {
     pub truncated: bool,
 }
 
-/// Keeps enumeration bounded and newest-first; one malformed recording does not hide other projects.
-pub(super) fn list(root: &Path) -> Result<LibraryListing, StorageError> {
+/// Keeps enumeration bounded; one malformed recording does not hide other projects.
+pub(super) fn list(root: &Path, query: &LibraryQuery) -> Result<LibraryListing, StorageError> {
+    query.validate()?;
     let mut listing = LibraryListing::default();
     let directory = match fs::read_dir(root) {
         Ok(directory) => directory,
@@ -67,15 +71,7 @@ pub(super) fn list(root: &Path) -> Result<LibraryListing, StorageError> {
             }
         }
     }
-    listing.entries.sort_by(|a, b| {
-        b.modified_unix_ms
-            .cmp(&a.modified_unix_ms)
-            .then_with(|| a.path.cmp(&b.path))
-    });
-    if listing.entries.len() > MAX_LIBRARY_ENTRIES {
-        listing.truncated = true;
-        listing.entries.truncate(MAX_LIBRARY_ENTRIES);
-    }
+    query::finish(&mut listing, query);
     Ok(listing)
 }
 

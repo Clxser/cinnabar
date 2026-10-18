@@ -261,6 +261,9 @@ impl UiPresentationRuntime {
                     | launcher::menu::MenuField::StudioDestination
                     | launcher::menu::MenuField::StudioCamera(_)
                     | launcher::menu::MenuField::StudioClip(_)
+                    | launcher::menu::MenuField::StudioExportRange(_)
+                    | launcher::menu::MenuField::StudioSeek
+                    | launcher::menu::MenuField::StudioLibrarySearch
                     | launcher::menu::MenuField::MacroCommand(_) => {
                         return None;
                     }

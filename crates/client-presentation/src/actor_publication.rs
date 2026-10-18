@@ -171,6 +171,7 @@ pub fn prepare_actor_render_frame(
         },
         hides_box,
         &mut new_geometries,
+        None,
     );
     state.paintings.refresh(
         client_world.entity_assets,
@@ -280,6 +281,7 @@ pub fn prepare_actor_render_frame(
             &mut params.hand_builder.0,
             params.glint_settings.as_deref(),
             params.profiler.as_deref(),
+            bodies.render_frame.take(),
         );
     }
     params.prepared.0 = Some(commit::PendingActorPublication::new(

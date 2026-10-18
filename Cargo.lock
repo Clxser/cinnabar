@@ -8002,6 +8002,7 @@ dependencies = [
  "jsonui-editor",
  "launcher",
  "oreui",
+ "recording-studio",
  "serde_json",
  "tempfile",
  "ui",

@@ -18,6 +18,9 @@ pub struct MenuInputContext<'w, 's> {
     pub(super) keyboard_messages: MessageReader<'w, 's, KeyboardInput>,
     pub(super) focus: Option<ResMut<'w, client_state::CursorFocus>>,
     pub(super) driven: Option<Res<'w, client_state::DrivenInput>>,
+    pub(super) keyboard_events: Option<Res<'w, Messages<KeyboardInput>>>,
+    pub(super) motion_events: Option<Res<'w, Messages<bevy::input::mouse::MouseMotion>>>,
+    pub(super) camera_input: Local<'s, super::studio_camera::Input>,
 }
 
 /// Tracks modifiers and native input without consuming menu navigation's messages.

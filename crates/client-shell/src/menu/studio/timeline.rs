@@ -2,7 +2,12 @@
 
 use super::*;
 use launcher::menu::studio::EditorPanel;
-use recording_studio::timeline::{DragMode, TimelineEdit};
+use recording_studio::timeline::{DragMode, SnapIndex, TimelineKey};
+use std::collections::BTreeSet;
+mod gestures;
+mod selection;
+#[cfg(test)]
+mod tests;
 
 pub(super) enum Gesture {
     Overview {
@@ -16,7 +21,24 @@ pub(super) enum Gesture {
         down: f32,
         duration: MediaTime,
         project: Arc<Project>,
-        pending: Option<TimelineEdit>,
+        revision: u64,
+        selected: BTreeSet<Id>,
+        edges: Vec<MediaTime>,
+        snap: SnapIndex,
+        last: Option<([f32; 2], bool)>,
+        pending: Option<Vec<Command>>,
+    },
+    Key {
+        key: TimelineKey,
+        width: u32,
+        height: u32,
+        down: [f32; 2],
+        duration: MediaTime,
+        project: Arc<Project>,
+        revision: u64,
+        snap: SnapIndex,
+        last: Option<([f32; 2], bool)>,
+        pending: Option<(Command, TimelineKey)>,
     },
 }
 
@@ -133,141 +155,5 @@ impl Studio {
             return true;
         }
         false
-    }
-
-    /// One project snapshot supplies the entire drag; releasing commits once, focus loss discards it.
-    pub(super) fn timeline_pointer(
-        &mut self,
-        hovered: Option<launcher::menu::MenuAction>,
-        x: Option<f32>,
-        held: bool,
-        pressed: bool,
-    ) -> bool {
-        if !held {
-            let Some(gesture) = self.gesture.take() else {
-                return false;
-            };
-            Arc::make_mut(&mut self.view).workspace.drag = None;
-            if let Gesture::Edit {
-                project,
-                pending: Some(edit),
-                ..
-            } = gesture
-            {
-                let result = if self
-                    .project()
-                    .is_ok_and(|current| Arc::ptr_eq(current, &project))
-                {
-                    self.edit("Drag timeline item", &edit.commands)
-                } else {
-                    Err("The project changed during this drag. Try dragging again.".into())
-                };
-                if let Err(error) = result {
-                    Arc::make_mut(&mut self.view).error = Some(error);
-                }
-                self.publish_editor();
-            }
-            return true;
-        }
-        if pressed && let Some(launcher::menu::MenuAction::Studio(action)) = hovered {
-            match action {
-                Action::TimelineOverview { left, width } => {
-                    self.gesture = Some(Gesture::Overview { left, width })
-                }
-                Action::DragItem {
-                    id, mode, width, ..
-                } => {
-                    if let (Some(down), Ok(project)) = (x, self.project().cloned()) {
-                        self.gesture = Some(Gesture::Edit {
-                            id,
-                            mode,
-                            width,
-                            down,
-                            duration: self.view.visible_duration,
-                            project,
-                            pending: None,
-                        });
-                        self.transport.pause();
-                        if let Err(error) = self.select_timeline_item(id) {
-                            Arc::make_mut(&mut self.view).error = Some(error);
-                        }
-                        Arc::make_mut(&mut self.view).workspace.panel = EditorPanel::Inspector;
-                        self.publish_editor();
-                    }
-                }
-                _ => {}
-            }
-        }
-        let Some(gesture) = self.gesture.take() else {
-            return false;
-        };
-        match gesture {
-            Gesture::Overview { left, width } => {
-                if let Some(x) = x {
-                    let at = ((f64::from(x) - f64::from(left)) / f64::from(width.max(1)))
-                        .clamp(0.0, 1.0)
-                        * self.timeline_end() as f64;
-                    let maximum = self
-                        .timeline_end()
-                        .saturating_sub(self.view.visible_duration.0);
-                    let start =
-                        (at - self.view.visible_duration.0 as f64 * 0.5).clamp(0.0, maximum as f64);
-                    Arc::make_mut(&mut self.view).visible_start = MediaTime(start.round() as u64);
-                }
-                self.gesture = Some(Gesture::Overview { left, width });
-            }
-            Gesture::Edit {
-                id,
-                mode,
-                width,
-                down,
-                duration,
-                project,
-                mut pending,
-            } => {
-                if let Some(x) = x.filter(|value| value.is_finite()) {
-                    let delta = ((f64::from(x - down) / f64::from(width.max(1)))
-                        * duration.0 as f64) as i128;
-                    let fps = project.export.fps;
-                    let span = recording_studio::timeline::item_span(&project, id);
-                    if let Ok(span) = span {
-                        let anchor = if mode == DragMode::TrimEnd {
-                            span.end
-                        } else {
-                            span.start
-                        };
-                        let wanted = MediaTime(
-                            (i128::from(anchor.0) + delta)
-                                .clamp(0, i128::from(recording_studio::time::MAX_MEDIA_MICROS))
-                                as u64,
-                        );
-                        if let Ok(snapped) = fps.snap(wanted) {
-                            let delta = i128::from(snapped.0) - i128::from(anchor.0);
-                            if let Ok(edit) = recording_studio::timeline::drag(
-                                &project,
-                                id,
-                                mode,
-                                delta,
-                                self.view.workspace.ripple,
-                            ) {
-                                Arc::make_mut(&mut self.view).workspace.drag =
-                                    Some((id, edit.span));
-                                pending = Some(edit);
-                            }
-                        }
-                    }
-                }
-                self.gesture = Some(Gesture::Edit {
-                    id,
-                    mode,
-                    width,
-                    down,
-                    duration,
-                    project,
-                    pending,
-                });
-            }
-        }
-        true
     }
 }

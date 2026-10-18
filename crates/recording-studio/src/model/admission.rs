@@ -12,6 +12,9 @@ impl Project {
             return Err(StudioError::Version(self.version));
         }
         limit("project name bytes", self.name.len(), 256)?;
+        if self.muted_tracks.iter().any(|track| !track.valid()) {
+            return Err(StudioError::Invalid("muted track is outside the timeline"));
+        }
         let mut ids = BTreeSet::new();
         for id in self.ids() {
             if id.0 == 0 || !ids.insert(id) {
@@ -24,6 +27,7 @@ impl Project {
         let mut keys = 0usize;
         for shot in &self.shots {
             shot.validate()?;
+            keys += shot.fov_curve.as_ref().map_or(0, |curve| curve.keys.len());
             if let CameraMode::Path { keys: path, .. } = &shot.mode {
                 keys += path.len();
             }
@@ -107,21 +111,7 @@ impl Project {
             if source.kind != MediaKind::Image && clip.source_range.end > source.duration {
                 return Err(StudioError::Invalid("clip extends beyond its source media"));
             }
-            let [left, top, right, bottom] = clip.framing.crop;
-            if !clip
-                .framing
-                .crop
-                .iter()
-                .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
-                || left >= right
-                || top >= bottom
-                || !clip.framing.opacity.is_finite()
-                || !(0.0..=1.0).contains(&clip.framing.opacity)
-            {
-                return Err(StudioError::Invalid(
-                    "crop and opacity must remain within their normalized bounds",
-                ));
-            }
+            clip.framing.validate()?;
             let span = clip.span()?;
             if clip.enabled {
                 lanes.entry(clip.track).or_default().push(span);
@@ -167,7 +157,7 @@ impl Project {
             if source.kind == MediaKind::Image
                 || clip.source_range.end > source.duration
                 || !clip.gain.is_finite()
-                || !(0.0..=8.0).contains(&clip.gain)
+                || !(0.0..=crate::audio::MAX_GAIN).contains(&clip.gain)
                 || clip.fade_in > duration
                 || clip.fade_out > duration
             {
@@ -228,6 +218,9 @@ impl Project {
             }
         }
         self.export.fps.validate()?;
+        if let Some(range) = self.export.range {
+            range.validate()?;
+        }
         let [width, height] = self.export.size;
         if width < 16
             || height < 16

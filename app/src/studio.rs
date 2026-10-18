@@ -30,6 +30,7 @@ mod environment;
 mod export;
 mod frames;
 mod observations;
+mod playback;
 mod preparation;
 mod preview;
 mod targets;
@@ -68,6 +69,7 @@ struct Active {
     video_readbacks: frames::Readbacks,
     captured: Arc<AtomicU64>,
     last_frame: Option<u64>,
+    last_camera_frame: Option<u64>,
     last_attack: u64,
     last_combat: u64,
     failure: Option<String>,
@@ -79,6 +81,13 @@ pub(crate) fn configure(app: &mut App) {
     app.init_resource::<client_presentation::dropped_items::recording::ReplayItems>();
     app.add_plugins(render::replay::ReplayPreviewPlugin);
     app.init_resource::<render_scene::ui_preview::UiPreviewSurface>();
+    app.init_resource::<playback::NativePlayback>().add_systems(
+        Update,
+        playback::update
+            .in_set(client_state::ClientFrameSet::UiPreparation)
+            .after(preview::update)
+            .before(crate::ui_runtime::presentation::prepare_ui_runtime),
+    );
     app.init_resource::<export::NativeExport>().add_systems(
         Update,
         export::update
@@ -221,6 +230,14 @@ fn update(world: &mut World) {
         }
         if active.stopping.is_none() {
             let elapsed = elapsed.unwrap_or(MediaTime::ZERO);
+            let sample_due = active
+                .session
+                .settings()
+                .fps
+                .frame_at(elapsed)
+                .ok()
+                .is_some_and(|frame| active.last_camera_frame != Some(frame));
+            let sample_started = std::time::Instant::now();
             if let Err(error) = observations::capture(world, &mut active, elapsed)
                 .and_then(|()| environment::sample(world, &mut active, elapsed))
                 .and_then(|()| actors::sample(world, &mut active, elapsed))
@@ -230,6 +247,23 @@ fn update(world: &mut World) {
             {
                 active.failure.get_or_insert(error);
                 stop(&mut active, now);
+            }
+            let sample_micros = if sample_due {
+                sample_started
+                    .elapsed()
+                    .as_micros()
+                    .min(u128::from(u64::MAX)) as u64
+            } else {
+                state.status.health.sample_micros
+            };
+            let actor_micros = world
+                .get_resource::<client_presentation::actor_publication::recording::ReplayActors>()
+                .map_or(0, |actors| actors.prepare_micros);
+            let health = frames::health(&active, actor_micros, sample_micros);
+            // Health counters do not force a fresh menu layout at the renderer's frame rate.
+            if state.status.elapsed.0 / 500_000 != elapsed.0 / 500_000 {
+                bevy::log::debug!(?health, "Studio capture health");
+                state.status.health = health;
             }
             state.status.elapsed = MediaTime(elapsed.0 / 100_000 * 100_000);
             state.status.captured_frames = active.captured.load(Ordering::Acquire);
@@ -487,6 +521,7 @@ fn poll_start(
                 video_readbacks: frames::Readbacks::default(),
                 captured: Arc::default(),
                 last_frame: None,
+                last_camera_frame: None,
                 last_attack: observations::attack_revision(world),
                 last_combat: observations::combat_revision(world),
                 failure: None,

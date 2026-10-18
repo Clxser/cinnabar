@@ -139,23 +139,7 @@ pub fn probe(path: &Path, cancellation: &Cancellation) -> Result<ProbedMedia, St
         std::fs::canonicalize(path).map_err(|error| format!("{}: {error}", path.display()))?;
     check_file(&path)?;
     let ffmpeg = crate::video::find_ffmpeg()?;
-    let name = if cfg!(windows) {
-        "ffprobe.exe"
-    } else {
-        "ffprobe"
-    };
-    let executable = ffmpeg
-        .parent()
-        .map(|parent| parent.join(name))
-        .filter(|path| path.is_file())
-        .or_else(|| {
-            std::env::var_os("PATH").and_then(|value| {
-                std::env::split_paths(&value)
-                    .map(|directory| directory.join(name))
-                    .find(|path| path.is_file())
-            })
-        })
-        .ok_or("FFprobe was not found. Install it beside FFmpeg to import or recover media.")?;
+    let executable = probe_executable(&ffmpeg)?;
     let mut command = Command::new(executable);
     command.args(["-v", "error", "-protocol_whitelist", "file,pipe", "-show_entries", "stream=codec_type,width,height,duration,avg_frame_rate,r_frame_rate:stream_disposition=attached_pic:format=duration,format_name", "-of", "json"])
         .arg(&path).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
@@ -176,6 +160,29 @@ pub fn probe(path: &Path, cancellation: &Cancellation) -> Result<ProbedMedia, St
     let probe: Probe = serde_json::from_slice(&bytes)
         .map_err(|error| format!("Invalid media metadata: {error}"))?;
     admit_probe(path, probe)
+}
+
+/// Import diagnostics and media admission resolve the same FFprobe binary.
+pub(crate) fn probe_executable(ffmpeg: &Path) -> Result<PathBuf, String> {
+    let name = if cfg!(windows) {
+        "ffprobe.exe"
+    } else {
+        "ffprobe"
+    };
+    ffmpeg
+        .parent()
+        .map(|parent| parent.join(name))
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            std::env::var_os("PATH").and_then(|value| {
+                std::env::split_paths(&value)
+                    .map(|directory| directory.join(name))
+                    .find(|path| path.is_file())
+            })
+        })
+        .ok_or_else(|| {
+            "FFprobe was not found. Install it beside FFmpeg to import or recover media.".into()
+        })
 }
 
 /// Metadata is admitted before importing; content hashing supports exact relink after a file move.
@@ -244,7 +251,7 @@ pub fn thumbnail(path: &Path, cancellation: &Cancellation) -> Result<Arc<[u8]>, 
 }
 
 /// Source bytes are streamed through one small buffer and cancellation is checked between reads.
-fn hash(path: &Path, cancellation: &Cancellation) -> Result<[u8; 32], String> {
+pub(crate) fn hash(path: &Path, cancellation: &Cancellation) -> Result<[u8; 32], String> {
     let expected = check_file(path)?;
     let mut file = File::open(path).map_err(|error| error.to_string())?;
     let mut digest = Sha256::new();
@@ -269,7 +276,7 @@ fn hash(path: &Path, cancellation: &Cancellation) -> Result<[u8; 32], String> {
 }
 
 /// Media byte limits apply before FFmpeg receives a filename or import begins hashing.
-fn check_file(path: &Path) -> Result<u64, String> {
+pub(crate) fn check_file(path: &Path) -> Result<u64, String> {
     let metadata =
         std::fs::metadata(path).map_err(|error| format!("{}: {error}", path.display()))?;
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_MEDIA_BYTES {

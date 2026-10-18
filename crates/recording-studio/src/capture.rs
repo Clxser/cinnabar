@@ -49,6 +49,9 @@ const MANIFEST_VERSION: u32 = 1;
 const MAX_MANIFEST_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_CAPTURE_HIGHLIGHTS: usize = 16_384;
 pub const MAX_CAPTURE_TRACKS: usize = 16;
+/// Both GPU transfer storage and producer admission share these finite live readback budgets.
+pub const MAX_READBACKS: usize = 3;
+pub const MAX_READBACK_BYTES: usize = 96 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum CapturePhase {
@@ -83,6 +86,27 @@ pub struct CaptureStatus {
     pub audio: bool,
     pub path: Option<PathBuf>,
     pub message: Option<String>,
+    pub health: CaptureHealth,
+}
+
+/// Live pipeline observations; latency is elapsed request time, separate from producer CPU work.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CaptureHealth {
+    /// Last admitted received-actor preparation, before the capture admission update.
+    pub actor_prepare_micros: u64,
+    /// Last admitted main-thread sample and GPU request preparation; excludes actor preparation above.
+    pub sample_micros: u64,
+    /// Last successful request through CPU pixel delivery, including GPU and task scheduling latency.
+    pub readback_micros: u64,
+    pub pending_readbacks: u32,
+    /// Reserved tightly packed pixel bytes, including completed frames waiting for encoder admission.
+    pub readback_bytes: u64,
+    pub encoder_frames: u32,
+    pub encoder_bytes: u64,
+    /// Failed nonblocking admission and retry attempts; missed_frames counts actual missing slots.
+    pub encoder_stalls: u64,
+    /// Capture slots blocked by full readbacks or skipped before a rendered image was available.
+    pub readback_stalls: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -106,7 +130,7 @@ pub struct CaptureSettings {
     /// Prepared first-person hand geometry is optional; older take settings leave it disabled.
     #[serde(default)]
     pub hand: bool,
-    /// Prepared HUD and chat are recorded only when explicitly requested for the next take.
+    /// Includes screen HUD/chat in video pixels and the native replay layer only when opted in.
     #[serde(default)]
     pub hud: bool,
 }

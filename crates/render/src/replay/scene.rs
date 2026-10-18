@@ -5,7 +5,7 @@ use std::sync::Arc;
 use bevy::prelude::*;
 use meshing::ChunkBiomeTintIdentity;
 use recording_scene::{palette::FrozenTint, playback::SceneFrame};
-use recording_studio::camera::CameraPose;
+use recording_studio::camera::{CameraPose, CameraTargetRef};
 use render_scene::{
     ActorRenderFrame, ActorRenderInstance, AtmosphereFrame, AtmosphereTextureAssets, BiomeTint,
     ChunkAnimationClock, ChunkBiomeTints, ChunkRenderInstance, ChunkTextureAssets,
@@ -21,6 +21,7 @@ impl ReplayRenderer {
         frame: &SceneFrame,
         recorded_view: bool,
         hand_visible: bool,
+        spectated: Option<CameraTargetRef>,
     ) -> Result<(), String> {
         let patch = &frame.terrain;
         let world = self.app.world_mut();
@@ -156,8 +157,19 @@ impl ReplayRenderer {
                 .view
                 .is_some_and(|view| !view.local_body_visible);
         let mut rig = actors.sample.rig.clone();
+        let spectated = spectated.and_then(|reference| {
+            let target = frame.targets.as_ref()?.target(reference.runtime_id)?;
+            target.matches(reference).then(|| target.reference())
+        });
         let keep = |index: usize| {
-            !hide_local || frame.local_actor != rig.manifest[index].identity.runtime_id
+            let identity = rig.manifest[index].identity;
+            actor_visible(
+                identity.runtime_id,
+                identity.spawn_revision,
+                frame.local_actor,
+                hide_local,
+                spectated,
+            )
         };
         let selected = (0..rig.instances.len())
             .filter(|&index| keep(index))
@@ -240,6 +252,45 @@ impl ReplayRenderer {
         });
         world.insert_resource(render_scene::BlockEntityFrameResource(visuals.blocks));
         Ok(())
+    }
+}
+
+/// Equipment layers share the body's lifetime; another spawn reusing its runtime ID remains visible.
+fn actor_visible(
+    runtime: u64,
+    spawn: u64,
+    local: u64,
+    hide_local: bool,
+    spectated: Option<CameraTargetRef>,
+) -> bool {
+    !(hide_local && runtime == local)
+        && !spectated.is_some_and(|target| {
+            target.runtime_id == runtime
+                && target
+                    .lifetime
+                    .is_some_and(|lifetime| lifetime.spawn_revision == spawn)
+        })
+}
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::*;
+    use recording_studio::camera::TargetLifetime;
+
+    #[test]
+    fn authored_pov_hides_only_its_body_lifetime_without_source_hud_visibility() {
+        let target = CameraTargetRef {
+            runtime_id: 7,
+            lifetime: Some(TargetLifetime {
+                unique_id: 10,
+                spawn_revision: 3,
+            }),
+        };
+        assert!(!actor_visible(7, 3, 99, false, Some(target)));
+        assert!(actor_visible(7, 4, 99, false, Some(target)));
+        assert!(actor_visible(8, 3, 99, false, Some(target)));
+        assert!(actor_visible(99, 1, 99, false, Some(target)));
+        assert!(!actor_visible(99, 1, 99, true, None));
     }
 }
 

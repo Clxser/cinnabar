@@ -195,6 +195,7 @@ impl Writer {
             at,
             sequence,
             remaining.min(MAX_CHECKPOINT_BYTES * 2),
+            self.config.compression_level,
         )?);
         Ok(())
     }
@@ -240,6 +241,7 @@ impl OpenSegment {
         at: MediaTime,
         sequence: u64,
         maximum: u64,
+        compression_level: u32,
     ) -> Result<Self, ArchiveError> {
         let path = format::segment_path(root, index, true);
         let file = File::options()
@@ -264,7 +266,7 @@ impl OpenSegment {
                     bytes: 0,
                     maximum,
                 },
-                Compression::fast(),
+                Compression::new(compression_level),
             ),
         })
     }

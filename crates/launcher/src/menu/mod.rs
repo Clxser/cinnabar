@@ -94,6 +94,9 @@ pub enum MenuField {
     StudioDestination,
     StudioCamera(recording_studio::camera::CameraParameter),
     StudioClip(studio::ClipTimeField),
+    StudioExportRange(studio::ExportRangeField),
+    StudioSeek,
+    StudioLibrarySearch,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -210,6 +213,15 @@ impl MenuAction {
                 Some(MenuField::StudioCamera(parameter))
             }
             Self::Studio(studio::Action::EditClipTime(field)) => Some(MenuField::StudioClip(field)),
+            Self::Studio(studio::Action::EditExportRange(field)) => {
+                Some(MenuField::StudioExportRange(field))
+            }
+            Self::Studio(studio::Action::Monitoring(
+                studio::monitoring::MonitoringAction::EditSeek,
+            )) => Some(MenuField::StudioSeek),
+            Self::Studio(studio::Action::LibraryTools(studio::library::LibraryAction::Search)) => {
+                Some(MenuField::StudioLibrarySearch)
+            }
             Self::SettingsMacroCommand(slot) => Some(MenuField::MacroCommand(slot)),
             Self::RealmMembership(realm_membership::Action::EditCode) => Some(MenuField::RealmCode),
             Self::AddName => Some(MenuField::Name),

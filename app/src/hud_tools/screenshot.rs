@@ -44,6 +44,7 @@ pub(crate) struct FrameCapture {
 struct SizedCapture {
     size: [u32; 2],
     source: [u32; 2],
+    hud: bool,
     consumers: Vec<SizedCaptureConsumer>,
 }
 
@@ -59,11 +60,12 @@ impl FrameCapture {
         self.owned.push(Box::new(consumer));
     }
 
-    /// Scales the final GPU output before readback; native screenshot requests take frame priority.
+    /// Samples world or final GPU output before readback; native screenshots take frame priority.
     pub(crate) fn request_sized(
         &mut self,
         size: [u32; 2],
         source: [u32; 2],
+        hud: bool,
         consumer: impl FnOnce(Result<Image, String>) + Send + Sync + 'static,
     ) -> Result<(), String> {
         recording_studio::video::frame_byte_len(size)?;
@@ -77,10 +79,13 @@ impl FrameCapture {
         let request = self.sized.get_or_insert_with(|| SizedCapture {
             size,
             source,
+            hud,
             consumers: Vec::new(),
         });
-        if request.size != size || request.source != source {
-            return Err("Only one recording size can be captured in a frame.".into());
+        if request.size != size || request.source != source || request.hud != hud {
+            return Err(
+                "Only one recording size and HUD policy can be captured in a frame.".into(),
+            );
         }
         request.consumers.push(Box::new(consumer));
         Ok(())
@@ -335,6 +340,30 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn recording_requests_keep_native_size_and_hud_policy_explicit() {
+        for hud in [false, true] {
+            let mut capture = FrameCapture::default();
+            capture
+                .request_sized([64, 32], [64, 32], hud, |_| {})
+                .unwrap();
+            let request = capture.sized.as_ref().unwrap();
+            assert_eq!(request.hud, hud);
+            assert_eq!(request.size, request.source);
+            assert!(
+                capture
+                    .request_sized([64, 32], [64, 32], !hud, |_| {})
+                    .is_err()
+            );
+            assert_eq!(capture.sized.as_ref().unwrap().hud, hud);
+            assert!(capture.shared.is_empty() && capture.owned.is_empty());
+            capture
+                .request_sized([64, 32], [64, 32], hud, |_| {})
+                .unwrap();
+            assert_eq!(capture.sized.as_ref().unwrap().consumers.len(), 2);
+        }
+    }
 
     #[test]
     fn encoding_consumers_run_outside_the_readback_observer() {

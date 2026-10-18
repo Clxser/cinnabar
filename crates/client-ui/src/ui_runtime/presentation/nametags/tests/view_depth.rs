@@ -12,6 +12,25 @@ fn placed_actor(runtime_id: u64, position: Vec3) -> ActorSnapshot {
 }
 
 #[test]
+fn recorded_eligible_tags_behind_the_source_camera_keep_exact_world_artwork() {
+    let stream = actor_stream(1, None, 0);
+    let camera = NametagView {
+        camera_position: Vec3::NEG_Z * 5.0,
+        ..view(Vec3::ZERO)
+    };
+    let mut cache = NametagTextCache::default();
+    let boards = ui::ScoreboardStore::default();
+    let tags = project_nametags(&mut cache, &boards, &stream, camera, None, 1.0, true);
+    assert_eq!(tags.len(), 1);
+    assert!(tags[0].view_depth < 0.0);
+    let scene = scene(&tags);
+    assert!(!scene.records.is_empty());
+    assert!(scene.records.iter().all(|record| record.anchor[2] == 0.0));
+    assert!(!scene.atlas.is_empty());
+    assert!(project_nametags(&mut cache, &boards, &stream, camera, None, 1.0, false).is_empty());
+}
+
+#[test]
 fn third_person_labels_sort_by_camera_depth_instead_of_viewer_distance() {
     let camera = NametagView {
         viewer_position: Vec3::ZERO,

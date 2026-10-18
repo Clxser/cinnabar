@@ -27,6 +27,7 @@ struct Worker {
     hand: super::hand::GeometryCache,
     atmosphere: super::atmosphere::AssetCache,
     items: super::items::Cache,
+    nametags: super::nametags::Cache,
 }
 
 impl VisualCapture {
@@ -40,6 +41,7 @@ impl VisualCapture {
             RecordingConfig {
                 disk_quota: journal_quota(),
                 queued_bytes: 256 * 1024 * 1024,
+                compression_level: 0,
                 ..Default::default()
             },
         )
@@ -96,6 +98,7 @@ impl VisualCapture {
                             hand: super::hand::GeometryCache::default(),
                             atmosphere: super::atmosphere::AssetCache::default(),
                             items: super::items::Cache::default(),
+                            nametags: super::nametags::Cache::default(),
                         });
                     }
                     let worker = store.as_mut().expect("prepared visual storage");
@@ -105,6 +108,7 @@ impl VisualCapture {
                         &mut worker.hand,
                         &mut worker.atmosphere,
                         &mut worker.items,
+                        &mut worker.nametags,
                         &frame,
                     )
                 },

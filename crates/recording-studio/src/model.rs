@@ -1,6 +1,6 @@
 //! Portable project metadata. Recorded scene data and imported media are never embedded here.
 
-use std::path::PathBuf;
+use std::{collections::BTreeSet, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -56,13 +56,34 @@ pub struct Framing {
     /// Normalized source crop: left, top, right, bottom.
     pub crop: [f64; 4],
     pub opacity: f64,
+    /// Clockwise image rotation around the retained crop's centre, independent of the replay camera.
+    #[serde(default)]
+    pub rotation_degrees: f64,
+    #[serde(default)]
+    pub fit: FramingFit,
 }
+
+macro_rules! framing_fits {
+    ($default:ident => $default_label:literal, $($kind:ident => $label:literal),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        pub enum FramingFit { #[default] $default, $($kind),+ }
+        impl FramingFit {
+            pub const ALL: &[Self] = &[Self::$default, $(Self::$kind),+];
+            /// One definition owns serialized modes, their control labels and inspector order.
+            pub const fn label(self) -> &'static str { match self { Self::$default => $default_label, $(Self::$kind => $label),+ } }
+        }
+    };
+}
+framing_fits! { Fit => "Fit", Fill => "Fill" }
 
 impl Default for Framing {
     fn default() -> Self {
         Self {
             crop: [0.0, 0.0, 1.0, 1.0],
             opacity: 1.0,
+            rotation_degrees: 0.0,
+            fit: FramingFit::default(),
         }
     }
 }
@@ -263,15 +284,29 @@ pub struct Transition {
     pub kind: TransitionKind,
 }
 
+impl Transition {
+    /// The cut is centred in one shared half-open transition interval, including source handles.
+    pub fn span_at(&self, cut: MediaTime) -> Result<Span, StudioError> {
+        let start = MediaTime(cut.0.saturating_sub(self.duration.0 / 2));
+        Span::new(start, start.checked_add(self.duration)?)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct ExportSettings {
+    /// Half-open project timeline range; absent preserves whole-project output for older projects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<Span>,
     pub size: [u32; 2],
     pub fps: FrameRate,
     pub codec: ExportCodec,
     pub encoder: Encoder,
     pub quality: u8,
     pub include_audio: bool,
+    /// Prepared source HUD/chat are hidden unless explicitly enabled; raster video pixels are unchanged.
+    #[serde(default)]
+    pub include_recorded_hud: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -295,12 +330,14 @@ pub enum Encoder {
 impl Default for ExportSettings {
     fn default() -> Self {
         Self {
+            range: None,
             size: [1920, 1080],
             fps: FrameRate::default(),
             codec: ExportCodec::H264,
             encoder: Encoder::Auto,
             quality: 20,
             include_audio: true,
+            include_recorded_hud: false,
         }
     }
 }
@@ -318,6 +355,8 @@ pub struct Project {
     pub titles: Vec<TitleClip>,
     pub markers: Vec<Marker>,
     pub transitions: Vec<Transition>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub muted_tracks: BTreeSet<crate::tracks::Track>,
     pub export: ExportSettings,
 }
 
@@ -335,6 +374,7 @@ impl Project {
             titles: Vec::new(),
             markers: Vec::new(),
             transitions: Vec::new(),
+            muted_tracks: BTreeSet::new(),
             export: ExportSettings::default(),
         }
     }

@@ -1,6 +1,6 @@
 //! Captures compact target anchors from received actors without preparing another animation/render list.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use bevy::prelude::*;
 use client_presentation::{
@@ -9,7 +9,9 @@ use client_presentation::{
 use recording_scene::targets::TargetCapture;
 use recording_studio::{
     MediaTime,
-    camera::{ActorPose, CameraTarget, MAX_CAMERA_TARGETS, MAX_TARGET_NAME_BYTES},
+    camera::{
+        ActorPose, CameraTarget, CameraTargetKind, MAX_CAMERA_TARGETS, MAX_TARGET_NAME_BYTES,
+    },
     capture::CaptureSession,
 };
 
@@ -56,7 +58,7 @@ pub(super) fn sample(world: &World, active: &mut Active, at: MediaTime) -> Resul
     Ok(())
 }
 
-/// Root/centre anchors are recorded as such; only a published native local eye becomes a player view.
+/// Local published eyes and supported standing remote-player eyes are retained separately from centres.
 fn snapshot(world: &World, targets: &mut Vec<CameraTarget>) -> Result<(), String> {
     let stream = world
         .get_resource::<ClientWorld>()
@@ -81,10 +83,27 @@ fn snapshot(world: &World, targets: &mut Vec<CameraTarget>) -> Result<(), String
             .map_or(position, |(min, max)| {
                 std::array::from_fn(|axis| (min[axis] + max[axis]) * 0.5)
             });
+        let view = authority.standing_player_view(actor.runtime_id, alpha);
+        let [yaw, pitch] = view.map_or_else(
+            || {
+                actor
+                    .interpolated_look(alpha)
+                    .unwrap_or([actor.yaw, actor.pitch])
+            },
+            |(_, look)| look,
+        );
         targets.push(CameraTarget {
             runtime_id: actor.runtime_id,
             unique_id: actor.unique_id,
             spawn_revision: actor.spawn_revision,
+            kind: match &actor.kind {
+                protocol::ActorKind::Player { .. } => CameraTargetKind::Player,
+                protocol::ActorKind::Entity { .. } => CameraTargetKind::Entity,
+            },
+            entity_type: Some(match &actor.kind {
+                protocol::ActorKind::Player { .. } => player_type(),
+                protocol::ActorKind::Entity { identifier } => Arc::clone(identifier),
+            }),
             name: label(
                 authority.actor_display_name(actor.unique_id),
                 actor.runtime_id,
@@ -92,10 +111,14 @@ fn snapshot(world: &World, targets: &mut Vec<CameraTarget>) -> Result<(), String
             pose: ActorPose {
                 position: anchor.map(f64::from),
                 velocity: [0.0; 3],
-                yaw: f64::from(actor.yaw),
-                pitch: f64::from(actor.pitch),
+                yaw: f64::from(yaw),
+                pitch: f64::from(pitch),
                 roll: 0.0,
-                eye_offset: None,
+                // The eye is derived from the named visual fact and collision feet, independent
+                // of this centre anchor's box. The subtraction only encodes its relative origin.
+                eye_offset: view.map(|(eye, _)| {
+                    std::array::from_fn(|axis| f64::from(eye[axis] - anchor[axis]))
+                }),
             },
             teleported: actor.teleported,
         });
@@ -113,6 +136,8 @@ fn snapshot(world: &World, targets: &mut Vec<CameraTarget>) -> Result<(), String
             runtime_id,
             unique_id: authority.local_player_unique_id(),
             spawn_revision: actor.map_or(0, |actor| actor.spawn_revision),
+            kind: CameraTargetKind::Player,
+            entity_type: Some(player_type()),
             name: label(
                 authority.actor_display_name(authority.local_player_unique_id()),
                 runtime_id,
@@ -133,6 +158,20 @@ fn snapshot(world: &World, targets: &mut Vec<CameraTarget>) -> Result<(), String
     }
     Ok(())
 }
+
+/// One immutable canonical player type avoids allocating an identical label per actor and capture frame.
+fn player_type() -> Arc<str> {
+    static TYPE: OnceLock<Arc<str>> = OnceLock::new();
+    Arc::clone(TYPE.get_or_init(|| {
+        Arc::from(
+            assets::facts::entity::NativeEntityClass::Player
+                .identifier()
+                .expect("native player identifier"),
+        )
+    }))
+}
+
+const _: () = assert!(MAX_TARGET_NAME_BYTES >= protocol::MAX_ACTOR_IDENTIFIER_BYTES);
 
 /// Names stay shared when already bounded; unusually long labels stop at a UTF-8 boundary.
 fn label(name: Option<Arc<str>>, runtime_id: u64) -> Arc<str> {

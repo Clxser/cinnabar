@@ -180,6 +180,7 @@ fn remote_body_and_persona_publish_sampled_clamps_and_preserve_java_overrides() 
                     },
                     |_, _, _, _| false,
                     &mut geometries,
+                    None,
                 );
                 assert_eq!(
                     bodies.remotes.len(),

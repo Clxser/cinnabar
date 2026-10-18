@@ -29,6 +29,7 @@ mod effects;
 mod faults;
 mod hud;
 mod items;
+mod labels;
 mod particles;
 pub use effects::FrameEffects;
 mod readback;
@@ -198,7 +199,7 @@ impl ReplayRenderer {
 
     /// Publishes one fully admitted source frame before drawing. A seek creates fresh view histories.
     pub fn apply(&mut self, frame: &SceneFrame, pose: CameraPose) -> Result<(), String> {
-        self.apply_view(frame, pose, pose == frame.view.pose, false, false)
+        self.apply_view(frame, pose, pose == frame.view.pose, true, false, None)
     }
 
     /// Source-camera overlays remain anchored to their recording when editor camera effects move its pose.
@@ -209,6 +210,7 @@ impl ReplayRenderer {
         source_view: bool,
         hide_hud: bool,
         hide_hand: bool,
+        spectated: Option<recording_studio::camera::CameraTargetRef>,
     ) -> Result<(), String> {
         pose.validate().map_err(|error| error.to_string())?;
         let transform = scene::camera_transform(pose)?;
@@ -218,7 +220,8 @@ impl ReplayRenderer {
             self.app.world_mut().despawn(self.camera);
             self.camera = camera(self.app.world_mut());
         }
-        self.apply_scene(frame, source_view, !hide_hand)?;
+        self.apply_scene(frame, source_view, !hide_hand, spectated)?;
+        self.apply_labels(frame, transform, source_view);
         self.apply_items(frame, transform, source_view)?;
         self.reproject_particles(frame, transform, pose.fov, source_view);
         self.apply_atmosphere_visuals(frame, transform, source_view)?;
@@ -286,15 +289,21 @@ impl ReplayRenderer {
             .queue
             .on_submitted_work_done(move || drop(submitted));
         let render = self.app.sub_app_mut(RenderApp).world_mut();
+        let mut shaders_ready = true;
         for pipeline in render.resource::<PipelineCache>().pipelines() {
             if let CachedPipelineState::Err(error) = &pipeline.state {
+                if crate::pipeline_warmup::shader_pending(error) {
+                    shaders_ready = false;
+                    continue;
+                }
                 return Err(format!("Replay shader preparation failed: {error}"));
             }
         }
         if self.terrain_dirty {
             self.terrain_dirty = !crate::chunk::replay::ready(render);
         }
-        let ready = !self.terrain_dirty
+        let ready = shaders_ready
+            && !self.terrain_dirty
             && crate::dropped_item_render::replay::ready(self.app.sub_app(RenderApp).world())?
             && crate::ui_render::replay_ready(self.app.sub_app(RenderApp).world())
             && crate::actor_render::replay_ready(self.app.sub_app(RenderApp).world())

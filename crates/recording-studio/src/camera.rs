@@ -9,11 +9,22 @@ use crate::{Id, MediaTime, Span, StudioError, effect::Easing, error::limit};
 pub const MAX_CAMERA_KEYS: usize = 8192;
 pub const MAX_CAMERA_TARGETS: usize = 4096;
 pub const MAX_TARGET_NAME_BYTES: usize = 256;
+pub const CAMERA_FOV_RANGE: std::ops::Range<f64> = 1.0..179.0;
 const DEFAULT_FOV: f64 = 70.0;
 
 mod edit;
+mod fov;
 mod keys;
+mod path;
+mod subjects;
+mod viewport;
 pub use edit::{CameraParameter, CameraRigKind};
+pub use path::{CameraHandles, PathControl};
+pub use subjects::{CameraSubjectFilter, CameraTargetKind, LEGACY_SUBJECT_NOTICE};
+pub use viewport::{CameraProjection, CameraView};
+
+#[cfg(test)]
+mod viewport_tests;
 
 /// Numeric drafts allow ordinary decimal and scientific notation while retaining a fixed input bound.
 pub const MAX_CAMERA_VALUE_BYTES: usize = 64;
@@ -69,7 +80,7 @@ impl CameraPose {
             .into_iter()
             .chain([self.yaw, self.pitch, self.roll, self.fov])
             .all(f64::is_finite)
-            || !(1.0..179.0).contains(&self.fov)
+            || !CAMERA_FOV_RANGE.contains(&self.fov)
             || self.pitch.abs() > 90.0
         {
             return Err(StudioError::Invalid(
@@ -97,6 +108,9 @@ pub struct CameraKey {
     pub at: MediaTime,
     pub pose: CameraPose,
     pub easing: Easing,
+    /// Relative world-space Bezier controls; absent controls preserve legacy rail evaluation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handles: Option<CameraHandles>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -119,6 +133,12 @@ pub enum CameraMode {
         offset: [f64; 3],
         look_ahead: f64,
         fov: f64,
+        #[serde(default)]
+        roll: f64,
+    },
+    Track {
+        actor: u64,
+        pose: CameraPose,
     },
     Orbit {
         actor: u64,
@@ -127,6 +147,8 @@ pub enum CameraMode {
         start_degrees: f64,
         turns: f64,
         fov: f64,
+        #[serde(default)]
+        roll: f64,
     },
 }
 
@@ -141,6 +163,12 @@ pub struct CameraShot {
     pub hide_hand: bool,
     #[serde(default)]
     pub target_lifetime: Option<TargetLifetime>,
+    /// Independent lens animation overrides the rig's original FOV only when explicitly authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fov_curve: Option<crate::effect::Curve>,
+    /// A trim retains the original easing phase without resampling or changing interior lens motion.
+    #[serde(default)]
+    pub fov_offset: MediaTime,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -169,6 +197,10 @@ pub struct ActorPose {
 }
 
 impl ActorPose {
+    /// Existing target anchors are native eyes when recorded, otherwise their recorded centre.
+    pub fn centre(self) -> [f64; 3] {
+        std::array::from_fn(|axis| self.position[axis] + self.eye_offset.unwrap_or([0.0; 3])[axis])
+    }
     /// Interpolates recorded target motion without deriving a view from a missing native eye offset.
     pub fn interpolated(self, other: Self, amount: f64) -> Self {
         let t = amount.clamp(0.0, 1.0);
@@ -194,7 +226,7 @@ impl ActorPose {
                         .lerp(DVec3::from_array(b), t)
                         .to_array(),
                 ),
-                _ => self.eye_offset,
+                _ => None,
             },
         }
     }
@@ -224,6 +256,8 @@ pub struct CameraTarget {
     pub unique_id: i64,
     pub spawn_revision: u64,
     pub name: Arc<str>,
+    pub kind: CameraTargetKind,
+    pub entity_type: Option<Arc<str>>,
     pub pose: ActorPose,
     pub teleported: bool,
 }
@@ -236,6 +270,18 @@ impl CameraTarget {
             self.name.len(),
             MAX_TARGET_NAME_BYTES,
         )?;
+        if let Some(entity_type) = &self.entity_type {
+            limit(
+                "camera target entity type bytes",
+                entity_type.len(),
+                MAX_TARGET_NAME_BYTES,
+            )?;
+            if entity_type.is_empty() || entity_type.chars().any(char::is_control) {
+                return Err(StudioError::Invalid(
+                    "camera target entity type is empty or contains control characters",
+                ));
+            }
+        }
         self.pose.validate()
     }
 
@@ -266,11 +312,37 @@ impl CameraTarget {
 }
 
 impl CameraShot {
+    /// First-person subject visibility is independent of whether recorded HUD layers are shown.
+    pub fn spectated_actor(&self) -> Option<CameraTargetRef> {
+        if let CameraMode::Player { actor, .. } = &self.mode {
+            Some(CameraTargetRef {
+                runtime_id: *actor,
+                lifetime: self.target_lifetime,
+            })
+        } else {
+            None
+        }
+    }
+
     /// Checks rigs and every path key once at project admission or edit commit.
     pub fn validate(&self) -> Result<(), StudioError> {
         self.span.validate()?;
         limit("camera name bytes", self.name.len(), 256)?;
-        let valid_fov = |fov: f64| fov.is_finite() && (1.0..179.0).contains(&fov);
+        let valid_fov = |fov: f64| fov.is_finite() && CAMERA_FOV_RANGE.contains(&fov);
+        if let Some(curve) = &self.fov_curve {
+            curve.validate(MediaTime(crate::time::MAX_MEDIA_MICROS))?;
+            self.fov_offset.checked_add(self.span.duration())?;
+            if curve.keys.iter().any(|key| !valid_fov(key.value)) {
+                return Err(StudioError::Invalid(
+                    "camera FOV keys must be between 1 and 179 degrees",
+                ));
+            }
+        }
+        if self.fov_curve.is_none() && self.fov_offset != MediaTime::ZERO {
+            return Err(StudioError::Invalid(
+                "a camera FOV phase requires a lens curve",
+            ));
+        }
         match &self.mode {
             CameraMode::Player { fov, actor: _ } => {
                 if !valid_fov(*fov) {
@@ -279,7 +351,7 @@ impl CameraShot {
                     ));
                 }
             }
-            CameraMode::Free { pose } => pose.validate()?,
+            CameraMode::Free { pose } | CameraMode::Track { pose, .. } => pose.validate()?,
             CameraMode::Path { keys, .. } => {
                 limit("camera keys", keys.len(), MAX_CAMERA_KEYS)?;
                 if keys.is_empty()
@@ -292,18 +364,23 @@ impl CameraShot {
                 }
                 for key in keys {
                     key.pose.validate()?;
+                    if let Some(handles) = &key.handles {
+                        handles.validate(key.pose.position)?;
+                    }
                 }
             }
             CameraMode::Follow {
                 offset,
                 look_ahead,
                 fov,
+                roll,
                 ..
             } => {
                 if !offset.iter().all(|value| value.is_finite())
                     || !look_ahead.is_finite()
                     || !(0.0..=10.0).contains(look_ahead)
                     || !valid_fov(*fov)
+                    || !roll.is_finite()
                 {
                     return Err(StudioError::Invalid("follow camera parameters are invalid"));
                 }
@@ -314,9 +391,10 @@ impl CameraShot {
                 start_degrees,
                 turns,
                 fov,
+                roll,
                 ..
             } => {
-                if ![radius, height, start_degrees, turns]
+                if ![radius, height, start_degrees, turns, roll]
                     .iter()
                     .all(|value| value.is_finite())
                     || !(0.1..=1024.0).contains(radius)
@@ -348,8 +426,18 @@ impl CameraShot {
             return None;
         }
         let elapsed = time.saturating_sub(self.span.start);
-        match &self.mode {
+        let mut pose = match &self.mode {
             CameraMode::Free { pose } => Some(*pose),
+            CameraMode::Track {
+                actor: target,
+                pose,
+            } => {
+                let target = actor(CameraTargetRef {
+                    runtime_id: *target,
+                    lifetime: self.target_lifetime,
+                })?;
+                Some(pose.looking_at(target.centre()))
+            }
             CameraMode::Path {
                 keys,
                 smooth_position,
@@ -376,6 +464,7 @@ impl CameraShot {
                 offset,
                 look_ahead,
                 fov,
+                roll,
             } => {
                 let target = actor(CameraTargetRef {
                     runtime_id: *target,
@@ -394,7 +483,10 @@ impl CameraShot {
                 Some(
                     CameraPose {
                         position: (centre + local).to_array(),
+                        yaw: target.yaw,
+                        pitch: target.pitch,
                         fov: *fov,
+                        roll: *roll,
                         ..CameraPose::default()
                     }
                     .looking_at(look.to_array()),
@@ -407,6 +499,7 @@ impl CameraShot {
                 start_degrees,
                 turns,
                 fov,
+                roll,
             } => {
                 let actor = actor(CameraTargetRef {
                     runtime_id: *target,
@@ -422,12 +515,17 @@ impl CameraShot {
                     CameraPose {
                         position: position.to_array(),
                         fov: *fov,
+                        roll: *roll,
                         ..CameraPose::default()
                     }
                     .looking_at(centre.to_array()),
                 )
             }
+        }?;
+        if let Some(fov) = self.fov_override(time) {
+            pose.fov = fov;
         }
+        Some(pose)
     }
 }
 
@@ -455,6 +553,18 @@ fn sample_path(keys: &[CameraKey], time: MediaTime, smooth: bool) -> Option<Came
         .easing
         .sample((time.0 - a.at.0) as f64 / (b.at.0 - a.at.0) as f64);
     let mut pose = a.pose.interpolated(b.pose, t);
+    if a.handles
+        .as_ref()
+        .and_then(|handles| handles.outgoing)
+        .is_some()
+        || b.handles
+            .as_ref()
+            .and_then(|handles| handles.incoming)
+            .is_some()
+    {
+        pose.position = path::bezier_position(keys, next - 1, t, smooth);
+        return Some(pose);
+    }
     if smooth {
         pose.position = std::array::from_fn(|axis| {
             let p1 = a.pose.position[axis];

@@ -3,16 +3,23 @@
 use super::*;
 
 /// The media panel adds imports at the end of the timeline and relinks the selected source.
-pub(super) fn draw(
+pub(super) fn draw_filtered(
     canvas: &mut Canvas<'_>,
     view: &MenuView,
     area: Bounds,
+    audio: bool,
 ) -> Result<(), PaintError> {
     let pad = canvas.r(1.2);
     let mut y = area[1];
     let left = area[0];
     let right = area[2];
-    canvas.text_line("Media", [left, y], right - left, HEADER5, TEXT)?;
+    canvas.text_line(
+        if audio { "Audio" } else { "Media" },
+        [left, y],
+        right - left,
+        HEADER5,
+        TEXT,
+    )?;
     y += canvas.r(4.0);
     control(
         canvas,
@@ -48,9 +55,21 @@ pub(super) fn draw(
     let Some(project) = &view.studio.project else {
         return Ok(());
     };
+    if y >= area[3] || right <= left {
+        return Ok(());
+    }
     let scroll = canvas.begin_scroll("studio_media", [left, y, right, area[3]])?;
-    let row = canvas.r(7.0);
-    for (index, source) in project.sources.iter().enumerate() {
+    let row = canvas.r(6.4);
+    let audio_sources: std::collections::BTreeSet<_> =
+        project.audio.iter().map(|clip| clip.source).collect();
+    let sources = project.sources.iter().filter(|source| {
+        !audio
+            || source.kind == recording_studio::model::MediaKind::Audio
+            || audio_sources.contains(&source.id)
+    });
+    let mut rows = 0;
+    for (index, source) in sources.enumerate() {
+        rows += 1;
         let top = y - scroll.offset + index as f32 * row;
         if top + row < y || top > area[3] {
             continue;
@@ -84,6 +103,6 @@ pub(super) fn draw(
             TEXT_DIMMER,
         )?;
     }
-    canvas.end_scroll(scroll, project.sources.len() as f32 * row)?;
+    canvas.end_scroll(scroll, rows as f32 * row)?;
     Ok(())
 }

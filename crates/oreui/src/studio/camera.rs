@@ -6,6 +6,7 @@ use recording_studio::camera::{
 
 use super::*;
 
+mod fov;
 mod keys;
 
 /// New rigs are offered only after a native source has published an admitted camera/target snapshot.
@@ -40,7 +41,9 @@ pub(super) fn creation(
                 CameraRigKind::Player => {
                     selected.is_some_and(|target| target.pose.eye_offset.is_some())
                 }
-                CameraRigKind::Follow | CameraRigKind::Orbit => selected.is_some(),
+                CameraRigKind::Track | CameraRigKind::Follow | CameraRigKind::Orbit => {
+                    selected.is_some()
+                }
             };
         control(
             canvas,
@@ -52,7 +55,18 @@ pub(super) fn creation(
             Variant::Secondary,
         )?;
     }
-    Ok(y + CameraRigKind::ALL.len().div_ceil(2) as f32 * canvas.r(4.8))
+    y += CameraRigKind::ALL.len().div_ceil(2) as f32 * canvas.r(4.8);
+    if selected_target(view).is_some_and(|target| target.pose.eye_offset.is_none()) {
+        for line in [
+            "No recorded native eye.",
+            "POV unavailable for this subject.",
+            "Use Track, Follow or Orbit.",
+        ] {
+            canvas.text_line(line, [left, y], right - left, CAPTION, TEXT_DIMMER)?;
+            y += canvas.r(3.2);
+        }
+    }
+    Ok(y)
 }
 
 /// Every numeric adjustment is undoable; path adjustments key the exact playhead instead of a neighbour.
@@ -79,13 +93,17 @@ pub(super) fn inspector(
     y += canvas.r(3.2);
     let targeted = matches!(
         shot.mode,
-        CameraMode::Player { .. } | CameraMode::Follow { .. } | CameraMode::Orbit { .. }
+        CameraMode::Player { .. }
+            | CameraMode::Track { .. }
+            | CameraMode::Follow { .. }
+            | CameraMode::Orbit { .. }
     );
     if targeted {
         let runtime_id = match &shot.mode {
             CameraMode::Player { actor, .. }
             | CameraMode::Follow { actor, .. }
             | CameraMode::Orbit { actor, .. } => *actor,
+            CameraMode::Track { actor, .. } => *actor,
             _ => unreachable!(),
         };
         let reference = CameraTargetRef {
@@ -149,6 +167,7 @@ pub(super) fn inspector(
     for &parameter in shot.parameters() {
         y = numeric(canvas, view, [left, y, right, area[3]], shot, parameter)?;
     }
+    y = fov::draw(canvas, view, [left, y, right, area[3]], shot)?;
     let width = (right - left - canvas.r(0.8)) * 0.5;
     for (index, (label, action)) in [
         ("Start here", Action::TrimCameraStart),
@@ -274,22 +293,38 @@ fn pair(
 fn target(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<f32, PaintError> {
     let [left, mut y, right, _] = area;
     canvas.text_line(
-        "Recorded target",
+        "Recorded subject",
         [left, y],
         right - left,
         CAPTION,
         TEXT_DIMMER,
     )?;
     y += canvas.r(2.8);
-    let name =
-        selected_target(view).map_or("No target at this frame", |target| target.name.as_ref());
+    control(
+        canvas,
+        view,
+        [left, y, right, y + canvas.r(3.6)],
+        &format!(
+            "Subjects: {}",
+            view.studio.camera_workspace.subject_filter.label()
+        ),
+        Action::ToggleCameraSubjectFilter,
+        true,
+        Variant::Secondary,
+    )?;
+    y += canvas.r(4.4);
+    let name = selected_target(view).map_or("No matching subject at this frame", |target| {
+        target.name.as_ref()
+    });
     let button = canvas.r(3.6);
-    let targets = view
-        .studio
-        .preview
-        .camera
-        .as_ref()
-        .is_some_and(|camera| !camera.targets.is_empty());
+    let targets = view.studio.preview.camera.as_ref().is_some_and(|camera| {
+        camera.targets.iter().any(|target| {
+            view.studio
+                .camera_workspace
+                .subject_filter
+                .includes(target, camera.local_actor)
+        })
+    });
     control(
         canvas,
         view,
@@ -315,17 +350,35 @@ fn target(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<f32,
         targets,
         Variant::Secondary,
     )?;
-    Ok(y + canvas.r(5.2))
+    y += canvas.r(5.2);
+    if view.studio.preview.camera.as_ref().is_some_and(|camera| {
+        camera.targets.iter().any(|target| {
+            target.kind == recording_studio::camera::CameraTargetKind::Unknown
+                && target.runtime_id != camera.local_actor
+        })
+    }) {
+        y += canvas.text(
+            recording_studio::camera::LEGACY_SUBJECT_NOTICE,
+            [left, y],
+            right - left,
+            CAPTION,
+            TEXT_DIMMER,
+            false,
+        )? + canvas.r(1.2);
+    }
+    Ok(y)
 }
 
 /// A stored inspector selection never silently rebinds when an actor's runtime ID is reused.
 fn selected_target(view: &MenuView) -> Option<&recording_studio::camera::CameraTarget> {
     let reference = view.studio.camera_target?;
-    view.studio
-        .preview
-        .camera
-        .as_ref()?
-        .targets
-        .iter()
-        .find(|target| target.matches(reference))
+    let camera = view.studio.preview.camera.as_ref()?;
+    camera.targets.iter().find(|target| {
+        target.matches(reference)
+            && view
+                .studio
+                .camera_workspace
+                .subject_filter
+                .includes(target, camera.local_actor)
+    })
 }

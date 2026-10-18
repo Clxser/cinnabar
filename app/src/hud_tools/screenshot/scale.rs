@@ -1,28 +1,37 @@
-//! GPU recording output: redirect the final composite, present it, then downscale before readback.
+//! GPU recording output: sample the world or final composite before the bounded readback.
 
 use std::sync::{Arc, Mutex};
 
 use bevy::{
-    camera::{NormalizedRenderTarget, RenderTarget},
-    core_pipeline::blit::{BlitPipeline, BlitPipelineKey},
+    camera::{CompositingSpace, NormalizedRenderTarget, RenderTarget},
+    core_pipeline::{
+        Core3d, Core3dSystems,
+        blit::{BlitPipeline, BlitPipelineKey},
+    },
     prelude::*,
     render::{
         Extract, ExtractSchedule, GpuResourceAppExt, Render, RenderApp, RenderStartup,
         RenderSystems,
         camera::ExtractedCamera,
-        render_asset::prepare_assets,
+        render_asset::{RenderAssets, prepare_assets},
         render_resource::{binding_types::*, *},
         renderer::{RenderContext, RenderDevice, RenderGraph, RenderGraphSystems},
         texture::{GpuImage, OutputColorAttachment},
-        view::{ViewTargetAttachments, prepare_view_attachments, prepare_view_targets},
+        view::{
+            ResolvedCompositingSpace, ViewTargetAttachments, prepare_view_attachments,
+            prepare_view_targets,
+        },
     },
     window::PrimaryWindow,
 };
 
-use super::{FrameCapture, FrameCaptureSet, Screenshot, ScreenshotCaptured, offscreen};
+use super::{FrameCapture, FrameCaptureSet, offscreen};
+
+mod readback;
+mod world;
 
 const RETAIN_IDLE_FRAMES: u16 = 600;
-type Status = Arc<Mutex<Result<(), String>>>;
+type Status = Arc<Mutex<Option<Result<(), String>>>>;
 
 #[derive(Resource, Default)]
 struct Pending(Option<Request>);
@@ -31,8 +40,10 @@ struct Pending(Option<Request>);
 struct Request {
     source: RenderTarget,
     source_size: [u32; 2],
+    hud: bool,
     output: Handle<Image>,
     status: Status,
+    readback: Arc<readback::Request>,
 }
 
 #[derive(Resource, Default)]
@@ -51,12 +62,17 @@ struct Source {
 }
 
 #[derive(Resource, Default)]
-struct Prepared(Option<Frame>);
+struct Prepared(Option<(Frame, readback::Transfer)>);
 
 #[derive(Resource)]
 struct GraphInstalled;
 
-struct Frame {
+enum Frame {
+    Composite(CompositeFrame),
+    World(world::WorldFrame),
+}
+
+struct CompositeFrame {
     rendered: OutputColorAttachment,
     display: OutputColorAttachment,
     output: NormalizedRenderTarget,
@@ -71,20 +87,26 @@ struct Frame {
 #[derive(Resource)]
 struct ScalePipeline(BlitPipeline);
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct ScaleKey {
+    format: TextureFormat,
+    space: Option<CompositingSpace>,
+}
+
 impl SpecializedRenderPipeline for ScalePipeline {
-    type Key = TextureFormat;
+    type Key = ScaleKey;
 
     fn specialize(&self, format: Self::Key) -> RenderPipelineDescriptor {
         self.0.specialize(BlitPipelineKey {
-            target_format: format,
+            target_format: format.format,
             blend_state: None,
             samples: 1,
-            source_space: None,
+            source_space: format.space,
         })
     }
 }
 
-/// Installs a bounded output owner and a blit after every camera has finished its final composite.
+/// Installs bounded output ownership for clean world and final composite samples.
 pub(super) fn configure(app: &mut App) {
     app.init_resource::<Pending>()
         .init_resource::<Output>()
@@ -105,6 +127,7 @@ pub(super) fn configure(app: &mut App) {
         .init_resource::<Extracted>()
         .init_gpu_resource::<Source>()
         .init_gpu_resource::<Prepared>()
+        .init_gpu_resource::<readback::Pool>()
         .init_gpu_resource::<SpecializedRenderPipelines<ScalePipeline>>()
         .add_systems(
             RenderStartup,
@@ -123,14 +146,13 @@ pub(super) fn configure(app: &mut App) {
         );
 }
 
-/// A single small image is reused; outstanding screenshots own independent GPU transfer buffers.
+/// One output image and a bounded transfer pool serve recording requests at their selected cadence.
 fn spawn(
     mut captures: ResMut<FrameCapture>,
     target: Res<offscreen::FrameTarget>,
     mut output: ResMut<Output>,
     mut pending: ResMut<Pending>,
     images: Option<ResMut<Assets<Image>>>,
-    mut commands: Commands,
 ) {
     pending.0 = None;
     let Some(mut request) = captures.sized.take() else {
@@ -151,33 +173,34 @@ fn spawn(
         return;
     };
     let size = UVec2::from_array(request.size);
+    // Clean world samples are linear; the attachment encodes sRGB bytes for the video.
+    let format = if request.hud {
+        TextureFormat::Rgba8Unorm
+    } else {
+        TextureFormat::Rgba8UnormSrgb
+    };
     let mut changed = false;
     let image = output.image.get_or_insert_with(|| {
         changed = true;
-        let mut texture =
-            Image::new_target_texture(size.x, size.y, TextureFormat::Rgba8Unorm, None);
+        let mut texture = Image::new_target_texture(size.x, size.y, format, None);
         texture.data = None;
+        texture.texture_descriptor.usage |= TextureUsages::COPY_SRC;
         images.add(texture)
     });
-    if images
-        .get(&*image)
-        .is_some_and(|texture| texture.size() != size)
-        && let Some(mut texture) = images.get_mut(&*image)
+    if images.get(&*image).is_some_and(|texture| {
+        texture.size() != size || texture.texture_descriptor.format != format
+    }) && let Some(mut texture) = images.get_mut(&*image)
     {
         changed = true;
-        texture.resize(Extent3d {
-            width: size.x,
-            height: size.y,
-            depth_or_array_layers: 1,
-        });
+        *texture = Image::new_target_texture(size.x, size.y, format, None);
+        texture.data = None;
+        texture.texture_descriptor.usage |= TextureUsages::COPY_SRC;
     }
     if changed {
         // Asset events flush before Last. This slot is skipped while the new GPU image is admitted.
         return;
     }
-    let status = Arc::new(Mutex::new(Err(
-        "The renderer did not produce the requested recording output.".into(),
-    )));
+    let status = Arc::new(Mutex::new(None));
     pending.0 = Some(Request {
         source: target
             .0
@@ -186,24 +209,11 @@ fn spawn(
                 RenderTarget::Image(image.clone().into())
             }),
         source_size: request.source,
+        hud: request.hud,
         output: image.clone(),
         status: Arc::clone(&status),
+        readback: readback::Request::new(request.size, std::mem::take(&mut request.consumers)),
     });
-    commands.spawn(Screenshot::image(image.clone())).observe(
-        move |mut captured: On<ScreenshotCaptured>| {
-            let result = status.lock().expect("recording output status").clone();
-            if let Err(error) = result {
-                for consumer in request.consumers.drain(..) {
-                    consumer(Err(error.clone()));
-                }
-            } else if let Some(last) = request.consumers.pop() {
-                for consumer in request.consumers.drain(..) {
-                    consumer(Ok(captured.image.clone()));
-                }
-                last(Ok(std::mem::take(&mut captured.event_mut().image)));
-            }
-        },
-    );
 }
 
 /// Resolves the same primary window or hidden output that owns the ordinary shared screenshot.
@@ -249,6 +259,16 @@ fn initialize(world: &mut World) {
         return;
     }
     world
+        .try_schedule_scope(Core3d, |_, schedule| {
+            schedule.add_systems(
+                world::render
+                    .in_set(render::frame_capture::WorldFrameCapture)
+                    .after(Core3dSystems::PostProcess)
+                    .before(bevy::core_pipeline::upscaling::upscaling),
+            );
+        })
+        .expect("clean recording output requires the world render graph");
+    world
         .try_schedule_scope(RenderGraph, |_, schedule| {
             schedule.add_systems(
                 render
@@ -261,40 +281,107 @@ fn initialize(world: &mut World) {
     world.insert_resource(GraphInstalled);
 }
 
-/// Redirects the existing final camera output, including direct HUD composites, without rerendering.
+/// Admits the current camera and chooses clean sampling or final-output redirection.
 fn prepare(
     extracted: Res<Extracted>,
     mut source: ResMut<Source>,
     mut prepared: ResMut<Prepared>,
     mut attachments: ResMut<ViewTargetAttachments>,
-    cameras: Query<&ExtractedCamera>,
+    cameras: Query<(Entity, &ExtractedCamera, Option<&ResolvedCompositingSpace>)>,
     device: Res<RenderDevice>,
     pipeline: Res<ScalePipeline>,
-    mut cache: ResMut<PipelineCache>,
+    cache: Res<PipelineCache>,
     mut variants: ResMut<SpecializedRenderPipelines<ScalePipeline>>,
+    mut readbacks: ResMut<readback::Pool>,
+    images: Res<RenderAssets<GpuImage>>,
 ) {
     prepared.0 = None;
     let Some((target, request)) = &extracted.0 else {
         source.idle = source.idle.saturating_add(1);
         if source.idle >= RETAIN_IDLE_FRAMES {
             source.texture = None;
+            readbacks.release_idle();
         }
         return;
     };
     source.idle = 0;
+    let Some(output) = images.get(&request.output) else {
+        return;
+    };
+    let format = if request.hud {
+        TextureFormat::Rgba8Unorm
+    } else {
+        TextureFormat::Rgba8UnormSrgb
+    };
+    let extent = output.texture_descriptor.size;
+    if output.view_format() != format || [extent.width, extent.height] != request.readback.size {
+        return;
+    }
+    attachments.insert(
+        NormalizedRenderTarget::Image(request.output.clone().into()),
+        OutputColorAttachment::new(output.texture_view.clone(), output.view_format()),
+    );
+    let transfer = match readbacks.reserve(&device, Arc::clone(&request.readback), format) {
+        Ok(Some(transfer)) => transfer,
+        Ok(None) => return,
+        Err(error) => {
+            request.readback.finish(Err(error));
+            return;
+        }
+    };
     let size = UVec2::from_array(request.source_size);
-    let mut found = false;
+    let mut found = None;
+    let mut count = 0;
     let mut resized = false;
-    for camera in cameras
+    for (entity, camera, space) in cameras
         .iter()
-        .filter(|camera| camera.target.as_ref() == Some(target))
+        .filter(|(_, camera, _)| camera.target.as_ref() == Some(target))
     {
-        found = true;
+        count += 1;
+        found = Some((entity, space.and_then(|space| space.0)));
         resized |= camera.physical_target_size != Some(size);
     }
-    if !found || resized {
-        *request.status.lock().expect("recording output status") =
-            Err("The recording window changed size; stop and start a new recording.".into());
+    if found.is_none() || resized {
+        *request.status.lock().expect("recording output status") = Some(Err(
+            "The recording window changed size; stop and start a new recording.".into(),
+        ));
+        return;
+    }
+    if !request.hud {
+        source.texture = None;
+        if count != 1 {
+            *request.status.lock().expect("recording output status") = Some(Err(
+                "Clean video capture requires one world camera for the recording viewport.".into(),
+            ));
+            return;
+        }
+        let (entity, space) = found.expect("recording camera checked");
+        let id = variants.specialize(
+            &cache,
+            &pipeline,
+            ScaleKey {
+                format: TextureFormat::Rgba8UnormSrgb,
+                space,
+            },
+        );
+        if cache.get_render_pipeline(id).is_some() {
+            prepared.0 = Some((
+                Frame::World(world::WorldFrame {
+                    view: entity,
+                    size,
+                    output: NormalizedRenderTarget::Image(request.output.clone().into()),
+                    pipeline: id,
+                    status: Arc::clone(&request.status),
+                }),
+                transfer,
+            ));
+        } else if let CachedPipelineState::Err(error) = cache.get_render_pipeline_state(id)
+            && !render::pipeline_warmup::shader_pending(error)
+        {
+            *request.status.lock().expect("recording output status") =
+                Some(Err(format!("The clean recording pipeline failed: {error}")));
+        }
+        // The ordinary display attachment is untouched: the live HUD still composites normally.
         return;
     }
     let Some(display) = attachments.get(target).cloned() else {
@@ -308,8 +395,9 @@ fn prepare(
             | TextureFormat::Bgra8Unorm
             | TextureFormat::Bgra8UnormSrgb
     ) {
-        *request.status.lock().expect("recording output status") =
-            Err("This window's output format cannot be captured as SDR video.".into());
+        *request.status.lock().expect("recording output status") = Some(Err(
+            "This window's output format cannot be captured as SDR video.".into(),
+        ));
         return;
     }
     if source
@@ -340,59 +428,96 @@ fn prepare(
     }
     let (_, _, _, view, raw) = source.texture.as_ref().expect("recording output allocated");
     let rendered = OutputColorAttachment::new(view.clone(), format);
-    let display_pipeline = variants.specialize(&cache, &pipeline, format);
-    let output_pipeline = variants.specialize(&cache, &pipeline, TextureFormat::Rgba8Unorm);
-    cache.block_on_render_pipeline(display_pipeline);
-    cache.block_on_render_pipeline(output_pipeline);
+    let display_pipeline = variants.specialize(
+        &cache,
+        &pipeline,
+        ScaleKey {
+            format,
+            space: None,
+        },
+    );
+    let output_pipeline = variants.specialize(
+        &cache,
+        &pipeline,
+        ScaleKey {
+            format: TextureFormat::Rgba8Unorm,
+            space: None,
+        },
+    );
     if cache.get_render_pipeline(display_pipeline).is_none()
         || cache.get_render_pipeline(output_pipeline).is_none()
     {
-        *request.status.lock().expect("recording output status") =
-            Err("The GPU recording scale pipeline is unavailable.".into());
+        for id in [display_pipeline, output_pipeline] {
+            if let CachedPipelineState::Err(error) = cache.get_render_pipeline_state(id)
+                && !render::pipeline_warmup::shader_pending(error)
+            {
+                *request.status.lock().expect("recording output status") =
+                    Some(Err(format!("The recording scale pipeline failed: {error}")));
+            }
+        }
         return;
     }
-    prepared.0 = Some(Frame {
-        rendered: rendered.clone(),
-        display,
-        output: NormalizedRenderTarget::Image(request.output.clone().into()),
-        display_pipeline,
-        output_pipeline,
-        display_binding: pipeline.0.create_bind_group(&device, view, &cache),
-        // The video retains the final output's bytes, including an unorm window's color encoding.
-        output_binding: pipeline.0.create_bind_group(&device, raw, &cache),
-        status: Arc::clone(&request.status),
-    });
+    prepared.0 = Some((
+        Frame::Composite(CompositeFrame {
+            rendered: rendered.clone(),
+            display,
+            output: NormalizedRenderTarget::Image(request.output.clone().into()),
+            display_pipeline,
+            output_pipeline,
+            display_binding: pipeline.0.create_bind_group(&device, view, &cache),
+            // The video retains the final output's bytes, including an unorm window's color encoding.
+            output_binding: pipeline.0.create_bind_group(&device, raw, &cache),
+            status: Arc::clone(&request.status),
+        }),
+        transfer,
+    ));
     attachments.insert(target.clone(), rendered);
 }
 
-/// Writes display and recording pixels before Bevy submits the small screenshot transfer.
+/// Writes display and recording pixels, then copies the recording image directly to its transfer.
 fn render(
     prepared: Res<Prepared>,
     attachments: Res<ViewTargetAttachments>,
+    images: Res<RenderAssets<GpuImage>>,
+    extracted: Res<Extracted>,
     cache: Res<PipelineCache>,
     mut context: RenderContext,
 ) {
-    let Some(frame) = &prepared.0 else { return };
-    if !frame.rendered.needs_present() {
+    let Some((frame, transfer)) = &prepared.0 else {
         return;
+    };
+    let Some((_, request)) = &extracted.0 else {
+        return;
+    };
+    if let Frame::Composite(frame) = frame {
+        if !frame.rendered.needs_present() {
+            return;
+        }
+        let Some(display_pipeline) = cache.get_render_pipeline(frame.display_pipeline) else {
+            return;
+        };
+        blit(
+            &mut context,
+            &frame.display,
+            display_pipeline,
+            &frame.display_binding,
+        );
+        let (Some(output), Some(output_pipeline)) = (
+            attachments.get(&frame.output),
+            cache.get_render_pipeline(frame.output_pipeline),
+        ) else {
+            return;
+        };
+        blit(&mut context, output, output_pipeline, &frame.output_binding);
+        *frame.status.lock().expect("recording output status") = Some(Ok(()));
     }
-    let Some(display_pipeline) = cache.get_render_pipeline(frame.display_pipeline) else {
-        return;
-    };
-    blit(
-        &mut context,
-        &frame.display,
-        display_pipeline,
-        &frame.display_binding,
-    );
-    let (Some(output), Some(output_pipeline)) = (
-        attachments.get(&frame.output),
-        cache.get_render_pipeline(frame.output_pipeline),
-    ) else {
-        return;
-    };
-    blit(&mut context, output, output_pipeline, &frame.output_binding);
-    *frame.status.lock().expect("recording output status") = Ok(());
+    if matches!(
+        *request.status.lock().expect("recording output status"),
+        Some(Ok(()))
+    ) && let Some(image) = images.get(&request.output)
+    {
+        transfer.copy(&mut context, &image.texture);
+    }
 }
 
 /// Draws one full-screen triangle into the retained output attachment at its own GPU dimensions.
@@ -419,6 +544,13 @@ fn blit(
 }
 
 /// Surface views are frame-owned and must be released before a later DXGI resize.
-fn release_display(mut prepared: ResMut<Prepared>) {
-    prepared.0 = None;
+fn release_display(mut prepared: ResMut<Prepared>, extracted: Res<Extracted>) {
+    if let Some((_, request)) = &extracted.0
+        && let Some(Err(error)) = &*request.status.lock().expect("recording output status")
+    {
+        request.readback.finish(Err(error.clone()));
+    }
+    if let Some((_, transfer)) = prepared.0.take() {
+        transfer.map();
+    }
 }

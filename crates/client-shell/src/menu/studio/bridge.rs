@@ -9,6 +9,9 @@ impl Studio {
         if self.export_request.is_some() || self.view.export.phase.busy() {
             return Ok(());
         }
+        if self.view.workflow.export_range_draft.is_some() {
+            return Err("Apply or cancel the Export In/Out field before exporting.".into());
+        }
         let project = self
             .editor
             .as_ref()
@@ -17,7 +20,7 @@ impl Studio {
         if project.duration() == MediaTime::ZERO {
             return Err("Add media before exporting.".into());
         }
-        self.export_request = Some(recording_studio::export::ExportRequest {
+        let request = recording_studio::export::ExportRequest {
             project: Arc::clone(project),
             source_base: self
                 .view
@@ -36,7 +39,9 @@ impl Studio {
                 Some(path) => recording_studio::export::Destination::Directory(path.clone()),
                 None => recording_studio::export::Destination::Directory(self.root.join("exports")),
             },
-        });
+        };
+        request.frame_range()?;
+        self.export_request = Some(request);
         self.transport.pause();
         self.export_cancel = false;
         Arc::make_mut(&mut self.view).export = recording_studio::export::ExportStatus {
@@ -78,6 +83,18 @@ impl Studio {
 }
 
 impl crate::menu::MenuRuntime {
+    /// Only running transport admits speculative visual preparation; paused camera edits stay exact.
+    pub fn studio_preview_playing(&self) -> bool {
+        self.studio.transport.playing()
+    }
+
+    /// The image edge and PCM edge share the same runtime monitoring policy.
+    pub fn studio_monitoring_speed(
+        &self,
+    ) -> recording_studio::playback::monitoring::MonitoringSpeed {
+        self.studio.view.workspace.monitoring.speed
+    }
+
     /// Export workers own their rendering state and receive one immutable project snapshot.
     pub fn take_studio_export_request(
         &mut self,
@@ -103,11 +120,13 @@ impl crate::menu::MenuRuntime {
             || self.studio.view.export.phase.busy()
             || self.screen != launcher::menu::MenuScreen::RecordingStudio
             || self.studio.view.show_library
+            || self.studio.view.workflow.show_settings
+            || self.studio.view.workflow.recovery.visible
         {
             return None;
         }
         let editor = self.studio.editor.as_ref()?;
-        if editor.project().duration() == MediaTime::ZERO {
+        if editor.duration() == MediaTime::ZERO {
             return None;
         }
         Some(recording_studio::preview::PreviewRequest {
@@ -116,7 +135,12 @@ impl crate::menu::MenuRuntime {
                 editor.revision(),
                 self.studio.transport.epoch(),
             ],
-            project: Arc::clone(editor.project()),
+            project: self
+                .studio
+                .camera_interaction
+                .project
+                .as_ref()
+                .map_or_else(|| Arc::clone(editor.project()), Arc::clone),
             source_base: self
                 .studio
                 .view
@@ -125,6 +149,9 @@ impl crate::menu::MenuRuntime {
                 .and_then(|path| path.parent())
                 .map_or_else(|| self.studio.root.clone(), PathBuf::from),
             at: self.studio.transport.position(),
+            camera_view: self.studio.view.camera_workspace.view,
+            quality: self.studio.view.workspace.preview_quality,
+            cadence: None,
         })
     }
 
@@ -139,8 +166,14 @@ impl crate::menu::MenuRuntime {
                 view.camera_target = camera
                     .targets
                     .iter()
-                    .find(|target| target.runtime_id == camera.local_actor)
-                    .or_else(|| camera.targets.first())
+                    .filter(|target| {
+                        view.camera_workspace
+                            .subject_filter
+                            .includes(target, camera.local_actor)
+                    })
+                    .min_by_key(|target| {
+                        (target.runtime_id != camera.local_actor, target.runtime_id)
+                    })
                     .map(recording_studio::camera::CameraTarget::reference);
             }
         }

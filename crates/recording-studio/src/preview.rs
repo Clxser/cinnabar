@@ -13,7 +13,12 @@ use crate::{
     playback::{CompiledTimeline, FramePlan, MAX_VISUAL_LAYERS},
 };
 
+mod decoders;
+mod quality;
 mod raster;
+pub use quality::PreviewQuality;
+mod coverage;
+pub use coverage::WorldLabelCoverage;
 
 /// Active decoded/native source frames share a byte budget before allocation or GPU upload begins.
 pub const MAX_VISUAL_FRAME_BYTES: usize = 4 * crate::video::MAX_FRAME_BYTES;
@@ -22,27 +27,53 @@ const PLAYBACK_LEAD_FRAMES: u64 = 2;
 
 #[derive(Clone)]
 pub struct PreviewRequest {
+    /// Interactive rendering budget; exact exports always select Full.
+    pub quality: PreviewQuality,
+    /// None uses exact export cadence; the interactive presentation edge supplies its display cap.
+    pub cadence: Option<crate::FrameRate>,
     /// Document, edit revision and transport seek epoch; forward playback does not change this identity.
     pub epoch: [u64; 3],
     pub project: Arc<Project>,
     pub source_base: PathBuf,
     pub at: MediaTime,
+    /// Unsaved viewport navigation never changes the exported project or the replay seek epoch.
+    pub camera_view: Option<crate::camera::CameraView>,
 }
 
 impl PreviewRequest {
-    /// Preview and export evaluate output frames on the same grid, including the final visible frame.
+    /// Playback may reduce cadence; paused inspection keeps every output frame at the preview extent.
+    /// Export never calls this editor-only budget boundary.
+    pub fn for_interactive(mut self, maximum: [u32; 2], playing: bool) -> (Self, [u32; 2]) {
+        self.cadence = playing.then(|| self.quality.frame_rate(self.project.export.fps));
+        let maximum = self.quality.maximum_size(maximum);
+        (self, maximum)
+    }
+
+    /// Runtime monitoring changes only an admitted interactive display grid; exact export has no grid override.
+    pub fn with_monitoring_speed(
+        mut self,
+        speed: crate::playback::monitoring::MonitoringSpeed,
+    ) -> Result<Self, String> {
+        if let Some(cadence) = self.cadence {
+            self.cadence = Some(speed.cadence(cadence).map_err(|error| error.to_string())?);
+        }
+        Ok(self)
+    }
+
+    /// Preview render and transport credit share one admitted frame grid; export keeps its exact grid.
+    pub fn frame_rate(&self) -> crate::FrameRate {
+        self.cadence.unwrap_or(self.project.export.fps)
+    }
+
+    /// Evaluates the admitted presentation grid, including the final visible frame before timeline end.
     pub fn frame_time(&self) -> Result<MediaTime, String> {
         let duration = self.project.duration();
         let at = MediaTime(self.at.0.min(duration.0.saturating_sub(1)));
         let frame = self
-            .project
-            .export
-            .fps
+            .frame_rate()
             .frame_at(at)
             .map_err(|error| error.to_string())?;
-        self.project
-            .export
-            .fps
+        self.frame_rate()
             .frame_time(frame)
             .map_err(|error| error.to_string())
     }
@@ -50,6 +81,7 @@ impl PreviewRequest {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PreviewStatus {
+    pub cadence: Option<crate::FrameRate>,
     pub loading: bool,
     pub ready: bool,
     pub at: MediaTime,
@@ -61,11 +93,12 @@ pub struct PreviewStatus {
 }
 
 impl PreviewStatus {
-    /// A delayed preview may buffer two output frames, but cannot accumulate seconds of unseen playback.
+    /// A delayed preview may buffer two presentation frames, but cannot accumulate seconds of unseen playback.
     pub fn playback_ceiling(&self, epoch: [u64; 3], fps: crate::FrameRate) -> Option<MediaTime> {
         if !self.ready || self.epoch != Some(epoch) || self.error.is_some() {
             return None;
         }
+        let fps = self.cadence.unwrap_or(fps);
         let frame = fps
             .frame_at(self.at)
             .ok()?
@@ -76,11 +109,18 @@ impl PreviewStatus {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CameraPreview {
+    pub world_labels: WorldLabelCoverage,
     pub epoch: [u64; 3],
     pub source: Id,
     pub source_time: MediaTime,
     /// Rig pose before transient timeline shake/zoom, so creating a shot cannot apply an effect twice.
     pub pose: crate::camera::CameraPose,
+    /// Actual displayed camera after transient view navigation and camera effects.
+    pub render_pose: crate::camera::CameraPose,
+    /// False when framing or composition prevents a unique projected editing viewport.
+    pub interactive: bool,
+    /// Normalized native-image rectangle inside the composed output, excluding any fitted bars.
+    pub viewport: [f64; 4],
     pub local_actor: u64,
     pub targets: Arc<[crate::camera::CameraTarget]>,
 }
@@ -145,14 +185,8 @@ impl RasterPreview {
     ) -> Result<RasterFrame, String> {
         if self.epoch != Some(request.epoch) {
             self.failures.clear();
-            if self
-                .epoch
-                .is_none_or(|old| old[0] != request.epoch[0] || old[2] != request.epoch[2])
-            {
-                for decoder in self.decoders.values_mut() {
-                    decoder.seek();
-                }
-            }
+            // Source identity/extent admission and the decoder's own source-time cursor decide
+            // whether decoding must restart; an editor epoch alone cannot stale decoded pixels.
             self.epoch = Some(request.epoch);
         }
         if self
@@ -161,6 +195,7 @@ impl RasterPreview {
             .is_none_or(|old| !Arc::ptr_eq(old.project(), &request.project))
             || self.source_base != request.source_base
         {
+            self.failures.clear();
             self.timeline = Some(
                 CompiledTimeline::new(Arc::clone(&request.project))
                     .map_err(|error| error.to_string())?,
@@ -185,7 +220,7 @@ impl RasterPreview {
             .plan
             .visuals
             .iter()
-            .map(|visual| visual.source)
+            .map(|visual| visual.clip)
             .collect::<BTreeSet<_>>();
         self.decoders.retain(|id, _| active.contains(id));
         self.failures.retain(|id, _| active.contains(id));
@@ -204,9 +239,6 @@ impl RasterPreview {
                 .ok_or("Visual layers exceed their combined frame byte budget.")?;
         }
         let mut pending = Vec::new();
-        if !self.plan.audio.is_empty() {
-            pending.push("audio");
-        }
         if self.plan.shot.is_some() {
             pending.push("3D camera changes (use a replay clip)");
         }
@@ -227,7 +259,7 @@ impl RasterPreview {
             if !matches!(source.kind, MediaKind::Video | MediaKind::Image) {
                 return Err("This visual source is not video or an image.".into());
             }
-            if let Some(error) = self.failures.get(&source.id) {
+            if let Some(error) = self.failures.get(&visual.clip) {
                 return Err(error.clone());
             }
             let path = if source.path.is_absolute() {
@@ -237,35 +269,26 @@ impl RasterPreview {
             };
             let decoded_size = fit_size(source.size, size)?;
             let fps = source.frame_rate.unwrap_or(project.export.fps);
-            if self
-                .decoders
-                .get(&source.id)
-                .is_none_or(|decoder| !decoder.matches(&path, decoded_size, fps))
-            {
-                self.decoders.insert(
-                    source.id,
-                    if self.interactive {
-                        VideoDecoder::interactive(&path, decoded_size, fps)?
-                    } else {
-                        VideoDecoder::new(&path, decoded_size, fps)?
-                    },
-                );
-            }
             let source_at = if source.kind == MediaKind::Image {
                 MediaTime::ZERO
             } else {
                 visual.time
             };
-            let frame = self
-                .decoders
-                .get_mut(&source.id)
-                .ok_or("Preview decoder is missing.")?
-                .frame(source_at, &cancelled);
+            let decoder = decoders::for_clip(
+                &mut self.decoders,
+                visual.clip,
+                &path,
+                decoded_size,
+                fps,
+                self.interactive,
+            )?;
+            decoder.admit_content(source.sha256);
+            let frame = decoder.frame(source_at, &cancelled);
             let frame = match frame {
                 Ok(frame) => frame,
                 Err(error) => {
                     if !cancelled() {
-                        self.failures.insert(source.id, error.clone());
+                        self.failures.insert(visual.clip, error.clone());
                     }
                     return Err(error);
                 }

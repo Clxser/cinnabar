@@ -10,7 +10,9 @@ pub enum StudioError {
         actual: usize,
         limit: usize,
     },
-    #[error("unsupported recording project version {0}")]
+    #[error(
+        "unsupported recording project version {0}; update Cinnabar or open a compatible backup"
+    )]
     Version(u32),
     #[error("{kind} {id} was not found")]
     Missing { kind: &'static str, id: u64 },

@@ -94,6 +94,11 @@ impl ScenePlayback {
         self.duration
     }
 
+    /// Retained clips can rebalance memory at a transition without seeking or rebuilding their world.
+    pub fn set_terrain_budget(&mut self, maximum_bytes: usize) -> Result<(), ArchiveError> {
+        self.terrain.set_maximum_bytes(maximum_bytes)
+    }
+
     /// Only completely admitted frames advance the coordinator's published source position.
     pub const fn position(&self) -> Option<MediaTime> {
         self.position

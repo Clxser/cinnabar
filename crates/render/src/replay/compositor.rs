@@ -3,7 +3,7 @@
 use super::{ReplayRenderContext, targets::Targets};
 use bevy::render::render_resource::{Texture, TextureView, TextureViewDescriptor};
 use recording_studio::{
-    Id, decode::DecodedFrame, model::Framing, playback::MAX_VISUAL_LAYERS,
+    Id, decode::DecodedFrame, framing::FrameTransform, model::Framing, playback::MAX_VISUAL_LAYERS,
     preview::MAX_VISUAL_FRAME_BYTES,
 };
 use render_scene::ui_preview::PreviewImage;
@@ -13,6 +13,8 @@ use std::{
 };
 
 mod pipelines;
+#[cfg(test)]
+mod tests;
 
 pub enum CompositeInput {
     Native(Arc<PreviewImage>),
@@ -33,12 +35,13 @@ pub struct CompositeLayer {
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Parameters {
     crop: [f32; 4],
-    placement: [f32; 4],
+    inverse_x: [f32; 4],
+    inverse_y: [f32; 4],
     control: [f32; 4],
     motion: [f32; 4],
 }
 impl Parameters {
-    const WGSL: &str = "struct Parameters { crop: vec4<f32>, placement: vec4<f32>, control: vec4<f32>, motion: vec4<f32>, };";
+    const WGSL: &str = "struct Parameters { crop: vec4<f32>, inverse_x: vec4<f32>, inverse_y: vec4<f32>, control: vec4<f32>, motion: vec4<f32>, };";
 }
 
 struct Upload {
@@ -392,7 +395,7 @@ fn view(layer: &CompositeLayer, uploads: &BTreeMap<Id, Upload>) -> Result<Textur
     })
 }
 
-/// Crops are fitted inside the canvas without stretching; opacity scales premultiplied contributions.
+/// The domain inverse transform owns rotated Fit/Fill geometry; motion and alpha remain independent.
 fn parameters_for(
     framing: Framing,
     source: [u32; 2],
@@ -400,47 +403,18 @@ fn parameters_for(
     premultiplied: bool,
     motion: [f32; 3],
 ) -> Result<Parameters, String> {
-    let [left, top, right, bottom] = framing.crop;
-    if !motion.into_iter().all(f32::is_finite)
-        || motion[0] <= 0.0
-        || source.contains(&0)
-        || output.contains(&0)
-        || ![left, top, right, bottom, framing.opacity]
-            .into_iter()
-            .all(f64::is_finite)
-        || left < 0.0
-        || top < 0.0
-        || right > 1.0
-        || bottom > 1.0
-        || left >= right
-        || top >= bottom
-        || !(0.0..=1.0).contains(&framing.opacity)
-    {
-        return Err("A composed crop, opacity or extent is invalid.".into());
+    if !motion.into_iter().all(f32::is_finite) || motion[0] <= 0.0 {
+        return Err("A composed image motion is invalid.".into());
     }
-    let width = f64::from(source[0]) * (right - left);
-    let height = f64::from(source[1]) * (bottom - top);
-    let scale = (f64::from(output[0]) / width).min(f64::from(output[1]) / height);
-    let fit = [
-        width * scale / f64::from(output[0]),
-        height * scale / f64::from(output[1]),
-    ];
+    let transform = FrameTransform::new(framing, source, output)?;
     let moved_x = motion[1] / (output[0] as f32 / output[1] as f32);
-    if fit
-        .into_iter()
-        .any(|side| !side.is_finite() || side as f32 <= 0.0)
-        || !moved_x.is_finite()
-    {
-        return Err("The composed crop is too small or its motion is out of range.".into());
+    if !moved_x.is_finite() {
+        return Err("The composed image motion is out of range.".into());
     }
     Ok(Parameters {
-        crop: framing.crop.map(|value| value as f32),
-        placement: [
-            ((1.0 - fit[0]) * 0.5) as f32,
-            ((1.0 - fit[1]) * 0.5) as f32,
-            fit[0] as f32,
-            fit[1] as f32,
-        ],
+        crop: transform.crop,
+        inverse_x: transform.inverse_x,
+        inverse_y: transform.inverse_y,
         control: [
             framing.opacity as f32,
             if premultiplied { 1.0 } else { 0.0 },

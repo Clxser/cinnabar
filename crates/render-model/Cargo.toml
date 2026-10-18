@@ -24,7 +24,7 @@ mod-api = { path = "../mod-api" }
 image.workspace = true
 tracing.workspace = true
 assets = { path = "../assets" }
-bytemuck = { version = "1", features = ["derive"] }
+bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
 glam.workspace = true
 render-api = { path = "../render-api" }
 sha2.workspace = true

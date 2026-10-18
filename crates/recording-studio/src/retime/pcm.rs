@@ -7,6 +7,9 @@ use std::{
 
 use super::*;
 
+mod pitch;
+pub use pitch::PitchWarp;
+
 pub const CHANNELS: usize = 2;
 const SAMPLE_BYTES: usize = std::mem::size_of::<f32>();
 pub const FRAME_BYTES: usize = CHANNELS * SAMPLE_BYTES;
@@ -110,21 +113,7 @@ impl<R: Read> StereoWarp<R> {
     /// The ring retains only the antialiasing window; decoder EOF before its declared padded extent is an error.
     fn fill(&mut self, required: u64) -> Result<(), String> {
         while self.next_source <= required {
-            let mut bytes = [0; FRAME_BYTES];
-            self.input.read_exact(&mut bytes).map_err(|error| {
-                format!("Audio decode ended before its declared source extent: {error}")
-            })?;
-            let frame = std::array::from_fn(|channel| {
-                let offset = channel * SAMPLE_BYTES;
-                f32::from_le_bytes(
-                    bytes[offset..offset + SAMPLE_BYTES]
-                        .try_into()
-                        .expect("one PCM sample"),
-                )
-            });
-            if frame.iter().any(|value| !value.is_finite()) {
-                return Err("Audio contains non-finite source samples.".into());
-            }
+            let frame = read_frame(&mut self.input)?;
             if self.window.len() == WINDOW_FRAMES {
                 self.window.pop_front();
             }
@@ -133,4 +122,24 @@ impl<R: Read> StereoWarp<R> {
         }
         Ok(())
     }
+}
+
+/// Every time-warping decoder admits the same finite little-endian stereo PCM framing.
+fn read_frame(input: &mut impl Read) -> Result<[f32; CHANNELS], String> {
+    let mut bytes = [0; FRAME_BYTES];
+    input.read_exact(&mut bytes).map_err(|error| {
+        format!("Audio decode ended before its declared source extent: {error}")
+    })?;
+    let frame = std::array::from_fn(|channel| {
+        let offset = channel * SAMPLE_BYTES;
+        f32::from_le_bytes(
+            bytes[offset..offset + SAMPLE_BYTES]
+                .try_into()
+                .expect("one PCM sample"),
+        )
+    });
+    if frame.iter().any(|value| !value.is_finite()) {
+        return Err("Audio contains non-finite source samples.".into());
+    }
+    Ok(frame)
 }

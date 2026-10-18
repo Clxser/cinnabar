@@ -13,6 +13,8 @@ pub const NAMETAG_TEXT_REVERSE_Z_BIAS: i32 = 32;
 pub const NAMETAG_ATLAS_SIDE: u32 = 2048;
 /// Most plate and text quads drawn in one frame.
 pub const MAX_NAMETAG_RECORDS: usize = 1024;
+/// Retained atlas lines may outlive the smaller visible draw budget.
+pub const MAX_NAMETAG_ATLAS_CELLS: usize = 4096;
 /// Font-pixel distance between stacked lines, shared with debug text.
 pub const NAMETAG_LINE_PITCH_PX: f32 = 10.0;
 /// Background margin left, right and above a line's centred text, in font pixels.

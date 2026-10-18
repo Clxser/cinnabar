@@ -13,44 +13,6 @@ pub(super) fn draw(
     let [left, mut y, right, _] = area;
     canvas.text_line("CLIP TIMING", [left, y], right - left, HEADER5, TEXT)?;
     y += canvas.r(4.0);
-    y += canvas.text(
-        "Finite seconds. Source In/Out keep Position. When Ripple is on, source trims shift later items.",
-        [left, y],
-        right - left,
-        CAPTION,
-        TEXT_DIMMER,
-        false,
-    )? + canvas.r(1.2);
-    let source = view.studio.project.as_ref().and_then(|project| {
-        project
-            .sources
-            .iter()
-            .find(|source| source.id == clip.source)
-    });
-    let maximum_source = source.map(|source| {
-        if source.kind == recording_studio::model::MediaKind::Image {
-            recording_studio::MediaTime(recording_studio::time::MAX_MEDIA_MICROS)
-        } else {
-            source.duration
-        }
-    });
-    if let (Some(source), Ok(span)) = (maximum_source, clip.span()) {
-        let maximum_position =
-            recording_studio::MediaTime(recording_studio::time::MAX_MEDIA_MICROS)
-                .saturating_sub(span.duration());
-        y += canvas.text(
-            &format!(
-                "0 <= Position <= {:.6} s.\n0 <= In < Out <= {:.6} s.",
-                maximum_position.seconds(),
-                source.seconds()
-            ),
-            [left, y],
-            right - left,
-            CAPTION,
-            TEXT_DIMMER,
-            false,
-        )? + canvas.r(1.2);
-    }
     for &field in ClipTimeField::ALL {
         canvas.text_line(field.label(), [left, y], right - left, CAPTION, TEXT_DIMMER)?;
         y += canvas.r(2.8);

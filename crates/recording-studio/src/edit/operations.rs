@@ -8,6 +8,16 @@ mod linked;
 /// Applies only metadata changes; no command starts a recording or writes files.
 pub(super) fn apply(project: &mut Project, command: &Command) -> Result<(), StudioError> {
     match command {
+        Command::SetTrackMuted { track, muted } => {
+            if !track.valid() {
+                return Err(StudioError::Invalid("invalid timeline track"));
+            }
+            if *muted {
+                project.muted_tracks.insert(*track);
+            } else {
+                project.muted_tracks.remove(track);
+            }
+        }
         Command::Rename { name } => project.name.clone_from(name),
         Command::AddSource { source } => project.sources.push(source.clone()),
         Command::ReplaceSource { source } => replace(

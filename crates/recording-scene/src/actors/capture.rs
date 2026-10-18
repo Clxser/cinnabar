@@ -57,6 +57,8 @@ impl ActorCapture {
             info,
             RecordingConfig {
                 disk_quota: journal_quota(),
+                // Pose payloads already carry bounded zlib streams; avoid compressing them twice.
+                compression_level: 0,
                 ..Default::default()
             },
         )

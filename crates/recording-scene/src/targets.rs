@@ -15,7 +15,8 @@ mod codec;
 mod playback;
 pub use playback::TargetRecording;
 
-pub const TARGET_TRACK_SCHEMA: &str = "cinnabar.camera-targets/1";
+pub const TARGET_TRACK_SCHEMA: &str = "cinnabar.camera-targets/2";
+const LEGACY_TARGET_TRACK_SCHEMA: &str = "cinnabar.camera-targets/1";
 pub const TARGET_DIRECTORY: &str = "camera-targets.cinreplay";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -106,7 +107,7 @@ impl TargetCapture {
                 .get(old_index)
                 .filter(|old| old.runtime_id == target.runtime_id);
             target.pose.velocity = [0.0; 3];
-            if let Some(old) = old.filter(|old| old.same_lifetime(target) && !target.teleported)
+            if let Some(old) = old.filter(|old| old.can_interpolate(target))
                 && let Some(previous) = self.previous_at.filter(|previous| *previous < at)
             {
                 let seconds = at.saturating_sub(previous).seconds();
@@ -142,7 +143,9 @@ impl TargetCapture {
                 + delta
                     .upserts
                     .iter()
-                    .map(|target| target.name.len())
+                    .map(|target| {
+                        target.name.len() + target.entity_type.as_ref().map_or(0, |kind| kind.len())
+                    })
                     .sum::<usize>();
             recording
                 .push_prepared(

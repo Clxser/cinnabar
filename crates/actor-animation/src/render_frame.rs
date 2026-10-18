@@ -20,6 +20,12 @@ pub struct ActorRenderLayers<'a> {
     pub skin: Cow<'a, [SkinRenderLayer]>,
 }
 
+struct CachedLayers<'a> {
+    layers: Option<ActorRenderLayers<'a>>,
+    /// An exhausted evaluation can contain completed-tick fallbacks instead of this frame's pose.
+    exhausted: bool,
+}
+
 /// A bounded render-layer evaluation frame, borrowing tick-owned actor and rig state.
 pub struct ActorRenderFrame<'a> {
     store: &'a ActorAnimationStore,
@@ -29,7 +35,7 @@ pub struct ActorRenderFrame<'a> {
     alpha: f32,
     remaining_ops: usize,
     world_body: Option<u64>,
-    sampled_layers: HashMap<u64, Option<ActorRenderLayers<'a>>>,
+    sampled_layers: HashMap<u64, CachedLayers<'a>>,
 }
 
 impl<'a> ActorRenderFrame<'a> {
@@ -59,8 +65,18 @@ impl<'a> ActorRenderFrame<'a> {
 
     /// Gives an external view its own local body without changing the live hand or tick state.
     pub fn with_world_body(mut self, runtime_id: u64) -> Self {
+        if self.world_body != Some(runtime_id) {
+            self.sampled_layers.remove(&runtime_id);
+        }
         self.world_body = Some(runtime_id);
-        self.sampled_layers.remove(&runtime_id);
+        self
+    }
+
+    /// Transfers same-clock cached samples to an additional view with its own bounded work budget.
+    /// Camera and interpolation inputs stay exact; `with_world_body` replaces only the local sample.
+    pub fn into_additional_view(mut self) -> Self {
+        self.sampled_layers.retain(|_, sample| !sample.exhausted);
+        self.remaining_ops = MAX_MOLANG_OPS_PER_RENDER_FRAME;
         self
     }
 
@@ -147,7 +163,7 @@ impl<'a> ActorRenderFrame<'a> {
         self.sampled_layers
             .entry(runtime_id)
             .or_insert_with(|| {
-                Self::sample(
+                let layers = Self::sample(
                     self.store,
                     self.actors,
                     (self.camera_rotation, self.camera_position, self.alpha),
@@ -155,8 +171,13 @@ impl<'a> ActorRenderFrame<'a> {
                     &mut self.remaining_ops,
                     true,
                     self.world_body == Some(runtime_id),
-                )
+                );
+                CachedLayers {
+                    layers,
+                    exhausted: self.remaining_ops == 0,
+                }
             })
+            .layers
             .as_ref()
     }
 
@@ -184,7 +205,7 @@ impl<'a> ActorRenderFrame<'a> {
                 .map(|layers| layers.render.clone());
         }
         if let Some(layers) = self.sampled_layers.get(&runtime_id) {
-            return layers.as_ref().map(|layers| layers.render.clone());
+            return layers.layers.as_ref().map(|layers| layers.render.clone());
         }
         Self::sample(
             self.store,

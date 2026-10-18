@@ -1,6 +1,12 @@
 //! Export files use exclusive staging and no-clobber publication beside the chosen destination.
 
 use super::*;
+pub(super) mod validation;
+
+pub(super) struct Published {
+    pub path: PathBuf,
+    pub warning: Option<String>,
+}
 
 /// Resolve relative destinations once on the IO worker, before any child process is started.
 pub(super) fn parent(destination: &Destination) -> Result<PathBuf, String> {
@@ -51,7 +57,7 @@ pub(super) fn check_bytes(path: &Path, maximum: u64) -> Result<(), String> {
 pub(super) fn publish(
     mut staged: tempfile::TempPath,
     destination: &Destination,
-) -> Result<PathBuf, String> {
+) -> Result<Published, String> {
     let parent = parent(destination)?;
     for index in 1..=16_384 {
         let path = match destination {
@@ -69,15 +75,12 @@ pub(super) fn publish(
         match staged.persist_noclobber(&path) {
             Ok(()) => {
                 #[cfg(unix)]
-                File::open(&parent)
+                let warning = File::open(&parent)
                     .and_then(|file| file.sync_all())
-                    .map_err(|error| {
-                        format!(
-                            "Video was written to {} but final folder sync failed: {error}",
-                            path.display()
-                        )
-                    })?;
-                return Ok(path);
+                    .err().map(|error| format!("Video was published, but final folder durability could not be confirmed: {error}"));
+                #[cfg(not(unix))]
+                let warning = None;
+                return Ok(Published { path, warning });
             }
             Err(error)
                 if error.error.kind() == std::io::ErrorKind::AlreadyExists
@@ -90,3 +93,6 @@ pub(super) fn publish(
     }
     Err("The export directory has no available generated filenames.".into())
 }
+
+#[cfg(test)]
+mod tests;

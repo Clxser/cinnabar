@@ -10,7 +10,10 @@ use crate::{
     retime::TimeMap,
 };
 
+#[cfg(test)]
+mod hud_tests;
 mod index;
+pub mod monitoring;
 use index::{IntervalIndex, Slot};
 
 /// Each admitted visual track can expose both members of its active dissolve.
@@ -53,6 +56,11 @@ impl Transport {
         self.rate
     }
 
+    /// Monitoring loops are runtime state and never become export or source trims.
+    pub const fn looping(&self) -> Option<Span> {
+        self.looping
+    }
+
     /// A seek invalidates temporal renderer, interpolation and audio histories through its epoch.
     pub fn seek(&mut self, position: MediaTime, duration: MediaTime) {
         self.position = MediaTime(position.0.min(duration.0));
@@ -76,8 +84,11 @@ impl Transport {
     /// Playback speed changes only the preview clock; clip retiming is a separate saved edit.
     pub fn set_rate(&mut self, rate: PlaybackRate) -> Result<(), StudioError> {
         rate.validate()?;
-        self.rate = rate;
-        self.remainder = 0;
+        if self.rate != rate {
+            self.rate = rate;
+            self.remainder = 0;
+            self.epoch = self.epoch.wrapping_add(1);
+        }
         Ok(())
     }
 
@@ -98,6 +109,41 @@ impl Transport {
         self.advance_until(elapsed, duration, MediaTime(u64::MAX));
     }
 
+    /// A device-consumed sample cursor advances monotonically under the same displayed-frame backpressure.
+    pub fn synchronize_audio(
+        &mut self,
+        position: MediaTime,
+        duration: MediaTime,
+        available: MediaTime,
+    ) {
+        if !self.playing {
+            return;
+        }
+        self.align_audio(position, duration, available);
+        self.complete_advance(u128::from(self.position.0), duration);
+    }
+
+    /// A confirmed device pause updates the frozen picture without seeking or restarting audio history.
+    pub fn reconcile_paused_audio(
+        &mut self,
+        position: MediaTime,
+        duration: MediaTime,
+        available: MediaTime,
+    ) {
+        if !self.playing {
+            self.align_audio(position, duration, available);
+        }
+    }
+
+    /// Both audible and paused cursor admissions obey the same monotone displayed-frame boundary.
+    fn align_audio(&mut self, position: MediaTime, duration: MediaTime, available: MediaTime) {
+        self.position = position
+            .max(self.position)
+            .min(duration)
+            .min(available.max(self.position));
+        self.remainder = 0;
+    }
+
     /// Backpressure limits unseen preview time without seeking, rewinding or retaining catch-up debt.
     pub fn advance_until(&mut self, elapsed: MediaTime, duration: MediaTime, available: MediaTime) {
         if !self.playing {
@@ -112,20 +158,25 @@ impl Transport {
         if next != requested {
             self.remainder = 0;
         }
-        if let Some(span) = self.looping.filter(|span| span.end <= duration) {
-            if next >= u128::from(span.end.0) {
-                self.position = MediaTime(
-                    span.start.0
-                        + ((next - u128::from(span.start.0)) % u128::from(span.duration().0))
-                            as u64,
-                );
-                self.epoch = self.epoch.wrapping_add(1);
-                return;
+        self.complete_advance(next, duration);
+    }
+
+    /// Audible and silent clocks cross the same loop boundary and invalidate old decoder histories.
+    fn complete_advance(&mut self, next: u128, duration: MediaTime) {
+        if let Some(span) = self.looping.filter(|span| span.end <= duration)
+            && next >= u128::from(span.end.0)
+        {
+            self.position = MediaTime(
+                span.start.0
+                    + ((next - u128::from(span.start.0)) % u128::from(span.duration().0)) as u64,
+            );
+            self.remainder = 0;
+            self.epoch = self.epoch.wrapping_add(1);
+        } else {
+            self.position = MediaTime(next.min(u128::from(duration.0)) as u64);
+            if self.position >= duration {
+                self.playing = false;
             }
-        }
-        self.position = MediaTime(next.min(u128::from(duration.0)) as u64);
-        if self.position == duration {
-            self.playing = false;
         }
     }
 
@@ -174,6 +225,7 @@ pub struct FramePlan {
     pub camera: Option<CameraPose>,
     pub base_camera: Option<CameraPose>,
     pub shot: Option<Id>,
+    pub spectated: Option<CameraTargetRef>,
     pub hide_hud: bool,
     pub hide_hand: bool,
     pub effects: EffectSample,
@@ -233,15 +285,23 @@ impl CompiledTimeline {
         out.camera = None;
         out.base_camera = None;
         out.shot = None;
-        out.hide_hud = false;
+        out.spectated = None;
+        out.hide_hud = !self.project.export.include_recorded_hud;
         out.hide_hand = false;
         out.effects = EffectSample::default();
         let mut shot = None;
+        let mut hidden_visual = false;
         out.transitions.clear();
         self.index.visit(time, |slot| match slot {
             Slot::Clip(index) => {
                 let clip = &self.project.clips[index];
+                let muted = self
+                    .project
+                    .muted_tracks
+                    .contains(&crate::tracks::Track::Video(clip.track));
+                hidden_visual |= clip.enabled && muted;
                 if clip.enabled
+                    && !muted
                     && let Ok(source_time) = self.visual_maps[index].source_time(time)
                 {
                     out.visuals.push(VisualSample {
@@ -255,6 +315,13 @@ impl CompiledTimeline {
                 }
             }
             Slot::Camera(index) => {
+                if self
+                    .project
+                    .muted_tracks
+                    .contains(&crate::tracks::Track::Camera)
+                {
+                    return;
+                }
                 let candidate = &self.project.shots[index];
                 if shot.is_none_or(|previous: usize| {
                     let previous = &self.project.shots[previous];
@@ -265,12 +332,23 @@ impl CompiledTimeline {
             }
             Slot::Effect(index) => {
                 let effect = &self.project.effects[index];
-                let enabled = effect
-                    .origin
-                    .and_then(|origin| origin.clip_id)
-                    .and_then(|id| self.clip_indices.get(&id))
-                    .is_none_or(|&index| self.project.clips[index].enabled);
-                if enabled {
+                let enabled =
+                    effect
+                        .origin
+                        .and_then(|origin| origin.clip_id)
+                        .and_then(|id| self.clip_indices.get(&id))
+                        .is_none_or(|&index| {
+                            self.project.clips[index].enabled
+                                && !self.project.muted_tracks.contains(
+                                    &crate::tracks::Track::Video(self.project.clips[index].track),
+                                )
+                        });
+                if enabled
+                    && !self
+                        .project
+                        .muted_tracks
+                        .contains(&crate::tracks::Track::Effects)
+                {
                     out.effects.add(effect.kind, effect.sample(time));
                 }
             }
@@ -279,6 +357,7 @@ impl CompiledTimeline {
                 let map = &self.audio_maps[index];
                 let gain = clip.gain_in_span(time, map.span());
                 if gain > 0.0
+                    && !self.project.audio_muted(clip)
                     && let Ok(source_time) = map.source_time(time)
                 {
                     out.audio.push(AudioSample {
@@ -290,7 +369,15 @@ impl CompiledTimeline {
                     });
                 }
             }
-            Slot::Title(index) => out.titles.push(index),
+            Slot::Title(index) => {
+                if !self
+                    .project
+                    .muted_tracks
+                    .contains(&crate::tracks::Track::Titles)
+                {
+                    out.titles.push(index);
+                }
+            }
             Slot::Transition(index) => out.transitions.push(index),
         });
         let transitions = std::mem::take(&mut out.transitions);
@@ -302,14 +389,15 @@ impl CompiledTimeline {
         out.effects.constrain();
         out.visuals
             .sort_unstable_by_key(|visual| (visual.track, visual.clip));
-        if let Some(index) = shot {
+        if let Some(index) = shot.filter(|_| !(out.visuals.is_empty() && hidden_visual)) {
             let shot = &self.project.shots[index];
             out.shot = Some(shot.id);
             let selected = out.visuals.last();
             out.camera = shot.sample(time, |id| {
                 selected.and_then(|source| actor(source.source, id, source.time))
             });
-            out.hide_hud = shot.hide_hud;
+            out.spectated = shot.spectated_actor().filter(|_| out.camera.is_some());
+            out.hide_hud |= shot.hide_hud;
             out.hide_hand = shot.hide_hand;
         }
         out.base_camera = out.camera;
@@ -343,8 +431,18 @@ impl CompiledTimeline {
                 kind: "clip",
                 id: transition.to.0,
             })?;
-        let start = to.at.0.saturating_sub(transition.duration.0 / 2);
-        if !from.enabled || !to.enabled {
+        let start = transition.span_at(to.at)?.start.0;
+        if !from.enabled
+            || !to.enabled
+            || self
+                .project
+                .muted_tracks
+                .contains(&crate::tracks::Track::Video(from.track))
+            || self
+                .project
+                .muted_tracks
+                .contains(&crate::tracks::Track::Video(to.track))
+        {
             return Ok(());
         }
         let progress =

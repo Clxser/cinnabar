@@ -13,7 +13,7 @@ use render::replay::{
 };
 use render_scene::ui_preview::PreviewImage;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
@@ -22,7 +22,6 @@ use std::{
 struct RasterSource {
     source: Id,
     path: PathBuf,
-    epoch: [u64; 2],
     decoder: VideoDecoder,
 }
 
@@ -111,7 +110,7 @@ impl Composition {
         if self.plan.visuals.len() > MAX_VISUAL_LAYERS {
             return Err("The frame exceeds its visual layer budget.".into());
         }
-        let active_native: BTreeSet<_> = self
+        let active_native: BTreeMap<_, _> = self
             .plan
             .visuals
             .iter()
@@ -120,9 +119,9 @@ impl Composition {
                     .get(&visual.source)
                     .is_some_and(|&index| request.project.sources[index].kind == MediaKind::Replay)
             })
-            .map(|visual| visual.clip)
+            .map(|visual| (visual.clip, visual.source))
             .collect();
-        let active_raster: BTreeSet<_> = self
+        let active_raster: BTreeMap<_, _> = self
             .plan
             .visuals
             .iter()
@@ -131,18 +130,17 @@ impl Composition {
                     .get(&visual.source)
                     .is_some_and(|&index| request.project.sources[index].kind != MediaKind::Replay)
             })
-            .map(|visual| visual.clip)
+            .map(|visual| (visual.clip, visual.source))
             .collect();
         let budget = recording_scene::scene::DEFAULT_RESIDENT_BYTES / active_native.len().max(1);
-        if budget < self.native_budget {
-            self.native.clear();
-            self.native_budget = budget;
+        reuse_cut_sources(&mut self.native, &active_native, NativeScene::source_id);
+        for native in self.native.values_mut() {
+            native.set_resident_limit(budget)?;
         }
-        self.native.retain(|clip, _| active_native.contains(clip));
-        if active_native.is_empty() {
-            self.native_budget = recording_scene::scene::DEFAULT_RESIDENT_BYTES;
-        }
-        self.raster.retain(|clip, _| active_raster.contains(clip));
+        self.native_budget = budget;
+        reuse_cut_sources(&mut self.raster, &active_raster, |source| {
+            Some(source.source)
+        });
         if self.plan.shot.is_some() && active_native.is_empty() {
             return Err(
                 "Camera shots need a 3D replay clip throughout their timeline range.".into(),
@@ -184,7 +182,13 @@ impl Composition {
                 let frame =
                     native.render_visual(request, *visual, source, size, cancelled, wait)?;
                 missing_target |= frame.missing_target;
-                camera = Some(frame.camera);
+                let mut preview = frame.camera;
+                preview.interactive = self.interactive
+                    && self.plan.visuals.len() == 1
+                    && visual.framing == recording_studio::model::Framing::default()
+                    && visual.mix.is_none();
+                preview.viewport = fit_viewport(frame.image.target.size(), size);
+                camera = Some(preview);
                 for notice in frame.notices {
                     if !notices.contains(&notice) {
                         notices.push(notice);
@@ -202,7 +206,6 @@ impl Composition {
                 };
                 let decoded_size = fit_size(source.size, size)?;
                 let fps = source.frame_rate.unwrap_or(request.project.export.fps);
-                let epoch = [request.epoch[0], request.epoch[2]];
                 if self.raster.get(&visual.clip).is_none_or(|old| {
                     old.source != source.id
                         || old.path != path
@@ -218,7 +221,6 @@ impl Composition {
                         RasterSource {
                             source: source.id,
                             path,
-                            epoch,
                             decoder,
                         },
                     );
@@ -227,10 +229,7 @@ impl Composition {
                     .raster
                     .get_mut(&visual.clip)
                     .expect("raster decoder admitted");
-                if raster.epoch != epoch {
-                    raster.decoder.seek();
-                    raster.epoch = epoch;
-                }
+                raster.decoder.admit_content(source.sha256);
                 let time = if source.kind == MediaKind::Image {
                     recording_studio::MediaTime::ZERO
                 } else {
@@ -280,12 +279,6 @@ impl Composition {
             }
             wait();
         };
-        if self.interactive && !self.plan.audio.is_empty() {
-            let audio = "Audio is not previewed yet.";
-            if !notices.contains(&audio) {
-                notices.push(audio);
-            }
-        }
         Ok(ComposedFrame {
             image,
             camera,
@@ -293,5 +286,73 @@ impl Composition {
             missing_target,
             native: !active_native.is_empty(),
         })
+    }
+}
+
+/// Rehomes only inactive matching media contexts; simultaneous instances keep independent source clocks.
+fn reuse_cut_sources<T>(
+    retained: &mut BTreeMap<Id, T>,
+    active: &BTreeMap<Id, Id>,
+    source: impl Fn(&T) -> Option<Id>,
+) {
+    for (&clip, &wanted) in active {
+        if retained.contains_key(&clip) {
+            continue;
+        }
+        let reusable = retained.iter().find_map(|(id, context)| {
+            (!active.contains_key(id) && source(context) == Some(wanted)).then_some(*id)
+        });
+        if let Some(old) = reusable {
+            let context = retained.remove(&old).expect("retained media context");
+            retained.insert(clip, context);
+        }
+    }
+    retained.retain(|clip, _| active.contains_key(clip));
+}
+
+/// Maps native projection through the compositor's centered aspect-fit placement.
+fn fit_viewport(source: [u32; 2], output: [u32; 2]) -> [f64; 4] {
+    let source_aspect = f64::from(source[0]) / f64::from(source[1]);
+    let output_aspect = f64::from(output[0]) / f64::from(output[1]);
+    if source_aspect > output_aspect {
+        let height = output_aspect / source_aspect;
+        [0.0, (1.0 - height) * 0.5, 1.0, (1.0 + height) * 0.5]
+    } else {
+        let width = source_aspect / output_aspect;
+        [(1.0 - width) * 0.5, 0.0, (1.0 + width) * 0.5, 1.0]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn adjacent_cuts_reuse_media_contexts_but_crossfades_keep_separate_clocks() {
+        let mut retained = BTreeMap::from([(Id(1), (Id(9), 42))]);
+        reuse_cut_sources(&mut retained, &BTreeMap::from([(Id(2), Id(9))]), |value| {
+            Some(value.0)
+        });
+        assert_eq!(retained.get(&Id(2)), Some(&(Id(9), 42)));
+        assert_eq!(retained.len(), 1);
+        reuse_cut_sources(
+            &mut retained,
+            &BTreeMap::from([(Id(2), Id(9)), (Id(3), Id(9))]),
+            |value| Some(value.0),
+        );
+        assert_eq!(retained.get(&Id(2)), Some(&(Id(9), 42)));
+        assert!(!retained.contains_key(&Id(3)));
+        reuse_cut_sources(&mut retained, &BTreeMap::from([(Id(4), Id(10))]), |value| {
+            Some(value.0)
+        });
+        assert!(retained.is_empty());
+    }
+    #[test]
+    fn native_camera_viewport_tracks_centered_letterboxing() {
+        assert_eq!(fit_viewport([1600, 900], [1280, 720]), [0.0, 0.0, 1.0, 1.0]);
+        let viewport = fit_viewport([1600, 1000], [1280, 720]);
+        assert!((viewport[0] - 0.05).abs() < 1e-9);
+        assert_eq!(viewport[1], 0.0);
+        assert!((viewport[2] - 0.95).abs() < 1e-9);
+        assert_eq!(viewport[3], 1.0);
     }
 }

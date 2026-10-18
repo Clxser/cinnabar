@@ -45,7 +45,8 @@ pub(super) struct SampledBodies<'a> {
     pub render_frame: Option<actor_animation::ActorRenderFrame<'a>>,
 }
 
-/// Samples visible bodies in authority order, sharing one controller budget for the frame.
+/// Samples bodies in authority order; an optional same-clock frame reuses immutable controller work.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn sample<'a>(
     stream: Option<&'a WorldStream>,
     input: &ActorFrameInput,
@@ -54,6 +55,7 @@ pub(super) fn sample<'a>(
     caches: BodyCaches<'_>,
     hides_box: impl Fn(&WorldStream, ActorCullView, [f32; 3], [f32; 3]) -> bool,
     new_geometries: &mut Vec<render_model::ActorRigGeometry>,
+    sampled_frame: Option<actor_animation::ActorRenderFrame<'a>>,
 ) -> SampledBodies<'a> {
     let (
         PoseView {
@@ -88,11 +90,16 @@ pub(super) fn sample<'a>(
     let mut remote_skin_layers = std::collections::HashMap::new();
     let mut occlusion_work = occlusion::PreparationWork::default();
     let mut render_frame = stream.map(|stream| {
-        let frame = stream.authority().actor_render_frame(partial_tick);
+        let frame =
+            sampled_frame.unwrap_or_else(|| stream.authority().actor_render_frame(partial_tick));
         if first_person {
             frame
         } else {
-            frame.with_world_body(stream.local_player_runtime_id())
+            let local = stream.local_player_runtime_id();
+            let mut frame = frame.with_world_body(local);
+            // Reserve the local body's native sample before remote draws spend the shared budget.
+            let _ = frame.layers_with_skin(local);
+            frame
         }
     });
     let (local_runtime_id, actor_session_id, dimension, remotes, canonical_local, unrigged_actors) =
@@ -190,10 +197,15 @@ pub(super) fn sample<'a>(
                                 );
                                 java_posed.push(java_pose.posed);
                             }
-                            if local && !first_person && !java_applied && local_emote_pose.is_none()
+                            if local
+                                && !first_person
+                                && !java_applied
+                                && local_emote_pose.is_none()
+                                && let Some(frame) = render_frame.as_mut()
                             {
                                 native_pose.apply_body(
                                     stream,
+                                    frame,
                                     &mut presentation,
                                     partial_tick,
                                     sampling_camera,

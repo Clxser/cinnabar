@@ -284,15 +284,33 @@ fn assert_native_body_sample(equipment_parent: bool, case: BodyCase) {
                 );
             }
             let mut repeated = presentation.clone();
+            let mut frame = stream
+                .authority()
+                .actor_render_frame(actor_alpha)
+                .with_world_body(1);
+            let _ = frame.layers_with_skin(1).unwrap();
+            frame.set_remaining_ops(0);
+            let mut shared = NativePoseCache::default();
+            shared.apply_body(&stream, &mut frame, &mut repeated, actor_alpha, camera);
+            assert_eq!(repeated.submission.input.previous_bones, previous);
+            assert_eq!(repeated.submission.input.current_bones, current);
+            assert_eq!(
+                frame.remaining_ops(),
+                0,
+                "body conversion must reuse the admitted animation sample"
+            );
             {
                 let mut state = world.resource_mut::<super::super::ActorFrameState>();
                 let work = state.java_hand.native_pose.sample_work;
                 assert_eq!(work.0, 1, "only the native body consumer samples the frame");
                 let allocations = test_alloc::thread_allocations();
-                state
-                    .java_hand
-                    .native_pose
-                    .apply_body(&stream, &mut repeated, actor_alpha, camera);
+                state.java_hand.native_pose.apply_body(
+                    &stream,
+                    &mut frame,
+                    &mut repeated,
+                    actor_alpha,
+                    camera,
+                );
                 assert_eq!(state.java_hand.native_pose.sample_work, work);
                 assert_eq!(test_alloc::thread_allocations(), allocations);
             }

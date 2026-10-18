@@ -12,7 +12,7 @@ macro_rules! rigs {
         }
     };
 }
-rigs! { Player => "Player", Free => "Free", Path => "Path", Follow => "Follow", Orbit => "Orbit" }
+rigs! { Player => "Become entity", Free => "Free", Path => "Path", Track => "Track entity", Follow => "Follow", Orbit => "Orbit" }
 
 macro_rules! parameters {
     ($($kind:ident => ($label:literal, $step:literal)),+ $(,)?) => {
@@ -54,6 +54,7 @@ impl CameraShot {
                     at: MediaTime::ZERO,
                     pose,
                     easing: Easing::Smooth,
+                    handles: None,
                 }],
                 smooth_position: true,
             },
@@ -68,20 +69,46 @@ impl CameraShot {
                     fov: pose.fov,
                 }
             }
-            K::Follow => CameraMode::Follow {
+            K::Track => CameraMode::Track {
                 actor: reference()?.runtime_id,
-                offset: [0.0, 1.5, -5.0],
-                look_ahead: 0.0,
-                fov: pose.fov,
+                pose,
             },
-            K::Orbit => CameraMode::Orbit {
-                actor: reference()?.runtime_id,
-                radius: 6.0,
-                height: 2.0,
-                start_degrees: 0.0,
-                turns: 0.25,
-                fov: pose.fov,
-            },
+            K::Follow | K::Orbit => {
+                let target =
+                    target.ok_or(StudioError::Invalid("choose a recorded subject first"))?;
+                let delta =
+                    DVec3::from_array(pose.position) - DVec3::from_array(target.pose.centre());
+                if kind == K::Follow {
+                    let (sin, cos) = target.pose.yaw.to_radians().sin_cos();
+                    CameraMode::Follow {
+                        actor: reference()?.runtime_id,
+                        offset: [
+                            delta.x * cos + delta.z * sin,
+                            delta.y,
+                            -delta.x * sin + delta.z * cos,
+                        ],
+                        look_ahead: 0.0,
+                        fov: pose.fov,
+                        roll: pose.roll,
+                    }
+                } else {
+                    let radius = delta.x.hypot(delta.z);
+                    if !(0.1..=1024.0).contains(&radius) || delta.y.abs() > 1024.0 {
+                        return Err(StudioError::Invalid(
+                            "move the camera 0.1–1024 blocks from the subject before creating an orbit",
+                        ));
+                    }
+                    CameraMode::Orbit {
+                        actor: reference()?.runtime_id,
+                        radius,
+                        height: delta.y,
+                        start_degrees: delta.x.atan2(delta.z).to_degrees(),
+                        turns: 0.25,
+                        fov: pose.fov,
+                        roll: pose.roll,
+                    }
+                }
+            }
         };
         let shot = Self {
             id,
@@ -95,6 +122,8 @@ impl CameraShot {
             } else {
                 Some(reference()?.lifetime.expect("captured target lifetime"))
             },
+            fov_curve: None,
+            fov_offset: MediaTime::ZERO,
         };
         shot.validate()?;
         Ok(shot)
@@ -105,6 +134,7 @@ impl CameraShot {
         match &self.mode {
             CameraMode::Player { actor: _, fov: _ } => CameraRigKind::Player,
             CameraMode::Free { pose: _ } => CameraRigKind::Free,
+            CameraMode::Track { .. } => CameraRigKind::Track,
             CameraMode::Path {
                 keys: _,
                 smooth_position: _,
@@ -114,6 +144,7 @@ impl CameraShot {
                 offset: _,
                 look_ahead: _,
                 fov: _,
+                roll: _,
             } => CameraRigKind::Follow,
             CameraMode::Orbit {
                 actor: _,
@@ -122,6 +153,7 @@ impl CameraShot {
                 start_degrees: _,
                 turns: _,
                 fov: _,
+                roll: _,
             } => CameraRigKind::Orbit,
         }
     }
@@ -133,8 +165,16 @@ impl CameraShot {
             CameraRigKind::Free | CameraRigKind::Path => {
                 &[P::X, P::Y, P::Z, P::Yaw, P::Pitch, P::Roll, P::Fov]
             }
-            CameraRigKind::Follow => &[P::X, P::Y, P::Z, P::LookAhead, P::Fov],
-            CameraRigKind::Orbit => &[P::Radius, P::Height, P::StartAngle, P::Turns, P::Fov],
+            CameraRigKind::Track => &[P::X, P::Y, P::Z, P::Roll, P::Fov],
+            CameraRigKind::Follow => &[P::X, P::Y, P::Z, P::LookAhead, P::Roll, P::Fov],
+            CameraRigKind::Orbit => &[
+                P::Radius,
+                P::Height,
+                P::StartAngle,
+                P::Turns,
+                P::Roll,
+                P::Fov,
+            ],
             CameraRigKind::Player => &[P::Fov],
         }
     }
@@ -142,8 +182,20 @@ impl CameraShot {
     /// Resolves position parameters to a path's sampled pose without selecting an arbitrary neighbouring key.
     pub fn parameter(&self, parameter: CameraParameter, at: MediaTime) -> Option<f64> {
         use CameraParameter as P;
+        if parameter == P::Fov
+            && let Some(value) = self.fov_override(at)
+        {
+            return Some(value);
+        }
         match &self.mode {
             CameraMode::Free { pose } => pose_value(*pose, parameter),
+            CameraMode::Track { pose, .. } => {
+                if matches!(parameter, P::Yaw | P::Pitch) {
+                    None
+                } else {
+                    pose_value(*pose, parameter)
+                }
+            }
             CameraMode::Path {
                 keys,
                 smooth_position,
@@ -157,12 +209,14 @@ impl CameraShot {
                 offset,
                 look_ahead,
                 fov,
+                roll,
             } => match parameter {
                 P::X => Some(offset[0]),
                 P::Y => Some(offset[1]),
                 P::Z => Some(offset[2]),
                 P::LookAhead => Some(*look_ahead),
                 P::Fov => Some(*fov),
+                P::Roll => Some(*roll),
                 _ => None,
             },
             CameraMode::Orbit {
@@ -172,12 +226,14 @@ impl CameraShot {
                 start_degrees,
                 turns,
                 fov,
+                roll,
             } => match parameter {
                 P::Radius => Some(*radius),
                 P::Height => Some(*height),
                 P::StartAngle => Some(*start_degrees),
                 P::Turns => Some(*turns),
                 P::Fov => Some(*fov),
+                P::Roll => Some(*roll),
                 _ => None,
             },
         }
@@ -202,7 +258,7 @@ impl CameraShot {
         let value = current + steps * parameter.step();
         let value = match parameter {
             P::Pitch => value.clamp(-90.0, 90.0),
-            P::Fov => value.clamp(1.01, 178.99),
+            P::Fov => value.clamp(CAMERA_FOV_RANGE.start + 0.01, CAMERA_FOV_RANGE.end - 0.01),
             P::Radius => value.clamp(0.1, 1024.0),
             P::Height | P::Turns => value.clamp(-1024.0, 1024.0),
             P::LookAhead => value.clamp(0.0, 10.0),
@@ -227,9 +283,14 @@ impl CameraShot {
             "this rig does not own that camera parameter",
         ))?;
         use CameraParameter as P;
+        if parameter == P::Fov && self.fov_curve.is_some() {
+            return self.with_fov_key(at, value);
+        }
         let mut next = self.clone();
         match &mut next.mode {
-            CameraMode::Free { pose } => set_pose(pose, parameter, value)?,
+            CameraMode::Free { pose } | CameraMode::Track { pose, .. } => {
+                set_pose(pose, parameter, value)?
+            }
             CameraMode::Path {
                 keys,
                 smooth_position,
@@ -244,6 +305,7 @@ impl CameraShot {
                         at: offset,
                         pose,
                         easing: Easing::Smooth,
+                        handles: None,
                     },
                 )?;
             }
@@ -253,12 +315,14 @@ impl CameraShot {
                 offset,
                 look_ahead,
                 fov,
+                roll,
             } => match parameter {
                 P::X => offset[0] = value,
                 P::Y => offset[1] = value,
                 P::Z => offset[2] = value,
                 P::LookAhead => *look_ahead = value,
                 P::Fov => *fov = value,
+                P::Roll => *roll = value,
                 _ => unreachable!("parameter admitted above"),
             },
             CameraMode::Orbit {
@@ -268,12 +332,14 @@ impl CameraShot {
                 start_degrees,
                 turns,
                 fov,
+                roll,
             } => match parameter {
                 P::Radius => *radius = value,
                 P::Height => *height = value,
                 P::StartAngle => *start_degrees = value,
                 P::Turns => *turns = value,
                 P::Fov => *fov = value,
+                P::Roll => *roll = value,
                 _ => unreachable!("parameter admitted above"),
             },
         }
@@ -302,6 +368,7 @@ impl CameraShot {
                 at: at.saturating_sub(self.span.start),
                 pose,
                 easing: Easing::Smooth,
+                handles: None,
             },
         )?;
         next.validate()?;
@@ -325,6 +392,7 @@ impl CameraShot {
                 offset: _,
                 look_ahead: _,
                 fov: _,
+                roll: _,
             }
             | CameraMode::Orbit {
                 actor,
@@ -333,7 +401,9 @@ impl CameraShot {
                 start_degrees: _,
                 turns: _,
                 fov: _,
-            } => *actor = target.runtime_id,
+                roll: _,
+            }
+            | CameraMode::Track { actor, pose: _ } => *actor = target.runtime_id,
             CameraMode::Free { pose: _ }
             | CameraMode::Path {
                 keys: _,
@@ -353,6 +423,9 @@ impl CameraShot {
                 "camera trim must stay inside its shot",
             ));
         }
+        if span == self.span {
+            return Ok(self.clone());
+        }
         let mut next = self.clone();
         let offset = span.start.saturating_sub(self.span.start);
         match &mut next.mode {
@@ -368,6 +441,11 @@ impl CameraShot {
                     *smooth_position,
                 )
                 .ok_or(StudioError::Invalid("camera path has no last pose"))?;
+                let first_key = keys.iter().find(|key| key.at == offset).cloned();
+                let last_key = keys
+                    .iter()
+                    .find(|key| key.at == span.end.saturating_sub(self.span.start))
+                    .cloned();
                 keys.retain(|key| {
                     key.at > offset && key.at < span.end.saturating_sub(self.span.start)
                 });
@@ -379,7 +457,8 @@ impl CameraShot {
                     CameraKey {
                         at: MediaTime::ZERO,
                         pose: first,
-                        easing: Easing::Smooth,
+                        easing: first_key.as_ref().map_or(Easing::Smooth, |key| key.easing),
+                        handles: first_key.and_then(|key| key.handles),
                     },
                 )?;
                 set_key(
@@ -387,7 +466,8 @@ impl CameraShot {
                     CameraKey {
                         at: span.duration(),
                         pose: last,
-                        easing: Easing::Smooth,
+                        easing: last_key.as_ref().map_or(Easing::Smooth, |key| key.easing),
+                        handles: last_key.and_then(|key| key.handles),
                     },
                 )?;
             }
@@ -398,18 +478,24 @@ impl CameraShot {
                 start_degrees,
                 turns,
                 fov: _,
+                roll: _,
             } => {
                 *start_degrees += 360.0 * *turns * offset.0 as f64 / self.span.duration().0 as f64;
                 *turns *= span.duration().0 as f64 / self.span.duration().0 as f64;
             }
             CameraMode::Player { actor: _, fov: _ }
             | CameraMode::Free { pose: _ }
+            | CameraMode::Track { .. }
             | CameraMode::Follow {
                 actor: _,
                 offset: _,
                 look_ahead: _,
                 fov: _,
+                roll: _,
             } => {}
+        }
+        if next.fov_curve.is_some() {
+            next.fov_offset = next.fov_offset.checked_add(offset)?;
         }
         next.span = span;
         next.validate()?;
@@ -457,6 +543,7 @@ fn set_key(keys: &mut Vec<CameraKey>, mut key: CameraKey) -> Result<(), StudioEr
     match keys.binary_search_by_key(&key.at, |old| old.at) {
         Ok(index) => {
             key.easing = keys[index].easing;
+            key.handles = keys[index].handles;
             keys[index] = key;
         }
         Err(index) => {

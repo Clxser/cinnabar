@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use crate::{decode::DecodedFrame, model::Framing};
+use crate::{decode::DecodedFrame, framing::FrameTransform, model::Framing};
 
 const MAX_PIXELS: usize = crate::video::MAX_FRAME_BYTES / std::mem::size_of::<[f32; 4]>();
 const ENCODE_LEVELS: usize = 4096;
@@ -37,7 +37,7 @@ impl Raster {
         Ok(raster)
     }
 
-    /// Fits the authored crop inside the output and blends source alpha and clip opacity in track order.
+    /// Rotates and fits or fills the retained crop without stretching, then blends premultiplied source alpha.
     pub fn overlay(
         &mut self,
         source: &DecodedFrame,
@@ -45,20 +45,6 @@ impl Raster {
         weighted: bool,
         cancelled: &impl Fn() -> bool,
     ) -> Result<(), String> {
-        let [left, top, right, bottom] = framing.crop;
-        if ![left, top, right, bottom, framing.opacity]
-            .iter()
-            .all(|value| value.is_finite())
-            || left < 0.0
-            || top < 0.0
-            || right > 1.0
-            || bottom > 1.0
-            || left >= right
-            || top >= bottom
-            || !(0.0..=1.0).contains(&framing.opacity)
-        {
-            return Err("Preview crop or opacity is invalid.".into());
-        }
         let [width, height] = source.size;
         let expected = (width as usize)
             .checked_mul(height as usize)
@@ -66,34 +52,30 @@ impl Raster {
         if width == 0 || height == 0 || expected != Some(source.rgba8.len()) {
             return Err("Preview source pixels do not match their dimensions.".into());
         }
-        let crop_width = f64::from(width) * (right - left);
-        let crop_height = f64::from(height) * (bottom - top);
-        let scale =
-            (f64::from(self.size[0]) / crop_width).min(f64::from(self.size[1]) / crop_height);
-        let draw_width = crop_width * scale;
-        let draw_height = crop_height * scale;
-        let x0 = (f64::from(self.size[0]) - draw_width) * 0.5;
-        let y0 = (f64::from(self.size[1]) - draw_height) * 0.5;
+        let transform = FrameTransform::new(framing, source.size, self.size)?;
+        let [left, top, right, bottom] = transform.bounds;
+        let opacity = framing.opacity as f32;
+        let canvas_scale = self.size.map(|side| 1.0 / side as f32);
         let linear = srgb_table();
-        for y in y0.ceil().max(0.0) as u32..((y0 + draw_height).ceil() as u32).min(self.size[1]) {
+        for y in top..bottom {
             if cancelled() {
                 return Err("Preview composition cancelled.".into());
             }
-            let sy = (top * f64::from(height) + (f64::from(y) + 0.5 - y0) / scale)
-                .floor()
-                .clamp(0.0, f64::from(height - 1)) as usize;
-            for x in x0.ceil().max(0.0) as u32..((x0 + draw_width).ceil() as u32).min(self.size[0])
-            {
-                let sx = (left * f64::from(width) + (f64::from(x) + 0.5 - x0) / scale)
-                    .floor()
-                    .clamp(0.0, f64::from(width - 1)) as usize;
-                let pixel = &source.rgba8[(sy * width as usize + sx) * 4..][..4];
-                let alpha = (f64::from(pixel[3]) / 255.0 * framing.opacity) as f32;
+            for x in left..right {
+                let canvas = [
+                    (x as f32 + 0.5) * canvas_scale[0],
+                    (y as f32 + 0.5) * canvas_scale[1],
+                ];
+                let Some(uv) = transform.source_uv(canvas) else {
+                    continue;
+                };
+                let pixel = sample(source, uv, linear);
+                let alpha = pixel[3] * opacity;
                 let destination = &mut self.linear[(y * self.size[0] + x) as usize];
                 let retained = if weighted { 1.0 } else { 1.0 - alpha };
                 for channel in 0..3 {
                     destination[channel] =
-                        destination[channel] * retained + linear[pixel[channel] as usize] * alpha;
+                        destination[channel] * retained + pixel[channel] * opacity;
                 }
                 destination[3] = destination[3] * retained + alpha;
             }
@@ -150,6 +132,40 @@ impl Raster {
     }
 }
 
+/// Premultiplied bilinear filtering matches the GPU sampler without pulling colour from transparent texels.
+fn sample(source: &DecodedFrame, uv: [f32; 2], linear: &[f32; 256]) -> [f32; 4] {
+    let [width, height] = source.size;
+    let point = [uv[0] * width as f32 - 0.5, uv[1] * height as f32 - 0.5];
+    let base = point.map(|value| value.floor() as i64);
+    let fraction = [point[0] - base[0] as f32, point[1] - base[1] as f32];
+    let texel = |x: i64, y: i64| {
+        let x = x.clamp(0, i64::from(width - 1)) as usize;
+        let y = y.clamp(0, i64::from(height - 1)) as usize;
+        let pixel = &source.rgba8[(y * width as usize + x) * 4..][..4];
+        let alpha = f32::from(pixel[3]) / 255.0;
+        [
+            linear[pixel[0] as usize] * alpha,
+            linear[pixel[1] as usize] * alpha,
+            linear[pixel[2] as usize] * alpha,
+            alpha,
+        ]
+    };
+    let blend = |a: [f32; 4], b: [f32; 4], t: f32| {
+        std::array::from_fn(|channel| a[channel] * (1.0 - t) + b[channel] * t)
+    };
+    let top = blend(
+        texel(base[0], base[1]),
+        texel(base[0] + 1, base[1]),
+        fraction[0],
+    );
+    let bottom = blend(
+        texel(base[0], base[1] + 1),
+        texel(base[0] + 1, base[1] + 1),
+        fraction[0],
+    );
+    blend(top, bottom, fraction[1])
+}
+
 /// IEC sRGB decoding is tabulated once, avoiding a power operation for each source channel and frame.
 fn srgb_table() -> &'static [f32; 256] {
     static TABLE: OnceLock<[f32; 256]> = OnceLock::new();
@@ -180,3 +196,6 @@ fn encoded_table() -> &'static [u8; ENCODE_LEVELS] {
         })
     })
 }
+
+#[cfg(test)]
+mod tests;

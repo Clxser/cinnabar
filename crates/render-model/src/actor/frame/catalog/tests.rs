@@ -39,6 +39,35 @@ fn actor_catalog_admits_multiple_individually_bounded_models() {
 }
 
 #[test]
+fn catalog_identity_remains_unique_after_both_views_replace_a_publication() {
+    let first = geometry(1, 6);
+    let old_page = Arc::downgrade(&first.vertices);
+    let mut live = GeometryCatalog::layout([(first.id, first)].into_iter().collect()).unwrap();
+    let mut recording = live.clone();
+    let previous = live.identity();
+    assert_eq!(previous, recording.identity());
+    let epoch = live.vertices.epoch;
+    live.append_evicting(vec![geometry(2, 6)], |id| *id == EntityRigId(1), 2)
+        .unwrap();
+    recording
+        .append_evicting(vec![geometry(3, 6)], |id| *id == EntityRigId(1), 3)
+        .unwrap();
+    assert_eq!(live.vertices.epoch, epoch);
+    assert_eq!(recording.vertices.epoch, epoch);
+    assert_ne!(previous, live.identity());
+    assert_ne!(previous, recording.identity());
+    assert_eq!(previous.segments.strong_count(), 0);
+    assert_eq!(previous.offsets.strong_count(), 0);
+    assert_eq!(previous.spans.strong_count(), 0);
+    assert!(
+        old_page.upgrade().is_none(),
+        "identity leases must not pin evicted vertex pages"
+    );
+    // Expired weak metadata leases still guard their allocation against address reuse.
+    assert!(previous.segments.ptr_eq(&previous.clone().segments));
+}
+
+#[test]
 fn duplicate_vertex_pages_share_storage_and_keep_rig_metadata() {
     let count = 6;
     let first = geometry(1, count);

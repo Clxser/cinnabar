@@ -32,6 +32,9 @@ fn max_bytes(field: MenuField) -> usize {
         MenuField::StudioDestination => recording_studio::settings::MAX_PATH_BYTES,
         MenuField::StudioCamera(_) => recording_studio::camera::MAX_CAMERA_VALUE_BYTES,
         MenuField::StudioClip(_) => launcher::menu::studio::MAX_CLIP_TIME_BYTES,
+        MenuField::StudioExportRange(_) => launcher::menu::studio::MAX_CLIP_TIME_BYTES,
+        MenuField::StudioSeek => recording_studio::playback::monitoring::MAX_SEEK_BYTES,
+        MenuField::StudioLibrarySearch => recording_studio::storage::MAX_LIBRARY_SEARCH_BYTES,
     }
 }
 
@@ -51,6 +54,9 @@ impl crate::menu::MenuRuntime {
             MenuField::StudioDestination => &self.studio.destination_text,
             MenuField::StudioCamera(_) => &self.studio.camera_text,
             MenuField::StudioClip(_) => &self.studio.clip_text,
+            MenuField::StudioExportRange(_) => &self.studio.range_text,
+            MenuField::StudioSeek => &self.studio.seek_text,
+            MenuField::StudioLibrarySearch => &self.studio.search_text,
         }
     }
 
@@ -69,6 +75,9 @@ impl crate::menu::MenuRuntime {
             MenuField::StudioDestination => &mut self.studio.destination_text,
             MenuField::StudioCamera(_) => &mut self.studio.camera_text,
             MenuField::StudioClip(_) => &mut self.studio.clip_text,
+            MenuField::StudioExportRange(_) => &mut self.studio.range_text,
+            MenuField::StudioSeek => &mut self.studio.seek_text,
+            MenuField::StudioLibrarySearch => &mut self.studio.search_text,
         }
     }
 
@@ -88,6 +97,118 @@ impl crate::menu::MenuRuntime {
                 .map(|range| [range.start, range.end]),
             revision: self.caret_revision,
             shown: true,
+        }
+    }
+}
+
+impl crate::menu::MenuRuntime {
+    /// Focus `field` with its caret after the text, as a newly selected box.
+    pub(in crate::menu) fn focus_field(&mut self, field: MenuField) {
+        if field != MenuField::StudioLibrarySearch {
+            self.studio.cancel_library_search();
+        }
+        if field == MenuField::StudioLibrarySearch {
+            self.studio.begin_library_search();
+        }
+        if !matches!(field, MenuField::StudioExportRange(_)) {
+            self.studio.cancel_export_range();
+        }
+        if let MenuField::StudioExportRange(parameter) = field
+            && let Err(error) = self.studio.begin_export_range(parameter)
+        {
+            std::sync::Arc::make_mut(&mut self.studio.view).error = Some(error);
+            self.field = None;
+            return;
+        }
+        if field != MenuField::StudioSeek {
+            self.studio.cancel_monitor_seek();
+        }
+        if field == MenuField::StudioSeek
+            && let Err(error) = self.studio.begin_monitor_seek()
+        {
+            std::sync::Arc::make_mut(&mut self.studio.view).error = Some(error);
+            self.field = None;
+            return;
+        }
+        if !matches!(field, MenuField::StudioClip(_)) {
+            self.studio.cancel_clip_time();
+        }
+        if let MenuField::StudioClip(parameter) = field
+            && let Err(error) = self.studio.begin_clip_time(parameter)
+        {
+            std::sync::Arc::make_mut(&mut self.studio.view).error = Some(error);
+            self.field = None;
+            return;
+        }
+        if field == MenuField::StudioDestination {
+            self.studio.begin_destination();
+        }
+        if let MenuField::StudioCamera(parameter) = field
+            && let Err(error) = self.studio.begin_camera_value(parameter)
+        {
+            std::sync::Arc::make_mut(&mut self.studio.view).error = Some(error);
+            self.field = None;
+            return;
+        }
+        if field == MenuField::StudioTitle
+            && let Err(error) = self.studio.begin_title_text()
+        {
+            std::sync::Arc::make_mut(&mut self.studio.view).error = Some(error);
+            self.field = None;
+            return;
+        }
+        self.field = Some(field);
+        self.edit_field(|editor| editor.move_end(false));
+    }
+
+    /// Native text input owns key priority while any field holds the caret.
+    pub(in crate::menu) fn has_focused_field(&self) -> bool {
+        self.field.is_some()
+    }
+
+    /// Apply `edit` to the focused field; every edit or caret move restarts the blink,
+    /// as vanilla's text edit box shows its caret again after typing.
+    pub(in crate::menu) fn edit_field(&mut self, edit: impl FnOnce(&mut ChatEditor)) {
+        let Some(field) = self.field else {
+            return;
+        };
+        if field == MenuField::SkinName && self.dressing_room.busy {
+            return;
+        }
+        edit(self.editor_mut(field));
+        if field == MenuField::StudioLibrarySearch {
+            self.studio.publish_library_search();
+        }
+        if field == MenuField::StudioSeek {
+            self.studio.publish_monitor_seek();
+        }
+        if field == MenuField::StudioDestination {
+            self.studio.publish_destination();
+        }
+        if field == MenuField::StudioTitle {
+            self.studio.publish_title_text();
+        }
+        if matches!(field, MenuField::StudioCamera(_)) {
+            self.studio.publish_camera_value();
+        }
+        if matches!(field, MenuField::StudioClip(_)) {
+            self.studio.publish_clip_time();
+        }
+        if matches!(field, MenuField::StudioExportRange(_)) {
+            self.studio.publish_export_range();
+        }
+        if let MenuField::MacroCommand(slot) = field {
+            self.sync_macro_command(slot);
+        }
+        if field == MenuField::RealmCode
+            && let Some(state) = &mut self.realm_membership.state
+        {
+            state.code = self.realm_membership.code.as_str().to_owned();
+            state.error = None;
+        }
+        self.caret_revision = self.caret_revision.wrapping_add(1);
+        if field == MenuField::SkinName {
+            self.sync_skin_name_draft();
         }
     }
 }

@@ -80,6 +80,9 @@ fn snapshot(
         .get_resource::<crate::block_entities::system::recording::ReplayBlockEntities>()
         .ok_or("Prepared block models are unavailable for recording.")?;
     Ok(FrozenVisuals {
+        nametags: world
+            .get_resource::<render_scene::NametagSceneResource>()
+            .map(|scene| Arc::new(scene.0.clone())),
         particles: PreparedParticles {
             base: base.clone(),
             atlas_side: *atlas_side,

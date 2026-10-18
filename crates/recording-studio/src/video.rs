@@ -5,7 +5,7 @@ use std::{
     collections::BTreeMap,
     io::{self, Write},
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, Command, Stdio},
+    process::{Command, Stdio},
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -14,12 +14,15 @@ use std::{
 };
 
 use crate::FrameRate;
+use crate::export::Cancellation;
 use crate::model::{Encoder, ExportCodec};
 use crossbeam_channel::{Receiver, Sender, TrySendError};
 
+pub mod diagnostics;
 mod executable;
 mod export;
 mod options;
+mod recording;
 pub use export::VideoWriter;
 pub use options::{EncodeOptions, EncodingSpeed};
 
@@ -170,6 +173,17 @@ impl QueuedFrame {
 }
 
 impl FrameSink {
+    /// Nonblocking live queue observations exclude the one frame currently owned by the writer.
+    pub fn queued(&self) -> (usize, usize) {
+        let frames = self
+            .sender
+            .try_lock()
+            .ok()
+            .and_then(|slot| slot.as_ref().map(Sender::len))
+            .unwrap_or(0);
+        (frames, self.queued_bytes.load(Ordering::Acquire))
+    }
+
     /// Live capture never waits for an encoder or another capture callback.
     pub fn try_push(&self, frame: Frame) -> Result<(), FramePushError> {
         let sender = match self.sender.try_lock() {
@@ -210,7 +224,20 @@ impl FrameSink {
 
     /// Allows a live capture adapter to avoid scheduling an unnecessary GPU readback.
     pub fn has_capacity(&self) -> bool {
-        self.queued_bytes.load(Ordering::Acquire) < MAX_LIVE_QUEUED_BYTES
+        self.capacity_for(1)
+    }
+
+    /// Checks the complete frame charge before scheduling GPU work that cannot fit the encoder queue.
+    pub fn has_capacity_for(&self, size: [u32; 2]) -> bool {
+        frame_byte_len(size).is_ok_and(|bytes| self.capacity_for(bytes))
+    }
+
+    /// Advisory admission uses the same byte quota as the eventual atomic producer reservation.
+    fn capacity_for(&self, bytes: usize) -> bool {
+        self.queued_bytes
+            .load(Ordering::Acquire)
+            .checked_add(bytes)
+            .is_some_and(|bytes| bytes <= MAX_LIVE_QUEUED_BYTES)
             && self
                 .sender
                 .try_lock()
@@ -246,6 +273,7 @@ pub struct Recorder {
     writer: Option<JoinHandle<Result<Summary, String>>>,
     settings: VideoSettings,
     expected_frames: Arc<AtomicU64>,
+    cancellation: Cancellation,
 }
 
 impl Recorder {
@@ -264,9 +292,17 @@ impl Recorder {
         if let Some(parent) = settings.path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
-        Self::spawn(settings, move |settings, frames, expected| {
+        Self::spawn(settings, move |settings, frames, expected, cancellation| {
             let encoder = options.select_encoder(&ffmpeg, settings.codec)?;
-            encode(&ffmpeg, settings, frames, options, encoder, expected)
+            recording::encode(
+                &ffmpeg,
+                settings,
+                frames,
+                options,
+                encoder,
+                expected,
+                cancellation,
+            )
         })
     }
 
@@ -279,8 +315,16 @@ impl Recorder {
         if let Some(parent) = settings.path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
-        Self::spawn(settings, move |settings, frames, expected| {
-            encode(&ffmpeg, settings, frames, options, encoder, expected)
+        Self::spawn(settings, move |settings, frames, expected, cancellation| {
+            recording::encode(
+                &ffmpeg,
+                settings,
+                frames,
+                options,
+                encoder,
+                expected,
+                cancellation,
+            )
         })
     }
 
@@ -291,6 +335,7 @@ impl Recorder {
             &VideoSettings,
             &Receiver<QueuedFrame>,
             &AtomicU64,
+            &Cancellation,
         ) -> Result<Summary, String>
         + Send
         + 'static,
@@ -299,9 +344,11 @@ impl Recorder {
         let thread_settings = settings.clone();
         let expected_frames = Arc::new(AtomicU64::new(0));
         let expected = Arc::clone(&expected_frames);
+        let cancellation = Cancellation::default();
+        let worker_cancellation = cancellation.clone();
         let writer = thread::Builder::new()
             .name("studio-video-encoder".into())
-            .spawn(move || encoder(&thread_settings, &receiver, &expected))
+            .spawn(move || encoder(&thread_settings, &receiver, &expected, &worker_cancellation))
             .map_err(|error| error.to_string())?;
         Ok(Self {
             sink: FrameSink {
@@ -311,6 +358,7 @@ impl Recorder {
             writer: Some(writer),
             settings,
             expected_frames,
+            cancellation,
         })
     }
 
@@ -344,44 +392,15 @@ impl Recorder {
         let Some(audio) = audio.filter(|_| summary.frames > 0) else {
             return Ok(summary);
         };
-        let ffmpeg = find_ffmpeg()?;
-        let parent = summary
-            .path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        let stem = video_staging_path(&summary.path);
-        let staged = tempfile::Builder::new()
-            .prefix(stem.file_stem().unwrap_or_default())
-            .suffix(".mp4")
-            .tempfile_in(parent)
-            .map_err(|error| error.to_string())?
-            .into_temp_path();
-        let mut command = Command::new(ffmpeg);
-        command
-            .args(mux_arguments(&summary.path, audio, &staged))
-            .stdin(Stdio::null());
-        crate::media_process::hide_console(&mut command);
-        let status = command
-            .status()
-            .map_err(|error| format!("start ffmpeg to mux audio: {error}"))?;
-        if !status.success() {
-            return Err(format!(
-                "muxing audio failed ({status}); the silent video is at {}",
-                summary.path.display()
-            ));
-        }
-        crate::media_process::sync_output(&staged)?;
-        staged
-            .persist(&summary.path)
-            .map_err(|error| error.to_string())?;
+        recording::mux(&summary.path, audio, &self.cancellation)?;
         Ok(summary)
     }
 }
 
 impl Drop for Recorder {
-    /// Closes admission immediately; the encoding worker drains asynchronously during normal teardown.
+    /// Cancels owned process IO and closes admission without waiting on the caller's thread.
     fn drop(&mut self) {
+        self.cancellation.cancel();
         self.sink.close();
         self.writer.take();
     }
@@ -391,71 +410,6 @@ fn video_staging_path(path: &Path) -> PathBuf {
     let mut name = path.file_stem().unwrap_or_default().to_os_string();
     name.push(".video.mp4");
     path.with_file_name(name)
-}
-
-fn encode(
-    ffmpeg: &Path,
-    settings: &VideoSettings,
-    frames: &Receiver<QueuedFrame>,
-    options: EncodeOptions,
-    encoder: Encoder,
-    expected: &AtomicU64,
-) -> Result<Summary, String> {
-    let mut frames = frames.iter().map(QueuedFrame::into_frame).peekable();
-    let Some(first) = frames.peek() else {
-        return Ok(Summary {
-            path: settings.path.clone(),
-            frames: 0,
-            size: None,
-        });
-    };
-    let (size, layout) = (first.size, first.layout);
-    frame_byte_len(size)?;
-    let mut command = Command::new(ffmpeg);
-    command
-        .args(options::arguments(
-            settings,
-            size,
-            layout,
-            &settings.path,
-            options,
-            encoder,
-        ))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit());
-    crate::media_process::hide_console(&mut command);
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("start ffmpeg: {error}"))?;
-    let stdin = child.stdin.take().ok_or("ffmpeg stdin unavailable")?;
-    let written = finish_child(child, stdin, |stdin| {
-        if options.speed == EncodingSpeed::Live {
-            write_live(stdin, frames, size, layout, expected, settings.fps)
-        } else {
-            write_ordered(stdin, frames, size, layout)
-        }
-    })?;
-    Ok(Summary {
-        path: settings.path.clone(),
-        frames: written,
-        size: Some([size[0] & !1, size[1] & !1]),
-    })
-}
-
-fn finish_child(
-    mut child: Child,
-    mut stdin: ChildStdin,
-    write: impl FnOnce(&mut ChildStdin) -> io::Result<u64>,
-) -> Result<u64, String> {
-    let written = write(&mut stdin).map_err(|error| error.to_string());
-    drop(stdin);
-    let status = child.wait().map_err(|error| error.to_string())?;
-    let written = written?;
-    if !status.success() {
-        return Err(format!("ffmpeg exited with {status}"));
-    }
-    Ok(written)
 }
 
 /// Writes exact captures in frame order with a bounded reorder window.
@@ -587,7 +541,7 @@ mod tests {
             },
             codec: ExportCodec::H264,
         };
-        let recorder = Recorder::spawn(settings, |settings, frames, _| {
+        let recorder = Recorder::spawn(settings, |settings, frames, _, _| {
             Ok(Summary {
                 path: settings.path.clone(),
                 frames: frames.iter().count() as u64,
@@ -611,12 +565,61 @@ mod tests {
     }
 
     #[test]
+    fn dropping_recording_cancels_worker_io_and_closes_all_live_sinks() {
+        let settings = VideoSettings {
+            path: PathBuf::from("unused.mp4"),
+            fps: FrameRate {
+                numerator: 240,
+                denominator: 1,
+            },
+            codec: ExportCodec::H264,
+        };
+        let mut recorder = Recorder::spawn(settings, |settings, frames, _, cancellation| {
+            assert!(frames.iter().next().is_none());
+            assert!(cancellation.cancelled());
+            Ok(Summary {
+                path: settings.path.clone(),
+                frames: 0,
+                size: None,
+            })
+        })
+        .unwrap();
+        let worker = recorder.writer.take().unwrap();
+        let cancellation = recorder.cancellation.clone();
+        let sink = recorder.sink();
+        drop(recorder);
+        assert!(cancellation.cancelled());
+        assert!(matches!(
+            sink.try_push(frame(0, 0)),
+            Err(FramePushError::Closed(_))
+        ));
+        assert_eq!(worker.join().unwrap().unwrap().frames, 0);
+    }
+
+    #[test]
     fn resized_frames_are_rejected() {
         let mut resized = frame(1, 1);
         resized.size = [2, 1];
         let mut out = Vec::new();
         let frames = [frame(0, 0), resized].into_iter();
         assert!(write_ordered(&mut out, frames, [1, 1], PixelLayout::Bgra).is_err());
+    }
+
+    #[test]
+    fn readback_preflight_reserves_room_for_the_entire_frame() {
+        let (sender, _receiver) = crossbeam_channel::bounded(QUEUE_FRAMES);
+        let queued_bytes = Arc::new(AtomicUsize::new(MAX_LIVE_QUEUED_BYTES - 3));
+        let sink = FrameSink {
+            sender: Arc::new(Mutex::new(Some(sender))),
+            queued_bytes: Arc::clone(&queued_bytes),
+        };
+        assert!(sink.has_capacity());
+        assert!(!sink.has_capacity_for([1, 1]));
+        queued_bytes.store(MAX_LIVE_QUEUED_BYTES - 4, Ordering::Release);
+        assert!(sink.has_capacity_for([1, 1]));
+        assert!(!sink.has_capacity_for([u32::MAX, u32::MAX]));
+        sink.close();
+        assert!(!sink.has_capacity_for([1, 1]));
     }
 
     #[test]

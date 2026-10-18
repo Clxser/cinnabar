@@ -102,6 +102,9 @@ impl Studio {
                 settings.quality = settings.quality.saturating_add_signed(direction).min(51)
             }
             Action::ToggleExportAudio => settings.include_audio = !settings.include_audio,
+            Action::ToggleRecordedHud => {
+                settings.include_recorded_hud = !settings.include_recorded_hud
+            }
             _ => return Err("This output control is unavailable.".into()),
         }
         self.edit("Change export settings", &[Command::SetExport { settings }])
@@ -146,26 +149,40 @@ impl Studio {
         Ok(())
     }
 
+    /// Fallback focus exposes only the active settings group before painted geometry arrives.
     pub(super) fn workflow_focus_actions(&self) -> Vec<Action> {
-        let mut actions = vec![Action::ToggleSettings];
-        if self.view.workflow.media_busy {
-            actions.push(Action::CancelMedia);
-        } else {
-            actions.push(Action::ImportMedia);
-            if self.view.selected.is_some() {
-                actions.push(Action::RelinkMedia);
-            }
+        use launcher::menu::studio::{SettingsPage, WorkspaceAction};
+        let workflow = &self.view.workflow;
+        let mut actions = vec![Action::ToggleSettings, Action::ShowRecovery];
+        if workflow.recovery.error.is_some() {
+            actions.push(Action::RetryAutosave);
         }
-        if self.view.workflow.show_settings {
-            if !self.view.capture.phase.busy() {
-                actions.extend([
-                    Action::CycleCaptureFps,
-                    Action::CycleCaptureSize,
-                    Action::ToggleCaptureHand,
-                    Action::ToggleCaptureHud,
-                ]);
+        if !workflow.show_settings {
+            if workflow.media_busy {
+                actions.push(Action::CancelMedia);
+            } else {
+                actions.push(Action::ImportMedia);
+                if self.view.selected.is_some() {
+                    actions.push(Action::RelinkMedia);
+                }
             }
-            if self.editor.is_some() {
+            return actions;
+        }
+        actions.extend(
+            SettingsPage::ALL
+                .iter()
+                .copied()
+                .map(|page| Action::Workspace(WorkspaceAction::SettingsPage(page))),
+        );
+        match self.view.workspace.settings_page {
+            SettingsPage::Recording if !self.view.capture.phase.busy() => actions.extend([
+                Action::CycleCaptureFps,
+                Action::CycleCaptureSize,
+                Action::ToggleCaptureHand,
+                Action::ToggleCaptureHud,
+            ]),
+            SettingsPage::Export if self.editor.is_some() => {
+                actions.extend(self.export_range_focus_actions());
                 actions.extend([
                     Action::CycleExportFps,
                     Action::CycleExportSize,
@@ -174,15 +191,44 @@ impl Studio {
                     Action::AdjustExportQuality(-1),
                     Action::AdjustExportQuality(1),
                     Action::ToggleExportAudio,
+                    Action::ToggleRecordedHud,
                     Action::EditExportDestination,
                 ]);
-                if self.view.workflow.destination_draft.is_some() {
+                if workflow.destination_draft.is_some() {
                     actions.extend([
                         Action::ApplyExportDestination,
                         Action::CancelExportDestination,
                     ]);
                 }
             }
+            SettingsPage::Preview => actions.extend(
+                [
+                    WorkspaceAction::CyclePreviewQuality,
+                    WorkspaceAction::TogglePreviewFill,
+                    WorkspaceAction::Density,
+                    WorkspaceAction::TimelineSize,
+                ]
+                .map(Action::Workspace),
+            ),
+            SettingsPage::Diagnostics => {
+                if !workflow.diagnostics.checking
+                    && !self.view.capture.phase.busy()
+                    && !self.view.export.phase.busy()
+                {
+                    actions.push(Action::CheckDependencies);
+                }
+                if !self.view.export.phase.busy()
+                    && self.editor.as_ref().is_some_and(|editor| {
+                        workflow.diagnostics.report.as_ref().is_some_and(|report| {
+                            report.software.available
+                                && report.codec == editor.project().export.codec
+                        })
+                    })
+                {
+                    actions.push(Action::UseCpuEncoder);
+                }
+            }
+            _ => {}
         }
         actions
     }

@@ -264,6 +264,19 @@ impl WorldAuthority {
         self.actors.get(runtime_id)
     }
 
+    /// A retained rider link excludes standing POV even before its mount or rider flags arrive.
+    pub fn standing_player_view(
+        &self,
+        runtime_id: u64,
+        alpha: f32,
+    ) -> Option<([f32; 3], [f32; 2])> {
+        let actor = self.actors.get(runtime_id)?;
+        actor.standing_player_view(
+            alpha,
+            self.actors.ridden_unique_id(actor.unique_id).is_some(),
+        )
+    }
+
     /// Publishes the session's level mode before remote players are admitted.
     pub fn set_world_default_game_mode(&mut self, mode: protocol::GameModeUpdate) {
         self.actors.apply_world_game_mode(mode);

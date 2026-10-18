@@ -8,13 +8,19 @@ use std::{
 
 use recording_studio::{
     archive::ArchiveError,
-    camera::{ActorPose, CameraTarget, MAX_CAMERA_TARGETS, MAX_TARGET_NAME_BYTES},
+    camera::{
+        ActorPose, CameraTarget, CameraTargetKind, MAX_CAMERA_TARGETS, MAX_TARGET_NAME_BYTES,
+    },
 };
 
 use super::Delta;
 use crate::binary::{self, Reader};
 
-const MAGIC: [u8; 8] = *b"CINTRK01";
+const MAGIC: [u8; 8] = *b"CINTRK02";
+const LEGACY_MAGIC: [u8; 8] = *b"CINTRK01";
+
+#[cfg(test)]
+mod tests;
 
 /// Exact field binding forces a codec update when the shared target contract changes.
 pub(super) fn write(output: &mut dyn Write, delta: &Delta) -> Result<(), ArchiveError> {
@@ -29,6 +35,8 @@ pub(super) fn write(output: &mut dyn Write, delta: &Delta) -> Result<(), Archive
             unique_id,
             spawn_revision,
             name,
+            kind,
+            entity_type,
             pose,
             teleported,
         } = target;
@@ -52,6 +60,8 @@ pub(super) fn write(output: &mut dyn Write, delta: &Delta) -> Result<(), Archive
         }
         binary::u32(output, u32::from(*teleported))?;
         binary::blob(output, name.as_bytes())?;
+        binary::u32(output, kind.code())?;
+        binary::blob(output, entity_type.as_deref().unwrap_or("").as_bytes())?;
     }
     binary::packed(output, &delta.removed, |id| {
         [*id as u32, (*id >> 32) as u32]
@@ -61,7 +71,8 @@ pub(super) fn write(output: &mut dyn Write, delta: &Delta) -> Result<(), Archive
 /// Counts, UTF-8, duplicate identities, non-finite values and trailing bytes fail before publication.
 pub(super) fn read(input: &mut dyn Read) -> Result<Delta, ArchiveError> {
     let mut reader = Reader::new(input);
-    if reader.bytes::<8>()? != MAGIC {
+    let magic = reader.bytes::<8>()?;
+    if magic != MAGIC && magic != LEGACY_MAGIC {
         return Err(ArchiveError::Invalid("unsupported camera target envelope"));
     }
     let count = reader.u32()? as usize;
@@ -91,11 +102,26 @@ pub(super) fn read(input: &mut dyn Read) -> Result<Delta, ArchiveError> {
         let teleported = boolean(reader.u32()?)?;
         let name = String::from_utf8(reader.blob(MAX_TARGET_NAME_BYTES)?)
             .map_err(|_| ArchiveError::Invalid("camera target name is not UTF-8"))?;
+        let (kind, entity_type) = if magic == MAGIC {
+            let kind = CameraTargetKind::from_code(reader.u32()?).ok_or(ArchiveError::Invalid(
+                "invalid camera target classification",
+            ))?;
+            let entity_type = String::from_utf8(reader.blob(MAX_TARGET_NAME_BYTES)?)
+                .map_err(|_| ArchiveError::Invalid("camera target entity type is not UTF-8"))?;
+            (
+                kind,
+                (!entity_type.is_empty()).then(|| Arc::from(entity_type)),
+            )
+        } else {
+            (CameraTargetKind::Unknown, None)
+        };
         let target = CameraTarget {
             runtime_id,
             unique_id,
             spawn_revision,
             name: Arc::from(name),
+            kind,
+            entity_type,
             teleported,
             pose: ActorPose {
                 position: values[..3].try_into().expect("three position axes"),

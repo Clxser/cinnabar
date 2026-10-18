@@ -274,6 +274,16 @@ impl TimeMap {
     pub fn is_uniform(&self) -> bool {
         matches!(self.mapping, Mapping::Uniform { .. })
     }
+    /// Constant ramps expose their combined rational rate to the shared pitch-preserving decoder.
+    pub fn uniform_rate(&self) -> Option<(u64, u64)> {
+        match self.mapping {
+            Mapping::Uniform {
+                numerator,
+                denominator,
+            } => Some((numerator, denominator)),
+            Mapping::Ramp { .. } => None,
+        }
+    }
 
     /// This source position is intentionally unclamped to the trim so transitions can use source handles.
     fn position_at(&self, at: MediaTime) -> f64 {

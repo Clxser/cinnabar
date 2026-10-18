@@ -2,6 +2,7 @@
 
 mod minecraft_import;
 mod mods;
+mod studio;
 
 use std::sync::Arc;
 
@@ -38,6 +39,96 @@ const TALL_SIZE: [u32; 2] = [1280, 900];
 const KEYBOARD_SIZE: [u32; 2] = [SIZE[0], 2000];
 
 pub const STATES: &[State] = &[
+    State {
+        name: "studio-recovery",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::recovery,
+    },
+    State {
+        name: "studio-recovery-narrow",
+        size: [900, 600],
+        gui_scale: GUI_SCALE,
+        fixture: studio::recovery,
+    },
+    State {
+        name: "studio-preview-settings",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::preview_settings,
+    },
+    State {
+        name: "studio-controls",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::controls,
+    },
+    State {
+        name: "studio-setup",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::setup,
+    },
+    State {
+        name: "studio-editor",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::editor,
+    },
+    State {
+        name: "studio-editor-short",
+        size: [1280, 600],
+        gui_scale: GUI_SCALE,
+        fixture: studio::editor,
+    },
+    State {
+        name: "studio-editor-narrow",
+        size: [900, 600],
+        gui_scale: GUI_SCALE,
+        fixture: studio::editor,
+    },
+    State {
+        name: "studio-editor-small",
+        size: [640, 480],
+        gui_scale: GUI_SCALE,
+        fixture: studio::editor,
+    },
+    State {
+        name: "studio-editor-large-gui",
+        size: [900, 600],
+        gui_scale: 4,
+        fixture: studio::editor,
+    },
+    State {
+        name: "studio-camera",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::camera,
+    },
+    State {
+        name: "studio-recording",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::recording,
+    },
+    State {
+        name: "studio-audio",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::audio,
+    },
+    State {
+        name: "studio-settings",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::settings,
+    },
+    State {
+        name: "studio-settings-narrow",
+        size: [900, 600],
+        gui_scale: GUI_SCALE,
+        fixture: studio::settings,
+    },
     State {
         name: "chat-background-transparent",
         size: SIZE,

@@ -1,26 +1,140 @@
-//! Recording and export settings use the studio's existing native scroll and control primitives.
+//! Recording and export settings use full-height groups without nested short scroll panes.
 
 use super::*;
 use recording_studio::settings::{codec_label, encoder_label};
 
-/// Keeps every output choice reachable on small windows without covering the transport with a modal.
+mod diagnostics;
+mod export_range;
+mod help;
+
+/// One selected settings group owns the full usable height, with no nested short scroll panes.
 pub(super) fn draw(
     canvas: &mut Canvas<'_>,
     view: &MenuView,
     area: Bounds,
 ) -> Result<(), PaintError> {
+    use launcher::menu::studio::{SettingsPage, WorkspaceAction};
     widgets::panel(canvas, area)?;
-    let pad = canvas.r(2.0);
-    let [left, top, right, bottom] = [area[0] + pad, area[1] + pad, area[2] - pad, area[3] - pad];
-    let scroll = canvas.begin_scroll("studio_settings", [left, top, right, bottom])?;
-    let mut y = top - scroll.offset;
-    canvas.text_line(
-        "Recording and export",
-        [left, y],
-        right - left,
-        HEADER5,
-        TEXT,
+    let pad = canvas.r(1.2);
+    let inner = [area[0] + pad, area[1] + pad, area[2] - pad, area[3] - pad];
+    if inner[2] <= inner[0] || inner[3] <= inner[1] {
+        return Ok(());
+    }
+    let gap = canvas.r(0.5);
+    let pages = SettingsPage::ALL;
+    let columns = (((inner[2] - inner[0] + gap) / (canvas.r(13.0) + gap)).floor() as usize)
+        .clamp(1, pages.len());
+    let width = (inner[2] - inner[0] - gap * (columns - 1) as f32) / columns as f32;
+    let row_height = canvas.r(3.8);
+    for (index, &page) in pages.iter().enumerate() {
+        let x = inner[0] + (index % columns) as f32 * (width + gap);
+        let y = inner[1] + (index / columns) as f32 * (row_height + gap);
+        control(
+            canvas,
+            view,
+            [x, y, x + width, y + row_height],
+            page.label(),
+            Action::Workspace(WorkspaceAction::SettingsPage(page)),
+            true,
+            if view.studio.workspace.settings_page == page {
+                Variant::Primary
+            } else {
+                Variant::Neutral
+            },
+        )?;
+    }
+    let rows = pages.len().div_ceil(columns);
+    let bounds = [
+        inner[0],
+        inner[1] + rows as f32 * (row_height + gap) + pad,
+        inner[2],
+        inner[3],
+    ];
+    if bounds[3] <= bounds[1] {
+        return Ok(());
+    }
+    let previous = canvas.settings_scrollbars;
+    canvas.settings_scrollbars = true;
+    let key = format!("studio_settings_{:?}", view.studio.workspace.settings_page);
+    let scroll = canvas.begin_scroll(&key, bounds)?;
+    let top = bounds[1] - scroll.offset;
+    let content = [bounds[0], top, bounds[2], bounds[3]];
+    let bottom = match view.studio.workspace.settings_page {
+        SettingsPage::Recording => capture(canvas, view, content),
+        SettingsPage::Preview => preview(canvas, view, content),
+        SettingsPage::Export => output(canvas, view, content),
+        SettingsPage::Diagnostics => diagnostics::draw(canvas, view, content),
+        SettingsPage::Controls => help::draw(canvas, view, content),
+    };
+    let result = match bottom {
+        Ok(bottom) => canvas.end_scroll(scroll, (bottom - top).max(0.0) + pad),
+        Err(error) => Err(error),
+    };
+    canvas.settings_scrollbars = previous;
+    result
+}
+
+/// Preview controls affect only the interactive viewer; project output retains its saved settings.
+fn preview(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<f32, PaintError> {
+    use launcher::menu::studio::WorkspaceAction;
+    let [left, mut y, right, bottom] = area;
+    canvas.text_line("Preview", [left, y], right - left, HEADER5, TEXT)?;
+    y += canvas.r(4.8);
+    row(
+        canvas,
+        view,
+        [left, y, right, bottom],
+        &format!(
+            "Preview quality: {}",
+            view.studio.workspace.preview_quality.label()
+        ),
+        Action::Workspace(WorkspaceAction::CyclePreviewQuality),
+        true,
     )?;
+    y += canvas.r(5.0);
+    y += canvas.text("Fast uses a smaller picture at up to 30 FPS. Balanced and Full preview at up to 60 FPS. Export retains the project's exact output resolution and frame rate.", [left, y], right-left, CAPTION, TEXT_DIMMER, false)? + canvas.r(2.0);
+    row(
+        canvas,
+        view,
+        [left, y, right, bottom],
+        if view.studio.workspace.preview_fill {
+            "Viewer: Fill (crop edges)"
+        } else {
+            "Viewer: Fit (whole picture)"
+        },
+        Action::Workspace(WorkspaceAction::TogglePreviewFill),
+        true,
+    )?;
+    y += canvas.r(5.0);
+    row(
+        canvas,
+        view,
+        [left, y, right, bottom],
+        &format!(
+            "Interface density: {}",
+            view.studio.workspace.density.label()
+        ),
+        Action::Workspace(WorkspaceAction::Density),
+        true,
+    )?;
+    y += canvas.r(5.0);
+    row(
+        canvas,
+        view,
+        [left, y, right, bottom],
+        view.studio.workspace.timeline_size.label(),
+        Action::Workspace(WorkspaceAction::TimelineSize),
+        true,
+    )?;
+    y += canvas.r(5.0);
+    Ok(y)
+}
+
+/// Capture choices apply to the next take and remain disabled while capture owns those settings.
+fn capture(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<f32, PaintError> {
+    let [left, top, right, bottom] = area;
+    let mut y = top;
+    canvas.text_line("Recording", [left, y], right - left, HEADER5, TEXT)?;
     y += canvas.r(4.8);
     let capture = view.studio.workflow.capture_settings;
     row(
@@ -67,8 +181,19 @@ pub(super) fn draw(
         !view.studio.capture.phase.busy(),
     )?;
     y += canvas.r(5.0);
-    y += canvas.text("120/240 FPS can retain more motion for slow motion. Recording size uses GPU scaling before readback and never upscales. Capture follows actual game frames; missed slots repeat the previous frame and are reported. Changes apply to the next take.", [left, y], right - left, CAPTION, TEXT_DIMMER, false)? + canvas.r(3.0);
+    y += canvas.text("Changes apply to the next take. HUD/chat Off keeps video clean and preserves world labels. Higher FPS needs more GPU and encoder capacity; repeated capture slots are reported.", [left, y], right - left, CAPTION, TEXT_DIMMER, false)? + canvas.r(3.0);
+    Ok(y)
+}
+
+/// Output choices and destination describe the actual export job queued from the current project.
+fn output(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<f32, PaintError> {
+    let [left, top, right, bottom] = area;
+    let pad = canvas.r(1.6);
+    let mut y = top;
+    canvas.text_line("Export", [left, y], right - left, HEADER5, TEXT)?;
+    y += canvas.r(4.8);
     if let Some(project) = &view.studio.project {
+        y = export_range::draw(canvas, view, [left, y, right, bottom])?;
         let settings = &project.export;
         let enabled = !view.studio.loading;
         for (label, action) in [
@@ -107,6 +232,20 @@ pub(super) fn draw(
             y += canvas.r(5.0);
         }
         let button = canvas.r(5.6);
+        row(
+            canvas,
+            view,
+            [left, y, right, bottom],
+            if settings.include_recorded_hud {
+                "Replay HUD and chat: Enabled"
+            } else {
+                "Replay HUD and chat: Hidden"
+            },
+            Action::ToggleRecordedHud,
+            enabled,
+        )?;
+        y += canvas.r(5.0);
+        y += canvas.text("Only the recorded source camera can restore captured HUD/chat. World nametags are a separate layer. HUD/chat already baked into video pixels cannot be removed; use the native replay track.", [left, y], right-left, CAPTION, TEXT_DIMMER, false)? + canvas.r(2.0);
         canvas.text_line(
             &format!("Quality: {} (lower is higher quality)", settings.quality),
             [left, y + canvas.r(0.8)],
@@ -198,9 +337,7 @@ pub(super) fn draw(
             false,
         )?;
     }
-    let content = y - top + scroll.offset + pad;
-    canvas.end_scroll(scroll, content)?;
-    Ok(())
+    Ok(y)
 }
 
 /// Native wide controls wrap the setting's value in the same focusable hit target.

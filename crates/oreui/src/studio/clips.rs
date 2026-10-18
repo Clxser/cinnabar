@@ -2,30 +2,59 @@
 
 use super::*;
 use recording_studio::{
-    model::{Clip, TransitionKind},
+    model::{Clip, FramingFit, TransitionKind},
     timeline::FramingParameter,
 };
 
 mod timing;
 
-/// Keeps percentage controls legible on narrow inspectors and derives labels from the domain owner.
-pub(super) fn draw(
+/// Crop, rotation and Fit/Fill keep their own units while sharing ordinary reversible framing commands.
+pub(super) fn framing(
     canvas: &mut Canvas<'_>,
     view: &MenuView,
     area: Bounds,
     clip: &Clip,
 ) -> Result<f32, PaintError> {
     let [left, mut y, right, _] = area;
-    y = timing::draw(canvas, view, [left, y, right, area[3]], clip)?;
     canvas.text_line("FRAMING", [left, y], right - left, HEADER5, TEXT)?;
     y += canvas.r(4.0);
     let button = canvas.r(3.6);
     for parameter in FramingParameter::ALL.iter().copied() {
+        if parameter == FramingParameter::Fit {
+            let count = FramingFit::ALL.len() as f32;
+            let width = (right - left - canvas.r(0.8) * (count - 1.0)) / count;
+            for (index, &mode) in FramingFit::ALL.iter().enumerate() {
+                let direction = match mode {
+                    FramingFit::Fit => -1,
+                    FramingFit::Fill => 1,
+                };
+                let x = left + index as f32 * (width + canvas.r(0.8));
+                control(
+                    canvas,
+                    view,
+                    [x, y, x + width, y + canvas.r(4.0)],
+                    mode.label(),
+                    Action::AdjustFraming {
+                        parameter,
+                        direction,
+                    },
+                    clip.framing.fit != mode,
+                    if clip.framing.fit == mode {
+                        Variant::Primary
+                    } else {
+                        Variant::Secondary
+                    },
+                )?;
+            }
+            y += canvas.r(4.8);
+            y += canvas.text("Fit keeps the whole rotated crop. Fill covers the output and crops its outer edges.", [left, y], right - left, CAPTION, TEXT_DIMMER, false)? + canvas.r(1.2);
+            continue;
+        }
         canvas.text_line(
             &format!(
-                "{} {:.1}%",
+                "{} {}",
                 parameter.label(),
-                parameter.value(clip.framing) * 100.0
+                parameter.formatted(clip.framing)
             ),
             [left, y + canvas.r(0.8)],
             (right - left - button * 2.0 - canvas.r(1.2)).max(0.0),
@@ -59,6 +88,42 @@ pub(super) fn draw(
         Variant::Secondary,
     )?;
     y += canvas.r(5.6);
+    Ok(y)
+}
+
+/// Timing and layer order are the selected clip's default properties.
+pub(super) fn general(
+    canvas: &mut Canvas<'_>,
+    view: &MenuView,
+    area: Bounds,
+    clip: &Clip,
+) -> Result<f32, PaintError> {
+    let [left, mut y, right, _] = area;
+    y = timing::draw(canvas, view, [left, y, right, area[3]], clip)?;
+    let native = view
+        .studio
+        .project
+        .as_ref()
+        .and_then(|project| {
+            project
+                .sources
+                .iter()
+                .find(|source| source.id == clip.source)
+        })
+        .and_then(recording_studio::capture::native_replay_directory)
+        .is_some();
+    if native {
+        control(
+            canvas,
+            view,
+            [left, y, right, y + canvas.r(4.0)],
+            "Use 3D replay",
+            Action::UseNativeReplay,
+            true,
+            Variant::Primary,
+        )?;
+        y += canvas.r(5.2);
+    }
     canvas.text_line(
         &format!("Visual layer {}", clip.track + 1),
         [left, y],
@@ -85,6 +150,17 @@ pub(super) fn draw(
         )?;
     }
     y += canvas.r(6.0);
+    Ok(y)
+}
+
+/// Cut controls stay together, with an explicit reason when a neighbouring clip is required.
+pub(super) fn cut(
+    canvas: &mut Canvas<'_>,
+    view: &MenuView,
+    area: Bounds,
+    clip: &Clip,
+) -> Result<f32, PaintError> {
+    let [left, mut y, right, _] = area;
     let project = view
         .studio
         .project

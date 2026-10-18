@@ -12,16 +12,24 @@ use recording_studio::{
     storage::{LibraryKind, ProjectStorage, StorageRequest, StorageResult, StorageValue},
 };
 
+mod audio;
 mod bridge;
 mod camera;
 mod clips;
+mod diagnostics;
 mod effects;
+mod export_range;
+mod library;
 mod media;
+mod monitoring;
+mod persistence;
+mod recovery;
 mod scene;
 mod settings;
 mod speed;
 pub(super) mod timeline;
 mod titles;
+mod workspace;
 
 pub(super) struct Studio {
     pub view: Arc<Snapshot>,
@@ -29,9 +37,12 @@ pub(super) struct Studio {
     storage: Option<ProjectStorage>,
     editor: Option<Editor>,
     transport: Transport,
+    audio_pause: audio::PauseSync,
     library_job: Option<u64>,
     open_job: Option<u64>,
-    save_job: Option<(u64, u64)>,
+    save_job: Option<persistence::SaveJob>,
+    recovery: recovery::Recovery,
+    diagnostics: diagnostics::Diagnostics,
     document: u64,
     replays: BTreeMap<Id, Arc<RecordingReader>>,
     scrub: Option<(i32, u32)>,
@@ -50,8 +61,14 @@ pub(super) struct Studio {
     pub(super) destination_text: ui::ChatEditor,
     pub(super) camera_text: ui::ChatEditor,
     camera_edit: Option<camera::CameraValueEdit>,
+    camera_interaction: camera::CameraInteraction,
     pub(super) clip_text: ui::ChatEditor,
     clip_edit: Option<clips::ClipTimeEdit>,
+    pub(super) range_text: ui::ChatEditor,
+    range_edit: Option<export_range::RangeEdit>,
+    pub(super) search_text: ui::ChatEditor,
+    pub(super) seek_text: ui::ChatEditor,
+    seek_edit: Option<(u64, u64)>,
 }
 
 impl std::fmt::Debug for Studio {
@@ -81,9 +98,12 @@ impl Studio {
             storage: None,
             editor: None,
             transport: Transport::default(),
+            audio_pause: Default::default(),
             library_job: None,
             open_job: None,
             save_job: None,
+            recovery: Default::default(),
+            diagnostics: Default::default(),
             document: 0,
             replays: BTreeMap::new(),
             scrub: None,
@@ -108,16 +128,29 @@ impl Studio {
                 ),
             ),
             camera_edit: None,
+            camera_interaction: Default::default(),
             clip_text: super::input::fields::field_editor(launcher::menu::MenuField::StudioClip(
                 launcher::menu::studio::ClipTimeField::Position,
             )),
             clip_edit: None,
+            range_text: super::input::fields::field_editor(
+                launcher::menu::MenuField::StudioExportRange(
+                    launcher::menu::studio::ExportRangeField::In,
+                ),
+            ),
+            range_edit: None,
+            search_text: super::input::fields::field_editor(
+                launcher::menu::MenuField::StudioLibrarySearch,
+            ),
+            seek_text: super::input::fields::field_editor(launcher::menu::MenuField::StudioSeek),
+            seek_edit: None,
         }
     }
 
     /// Opens the existing document or library without resetting unsaved edits.
     pub fn open(&mut self) {
         self.scrub = None;
+        self.scan_recovery();
         if let Err(error) = self.ensure_storage().and_then(|()| self.refresh()) {
             Arc::make_mut(&mut self.view).error = Some(error);
         }
@@ -136,6 +169,38 @@ impl Studio {
 
     /// Dispatches only native UI intent. Editing never changes the live session or recorded media.
     pub fn activate(&mut self, action: Action) {
+        if self.view.workflow.recovery.busy
+            && !matches!(
+                action,
+                Action::CancelOpen
+                    | Action::CancelExport
+                    | Action::ToggleRecording
+                    | Action::Bookmark
+                    | Action::ClearError
+            )
+        {
+            return;
+        }
+        if self.view.workflow.recovery.visible
+            && !matches!(
+                action,
+                Action::ShowRecovery
+                    | Action::HideRecovery
+                    | Action::ScanRecovery
+                    | Action::RestoreRecovery(_)
+                    | Action::DiscardRecovery(_)
+                    | Action::RetryAutosave
+                    | Action::ConfirmDiscard
+                    | Action::CancelDiscard
+                    | Action::CancelOpen
+                    | Action::CancelExport
+                    | Action::ToggleRecording
+                    | Action::Bookmark
+                    | Action::ClearError
+            )
+        {
+            return;
+        }
         if self.view.loading
             && !matches!(
                 action,
@@ -158,6 +223,11 @@ impl Studio {
     /// Services at most the storage queue's bounded completions and advances a caller-owned clock.
     pub fn tick(&mut self, elapsed: f64, visible: bool) {
         self.poll_media();
+        if visible {
+            self.prime_recovery_scan();
+        }
+        self.tick_recovery(elapsed);
+        self.poll_diagnostics();
         if self.storage.is_none() {
             return;
         }
@@ -178,6 +248,7 @@ impl Studio {
                     self.save_job = None;
                     self.preferences_job = None;
                     self.thumbnails_job = None;
+                    self.warn_retained_recovery();
                     break;
                 }
             }
@@ -192,8 +263,7 @@ impl Studio {
                 editor.project().export.fps,
             )
         {
-            self.transport
-                .advance_until(elapsed, editor.duration(), available);
+            self.advance_playback(elapsed, available);
         }
         if self.view.position != self.transport.position()
             || self.view.playing != self.transport.playing()
@@ -220,7 +290,13 @@ impl Studio {
     /// Lists actual current controls for keyboard/gamepad fallback before painted focus is available.
     pub fn focus_actions(&self) -> Vec<launcher::menu::MenuAction> {
         use launcher::menu::MenuAction;
-        let mut actions = if self.view.discard.is_some() {
+        let mut actions = if self.view.workflow.recovery.busy {
+            if self.view.loading {
+                vec![Action::CancelOpen]
+            } else {
+                Vec::new()
+            }
+        } else if self.view.discard.is_some() {
             vec![Action::CancelDiscard, Action::ConfirmDiscard]
         } else if self.view.loading {
             let mut actions = vec![Action::CancelOpen];
@@ -228,9 +304,34 @@ impl Studio {
                 actions.push(Action::ToggleRecording);
             }
             actions
+        } else if self.view.workflow.recovery.visible {
+            let mut actions = vec![Action::HideRecovery, Action::ScanRecovery];
+            if !self.view.workflow.recovery.loading {
+                for (index, entry) in self.view.workflow.recovery.entries.iter().enumerate() {
+                    if entry.recoverable {
+                        actions.push(Action::RestoreRecovery(index));
+                    }
+                    actions.push(Action::DiscardRecovery(index));
+                }
+            }
+            actions
+        } else if self.view.workflow.show_settings {
+            vec![
+                Action::Library,
+                Action::Save,
+                if self.view.export.phase.busy() {
+                    Action::CancelExport
+                } else {
+                    Action::Export
+                },
+            ]
         } else if self.view.show_library || self.editor.is_none() {
             let mut actions = vec![Action::NewProject, Action::Refresh];
-            actions.extend((0..self.view.library.len()).map(Action::Open));
+            actions.extend(self.library_focus_actions());
+            actions.extend((0..self.view.library.len()).map(|index| Action::Open {
+                generation: self.view.workspace.library.generation,
+                index,
+            }));
             actions
         } else {
             vec![
@@ -255,15 +356,25 @@ impl Studio {
         if self.view.discard.is_none()
             && !self.view.loading
             && !self.view.show_library
+            && !self.view.workflow.show_settings
             && self.editor.is_some()
+            && !self.view.workflow.recovery.visible
+            && !self.view.workflow.recovery.busy
         {
+            actions.extend(self.workspace_focus_actions());
+            actions.extend(self.monitoring_focus_actions());
             actions.extend(self.camera_focus_actions());
+            actions.extend(self.audio_focus_actions());
             actions.extend(self.clip_focus_actions());
             actions.extend(self.speed_focus_actions());
             actions.extend(self.effect_focus_actions());
             actions.extend(self.title_focus_actions());
         }
-        if self.view.discard.is_none() && !self.view.loading {
+        if self.view.discard.is_none()
+            && !self.view.loading
+            && !self.view.workflow.recovery.visible
+            && !self.view.workflow.recovery.busy
+        {
             actions.extend(self.workflow_focus_actions());
         }
         let mut actions: Vec<_> = actions.into_iter().map(MenuAction::Studio).collect();
@@ -295,13 +406,37 @@ impl Studio {
         ) {
             self.cancel_camera_value();
             self.cancel_clip_time();
+            self.cancel_monitor_seek();
             Arc::make_mut(&mut self.view).speed_key = None;
         }
         match action {
+            Action::Monitoring(action) => self.monitoring_action(action)?,
+            Action::Workspace(action) => self.workspace_action(action),
+            Action::ScanRecovery => self.scan_recovery(),
+            Action::ShowRecovery => self.show_recovery(),
+            Action::HideRecovery => Arc::make_mut(&mut self.view).workflow.recovery.visible = false,
+            Action::RestoreRecovery(index) => {
+                let intent = self.recovery_restore_intent(index)?;
+                self.leave(intent, false)?;
+            }
+            Action::DiscardRecovery(index) => self.discard_recovery(index)?,
+            Action::RetryAutosave => self.retry_autosave(),
+            Action::CheckDependencies => self.check_dependencies()?,
+            Action::FullExportRange => self.full_export_range()?,
+            Action::SetExportRangeAtPlayhead(field) => self.export_range_at_playhead(field)?,
+            Action::EditExportRange(field) => self.begin_export_range(field)?,
+            Action::ApplyExportRange => self.apply_export_range()?,
+            Action::CancelExportRange => self.cancel_export_range(),
+            Action::UseCpuEncoder => self.use_cpu_encoder()?,
+            Action::Timeline(action) => self.timeline_action(action)?,
             Action::ImportMedia => self.begin_media(false)?,
             Action::RelinkMedia => self.begin_media(true)?,
             Action::CancelMedia => self.cancel_media(),
             Action::ToggleSettings => {
+                if !self.view.workflow.show_settings {
+                    self.transport.pause();
+                    self.release_camera();
+                }
                 let workflow = &mut Arc::make_mut(&mut self.view).workflow;
                 workflow.show_settings = !workflow.show_settings;
             }
@@ -314,15 +449,22 @@ impl Studio {
             | Action::CycleExportCodec
             | Action::CycleExportEncoder
             | Action::AdjustExportQuality(_)
-            | Action::ToggleExportAudio => self.output_setting(action)?,
+            | Action::ToggleExportAudio
+            | Action::ToggleRecordedHud => self.output_setting(action)?,
             Action::EditExportDestination => self.begin_destination(),
             Action::ApplyExportDestination => self.apply_destination()?,
             Action::CancelExportDestination => {
                 Arc::make_mut(&mut self.view).workflow.destination_draft = None
             }
-            Action::Export => self.queue_export()?,
+            Action::Export => {
+                self.cancel_diagnostics();
+                self.queue_export()?;
+            }
             Action::CancelExport => self.export_cancel = true,
-            Action::ToggleRecording => self.queue_capture_toggle(),
+            Action::ToggleRecording => {
+                self.cancel_diagnostics();
+                self.queue_capture_toggle();
+            }
             Action::Bookmark => {
                 if self.capture_request.is_none()
                     && self.view.capture.phase == recording_studio::capture::CapturePhase::Recording
@@ -332,17 +474,25 @@ impl Studio {
                 }
             }
             Action::NewProject => self.leave(DiscardIntent::NewProject, false)?,
-            Action::Open(index) => self.leave(DiscardIntent::Open(index), false)?,
+            Action::Open { generation, index } => {
+                let intent = self.library_intent(generation, index)?;
+                self.leave(intent, false)?;
+            }
+            Action::LibraryTools(action) => self.library_action(action)?,
             Action::ConfirmDiscard => {
-                if let Some(intent) = Arc::make_mut(&mut self.view).discard.take() {
+                if let Some(intent) = self.view.discard.clone() {
                     self.leave(intent, true)?;
                 }
             }
             Action::CancelDiscard => Arc::make_mut(&mut self.view).discard = None,
             Action::CancelOpen => {
+                if self.view.loading && self.view.workflow.recovery.busy {
+                    self.cancel_recovery_restore();
+                }
                 self.open_cancel.cancel();
                 self.open_job = None;
                 Arc::make_mut(&mut self.view).loading = false;
+                self.warn_retained_recovery();
             }
             Action::Refresh => {
                 self.ensure_storage()?;
@@ -429,14 +579,7 @@ impl Studio {
                     }],
                 )?;
             }
-            Action::DeleteSelected => {
-                let id = self
-                    .view
-                    .selected
-                    .ok_or("Select a timeline item to delete.")?;
-                self.edit("Delete item", &[Command::Delete { id }])?;
-                Arc::make_mut(&mut self.view).selected = None;
-            }
+            Action::DeleteSelected => self.delete_timeline_selection()?,
             Action::SetRate(rate) => {
                 let id = self
                     .view
@@ -505,6 +648,11 @@ impl Studio {
             Action::TrimTitleEnd => self.trim_title(false)?,
             Action::MoveTitle(frames) => self.move_title(frames)?,
             Action::ToggleEffect => self.toggle_effect()?,
+            Action::ToggleAudioMute => self.toggle_audio_mute()?,
+            Action::AdjustAudio {
+                parameter,
+                direction,
+            } => self.adjust_audio(parameter, direction)?,
             Action::AdjustEffect(direction) => self.adjust_effect(direction)?,
             Action::AddEffectKey => self.key_effect()?,
             Action::DeleteEffectKey => self.delete_effect_key()?,
@@ -513,8 +661,16 @@ impl Studio {
             Action::SelectEffectKey { effect, at } => self.select_effect_key(effect, at)?,
             Action::MoveEffect(frames) => self.move_effect(frames)?,
             Action::UseNativeReplay => self.use_native_replay()?,
+            Action::CameraViewport { .. } => self.focus_camera()?,
+            Action::CameraControl { shot, at, .. } => self.select_camera_key(shot, at)?,
+            Action::CameraSubject(reference) => self.select_camera_subject(reference)?,
+            Action::ReleaseCamera => self.release_camera(),
+            Action::ApplyCameraView => self.apply_camera_view()?,
+            Action::ResetCameraView => self.reset_camera_view(),
+            Action::ResetCameraHandles => self.reset_camera_handles()?,
             Action::CreateCamera(kind) => self.create_camera(kind)?,
             Action::CycleCameraTarget(direction) => self.cycle_camera_target(direction),
+            Action::ToggleCameraSubjectFilter => self.toggle_camera_subject_filter(),
             Action::RetargetCamera => self.retarget_camera()?,
             Action::AdjustCamera {
                 parameter,
@@ -522,6 +678,12 @@ impl Studio {
             } => self.adjust_camera(parameter, direction)?,
             Action::AddCameraKey => self.add_camera_key()?,
             Action::DeleteCameraKey => self.delete_camera_key()?,
+            Action::AddCameraFovKey
+            | Action::DeleteCameraFovKey
+            | Action::ClearCameraFov
+            | Action::CycleCameraFovEasing
+            | Action::StepCameraFovKey(_) => self.camera_fov_action(action)?,
+            Action::SelectCameraFovKey { shot, at } => self.select_camera_fov_key(shot, at)?,
             Action::CycleCameraEasing => self.cycle_camera_easing()?,
             Action::ToggleCameraSmoothing => self.toggle_camera_smoothing()?,
             Action::StepCameraKey(direction) => self.step_camera_key(direction)?,
@@ -553,208 +715,23 @@ impl Studio {
             Arc::make_mut(&mut self.view).discard = Some(intent);
             return Ok(());
         }
+        if confirmed && !self.recovery_leave(intent.clone())? {
+            return Ok(());
+        }
         match intent {
+            DiscardIntent::RestoreRecovery(id) => self.begin_restore(id)?,
             DiscardIntent::NewProject => {
                 let editor =
                     Editor::new(Project::new("Untitled project")).map_err(|e| e.to_string())?;
                 self.install(editor, None);
             }
-            DiscardIntent::Open(index) => {
-                self.ensure_storage()?;
-                let entry = self
-                    .view
-                    .library
-                    .get(index)
-                    .ok_or("This library item is no longer available. Refresh the library.")?;
-                if entry.interrupted && self.view.capture.phase.busy() {
-                    return Err(
-                        "Stop and finish recording before attempting interrupted-take recovery."
-                            .into(),
-                    );
-                }
-                self.thumbnails_cancel.cancel();
-                self.open_cancel.cancel();
-                self.open_cancel = Default::default();
-                let request = match entry.kind {
-                    LibraryKind::Project => StorageRequest::LoadProject {
-                        path: entry.path.clone(),
-                    },
-                    LibraryKind::Recording if entry.interrupted => {
-                        StorageRequest::RecoverRecording {
-                            path: entry.path.clone(),
-                            cancellation: self.open_cancel.clone(),
-                        }
-                    }
-                    LibraryKind::Recording => StorageRequest::OpenRecording {
-                        path: entry.path.clone(),
-                    },
-                };
-                self.open_job = Some(
-                    self.storage
-                        .as_mut()
-                        .expect("storage exists")
-                        .request(request)
-                        .map_err(|e| e.to_string())?,
-                );
-                Arc::make_mut(&mut self.view).loading = true;
-            }
+            DiscardIntent::Open {
+                path,
+                kind,
+                interrupted,
+            } => self.open_library_item(path, kind, interrupted)?,
         }
         Ok(())
-    }
-
-    /// Starts the service lazily so ordinary gameplay and launcher startup incur no studio IO.
-    fn ensure_storage(&mut self) -> Result<(), String> {
-        if self.storage.is_none() {
-            self.storage = Some(ProjectStorage::start().map_err(|e| e.to_string())?);
-        }
-        Ok(())
-    }
-
-    /// Coalesces repeated refresh presses into one outstanding library job.
-    fn refresh(&mut self) -> Result<(), String> {
-        if self.library_job.is_some() {
-            return Ok(());
-        }
-        self.ensure_storage()?;
-        self.thumbnails_cancel.cancel();
-        self.thumbnails_job = None;
-        self.library_job = Some(
-            self.storage
-                .as_mut()
-                .expect("storage exists")
-                .request(StorageRequest::ListLibrary {
-                    root: self.root.clone(),
-                })
-                .map_err(|e| e.to_string())?,
-        );
-        Arc::make_mut(&mut self.view).library_loading = true;
-        Ok(())
-    }
-
-    /// Captures an immutable revision; opening another document cannot misapply its save completion.
-    fn save(&mut self) -> Result<(), String> {
-        if self.save_job.is_some() {
-            return Ok(());
-        }
-        self.ensure_storage()?;
-        self.thumbnails_cancel.cancel();
-        let editor = self
-            .editor
-            .as_ref()
-            .ok_or("Create or open a project first.")?;
-        let project = Arc::clone(editor.project());
-        let revision = editor.revision();
-        let request = if let Some(path) = &self.view.file {
-            StorageRequest::SaveProject {
-                path: path.clone(),
-                project,
-                revision,
-                source_base: self.root.clone(),
-            }
-        } else {
-            StorageRequest::SaveNewProject {
-                directory: self.root.clone(),
-                project,
-                revision,
-                source_base: self.root.clone(),
-            }
-        };
-        let job = self
-            .storage
-            .as_mut()
-            .expect("storage exists")
-            .request(request)
-            .map_err(|e| e.to_string())?;
-        self.save_job = Some((job, self.document));
-        Arc::make_mut(&mut self.view).saving = true;
-        Ok(())
-    }
-
-    /// Publishes only the newest matching job; a failed open leaves the existing editor intact.
-    fn completed(&mut self, completed: StorageResult) {
-        let library = self.library_job == Some(completed.job);
-        let open = self.open_job == Some(completed.job);
-        let saved = self.save_job.filter(|(job, _)| *job == completed.job);
-        let preferences = self.preferences_job == Some(completed.job);
-        let thumbnails = self.thumbnails_job == Some(completed.job);
-        if !library && !open && saved.is_none() && !preferences && !thumbnails {
-            return;
-        }
-        if preferences {
-            self.preferences_job = None;
-        }
-        if thumbnails {
-            self.thumbnails_job = None;
-        }
-        if library {
-            self.library_job = None;
-            Arc::make_mut(&mut self.view).library_loading = false;
-        }
-        if open {
-            self.open_job = None;
-            Arc::make_mut(&mut self.view).loading = false;
-        }
-        if saved.is_some() {
-            self.save_job = None;
-            Arc::make_mut(&mut self.view).saving = false;
-        }
-        let value = match completed.result {
-            Ok(value) => value,
-            Err(error) => {
-                bevy::log::warn!(error = %error, "Studio storage operation failed");
-                Arc::make_mut(&mut self.view).error = Some(error.to_string());
-                return;
-            }
-        };
-        match value {
-            StorageValue::Library(listing) => {
-                let view = Arc::make_mut(&mut self.view);
-                view.library = listing.entries.into();
-                view.library_truncated = listing.truncated;
-                view.notice = (!listing.issues.is_empty()).then(|| listing.issues.join("\n"));
-                view.workflow.thumbnail_sheet = None;
-                view.workflow.thumbnail_slots = Arc::default();
-                self.thumbnails_cancel = Default::default();
-                self.thumbnails_job = self.storage.as_mut().and_then(|storage| {
-                    storage
-                        .request(StorageRequest::Thumbnails {
-                            entries: self.view.library.clone(),
-                            cancellation: self.thumbnails_cancel.clone(),
-                        })
-                        .ok()
-                });
-            }
-            StorageValue::Thumbnails { sheet, slots } => {
-                let workflow = &mut Arc::make_mut(&mut self.view).workflow;
-                workflow.thumbnail_sheet = Some(sheet);
-                workflow.thumbnail_slots = slots.into();
-            }
-            StorageValue::CaptureSettings(settings) => {
-                if !self.preferences_changed {
-                    Arc::make_mut(&mut self.view).workflow.capture_settings = settings;
-                }
-            }
-            StorageValue::LoadedProject { path, editor } => self.install(editor, Some(path)),
-            StorageValue::CapturedVideo { editor, notice } => {
-                self.install(editor, None);
-                Arc::make_mut(&mut self.view).notice = notice;
-            }
-            StorageValue::SavedProject { path, revision } => {
-                if saved.is_some_and(|(_, document)| document == self.document) {
-                    if let Some(editor) = &mut self.editor {
-                        editor.mark_saved(revision);
-                    }
-                    Arc::make_mut(&mut self.view).file = Some(path);
-                    let _ = self.refresh();
-                }
-            }
-            StorageValue::Recording { path, reader } => {
-                if let Err(error) = self.import_replay(path, reader) {
-                    Arc::make_mut(&mut self.view).error = Some(error);
-                }
-            }
-        }
-        self.publish_editor();
     }
 
     /// Adds a recording as immutable source media; a recovered recording uses only its committed duration.
@@ -806,20 +783,26 @@ impl Studio {
 
     /// Replaces the active document only after the selected input has been fully admitted.
     fn install(&mut self, editor: Editor, path: Option<PathBuf>) {
+        self.reset_camera_view();
+        Arc::make_mut(&mut self.view).camera_workspace = Default::default();
         if let Some(job) = &self.media_job {
             job.cancellation.cancel();
         }
         self.cancel_title_text();
         self.cancel_camera_value();
         self.cancel_clip_time();
+        self.cancel_export_range();
         self.document = self.document.wrapping_add(1);
+        self.reset_recovery_document();
         self.editor = Some(editor);
         self.replays.clear();
         self.transport = Transport::default();
         let view = Arc::make_mut(&mut self.view);
+        view.loading = false;
         view.file = path;
         view.show_library = false;
         view.selected = None;
+        view.workspace.timeline = Default::default();
         view.camera_target = None;
         view.speed_key = None;
         view.preview = Default::default();
@@ -831,7 +814,11 @@ impl Studio {
 
     /// Keeps per-frame presentation cheap: projects and library arrays remain shared publications.
     fn publish_editor(&mut self) {
+        self.publish_monitoring();
+        self.reconcile_timeline_selection();
         self.reconcile_clip_time();
+        self.reconcile_export_range();
+        self.reconcile_camera_workspace();
         let view = Arc::make_mut(&mut self.view);
         if let Some(editor) = &self.editor {
             if view
@@ -870,7 +857,12 @@ impl Studio {
             .editor
             .as_mut()
             .ok_or("Create or open a project first.")?;
-        editor.apply(label, commands).map_err(|e| e.to_string())?;
+        let locked = &self.view.workspace.timeline.locked;
+        editor
+            .apply_guarded(label, commands, |before, after| {
+                recording_studio::timeline::ensure_unlocked(before, after, locked)
+            })
+            .map_err(|e| e.to_string())?;
         let duration = editor.duration();
         self.cancel_camera_value();
         self.cancel_clip_time();
@@ -884,11 +876,12 @@ impl Studio {
     pub fn pointer(
         &mut self,
         hovered: Option<launcher::menu::MenuAction>,
-        x: Option<f32>,
+        point: Option<[f32; 2]>,
         held: bool,
         pressed: bool,
+        modifiers: [bool; 3],
     ) -> bool {
-        if self.timeline_pointer(hovered, x, held, pressed) {
+        if self.timeline_pointer(hovered, point, held, pressed, modifiers) {
             return true;
         }
         if !held {
@@ -904,7 +897,7 @@ impl Studio {
         let Some((left, width)) = self.scrub else {
             return false;
         };
-        if let Some(x) = x {
+        if let Some([x, _]) = point {
             let fraction =
                 ((f64::from(x) - f64::from(left)) / f64::from(width.max(1))).clamp(0.0, 1.0);
             let at = self
@@ -930,8 +923,10 @@ impl Studio {
 
     /// Modal input and desktop focus loss release the editor's pointer capture.
     pub fn cancel_pointer(&mut self) {
+        self.release_camera();
         self.scrub = None;
         self.gesture = None;
         Arc::make_mut(&mut self.view).workspace.drag = None;
+        self.clear_timeline_drag();
     }
 }

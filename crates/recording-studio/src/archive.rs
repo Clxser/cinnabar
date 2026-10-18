@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{MediaTime, time::MAX_MEDIA_MICROS};
 
+#[cfg(test)]
+mod compression_tests;
 mod format;
 mod reader;
 mod task;
@@ -137,6 +139,8 @@ pub struct RecordingConfig {
     pub segment_bytes: u64,
     pub segment_duration: MediaTime,
     pub disk_quota: u64,
+    /// Zlib level for journal segments. Precompressed scene payloads use stored zlib blocks.
+    pub compression_level: u32,
 }
 
 impl Default for RecordingConfig {
@@ -147,6 +151,7 @@ impl Default for RecordingConfig {
             segment_bytes: 4 * 1024 * 1024,
             segment_duration: MediaTime(1_000_000),
             disk_quota: 25 * 1024 * 1024 * 1024,
+            compression_level: 1,
         }
     }
 }
@@ -159,6 +164,7 @@ impl RecordingConfig {
             || !(64 * 1024..=MAX_CHECKPOINT_BYTES).contains(&self.segment_bytes)
             || !(100_000..=10_000_000).contains(&self.segment_duration.0)
             || self.disk_quota < 1024 * 1024
+            || self.compression_level > 9
         {
             return Err(ArchiveError::Invalid("invalid recording storage limits"));
         }

@@ -3,6 +3,7 @@ pub mod audio;
 pub mod audio_ingress;
 pub mod named_audio;
 pub mod observations;
+pub mod preview;
 pub mod session_audio;
 
 mod plugin;

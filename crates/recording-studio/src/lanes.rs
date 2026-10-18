@@ -15,6 +15,7 @@ pub struct TimelineLanes {
     pub audio: Lanes,
     pub titles: Lanes,
     source_names: BTreeMap<Id, Arc<str>>,
+    tracks: Arc<[crate::tracks::Track]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -42,6 +43,7 @@ impl TimelineLanes {
             audio,
             titles,
             source_names,
+            tracks: _,
         } = self;
         cameras.items.is_empty()
             && effects.items.is_empty()
@@ -63,7 +65,8 @@ impl TimelineLanes {
             .iter()
             .map(|clip| clip.span().map(|span| (clip.id, span)))
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self {
+        let mut lanes = Self {
+            tracks: Arc::from([]),
             source_names: project
                 .sources
                 .iter()
@@ -91,7 +94,39 @@ impl TimelineLanes {
                     .map(|title| (title.id, title.span))
                     .collect(),
             ),
-        })
+        };
+        let visual_tracks = project
+            .clips
+            .iter()
+            .map(|clip| clip.track + 1)
+            .max()
+            .unwrap_or(1);
+        let mut tracks = (0..visual_tracks)
+            .map(crate::tracks::Track::Video)
+            .collect::<Vec<_>>();
+        for (track, rows) in [
+            (crate::tracks::Track::Camera, lanes.cameras.rows()),
+            (crate::tracks::Track::Effects, lanes.effects.rows()),
+            (crate::tracks::Track::Audio, lanes.audio.rows()),
+            (crate::tracks::Track::Titles, lanes.titles.rows()),
+        ] {
+            tracks.extend(std::iter::repeat_n(track, rows));
+        }
+        lanes.tracks = tracks.into();
+        Ok(lanes)
+    }
+
+    /// Physical rows derive from the admitted logical tracks and overlap packing exactly once.
+    pub fn tracks(&self) -> &[crate::tracks::Track] {
+        &self.tracks
+    }
+
+    /// Finds the first physical row for a stable logical owner.
+    pub fn track_start(&self, track: crate::tracks::Track) -> usize {
+        self.tracks
+            .iter()
+            .position(|candidate| *candidate == track)
+            .unwrap_or(0)
     }
 }
 

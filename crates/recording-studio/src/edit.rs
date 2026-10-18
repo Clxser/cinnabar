@@ -12,6 +12,8 @@ use crate::{
 };
 
 mod operations;
+#[cfg(test)]
+mod save_tests;
 
 pub const MAX_EDIT_COMMANDS: usize = 512;
 pub const MAX_UNDO_STEPS: usize = 100;
@@ -21,6 +23,10 @@ pub const MAX_UNDO_BYTES: usize = 32 * 1024 * 1024;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    SetTrackMuted {
+        track: crate::tracks::Track,
+        muted: bool,
+    },
     Rename {
         name: String,
     },
@@ -151,6 +157,18 @@ impl Editor {
     pub fn project(&self) -> &Arc<Project> {
         &self.current.project
     }
+
+    /// Restoring metadata creates an unsaved copy with no false durable baseline or inherited undo history.
+    pub fn recovered(project: Project) -> Result<Self, StudioError> {
+        let mut editor = Self::new(project)?;
+        editor.saved_project = Arc::new(Project::new(editor.project().name.clone()));
+        Ok(editor)
+    }
+
+    /// Storage acknowledges the exact immutable snapshot, even if editing has advanced while saving.
+    pub fn mark_saved_snapshot(&mut self, project: Arc<Project>) {
+        self.saved_project = project;
+    }
     /// Admission computes duration once; playback and undo use the matching immutable revision.
     pub const fn duration(&self) -> MediaTime {
         self.current.duration
@@ -194,9 +212,20 @@ impl Editor {
         label: impl Into<String>,
         commands: &[Command],
     ) -> Result<bool, StudioError> {
+        self.apply_guarded(label, commands, |_, _| Ok(()))
+    }
+
+    /// Workspace constraints inspect the fully synchronized draft before a single undo step is published.
+    pub fn apply_guarded(
+        &mut self,
+        label: impl Into<String>,
+        commands: &[Command],
+        admit: impl FnOnce(&Project, &Project) -> Result<(), StudioError>,
+    ) -> Result<bool, StudioError> {
         let label = label.into();
         crate::error::limit("edit label bytes", label.len(), 256)?;
         let next = self.draft(commands)?;
+        admit(&self.current.project, &next)?;
         if next == *self.current.project {
             return Ok(false);
         }

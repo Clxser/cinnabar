@@ -73,9 +73,8 @@ impl IntervalIndex {
                     kind: "clip",
                     id: transition.to.0,
                 })?;
-            let start = MediaTime(clip.at.0.saturating_sub(transition.duration.0 / 2));
             entries.push(Entry {
-                span: Span::new(start, start.checked_add(transition.duration)?)?,
+                span: transition.span_at(clip.at)?,
                 slot: Slot::Transition(index),
             });
         }

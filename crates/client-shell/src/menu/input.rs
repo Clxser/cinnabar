@@ -9,6 +9,7 @@ mod preview;
 mod remapping;
 mod server_list;
 mod settings_pointer;
+mod studio_camera;
 
 use context::MenuInputContext;
 use settings_pointer::{native_release_action, update_slider};
@@ -198,80 +199,6 @@ impl MenuModifiers {
 }
 
 impl MenuRuntime {
-    /// Focus `field` with its caret after the text, as a newly selected box.
-    pub(super) fn focus_field(&mut self, field: MenuField) {
-        if !matches!(field, MenuField::StudioClip(_)) {
-            self.studio.cancel_clip_time();
-        }
-        if let MenuField::StudioClip(parameter) = field
-            && let Err(error) = self.studio.begin_clip_time(parameter)
-        {
-            std::sync::Arc::make_mut(&mut self.studio.view).error = Some(error);
-            self.field = None;
-            return;
-        }
-        if field == MenuField::StudioDestination {
-            self.studio.begin_destination();
-        }
-        if let MenuField::StudioCamera(parameter) = field
-            && let Err(error) = self.studio.begin_camera_value(parameter)
-        {
-            std::sync::Arc::make_mut(&mut self.studio.view).error = Some(error);
-            self.field = None;
-            return;
-        }
-        if field == MenuField::StudioTitle
-            && let Err(error) = self.studio.begin_title_text()
-        {
-            std::sync::Arc::make_mut(&mut self.studio.view).error = Some(error);
-            self.field = None;
-            return;
-        }
-        self.field = Some(field);
-        self.edit_field(|editor| editor.move_end(false));
-    }
-
-    fn has_focused_field(&self) -> bool {
-        self.field.is_some()
-    }
-
-    /// Apply `edit` to the focused field; every edit or caret move restarts the blink,
-    /// as vanilla's text edit box shows its caret again after typing.
-    fn edit_field(&mut self, edit: impl FnOnce(&mut ChatEditor)) {
-        let Some(field) = self.field else {
-            return;
-        };
-        if field == MenuField::SkinName && self.dressing_room.busy {
-            return;
-        }
-        edit(self.editor_mut(field));
-        if field == MenuField::StudioDestination {
-            self.studio.publish_destination();
-        }
-        if field == MenuField::StudioTitle {
-            self.studio.publish_title_text();
-        }
-        if matches!(field, MenuField::StudioCamera(_)) {
-            self.studio.publish_camera_value();
-        }
-        if matches!(field, MenuField::StudioClip(_)) {
-            self.studio.publish_clip_time();
-        }
-        if let MenuField::MacroCommand(slot) = field {
-            self.sync_macro_command(slot);
-        }
-        if field == MenuField::RealmCode
-            && let Some(state) = &mut self.realm_membership.state
-        {
-            state.code = self.realm_membership.code.as_str().to_owned();
-            state.error = None;
-        }
-        self.caret_revision = self.caret_revision.wrapping_add(1);
-        if field == MenuField::SkinName {
-            self.sync_skin_name_draft();
-        }
-    }
-
     /// A press inside the focused field puts its caret at `byte`.
     pub fn place_caret(&mut self, byte: usize) {
         self.edit_field(|editor| editor.place_cursor(byte));
@@ -385,7 +312,18 @@ pub fn drive_menu_input(
         mut keyboard_messages,
         mut focus,
         driven,
+        keyboard_events,
+        motion_events,
+        mut camera_input,
     } = context;
+    let elapsed = time.as_ref().map_or(0.0, |time| time.delta_secs_f64());
+    camera_input.observe(
+        keyboard_events.as_deref(),
+        mouse_messages.as_deref(),
+        motion_events.as_deref(),
+        menu.studio.view.camera_workspace.focused,
+        window.1.focused,
+    );
     if let Some(time) = time {
         menu.advance_death_controls(time.delta_secs_f64());
         let studio_visible =
@@ -458,6 +396,7 @@ pub fn drive_menu_input(
             || runtime.server_forms().owns_input()
                 && (!menu.is_visible() || runtime.server_forms().settings_form_active())
     }) {
+        menu.studio.release_camera();
         presentation.cancel_menu_player_preview_input();
         presentation.cancel_menu_server_list_input();
         gui_scale_drag.preview_touch = None;
@@ -618,17 +557,31 @@ pub fn drive_menu_input(
     let pointer_pressed = mouse_buttons.pressed(MouseButton::Left) || gui_scale_drag.left_held;
     let pointer_just_pressed =
         mouse_buttons.just_pressed(MouseButton::Left) || (pointer_pressed && !menu.pointer_down);
-    let studio_owns_pointer = if menu.screen() == launcher::menu::MenuScreen::RecordingStudio {
-        let hovered = menu.hovered;
-        menu.studio.pointer(
-            hovered,
-            cursor_position.map(|position| position.x),
-            pointer_pressed,
-            pointer_just_pressed,
-        )
-    } else {
-        false
-    };
+    let camera_owns_pointer = camera_input.drive(
+        &mut menu,
+        cursor_position.map(|point| point.to_array()),
+        pointer_pressed,
+        pointer_just_pressed,
+        elapsed,
+        studio_camera::viewport_visible(&presentation.0),
+    );
+    let studio_owns_pointer = camera_owns_pointer
+        || if menu.screen() == launcher::menu::MenuScreen::RecordingStudio {
+            let hovered = menu.hovered;
+            menu.studio.pointer(
+                hovered,
+                cursor_position.map(|position| [position.x, position.y]),
+                pointer_pressed,
+                pointer_just_pressed,
+                [
+                    modifiers.shift(),
+                    modifiers.shortcut(),
+                    modifiers.0 & (MenuModifiers::ALT_LEFT | MenuModifiers::ALT_RIGHT) != 0,
+                ],
+            )
+        } else {
+            false
+        };
     if studio_owns_pointer {
         menu.field = None;
     }

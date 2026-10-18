@@ -7,7 +7,9 @@ use std::{
 };
 
 use assets::RuntimeFontCatalog;
-use render_model::{NAMETAG_ATLAS_SIDE, NametagAtlasRect};
+use render_model::{
+    MAX_NAMETAG_ATLAS_CELLS as MAX_ATLAS_LINES, NAMETAG_ATLAS_SIDE, NametagAtlasRect,
+};
 use ui::{
     FONT_DESIGN_PIXEL_TEXELS, TEXT_BASELINE_64, TEXT_BOLD_OFFSET_64, TEXT_LINE_HEIGHT_64,
     TextLayout, TextLayoutCache, TextLayoutRequest, TextStyle, TextWrap, UiScale,
@@ -236,9 +238,6 @@ impl NametagAtlas {
         )
     }
 }
-
-/// Retained line bound, far above any frame's visible tags.
-const MAX_ATLAS_LINES: usize = 4096;
 
 struct LineLayout {
     layout: Arc<TextLayout>,

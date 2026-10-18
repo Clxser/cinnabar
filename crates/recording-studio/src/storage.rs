@@ -17,8 +17,12 @@ use crate::{
 mod files;
 mod library;
 mod preferences;
+mod recovery;
+pub use recovery::{AUTOSAVE_INTERVAL_MICROS, RecoveryEntry, RecoveryRequest, RecoveryValue};
 
-pub use library::{LibraryEntry, LibraryKind, LibraryListing};
+pub use library::{
+    LibraryEntry, LibraryKind, LibraryListing, LibraryQuery, LibrarySort, MAX_LIBRARY_SEARCH_BYTES,
+};
 
 const STORAGE_QUEUE_CAPACITY: usize = 4;
 
@@ -28,6 +32,10 @@ pub enum StorageError {
     Busy,
     #[error("project storage worker is unavailable")]
     Closed,
+    #[error(
+        "this recovery slot was retired; retry autosave explicitly to protect the open editor in a new slot"
+    )]
+    RecoveryRetired,
     #[error("{path}: {source}")]
     Io {
         path: PathBuf,
@@ -36,6 +44,12 @@ pub enum StorageError {
     },
     #[error(transparent)]
     Project(#[from] StudioError),
+    #[error("{path}: {source}")]
+    InvalidProject {
+        path: PathBuf,
+        #[source]
+        source: StudioError,
+    },
     #[error(transparent)]
     Recording(#[from] ArchiveError),
     #[error("project path has no parent directory")]
@@ -45,6 +59,7 @@ pub enum StorageError {
 }
 
 pub enum StorageRequest {
+    Recovery(RecoveryRequest),
     SaveNewProject {
         directory: PathBuf,
         project: Arc<Project>,
@@ -63,6 +78,7 @@ pub enum StorageRequest {
     },
     ListLibrary {
         root: PathBuf,
+        query: LibraryQuery,
     },
     OpenRecording {
         path: PathBuf,
@@ -85,6 +101,7 @@ pub enum StorageRequest {
 }
 
 pub enum StorageValue {
+    Recovery(RecoveryValue),
     LoadedProject {
         path: PathBuf,
         editor: Editor,
@@ -129,8 +146,14 @@ impl ProjectStorage {
         std::thread::Builder::new()
             .name("studio-project-storage".into())
             .spawn(move || {
+                let mut recovery = recovery::Store::default();
                 while let Ok((job, request)) = jobs.recv() {
-                    let result = execute(request);
+                    let result = match request {
+                        StorageRequest::Recovery(request) => {
+                            recovery.execute(request).map(StorageValue::Recovery)
+                        }
+                        request => execute(request),
+                    };
                     if completed.send(StorageResult { job, result }).is_err() {
                         break;
                     }
@@ -179,6 +202,7 @@ impl ProjectStorage {
 /// Runs only on the storage worker; callers consume structured completions on their own schedule.
 fn execute(request: StorageRequest) -> Result<StorageValue, StorageError> {
     match request {
+        StorageRequest::Recovery(_) => unreachable!("recovery owns its ordered worker state"),
         StorageRequest::LoadProject { path } => {
             let path = files::absolute(&path)?;
             let mut project = files::load(&path)?;
@@ -215,7 +239,9 @@ fn execute(request: StorageRequest) -> Result<StorageValue, StorageError> {
             files::save(&path, &project, &files::absolute(&source_base)?)?;
             Ok(StorageValue::SavedProject { path, revision })
         }
-        StorageRequest::ListLibrary { root } => Ok(StorageValue::Library(library::list(&root)?)),
+        StorageRequest::ListLibrary { root, query } => {
+            Ok(StorageValue::Library(library::list(&root, &query)?))
+        }
         StorageRequest::Thumbnails {
             entries,
             cancellation,

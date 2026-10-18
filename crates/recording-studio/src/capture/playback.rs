@@ -24,6 +24,8 @@ pub struct RecordedView {
 pub struct CameraRecording {
     cursor: RecordingCursor,
     current: Option<RecordedView>,
+    next: Option<RecordedView>,
+    position: Option<MediaTime>,
 }
 
 impl CameraRecording {
@@ -38,6 +40,8 @@ impl CameraRecording {
         Ok(Self {
             cursor: reader.into_cursor(),
             current: None,
+            next: None,
+            position: None,
         })
     }
 
@@ -57,57 +61,118 @@ impl CameraRecording {
         at: MediaTime,
         cancelled: impl Fn() -> bool,
     ) -> Result<RecordedView, ArchiveError> {
-        let mut current = None;
-        let result = self
-            .cursor
-            .seek(at, &cancelled, |record| observe(record, &mut current))
-            .and_then(|()| {
-                current.ok_or(ArchiveError::Invalid(
-                    "recording has no camera sample at this time",
-                ))
-            });
-        match result {
-            Ok(view) => {
-                self.current = Some(view);
-                Ok(view)
+        self.current = None;
+        self.next = None;
+        let result = (|| {
+            let mut baseline = at;
+            loop {
+                self.cursor.seek(baseline, &cancelled, |record| {
+                    observe(record, &mut self.current)
+                })?;
+                if self.current.is_some() {
+                    break;
+                }
+                let checkpoint = self.cursor.reader().checkpoint_at(baseline)?;
+                if checkpoint == MediaTime::ZERO {
+                    break;
+                }
+                baseline = MediaTime(checkpoint.0 - 1);
             }
-            Err(error) => {
-                self.invalidate();
-                Err(error)
+            if baseline < at {
+                self.cursor
+                    .advance_to(at, &cancelled, |record| observe(record, &mut self.current))?;
             }
-        }
+            self.read_next(&cancelled)?;
+            self.sample(at)
+        })();
+        self.finish(at, result)
     }
 
-    /// Advances only newly crossed samples, preserving the original camera between recorded frames.
+    /// Promotes crossed samples once and evaluates two admitted poses without accumulating motion.
     pub fn advance_to(
         &mut self,
         at: MediaTime,
         cancelled: impl Fn() -> bool,
     ) -> Result<RecordedView, ArchiveError> {
-        let mut current = self.current;
-        let result = self
-            .cursor
-            .advance_to(at, &cancelled, |record| observe(record, &mut current))
-            .and_then(|()| {
-                current.ok_or(ArchiveError::Invalid(
+        let result = (|| {
+            if cancelled() {
+                return Err(ArchiveError::Cancelled);
+            }
+            if self.position.is_none_or(|previous| at < previous) || at > self.duration() {
+                return Err(ArchiveError::Invalid(
                     "camera playback needs a successful seek",
-                ))
-            });
-        match result {
-            Ok(view) => {
-                self.current = Some(view);
-                Ok(view)
+                ));
             }
-            Err(error) => {
-                self.invalidate();
-                Err(error)
+            if self.next.is_some_and(|next| next.at <= at) {
+                self.current = self.next.take();
+                self.cursor
+                    .advance_to(at, &cancelled, |record| observe(record, &mut self.current))?;
+                self.read_next(&cancelled)?;
             }
-        }
+            self.sample(at)
+        })();
+        self.finish(at, result)
     }
 
     /// A failed sibling scene track cannot leave an independently advancing camera cursor behind.
     pub fn invalidate(&mut self) {
         self.cursor.invalidate();
+        self.current = None;
+        self.next = None;
+        self.position = None;
+    }
+
+    /// Gameplay records and legacy settings-only checkpoints never manufacture a new camera sample.
+    fn read_next(&mut self, cancelled: &impl Fn() -> bool) -> Result<(), ArchiveError> {
+        self.next = None;
+        while let Some(at) = self.cursor.next_time(cancelled)? {
+            self.cursor
+                .advance_to(at, cancelled, |record| observe(record, &mut self.next))?;
+            if self.next.is_some() {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Source camera rotation follows shortest arcs; large unmarked jumps remain discrete cuts.
+    fn sample(&self, at: MediaTime) -> Result<RecordedView, ArchiveError> {
+        let current = self.current.ok_or(ArchiveError::Invalid(
+            "recording has no camera sample at this time",
+        ))?;
+        let pose = self
+            .next
+            .filter(|next| next.at > current.at)
+            .map_or(current.pose, |next| {
+                let distance = current
+                    .pose
+                    .position
+                    .into_iter()
+                    .zip(next.pose.position)
+                    .map(|(a, b)| (a - b).powi(2))
+                    .sum::<f64>();
+                if distance > 64.0_f64.powi(2) || next.at.0 - current.at.0 > 1_000_000 {
+                    return current.pose;
+                }
+                let amount = at.saturating_sub(current.at).0 as f64
+                    / next.at.saturating_sub(current.at).0 as f64;
+                current.pose.interpolated(next.pose, amount)
+            });
+        Ok(RecordedView { at, pose })
+    }
+
+    /// Failed lookahead cannot leave a future cursor paired with an old published source pose.
+    fn finish(
+        &mut self,
+        at: MediaTime,
+        result: Result<RecordedView, ArchiveError>,
+    ) -> Result<RecordedView, ArchiveError> {
+        if result.is_ok() {
+            self.position = Some(at);
+        } else {
+            self.invalidate();
+        }
+        result
     }
 }
 
@@ -124,7 +189,7 @@ fn observe(
     current: &mut Option<RecordedView>,
 ) -> Result<(), ArchiveError> {
     match record.kind {
-        RecordKind::CheckpointStart => *current = None,
+        RecordKind::CheckpointStart => {}
         RecordKind::CheckpointEnd | RecordKind::Gameplay => {}
         RecordKind::CheckpointPart => {
             bounded(record.payload)?;
@@ -181,4 +246,62 @@ fn admit_pose(
         .map_err(|_| ArchiveError::Invalid("invalid recorded camera pose"))?;
     *current = Some(RecordedView { at, pose });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_only_checkpoints_preserve_the_previous_camera_pose() {
+        let pose = CameraPose {
+            yaw: 137.0,
+            ..CameraPose::default()
+        };
+        let mut current = Some(RecordedView {
+            at: MediaTime(10),
+            pose,
+        });
+        observe(
+            ReplayRecord {
+                sequence: 1,
+                at: MediaTime(20),
+                kind: RecordKind::CheckpointStart,
+                payload: &[],
+            },
+            &mut current,
+        )
+        .unwrap();
+        let legacy = serde_json::to_vec(&CaptureSettings::default()).unwrap();
+        observe(
+            ReplayRecord {
+                sequence: 2,
+                at: MediaTime(20),
+                kind: RecordKind::CheckpointPart,
+                payload: &legacy,
+            },
+            &mut current,
+        )
+        .unwrap();
+        assert_eq!(current.unwrap().pose, pose);
+        assert_eq!(current.unwrap().at, MediaTime(10));
+        let no_pose = serde_json::to_vec(&PovCheckpoint {
+            version: POV_CHECKPOINT_VERSION,
+            settings: CaptureSettings::default(),
+            camera: None,
+        })
+        .unwrap();
+        observe(
+            ReplayRecord {
+                sequence: 3,
+                at: MediaTime(30),
+                kind: RecordKind::CheckpointPart,
+                payload: &no_pose,
+            },
+            &mut current,
+        )
+        .unwrap();
+        assert_eq!(current.unwrap().pose, pose);
+        assert_eq!(current.unwrap().at, MediaTime(10));
+    }
 }

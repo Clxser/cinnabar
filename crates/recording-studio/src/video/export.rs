@@ -44,7 +44,7 @@ impl VideoWriter {
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit());
-        let process = MediaChild::start(command, cancellation.clone())?;
+        let process = MediaChild::start_output(command, cancellation.clone(), &settings.path, 0)?;
         Ok(Self {
             process,
             size,
@@ -65,6 +65,7 @@ impl VideoWriter {
         if index != self.next || size != self.size || frame_byte_len(size)? != rgba8.len() {
             return Err("An export frame has a wrong index, extent or pixel length.".into());
         }
+        let _deadline = self.process.guard_io();
         self.process
             .stdin
             .as_mut()

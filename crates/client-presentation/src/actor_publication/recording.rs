@@ -10,6 +10,11 @@ pub struct ReplayActors {
     pub frame: Option<ActorRenderFrame>,
     requested: bool,
     scratch: ActorFrameState,
+    scene: ActorRenderScene,
+    source_catalog: Option<render_model::ActorRigCatalogIdentity>,
+    source_artwork: Option<render_model::ActorArtworkPages>,
+    /// Most recent admitted recording-only preparation; excludes ordinary gameplay preparation.
+    pub prepare_micros: u64,
 }
 
 impl ReplayActors {
@@ -19,6 +24,10 @@ impl ReplayActors {
             self.frame = None;
             self.requested = false;
             self.scratch = ActorFrameState::default();
+            self.scene = ActorRenderScene::default();
+            self.source_catalog = None;
+            self.source_artwork = None;
+            self.prepare_micros = 0;
         }
         self.enabled = enabled;
     }
@@ -31,9 +40,9 @@ impl ReplayActors {
 
 /// Samples the same admitted actors, artwork and animation clock with an independent body view.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn prepare(
+pub(super) fn prepare<'a>(
     replay: &mut ReplayActors,
-    stream: Option<&WorldStream>,
+    stream: Option<&'a WorldStream>,
     input: &ActorFrameInput,
     mut view: bodies::PoseView,
     visibility: Option<crate::local_player::FrozenLocalAvatarVisibility>,
@@ -46,18 +55,34 @@ pub(super) fn prepare(
     hand: &mut ActorRigFrameBuilder,
     glint: Option<&render_scene::UiGlintSettings>,
     profiler: Option<&RuntimeStageProfiler>,
+    sampled_frame: Option<actor_animation::ActorRenderFrame<'a>>,
 ) {
     if !replay.enabled || !std::mem::take(&mut replay.requested) {
         return;
     }
+    let started = std::time::Instant::now();
     // The hand keeps the ordinary first-person sample; replay bodies use their world-space pose.
     view.first_person = false;
     let session = stream.map(|stream| stream.authority().actor_session_id());
     if replay.scratch.published_session != session {
         replay.scratch = ActorFrameState::default();
         replay.scratch.published_session = session;
+        replay.source_catalog = None;
+        replay.source_artwork = None;
+        replay.scene = ActorRenderScene::default();
     }
-    let original_artwork = Arc::clone(&scene.frame().artwork);
+    if replay.source_catalog != Some(scene.catalog_identity()) {
+        replay.scene.copy_catalog_from(scene);
+        replay.source_catalog = Some(scene.catalog_identity());
+    }
+    if replay
+        .source_artwork
+        .as_ref()
+        .is_none_or(|old| !old.shares_storage_with(artwork))
+    {
+        replay.scene.configure_artwork(artwork.clone());
+        replay.source_artwork = Some(artwork.clone());
+    }
     let scratch = &mut replay.scratch;
     let mut equipment = equipment;
     let mut geometries = Vec::new();
@@ -75,6 +100,7 @@ pub(super) fn prepare(
         },
         |_, _, _, _| false,
         &mut geometries,
+        sampled_frame.map(actor_animation::ActorRenderFrame::into_additional_view),
     );
     let (_, local) = bodies::place_local(
         &mut bodies,
@@ -122,7 +148,7 @@ pub(super) fn prepare(
         },
         artwork,
         entity_assets,
-        scene,
+        &mut replay.scene,
         (view.partial_tick, 0.0, glint),
         &mut geometries,
     );
@@ -130,12 +156,23 @@ pub(super) fn prepare(
     if let Some(equipment) = equipment {
         geometries.extend(equipment.take_pending_geometries());
     }
-    // Use the native catalog so server, skin and equipment geometry keep their actual owners.
-    // The ordinary publication follows this one and retains the gameplay camera's selected batch.
+    // New skin/item geometry remains registered for subsequent live frames. Recording draws and
+    // artwork use their own scene, so they cannot reset the live rig or churn its GPU residency.
     register_geometries(hand, scene, geometries, profiler);
+    if replay.source_catalog != Some(scene.catalog_identity()) {
+        replay.scene.copy_catalog_from(scene);
+        replay.source_catalog = Some(scene.catalog_identity());
+    }
     replay.frame = Some(
-        crate::presentation::actors::update_actor_rig_scene(scene, view.partial_tick, batch)
-            .clone(),
+        crate::presentation::actors::update_actor_rig_scene(
+            &mut replay.scene,
+            view.partial_tick,
+            batch,
+        )
+        .clone(),
     );
-    scene.configure_artwork((*original_artwork).clone());
+    replay.prepare_micros = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
 }
+
+#[cfg(test)]
+mod tests;

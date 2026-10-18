@@ -1,6 +1,7 @@
 //! The studio library draws real local entries and keeps empty/loading/error states actionable.
 
 use super::*;
+use launcher::menu::{MenuField, studio::library::LibraryAction};
 use recording_studio::storage::LibraryKind;
 
 pub(super) fn draw(
@@ -69,6 +70,38 @@ pub(super) fn draw(
         )?;
     }
     let content_top = button_top + canvas.r(7.2);
+    let mut content_top = content_top;
+    if right - left > canvas.r(20.0) && content_top + canvas.r(3.8) <= area[3] - pad {
+        control(
+            canvas,
+            view,
+            [
+                left,
+                content_top,
+                left + canvas.r(20.0),
+                content_top + canvas.r(3.8),
+            ],
+            &if view.studio.workflow.recovery.entries.is_empty() {
+                "Project recovery".to_owned()
+            } else {
+                format!(
+                    "Recover projects ({})",
+                    view.studio.workflow.recovery.entries.len()
+                )
+            },
+            Action::ShowRecovery,
+            !view.studio.workflow.recovery.busy,
+            Variant::Neutral,
+        )?;
+        content_top += canvas.r(4.8);
+    }
+    if content_top >= area[3] - pad {
+        return Ok(());
+    }
+    content_top = query_controls(canvas, view, [left, content_top, right, area[3] - pad])?;
+    if content_top >= area[3] - pad {
+        return Ok(());
+    }
     if view.studio.library_loading {
         canvas.text_line(
             "Loading your studio...",
@@ -79,14 +112,22 @@ pub(super) fn draw(
         )?;
     } else if view.studio.library.is_empty() {
         canvas.text_line(
-            "Your next video starts here.",
+            if view.studio.workspace.library.search.is_empty() {
+                "Your next video starts here."
+            } else {
+                "No matching recordings or projects."
+            },
             [left, content_top + canvas.r(3.2)],
             right - left,
             HEADER5,
             TEXT,
         )?;
         canvas.text_line(
-            "Recordings and saved projects appear in this library.",
+            if view.studio.workspace.library.search.is_empty() {
+                "Recordings and saved projects appear in this library."
+            } else {
+                "Try a shorter search or clear the filter."
+            },
             [left, content_top + canvas.r(7.2)],
             right - left,
             BODY,
@@ -108,8 +149,12 @@ pub(super) fn draw(
                 view,
                 bounds,
                 false,
-                (!entry.interrupted || !view.studio.capture.phase.busy())
-                    .then_some(MenuAction::Studio(Action::Open(index))),
+                (!entry.interrupted || !view.studio.capture.phase.busy()).then_some(
+                    MenuAction::Studio(Action::Open {
+                        generation: view.studio.workspace.library.generation,
+                        index,
+                    }),
+                ),
             )?;
             let thumbnail = view
                 .studio
@@ -166,7 +211,7 @@ pub(super) fn draw(
     }
     if view.studio.library_truncated {
         canvas.text_line(
-            "Showing recent items. More projects remain in your studio folder.",
+            "Library limit reached. Narrow the search; more files may remain in the folder.",
             [left, area[3] - canvas.r(3.6)],
             right - left,
             CAPTION,
@@ -174,4 +219,65 @@ pub(super) fn draw(
         )?;
     }
     Ok(())
+}
+
+/// Search has an explicit Apply boundary, so typing never triggers a filesystem scan per keystroke.
+fn query_controls(
+    canvas: &mut Canvas<'_>,
+    view: &MenuView,
+    area: Bounds,
+) -> Result<f32, PaintError> {
+    let [left, top, right, bottom] = area;
+    let row = canvas.r(3.8);
+    let gap = canvas.r(0.8);
+    if top + row > bottom {
+        return Ok(bottom);
+    }
+    let enabled = !view.studio.library_loading;
+    let state = &view.studio.workspace.library;
+    let draft = state.draft.as_deref();
+    let split = right - left < canvas.r(65.0);
+    let tools = canvas.r(35.0).min((right - left).max(0.0));
+    let field_right = if split { right } else { right - tools - gap };
+    widgets::text_field(
+        canvas,
+        view,
+        [left, top, field_right, top + row],
+        draft.unwrap_or(&state.search),
+        "Search recordings and projects",
+        view.field == Some(MenuField::StudioLibrarySearch),
+        enabled.then_some(MenuAction::Studio(Action::LibraryTools(
+            LibraryAction::Search,
+        ))),
+    )?;
+    let tools_top = if split { top + row + gap } else { top };
+    if tools_top + row > bottom {
+        return Ok(top + row + gap);
+    }
+    let mut x = if split { left } else { field_right + gap };
+    for (label, action, width, active) in [
+        ("Search", LibraryAction::ApplySearch, 9.0, draft.is_some()),
+        (
+            "Clear",
+            LibraryAction::ClearSearch,
+            8.0,
+            !state.search.is_empty() || draft.is_some(),
+        ),
+        (state.sort.label(), LibraryAction::CycleSort, 16.0, true),
+    ] {
+        let edge = (x + canvas.r(width)).min(right);
+        if edge - x >= canvas.r(6.0) {
+            control(
+                canvas,
+                view,
+                [x, tools_top, edge, tools_top + row],
+                label,
+                Action::LibraryTools(action),
+                enabled && active,
+                Variant::Secondary,
+            )?;
+        }
+        x = edge + gap;
+    }
+    Ok(tools_top + row + canvas.r(1.6))
 }

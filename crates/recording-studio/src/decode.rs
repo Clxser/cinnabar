@@ -6,7 +6,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::Arc,
     thread::JoinHandle,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, bounded};
@@ -15,6 +15,8 @@ use crate::{FrameRate, MediaTime, time::MICROS_PER_SECOND, video::frame_byte_len
 const RECEIVE_INTERVAL: Duration = Duration::from_millis(10);
 const READ_AHEAD_BYTES: usize = 16 * 1024 * 1024;
 const READ_AHEAD_FRAMES: usize = 4;
+const FRAME_DEADLINE: Duration = Duration::from_secs(30);
+mod cache;
 
 pub struct DecodedFrame {
     pub size: [u32; 2],
@@ -25,9 +27,10 @@ pub struct VideoDecoder {
     path: PathBuf,
     size: [u32; 2],
     fps: FrameRate,
+    content: Option<[u8; 32]>,
     process: Option<Process>,
     next: u64,
-    last: Option<(u64, Arc<[u8]>)>,
+    cache: cache::FrameCache,
     interactive: bool,
     hardware: bool,
 }
@@ -52,9 +55,10 @@ impl VideoDecoder {
             path: path.to_path_buf(),
             size,
             fps,
+            content: None,
             process: None,
             next: 0,
-            last: None,
+            cache: cache::FrameCache::new(false),
             interactive: false,
             hardware: false,
         })
@@ -65,6 +69,7 @@ impl VideoDecoder {
     pub fn interactive(path: &Path, size: [u32; 2], fps: FrameRate) -> Result<Self, String> {
         let mut decoder = Self::new(path, size, fps)?;
         decoder.interactive = true;
+        decoder.cache = cache::FrameCache::new(true);
         decoder.hardware = cfg!(windows);
         Ok(decoder)
     }
@@ -72,7 +77,15 @@ impl VideoDecoder {
     /// A transport seek invalidates read-ahead even when the requested source time is nearby.
     pub fn seek(&mut self) {
         self.process.take();
-        self.last = None;
+    }
+
+    /// Relinking immutable media at the same path must retire both open read-ahead and cached pixels.
+    pub fn admit_content(&mut self, identity: Option<[u8; 32]>) {
+        if self.content != identity {
+            self.process.take();
+            self.cache = cache::FrameCache::new(self.interactive);
+            self.content = identity;
+        }
     }
 
     /// Reports the decoder actually selected after any hardware fallback, without probing another process.
@@ -92,12 +105,10 @@ impl VideoDecoder {
             self.process.take();
             return Err("Preview decode cancelled.".into());
         }
-        if let Some((index, rgba8)) = &self.last
-            && *index == target
-        {
+        if let Some(rgba8) = self.cache.get(target) {
             return Ok(DecodedFrame {
                 size: self.size,
-                rgba8: Arc::clone(rgba8),
+                rgba8,
             });
         }
         let result = self.decode(target, &cancelled);
@@ -139,6 +150,7 @@ impl VideoDecoder {
             )?);
             self.next = target;
         }
+        let mut progressed = Instant::now();
         while self.next <= target {
             if cancelled() {
                 self.process.take();
@@ -152,21 +164,29 @@ impl VideoDecoder {
                 .recv_timeout(RECEIVE_INTERVAL);
             match result {
                 Ok(Ok(bytes)) => {
-                    self.last = Some((self.next, bytes));
+                    self.cache.insert(self.next, bytes);
                     self.next += 1;
+                    progressed = Instant::now();
                 }
                 Ok(Err(error)) => {
                     self.process.take();
                     return Err(error);
                 }
-                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Timeout) if progressed.elapsed() < FRAME_DEADLINE => continue,
+                Err(RecvTimeoutError::Timeout) => {
+                    self.process.take();
+                    return Err("Video decoding produced no frame for 30 seconds. Check the media file or choose a lower preview quality.".into());
+                }
                 Err(RecvTimeoutError::Disconnected) => {
                     self.process.take();
                     return Err("The video ended before the requested frame.".into());
                 }
             }
         }
-        let rgba8 = Arc::clone(&self.last.as_ref().ok_or("No video frame was decoded.")?.1);
+        let rgba8 = self
+            .cache
+            .get(target)
+            .ok_or("No video frame was decoded.")?;
         Ok(DecodedFrame {
             size: self.size,
             rgba8,
@@ -290,5 +310,24 @@ impl Drop for Process {
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relinked_content_at_the_same_path_retires_pixels_but_unchanged_identity_reuses_them() {
+        let mut decoder =
+            VideoDecoder::new(Path::new("deferred.mp4"), [2, 2], FrameRate::default()).unwrap();
+        decoder.admit_content(Some([1; 32]));
+        let pixels: Arc<[u8]> = vec![255; 16].into();
+        decoder.cache.insert(0, Arc::clone(&pixels));
+        decoder.admit_content(Some([1; 32]));
+        assert!(Arc::ptr_eq(&decoder.cache.get(0).unwrap(), &pixels));
+        decoder.admit_content(Some([2; 32]));
+        assert!(decoder.cache.get(0).is_none());
+        assert_eq!(decoder.content, Some([2; 32]));
     }
 }

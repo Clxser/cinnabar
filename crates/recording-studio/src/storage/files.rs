@@ -31,17 +31,32 @@ pub(super) fn load(path: &Path) -> Result<Project, StorageError> {
         .take(MAX_PROJECT_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(|source| io(path, source))?;
-    Ok(Project::from_json(&bytes)?)
+    Project::from_json(&bytes).map_err(|source| StorageError::InvalidProject {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 /// Saves a metadata copy with portable paths; the active editor and immutable media stay untouched.
 pub(super) fn save(path: &Path, project: &Project, source_base: &Path) -> Result<(), StorageError> {
     let parent = path.parent().ok_or(StorageError::InvalidPath)?;
     let bytes = portable_bytes(parent, project, source_base)?;
+    atomic_bytes(path, &bytes)
+}
+
+/// Recovery and explicit saves publish only flushed, exclusively staged metadata.
+pub(super) fn atomic_bytes(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
+    let parent = path.parent().ok_or(StorageError::InvalidPath)?;
     fs::create_dir_all(parent).map_err(|source| io(parent, source))?;
+    atomic_existing(path, bytes)
+}
+
+/// A retired recovery directory is never recreated by a racing publisher.
+pub(super) fn atomic_existing(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
+    let parent = path.parent().ok_or(StorageError::InvalidPath)?;
     let (staging, mut file) = create_staging(parent)?;
     let write_result = file
-        .write_all(&bytes)
+        .write_all(bytes)
         .and_then(|()| file.sync_all())
         .map_err(|source| io(&staging, source));
     drop(file);
@@ -112,7 +127,7 @@ fn portable_bytes(
 }
 
 /// Flushes the published directory entry on hosts exposing directory fsync.
-fn sync_parent(parent: &Path) -> Result<(), StorageError> {
+pub(super) fn sync_parent(parent: &Path) -> Result<(), StorageError> {
     #[cfg(unix)]
     File::open(parent)
         .and_then(|file| file.sync_all())

@@ -36,6 +36,9 @@ impl MenuRuntime {
     }
 
     pub fn move_focus(&mut self, direction: i32) {
+        if self.studio.view.camera_workspace.focused {
+            self.studio.release_camera();
+        }
         let actions = self.focus_actions();
         if actions.is_empty() {
             self.focused = 0;
@@ -644,5 +647,7 @@ pub(super) fn same_control(a: MenuAction, b: MenuAction) -> bool {
     }
 }
 
+#[cfg(test)]
+mod camera_tests;
 #[cfg(test)]
 mod review_tests;

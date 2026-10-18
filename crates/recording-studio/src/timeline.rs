@@ -2,6 +2,17 @@
 
 use crate::{Id, MediaTime, Project, Span, StudioError, edit::Command};
 
+mod group;
+mod keys;
+mod snapping;
+pub use group::{
+    delete_selection, duplicate_selection, ensure_unlocked, move_selection, selection_ids,
+};
+pub use keys::{KeyKind, TimelineKey, key_time, move_key};
+pub use snapping::SnapIndex;
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DragMode {
     Move,
@@ -24,17 +35,33 @@ macro_rules! framing_parameters {
         }
     };
 }
-framing_parameters! { Opacity => "Opacity", Left => "Crop left", Right => "Crop right", Top => "Crop top", Bottom => "Crop bottom" }
+framing_parameters! { Opacity => "Opacity", Rotation => "Rotation", Fit => "Layer mode", Left => "Crop left", Right => "Crop right", Top => "Crop top", Bottom => "Crop bottom" }
 
 impl FramingParameter {
-    /// Reads normalized retained-source framing values for the inspector's percentage controls.
+    /// Rotation uses degrees; crop and opacity use normalized fractions; layer mode selects Fit or Fill.
     pub fn value(self, framing: crate::model::Framing) -> f64 {
         match self {
             Self::Opacity => framing.opacity,
+            Self::Rotation => framing.rotation_degrees,
+            Self::Fit => match framing.fit {
+                crate::model::FramingFit::Fit => 0.0,
+                crate::model::FramingFit::Fill => 1.0,
+            },
             Self::Left => framing.crop[0],
             Self::Top => framing.crop[1],
             Self::Right => 1.0 - framing.crop[2],
             Self::Bottom => 1.0 - framing.crop[3],
+        }
+    }
+
+    /// Numeric labels retain the parameter's own unit instead of treating image rotation as a percentage.
+    pub fn formatted(self, framing: crate::model::Framing) -> String {
+        match self {
+            Self::Rotation => format!("{:.1}°", self.value(framing)),
+            Self::Fit => framing.fit.label().into(),
+            Self::Opacity | Self::Left | Self::Right | Self::Top | Self::Bottom => {
+                format!("{:.1}%", self.value(framing) * 100.0)
+            }
         }
     }
 
@@ -49,6 +76,23 @@ impl FramingParameter {
         let gap_y = (framing.crop[3] - framing.crop[1]).min(0.01);
         match self {
             Self::Opacity => framing.opacity = (framing.opacity + amount).clamp(0.0, 1.0),
+            Self::Rotation => {
+                let turn = crate::framing::FULL_TURN_DEGREES;
+                framing.rotation_degrees = (framing.rotation_degrees.rem_euclid(turn)
+                    + f64::from(direction.signum())
+                    + turn * 0.5)
+                    .rem_euclid(turn)
+                    - turn * 0.5;
+            }
+            Self::Fit => {
+                if direction != 0 {
+                    framing.fit = if direction < 0 {
+                        crate::model::FramingFit::Fit
+                    } else {
+                        crate::model::FramingFit::Fill
+                    };
+                }
+            }
             Self::Left => {
                 framing.crop[0] = (framing.crop[0] + amount).clamp(0.0, framing.crop[2] - gap_x)
             }

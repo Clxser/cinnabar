@@ -17,6 +17,10 @@ use crate::{
 
 mod audio;
 mod files;
+pub mod range;
+
+/// Offline mixing, source admission and AAC muxing use one PCM clock.
+pub const AUDIO_SAMPLE_RATE: u32 = 48_000;
 
 const VIDEO_BYTE_LIMIT: u64 = 64 * 1024 * 1024 * 1024;
 const RUNNING: u8 = 0;
@@ -70,6 +74,18 @@ pub struct ExportRequest {
     pub source_base: PathBuf,
     /// A chosen file is never overwritten. A directory generates a unique `Export N.mp4` name.
     pub destination: Destination,
+}
+
+impl ExportRequest {
+    /// Export freezes saved range and output cadence together in its immutable project snapshot.
+    pub fn frame_range(&self) -> Result<range::FrameRange, String> {
+        range::FrameRange::new(
+            self.project.export.fps,
+            self.project.duration(),
+            self.project.export.range,
+        )
+        .map_err(|error| error.to_string())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -232,24 +248,22 @@ fn run<S: FrameSource>(
         return Err("The project has no duration to export.".into());
     }
     frame_byte_len(project.export.size)?;
-    let total = project
-        .export
-        .fps
-        .frames_covering(project.duration())
-        .map_err(|error| error.to_string())?;
-    let duration = project
-        .export
-        .fps
-        .frame_time(total)
-        .map_err(|error| error.to_string())?;
+    let range = request.frame_range()?;
+    let total = range.frames();
     let with_audio = project.export.include_audio
-        && project
-            .audio
-            .iter()
-            .any(|clip| !clip.muted && clip.gain > 0.0);
+        && project.audio.iter().any(|clip| {
+            !project.audio_muted(clip)
+                && clip.gain > 0.0
+                && clip.span().is_ok_and(|span| {
+                    range
+                        .audio_window(span, AUDIO_SAMPLE_RATE)
+                        .is_ok_and(|window| window.is_some())
+                })
+        });
     if with_audio {
-        audio::byte_length(duration)?;
+        audio::byte_length(project.export.fps, total)?;
     }
+    crate::dependencies::validate_sources(project, &request.source_base, cancellation)?;
     let parent = files::parent(&request.destination)?;
     let destination = match &request.destination {
         Destination::Directory(_) => Destination::Directory(parent.clone()),
@@ -298,18 +312,17 @@ fn run<S: FrameSource>(
         status.encoder = Some(video.encoder());
     });
     let mut preview = PreviewRequest {
+        quality: crate::preview::PreviewQuality::Full,
+        cadence: None,
         epoch: [0; 3],
         project: Arc::clone(project),
         source_base: request.source_base.clone(),
         at: MediaTime::ZERO,
+        camera_view: None,
     };
     for index in 0..total {
         cancellation.check()?;
-        preview.at = project
-            .export
-            .fps
-            .frame_time(index)
-            .map_err(|error| error.to_string())?;
+        preview.at = range.time(index).map_err(|error| error.to_string())?;
         let frame = source.frame(&preview, cancellation)?;
         video.frame(index, frame.size, &frame.rgba8)?;
         update(status, |status| {
@@ -325,24 +338,30 @@ fn run<S: FrameSource>(
     drop(source);
     update(status, |status| status.phase = ExportPhase::FinishingVideo);
     video.finish(total)?;
-    files::check_bytes(&staged, VIDEO_BYTE_LIMIT)?;
+    files::validation::validate(&staged, VIDEO_BYTE_LIMIT, cancellation)?;
     cancellation.check()?;
     if with_audio {
         update(status, |status| status.phase = ExportPhase::MixingAudio);
-        let mix = audio::mix(&request, duration, scratch.path(), cancellation)?;
+        let mix = audio::mix(&request, total, scratch.path(), cancellation)?;
         update(status, |status| status.phase = ExportPhase::Muxing);
         let muxed = files::staging(&parent)?;
         audio::mux(&staged, &mix, &muxed, cancellation)?;
-        files::check_bytes(&muxed, VIDEO_BYTE_LIMIT)?;
+        files::validation::validate(&muxed, VIDEO_BYTE_LIMIT, cancellation)?;
         staged = muxed;
     }
     crate::media_process::sync_output(&staged)?;
     cancellation.begin_publication()?;
     update(status, |status| status.phase = ExportPhase::Publishing);
-    let path = files::publish(staged, &destination)?;
+    let published = files::publish(staged, &destination)?;
     update(status, |status| {
         status.phase = ExportPhase::Complete;
-        status.path = Some(path);
+        status.path = Some(published.path);
+        if let Some(warning) = published.warning {
+            status.notice = Some(match status.notice.take() {
+                Some(notice) => format!("{notice} {warning}"),
+                None => warning,
+            });
+        }
     });
     Ok(())
 }
@@ -350,13 +369,4 @@ fn run<S: FrameSource>(
 /// Poisoned UI observation cannot prevent the worker from reporting its terminal result.
 fn update(status: &Mutex<ExportStatus>, change: impl FnOnce(&mut ExportStatus)) {
     change(&mut status.lock().unwrap_or_else(|error| error.into_inner()));
-}
-
-/// Source references retain the same meaning during unsaved exports and saved-project exports.
-fn source_path(base: &Path, path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        base.join(path)
-    }
 }

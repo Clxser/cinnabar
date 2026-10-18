@@ -20,8 +20,11 @@ pub(super) fn drive(
                 menu.field,
                 Some(
                     MenuField::StudioDestination
+                        | MenuField::StudioSeek
+                        | MenuField::StudioLibrarySearch
                         | MenuField::StudioCamera(_)
                         | MenuField::StudioClip(_)
+                        | MenuField::StudioExportRange(_)
                 )
             )
         {
@@ -31,8 +34,22 @@ pub(super) fn drive(
                     Action::ApplyExportDestination,
                     Action::CancelExportDestination,
                 )
+            } else if menu.field == Some(MenuField::StudioLibrarySearch) {
+                use launcher::menu::studio::library::LibraryAction;
+                (
+                    Action::LibraryTools(LibraryAction::ApplySearch),
+                    Action::LibraryTools(LibraryAction::CancelSearch),
+                )
+            } else if menu.field == Some(MenuField::StudioSeek) {
+                use launcher::menu::studio::monitoring::MonitoringAction;
+                (
+                    Action::Monitoring(MonitoringAction::ApplySeek),
+                    Action::Monitoring(MonitoringAction::CancelSeek),
+                )
             } else if matches!(menu.field, Some(MenuField::StudioClip(_))) {
                 (Action::ApplyClipTime, Action::CancelClipTime)
+            } else if matches!(menu.field, Some(MenuField::StudioExportRange(_))) {
+                (Action::ApplyExportRange, Action::CancelExportRange)
             } else {
                 (Action::ApplyCameraValue, Action::CancelCameraValue)
             };
@@ -87,6 +104,22 @@ pub(super) fn drive(
             menu.input_mode = MenuInputMode::Keyboard;
         }
         if menu.edit_key(input.key_code, modifiers.shift(), modifiers.shortcut()) {
+            continue;
+        }
+        if menu.screen() == launcher::menu::MenuScreen::RecordingStudio
+            && menu.field.is_none()
+            && menu.studio.view.camera_workspace.focused
+            && !modifiers.shortcut()
+            && matches!(
+                input.key_code,
+                KeyCode::KeyW
+                    | KeyCode::KeyA
+                    | KeyCode::KeyS
+                    | KeyCode::KeyD
+                    | KeyCode::KeyQ
+                    | KeyCode::KeyE
+            )
+        {
             continue;
         }
         if studio_shortcut(menu, input, modifiers) {
@@ -163,6 +196,7 @@ fn studio_shortcut(
         || menu.dialog.is_some()
         || menu.studio.view.discard.is_some()
         || menu.studio.view.loading
+        || menu.studio.view.workflow.recovery.visible
     {
         return false;
     }
@@ -182,40 +216,101 @@ fn studio_shortcut(
                 | Action::Pan(_)
                 | Action::FitTimeline
                 | Action::RevealPlayhead
+                | Action::Timeline(_)
         ))
     );
-    let timeline_keys = editing && timeline_focus;
-    let action = match input.key_code {
-        KeyCode::KeyS if modifiers.shortcut() => Action::Save,
-        KeyCode::KeyN if modifiers.shortcut() => Action::NewProject,
-        KeyCode::KeyZ if modifiers.shortcut() && modifiers.shift() => Action::Redo,
-        KeyCode::KeyZ if modifiers.shortcut() => Action::Undo,
-        KeyCode::KeyY if modifiers.shortcut() => Action::Redo,
-        KeyCode::Space if editing => Action::TogglePlayback,
-        KeyCode::ArrowLeft if timeline_keys => Action::Step(-1),
-        KeyCode::ArrowRight if timeline_keys => Action::Step(1),
-        KeyCode::KeyS if editing && !modifiers.shortcut() => Action::Split,
-        KeyCode::Delete if timeline_keys => Action::DeleteSelected,
-        KeyCode::KeyF if editing && !modifiers.shortcut() => Action::FitTimeline,
-        KeyCode::Equal if editing => Action::Zoom(1),
-        KeyCode::Minus if editing => Action::Zoom(-1),
-        KeyCode::PageUp if editing => Action::Pan(-1),
-        KeyCode::PageDown if editing => Action::Pan(1),
-        KeyCode::Home if timeline_keys => Action::Seek(recording_studio::MediaTime::ZERO),
-        KeyCode::End if timeline_keys => Action::Seek(
-            menu.studio
-                .view
-                .project
-                .as_ref()
-                .map_or(recording_studio::MediaTime::ZERO, |project| {
-                    project.duration()
-                }),
-        ),
-        _ => return false,
+    let timeline_keys = editing && timeline_focus && !menu.studio.view.camera_workspace.focused;
+    use launcher::menu::studio::shortcuts::{self, Context};
+    if modifiers.0 & (MenuModifiers::ALT_LEFT | MenuModifiers::ALT_RIGHT) != 0 {
+        return false;
+    }
+    let Some(key) = shortcuts::Key::ALL
+        .iter()
+        .copied()
+        .find(|&key| studio_physical_key(key) == input.key_code)
+    else {
+        return false;
     };
+    let Some(command) = shortcuts::resolve(
+        key,
+        modifiers.shortcut(),
+        modifiers.shift(),
+        Context {
+            project: menu.studio.view.project.is_some(),
+            editor: editing,
+            timeline: timeline_keys,
+            camera_focused: menu.studio.view.camera_workspace.focused,
+            inspected: menu.studio.view.camera_workspace.view.is_some(),
+        },
+    ) else {
+        return false;
+    };
+    let duration = menu
+        .studio
+        .view
+        .project
+        .as_ref()
+        .map_or(recording_studio::MediaTime::ZERO, |project| {
+            project.duration()
+        });
+    let action = command.action(duration);
     if !input.repeat || matches!(action, Action::Step(_)) {
         menu.input_mode = MenuInputMode::Keyboard;
-        menu.studio.activate(action);
+        if matches!(
+            action,
+            Action::Monitoring(launcher::menu::studio::monitoring::MonitoringAction::EditSeek)
+        ) {
+            menu.activate(launcher::menu::MenuAction::Studio(action));
+        } else {
+            menu.studio.activate(action);
+        }
     }
     true
+}
+
+/// Exhaustive conversion keeps the engine edge aligned with the portable help/command registry.
+fn studio_physical_key(key: launcher::menu::studio::shortcuts::Key) -> KeyCode {
+    use launcher::menu::studio::shortcuts::Key;
+    match key {
+        Key::S => KeyCode::KeyS,
+        Key::N => KeyCode::KeyN,
+        Key::Z => KeyCode::KeyZ,
+        Key::Y => KeyCode::KeyY,
+        Key::E => KeyCode::KeyE,
+        Key::R => KeyCode::KeyR,
+        Key::A => KeyCode::KeyA,
+        Key::D => KeyCode::KeyD,
+        Key::F => KeyCode::KeyF,
+        Key::G => KeyCode::KeyG,
+        Key::L => KeyCode::KeyL,
+        Key::BracketLeft => KeyCode::BracketLeft,
+        Key::BracketRight => KeyCode::BracketRight,
+        Key::Space => KeyCode::Space,
+        Key::Left => KeyCode::ArrowLeft,
+        Key::Right => KeyCode::ArrowRight,
+        Key::Delete => KeyCode::Delete,
+        Key::Plus => KeyCode::Equal,
+        Key::Minus => KeyCode::Minus,
+        Key::PageUp => KeyCode::PageUp,
+        Key::PageDown => KeyCode::PageDown,
+        Key::Home => KeyCode::Home,
+        Key::End => KeyCode::End,
+        Key::Help => KeyCode::F1,
+    }
+}
+
+#[cfg(test)]
+mod studio_shortcut_tests {
+    use super::*;
+    #[test]
+    fn registered_portable_keys_have_unique_physical_inputs() {
+        let keys = launcher::menu::studio::shortcuts::Key::ALL;
+        for (index, &key) in keys.iter().enumerate() {
+            assert!(
+                !keys[index + 1..]
+                    .iter()
+                    .any(|&other| studio_physical_key(key) == studio_physical_key(other))
+            );
+        }
+    }
 }

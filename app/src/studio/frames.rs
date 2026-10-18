@@ -4,10 +4,8 @@ use std::{collections::BTreeMap, sync::atomic::AtomicUsize};
 
 use super::*;
 use bevy::render::render_resource::TextureFormat;
+use recording_studio::capture::{MAX_READBACK_BYTES, MAX_READBACKS};
 use recording_studio::video::{Frame, FramePushError, PixelLayout, frame_byte_len};
-
-const MAX_READBACKS: usize = 3;
-const MAX_READBACK_BYTES: usize = 96 * 1024 * 1024;
 
 pub(super) struct Readbacks {
     pending: Arc<AtomicUsize>,
@@ -16,6 +14,11 @@ pub(super) struct Readbacks {
     ready: BTreeMap<u64, Completion>,
     next: u64,
     deliver: u64,
+    bytes: Arc<AtomicUsize>,
+    latency: Arc<AtomicU64>,
+    pub(super) encoder_stalls: u64,
+    pub(super) readback_stalls: u64,
+    last_attempt: Option<u64>,
 }
 
 impl Default for Readbacks {
@@ -29,6 +32,11 @@ impl Default for Readbacks {
             ready: BTreeMap::new(),
             next: 0,
             deliver: 0,
+            bytes: Arc::default(),
+            latency: Arc::default(),
+            encoder_stalls: 0,
+            readback_stalls: 0,
+            last_attempt: None,
         }
     }
 }
@@ -52,14 +60,64 @@ impl Readbacks {
             .checked_add(1)
             .ok_or("Recording readback sequence was exhausted.")?;
         self.pending.fetch_add(1, Ordering::AcqRel);
+        self.bytes.fetch_add(bytes, Ordering::AcqRel);
         Ok(Some(Slot {
             sender: self.sender.clone(),
+            started: std::time::Instant::now(),
+            latency: Arc::clone(&self.latency),
             completion: Some(Completion {
                 sequence,
                 frame: None,
-                _permit: Permit(Arc::clone(&self.pending)),
+                _permit: Permit {
+                    pending: Arc::clone(&self.pending),
+                    bytes: Arc::clone(&self.bytes),
+                    size: bytes,
+                },
             }),
         }))
+    }
+
+    /// A full encoder retains the oldest completed readback and its admission permit for retry.
+    fn drain(
+        &mut self,
+        mut push: impl FnMut(Frame) -> Result<(), FramePushError>,
+    ) -> Result<u64, String> {
+        for completion in self.completed.try_iter() {
+            self.ready.insert(completion.sequence, completion);
+        }
+        let mut captured = 0;
+        while let Some(mut completion) = self.ready.remove(&self.deliver) {
+            if let Some(frame) = completion.frame.take() {
+                let frame = match frame {
+                    Ok(frame) => frame,
+                    Err(error) => {
+                        self.deliver += 1;
+                        return Err(error);
+                    }
+                };
+                match push(frame) {
+                    Ok(()) => captured += 1,
+                    Err(FramePushError::Full(frame)) => {
+                        self.encoder_stalls = self.encoder_stalls.saturating_add(1);
+                        completion.frame = Some(Ok(frame));
+                        self.ready.insert(self.deliver, completion);
+                        break;
+                    }
+                    Err(FramePushError::Closed(_)) => {
+                        self.deliver += 1;
+                        return Err("The live video encoder stopped accepting frames.".into());
+                    }
+                    Err(FramePushError::Invalid(_)) => {
+                        self.deliver += 1;
+                        return Err("The captured frame exceeds the encoder's memory limit.".into());
+                    }
+                }
+            } else {
+                self.readback_stalls = self.readback_stalls.saturating_add(1);
+            }
+            self.deliver += 1;
+        }
+        Ok(captured)
     }
 }
 
@@ -69,21 +127,32 @@ struct Completion {
     _permit: Permit,
 }
 
-struct Permit(Arc<AtomicUsize>);
+struct Permit {
+    pending: Arc<AtomicUsize>,
+    bytes: Arc<AtomicUsize>,
+    size: usize,
+}
 impl Drop for Permit {
     /// Successful, skipped and abandoned readbacks release the same bounded admission slot.
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
+        self.pending.fetch_sub(1, Ordering::AcqRel);
+        self.bytes.fetch_sub(self.size, Ordering::AcqRel);
     }
 }
 
 struct Slot {
     sender: crossbeam_channel::Sender<Completion>,
     completion: Option<Completion>,
+    started: std::time::Instant,
+    latency: Arc<AtomicU64>,
 }
 impl Slot {
     /// Ownership of the screenshot pixels transfers directly to the encoder queue.
     fn complete(mut self, frame: Result<Frame, String>) {
+        self.latency.store(
+            self.started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64,
+            Ordering::Release,
+        );
         if let Some(completion) = &mut self.completion {
             completion.frame = Some(frame);
         }
@@ -100,34 +169,12 @@ impl Drop for Slot {
 
 /// Transfers ready callbacks in request order; out-of-order GPU completion cannot corrupt video time.
 pub(super) fn drain(active: &mut Active) -> Result<(), String> {
-    for completion in active.video_readbacks.completed.try_iter() {
-        active
-            .video_readbacks
-            .ready
-            .insert(completion.sequence, completion);
-    }
     let sink = active.session.sink();
-    while let Some(completion) = active
-        .video_readbacks
-        .ready
-        .remove(&active.video_readbacks.deliver)
-    {
-        active.video_readbacks.deliver += 1;
-        if let Some(frame) = completion.frame {
-            match sink.try_push(frame?) {
-                Ok(()) => {
-                    active.captured.fetch_add(1, Ordering::Relaxed);
-                }
-                Err(FramePushError::Full(_)) => {}
-                Err(FramePushError::Closed(_)) => {
-                    return Err("The live video encoder stopped accepting frames.".into());
-                }
-                Err(FramePushError::Invalid(_)) => {
-                    return Err("The captured frame exceeds the encoder's memory limit.".into());
-                }
-            }
-        }
-    }
+    active.video_readbacks.drain(|frame| {
+        sink.try_push(frame).inspect(|()| {
+            active.captured.fetch_add(1, Ordering::Relaxed);
+        })
+    })?;
     Ok(())
 }
 
@@ -139,29 +186,70 @@ pub(super) fn capture(world: &mut World, active: &mut Active, at: MediaTime) -> 
         .fps
         .frame_at(at)
         .map_err(|error| error.to_string())?;
-    if active.last_frame.is_some_and(|last| index <= last) || !active.session.sink().has_capacity()
+    // Native camera coverage must not depend on encoder or GPU readback availability.
+    if active.last_camera_frame.is_none_or(|last| index > last) {
+        if let Some(pose) = observations::camera(world) {
+            active.session.camera(at, pose)?;
+            active.last_camera_frame = Some(index);
+        }
+    }
+    if active.last_frame.is_some_and(|last| index <= last) {
+        return Ok(());
+    }
+    let first_attempt = active.video_readbacks.last_attempt != Some(index);
+    active.video_readbacks.last_attempt = Some(index);
+    if !active
+        .session
+        .sink()
+        .has_capacity_for(active.session.video_size())
     {
+        if first_attempt {
+            active.video_readbacks.encoder_stalls =
+                active.video_readbacks.encoder_stalls.saturating_add(1);
+        }
         return Ok(());
     }
     let expected_size = active.session.video_size();
     let source_size = active.session.info().viewport;
     let Some(slot) = active.video_readbacks.reserve(expected_size)? else {
+        if first_attempt {
+            active.video_readbacks.readback_stalls =
+                active.video_readbacks.readback_stalls.saturating_add(1);
+        }
         return Ok(());
     };
-    if let Some(pose) = observations::camera(world) {
-        active.session.camera(at, pose)?;
-    }
     active.last_frame = Some(index);
     let mut capture = world.resource_mut::<crate::hud_tools::FrameCapture>();
-    if expected_size == source_size {
-        capture.request_owned(move |image| slot.complete(frame(image, index, expected_size)));
-    } else {
-        capture.request_sized(expected_size, source_size, move |image| {
-            slot.complete(image.and_then(|image| frame(image, index, expected_size)));
-        })?;
-    }
+    let hud = active.session.settings().hud;
+    capture.request_sized(expected_size, source_size, hud, move |image| {
+        slot.complete(image.and_then(|image| frame(image, index, expected_size)));
+    })?;
     Ok(())
 }
+
+/// Reads bounded queue counters without locking or copying queued payloads.
+pub(super) fn health(
+    active: &Active,
+    actor_prepare_micros: u64,
+    sample_micros: u64,
+) -> recording_studio::capture::CaptureHealth {
+    let readbacks = &active.video_readbacks;
+    let (encoder_frames, encoder_bytes) = active.session.sink().queued();
+    recording_studio::capture::CaptureHealth {
+        actor_prepare_micros,
+        sample_micros,
+        readback_micros: readbacks.latency.load(Ordering::Acquire),
+        pending_readbacks: readbacks.pending() as u32,
+        readback_bytes: readbacks.bytes.load(Ordering::Acquire) as u64,
+        encoder_frames: encoder_frames as u32,
+        encoder_bytes: encoder_bytes as u64,
+        encoder_stalls: readbacks.encoder_stalls,
+        readback_stalls: readbacks.readback_stalls,
+    }
+}
+
+#[cfg(test)]
+mod tests;
 
 /// Checks tightly packed SDR pixels before taking their allocation; no additional full-frame clone.
 fn frame(mut image: Image, index: u64, expected_size: [u32; 2]) -> Result<Frame, String> {

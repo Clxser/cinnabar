@@ -56,6 +56,11 @@ impl TerrainPlayback {
         self.cursor.reader().info()
     }
 
+    /// A composition can share a smaller allowance while retaining all currently admitted state.
+    pub fn set_maximum_bytes(&mut self, maximum_bytes: usize) -> Result<(), ArchiveError> {
+        self.scene.set_maximum_bytes(maximum_bytes)
+    }
+
     /// Seeks from a complete baseline and returns a replacement patch only after all object admission succeeds.
     pub fn seek(
         &mut self,

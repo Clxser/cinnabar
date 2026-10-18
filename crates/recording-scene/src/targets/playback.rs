@@ -10,7 +10,9 @@ use recording_studio::{
     camera::{CameraTarget, MAX_CAMERA_TARGETS},
 };
 
-use super::{TARGET_DIRECTORY, TARGET_TRACK_SCHEMA, TargetFrame, codec};
+use super::{
+    LEGACY_TARGET_TRACK_SCHEMA, TARGET_DIRECTORY, TARGET_TRACK_SCHEMA, TargetFrame, codec,
+};
 
 pub struct TargetRecording {
     cursor: RecordingCursor,
@@ -36,7 +38,10 @@ impl TargetRecording {
             Err(source) => return Err(ArchiveError::Io { path: root, source }),
         }
         let reader = RecordingReader::open(&root)?;
-        if reader.info().scene_schema != TARGET_TRACK_SCHEMA {
+        if !matches!(
+            reader.info().scene_schema.as_str(),
+            TARGET_TRACK_SCHEMA | LEGACY_TARGET_TRACK_SCHEMA
+        ) {
             return Err(ArchiveError::Invalid(
                 "unsupported camera target track schema",
             ));
@@ -213,8 +218,7 @@ fn interpolate(current: &TargetFrame, next: Option<&TargetFrame>, at: MediaTime)
         .map(|target| {
             let mut sampled = target.clone();
             if let Some(future) = next.target(target.runtime_id)
-                && target.same_lifetime(future)
-                && !future.teleported
+                && target.can_interpolate(future)
             {
                 sampled.pose = target.pose.interpolated(future.pose, amount);
             }

@@ -30,7 +30,7 @@ fn sampled(uv: vec2<f32>) -> vec4<f32> {
 
 @fragment fn layer(input: VertexOutput) -> @location(0) vec4<f32> {
     let moved = (input.uv - 0.5) / settings.motion.x + 0.5 + settings.motion.yz;
-    let local = (moved - settings.placement.xy) / settings.placement.zw;
+    let local = vec2<f32>(dot(settings.inverse_x.xyz, vec3<f32>(moved, 1.0)), dot(settings.inverse_y.xyz, vec3<f32>(moved, 1.0)));
     if any(local < vec2<f32>(0.0)) || any(local > vec2<f32>(1.0)) { discard; }
     let half_texel = settings.control.zw * 0.5;
     let middle = (settings.crop.xy + settings.crop.zw) * 0.5;

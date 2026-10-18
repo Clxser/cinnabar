@@ -9,7 +9,16 @@ pub const TITLE: &str = "Recording Studio";
 pub const TIMELINE_SCROLL_ID: &str = "studio_timeline";
 
 mod clip;
+mod export_range;
+pub use export_range::ExportRangeField;
+pub mod timeline;
 pub use clip::{ClipTimeField, MAX_CLIP_TIME_BYTES};
+mod camera;
+pub use camera::CameraWorkspace;
+mod workspace;
+pub use workspace::{
+    Density, InspectorSection, SettingsPage, TimelineSize, Toolbox, ViewportTool, WorkspaceAction,
+};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum EditorPanel {
@@ -21,21 +30,49 @@ pub enum EditorPanel {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Workspace {
+    pub library: library::LibraryWorkspace,
+    pub monitoring: monitoring::MonitoringWorkspace,
+    pub timeline: timeline::TimelineWorkspace,
     pub panel: EditorPanel,
+    pub toolbox: Toolbox,
+    pub inspector: InspectorSection,
+    pub density: Density,
+    pub timeline_size: TimelineSize,
+    pub media_hidden: bool,
+    pub inspector_hidden: bool,
+    pub preview_only: bool,
+    pub viewport_tool: ViewportTool,
+    pub preview_fill: bool,
+    pub preview_quality: recording_studio::preview::PreviewQuality,
+    pub settings_page: SettingsPage,
     pub ripple: bool,
     pub follow_playhead: bool,
     pub drag: Option<(Id, recording_studio::Span)>,
 }
 mod workflow;
 pub use workflow::Workflow;
+pub mod library;
+pub mod monitoring;
+pub mod shortcuts;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Action {
+    Monitoring(monitoring::MonitoringAction),
+    Timeline(timeline::TimelineAction),
+    Workspace(WorkspaceAction),
     ToggleRecording,
     ImportMedia,
     RelinkMedia,
     CancelMedia,
     ToggleSettings,
+    ScanRecovery,
+    ShowRecovery,
+    HideRecovery,
+    RestoreRecovery(usize),
+    DiscardRecovery(usize),
+    RetryAutosave,
+    CheckDependencies,
+    UseCpuEncoder,
     CycleCaptureFps,
     CycleCaptureSize,
     ToggleCaptureHand,
@@ -46,13 +83,23 @@ pub enum Action {
     CycleExportEncoder,
     AdjustExportQuality(i8),
     ToggleExportAudio,
+    ToggleRecordedHud,
     EditExportDestination,
     ApplyExportDestination,
     CancelExportDestination,
+    FullExportRange,
+    SetExportRangeAtPlayhead(ExportRangeField),
+    EditExportRange(ExportRangeField),
+    ApplyExportRange,
+    CancelExportRange,
     Bookmark,
     NewProject,
     Refresh,
-    Open(usize),
+    LibraryTools(library::LibraryAction),
+    Open {
+        generation: u64,
+        index: usize,
+    },
     Library,
     Save,
     Export,
@@ -141,9 +188,29 @@ pub enum Action {
         at: MediaTime,
     },
     MoveEffect(i8),
+    ToggleAudioMute,
+    AdjustAudio {
+        parameter: recording_studio::audio::AudioParameter,
+        direction: i8,
+    },
     UseNativeReplay,
+    CameraViewport {
+        bounds: [i32; 4],
+    },
+    CameraControl {
+        shot: Id,
+        at: MediaTime,
+        handle: recording_studio::camera::PathControl,
+        bounds: [i32; 4],
+    },
+    CameraSubject(CameraTargetRef),
+    ReleaseCamera,
+    ApplyCameraView,
+    ResetCameraView,
+    ResetCameraHandles,
     CreateCamera(CameraRigKind),
     CycleCameraTarget(i8),
+    ToggleCameraSubjectFilter,
     RetargetCamera,
     AdjustCamera {
         parameter: CameraParameter,
@@ -151,6 +218,15 @@ pub enum Action {
     },
     AddCameraKey,
     DeleteCameraKey,
+    AddCameraFovKey,
+    DeleteCameraFovKey,
+    ClearCameraFov,
+    CycleCameraFovEasing,
+    StepCameraFovKey(i8),
+    SelectCameraFovKey {
+        shot: Id,
+        at: MediaTime,
+    },
     CycleCameraEasing,
     ToggleCameraSmoothing,
     StepCameraKey(i8),
@@ -173,15 +249,21 @@ pub enum Action {
     ClearError,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DiscardIntent {
     NewProject,
-    Open(usize),
+    Open {
+        path: PathBuf,
+        kind: recording_studio::storage::LibraryKind,
+        interrupted: bool,
+    },
+    RestoreRecovery(String),
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
     pub workspace: Workspace,
+    pub camera_workspace: CameraWorkspace,
     pub workflow: Workflow,
     pub capture: recording_studio::capture::CaptureStatus,
     pub export: recording_studio::export::ExportStatus,
@@ -212,6 +294,7 @@ pub struct Snapshot {
     pub error: Option<String>,
     pub notice: Option<String>,
     pub preview: recording_studio::preview::PreviewStatus,
+    pub audio: recording_studio::audio::PreviewStatus,
     pub preview_icon: Option<ui::IconRef>,
 }
 
@@ -220,6 +303,7 @@ impl PartialEq for Snapshot {
     fn eq(&self, other: &Self) -> bool {
         let Self {
             workspace,
+            camera_workspace,
             workflow,
             capture,
             export,
@@ -250,10 +334,12 @@ impl PartialEq for Snapshot {
             error,
             notice,
             preview,
+            audio,
             preview_icon,
         } = self;
         let Self {
             workspace: b_workspace,
+            camera_workspace: b_camera_workspace,
             workflow: b_workflow,
             capture: b_capture,
             export: b_export,
@@ -284,9 +370,11 @@ impl PartialEq for Snapshot {
             error: b_error,
             notice: b_notice,
             preview: b_preview,
+            audio: b_audio,
             preview_icon: b_preview_icon,
         } = other;
         workspace == b_workspace
+            && camera_workspace == b_camera_workspace
             && capture == b_capture
             && workflow == b_workflow
             && (Arc::ptr_eq(lanes, b_lanes) || lanes.is_empty() && b_lanes.is_empty())
@@ -298,6 +386,7 @@ impl PartialEq for Snapshot {
             && speed_key == b_speed_key
             && title_draft == b_title_draft
             && preview == b_preview
+            && audio == b_audio
             && preview_icon == b_preview_icon
             && (Arc::ptr_eq(library, b_library) || library.is_empty() && b_library.is_empty())
             && match (project, b_project) {

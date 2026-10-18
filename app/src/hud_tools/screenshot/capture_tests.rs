@@ -82,9 +82,9 @@ fn assert_blue(image: Image, expected_size: (u32, u32)) {
     );
 }
 
-#[test]
-fn hidden_camera_pixels_reach_shared_capture() {
-    let Some(renderer) = renderer() else { return };
+/// Builds the same hidden camera for display and clean-video admission checks.
+fn app() -> Option<App> {
+    let renderer = renderer()?;
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
         .add_plugins(WindowPlugin {
@@ -115,6 +115,12 @@ fn hidden_camera_pixels_reach_shared_capture() {
         Msaa::Off,
         Tonemapping::Linear,
     ));
+    Some(app)
+}
+
+#[test]
+fn hidden_camera_pixels_reach_shared_capture() {
+    let Some(mut app) = app() else { return };
     app.finish();
     app.cleanup();
     for _ in 0..8 {
@@ -135,4 +141,166 @@ fn hidden_camera_pixels_reach_shared_capture() {
         app.update();
     }
     assert_blue(capture(&mut app), (32, 16));
+}
+
+/// Keeps requesting through the initial GPU asset admission, as recording frame slots do.
+fn video(app: &mut App, size: [u32; 2], hud: bool) -> Result<Image, String> {
+    let result = Arc::new(Mutex::new(None));
+    test_time::eventually("clean recording pixel readback", || {
+        let received = Arc::clone(&result);
+        app.world_mut()
+            .resource_mut::<super::FrameCapture>()
+            .request_sized(size, [64, 32], hud, move |image| {
+                let mut result = received.lock().unwrap();
+                if result.is_none() {
+                    *result = Some(image);
+                }
+            })
+            .unwrap();
+        app.update();
+        app.sub_app(RenderApp)
+            .world()
+            .resource::<RenderDevice>()
+            .wgpu_device()
+            .poll(wgpu::PollType::wait_indefinitely())
+            .unwrap();
+        result.lock().unwrap().is_some()
+    });
+    result.lock().unwrap().take().unwrap()
+}
+
+/// A solid screen layer makes a leaked HUD or an accidentally hidden live HUD observable.
+fn screen_hud(
+    view: bevy::render::renderer::ViewQuery<&bevy::render::view::ViewTarget>,
+    mut context: bevy::render::renderer::RenderContext,
+) {
+    use bevy::render::render_resource::{LoadOp, RenderPassDescriptor};
+    let mut color = view.into_inner().get_unsampled_color_attachment();
+    color.ops.load = LoadOp::Clear(wgpu::Color::RED);
+    let attachments = [Some(color)];
+    let _pass = context
+        .command_encoder()
+        .begin_render_pass(&RenderPassDescriptor {
+            label: Some("test screen HUD"),
+            color_attachments: &attachments,
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+}
+
+/// Draws an observable screen layer through the normal camera output after the clean sample.
+fn install_hud(world: &mut World) {
+    use bevy::core_pipeline::{Core3d, Core3dSystems, upscaling::upscaling};
+    world.schedule_scope(Core3d, |_, schedule| {
+        schedule.add_systems(
+            screen_hud
+                .after(Core3dSystems::PostProcess)
+                .after(render::frame_capture::WorldFrameCapture)
+                .before(upscaling),
+        );
+    });
+}
+
+#[test]
+fn clean_video_preserves_world_pixels_and_live_hud_without_old_frame_fallback() {
+    let Some(mut app) = app() else { return };
+    app.sub_app_mut(RenderApp)
+        .add_systems(bevy::render::RenderStartup, install_hud);
+    app.finish();
+    app.cleanup();
+    for _ in 0..8 {
+        app.update();
+    }
+    // Both bounded scale and Native size must sample before screen HUD composition.
+    assert_blue(video(&mut app, [32, 16], false).unwrap(), (32, 16));
+    assert_blue(video(&mut app, [64, 32], false).unwrap(), (64, 32));
+    let display = capture(&mut app).try_into_dynamic().unwrap().to_rgb8();
+    assert_eq!(display.get_pixel(32, 16).0, [255, 0, 0]);
+    let recorded_hud = video(&mut app, [32, 16], true)
+        .unwrap()
+        .try_into_dynamic()
+        .unwrap()
+        .to_rgb8();
+    assert_eq!(recorded_hud.get_pixel(16, 8).0, [255, 0, 0]);
+    // Native dimensions with HUD enabled use the same reusable output and retain its exact pixels.
+    let native_hud = video(&mut app, [64, 32], true)
+        .unwrap()
+        .try_into_dynamic()
+        .unwrap()
+        .to_rgb8();
+    assert_eq!(native_hud.dimensions(), (64, 32));
+    assert_eq!(native_hud.get_pixel(32, 16).0, [255, 0, 0]);
+
+    let mut cameras = app.world_mut().query::<&mut Camera>();
+    cameras.single_mut(app.world_mut()).unwrap().clear_color =
+        ClearColorConfig::Custom(Color::srgb(0.1, 0.8, 0.2));
+    let current = video(&mut app, [32, 16], false)
+        .unwrap()
+        .try_into_dynamic()
+        .unwrap()
+        .to_rgb8();
+    let [red, green, blue] = current.get_pixel(16, 8).0;
+    assert!(green > 100 && green > red && green > blue);
+
+    // The reusable output still contains green pixels, but no current view may deliver those.
+    cameras.single_mut(app.world_mut()).unwrap().is_active = false;
+    assert!(video(&mut app, [32, 16], false).is_err());
+}
+
+#[test]
+fn native_screenshot_keeps_priority_over_a_native_hud_recording_slot() {
+    /// Cancellation releases the recording owner's pending slot without delivering an old image.
+    struct Slot(Arc<Mutex<bool>>);
+    impl Drop for Slot {
+        fn drop(&mut self) {
+            *self.0.lock().unwrap() = true;
+        }
+    }
+    let Some(mut app) = app() else { return };
+    app.sub_app_mut(RenderApp)
+        .add_systems(bevy::render::RenderStartup, install_hud);
+    app.finish();
+    app.cleanup();
+    for _ in 0..8 {
+        app.update();
+    }
+    let released = Arc::new(Mutex::new(false));
+    let slot = Slot(Arc::clone(&released));
+    let result = Arc::new(Mutex::new(None));
+    let received = Arc::clone(&result);
+    {
+        let mut requests = app.world_mut().resource_mut::<super::FrameCapture>();
+        requests
+            .request_sized([64, 32], [64, 32], true, move |_| {
+                drop(slot);
+                panic!("a screenshot must cancel this recording slot before capture");
+            })
+            .unwrap();
+        requests.request_owned(move |image| {
+            *received.lock().unwrap() = Some(image);
+        });
+    }
+    test_time::eventually("native screenshot priority during recording", || {
+        app.update();
+        app.sub_app(RenderApp)
+            .world()
+            .resource::<RenderDevice>()
+            .wgpu_device()
+            .poll(wgpu::PollType::wait_indefinitely())
+            .unwrap();
+        result.lock().unwrap().is_some()
+    });
+    assert!(*released.lock().unwrap());
+    let screenshot = result
+        .lock()
+        .unwrap()
+        .take()
+        .unwrap()
+        .try_into_dynamic()
+        .unwrap()
+        .to_rgb8();
+    assert_eq!(screenshot.dimensions(), (64, 32));
+    assert_eq!(screenshot.get_pixel(32, 16).0, [255, 0, 0]);
 }

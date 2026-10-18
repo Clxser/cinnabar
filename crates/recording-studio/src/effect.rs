@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+mod camera;
+
 use crate::{Id, MediaTime, Span, StudioError, error::limit};
 
 pub const MAX_CURVE_KEYS: usize = 4096;
@@ -151,6 +153,7 @@ macro_rules! effects {
             pub const fn label(self) -> &'static str { match self { $(Self::$kind => $label),+ } }
             pub const fn initial(self) -> f64 { match self { $(Self::$kind => $initial),+ } }
             pub const fn step(self) -> f64 { match self { $(Self::$kind => $step),+ } }
+            pub const fn limits(self) -> (f64,f64) { match self { $(Self::$kind => ($min,$max)),+ } }
             pub fn constrain(self, value: f64) -> f64 { match self { $(Self::$kind => value.clamp($min, $max)),+ } }
         }
     };
@@ -260,7 +263,8 @@ impl EffectSample {
         mut pose: crate::camera::CameraPose,
         at: MediaTime,
     ) -> crate::camera::CameraPose {
-        pose.fov = (pose.fov - self.zoom_degrees).clamp(1.0, 178.0);
+        let range = crate::camera::CAMERA_FOV_RANGE;
+        pose.fov = (pose.fov - self.zoom_degrees).clamp(range.start, range.end.next_down());
         let seconds = at.seconds();
         pose.yaw += self.shake_degrees * (seconds * 53.0).sin() * (seconds * 19.0).cos();
         pose.pitch = (pose.pitch + self.shake_degrees * (seconds * 47.0).sin()).clamp(-90.0, 90.0);
@@ -308,5 +312,27 @@ impl EffectSample {
         self.chromatic = EffectKind::Chromatic.constrain(self.chromatic);
         self.soft_focus = EffectKind::SoftFocus.constrain(self.soft_focus);
         self.sharpen = EffectKind::Sharpen.constrain(self.sharpen);
+    }
+}
+
+#[cfg(test)]
+mod camera_effect_tests {
+    use super::*;
+
+    #[test]
+    fn neutral_effects_preserve_every_admitted_high_fov() {
+        for fov in [178.5, crate::camera::CAMERA_FOV_RANGE.end.next_down()] {
+            let pose = crate::camera::CameraPose {
+                fov,
+                ..Default::default()
+            };
+            pose.validate().unwrap();
+            assert_eq!(
+                EffectSample::default()
+                    .camera_pose(pose, MediaTime::ZERO)
+                    .fov,
+                fov
+            );
+        }
     }
 }

@@ -855,6 +855,7 @@ mod shadow;
 mod spatial;
 mod synchronized_audio;
 mod terrain_interlock;
+mod view_anchor;
 
 pub use dropped::{DroppedItemView, MAX_DROPPED_ITEM_COPIES, dropped_item_copy_count};
 pub use entities::{

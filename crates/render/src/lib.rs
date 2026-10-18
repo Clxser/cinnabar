@@ -38,6 +38,7 @@ mod entity_shadow_render;
 pub use enhanced::EnhancedRenderPlugin;
 pub use entity_shadow_render::EntityShadowRenderPlugin;
 mod far_terrain;
+pub mod frame_capture;
 pub use far_terrain::FarTerrainRenderPlugin;
 mod gpu_timing;
 pub use gpu_timing::{DetailedGpuTiming, GpuTimingPlugin};
@@ -70,7 +71,7 @@ mod pack_skybox;
 mod panorama_render;
 mod particle_render;
 
-mod pipeline_warmup;
+pub mod pipeline_warmup;
 #[cfg(test)]
 #[path = "pipeline_warmup/app_tests.rs"]
 mod pipeline_warmup_app_tests;

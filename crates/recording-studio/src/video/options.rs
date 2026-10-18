@@ -94,7 +94,7 @@ impl EncodeOptions {
 }
 
 /// Every supported codec has one software encoder and one NVIDIA encoder in this policy.
-fn encoder_name(codec: ExportCodec, encoder: Encoder) -> &'static str {
+pub(super) fn encoder_name(codec: ExportCodec, encoder: Encoder) -> &'static str {
     match (codec, encoder) {
         (ExportCodec::H264, Encoder::Cpu | Encoder::Auto) => "libx264",
         (ExportCodec::Hevc, Encoder::Cpu | Encoder::Auto) => "libx265",
@@ -138,6 +138,23 @@ pub(super) fn arguments(
         "-c:v".into(),
         encoder_name(settings.codec, encoder).into(),
     ]);
+    if options.speed == EncodingSpeed::Live {
+        let threads = live_threads_for(std::thread::available_parallelism().map_or(1, usize::from));
+        args.extend(["-filter_threads".into(), "1".into()]);
+        if encoder == Encoder::Cpu {
+            args.extend(["-threads:v".into(), threads.to_string()]);
+            match settings.codec {
+                ExportCodec::H264 => {
+                    args.extend(["-x264-params".into(), "lookahead-threads=1".into()])
+                }
+                ExportCodec::Hevc => args.extend([
+                    "-x265-params".into(),
+                    format!("pools={threads}:frame-threads=1"),
+                ]),
+                ExportCodec::Av1 => args.extend(["-svtav1-params".into(), format!("lp={threads}")]),
+            }
+        }
+    }
     let quality = options
         .quality
         .unwrap_or(match settings.codec {
@@ -207,4 +224,66 @@ pub(super) fn arguments(
     );
     args.push(output.display().to_string());
     args
+}
+
+/// Live software encoding shares the host with animation, streaming and rendering; export remains free.
+fn live_threads_for(available: usize) -> usize {
+    (available / 2).clamp(1, 8)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn live_workers_leave_host_capacity_and_have_a_finite_upper_bound() {
+        for (available, expected) in [(0, 1), (1, 1), (2, 1), (4, 2), (16, 8), (128, 8)] {
+            assert_eq!(live_threads_for(available), expected);
+        }
+    }
+
+    #[test]
+    fn live_thread_limits_preserve_rate_dimensions_quality_and_encoder_choice() {
+        for codec in [ExportCodec::H264, ExportCodec::Hevc, ExportCodec::Av1] {
+            let settings = VideoSettings {
+                path: "capture.mp4".into(),
+                fps: FrameRate {
+                    numerator: 240,
+                    denominator: 1,
+                },
+                codec,
+            };
+            let args = arguments(
+                &settings,
+                [1920, 1080],
+                PixelLayout::Rgba,
+                &settings.path,
+                EncodeOptions {
+                    speed: EncodingSpeed::Live,
+                    quality: Some(19),
+                    encoder: Encoder::Cpu,
+                },
+                Encoder::Cpu,
+            );
+            let value = |flag: &str| {
+                args.windows(2)
+                    .find(|pair| pair[0] == flag)
+                    .map(|pair| pair[1].as_str())
+            };
+            assert_eq!(value("-framerate"), Some("240"));
+            assert_eq!(value("-video_size"), Some("1920x1080"));
+            assert_eq!(value("-crf"), Some("19"));
+            assert_eq!(value("-c:v"), Some(encoder_name(codec, Encoder::Cpu)));
+            assert!(value("-threads:v").unwrap().parse::<usize>().unwrap() <= 8);
+            let export = arguments(
+                &settings,
+                [1920, 1080],
+                PixelLayout::Rgba,
+                &settings.path,
+                EncodeOptions::default(),
+                Encoder::Cpu,
+            );
+            assert!(!export.iter().any(|arg| arg == "-threads:v"));
+        }
+    }
 }

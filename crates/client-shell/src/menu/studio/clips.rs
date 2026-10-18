@@ -45,7 +45,7 @@ impl Studio {
             .ok_or_else(|| "Select a video or replay clip first.".into())
     }
 
-    /// Adjusts only source crop/opacity and keeps source time, camera and linked audio unchanged.
+    /// Adjusts saved image framing while preserving source time, camera and linked audio.
     pub(super) fn adjust_framing(
         &mut self,
         parameter: recording_studio::timeline::FramingParameter,

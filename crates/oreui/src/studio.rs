@@ -9,6 +9,7 @@ use super::{
     widgets::{self, Variant},
 };
 
+mod audio;
 mod camera;
 mod clips;
 mod editor;
@@ -17,13 +18,32 @@ mod export;
 mod library;
 mod media;
 mod recording;
+mod recovery;
+#[cfg(test)]
+mod recovery_tests;
 mod settings;
 mod speed;
 mod timeline;
 mod titles;
+mod viewport;
 
 /// Uses the existing OreUI font, focus, button and scroll primitives throughout the workspace.
 pub(super) fn draw(
+    canvas: &mut Canvas<'_>,
+    view: &MenuView,
+    size: [f32; 2],
+) -> Result<(), PaintError> {
+    let scale = view
+        .studio
+        .workspace
+        .density
+        .scale()
+        .max((13.0 / canvas.r(BODY.size)).min(1.0));
+    canvas.with_scale(scale, |canvas| draw_workspace(canvas, view, size))
+}
+
+/// Studio adapts independently of the game HUD while keeping the native font and input scale.
+fn draw_workspace(
     canvas: &mut Canvas<'_>,
     view: &MenuView,
     size: [f32; 2],
@@ -38,7 +58,7 @@ pub(super) fn draw(
         [pad, pad, pad + canvas.r(7.2), header - pad],
         Variant::Neutral,
         "Back",
-        Some(MenuAction::AddBack),
+        (!view.studio.workflow.recovery.busy).then_some(MenuAction::AddBack),
     )?;
     let title_left = pad * 2.0 + canvas.r(7.2);
     canvas.text_line(
@@ -49,6 +69,8 @@ pub(super) fn draw(
         TEXT,
     )?;
     let studio = &view.studio;
+    let document_controls =
+        !studio.loading && !studio.workflow.recovery.visible && !studio.workflow.recovery.busy;
     let subtitle = studio
         .project
         .as_ref()
@@ -64,6 +86,8 @@ pub(super) fn draw(
     )?;
     let status = if studio.saving {
         "Saving..."
+    } else if studio.workflow.recovery.autosaving {
+        "Autosaving recovery..."
     } else if studio.dirty {
         "Unsaved changes"
     } else if studio.file.is_some() {
@@ -81,7 +105,7 @@ pub(super) fn draw(
         [right - save_width, pad, right, header - pad],
         "Save",
         Action::Save,
-        studio.project.is_some() && !studio.saving && !studio.loading,
+        studio.project.is_some() && !studio.saving && document_controls,
         Variant::Primary,
     )?;
     let export_right = right - save_width - pad;
@@ -95,7 +119,7 @@ pub(super) fn draw(
             .project
             .as_ref()
             .is_some_and(|project| project.duration() > recording_studio::MediaTime::ZERO)
-            && !studio.loading
+            && document_controls
             && !studio.export.phase.busy(),
         Variant::Secondary,
     )?;
@@ -114,7 +138,7 @@ pub(super) fn draw(
             "Library"
         },
         Action::Library,
-        true,
+        document_controls,
         Variant::Secondary,
     )?;
     if size[0] > canvas.r(110.0) {
@@ -135,9 +159,23 @@ pub(super) fn draw(
         canvas.text_line(
             error,
             [pad * 2.0, top + canvas.r(0.6)],
-            size[0] - pad * 4.0,
+            (size[0] - pad * 4.0 - canvas.r(10.0)).max(0.0),
             CAPTION,
             TEXT,
+        )?;
+        control(
+            canvas,
+            view,
+            [
+                size[0] - pad - canvas.r(9.0),
+                top,
+                size[0] - pad,
+                top + canvas.r(4.4),
+            ],
+            "Dismiss",
+            Action::Workspace(launcher::menu::studio::WorkspaceAction::DismissStatus),
+            true,
+            Variant::Neutral,
         )?;
         top += canvas.r(5.2);
     }
@@ -152,15 +190,20 @@ pub(super) fn draw(
         )?;
         top += height + canvas.r(1.2);
     }
+    top = recovery::warning(canvas, view, [pad, top, size[0] - pad, size[1] - pad])?;
     top = recording::draw(canvas, view, [pad, top, size[0] - pad, size[1] - pad])?;
     top = export::draw(canvas, view, [pad, top, size[0] - pad, size[1] - pad])?;
     let area = [pad, top, size[0] - pad, size[1] - pad];
-    if studio.workflow.show_settings {
-        settings::draw(canvas, view, area)?;
-    } else if studio.show_library || studio.project.is_none() {
-        library::draw(canvas, view, area)?;
-    } else {
-        editor::draw(canvas, view, area)?;
+    if area[2] > area[0] && area[3] > area[1] {
+        if studio.workflow.recovery.visible {
+            recovery::draw(canvas, view, area)?;
+        } else if studio.workflow.show_settings {
+            settings::draw(canvas, view, area)?;
+        } else if studio.show_library || studio.project.is_none() {
+            library::draw(canvas, view, area)?;
+        } else {
+            editor::draw(canvas, view, area)?;
+        }
     }
     if studio.loading {
         canvas.overlay(size, [0, 0, 0, 150])?;
@@ -256,7 +299,11 @@ fn discard(canvas: &mut Canvas<'_>, view: &MenuView, size: [f32; 2]) -> Result<(
         TEXT,
     )?;
     canvas.text_line(
-        "Save your project before opening another.",
+        if view.studio.workflow.recovery.busy {
+            "Finishing recovery cleanup..."
+        } else {
+            "Save your project before opening another."
+        },
         [left + pad, top + canvas.r(6.0)],
         width - pad * 2.0,
         BODY,
@@ -270,7 +317,7 @@ fn discard(canvas: &mut Canvas<'_>, view: &MenuView, size: [f32; 2]) -> Result<(
         [left + pad, y, middle - pad * 0.5, bounds[3] - pad],
         "Keep editing",
         Action::CancelDiscard,
-        true,
+        !view.studio.workflow.recovery.busy,
         Variant::Secondary,
     )?;
     control(
@@ -279,7 +326,7 @@ fn discard(canvas: &mut Canvas<'_>, view: &MenuView, size: [f32; 2]) -> Result<(
         [middle + pad * 0.5, y, bounds[2] - pad, bounds[3] - pad],
         "Discard",
         Action::ConfirmDiscard,
-        true,
+        !view.studio.workflow.recovery.busy,
         Variant::Destructive,
     )
 }

@@ -61,7 +61,7 @@ impl PreviewMetrics {
             );
             return;
         }
-        let number = request.project.export.fps.frame_at(request.at).unwrap_or(0);
+        let number = request.frame_rate().frame_at(request.at).unwrap_or(0);
         if let Some(previous) = self.previous {
             self.skipped += number.saturating_sub(previous.saturating_add(1));
         }

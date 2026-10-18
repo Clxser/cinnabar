@@ -168,6 +168,15 @@ impl TerrainScene {
         self.resident_bytes
     }
 
+    /// Rebalances a shared playback budget without discarding admitted terrain or its cursor.
+    pub fn set_maximum_bytes(&mut self, maximum_bytes: usize) -> Result<(), ArchiveError> {
+        if self.resident_bytes > maximum_bytes {
+            return Err(ArchiveError::Quota);
+        }
+        self.maximum_bytes = maximum_bytes;
+        Ok(())
+    }
+
     /// Clears only this draft; a renderer keeps the last admitted scene until a whole seek succeeds.
     pub fn clear(&mut self) {
         self.chunks.clear();
@@ -433,3 +442,6 @@ fn prune<K: Ord, T: ?Sized>(cache: &mut BTreeMap<K, Weak<T>>) -> Result<(), Arch
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

@@ -3,7 +3,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     sync::{
-        Arc,
+        Arc, Weak,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -23,6 +23,25 @@ use free_ranges::FreeRanges;
 
 /// Distinct for independently constructed catalogs.
 static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
+
+/// Allocation leases identify one catalog publication without keeping obsolete vertex pages alive.
+#[derive(Clone, Debug)]
+pub struct ActorRigCatalogIdentity {
+    epoch: u64,
+    segments: Weak<[Arc<[ActorRigVertex]>]>,
+    offsets: Weak<[usize]>,
+    spans: Weak<[ActorRigGeometrySpan]>,
+}
+
+impl PartialEq for ActorRigCatalogIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        self.epoch == other.epoch
+            && self.segments.ptr_eq(&other.segments)
+            && self.offsets.ptr_eq(&other.offsets)
+            && self.spans.ptr_eq(&other.spans)
+    }
+}
+impl Eq for ActorRigCatalogIdentity {}
 
 /// Immutable geometry pages and their storage-buffer addresses.
 #[derive(Clone, Debug, PartialEq)]
@@ -147,7 +166,7 @@ pub(super) struct AdmissionPlan {
     pub(super) deferred: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(super) struct GeometryCatalog {
     pub(super) geometries: BTreeMap<EntityRigId, ActorRigGeometry>,
     /// Stable span index for each registered geometry.
@@ -163,6 +182,16 @@ pub(super) struct GeometryCatalog {
 }
 
 impl GeometryCatalog {
+    /// Weak leases retain metadata allocation identities even after both view catalogs replace them.
+    pub(super) fn identity(&self) -> ActorRigCatalogIdentity {
+        ActorRigCatalogIdentity {
+            epoch: self.vertices.epoch,
+            segments: Arc::downgrade(&self.vertices.segments),
+            offsets: Arc::downgrade(&self.vertices.offsets),
+            spans: Arc::downgrade(&self.published_spans),
+        }
+    }
+
     /// Places immutable geometry pages consecutively without copying their vertices.
     pub(super) fn layout(
         geometries: BTreeMap<EntityRigId, ActorRigGeometry>,

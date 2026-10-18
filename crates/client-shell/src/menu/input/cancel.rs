@@ -6,6 +6,19 @@ impl MenuRuntime {
     /// A selected vanilla edit box consumes cancel before the screen handles it.
     pub(super) fn go_back_from_input(&mut self) {
         if self.screen == launcher::menu::MenuScreen::RecordingStudio {
+            if self.field == Some(MenuField::StudioLibrarySearch) {
+                self.studio.cancel_library_search();
+                self.field = None;
+                return;
+            }
+            if self.studio.view.workflow.recovery.visible {
+                self.go_back();
+                return;
+            }
+            if self.studio.view.camera_workspace.focused {
+                self.studio.release_camera();
+                return;
+            }
             if self.studio.view.discard.is_some() {
                 self.studio
                     .activate(launcher::menu::studio::Action::CancelDiscard);

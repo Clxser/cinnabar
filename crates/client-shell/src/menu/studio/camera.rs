@@ -7,7 +7,14 @@ use recording_studio::{
 
 use super::*;
 
+mod fov;
 mod values;
+mod viewport;
+pub(super) use viewport::CameraInteraction;
+#[cfg(test)]
+mod authoring_tests;
+#[cfg(test)]
+mod subject_tests;
 
 pub(super) struct CameraValueEdit {
     document: u64,
@@ -21,7 +28,14 @@ impl Studio {
     /// Bounded focus fallback exposes the same camera intents as the painted inspector.
     pub(super) fn camera_focus_actions(&self) -> Vec<Action> {
         let mut actions = Vec::new();
+        if self.view.camera_workspace.view.is_some() {
+            actions.extend([Action::ApplyCameraView, Action::ResetCameraView]);
+        }
+        if self.view.camera_workspace.focused {
+            actions.push(Action::ReleaseCamera);
+        }
         if self.view.preview.camera.is_some() {
+            actions.push(Action::ToggleCameraSubjectFilter);
             actions.extend([Action::CycleCameraTarget(-1), Action::CycleCameraTarget(1)]);
             actions.extend(CameraRigKind::ALL.iter().copied().map(Action::CreateCamera));
         }
@@ -33,10 +47,21 @@ impl Studio {
             ]);
             if matches!(
                 shot.kind(),
-                CameraRigKind::Player | CameraRigKind::Follow | CameraRigKind::Orbit
+                CameraRigKind::Player
+                    | CameraRigKind::Track
+                    | CameraRigKind::Follow
+                    | CameraRigKind::Orbit
             ) {
                 actions.push(Action::RetargetCamera);
             }
+            actions.extend([
+                Action::AddCameraFovKey,
+                Action::DeleteCameraFovKey,
+                Action::ClearCameraFov,
+                Action::CycleCameraFovEasing,
+                Action::StepCameraFovKey(-1),
+                Action::StepCameraFovKey(1),
+            ]);
             if shot.kind() == CameraRigKind::Path {
                 actions.extend([
                     Action::AddCameraKey,
@@ -48,6 +73,12 @@ impl Studio {
                     Action::MoveCameraKey(-1),
                     Action::MoveCameraKey(1),
                 ]);
+                if shot
+                    .key_at(self.transport.position())
+                    .is_some_and(|key| key.handles.is_some())
+                {
+                    actions.push(Action::ResetCameraHandles);
+                }
             }
             if self.view.camera_draft.is_some() {
                 actions.extend([Action::ApplyCameraValue, Action::CancelCameraValue]);
@@ -65,14 +96,23 @@ impl Studio {
 
     /// Rejects a stale displayed pose after document/seek/edit changes instead of keying the wrong frame.
     fn camera_preview(&self) -> Result<CameraPreview, String> {
+        let preview = self.displayed_camera_preview()?;
+        if self.view.preview.ready {
+            Ok(preview)
+        } else {
+            Err("Wait for the 3D preview to finish before using its camera pose.".into())
+        }
+    }
+
+    /// A view-only refresh retains the displayed subject identities while its replacement renders.
+    fn displayed_camera_preview(&self) -> Result<CameraPreview, String> {
         let editor = self.editor.as_ref().ok_or("Open a project first.")?;
         self.view
             .preview
             .camera
             .as_ref()
             .filter(|camera| {
-                self.view.preview.ready
-                    && camera.epoch == [self.document, editor.revision(), self.transport.epoch()]
+                camera.epoch == [self.document, editor.revision(), self.transport.epoch()]
             })
             .cloned()
             .ok_or_else(|| "Wait for the 3D preview to finish before using its camera pose.".into())
@@ -153,18 +193,24 @@ impl Studio {
         let end = MediaTime(clip_end.0.min(at.0.saturating_add(6_000_000)));
         let span = Span::new(at, end).map_err(|error| error.to_string())?;
         let target = self.view.camera_target.and_then(|reference| {
-            preview
-                .targets
-                .iter()
-                .find(|target| target.matches(reference))
+            preview.targets.iter().find(|target| {
+                target.matches(reference)
+                    && self
+                        .view
+                        .camera_workspace
+                        .subject_filter
+                        .includes(target, preview.local_actor)
+            })
         });
         let id = project.next_id().map_err(|error| error.to_string())?;
-        let shot = CameraShot::from_preview(id, span, kind, preview.pose, target)
+        let pose = self.camera_authoring_pose(at, preview.pose)?;
+        let shot = CameraShot::from_preview(id, span, kind, pose, target)
             .map_err(|error| error.to_string())?;
         let duration = project.duration();
         self.transport.pause();
         self.transport.seek(at, duration);
         self.edit("Add camera shot", &[Command::AddShot { shot }])?;
+        self.reset_camera_view();
         Arc::make_mut(&mut self.view).selected = Some(id);
         Ok(())
     }
@@ -174,24 +220,45 @@ impl Studio {
         let Some(preview) = &self.view.preview.camera else {
             return;
         };
-        if preview.targets.is_empty() {
+        let targets = preview
+            .targets
+            .iter()
+            .filter(|target| {
+                self.view
+                    .camera_workspace
+                    .subject_filter
+                    .includes(target, preview.local_actor)
+            })
+            .collect::<Vec<_>>();
+        if targets.is_empty() {
             return;
         }
-        let old = self.view.camera_target.and_then(|reference| {
-            preview
-                .targets
-                .iter()
-                .position(|target| target.matches(reference))
-        });
+        let old = self
+            .view
+            .camera_target
+            .and_then(|reference| targets.iter().position(|target| target.matches(reference)));
         let next = match old {
-            Some(index) if direction < 0 => {
-                (index + preview.targets.len() - 1) % preview.targets.len()
-            }
-            Some(index) => (index + 1) % preview.targets.len(),
+            Some(index) if direction < 0 => (index + targets.len() - 1) % targets.len(),
+            Some(index) => (index + 1) % targets.len(),
             None => 0,
         };
-        let target = preview.targets[next].reference();
+        let target = targets[next].reference();
         Arc::make_mut(&mut self.view).camera_target = Some(target);
+    }
+
+    /// Advanced entity browsing is explicit and cannot rebind an existing camera shot.
+    pub(super) fn toggle_camera_subject_filter(&mut self) {
+        let filter = self.view.camera_workspace.subject_filter.next();
+        let selected = self.view.camera_target.filter(|reference| {
+            self.view.preview.camera.as_ref().is_some_and(|camera| {
+                camera.targets.iter().any(|target| {
+                    target.matches(*reference) && filter.includes(target, camera.local_actor)
+                })
+            })
+        });
+        let view = Arc::make_mut(&mut self.view);
+        view.camera_workspace.subject_filter = filter;
+        view.camera_target = selected;
     }
 
     /// Rebinding preserves follow/orbit parameters and records the selected actor's spawn lifetime.
@@ -204,7 +271,14 @@ impl Studio {
         let target = preview
             .targets
             .iter()
-            .find(|target| target.matches(reference))
+            .find(|target| {
+                target.matches(reference)
+                    && self
+                        .view
+                        .camera_workspace
+                        .subject_filter
+                        .includes(target, preview.local_actor)
+            })
             .ok_or("This camera target is no longer present at the playhead.")?;
         let shot = self
             .camera_shot()?
@@ -229,12 +303,13 @@ impl Studio {
         self.edit("Adjust camera", &[Command::ReplaceShot { shot }])
     }
 
-    /// The key captures the current unmodified rig pose, leaving transient effects separate.
+    /// The key captures inspection navigation when present, leaving transient effects separate.
     pub(super) fn add_camera_key(&mut self) -> Result<(), String> {
         let preview = self.camera_preview()?;
+        let pose = self.camera_authoring_pose(self.view.preview.at, preview.pose)?;
         let shot = self
             .camera_shot()?
-            .keyed(self.view.preview.at, preview.pose)
+            .keyed(self.view.preview.at, pose)
             .map_err(|error| error.to_string())?;
         self.transport.pause();
         self.edit("Add camera key", &[Command::ReplaceShot { shot }])
@@ -319,6 +394,7 @@ impl Studio {
         self.transport.pause();
         self.transport.seek(at, duration);
         Arc::make_mut(&mut self.view).selected = Some(id);
+        Arc::make_mut(&mut self.view).camera_workspace.key = Some((id, at));
         Ok(())
     }
 
@@ -344,10 +420,12 @@ impl Studio {
         let shot = shot
             .with_key_time(at, destination)
             .map_err(|error| error.to_string())?;
+        let id = shot.id;
         self.cancel_camera_value();
         self.transport.pause();
         self.edit("Move camera key", &[Command::ReplaceShot { shot }])?;
         self.transport.seek(destination, duration);
+        Arc::make_mut(&mut self.view).camera_workspace.key = Some((id, destination));
         Ok(())
     }
 

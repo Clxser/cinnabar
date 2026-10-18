@@ -4,14 +4,17 @@
 //! callers supply time, world samples and rendered frames. Storage runs behind bounded workers.
 
 pub mod archive;
+pub mod audio;
 pub mod automation;
 pub mod camera;
 pub mod capture;
 pub mod decode;
+pub mod dependencies;
 pub mod edit;
 pub mod effect;
 pub mod error;
 pub mod export;
+pub mod framing;
 pub mod lanes;
 pub mod media;
 mod media_process;
@@ -25,6 +28,7 @@ pub mod storage;
 pub mod time;
 pub mod timeline;
 pub mod title;
+pub mod tracks;
 pub mod video;
 pub mod wav;
 

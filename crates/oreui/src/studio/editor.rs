@@ -1,68 +1,45 @@
-//! Editor composition keeps the preview central, with native controls and actual project metadata.
+//! A stable editor workspace keeps tools, the viewer, selection properties and tracks separate.
 
-use super::super::theme::TEXT_DIMMEST;
 use super::*;
+use launcher::menu::studio::EditorPanel;
 use recording_studio::MediaTime;
 
+mod inspector;
+mod toolbar;
+mod toolbox;
+mod transport;
+mod viewer;
+
+/// Reserves usable preview and track regions without scrolling the entire editor off screen.
 pub(super) fn draw(
     canvas: &mut Canvas<'_>,
     view: &MenuView,
     area: Bounds,
 ) -> Result<(), PaintError> {
-    let minimum = canvas.r(if area[2] - area[0] > canvas.r(105.0) {
-        40.0
-    } else {
-        46.0
-    });
-    if area[3] - area[1] < minimum {
-        let previous = canvas.settings_scrollbars;
-        canvas.settings_scrollbars = true;
-        let scroll = canvas.begin_scroll("studio_workspace_compact", area)?;
-        let top = area[1] - scroll.offset;
-        let result = draw_workspace(
-            canvas,
-            view,
-            [area[0], top, area[2] - canvas.r(1.4), top + minimum],
-        );
-        let end = canvas.end_scroll(scroll, minimum);
-        canvas.settings_scrollbars = previous;
-        result?;
-        return end;
-    }
-    draw_workspace(canvas, view, area)
-}
-
-fn draw_workspace(
-    canvas: &mut Canvas<'_>,
-    view: &MenuView,
-    area: Bounds,
-) -> Result<(), PaintError> {
-    let Some(project) = &view.studio.project else {
+    if view.studio.project.is_none() || area[2] <= area[0] || area[3] <= area[1] {
         return Ok(());
-    };
-    let pad = canvas.r(1.2);
-    let available = (area[3] - area[1]).max(0.0);
-    let timeline_height = (available * 0.42)
-        .max(canvas.r(27.0))
-        .min((available - canvas.r(12.0)).max(canvas.r(12.0)));
-    let timeline_top = (area[3] - timeline_height).max(area[1] + canvas.r(12.0));
-    let wide = area[2] - area[0] > canvas.r(105.0);
-    let mut upper_top = area[1];
-    if !wide {
-        let width = ((area[2] - area[0]) - pad * 2.0) / 3.0;
+    }
+    let pad = canvas.r(0.9);
+    let mut top = toolbar::draw(canvas, view, area)?;
+    let width = area[2] - area[0];
+    let wide = width >= canvas.r(115.0);
+    let medium = width >= canvas.r(78.0);
+    if !medium && !view.studio.workspace.preview_only {
+        let gap = canvas.r(0.5);
+        let button = (width - gap * 2.0) / 3.0;
         for (index, (label, panel)) in [
-            ("Preview", launcher::menu::studio::EditorPanel::Preview),
-            ("Media", launcher::menu::studio::EditorPanel::Media),
-            ("Inspector", launcher::menu::studio::EditorPanel::Inspector),
+            ("Preview", EditorPanel::Preview),
+            ("Tools", EditorPanel::Media),
+            ("Properties", EditorPanel::Inspector),
         ]
         .into_iter()
         .enumerate()
         {
-            let x = area[0] + index as f32 * (width + pad);
+            let x = area[0] + index as f32 * (button + gap);
             control(
                 canvas,
                 view,
-                [x, upper_top, x + width, upper_top + canvas.r(4.0)],
+                [x, top, x + button, top + canvas.r(3.4)],
                 label,
                 Action::Panel(panel),
                 true,
@@ -73,241 +50,181 @@ fn draw_workspace(
                 },
             )?;
         }
-        upper_top += canvas.r(4.8);
-        let panel_area = [area[0], upper_top, area[2], timeline_top - pad];
-        match view.studio.workspace.panel {
-            launcher::menu::studio::EditorPanel::Media => {
-                media(canvas, view, panel_area)?;
-                return timeline::draw(canvas, view, [area[0], timeline_top, area[2], area[3]]);
+        top += canvas.r(4.3);
+    }
+    let available = (area[3] - top).max(0.0);
+    if available <= canvas.r(2.0) {
+        return Ok(());
+    }
+    let minimum = canvas.r(17.0).min(available * 0.45);
+    let maximum = (available - canvas.r(13.0)).max(minimum);
+    let timeline_height = if view.studio.workspace.preview_only {
+        0.0
+    } else {
+        (available * view.studio.workspace.timeline_size.fraction()).clamp(minimum, maximum)
+    };
+    let timeline_top = (area[3] - timeline_height).max(top);
+    let stage = [area[0], top, area[2], (timeline_top - pad).max(top)];
+    if stage[3] > stage[1] {
+        if !medium && !view.studio.workspace.preview_only {
+            match view.studio.workspace.panel {
+                EditorPanel::Media => toolbox::draw(canvas, view, stage)?,
+                EditorPanel::Inspector => inspector::draw(canvas, view, stage)?,
+                EditorPanel::Preview => preview(canvas, view, stage)?,
             }
-            launcher::menu::studio::EditorPanel::Inspector => {
-                inspector(canvas, view, panel_area)?;
-                return timeline::draw(canvas, view, [area[0], timeline_top, area[2], area[3]]);
+        } else {
+            let workspace = &view.studio.workspace;
+            let show_tools = !workspace.preview_only
+                && !workspace.media_hidden
+                && (wide || workspace.panel == EditorPanel::Media);
+            let show_properties = !workspace.preview_only
+                && !workspace.inspector_hidden
+                && (wide
+                    || workspace.panel == EditorPanel::Inspector
+                    || (workspace.panel == EditorPanel::Preview && view.studio.selected.is_some()));
+            let tool_width = if show_tools {
+                canvas.r(26.0).min(width * 0.25)
+            } else {
+                0.0
+            };
+            let property_width = if show_properties && (!show_tools || wide) {
+                canvas.r(31.0).min(width * 0.32)
+            } else {
+                0.0
+            };
+            let viewer = [
+                stage[0] + tool_width + if tool_width > 0.0 { pad } else { 0.0 },
+                stage[1],
+                stage[2] - property_width - if property_width > 0.0 { pad } else { 0.0 },
+                stage[3],
+            ];
+            if tool_width > 0.0 {
+                toolbox::draw(
+                    canvas,
+                    view,
+                    [stage[0], top, stage[0] + tool_width, stage[3]],
+                )?;
             }
-            launcher::menu::studio::EditorPanel::Preview => {}
+            if property_width > 0.0 {
+                inspector::draw(
+                    canvas,
+                    view,
+                    [stage[2] - property_width, top, stage[2], stage[3]],
+                )?;
+            }
+            preview(canvas, view, viewer)?;
         }
     }
-    let left_width = if wide {
-        (area[2] - area[0]) * 0.19
+    if view.studio.workspace.preview_only {
+        Ok(())
     } else {
-        0.0
-    };
-    let right_width = if wide {
-        (area[2] - area[0]) * 0.23
-    } else {
-        0.0
-    };
-    let preview = [
-        area[0] + left_width,
-        upper_top,
-        area[2] - right_width,
-        timeline_top - pad,
-    ];
-    if wide {
-        media(
-            canvas,
-            view,
-            [area[0], area[1], preview[0] - pad, preview[3]],
-        )?;
-        inspector(
-            canvas,
-            view,
-            [preview[2] + pad, area[1], area[2], preview[3]],
-        )?;
+        timeline::draw(canvas, view, [area[0], timeline_top, area[2], area[3]])
     }
-    widgets::panel(canvas, preview)?;
-    let transport_top = preview[3] - canvas.r(5.6);
+}
+
+/// Preview overlays and pointer targets share the actual letterboxed image rectangle.
+fn preview(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<(), PaintError> {
+    if area[2] <= area[0] || area[3] <= area[1] {
+        return Ok(());
+    }
+    widgets::panel(canvas, area)?;
+    let pad = canvas.r(0.8);
+    let transport_height = canvas.r(8.4).min((area[3] - area[1]) * 0.45);
+    let transport_top = area[3] - transport_height;
+    let mut image_top = viewer::toolbar(canvas, view, [area[0], area[1], area[2], transport_top])?;
+    if let Some(notice) = &view.studio.preview.notice {
+        let notice_height = canvas.r(2.5);
+        if transport_top - image_top > notice_height + canvas.r(6.0) {
+            canvas.text_line(
+                notice,
+                [area[0] + pad, image_top],
+                (area[2] - area[0] - pad * 2.0).max(0.0),
+                CAPTION,
+                TEXT_DIMMER,
+            )?;
+            image_top += notice_height;
+        }
+    }
     let viewport = [
-        preview[0] + pad,
-        preview[1] + pad,
-        preview[2] - pad,
+        area[0] + pad,
+        image_top + pad,
+        area[2] - pad,
         transport_top - pad,
     ];
-    canvas.fill(viewport, [16, 20, 24, 255])?;
-    let caption = if project.sources.is_empty() {
-        "Add a recording to begin your edit."
-    } else if let Some(error) = &view.studio.preview.error {
-        error.as_str()
-    } else if view.studio.preview.loading {
-        "Loading preview..."
-    } else {
-        "Select a playable recording to preview."
-    };
-    if let Some(icon) = view.studio.preview_icon {
-        canvas.fitted_media(icon, viewport)?;
-    } else {
-        canvas.text_centred(caption, viewport, BODY, TEXT_DIMMEST, false)?;
-    }
-    if let Some(notice) = &view.studio.preview.notice {
-        canvas.text_line(
-            notice,
-            [viewport[0] + pad, viewport[3] - canvas.r(2.8)],
-            (viewport[2] - viewport[0] - pad * 2.0).max(0.0),
-            CAPTION,
-            TEXT_DIMMER,
-        )?;
-    }
-    let button_width = canvas.r(7.2);
-    let center = (preview[0] + preview[2]) * 0.5;
-    control(
-        canvas,
-        view,
-        [
-            center - button_width * 1.6,
-            transport_top,
-            center - button_width * 0.6,
-            preview[3] - pad,
-        ],
-        "Prev",
-        Action::Step(-1),
-        true,
-        Variant::Secondary,
-    )?;
-    control(
-        canvas,
-        view,
-        [
-            center - button_width * 0.5,
-            transport_top,
-            center + button_width * 0.5,
-            preview[3] - pad,
-        ],
-        if view.studio.playing { "Pause" } else { "Play" },
-        Action::TogglePlayback,
-        project.duration() > MediaTime::ZERO,
-        Variant::Primary,
-    )?;
-    control(
-        canvas,
-        view,
-        [
-            center + button_width * 0.6,
-            transport_top,
-            center + button_width * 1.6,
-            preview[3] - pad,
-        ],
-        "Next",
-        Action::Step(1),
-        true,
-        Variant::Secondary,
-    )?;
-    if preview[2] - preview[0] > canvas.r(60.0) {
-        canvas.text_line(
-            &time_label(view.studio.position),
-            [preview[0] + pad, transport_top + canvas.r(0.8)],
-            canvas.r(15.2),
-            CAPTION,
-            TEXT_DIMMER,
-        )?;
-    }
-    timeline::draw(canvas, view, [area[0], timeline_top, area[2], area[3]])
-}
-
-/// Source rows reflect the open project's immutable media, with no placeholder thumbnails.
-fn media(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<(), PaintError> {
-    widgets::panel(canvas, area)?;
-    let pad = canvas.r(1.6);
-    super::media::draw(
-        canvas,
-        view,
-        [area[0] + pad, area[1] + pad, area[2] - pad, area[3] - pad],
-    )
-}
-
-/// Inspector operations act on the selected timeline identity and commit through normal undo history.
-fn inspector(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<(), PaintError> {
-    widgets::panel(canvas, area)?;
-    let pad = canvas.r(1.6);
-    let left = area[0] + pad;
-    let right = area[2] - pad;
-    let mut y = area[1] + pad;
-    canvas.text_line("INSPECTOR", [left, y], right - left, HEADER5, TEXT)?;
-    y += canvas.r(4.4);
-    let content_top = y;
-    let scroll = canvas.begin_scroll("studio_inspector", [left, y, right, area[3] - pad])?;
-    y -= scroll.offset;
-    let project = view.studio.project.as_ref().expect("editor has a project");
-    if let Some(shot) = project
-        .shots
-        .iter()
-        .find(|shot| Some(shot.id) == view.studio.selected)
-    {
-        y = super::camera::inspector(canvas, view, [left, y, right, area[3] - pad], shot)?;
-    } else if let Some(effect) = project
-        .effects
-        .iter()
-        .find(|effect| Some(effect.id) == view.studio.selected)
-    {
-        y = super::effects::inspector(canvas, view, [left, y, right, area[3] - pad], effect)?;
-    } else if let Some(title) = project
-        .titles
-        .iter()
-        .find(|title| Some(title.id) == view.studio.selected)
-    {
-        y = super::titles::inspector(canvas, view, [left, y, right, area[3] - pad], title)?;
-    } else {
-        let selected = project
-            .clips
-            .iter()
-            .find(|clip| Some(clip.id) == view.studio.selected);
-        canvas.text_line(
-            if selected.is_some() {
-                "Clip speed"
+    if viewport[2] > viewport[0] && viewport[3] > viewport[1] {
+        canvas.fill(viewport, [16, 20, 24, 255])?;
+        if let Some(icon) = view.studio.preview_icon {
+            let content = view
+                .studio
+                .preview
+                .camera
+                .as_ref()
+                .filter(|camera| camera.interactive)
+                .map_or([0.0, 0.0, 1.0, 1.0], |camera| camera.viewport);
+            if let Some(image) =
+                viewer::image_bounds(icon, viewport, content, view.studio.workspace.preview_fill)
+            {
+                let clip = canvas.begin_clip(viewport)?;
+                canvas.media_in_bounds(icon, image)?;
+                let result = super::viewport::draw(canvas, view, image, viewport);
+                canvas.end_clip(clip);
+                result?;
+            }
+        } else {
+            let caption = if let Some(error) = &view.studio.preview.error {
+                error.as_str()
+            } else if view.studio.preview.loading {
+                "Loading preview..."
+            } else if view
+                .studio
+                .project
+                .as_ref()
+                .is_none_or(|project| project.sources.is_empty())
+            {
+                "Import media or open a recording to begin."
             } else {
-                "Select a clip on the timeline."
-            },
-            [left, y],
-            right - left,
-            BODY,
-            TEXT_DIMMER,
-        )?;
-        y += canvas.r(3.2);
-        y = super::speed::rates(
-            canvas,
-            view,
-            [left, y, right, area[3] - pad],
-            false,
-            selected.is_some(),
-        )?;
-        if let Some(clip) = selected {
-            y = super::speed::draw(canvas, view, [left, y, right, area[3] - pad], clip)?;
-            y = super::clips::draw(canvas, view, [left, y, right, area[3] - pad], clip)?;
+                "Select a playable recording to preview."
+            };
+            canvas.text_centred(caption, viewport, CAPTION, TEXT_DIMMER, false)?;
         }
-        let native_available = selected
-            .and_then(|clip| {
-                project
-                    .sources
-                    .iter()
-                    .find(|source| source.id == clip.source)
-            })
-            .and_then(recording_studio::capture::native_replay_directory)
-            .is_some();
-        if native_available {
-            control(
-                canvas,
-                view,
-                [left, y, right, y + canvas.r(4.4)],
-                "Use 3D replay",
-                Action::UseNativeReplay,
-                native_available,
-                Variant::Secondary,
+        // A retained successful image must not conceal a later decode or render failure.
+        let status = view
+            .studio
+            .preview
+            .error
+            .as_deref()
+            .or(view.studio.audio.error.as_deref());
+        if let Some(status) = status {
+            let height = canvas.r(3.2).min(viewport[3] - viewport[1]);
+            canvas.fill(
+                [viewport[0], viewport[1], viewport[2], viewport[1] + height],
+                [20, 25, 30, 235],
             )?;
+            let recovery = view.studio.camera_workspace.view.is_some();
+            let right = viewport[2] - if recovery { canvas.r(14.0) } else { pad };
+            canvas.text_line(
+                status,
+                [viewport[0] + pad, viewport[1] + canvas.r(0.5)],
+                (right - viewport[0] - pad).max(0.0),
+                CAPTION,
+                TEXT_DIMMER,
+            )?;
+            if recovery {
+                control(
+                    canvas,
+                    view,
+                    [right, viewport[1], viewport[2], viewport[1] + height],
+                    "Reset view",
+                    Action::ResetCameraView,
+                    true,
+                    Variant::Neutral,
+                )?;
+            }
         }
-        y += canvas.r(6.0);
     }
-    control(
+    transport::draw(
         canvas,
         view,
-        [left, y, right, y + canvas.r(4.4)],
-        "Add title",
-        Action::AddTitle,
-        true,
-        Variant::Secondary,
-    )?;
-    y += canvas.r(6.0);
-    y = super::camera::creation(canvas, view, [left, y, right, area[3] - pad])?;
-    y += canvas.r(2.0);
-    y = super::effects::creation(canvas, view, [left, y, right, area[3] - pad])?;
-    let height = (y - content_top + scroll.offset).max(0.0);
-    canvas.end_scroll(scroll, height)
+        [area[0] + pad, transport_top, area[2] - pad, area[3] - pad],
+    )
 }

@@ -1,7 +1,10 @@
 //! Bounded window painting with frame-snapped scrubbing and stable item hit targets.
 
 use super::*;
+use launcher::menu::studio::timeline::TimelineAction;
+use recording_studio::tracks::Track;
 use recording_studio::{Id, MediaTime, Span};
+mod keys;
 
 const VIDEO: [u8; 4] = [60, 104, 62, 255];
 const CAMERA: [u8; 4] = [55, 86, 122, 255];
@@ -10,11 +13,105 @@ const AUDIO: [u8; 4] = [45, 100, 95, 255];
 const TITLE: [u8; 4] = [85, 87, 96, 255];
 const PLAYHEAD: [u8; 4] = [160, 224, 129, 255];
 
+/// One responsive toolbar reserves the track viewport instead of wrapping above it.
+fn toolbar(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<f32, PaintError> {
+    let pad = canvas.r(0.6);
+    let height = canvas.r(3.8);
+    if area[3] - area[1] < canvas.r(11.0) {
+        return Ok(area[1] + pad);
+    }
+    let mut x = area[0] + pad;
+    let selected =
+        view.studio.selected.is_some() || !view.studio.workspace.timeline.selected.is_empty();
+    for (label, action, enabled, active, wide) in [
+        (
+            "Undo",
+            Action::Undo,
+            view.studio.undo.is_some(),
+            false,
+            false,
+        ),
+        (
+            "Redo",
+            Action::Redo,
+            view.studio.redo.is_some(),
+            false,
+            false,
+        ),
+        ("Delete", Action::DeleteSelected, selected, false, false),
+        (
+            "Dup",
+            Action::Timeline(TimelineAction::Duplicate),
+            selected,
+            false,
+            false,
+        ),
+        (
+            "Snap",
+            Action::Timeline(TimelineAction::ToggleSnapping),
+            true,
+            view.studio.workspace.timeline.snapping,
+            false,
+        ),
+        ("Fit", Action::FitTimeline, true, false, false),
+        ("Split", Action::Split, selected, false, true),
+        (
+            "Ripple",
+            Action::ToggleRipple,
+            true,
+            view.studio.workspace.ripple,
+            true,
+        ),
+        (
+            "Follow",
+            Action::ToggleFollowPlayhead,
+            true,
+            view.studio.workspace.follow_playhead,
+            true,
+        ),
+        ("Playhead", Action::RevealPlayhead, true, false, true),
+        ("−", Action::Zoom(-1), true, false, true),
+        ("+", Action::Zoom(1), true, false, true),
+    ] {
+        let width = canvas.r(if label.len() <= 1 {
+            3.8
+        } else if label.len() > 6 {
+            8.0
+        } else {
+            6.4
+        });
+        if wide && area[2] - area[0] < canvas.r(86.0) {
+            continue;
+        }
+        if x + width > area[2] - pad {
+            break;
+        }
+        control(
+            canvas,
+            view,
+            [x, area[1] + pad, x + width, area[1] + pad + height],
+            label,
+            action,
+            enabled,
+            if active {
+                Variant::Primary
+            } else {
+                Variant::Secondary
+            },
+        )?;
+        x += width + pad;
+    }
+    Ok(area[1] + height + pad * 2.0)
+}
+
 pub(super) fn draw(
     canvas: &mut Canvas<'_>,
     view: &MenuView,
     area: Bounds,
 ) -> Result<(), PaintError> {
+    if area[2] <= area[0] || area[3] <= area[1] {
+        return Ok(());
+    }
     widgets::panel(canvas, area)?;
     let project = view
         .studio
@@ -22,105 +119,23 @@ pub(super) fn draw(
         .as_ref()
         .expect("timeline has a project");
     let pad = canvas.r(0.8);
-    let mut x = area[0] + pad;
-    let top = area[1] + pad;
-    for (label, action, enabled) in [
-        ("Undo", Action::Undo, view.studio.undo.is_some()),
-        ("Redo", Action::Redo, view.studio.redo.is_some()),
-        ("Split", Action::Split, view.studio.selected.is_some()),
-        (
-            "Delete",
-            Action::DeleteSelected,
-            view.studio.selected.is_some(),
-        ),
-    ] {
-        let width = canvas.r(8.4);
-        control(
-            canvas,
-            view,
-            [x, top, x + width, top + canvas.r(3.8)],
-            label,
-            action,
-            enabled,
-            Variant::Secondary,
-        )?;
-        x += width + pad;
-    }
-    let mut right = area[2] - pad;
-    for (label, action) in [
-        ("+", Action::Zoom(1)),
-        ("-", Action::Zoom(-1)),
-        ("Fit", Action::FitTimeline),
-    ] {
-        let width = canvas.r(if label.len() == 1 { 4.0 } else { 8.4 });
-        if right - width <= x {
-            break;
-        }
-        control(
-            canvas,
-            view,
-            [right - width, top, right, top + canvas.r(3.8)],
-            label,
-            action,
-            true,
-            Variant::Secondary,
-        )?;
-        right -= width + pad;
-    }
-    let options_top = top + canvas.r(4.6);
-    let mut option_left = area[0] + pad;
-    for (label, action, active) in [
-        ("Playhead", Action::RevealPlayhead, false),
-        ("Ripple", Action::ToggleRipple, view.studio.workspace.ripple),
-        (
-            "Follow",
-            Action::ToggleFollowPlayhead,
-            view.studio.workspace.follow_playhead,
-        ),
-    ] {
-        let width = canvas.r(9.2);
-        control(
-            canvas,
-            view,
-            [
-                option_left,
-                options_top,
-                option_left + width,
-                options_top + canvas.r(3.4),
-            ],
-            label,
-            action,
-            true,
-            if active {
-                Variant::Primary
-            } else {
-                Variant::Secondary
-            },
-        )?;
-        option_left += width + pad;
-    }
-    if area[2] - option_left > canvas.r(54.0) {
-        canvas.text_line(
-            "Scroll tracks · Shift+wheel pan · Ctrl+wheel zoom",
-            [option_left + pad, options_top + canvas.r(0.4)],
-            area[2] - option_left - pad * 2.0,
-            CAPTION,
-            TEXT_DIMMER,
-        )?;
-    }
-    let ruler_top = options_top + canvas.r(4.0);
-    let label_width = canvas.r(14.0).min((area[2] - area[0]) * 0.25);
+    let ruler_top = toolbar(canvas, view, area)?;
+    let label_width = canvas.r(19.0).min((area[2] - area[0]) * 0.34);
     let left = area[0] + label_width;
     let right = area[2] - pad - canvas.r(1.4);
     let start = view.studio.visible_start;
     let duration = view.studio.visible_duration.0.max(1);
-    let ruler_bottom = ruler_top + canvas.r(2.8);
+    let ruler_bottom = (ruler_top + canvas.r(2.8)).min(area[3] - pad);
+    let body_bottom = area[3] - canvas.r(3.6);
+    if right <= left || ruler_bottom >= body_bottom {
+        return Ok(());
+    }
     let window = Window {
         left,
         right,
         start,
         duration,
-        vertical: [ruler_bottom, area[3] - canvas.r(3.6)],
+        vertical: [ruler_bottom, body_bottom],
     };
     canvas.fill([left, ruler_top, right, ruler_bottom], NEUTRAL90)?;
     for index in 0..=6 {
@@ -144,19 +159,38 @@ pub(super) fn draw(
         }),
         [left, ruler_top, right, ruler_bottom],
     )?;
-    let visual_tracks = project
-        .clips
-        .iter()
-        .map(|clip| usize::from(clip.track) + 1)
-        .max()
-        .unwrap_or(1);
+    let mut marker_columns = std::collections::BTreeSet::new();
+    for marker in &project.markers {
+        let x = window.x(marker.at);
+        if x < left || x > right || !marker_columns.insert((x / 4.0).round() as i32) {
+            continue;
+        }
+        canvas.fill(
+            [
+                (x - 1.0).max(left),
+                ruler_top,
+                (x + 1.0).min(right),
+                ruler_bottom,
+            ],
+            [245, 193, 87, 255],
+        )?;
+        canvas.hit(
+            MenuAction::Studio(Action::Seek(marker.at)),
+            [
+                (x - 5.0).max(left),
+                ruler_top,
+                (x + 5.0).min(right),
+                ruler_bottom,
+            ],
+        )?;
+    }
     let lanes = &view.studio.lanes;
-    let cameras_row = visual_tracks;
-    let effects_row = cameras_row + lanes.cameras.rows();
-    let audio_row = effects_row + lanes.effects.rows();
-    let titles_row = audio_row + lanes.audio.rows();
-    let rows = titles_row + lanes.titles.rows();
-    let row_height = canvas.r(3.6);
+    let cameras_row = lanes.track_start(Track::Camera);
+    let effects_row = lanes.track_start(Track::Effects);
+    let audio_row = lanes.track_start(Track::Audio);
+    let titles_row = lanes.track_start(Track::Titles);
+    let rows = lanes.tracks().len();
+    let row_height = canvas.r(4.2);
     let body = [
         area[0] + pad,
         ruler_bottom,
@@ -181,26 +215,48 @@ pub(super) fn draw(
                 [39, 43, 49, 255]
             },
         )?;
-        let label = if row < visual_tracks {
-            if row == 0 { "Replay" } else { "Video" }
-        } else {
-            if row < effects_row {
-                "Cameras"
-            } else if row < audio_row {
-                "Effects"
-            } else if row < titles_row {
-                "Audio"
-            } else {
-                "Titles"
-            }
-        };
+        let track = lanes.tracks()[row];
+        let label = track.label();
         canvas.text_line(
-            label,
+            &label,
             [body[0] + pad, y + canvas.r(0.6)],
-            label_width - pad * 2.0,
+            (label_width - canvas.r(7.0)).max(0.0),
             CAPTION,
             TEXT_DIMMER,
         )?;
+        for (offset, label, action, active) in [
+            (
+                canvas.r(6.6),
+                "M",
+                TimelineAction::ToggleMute(track),
+                project.muted_tracks.contains(&track),
+            ),
+            (
+                canvas.r(3.4),
+                "L",
+                TimelineAction::ToggleLock(track),
+                view.studio.workspace.timeline.locked.contains(&track),
+            ),
+        ] {
+            control(
+                canvas,
+                view,
+                [
+                    left - offset,
+                    y,
+                    left - offset + canvas.r(3.0),
+                    y + row_height,
+                ],
+                label,
+                Action::Timeline(action),
+                true,
+                if active {
+                    Variant::Primary
+                } else {
+                    Variant::Secondary
+                },
+            )?;
+        }
     }
     for clip in &project.clips {
         if let Ok(span) = clip.span() {
@@ -216,6 +272,9 @@ pub(super) fn draw(
             item(
                 canvas, view, &window, clip.id, span, y, row_height, label, VIDEO,
             )?;
+            if view.studio.selected == Some(clip.id) {
+                keys::speed(canvas, view, &window, clip, y, row_height)?;
+            }
         }
     }
     for shot in &project.shots {
@@ -231,8 +290,9 @@ pub(super) fn draw(
             CAMERA,
         )?;
         if view.studio.selected == Some(shot.id) {
-            camera_keys(
+            keys::camera(
                 canvas,
+                view,
                 &window,
                 shot,
                 row_y(cameras_row + lanes.cameras.row(shot.id).unwrap_or(0)),
@@ -253,8 +313,9 @@ pub(super) fn draw(
             EFFECT,
         )?;
         if view.studio.selected == Some(effect.id) {
-            effect_keys(
+            keys::effect(
                 canvas,
+                view,
                 &window,
                 effect,
                 row_y(effects_row + lanes.effects.row(effect.id).unwrap_or(0)),
@@ -302,6 +363,12 @@ pub(super) fn draw(
             PLAYHEAD,
         )?;
     }
+    if let Some(at) = view.studio.workspace.timeline.snap_line {
+        let x = window.x(at);
+        if (left..=right).contains(&x) {
+            canvas.fill([x, ruler_bottom, x + 1.0, body_bottom], [245, 193, 87, 255])?;
+        }
+    }
     canvas.end_scroll(scroll, rows as f32 * row_height)?;
     canvas.settings_scrollbars = previous_scrollbars;
     overview(
@@ -348,9 +415,11 @@ fn item(
     let span = view
         .studio
         .workspace
-        .drag
-        .filter(|(item, _)| *item == id)
-        .map_or(span, |(_, span)| span);
+        .timeline
+        .ghost
+        .iter()
+        .find(|(item, _)| *item == id)
+        .map_or(span, |(_, span)| *span);
     let left = window.x(span.start).max(window.left);
     let right = window.x(span.end).min(window.right);
     if left >= right {
@@ -359,7 +428,7 @@ fn item(
     let pad = canvas.r(0.4);
     let bounds = [left, y + pad, right, y + height - pad];
     canvas.fill(bounds, color)?;
-    if view.studio.selected == Some(id) {
+    if view.studio.selected == Some(id) || view.studio.workspace.timeline.selected.contains(&id) {
         canvas.frame(bounds, 0.2, PLAYHEAD)?;
     }
     if right - left > canvas.r(7.2) {
@@ -378,6 +447,15 @@ fn item(
             .any(|audio| audio.id == id && audio.linked_clip.is_some())
     });
     if linked {
+        return canvas.hit(MenuAction::Studio(Action::Select(id)), bounds);
+    }
+    if view
+        .studio
+        .project
+        .as_ref()
+        .and_then(|project| recording_studio::tracks::item_track(project, id).ok())
+        .is_some_and(|track| view.studio.workspace.timeline.locked.contains(&track))
+    {
         return canvas.hit(MenuAction::Studio(Action::Select(id)), bounds);
     }
     let geometry = (
@@ -476,86 +554,4 @@ fn overview(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<()
         }),
         area,
     )
-}
-
-/// Path keys use absolute timeline hits while retaining their relative saved offsets.
-fn camera_keys(
-    canvas: &mut Canvas<'_>,
-    window: &Window,
-    shot: &recording_studio::camera::CameraShot,
-    y: f32,
-    height: f32,
-) -> Result<(), PaintError> {
-    if y + height <= window.vertical[0] || y >= window.vertical[1] {
-        return Ok(());
-    }
-    let mut previous = window.left - canvas.r(1.0);
-    for key in shot.path_keys() {
-        let Ok(at) = shot.span.start.checked_add(key.at) else {
-            continue;
-        };
-        let x = window.x(at);
-        if x < window.left || x > window.right || x - previous < canvas.r(0.7).max(3.0) {
-            continue;
-        }
-        let bounds = [
-            (x - 2.0).max(window.left),
-            (y + height * 0.25).max(window.vertical[0]),
-            (x + 2.0).min(window.right),
-            (y + height * 0.8).min(window.vertical[1]),
-        ];
-        canvas.fill(bounds, [190, 218, 248, 255])?;
-        canvas.hit(
-            MenuAction::Studio(Action::SelectCameraKey { shot: shot.id, at }),
-            bounds,
-        )?;
-        previous = x;
-    }
-    Ok(())
-}
-
-/// Dense keys share visible marker columns; previous/next navigation still reaches every authored key.
-fn effect_keys(
-    canvas: &mut Canvas<'_>,
-    window: &Window,
-    effect: &recording_studio::effect::EffectClip,
-    y: f32,
-    height: f32,
-) -> Result<(), PaintError> {
-    if y + height <= window.vertical[0] || y >= window.vertical[1] {
-        return Ok(());
-    }
-    const MAX_MARKERS: f32 = 256.0;
-    let spacing = ((window.right - window.left) / MAX_MARKERS)
-        .max(canvas.r(0.6))
-        .max(3.0);
-    let mut next = window.left;
-    for key in &effect.amount.keys {
-        let Ok(at) = effect.span.start.checked_add(key.at) else {
-            continue;
-        };
-        let x = window.x(at);
-        if x < next || x > window.right {
-            continue;
-        }
-        let half = canvas.r(0.25).max(1.0);
-        let bounds = [
-            (x - half).max(window.left),
-            (y + height * 0.25).max(window.vertical[0]),
-            (x + half).min(window.right),
-            (y + height * 0.8).min(window.vertical[1]),
-        ];
-        if bounds[0] < bounds[2] && bounds[1] < bounds[3] {
-            canvas.fill(bounds, PLAYHEAD)?;
-            canvas.hit(
-                MenuAction::Studio(Action::SelectEffectKey {
-                    effect: effect.id,
-                    at: key.at,
-                }),
-                bounds,
-            )?;
-        }
-        next = x + spacing;
-    }
-    Ok(())
 }

@@ -9493,7 +9493,8 @@ Current implementation; runtime acceptance remains incomplete:
 - Cinematic paths now support time-aware smoothing, shortest-angle rotation,
   editable keys/easing and typed camera values. Shared source-time speed ramps
   drive visual sampling, linked game audio, transitions and source-anchored
-  generated effects/markers. Ramp audio currently changes pitch. Native/raster
+  generated effects/markers. Ramp audio now uses shared pitch-preserving tempo
+  processing; perceptual qualification remains open. Native/raster
   layers share a linear premultiplied preview/export compositor with crop,
   opacity and crossfades. These implementations still need rendered acceptance.
 
@@ -9527,7 +9528,83 @@ Current implementation; runtime acceptance remains incomplete:
   follow-up is formatted only; compilation, regression and rendered acceptance
   for native/Java animation, skins and external cameras remain incomplete.
 
+- Studio playback now retains ordered GPU readbacks during encoder backpressure,
+  records native camera samples independently of video admission, reuses the local
+  world-body frame, and updates crossfade budgets without rebuilding replay contexts.
+  Interactive view drafts coalesce without continually cancelling in-flight renders.
+  Transient shader loading remains pending rather than becoming a permanent failure.
+- Device-paced Studio audio now shares bounded decode/mix and pitch-preserving
+  retiming with export. Epoch cancellation, callback-confirmed pause reconciliation,
+  unique worker jobs, mute/gain/fades and video ceilings coordinate its clocks.
+  Preview currently admits at most 32 simultaneous audio streams; hardware sync and
+  perceptual time-stretch qualification remain incomplete.
+- The native camera viewport now supports focused WASD/QE flight, right-mouse look,
+  recorded-subject markers, projected paths, draggable keys and evaluated Bezier
+  handles. Inspection views remain transient until applied. Spatial authoring is
+  limited to one native layer with default framing; subjects and path keys use
+  visible bounded windows. Legacy captures cannot recover omitted local-body poses.
+- Timeline selection, linked duplication/group moves, magnetic snapping, track
+  mute/lock and direct key/curve drags use ordinary admitted edit transactions.
+  Track mute persists; editor locks and panel preferences remain local view state.
+  The existing transaction-size limit remains explicit.
+- Studio panels now separate creation tools from selected properties, retain the
+  viewer/transport/timeline, and expose density, panel visibility and timeline sizes.
+  Anonymous production-painter snapshots render at wide, short and narrow sizes,
+  including audio and settings; the former short-window inverted rectangle is fixed.
+  Focused changed-crate checks compile. Regression and runtime acceptance is being
+  exercised separately; no recording-FPS gain or complete replay parity is claimed.
+
+- Production hardening now isolates recording actor preparation from live artwork,
+  reuses same-clock animation samples and bounded GPU readback buffers, avoids
+  recompressing scene envelopes, and limits live software encoder threads. Capture
+  health reports CPU admission/actor time, readback/encoder queues and stalls.
+  The reported 160-to-50 FPS recording regression has not been remeasured; no
+  minimal-overhead or sustained-capture gate is closed.
+- Preview has independent Fast/Balanced/Full resolution and playback budgets,
+  exact paused frame stepping, bounded decoded-frame reuse and adjacent-cut
+  context reuse. Audio credit follows preview cadence rather than export FPS.
+  Export retains exact output settings, checks used sources, validates MP4 framing
+  and publishes without overwriting an existing destination. These mechanisms
+  still need long playback, seek, slow-disk, cancellation and hardware qualification.
+- Project recovery uses caller-clock autosaves, bounded versioned copies, ordered
+  checkpoints, durable discard revisions and explicit restore into an unsaved copy.
+  Setup checks actual encoder operation; tabs and a shared keyboard/help registry
+  simplify workspace controls. Recovery and dependency screens have anonymous
+  snapshot fixtures. New owning regressions are written but unrun. This hardening
+  pass has no builds, tests, rendered captures or runtime acceptance.
+
+- Replay-reference controls include stationary entity tracking, independent shot
+  FOV curves, limited new-player POV anchors and lifetime-bound body hiding.
+  Follow/Orbit creation retains inspected framing. Remote POV admits only upright,
+  unit-scale, unmounted living standing players; other poses, mobs, missing legacy
+  anchors and transition eye easing remain incomplete.
+- Monitoring exposes runtime-only 0.1x–8x speed, typed seeking, seconds jumps and
+  whole-project looping with rational audio cursor conversion and bounded tempo
+  processing. Fast preview respects its wall-time presentation budget. Slow
+  monitoring retains the existing frame grid; gapless looping remains incomplete.
+- Saved export In/Out uses distinct visual-frame and PCM admission. Library
+  search/sort runs on the storage worker before visible truncation; painted row
+  generations and captured paths guard refreshes and dirty-open confirmation.
+  The reference's unspecified Module item uses existing keyframed Effects.
+  New regression sources are unrun. These additions have source review and
+  formatting only; compilation, rendered acceptance, synchronization and export
+  qualification remain incomplete. No parity or performance gate is closed.
+
 Required work remains open:
+
+- Preview refreshes now retain admitted same-epoch camera images and font owners,
+  with bounded one-frame preparation ahead of playback. The viewer defaults to
+  uncluttered navigation; player and path markers require explicit tools. Left
+  drags orbit transiently, while saved image rotation and Fit/Fill use one CPU/GPU
+  transform. Focus view and native content fitting enlarge the usable picture.
+- Player selection uses versioned captured actor classification. Native HUD/chat
+  is hidden by default independently of project titles and prepared world tags.
+  New visual captures retain exact nametag quads and content-addressed atlas cells;
+  older takes cannot recover missing classifications or tag artwork. New clean
+  POV capture omits screen overlays without hiding the live HUD. These follow-up
+  changes are source-reviewed and formatted only: their owning regressions,
+  compilation, capture ordering, seek/audio smoothness and rendered acceptance
+  remain incomplete. No performance or visual parity gate is closed.
 
 - Render and exercise recording options, library/editor, focus, scrolling,
   numeric/drag timeline edits, loading/error/recovery states and dirty-edit
@@ -9539,16 +9616,16 @@ Required work remains open:
   player/free/path/follow/orbit cameras and mixed native/raster compositions.
   New visual tracks cannot reconstruct data omitted from older takes.
 - Validate linked edits, imports/relinks, speed ramps, generated event anchors,
-  thumbnails/waveforms and audio export. Interactive audio preview/mixing and
-  additional assisted editing workflows remain separate unfinished work.
+  thumbnails/waveforms, audio export and interactive audio preview/mixing.
+  Hardware synchronization and additional assisted editing workflows remain open.
 - Validate hardware/software export, progress/cancellation, destination safety,
   completed-file publication and interrupted POV recovery. Native journal repair,
   long-session disk quotas, resize and shutdown acceptance remain open.
 - Owning-crate regressions and rendered/runtime acceptance are still required.
   Performance, sustained capture cadence and resource bounds need measurement.
-  Default and Enhanced production Cargo checking pass for this expansion.
-  Automated tests and game launches remain unrun, and production compilation
-  does not close these acceptance gates.
+  Earlier Default and Enhanced production checks predate the latest hardening.
+  The latest hardening is source-reviewed and formatted only; compilation, new
+  regressions, rendered acceptance and game launches remain unrun.
 
 This feature is incomplete. Domain APIs and storage code alone do not establish a
 working Recording Studio, replay visual parity or a performance acceptance result.

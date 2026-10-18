@@ -13,6 +13,22 @@ use render_scene::PipelineWarmupReadiness;
 
 const UNLOADED_SHADER: Handle<Shader> = uuid_handle!("5b0e7c3d-8a41-4f2e-9d6b-1c7a2e9f4b80");
 
+#[test]
+fn asynchronous_shader_dependencies_retry_but_compile_failures_are_terminal() {
+    assert!(shader_pending(&ShaderCacheError::ShaderNotLoaded(
+        UNLOADED_SHADER.id()
+    )));
+    assert!(shader_pending(
+        &ShaderCacheError::ShaderImportNotYetAvailable
+    ));
+    assert!(!shader_pending(&ShaderCacheError::ProcessShaderError(
+        "invalid shader".into()
+    )));
+    assert!(!shader_pending(&ShaderCacheError::CreateShaderModule(
+        "validation failed".into()
+    )));
+}
+
 /// Validation-only backend with synchronous compilation, so `process_queue` finishes each pipeline.
 fn cache() -> PipelineCache {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {

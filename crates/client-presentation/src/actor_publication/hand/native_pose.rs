@@ -86,21 +86,38 @@ impl NativePoseCache {
     pub(in super::super) fn apply_body(
         &mut self,
         stream: &WorldStream,
+        frame: &mut actor_animation::ActorRenderFrame<'_>,
         presentation: &mut ActorRigPresentation,
         alpha: f32,
         camera: Option<([f32; 2], [f32; 3])>,
     ) {
-        if let Some([previous, current]) = self.sample_with_skin(
+        let key = pose_key(
             stream,
             presentation,
-            NativePoseInput {
+            &NativePoseInput {
                 consume: None,
                 animation: None,
                 alpha,
                 camera,
                 sample_skin: true,
             },
-        ) {
+        );
+        let pose = key.and_then(|key| {
+            if camera.is_some() && self.key.as_ref() == Some(&key) {
+                return self.pose.clone();
+            }
+            #[cfg(test)]
+            let allocated = test_alloc::thread_allocations();
+            let runtime_id = presentation.submission.input.identity.runtime_id;
+            let pose = self.cache_pose(key, presentation, frame.layers_with_skin(runtime_id));
+            #[cfg(test)]
+            {
+                self.sample_work.0 += 1;
+                self.sample_work.1 += test_alloc::thread_allocations() - allocated;
+            }
+            pose
+        });
+        if let Some([previous, current]) = pose {
             presentation.submission.input.previous_bones = previous;
             presentation.submission.input.current_bones = current;
         }
@@ -159,15 +176,17 @@ impl NativePoseCache {
             sample_skin,
         } = input;
         let runtime_id = presentation.submission.input.identity.runtime_id;
-        let rig = stream.authority().actor_rig(runtime_id)?;
-        let key = PoseKey {
-            source: source_key(stream, consume, animation, alpha),
-            tick: (rig.rig.0, rig.completed_tick, rig.reset_generation),
-            actor_alpha: alpha.to_bits(),
-            physics_alpha: rig.java.local_swing_alpha.map(f32::to_bits),
-            camera,
-            sample_skin,
-        };
+        let key = pose_key(
+            stream,
+            presentation,
+            &NativePoseInput {
+                consume,
+                animation,
+                alpha,
+                camera,
+                sample_skin,
+            },
+        )?;
         if camera.is_some() && self.key.as_ref() == Some(&key) {
             return self.pose.clone();
         }
@@ -177,7 +196,6 @@ impl NativePoseCache {
         if sample_skin {
             frame = frame.with_world_body(runtime_id);
         }
-        self.skin_layers = None;
         let sampled = if sample_skin {
             frame.layers_with_skin(runtime_id)
         } else {
@@ -188,20 +206,50 @@ impl NativePoseCache {
                     skin: Cow::Borrowed(&[]),
                 })
         };
-        let pose = sampled.and_then(|sampled| {
-            let pose = body_pose(presentation, sampled)?;
-            self.skin_layers = pose.skin;
-            Some(pose.bones)
-        });
+        let pose = self.cache_pose(key, presentation, sampled);
         #[cfg(test)]
         {
             self.sample_work.0 += 1;
             self.sample_work.1 += test_alloc::thread_allocations() - allocated;
         }
+        pose
+    }
+
+    /// Converts and retains one shared frame sample for body, equipment and persona consumers.
+    fn cache_pose(
+        &mut self,
+        key: PoseKey,
+        presentation: &ActorRigPresentation,
+        sampled: Option<actor_animation::ActorRenderLayers<'_>>,
+    ) -> Option<[RenderPose; 2]> {
+        self.skin_layers = None;
+        let pose = sampled.and_then(|sampled| {
+            let pose = body_pose(presentation, sampled)?;
+            self.skin_layers = pose.skin;
+            Some(pose.bones)
+        });
         self.key = Some(key);
         self.pose = pose.clone();
         pose
     }
+}
+
+/// View, interpolation and authoritative lifetime facts identify an unchanged native consumer.
+fn pose_key(
+    stream: &WorldStream,
+    presentation: &ActorRigPresentation,
+    input: &NativePoseInput,
+) -> Option<PoseKey> {
+    let runtime_id = presentation.submission.input.identity.runtime_id;
+    let rig = stream.authority().actor_rig(runtime_id)?;
+    Some(PoseKey {
+        source: source_key(stream, input.consume, input.animation, input.alpha),
+        tick: (rig.rig.0, rig.completed_tick, rig.reset_generation),
+        actor_alpha: input.alpha.to_bits(),
+        physics_alpha: rig.java.local_swing_alpha.map(f32::to_bits),
+        camera: input.camera,
+        sample_skin: input.sample_skin,
+    })
 }
 
 /// Converts sampled native endpoints only when they match the runtime body's skeleton.
