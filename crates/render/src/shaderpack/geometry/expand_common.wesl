@@ -1,6 +1,7 @@
 // Iris vertex stream writer shared by the cube, model and liquid expansion kernels. Each job
-// writes one or more four-vertex faces; `geometry/vertex.rs` owns the word layout and generates
-// the IRIS_WORD_* constants, `geometry/jobs.rs` the job encoding, `atlas.rs` the sprite slots.
+// writes one or more four-vertex faces; `geometry/vertex.rs` owns the word layout
+// (`TerrainLayout`, passed in `ExpandParams::words`), `geometry/jobs.rs` the job encoding,
+// `atlas.rs` the sprite slots.
 import render::material::{MaterialGpu, texture_layer, texture_page, material_uses_overlay_mask};
 
 struct ExpandParams {
@@ -9,6 +10,10 @@ struct ExpandParams {
     /// x: AO goes to colour alpha (Iris `separateAo`); y: bake face shading (`oldLighting`);
     /// z: first job word in `job_words`; w: materials in the attribute table before it.
     flags: vec4<u32>,
+    /// `TerrainLayout::expand_words`: the vertex stride and each field's word, a byte each,
+    /// `LAYOUT_ABSENT` for fields the layout leaves out. x: stride, float position, packed
+    /// position, colour; y: uv, mid uv, lightmap, normal; z: tangent, block, mid block.
+    words: vec4<u32>,
 }
 
 // The material attribute table (two words per material) followed by four-word jobs; one
@@ -20,6 +25,11 @@ struct ExpandParams {
 
 const EXPAND_WORKGROUP_SIZE: u32 = 64u;
 const NO_ANIMATION: u32 = 0xffffffffu;
+const LAYOUT_ABSENT: u32 = 0xffu;
+/// Packed positions: steps per block, and blocks below the section origin of step zero
+/// (`vertex.rs`'s `PACKED_POSITION_STEPS` and `PACKED_POSITION_BIAS`).
+const PACKED_POSITION_STEPS: f32 = 2048.0;
+const PACKED_POSITION_BIAS: f32 = 8.0;
 /// Iris's `mc_Entity.y` (`ExtendedDataHelper`): fluids and every other block.
 const FLUID_RENDER_TYPE: i32 = 1;
 const BLOCK_RENDER_TYPE: i32 = -1;
@@ -65,10 +75,12 @@ struct JobFace {
 
 /// One Iris vertex as the expanded stream stores it, before packing: `light` is Java's raw
 /// lightmap coordinate (level × 16), `block` is `mc_Entity.xy` and `mid_block` `at_midBlock`.
-/// Shader-pack programs that read the arena directly (`pull.rs`) receive these values with
-/// the stream's precision.
+/// `position` is relative to the anchor and `local` to the section origin; packed layouts
+/// store `local`. Shader-pack programs that read the arena directly (`pull.rs`) receive
+/// these values with the stream's precision.
 struct IrisVertex {
     position: vec3<f32>,
+    local: vec3<f32>,
     colour: vec4<f32>,
     uv: vec2<f32>,
     mid_uv: vec2<f32>,
@@ -142,29 +154,61 @@ fn face_tangent(positions: array<vec3<f32>, 4>, uvs: array<vec2<f32>, 4>, normal
     return vec4(direction, select(1.0, -1.0, dot(cross(normal, direction), bitangent) < 0.0));
 }
 
-fn write_vertex(index: u32, vertex: IrisVertex) {
-    let base = index * IRIS_VERTEX_WORDS;
-    vertices[base + IRIS_WORD_POSITION] = bitcast<u32>(vertex.position.x);
-    vertices[base + IRIS_WORD_POSITION + 1u] = bitcast<u32>(vertex.position.y);
-    vertices[base + IRIS_WORD_POSITION + 2u] = bitcast<u32>(vertex.position.z);
-    vertices[base + IRIS_WORD_COLOR] = pack4x8unorm(vertex.colour);
-    vertices[base + IRIS_WORD_UV0] = pack2x16unorm(vertex.uv);
-    vertices[base + IRIS_WORD_MID_TEX] = pack2x16unorm(vertex.mid_uv);
-    vertices[base + IRIS_WORD_LIGHTMAP] = pack2x16float(vertex.light);
-    vertices[base + IRIS_WORD_NORMAL] = pack4x8snorm(vec4(vertex.normal, 0.0));
-    vertices[base + IRIS_WORD_TANGENT] = pack4x8snorm(vertex.tangent);
-    // Signed shorts and bytes, as Iris stores `mc_Entity` and `at_midBlock`; the mid-block
-    // offset truncates towards zero like Iris's `(int)` cast.
-    vertices[base + IRIS_WORD_BLOCK_ID] =
-        (bitcast<u32>(vertex.block.x) & 0xffffu) | (bitcast<u32>(vertex.block.y) << 16u);
-    let mid = bitcast<vec4<u32>>(vec4<i32>(vertex.mid_block)) & vec4(0xffu);
-    vertices[base + IRIS_WORD_MID_BLOCK] = mid.x | (mid.y << 8u) | (mid.z << 16u) | (mid.w << 24u);
+/// Byte `index` of a `TerrainLayout::expand_words` word.
+fn layout_byte(word: u32, index: u32) -> u32 {
+    return (word >> (index * 8u)) & 0xffu;
 }
 
-/// A vertex of a face slot that rasterizes nothing: all four corners at `position`.
-fn degenerate_vertex(position: vec3<f32>) -> IrisVertex {
+/// Writes `value` at `word` of the vertex at `base`, unless the layout leaves it out.
+fn put_word(base: u32, word: u32, value: u32) {
+    if (word != LAYOUT_ABSENT) {
+        vertices[base + word] = value;
+    }
+}
+
+fn write_vertex(index: u32, vertex: IrisVertex) {
+    let words = params.words;
+    let base = index * layout_byte(words.x, 0u);
+    let position = layout_byte(words.x, 1u);
+    if (position != LAYOUT_ABSENT) {
+        vertices[base + position] = bitcast<u32>(vertex.position.x);
+        vertices[base + position + 1u] = bitcast<u32>(vertex.position.y);
+        vertices[base + position + 2u] = bitcast<u32>(vertex.position.z);
+    }
+    let packed_position = layout_byte(words.x, 2u);
+    if (packed_position != LAYOUT_ABSENT) {
+        let steps = clamp(
+            round((vertex.local + vec3(PACKED_POSITION_BIAS)) * PACKED_POSITION_STEPS),
+            vec3(0.0),
+            vec3(65535.0),
+        );
+        let packed = vec3<u32>(steps);
+        vertices[base + packed_position] = packed.x | (packed.y << 16u);
+        vertices[base + packed_position + 1u] = packed.z;
+    }
+    put_word(base, layout_byte(words.x, 3u), pack4x8unorm(vertex.colour));
+    put_word(base, layout_byte(words.y, 0u), pack2x16unorm(vertex.uv));
+    put_word(base, layout_byte(words.y, 1u), pack2x16unorm(vertex.mid_uv));
+    put_word(base, layout_byte(words.y, 2u), pack2x16float(vertex.light));
+    put_word(base, layout_byte(words.y, 3u), pack4x8snorm(vec4(vertex.normal, 0.0)));
+    put_word(base, layout_byte(words.z, 0u), pack4x8snorm(vertex.tangent));
+    // Signed shorts and bytes, as Iris stores `mc_Entity` and `at_midBlock`; the mid-block
+    // offset truncates towards zero like Iris's `(int)` cast.
+    put_word(
+        base,
+        layout_byte(words.z, 1u),
+        (bitcast<u32>(vertex.block.x) & 0xffffu) | (bitcast<u32>(vertex.block.y) << 16u),
+    );
+    let mid = bitcast<vec4<u32>>(vec4<i32>(vertex.mid_block)) & vec4(0xffu);
+    put_word(base, layout_byte(words.z, 2u), mid.x | (mid.y << 8u) | (mid.z << 16u) | (mid.w << 24u));
+}
+
+/// A vertex of a face slot that rasterizes nothing: all four corners at `position`
+/// (section-local `local`).
+fn degenerate_vertex(position: vec3<f32>, local: vec3<f32>) -> IrisVertex {
     var vertex: IrisVertex;
     vertex.position = position;
+    vertex.local = local;
     vertex.block = vec2(-1, BLOCK_RENDER_TYPE);
     return vertex;
 }
@@ -193,6 +237,7 @@ fn face_vertex(source_corners: FaceCorners, source: FaceSource, tint: vec4<f32>,
     let position = positions[corner];
     var vertex: IrisVertex;
     vertex.position = vec3<f32>(source.chunk_origin - params.anchor.xyz) + position;
+    vertex.local = position;
     vertex.colour = vec4(
         tint.rgb * shade * select(ao, 1.0, separate_ao),
         select(tint.a, ao, separate_ao),
@@ -216,9 +261,12 @@ fn job_slot_vertex(job: vec4<u32>, slot: u32, face: JobFace, corner: u32) -> Iri
     let corners = face.corners;
     let source = face.source;
     if (!face.valid) {
-        return degenerate_vertex(vec3(0.0));
+        return degenerate_vertex(vec3(0.0), vec3(0.0));
     }
-    let degenerate = degenerate_vertex(vec3<f32>(source.chunk_origin - params.anchor.xyz) + corners.positions[0]);
+    let degenerate = degenerate_vertex(
+        vec3<f32>(source.chunk_origin - params.anchor.xyz) + corners.positions[0],
+        corners.positions[0],
+    );
     let overlay_slot = (job.w & JOB_OVERLAY_FACE) != 0u;
     let overlay = material_uses_overlay_mask(source.material.flags) && overlay_slot;
     let front = sprite_slot(source.material, false);

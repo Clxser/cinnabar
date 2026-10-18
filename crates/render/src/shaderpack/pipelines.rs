@@ -384,6 +384,11 @@ pub(crate) fn bind_group_layouts(
 pub(crate) const QUAD_ATTRIBUTE_BYTES: u64 = 16;
 /// Supplied attributes in the quad buffer, in [`VertexAttribute::location`] order.
 pub(crate) const QUAD_ATTRIBUTES: u64 = shaderpack::FIRST_OTHER_ATTRIBUTE_LOCATION as u64;
+/// The quad buffer's slot after the supplied attributes: zero, which the raw position parts
+/// (`iris_PackedPosition`, `iris_DrawOrigin`) read so positions come from the float input.
+const QUAD_ZERO_SLOT: u64 = QUAD_ATTRIBUTES;
+/// Slots per quad vertex.
+const QUAD_SLOTS: u64 = QUAD_ATTRIBUTES + 1;
 
 /// The quad vertices (triangle strip) with every supplied attribute, 16 bytes each:
 /// position (0..1 square), white colour, +Z normal, texture coordinate equal to position;
@@ -391,9 +396,9 @@ pub(crate) const QUAD_ATTRIBUTES: u64 = shaderpack::FIRST_OTHER_ATTRIBUTE_LOCATI
 pub(crate) fn quad_vertices() -> Vec<u8> {
     let corners = [[0.0f32, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
     let mut bytes =
-        Vec::with_capacity(corners.len() * (QUAD_ATTRIBUTES * QUAD_ATTRIBUTE_BYTES) as usize);
+        Vec::with_capacity(corners.len() * (QUAD_SLOTS * QUAD_ATTRIBUTE_BYTES) as usize);
     for [x, y] in corners {
-        for location in 0..QUAD_ATTRIBUTES {
+        for location in 0..QUAD_SLOTS {
             let value: [f32; 4] = match location {
                 l if Some(l as u32) == VertexAttribute::Position.location() => [x, y, 0.0, 1.0],
                 l if Some(l as u32) == VertexAttribute::Color.location() => [1.0; 4],
@@ -416,7 +421,10 @@ pub(crate) fn quad_attributes(reflection: &ProgramReflection) -> Vec<WgpuAttribu
         .vertex_inputs
         .iter()
         .filter_map(|input| {
-            let slot = input.attribute.location()?;
+            let slot = match input.attribute {
+                VertexAttribute::PackedPosition | VertexAttribute::DrawOrigin => QUAD_ZERO_SLOT,
+                ref supplied => u64::from(supplied.location()?),
+            };
             let components = match input.ty {
                 ValueType::Scalar(_) => 1,
                 ValueType::Vector { size, .. } => size,
@@ -438,7 +446,7 @@ pub(crate) fn quad_attributes(reflection: &ProgramReflection) -> Vec<WgpuAttribu
             };
             Some(WgpuAttribute {
                 format,
-                offset: u64::from(slot) * QUAD_ATTRIBUTE_BYTES,
+                offset: slot * QUAD_ATTRIBUTE_BYTES,
                 shader_location: input.location,
             })
         })
@@ -447,7 +455,7 @@ pub(crate) fn quad_attributes(reflection: &ProgramReflection) -> Vec<WgpuAttribu
 
 pub(crate) fn quad_layout(attributes: &[WgpuAttribute]) -> VertexBufferLayout<'_> {
     VertexBufferLayout {
-        array_stride: QUAD_ATTRIBUTES * QUAD_ATTRIBUTE_BYTES,
+        array_stride: QUAD_SLOTS * QUAD_ATTRIBUTE_BYTES,
         step_mode: VertexStepMode::Vertex,
         attributes,
     }
@@ -674,7 +682,7 @@ mod tests {
     #[test]
     fn quad_buffer_places_each_supplied_attribute_at_its_fixed_location() {
         let bytes = quad_vertices();
-        let stride = (QUAD_ATTRIBUTES * QUAD_ATTRIBUTE_BYTES) as usize;
+        let stride = (QUAD_SLOTS * QUAD_ATTRIBUTE_BYTES) as usize;
         assert_eq!(bytes.len(), stride * 4);
         let read = |vertex: usize, attribute: VertexAttribute| -> [f32; 4] {
             let start = vertex * stride

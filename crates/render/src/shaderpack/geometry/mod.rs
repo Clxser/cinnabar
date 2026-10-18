@@ -22,17 +22,19 @@
 //!   disabled, the adapter releases every buffer. Set `separate_ao`/`old_lighting` from the
 //!   pack's `separateAo`/`oldLighting`.
 //! - Pipelines: build each gbuffers/shadow program's vertex state with [`vertex_buffer_layouts`]
-//!   from `ProgramReflection::vertex_inputs`. Geometry winds counter-clockwise from the front in
-//!   world space, every two-sided face carries an explicit back face, and grass-side overlays
-//!   are separate coplanar faces drawn after their base, so draw every category with back-face
-//!   culling and a less-or-equal depth test, as Java does.
-//! - Uniforms: vertex positions are relative to [`ShaderpackGeometry::origin`]. Set the pack's
-//!   `chunkOffset` to [`ShaderpackGeometry::chunk_offset`] and fold the same translation into
-//!   `gl_ModelViewMatrix` (`iris_ModelViewMat = gbufferModelView * translate(chunkOffset)`), so
-//!   `vaPosition + chunkOffset` and `gl_ModelViewMatrix * gl_Vertex` mean what Iris gives.
-//!   Set `iris_TextureMat[1]` to [`LIGHTMAP_TEXTURE_MATRIX`]: the lightmap attribute holds
-//!   Java's raw `light × 16` values, which that matrix maps to `(light × 16 + 8) / 256`;
-//!   `iris_TextureMat[0]` is the identity.
+//!   from `ProgramReflection::vertex_inputs` and the pack's [`TerrainLayout::compact`] layout
+//!   (set as [`ShaderpackGeometrySettings::layout`]). Geometry winds counter-clockwise from the
+//!   front in world space, every two-sided face carries an explicit back face, and grass-side
+//!   overlays are separate coplanar faces drawn after their base, so draw every category with
+//!   back-face culling and a less-or-equal depth test, as Java does.
+//! - Uniforms: vertex positions are relative to [`ShaderpackGeometry::origin`] (packed
+//!   layouts store them relative to each section and add the section's origin per draw).
+//!   Set the pack's `chunkOffset` to [`ShaderpackGeometry::chunk_offset`] and fold the same
+//!   translation into `gl_ModelViewMatrix` (`iris_ModelViewMat = gbufferModelView *
+//!   translate(chunkOffset)`), so `vaPosition + chunkOffset` and `gl_ModelViewMatrix *
+//!   gl_Vertex` mean what Iris gives. Set `iris_TextureMat[1]` to [`LIGHTMAP_TEXTURE_MATRIX`]:
+//!   the lightmap attribute holds Java's raw `light × 16` values, which that matrix maps to
+//!   `(light × 16 + 8) / 256`; `iris_TextureMat[0]` is the identity.
 //! - Textures: bind `ShaderpackAtlas::{color, normals, specular}` as the pack's
 //!   `gtexture`/`texture`/`tex`, `normals` and `specular`.
 //! - Drawing: inside a pass holding the program's pipeline and bind groups, call
@@ -45,11 +47,12 @@
 //! - Block ids: insert [`ShaderpackBlockIds`] to supply `mc_Entity` ids; without it they read -1.
 //!
 //! # Memory
-//! One face is four 52-byte vertices. Faces live in vertex pages no larger than one storage
-//! binding, within [`ShaderpackGeometrySettings::budget_bytes`]; sections that do not fit wait,
-//! undrawn, until space frees (a warning is logged once). Expansion is bounded to
-//! [`FRAME_EXPANSION_FACES`] per frame, except after an origin move, which re-expands everything
-//! in one frame.
+//! One face is four vertices of the pack's layout: 8 bytes of packed position plus 4 bytes
+//! per other field its terrain programs read (at most 40 bytes). Faces live in vertex pages
+//! no larger than one storage binding, within [`ShaderpackGeometrySettings::budget_bytes`];
+//! sections that do not fit wait, undrawn, until space frees (a warning is logged once).
+//! Expansion is bounded to [`FRAME_EXPANSION_FACES`] per frame, except after an origin move,
+//! which re-expands everything in one frame.
 
 mod allocator;
 mod block_ids;
@@ -82,8 +85,8 @@ pub(crate) use vertex::{
     CONSTANT_STREAM_WORDS, host_vertex, substitute_layout_constants, textured_host_vertex,
 };
 pub use vertex::{
-    CONSTANT_VERTEX_BUFFER, GEOMETRY_VERTEX_BUFFER, IRIS_VERTEX_STRIDE, VertexLayoutError,
-    vertex_buffer_layouts,
+    CONSTANT_VERTEX_BUFFER, DRAW_ORIGIN_VERTEX_BUFFER, GEOMETRY_VERTEX_BUFFER, IRIS_VERTEX_STRIDE,
+    TerrainLayout, VertexLayoutError, vertex_buffer_layouts,
 };
 
 /// `gl_TextureMatrix[1]` of Java terrain: maps raw `light × 16` lightmap coordinates to

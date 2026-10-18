@@ -32,7 +32,7 @@ use super::residency::{
     Eviction, Placement, Residency, ResidentFaces, SECTION_RADIUS, section_distance,
 };
 use super::shadow_cull::ShadowFrustum;
-use super::vertex::CONSTANT_STREAM_WORDS;
+use super::vertex::{CONSTANT_STREAM_WORDS, DRAW_ORIGIN_BYTES, TerrainLayout, draw_origin};
 use crate::chunk::shaderpack_sources::{
     PackedChunkBuffers, PackedChunkSources, ResidentSections, terrain_multi_draw_indirect,
 };
@@ -74,6 +74,8 @@ pub struct ShaderpackGeometrySettings {
     /// Pages hold face refs that pulled pack pipelines decode (`pull.rs`) instead of
     /// expanded vertices.
     pub pulled: bool,
+    /// The expanded vertex the pack's terrain pipelines read.
+    pub layout: TerrainLayout,
 }
 
 impl Default for ShaderpackGeometrySettings {
@@ -84,6 +86,7 @@ impl Default for ShaderpackGeometrySettings {
             old_lighting: false,
             budget_bytes: DEFAULT_GEOMETRY_BUDGET_BYTES,
             pulled: false,
+            layout: TerrainLayout::WIDE,
         }
     }
 }
@@ -134,6 +137,13 @@ pub struct ShaderpackGeometry {
     inputs: Option<ExpansionInputs>,
     /// Pages hold face refs (`pull.rs`); see [`ShaderpackGeometrySettings::pulled`].
     pulled: bool,
+    /// The expanded vertex pages hold; see [`ShaderpackGeometrySettings::layout`].
+    layout: TerrainLayout,
+    /// Per-draw origins of packed positions, one per residency slot, while the layout packs
+    /// them.
+    draw_origins: Option<Buffer>,
+    /// Entries `draw_origins` holds.
+    draw_origin_capacity: u32,
     /// What pulled pipelines bind, kept current each frame in pull mode.
     pulled_arena: PulledArena,
     binding_bytes: u64,
@@ -172,7 +182,11 @@ impl FromWorld for ShaderpackGeometry {
             .max_storage_buffer_binding_size
             .min(limits.max_buffer_size);
         Self {
-            residency: Residency::new(binding_bytes, DEFAULT_GEOMETRY_BUDGET_BYTES),
+            residency: Residency::new(
+                binding_bytes,
+                DEFAULT_GEOMETRY_BUDGET_BYTES,
+                TerrainLayout::WIDE.stride(),
+            ),
             pages: Vec::new(),
             index_buffer: None,
             index_faces: 0,
@@ -185,6 +199,9 @@ impl FromWorld for ShaderpackGeometry {
             attribute_key: None,
             inputs: None,
             pulled: false,
+            layout: TerrainLayout::WIDE,
+            draw_origins: None,
+            draw_origin_capacity: 0,
             pulled_arena: PulledArena::default(),
             binding_bytes,
             views: HashMap::new(),
@@ -240,6 +257,11 @@ impl ShaderpackGeometry {
         self.pulled_arena.ready().then_some(&self.pulled_arena)
     }
 
+    /// The expanded vertex the pages hold, which terrain pipelines must read.
+    pub(crate) fn layout(&self) -> TerrainLayout {
+        self.layout
+    }
+
     /// Records `category` for `view` (a render-world view entity with visible chunks): its
     /// camera list, or with `shadow` its shadow-pass list from
     /// [`Self::prepare_shadow_view`]. The pass must already hold a pipeline built with
@@ -259,7 +281,18 @@ impl ShaderpackGeometry {
         let Some(draws) = lists.get(&view) else {
             return 0;
         };
-        draws.record(pass, category, &self.pages, index_buffer, &self.constants)
+        let origins = self
+            .draw_origins
+            .as_ref()
+            .filter(|_| self.layout.packed() && !self.pulled);
+        draws.record(
+            pass,
+            category,
+            &self.pages,
+            index_buffer,
+            &self.constants,
+            origins,
+        )
     }
 
     /// Builds (or keeps, when the sections it lists are unchanged) `view`'s shadow-pass list:
@@ -312,12 +345,16 @@ impl ShaderpackGeometry {
         self.retry_eye = None;
         self.memory_cap = None;
         self.pulled_arena = PulledArena::default();
+        self.draw_origins = None;
+        self.draw_origin_capacity = 0;
     }
 
-    /// Switches pages between expanded vertices and face refs, dropping every page.
-    fn set_pulled(&mut self, pulled: bool) {
+    /// Switches pages between expanded vertices of `layout` and face refs, dropping every
+    /// page.
+    fn set_storage(&mut self, pulled: bool, layout: TerrainLayout) {
         self.release_all();
         self.pulled = pulled;
+        self.layout = layout;
         self.residency = if pulled {
             Residency::with_faces(
                 self.binding_bytes.min(PULL_PAGE_BYTES),
@@ -325,8 +362,50 @@ impl ShaderpackGeometry {
                 FACE_REF_BYTES,
             )
         } else {
-            Residency::new(self.binding_bytes, DEFAULT_GEOMETRY_BUDGET_BYTES)
+            Residency::new(
+                self.binding_bytes,
+                DEFAULT_GEOMETRY_BUDGET_BYTES,
+                layout.stride(),
+            )
         };
+    }
+
+    /// Writes the draw origin of the section in residency slot `slot`, at block `section`,
+    /// for positions relative to `anchor`; a full table is replaced by one twice the size
+    /// holding every resident section's origin.
+    fn write_draw_origin(
+        &mut self,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        slot: u32,
+        section: [i32; 3],
+        anchor: IVec3,
+    ) {
+        let anchor = anchor.to_array();
+        if slot >= self.draw_origin_capacity || self.draw_origins.is_none() {
+            let capacity = self.residency.slot_count().next_power_of_two().max(1024);
+            let buffer = device.create_buffer(&BufferDescriptor {
+                label: Some("shader-pack terrain draw origins"),
+                size: u64::from(capacity) * DRAW_ORIGIN_BYTES,
+                usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let mut entries = vec![[0.0_f32; 4]; self.residency.slot_count() as usize];
+            for resident in self.residency.sections.values() {
+                entries[resident.slot as usize] = draw_origin(resident.origin, anchor);
+            }
+            queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&entries));
+            self.draw_origins = Some(buffer);
+            self.draw_origin_capacity = capacity;
+            return;
+        }
+        if let Some(buffer) = &self.draw_origins {
+            queue.write_buffer(
+                buffer,
+                u64::from(slot) * DRAW_ORIGIN_BYTES,
+                bytemuck::cast_slice(&draw_origin(section, anchor)),
+            );
+        }
     }
 
     /// Creates vertex page `placement.page` when the placement opened it. Returns false when
@@ -457,8 +536,8 @@ pub(crate) fn prepare_shaderpack_geometry(
         }
         return;
     }
-    if settings.pulled != geometry.pulled {
-        geometry.set_pulled(settings.pulled);
+    if settings.pulled != geometry.pulled || settings.layout != geometry.layout {
+        geometry.set_storage(settings.pulled, settings.layout);
     }
     let geometry = &mut *geometry;
     geometry.residency.set_budget(
@@ -561,10 +640,21 @@ pub(crate) fn prepare_shaderpack_geometry(
             );
         }
     }
+    // A page whose sections fit in the others' free room drains, its sections moving, and
+    // goes once empty; the draw lists name pages by index and are rebuilt.
+    if let Some(page) = geometry.residency.finish_draining() {
+        geometry.pages.remove(page);
+        geometry.views.clear();
+        geometry.shadows.clear();
+    } else {
+        geometry.residency.start_draining();
+    }
     geometry.complete_radius = camera.and_then(|eye| {
         geometry
             .residency
             .pending()
+            // Sections moving off a draining page still draw their old faces.
+            .filter(|entity| !geometry.residency.moving(*entity))
             .filter_map(|entity| sections.get(entity))
             .map(|section| section_distance(section.origin, eye))
             .min_by(f64::total_cmp)
@@ -688,7 +778,7 @@ fn plan_frame(
             break;
         }
         plan.place(placement.faces.start);
-        geometry
+        let slot = geometry
             .residency
             .commit(entity, &placement, &plan, section.origin);
         if geometry.pulled {
@@ -699,6 +789,9 @@ fn plan_frame(
                 bytemuck::cast_slice(&refs),
             );
         } else {
+            if geometry.layout.packed() {
+                geometry.write_draw_origin(device, &inputs.queue, slot, section.origin, origin);
+            }
             for (kind, planned) in plan.jobs.into_iter().enumerate() {
                 jobs.entry((kind, placement.page))
                     .or_default()
@@ -773,7 +866,7 @@ fn plan_frame(
 }
 
 /// The kernels' `ExpandParams` words: the origin, `separateAo`, `oldLighting`, the first job
-/// word and the materials in the attribute table.
+/// word, the materials in the attribute table and the vertex layout.
 fn expand_params(
     origin: IVec3,
     settings: &ShaderpackGeometrySettings,
@@ -785,6 +878,7 @@ fn expand_params(
     params[5] = u32::from(settings.old_lighting);
     params[6] = attributes.len() as u32;
     params[7] = (attributes.len() / 2) as u32;
+    params[8..12].copy_from_slice(&settings.layout.expand_words());
     params
 }
 
@@ -907,7 +1001,7 @@ impl ResidencyLog {
         let now = Instant::now();
         self.expanded_faces += u64::from(expanded);
         self.frames += 1;
-        let pending = residency.pending_len();
+        let pending = residency.undrawn_len();
         match (pending, self.filling_since) {
             (0, Some(since)) => {
                 self.filling_since = None;

@@ -8,9 +8,9 @@ use super::pipelines::{
 use super::pull::PulledResource;
 use super::vertex::{
     BLOCK_ID, COLOR, CONSTANT_STREAM_WORDS, IRIS_VERTEX_WORDS, LIGHTMAP, MID_BLOCK, MID_TEX,
-    NORMAL, POSITION, TANGENT, UV0,
+    NORMAL, POSITION, TANGENT, TerrainLayout, UV0, draw_origin,
 };
-use super::{LIGHTMAP_TEXTURE_MATRIX, vertex_buffer_layouts};
+use super::{DRAW_ORIGIN_VERTEX_BUFFER, LIGHTMAP_TEXTURE_MATRIX, vertex_buffer_layouts};
 use crate::gpu_snapshot::Gpu;
 use crate::shaderpack::atlas;
 use assets::Material;
@@ -112,6 +112,8 @@ fn cube_quads() -> [PackedQuad; 2] {
 struct Expanded {
     gpu: Gpu,
     vertices: wgpu::Buffer,
+    /// The stream's layout.
+    layout: TerrainLayout,
     words: Vec<u32>,
     faces: u32,
     categories: [std::ops::Range<u32>; 3],
@@ -172,10 +174,18 @@ struct Fixture<'a> {
     streams: Vec<u32>,
     /// The origin's stream bases: liquid records at `z`, their lighting records at `w`.
     stream_bases: [u32; 4],
+    /// The vertex layout the kernel writes.
+    layout: TerrainLayout,
 }
 
-/// Expands the fixture section's cube quads with the production kernel and layouts.
+/// Expands the fixture section's cube quads with the production kernel and layouts, in the
+/// wide stream.
 fn expand_fixture(name: &str) -> Option<Expanded> {
+    expand_fixture_in(name, TerrainLayout::WIDE)
+}
+
+/// Expands the fixture section's cube quads into a stream of `layout`.
+fn expand_fixture_in(name: &str, layout: TerrainLayout) -> Option<Expanded> {
     let quads = cube_quads();
     let mut streams = words_of(TOP_LIGHT).to_vec();
     streams.extend(words_of(SIDE_LIGHT));
@@ -187,6 +197,7 @@ fn expand_fixture(name: &str) -> Option<Expanded> {
             liquid_quads: &[],
             streams,
             stream_bases: [0; 4],
+            layout,
         },
     )
 }
@@ -272,6 +283,7 @@ fn expand_section(name: &str, fixture: Fixture<'_>) -> Option<Expanded> {
     params[..3].copy_from_slice(&ANCHOR.map(|axis| axis as u32));
     params[6] = attributes.len() as u32;
     params[7] = materials.len() as u32;
+    params[8..12].copy_from_slice(&fixture.layout.expand_words());
     let params = gpu
         .device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -279,7 +291,7 @@ fn expand_section(name: &str, fixture: Fixture<'_>) -> Option<Expanded> {
             contents: bytemuck::cast_slice(&params),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-    let vertex_bytes = u64::from(plan.faces) * 4 * u64::from(IRIS_VERTEX_WORDS) * 4;
+    let vertex_bytes = u64::from(plan.faces) * 4 * fixture.layout.stride();
     let vertices = gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: vertex_bytes,
@@ -402,6 +414,7 @@ fn expand_section(name: &str, fixture: Fixture<'_>) -> Option<Expanded> {
     Some(Expanded {
         gpu,
         vertices,
+        layout: fixture.layout,
         words: bytemuck::cast_slice(&bytes).to_vec(),
         faces: plan.faces,
         categories: plan.categories.clone(),
@@ -627,6 +640,7 @@ fn liquid_faces_carry_the_fluid_render_type() {
             liquid_quads: &[liquid],
             streams,
             stream_bases: [0, 0, 0, 2],
+            layout: TerrainLayout::WIDE,
         },
     ) else {
         return;
@@ -844,8 +858,8 @@ fn draw_fixture(expanded: &Expanded, pulled: bool) -> Vec<Vec<u8>> {
         ],
     });
 
-    let layouts =
-        vertex_buffer_layouts(&reflection.vertex_inputs).expect("terrain supplies every input");
+    let layouts = vertex_buffer_layouts(&reflection.vertex_inputs, &expanded.layout)
+        .expect("terrain supplies every input");
     let buffers: Vec<_> = layouts
         .iter()
         .map(|layout| {
@@ -1001,6 +1015,12 @@ fn draw_fixture(expanded: &Expanded, pulled: bool) -> Vec<Vec<u8>> {
         contents: bytemuck::cast_slice(&CONSTANT_STREAM_WORDS),
         usage: wgpu::BufferUsages::VERTEX,
     });
+    // The section's draw origin in slot 0, which packed draws select as their first instance.
+    let origins = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::cast_slice(&draw_origin(SECTION_ORIGIN, ANCHOR)),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
     let mut encoder = device.create_command_encoder(&Default::default());
     {
         let attachments: Vec<_> = views
@@ -1044,6 +1064,9 @@ fn draw_fixture(expanded: &Expanded, pulled: bool) -> Vec<Vec<u8>> {
         } else {
             pass.set_vertex_buffer(super::GEOMETRY_VERTEX_BUFFER, expanded.vertices.slice(..));
             pass.set_vertex_buffer(super::CONSTANT_VERTEX_BUFFER, constants.slice(..));
+            if expanded.layout.packed() {
+                pass.set_vertex_buffer(DRAW_ORIGIN_VERTEX_BUFFER, origins.slice(..));
+            }
             pass.draw_indexed(
                 0..(solid.end - solid.start) * 6,
                 (solid.start * 4) as i32,
@@ -1116,6 +1139,37 @@ fn pulled_terrain_draws_the_pixels_expanded_terrain_draws() {
             .filter(|(a, b)| a.abs_diff(**b) > 1)
             .count();
         assert_eq!(differing, 0, "colortex{target}: pulled and expanded differ");
+    }
+}
+
+#[test]
+fn packed_terrain_draws_the_pixels_wide_terrain_draws() {
+    let Some(wide) = expand_fixture("shader-pack wide terrain draw") else {
+        return;
+    };
+    let program = translate_fixture();
+    let reflection = program.reflection.as_ref().expect("reflection");
+    let layout = TerrainLayout::compact(&reflection.vertex_inputs);
+    assert!(
+        layout.stride() < TerrainLayout::WIDE.stride(),
+        "the fixture program reads fewer fields than the wide stream holds"
+    );
+    let Some(packed) = expand_fixture_in("shader-pack packed terrain draw", layout) else {
+        return;
+    };
+    assert_eq!(
+        packed.words.len() as u64 * 4,
+        u64::from(packed.faces) * 4 * layout.stride()
+    );
+    let wide_pixels = draw_fixture(&wide, false);
+    let packed_pixels = draw_fixture(&packed, false);
+    for (target, (packed, reference)) in packed_pixels.iter().zip(&wide_pixels).enumerate() {
+        let drawn = reference.chunks(4).filter(|texel| texel[3] != 0).count();
+        assert!(drawn > 0, "colortex{target} draws the section");
+        assert!(
+            packed == reference,
+            "colortex{target}: packed and wide terrain differ"
+        );
     }
 }
 

@@ -175,6 +175,8 @@ pub(crate) struct PackGpu {
     /// Terrain draws read the arenas directly (`geometry::pull`), so the geometry adapter
     /// keeps face refs instead of expanded vertices.
     pub pulled_terrain: bool,
+    /// The expanded vertex the pack's terrain draws read.
+    pub terrain_layout: super::geometry::TerrainLayout,
     /// `shadowcomp*` compute passes after the shadow pass.
     pub shadowcomp: Vec<PassStep>,
     /// Present when some shadow draw resolved.
@@ -882,6 +884,10 @@ pub(crate) fn build(
         quad,
         host,
         pulled_terrain: draws.iter().any(|d| d.pulled.is_some()),
+        terrain_layout: draws
+            .iter()
+            .find_map(|d| d.layout)
+            .unwrap_or(super::geometry::TerrainLayout::WIDE),
         draws,
         shadowcomp,
         shadow,

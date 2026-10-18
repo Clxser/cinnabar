@@ -32,7 +32,7 @@ use super::jobs::{JOB_KINDS, SectionPlan, job_slots};
 use super::pipelines::expansion_shader_source;
 use super::vertex::{
     BLOCK_ID, COLOR, CONSTANT_STREAM_WORDS, GEOMETRY_VERTEX_BUFFER, InputFetch, LIGHTMAP,
-    MID_BLOCK, MID_TEX, NORMAL, POSITION, TANGENT, UV0, input_fetches,
+    MID_BLOCK, MID_TEX, NORMAL, POSITION, TANGENT, TerrainLayout, UV0, input_fetches,
 };
 
 /// Environment switch: `1` builds pulled terrain pipelines when a pack loads.
@@ -184,7 +184,8 @@ pub(crate) fn pulled_vertex_stage(
         .iter()
         .position(|e| e.stage == ShaderStage::Vertex && e.name == entry)
         .ok_or_else(|| format!("no vertex entry point `{entry}`"))?;
-    let fetches = input_fetches(inputs).map_err(|e| e.to_string())?;
+    // The decoded vertex carries float positions, as the wide stream does.
+    let fetches = input_fetches(inputs, &TerrainLayout::WIDE).map_err(|e| e.to_string())?;
     let arguments = &vertex.entry_points[entry_index].function.arguments;
     let sources = arguments
         .iter()

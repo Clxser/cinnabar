@@ -95,10 +95,11 @@ mod shader_safety;
 pub use self::shaderpack::atlas::{ShaderpackAtlas, ShaderpackAtlasPlugin};
 #[cfg(feature = "shaderpacks")]
 pub use self::shaderpack::geometry::{
-    BlockEntityIdFn, CONSTANT_VERTEX_BUFFER, DEFAULT_GEOMETRY_BUDGET_BYTES, FRAME_EXPANSION_FACES,
-    GEOMETRY_VERTEX_BUFFER, GeometryCategory, IRIS_VERTEX_STRIDE, LIGHTMAP_TEXTURE_MATRIX,
-    ShaderpackBlockIds, ShaderpackGeometry, ShaderpackGeometryPlugin, ShaderpackGeometrySettings,
-    UNASSIGNED_BLOCK_ID, VertexLayoutError, vertex_buffer_layouts,
+    BlockEntityIdFn, CONSTANT_VERTEX_BUFFER, DEFAULT_GEOMETRY_BUDGET_BYTES,
+    DRAW_ORIGIN_VERTEX_BUFFER, FRAME_EXPANSION_FACES, GEOMETRY_VERTEX_BUFFER, GeometryCategory,
+    IRIS_VERTEX_STRIDE, LIGHTMAP_TEXTURE_MATRIX, ShaderpackBlockIds, ShaderpackGeometry,
+    ShaderpackGeometryPlugin, ShaderpackGeometrySettings, TerrainLayout, UNASSIGNED_BLOCK_ID,
+    VertexLayoutError, vertex_buffer_layouts,
 };
 // Shader packs' arena-reading terrain prototype composes the expansion modules at runtime.
 #[cfg(any(test, feature = "shaderpacks"))]

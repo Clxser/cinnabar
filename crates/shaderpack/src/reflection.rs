@@ -186,6 +186,15 @@ pub enum VertexAttribute {
     ChunkFade,
     /// `dhMaterialId`.
     DhMaterialId,
+    /// `iris_PackedPosition` (`uvec4`): a position in unsigned fixed point, scaled and offset
+    /// by [`VertexAttribute::DrawOrigin`]. The translator unpacks every position input
+    /// (`gl_Vertex`, `vaPosition`) as `stored + origin.xyz + vec3(packed.xyz) * origin.w`,
+    /// so a vertex stream supplies either float positions or packed ones and the other
+    /// part reads zero. Its location is the first one the stage leaves free.
+    PackedPosition,
+    /// `iris_DrawOrigin` (`vec4`): the origin (`xyz`) and scale (`w`) of
+    /// [`VertexAttribute::PackedPosition`], per draw.
+    DrawOrigin,
     /// An input the pack declares that Iris does not supply.
     Other(String),
 }
@@ -212,6 +221,8 @@ const ATTRIBUTE_NAMES: &[(&str, VertexAttribute)] = &[
     ("at_velocity", VertexAttribute::Velocity),
     ("mc_chunkFade", VertexAttribute::ChunkFade),
     ("dhMaterialId", VertexAttribute::DhMaterialId),
+    ("iris_PackedPosition", VertexAttribute::PackedPosition),
+    ("iris_DrawOrigin", VertexAttribute::DrawOrigin),
 ];
 
 /// Supplied attributes in location order; `Other` inputs take locations after these.
@@ -253,7 +264,8 @@ impl VertexAttribute {
             .unwrap_or_else(|| VertexAttribute::Other(name.to_string()))
     }
 
-    /// The fixed shader location of a supplied attribute; `None` for `Other`.
+    /// The fixed shader location of a supplied attribute; `None` for `Other` and the raw
+    /// position parts, which take free locations.
     pub fn location(&self) -> Option<u32> {
         SUPPLIED.iter().position(|a| a == self).map(|i| i as u32)
     }
@@ -487,8 +499,13 @@ mod tests {
 
     #[test]
     fn every_named_attribute_has_a_location_and_every_location_a_name() {
+        let position_parts = [VertexAttribute::PackedPosition, VertexAttribute::DrawOrigin];
         for (name, attribute) in ATTRIBUTE_NAMES {
-            assert!(attribute.location().is_some(), "{name} has no location");
+            assert_eq!(
+                attribute.location().is_some(),
+                !position_parts.contains(attribute),
+                "{name}: only the position parts take free locations"
+            );
             assert_eq!(&VertexAttribute::from_glsl_name(name), attribute);
         }
         for attribute in SUPPLIED {
