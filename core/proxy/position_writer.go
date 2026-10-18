@@ -3,7 +3,6 @@ package proxy
 import (
 	"sync"
 
-	"github.com/sandertv/gophertunnel/minecraft"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/login"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 	"github.com/sandertv/gophertunnel/minecraft/resource"
@@ -48,12 +47,20 @@ func trackPositionWrites(destination packetSession, delay *PacketDelay, session,
 }
 
 // observe records a movement only under the lease captured before its successful write.
-func (writer *positionWriter) observe(values []packet.Packet, epoch uint64, enabled bool) {
-	if writer.armed && enabled {
-		if position := ownMovementPosition(values, writer.ownID); position != nil {
-			writer.epoch, writer.position = epoch, position
-		}
+func (writer *positionWriter) observe(position *ForwardedPosition, epoch uint64, enabled bool) {
+	if writer.armed && enabled && position != nil {
+		writer.epoch, writer.position = epoch, position
 	}
+}
+
+// receivedPosition copies the received anchor before an interceptor can mutate decoded values.
+func (writer *positionWriter) receivedPosition(values []packet.Packet) *ForwardedPosition {
+	if len(values) == 0 {
+		return nil
+	}
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	return ownMovementPosition(values, writer.ownID)
 }
 
 // WritePacket observes typed writes, including injections made by either relay direction.
@@ -64,36 +71,37 @@ func (writer *positionWriter) WritePacket(value packet.Packet) error {
 	if err := writer.packetSession.WritePacket(value); err != nil {
 		return err
 	}
-	writer.observe([]packet.Packet{value}, epoch, enabled)
+	writer.observe(ownMovementPosition([]packet.Packet{value}, writer.ownID), epoch, enabled)
 	return nil
 }
 
 // writeReceived observes decoded movements while preserving their original encoded bytes.
-func (writer *positionWriter) writeReceived(raw minecraft.RawPacket) error {
+func (writer *positionWriter) writeReceived(data []byte, position *ForwardedPosition) error {
 	writer.mu.Lock()
 	defer writer.mu.Unlock()
 	epoch, enabled := writer.delay.positionToken()
-	if err := writer.packetSession.WritePacketRaw(raw.Data); err != nil {
+	if err := writer.packetSession.WritePacketRaw(data); err != nil {
 		return err
 	}
-	writer.observe(raw.Decoded, epoch, enabled)
+	writer.observe(position, epoch, enabled)
 	return nil
 }
 
 // WritePacketRaw serializes raw writes; the relay supplies decoded observations through writeReceived.
 func (writer *positionWriter) WritePacketRaw(data []byte) error {
-	return writer.writeReceived(minecraft.RawPacket{Data: data})
+	return writer.writeReceived(data, nil)
 }
 
 // Flush commits only movements that left the upstream buffer successfully.
 func (writer *positionWriter) Flush() error {
 	writer.mu.Lock()
 	defer writer.mu.Unlock()
+	position := writer.position
+	writer.position = nil
 	if err := writer.packetSession.Flush(); err != nil {
 		return err
 	}
-	writer.delay.commitPosition(writer.session, writer.epoch, writer.position)
-	writer.position = nil
+	writer.delay.commitPosition(writer.session, writer.epoch, position)
 	return nil
 }
 
@@ -101,13 +109,13 @@ func (writer *positionWriter) Flush() error {
 func (writer *positionWriter) WritePacketImmediate(values ...packet.Packet) error {
 	writer.mu.Lock()
 	defer writer.mu.Unlock()
+	defer func() { writer.position = nil }()
 	epoch, enabled := writer.delay.positionToken()
 	if err := writer.packetSession.WritePacketImmediate(values...); err != nil {
 		return err
 	}
-	writer.observe(values, epoch, enabled)
+	writer.observe(ownMovementPosition(values, writer.ownID), epoch, enabled)
 	writer.delay.commitPosition(writer.session, writer.epoch, writer.position)
-	writer.position = nil
 	return nil
 }
 

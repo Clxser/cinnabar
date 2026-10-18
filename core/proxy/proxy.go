@@ -560,6 +560,14 @@ func inspectsUpstreamIdentity(id uint32, identity login.IdentityData) bool {
 // forwardPacket writes raw's received bytes unless the proxy rewrote one of its decoded packets or an
 // intercept changed or dropped one. intercept is optional.
 func forwardPacket(destination packetSession, raw minecraft.RawPacket, identity login.IdentityData, intercept SessionInterceptor, direction Direction) error {
+	writer, observing := destination.(interface {
+		receivedPosition([]packet.Packet) *ForwardedPosition
+		writeReceived([]byte, *ForwardedPosition) error
+	})
+	var received *ForwardedPosition
+	if observing {
+		received = writer.receivedPosition(raw.Decoded)
+	}
 	intercepted := intercept != nil && len(raw.Decoded) != 0 && intercept.Intercepts(direction, raw.ID)
 	var verdictBuffer [4]Verdict
 	verdicts := verdictBuffer[:0]
@@ -576,10 +584,8 @@ func forwardPacket(destination packetSession, raw minecraft.RawPacket, identity 
 		rewritten = rewritten || verdict != Forward || normalizeUpstreamIdentity(value, identity) != value
 	}
 	if !rewritten {
-		if writer, ok := destination.(interface {
-			writeReceived(minecraft.RawPacket) error
-		}); ok {
-			return writer.writeReceived(raw)
+		if observing {
+			return writer.writeReceived(raw.Data, received)
 		}
 		return destination.WritePacketRaw(raw.Data)
 	}
