@@ -7,7 +7,8 @@
 //! side and draws into the other side; afterwards each buffer it wrote flips, unless
 //! `flip.<program>.<buffer>=false`, and `flip.<program>.<buffer>=true` also flips a buffer
 //! the pass did not write. The plan is identical every frame, and buffers that end the frame
-//! flipped are copied back to main after `final`, so the next frame starts unflipped.
+//! flipped are copied back to main after `final` unless the next frame clears them anyway,
+//! so the next frame starts unflipped.
 
 use shaderpack::{BufferDirectives, BufferFormat, BufferId, FlipRule, ProgramGroup, SizeValue};
 
@@ -252,6 +253,24 @@ pub(crate) fn plan_frame(programs: &[PlannedProgram], flips: &[FlipRule]) -> Fra
     }
 }
 
+/// Leaves out of `frame.swap_back` the buffers cleared at the start of every frame: nothing
+/// reads their last side before the clear, as Iris skips their copy-back. `colortex0` stays
+/// when no `final` program runs, since the screen is then presented from its main texture.
+pub(crate) fn skip_cleared_swap_back(
+    frame: &mut FramePlan,
+    buffers: &[BufferPlan],
+    programs: &[PlannedProgram],
+) {
+    let presents_colortex0 = !programs.iter().any(|p| p.group == ProgramGroup::Final);
+    frame.swap_back.retain(|&index| {
+        (presents_colortex0 && index == 0)
+            || buffers
+                .iter()
+                .find(|buffer| buffer.index == index)
+                .is_none_or(|buffer| buffer.clear.is_none())
+    });
+}
+
 /// Plans the colour buffers the passes and the `gbuffers_*` programs in `geometry` touch
 /// (plus buffer 0, which receives the scene). A geometry program that samples a buffer it
 /// also draws into reads the buffer's other side, so such buffers get an alternate texture.
@@ -398,6 +417,33 @@ mod tests {
         assert_eq!(plan.scene_alt, 1);
         assert_eq!(plan.post[0].read_alt, 1);
         assert_eq!(plan.swap_back, [0, 1]);
+    }
+
+    #[test]
+    fn buffers_cleared_every_frame_are_not_copied_back() {
+        let buffer = |index, clear| BufferPlan {
+            index,
+            format: BufferFormat::Rgba8,
+            extent: Extent::Relative([1.0; 2]),
+            clear,
+            mipmapped: false,
+            alternate: true,
+        };
+        let cleared = Some(BufferClear::Color([0.0; 4]));
+        let mut programs = vec![
+            program("prepare", ProgramGroup::Prepare, &[0]),
+            program("deferred", ProgramGroup::Deferred, &[1]),
+        ];
+        let buffers = [buffer(0, cleared), buffer(1, cleared)];
+        let mut plan = plan_frame(&programs, &[]);
+        skip_cleared_swap_back(&mut plan, &buffers, &programs);
+        assert_eq!(plan.swap_back, [0], "without final, colortex0 is presented");
+
+        programs.push(program("final", ProgramGroup::Final, &[0]));
+        let buffers = [buffer(0, cleared), buffer(1, None)];
+        let mut plan = plan_frame(&programs, &[]);
+        skip_cleared_swap_back(&mut plan, &buffers, &programs);
+        assert_eq!(plan.swap_back, [1], "only the buffer kept across frames");
     }
 
     #[test]

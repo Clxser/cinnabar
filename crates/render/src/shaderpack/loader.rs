@@ -18,7 +18,7 @@ use super::pipelines::{
 };
 use super::plan::{
     BufferPlan, FramePlan, MAX_COLOR_BUFFERS, PassStep, PlannedProgram, color_buffer_of,
-    plan_buffers, plan_frame,
+    plan_buffers, plan_frame, skip_cleared_swap_back,
 };
 use super::resources::bindings::resolve_bindings;
 use super::resources::{
@@ -488,7 +488,7 @@ pub(crate) fn build(
         .filter(|p| p.program.group == ProgramGroup::Gbuffers)
         .filter_map(|p| Some(planned(p, p.reflection.as_ref()?)))
         .collect();
-    let frame = plan_frame(&plans, &translation.properties.flips);
+    let mut frame = plan_frame(&plans, &translation.properties.flips);
     let buffers = plan_buffers(
         &plans,
         &geometry_plans,
@@ -496,6 +496,7 @@ pub(crate) fn build(
         &translation.buffers,
         &translation.properties.buffer_sizes,
     );
+    skip_cleared_swap_back(&mut frame, &buffers, &plans);
     let support = gpu.support();
     let mut buffer_formats = [None; MAX_COLOR_BUFFERS as usize];
     for buffer in &buffers {
