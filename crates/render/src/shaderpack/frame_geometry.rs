@@ -14,8 +14,10 @@ use super::loader::PackGpu;
 use super::passes::{ViewState, clear_attachment, load_attachment, pass};
 use super::sky::{SkyGeometry, SkyInputs, sky_geometry};
 use super::targets::AtlasViews;
+use crate::gpu_timing::{GpuTimestamps, within_stage};
 use bevy::render::render_phase::TrackedRenderPass;
 use bevy::render::renderer::RenderDevice;
+use render_scene::RuntimeStage;
 use wgpu::{CommandEncoder, Device, Queue, TextureView};
 
 /// Terrain the pack's geometry programs draw.
@@ -402,13 +404,15 @@ pub(crate) fn record_shadow(
 /// The sky (no depth) with the sun, moon and stars, then opaque terrain, actors and block
 /// entities against a cleared depth attachment and the effects Iris draws before the
 /// deferred passes, the copy into `depthtex2`, the solid hand, then the copies into
-/// `depthtex0` and `depthtex1`, which hold the same depth until translucents draw.
+/// `depthtex0` and `depthtex1`, which hold the same depth until translucents draw. Solid
+/// and cutout terrain are timed as the terrain stages during aggregate profiling.
 pub(crate) fn record_opaque(
     device: &Device,
     queue: &Queue,
     encoder: &mut CommandEncoder,
     state: &mut ViewState,
     geometry: &FrameGeometry<'_>,
+    timestamps: Option<&GpuTimestamps>,
 ) {
     let scene_alt = state.pack.frame.scene_alt;
     let sky = sky_geometry(geometry.sky);
@@ -435,16 +439,21 @@ pub(crate) fn record_opaque(
     let view = depth.view.clone();
     let size = state.targets.screen_size;
     clear_depth(encoder, &view);
-    for kind in [DrawKind::TerrainSolid, DrawKind::TerrainCutout] {
-        record_kind(
-            encoder,
-            state,
-            geometry,
-            kind,
-            scene_alt,
-            Some((&view, size)),
-            None,
-        );
+    for (kind, stage) in [
+        (DrawKind::TerrainSolid, RuntimeStage::GpuTerrainSolid),
+        (DrawKind::TerrainCutout, RuntimeStage::GpuTerrainCutout),
+    ] {
+        within_stage(timestamps, stage, encoder, |encoder| {
+            record_kind(
+                encoder,
+                state,
+                geometry,
+                kind,
+                scene_alt,
+                Some((&view, size)),
+                None,
+            );
+        });
     }
     for kind in [
         DrawKind::Entities,

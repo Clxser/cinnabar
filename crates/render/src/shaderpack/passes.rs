@@ -345,7 +345,9 @@ pub(crate) fn record_frame(
         |encoder| {
             run_steps(encoder, state, Steps::Prepare, state.targets.screen_size);
             match geometry {
-                Some(geometry) => record_opaque(device, queue, encoder, state, geometry),
+                Some(geometry) => {
+                    record_opaque(device, queue, encoder, state, geometry, timestamps);
+                }
                 None => copy_scene(device, encoder, &pack, &state.targets, io),
             }
         },

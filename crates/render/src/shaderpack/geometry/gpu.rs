@@ -471,7 +471,11 @@ pub(crate) fn prepare_shaderpack_geometry(
     for removed in removed {
         geometry.residency.remove(removed);
     }
-    for changed in sections.changed().collect::<Vec<_>>() {
+    let changed: Vec<_> = sections.changed().collect();
+    if changed.len() > 512 {
+        debug!(target: "cinnabar::shaderpack", sections = changed.len(), "shader-pack terrain sections changed");
+    }
+    for changed in changed {
         geometry.residency.enqueue(changed);
     }
     let camera = views
@@ -521,6 +525,13 @@ pub(crate) fn prepare_shaderpack_geometry(
     };
     let rebased = camera.is_some_and(|camera| geometry.residency.follow_camera(camera));
     if rebased || geometry.inputs.as_ref() != Some(&expansion_inputs) {
+        debug!(
+            target: "cinnabar::shaderpack",
+            rebased,
+            previous = ?geometry.inputs,
+            current = ?expansion_inputs,
+            "shader-pack terrain re-expands every resident section"
+        );
         let resident: Vec<_> = sections.entities().collect();
         geometry.residency.enqueue_all(resident);
         geometry.inputs = Some(expansion_inputs);
