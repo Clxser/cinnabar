@@ -150,6 +150,7 @@ pub(in crate::chunk) fn prepare_transparent_sorts(
     witness_evidence: Res<TransparentWitnessEvidence>,
     mut upload_budget: ResMut<TransparentUploadBudget>,
     profiler: Option<Res<RuntimeStageProfiler>>,
+    pack: render_scene::shaderpack::ShaderPackDrawnViews,
 ) {
     let worker_profiler = profiler.as_deref().cloned();
     let _timer = profiler
@@ -282,9 +283,12 @@ pub(in crate::chunk) fn prepare_transparent_sorts(
         });
     }
 
+    // A view whose terrain a shader pack draws never queues the Vanilla water draw, so its
+    // order is not kept either.
     let mut visible_views = views
         .iter()
         .filter(|(_, _, _, settings)| retains_transparent_sort(*settings))
+        .filter(|(entity, ..)| !pack.replaces(*entity, |drawn| drawn.terrain))
         .collect::<Vec<_>>();
     visible_views.sort_by_key(|(entity, ..)| *entity);
     if visible_views.len() > MAX_TRANSPARENT_VIEWS {

@@ -95,7 +95,7 @@ impl WorldStream {
             block_entity_visuals: BlockEntityVisualDiagnostics::default(),
             classifier: BlockClassifier::new(air_network_id),
             startup_terrain_announced: true,
-            cutout_leaves: false,
+            java_meshing: None,
             seasonal_foliage: seasonal_foliage::SeasonalFoliage::default(),
             ingress_dimension: bootstrap.dimension,
             deferred_ingress: VecDeque::new(),

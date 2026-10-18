@@ -172,17 +172,14 @@ impl ViewDraws {
                 _ => &opaque,
             };
             let facing = inputs.facing;
-            let culls_facing = category != GeometryCategory::Translucent;
             for section in ordered {
                 if section.categories[category.index()].is_empty() {
                     continue;
                 }
                 let groups = &section.facing[category.index()];
-                let visible = facing
-                    .filter(|_| culls_facing)
-                    .map_or([true; FACING_GROUPS], |eye| {
-                        facing_visible(section.origin, eye)
-                    });
+                let visible = facing.map_or([true; FACING_GROUPS], |eye| {
+                    facing_visible(section.origin, eye)
+                });
                 // Visible groups that follow one another merge into one command.
                 let mut pending: Option<Range<u32>> = None;
                 for (group, faces) in groups.iter().enumerate() {

@@ -256,7 +256,8 @@ fn face_vertex(source_corners: FaceCorners, source: FaceSource, tint: vec4<f32>,
 }
 
 /// Corner `corner` of slot `slot` of the face slots `job` reserved: the face, then an overlay
-/// slot when `JOB_OVERLAY_FACE` is set and a back side when `JOB_REVERSE_FACE` is set.
+/// slot when `JOB_OVERLAY_FACE` is set and a back side when `JOB_REVERSE_FACE` is set; a
+/// `JOB_BACK_ONLY` job's one slot is the back side alone.
 /// Grass-side overlay materials draw an untinted opaque base under a tinted cutout overlay, as
 /// Java's overlay quads do; slots the material does not need, and every slot of an invalid
 /// record, are degenerate.
@@ -273,6 +274,12 @@ fn job_slot_vertex(job: vec4<u32>, slot: u32, face: JobFace, corner: u32) -> Iri
     let overlay_slot = (job.w & JOB_OVERLAY_FACE) != 0u;
     let overlay = material_uses_overlay_mask(source.material.flags) && overlay_slot;
     let front = sprite_slot(source.material, false);
+    if ((job.w & JOB_BACK_ONLY) != 0u) {
+        if (source.two_sided) {
+            return face_vertex(corners, source, source.tint, front, true, corner);
+        }
+        return degenerate;
+    }
     if (slot == 0u) {
         if (overlay) {
             return face_vertex(corners, source, vec4(vec3(1.0), source.tint.a), sprite_slot(source.material, true), false, corner);

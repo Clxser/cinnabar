@@ -19,6 +19,9 @@ use meshing::{PackedLiquidQuad, PackedModelDrawRef, PackedModelRef, PackedQuad};
 pub(crate) const JOB_OVERLAY_FACE: u32 = 1 << 16;
 /// Job flag: the last slot holds the back of a two-sided face.
 pub(crate) const JOB_REVERSE_FACE: u32 = 1 << 17;
+/// Job flag: the job's only slot holds the back of a two-sided face, as its own job because
+/// it faces the other way and so belongs to the opposite facing group.
+pub(crate) const JOB_BACK_ONLY: u32 = 1 << 18;
 
 /// Iris geometry categories, in the order a section's faces are stored.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -173,6 +176,15 @@ impl CategoryJobs {
     }
 }
 
+/// The axis direction a liquid face faces, when it lies in one axis plane: every side and
+/// bottom face, and a top face whose four corners stand at one height (Sodium's aligned
+/// fluid quads). A sloped top faces no single axis direction.
+fn liquid_facing(liquid: PackedLiquidQuad) -> Option<meshing::Face> {
+    let face = liquid.face();
+    let heights = liquid.heights();
+    (face != meshing::Face::PositiveY || heights.iter().all(|h| *h == heights[0])).then_some(face)
+}
+
 /// Plans one section. Overlay materials leave the solid run for the cutout category, because
 /// their overlay face is alpha-tested.
 pub(crate) fn plan_section(
@@ -232,18 +244,27 @@ pub(crate) fn plan_section(
         } else {
             GeometryCategory::Translucent
         };
-        let flags = if liquid.is_two_sided() {
-            JOB_REVERSE_FACE
-        } else {
-            0
-        };
-        categories[category.index()].push(
-            FACING_REST,
-            JobKind::Liquid,
-            section.liquid_base + index as u32,
-            metadata,
-            flags,
-        );
+        let record = section.liquid_base + index as u32;
+        let jobs = &mut categories[category.index()];
+        match liquid_facing(*liquid) {
+            // An axis-aligned face and its back face away from each other: as Sodium's fluid
+            // quads, each is culled when the eye is behind its plane.
+            Some(face) => {
+                jobs.push(face as usize, JobKind::Liquid, record, metadata, 0);
+                if liquid.is_two_sided() {
+                    let back = face as usize ^ 1;
+                    jobs.push(back, JobKind::Liquid, record, metadata, JOB_BACK_ONLY);
+                }
+            }
+            None => {
+                let flags = if liquid.is_two_sided() {
+                    JOB_REVERSE_FACE
+                } else {
+                    0
+                };
+                jobs.push(FACING_REST, JobKind::Liquid, record, metadata, flags);
+            }
+        }
     }
 
     let mut plan = SectionPlan::default();

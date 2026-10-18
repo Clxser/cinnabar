@@ -7,8 +7,9 @@ pub(in crate::stream) struct MeshSnapshot {
     pub(in crate::stream) column: Option<Arc<BTreeMap<i32, Arc<SubChunk>>>>,
     pub(in crate::stream) center_y: i32,
     pub(in crate::stream) light_halo: MeshLightHalo,
-    /// Meshes every leaf cutout, as Java's fancy leaves do ([`WorldStream::set_cutout_leaves`]).
-    pub(in crate::stream) cutout_leaves: bool,
+    /// Java meshing for shader packs ([`WorldStream::set_java_meshing`]): every leaf cutout,
+    /// and no water faces toward these sorted water-filled network values.
+    pub(in crate::stream) java_meshing: Option<Arc<[u32]>>,
 }
 
 pub(in crate::stream) type BiomeNeighbourhood =
@@ -105,7 +106,8 @@ impl MeshSnapshot {
             &self.light_halo,
             ::meshing::MeshOptions {
                 split_tinted_faces: biome.uniform_tint_index().is_none(),
-                cutout_leaves: self.cutout_leaves,
+                cutout_leaves: self.java_meshing.is_some(),
+                water_filled: self.java_meshing.as_deref().unwrap_or_default(),
             },
         )
     }

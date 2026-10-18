@@ -626,7 +626,7 @@ impl WorldStream {
                 .map(world::Chunk::shared_sub_chunks),
             center_y: key.y,
             light_halo,
-            cutout_leaves: self.cutout_leaves,
+            java_meshing: self.java_meshing.clone(),
         }
     }
     pub(in crate::stream) fn biome_neighbourhood(&self, key: SubChunkKey) -> BiomeNeighbourhood {
