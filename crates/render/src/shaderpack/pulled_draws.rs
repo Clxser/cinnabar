@@ -94,10 +94,13 @@ fn pulled_program(
         ));
     }
     let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some(&format!("shader pack {} pulled vsh", program.name)),
-        source: wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(pulled.module.clone())),
-    });
+    let module = super::pipelines::pack_shader_module(
+        device,
+        wgpu::ShaderModuleDescriptor {
+            label: Some(&format!("shader pack {} pulled vsh", program.name)),
+            source: wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(pulled.module.clone())),
+        },
+    );
     let mut group3 = stage.entries[3].clone();
     group3.extend(pulled.layout_entries());
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
