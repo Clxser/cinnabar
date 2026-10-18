@@ -159,17 +159,43 @@ fn layout(
         })
 }
 
+/// One section's records for one kernel, and the geometry stream (binding 13) it reads.
+struct Fixture<'a> {
+    kind: JobKind,
+    cube_quads: &'a [PackedQuad],
+    liquid_quads: &'a [meshing::PackedLiquidQuad],
+    streams: Vec<u32>,
+    /// The origin's stream bases: liquid records at `z`, their lighting records at `w`.
+    stream_bases: [u32; 4],
+}
+
 /// Expands the fixture section's cube quads with the production kernel and layouts.
 fn expand_fixture(name: &str) -> Option<Expanded> {
+    let quads = cube_quads();
+    let mut streams = words_of(TOP_LIGHT).to_vec();
+    streams.extend(words_of(SIDE_LIGHT));
+    expand_section(
+        name,
+        Fixture {
+            kind: JobKind::Cube,
+            cube_quads: &quads,
+            liquid_quads: &[],
+            streams,
+            stream_bases: [0; 4],
+        },
+    )
+}
+
+/// Expands `fixture` with the production kernel of its kind and layouts.
+fn expand_section(name: &str, fixture: Fixture<'_>) -> Option<Expanded> {
+    let kind = fixture.kind;
     let limits = wgpu::Limits {
-        max_storage_buffers_per_shader_stage: super::pipelines::storage_buffers_per_stage(
-            JobKind::Cube,
-        ),
+        max_storage_buffers_per_shader_stage: super::pipelines::storage_buffers_per_stage(kind),
         ..wgpu::Limits::default()
     };
     let gpu = Gpu::for_fixture_with_limits(name, wgpu::Features::empty(), limits)?;
     let materials = materials();
-    let quads = cube_quads();
+    let quads = fixture.cube_quads;
     let tables = MaterialTables {
         materials: &materials,
         model_templates: &[],
@@ -178,7 +204,7 @@ fn expand_fixture(name: &str) -> Option<Expanded> {
     let section = SectionGeometry {
         metadata_index: 0,
         quad_base: 0,
-        cube_quads: &quads,
+        cube_quads: quads,
         solid_len: 1,
         model_refs: &[],
         model_draw_base: 0,
@@ -186,7 +212,7 @@ fn expand_fixture(name: &str) -> Option<Expanded> {
         transparent_model_draw_base: 0,
         transparent_model_draw_refs: &[],
         liquid_base: 0,
-        liquid_quads: &[],
+        liquid_quads: fixture.liquid_quads,
     };
     let plan = plan_section(&section, &tables);
     let storage = |words: &[u32]| {
@@ -197,9 +223,11 @@ fn expand_fixture(name: &str) -> Option<Expanded> {
                 usage: wgpu::BufferUsages::STORAGE,
             })
     };
-    let quad_words: Vec<u32> = quads.iter().flat_map(PackedQuad::words).collect();
+    let mut quad_words: Vec<u32> = quads.iter().flat_map(PackedQuad::words).collect();
+    quad_words.resize(quad_words.len().max(2), 0);
     let mut origin_words: Vec<u32> = SECTION_ORIGIN.map(|axis| axis as u32).to_vec();
-    origin_words.extend([0, 0, 0, 0, 0]);
+    origin_words.push(0);
+    origin_words.extend(fixture.stream_bases);
     let material_words: Vec<u32> = materials
         .iter()
         .flat_map(|material| {
@@ -213,8 +241,7 @@ fn expand_fixture(name: &str) -> Option<Expanded> {
             ]
         })
         .collect();
-    let mut stream_words = words_of(TOP_LIGHT).to_vec();
-    stream_words.extend(words_of(SIDE_LIGHT));
+    let stream_words = fixture.streams;
     let world_uniform = gpu
         .device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -226,7 +253,7 @@ fn expand_fixture(name: &str) -> Option<Expanded> {
     attributes[GRASS as usize * 2] = GRASS_BLOCK_ID as u32;
     attributes[GRASS as usize * 2 + 1] = GRASS_EMISSION;
     let mut job_words = attributes.clone();
-    job_words.extend(plan.jobs[JobKind::Cube as usize].iter().flatten());
+    job_words.extend(plan.jobs[kind as usize].iter().flatten());
     let mut remap = vec![[0_u32; 2]; atlas::static_sprite_slot(1, 2) as usize + 1];
     remap[0] = ATLAS_SIZE;
     let rect = |[x, y, w, h]: [u32; 4]| [x | (y << 16), w | (h << 16)];
@@ -254,14 +281,19 @@ fn expand_fixture(name: &str) -> Option<Expanded> {
         mapped_at_creation: false,
     });
 
-    let source = kernel(include_str!("expand_cubes.wesl"));
+    let (root, entry) = match kind {
+        JobKind::Cube => (include_str!("expand_cubes.wesl"), "expand_cubes"),
+        JobKind::Model => (include_str!("expand_models.wesl"), "expand_models"),
+        JobKind::Liquid => (include_str!("expand_liquids.wesl"), "expand_liquids"),
+    };
+    let source = kernel(root);
     let module = gpu
         .device
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
-    let sources_layout = layout(&gpu, &source_layout(JobKind::Cube));
+    let sources_layout = layout(&gpu, &source_layout(kind));
     let output_layout = layout(&gpu, &output_layout());
     let pipeline_layout = gpu
         .device
@@ -276,7 +308,7 @@ fn expand_fixture(name: &str) -> Option<Expanded> {
             label: None,
             layout: Some(&pipeline_layout),
             module: &module,
-            entry_point: Some("expand_cubes"),
+            entry_point: Some(entry),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -290,6 +322,7 @@ fn expand_fixture(name: &str) -> Option<Expanded> {
     ];
     let mut source_entries: Vec<_> = source_buffers
         .iter()
+        .filter(|(binding, _)| super::pipelines::source_bindings(kind).contains(binding))
         .map(|(binding, buffer)| wgpu::BindGroupEntry {
             binding: *binding,
             resource: buffer.as_entire_binding(),
@@ -334,11 +367,7 @@ fn expand_fixture(name: &str) -> Option<Expanded> {
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &sources, &[]);
         pass.set_bind_group(1, &output, &[]);
-        pass.dispatch_workgroups(
-            (plan.jobs[JobKind::Cube as usize].len() as u32).div_ceil(64),
-            1,
-            1,
-        );
+        pass.dispatch_workgroups((plan.jobs[kind as usize].len() as u32).div_ceil(64), 1, 1);
     }
     gpu.queue.submit([encoder.finish()]);
     let bytes = read_buffer(&gpu, &vertices, vertex_bytes);
@@ -555,6 +584,58 @@ fn two_sided_faces_gain_an_explicit_back_face() {
 // --- Translated fixture program ----------------------------------------------------------------
 
 const TARGET_SIDE: u32 = 64;
+
+/// The liquid kernel writes Iris's fluid render type (`mc_Entity.y = 1`) on every corner.
+#[test]
+fn liquid_faces_carry_the_fluid_render_type() {
+    let height = 230_u8;
+    let liquid = meshing::PackedLiquidQuad::try_pack(
+        [4, 5, 6],
+        Face::PositiveY,
+        [height; 4],
+        GRASS,
+        0,
+        [0, 0],
+        false,
+    )
+    .unwrap();
+    // The record names origin slot 0; its lighting record follows it at record 2.
+    let mut streams = liquid.words().to_vec();
+    streams[3] = 0;
+    streams.extend(words_of(TOP_LIGHT));
+    let Some(expanded) = expand_section(
+        "shader-pack liquid expansion",
+        Fixture {
+            kind: JobKind::Liquid,
+            cube_quads: &[],
+            liquid_quads: &[liquid],
+            streams,
+            stream_bases: [0, 0, 0, 2],
+        },
+    ) else {
+        return;
+    };
+    assert_eq!(
+        expanded.categories,
+        [0..0, 0..0, 0..1],
+        "water is translucent"
+    );
+    let surface = 5.0 + f32::from(height) / 255.0;
+    for corner in 0..4 {
+        let vertex = decode(&expanded.words, corner);
+        assert_eq!(
+            vertex.render_type, 1.0,
+            "fluids read Iris's FLUID_RENDER_TYPE in mc_Entity.y"
+        );
+        assert_eq!(vertex.block_id, GRASS_BLOCK_ID as f32);
+        assert!(
+            (vertex.position.y - surface).abs() < 1e-3,
+            "the surface sits at the record's height: {}",
+            vertex.position.y
+        );
+        assert_eq!(vertex.normal, [0, 127, 0, 0]);
+    }
+}
 
 fn translate_fixture() -> shaderpack::ProgramTranslation {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -66,6 +66,8 @@ pub use gpu::{
     ShaderpackGeometrySettings,
 };
 pub use jobs::GeometryCategory;
+#[cfg(test)]
+pub(crate) use vertex::{BLOCK_ID, IRIS_VERTEX_WORDS, LIGHTMAP, NORMAL, POSITION, UV0};
 pub(crate) use vertex::{
     CONSTANT_STREAM_WORDS, host_vertex, substitute_layout_constants, textured_host_vertex,
 };

@@ -35,6 +35,8 @@
 
 mod classify;
 mod frame;
+#[cfg(test)]
+mod gpu_tests;
 mod ids;
 mod skin;
 mod sources;
