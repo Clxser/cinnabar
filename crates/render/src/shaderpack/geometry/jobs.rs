@@ -5,7 +5,8 @@
 //! block of a greedy quad (its width and height steps in flag bits 0-15); every job reserves an
 //! extra slot for a grass-side overlay ([`JOB_OVERLAY_FACE`]) and for the back of a two-sided
 //! face ([`JOB_REVERSE_FACE`]) when it may need them, and the kernel leaves unneeded slots
-//! degenerate. Cubes and liquids take their sidedness from the material or record; block-model
+//! degenerate. Cube faces are one-sided, as Java's (shader-pack meshing gives each leaf its
+//! own face of a shared plane); liquids take their sidedness from the record, block-model
 //! quads from the template quad's own two-sided flag, as the chunk renderer's model fragment
 //! gate does.
 
@@ -184,18 +185,15 @@ pub(crate) fn plan_section(
     let mut categories: [CategoryJobs; 3] = Default::default();
     let metadata = section.metadata_index;
     for (index, quad) in section.cube_quads.iter().enumerate() {
-        let flags = material_flags(tables.materials, quad.material_id());
+        // Two-sided cube materials are leaves, whose shared planes the mesher splits into each
+        // leaf's own face for shader packs (`MeshOptions::cutout_leaves`): one-sided, as Java's.
+        let flags = material_flags(tables.materials, quad.material_id()) & !JOB_REVERSE_FACE;
         let category = if (index as u32) < section.solid_len && flags & JOB_OVERLAY_FACE == 0 {
             GeometryCategory::Solid
         } else {
             GeometryCategory::Cutout
         };
-        // A two-sided face's back faces the other way, in the same job.
-        let group = if flags & JOB_REVERSE_FACE == 0 {
-            quad.face() as usize
-        } else {
-            FACING_REST
-        };
+        let group = quad.face() as usize;
         for height in 0..u32::from(quad.height()) {
             for width in 0..u32::from(quad.width()) {
                 categories[category.index()].push(

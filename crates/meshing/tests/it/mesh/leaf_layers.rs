@@ -157,9 +157,10 @@ fn deep_leaves_are_opaque_with_unchanged_fancy_texture_and_keep_faces_against_no
 }
 
 /// Java fancy leaves (shader-pack mode) have no opaque deep leaves: an enclosed leaf keeps
-/// the cutout, two-sided material and one shared plane per leaf pair, like any other leaf.
+/// the cutout material like any other leaf, and every leaf draws its own face toward each
+/// neighbouring leaf, so a shared plane carries both leaves' faces.
 #[test]
-fn cutout_leaves_mesh_enclosed_leaves_cutout_with_shared_planes() {
+fn cutout_leaves_mesh_enclosed_leaves_cutout_with_both_faces_of_shared_planes() {
     let assets = seasonal_leaf_fixture();
     let origin = [8, 8, 8];
     let mode = NetworkIdMode::Sequential;
@@ -181,16 +182,15 @@ fn cutout_leaves_mesh_enclosed_leaves_cutout_with_shared_planes() {
     {
         assert_leaf_layer(&mesh, &assets, cell, false);
     }
+    // Seven leaves, none occluding: every leaf keeps all six faces.
     for face in Face::ALL {
-        let kept = mesh
+        let faces: u32 = mesh
             .cube_quads()
             .iter()
-            .any(|quad| quad.origin() == origin && quad.face() == face);
-        assert_eq!(
-            kept,
-            matches!(face, Face::PositiveX | Face::NegativeY | Face::PositiveZ),
-            "{face:?}"
-        );
+            .filter(|quad| quad.face() == face)
+            .map(|quad| u32::from(quad.width()) * u32::from(quad.height()))
+            .sum();
+        assert_eq!(faces, 7, "{face:?}");
     }
 }
 

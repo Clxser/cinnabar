@@ -85,11 +85,11 @@ fn greedy_quads_expand_to_one_job_per_covered_block_and_categories_stay_contiguo
     let plan = plan_section(&section, &tables);
 
     // Solid: the 2x3 quad's six blocks, then lava.
-    // Cutout: the overlay quad (face + overlay), the two-sided quad (face + back), the quad whose
-    // positional variant is two-sided (face + back), then the two-sided model quad.
+    // Cutout: the overlay quad (face + overlay), the two-sided (leaf) quad and the quad whose
+    // positional variant is two-sided as one-sided faces, then the two-sided model quad.
     // Translucent: the same model drawn translucent, then two-sided water.
-    assert_eq!(plan.categories, [0..7, 7..15, 15..19]);
-    assert_eq!(plan.faces, 19);
+    assert_eq!(plan.categories, [0..7, 7..13, 13..17]);
+    assert_eq!(plan.faces, 17);
     // Single-sided cube faces group by direction ahead of everything else in their category.
     assert_eq!(plan.facing[0][Face::PositiveY as usize], 0..6);
     assert_eq!(plan.facing[0][FACING_REST], 6..7, "lava");
@@ -99,11 +99,12 @@ fn greedy_quads_expand_to_one_job_per_covered_block_and_categories_stay_contiguo
         "face and overlay"
     );
     assert_eq!(
-        plan.facing[1][FACING_REST],
-        9..15,
-        "two-sided cubes and the model"
+        plan.facing[1][Face::PositiveZ as usize],
+        9..11,
+        "leaf cubes face one way, as Java's"
     );
-    assert_eq!(plan.facing[2][FACING_REST], 15..19);
+    assert_eq!(plan.facing[1][FACING_REST], 11..13, "the model");
+    assert_eq!(plan.facing[2][FACING_REST], 13..17);
     let cubes = &plan.jobs[JobKind::Cube as usize];
     let blocks: Vec<_> = cubes[..6]
         .iter()
@@ -135,13 +136,13 @@ fn greedy_quads_expand_to_one_job_per_covered_block_and_categories_stay_contiguo
             (4, 1),
             (5, 1),
             (7, 2),
-            (9, 2),
-            (11, 2)
+            (9, 1),
+            (10, 1)
         ]
     );
     assert_eq!(cubes[6][3], JOB_OVERLAY_FACE);
-    assert_eq!(cubes[7][3], JOB_REVERSE_FACE);
-    assert_eq!(face_range(&plan, JobKind::Model), [(13, 2), (15, 2)]);
+    assert_eq!(cubes[7][3], 0);
+    assert_eq!(face_range(&plan, JobKind::Model), [(11, 2), (13, 2)]);
     assert_eq!(
         plan.jobs[JobKind::Model as usize]
             .iter()
@@ -151,7 +152,7 @@ fn greedy_quads_expand_to_one_job_per_covered_block_and_categories_stay_contiguo
     );
     assert_eq!(
         face_range(&plan, JobKind::Liquid),
-        [(6, 1), (17, 2)],
+        [(6, 1), (15, 2)],
         "jobs follow category order"
     );
     assert_eq!(
