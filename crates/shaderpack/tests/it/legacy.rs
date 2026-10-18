@@ -53,7 +53,8 @@ fn version_120_terrain_maps_legacy_inputs_uniforms_and_samplers_to_fixed_binding
         [StageKind::Vertex, StageKind::Fragment]
     );
 
-    // Every legacy and Iris attribute the vertex stage reads, at its fixed location.
+    // Every legacy and Iris attribute the vertex stage reads, at its fixed location, and the
+    // raw position parts `gl_Vertex` is unpacked from, at the first free locations.
     let attributes: Vec<(&str, VertexAttribute)> = r
         .vertex_inputs
         .iter()
@@ -67,15 +68,17 @@ fn version_120_terrain_maps_legacy_inputs_uniforms_and_samplers_to_fixed_binding
             ("iris_Normal", VertexAttribute::Normal),
             ("iris_MultiTexCoord0", VertexAttribute::TexCoord),
             ("iris_MultiTexCoord1", VertexAttribute::Lightmap),
+            ("iris_PackedPosition", VertexAttribute::PackedPosition),
+            ("iris_DrawOrigin", VertexAttribute::DrawOrigin),
             ("mc_Entity", VertexAttribute::BlockId),
             ("mc_midTexCoord", VertexAttribute::MidTexCoord),
             ("at_tangent", VertexAttribute::Tangent),
         ]
     );
     for input in &r.vertex_inputs {
-        assert_eq!(
-            Some(input.location),
-            input.attribute.location(),
+        let fixed = input.attribute.location();
+        assert!(
+            fixed.is_none_or(|fixed| fixed == input.location),
             "{} location",
             input.name
         );
@@ -84,6 +87,22 @@ fn version_120_terrain_maps_legacy_inputs_uniforms_and_samplers_to_fixed_binding
             input.attribute
         );
     }
+    let location = |attribute: VertexAttribute| {
+        r.vertex_inputs
+            .iter()
+            .find(|i| i.attribute == attribute)
+            .map(|i| i.location)
+    };
+    assert_eq!(location(VertexAttribute::PackedPosition), Some(5));
+    assert_eq!(location(VertexAttribute::DrawOrigin), Some(6));
+    // The stage reads float positions as three components and builds `gl_Vertex` from them.
+    assert_eq!(
+        r.vertex_inputs[0].ty,
+        ValueType::Vector {
+            size: 3,
+            scalar: ScalarType::Float
+        }
+    );
     let mid = r
         .vertex_inputs
         .iter()
@@ -242,7 +261,12 @@ fn version_400_compatibility_ftransform_needs_only_the_position_matrices() {
         .collect();
     assert_eq!(
         attributes,
-        [VertexAttribute::Position, VertexAttribute::Color]
+        [
+            VertexAttribute::Position,
+            VertexAttribute::Color,
+            VertexAttribute::PackedPosition,
+            VertexAttribute::DrawOrigin
+        ]
     );
     assert_eq!(uniform_names(r), ["iris_ModelViewMat", "iris_ProjMat"]);
     let ubo = r.uniforms.as_ref().unwrap();
@@ -301,7 +325,12 @@ fn line_programs_get_the_core_matrices_and_attributes_iris_supplies() {
         .collect();
     assert_eq!(
         attributes,
-        [VertexAttribute::Position, VertexAttribute::Normal]
+        [
+            VertexAttribute::Position,
+            VertexAttribute::PackedPosition,
+            VertexAttribute::Normal,
+            VertexAttribute::DrawOrigin
+        ]
     );
     // Read as the compatibility matrices, as Iris's core transformer renames them.
     assert_eq!(uniform_names(r), ["iris_ModelViewMat", "iris_ProjMat"]);

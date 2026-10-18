@@ -9,6 +9,8 @@ pub(crate) struct FaceAllocator {
     /// Free ranges by start, never adjacent to each other.
     free: BTreeMap<u32, u32>,
     capacity: u32,
+    /// Faces in `free`.
+    free_faces: u32,
 }
 
 impl FaceAllocator {
@@ -17,6 +19,7 @@ impl FaceAllocator {
         let mut faces = Self {
             free: BTreeMap::new(),
             capacity,
+            free_faces: 0,
         };
         faces.release(0..capacity);
         faces
@@ -24,6 +27,11 @@ impl FaceAllocator {
 
     pub(crate) fn capacity(&self) -> u32 {
         self.capacity
+    }
+
+    /// Faces allocated.
+    pub(crate) fn used(&self) -> u32 {
+        self.capacity - self.free_faces
     }
 
     /// The lowest free range of `len` faces, or `None` when none fits.
@@ -36,6 +44,7 @@ impl FaceAllocator {
         if end - start > len {
             self.free.insert(start + len, end);
         }
+        self.free_faces -= len;
         Some(start..start + len)
     }
 
@@ -57,6 +66,7 @@ impl FaceAllocator {
         if range.end < end {
             self.free.insert(range.end, end);
         }
+        self.free_faces -= range.end - range.start;
         true
     }
 
@@ -65,6 +75,7 @@ impl FaceAllocator {
         if range.is_empty() {
             return;
         }
+        self.free_faces += range.end - range.start;
         let mut start = range.start;
         let mut end = range.end;
         if let Some((&before, &before_end)) = self.free.range(..start).next_back()
@@ -93,10 +104,13 @@ mod tests {
         let c = faces.allocate(3).unwrap();
         assert_eq!((a.clone(), b.clone(), c.clone()), (0..4, 4..7, 7..10));
         assert_eq!(faces.allocate(1), None);
+        assert_eq!(faces.used(), 10);
         faces.release(a);
         faces.release(c);
+        assert_eq!(faces.used(), 3);
         assert_eq!(faces.allocate(5), None, "free space is split around b");
         faces.release(b);
+        assert_eq!(faces.used(), 0);
         assert_eq!(
             faces.allocate(10),
             Some(0..10),
@@ -111,5 +125,6 @@ mod tests {
         assert!(!faces.allocate_at(5..8), "overlaps the taken range");
         assert_eq!(faces.allocate(3), Some(0..3));
         assert_eq!(faces.allocate(4), Some(6..10));
+        assert_eq!(faces.used(), 10);
     }
 }

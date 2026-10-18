@@ -26,13 +26,19 @@ fn constant_word(offset: u64) -> u32 {
     CONSTANT_STREAM_WORDS[(offset / 4) as usize]
 }
 
+/// The geometry and constant stream layouts of `inputs` read from the wide stream.
+fn wide(inputs: &[VertexInput]) -> Result<[VertexBufferLayout; 2], VertexLayoutError> {
+    let layouts = vertex_buffer_layouts(inputs, &TerrainLayout::WIDE)?;
+    Ok(layouts.try_into().expect("wide streams have two buffers"))
+}
+
 #[test]
 fn compatibility_inputs_read_their_stored_fields() {
     let float = ScalarType::Float;
     // The translator declares `mc_Entity` and `at_midBlock` as integer inputs.
     let int = ScalarType::Int;
     let inputs = [
-        input(0, "iris_Vertex", vector(4, float)),
+        input(0, "iris_Vertex", vector(3, float)),
         input(1, "iris_Color", vector(4, float)),
         input(2, "iris_Normal", vector(3, float)),
         input(3, "iris_MultiTexCoord0", vector(4, float)),
@@ -42,7 +48,7 @@ fn compatibility_inputs_read_their_stored_fields() {
         input(10, "at_tangent", vector(4, float)),
         input(11, "at_midBlock", vector(4, int)),
     ];
-    let [geometry, constant] = vertex_buffer_layouts(&inputs).unwrap();
+    let [geometry, constant] = wide(&inputs).unwrap();
     assert_eq!(geometry.array_stride, IRIS_VERTEX_STRIDE);
     assert!(constant.attributes.is_empty());
     let expected = [
@@ -73,14 +79,14 @@ fn integer_stored_fields_bind_only_integer_inputs() {
             VertexAttribute::from_glsl_name(name).stored_numbers(),
             Some(StoredNumbers::Int)
         );
-        let [geometry, _] = vertex_buffer_layouts(&[input(8, name, vector(2, ScalarType::Int))])
+        let [geometry, _] = wide(&[input(8, name, vector(2, ScalarType::Int))])
             .unwrap_or_else(|error| panic!("{name}: {error}"));
         assert_eq!(
             attribute(&geometry, 8),
             (field.format, u64::from(field.word) * 4)
         );
         assert!(
-            vertex_buffer_layouts(&[input(8, name, vector(2, ScalarType::Float))]).is_err(),
+            wide(&[input(8, name, vector(2, ScalarType::Float))]).is_err(),
             "{name}"
         );
     }
@@ -93,7 +99,7 @@ fn the_lightmap_is_stored_once_for_every_name() {
         input(4, "vaUV2", vector(2, ScalarType::Float)),
         input(5, "iris_MultiTexCoord2", vector(4, ScalarType::Float)),
     ];
-    let [geometry, _] = vertex_buffer_layouts(&inputs).unwrap();
+    let [geometry, _] = wide(&inputs).unwrap();
     for location in [4, 5] {
         assert_eq!(
             attribute(&geometry, location),
@@ -111,7 +117,7 @@ fn attributes_terrain_lacks_read_iris_constants() {
         input(12, "at_velocity", vector(3, ScalarType::Float)),
         input(15, "myCustomInput", vector(4, ScalarType::Uint)),
     ];
-    let [geometry, constant] = vertex_buffer_layouts(&inputs).unwrap();
+    let [geometry, constant] = wide(&inputs).unwrap();
     assert!(geometry.attributes.is_empty());
     assert_eq!(
         constant.array_stride, 0,
@@ -152,7 +158,7 @@ fn inputs_of_types_terrain_cannot_supply_are_rejected() {
         rows: 4,
         scalar: ScalarType::Float,
     };
-    let error = vertex_buffer_layouts(&[input(0, "iris_Vertex", matrix)]).unwrap_err();
+    let error = wide(&[input(0, "iris_Vertex", matrix)]).unwrap_err();
     assert_eq!(
         error,
         VertexLayoutError::UnsupportedType {
@@ -160,7 +166,108 @@ fn inputs_of_types_terrain_cannot_supply_are_rejected() {
             ty: matrix
         }
     );
-    assert!(vertex_buffer_layouts(&[input(1, "iris_Color", vector(4, ScalarType::Int))]).is_err());
+    assert!(wide(&[input(1, "iris_Color", vector(4, ScalarType::Int))]).is_err());
+}
+
+#[test]
+fn packed_layouts_store_only_what_terrain_reads_and_unpack_positions_per_draw() {
+    let float = ScalarType::Float;
+    // BSL-like terrain: no tangent, no at_midBlock.
+    let inputs = [
+        input(0, "iris_Vertex", vector(3, float)),
+        input(1, "iris_Color", vector(4, float)),
+        input(2, "iris_Normal", vector(3, float)),
+        input(3, "iris_MultiTexCoord0", vector(4, float)),
+        input(4, "iris_MultiTexCoord1", vector(4, float)),
+        input(5, "iris_PackedPosition", vector(4, ScalarType::Uint)),
+        input(6, "iris_DrawOrigin", vector(4, float)),
+        input(8, "mc_Entity", vector(4, ScalarType::Int)),
+        input(9, "mc_midTexCoord", vector(2, float)),
+    ];
+    let layout = TerrainLayout::compact(&inputs);
+    assert!(layout.packed());
+    // Packed position (two words), colour, uv, mid uv, lightmap, normal, block id.
+    assert_eq!(layout.stride(), 32);
+    assert_eq!(layout.word(TANGENT), None);
+    assert_eq!(layout.word(MID_BLOCK), None);
+    let layouts = vertex_buffer_layouts(&inputs, &layout).unwrap();
+    let [geometry, constant, origins] = &layouts[..] else {
+        panic!("packed layouts bind three buffers");
+    };
+    assert_eq!(geometry.array_stride, 32);
+    assert_eq!(attribute(geometry, 5), (VertexFormat::Uint16x4, 0));
+    assert_eq!(attribute(geometry, 1), (COLOR.format, 8));
+    for (location, field) in [
+        (1, COLOR),
+        (2, NORMAL),
+        (3, UV0),
+        (4, LIGHTMAP),
+        (8, BLOCK_ID),
+    ] {
+        assert_eq!(
+            attribute(geometry, location),
+            (field.format, u64::from(layout.word(field).unwrap()) * 4)
+        );
+    }
+    // The float position reads zero; the origin comes per draw.
+    let (format, offset) = attribute(constant, 0);
+    assert_eq!(format, VertexFormat::Float32x3);
+    assert_eq!(
+        (0..3).map(|i| constant_word(offset + i * 4)).sum::<u32>(),
+        0
+    );
+    assert_eq!(origins.step_mode, VertexStepMode::Instance);
+    assert_eq!(origins.array_stride, DRAW_ORIGIN_BYTES);
+    assert_eq!(attribute(origins, 6), (VertexFormat::Float32x4, 0));
+    // The wide stream reads float positions and zero for both parts.
+    let [geometry, constant] = wide(&inputs).unwrap();
+    assert_eq!(attribute(&geometry, 0), (POSITION.format, 0));
+    for location in [5, 6] {
+        let (_, offset) = attribute(&constant, location);
+        assert_eq!(
+            (0..4).map(|i| constant_word(offset + i * 4)).sum::<u32>(),
+            0
+        );
+    }
+}
+
+#[test]
+fn packed_positions_unpack_exactly_on_the_grid() {
+    let anchor = [1024, 0, -2048];
+    let section = [1040, 64, -2064];
+    let [x, y, z, scale] = draw_origin(section, anchor);
+    assert_eq!(
+        [x, y, z],
+        [8.0, 56.0, -24.0],
+        "section minus anchor minus the bias"
+    );
+    // A model corner 3/16 into the block at section-local (5, 0, 15): stored steps unpack to
+    // the float position the wide stream holds.
+    let local = [5.0 + 3.0 / 16.0, 0.0, 15.0];
+    let steps = local.map(|axis: f32| ((axis + 8.0) * 2048.0).round());
+    let unpacked = [
+        x + steps[0] * scale,
+        y + steps[1] * scale,
+        z + steps[2] * scale,
+    ];
+    let wide = [16.0 + local[0], 64.0 + local[1], -16.0 + local[2]];
+    assert_eq!(unpacked, wide);
+}
+
+#[test]
+fn kernel_layout_words_name_every_field() {
+    let [first, second, third, _] = TerrainLayout::WIDE.expand_words();
+    assert_eq!(first, IRIS_VERTEX_WORDS | (0xff << 16) | (COLOR.word << 24));
+    assert_eq!(
+        second,
+        UV0.word | (MID_TEX.word << 8) | (LIGHTMAP.word << 16) | (NORMAL.word << 24)
+    );
+    assert_eq!(
+        third,
+        TANGENT.word | (BLOCK_ID.word << 8) | (MID_BLOCK.word << 16) | (0xff << 24)
+    );
+    let packed = TerrainLayout::compact(std::iter::empty()).expand_words();
+    assert_eq!(packed[0], 2 | (0xff << 8) | (0xff << 24), "position only");
 }
 
 #[test]

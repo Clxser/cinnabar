@@ -130,7 +130,7 @@ pub(crate) fn transform(
         // Inputs Iris supplies without the pack declaring them.
         for (n, ty) in [("mc_chunkFade", "float"), ("dhMaterialId", "int")] {
             if !c.declared.contains(n) && lg.toks.iter().any(|t| t.ident() == Some(n)) {
-                declare::vertex_input(&mut builtin_io, &mut c.vertex_inputs, n, ty);
+                declare::vertex_input(&mut builtin_io, &mut c, n, ty);
             }
         }
         for (g, n, ty) in [
@@ -143,9 +143,10 @@ pub(crate) fn transform(
             ("gl_MultiTexCoord3", "iris_MultiTexCoord3", "vec4"),
         ] {
             if lg.builtins.contains(g) {
-                declare::vertex_input(&mut builtin_io, &mut c.vertex_inputs, n, ty);
+                declare::vertex_input(&mut builtin_io, &mut c, n, ty);
             }
         }
+        declare::position_parts(&mut builtin_io, &mut c);
     }
     let varying_dir = match stage {
         StageKind::Vertex => Some("out"),

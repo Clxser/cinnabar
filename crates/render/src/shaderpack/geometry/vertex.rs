@@ -159,6 +159,8 @@ pub(crate) fn textured_host_vertex(
 pub enum VertexLayoutError {
     /// The input is declared with a type terrain vertices are not stored in.
     UnsupportedType { name: String, ty: ValueType },
+    /// The input reads a field the vertex layout leaves out.
+    NotStored { name: String },
 }
 
 impl std::fmt::Display for VertexLayoutError {
@@ -167,11 +169,151 @@ impl std::fmt::Display for VertexLayoutError {
             Self::UnsupportedType { name, ty } => {
                 write!(f, "vertex input `{name}` has unsupported type {ty:?}")
             }
+            Self::NotStored { name } => {
+                write!(
+                    f,
+                    "vertex input `{name}` reads a field the layout leaves out"
+                )
+            }
         }
     }
 }
 
 impl std::error::Error for VertexLayoutError {}
+
+/// Vertex buffer slot of the per-draw origin of packed positions: an instance-step buffer
+/// of one `[f32; 4]` per resident section, which each terrain draw selects through its
+/// first instance.
+pub const DRAW_ORIGIN_VERTEX_BUFFER: u32 = 2;
+/// Bytes of one per-draw origin.
+pub(crate) const DRAW_ORIGIN_BYTES: u64 = 16;
+/// Steps per block of a packed position component.
+const PACKED_POSITION_STEPS: f32 = 2048.0;
+/// Blocks below the section origin that a packed position component's zero stands for, so
+/// the 16-bit range covers −8 to 24 blocks around the section.
+const PACKED_POSITION_BIAS: i32 = 8;
+/// Absent field in [`TerrainLayout::expand_words`].
+const ABSENT_WORD: u32 = 0xff;
+
+/// The expanded terrain vertex of one pack: which fields are stored, at which words, and
+/// whether positions are packed.
+///
+/// The packed layout ([`Self::compact`]) stores only the fields some terrain program reads,
+/// in their [`STORED_FIELDS`] formats (so they reach the shader exactly as from the wide
+/// layout), and the position as four `u16`: section-local components in 1/2048 blocks
+/// from −8 (`PACKED_POSITION_BIAS`), with `w` unused. The translator unpacks every position
+/// input as `float + origin.xyz + packed.xyz * origin.w`: packed draws read float zero
+/// and the section's [`draw_origin`] per draw ([`DRAW_ORIGIN_VERTEX_BUFFER`]); wide draws
+/// (sky, effects, actors, and the [`Self::WIDE`] terrain layout) read their float
+/// position and zero for the rest. Positions on the 1/2048 grid (every cube face and every
+/// model element on Java's 1/16 grid) come out identical to float positions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TerrainLayout {
+    packed: bool,
+    /// Word of each of [`STORED_FIELDS`], in that order; the position's when not packed.
+    words: [Option<u8>; STORED_FIELDS.len()],
+    /// Word of the packed position.
+    packed_word: Option<u8>,
+    stride_words: u8,
+}
+
+impl TerrainLayout {
+    /// Every field at its [`STORED_FIELDS`] word, positions as floats: the stream the host
+    /// builds for sky, effects and actors.
+    pub const WIDE: Self = {
+        let mut words = [None; STORED_FIELDS.len()];
+        let mut index = 0;
+        while index < STORED_FIELDS.len() {
+            words[index] = Some(STORED_FIELDS[index].word as u8);
+            index += 1;
+        }
+        Self {
+            packed: false,
+            words,
+            packed_word: None,
+            stride_words: IRIS_VERTEX_WORDS as u8,
+        }
+    };
+
+    /// The packed layout holding what `inputs` (every terrain program's vertex inputs) read.
+    pub fn compact<'a>(inputs: impl IntoIterator<Item = &'a VertexInput>) -> Self {
+        let mut needed = [false; STORED_FIELDS.len()];
+        for input in inputs {
+            let Some((class, _)) = class_and_size(input.ty) else {
+                continue;
+            };
+            if let Some(Some(field)) = stored_field(&input.attribute, class)
+                && let Some(index) = STORED_FIELDS.iter().position(|f| *f == field)
+            {
+                needed[index] = true;
+            }
+        }
+        let mut words = [None; STORED_FIELDS.len()];
+        // The packed position takes the first two words.
+        let mut next = 2_u8;
+        for (index, field) in STORED_FIELDS.iter().enumerate() {
+            if *field == POSITION || !needed[index] {
+                continue;
+            }
+            words[index] = Some(next);
+            next += (field.format.size() / 4) as u8;
+        }
+        Self {
+            packed: true,
+            words,
+            packed_word: Some(0),
+            stride_words: next,
+        }
+    }
+
+    /// Whether positions are packed relative to each draw's section.
+    pub fn packed(&self) -> bool {
+        self.packed
+    }
+
+    /// Bytes between consecutive vertices.
+    pub fn stride(&self) -> u64 {
+        u64::from(self.stride_words) * 4
+    }
+
+    /// The word `field` is stored at, if stored.
+    pub(crate) fn word(&self, field: StoredField) -> Option<u32> {
+        let index = STORED_FIELDS.iter().position(|f| *f == field)?;
+        self.words[index].map(u32::from)
+    }
+
+    /// The kernels' `ExpandParams::words`: stride and the word of every field, a byte each
+    /// (`ABSENT_WORD` when not stored), in `expand_common.wesl`'s order.
+    pub(crate) fn expand_words(&self) -> [u32; 4] {
+        let byte = |word: Option<u32>| word.unwrap_or(ABSENT_WORD);
+        let pack =
+            |bytes: [u32; 4]| bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24);
+        let field = |field: StoredField| byte(self.word(field));
+        [
+            pack([
+                u32::from(self.stride_words),
+                field(POSITION),
+                byte(self.packed_word.map(u32::from)),
+                field(COLOR),
+            ]),
+            pack([field(UV0), field(MID_TEX), field(LIGHTMAP), field(NORMAL)]),
+            pack([
+                field(TANGENT),
+                field(BLOCK_ID),
+                field(MID_BLOCK),
+                ABSENT_WORD,
+            ]),
+            0,
+        ]
+    }
+}
+
+/// The per-draw origin of packed positions of a section at block `section` when vertex
+/// positions are relative to `anchor`: where the packed zero lies, and the step.
+pub(crate) fn draw_origin(section: [i32; 3], anchor: [i32; 3]) -> [f32; 4] {
+    let axis = |index: usize| (section[index] - anchor[index] - PACKED_POSITION_BIAS) as f32;
+    [axis(0), axis(1), axis(2), PACKED_POSITION_STEPS.recip()]
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Class {
@@ -195,17 +337,17 @@ fn class_and_size(ty: ValueType) -> Option<(Class, u8)> {
     Some((class, size))
 }
 
-/// The stored field and format an input reads from the expanded stream, or `None` when the
-/// constant stream supplies it. Stored fields are read as the kind of number they hold,
-/// which the translator's conversions ([`VertexAttribute::stored_numbers`]) make every
-/// declaration read.
-fn stored_format(attribute: &VertexAttribute, class: Class) -> Option<Option<(u32, VertexFormat)>> {
+/// The stored field an input reads from the expanded stream, `Some(None)` when the constant
+/// stream supplies it, or `None` when it cannot be read as declared. Stored fields are read
+/// as the kind of number they hold, which the translator's conversions
+/// ([`VertexAttribute::stored_numbers`]) make every declaration read. The packed position
+/// parts are not fields; [`input_fetches`] places them.
+fn stored_field(attribute: &VertexAttribute, class: Class) -> Option<Option<StoredField>> {
     let stored_class = match attribute.stored_numbers() {
         Some(StoredNumbers::Int) => Class::Sint,
         Some(StoredNumbers::Float) | None => Class::Float,
     };
-    let stored =
-        |field: StoredField| (class == stored_class).then_some(Some((field.word, field.format)));
+    let stored = |field: StoredField| (class == stored_class).then_some(Some(field));
     match attribute {
         VertexAttribute::Position => stored(POSITION),
         VertexAttribute::Color => stored(COLOR),
@@ -222,6 +364,8 @@ fn stored_format(attribute: &VertexAttribute, class: Class) -> Option<Option<(u3
         | VertexAttribute::Velocity
         | VertexAttribute::ChunkFade
         | VertexAttribute::DhMaterialId
+        | VertexAttribute::PackedPosition
+        | VertexAttribute::DrawOrigin
         | VertexAttribute::Other(_) => Some(None),
     }
 }
@@ -260,7 +404,8 @@ fn constant_format(attribute: &VertexAttribute, class: Class, size: u8) -> (u32,
 }
 
 /// Where one program input is fetched from: `buffer` is [`GEOMETRY_VERTEX_BUFFER`] (the
-/// expanded stream) or [`CONSTANT_VERTEX_BUFFER`], read at `word` in `format`.
+/// expanded stream), [`CONSTANT_VERTEX_BUFFER`] or [`DRAW_ORIGIN_VERTEX_BUFFER`], read at
+/// `word` in `format`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct InputFetch {
     pub(crate) location: u32,
@@ -269,8 +414,12 @@ pub(crate) struct InputFetch {
     pub(crate) format: VertexFormat,
 }
 
-/// The fetch of every input in `inputs`, as [`vertex_buffer_layouts`] binds them.
-pub(crate) fn input_fetches(inputs: &[VertexInput]) -> Result<Vec<InputFetch>, VertexLayoutError> {
+/// The fetch of every input in `inputs` from a stream in `layout`, as
+/// [`vertex_buffer_layouts`] binds them.
+pub(crate) fn input_fetches(
+    inputs: &[VertexInput],
+    layout: &TerrainLayout,
+) -> Result<Vec<InputFetch>, VertexLayoutError> {
     inputs
         .iter()
         .map(|input| {
@@ -279,14 +428,40 @@ pub(crate) fn input_fetches(inputs: &[VertexInput]) -> Result<Vec<InputFetch>, V
                 ty: input.ty,
             };
             let (class, size) = class_and_size(input.ty).ok_or_else(unsupported)?;
-            let (buffer, (word, format)) =
-                match stored_format(&input.attribute, class).ok_or_else(unsupported)? {
-                    Some(stored) => (GEOMETRY_VERTEX_BUFFER, stored),
-                    None => (
-                        CONSTANT_VERTEX_BUFFER,
-                        constant_format(&input.attribute, class, size),
+            let constant = || {
+                (
+                    CONSTANT_VERTEX_BUFFER,
+                    constant_format(&input.attribute, class, size),
+                )
+            };
+            let (buffer, (word, format)) = match (&input.attribute, layout.packed) {
+                (VertexAttribute::Position, true) => constant(),
+                (VertexAttribute::PackedPosition, true) if class == Class::Uint => (
+                    GEOMETRY_VERTEX_BUFFER,
+                    (
+                        layout.packed_word.map_or(0, u32::from),
+                        VertexFormat::Uint16x4,
                     ),
-                };
+                ),
+                (VertexAttribute::DrawOrigin, true) if class == Class::Float => {
+                    (DRAW_ORIGIN_VERTEX_BUFFER, (0, VertexFormat::Float32x4))
+                }
+                (VertexAttribute::PackedPosition | VertexAttribute::DrawOrigin, true) => {
+                    return Err(unsupported());
+                }
+                (attribute, _) => match stored_field(attribute, class).ok_or_else(unsupported)? {
+                    Some(field) => {
+                        let word =
+                            layout
+                                .word(field)
+                                .ok_or_else(|| VertexLayoutError::NotStored {
+                                    name: input.name.clone(),
+                                })?;
+                        (GEOMETRY_VERTEX_BUFFER, (word, field.format))
+                    }
+                    None => constant(),
+                },
+            };
             Ok(InputFetch {
                 location: input.location,
                 buffer,
@@ -298,38 +473,44 @@ pub(crate) fn input_fetches(inputs: &[VertexInput]) -> Result<Vec<InputFetch>, V
 }
 
 /// Vertex buffer layouts binding a translated program's `inputs` (from
-/// `ProgramReflection::vertex_inputs`) to terrain geometry: slot [`GEOMETRY_VERTEX_BUFFER`]
-/// is the expanded stream and slot [`CONSTANT_VERTEX_BUFFER`] the zero-stride constant stream.
-/// Fewer stored components than an input declares read as GL's `(0, 0, 0, 1)` defaults.
+/// `ProgramReflection::vertex_inputs`) to a stream in `layout`: slot
+/// [`GEOMETRY_VERTEX_BUFFER`] is the expanded stream, slot [`CONSTANT_VERTEX_BUFFER`] the
+/// zero-stride constant stream and, for packed layouts, slot [`DRAW_ORIGIN_VERTEX_BUFFER`]
+/// the per-draw origins. Fewer stored components than an input declares read as GL's
+/// `(0, 0, 0, 1)` defaults.
 pub fn vertex_buffer_layouts(
     inputs: &[VertexInput],
-) -> Result<[VertexBufferLayout; 2], VertexLayoutError> {
-    let mut geometry = Vec::new();
-    let mut constant = Vec::new();
-    for fetch in input_fetches(inputs)? {
-        let attribute = GpuVertexAttribute {
-            format: fetch.format,
-            offset: u64::from(fetch.word) * 4,
-            shader_location: fetch.location,
-        };
-        if fetch.buffer == GEOMETRY_VERTEX_BUFFER {
-            geometry.push(attribute);
-        } else {
-            constant.push(attribute);
-        }
-    }
-    Ok([
+    layout: &TerrainLayout,
+) -> Result<Vec<VertexBufferLayout>, VertexLayoutError> {
+    let mut buffers = vec![
         VertexBufferLayout {
-            array_stride: IRIS_VERTEX_STRIDE,
+            array_stride: layout.stride(),
             step_mode: VertexStepMode::Vertex,
-            attributes: geometry,
+            attributes: vec![],
         },
         VertexBufferLayout {
             array_stride: 0,
             step_mode: VertexStepMode::Vertex,
-            attributes: constant,
+            attributes: vec![],
         },
-    ])
+    ];
+    if layout.packed {
+        buffers.push(VertexBufferLayout {
+            array_stride: DRAW_ORIGIN_BYTES,
+            step_mode: VertexStepMode::Instance,
+            attributes: vec![],
+        });
+    }
+    for fetch in input_fetches(inputs, layout)? {
+        buffers[fetch.buffer as usize]
+            .attributes
+            .push(GpuVertexAttribute {
+                format: fetch.format,
+                offset: u64::from(fetch.word) * 4,
+                shader_location: fetch.location,
+            });
+    }
+    Ok(buffers)
 }
 
 /// Replaces the expansion kernels' layout placeholders with this module's words.

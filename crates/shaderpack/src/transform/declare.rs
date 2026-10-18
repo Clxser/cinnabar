@@ -44,15 +44,41 @@ pub(super) struct Collected {
     pub frag_outputs: Vec<(u32, String)>,
     /// Pack-visible resource names as (group, binding, name).
     pub resource_names: Vec<(u32, u32, String)>,
+    /// The next location an `Other` vertex input would take.
+    pub next_attribute: u32,
+    /// A position input was declared, so the raw position parts must be too.
+    pub unpacks_position: bool,
 }
 
 fn first_line(toks: &[Tok]) -> u32 {
     toks.iter().map(|t| t.line).find(|l| *l != 0).unwrap_or(0)
 }
 
-/// An input whose declared type differs in kind from how the vertex stream stores its
-/// attribute ([`VertexAttribute::stored_numbers`]): the name and type of the input the stage
-/// reads instead, and the expression converting that into the declared type `ty`.
+/// Name of the raw packed-position input ([`VertexAttribute::PackedPosition`]).
+const PACKED_POSITION_INPUT: &str = "iris_PackedPosition";
+/// Name of the per-draw origin input ([`VertexAttribute::DrawOrigin`]).
+const DRAW_ORIGIN_INPUT: &str = "iris_DrawOrigin";
+
+/// The expression a position input of type `ty` reads: the float position `stored` plus the
+/// packed position scaled and offset by the draw origin. A vertex stream supplies one of the
+/// two and zero for the other (and for the origin), so either sum is exact.
+fn position_unpack(stored: &str, ty: &str) -> String {
+    let position = format!(
+        "({stored} + {DRAW_ORIGIN_INPUT}.xyz + vec3({PACKED_POSITION_INPUT}.xyz) * {DRAW_ORIGIN_INPUT}.w)"
+    );
+    match ty {
+        "vec4" => format!("vec4({position}, 1.0)"),
+        "vec2" => format!("{position}.xy"),
+        "float" => format!("{position}.x"),
+        _ => position,
+    }
+}
+
+/// An input whose declared type differs from what the vertex stream stores for its
+/// attribute: positions, which are unpacked ([`position_unpack`]), and attributes stored as
+/// the other kind of number ([`VertexAttribute::stored_numbers`]). Returns the name and type
+/// of the input the stage reads instead, and the expression converting that into the
+/// declared type `ty`.
 fn converted_input(
     attribute: &VertexAttribute,
     name: &str,
@@ -61,6 +87,14 @@ fn converted_input(
 ) -> Option<(String, String, String)> {
     if !arr.is_empty() {
         return None;
+    }
+    if *attribute == VertexAttribute::Position {
+        if ty != "float" && !ty.starts_with("vec") {
+            return None;
+        }
+        let stored = format!("iris_float_{name}");
+        let convert = position_unpack(&stored, ty);
+        return Some((stored, "vec3".to_string(), convert));
     }
     let size = ty
         .trim_start_matches(['i', 'u'])
@@ -83,6 +117,29 @@ fn converted_input(
         }
         _ => None,
     }
+}
+
+/// Declares the raw position parts at the first locations the stage's inputs leave free,
+/// once a position input reads them.
+pub(super) fn position_parts(io: &mut String, c: &mut Collected) {
+    if !c.unpacks_position {
+        return;
+    }
+    let others =
+        FIRST_OTHER_ATTRIBUTE_LOCATION..c.next_attribute.max(FIRST_OTHER_ATTRIBUTE_LOCATION);
+    let mut free = (0..).filter(|location| {
+        !others.contains(location) && c.vertex_inputs.iter().all(|(used, _)| used != location)
+    });
+    let mut parts = vec![];
+    for (name, ty) in [
+        (PACKED_POSITION_INPUT, "uvec4"),
+        (DRAW_ORIGIN_INPUT, "vec4"),
+    ] {
+        let location = free.next().expect("locations are unbounded");
+        io.push_str(&format!("layout(location = {location}) in {ty} {name};\n"));
+        parts.push((location, name.to_string()));
+    }
+    c.vertex_inputs.extend(parts);
 }
 
 /// Collects declarations of `items` for `stage`.
@@ -189,6 +246,7 @@ pub(super) fn collect(
                             .map(|t| t.at(line)),
                     );
                     c.before_main.push(format!("{name} = {convert};"));
+                    c.unpacks_position |= attribute == VertexAttribute::Position;
                     continue;
                 }
                 c.io.extend(
@@ -260,6 +318,7 @@ pub(super) fn collect(
         }
         c.body.push(Item::Decl(d, toks));
     }
+    c.next_attribute = next_attr;
     Ok(c)
 }
 
@@ -348,11 +407,23 @@ pub(super) fn integer_bool(ty: &str) -> String {
 }
 
 /// Declares built-in vertex input `name` of type `ty` in `io` at its fixed attribute
-/// location and records it in `inputs`; names without a fixed location are skipped.
-pub(super) fn vertex_input(io: &mut String, inputs: &mut Vec<(u32, String)>, name: &str, ty: &str) {
-    if let Some(loc) = VertexAttribute::from_glsl_name(name).location() {
-        io.push_str(&format!("layout(location = {loc}) in {ty} {name};\n"));
-        inputs.push((loc, name.to_string()));
+/// location (read converted, as declared inputs are) and records it in `c`; names without a
+/// fixed location are skipped.
+pub(super) fn vertex_input(io: &mut String, c: &mut Collected, name: &str, ty: &str) {
+    let attribute = VertexAttribute::from_glsl_name(name);
+    let Some(loc) = attribute.location() else {
+        return;
+    };
+    c.vertex_inputs.push((loc, name.to_string()));
+    match converted_input(&attribute, name, ty, &[]) {
+        Some((stored, read, convert)) => {
+            io.push_str(&format!(
+                "layout(location = {loc}) in {read} {stored};\n{ty} {name};\n"
+            ));
+            c.before_main.push(format!("{name} = {convert};"));
+            c.unpacks_position |= attribute == VertexAttribute::Position;
+        }
+        None => io.push_str(&format!("layout(location = {loc}) in {ty} {name};\n")),
     }
 }
 

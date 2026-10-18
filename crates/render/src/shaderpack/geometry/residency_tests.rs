@@ -1,5 +1,9 @@
 use super::*;
 
+/// A 28-byte vertex, as a packed layout stores.
+const STRIDE: u64 = 28;
+const FACE_BYTES: u64 = face_bytes(STRIDE);
+
 fn plan(faces: u32) -> SectionPlan {
     SectionPlan {
         faces,
@@ -15,15 +19,15 @@ fn entity(index: u32) -> Entity {
 
 #[test]
 fn pages_hold_the_page_size_or_the_binding_limit() {
-    let residency = Residency::new(u64::MAX / 2, 1 << 30);
+    let residency = Residency::new(u64::MAX / 2, 1 << 30, STRIDE);
     assert_eq!(u64::from(residency.page_faces), PAGE_BYTES / FACE_BYTES);
-    let small = Residency::new(100 * FACE_BYTES, 1 << 30);
+    let small = Residency::new(100 * FACE_BYTES, 1 << 30, STRIDE);
     assert_eq!(small.page_faces, 100);
 }
 
 #[test]
 fn revoking_a_page_that_failed_to_allocate_drops_it_and_parks_the_section() {
-    let mut residency = Residency::new(10 * FACE_BYTES, 1 << 30);
+    let mut residency = Residency::new(10 * FACE_BYTES, 1 << 30, STRIDE);
     let first = residency.place(entity(1), &plan(10)).unwrap();
     residency.commit(entity(1), &first, &plan(10), [0; 3]);
     let opened = residency.place(entity(2), &plan(5)).unwrap();
@@ -37,7 +41,7 @@ fn revoking_a_page_that_failed_to_allocate_drops_it_and_parks_the_section() {
 
 #[test]
 fn pages_open_whole_and_the_last_takes_what_the_budget_leaves() {
-    let mut residency = Residency::new(100 * FACE_BYTES, 250 * FACE_BYTES);
+    let mut residency = Residency::new(100 * FACE_BYTES, 250 * FACE_BYTES, STRIDE);
     let first = residency.place(entity(1), &plan(60)).unwrap();
     assert_eq!(
         first,
@@ -89,7 +93,7 @@ fn pages_open_whole_and_the_last_takes_what_the_budget_leaves() {
 
 #[test]
 fn a_replacement_that_does_not_fit_keeps_the_old_faces() {
-    let mut residency = Residency::new(100 * FACE_BYTES, 100 * FACE_BYTES);
+    let mut residency = Residency::new(100 * FACE_BYTES, 100 * FACE_BYTES, STRIDE);
     let placement = residency.place(entity(1), &plan(10)).unwrap();
     residency.commit(entity(1), &placement, &plan(10), [0; 3]);
     assert_eq!(residency.place(entity(1), &plan(101)), None);
@@ -102,7 +106,7 @@ fn a_replacement_that_does_not_fit_keeps_the_old_faces() {
 
 #[test]
 fn the_origin_follows_the_camera_on_a_grid_and_counts_epochs() {
-    let mut residency = Residency::new(1 << 20, 1 << 20);
+    let mut residency = Residency::new(1 << 20, 1 << 20, STRIDE);
     assert!(residency.follow_camera(DVec3::new(700.0, 64.0, -1600.0)));
     assert_eq!(residency.origin, Some(IVec3::new(1024, 0, -2048)));
     assert!(!residency.follow_camera(DVec3::new(3000.0, 64.0, -2048.0)));
@@ -113,7 +117,7 @@ fn the_origin_follows_the_camera_on_a_grid_and_counts_epochs() {
 
 #[test]
 fn the_queue_holds_each_section_once_and_forgets_removed_ones() {
-    let mut residency = Residency::new(1 << 20, 1 << 20);
+    let mut residency = Residency::new(1 << 20, 1 << 20, STRIDE);
     residency.enqueue_all([entity(1), entity(2), entity(1)]);
     residency.remove(entity(2));
     assert_eq!(residency.pending_len(), 1);
@@ -131,7 +135,7 @@ fn the_queue_holds_each_section_once_and_forgets_removed_ones() {
 #[test]
 fn over_budget_nearer_sections_evict_the_farthest_and_farther_ones_wait() {
     // Room for exactly two sections of 100 faces.
-    let mut residency = Residency::new(1 << 30, 200 * FACE_BYTES);
+    let mut residency = Residency::new(1 << 30, 200 * FACE_BYTES, STRIDE);
     let eye = DVec3::new(8.0, 8.0, 8.0);
     let at = |x: i32| [x, 0, 0];
     let place = |residency: &mut Residency, id: u32, x: i32, eviction: &mut Eviction| {
@@ -163,4 +167,81 @@ fn over_budget_nearer_sections_evict_the_farthest_and_farther_ones_wait() {
     residency.remove(entity(1));
     residency.retry_waiting();
     assert_eq!(residency.take_queue(), [entity(2)]);
+}
+
+#[test]
+fn draw_origin_slots_are_reused_and_survive_a_failed_replacement() {
+    let mut residency = Residency::new(100 * FACE_BYTES, 100 * FACE_BYTES, STRIDE);
+    let commit = |residency: &mut Residency, id: u32, faces: u32| {
+        let placement = residency.place(entity(id), &plan(faces)).unwrap();
+        residency.commit(entity(id), &placement, &plan(faces), [0; 3])
+    };
+    assert_eq!(commit(&mut residency, 1, 10), 0);
+    assert_eq!(commit(&mut residency, 2, 10), 1);
+    // A replacement that does not fit keeps the section's slot with its old faces.
+    assert_eq!(residency.place(entity(1), &plan(101)), None);
+    assert_eq!(residency.sections[&entity(1)].slot, 0);
+    // A replacement that fits gives the old slot back and takes the free one.
+    assert_eq!(commit(&mut residency, 1, 20), 0);
+    residency.remove(entity(2));
+    assert_eq!(commit(&mut residency, 3, 10), 1);
+    assert_eq!(residency.slot_count(), 2);
+}
+
+#[test]
+fn a_page_whose_faces_fit_elsewhere_drains_and_goes() {
+    let mut residency = Residency::new(100 * FACE_BYTES, 1 << 30, STRIDE);
+    let commit = |residency: &mut Residency, id: u32, faces: u32| {
+        let placement = residency.place(entity(id), &plan(faces)).unwrap();
+        residency.commit(entity(id), &placement, &plan(faces), [id as i32; 3]);
+        placement.page
+    };
+    // Three pages: [60, 40], [90], [50] faces.
+    assert_eq!(commit(&mut residency, 1, 60), 0);
+    assert_eq!(commit(&mut residency, 2, 40), 0);
+    assert_eq!(commit(&mut residency, 3, 90), 1);
+    assert_eq!(commit(&mut residency, 4, 50), 2);
+    // Freeing 60 faces of page 0 leaves 60 + 10 + 50 free: page 0's 40 fit elsewhere.
+    residency.remove(entity(1));
+    residency.enqueue(entity(3));
+    assert!(!residency.start_draining(), "nothing may be pending");
+    assert_eq!(residency.take_queue(), [entity(3)]);
+    assert!(residency.start_draining());
+    assert_eq!(residency.take_queue(), [entity(2)]);
+    assert_eq!(
+        residency.finish_draining(),
+        None,
+        "page 0 still holds faces"
+    );
+    // The moved section lands on page 2, not back on page 0.
+    assert_eq!(commit(&mut residency, 2, 40), 2);
+    assert_eq!(residency.finish_draining(), Some(0));
+    assert_eq!(residency.pages.len(), 2);
+    assert_eq!(
+        residency.sections[&entity(3)].page,
+        0,
+        "later pages renumber"
+    );
+    assert_eq!(residency.sections[&entity(2)].page, 1);
+    assert_eq!(residency.sections[&entity(4)].page, 1);
+}
+
+#[test]
+fn a_draining_page_takes_a_placement_nothing_else_has_room_for_and_stays() {
+    let mut residency = Residency::new(100 * FACE_BYTES, 200 * FACE_BYTES, STRIDE);
+    // Page 0: 50 + 50 faces; page 1: 20.
+    for (id, faces) in [(1, 50), (2, 50), (3, 20)] {
+        let placement = residency.place(entity(id), &plan(faces)).unwrap();
+        residency.commit(entity(id), &placement, &plan(faces), [0; 3]);
+    }
+    residency.remove(entity(1));
+    assert!(
+        residency.start_draining(),
+        "page 1's 20 faces fit in page 0's 50"
+    );
+    assert_eq!(residency.take_queue(), [entity(3)]);
+    // 70 faces fit only in the draining page, which then stays.
+    let fallback = residency.place(entity(4), &plan(70)).unwrap();
+    assert_eq!((fallback.page, fallback.new_page), (1, false));
+    assert_eq!(residency.finish_draining(), None, "draining was given up");
 }

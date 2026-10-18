@@ -8,7 +8,7 @@ use super::draws::DrawKind;
 use super::effects::textures::ShaderpackEffectTextures;
 use super::effects::{Effect, EffectInputs, prepare_effects};
 use super::geometry::{
-    CONSTANT_VERTEX_BUFFER, GEOMETRY_VERTEX_BUFFER, GeometryCategory, PulledArena,
+    CONSTANT_VERTEX_BUFFER, GEOMETRY_VERTEX_BUFFER, GeometryCategory, PulledArena, TerrainLayout,
 };
 use super::loader::PackGpu;
 use super::passes::{ViewState, clear_attachment, load_attachment, pass};
@@ -32,6 +32,9 @@ pub(crate) trait TerrainDraws {
 
     /// The arenas pulled terrain draws bind, once they exist.
     fn pulled_arena(&self) -> Option<&PulledArena>;
+
+    /// The expanded vertex the terrain pages hold.
+    fn layout(&self) -> TerrainLayout;
 }
 
 /// What a view supplies for the pack's geometry this frame.
@@ -162,6 +165,13 @@ fn record_kind(
     let groups = &state.bindings.draws[index].groups;
     if pack.draws[index].pulled.is_some() && groups[3].is_none() {
         // The arenas a pulled draw reads do not exist yet.
+        return;
+    }
+    if pack.draws[index]
+        .layout
+        .is_some_and(|layout| layout != geometry.terrain.layout())
+    {
+        // The pages still hold another layout (the pack just changed).
         return;
     }
     {

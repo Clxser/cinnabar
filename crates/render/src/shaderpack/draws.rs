@@ -6,7 +6,7 @@
 use super::alpha_test::{ONE_TENTH_ALPHA, inject_alpha_test};
 use super::effects::{Effect, EffectSettings};
 use super::geometry::pull::{PULLED_ENTRY, face_ref_buffer_layout};
-use super::geometry::{GeometryCategory, vertex_buffer_layouts};
+use super::geometry::{GeometryCategory, TerrainLayout, vertex_buffer_layouts};
 use super::loader::{GpuContext, GpuProgram};
 use super::pipelines::{blend_state, color_target};
 use super::plan::MAX_COLOR_BUFFERS;
@@ -403,6 +403,9 @@ pub(crate) struct GeometryDraw {
     pub outputs: Vec<Option<u32>>,
     /// The arena bindings a pulled terrain draw adds to its program's group 3.
     pub pulled: Option<std::sync::Arc<PulledBindings>>,
+    /// The expanded vertex an expanded terrain draw's pipeline reads; it draws only while
+    /// the terrain pages hold that layout.
+    pub layout: Option<TerrainLayout>,
 }
 
 /// A geometry program's pipeline pieces, from which its draws' pipelines are built.
@@ -438,6 +441,8 @@ pub(crate) struct DrawPipelineInputs<'a> {
     pub target_format: &'a dyn Fn(u32) -> Option<TextureFormat>,
     /// The program's pulled vertex stage, for terrain draws that read the arenas.
     pub pulled: Option<&'a PulledProgram>,
+    /// The expanded vertex terrain draws read; other draws read [`TerrainLayout::WIDE`].
+    pub terrain_layout: TerrainLayout,
 }
 
 /// The draw buffer a `blend.<program>.<buffer>` rule names, in the draw's buffer space.
@@ -445,6 +450,16 @@ fn rule_buffer(name: &str, shadow: bool) -> Option<u32> {
     match (BufferId::parse(name)?, shadow) {
         (BufferId::Color(i), false) | (BufferId::ShadowColor(i), true) => Some(i),
         _ => None,
+    }
+}
+
+/// The vertex layout `kind` reads: the pack's terrain layout for terrain, the wide stream the
+/// host builds for everything else.
+fn draw_layout(kind: DrawKind, terrain: TerrainLayout) -> TerrainLayout {
+    if kind.category().is_some() {
+        terrain
+    } else {
+        TerrainLayout::WIDE
     }
 }
 
@@ -456,7 +471,11 @@ pub(crate) fn draw_pipeline(
     inputs: &DrawPipelineInputs<'_>,
 ) -> Result<(wgpu::RenderPipeline, Vec<Option<u32>>), String> {
     let reflection = inputs.reflection;
-    let layouts = vertex_buffer_layouts(&reflection.vertex_inputs).map_err(|e| e.to_string())?;
+    let layouts = vertex_buffer_layouts(
+        &reflection.vertex_inputs,
+        &draw_layout(kind, inputs.terrain_layout),
+    )
+    .map_err(|e| e.to_string())?;
     let buffers: Vec<_> = match inputs.pulled {
         Some(_) => vec![Some(face_ref_buffer_layout())],
         None => layouts
@@ -576,9 +595,10 @@ pub(crate) fn draw_pipeline(
     Ok((pipeline, outputs))
 }
 
-/// Builds every resolved draw's pipeline. Draws whose program cannot bind terrain vertices,
-/// or whose pipeline the device rejects, are dropped (logged); without a solid terrain draw
-/// none remain, so the Vanilla scene copy stays in place.
+/// Builds every resolved draw's pipeline. Terrain draws read a [`TerrainLayout::compact`]
+/// vertex holding what any terrain program reads. Draws whose program cannot bind terrain
+/// vertices, or whose pipeline the device rejects, are dropped (logged); without a solid
+/// terrain draw none remain, so the Vanilla scene copy stays in place.
 #[allow(
     clippy::too_many_arguments,
     reason = "the pack-wide plan pieces a draw pipeline draws on"
@@ -594,6 +614,19 @@ pub(crate) fn geometry_draws(
     buffer_formats: &[Option<TextureFormat>; MAX_COLOR_BUFFERS as usize],
     shadow: &ShadowSlots,
 ) -> Vec<GeometryDraw> {
+    let terrain_layout = TerrainLayout::compact(
+        selected
+            .iter()
+            .filter(|(kind, _)| kind.category().is_some())
+            .flat_map(|(_, selected)| {
+                &programs[stages[*selected].program].reflection.vertex_inputs
+            }),
+    );
+    bevy::log::debug!(
+        target: "cinnabar::shaderpack",
+        bytes = terrain_layout.stride(),
+        "shader-pack terrain vertex"
+    );
     let mut draws = vec![];
     for (kind, selected) in selected {
         let stage = &stages[*selected];
@@ -624,6 +657,7 @@ pub(crate) fn geometry_draws(
             effects,
             target_format: &target_format,
             pulled,
+            terrain_layout,
         };
         // Each draw gets its own error scope: a pipeline the device rejects drops only that
         // draw, as Iris falls back per program, instead of the pack-wide scope failing.
@@ -637,6 +671,7 @@ pub(crate) fn geometry_draws(
                 pipeline,
                 outputs,
                 pulled: pulled.map(|p| std::sync::Arc::clone(&p.bindings)),
+                layout: (kind.category().is_some() && pulled.is_none()).then_some(terrain_layout),
             }),
             (Err(error), _) => bevy::log::warn!(
                 target: "cinnabar::shaderpack",

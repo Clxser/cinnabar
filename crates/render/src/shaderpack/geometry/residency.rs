@@ -9,10 +9,11 @@ use bevy::prelude::Entity;
 
 use super::allocator::FaceAllocator;
 use super::jobs::{FACING_GROUPS, SectionPlan};
-use super::vertex::IRIS_VERTEX_STRIDE;
 
-/// Bytes of one expanded face: four vertices.
-pub(crate) const FACE_BYTES: u64 = 4 * IRIS_VERTEX_STRIDE;
+/// Bytes of one expanded face of `stride`-byte vertices: four vertices.
+pub(crate) const fn face_bytes(stride: u64) -> u64 {
+    4 * stride
+}
 /// Size of a vertex page. Pages are created at this size (or what the budget has left) and
 /// never grow, so filling the budget allocates whole pages once and copies nothing; the
 /// device allocates a page memory of its own, and 64 MiB is small enough that the last,
@@ -48,6 +49,9 @@ pub(crate) struct ResidentFaces {
     /// Unique to this placement: a draw list built from it stays valid while the section
     /// keeps this stamp.
     pub(crate) stamp: u64,
+    /// The section's entry in the per-draw origin table, which its draws select as their
+    /// first instance.
+    pub(crate) slot: u32,
 }
 
 /// Face space of one vertex page. Pages never exceed one storage-buffer binding, since the
@@ -93,13 +97,25 @@ pub(crate) struct Residency {
     pub(crate) epoch: u64,
     /// Stamp the next committed placement takes.
     next_stamp: u64,
+    /// Draw-origin slots given back by sections that left, reused first.
+    free_slots: Vec<u32>,
+    /// Slots handed out so far: the origin table must hold this many entries.
+    slot_count: u32,
+    /// The page being emptied so its memory can go: placements land elsewhere while
+    /// anything else fits, and its sections are queued to move.
+    draining: Option<usize>,
 }
 
 impl Residency {
     /// `binding_bytes` is the largest buffer a kernel may bind; `budget_bytes` the memory budget.
-    /// Pages hold [`PAGE_BYTES`] (less when the binding limit is smaller) of expanded faces.
-    pub(crate) fn new(binding_bytes: u64, budget_bytes: u64) -> Self {
-        Self::with_faces(binding_bytes.min(PAGE_BYTES), budget_bytes, FACE_BYTES)
+    /// Pages hold [`PAGE_BYTES`] (less when the binding limit is smaller) of expanded faces of
+    /// `stride`-byte vertices.
+    pub(crate) fn new(binding_bytes: u64, budget_bytes: u64, stride: u64) -> Self {
+        Self::with_faces(
+            binding_bytes.min(PAGE_BYTES),
+            budget_bytes,
+            face_bytes(stride),
+        )
     }
 
     /// Pages of `page_bytes` holding faces of `face_bytes` each.
@@ -117,7 +133,22 @@ impl Residency {
             origin: None,
             epoch: 0,
             next_stamp: 0,
+            free_slots: Vec::new(),
+            slot_count: 0,
+            draining: None,
         }
+    }
+
+    /// Draw-origin slots handed out so far, free or not.
+    pub(crate) fn slot_count(&self) -> u32 {
+        self.slot_count
+    }
+
+    fn release(&mut self, resident: &ResidentFaces) {
+        self.pages[resident.page]
+            .faces
+            .release(resident.faces.clone());
+        self.free_slots.push(resident.slot);
     }
 
     /// Bytes one face takes in a page.
@@ -202,7 +233,7 @@ impl Residency {
     /// Frees a removed section's faces.
     pub(crate) fn remove(&mut self, entity: Entity) {
         if let Some(resident) = self.sections.remove(&entity) {
-            self.pages[resident.page].faces.release(resident.faces);
+            self.release(&resident);
         }
         self.waiting.remove(&entity);
         if self.queued.remove(&entity) {
@@ -213,7 +244,7 @@ impl Residency {
     /// Frees a resident section's faces to make room for a nearer one; it waits for room.
     pub(crate) fn evict(&mut self, entity: Entity) {
         if let Some(resident) = self.sections.remove(&entity) {
-            self.pages[resident.page].faces.release(resident.faces);
+            self.release(&resident);
             self.wait(entity);
         }
     }
@@ -246,15 +277,17 @@ impl Residency {
                 .release(previous.faces.clone());
         }
         let placement = self.allocate(plan.faces);
-        if placement.is_none()
-            && let Some(previous) = previous
-        {
-            // Keep drawing the old faces until a later frame finds room.
-            let reclaimed = self.pages[previous.page]
-                .faces
-                .allocate_at(previous.faces.clone());
-            debug_assert!(reclaimed, "released faces are free");
-            self.sections.insert(entity, previous);
+        match previous {
+            Some(previous) if placement.is_none() => {
+                // Keep drawing the old faces until a later frame finds room.
+                let reclaimed = self.pages[previous.page]
+                    .faces
+                    .allocate_at(previous.faces.clone());
+                debug_assert!(reclaimed, "released faces are free");
+                self.sections.insert(entity, previous);
+            }
+            Some(previous) => self.free_slots.push(previous.slot),
+            None => {}
         }
         placement
     }
@@ -299,7 +332,11 @@ impl Residency {
     }
 
     fn allocate(&mut self, faces: u32) -> Option<Placement> {
+        let draining = self.draining;
         for (page, space) in self.pages.iter_mut().enumerate() {
+            if Some(page) == draining {
+                continue;
+            }
             if let Some(range) = space.faces.allocate(faces) {
                 return Some(Placement {
                     page,
@@ -307,6 +344,17 @@ impl Residency {
                     new_page: false,
                 });
             }
+        }
+        if let Some(page) = draining
+            && let Some(range) = self.pages[page].faces.allocate(faces)
+        {
+            // Nothing else has room: the page stays.
+            self.draining = None;
+            return Some(Placement {
+                page,
+                faces: range,
+                new_page: false,
+            });
         }
         let budget_left = self.budget_faces.saturating_sub(self.capacity_faces());
         let capacity = u64::from(self.page_faces).min(budget_left) as u32;
@@ -325,14 +373,88 @@ impl Residency {
         })
     }
 
-    /// Records `entity`'s placed plan.
+    /// Whether `entity` is resident on the draining page, queued to move off it.
+    pub(crate) fn moving(&self, entity: Entity) -> bool {
+        self.draining.is_some_and(|page| {
+            self.sections
+                .get(&entity)
+                .is_some_and(|resident| resident.page == page)
+        })
+    }
+
+    /// Sections queued or waiting for room, leaving out those moving off the draining page,
+    /// which still draw.
+    pub(crate) fn undrawn_len(&self) -> usize {
+        self.pending()
+            .filter(|entity| !self.moving(*entity))
+            .count()
+    }
+
+    /// Starts emptying the page with the fewest faces once nothing waits and the other
+    /// pages' free faces hold its faces with a quarter to spare, queueing its sections to
+    /// move. Returns whether it started.
+    pub(crate) fn start_draining(&mut self) -> bool {
+        if self.draining.is_some() || self.pending_len() > 0 || self.pages.len() < 2 {
+            return false;
+        }
+        let free: u64 = self
+            .pages
+            .iter()
+            .map(|page| u64::from(page.faces.capacity() - page.faces.used()))
+            .sum();
+        let Some((page, space)) = self
+            .pages
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, page)| page.faces.used())
+        else {
+            return false;
+        };
+        let used = u64::from(space.faces.used());
+        let free_elsewhere = free - u64::from(space.faces.capacity()) + used;
+        if free_elsewhere < used + used / 4 {
+            return false;
+        }
+        self.draining = Some(page);
+        let moving: Vec<_> = self
+            .sections
+            .iter()
+            .filter(|(_, resident)| resident.page == page)
+            .map(|(entity, _)| *entity)
+            .collect();
+        self.enqueue_all(moving);
+        true
+    }
+
+    /// Drops the draining page once its last face has moved, renumbering the pages after
+    /// it. Returns the dropped page, whose buffer the caller drops too.
+    pub(crate) fn finish_draining(&mut self) -> Option<usize> {
+        let page = self.draining?;
+        if self.pages[page].faces.used() > 0 {
+            return None;
+        }
+        self.draining = None;
+        self.pages.remove(page);
+        for resident in self.sections.values_mut() {
+            if resident.page > page {
+                resident.page -= 1;
+            }
+        }
+        Some(page)
+    }
+
+    /// Records `entity`'s placed plan, returning its draw-origin slot.
     pub(crate) fn commit(
         &mut self,
         entity: Entity,
         placement: &Placement,
         plan: &SectionPlan,
         origin: [i32; 3],
-    ) {
+    ) -> u32 {
+        let slot = self.free_slots.pop().unwrap_or_else(|| {
+            self.slot_count += 1;
+            self.slot_count - 1
+        });
         self.sections.insert(
             entity,
             ResidentFaces {
@@ -343,9 +465,11 @@ impl Residency {
                 origin,
                 epoch: self.epoch,
                 stamp: self.next_stamp,
+                slot,
             },
         );
         self.next_stamp += 1;
+        slot
     }
 
     /// Drops every page and section, as when the mode turns off.
@@ -356,6 +480,9 @@ impl Residency {
         self.queued.clear();
         self.waiting.clear();
         self.origin = None;
+        self.free_slots.clear();
+        self.slot_count = 0;
+        self.draining = None;
     }
 }
 

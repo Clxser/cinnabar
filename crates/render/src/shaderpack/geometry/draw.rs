@@ -13,7 +13,7 @@ use wgpu::util::DrawIndexedIndirectArgs;
 
 use super::jobs::{FACING_GROUPS, FACING_REST, GeometryCategory};
 use super::residency::{ResidentFaces, section_distance};
-use super::vertex::{CONSTANT_VERTEX_BUFFER, GEOMETRY_VERTEX_BUFFER};
+use super::vertex::{CONSTANT_VERTEX_BUFFER, DRAW_ORIGIN_VERTEX_BUFFER, GEOMETRY_VERTEX_BUFFER};
 
 /// Indices of one quad face, counter-clockwise like its corners.
 pub(crate) const FACE_INDICES: [u32; 6] = [0, 1, 2, 0, 2, 3];
@@ -125,7 +125,7 @@ impl ViewDraws {
     /// page), each page's sections near to far from the eye like Sodium's, so early depth
     /// testing skips the pack's fragment shading of hidden faces; translucent far to near.
     /// `instanced` draws face-ref pages (`pull.rs`): one quad per instance, the faces as
-    /// instances.
+    /// instances. Otherwise each command's first instance is its section's draw-origin slot.
     pub(crate) fn build(inputs: &DrawInputs<'_>, instanced: bool) -> Self {
         let mut by_page = inputs.sections.clone();
         by_page.sort_unstable_by_key(|section| (section.page, section.faces.start));
@@ -188,13 +188,13 @@ impl ViewDraws {
                         Some(open) if open.end == faces.start => open.end = faces.end,
                         _ => {
                             if let Some(done) = pending.replace(faces.clone()) {
-                                draws.push(category, section.page, done, instanced);
+                                draws.push(category, section, done, instanced);
                             }
                         }
                     }
                 }
                 if let Some(done) = pending {
-                    draws.push(category, section.page, done, instanced);
+                    draws.push(category, section, done, instanced);
                 }
             }
         }
@@ -204,10 +204,11 @@ impl ViewDraws {
     fn push(
         &mut self,
         category: GeometryCategory,
-        page: usize,
+        section: &ResidentFaces,
         faces: Range<u32>,
         instanced: bool,
     ) {
+        let page = section.page;
         let command = self.commands.len() as u32;
         let count = faces.end - faces.start;
         self.commands.push(if instanced {
@@ -224,7 +225,7 @@ impl ViewDraws {
                 instance_count: 1,
                 first_index: 0,
                 base_vertex: (faces.start * 4) as i32,
-                first_instance: 0,
+                first_instance: section.slot,
             }
         });
         let runs = &mut self.runs[category.index()];
@@ -296,7 +297,8 @@ impl ViewDraws {
     }
 
     /// Records `category` into `pass`, which must already have the program's pipeline and bind
-    /// groups set. Returns the draws issued.
+    /// groups set; `origins` is the draw-origin table packed layouts read. Returns the draws
+    /// issued.
     pub(crate) fn record<'w>(
         &'w self,
         pass: &mut TrackedRenderPass<'w>,
@@ -304,6 +306,7 @@ impl ViewDraws {
         pages: &'w [Buffer],
         index_buffer: &'w Buffer,
         constants: &'w Buffer,
+        origins: Option<&'w Buffer>,
     ) -> u32 {
         let runs = &self.runs[category.index()];
         if runs.is_empty() {
@@ -311,6 +314,9 @@ impl ViewDraws {
         }
         pass.set_index_buffer(index_buffer.slice(..), IndexFormat::Uint32);
         pass.set_vertex_buffer(CONSTANT_VERTEX_BUFFER as usize, constants.slice(..));
+        if let Some(origins) = origins {
+            pass.set_vertex_buffer(DRAW_ORIGIN_VERTEX_BUFFER as usize, origins.slice(..));
+        }
         let stride = std::mem::size_of::<DrawIndexedIndirectArgs>() as u64;
         for run in runs {
             pass.set_vertex_buffer(GEOMETRY_VERTEX_BUFFER as usize, pages[run.page].slice(..));
@@ -376,6 +382,7 @@ mod tests {
             origin,
             epoch: 1,
             stamp: 0,
+            slot: origin[0] as u32,
         }
     }
 
@@ -404,6 +411,9 @@ mod tests {
         assert_eq!(solid.len(), 1, "both solid ranges share page 0 in one run");
         assert_eq!(solid[0].commands.len(), 2);
         assert_eq!(draws.max_faces(), 2);
+        // Each command selects its section's draw origin (the fixture's slot is origin x).
+        let first_instances: Vec<_> = draws.commands.iter().map(|c| c.first_instance).collect();
+        assert_eq!(first_instances, [0, 64, 64, 0]);
     }
 
     #[test]
