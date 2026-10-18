@@ -13,6 +13,7 @@ mod legacy;
 mod options;
 mod program_contracts;
 mod regressions;
+mod storage_bindings;
 mod zip_source;
 
 use shaderpack::{PackTranslation, ProgramReflection, ProgramTranslation, ShaderPack};

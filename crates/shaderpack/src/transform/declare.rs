@@ -104,7 +104,8 @@ pub(super) fn collect(
         }
         if let Some((bname, members, inst)) = &d.block {
             if d.has("uniform") || d.has("buffer") {
-                block(&mut c, &d, bname, members, inst, iface);
+                block(&mut c, &d, bname, members, inst, iface)
+                    .map_err(|message| TransformError::new(message, line))?;
                 continue;
             }
             if d.has("in") || d.has("out") {
@@ -224,15 +225,15 @@ fn block(
     members: &[Tok],
     inst: &[Tok],
     iface: &mut ProgramInterface,
-) {
+) -> Result<(), String> {
     let storage = d.has("buffer");
     let (set, binding) = if storage {
         (
             STORAGE_BUFFER_GROUP,
-            iface.storage_binding(bname, layout_key(&d.layout, "binding")),
+            iface.storage_binding(bname, layout_key(&d.layout, "binding"))?,
         )
     } else {
-        (UNIFORM_GROUP, iface.uniform_block_binding(bname))
+        (UNIFORM_GROUP, iface.uniform_block_binding(bname)?)
     };
     let instance = inst.iter().find_map(|t| t.ident()).unwrap_or(bname);
     c.resource_names.push((set, binding, instance.to_string()));
@@ -246,7 +247,7 @@ fn block(
         }
         lay.push(id(if storage { "std430" } else { "std140" }));
     }
-    lay.extend(lex(&format!(", set = {set}, binding = {binding}")));
+    lay.extend(lex(&format!(", set = {set}, binding = {binding}u")));
     c.resources.extend([id("layout"), p("(")]);
     c.resources.extend(lay);
     c.resources.push(p(")"));
@@ -258,6 +259,7 @@ fn block(
     c.resources.push(p("}"));
     c.resources.extend(inst.iter().cloned());
     c.resources.push(p(";"));
+    Ok(())
 }
 
 /// Assigns opaque-resource bindings and collects ordinary uniforms for the shared block.
@@ -272,7 +274,9 @@ fn uniforms(
         if is_opaque(&d.ty) {
             c.opaque.insert(name.clone());
             if let Some((tex_ty, shadow)) = sampler_info(&d.ty) {
-                let b = iface.texture_binding(name);
+                let b = iface
+                    .texture_binding(name)
+                    .map_err(|message| TransformError::new(message, line))?;
                 c.resource_names.push((TEXTURE_GROUP, b, name.clone()));
                 c.samplers.insert(name.clone(), (d.ty.clone(), shadow));
                 c.resources.extend(
@@ -286,7 +290,9 @@ fn uniforms(
                 c.resources.extend(arr.iter().cloned());
                 c.resources.push(p(";"));
             } else if is_image(&d.ty) {
-                let b = iface.image_binding(name);
+                let b = iface
+                    .image_binding(name)
+                    .map_err(|message| TransformError::new(message, line))?;
                 c.resource_names.push((IMAGE_GROUP, b, name.clone()));
                 let mut lay = strip_layout_keys(&d.layout, &["binding", "set"]);
                 if lay.is_empty() {
