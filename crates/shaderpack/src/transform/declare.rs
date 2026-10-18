@@ -50,6 +50,27 @@ fn first_line(toks: &[Tok]) -> u32 {
     toks.iter().map(|t| t.line).find(|l| *l != 0).unwrap_or(0)
 }
 
+/// The float type an integer lightmap input (`in ivec2 vaUV2`) reads before converting, or
+/// `None` for every other input.
+fn integer_lightmap(attribute: &VertexAttribute, ty: &str, arr: &[Tok]) -> Option<String> {
+    let lightmap = matches!(
+        attribute,
+        VertexAttribute::Lightmap | VertexAttribute::MultiTexCoord2
+    );
+    if !lightmap || !arr.is_empty() || !is_integer(ty) {
+        return None;
+    }
+    Some(match ty {
+        "int" | "uint" => "float".to_string(),
+        vector => format!(
+            "vec{}",
+            vector
+                .trim_start_matches(['i', 'u'])
+                .trim_start_matches("vec")
+        ),
+    })
+}
+
 /// Collects declarations of `items` for `stage`.
 pub(super) fn collect(
     items: Vec<Item>,
@@ -123,14 +144,31 @@ pub(super) fn collect(
         let is_out = d.has("out") || (d.has("varying") && stage == StageKind::Vertex);
         if stage == StageKind::Vertex && is_in && !d.has("varying") {
             for (name, arr, _) in &d.decls {
-                let loc = VertexAttribute::from_glsl_name(name)
-                    .location()
-                    .unwrap_or_else(|| {
-                        let l = next_attr;
-                        next_attr += loc_size(&d.ty, arr_len(arr).unwrap_or(1));
-                        l
-                    });
+                let attribute = VertexAttribute::from_glsl_name(name);
+                let loc = attribute.location().unwrap_or_else(|| {
+                    let l = next_attr;
+                    next_attr += loc_size(&d.ty, arr_len(arr).unwrap_or(1));
+                    l
+                });
                 c.vertex_inputs.push((loc, name.clone()));
+                if let Some(float_ty) = integer_lightmap(&attribute, &d.ty, arr) {
+                    // The vertex stream stores the lightmap once, as exact half floats; an
+                    // integer declaration (`in ivec2 vaUV2`) reads that and converts.
+                    let stored = format!("iris_float_{name}");
+                    c.io.extend(
+                        lex(&format!("layout(location = {loc}) in {float_ty} {stored};"))
+                            .into_iter()
+                            .map(|t| t.at(line)),
+                    );
+                    c.split_globals.extend(
+                        lex(&format!("{} {name};", d.ty))
+                            .into_iter()
+                            .map(|t| t.at(line)),
+                    );
+                    c.before_main
+                        .push(format!("{name} = {}(round({stored}));", d.ty));
+                    continue;
+                }
                 c.io.extend(
                     lex(&format!("layout(location = {loc}) in {} {name}", d.ty))
                         .into_iter()
@@ -370,6 +408,21 @@ fn varying(
         }
         q.join(" ")
     };
+    if dir == "out" {
+        iface.write(name);
+    } else if !iface.written(name) {
+        // No vertex output feeds this input: GLSL links it when the fragment never reads
+        // it, WebGPU rejects the pipeline. It becomes a zeroed private global.
+        let mut leaves = vec![];
+        flatten_leaves(name.to_string(), ty, arr, structs, line, &mut leaves)?;
+        c.split_globals.extend([id(ty).at(line), id(name).at(line)]);
+        c.split_globals.extend_from_slice(arr);
+        c.split_globals.push(p(";"));
+        for (path, leaf_ty) in leaves {
+            c.before_main.push(format!("{path} = {leaf_ty}(0);"));
+        }
+        return Ok(());
+    }
     if arr.is_empty() && mat_cols(ty).is_none() && !structs.contains_key(ty) {
         let loc = iface.varying(name, loc_size(ty, 1));
         let q = if dir == "in" {

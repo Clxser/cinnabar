@@ -48,7 +48,7 @@ fn compatibility_inputs_read_their_stored_fields() {
         (1, COLOR),
         (2, NORMAL),
         (3, UV0),
-        (4, LIGHTMAP_FLOAT),
+        (4, LIGHTMAP),
         (8, BLOCK_ID),
         (9, MID_TEX),
         (10, TANGENT),
@@ -63,21 +63,20 @@ fn compatibility_inputs_read_their_stored_fields() {
 }
 
 #[test]
-fn core_profile_integer_lightmap_reads_the_rounded_field() {
+fn the_lightmap_is_stored_once_for_every_name() {
+    // The translator declares an integer `vaUV2` as a float input and converts it.
     let inputs = [
-        input(4, "vaUV2", vector(2, ScalarType::Int)),
+        input(4, "vaUV2", vector(2, ScalarType::Float)),
         input(5, "iris_MultiTexCoord2", vector(4, ScalarType::Float)),
     ];
     let [geometry, _] = vertex_buffer_layouts(&inputs).unwrap();
-    assert_eq!(
-        attribute(&geometry, 4),
-        (VertexFormat::Sint16x2, u64::from(LIGHTMAP_INT.word) * 4)
-    );
-    assert_eq!(
-        attribute(&geometry, 5),
-        (LIGHTMAP_FLOAT.format, u64::from(LIGHTMAP_FLOAT.word) * 4),
-        "gl_MultiTexCoord2 is a second name for the lightmap"
-    );
+    for location in [4, 5] {
+        assert_eq!(
+            attribute(&geometry, location),
+            (LIGHTMAP.format, u64::from(LIGHTMAP.word) * 4),
+            "gl_MultiTexCoord2 is a second name for the lightmap"
+        );
+    }
 }
 
 #[test]
@@ -143,7 +142,7 @@ fn inputs_of_types_terrain_cannot_supply_are_rejected() {
 #[test]
 fn every_layout_placeholder_is_resolved() {
     let source = "IRIS_VERTEX_WORDS IRIS_WORD_POSITION IRIS_WORD_COLOR IRIS_WORD_UV0 \
-        IRIS_WORD_MID_TEX IRIS_WORD_LIGHTMAP_FLOAT IRIS_WORD_LIGHTMAP_INT IRIS_WORD_NORMAL \
+        IRIS_WORD_MID_TEX IRIS_WORD_LIGHTMAP IRIS_WORD_NORMAL \
         IRIS_WORD_TANGENT IRIS_WORD_BLOCK_ID IRIS_WORD_MID_BLOCK";
     let resolved = substitute_layout_constants(source);
     assert!(!resolved.contains("IRIS_"), "{resolved}");

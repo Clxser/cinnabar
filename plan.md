@@ -1156,8 +1156,10 @@ screen-effect parity remain incomplete.
 
 - `crates/assets/data/java-mapping-v2193.bin` maps every block-registry state to one Java block
   state, lists Java block tags, the Java biome registry (temperature, downfall, precipitation,
-  frozen modifier, in network registry order) and Java biome tags, maps Bedrock biome ids to
-  Java biomes, and Bedrock entity and item identifiers to Java entity types and items.
+  frozen modifier and the sky, fog and water fog colour attributes, in network registry order),
+  the overworld, nether and end dimension types' colour attributes and Java biome tags, maps
+  Bedrock biome ids to Java biomes, and Bedrock entity and item identifiers to Java entity
+  types and items.
   `registryc --kind java-mapping` generates it from the GeyserMC mappings pinned in
   `assets/geyser-mappings-source.json` (Java 26.3, Bedrock 1.26.50) and, for entities, from the
   builder chains of Geyser's `VanillaEntities.java` at the commit pinned there.
@@ -1180,18 +1182,24 @@ screen-effect parity remain incomplete.
 
 ## Shader-pack render mode (experimental, incomplete)
 
-- `--features shaderpacks` runs Java OptiFine/Iris packs (checked: BSL v10.1.8, Photon v1.3b)
-  through their own `shadow`, `gbuffers_skybasic`/`terrain*`/`water`, `deferred`, `composite`
-  and `final` programs on Cinnabar terrain expanded into Iris's vertex format. Sky, sun path,
-  `sunAngle`/`shadowAngle` and the shadow camera follow Java's eased celestial angle.
+- `--features shaderpacks` runs Java OptiFine/Iris packs (checked against Iris 1.11.7 on Java
+  26.3: BSL v10.1.8, Photon v1.3b, Complementary Reimagined r5.9.3, SEUS Renewed v1.0.1)
+  through their own `shadow`, `gbuffers_*`, `deferred`, `composite` and `final` programs on
+  Cinnabar terrain expanded into Iris's vertex format. Sky, sun path, `sunAngle`/`shadowAngle`
+  and the shadow camera follow Java's eased celestial angle; `MC_VERSION`/`IRIS_VERSION` are
+  Iris 1.11.7's on 26.3.
 - `lightmap` is the world lightmap Cinnabar's own terrain uses (sky darkening, night vision,
   darkness, brightness), rewritten when it changes; the Java `LightTexture` block-light flicker
   is not modelled.
 - Block-model quads keep their back faces by the template quad's two-sided flag, as the chunk
   renderer does, so cross plants draw through the pack.
 - Expansion is nearest-first within the 1 GiB vertex budget; over budget, nearer sections evict
-  the farthest. The Vanilla overlay (entities, particles, clouds, weather) passes nothing beyond
-  `far` or the fully expanded radius, so unexpanded terrain shows the pack's sky or fog.
+  the farthest. Vanilla terrain and far-terrain tiles are not drawn on pack cameras, so a
+  section not expanded yet shows the pack's sky or fog, as Iris draws no unbuilt section.
+- Entities, block entities, the hand, armour glint, particles, weather, clouds, sun, moon,
+  stars, lightning, block cracks and the selection outline draw through the pack's
+  `gbuffers_*` programs (Iris fallback chains, render stages and default blend/alpha state);
+  the Vanilla overlay keeps only portals and what the pack does not draw.
 - Developer captures pin the time with `--fixed-time <ticks>` (docs/agents/live-testing.md);
   `CINNABAR_SHADERPACK_UNIFORM_DUMP=<file>` dumps every program's uniforms and the values
   supplied, flagging unknown ones.
@@ -1201,15 +1209,18 @@ screen-effect parity remain incomplete.
   registry order, not Iris's `Biomes.register` order; comparisons agree. The snow line omits
   Java's temperature noise and the frozen modifier. Custom uniform expressions see macros
   expanded, and `colortex0` clears to the fog colour, as in Iris.
-- Gaps against Iris references (same tick, 16-chunk render distance): entities, the hand,
-  particles, clouds and weather are Vanilla-lit overlay pixels without gbuffer data; no pack
-  clouds (`gbuffers_clouds`), `skytextured` sun/moon or vanilla stars; `minecraft:` resource
-  textures are not resolved; `skyColor`/`fogColor` are Bedrock atmosphere values, not Java's;
-  `bedrockLevel` and `relativeEyePosition` read 0; Photon's day scenes stay darker than Java's
-  in sun-shadowed areas (cause open; its GTAO buffer is plausible); eye-located inputs sample
-  the player, so captures put the player at the camera; shadows cover every resident section
-  without `shadowDistance` culling; translucents sort per section; Vanilla terrain still
-  renders underneath. Not a parity gate.
+- `skyColor`/`fogColor` follow Java's sky and fog colours from the carrier's biome and
+  dimension colour attributes; `frameTimeCounter` counts from pack load as in Iris, and
+  developer captures can pin it (`--frame-time-counter`).
+- Gaps against Iris references (same tick, 16-chunk render distance): weather draws
+  Cinnabar's Bedrock streaks rather than Java's rain columns; clouds use Cinnabar's 16-block
+  cells; effects cast no shadows; block entities read `blockEntityId` -1 and
+  `entities_glowing` is never selected; worn armour and mob-held items read
+  `currentRenderedItemId` -1; geometry and tessellation stages are unsupported (Rethinking
+  Voxels' voxel shadow, Eclipse's grass); `bedrockLevel` and `relativeEyePosition` read 0;
+  eye-located inputs sample the player, so captures put the player at the camera; shadows
+  cover every resident section without `shadowDistance` culling; translucents sort per
+  section. Not a parity gate.
 
 ## Anvil screen
 

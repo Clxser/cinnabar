@@ -15,9 +15,11 @@
 //! actors, block entities and the hand from the actor adapter (`actors`). The pack also
 //! draws the sun, moon, stars, particles, clouds, weather, lightning, block cracks and the
 //! selection outline through its own programs (`effects`). What it does not draw (block-entity
-//! portals) is taken from the Vanilla scene, which still
-//! renders underneath, where it is nearer than the pack's geometry. Packs without terrain
-//! programs get the Vanilla scene copied into `colortex0` instead.
+//! portals) is taken from the Vanilla scene where it is nearer than the pack's geometry. The
+//! Vanilla terrain and far-terrain passes skip the pack's cameras (`ShaderPackDrawnCategories`
+//! `terrain`), so a section not expanded yet shows the pack's sky or fog, as Iris draws no
+//! unbuilt section. Packs without terrain programs get the Vanilla scene copied into
+//! `colortex0` instead.
 //!
 //! Conventions: pack buffers are stored bottom-up and gamma-encoded as in OpenGL Minecraft
 //! (the translator flips clip-space Y and remaps clip depth), uniforms use OpenGL matrices,

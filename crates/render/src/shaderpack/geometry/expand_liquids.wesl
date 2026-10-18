@@ -42,5 +42,6 @@ fn expand_liquids(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_wor
     source.material_id = first.selected_material_id;
     source.material = material;
     source.two_sided = (first.packed_material & LIQUID_TWO_SIDED_BIT) != 0u;
+    source.fluid = true;
     write_job_faces(job, corners, source);
 }

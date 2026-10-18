@@ -20,6 +20,9 @@ struct ExpandParams {
 
 const EXPAND_WORKGROUP_SIZE: u32 = 64u;
 const NO_ANIMATION: u32 = 0xffffffffu;
+/// Iris's `mc_Entity.y` (`ExtendedDataHelper`): fluids and every other block.
+const FLUID_RENDER_TYPE: f32 = 1.0;
+const BLOCK_RENDER_TYPE: f32 = -1.0;
 
 /// The four corners of one face, in counter-clockwise front-face order.
 struct FaceCorners {
@@ -47,6 +50,9 @@ struct FaceSource {
     material_id: u32,
     material: MaterialGpu,
     two_sided: bool,
+    /// Liquid surfaces: Iris's fluid render type in `mc_Entity.y`. Kernels leave it at the
+    /// zero value, false, for blocks.
+    fluid: bool,
 }
 
 /// Linear job index of a dispatch that may span a second dimension.
@@ -122,22 +128,22 @@ fn write_vertex(
     normal: vec3<f32>,
     tangent: vec4<f32>,
     block_id: i32,
+    render_type: f32,
     mid_block: vec4<f32>,
 ) {
     let base = index * IRIS_VERTEX_WORDS;
     let raw_light = clamp(light, vec2(0.0), vec2(15.0)) * 16.0;
-    let int_light = vec2<u32>(round(raw_light));
     vertices[base + IRIS_WORD_POSITION] = bitcast<u32>(position.x);
     vertices[base + IRIS_WORD_POSITION + 1u] = bitcast<u32>(position.y);
     vertices[base + IRIS_WORD_POSITION + 2u] = bitcast<u32>(position.z);
     vertices[base + IRIS_WORD_COLOR] = pack4x8unorm(colour);
     vertices[base + IRIS_WORD_UV0] = pack2x16unorm(uv);
     vertices[base + IRIS_WORD_MID_TEX] = pack2x16unorm(mid_uv);
-    vertices[base + IRIS_WORD_LIGHTMAP_FLOAT] = pack2x16float(raw_light);
-    vertices[base + IRIS_WORD_LIGHTMAP_INT] = int_light.x | (int_light.y << 16u);
+    vertices[base + IRIS_WORD_LIGHTMAP] = pack2x16float(raw_light);
     vertices[base + IRIS_WORD_NORMAL] = pack4x8snorm(vec4(normal, 0.0));
     vertices[base + IRIS_WORD_TANGENT] = pack4x8snorm(tangent);
     vertices[base + IRIS_WORD_BLOCK_ID] = bitcast<u32>(f32(block_id));
+    vertices[base + IRIS_WORD_BLOCK_ID + 1u] = bitcast<u32>(render_type);
     vertices[base + IRIS_WORD_MID_BLOCK] = pack2x16float(mid_block.xy);
     vertices[base + IRIS_WORD_MID_BLOCK + 1u] = pack2x16float(mid_block.zw);
 }
@@ -146,7 +152,7 @@ fn write_vertex(
 fn write_degenerate_face(face: u32, position: vec3<f32>) {
     for (var corner = 0u; corner < 4u; corner += 1u) {
         write_vertex(face * 4u + corner, position, vec4(0.0), vec2(0.0), vec2(0.0), vec2(0.0),
-            vec3(0.0), vec4(0.0), -1, vec4(0.0));
+            vec3(0.0), vec4(0.0), -1, BLOCK_RENDER_TYPE, vec4(0.0));
     }
 }
 
@@ -183,6 +189,7 @@ fn write_face(face: u32, source_corners: FaceCorners, source: FaceSource, tint: 
         );
         write_vertex(face * 4u + corner, offset + positions[corner], colour, uvs[corner], mid_uv,
             corners.light[order[corner]], normal, tangent, attributes.x,
+            select(BLOCK_RENDER_TYPE, FLUID_RENDER_TYPE, source.fluid),
             vec4((centre - positions[corner]) * 64.0, f32(attributes.y)));
     }
 }

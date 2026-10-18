@@ -6,8 +6,8 @@ use super::pipelines::{
     EXPAND_PARAMS_BYTES, expansion_shader_source, output_layout, source_layout,
 };
 use super::vertex::{
-    BLOCK_ID, COLOR, CONSTANT_STREAM_WORDS, IRIS_VERTEX_WORDS, LIGHTMAP_FLOAT, LIGHTMAP_INT,
-    MID_BLOCK, MID_TEX, NORMAL, POSITION, TANGENT, UV0,
+    BLOCK_ID, COLOR, CONSTANT_STREAM_WORDS, IRIS_VERTEX_WORDS, LIGHTMAP, MID_BLOCK, MID_TEX,
+    NORMAL, POSITION, TANGENT, UV0,
 };
 use super::{LIGHTMAP_TEXTURE_MATRIX, vertex_buffer_layouts};
 use crate::gpu_snapshot::Gpu;
@@ -359,10 +359,10 @@ struct Decoded {
     uv: [f32; 2],
     mid_uv: [f32; 2],
     lightmap: [f32; 2],
-    lightmap_int: [i16; 2],
     normal: [i8; 4],
     tangent: [i8; 4],
     block_id: f32,
+    render_type: f32,
     mid_block: [f32; 4],
 }
 
@@ -385,14 +385,11 @@ fn decode(words: &[u32], vertex: u32) -> Decoded {
         colour: bytes(word(COLOR, 0)),
         uv: unorm16(word(UV0, 0)),
         mid_uv: unorm16(word(MID_TEX, 0)),
-        lightmap: half(word(LIGHTMAP_FLOAT, 0)),
-        lightmap_int: [
-            (word(LIGHTMAP_INT, 0) & 0xffff) as i16,
-            (word(LIGHTMAP_INT, 0) >> 16) as i16,
-        ],
+        lightmap: half(word(LIGHTMAP, 0)),
         normal: signed(word(NORMAL, 0)),
         tangent: signed(word(TANGENT, 0)),
         block_id: f32::from_bits(word(BLOCK_ID, 0)),
+        render_type: f32::from_bits(word(BLOCK_ID, 1)),
         mid_block: [
             mid_block[0][0],
             mid_block[0][1],
@@ -486,10 +483,6 @@ fn greedy_top_face_expands_to_per_block_faces_with_java_attributes() {
                 0.01,
                 "lightmap",
             );
-            assert_eq!(
-                vertex.lightmap_int,
-                lightmaps[face as usize][corner as usize].map(|value| value.round() as i16)
-            );
             let brightness = (ao[face as usize][corner as usize] * 255.0_f32).round() as u8;
             assert!(
                 vertex.colour[..3]
@@ -506,6 +499,10 @@ fn greedy_top_face_expands_to_per_block_faces_with_java_attributes() {
                 "+X tangent, mirrored bitangent"
             );
             assert_eq!(vertex.block_id, GRASS_BLOCK_ID as f32);
+            assert_eq!(
+                vertex.render_type, -1.0,
+                "blocks read Iris's BLOCK_RENDER_TYPE in mc_Entity.y"
+            );
             let centre = top_positions[face as usize][0] + Vec3::new(0.5, -0.5, 0.5);
             let expected = (centre - at) * 64.0;
             assert_close(

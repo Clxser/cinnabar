@@ -156,6 +156,13 @@ pub(crate) fn transform(
         let front = (stage == StageKind::Vertex && lg.builtins.contains("gl_FrontColor"))
             || (stage == StageKind::Fragment && lg.builtins.contains("gl_Color"));
         let mut varying = |name: &str, ty: &str| {
+            if dir == "out" {
+                iface.write(name);
+            } else if !iface.written(name) {
+                builtin_io.push_str(&format!("{ty} {name};\n"));
+                c.before_main.push(format!("{name} = {ty}(0);"));
+                return;
+            }
             let loc = iface.varying(name, 1);
             builtin_io.push_str(&format!("layout(location = {loc}) {dir} {ty} {name};\n"));
         };

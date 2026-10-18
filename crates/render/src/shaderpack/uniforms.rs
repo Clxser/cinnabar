@@ -251,26 +251,26 @@ pub(crate) fn sky_fog(
     position: Vec3,
 ) -> SkyFogColors {
     let mapping = JavaBlockMapping::pinned().ok();
-    let biome =
-        mapping
-            .and_then(|mapping| {
-                BiomeColors::blend(game.sky_biomes.iter().filter_map(|&(biome, weight)| {
-                    Some((BiomeColors::at(mapping, biome)?, weight))
-                }))
-                .or_else(|| BiomeColors::fallback(mapping))
-            })
-            .unwrap_or(BiomeColors {
-                sky: [0.0; 3],
-                fog: [0.0; 3],
-                water_fog: [0.0; 3],
-            });
+    let dimension = match game.dimension {
+        1 => SkyDimension::Nether,
+        2 => SkyDimension::End,
+        _ => SkyDimension::Overworld,
+    };
+    let biome = mapping
+        .and_then(|mapping| {
+            BiomeColors::blend(game.sky_biomes.iter().filter_map(|&(biome, weight)| {
+                Some((BiomeColors::at(mapping, biome, dimension)?, weight))
+            }))
+            .or_else(|| BiomeColors::fallback(mapping, dimension))
+        })
+        .unwrap_or(BiomeColors {
+            sky: [0.0; 3],
+            fog: [0.0; 3],
+            water_fog: [0.0; 3],
+        });
     shaderpack::sky_fog(&SkyFogInputs {
         biome,
-        dimension: match game.dimension {
-            1 => SkyDimension::Nether,
-            2 => SkyDimension::End,
-            _ => SkyDimension::Overworld,
-        },
+        dimension,
         celestial_angle: game.celestial_angle,
         rain: game.rain_strength,
         thunder: game.thunder_strength,

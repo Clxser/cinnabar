@@ -457,6 +457,106 @@ fn a_buffer_sampled_and_written_as_an_image_reads_a_snapshot() {
     });
 }
 
+/// Counts its 16 invocations into an `r32ui` custom image with an image atomic.
+const COUNT_ATOMICALLY: &str = "#version 430
+layout(local_size_x = 4, local_size_y = 4) in;
+const ivec3 workGroups = ivec3(1, 1, 1);
+layout(r32ui) uniform uimage2D counter;
+void main() {
+    imageAtomicAdd(counter, ivec2(0), 1u);
+}
+";
+
+/// Writes the counter's first texel, over 255, to red.
+const SHOW_COUNT: &str = "#version 430
+uniform usampler2D counterSampler;
+void main() {
+/* DRAWBUFFERS:0 */
+    uint count = texelFetch(counterSampler, ivec2(0), 0).r;
+    gl_FragData[0] = vec4(float(count) / 255.0, 0.0, 0.0, 1.0);
+}
+";
+
+#[test]
+fn image_atomics_count_into_a_custom_image() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    if !gpu
+        .device
+        .features()
+        .contains(wgpu::Features::TEXTURE_ATOMIC)
+    {
+        eprintln!("missing fixture: a GPU with TEXTURE_ATOMIC for image atomics");
+        return;
+    }
+    let bytes = render(
+        &gpu,
+        &[
+            (
+                "shaders.properties",
+                "image.counter = counterSampler RED_INTEGER R32UI UNSIGNED_INT true false 1 1\n",
+            ),
+            ("composite.csh", COUNT_ATOMICALLY),
+            ("composite.vsh", PASS_VERTEX),
+            ("composite.fsh", SHOW_COUNT),
+            ("final.vsh", PASS_VERTEX),
+            ("final.fsh", FINAL),
+        ],
+    );
+    assert_pixels(&bytes, |_| [16, 0, 0]);
+}
+
+#[test]
+fn a_draw_pipeline_the_device_rejects_drops_only_that_draw() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    // The entities stages disagree on `tint`'s type: both translate, the pipeline fails
+    // validation. Iris falls back per program; the pack still loads with its terrain draw.
+    let pack = pack(&[
+        ("gbuffers_terrain.vsh", PASS_VERTEX),
+        ("gbuffers_terrain.fsh", FILL),
+        (
+            "gbuffers_entities.vsh",
+            "#version 120\nvarying vec2 tint;\nvoid main() { tint = vec2(1.0); gl_Position = ftransform(); }\n",
+        ),
+        (
+            "gbuffers_entities.fsh",
+            "#version 120\nvarying vec3 tint;\nvoid main() { gl_FragData[0] = vec4(tint, 1.0); }\n",
+        ),
+    ]);
+    let pack = build(
+        &pack,
+        "fixture",
+        JAVA_DIMENSIONS[0],
+        None,
+        &gpu,
+        &Default::default(),
+    )
+    .expect("one rejected draw does not reject the pack");
+    let entities = pack
+        .programs
+        .iter()
+        .position(|p| p.name == "gbuffers_entities")
+        .expect("gbuffers_entities translated");
+    assert!(
+        pack.draws
+            .iter()
+            .any(|d| d.kind == super::draws::DrawKind::TerrainSolid),
+        "the terrain draw survives"
+    );
+    let kept: Vec<_> = pack
+        .draws
+        .iter()
+        .filter(|d| d.program == entities)
+        .map(|d| d.kind)
+        .collect();
+    assert!(kept.is_empty(), "rejected entities draws kept: {kept:?}");
+}
+
 #[test]
 fn sampler_classes_map_to_wrap_and_filter_modes() {
     for (index, class) in SamplerClass::ALL.into_iter().enumerate() {

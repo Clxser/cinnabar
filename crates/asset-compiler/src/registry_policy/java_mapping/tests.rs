@@ -239,6 +239,7 @@ fn codec_biome(out: &mut Vec<u8>, biome: &str, id: i32, climate: (f32, f32, u8),
         name(out, "temperature_modifier");
         name(out, modifier);
     }
+    attributes(out, &[("minecraft:visual/sky_color", "#78a7ff")]);
     out.push(10);
     name(out, "effects");
     out.push(8);
@@ -246,6 +247,21 @@ fn codec_biome(out: &mut Vec<u8>, biome: &str, id: i32, climate: (f32, f32, u8),
     name(out, "#3f76e4");
     out.push(0);
     out.push(0);
+    out.push(0);
+}
+
+/// Writes an `attributes` compound of string `colours` and one skipped compound attribute.
+fn attributes(out: &mut Vec<u8>, colours: &[(&str, &str)]) {
+    out.push(10);
+    name(out, "attributes");
+    out.push(10);
+    name(out, "minecraft:audio/background_music");
+    out.push(0);
+    for (attribute, colour) in colours {
+        out.push(8);
+        name(out, attribute);
+        name(out, colour);
+    }
     out.push(0);
 }
 
@@ -276,6 +292,36 @@ fn codec(entries: &[TestBiome]) -> Vec<u8> {
         codec_biome(&mut nbt, biome, id, climate, modifier);
     }
     nbt.push(0);
+    nbt.push(10);
+    name(&mut nbt, nbt::DIMENSION_TYPE_REGISTRY);
+    nbt.push(8);
+    name(&mut nbt, "type");
+    name(&mut nbt, nbt::DIMENSION_TYPE_REGISTRY);
+    nbt.push(9);
+    name(&mut nbt, "value");
+    nbt.push(10);
+    nbt.extend_from_slice(&1i32.to_be_bytes());
+    nbt.push(8);
+    name(&mut nbt, "name");
+    name(&mut nbt, "minecraft:the_end");
+    nbt.push(3);
+    name(&mut nbt, "id");
+    nbt.extend_from_slice(&0i32.to_be_bytes());
+    nbt.push(10);
+    name(&mut nbt, "element");
+    nbt.push(1);
+    name(&mut nbt, "has_skylight");
+    nbt.push(0);
+    attributes(
+        &mut nbt,
+        &[
+            ("minecraft:visual/fog_color", "#181318"),
+            ("minecraft:visual/sky_color", "#000000"),
+        ],
+    );
+    nbt.push(0);
+    nbt.push(0);
+    nbt.push(0);
     nbt.push(0);
     gzip(&nbt)
 }
@@ -296,6 +342,10 @@ fn the_network_codec_yields_biome_climate_in_registry_order() {
             downfall,
             has_precipitation,
             frozen,
+            colours: JavaSkyColours {
+                sky: Some(0x78_A7_FF),
+                ..JavaSkyColours::default()
+            },
         };
     assert_eq!(
         biomes,
@@ -307,6 +357,21 @@ fn the_network_codec_yields_biome_climate_in_registry_order() {
     );
     assert!(nbt::biomes(&codec(&[("minecraft:plains", 0, (0.8, 0.4, 1), "warm")])).is_err());
     assert!(nbt::biomes(&codec(&[("minecraft:plains", 0, (0.8, 0.4, 2), "")])).is_err());
+}
+
+#[test]
+fn the_network_codec_yields_dimension_type_colours() {
+    assert_eq!(
+        nbt::dimensions(&codec(&[])).unwrap(),
+        vec![nbt::CodecDimension {
+            name: "minecraft:the_end".into(),
+            colours: JavaSkyColours {
+                sky: Some(0),
+                fog: Some(0x18_13_18),
+                water_fog: None,
+            },
+        }]
+    );
 }
 
 /// The pinned source files, or `None` (with the missing-fixture notice) without the archive.
@@ -341,6 +406,16 @@ fn the_java_biome_registry_is_the_geyser_biome_set_with_its_climate_and_tags() {
         (0.8, 0.4, true, false)
     );
     assert!(registry[index("minecraft:frozen_ocean")].frozen);
+    assert_eq!(plains.colours.sky, Some(0x78_A7_FF));
+    let pale = &registry[index("minecraft:pale_garden")].colours;
+    assert_eq!(
+        (pale.sky, pale.fog, pale.water_fog),
+        (Some(0xB9_B9_B9), Some(0x81_77_70), Some(0x55_69_80))
+    );
+    let dimensions = dimension_colours(&files).unwrap();
+    let [overworld, _, end] = dimensions;
+    assert_eq!(overworld.fog, Some(0xC0_D8_FF));
+    assert_eq!((end.sky, end.fog), (Some(0), Some(0x18_13_18)));
     let tags = biome_tags(&files, registry.len()).unwrap();
     let members = |tag: &str| {
         &tags

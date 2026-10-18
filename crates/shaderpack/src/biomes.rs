@@ -167,12 +167,9 @@ impl BiomeUniforms {
         bedrock_biome: u32,
         block_y: i32,
     ) -> Option<BiomeUniforms> {
-        let index = mapping.java_biome_index(bedrock_biome).or_else(|| {
-            mapping
-                .java_biomes()
-                .position(|biome| biome.name == FALLBACK_BIOME)
-                .and_then(|index| u16::try_from(index).ok())
-        })?;
+        let index = mapping
+            .java_biome_index(bedrock_biome)
+            .or_else(|| fallback_biome_index(mapping))?;
         let entry = mapping.java_biome_entry(index)?;
         Some(BiomeUniforms {
             biome: i32::from(index),
@@ -182,6 +179,14 @@ impl BiomeUniforms {
             rainfall: entry.downfall,
         })
     }
+}
+
+/// The registry index of [`FALLBACK_BIOME`], what Java reads unmapped biomes as.
+pub(crate) fn fallback_biome_index(mapping: &JavaBlockMapping) -> Option<u16> {
+    mapping
+        .java_biomes()
+        .position(|biome| biome.name == FALLBACK_BIOME)
+        .and_then(|index| u16::try_from(index).ok())
 }
 
 /// The Iris category of the Java biome at `index`.

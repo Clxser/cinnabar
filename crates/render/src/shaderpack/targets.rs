@@ -108,6 +108,9 @@ impl ViewTargets {
             if pack.storage_buffers & (1 << plan.index) != 0 {
                 usage |= TextureUsages::STORAGE_BINDING;
             }
+            if pack.atomic_buffers & (1 << plan.index) != 0 {
+                usage |= TextureUsages::STORAGE_ATOMIC;
+            }
             let sides = if plan.alternate { 2 } else { 1 };
             let textures: Vec<wgpu::Texture> = (0..sides)
                 .map(|side| {
@@ -205,7 +208,8 @@ impl ViewTargets {
             .custom_images
             .iter()
             .zip(&pack.image_formats)
-            .map(|(image, format)| {
+            .zip(&pack.atomic_images)
+            .map(|((image, format), &atomic)| {
                 let (dimension, size) = match image.size {
                     ImageSize::Relative { width, height } => (
                         wgpu::TextureDimension::D2,
@@ -237,7 +241,12 @@ impl ViewTargets {
                     format: *format,
                     usage: TextureUsages::STORAGE_BINDING
                         | TextureUsages::TEXTURE_BINDING
-                        | TextureUsages::COPY_DST,
+                        | TextureUsages::COPY_DST
+                        | if atomic {
+                            TextureUsages::STORAGE_ATOMIC
+                        } else {
+                            TextureUsages::empty()
+                        },
                     view_formats: &[],
                 });
                 let view = texture.create_view(&Default::default());

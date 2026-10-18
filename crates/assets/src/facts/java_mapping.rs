@@ -18,7 +18,7 @@ pub const SOURCE_PATH: &str = "crates/assets/data/java-mapping-v2193.bin";
 /// The pinned GeyserMC source the generator reads.
 pub const SOURCE_MANIFEST: &str = "assets/geyser-mappings-source.json";
 pub const MAX_BYTES: usize = 2 * 1024 * 1024;
-const MAGIC: &[u8; 8] = b"JAVAMAP3";
+const MAGIC: &[u8; 8] = b"JAVAMAP4";
 const SOURCE_BYTES: &[u8] = include_bytes!("../../data/java-mapping-v2193.bin");
 const SOURCE_SHA256: &str = include_str!("../../data/java-mapping-v2193.sha256");
 const BIOME_REGISTRY_BYTES: &[u8] = include_bytes!("../../data/biome-registry-v2193.bin");
@@ -76,6 +76,9 @@ pub struct JavaMappingPayload {
     /// Java biome tags (`namespace:path`, sorted, unique) with their member Java biome indices,
     /// ascending.
     pub biome_tags: Box<[JavaBiomeTag]>,
+    /// The colours each [`JavaDimension`] type sets, in [`JavaDimension::ALL`] order: what a
+    /// biome that leaves a colour unset shows in that dimension.
+    pub dimension_colours: [JavaSkyColours; 3],
     /// Bedrock biome id to Java biome index, sorted by Bedrock id.
     pub biomes: Box<[JavaBiome]>,
     /// Every Java entity type Geyser registers with the Bedrock entity id it spawns, sorted by
@@ -104,6 +107,57 @@ pub type JavaBiomeTag = (Box<str>, Box<[u16]>);
 /// A Bedrock biome id and the index of its Java biome in [`JavaMappingPayload::java_biomes`].
 pub type JavaBiome = (u32, u16);
 
+/// The sky, fog and water fog colours (`0xRRGGBB`) a Java biome or dimension type sets
+/// through its `minecraft:visual/*_color` environment attributes; `None` leaves the colour
+/// to the layer below (biome over dimension type over the attribute's default).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct JavaSkyColours {
+    pub sky: Option<u32>,
+    pub fog: Option<u32>,
+    pub water_fog: Option<u32>,
+}
+
+impl JavaSkyColours {
+    /// Each colour of `self`, else of `below`.
+    pub fn over(self, below: Self) -> Self {
+        Self {
+            sky: self.sky.or(below.sky),
+            fog: self.fog.or(below.fog),
+            water_fog: self.water_fog.or(below.water_fog),
+        }
+    }
+
+    fn valid(self) -> bool {
+        [self.sky, self.fog, self.water_fog]
+            .into_iter()
+            .flatten()
+            .all(|colour| colour <= 0xFF_FF_FF)
+    }
+}
+
+/// The Java dimension types whose colours the carrier keeps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JavaDimension {
+    Overworld,
+    Nether,
+    End,
+}
+
+impl JavaDimension {
+    /// Every kept dimension type, in [`JavaMappingPayload::dimension_colours`] order.
+    pub const ALL: [Self; 3] = [Self::Overworld, Self::Nether, Self::End];
+
+    /// The dimension type's registry id.
+    pub const fn identifier(self) -> &'static str {
+        match self {
+            Self::Overworld => "minecraft:overworld",
+            Self::Nether => "minecraft:the_nether",
+            Self::End => "minecraft:the_end",
+        }
+    }
+}
+
 /// One serialized Java biome registry entry; [`JavaBiomeEntry`] is its borrowed view.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -116,6 +170,8 @@ pub struct JavaBiomeRecord {
     pub has_precipitation: bool,
     /// Whether the biome's temperature modifier is `frozen`.
     pub frozen: bool,
+    /// The colours the biome sets over its dimension type's.
+    pub colours: JavaSkyColours,
 }
 
 /// One Java biome of the pinned registry; its index is Java's network registry id (the
@@ -130,6 +186,8 @@ pub struct JavaBiomeEntry<'a> {
     pub has_precipitation: bool,
     /// Whether the biome's temperature modifier is `frozen`.
     pub frozen: bool,
+    /// The colours the biome sets over its dimension type's.
+    pub colours: JavaSkyColours,
 }
 
 impl<'a> From<&'a JavaBiomeRecord> for JavaBiomeEntry<'a> {
@@ -140,6 +198,7 @@ impl<'a> From<&'a JavaBiomeRecord> for JavaBiomeEntry<'a> {
             downfall: record.downfall,
             has_precipitation: record.has_precipitation,
             frozen: record.frozen,
+            colours: record.colours,
         }
     }
 }
@@ -346,7 +405,11 @@ impl JavaBlockMapping {
                 namespaced(&biome.name)
                     && biome.temperature.is_finite()
                     && biome.downfall.is_finite()
-            }),
+                    && biome.colours.valid()
+            }) && payload
+                .dimension_colours
+                .iter()
+                .all(|colours| colours.valid()),
             "Java biome entry",
         )?;
         let mut names: Vec<&str> = java_biomes
@@ -447,6 +510,11 @@ impl JavaBlockMapping {
             .java_biomes
             .get(usize::from(index))
             .map(JavaBiomeEntry::from)
+    }
+
+    /// The colours the dimension type `dimension` sets.
+    pub fn java_dimension_colours(&self, dimension: JavaDimension) -> JavaSkyColours {
+        self.payload.dimension_colours[dimension as usize]
     }
 
     /// Whether the Java biome at registry index `index` belongs to the Java biome tag `tag`

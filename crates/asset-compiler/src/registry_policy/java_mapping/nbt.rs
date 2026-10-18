@@ -1,14 +1,22 @@
 //! Reads the generator's gzip-compressed, big-endian network exports: `networkTags.nbt`, a root
 //! compound of registries each mapping tag ids to integer arrays of registry ids, and
 //! `networkCodec.nbt`, a root compound of registries each holding `{type, value: [{name, id,
-//! element}]}`, of which the biome registry is read.
+//! element}]}`, of which the biome and dimension type registries are read.
 
 use super::Result;
+use assets::facts::java_mapping::JavaSkyColours;
 use flate2::read::GzDecoder;
 use std::io::Read;
 
 pub(super) const BLOCK_REGISTRY: &str = "minecraft:block";
 pub(super) const BIOME_REGISTRY: &str = "minecraft:worldgen/biome";
+pub(super) const DIMENSION_TYPE_REGISTRY: &str = "minecraft:dimension_type";
+/// The environment attributes kept in [`JavaSkyColours`], in field order.
+const COLOUR_ATTRIBUTES: [&str; 3] = [
+    "minecraft:visual/sky_color",
+    "minecraft:visual/fog_color",
+    "minecraft:visual/water_fog_color",
+];
 const MAX_INFLATED_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_DEPTH: usize = 32;
 
@@ -36,6 +44,15 @@ pub(super) struct CodecBiome {
     pub has_precipitation: bool,
     /// `temperature_modifier` is `frozen` (absent or `none` otherwise).
     pub frozen: bool,
+    /// The colour attributes the biome sets.
+    pub colours: JavaSkyColours,
+}
+
+/// One `minecraft:dimension_type` entry of the network codec: its id and colour attributes.
+#[derive(Debug, PartialEq)]
+pub(super) struct CodecDimension {
+    pub name: String,
+    pub colours: JavaSkyColours,
 }
 
 /// Every tag of `registry` in a network tag export with its member registry ids, in file order.
@@ -45,7 +62,16 @@ pub(super) fn tags(compressed: &[u8], registry: &str) -> Result<Vec<(String, Vec
 
 /// The biome registry of a network codec export, in file order.
 pub(super) fn biomes(compressed: &[u8]) -> Result<Vec<CodecBiome>> {
-    registry_entry(compressed, BIOME_REGISTRY, |reader| reader.biome_registry())
+    registry_entry(compressed, BIOME_REGISTRY, |reader| {
+        reader.registry(BIOME_REGISTRY, Reader::biome_entry)
+    })
+}
+
+/// The dimension type registry of a network codec export, in file order.
+pub(super) fn dimensions(compressed: &[u8]) -> Result<Vec<CodecDimension>> {
+    registry_entry(compressed, DIMENSION_TYPE_REGISTRY, |reader| {
+        reader.registry(DIMENSION_TYPE_REGISTRY, Reader::dimension_entry)
+    })
 }
 
 /// Inflates an export and reads the compound value of `registry` in its root compound with
@@ -151,8 +177,13 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// The biome registry compound: `type` names the registry and `value` lists its entries.
-    fn biome_registry(&mut self) -> Result<Vec<CodecBiome>> {
+    /// A codec registry compound: `type` names the registry and `value` lists its entries,
+    /// each read by `entry`.
+    fn registry<T>(
+        &mut self,
+        registry: &str,
+        entry: impl Fn(&mut Self) -> Result<T>,
+    ) -> Result<Vec<T>> {
         let mut kind_name = None;
         let mut entries = None;
         loop {
@@ -166,29 +197,94 @@ impl<'a> Reader<'a> {
                     let element = self.u8()?;
                     let count = self.length()?;
                     if element != COMPOUND && count > 0 {
-                        return Err("biome registry value is not a list of compounds".into());
+                        return Err(format!("{registry} value is not a list of compounds").into());
                     }
                     entries = Some(
                         (0..count)
-                            .map(|_| self.biome_entry())
+                            .map(|_| entry(self))
                             .collect::<Result<Vec<_>>>()?,
                     );
                 }
-                (_, field) => return Err(format!("unexpected biome registry field {field}").into()),
+                (_, field) => return Err(format!("unexpected {registry} field {field}").into()),
             }
         }
-        if kind_name.as_deref() != Some(BIOME_REGISTRY) {
-            return Err(format!("biome registry type is not {BIOME_REGISTRY}").into());
+        if kind_name.as_deref() != Some(registry) {
+            return Err(format!("registry type is not {registry}").into());
         }
-        entries.ok_or_else(|| "biome registry has no value list".into())
+        entries.ok_or_else(|| format!("{registry} has no value list").into())
     }
 
-    /// One registry entry `{name, id, element}` with the climate fields of its element; the
-    /// element's `effects` and `attributes` are skipped and any other field is rejected.
+    /// An `attributes` compound's [`COLOUR_ATTRIBUTES`] (`"#rrggbb"` strings); every other
+    /// attribute is skipped.
+    fn colour_attributes(&mut self) -> Result<JavaSkyColours> {
+        let mut colours = [None; 3];
+        loop {
+            let kind = self.u8()?;
+            if kind == END {
+                break;
+            }
+            let name = self.string()?;
+            let Some(slot) = COLOUR_ATTRIBUTES.iter().position(|&known| known == name) else {
+                self.skip(kind, 2)?;
+                continue;
+            };
+            if kind != STRING {
+                return Err(format!("attribute {name} is not a colour string").into());
+            }
+            let text = self.string()?;
+            let colour = text
+                .strip_prefix('#')
+                .filter(|hex| hex.len() == 6)
+                .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+                .ok_or_else(|| format!("attribute {name} is {text}, not #rrggbb"))?;
+            colours[slot] = Some(colour);
+        }
+        let [sky, fog, water_fog] = colours;
+        Ok(JavaSkyColours {
+            sky,
+            fog,
+            water_fog,
+        })
+    }
+
+    /// One dimension type entry `{name, id, element}`: its name and the colour attributes of
+    /// its element, every other field skipped.
+    fn dimension_entry(&mut self) -> Result<CodecDimension> {
+        let (mut name, mut colours) = (None, JavaSkyColours::default());
+        loop {
+            let kind = self.u8()?;
+            if kind == END {
+                break;
+            }
+            match (kind, self.string()?.as_str()) {
+                (STRING, "name") => name = Some(self.string()?),
+                (COMPOUND, "element") => loop {
+                    let kind = self.u8()?;
+                    if kind == END {
+                        break;
+                    }
+                    match (kind, self.string()?.as_str()) {
+                        (COMPOUND, "attributes") => colours = self.colour_attributes()?,
+                        _ => self.skip(kind, 2)?,
+                    }
+                },
+                (kind, _) => self.skip(kind, 1)?,
+            }
+        }
+        Ok(CodecDimension {
+            name: name.ok_or("dimension type entry without a name")?,
+            colours,
+        })
+    }
+
+    /// One registry entry `{name, id, element}` with the climate fields and colour attributes
+    /// of its element; the element's `effects` and other attributes are skipped and any other
+    /// field is rejected.
     fn biome_entry(&mut self) -> Result<CodecBiome> {
         let (mut name, mut id) = (None, None);
         let (mut temperature, mut downfall, mut precipitation) = (None, None, None);
         let mut frozen = false;
+        let mut colours = JavaSkyColours::default();
         loop {
             let kind = self.u8()?;
             if kind == END {
@@ -228,7 +324,8 @@ impl<'a> Reader<'a> {
                                 }
                             };
                         }
-                        (COMPOUND, "effects" | "attributes") => self.skip(COMPOUND, 1)?,
+                        (COMPOUND, "attributes") => colours = self.colour_attributes()?,
+                        (COMPOUND, "effects") => self.skip(COMPOUND, 1)?,
                         (_, field) => {
                             return Err(format!("unexpected biome element field {field}").into());
                         }
@@ -245,6 +342,7 @@ impl<'a> Reader<'a> {
             downfall: downfall.ok_or_else(|| missing("downfall"))?,
             has_precipitation: precipitation.ok_or_else(|| missing("has_precipitation"))?,
             frozen,
+            colours,
             name,
         })
     }

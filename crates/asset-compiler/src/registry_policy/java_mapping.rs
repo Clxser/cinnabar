@@ -11,8 +11,8 @@ mod source;
 
 use super::Result;
 use assets::facts::java_mapping::{
-    self, JavaBiome, JavaBiomeRecord, JavaBiomeTag, JavaBlockMapping, JavaBlockTag, JavaIdentity,
-    JavaMappingPayload,
+    self, JavaBiome, JavaBiomeRecord, JavaBiomeTag, JavaBlockMapping, JavaBlockTag, JavaDimension,
+    JavaIdentity, JavaMappingPayload, JavaSkyColours,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -185,6 +185,7 @@ pub fn compile(
     let geyser_biomes: BTreeMap<String, GeyserBiome> = serde_json::from_slice(&files.biomes)?;
     let java_biomes = java_biomes(files, &geyser_biomes)?;
     let biome_tags = biome_tags(files, java_biomes.len())?;
+    let dimension_colours = dimension_colours(files)?;
     let (biomes, biome_count) = biomes(&geyser_biomes, &java_biomes, biome_registry)?;
     let entities =
         entities::entity_pairs(&files.vanilla_entities, &files.bedrock_entity_definitions)?;
@@ -223,6 +224,7 @@ pub fn compile(
         tags,
         java_biomes,
         biome_tags,
+        dimension_colours,
         biomes,
         entities,
         bedrock_entities,
@@ -464,8 +466,29 @@ fn java_biomes(
             downfall: biome.downfall,
             has_precipitation: biome.has_precipitation,
             frozen: biome.frozen,
+            colours: biome.colours,
         })
         .collect())
+}
+
+/// The colours of every [`JavaDimension`] type in the network codec, in
+/// [`JavaDimension::ALL`] order.
+fn dimension_colours(files: &SourceFiles) -> Result<[JavaSkyColours; 3]> {
+    let codec = nbt::dimensions(&files.codec)?;
+    let mut colours = [JavaSkyColours::default(); 3];
+    for (slot, dimension) in colours.iter_mut().zip(JavaDimension::ALL) {
+        *slot = codec
+            .iter()
+            .find(|entry| entry.name == dimension.identifier())
+            .ok_or_else(|| {
+                format!(
+                    "networkCodec.nbt has no dimension type {}",
+                    dimension.identifier()
+                )
+            })?
+            .colours;
+    }
+    Ok(colours)
 }
 
 /// Java biome tags from the network tag export, members as Java biome registry indices
