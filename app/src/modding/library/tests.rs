@@ -28,6 +28,85 @@ fn requested_component(path: &Path, request: &mod_host::ModGrants) {
     fs::write(path, bytes).unwrap();
 }
 
+/// Writes requested permissions and a version into a binary component's declarations.
+fn versioned_component(path: &Path, request: &mod_host::ModGrants, version: &str) {
+    requested_component(path, request);
+    let mut bytes = fs::read(path).unwrap();
+    let section = [&[7u8][..], b"version", version.as_bytes()].concat();
+    bytes.extend([0, u8::try_from(section.len()).unwrap()]);
+    bytes.extend(section);
+    fs::write(path, bytes).unwrap();
+}
+
+#[test]
+fn source_revisions_refresh_cached_declarations() {
+    for external in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let mods = directory.path().join("mods");
+        let registration = directory.path().join("config");
+        fs::create_dir_all(&mods).unwrap();
+        let path = if external {
+            directory.path().join("zoom.wasm")
+        } else {
+            mods.join("zoom.wasm")
+        };
+        let mut requested = mod_host::ModGrants {
+            camera: true,
+            ..Default::default()
+        };
+        versioned_component(&path, &requested, "1.0");
+        select(&registration, &path, true, "enable".into()).unwrap();
+        let mut cache = BTreeMap::new();
+        for version in ["1.0", "2.0-rebuilt", "3.0-replaced"] {
+            if version != "1.0" {
+                requested.settings = true;
+                if version == "3.0-replaced" {
+                    let replacement = directory.path().join("replacement.wasm");
+                    versioned_component(&replacement, &requested, version);
+                    fs::remove_file(&path).unwrap();
+                    fs::rename(replacement, &path).unwrap();
+                } else {
+                    versioned_component(&path, &requested, version);
+                }
+            }
+            let library = scan_cached(&mods, &registration, String::new(), &mut cache);
+            let [item] = library.installed.as_slice() else {
+                panic!("one registered component");
+            };
+            assert_eq!(
+                item.metadata.version.as_deref(),
+                Some(version),
+                "external: {external}"
+            );
+            assert_eq!(library.active[0].id, item.id);
+            for (permission, capability) in item
+                .permissions
+                .iter()
+                .zip(mod_host::ModGrants::CAPABILITIES)
+            {
+                assert_eq!(permission.requested, Some((capability.enabled)(&requested)));
+                assert!(
+                    !permission.enabled,
+                    "refreshing declarations cannot grant permission"
+                );
+            }
+            let unchanged = scan_cached(&mods, &registration, String::new(), &mut cache);
+            assert_eq!(unchanged, library);
+            assert_eq!(cache.len(), 1);
+        }
+        fs::remove_file(&path).unwrap();
+        let missing = scan_cached(&mods, &registration, String::new(), &mut cache);
+        assert_eq!(missing.installed[0].metadata, Default::default());
+        versioned_component(&path, &requested, "4.0");
+        let restored = scan_cached(&mods, &registration, String::new(), &mut cache);
+        assert_eq!(
+            restored.installed[0].metadata.version.as_deref(),
+            Some("4.0")
+        );
+        assert_eq!(cache.len(), 1);
+    }
+}
+
 #[test]
 fn batch_permission_actions_grant_exact_requests_and_revoke_all() {
     let directory = tempfile::tempdir().unwrap();

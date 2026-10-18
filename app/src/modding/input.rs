@@ -146,6 +146,11 @@ pub(super) fn prepare_mod_input(
     }
     let pointer_pressed =
         physical.pointer_edges(mouse_events.as_deref(), mouse.as_deref(), entity, focused);
+    if !focused {
+        physical.left_held = false;
+        physical.held_keys.clear();
+        physical.held_seeded = false;
+    }
     let primary_pressed = pointer_pressed.iter().any(|key| key == "MouseLeft");
     panel_keys.extend(
         pointer_pressed
@@ -332,10 +337,8 @@ pub(super) fn prepare_mod_input(
             crate::camera::mouse_input_active(window, &cursor, focus.as_deref(), driven.is_some()),
         );
         finish_capture(
-            &mut physical,
             open,
             was_open,
-            focused,
             restore,
             &mut keys,
             mouse.as_deref_mut(),
@@ -544,10 +547,8 @@ pub(super) fn prepare_mod_input(
         events,
     };
     finish_capture(
-        &mut physical,
         open,
         was_open,
-        focused,
         restore,
         &mut keys,
         mouse.as_deref_mut(),
@@ -577,26 +578,15 @@ pub(super) fn prepare_mod_input(
 }
 
 /// Applies shared pointer capture and input consumption for every native personal panel.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Applies one native panel ownership transition."
-)]
 fn finish_capture(
-    physical: &mut PhysicalControls,
     open: bool,
     was_open: bool,
-    focused: bool,
     restore: bool,
     keys: &mut ButtonInput<KeyCode>,
     mut mouse: Option<&mut ButtonInput<MouseButton>>,
     mut motion: Option<&mut AccumulatedMouseMotion>,
     cursor: &mut Mut<CursorOptions>,
 ) {
-    if !focused {
-        physical.left_held = false;
-        physical.held_keys.clear();
-        physical.held_seeded = false;
-    }
     if (open || was_open)
         && let Some(mouse) = mouse.as_mut()
     {

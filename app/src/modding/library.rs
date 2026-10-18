@@ -463,27 +463,8 @@ fn installed(mods: &Path) -> Vec<(InstalledMod, PathBuf)> {
                 .ok()
                 .filter(fs::Metadata::is_file)?;
             (!file.starts_with('.') && is_component(&path)).then(|| {
-                let mut digest = Sha256::new();
-                digest.update(file.as_bytes());
-                digest.update(metadata.len().to_le_bytes());
-                for timestamp in [metadata.created(), metadata.modified()]
-                    .into_iter()
-                    .flatten()
-                {
-                    if let Ok(elapsed) = timestamp.duration_since(std::time::UNIX_EPOCH) {
-                        digest.update(elapsed.as_nanos().to_le_bytes());
-                    }
-                }
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::MetadataExt;
-                    digest.update(metadata.dev().to_le_bytes());
-                    digest.update(metadata.ino().to_le_bytes());
-                }
-                let digest = digest.finalize();
-                let id = u64::from_le_bytes(digest[..8].try_into().expect("eight digest bytes"));
                 let item = InstalledMod {
-                    id,
+                    id: file_identity(&path, &metadata),
                     file,
                     bytes: metadata.len(),
                     permissions: Vec::new(),
@@ -497,7 +478,30 @@ fn installed(mods: &Path) -> Vec<(InstalledMod, PathBuf)> {
     found
 }
 
-/// Retains enabled registrations without directory entries under their own path identity.
+/// Identifies a component's path and file revision without rereading its contents.
+fn file_identity(path: &Path, metadata: &fs::Metadata) -> u64 {
+    let mut digest = Sha256::new();
+    digest.update(path.as_os_str().as_encoded_bytes());
+    digest.update(metadata.len().to_le_bytes());
+    for timestamp in [metadata.created(), metadata.modified()]
+        .into_iter()
+        .flatten()
+    {
+        if let Ok(elapsed) = timestamp.duration_since(std::time::UNIX_EPOCH) {
+            digest.update(elapsed.as_nanos().to_le_bytes());
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        digest.update(metadata.dev().to_le_bytes());
+        digest.update(metadata.ino().to_le_bytes());
+    }
+    let digest = digest.finalize();
+    u64::from_le_bytes(digest[..8].try_into().expect("eight digest bytes"))
+}
+
+/// Includes enabled external sources with file revisions, and missing sources by path alone.
 fn include_active(entries: &mut Vec<(InstalledMod, PathBuf)>, current: &[selection::Registered]) {
     for current in current.iter().filter(|current| current.entry.enabled) {
         let path = &current.entry.component;
@@ -507,15 +511,21 @@ fn include_active(entries: &mut Vec<(InstalledMod, PathBuf)>, current: &[selecti
         {
             continue;
         }
+        let metadata = fs::symlink_metadata(path)
+            .ok()
+            .filter(fs::Metadata::is_file);
         entries.push((
             InstalledMod {
-                id: selection::component_id(path),
+                id: metadata.as_ref().map_or_else(
+                    || selection::component_id(path),
+                    |metadata| file_identity(path, metadata),
+                ),
                 file: path
                     .file_name()
                     .unwrap_or_default()
                     .to_string_lossy()
                     .into_owned(),
-                bytes: 0,
+                bytes: metadata.as_ref().map_or(0, fs::Metadata::len),
                 permissions: Vec::new(),
                 metadata: Default::default(),
             },

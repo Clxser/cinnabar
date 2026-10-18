@@ -1,16 +1,16 @@
 use super::*;
 use crate::modding::packets::PacketMods;
 
-#[test]
-fn packet_mouse_subscriptions_route_edges_and_consume_only_reserved_buttons() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("pointer.wat");
+/// Starts a packet-only input app with a closed menu and the requested subscriptions.
+fn packet_input_app(
+    directory: &std::path::Path,
+    subscriptions: &[&str],
+) -> (App, Entity, std::sync::Arc<dyn protocol::PacketRelay>) {
+    let path = directory.join("input.wat");
     let source = include_str!("../../../../crates/mod-host/src/packet_mod/tests/guest.wat")
         .replace("$IMPORTS", "")
         .replace("$START", "");
-    let output = serde_json::json!({"open":false,
-        "keys":POINTER_BUTTONS.map(|(_, name)| name)})
-    .to_string();
+    let output = serde_json::json!({"open":false, "keys":subscriptions}).to_string();
     let encoded: String = output.bytes().map(|byte| format!("\\{byte:02x}")).collect();
     let mut source = source.trim_end().strip_suffix(')').unwrap().to_owned();
     source.push_str(&format!(
@@ -49,7 +49,8 @@ fn packet_mouse_subscriptions_route_edges_and_consume_only_reserved_buttons() {
     );
     assert!(packets.native_menu_identity().is_some());
     let mut app = App::new();
-    app.add_message::<MouseButtonInput>()
+    app.add_message::<KeyboardInput>()
+        .add_message::<MouseButtonInput>()
         .init_resource::<crate::modding::ReservedControls>()
         .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<ButtonInput<MouseButton>>()
@@ -80,8 +81,52 @@ fn packet_mouse_subscriptions_route_edges_and_consume_only_reserved_buttons() {
             .menu
             .retained
             .as_ref()
-            .is_some_and(|output| output.output.keys.len() == POINTER_BUTTONS.len())
+            .is_some_and(|output| output.output.keys.len() == subscriptions.len())
     });
+    (app, window, relay)
+}
+
+#[test]
+fn packet_only_refocus_discards_stale_held_keys() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut app, window, relay) = packet_input_app(directory.path(), &[]);
+    for key in [KeyCode::ShiftLeft, KeyCode::ShiftRight] {
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(key);
+        app.world_mut().write_message(KeyboardInput {
+            key_code: key,
+            logical_key: bevy::input::keyboard::Key::Shift,
+            state: ButtonState::Pressed,
+            text: None,
+            repeat: false,
+            window,
+        });
+        app.update();
+        assert!(app.world().resource::<PacketMods>().menu.pending.shift_held);
+        assert!(!app.world().resource::<PacketMods>().menu_owns_panel());
+
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = false;
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.update();
+        assert!(!app.world().resource::<PacketMods>().menu.pending.shift_held);
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = true;
+        app.update();
+        assert!(
+            !app.world().resource::<PacketMods>().menu.pending.shift_held,
+            "refocus must resample physical input after a release outside the window"
+        );
+    }
+    relay.stop();
+}
+
+#[test]
+fn packet_mouse_subscriptions_route_edges_and_consume_only_reserved_buttons() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut app, window, relay) =
+        packet_input_app(directory.path(), &POINTER_BUTTONS.map(|(_, name)| name));
     for fast_tap in [false, true] {
         for (button, name) in POINTER_BUTTONS {
             app.world_mut()
