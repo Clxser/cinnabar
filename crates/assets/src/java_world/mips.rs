@@ -119,7 +119,7 @@ fn fill_transparent(pixels: &mut [u8], side: u32, dark: bool) {
                 }
             }
         }
-        for pixel in pixels.chunks_exact_mut(4) {
+        for pixel in pixels.as_chunks_mut::<4>().0 {
             if pixel[3] == 0 {
                 for i in 0..3 {
                     pixel[i] = (u16::from(darkest[i]) * 3 / 4) as u8;
@@ -212,7 +212,7 @@ fn scale_coverage(pixels: &mut [u8], side: u32, desired: f32) {
         }
         scale = (low + high) * 0.5;
     }
-    for pixel in pixels.chunks_exact_mut(4) {
+    for pixel in pixels.as_chunks_mut::<4>().0 {
         pixel[3] = ((f32::from(pixel[3]) / 255.0 * best + 0.025).clamp(0.0, 1.0) * 255.0) as u8;
     }
 }
@@ -270,7 +270,9 @@ mod tests {
             assert!(
                 level
                     .rgba8
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .all(|pixel| pixel[1] == 0 && pixel[2] == 0)
             );
         }
