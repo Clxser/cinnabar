@@ -50,16 +50,13 @@ impl WorldStream {
         self.java_world_lighting
     }
 
-    /// Requeues resident meshes with new revisions; old records remain decodable until replaced.
+    /// Rebuilds affected geometry and rejects work captured for an earlier style.
     pub fn set_java_world_lighting(&mut self, enabled: bool, now: Instant) {
         if self.java_world_lighting == enabled {
             return;
         }
         self.java_world_lighting = enabled;
-        self.retain_mesh_changes(|_| false);
-        for key in self.resident.iter().copied().collect::<Vec<_>>() {
-            self.mark_dirty_exact(key, now);
-        }
+        self.invalidate_mesh_rendering(now);
     }
 
     /// The render choices captured by new mesh jobs and resource-pack snapshots.
@@ -67,7 +64,7 @@ impl WorldStream {
         self.mesh_render_settings
     }
 
-    /// Identifies the quality generation, including changes that return to an earlier value.
+    /// Identifies mesh choices, including changes that return to an earlier value.
     pub fn mesh_render_revision(&self) -> u64 {
         self.mesh_render_revision
     }
@@ -83,11 +80,16 @@ impl WorldStream {
             return false;
         }
         self.mesh_render_settings = settings;
+        self.invalidate_mesh_rendering(now);
+        true
+    }
+
+    /// Withdraws obsolete work and advances the generation used by resource-pack rebuilds.
+    fn invalidate_mesh_rendering(&mut self, now: Instant) {
         self.mesh_render_revision += 1;
         self.invalidate_meshes(now);
         self.staged_mesh_completions.clear();
         self.staged_mesh_bytes = 0;
-        true
     }
 
     /// Captures resident render neighbourhoods only when their lighting is ready.
