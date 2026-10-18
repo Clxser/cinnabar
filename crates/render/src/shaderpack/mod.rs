@@ -48,6 +48,8 @@ mod loader;
 #[cfg(feature = "shaderpacks")]
 mod passes;
 #[cfg(feature = "shaderpacks")]
+mod pipeline_cache;
+#[cfg(feature = "shaderpacks")]
 mod pipelines;
 #[cfg(feature = "shaderpacks")]
 mod plan;

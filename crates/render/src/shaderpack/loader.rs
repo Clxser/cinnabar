@@ -10,6 +10,7 @@ use super::draws::{DrawPipelineInputs, GeometryDraw, draw_pipeline, select_draws
 use super::effects::EffectSettings;
 use super::effects::resources::VanillaTextures;
 use super::host_pipelines::{HostPipelines, host_pipelines};
+use super::pipeline_cache::PipelineCacheFile;
 use super::pipelines::{
     FormatSupport, Kind, bind_group_layouts, blend_state, color_target, format_kind,
     layout_entries, quad_attributes, quad_layout, shader_modules, storage_format, texture_format,
@@ -31,7 +32,7 @@ use shaderpack::{
     ProgramTranslation, SamplerBinding, SamplerClass, ScaleRule, ShaderPack, StageKind,
     TranslateConfig,
 };
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use wgpu::{TextureFormat, TextureUsages};
 
@@ -288,56 +289,6 @@ pub(crate) fn translate_config(pack: &ShaderPack, dimension: &str) -> TranslateC
         folder: pack.dimension_folder(dimension),
         environment,
         ..TranslateConfig::default()
-    }
-}
-
-/// A backend pipeline cache persisted in `cache_dir`.
-struct PipelineCacheFile {
-    cache: wgpu::PipelineCache,
-    path: PathBuf,
-}
-
-impl PipelineCacheFile {
-    fn open(gpu: &GpuContext, cache_dir: Option<&Path>, key: &str) -> Option<Self> {
-        let dir = cache_dir?;
-        if !gpu
-            .device
-            .features()
-            .contains(wgpu::Features::PIPELINE_CACHE)
-        {
-            return None;
-        }
-        let adapter = wgpu::util::pipeline_cache_key(&gpu.adapter.get_info())?;
-        let path = dir.join(format!("{adapter}-{key}.bin"));
-        let data = std::fs::read(&path).ok();
-        // SAFETY: the data was written by `get_data` of a cache for the same adapter key;
-        // `fallback` replaces data the driver rejects.
-        let cache = unsafe {
-            gpu.device
-                .create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
-                    label: Some("shader pack pipeline cache"),
-                    data: data.as_deref(),
-                    fallback: true,
-                })
-        };
-        Some(Self { cache, path })
-    }
-
-    fn store(&self) {
-        let Some(data) = self.cache.get_data() else {
-            return;
-        };
-        let write = || -> std::io::Result<()> {
-            if let Some(parent) = self.path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            let temp = self.path.with_extension("tmp");
-            std::fs::write(&temp, &data)?;
-            std::fs::rename(&temp, &self.path)
-        };
-        if let Err(error) = write() {
-            bevy::log::debug!(target: "cinnabar::shaderpack", %error, "pipeline cache not saved");
-        }
     }
 }
 
