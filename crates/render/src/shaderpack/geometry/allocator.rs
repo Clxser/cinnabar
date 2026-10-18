@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-/// Free ranges of a growable face arena, coalesced on release.
+/// Free ranges of a fixed-size face arena, coalesced on release.
 #[derive(Debug, Default)]
 pub(crate) struct FaceAllocator {
     /// Free ranges by start, never adjacent to each other.
@@ -12,6 +12,16 @@ pub(crate) struct FaceAllocator {
 }
 
 impl FaceAllocator {
+    /// An arena of `capacity` faces, all free.
+    pub(crate) fn new(capacity: u32) -> Self {
+        let mut faces = Self {
+            free: BTreeMap::new(),
+            capacity,
+        };
+        faces.release(0..capacity);
+        faces
+    }
+
     pub(crate) fn capacity(&self) -> u32 {
         self.capacity
     }
@@ -68,42 +78,6 @@ impl FaceAllocator {
         }
         self.free.insert(start, end);
     }
-
-    /// Free faces ending at capacity, which growth would extend.
-    pub(crate) fn tail_free(&self) -> u32 {
-        self.free
-            .iter()
-            .next_back()
-            .filter(|(_, end)| **end == self.capacity)
-            .map_or(0, |(start, end)| end - start)
-    }
-
-    /// Extends capacity to `capacity` faces; the new tail becomes free.
-    pub(crate) fn grow(&mut self, capacity: u32) {
-        if capacity > self.capacity {
-            let tail = self.capacity..capacity;
-            self.capacity = capacity;
-            self.release(tail);
-        }
-    }
-
-    /// Undoes growth back to `capacity` faces; everything past it must be free.
-    pub(crate) fn truncate(&mut self, capacity: u32) {
-        if capacity >= self.capacity {
-            return;
-        }
-        debug_assert!(
-            self.capacity - self.tail_free() <= capacity,
-            "truncating used faces"
-        );
-        if let Some((&start, _)) = self.free.iter().next_back() {
-            self.free.remove(&start);
-            if start < capacity {
-                self.free.insert(start, capacity);
-            }
-        }
-        self.capacity = capacity;
-    }
 }
 
 #[cfg(test)]
@@ -112,9 +86,8 @@ mod tests {
 
     #[test]
     fn allocations_never_overlap_and_released_neighbours_coalesce() {
-        let mut faces = FaceAllocator::default();
-        assert_eq!(faces.allocate(1), None);
-        faces.grow(10);
+        let mut faces = FaceAllocator::new(10);
+        assert_eq!(faces.allocate(0), Some(0..0));
         let a = faces.allocate(4).unwrap();
         let b = faces.allocate(3).unwrap();
         let c = faces.allocate(3).unwrap();
@@ -124,29 +97,19 @@ mod tests {
         faces.release(c);
         assert_eq!(faces.allocate(5), None, "free space is split around b");
         faces.release(b);
-        assert_eq!(faces.allocate(10), Some(0..10));
+        assert_eq!(
+            faces.allocate(10),
+            Some(0..10),
+            "released ranges coalesce whole"
+        );
     }
 
     #[test]
     fn exact_ranges_are_taken_only_when_wholly_free() {
-        let mut faces = FaceAllocator::default();
-        faces.grow(10);
+        let mut faces = FaceAllocator::new(10);
         assert!(faces.allocate_at(3..6));
         assert!(!faces.allocate_at(5..8), "overlaps the taken range");
         assert_eq!(faces.allocate(3), Some(0..3));
         assert_eq!(faces.allocate(4), Some(6..10));
-    }
-
-    #[test]
-    fn growth_frees_the_new_tail_and_joins_a_free_end() {
-        let mut faces = FaceAllocator::default();
-        faces.grow(4);
-        let head = faces.allocate(2).unwrap();
-        faces.grow(8);
-        assert_eq!(faces.tail_free(), 6);
-        assert_eq!(faces.allocate(6), Some(2..8));
-        assert_eq!(faces.tail_free(), 0);
-        faces.release(head);
-        assert_eq!(faces.allocate(2), Some(0..2));
     }
 }

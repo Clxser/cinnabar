@@ -8,6 +8,7 @@
 //! the whole set.
 
 use super::draws::{DrawKind, GeometryDraw};
+use super::geometry::PulledArena;
 use super::loader::{PackGpu, ProgramPipeline, SCREEN_FORMAT};
 use super::plan::{MAX_COLOR_BUFFERS, PassStep};
 use super::resources::{AtlasLayer, ImageSource, TextureSource};
@@ -438,6 +439,27 @@ pub(crate) fn pass_bind_groups<'a>(
     read_alt: u32,
     atlas: Option<AtlasViews<'a>>,
 ) -> [Option<wgpu::BindGroup>; 4] {
+    let entries = pass_bind_entries(pack, targets, uniforms, program, read_alt, atlas);
+    let program = &pack.programs[program];
+    std::array::from_fn(|group| {
+        let layout = program.layouts[group].as_ref()?;
+        Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&program.name),
+            layout,
+            entries: &entries[group],
+        }))
+    })
+}
+
+/// The entries of `pass_bind_groups`, per group.
+fn pass_bind_entries<'a>(
+    pack: &'a PackGpu,
+    targets: &'a ViewTargets,
+    uniforms: Option<&'a wgpu::Buffer>,
+    program: usize,
+    read_alt: u32,
+    atlas: Option<AtlasViews<'a>>,
+) -> [Vec<wgpu::BindGroupEntry<'a>>; 4] {
     let program = &pack.programs[program];
     let reflection = &program.reflection;
     let mut entries: [Vec<wgpu::BindGroupEntry<'a>>; 4] = Default::default();
@@ -512,14 +534,7 @@ pub(crate) fn pass_bind_groups<'a>(
             wgpu::BindingResource::TextureView(view),
         );
     }
-    std::array::from_fn(|group| {
-        let layout = program.layouts[group].as_ref()?;
-        Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&program.name),
-            layout,
-            entries: &entries[group],
-        }))
-    })
+    entries
 }
 
 /// One geometry draw's uniform buffer (its own, since draws sharing a program differ in
@@ -706,23 +721,54 @@ impl ViewBindings {
 
     /// Rebuilds every draw's bind groups over the textures `views` gives its kind (the
     /// placeholder while `None`): the block atlas for terrain, an effect's own texture.
+    /// Pulled terrain draws add `arena`'s buffers to group 3, which stays unbound while the
+    /// arenas do not exist yet.
     pub(crate) fn bind_draws<'a>(
         &mut self,
         device: &Device,
         pack: &PackGpu,
         targets: &ViewTargets,
         views: impl Fn(DrawKind) -> Option<AtlasViews<'a>>,
+        arena: Option<&PulledArena>,
     ) {
         for (draw, binding) in pack.draws.iter().zip(&mut self.draws) {
-            binding.groups = pass_bind_groups(
-                device,
+            let uniforms = binding.uniforms.as_ref();
+            let read_alt = draw_read_alt(pack, draw);
+            let Some(pulled) = &draw.pulled else {
+                binding.groups = pass_bind_groups(
+                    device,
+                    pack,
+                    targets,
+                    uniforms,
+                    draw.program,
+                    read_alt,
+                    views(draw.kind),
+                );
+                continue;
+            };
+            let mut entries = pass_bind_entries(
                 pack,
                 targets,
-                binding.uniforms.as_ref(),
+                uniforms,
                 draw.program,
-                draw_read_alt(pack, draw),
+                read_alt,
                 views(draw.kind),
             );
+            let arena_entries = arena.and_then(|arena| pulled.entries(arena));
+            let program = &pack.programs[draw.program];
+            binding.groups = std::array::from_fn(|group| {
+                let layout = if group == 3 {
+                    entries[3].extend(arena_entries.clone()?);
+                    &pulled.layout
+                } else {
+                    program.layouts[group].as_ref()?
+                };
+                Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(&program.name),
+                    layout,
+                    entries: &entries[group],
+                }))
+            });
         }
     }
 }

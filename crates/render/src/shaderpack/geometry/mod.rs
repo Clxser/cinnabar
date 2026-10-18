@@ -13,6 +13,9 @@
 //! A greedy quad becomes one face per covered block, as Java tessellates, because one 2D atlas
 //! cannot repeat a sprite across a merged face.
 //!
+//! `pull` is a prototype of the other choice, measured against expansion: pack vertex stages
+//! wrapped at the naga level to decode the arenas per vertex from 16-byte face refs.
+//!
 //! # Host contract
 //! - Add [`ShaderpackGeometryPlugin`] (and [`crate::shaderpack::atlas::ShaderpackAtlasPlugin`]),
 //!   then set [`ShaderpackGeometrySettings::enabled`] in the render world while a pack draws;
@@ -54,6 +57,8 @@ mod draw;
 mod gpu;
 pub(crate) mod jobs;
 mod pipelines;
+pub(crate) mod pull;
+mod pulled_arena;
 mod residency;
 mod shadow_cull;
 mod vertex;
@@ -69,6 +74,7 @@ pub use gpu::{
     ShaderpackGeometrySettings, device_geometry_budget,
 };
 pub use jobs::GeometryCategory;
+pub(crate) use pulled_arena::PulledArena;
 pub(crate) use shadow_cull::{ShadowCullSettings, ShadowCulling, ShadowFrustum};
 #[cfg(test)]
 pub(crate) use vertex::{BLOCK_ID, IRIS_VERTEX_WORDS, LIGHTMAP, NORMAL, POSITION, UV0};

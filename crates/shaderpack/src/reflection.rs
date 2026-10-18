@@ -236,6 +236,13 @@ const SUPPLIED: &[VertexAttribute] = &[
 /// First location used for [`VertexAttribute::Other`] inputs.
 pub const FIRST_OTHER_ATTRIBUTE_LOCATION: u32 = SUPPLIED.len() as u32;
 
+/// Whether the host's vertex stream stores an attribute as floats or as integers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StoredNumbers {
+    Float,
+    Int,
+}
+
 impl VertexAttribute {
     /// The attribute a translated vertex input name stands for.
     pub fn from_glsl_name(name: &str) -> VertexAttribute {
@@ -249,6 +256,21 @@ impl VertexAttribute {
     /// The fixed shader location of a supplied attribute; `None` for `Other`.
     pub fn location(&self) -> Option<u32> {
         SUPPLIED.iter().position(|a| a == self).map(|i| i as u32)
+    }
+
+    /// How the host's vertex stream stores this attribute, for those a declaration of the
+    /// other kind reads converted rather than as declared, as GL converts integer vertex
+    /// data for float inputs. The lightmap is stored once as exact floats (`in ivec2 vaUV2`
+    /// reads them and rounds); `mc_Entity` and `at_midBlock` as the integers Iris stores
+    /// (`in vec4 mc_Entity` reads them and converts). `None` for every other attribute.
+    pub fn stored_numbers(&self) -> Option<StoredNumbers> {
+        match self {
+            VertexAttribute::Lightmap | VertexAttribute::MultiTexCoord2 => {
+                Some(StoredNumbers::Float)
+            }
+            VertexAttribute::BlockId | VertexAttribute::MidBlock => Some(StoredNumbers::Int),
+            _ => None,
+        }
     }
 }
 

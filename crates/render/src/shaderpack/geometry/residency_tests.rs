@@ -14,108 +14,88 @@ fn entity(index: u32) -> Entity {
 }
 
 #[test]
-fn pages_stop_growing_at_the_page_cap() {
+fn pages_hold_the_page_size_or_the_binding_limit() {
     let residency = Residency::new(u64::MAX / 2, 1 << 30);
-    assert_eq!(u64::from(residency.page_faces), MAX_PAGE_BYTES / FACE_BYTES);
+    assert_eq!(u64::from(residency.page_faces), PAGE_BYTES / FACE_BYTES);
+    let small = Residency::new(100 * FACE_BYTES, 1 << 30);
+    assert_eq!(small.page_faces, 100);
 }
 
 #[test]
-fn revoking_a_failed_growth_restores_the_page_and_parks_the_section() {
-    let mut residency = Residency::new(1 << 30, 1 << 30);
-    let first = residency
-        .place(entity(1), &plan(INITIAL_PAGE_FACES))
-        .unwrap();
-    residency.commit(entity(1), &first, &plan(INITIAL_PAGE_FACES), [0; 3]);
-    let grown = residency.place(entity(2), &plan(10)).unwrap();
-    assert_eq!(grown.grown_from, Some(INITIAL_PAGE_FACES));
-    residency.revoke(entity(2), &grown);
-    assert_eq!(residency.pages[0].faces.capacity(), INITIAL_PAGE_FACES);
+fn revoking_a_page_that_failed_to_allocate_drops_it_and_parks_the_section() {
+    let mut residency = Residency::new(10 * FACE_BYTES, 1 << 30);
+    let first = residency.place(entity(1), &plan(10)).unwrap();
+    residency.commit(entity(1), &first, &plan(10), [0; 3]);
+    let opened = residency.place(entity(2), &plan(5)).unwrap();
+    assert!(opened.new_page);
+    residency.revoke(entity(2), &opened);
+    assert_eq!(residency.pages.len(), 1);
+    assert_eq!(residency.capacity_faces(), 10);
     assert_eq!(residency.waiting_len(), 1);
     assert!(!residency.sections.contains_key(&entity(2)));
-    // A revoked new page is dropped entirely.
-    let mut fresh = Residency::new(1 << 30, 1 << 30);
-    let opened = fresh.place(entity(3), &plan(5)).unwrap();
-    fresh.revoke(entity(3), &opened);
-    assert!(fresh.pages.is_empty());
-    assert_eq!(fresh.capacity_faces(), 0);
 }
 
 #[test]
-fn pages_grow_by_doubling_then_open_new_pages_within_the_budget() {
-    let page_faces = INITIAL_PAGE_FACES * 4;
-    let mut residency = Residency::new(
-        u64::from(page_faces) * FACE_BYTES,
-        6 * u64::from(INITIAL_PAGE_FACES) * FACE_BYTES,
-    );
-    let first = residency
-        .place(entity(1), &plan(INITIAL_PAGE_FACES))
-        .unwrap();
+fn pages_open_whole_and_the_last_takes_what_the_budget_leaves() {
+    let mut residency = Residency::new(100 * FACE_BYTES, 250 * FACE_BYTES);
+    let first = residency.place(entity(1), &plan(60)).unwrap();
     assert_eq!(
         first,
         Placement {
             page: 0,
-            faces: 0..INITIAL_PAGE_FACES,
-            grown_from: Some(0)
+            faces: 0..60,
+            new_page: true
         }
     );
-    residency.commit(entity(1), &first, &plan(INITIAL_PAGE_FACES), [0; 3]);
-    let second = residency
-        .place(entity(2), &plan(INITIAL_PAGE_FACES))
-        .unwrap();
+    assert_eq!(residency.capacity_faces(), 100, "a page opens at full size");
+    residency.commit(entity(1), &first, &plan(60), [0; 3]);
+    let second = residency.place(entity(2), &plan(40)).unwrap();
     assert_eq!(
-        second.grown_from,
-        Some(INITIAL_PAGE_FACES),
-        "the page doubles in place"
+        second,
+        Placement {
+            page: 0,
+            faces: 60..100,
+            new_page: false
+        },
+        "faces fill the open page before another opens"
     );
-    assert_eq!(second.faces, INITIAL_PAGE_FACES..2 * INITIAL_PAGE_FACES);
-    residency.commit(entity(2), &second, &plan(INITIAL_PAGE_FACES), [0; 3]);
-    let third = residency
-        .place(entity(3), &plan(2 * INITIAL_PAGE_FACES))
-        .unwrap();
-    assert_eq!(third.page, 0, "page grows to its binding limit");
-    assert_eq!(residency.pages[0].faces.capacity(), page_faces);
-    residency.commit(entity(3), &third, &plan(2 * INITIAL_PAGE_FACES), [0; 3]);
-    let fourth = residency
-        .place(entity(4), &plan(INITIAL_PAGE_FACES))
-        .unwrap();
-    assert_eq!(fourth.page, 1, "a full page opens another");
-    residency.commit(entity(4), &fourth, &plan(INITIAL_PAGE_FACES), [0; 3]);
+    residency.commit(entity(2), &second, &plan(40), [0; 3]);
+    let third = residency.place(entity(3), &plan(90)).unwrap();
+    assert_eq!((third.page, third.new_page), (1, true));
+    residency.commit(entity(3), &third, &plan(90), [0; 3]);
+    let fourth = residency.place(entity(4), &plan(50)).unwrap();
+    assert_eq!((fourth.page, fourth.new_page), (2, true));
     assert_eq!(
-        residency.place(entity(5), &plan(2 * INITIAL_PAGE_FACES)),
+        residency.pages[2].faces.capacity(),
+        50,
+        "the last page is what the budget leaves"
+    );
+    residency.commit(entity(4), &fourth, &plan(50), [0; 3]);
+    assert_eq!(
+        residency.place(entity(5), &plan(20)),
         None,
         "the budget is spent"
     );
-    assert_eq!(
-        residency.pages[1].faces.capacity(),
-        INITIAL_PAGE_FACES,
-        "a failed placement grows nothing"
-    );
+    assert_eq!(residency.pages.len(), 3);
     residency.remove(entity(3));
-    assert!(
+    assert_eq!(
         residency
-            .place(entity(5), &plan(2 * INITIAL_PAGE_FACES))
-            .is_some(),
+            .place(entity(5), &plan(20))
+            .map(|placed| placed.page),
+        Some(1),
         "removed faces are reused"
     );
 }
 
 #[test]
 fn a_replacement_that_does_not_fit_keeps_the_old_faces() {
-    let mut residency = Residency::new(
-        u64::from(INITIAL_PAGE_FACES) * FACE_BYTES,
-        u64::from(INITIAL_PAGE_FACES) * FACE_BYTES,
-    );
+    let mut residency = Residency::new(100 * FACE_BYTES, 100 * FACE_BYTES);
     let placement = residency.place(entity(1), &plan(10)).unwrap();
     residency.commit(entity(1), &placement, &plan(10), [0; 3]);
-    assert_eq!(
-        residency.place(entity(1), &plan(INITIAL_PAGE_FACES + 1)),
-        None
-    );
+    assert_eq!(residency.place(entity(1), &plan(101)), None);
     assert_eq!(residency.sections[&entity(1)].faces, 0..10);
     assert!(
-        residency
-            .place(entity(2), &plan(INITIAL_PAGE_FACES - 10))
-            .is_some(),
+        residency.place(entity(2), &plan(90)).is_some(),
         "only the old faces stay taken"
     );
 }

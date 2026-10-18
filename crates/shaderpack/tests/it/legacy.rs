@@ -101,7 +101,14 @@ fn version_120_terrain_maps_legacy_inputs_uniforms_and_samplers_to_fixed_binding
         .iter()
         .find(|i| i.name == "mc_Entity")
         .unwrap();
-    assert_eq!(entity.ty, VEC4);
+    // Stored as Iris's shorts, so the stage reads integers and converts them.
+    assert_eq!(
+        entity.ty,
+        ValueType::Vector {
+            size: 4,
+            scalar: ScalarType::Int
+        }
+    );
 
     // Fixed-function matrices and the pack's own uniforms share one std140 block.
     let ubo = r.uniforms.as_ref().expect("loose uniform block");
@@ -454,4 +461,56 @@ fn an_integer_lightmap_declaration_reads_the_float_lightmap_and_converts() {
         glsl.contains("vaUV2 = ivec2(round(iris_float_vaUV2));"),
         "{glsl}"
     );
+}
+
+#[test]
+fn float_block_id_and_mid_block_declarations_read_the_stored_integers_and_convert() {
+    // Iris stores `mc_Entity` as shorts and `at_midBlock` as bytes; float declarations read
+    // integer inputs and convert, as GL converts integer vertex data for float inputs.
+    let vertex = "#version 120\n\
+        attribute vec4 mc_Entity;\n\
+        attribute vec3 at_midBlock;\n\
+        varying float id;\n\
+        varying vec3 mid;\n\
+        void main() { id = mc_Entity.x; mid = at_midBlock; gl_Position = ftransform(); }\n";
+    let fragment = "#version 120\n\
+        varying float id;\n\
+        varying vec3 mid;\n\
+        void main() { gl_FragData[0] = vec4(id, mid); }\n";
+    let pack = inline_pack(&[
+        ("gbuffers_terrain.vsh", vertex),
+        ("gbuffers_terrain.fsh", fragment),
+    ]);
+    let t = pack.translate(&TranslateConfig::default());
+    let terrain = program(&t, "gbuffers_terrain");
+    let r = reflection(terrain);
+    for (attribute, size) in [
+        (VertexAttribute::BlockId, 4),
+        (VertexAttribute::MidBlock, 3),
+    ] {
+        let input = r
+            .vertex_inputs
+            .iter()
+            .find(|i| i.attribute == attribute)
+            .expect("declared inputs are vertex inputs");
+        assert_eq!(
+            input.ty,
+            ValueType::Vector {
+                size,
+                scalar: ScalarType::Int
+            },
+            "{attribute:?}"
+        );
+    }
+    let glsl = &terrain.stages[0]
+        .result
+        .as_ref()
+        .expect("vertex compiles")
+        .glsl;
+    for converted in [
+        "mc_Entity = vec4(iris_int_mc_Entity);",
+        "at_midBlock = vec3(iris_int_at_midBlock);",
+    ] {
+        assert!(glsl.contains(converted), "missing `{converted}` in\n{glsl}");
+    }
 }

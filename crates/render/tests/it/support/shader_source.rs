@@ -401,7 +401,7 @@ pub fn composable_sources() -> Vec<(&'static str, String)> {
 }
 
 /// Resolves dependency packages with the same crate names used by Bevy's shader cache.
-struct FixtureResolver(wesl::resolver::VirtualResolver<'static>);
+pub(crate) struct FixtureResolver(pub(crate) wesl::resolver::VirtualResolver<'static>);
 
 impl wesl::Resolver for FixtureResolver {
     /// Reads a fixture module after removing the importing package's dependency prefix.

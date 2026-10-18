@@ -145,11 +145,10 @@ fn write_vertex(
     vertices[base + IRIS_WORD_LIGHTMAP] = pack2x16float(raw_light);
     vertices[base + IRIS_WORD_NORMAL] = pack4x8snorm(vec4(normal, 0.0));
     vertices[base + IRIS_WORD_TANGENT] = pack4x8snorm(tangent);
-    vertices[base + IRIS_WORD_BLOCK_ID] = bitcast<u32>(f32(block_id));
-    // Iris's render type for non-fluid geometry (`mc_Entity.y`).
-    vertices[base + IRIS_WORD_BLOCK_ID + 1u] = bitcast<u32>(-1.0f);
+    // Signed shorts, as Iris stores `mc_Entity`, with Iris's render type for non-fluid
+    // geometry (-1) in `y`; `at_midBlock` is zero.
+    vertices[base + IRIS_WORD_BLOCK_ID] = (bitcast<u32>(block_id) & 0xffffu) | 0xffff0000u;
     vertices[base + IRIS_WORD_MID_BLOCK] = 0u;
-    vertices[base + IRIS_WORD_MID_BLOCK + 1u] = 0u;
 }
 
 // Rig vertex x of the dispatch's job y (y continues in z past the dispatch limit).

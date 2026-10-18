@@ -100,7 +100,8 @@ pub use self::shaderpack::geometry::{
     ShaderpackBlockIds, ShaderpackGeometry, ShaderpackGeometryPlugin, ShaderpackGeometrySettings,
     UNASSIGNED_BLOCK_ID, VertexLayoutError, vertex_buffer_layouts,
 };
-#[cfg(test)]
+// Shader packs' arena-reading terrain prototype composes the expansion modules at runtime.
+#[cfg(any(test, feature = "shaderpacks"))]
 #[path = "../tests/it/support/shader_source.rs"]
 mod shader_source;
 mod shaderpack;

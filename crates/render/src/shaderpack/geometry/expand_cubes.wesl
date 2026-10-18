@@ -4,7 +4,7 @@ import render::chunk::{cube_quad, cube_light_sample, quad_corner, face_normal, q
 import render::material::{materials, material_uv_flags};
 import render::biome_tint::{uniform_biome_tint_gamma, blended_biome_tint_gamma};
 import render::lighting::{light_ao_factor, material_ambient_occlusion, material_face_shade};
-import render::shaderpack::geometry::expand_common::{FaceCorners, FaceSource, expand_job, expand_job_count, expand_job_index, write_job_faces, EXPAND_WORKGROUP_SIZE};
+import render::shaderpack::geometry::expand_common::{FaceCorners, FaceSource, JobFace, expand_job, expand_job_count, expand_job_index, write_job_faces, EXPAND_WORKGROUP_SIZE};
 
 /// Gamma tint of the block at section-local corner `block`, as the cube renderer evaluates it.
 fn cube_tint(flags: u32, record: u32, block: vec3<f32>, chunk_origin: vec3<i32>) -> vec3<f32> {
@@ -28,6 +28,11 @@ fn expand_cubes(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workg
         return;
     }
     let job = expand_job(index);
+    write_job_faces(job, cube_face(job));
+}
+
+/// The face of the block `job` covers within its packed greedy cube quad.
+fn cube_face(job: vec4<u32>) -> JobFace {
     let cube = cube_quad(job.x, job.y);
     let material = materials[cube.selected_material_id];
     let extent = vec2(cube.width, cube.height);
@@ -74,5 +79,5 @@ fn expand_cubes(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workg
     source.material_id = cube.selected_material_id;
     source.material = material;
     source.two_sided = (material.flags & MATERIAL_TWO_SIDED_FLAG) != 0u;
-    write_job_faces(job, corners, source);
+    return JobFace(corners, source, true);
 }
