@@ -336,6 +336,15 @@ pub(super) fn integer_bool(ty: &str) -> String {
     }
 }
 
+/// Declares built-in vertex input `name` of type `ty` in `io` at its fixed attribute
+/// location and records it in `inputs`; names without a fixed location are skipped.
+pub(super) fn vertex_input(io: &mut String, inputs: &mut Vec<(u32, String)>, name: &str, ty: &str) {
+    if let Some(loc) = VertexAttribute::from_glsl_name(name).location() {
+        io.push_str(&format!("layout(location = {loc}) in {ty} {name};\n"));
+        inputs.push((loc, name.to_string()));
+    }
+}
+
 fn uniforms(
     c: &mut Collected,
     d: &Decl,

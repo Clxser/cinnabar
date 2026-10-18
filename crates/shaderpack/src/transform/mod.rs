@@ -18,7 +18,7 @@ use crate::preprocess::Preprocessed;
 use crate::programs::StageKind;
 use crate::reflection::{
     LEGACY_UNIFORMS, SHADOW_SAMPLER_BINDING, SHADOW_SAMPLER_NAME, SamplerClass, TEXTURE_GROUP,
-    TextureDimension, VertexAttribute,
+    TextureDimension,
 };
 use crate::token::{Tok, lex};
 pub(crate) use assemble::{UboMember, assemble, merge_uniforms};
@@ -130,7 +130,7 @@ pub(crate) fn transform(
         // Inputs Iris supplies without the pack declaring them.
         for (n, ty) in [("mc_chunkFade", "float"), ("dhMaterialId", "int")] {
             if !c.declared.contains(n) && lg.toks.iter().any(|t| t.ident() == Some(n)) {
-                vertex_input(&mut builtin_io, &mut c.vertex_inputs, n, ty);
+                declare::vertex_input(&mut builtin_io, &mut c.vertex_inputs, n, ty);
             }
         }
         for (g, n, ty) in [
@@ -143,7 +143,7 @@ pub(crate) fn transform(
             ("gl_MultiTexCoord3", "iris_MultiTexCoord3", "vec4"),
         ] {
             if lg.builtins.contains(g) {
-                vertex_input(&mut builtin_io, &mut c.vertex_inputs, n, ty);
+                declare::vertex_input(&mut builtin_io, &mut c.vertex_inputs, n, ty);
             }
         }
     }
@@ -293,11 +293,4 @@ pub(crate) fn transform(
         frag_outputs: c.frag_outputs,
         resource_names,
     })
-}
-
-fn vertex_input(io: &mut String, inputs: &mut Vec<(u32, String)>, name: &str, ty: &str) {
-    if let Some(loc) = VertexAttribute::from_glsl_name(name).location() {
-        io.push_str(&format!("layout(location = {loc}) in {ty} {name};\n"));
-        inputs.push((loc, name.to_string()));
-    }
 }

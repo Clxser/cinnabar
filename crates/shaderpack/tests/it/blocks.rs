@@ -1,5 +1,6 @@
 //! GLSL that OpenGL drivers accept and naga's parser needs rewritten: interface blocks
-//! between stages, bools in buffer blocks, integer 1D samplers and returns that convert.
+//! between stages, bools in buffer blocks, integer 1D samplers, returns that convert and
+//! implicit-LOD shadow lookups in compute shaders.
 
 use crate::{program, reflection};
 use shaderpack::{PackSource, SampleType, ShaderPack, TextureDimension, TranslateConfig};
@@ -99,4 +100,27 @@ fn integer_1d_samplers_and_returns_that_convert_translate() {
         blocks.map(|t| (t.dimension, t.sample_type)),
         Some((TextureDimension::D1, SampleType::Uint))
     );
+}
+
+#[test]
+fn compute_shadow_and_texture_lookups_sample_lod_zero() {
+    let t = translate(&[(
+        "deferred1.csh",
+        "#version 430\n\
+         layout(local_size_x = 16, local_size_y = 16) in;\n\
+         const vec2 workGroupsRender = vec2(0.5, 0.5);\n\
+         uniform sampler2DShadow shadowtex0;\n\
+         uniform sampler2D noisetex;\n\
+         layout(rgba16f) uniform image2D colorimg10;\n\
+         void main() {\n\
+             vec2 uv = vec2(gl_GlobalInvocationID.xy) / 128.0;\n\
+             float shadow = shadow2D(shadowtex0, vec3(uv, 0.5)).x;\n\
+             float noise = texture2D(noisetex, uv).r;\n\
+             imageStore(colorimg10, ivec2(gl_GlobalInvocationID.xy), vec4(shadow, noise, 0.0, 1.0));\n\
+         }\n",
+    )]);
+    let r = reflection(program(&t, "deferred1"));
+    let mut sampled: Vec<&str> = r.textures.iter().map(|t| t.name.as_str()).collect();
+    sampled.sort_unstable();
+    assert_eq!(sampled, ["noisetex", "shadowtex0"]);
 }
