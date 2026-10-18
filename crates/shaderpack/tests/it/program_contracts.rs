@@ -405,3 +405,26 @@ fn deep_includes_expand_without_call_stack_recursion() {
         "composite",
     ));
 }
+
+#[test]
+fn unqualified_dimension_mappings_match_namespaced_queries() {
+    let pack = ShaderPack::new(PackSource::from_files([
+        (
+            "dimension.properties",
+            "dimension.customNether = the_nether",
+        ),
+        ("customNether/final.vsh", ""),
+        ("customNether/final.fsh", ""),
+        ("world-1/composite.vsh", ""),
+        ("world-1/composite.fsh", ""),
+    ]));
+    let folder = pack.dimension_folder("minecraft:the_nether");
+    assert_eq!(folder, "customNether");
+    let selected = pack.programs(&TranslateConfig {
+        folder,
+        ..TranslateConfig::default()
+    });
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].name, "final");
+    assert_eq!(selected[0].folder, "customNether");
+}
