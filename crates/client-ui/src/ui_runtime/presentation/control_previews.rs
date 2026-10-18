@@ -152,12 +152,11 @@ impl Previews {
                 data.set_collection(
                     name,
                     rows.iter()
-                        .map(|row| CollectionItem {
-                            role: None,
-                            values: row
-                                .iter()
-                                .map(|(name, value)| (name.clone(), scalar(value)))
-                                .collect(),
+                        .map(|row| {
+                            row.iter()
+                                .fold(CollectionItem::default(), |item, (name, value)| {
+                                    item.with(name.as_str(), scalar(value))
+                                })
                         })
                         .collect(),
                 );
