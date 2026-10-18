@@ -5,7 +5,9 @@
 
 use super::effects::resources::VanillaTextures;
 use super::loader::GpuContext;
-use super::pipelines::{FormatSupport, Kind, format_kind, storage_format, texture_format};
+use super::pipelines::{
+    FormatSupport, Kind, format_kind, storage_format, texture_format, texture_sample_type,
+};
 use super::plan::{MAX_COLOR_BUFFERS, color_buffer_of};
 use shaderpack::{
     BufferFormat, BufferId, CustomImage, ImageSize, ProgramGroup, ProgramReflection, SampleType,
@@ -28,7 +30,8 @@ const MAX_CUSTOM_TEXTURE_SIDE: u32 = 8192;
 pub(crate) enum TextureSource {
     /// `colortexN`, on the side the pass reads.
     Buffer { index: u32, format: TextureFormat },
-    /// `depthtexN` as floats.
+    /// `depthtexN` as floats: `depthtex0` reads the geometry depth attachment itself where
+    /// nothing draws into it ([`super::targets::ViewTargets`]), the others their copies.
     Depth { index: usize, format: TextureFormat },
     /// `depthtexN` for the comparison sampler.
     DepthCompare(usize),
@@ -61,6 +64,16 @@ impl TextureSource {
             | TextureSource::Constant { format, .. } => format,
             TextureSource::DepthCompare(_) => TextureFormat::Depth32Float,
             TextureSource::Atlas(_) => ATLAS_FORMAT,
+        }
+    }
+
+    /// The sample type its binding declares. `depthtex` reads use the non-filtering
+    /// `ClampNearest` sampler, so they bind as unfilterable floats, which both the float
+    /// copies and the geometry depth attachment satisfy.
+    pub(crate) fn sample_type(&self, support: FormatSupport) -> wgpu::TextureSampleType {
+        match self {
+            TextureSource::Depth { .. } => wgpu::TextureSampleType::Float { filterable: false },
+            source => texture_sample_type(source.format(), support),
         }
     }
 }

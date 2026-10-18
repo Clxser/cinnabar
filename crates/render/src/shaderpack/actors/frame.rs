@@ -14,7 +14,9 @@ use crate::shaderpack::geometry::{
     CONSTANT_VERTEX_BUFFER, GEOMETRY_VERTEX_BUFFER, IRIS_VERTEX_STRIDE,
 };
 use crate::shaderpack::passes::ViewState;
-use crate::shaderpack::targets::{AtlasViews, draw_read_alt, pass_bind_groups};
+use crate::shaderpack::targets::{
+    AtlasViews, draw_read_alt, draws_into_geometry_depth, pass_bind_groups,
+};
 use crate::shaderpack::uniforms::patch_block;
 
 /// Compute dispatch dimension limit.
@@ -119,6 +121,7 @@ pub(crate) fn prepare(
                     normals: &neutral.normals,
                     specular: &neutral.specular,
                 }),
+                draws_into_geometry_depth(geometry.kind),
             );
             slot.texture = Some(draw.texture);
         }

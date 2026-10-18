@@ -151,6 +151,8 @@ pub(crate) struct PackGpu {
     pub depth_format: TextureFormat,
     /// `depthtex0..2` some program samples with the comparison sampler.
     pub depth_compare: [bool; 3],
+    /// `depthtex0..2` some program samples as floats; the others are never copied.
+    pub depth_sampled: [bool; 3],
     pub constants: ConstantTextures,
     pub custom_images: Vec<shaderpack::CustomImage>,
     /// Texture format of each custom image.
@@ -567,6 +569,7 @@ pub(crate) fn build(
         .collect();
     let mut constants = ConstantBuilder::new(gpu, pack, &translation, vanilla, support);
     let mut depth_compare = [false; 3];
+    let mut depth_sampled = [false; 3];
     let mut programs = Vec::with_capacity(all.len());
     // Per geometry program: its pipeline layout, vertex module and fragment stage.
     let mut geometry_stages = vec![];
@@ -582,12 +585,18 @@ pub(crate) fn build(
             &image_formats,
         );
         for source in &bindings.textures {
-            if let TextureSource::DepthCompare(i) = source {
-                depth_compare[*i] = true;
+            match *source {
+                TextureSource::DepthCompare(i) => depth_compare[i] = true,
+                TextureSource::Depth { index, .. } => depth_sampled[index] = true,
+                _ => {}
             }
         }
-        let formats: Vec<TextureFormat> = bindings.textures.iter().map(|s| s.format()).collect();
-        let entries = layout_entries(reflection, &formats, support);
+        let sample_types: Vec<_> = bindings
+            .textures
+            .iter()
+            .map(|s| s.sample_type(support))
+            .collect();
+        let entries = layout_entries(reflection, &sample_types);
         let layouts = bind_group_layouts(&gpu.device, &program.program.name, &entries);
         let layout_refs: Vec<Option<&wgpu::BindGroupLayout>> =
             layouts.iter().map(Option::as_ref).collect();
@@ -804,7 +813,7 @@ pub(crate) fn build(
         gpu,
         &buffer_formats,
         depth_format,
-        depth_compare,
+        depth_compare.contains(&true) || !draws.is_empty(),
         &mipmap_formats,
     );
     let shader_storage = storage_sizes(&reflections, &translation.properties);
@@ -859,6 +868,7 @@ pub(crate) fn build(
         atomic_buffers,
         depth_format,
         depth_compare,
+        depth_sampled,
         constants,
         custom_images: translation.properties.images.clone(),
         image_formats,

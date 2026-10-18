@@ -9,10 +9,12 @@ use wgpu::TextureFormat;
 pub(crate) struct HostPipelines {
     pub scene_colour: wgpu::RenderPipeline,
     pub scene_depth: wgpu::RenderPipeline,
-    pub scene_depth_compare: Option<wgpu::RenderPipeline>,
+    /// Writes the scene depth into a depth texture: the comparison `depthtex*` and the
+    /// geometry depth, which the Vanilla scene stands in for until the pack draws terrain.
+    pub scene_depth_attachment: Option<wgpu::RenderPipeline>,
     /// Copies the geometry depth attachment into a float `depthtex`/`shadowtex`.
     pub depth_copy: wgpu::RenderPipeline,
-    /// Overlays what the Vanilla scene draws in front of the pack's geometry (actors,
+    /// Overlays what the Vanilla scene draws in front of the pack's opaque geometry (actors,
     /// particles, clouds) onto `colortex0` and the depth attachment.
     pub vanilla_overlay: wgpu::RenderPipeline,
     /// `present` per view target format.
@@ -25,12 +27,13 @@ pub(crate) struct HostPipelines {
     pub constant_stream: wgpu::Buffer,
 }
 
-/// Builds the host passes for a pack's buffer and depth formats.
+/// Builds the host passes for a pack's buffer and depth formats; `depth_targets` when the
+/// pack has a geometry depth or comparison `depthtex*` for the scene depth to fill.
 pub(super) fn host_pipelines(
     gpu: &GpuContext,
     buffer_formats: &[Option<TextureFormat>; MAX_COLOR_BUFFERS as usize],
     depth_format: TextureFormat,
-    depth_compare: [bool; 3],
+    depth_targets: bool,
     mipmap_formats: &[TextureFormat],
 ) -> HostPipelines {
     let device = &gpu.device;
@@ -88,9 +91,8 @@ pub(super) fn host_pipelines(
             ],
             false,
         ),
-        scene_depth_compare: depth_compare
-            .contains(&true)
-            .then(|| pipeline("scene_depth_compare", &[], true)),
+        scene_depth_attachment: depth_targets
+            .then(|| pipeline("scene_depth_attachment", &[], true)),
         depth_copy: pipeline("depth_copy", &[target(depth_format)], false),
         vanilla_overlay: pipeline("vanilla_overlay", &[target(colour0)], true),
         present: [

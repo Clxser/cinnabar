@@ -20,10 +20,10 @@ struct DepthParameters {
 @group(0) @binding(1) var source_depth: texture_depth_2d;
 @group(0) @binding(2) var<uniform> depth_parameters: DepthParameters;
 @group(0) @binding(3) var source_sampler: sampler;
-// The pack's geometry depth (OpenGL window depth, bottom-up like the pack's buffers), as
-// the depth attachment and as its `depthtex0` float copy.
+// The pack's geometry depth (OpenGL window depth, bottom-up like the pack's buffers) as the
+// depth attachment, and its opaque depth as the `depthtex1` float copy.
 @group(0) @binding(4) var pack_depth: texture_depth_2d;
-@group(0) @binding(5) var pack_depth_copy: texture_2d<f32>;
+@group(0) @binding(5) var pack_opaque_depth: texture_2d<f32>;
 
 struct Fullscreen {
     @builtin(position) position: vec4<f32>,
@@ -99,8 +99,9 @@ fn scene_depth(in: Fullscreen) -> SceneDepthOut {
     return SceneDepthOut(depth, depth, depth);
 }
 
+// The scene depth into a depth texture: a comparison `depthtex` or the geometry depth.
 @fragment
-fn scene_depth_compare(in: Fullscreen) -> @builtin(frag_depth) f32 {
+fn scene_depth_attachment(in: Fullscreen) -> @builtin(frag_depth) f32 {
     return gl_depth(in);
 }
 
@@ -139,10 +140,11 @@ struct OverlayOut {
     @builtin(frag_depth) depth: f32,
 }
 
-// What the Vanilla scene drew clearly in front of the pack's geometry (entities, particles,
-// clouds, terrain not yet re-expanded), written into `colortex0` and the depth attachment.
-// Nothing comes through beyond the fully expanded radius: there the pack's sky or fog stands
-// where its terrain waits, rather than Vanilla terrain without gbuffer data.
+// What the Vanilla scene drew clearly in front of the pack's opaque geometry (entities,
+// particles, terrain not yet re-expanded), written into `colortex0` and the depth attachment
+// before translucent geometry draws over it, as Iris draws entities. Nothing comes through
+// beyond the fully expanded radius: there the pack's sky or fog stands where its terrain
+// waits, rather than Vanilla terrain without gbuffer data.
 @fragment
 fn vanilla_overlay(in: Fullscreen) -> OverlayOut {
     let size = textureDimensions(source_depth);
@@ -156,7 +158,7 @@ fn vanilla_overlay(in: Fullscreen) -> OverlayOut {
     if (vanilla * ray > depth_parameters.overlay_radius) {
         discard;
     }
-    let pack = gl_distance(textureLoad(pack_depth_copy, vec2<i32>(in.position.xy), 0).r);
+    let pack = gl_distance(textureLoad(pack_opaque_depth, vec2<i32>(in.position.xy), 0).r);
     // Both renderers draw the same terrain: only clearly nearer samples come through.
     if (vanilla > pack * 0.995 - 0.05) {
         discard;

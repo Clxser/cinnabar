@@ -242,21 +242,23 @@ fn copy_depth_to_floats(
     }
 }
 
-/// Copies the geometry depth into `depthtex{indices}`: the float copies and, for the ones a
-/// program samples with the comparison sampler, the depth copies.
+/// Copies the geometry depth into the float `depthtex{floats}` and the comparison
+/// `depthtex{compares}` some program samples. `depthtex0` needs no float copy: programs read
+/// the geometry depth itself ([`super::targets::ViewTargets`]).
 fn copy_view_depth(
     device: &Device,
     encoder: &mut CommandEncoder,
     state: &ViewState,
-    indices: &[usize],
+    floats: &[usize],
+    compares: &[usize],
 ) {
     let targets = &state.targets;
     let Some(depth) = targets.geometry_depth.as_ref() else {
         return;
     };
-    let floats: Vec<&TextureView> = indices.iter().map(|i| &targets.depth[*i].view).collect();
+    let floats: Vec<&TextureView> = floats.iter().map(|i| &targets.depth[*i].view).collect();
     copy_depth_to_floats(device, encoder, &state.pack, &depth.view, &floats);
-    for index in indices {
+    for index in compares {
         if let Some(compare) = &targets.depth_compare[*index] {
             encoder.copy_texture_to_texture(
                 depth.texture.as_image_copy(),
@@ -403,8 +405,8 @@ pub(crate) fn record_shadow(
 
 /// The sky (no depth) with the sun, moon and stars, then opaque terrain, actors and block
 /// entities against a cleared depth attachment and the effects Iris draws before the
-/// deferred passes, the copy into `depthtex2`, the solid hand, then the copies into
-/// `depthtex0` and `depthtex1`, which hold the same depth until translucents draw. Solid
+/// deferred passes, the copy into `depthtex2` when sampled, the solid hand, then the copy
+/// into `depthtex1`, which also stands in for `depthtex0` until translucents draw. Solid
 /// and cutout terrain are timed as the terrain stages during aggregate profiling.
 pub(crate) fn record_opaque(
     device: &Device,
@@ -482,7 +484,8 @@ pub(crate) fn record_opaque(
         Some((&view, size)),
     );
     // Iris's `depthtex2` holds the depth before the hand, `depthtex1` before translucents.
-    copy_view_depth(device, encoder, state, &[2]);
+    let before_hand: &[usize] = if pack.depth_sampled[2] { &[2] } else { &[] };
+    copy_view_depth(device, encoder, state, before_hand, &[2]);
     super::actors::record(
         encoder,
         state,
@@ -490,13 +493,14 @@ pub(crate) fn record_opaque(
         scene_alt,
         Some((&view, size)),
     );
-    copy_view_depth(device, encoder, state, &[0, 1]);
+    // The Vanilla overlay compares against `depthtex1`, so it is always copied.
+    copy_view_depth(device, encoder, state, &[1], &[0, 1]);
 }
 
-/// Translucent terrain, actors and block entities after the deferred passes, the effects
-/// Iris draws after them (particles by the pack's ordering, clouds, weather) and the
-/// translucent hand, then what Vanilla drew in front of the pack's geometry, then
-/// `depthtex0` with all of it.
+/// What Vanilla drew in front of the pack's opaque geometry, then translucent terrain,
+/// actors and block entities after the deferred passes, the effects Iris draws after them
+/// (particles by the pack's ordering, clouds, weather) and the translucent hand, all into
+/// the geometry depth `depthtex0` reads.
 pub(crate) fn record_translucent(
     device: &Device,
     encoder: &mut CommandEncoder,
@@ -509,6 +513,7 @@ pub(crate) fn record_translucent(
     };
     let view = depth.view.clone();
     let size = state.targets.screen_size;
+    record_vanilla_overlay(device, encoder, state, vanilla, &view);
     let translucent_alt = state.pack.frame.translucent_alt;
     record_kind(
         encoder,
@@ -551,13 +556,12 @@ pub(crate) fn record_translucent(
         translucent_alt,
         Some((&view, size)),
     );
-    copy_view_depth(device, encoder, state, &[0]);
-    record_vanilla_overlay(device, encoder, state, vanilla, &view);
-    copy_view_depth(device, encoder, state, &[0]);
+    copy_view_depth(device, encoder, state, &[], &[0]);
 }
 
-/// Composites the Vanilla scene where it is clearly nearer than the pack's geometry into
-/// `colortex0` (gamma-encoded, on the side composite passes read) and the depth attachment.
+/// Composites the Vanilla scene where it is clearly nearer than the pack's opaque geometry
+/// into `colortex0` (gamma-encoded, on the side composite passes read) and the depth
+/// attachment, before translucent geometry draws over it.
 /// What the pack does not draw itself (block-entity portals) reaches the pack this way,
 /// already lit by Vanilla and without gbuffer data; Vanilla leaves out the categories and
 /// effects the pack draws (`ShaderPackDrawnCategories`, `ShaderPackEffects`).
@@ -595,7 +599,7 @@ fn record_vanilla_overlay(
             },
             wgpu::BindGroupEntry {
                 binding: 5,
-                resource: wgpu::BindingResource::TextureView(&targets.depth[0].view),
+                resource: wgpu::BindingResource::TextureView(&targets.depth[1].view),
             },
         ],
     });

@@ -384,12 +384,16 @@ impl ViewTargets {
     }
 
     /// The view a texture binding reads during a pass whose reads use `read_alt`.
+    /// `depthtex0` is the geometry depth itself, as in Iris, unless `geometry_attached`: draws
+    /// into it read `depthtex1`'s copy instead, which holds the same depth from the end of
+    /// the opaque geometry until translucents draw.
     fn texture_view<'a>(
         &'a self,
         pack: &'a PackGpu,
         source: TextureSource,
         read_alt: u32,
         atlas: Option<AtlasViews<'a>>,
+        geometry_attached: bool,
     ) -> &'a TextureView {
         match source {
             TextureSource::Buffer { index, .. } => {
@@ -398,6 +402,11 @@ impl ViewTargets {
                     .expect("planned buffers are allocated");
                 &buffer.sampled[buffer.side(read_alt & (1 << index) != 0)]
             }
+            TextureSource::Depth { index: 0, .. } => match &self.geometry_depth {
+                Some(_) if geometry_attached => &self.depth[1].view,
+                Some(depth) => &depth.view,
+                None => &self.depth[0].view,
+            },
             TextureSource::Depth { index, .. } => &self.depth[index].view,
             TextureSource::DepthCompare(index) => {
                 &self.depth_compare[index]
@@ -429,7 +438,12 @@ pub(crate) struct AtlasViews<'a> {
 }
 
 /// Builds the bind groups of program `program` for a pass whose buffer reads use
-/// `read_alt`.
+/// `read_alt`; `geometry_attached` when the pass draws into the geometry depth
+/// ([`draws_into_geometry_depth`]).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the view state one program's bindings resolve against"
+)]
 pub(crate) fn pass_bind_groups<'a>(
     device: &Device,
     pack: &'a PackGpu,
@@ -438,8 +452,17 @@ pub(crate) fn pass_bind_groups<'a>(
     program: usize,
     read_alt: u32,
     atlas: Option<AtlasViews<'a>>,
+    geometry_attached: bool,
 ) -> [Option<wgpu::BindGroup>; 4] {
-    let entries = pass_bind_entries(pack, targets, uniforms, program, read_alt, atlas);
+    let entries = pass_bind_entries(
+        pack,
+        targets,
+        uniforms,
+        program,
+        read_alt,
+        atlas,
+        geometry_attached,
+    );
     let program = &pack.programs[program];
     std::array::from_fn(|group| {
         let layout = program.layouts[group].as_ref()?;
@@ -451,6 +474,12 @@ pub(crate) fn pass_bind_groups<'a>(
     })
 }
 
+/// Whether a draw of `kind` tests against the geometry depth attachment, so its bindings
+/// cannot read that texture: camera draws other than the sky.
+pub(crate) fn draws_into_geometry_depth(kind: DrawKind) -> bool {
+    kind.depth() && !kind.shadow()
+}
+
 /// The entries of `pass_bind_groups`, per group.
 fn pass_bind_entries<'a>(
     pack: &'a PackGpu,
@@ -459,6 +488,7 @@ fn pass_bind_entries<'a>(
     program: usize,
     read_alt: u32,
     atlas: Option<AtlasViews<'a>>,
+    geometry_attached: bool,
 ) -> [Vec<wgpu::BindGroupEntry<'a>>; 4] {
     let program = &pack.programs[program];
     let reflection = &program.reflection;
@@ -509,7 +539,7 @@ fn pass_bind_entries<'a>(
                     .expect("snapshots are allocated for every such image")
                     .view
             }
-            source => targets.texture_view(pack, source, read_alt, atlas),
+            source => targets.texture_view(pack, source, read_alt, atlas, geometry_attached),
         };
         push(
             texture.group,
@@ -619,6 +649,7 @@ impl ViewBindings {
                         step.program,
                         step.read_alt,
                         None,
+                        false,
                     )
                 })
                 .collect()
@@ -734,6 +765,7 @@ impl ViewBindings {
         for (draw, binding) in pack.draws.iter().zip(&mut self.draws) {
             let uniforms = binding.uniforms.as_ref();
             let read_alt = draw_read_alt(pack, draw);
+            let attached = draws_into_geometry_depth(draw.kind);
             let Some(pulled) = &draw.pulled else {
                 binding.groups = pass_bind_groups(
                     device,
@@ -743,6 +775,7 @@ impl ViewBindings {
                     draw.program,
                     read_alt,
                     views(draw.kind),
+                    attached,
                 );
                 continue;
             };
@@ -753,6 +786,7 @@ impl ViewBindings {
                 draw.program,
                 read_alt,
                 views(draw.kind),
+                attached,
             );
             let arena_entries = arena.and_then(|arena| pulled.entries(arena));
             let program = &pack.programs[draw.program];

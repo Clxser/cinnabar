@@ -479,7 +479,8 @@ fn run_steps(encoder: &mut CommandEncoder, state: &mut ViewState, steps: Steps, 
     }
 }
 
-/// Copies the scene colour into `colortex0` and the scene depth into `depthtex*`.
+/// Copies the scene colour into `colortex0` and the scene depth into `depthtex*` and the
+/// geometry depth, which `depthtex0` reads.
 fn copy_scene(
     device: &Device,
     encoder: &mut CommandEncoder,
@@ -535,9 +536,10 @@ fn copy_scene(
     render.set_bind_group(0, &group, &[]);
     render.draw(0..3, 0..1);
     drop(render);
-    if let Some(pipeline) = &host.scene_depth_compare {
+    if let Some(pipeline) = &host.scene_depth_attachment {
         let group = depth_group(pipeline);
-        for target in targets.depth_compare.iter().flatten() {
+        let depths = targets.depth_compare.iter().flatten();
+        for target in depths.chain(&targets.geometry_depth) {
             let depth = wgpu::RenderPassDepthStencilAttachment {
                 view: &target.view,
                 depth_ops: Some(wgpu::Operations {

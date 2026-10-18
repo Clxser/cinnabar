@@ -255,12 +255,11 @@ pub(crate) fn sampler_binding_type(sampler: &SamplerBinding) -> SamplerBindingTy
 }
 
 /// The bind-group layout entries of one program, per group (0..=3), with each sampled
-/// texture typed by the format the host will bind (`texture_formats` is parallel to
-/// `reflection.textures`).
+/// texture typed as the host will bind it (`sample_types` is parallel to
+/// `reflection.textures`; see [`super::resources::TextureSource::sample_type`]).
 pub(crate) fn layout_entries(
     reflection: &ProgramReflection,
-    texture_formats: &[TextureFormat],
-    support: FormatSupport,
+    sample_types: &[TextureSampleType],
 ) -> [Vec<BindGroupLayoutEntry>; 4] {
     let mut groups: [Vec<BindGroupLayoutEntry>; 4] = Default::default();
     let mut push = |group: u32, entry: BindGroupLayoutEntry| {
@@ -321,14 +320,14 @@ pub(crate) fn layout_entries(
             },
         );
     }
-    for (texture, format) in reflection.textures.iter().zip(texture_formats) {
+    for (texture, sample_type) in reflection.textures.iter().zip(sample_types) {
         push(
             texture.group,
             BindGroupLayoutEntry {
                 binding: texture.binding,
                 visibility: stages(texture.stages),
                 ty: BindingType::Texture {
-                    sample_type: texture_sample_type(*format, support),
+                    sample_type: *sample_type,
                     view_dimension: view_dimension(texture.dimension),
                     multisampled: false,
                 },
