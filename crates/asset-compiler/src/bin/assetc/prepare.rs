@@ -201,7 +201,7 @@ fn take_ready(
     Some((index, blocked))
 }
 
-/// Stamps a success, or an optional failure so it is not retried until its inputs change.
+/// Stamps a success or caches an optional failure for untargeted preparation.
 fn record(
     context: &Context,
     stamp: &Mutex<Stamp>,

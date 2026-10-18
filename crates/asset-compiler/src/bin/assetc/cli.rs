@@ -372,7 +372,7 @@ pub(super) enum Command {
         /// Carrier directory; defaults to the checkout's compiled-asset directory.
         #[arg(long)]
         out: Option<PathBuf>,
-        /// Carrier names to build, plus the carriers they read.
+        /// Carrier names to build, plus the carriers they read. Retry cached optional failures.
         #[arg(long, value_delimiter = ',')]
         only: Vec<String>,
         /// Print the stale set as JSON and build nothing.
