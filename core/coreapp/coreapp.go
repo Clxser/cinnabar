@@ -61,6 +61,22 @@ type Options struct {
 
 // Main runs the core process with its command-line arguments and exits non-zero when it fails.
 func Main(options Options) {
+	if code := runAtUserLevel(normalUser, os.Stderr, func() int { return runMain(options) }); code != 0 {
+		os.Exit(code)
+	}
+}
+
+// runAtUserLevel refuses elevated or unknown permissions before starting any core work.
+func runAtUserLevel(check func() error, stderr io.Writer, run func() int) int {
+	if err := check(); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return run()
+}
+
+// runMain owns the core's runtime settings, lifeline and services after the permission check.
+func runMain(options Options) int {
 	if options.Version != "" {
 		version = options.Version
 	}
@@ -81,9 +97,7 @@ func Main(options Options) {
 	exitCode := execute(ctx, args, os.Stdout, os.Stderr, authcache.Source, withInterceptor(proxy.Serve, options.Interceptor))
 	latencytrace.Finish()
 	stop()
-	if exitCode != 0 {
-		os.Exit(exitCode)
-	}
+	return exitCode
 }
 
 // withInterceptor returns serve with interceptor joining its sessions; nil keeps serve unchanged.

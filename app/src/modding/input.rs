@@ -146,44 +146,46 @@ pub(super) fn prepare_mod_input(
         || ui.ui_focused(&player),
         |menu| presentation.base_absorbs_gameplay_input(&player, &ui, menu),
     );
-    if packet_available && focused && !absorbed {
-        if let Some(packets) = packets.as_mut() {
-            let toggle = packets
+    if packet_available
+        && focused
+        && !absorbed
+        && let Some(packets) = packets.as_mut()
+    {
+        let toggle = packets
+            .menu
+            .retained
+            .as_ref()
+            .and_then(|retained| retained.output.panel.as_ref())
+            .map(|panel| panel.toggle_key.clone());
+        if toggle.as_ref().is_some_and(|toggle| {
+            take_packet_toggle(
+                &mut panel_keys,
+                toggle,
+                packet_owned,
+                presentation.mod_ui().mod_panel_open(),
+                presentation.mod_ui().mod_panel_capture_key(),
+            )
+        }) {
+            super::packet_menu::toggle(packets, &mut presentation);
+            packet_owned = packets.menu_owns_panel();
+        }
+        if !packet_owned && !presentation.mod_ui().mod_panel_open() {
+            let reserved = packets
                 .menu
                 .retained
                 .as_ref()
-                .and_then(|retained| retained.output.panel.as_ref())
-                .map(|panel| panel.toggle_key.clone());
-            if toggle.as_ref().is_some_and(|toggle| {
-                take_packet_toggle(
-                    &mut panel_keys,
-                    toggle,
-                    packet_owned,
-                    presentation.mod_ui().mod_panel_open(),
-                    presentation.mod_ui().mod_panel_capture_key(),
-                )
-            }) {
-                super::packet_menu::toggle(packets, &mut presentation);
-                packet_owned = packets.menu_owns_panel();
-            }
-            if !packet_owned && !presentation.mod_ui().mod_panel_open() {
-                let reserved = packets
-                    .menu
-                    .retained
-                    .as_ref()
-                    .map(|retained| retained.output.keys.clone())
-                    .unwrap_or_default();
-                packets.menu.pending.keys = panel_keys
-                    .iter()
-                    .filter(|(key, _, repeat)| !repeat && reserved.contains(key))
-                    .take(mod_api::MAX_CONTROL_KEYS)
-                    .map(|(key, _, _)| mod_api::native_menu::Key {
-                        key: key.clone(),
-                        text: None,
-                    })
-                    .collect();
-                consume_reserved(&mut keys, &reserved, toggle.as_deref());
-            }
+                .map(|retained| retained.output.keys.clone())
+                .unwrap_or_default();
+            packets.menu.pending.keys = panel_keys
+                .iter()
+                .filter(|(key, _, repeat)| !repeat && reserved.contains(key))
+                .take(mod_api::MAX_CONTROL_KEYS)
+                .map(|(key, _, _)| mod_api::native_menu::Key {
+                    key: key.clone(),
+                    text: None,
+                })
+                .collect();
+            consume_reserved(&mut keys, &reserved, toggle.as_deref());
         }
     }
     if !packet_owned {
@@ -298,10 +300,13 @@ pub(super) fn prepare_mod_input(
             extension.controls = mod_host::empty_controls();
             extension.controls.panel_open = open;
         }
-        if was_open && !open && focused && !absorbed {
-            if let Some(focus) = focus.as_deref_mut() {
-                focus.authorize_screen_return();
-            }
+        if was_open
+            && !open
+            && focused
+            && !absorbed
+            && let Some(focus) = focus.as_deref_mut()
+        {
+            focus.authorize_screen_return();
         }
         let restore = physical.finish_panel(
             open,

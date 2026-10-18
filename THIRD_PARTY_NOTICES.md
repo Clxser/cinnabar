@@ -445,3 +445,4 @@ SOFTWARE.
 - Font SHA-256: `4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf`
 
 Authored native panels may select Inter with `font_type: "mod_panel_sans"`.
+The cosmetic regression geometry and textures in `crates/render-model/src/hats/` are original Cinnabar artwork, distributed under the repository license. Editable projects and production catalog assets are maintained in cinnabar-mc/cinnabar-api.

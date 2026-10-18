@@ -56,7 +56,7 @@ pub fn validate_source(bytes: &[u8], cache: Option<&Path>) -> Result<()> {
 }
 
 /// Applies the owning host's source ceiling even when bytes came from a captured snapshot.
-fn check_size(bytes: &[u8]) -> Result<()> {
+pub(crate) fn check_size(bytes: &[u8]) -> Result<()> {
     ensure!(
         bytes.len() <= SourceKind::of(bytes).byte_limit(),
         "source exceeds byte limit"

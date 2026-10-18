@@ -438,4 +438,21 @@ mod tests {
         let applied = preparation.prepare_application(|_| Some(()), |_| {});
         assert!(matches!(applied, Some(Ok(()))));
     }
+
+    #[test]
+    fn relay_only_packs_prepare_without_server_application_reports() {
+        let id = "66666666-2222-3333-4444-555555555555";
+        let handoff =
+            protocol::ResourcePackHandoff::from_archives(Vec::new()).with_relay_packs(vec![
+                protocol::RelayPack {
+                    archive: pack_zip(id),
+                    above_server: true,
+                },
+            ]);
+        let preparation = prepare_session_packs(handoff, &protocol::GameData::default(), u64::MAX);
+        assert!(preparation.has_packs());
+        assert!(!preparation.has_applied_packs());
+        let applied = preparation.prepare_application(|_| Some(()), |_| {});
+        assert!(matches!(applied, Some(Ok(()))));
+    }
 }

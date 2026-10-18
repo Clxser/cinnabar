@@ -100,7 +100,7 @@ fn move_clips(
     transform: json_ui::transform::Affine,
     viewport: [f32; 4],
 ) -> Result<(), PaintError> {
-    for pair in nodes.chunks_exact_mut(2) {
+    for pair in nodes.as_chunks_mut::<2>().0 {
         let previous = pair[0].bounds();
         let moved = transform.bounds(json_ui::Rect::new(
             f64::from(previous.min().x()),

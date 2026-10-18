@@ -1933,6 +1933,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "web-time",
 ]
 
 [[package]]
@@ -2223,6 +2224,7 @@ dependencies = [
  "test-time",
  "thiserror 2.0.18",
  "tracing",
+ "web-time",
  "windows-sys 0.61.2",
  "world",
 ]
@@ -2278,6 +2280,7 @@ dependencies = [
  "client-state",
  "client-ui",
  "client-world",
+ "cosmetics",
  "crash-monitor",
  "crash-report",
  "crossbeam-channel",
@@ -2345,10 +2348,12 @@ dependencies = [
  "ui",
  "ui-engine",
  "ui-screens",
+ "update-installer",
  "update-manifest",
  "url",
  "uuid",
  "wat",
+ "web-time",
  "wgpu",
  "windows-sys 0.61.2",
  "winit",
@@ -2497,6 +2502,9 @@ dependencies = [
  "simulation-clock",
  "test-alloc",
  "test-time",
+ "tokio",
+ "web-sys",
+ "web-time",
  "windows-sys 0.61.2",
  "world",
  "zip",
@@ -2568,6 +2576,7 @@ dependencies = [
  "chunk-pipeline",
  "client-ui",
  "client-world",
+ "cosmetics",
  "diagnostics",
  "glam",
  "image",
@@ -2627,6 +2636,7 @@ dependencies = [
  "test-time",
  "tokio",
  "tracing",
+ "web-time",
 ]
 
 [[package]]
@@ -2639,6 +2649,7 @@ dependencies = [
  "crossbeam-channel",
  "protocol",
  "protocol-ids",
+ "render-api",
  "serde_json",
  "server-experience",
  "simulation-clock",
@@ -2649,6 +2660,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "web-time",
  "world",
 ]
 
@@ -2665,9 +2677,11 @@ dependencies = [
  "client-state",
  "client-ui",
  "client-world",
+ "cosmetics",
  "crossbeam-channel",
  "developer-control",
  "image",
+ "js-sys",
  "json-ui",
  "launcher",
  "launcher-host",
@@ -2691,6 +2705,8 @@ dependencies = [
  "tokio",
  "ui",
  "ui-engine",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wgpu",
  "winit",
  "zip",
@@ -2718,11 +2734,13 @@ dependencies = [
  "bridge",
  "chunk-pipeline",
  "client-world",
+ "cosmetics",
  "crossbeam-channel",
  "env-compat",
  "glam",
  "image",
  "inventory 0.1.20",
+ "js-sys",
  "json-ui",
  "launcher",
  "launcher-host",
@@ -2757,6 +2775,9 @@ dependencies = [
  "ui-screens",
  "url",
  "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-time",
  "world",
  "zip",
 ]
@@ -2780,6 +2801,7 @@ dependencies = [
  "test-time",
  "thiserror 2.0.18",
  "tracing",
+ "web-time",
  "world",
 ]
 
@@ -2816,6 +2838,8 @@ version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
 dependencies = [
+ "serde",
+ "termcolor",
  "unicode-width",
 ]
 
@@ -2998,6 +3022,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ceec7a6067e62d6f931a2baf6f3a751f4a892595bcec1461a3c94ef9949864b6"
 dependencies = [
  "bindgen",
+]
+
+[[package]]
+name = "cosmetics"
+version = "0.1.20"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -3237,6 +3270,7 @@ dependencies = [
  "tiny-skia",
  "tracing",
  "ui",
+ "update-installer",
  "wgpu",
  "windows-sys 0.61.2",
  "winit",
@@ -3512,6 +3546,7 @@ dependencies = [
  "test-assembler",
  "thiserror 2.0.18",
  "tokio",
+ "toml 0.9.12+spec-1.1.0",
  "wait-timeout",
  "wholesym",
  "workspace-declarations",
@@ -3543,6 +3578,7 @@ dependencies = [
  "tracing-error",
  "tracing-log",
  "tracing-subscriber",
+ "web-time",
  "windows-sys 0.61.2",
  "world",
 ]
@@ -3927,6 +3963,7 @@ dependencies = [
  "test-time",
  "thiserror 2.0.18",
  "tracing",
+ "web-time",
  "world",
  "xxhash-rust",
 ]
@@ -4225,6 +4262,7 @@ dependencies = [
  "client-world",
  "env-compat",
  "inventory 0.1.20",
+ "meshing",
  "player-state",
  "protocol",
  "protocol-ids",
@@ -4238,6 +4276,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "web-time",
  "world",
 ]
 
@@ -5137,6 +5176,7 @@ version = "0.1.20"
 dependencies = [
  "assets",
  "bridge",
+ "cosmetics",
  "json-ui",
  "render-api",
  "resource-pack",
@@ -5157,6 +5197,7 @@ dependencies = [
  "anyhow",
  "async-io",
  "bridge",
+ "cosmetics",
  "crash-handler",
  "crash-report",
  "crossbeam-channel",
@@ -5843,6 +5884,7 @@ dependencies = [
  "bytemuck",
  "mod-api",
  "naga",
+ "test-alloc",
 ]
 
 [[package]]
@@ -5895,7 +5937,7 @@ checksum = "bc0287524726960e07b119cebd01678f852f147742ae0d925e6a520dca956126"
 [[package]]
 name = "naga"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=892de142a078784c58b2531c15d7ace97a851157#892de142a078784c58b2531c15d7ace97a851157"
+source = "git+https://github.com/cinnabar-mc/wgpu?rev=b9611d40466b1c86cda04099890ab157b1ae5035#b9611d40466b1c86cda04099890ab157b1ae5035"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -5920,7 +5962,7 @@ dependencies = [
 [[package]]
 name = "naga-types"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=892de142a078784c58b2531c15d7ace97a851157#892de142a078784c58b2531c15d7ace97a851157"
+source = "git+https://github.com/cinnabar-mc/wgpu?rev=b9611d40466b1c86cda04099890ab157b1ae5035#b9611d40466b1c86cda04099890ab157b1ae5035"
 dependencies = [
  "hashbrown 0.17.1",
  "indexmap",
@@ -6590,6 +6632,7 @@ version = "0.1.20"
 dependencies = [
  "assets",
  "bridge",
+ "cosmetics",
  "image",
  "launcher",
  "protocol",
@@ -7158,6 +7201,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "web-time",
  "xxhash-rust",
  "zeroize",
 ]
@@ -7603,6 +7647,7 @@ dependencies = [
  "test-alloc",
  "test-time",
  "tracy-client",
+ "web-time",
  "wesl",
  "wgpu",
  "windows-sys 0.61.2",
@@ -7620,6 +7665,7 @@ dependencies = [
  "assets",
  "block-transform",
  "bytemuck",
+ "cosmetics",
  "foldhash 0.2.0",
  "glam",
  "hashbrown 0.16.1",
@@ -7628,6 +7674,7 @@ dependencies = [
  "pack-compiler",
  "pack-entity-compiler",
  "render-api",
+ "serde",
  "serde_json",
  "sha2",
  "simulation-clock",
@@ -7668,6 +7715,7 @@ dependencies = [
  "test-alloc",
  "test-time",
  "tracy-client",
+ "web-time",
  "world",
 ]
 
@@ -9131,6 +9179,7 @@ dependencies = [
  "launcher",
  "player-state",
  "protocol",
+ "render-api",
  "render-model",
  "resource-pack",
  "serde_json",
@@ -9145,6 +9194,8 @@ name = "ui-snapshot"
 version = "0.1.20"
 dependencies = [
  "assets",
+ "bridge",
+ "cosmetics",
  "image",
  "inventory 0.1.20",
  "json-ui",
@@ -9154,6 +9205,7 @@ dependencies = [
  "oreui",
  "player-state",
  "protocol",
+ "render-api",
  "render-model",
  "resource-pack",
  "serde_json",
@@ -9949,12 +10001,23 @@ version = "0.1.20"
 dependencies = [
  "assets",
  "bridge",
+ "cinnabar",
+ "client-audio",
+ "client-session",
+ "console_error_panic_hook",
  "futures",
  "js-sys",
+ "launcher",
+ "protocol",
  "semantic-input",
+ "serde",
  "serde_json",
+ "tempfile",
+ "tokio",
+ "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
  "web-transport",
 ]
 
@@ -9998,6 +10061,7 @@ dependencies = [
  "bytes",
  "futures",
  "js-sys",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-util",
@@ -10064,7 +10128,7 @@ dependencies = [
 [[package]]
 name = "wgpu"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=892de142a078784c58b2531c15d7ace97a851157#892de142a078784c58b2531c15d7ace97a851157"
+source = "git+https://github.com/cinnabar-mc/wgpu?rev=b9611d40466b1c86cda04099890ab157b1ae5035#b9611d40466b1c86cda04099890ab157b1ae5035"
 dependencies = [
  "arrayvec",
  "bitflags 2.13.0",
@@ -10075,6 +10139,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "js-sys",
  "log",
+ "naga",
  "portable-atomic",
  "profiling",
  "raw-window-handle",
@@ -10091,7 +10156,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=892de142a078784c58b2531c15d7ace97a851157#892de142a078784c58b2531c15d7ace97a851157"
+source = "git+https://github.com/cinnabar-mc/wgpu?rev=b9611d40466b1c86cda04099890ab157b1ae5035#b9611d40466b1c86cda04099890ab157b1ae5035"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -10124,7 +10189,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-apple"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=892de142a078784c58b2531c15d7ace97a851157#892de142a078784c58b2531c15d7ace97a851157"
+source = "git+https://github.com/cinnabar-mc/wgpu?rev=b9611d40466b1c86cda04099890ab157b1ae5035#b9611d40466b1c86cda04099890ab157b1ae5035"
 dependencies = [
  "wgpu-hal",
 ]
@@ -10132,7 +10197,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-emscripten"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=892de142a078784c58b2531c15d7ace97a851157#892de142a078784c58b2531c15d7ace97a851157"
+source = "git+https://github.com/cinnabar-mc/wgpu?rev=b9611d40466b1c86cda04099890ab157b1ae5035#b9611d40466b1c86cda04099890ab157b1ae5035"
 dependencies = [
  "wgpu-hal",
 ]
@@ -10140,7 +10205,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=892de142a078784c58b2531c15d7ace97a851157#892de142a078784c58b2531c15d7ace97a851157"
+source = "git+https://github.com/cinnabar-mc/wgpu?rev=b9611d40466b1c86cda04099890ab157b1ae5035#b9611d40466b1c86cda04099890ab157b1ae5035"
 dependencies = [
  "wgpu-hal",
 ]
@@ -10148,7 +10213,7 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=892de142a078784c58b2531c15d7ace97a851157#892de142a078784c58b2531c15d7ace97a851157"
+source = "git+https://github.com/cinnabar-mc/wgpu?rev=b9611d40466b1c86cda04099890ab157b1ae5035#b9611d40466b1c86cda04099890ab157b1ae5035"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -10203,7 +10268,7 @@ dependencies = [
 [[package]]
 name = "wgpu-naga-bridge"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=892de142a078784c58b2531c15d7ace97a851157#892de142a078784c58b2531c15d7ace97a851157"
+source = "git+https://github.com/cinnabar-mc/wgpu?rev=b9611d40466b1c86cda04099890ab157b1ae5035#b9611d40466b1c86cda04099890ab157b1ae5035"
 dependencies = [
  "naga",
  "wgpu-types",
@@ -10212,7 +10277,7 @@ dependencies = [
 [[package]]
 name = "wgpu-types"
 version = "30.0.1"
-source = "git+https://github.com/bedrock-mc/wgpu?rev=892de142a078784c58b2531c15d7ace97a851157#892de142a078784c58b2531c15d7ace97a851157"
+source = "git+https://github.com/cinnabar-mc/wgpu?rev=b9611d40466b1c86cda04099890ab157b1ae5035#b9611d40466b1c86cda04099890ab157b1ae5035"
 dependencies = [
  "bitflags 2.13.0",
  "bytemuck",

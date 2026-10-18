@@ -13,7 +13,7 @@ impl UiDrawList {
             let indices = self
                 .indices
                 .get(batch.index_range.start as usize..batch.index_range.end as usize)?;
-            for triangle in indices.chunks_exact(3) {
+            for triangle in indices.as_chunks::<3>().0 {
                 let mut low = [f32::INFINITY; 2];
                 let mut high = [f32::NEG_INFINITY; 2];
                 for index in triangle {

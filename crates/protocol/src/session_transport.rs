@@ -1,19 +1,22 @@
 use std::collections::VecDeque;
 use std::future::{Future, poll_fn};
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, ready};
 
 use crate::codec::SessionFailure;
-use crate::packet_relay::{BatchWriter, PacketRelay, RelayLink, put_entry};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::packet_relay::PacketRelay;
+use crate::packet_relay::{BatchWriter, RelayLink, put_entry};
 use crate::packet_tap::{PacketBody, PacketDirection, PacketOutcome, PacketRecordId, PacketTap};
 use crate::raw_packet::{MAX_RAW_BATCH_PACKETS, RawPacket, decode_batch_body};
 use crate::session_wire::{CoreMessage, SessionDisconnect, SessionTransfer};
 use crate::{Packet, ProtocolError, SessionError};
 use bridge::{BridgeError, FrameQueue, FramedReader};
 use bytes::{Bytes, BytesMut};
-use futures::{Stream, StreamExt};
+use futures::StreamExt;
 
 /// A server may batch a whole pack transfer, or a large item registry, into one batch,
 /// so the local leg accepts batches far larger than a typical client's 16 MiB default.
@@ -24,6 +27,7 @@ pub(crate) const MAX_READ_AHEAD_BYTES: usize = 64 * 1024 * 1024;
 
 /// Best-effort: tells the core whether this client applied (or reverted) the
 /// newest attempt's handed-off packs; returns whether the core recorded it.
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn report_pack_application(socket_dir: &Path, applied: bool) -> bool {
     let Ok(status) = bridge::read_status(socket_dir).await else {
         return false;
@@ -52,8 +56,9 @@ pub(crate) enum Terminal {
 /// poll until flushed, strictly in order, so cancellation neither loses nor repeats it. An
 /// optional [`PacketTap`] sees each received packet once, as its batch is read and split (see
 /// [`crate::packet_tap`] for what that time measures), and each sent packet once.
-pub(crate) struct SessionTransport {
-    reader: FramedReader,
+pub(crate) struct SessionTransport<R = FramedReader> {
+    reader: R,
+    timers: bridge::tasks::Timers,
     writer: BatchWriter,
     relay: Option<RelayLink>,
     startup: VecDeque<Bytes>, // startup batch bodies, read before any core frame
@@ -95,11 +100,23 @@ impl InFlightSend {
     }
 }
 
-impl SessionTransport {
+impl<R: bridge::FrameRead> SessionTransport<R> {
     /// Continues a handed-off session; the `startup` packets, each with its header, come first.
-    pub(crate) fn new(reader: FramedReader, frames: FrameQueue, startup: &[Bytes]) -> Self {
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn new(reader: R, frames: FrameQueue, startup: &[Bytes]) -> Self {
+        Self::with_timers(reader, frames, startup, bridge::tasks::Timers::tokio())
+    }
+
+    /// Continues prepared I/O with deadlines registered by its host.
+    pub(crate) fn with_timers(
+        reader: R,
+        frames: FrameQueue,
+        startup: &[Bytes],
+        timers: bridge::tasks::Timers,
+    ) -> Self {
         Self {
             reader,
+            timers,
             writer: BatchWriter::direct(frames),
             relay: None,
             startup: startup_batches(startup).into(),
@@ -117,6 +134,7 @@ impl SessionTransport {
     }
 
     /// Passes later batches through `relay` and starts its timed work on this runtime.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn set_relay(&mut self, relay: Arc<dyn PacketRelay>) {
         let (link, writer) = RelayLink::start(relay, self.writer.queue(), self.tap.clone());
         self.relay = Some(link);
@@ -126,6 +144,17 @@ impl SessionTransport {
     /// Switches later server batches to the play budget after the login owner observes spawn.
     pub(crate) fn finish_startup(&mut self) {
         self.joining = false;
+    }
+
+    /// Registers one host deadline without restarting it on each packet.
+    pub(crate) fn sleep(&self, duration: std::time::Duration) -> bridge::tasks::Timer {
+        self.timers.sleep(duration)
+    }
+
+    /// Exposes the queue for capacity-controlled transport fixtures.
+    #[cfg(test)]
+    pub(crate) fn frame_queue(&self) -> FrameQueue {
+        self.writer.queue()
     }
 
     /// The latency-trace connection, frame and in-frame index of the packet [`Self::recv`]

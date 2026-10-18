@@ -3,7 +3,7 @@
 
 use crate::packet_tap::PacketTap;
 use crate::session_wire::SessionIdentity;
-use bridge::{BridgeError, FrameQueue};
+use bridge::{BridgeError, FrameQueue, FrameWritten};
 use bytes::{BufMut, Bytes, BytesMut};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{Mutex, mpsc};
@@ -11,6 +11,7 @@ use tokio::sync::{Mutex, mpsc};
 /// How often a relay's timed work runs: one client tick.
 pub const RELAY_TICK: Duration = Duration::from_millis(50);
 /// Injected client-bound bodies waiting for the session to read them.
+#[cfg(not(target_arch = "wasm32"))]
 const INJECTED_CAPACITY: usize = 64;
 
 /// A batch body is each packet as a varuint32 byte length followed by the encoded packet,
@@ -94,6 +95,7 @@ impl BatchWriter {
     }
 
     /// The core connection's frame queue.
+    #[cfg(any(test, not(target_arch = "wasm32")))]
     pub(crate) fn queue(&self) -> FrameQueue {
         self.frames.clone()
     }
@@ -101,29 +103,37 @@ impl BatchWriter {
     /// Writes one Batch frame after every frame accepted before it and resolves once flushed.
     /// A relay sees its body first; a batch it drops resolves at once.
     pub(crate) async fn send(&self, frame: Bytes) -> Result<(), BridgeError> {
+        if let Some(written) = self.accept(frame).await? {
+            written.await?;
+        }
+        Ok(())
+    }
+
+    /// Accepts one final frame and records it once, retaining the flush ticket across cancellation.
+    pub(crate) async fn accept(&self, frame: Bytes) -> Result<Option<FrameWritten>, BridgeError> {
         let Some(shared) = &self.relay else {
+            let written = self.frames.accept(frame.clone()).await?;
             self.record(&frame);
-            return self.frames.send(frame).await;
+            return Ok(Some(written));
         };
-        let written = {
-            let _gate = shared.gate.lock().await;
-            let frame = match shared.relay.outbound(&frame[1..]) {
-                None => frame,
-                Some(body) if body.is_empty() => return Ok(()),
-                Some(body) => batch_frame_from_body(&body),
-            };
-            self.record(&frame);
-            self.frames.accept(frame).await?
+        let _gate = shared.gate.lock().await;
+        let frame = match shared.relay.outbound(&frame[1..]) {
+            None => frame,
+            Some(body) if body.is_empty() => return Ok(None),
+            Some(body) => batch_frame_from_body(&body),
         };
-        written.await
+        let written = self.frames.accept(frame.clone()).await?;
+        self.record(&frame);
+        Ok(Some(written))
     }
 
     /// Accepts a relay's own server-bound body in write order, without relaying it again.
+    #[cfg(not(target_arch = "wasm32"))]
     async fn inject(&self, shared: &Shared, body: &[u8]) -> Result<(), BridgeError> {
         let _gate = shared.gate.lock().await;
         let frame = batch_frame_from_body(body);
+        self.frames.accept(frame.clone()).await?;
         self.record(&frame);
-        self.frames.accept(frame).await?;
         Ok(())
     }
 }
@@ -137,6 +147,7 @@ pub(crate) struct RelayLink {
 
 impl RelayLink {
     /// Starts the tick task on the current runtime and routes `frames` through the relay.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn start(
         relay: Arc<dyn PacketRelay>,
         frames: FrameQueue,
@@ -180,6 +191,7 @@ impl Drop for RelayLink {
 }
 
 /// Runs the relay's timed work until the session or the core connection ends.
+#[cfg(not(target_arch = "wasm32"))]
 async fn run_ticks(shared: Arc<Shared>, writer: BatchWriter, inject: mpsc::Sender<Bytes>) {
     let mut interval = tokio::time::interval(RELAY_TICK);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -200,6 +212,7 @@ async fn run_ticks(shared: Arc<Shared>, writer: BatchWriter, inject: mpsc::Sende
 }
 
 /// Starts a relay for a handed-off session off the async runtime and returns its packs.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn start(
     relay: Arc<dyn PacketRelay>,
     identity: SessionIdentity,
@@ -213,6 +226,7 @@ pub(crate) async fn start(
 }
 
 /// Joins packets, each with its header, into one batch body.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn batch_body(packets: &[Bytes]) -> Bytes {
     let mut body = BytesMut::new();
     for packet in packets {

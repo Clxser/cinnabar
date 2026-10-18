@@ -222,14 +222,14 @@ impl<'a> Metadata<'a> {
                 }
             }
         }
-        if type_index.is_none() {
-            if let Some(functions) = &self.functions {
-                type_index = functions
-                    .clone()
-                    .into_iter()
-                    .nth(function as usize)
-                    .transpose()?;
-            }
+        if type_index.is_none()
+            && let Some(functions) = &self.functions
+        {
+            type_index = functions
+                .clone()
+                .into_iter()
+                .nth(function as usize)
+                .transpose()?;
         }
         let (Some(mut index), Some(types)) = (type_index, &self.types) else {
             return Ok(None);

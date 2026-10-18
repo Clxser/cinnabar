@@ -8,9 +8,6 @@ pub(super) fn sync_authority(world: &mut World) {
     let Some(watcher) = world.get_resource::<Watcher>() else {
         return;
     };
-    if let Some(runtime) = world.get_resource::<ModRuntime>() {
-        watcher.remember_settings(runtime);
-    }
     let desired = watcher.desired.lock().expect("mod desired list");
     let enabled: Vec<_> = if watcher.alive.load(Ordering::Acquire) {
         desired
@@ -42,6 +39,10 @@ pub(super) fn sync_authority(world: &mut World) {
     if let Some(mut packets) = world.get_resource_mut::<crate::modding::packets::PacketMods>() {
         packets.authorize(&enabled);
     }
+    world.resource::<Watcher>().remember_settings(
+        world.get_resource::<ModRuntime>(),
+        world.get_resource::<UiRuntimeResource>().map(|ui| &ui.0),
+    );
     refresh_presentation(world);
 }
 
@@ -79,8 +80,27 @@ fn index(world: &World, component: &std::path::Path) -> Option<usize> {
         })
 }
 
+/// Treats reordered or delayed results as idempotent once the same source and fence are running.
+fn already_admitted(world: &World, candidate: &Candidate) -> bool {
+    let Some(index) = index(world, &candidate.registration.component) else {
+        return false;
+    };
+    let runtime = world.resource::<ModRuntime>();
+    let host = runtime.hosts.host(index);
+    host.is_active()
+        && Some(host.drawing_session()) == candidate.frame_host().map(ModHost::drawing_session)
+        && runtime.metadata[index]
+            .registration
+            .as_ref()
+            .is_some_and(|registered| registered.identity == candidate.identity)
+}
+
 /// Installs a prepared candidate without changing the other instances or their preferences.
 fn publish(world: &mut World, candidate: Candidate) -> Result<(), Box<Candidate>> {
+    if already_admitted(world, &candidate) {
+        candidate.retire(world.resource::<Watcher>());
+        return Ok(());
+    }
     if matches!(&candidate.runtime, CandidateRuntime::Packet(_)) {
         if let Some(previous) = index(world, &candidate.registration.component) {
             let old = detach(world, previous);
@@ -105,10 +125,19 @@ fn publish(world: &mut World, candidate: Candidate) -> Result<(), Box<Candidate>
     {
         return Err(Box::new(candidate));
     }
+    if previous.is_some_and(|index| {
+        super::super::admission::DrawingContext::capture(
+            world.resource::<ModRuntime>().hosts.host(index),
+            world.get_resource::<UiRuntimeResource>().map(|ui| &ui.0),
+        ) != candidate.drawing
+    }) {
+        return Err(Box::new(candidate));
+    }
     let Candidate {
         runtime: CandidateRuntime::Frame(mut prepared),
         registration,
         identity,
+        ..
     } = candidate
     else {
         unreachable!()
@@ -154,7 +183,6 @@ fn publish(world: &mut World, candidate: Candidate) -> Result<(), Box<Candidate>
             metadata: vec![metadata],
             render_sources: Vec::new(),
             render_merge: Default::default(),
-            last_reload: std::time::Instant::now(),
             controls: mod_host::empty_controls(),
             suspended: false,
             hud_editor_owner: None,
@@ -275,6 +303,7 @@ pub(super) fn apply(world: &mut World, update: Update) {
         .changes
         .iter()
         .filter_map(|change| change.result.as_ref().ok())
+        .filter(|candidate| !already_admitted(world, candidate))
         .any(|candidate| {
             index(world, &candidate.registration.component).is_some_and(|index| {
                 let old = world.resource::<ModRuntime>().hosts.host(index);
@@ -286,9 +315,10 @@ pub(super) fn apply(world: &mut World, update: Update) {
             })
         });
     if stale_settings {
-        if let Some(runtime) = world.get_resource::<ModRuntime>() {
-            watcher.remember_settings(runtime);
-        }
+        watcher.remember_settings(
+            world.get_resource::<ModRuntime>(),
+            world.get_resource::<UiRuntimeResource>().map(|ui| &ui.0),
+        );
         for change in update.changes {
             if let Ok(candidate) = change.result {
                 candidate.retire(watcher);
@@ -330,6 +360,7 @@ pub(super) fn apply(world: &mut World, update: Update) {
     let mut statuses = Vec::new();
     for change in update.changes {
         let component = change.entry.component;
+        let reload = Some(change.entry.reload);
         let error = match change.result {
             Ok(candidate) => match publish(world, *candidate) {
                 Ok(()) => {
@@ -341,7 +372,7 @@ pub(super) fn apply(world: &mut World, update: Update) {
                     } else {
                         "loaded"
                     };
-                    statuses.push(Status::new(component, state, None));
+                    statuses.push(Status::new(component, state, None, reload));
                     continue;
                 }
                 Err(candidate) => {
@@ -360,6 +391,7 @@ pub(super) fn apply(world: &mut World, update: Update) {
             component,
             if running { "reload-error" } else { "error" },
             Some(error),
+            reload,
         ));
     }
     reorder(world, &update.registration.mods);
@@ -377,15 +409,30 @@ pub(super) fn apply(world: &mut World, update: Update) {
                 .iter()
                 .enumerate()
                 .filter_map(move |(index, metadata)| {
-                    (!runtime.hosts.host(index).is_revoked())
-                        .then_some(metadata.registration.as_ref())
-                        .flatten()
+                    let host = runtime.hosts.host(index);
+                    let registered = metadata.registration.as_ref()?;
+                    (!host.is_revoked()).then(|| {
+                        (
+                            registered.entry.component.clone(),
+                            Admitted {
+                                source: registered.identity,
+                                drawing: host.drawing_session(),
+                            },
+                        )
+                    })
                 })
         })
-        .map(|registered| (registered.entry.component.clone(), registered.identity))
         .collect();
     if let Some(packets) = world.get_resource::<crate::modding::packets::PacketMods>() {
-        installed.extend(packets.identities());
+        installed.extend(packets.identities().map(|(path, source)| {
+            (
+                path,
+                Admitted {
+                    source,
+                    drawing: None,
+                },
+            )
+        }));
     }
     world
         .resource::<Watcher>()

@@ -68,13 +68,6 @@ fn run() -> Result<(), String> {
                     .parse::<u8>()
                     .map_err(|error| error.to_string())?
             }
-            "--time" => {
-                seconds = args
-                    .next()
-                    .ok_or("--time requires seconds")?
-                    .parse::<f64>()
-                    .map_err(|error| error.to_string())?
-            }
             "--state" => name = Some(args.next().ok_or("--state requires a name")?),
             "--out" => {
                 out = Some(PathBuf::from(
@@ -83,6 +76,16 @@ fn run() -> Result<(), String> {
             }
             "--carriers" => {
                 dir = PathBuf::from(args.next().ok_or("--carriers requires a directory")?)
+            }
+            "--time" => {
+                seconds = args
+                    .next()
+                    .ok_or("--time requires seconds")?
+                    .parse::<f64>()
+                    .map_err(|_| "--time requires finite, nonnegative seconds")?;
+                if !seconds.is_finite() || seconds < 0.0 {
+                    return Err("--time requires finite, nonnegative seconds".into());
+                }
             }
             "--help" | "-h" => {
                 println!(
@@ -108,7 +111,8 @@ fn run() -> Result<(), String> {
     if size.iter().any(|value| !(1..=8192).contains(value))
         || !(1..=4).contains(&gui_scale)
         || !seconds.is_finite()
-        || !(0.0..=60.0).contains(&seconds)
+        || seconds < 0.0
+        || (panel.is_some() && seconds > 60.0)
     {
         return Err("snapshot dimensions, GUI scale or sample time exceed their bounds".into());
     }
@@ -142,7 +146,7 @@ fn run() -> Result<(), String> {
             resource_pack.as_deref(),
         )
     } else {
-        render::png(state.expect("named state checked"), &dir)
+        render::png_at(state.expect("named state checked"), &dir, seconds)
     };
     let (name, size, gui_scale) = state.map_or(("mod-panel", size, gui_scale), |state| {
         (state.name, state.size, state.gui_scale)
