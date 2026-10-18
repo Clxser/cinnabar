@@ -404,8 +404,18 @@ fn rain_falls_in_javas_columns_down_to_the_surface() {
     };
     let camera = Vec3::new(0.5, 70.5, 0.5);
     let mut blocked = Mesh::default();
-    rain_columns(&mut blocked, &grid(render_model::OCCLUSION_BLOCKED), sheet, camera, 1.0, 37.25);
-    assert!(blocked.indices.is_empty(), "no rain where the biome has none");
+    rain_columns(
+        &mut blocked,
+        &grid(render_model::OCCLUSION_BLOCKED),
+        sheet,
+        camera,
+        1.0,
+        37.25,
+    );
+    assert!(
+        blocked.indices.is_empty(),
+        "no rain where the biome has none"
+    );
     let mut dry = Mesh::default();
     rain_columns(&mut dry, &grid(64), sheet, camera, 0.0, 37.25);
     assert!(dry.indices.is_empty(), "no rain at rain level 0");
@@ -426,12 +436,20 @@ fn rain_falls_in_javas_columns_down_to_the_surface() {
         let centre = (quad[0] + quad[1]) * 0.5;
         columns.insert((centre.x.round() as i32, centre.z.round() as i32));
         assert!(((quad[1] - quad[0]).length() - 1.0).abs() < 1e-4);
-        assert!((quad[1] - quad[0]).dot(Vec3::new(centre.x, 0.0, centre.z)).abs() < 1e-3);
+        assert!(
+            (quad[1] - quad[0])
+                .dot(Vec3::new(centre.x, 0.0, centre.z))
+                .abs()
+                < 1e-3
+        );
     }
     assert_eq!(columns.len(), 21 * 21 - 1);
     assert!(!columns.contains(&(0, 0)));
     // The sheet repeats every four blocks; each piece stays inside the rain cell.
-    assert!(uv.iter().all(|t| (0.125 - 1e-4..=0.625 + 1e-4).contains(&t[1])));
+    assert!(
+        uv.iter()
+            .all(|t| (0.125 - 1e-4..=0.625 + 1e-4).contains(&t[1]))
+    );
     for quad in corners.chunks(4) {
         assert!(quad[0].y - quad[3].y <= 4.0 + 1e-3);
     }
