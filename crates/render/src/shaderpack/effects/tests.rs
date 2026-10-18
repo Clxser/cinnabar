@@ -7,7 +7,7 @@ use super::resources::{VanillaImage, VanillaTextures, bedrock_path};
 use super::settings::ParticleOrdering;
 use super::stars::{JavaRandom, STAR_QUADS};
 use super::vertices::{FULL_BRIGHT, Mesh};
-use super::weather::weather_quads;
+use super::weather::{rain_columns, weather_quads};
 use super::*;
 use crate::shaderpack::draws::{DrawKind, resolve_program};
 use crate::shaderpack::geometry::IRIS_VERTEX_STRIDE;
@@ -345,15 +345,15 @@ fn particles_expand_like_the_vanilla_shader() {
 }
 
 #[test]
-fn weather_streaks_stop_at_the_column_surface() {
+fn snow_streaks_stop_at_the_column_surface() {
     let layer = PrecipitationLayerRecord {
         base_offset: [0.0; 4],
         velocity: [0.0, -1.0, 0.0, 0.0],
-        uv_rect: [0.0, 0.125, 0.125, 0.5],
-        dimensions: [0.1, 4.0],
+        uv_rect: [0.0, 0.0, 0.125, 0.125],
+        dimensions: [0.2, 4.0],
         first_particle: 0,
         particle_count: 925,
-        kind: 0,
+        kind: 1,
         _pad: [0; 3],
     };
     let grid = |height: i32| {
@@ -381,6 +381,60 @@ fn weather_streaks_stop_at_the_column_surface() {
         positions(&clipped).iter().all(|p| p.y >= 0.5 - 1e-4),
         "streaks end at the surface"
     );
+    let rain = PrecipitationLayerRecord { kind: 0, ..layer };
+    let mut rain_streaks = Mesh::default();
+    weather_quads(
+        &mut rain_streaks,
+        &[rain],
+        [0.0; 3],
+        &grid(render_model::OCCLUSION_OPEN),
+        Vec3::ZERO,
+    );
+    assert!(rain_streaks.indices.is_empty(), "rain draws as columns");
+}
+
+#[test]
+fn rain_falls_in_javas_columns_down_to_the_surface() {
+    let sheet = [0.0, 0.125, 0.125, 0.5];
+    let grid = |height: i32| {
+        let mut grid = OcclusionGrid::default();
+        grid.origin = [-32, -32];
+        grid.heights.fill(height);
+        grid
+    };
+    let camera = Vec3::new(0.5, 70.5, 0.5);
+    let mut blocked = Mesh::default();
+    rain_columns(&mut blocked, &grid(render_model::OCCLUSION_BLOCKED), sheet, camera, 1.0, 37.25);
+    assert!(blocked.indices.is_empty(), "no rain where the biome has none");
+    let mut dry = Mesh::default();
+    rain_columns(&mut dry, &grid(64), sheet, camera, 0.0, 37.25);
+    assert!(dry.indices.is_empty(), "no rain at rain level 0");
+
+    let mut mesh = Mesh::default();
+    rain_columns(&mut mesh, &grid(64), sheet, camera, 1.0, 37.25);
+    let corners = positions(&mesh);
+    let uv = uvs(&mesh);
+    assert!(!corners.is_empty());
+    // From the surface at y 64 to ten blocks above the camera's block (y 80).
+    let lowest = corners.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+    let highest = corners.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+    assert!((lowest - (64.0 - 70.5)).abs() < 1e-3, "{lowest}");
+    assert!((highest - (80.0 - 70.5)).abs() < 1e-3, "{highest}");
+    // 21 x 21 columns less the camera's own; every quad is one block wide and faces it.
+    let mut columns = std::collections::HashSet::new();
+    for quad in corners.chunks(4) {
+        let centre = (quad[0] + quad[1]) * 0.5;
+        columns.insert((centre.x.round() as i32, centre.z.round() as i32));
+        assert!(((quad[1] - quad[0]).length() - 1.0).abs() < 1e-4);
+        assert!((quad[1] - quad[0]).dot(Vec3::new(centre.x, 0.0, centre.z)).abs() < 1e-3);
+    }
+    assert_eq!(columns.len(), 21 * 21 - 1);
+    assert!(!columns.contains(&(0, 0)));
+    // The sheet repeats every four blocks; each piece stays inside the rain cell.
+    assert!(uv.iter().all(|t| (0.125 - 1e-4..=0.625 + 1e-4).contains(&t[1])));
+    for quad in corners.chunks(4) {
+        assert!(quad[0].y - quad[3].y <= 4.0 + 1e-3);
+    }
 }
 
 fn camera() -> EffectCamera {

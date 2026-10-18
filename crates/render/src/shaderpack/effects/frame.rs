@@ -6,7 +6,7 @@ use super::clouds::{CloudCache, CloudFrame, cloud_quads};
 use super::lines::{cracks, lightning, outline};
 use super::particles::particle_quads;
 use super::vertices::Mesh;
-use super::weather::weather_quads;
+use super::weather::{RAIN_KIND, rain_columns, weather_quads};
 use super::{CloudSetting, Effect, EffectSettings};
 use crate::shaderpack::draws::DrawKind;
 use crate::shaderpack::loader::PackGpu;
@@ -48,6 +48,9 @@ pub(crate) struct EffectInputs<'a> {
     pub lightning: Option<&'a LightningScene>,
     pub selection: Option<&'a BlockSelectionFrame>,
     pub block_entities: Option<&'a BlockEntityFrame>,
+    /// Seconds the renderer has run, the game clock Java's rain scrolls with unless the
+    /// pack's `frameTimeCounter` is pinned.
+    pub seconds: f32,
 }
 
 /// One view's effect buffers and the index range each effect draws this frame.
@@ -108,6 +111,21 @@ fn build(
         }
         Effect::Weather => {
             if let Some(scene) = inputs.precipitation {
+                if let Some(rain) = scene
+                    .layers
+                    .iter()
+                    .find(|layer| layer.kind == RAIN_KIND && layer.particle_count > 0)
+                {
+                    let seconds = inputs.frame.frame_time_counter.unwrap_or(inputs.seconds);
+                    rain_columns(
+                        mesh,
+                        &scene.occlusion,
+                        rain.uv_rect,
+                        camera,
+                        inputs.frame.rain_strength,
+                        seconds * render_model::PRECIPITATION_TICKS_PER_SECOND as f32,
+                    );
+                }
                 weather_quads(
                     mesh,
                     &scene.layers,

@@ -467,6 +467,9 @@ fn shaderpack_post(
         block_entities: world
             .get_resource::<render_scene::BlockEntityFrameResource>()
             .map(|frame| &frame.0),
+        seconds: world
+            .get_resource::<Time>()
+            .map_or(0.0, |time| time.elapsed_secs()),
     };
     let actor_rig = crate::actor_render::shaderpack_source::shaderpack_actors(world);
     let hand_rig = crate::hand_rig_render::shaderpack_source::shaderpack_hand(world);
