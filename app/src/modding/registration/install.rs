@@ -60,7 +60,7 @@ fn detach(world: &mut World, index: usize) -> ModHost {
         world.remove_resource::<VisualTimeOverride>();
         world.remove_resource::<ModInteraction>();
         clear_presentation(world);
-        return runtime.hosts.host;
+        return runtime.hosts.into_single();
     }
     let mut runtime = world.resource_mut::<ModRuntime>();
     runtime.remove_host(index)
@@ -168,27 +168,11 @@ fn publish(world: &mut World, candidate: Candidate) -> Result<(), Box<Candidate>
         }),
     };
     if let Some(mut runtime) = world.get_resource_mut::<ModRuntime>() {
-        runtime.metadata.push(metadata);
-        runtime
-            .hosts
-            .companions
-            .push(client_extensions::modding::multi::Companion {
-                host: prepared.host,
-            });
-        runtime.render_sources.clear();
+        runtime.push_host(prepared.host, metadata);
     } else {
         world.insert_resource(VisualTimeOverride(None));
         world.insert_resource(ModInteraction::default());
-        world.insert_resource(ModRuntime {
-            hosts: ModHosts::new(prepared.host, Vec::new()),
-            metadata: vec![metadata],
-            render_sources: Vec::new(),
-            render_merge: Default::default(),
-            controls: mod_host::empty_controls(),
-            suspended: false,
-            hud_editor_owner: None,
-            screens: Default::default(),
-        });
+        world.insert_resource(ModRuntime::new(prepared.host, metadata));
     }
     if let Some(old) = old {
         world.resource::<Watcher>().retire(old);
@@ -227,7 +211,6 @@ fn reorder(world: &mut World, entries: &[Entry]) {
             }
         }
     }
-    runtime.render_sources.clear();
 }
 
 /// Applies a current batch, retaining the previous instance on failed reloads.
