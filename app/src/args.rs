@@ -35,6 +35,7 @@ Options:
   --shader-pack <PATH>         Draw this Java shader pack (zip or folder) for the session only
   --fixed-time <TICKS>         Developer builds: draw at this time of day (0 = sunrise), ignoring the server clock
   --frame-time-counter <SECONDS>  Developer builds: freeze shader packs' frameTimeCounter (0 to <3600)
+  --hide-toasts                Developer builds: never draw toasts (join requests, achievements) in captures
   --gui-scale <1-4|auto>       Fix the GUI scale (default: auto, the Bedrock desktop rule)
   --dev-debug-overlay          Compatibility alias; F3 debug controls are always available
   --language <ll_CC>           UI language (default: from LC_ALL/LC_MESSAGES/LANG, else en_US)
@@ -130,6 +131,9 @@ pub struct ClientArgs {
     /// Shader packs' `frameTimeCounter` frozen at this many milliseconds (developer-control
     /// builds only), for captures that match a reference's animation phase.
     pub frame_time_counter_ms: Option<u32>,
+    /// Toasts are never drawn (developer-control builds only), so an account's join requests
+    /// or achievements cannot land in a capture.
+    pub hide_toasts: bool,
     /// Enables F3 debug controls; the overlay starts hidden until F3 is pressed.
     /// `--dev-debug-overlay` remains accepted for older launch commands.
     pub dev_debug_overlay: bool,
@@ -166,6 +170,7 @@ impl Default for ClientArgs {
             shader_pack: None,
             fixed_time: None,
             frame_time_counter_ms: None,
+            hide_toasts: false,
             dev_debug_overlay: true,
             language: None,
             full_view_teleport_gate: false,
@@ -282,6 +287,9 @@ impl ClientArgs {
             return Err(ArgsError::DeveloperControlFeatureRequired(
                 "--frame-time-counter",
             ));
+        }
+        if !available && self.hide_toasts {
+            return Err(ArgsError::DeveloperControlFeatureRequired("--hide-toasts"));
         }
         Ok(())
     }
@@ -488,6 +496,7 @@ impl ClientArgs {
                         .ok_or_else(|| ArgsError::InvalidFrameTimeCounter(value.clone()))?;
                     parsed.frame_time_counter_ms = Some((seconds * 1000.0).round() as u32);
                 }
+                Some("--hide-toasts") => parsed.hide_toasts = true,
                 _ if resource_pack::is_pack_import_path(std::path::Path::new(&argument)) => {
                     parsed.import_packs.push(PathBuf::from(argument));
                 }
@@ -845,6 +854,32 @@ mod tests {
             );
         }
         assert!(HELP.contains("--frame-time-counter <SECONDS>"));
+    }
+
+    #[test]
+    fn hide_toasts_is_a_developer_only_flag() {
+        let args = ClientArgs {
+            hide_toasts: true,
+            ..ClientArgs::default()
+        };
+        assert_eq!(args.validate_developer_support(true), Ok(()));
+        assert_eq!(
+            args.validate_developer_support(false),
+            Err(ArgsError::DeveloperControlFeatureRequired("--hide-toasts"))
+        );
+        let parsed = ClientArgs::parse_from(["client", "--hide-toasts"]);
+        if cfg!(feature = "developer-control") {
+            let Ok(ParseOutcome::Run(args)) = parsed else {
+                panic!("expected run args, got {parsed:?}");
+            };
+            assert!(args.hide_toasts);
+        } else {
+            assert_eq!(
+                parsed,
+                Err(ArgsError::DeveloperControlFeatureRequired("--hide-toasts"))
+            );
+        }
+        assert!(HELP.contains("--hide-toasts"));
     }
 
     #[test]
