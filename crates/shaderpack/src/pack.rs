@@ -1,9 +1,10 @@
 //! A loaded shader pack and whole-pack translation.
 
 use crate::buffers::{BufferDirectives, BufferFormat};
+use crate::dimensions::DimensionSelector;
 use crate::environment::Environment;
 use crate::options::{OptionValues, PackOption, discover_options, option_defines};
-use crate::programs::{ProgramGroup, ProgramSource, dimension_folder, enumerate_programs};
+use crate::programs::{ProgramGroup, ProgramSource, enumerate_programs};
 use crate::properties::ShaderProperties;
 use crate::reflect::output_buffer;
 use crate::source::{PackError, PackSource};
@@ -58,6 +59,7 @@ pub struct PackTranslation {
 pub struct ShaderPack {
     source: PackSource,
     options: Vec<PackOption>,
+    dimensions: DimensionSelector,
 }
 
 impl ShaderPack {
@@ -72,7 +74,12 @@ impl ShaderPack {
             path.rsplit_once('.')
                 .is_some_and(|(_, ext)| SHADER_EXTENSIONS.contains(&ext))
         }));
-        ShaderPack { source, options }
+        let dimensions = DimensionSelector::new(&source);
+        ShaderPack {
+            source,
+            options,
+            dimensions,
+        }
     }
 
     /// Borrows the loaded pack files and their origin.
@@ -87,7 +94,7 @@ impl ShaderPack {
 
     /// The folder used for a dimension id such as `minecraft:overworld`.
     pub fn dimension_folder(&self, dimension: &str) -> String {
-        dimension_folder(&self.source, dimension)
+        self.dimensions.folder(dimension)
     }
 
     /// Macros visible to `shaders.properties` and enable rules: standard macros and options.
@@ -113,7 +120,7 @@ impl ShaderPack {
 
     /// The programs loaded for `config.folder`; `dh_*` programs only with Distant Horizons.
     pub fn programs(&self, config: &TranslateConfig) -> Vec<ProgramSource> {
-        enumerate_programs(&self.source, &config.folder)
+        enumerate_programs(&self.source, self.dimensions.program_folder(&config.folder))
             .into_iter()
             .filter(|p| {
                 config.environment.distant_horizons || p.group != ProgramGroup::DistantHorizons
@@ -184,7 +191,7 @@ impl ShaderPack {
         properties: &ShaderProperties,
     ) -> ProgramTranslation {
         let defines = self.defines(&config.environment, &config.options);
-        let rule = properties.program_rule(&config.folder, &program.name);
+        let rule = properties.program_rule(&program.folder, &program.name);
         let enabled = rule.is_none_or(|r| rule_holds(&r.expr, &defines));
         let mut values = config.options.clone();
         let mut pp_defines = config.environment.standard_defines();

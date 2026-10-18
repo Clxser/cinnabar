@@ -250,7 +250,7 @@ pub(crate) fn translate_program(
             ))
         })
         .collect();
-    match reflect(program.kind, &inputs, &out.draw_buffers) {
+    match reflect(program.kind, &inputs, &out.draw_buffers, &out.consts) {
         Ok(r) => out.reflection = Some(r),
         Err(message) => out.diagnostics.push(Diagnostic::new(Phase::Link, message)),
     }

@@ -4,10 +4,10 @@ use crate::buffers::{BufferFormat, BufferId};
 use crate::compile::CompiledStage;
 use crate::programs::{ProgramKind, StageKind};
 use crate::reflection::{
-    BufferBinding, ColorOutput, ComputeDispatch, LOOSE_UNIFORM_BINDING, LOOSE_UNIFORM_BLOCK,
-    ProgramReflection, SampleType, SamplerBinding, ScalarType, StageMask, StorageImageBinding,
-    TextureBinding, TextureDimension, UNIFORM_GROUP, UniformBlock, UniformMember, ValueType,
-    VertexAttribute, VertexInput,
+    BufferBinding, ColorOutput, LOOSE_UNIFORM_BINDING, LOOSE_UNIFORM_BLOCK, ProgramReflection,
+    SampleType, SamplerBinding, ScalarType, StageMask, StorageImageBinding, TextureBinding,
+    TextureDimension, UNIFORM_GROUP, UniformBlock, UniformMember, ValueType, VertexAttribute,
+    VertexInput,
 };
 use naga::{AddressSpace, ArraySize, Binding, ImageClass, ImageDimension, ScalarKind, TypeInner};
 use std::collections::BTreeMap;
@@ -42,6 +42,7 @@ pub(crate) fn reflect(
     kind: ProgramKind,
     stages: &[(&CompiledStage, StageNames<'_>)],
     draw_buffers: &[u32],
+    directives: &[crate::preprocess::ConstDirective],
 ) -> Result<ProgramReflection, String> {
     crate::reflect_link::validate(
         &stages
@@ -160,12 +161,7 @@ pub(crate) fn reflect(
                 }
             }
             StageKind::Compute => {
-                out.compute = Some(ComputeDispatch {
-                    workgroup_size: ep.workgroup_size,
-                    work_groups: constant(module, "workGroups").and_then(|v| v.as_u32s::<3>()),
-                    work_groups_render: constant(module, "workGroupsRender")
-                        .and_then(|v| v.as_f32s::<2>()),
-                });
+                out.compute = Some(crate::dispatch::reflect(ep.workgroup_size, directives));
             }
             _ => {}
         }
@@ -502,72 +498,4 @@ fn has_builtin(
         (_, Some(Binding::BuiltIn(x))) => *x == which,
         _ => false,
     }
-}
-
-/// Literal components of a module-scope constant.
-struct ConstValue(Vec<naga::Literal>);
-
-impl ConstValue {
-    /// Reads exactly N non-negative integer components from a constant.
-    fn as_u32s<const N: usize>(&self) -> Option<[u32; N]> {
-        let v: Option<Vec<u32>> = self
-            .0
-            .iter()
-            .map(|l| match l {
-                naga::Literal::I32(i) => u32::try_from(*i).ok(),
-                naga::Literal::U32(u) => Some(*u),
-                _ => None,
-            })
-            .collect();
-        v?.try_into().ok()
-    }
-
-    /// Reads exactly N floating-point components, narrowing double values if needed.
-    fn as_f32s<const N: usize>(&self) -> Option<[f32; N]> {
-        let v: Option<Vec<f32>> = self
-            .0
-            .iter()
-            .map(|l| match l {
-                naga::Literal::F32(f) => Some(*f),
-                naga::Literal::F64(f) => Some(*f as f32),
-                _ => None,
-            })
-            .collect();
-        v?.try_into().ok()
-    }
-}
-
-/// Evaluates the named module constant if it is built from literals.
-fn constant(module: &naga::Module, name: &str) -> Option<ConstValue> {
-    let (_, c) = module
-        .constants
-        .iter()
-        .find(|(_, c)| c.name.as_deref() == Some(name))?;
-    let mut out = vec![];
-    literals(module, c.init, &mut out)?;
-    Some(ConstValue(out))
-}
-
-/// Appends constant literal components, returning None for unsupported expressions.
-fn literals(
-    module: &naga::Module,
-    expr: naga::Handle<naga::Expression>,
-    out: &mut Vec<naga::Literal>,
-) -> Option<()> {
-    match &module.global_expressions[expr] {
-        naga::Expression::Literal(l) => out.push(*l),
-        naga::Expression::Compose { components, .. } => {
-            for c in components {
-                literals(module, *c, out)?;
-            }
-        }
-        naga::Expression::Splat { size, value } => {
-            for _ in 0..*size as u8 {
-                literals(module, *value, out)?;
-            }
-        }
-        naga::Expression::Constant(c) => literals(module, module.constants[*c].init, out)?,
-        _ => return None,
-    }
-    Some(())
 }

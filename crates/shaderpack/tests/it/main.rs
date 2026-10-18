@@ -11,6 +11,7 @@ mod draw_buffers;
 mod includes;
 mod legacy;
 mod options;
+mod program_contracts;
 mod regressions;
 mod zip_source;
 

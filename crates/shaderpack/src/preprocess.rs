@@ -7,6 +7,7 @@ use crate::source::PackSource;
 use crate::token::{Tok, TokKind};
 use pp_rs::pp::Preprocessor;
 use pp_rs::token::{Punct, TokenValue};
+use std::collections::BTreeMap;
 
 /// Identifier prefix of the markers that stand in for comment and `const` directives while
 /// the preprocessor decides which of them sit in active code. Stripped before transforming.
@@ -18,10 +19,10 @@ const MARKER: &str = "__shaderpack_directive_";
 pub(crate) enum Directive {
     RenderTargets(Vec<u32>),
     DrawBuffers(Vec<u32>),
-    Const(ConstDirective),
+    Const { value: ConstDirective, code: bool },
 }
 
-/// One `const` directive line, as written (OptiFine/Iris read these even inside comments).
+/// An active constant directive, expanded in code and kept literal inside comments.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConstDirective {
     pub ty: String,
@@ -86,9 +87,7 @@ struct Expander<'a> {
     out: String,
     map: LineMap,
     directives: Vec<Directive>,
-    stack: Vec<String>,
     pending: Vec<usize>,
-    in_block: bool,
 }
 
 /// Expands `#include`s of the `shaders/`-relative `path` textually, like Iris: absolute
@@ -107,9 +106,7 @@ pub(crate) fn expand(
         out: String::new(),
         map: LineMap::default(),
         directives: Vec::new(),
-        stack: Vec::new(),
         pending: Vec::new(),
-        in_block: false,
     };
     x.file(path, None)?;
     Ok(Expanded {
@@ -119,57 +116,103 @@ pub(crate) fn expand(
     })
 }
 
-impl Expander<'_> {
-    /// Expands a file and its includes, reporting missing files and include cycles.
+/// One source file being expanded, with its own comment scope and line iterator.
+struct FileFrame<'a> {
+    path: String,
+    file: u32,
+    lines: std::iter::Enumerate<std::str::Lines<'a>>,
+    in_block: bool,
+}
+
+impl<'a> Expander<'a> {
+    /// Loads a frame without copying its source; include errors retain the caller's location.
+    fn frame(
+        &mut self,
+        path: &str,
+        from: Option<SourceLocation>,
+    ) -> Result<FileFrame<'a>, Diagnostic> {
+        let source = self.source;
+        let text = source.text(path).ok_or_else(|| {
+            Diagnostic::new(Phase::Include, format!("cannot find `{path}`")).at(from)
+        })?;
+        Ok(FileFrame {
+            path: path.to_string(),
+            file: self.map.file_index(path),
+            lines: text.lines().enumerate(),
+            in_block: false,
+        })
+    }
+
+    /// Expands includes in source order using heap frames, reporting cycles and malformed files.
     fn file(&mut self, path: &str, from: Option<SourceLocation>) -> Result<(), Diagnostic> {
-        let Some(text) = self.source.text(path) else {
-            return Err(Diagnostic::new(Phase::Include, format!("cannot find `{path}`")).at(from));
-        };
-        if self.stack.iter().any(|p| p == path) {
-            return Err(
-                Diagnostic::new(Phase::Include, format!("include cycle through `{path}`")).at(from),
-            );
-        }
-        self.stack.push(path.to_string());
-        let file = self.map.file_index(path);
-        for (n, line) in text.lines().enumerate() {
+        let mut frames = vec![self.frame(path, from)?];
+        while let Some(frame) = frames.last_mut() {
+            let Some((n, line)) = frame.lines.next() else {
+                if frame.in_block {
+                    return Err(
+                        Diagnostic::new(Phase::Preprocess, "unterminated block comment").at(Some(
+                            SourceLocation {
+                                file: frame.path.clone(),
+                                line: self
+                                    .source
+                                    .text(&frame.path)
+                                    .map_or(0, |text| text.lines().count() as u32),
+                            },
+                        )),
+                    );
+                }
+                frames.pop();
+                continue;
+            };
             let here = SourceLocation {
-                file: path.to_string(),
+                file: frame.path.clone(),
                 line: n as u32 + 1,
             };
-            let trimmed = line.trim_start();
-            if let Some(rest) = trimmed.strip_prefix("#include") {
-                let target = resolve_include(path, rest);
-                self.file(&target, Some(here))?;
-                continue;
-            }
             let rewritten = if self.values.is_empty() {
                 None
             } else {
                 rewrite_option_line(line, self.options, self.values)
             };
             let line = rewritten.as_deref().unwrap_or(line);
-            let line = if trimmed.starts_with("#error") {
-                // pp-rs tokenizes lines inside skipped groups and rejects the `"` of `#error "…"`.
+            // pp-rs tokenizes skipped groups and rejects quotes in #error messages.
+            let line = if line.trim_start().starts_with("#error") {
                 line.replace('"', "")
             } else {
                 line.to_string()
             };
-            let out = self.directives_in(&line);
-            self.out.push_str(&out);
-            self.out.push('\n');
-            self.map.lines.push((file, n as u32 + 1));
+            let out = self.directives_in(&line, &mut frame.in_block);
+            let directive = out.trim_start().strip_prefix('#').map(str::trim_start);
+            if let Some(rest) = directive
+                .and_then(|d| d.strip_prefix("include"))
+                .filter(|rest| {
+                    rest.is_empty()
+                        || rest.starts_with(|c: char| c.is_whitespace() || c == '"' || c == '<')
+                })
+            {
+                let target = resolve_include(&frame.path, rest).map_err(|message| {
+                    Diagnostic::new(Phase::Include, message).at(Some(here.clone()))
+                })?;
+                if frames.iter().any(|frame| frame.path == target) {
+                    return Err(Diagnostic::new(
+                        Phase::Include,
+                        format!("include cycle through `{target}`"),
+                    )
+                    .at(Some(here)));
+                }
+                frames.push(self.frame(&target, Some(here))?);
+            } else {
+                self.out.push_str(&out);
+                self.out.push('\n');
+                self.map.lines.push((frame.file, n as u32 + 1));
+            }
         }
-        self.stack.pop();
         Ok(())
     }
 
-    /// Records the directives on `line` and returns the line with marker identifiers placed
-    /// in code right after the comment that held them, so only directives in active code
-    /// survive preprocessing.
-    fn directives_in(&mut self, line: &str) -> String {
-        let started_in_block = self.in_block;
-        let scan = scan_line(line, &mut self.in_block);
+    /// Removes comments and places directive markers in code so conditional preprocessing
+    /// selects them in source order. Code declarations also mark their expanded token range.
+    fn directives_in(&mut self, line: &str, in_block: &mut bool) -> String {
+        let scan = scan_line(line, in_block);
         for comment in &scan.block_comments {
             if let Some(d) = comment_directive(comment) {
                 self.directives.push(d);
@@ -177,32 +220,49 @@ impl Expander<'_> {
             }
         }
         let trimmed = line.trim_start();
-        if let Some(c) = trimmed.strip_prefix("const ").and_then(parse_const) {
-            self.directives.push(Directive::Const(c));
-            self.pending.push(self.directives.len() - 1);
-        }
-        let preprocessor_line = !started_in_block && trimmed.starts_with('#');
-        if self.pending.is_empty()
-            || self.in_block
-            || preprocessor_line
-            || line.trim_end().ends_with('\\')
+        let mut prefix = String::new();
+        if let Some(c) = trimmed
+            .strip_prefix("const")
+            .filter(|rest| rest.starts_with(char::is_whitespace))
+            .and_then(parse_const)
         {
-            return line.to_string();
+            let code = scan.code.trim_start().starts_with("const");
+            let index = self.directives.len();
+            if code {
+                prefix.push_str(&format!("{MARKER}start{index} "));
+            }
+            self.directives.push(Directive::Const { value: c, code });
+            self.pending.push(index);
         }
-        let mut out = line[..scan.code_end].to_string();
+        let preprocessor_line = scan.code.trim_start().starts_with('#');
+        if self.pending.is_empty() || preprocessor_line || scan.code.trim_end().ends_with('\\') {
+            prefix.push_str(&scan.code);
+            return prefix;
+        }
+        let mut out = prefix;
+        out.push_str(&scan.code);
         for i in self.pending.drain(..) {
             out.push_str(&format!(" {MARKER}{i} "));
         }
-        out.push_str(&line[scan.code_end..]);
         out
     }
 }
 
 /// `shaders/`-relative target of an `#include` argument written in `from`.
-fn resolve_include(from: &str, arg: &str) -> String {
-    let name = arg
-        .trim()
-        .trim_matches(|c| c == '"' || c == '<' || c == '>');
+fn resolve_include(from: &str, arg: &str) -> Result<String, String> {
+    let arg = arg.trim();
+    let (tail, close) = if let Some(tail) = arg.strip_prefix('"') {
+        (tail, '"')
+    } else if let Some(tail) = arg.strip_prefix('<') {
+        (tail, '>')
+    } else {
+        return Err("include requires a delimited filename".into());
+    };
+    let end = tail.find(close).ok_or("unterminated include filename")?;
+    let name = &tail[..end];
+    if name.is_empty() || !tail[end + close.len_utf8()..].trim().is_empty() {
+        return Err("include requires one non-empty filename".into());
+    }
     let joined = match name.strip_prefix('/') {
         Some(abs) => abs.to_string(),
         None => match from.rsplit_once('/') {
@@ -220,23 +280,23 @@ fn resolve_include(from: &str, arg: &str) -> String {
             s => parts.push(s),
         }
     }
-    parts.join("/")
+    Ok(parts.join("/"))
 }
 
 struct LineScan {
-    /// Byte offset where a trailing `//` comment starts, or the line length.
-    code_end: usize,
+    /// Source code with comments replaced by whitespace.
+    code: String,
     /// Text of the block comments (or parts of them) on this line.
     block_comments: Vec<String>,
 }
 
-/// Finds comments and the trailing code boundary while tracking multiline comments.
+/// Replaces comments with whitespace while collecting their text and tracking multiline scope.
 fn scan_line(line: &str, in_block: &mut bool) -> LineScan {
     let b = line.as_bytes();
     let mut i = 0;
     let mut comments = Vec::new();
     let mut current = String::new();
-    let mut code_end = line.len();
+    let mut code = String::new();
     while i < b.len() {
         if *in_block {
             if b[i] == b'*' && b.get(i + 1) == Some(&b'/') {
@@ -252,28 +312,34 @@ fn scan_line(line: &str, in_block: &mut bool) -> LineScan {
         }
         match b[i] {
             b'/' if b.get(i + 1) == Some(&b'/') => {
-                code_end = i;
                 break;
             }
             b'/' if b.get(i + 1) == Some(&b'*') => {
                 *in_block = true;
+                code.push(' ');
                 i += 2;
             }
             b'"' => {
+                let start = i;
                 i += 1;
                 while i < b.len() && b[i] != b'"' {
                     i += 1;
                 }
-                i += 1;
+                i = (i + 1).min(b.len());
+                code.push_str(&line[start..i]);
             }
-            _ => i += 1,
+            _ => {
+                let ch = line[i..].chars().next().expect("cursor is within the line");
+                code.push(ch);
+                i += ch.len_utf8();
+            }
         }
     }
     if *in_block {
         comments.push(current);
     }
     LineScan {
-        code_end: code_end.min(line.len()),
+        code,
         block_comments: comments,
     }
 }
@@ -311,6 +377,22 @@ fn parse_const(rest: &str) -> Option<ConstDirective> {
         name: name.to_string(),
         value: value.to_string(),
     })
+}
+
+/// Reads a directive declaration after ordinary code macros have expanded.
+fn expanded_const(tokens: &[Tok]) -> Option<ConstDirective> {
+    let end = tokens.iter().position(|token| token.is(";"))?;
+    let mut text = String::new();
+    for (i, token) in tokens[..=end].iter().enumerate() {
+        let signed_literal = i > 0
+            && (tokens[i - 1].is("-") || tokens[i - 1].is("+"))
+            && matches!(token.kind, TokKind::Int(_) | TokKind::Float(_));
+        if i > 0 && !signed_literal {
+            text.push(' ');
+        }
+        text.push_str(token.text());
+    }
+    parse_const(text.strip_prefix("const")?)
 }
 
 /// Checks for a non-empty ASCII identifier with a valid first character.
@@ -351,6 +433,7 @@ pub(crate) fn preprocess(
         render_targets: None,
         consts: Vec::new(),
     };
+    let mut const_starts = BTreeMap::new();
     for item in pp {
         let tok = item.map_err(|(e, loc)| {
             Diagnostic::new(Phase::Preprocess, format!("{e:?}"))
@@ -359,12 +442,31 @@ pub(crate) fn preprocess(
         let line = line_of(tok.location.start);
         let kind = match tok.value {
             TokenValue::Ident(s) => {
+                if let Some(i) = s
+                    .strip_prefix(MARKER)
+                    .and_then(|s| s.strip_prefix("start"))
+                    .and_then(|s| s.parse::<usize>().ok())
+                {
+                    const_starts.insert(i, out.tokens.len());
+                    continue;
+                }
                 if let Some(i) = s.strip_prefix(MARKER).and_then(|n| n.parse::<usize>().ok()) {
                     match expanded.directives.get(i) {
                         Some(Directive::RenderTargets(l) | Directive::DrawBuffers(l)) => {
                             out.render_targets = Some(l.clone());
                         }
-                        Some(Directive::Const(c)) => out.consts.push(c.clone()),
+                        Some(Directive::Const { value, code }) => {
+                            let value = if *code {
+                                const_starts
+                                    .remove(&i)
+                                    .and_then(|start| expanded_const(&out.tokens[start..]))
+                            } else {
+                                Some(value.clone())
+                            };
+                            if let Some(value) = value {
+                                out.consts.push(value);
+                            }
+                        }
                         None => {}
                     }
                     continue;
@@ -494,15 +596,15 @@ mod tests {
     #[test]
     fn includes_resolve_absolute_and_relative_paths() {
         assert_eq!(
-            resolve_include("world0/a.fsh", " \"/lib/x.glsl\""),
+            resolve_include("world0/a.fsh", " \"/lib/x.glsl\"").unwrap(),
             "lib/x.glsl"
         );
         assert_eq!(
-            resolve_include("world0/a.fsh", " \"../lib/x.glsl\""),
+            resolve_include("world0/a.fsh", " \"../lib/x.glsl\"").unwrap(),
             "lib/x.glsl"
         );
         assert_eq!(
-            resolve_include("program/a.glsl", " \"b.glsl\""),
+            resolve_include("program/a.glsl", " \"b.glsl\"").unwrap(),
             "program/b.glsl"
         );
     }

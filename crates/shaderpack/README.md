@@ -15,7 +15,7 @@ dispatch.
 
 The translation includes relative and absolute shader includes, macro
 preprocessing, legacy GLSL rewrites, active buffer directives, program enable
-rules and dimension-folder fallback. `shaders.properties` supplies typed rules
+rules and complete dimension program sets with root or wildcard defaults. `shaders.properties` supplies typed rules
 and parsed custom uniform expressions. A failed program keeps its diagnostics
 while other programs can still translate.
 

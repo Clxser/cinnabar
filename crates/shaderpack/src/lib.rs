@@ -14,6 +14,8 @@
 mod buffers;
 mod compile;
 mod diagnostics;
+mod dimensions;
+mod dispatch;
 mod environment;
 mod expr;
 mod options;

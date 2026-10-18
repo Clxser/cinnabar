@@ -182,66 +182,25 @@ pub fn geometry_fallback(name: &str) -> Option<&'static str> {
         .and_then(|(_, f)| *f)
 }
 
-/// The folder of `dimension` (a namespaced id like `minecraft:the_nether`):
-/// `dimension.properties` (`dimension.<folder> = <id> …`, `*` matching any id) first, then
-/// the vanilla folders, then `world0`.
-pub fn dimension_folder(source: &PackSource, dimension: &str) -> String {
-    if let Some(props) = source.text("dimension.properties") {
-        let mut wildcard = None;
-        for line in props.lines() {
-            let line = line.trim();
-            let Some(rest) = line.strip_prefix("dimension.") else {
-                continue;
-            };
-            let Some((folder, ids)) = rest.split_once('=') else {
-                continue;
-            };
-            let folder = folder.trim();
-            for id in ids.split_whitespace() {
-                if id == dimension {
-                    return folder.to_string();
-                }
-                if id == "*" {
-                    wildcard = Some(folder.to_string());
-                }
-            }
-        }
-        if let Some(folder) = wildcard {
-            return folder;
-        }
-    }
-    match dimension {
-        "minecraft:the_nether" => "world-1",
-        "minecraft:the_end" => "world1",
-        _ => "world0",
-    }
-    .to_string()
+/// Recognizes a program stage path and returns its directory, stem and stage.
+pub(crate) fn program_file(path: &str) -> Option<(&str, &str, StageKind)> {
+    let (directory, file) = path.rsplit_once('/').unwrap_or(("", path));
+    let (stem, extension) = file.rsplit_once('.')?;
+    program_group(stem)?;
+    Some((directory, stem, StageKind::from_extension(extension)?))
 }
 
 /// A program's stage files as (stage, `shaders/`-relative path).
 type StageFiles = Vec<(StageKind, String)>;
 
-/// Every program Iris would load for dimension folder `folder`: a program found in the
-/// folder takes all its stages from there, otherwise from the `shaders/` root. Files whose
-/// stem is not an Iris program name are ignored. Sorted by group, then name, render first.
+/// Enumerates one complete program directory, sorted by group and name, render first.
 pub fn enumerate_programs(source: &PackSource, folder: &str) -> Vec<ProgramSource> {
-    // (name, kind) -> folder -> stages
-    let mut found: BTreeMap<(String, ProgramKind), BTreeMap<String, StageFiles>> = BTreeMap::new();
+    let mut found: BTreeMap<(String, ProgramKind), StageFiles> = BTreeMap::new();
     for (path, _) in source.files() {
-        let (dir, file) = match path.rsplit_once('/') {
-            Some((d, f)) => (d, f),
-            None => ("", path),
-        };
-        if dir != folder && !dir.is_empty() {
-            continue;
-        }
-        let Some((stem, ext)) = file.rsplit_once('.') else {
+        let Some((dir, stem, stage)) = program_file(path) else {
             continue;
         };
-        let Some(stage) = StageKind::from_extension(ext) else {
-            continue;
-        };
-        if program_group(stem).is_none() {
+        if dir != folder {
             continue;
         }
         let kind = if stage == StageKind::Compute {
@@ -252,22 +211,17 @@ pub fn enumerate_programs(source: &PackSource, folder: &str) -> Vec<ProgramSourc
         found
             .entry((stem.to_string(), kind))
             .or_default()
-            .entry(dir.to_string())
-            .or_default()
             .push((stage, path.to_string()));
     }
     let mut out: Vec<ProgramSource> = found
         .into_iter()
-        .filter_map(|((name, kind), mut by_folder)| {
-            let (dir, mut stages) = by_folder
-                .remove_entry(folder)
-                .or_else(|| by_folder.remove_entry(""))?;
+        .filter_map(|((name, kind), mut stages)| {
             stages.sort();
             Some(ProgramSource {
                 group: program_group(&name)?,
                 name,
                 kind,
-                folder: dir,
+                folder: folder.to_string(),
                 stages,
             })
         })
@@ -298,6 +252,7 @@ fn natural_key(name: &str) -> (String, u32, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dimensions::DimensionSelector;
 
     #[test]
     fn program_names_follow_iris() {
@@ -351,7 +306,6 @@ mod tests {
             [
                 ("composite", "world0", ProgramKind::Render),
                 ("composite_a", "world0", ProgramKind::Compute),
-                ("final", "", ProgramKind::Render),
             ]
         );
         assert_eq!(
@@ -365,14 +319,27 @@ mod tests {
 
     #[test]
     fn dimension_properties_map_ids_with_wildcard_and_default_to_world0() {
-        let source = PackSource::from_files([(
-            "dimension.properties",
-            "dimension.world-1 = minecraft:the_nether\ndimension.world0 = minecraft:overworld *\n",
-        )]);
-        assert_eq!(dimension_folder(&source, "minecraft:the_nether"), "world-1");
-        assert_eq!(dimension_folder(&source, "mymod:moon"), "world0");
+        let source = PackSource::from_files([
+            (
+                "dimension.properties",
+                "dimension.world-1 = minecraft:the_nether\ndimension.world0 = minecraft:overworld *\n",
+            ),
+            ("world-1/final.fsh", ""),
+            ("world0/final.fsh", ""),
+        ]);
+        assert_eq!(
+            DimensionSelector::new(&source).folder("minecraft:the_nether"),
+            "world-1"
+        );
+        assert_eq!(
+            DimensionSelector::new(&source).folder("mymod:moon"),
+            "world0"
+        );
         let bare = PackSource::from_files([("a.fsh", "")]);
-        assert_eq!(dimension_folder(&bare, "minecraft:the_end"), "world1");
-        assert_eq!(dimension_folder(&bare, "mymod:moon"), "world0");
+        assert_eq!(
+            DimensionSelector::new(&bare).folder("minecraft:the_end"),
+            ""
+        );
+        assert_eq!(DimensionSelector::new(&bare).folder("mymod:moon"), "");
     }
 }

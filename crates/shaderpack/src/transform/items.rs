@@ -240,6 +240,47 @@ pub(super) fn size_unsized_arrays(src: &[Tok]) -> Vec<Tok> {
     out
 }
 
+/// Merges layout entries in order, replacing earlier entries in the same layout class.
+fn merge_layout(layout: &mut Vec<Tok>, incoming: &[Tok]) {
+    let mut entries: Vec<Vec<Tok>> = layout
+        .split(|t| t.is(","))
+        .filter(|entry| !entry.is_empty())
+        .map(<[Tok]>::to_vec)
+        .collect();
+    for entry in incoming
+        .split(|t| t.is(","))
+        .filter(|entry| !entry.is_empty())
+    {
+        let mut entry = entry.to_vec();
+        if let Some(name) = entry[0].ident() {
+            let name = name.to_ascii_lowercase();
+            entries.retain(|old| {
+                old[0]
+                    .ident()
+                    .is_none_or(|old| layout_class(old) != layout_class(&name))
+            });
+            entry[0] = crate::token::id(&name).at(entry[0].line);
+        }
+        entries.push(entry);
+    }
+    layout.clear();
+    for entry in entries {
+        if !layout.is_empty() {
+            layout.push(crate::token::p(","));
+        }
+        layout.extend(entry);
+    }
+}
+
+/// Groups mutually exclusive block packing and matrix order qualifiers.
+fn layout_class(name: &str) -> &str {
+    match name {
+        "std140" | "std430" | "shared" | "packed" => "block_packing",
+        "row_major" | "column_major" => "matrix_order",
+        _ => name,
+    }
+}
+
 /// Parses one top-level statement as a declaration; `None` for prototypes and anything else.
 pub(super) fn parse_decl(toks: &[Tok]) -> Option<Decl> {
     let mut i = 0;
@@ -249,7 +290,7 @@ pub(super) fn parse_decl(toks: &[Tok]) -> Option<Decl> {
         match toks.get(i)?.ident() {
             Some("layout") => {
                 let close = matching(toks, i + 1, "(", ")")?;
-                layout.extend_from_slice(toks.get(i + 2..close)?);
+                merge_layout(&mut layout, toks.get(i + 2..close)?);
                 i = close + 1;
             }
             Some(q) if QUALIFIERS.contains(&q) => {
