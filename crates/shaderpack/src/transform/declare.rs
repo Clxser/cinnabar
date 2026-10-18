@@ -10,8 +10,8 @@ use super::items::{
 use super::{ProgramInterface, ResourceNames, TransformError, UboMember};
 use crate::programs::StageKind;
 use crate::reflection::{
-    FIRST_OTHER_ATTRIBUTE_LOCATION, IMAGE_GROUP, STORAGE_BUFFER_GROUP, SamplerClass, TEXTURE_GROUP,
-    TextureDimension, UNIFORM_GROUP, VertexAttribute,
+    FIRST_OTHER_ATTRIBUTE_LOCATION, IMAGE_GROUP, STORAGE_BUFFER_GROUP, SamplerClass, StoredNumbers,
+    TEXTURE_GROUP, TextureDimension, UNIFORM_GROUP, VertexAttribute,
 };
 use crate::token::{Tok, id, lex, p};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -50,25 +50,39 @@ fn first_line(toks: &[Tok]) -> u32 {
     toks.iter().map(|t| t.line).find(|l| *l != 0).unwrap_or(0)
 }
 
-/// The float type an integer lightmap input (`in ivec2 vaUV2`) reads before converting, or
-/// `None` for every other input.
-fn integer_lightmap(attribute: &VertexAttribute, ty: &str, arr: &[Tok]) -> Option<String> {
-    let lightmap = matches!(
-        attribute,
-        VertexAttribute::Lightmap | VertexAttribute::MultiTexCoord2
-    );
-    if !lightmap || !arr.is_empty() || !is_integer(ty) {
+/// An input whose declared type differs in kind from how the vertex stream stores its
+/// attribute ([`VertexAttribute::stored_numbers`]): the name and type of the input the stage
+/// reads instead, and the expression converting that into the declared type `ty`.
+fn converted_input(
+    attribute: &VertexAttribute,
+    name: &str,
+    ty: &str,
+    arr: &[Tok],
+) -> Option<(String, String, String)> {
+    if !arr.is_empty() {
         return None;
     }
-    Some(match ty {
-        "int" | "uint" => "float".to_string(),
-        vector => format!(
-            "vec{}",
-            vector
-                .trim_start_matches(['i', 'u'])
-                .trim_start_matches("vec")
-        ),
-    })
+    let size = ty
+        .trim_start_matches(['i', 'u'])
+        .trim_start_matches("vec")
+        .parse::<u8>()
+        .ok();
+    match attribute.stored_numbers()? {
+        // Lightmap levels are stored as exact floats; integers round them back.
+        StoredNumbers::Float if is_integer(ty) => {
+            let read = size.map_or("float".to_string(), |size| format!("vec{size}"));
+            let stored = format!("iris_float_{name}");
+            let convert = format!("{ty}(round({stored}))");
+            Some((stored, read, convert))
+        }
+        StoredNumbers::Int if ty == "float" || ty.starts_with("vec") => {
+            let read = size.map_or("int".to_string(), |size| format!("ivec{size}"));
+            let stored = format!("iris_int_{name}");
+            let convert = format!("{ty}({stored})");
+            Some((stored, read, convert))
+        }
+        _ => None,
+    }
 }
 
 /// Collects declarations of `items` for `stage`.
@@ -151,12 +165,10 @@ pub(super) fn collect(
                     l
                 });
                 c.vertex_inputs.push((loc, name.clone()));
-                if let Some(float_ty) = integer_lightmap(&attribute, &d.ty, arr) {
-                    // The vertex stream stores the lightmap once, as exact half floats; an
-                    // integer declaration (`in ivec2 vaUV2`) reads that and converts.
-                    let stored = format!("iris_float_{name}");
+                if let Some((stored, read, convert)) = converted_input(&attribute, name, &d.ty, arr)
+                {
                     c.io.extend(
-                        lex(&format!("layout(location = {loc}) in {float_ty} {stored};"))
+                        lex(&format!("layout(location = {loc}) in {read} {stored};"))
                             .into_iter()
                             .map(|t| t.at(line)),
                     );
@@ -165,8 +177,7 @@ pub(super) fn collect(
                             .into_iter()
                             .map(|t| t.at(line)),
                     );
-                    c.before_main
-                        .push(format!("{name} = {}(round({stored}));", d.ty));
+                    c.before_main.push(format!("{name} = {convert};"));
                     continue;
                 }
                 c.io.extend(

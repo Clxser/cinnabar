@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use bevy::render::settings::{WgpuSettings, WgpuSettingsPriority};
 use launcher::graphics_backend::{Adapter, Backend};
 
-/// Applies renderer limits and compiler policy to Bevy's defaults.
+/// Applies renderer limits, compiler and allocator policy to Bevy's defaults.
 pub(super) fn configure_render_settings(settings: &mut WgpuSettings) {
     #[cfg(target_arch = "wasm32")]
     {
@@ -17,6 +17,11 @@ pub(super) fn configure_render_settings(settings: &mut WgpuSettings) {
         .limits
         .max_storage_buffers_per_shader_stage
         .max(render::required_vertex_storage_buffers());
+    // Bevy's default (`Performance`) sub-allocates from 128–256 MiB blocks the allocator
+    // keeps while any allocation in them lives; on a 2 GiB working set that left about
+    // 1 GiB reserved but unused. Smaller blocks pack tighter and free sooner, and buffers
+    // larger than a block (shader-pack vertex pages) get memory of their own.
+    settings.memory_hints = wgpu::MemoryHints::MemoryUsage;
 }
 
 /// Converts the policy's backend to wgpu's flags without keeping a separate order table.

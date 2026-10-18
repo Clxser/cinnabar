@@ -1,9 +1,11 @@
 //! Per-view draw lists over resident expanded sections, retained while what they were built
 //! from holds, and recording them into a pass.
 
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::ops::Range;
 
 use bevy::math::DVec3;
+use bevy::platform::hash::FixedHasher;
 use bevy::render::render_phase::TrackedRenderPass;
 use bevy::render::render_resource::{Buffer, BufferDescriptor, BufferUsages, IndexFormat};
 use bevy::render::renderer::{RenderDevice, RenderQueue};
@@ -57,31 +59,117 @@ fn facing_visible(origin: [i32; 3], eye: DVec3) -> [bool; FACING_GROUPS] {
     visible
 }
 
-impl ViewDraws {
-    /// Lists `sections` for one view: solid and cutout in page order, translucent far to near
-    /// from `eye` as Iris draws translucent terrain by section. With `facing`, the camera
-    /// position, solid and cutout faces it can only see from behind are left out.
-    pub(crate) fn build<'a>(
+/// Centre of the section the eye is in. Like Sodium, which orders sections by its graph
+/// walk from the camera's section and culls them by render distance from it, lists that
+/// depend on the camera only through this point stay valid while it moves within a section.
+pub(crate) fn eye_section_centre(eye: DVec3) -> DVec3 {
+    (eye / SECTION_SIZE).floor() * SECTION_SIZE + DVec3::splat(SECTION_SIZE / 2.0)
+}
+
+/// The sections one view's lists are built from and the camera they are seen from, reduced
+/// to what the lists depend on: [`Self::key`] changes exactly when [`ViewDraws::build`]
+/// would list something else, so a moving camera rebuilds only when the sections it lists,
+/// the section it is in or the facing groups it sees change.
+pub(crate) struct DrawInputs<'a> {
+    /// Current-epoch sections, in the order given.
+    sections: Vec<&'a ResidentFaces>,
+    /// [`eye_section_centre`] of the eye translucent sections are ordered from.
+    eye: Option<DVec3>,
+    /// Camera position solid and cutout facing groups are culled for.
+    facing: Option<DVec3>,
+}
+
+impl<'a> DrawInputs<'a> {
+    /// `sections` for one view: translucent far to near from the section `eye` is in, as
+    /// Iris draws translucent terrain by section (in page order without an eye); with
+    /// `facing`, the camera position, solid and cutout faces it can only see from behind are
+    /// left out. Sections of other epochs than `epoch` are skipped.
+    pub(crate) fn new(
         sections: impl Iterator<Item = &'a ResidentFaces>,
         eye: Option<DVec3>,
         epoch: u64,
         facing: Option<DVec3>,
     ) -> Self {
-        let sections: Vec<_> = sections.filter(|section| section.epoch == epoch).collect();
+        Self {
+            sections: sections.filter(|section| section.epoch == epoch).collect(),
+            eye: eye.map(eye_section_centre),
+            facing,
+        }
+    }
+
+    /// Fingerprint of the lists these inputs build.
+    pub(crate) fn key(&self) -> u64 {
+        let mut hasher = FixedHasher.build_hasher();
+        self.sections.len().hash(&mut hasher);
+        for section in &self.sections {
+            section.stamp.hash(&mut hasher);
+        }
+        self.eye
+            .map(|eye| eye.to_array().map(f64::to_bits))
+            .hash(&mut hasher);
+        // `facing_visible` compares the eye with section bounds, which lie on the 16-block
+        // grid, so the grid cells the eye lies on decide every comparison.
+        self.facing
+            .map(|eye| {
+                (eye / SECTION_SIZE)
+                    .to_array()
+                    .map(|cell| (cell.floor() as i64, cell.ceil() as i64))
+            })
+            .hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+impl ViewDraws {
+    /// The lists `inputs` describe: solid and cutout page by page (one vertex buffer bind per
+    /// page), each page's sections near to far from the eye like Sodium's, so early depth
+    /// testing skips the pack's fragment shading of hidden faces; translucent far to near.
+    pub(crate) fn build(inputs: &DrawInputs<'_>) -> Self {
+        let mut by_page = inputs.sections.clone();
+        by_page.sort_unstable_by_key(|section| (section.page, section.faces.start));
+        let mut opaque = by_page.clone();
+        if let Some(eye) = inputs.eye {
+            let mut keyed: Vec<_> = opaque
+                .iter()
+                .map(|section| {
+                    (
+                        section.page,
+                        section_distance(section.origin, eye),
+                        *section,
+                    )
+                })
+                .collect();
+            // Stable over page order, so sections as far as each other keep one order.
+            keyed.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+            opaque = keyed.into_iter().map(|(.., section)| section).collect();
+        }
+        let translucent = inputs.eye.map(|eye| {
+            let mut ordered: Vec<_> = by_page
+                .iter()
+                .filter(|section| {
+                    !section.categories[GeometryCategory::Translucent.index()].is_empty()
+                })
+                .map(|section| (section_distance(section.origin, eye), *section))
+                .collect();
+            // Stable over page order, so sections as far as each other keep one order.
+            ordered.sort_by(|a, b| b.0.total_cmp(&a.0));
+            ordered
+                .into_iter()
+                .map(|(_, section)| section)
+                .collect::<Vec<_>>()
+        });
         let mut draws = Self::default();
         for category in GeometryCategory::ALL {
-            let mut ordered: Vec<_> = sections
-                .iter()
-                .filter(|section| !section.categories[category.index()].is_empty())
-                .collect();
-            match (category, eye) {
-                (GeometryCategory::Translucent, Some(eye)) => ordered.sort_by(|a, b| {
-                    section_distance(b.origin, eye).total_cmp(&section_distance(a.origin, eye))
-                }),
-                _ => ordered.sort_by_key(|section| (section.page, section.faces.start)),
-            }
+            let ordered = match (category, &translucent) {
+                (GeometryCategory::Translucent, Some(ordered)) => ordered,
+                _ => &opaque,
+            };
+            let facing = inputs.facing;
             let culls_facing = category != GeometryCategory::Translucent;
             for section in ordered {
+                if section.categories[category.index()].is_empty() {
+                    continue;
+                }
                 let groups = &section.facing[category.index()];
                 let visible = facing
                     .filter(|_| culls_facing)
@@ -264,6 +352,7 @@ mod tests {
             categories,
             origin,
             epoch: 1,
+            stamp: 0,
         }
     }
 
@@ -273,12 +362,12 @@ mod tests {
         let far = section(0, 4..8, 6..8, [64, 0, 0]);
         let mut stale = section(1, 0..2, 2..2, [0, 16, 0]);
         stale.epoch = 0;
-        let draws = ViewDraws::build(
+        let draws = ViewDraws::build(&DrawInputs::new(
             [&near, &far, &stale].into_iter(),
             Some(DVec3::ZERO),
             1,
             None,
-        );
+        ));
         let translucent: Vec<_> = draws.runs[GeometryCategory::Translucent.index()]
             .iter()
             .flat_map(|run| run.commands.clone())
@@ -301,7 +390,12 @@ mod tests {
         });
         // Above and beyond +X and +Z of the section: -X, -Y and -Z faces face away.
         let eye = DVec3::new(40.0, 40.0, 40.0);
-        let draws = ViewDraws::build([&section].into_iter(), Some(eye), 1, Some(eye));
+        let draws = ViewDraws::build(&DrawInputs::new(
+            [&section].into_iter(),
+            Some(eye),
+            1,
+            Some(eye),
+        ));
         let solid: Vec<_> = draws
             .commands
             .iter()
@@ -314,9 +408,66 @@ mod tests {
         );
         // Inside the section every group may face the eye: one merged command.
         let inside = DVec3::splat(8.0);
-        let draws = ViewDraws::build([&section].into_iter(), Some(inside), 1, Some(inside));
+        let draws = ViewDraws::build(&DrawInputs::new(
+            [&section].into_iter(),
+            Some(inside),
+            1,
+            Some(inside),
+        ));
         assert_eq!(draws.commands.len(), 1);
         assert_eq!(draws.max_faces(), 12);
+    }
+
+    #[test]
+    fn a_moving_camera_keeps_its_key_exactly_while_the_lists_stay_the_same() {
+        // A 3×3×3 block of sections, each with two solid faces per facing group and two
+        // translucent faces.
+        let sections: Vec<_> = (0..27_u32)
+            .map(|index| {
+                let at = |step: u32| (step as i32 - 1) * 16;
+                let origin = [at(index % 3), at(index / 3 % 3), at(index / 9)];
+                let first = index * 14;
+                let mut section = section(0, first..first + 14, first + 12..first + 14, origin);
+                section.facing[0] = std::array::from_fn(|group| {
+                    let start = (first + group as u32 * 2).min(first + 12);
+                    start..(start + 2).min(first + 12)
+                });
+                section.stamp = u64::from(index);
+                section
+            })
+            .collect();
+        let listed = |eye: DVec3| {
+            let inputs = DrawInputs::new(sections.iter(), Some(eye), 1, Some(eye));
+            let commands: Vec<_> = ViewDraws::build(&inputs)
+                .commands
+                .iter()
+                .map(|command| (command.base_vertex, command.index_count))
+                .collect();
+            (inputs.key(), commands)
+        };
+        let mut previous = listed(DVec3::new(-20.0, 3.0, 5.0));
+        let mut rebuilds = 0;
+        for step in 1..400 {
+            let step = f64::from(step);
+            let next = listed(DVec3::new(-20.0 + step * 0.1, 3.0 + step * 0.05, 5.0));
+            if next.0 == previous.0 {
+                assert_eq!(next.1, previous.1, "an unchanged key keeps the lists");
+            } else {
+                rebuilds += 1;
+            }
+            previous = next;
+        }
+        // The eye crosses four section boundaries (x = -16, 0, 16 and y = 16).
+        assert!(rebuilds <= 8, "rebuilt {rebuilds} times over 400 frames");
+        // A section placed again (a new stamp) changes the key even at the same eye.
+        let eye = DVec3::splat(4.0);
+        let key = DrawInputs::new(sections.iter(), Some(eye), 1, Some(eye)).key();
+        let mut replaced = sections.clone();
+        replaced[13].stamp = 100;
+        assert_ne!(
+            DrawInputs::new(replaced.iter(), Some(eye), 1, Some(eye)).key(),
+            key
+        );
     }
 
     #[test]

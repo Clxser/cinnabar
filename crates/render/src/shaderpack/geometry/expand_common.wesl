@@ -21,8 +21,8 @@ struct ExpandParams {
 const EXPAND_WORKGROUP_SIZE: u32 = 64u;
 const NO_ANIMATION: u32 = 0xffffffffu;
 /// Iris's `mc_Entity.y` (`ExtendedDataHelper`): fluids and every other block.
-const FLUID_RENDER_TYPE: f32 = 1.0;
-const BLOCK_RENDER_TYPE: f32 = -1.0;
+const FLUID_RENDER_TYPE: i32 = 1;
+const BLOCK_RENDER_TYPE: i32 = -1;
 
 /// The four corners of one face, in counter-clockwise front-face order.
 struct FaceCorners {
@@ -128,7 +128,7 @@ fn write_vertex(
     normal: vec3<f32>,
     tangent: vec4<f32>,
     block_id: i32,
-    render_type: f32,
+    render_type: i32,
     mid_block: vec4<f32>,
 ) {
     let base = index * IRIS_VERTEX_WORDS;
@@ -142,10 +142,12 @@ fn write_vertex(
     vertices[base + IRIS_WORD_LIGHTMAP] = pack2x16float(raw_light);
     vertices[base + IRIS_WORD_NORMAL] = pack4x8snorm(vec4(normal, 0.0));
     vertices[base + IRIS_WORD_TANGENT] = pack4x8snorm(tangent);
-    vertices[base + IRIS_WORD_BLOCK_ID] = bitcast<u32>(f32(block_id));
-    vertices[base + IRIS_WORD_BLOCK_ID + 1u] = bitcast<u32>(render_type);
-    vertices[base + IRIS_WORD_MID_BLOCK] = pack2x16float(mid_block.xy);
-    vertices[base + IRIS_WORD_MID_BLOCK + 1u] = pack2x16float(mid_block.zw);
+    // Signed shorts and bytes, as Iris stores `mc_Entity` and `at_midBlock`; the mid-block
+    // offset truncates towards zero like Iris's `(int)` cast.
+    vertices[base + IRIS_WORD_BLOCK_ID] =
+        (bitcast<u32>(block_id) & 0xffffu) | (bitcast<u32>(render_type) << 16u);
+    let mid = bitcast<vec4<u32>>(vec4<i32>(mid_block)) & vec4(0xffu);
+    vertices[base + IRIS_WORD_MID_BLOCK] = mid.x | (mid.y << 8u) | (mid.z << 16u) | (mid.w << 24u);
 }
 
 /// Writes face slot `face` as four coincident vertices, which rasterize nothing.

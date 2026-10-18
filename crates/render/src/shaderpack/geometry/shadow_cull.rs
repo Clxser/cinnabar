@@ -168,21 +168,6 @@ impl ShadowFrustum {
             plane.xyz().dot(farthest) + plane.w >= 0.0
         })
     }
-
-    /// A stable fingerprint of what [`Self::visible`] depends on.
-    pub(crate) fn key(&self) -> Vec<u64> {
-        let mut key = vec![
-            self.eye.x.to_bits(),
-            self.eye.y.to_bits(),
-            self.eye.z.to_bits(),
-            self.distance.map_or(u64::MAX, f64::to_bits),
-            self.keep.map_or(u64::MAX, f64::to_bits),
-        ];
-        for plane in self.planes.iter().flatten() {
-            key.extend(plane.to_array().map(|v| u64::from(v.to_bits())));
-        }
-        key
-    }
 }
 
 /// The camera frustum's six planes from `view_projection` (inside-positive), in the order

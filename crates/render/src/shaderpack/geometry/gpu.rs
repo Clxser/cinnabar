@@ -2,12 +2,10 @@
 //! recording the expansion before any camera draws.
 
 use std::collections::HashMap;
-use std::hash::{BuildHasher, Hash, Hasher};
 use std::time::{Duration, Instant};
 
 use bevy::log::{debug, warn};
 use bevy::math::{DVec3, IVec3, Vec3};
-use bevy::platform::hash::FixedHasher;
 use bevy::prelude::{Entity, FromWorld, Has, Query, Res, ResMut, Resource, World, default};
 use bevy::render::camera::ExtractedCamera;
 use bevy::render::render_phase::TrackedRenderPass;
@@ -20,7 +18,7 @@ use bevy::render::view::{ExtractedView, RenderVisibleEntities};
 use render_scene::{ChunkRenderInstance, ChunkTextureAssets, RuntimeStage, RuntimeStageProfiler};
 
 use super::block_ids::{ShaderpackBlockIds, material_attribute_words};
-use super::draw::{ViewDraws, face_indices};
+use super::draw::{DrawInputs, ViewDraws, eye_section_centre, face_indices};
 use super::jobs::{
     GeometryCategory, JOB_KINDS, JobKind, MaterialTables, SectionPlan, plan_section,
 };
@@ -110,10 +108,9 @@ struct Dispatch {
     jobs: u32,
 }
 
-/// Expansion recorded by [`record_geometry_expansion`]: page copies first, then dispatches.
+/// Expansion recorded by [`record_geometry_expansion`].
 #[derive(Default)]
 struct PreparedExpansion {
-    copies: Vec<(Buffer, Buffer, u64)>,
     dispatches: Vec<Dispatch>,
 }
 
@@ -144,7 +141,7 @@ pub struct ShaderpackGeometry {
     budget_horizon: Option<f32>,
     /// Camera position when waiting sections were last retried.
     retry_eye: Option<DVec3>,
-    /// The vertex pages' size when the device last ran out of memory growing them; the
+    /// The vertex pages' size when the device last ran out of memory creating one; the
     /// budget stays below it, so nearer sections take room from farther ones instead.
     memory_cap: Option<u64>,
     log: ResidencyLog,
@@ -246,8 +243,8 @@ impl ShaderpackGeometry {
         draws.record(pass, category, &self.pages, index_buffer, &self.constants)
     }
 
-    /// Builds (or keeps, when nothing it depends on changed) `view`'s shadow-pass list: the
-    /// resident sections `frustum` keeps.
+    /// Builds (or keeps, when the sections it lists are unchanged) `view`'s shadow-pass list:
+    /// the resident sections `frustum` keeps.
     pub(crate) fn prepare_shadow_view(
         &mut self,
         view: Entity,
@@ -255,15 +252,7 @@ impl ShaderpackGeometry {
         device: &RenderDevice,
         queue: &RenderQueue,
     ) {
-        let mut hasher = FixedHasher.build_hasher();
-        self.residency.revision.hash(&mut hasher);
-        frustum.key().hash(&mut hasher);
-        let key = hasher.finish();
-        let draws = self.shadows.entry(view).or_default();
-        if draws.is_current(key) {
-            return;
-        }
-        let built = ViewDraws::build(
+        let inputs = DrawInputs::new(
             self.residency
                 .sections
                 .values()
@@ -272,6 +261,12 @@ impl ShaderpackGeometry {
             self.residency.epoch,
             None,
         );
+        let key = inputs.key();
+        let draws = self.shadows.entry(view).or_default();
+        if draws.is_current(key) {
+            return;
+        }
+        let built = ViewDraws::build(&inputs);
         let max_faces = built.max_faces();
         draws.replace(built, key, self.multi_draw.then_some((device, queue)));
         if max_faces > 0 {
@@ -299,35 +294,26 @@ impl ShaderpackGeometry {
         self.memory_cap = None;
     }
 
-    /// Creates or grows vertex page `placement.page` to its new capacity, keeping its faces.
-    /// Returns false, leaving the page as it was, when the device is out of memory.
-    fn grow_page(&mut self, device: &RenderDevice, placement: &Placement) -> bool {
-        let Some(previous) = placement.grown_from else {
+    /// Creates vertex page `placement.page` when the placement opened it. Returns false when
+    /// the device is out of memory.
+    fn create_page(&mut self, device: &RenderDevice, placement: &Placement) -> bool {
+        if !placement.new_page {
             return true;
-        };
+        }
         let capacity = self.residency.pages[placement.page].faces.capacity();
         let Some(buffer) = crate::gpu_allocation::buffer(
             device,
             &BufferDescriptor {
                 label: Some("shader-pack terrain vertices"),
                 size: u64::from(capacity) * FACE_BYTES,
-                usage: BufferUsages::VERTEX
-                    | BufferUsages::STORAGE
-                    | BufferUsages::COPY_SRC
-                    | BufferUsages::COPY_DST,
+                usage: BufferUsages::VERTEX | BufferUsages::STORAGE,
                 mapped_at_creation: false,
             },
         ) else {
             return false;
         };
-        if placement.page < self.pages.len() {
-            let old = std::mem::replace(&mut self.pages[placement.page], buffer.clone());
-            self.prepared
-                .copies
-                .push((old, buffer, u64::from(previous) * FACE_BYTES));
-        } else {
-            self.pages.push(buffer);
-        }
+        debug_assert_eq!(placement.page, self.pages.len(), "new pages come last");
+        self.pages.push(buffer);
         true
     }
 
@@ -614,7 +600,7 @@ fn plan_frame(
                 .for_each(|(_, rest)| geometry.residency.wait(rest));
             break;
         };
-        if !geometry.grow_page(device, &placement) {
+        if !geometry.create_page(device, &placement) {
             // Out of device memory: keep the pages there are, and let nearer sections take
             // room from farther ones from now on.
             geometry.residency.revoke(entity, &placement);
@@ -709,9 +695,10 @@ fn plan_frame(
     planned_faces
 }
 
-/// Draw lists per camera view of its visible resident sections within `far` horizontally, as
-/// Java culls render sections by render distance, leaving out faces the camera sees only
-/// from behind. A view's list is rebuilt only when its sections, the camera or `far` change.
+/// Draw lists per camera view of its visible resident sections within `far` horizontally of
+/// the camera's section, as Java culls render sections by render distance from it, leaving
+/// out faces the camera sees only from behind. A view's list is rebuilt only when the
+/// sections it lists, the camera's section or the facing groups it sees change.
 fn build_draws(
     geometry: &mut ShaderpackGeometry,
     device: &RenderDevice,
@@ -728,20 +715,29 @@ fn build_draws(
     let reach = far.map(|far| f64::from(far) + 8.0);
     for (entity, view, visible, _) in views.iter() {
         let eye = view.world_from_view.translation().as_dvec3();
-        let visible_sections = || {
+        let centre = eye_section_centre(eye);
+        let within = |faces: &ResidentFaces| {
+            reach.is_none_or(|reach| {
+                let [x, _, z] = faces.origin;
+                let dx = f64::from(x) + 8.0 - centre.x;
+                let dz = f64::from(z) + 8.0 - centre.z;
+                dx * dx + dz * dz <= reach * reach
+            })
+        };
+        let inputs = DrawInputs::new(
             visible
                 .get::<ChunkRenderInstance>()
                 .into_iter()
                 .flat_map(|class| class.iter_visible())
                 .map(|(entity, _)| *entity)
                 .filter(|entity| !sources.is_hidden(*entity))
-        };
-        let mut hasher = FixedHasher.build_hasher();
-        geometry.residency.revision.hash(&mut hasher);
-        eye.to_array().map(f64::to_bits).hash(&mut hasher);
-        reach.map(f64::to_bits).hash(&mut hasher);
-        visible_sections().for_each(|entity| entity.hash(&mut hasher));
-        let key = hasher.finish();
+                .filter_map(|entity| geometry.residency.sections.get(&entity))
+                .filter(|faces| within(faces)),
+            Some(eye),
+            epoch,
+            Some(eye),
+        );
+        let key = inputs.key();
         if geometry
             .views
             .get(&entity)
@@ -749,18 +745,7 @@ fn build_draws(
         {
             continue;
         }
-        let within = |faces: &ResidentFaces| {
-            reach.is_none_or(|reach| {
-                let [x, _, z] = faces.origin;
-                let dx = f64::from(x) + 8.0 - eye.x;
-                let dz = f64::from(z) + 8.0 - eye.z;
-                dx * dx + dz * dz <= reach * reach
-            })
-        };
-        let sections = visible_sections()
-            .filter_map(|entity| geometry.residency.sections.get(&entity))
-            .filter(|faces| within(faces));
-        let built = ViewDraws::build(sections, Some(eye), epoch, Some(eye));
+        let built = ViewDraws::build(&inputs);
         max_faces = max_faces.max(built.max_faces());
         geometry.views.entry(entity).or_default().replace(
             built,
@@ -773,7 +758,7 @@ fn build_draws(
     }
 }
 
-/// Records this frame's page growth copies and expansion dispatches ahead of camera passes.
+/// Records this frame's expansion dispatches ahead of camera passes.
 pub(crate) fn record_geometry_expansion(
     mut geometry: ResMut<ShaderpackGeometry>,
     pipelines: Res<ExpansionPipelines>,
@@ -782,7 +767,7 @@ pub(crate) fn record_geometry_expansion(
     mut context: RenderContext,
 ) {
     let prepared = std::mem::take(&mut geometry.prepared);
-    if prepared.copies.is_empty() && prepared.dispatches.is_empty() {
+    if prepared.dispatches.is_empty() {
         return;
     }
     crate::gpu_timing::within_stage(
@@ -790,9 +775,6 @@ pub(crate) fn record_geometry_expansion(
         RuntimeStage::GpuShaderpackExpansion,
         context.command_encoder(),
         |encoder| {
-            for (old, new, bytes) in &prepared.copies {
-                encoder.copy_buffer_to_buffer(old, 0, new, 0, *bytes);
-            }
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
                 label: Some("shader-pack terrain expansion"),
                 ..default()

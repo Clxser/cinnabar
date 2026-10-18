@@ -1,5 +1,6 @@
 //! Developer VRAM attribution: `CINNABAR_GPU_MEMORY_REPORT=<seconds>` logs the device
-//! allocator's totals and its largest allocations, summed by label, at that interval.
+//! allocator's totals and its largest allocations, summed by label, at that interval, then
+//! the memory blocks with the most reserved-but-unused room and what holds each.
 //! Backends without an allocator report (Metal, GL) log nothing.
 
 use bevy::prelude::{IntoScheduleConfigs, Res, ResMut, Resource, SubApp, info};
@@ -9,7 +10,9 @@ use std::time::{Duration, Instant};
 
 const ENV: &str = "CINNABAR_GPU_MEMORY_REPORT";
 /// Labels listed per report, largest first.
-const LISTED_LABELS: usize = 24;
+const LISTED_LABELS: usize = 40;
+/// Memory blocks listed per report, most unused room first.
+const LISTED_BLOCKS: usize = 16;
 
 #[derive(Resource)]
 struct MemoryReport {
@@ -70,5 +73,42 @@ fn report(mut state: ResMut<MemoryReport>, device: Res<RenderDevice>) {
         allocations = report.allocations.len(),
         "GPU memory: {}",
         listed.join(", ")
+    );
+    let mut blocks: Vec<_> = report
+        .blocks
+        .iter()
+        .map(|block| {
+            let held = &report.allocations[block.allocations.clone()];
+            let used: u64 = held.iter().map(|allocation| allocation.size).sum();
+            let largest = held
+                .iter()
+                .max_by_key(|allocation| allocation.size)
+                .map_or("", |allocation| allocation.name.as_str());
+            (
+                block.size,
+                block.size.saturating_sub(used),
+                held.len(),
+                largest,
+            )
+        })
+        .collect();
+    blocks.sort_unstable_by_key(|(_, unused, ..)| std::cmp::Reverse(*unused));
+    let listed: Vec<String> = blocks
+        .iter()
+        .take(LISTED_BLOCKS)
+        .map(|(size, unused, count, largest)| {
+            format!(
+                "{}MiB block {}MiB unused {count} allocs (largest {largest})",
+                size >> 20,
+                unused >> 20
+            )
+        })
+        .collect();
+    info!(
+        target: "cinnabar::gpu_memory",
+        blocks = blocks.len(),
+        unused_mib = blocks.iter().map(|(_, unused, ..)| unused).sum::<u64>() >> 20,
+        "GPU memory blocks: {}",
+        listed.join("; ")
     );
 }

@@ -361,9 +361,9 @@ struct Decoded {
     lightmap: [f32; 2],
     normal: [i8; 4],
     tangent: [i8; 4],
-    block_id: f32,
-    render_type: f32,
-    mid_block: [f32; 4],
+    block_id: i16,
+    render_type: i16,
+    mid_block: [i8; 4],
 }
 
 fn decode(words: &[u32], vertex: u32) -> Decoded {
@@ -375,7 +375,7 @@ fn decode(words: &[u32], vertex: u32) -> Decoded {
     let half = |w: u32| [f16_to_f32(w & 0xffff), f16_to_f32(w >> 16)];
     let bytes = |w: u32| w.to_le_bytes();
     let signed = |w: u32| bytes(w).map(|b| b as i8);
-    let mid_block = [half(word(MID_BLOCK, 0)), half(word(MID_BLOCK, 1))];
+    let shorts = |w: u32| [(w & 0xffff) as u16 as i16, (w >> 16) as u16 as i16];
     Decoded {
         position: Vec3::new(
             f32::from_bits(word(POSITION, 0)),
@@ -388,14 +388,9 @@ fn decode(words: &[u32], vertex: u32) -> Decoded {
         lightmap: half(word(LIGHTMAP, 0)),
         normal: signed(word(NORMAL, 0)),
         tangent: signed(word(TANGENT, 0)),
-        block_id: f32::from_bits(word(BLOCK_ID, 0)),
-        render_type: f32::from_bits(word(BLOCK_ID, 1)),
-        mid_block: [
-            mid_block[0][0],
-            mid_block[0][1],
-            mid_block[1][0],
-            mid_block[1][1],
-        ],
+        block_id: shorts(word(BLOCK_ID, 0))[0],
+        render_type: shorts(word(BLOCK_ID, 0))[1],
+        mid_block: signed(word(MID_BLOCK, 0)),
     }
 }
 
@@ -498,18 +493,18 @@ fn greedy_top_face_expands_to_per_block_faces_with_java_attributes() {
                 [127, 0, 0, -127],
                 "+X tangent, mirrored bitangent"
             );
-            assert_eq!(vertex.block_id, GRASS_BLOCK_ID as f32);
+            assert_eq!(i32::from(vertex.block_id), GRASS_BLOCK_ID);
             assert_eq!(
-                vertex.render_type, -1.0,
+                vertex.render_type, -1,
                 "blocks read Iris's BLOCK_RENDER_TYPE in mc_Entity.y"
             );
             let centre = top_positions[face as usize][0] + Vec3::new(0.5, -0.5, 0.5);
-            let expected = (centre - at) * 64.0;
-            assert_close(
-                &vertex.mid_block,
-                &[expected.x, expected.y, expected.z, GRASS_EMISSION as f32],
-                1e-3,
-                "at_midBlock",
+            // Iris truncates the offset in 1/64 blocks to signed bytes.
+            let expected = ((centre - at) * 64.0).to_array().map(|v| v as i8);
+            assert_eq!(
+                vertex.mid_block,
+                [expected[0], expected[1], expected[2], GRASS_EMISSION as i8],
+                "at_midBlock"
             );
         }
     }
@@ -537,7 +532,7 @@ fn two_sided_faces_gain_an_explicit_back_face() {
         assert_eq!(back[corner].uv, front[from].uv);
     }
     assert_eq!(
-        front[0].block_id, -1.0,
+        front[0].block_id, -1,
         "materials without an id read Iris's -1"
     );
     assert_close(

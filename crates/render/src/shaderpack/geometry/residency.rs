@@ -13,11 +13,11 @@ use super::vertex::IRIS_VERTEX_STRIDE;
 
 /// Bytes of one expanded face: four vertices.
 pub(crate) const FACE_BYTES: u64 = 4 * IRIS_VERTEX_STRIDE;
-/// Faces a new vertex page starts with before it grows.
-pub(crate) const INITIAL_PAGE_FACES: u32 = 1 << 16;
-/// Largest vertex page. Growing a page copies it into a buffer twice its size, so a cap keeps
-/// that transient allocation and copy small; beyond it, faces go to further pages.
-pub(crate) const MAX_PAGE_BYTES: u64 = 128 << 20;
+/// Size of a vertex page. Pages are created at this size (or what the budget has left) and
+/// never grow, so filling the budget allocates whole pages once and copies nothing; it is
+/// small enough that the last page wastes little of the budget and that running out of
+/// memory costs at most one page of terrain.
+pub(crate) const PAGE_BYTES: u64 = 128 << 20;
 /// Grid the geometry origin snaps to, in blocks.
 pub(crate) const ORIGIN_GRID: i32 = 1024;
 /// Camera distance from the origin, in blocks, past which the origin moves and every section
@@ -44,6 +44,9 @@ pub(crate) struct ResidentFaces {
     pub(crate) origin: [i32; 3],
     /// Origin epoch the positions were written against; stale faces are not drawn.
     pub(crate) epoch: u64,
+    /// Unique to this placement: a draw list built from it stays valid while the section
+    /// keeps this stamp.
+    pub(crate) stamp: u64,
 }
 
 /// Face space of one vertex page. Pages never exceed one storage-buffer binding, since the
@@ -53,13 +56,13 @@ pub(crate) struct PageSpace {
     pub(crate) faces: FaceAllocator,
 }
 
-/// Where a planned section was placed, and the page growth that placement needs.
+/// Where a planned section was placed, and whether that placement opened a new page.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Placement {
     pub(crate) page: usize,
     pub(crate) faces: Range<u32>,
-    /// The page's capacity in faces before this placement grew it, if it did.
-    pub(crate) grown_from: Option<u32>,
+    /// The placement opened page `page`, which the GPU side must create.
+    pub(crate) new_page: bool,
 }
 
 /// Resident sections by distance from the camera, nearest first, built on the first eviction
@@ -85,18 +88,16 @@ pub(crate) struct Residency {
     budget_faces: u64,
     pub(crate) origin: Option<IVec3>,
     pub(crate) epoch: u64,
-    /// Bumped whenever the resident sections or their faces change, so draw lists built from
-    /// them know when to rebuild.
-    pub(crate) revision: u64,
+    /// Stamp the next committed placement takes.
+    next_stamp: u64,
 }
 
 impl Residency {
     /// `binding_bytes` is the largest buffer a kernel may bind; `budget_bytes` the memory budget.
-    /// Pages stop growing at [`MAX_PAGE_BYTES`] and further faces open new pages, so growth
-    /// never needs a large allocation next to the page it replaces.
+    /// Pages hold [`PAGE_BYTES`] (less when the binding limit is smaller).
     pub(crate) fn new(binding_bytes: u64, budget_bytes: u64) -> Self {
         let page_faces =
-            (binding_bytes.min(MAX_PAGE_BYTES) / FACE_BYTES).min(u64::from(u32::MAX / 4)) as u32;
+            (binding_bytes.min(PAGE_BYTES) / FACE_BYTES).min(u64::from(u32::MAX / 4)) as u32;
         Self {
             pages: Vec::new(),
             sections: HashMap::new(),
@@ -107,29 +108,23 @@ impl Residency {
             budget_faces: budget_bytes / FACE_BYTES,
             origin: None,
             epoch: 0,
-            revision: 0,
+            next_stamp: 0,
         }
     }
 
-    /// Changes the memory budget; pages already open stay until they empty.
+    /// Changes the memory budget; pages already open stay.
     pub(crate) fn set_budget(&mut self, budget_bytes: u64) {
         self.budget_faces = budget_bytes / FACE_BYTES;
     }
 
-    /// Undoes an uncommitted `placement` of `entity` whose page could not be allocated: the
-    /// section waits without faces, and the page returns to its previous capacity.
+    /// Undoes an uncommitted `placement` of `entity` whose new page could not be allocated:
+    /// the page is dropped and the section waits without faces.
     pub(crate) fn revoke(&mut self, entity: Entity, placement: &Placement) {
-        self.pages[placement.page]
-            .faces
-            .release(placement.faces.clone());
-        match placement.grown_from {
-            Some(0) => {
-                debug_assert_eq!(placement.page + 1, self.pages.len(), "new pages come last");
-                self.pages.pop();
-            }
-            Some(previous) => self.pages[placement.page].faces.truncate(previous),
-            None => {}
-        }
+        debug_assert!(
+            placement.new_page && placement.page + 1 == self.pages.len(),
+            "only a new page, the last one, can fail to allocate"
+        );
+        self.pages.pop();
         self.wait(entity);
     }
 
@@ -195,7 +190,6 @@ impl Residency {
     pub(crate) fn remove(&mut self, entity: Entity) {
         if let Some(resident) = self.sections.remove(&entity) {
             self.pages[resident.page].faces.release(resident.faces);
-            self.revision += 1;
         }
         self.waiting.remove(&entity);
         if self.queued.remove(&entity) {
@@ -207,7 +201,6 @@ impl Residency {
     pub(crate) fn evict(&mut self, entity: Entity) {
         if let Some(resident) = self.sections.remove(&entity) {
             self.pages[resident.page].faces.release(resident.faces);
-            self.revision += 1;
             self.wait(entity);
         }
     }
@@ -222,7 +215,6 @@ impl Residency {
             _ => {
                 self.origin = Some(snapped);
                 self.epoch += 1;
-                self.revision += 1;
                 true
             }
         }
@@ -299,44 +291,24 @@ impl Residency {
                 return Some(Placement {
                     page,
                     faces: range,
-                    grown_from: None,
+                    new_page: false,
                 });
             }
         }
-        // Grow the last page, doubling, before opening another.
         let budget_left = self.budget_faces.saturating_sub(self.capacity_faces());
-        if let Some(page) = self.pages.len().checked_sub(1) {
-            let current = self.pages[page].faces.capacity();
-            let wanted = current
-                .saturating_mul(2)
-                .max(current + faces)
-                .min(self.page_faces);
-            let grown = u64::from(wanted - current).min(budget_left) as u32 + current;
-            if grown - current + self.pages[page].faces.tail_free() >= faces {
-                self.pages[page].faces.grow(grown);
-                if let Some(range) = self.pages[page].faces.allocate(faces) {
-                    return Some(Placement {
-                        page,
-                        faces: range,
-                        grown_from: Some(current),
-                    });
-                }
-            }
-        }
-        let budget_left = self.budget_faces.saturating_sub(self.capacity_faces());
-        let capacity =
-            u64::from(INITIAL_PAGE_FACES.max(faces).min(self.page_faces)).min(budget_left) as u32;
+        let capacity = u64::from(self.page_faces).min(budget_left) as u32;
         if capacity < faces || faces == 0 {
             return None;
         }
-        let mut space = PageSpace::default();
-        space.faces.grow(capacity);
+        let mut space = PageSpace {
+            faces: FaceAllocator::new(capacity),
+        };
         let range = space.faces.allocate(faces)?;
         self.pages.push(space);
         Some(Placement {
             page: self.pages.len() - 1,
             faces: range,
-            grown_from: Some(0),
+            new_page: true,
         })
     }
 
@@ -357,9 +329,10 @@ impl Residency {
                 facing: plan.facing.clone(),
                 origin,
                 epoch: self.epoch,
+                stamp: self.next_stamp,
             },
         );
-        self.revision += 1;
+        self.next_stamp += 1;
     }
 
     /// Drops every page and section, as when the mode turns off.
@@ -370,7 +343,6 @@ impl Residency {
         self.queued.clear();
         self.waiting.clear();
         self.origin = None;
-        self.revision += 1;
     }
 }
 

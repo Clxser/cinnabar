@@ -29,16 +29,18 @@ fn constant_word(offset: u64) -> u32 {
 #[test]
 fn compatibility_inputs_read_their_stored_fields() {
     let float = ScalarType::Float;
+    // The translator declares `mc_Entity` and `at_midBlock` as integer inputs.
+    let int = ScalarType::Int;
     let inputs = [
         input(0, "iris_Vertex", vector(4, float)),
         input(1, "iris_Color", vector(4, float)),
         input(2, "iris_Normal", vector(3, float)),
         input(3, "iris_MultiTexCoord0", vector(4, float)),
         input(4, "iris_MultiTexCoord1", vector(4, float)),
-        input(8, "mc_Entity", vector(4, float)),
+        input(8, "mc_Entity", vector(4, int)),
         input(9, "mc_midTexCoord", vector(2, float)),
         input(10, "at_tangent", vector(4, float)),
-        input(11, "at_midBlock", vector(4, float)),
+        input(11, "at_midBlock", vector(4, int)),
     ];
     let [geometry, constant] = vertex_buffer_layouts(&inputs).unwrap();
     assert_eq!(geometry.array_stride, IRIS_VERTEX_STRIDE);
@@ -58,6 +60,28 @@ fn compatibility_inputs_read_their_stored_fields() {
         assert_eq!(
             attribute(&geometry, location),
             (field.format, u64::from(field.word) * 4)
+        );
+    }
+}
+
+#[test]
+fn integer_stored_fields_bind_only_integer_inputs() {
+    // Float declarations of these never reach the layout: the translator converts them from
+    // integer inputs, so a float input means the two disagree.
+    for (name, field) in [("mc_Entity", BLOCK_ID), ("at_midBlock", MID_BLOCK)] {
+        assert_eq!(
+            VertexAttribute::from_glsl_name(name).stored_numbers(),
+            Some(StoredNumbers::Int)
+        );
+        let [geometry, _] = vertex_buffer_layouts(&[input(8, name, vector(2, ScalarType::Int))])
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(
+            attribute(&geometry, 8),
+            (field.format, u64::from(field.word) * 4)
+        );
+        assert!(
+            vertex_buffer_layouts(&[input(8, name, vector(2, ScalarType::Float))]).is_err(),
+            "{name}"
         );
     }
 }

@@ -5,7 +5,7 @@ use bevy::mesh::VertexBufferLayout;
 use bevy::render::render_resource::{
     VertexAttribute as GpuVertexAttribute, VertexFormat, VertexStepMode,
 };
-use shaderpack::{ScalarType, ValueType, VertexAttribute, VertexInput};
+use shaderpack::{ScalarType, StoredNumbers, ValueType, VertexAttribute, VertexInput};
 
 /// One stored vertex field: its first word in the expanded vertex and the format it is
 /// written in. The expansion kernels receive these words as generated WGSL constants.
@@ -41,13 +41,16 @@ pub(crate) const NORMAL: StoredField = field("IRIS_WORD_NORMAL", 7, VertexFormat
 /// Tangent with handedness in `w` (`at_tangent`).
 pub(crate) const TANGENT: StoredField = field("IRIS_WORD_TANGENT", 8, VertexFormat::Snorm8x4);
 /// `block.properties` id, -1 when unmapped, and Iris's render type: 1 for fluids, -1 for
-/// every other block (`mc_Entity.xy`).
-pub(crate) const BLOCK_ID: StoredField = field("IRIS_WORD_BLOCK_ID", 9, VertexFormat::Float32x2);
-/// Offset to the block centre in 1/64 blocks, and the block's emission (`at_midBlock`).
-pub(crate) const MID_BLOCK: StoredField = field("IRIS_WORD_MID_BLOCK", 11, VertexFormat::Float16x4);
+/// every other block (`mc_Entity.xy`), as the signed shorts Iris stores; the translator
+/// converts float declarations.
+pub(crate) const BLOCK_ID: StoredField = field("IRIS_WORD_BLOCK_ID", 9, VertexFormat::Sint16x2);
+/// Offset to the block centre in 1/64 blocks, truncated, and the block's emission
+/// (`at_midBlock`), as the signed bytes Iris stores; the translator converts float
+/// declarations.
+pub(crate) const MID_BLOCK: StoredField = field("IRIS_WORD_MID_BLOCK", 10, VertexFormat::Sint8x4);
 /// Iris's `mc_Entity.y` for everything but fluids (`ExtendedDataHelper.BLOCK_RENDER_TYPE`);
 /// the liquid kernel writes `FLUID_RENDER_TYPE`, 1.
-const BLOCK_RENDER_TYPE: f32 = -1.0;
+const BLOCK_RENDER_TYPE: i16 = -1;
 
 /// Every stored field, in word order.
 pub(crate) const STORED_FIELDS: [StoredField; 9] = [
@@ -125,8 +128,8 @@ pub(crate) fn host_vertex(
         .enumerate()
         .map(|(axis, v)| snorm8(v) << (8 * axis))
         .sum();
-    words[BLOCK_ID.word as usize] = (-1.0_f32).to_bits();
-    words[BLOCK_ID.word as usize + 1] = BLOCK_RENDER_TYPE.to_bits();
+    let short = |v: i16| u32::from(v as u16);
+    words[BLOCK_ID.word as usize] = short(-1) | (short(BLOCK_RENDER_TYPE) << 16);
     words
 }
 
@@ -193,32 +196,33 @@ fn class_and_size(ty: ValueType) -> Option<(Class, u8)> {
 }
 
 /// The stored field and format an input reads from the expanded stream, or `None` when the
-/// constant stream supplies it.
+/// constant stream supplies it. Stored fields are read as the kind of number they hold,
+/// which the translator's conversions ([`VertexAttribute::stored_numbers`]) make every
+/// declaration read.
 fn stored_format(attribute: &VertexAttribute, class: Class) -> Option<Option<(u32, VertexFormat)>> {
-    let stored = |field: StoredField| Some(Some((field.word, field.format)));
-    match (attribute, class) {
-        (VertexAttribute::Position, Class::Float) => stored(POSITION),
-        (VertexAttribute::Color, Class::Float) => stored(COLOR),
-        (VertexAttribute::TexCoord, Class::Float) => stored(UV0),
-        (VertexAttribute::MidTexCoord, Class::Float) => stored(MID_TEX),
+    let stored_class = match attribute.stored_numbers() {
+        Some(StoredNumbers::Int) => Class::Sint,
+        Some(StoredNumbers::Float) | None => Class::Float,
+    };
+    let stored =
+        |field: StoredField| (class == stored_class).then_some(Some((field.word, field.format)));
+    match attribute {
+        VertexAttribute::Position => stored(POSITION),
+        VertexAttribute::Color => stored(COLOR),
+        VertexAttribute::TexCoord => stored(UV0),
+        VertexAttribute::MidTexCoord => stored(MID_TEX),
         // Iris documents gl_MultiTexCoord2 as a second name for the lightmap coordinates.
-        (VertexAttribute::Lightmap | VertexAttribute::MultiTexCoord2, Class::Float) => {
-            stored(LIGHTMAP)
-        }
-        (VertexAttribute::Normal, Class::Float) => stored(NORMAL),
-        (VertexAttribute::Tangent, Class::Float) => stored(TANGENT),
-        (VertexAttribute::BlockId, Class::Float) => stored(BLOCK_ID),
-        (VertexAttribute::MidBlock, Class::Float) => stored(MID_BLOCK),
-        (
-            VertexAttribute::MultiTexCoord3
-            | VertexAttribute::Overlay
-            | VertexAttribute::Velocity
-            | VertexAttribute::ChunkFade
-            | VertexAttribute::DhMaterialId
-            | VertexAttribute::Other(_),
-            _,
-        ) => Some(None),
-        _ => None,
+        VertexAttribute::Lightmap | VertexAttribute::MultiTexCoord2 => stored(LIGHTMAP),
+        VertexAttribute::Normal => stored(NORMAL),
+        VertexAttribute::Tangent => stored(TANGENT),
+        VertexAttribute::BlockId => stored(BLOCK_ID),
+        VertexAttribute::MidBlock => stored(MID_BLOCK),
+        VertexAttribute::MultiTexCoord3
+        | VertexAttribute::Overlay
+        | VertexAttribute::Velocity
+        | VertexAttribute::ChunkFade
+        | VertexAttribute::DhMaterialId
+        | VertexAttribute::Other(_) => Some(None),
     }
 }
 
