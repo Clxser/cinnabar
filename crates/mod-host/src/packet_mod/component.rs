@@ -56,16 +56,17 @@ impl Program {
         grants: &ModGrants,
         cache: Option<&Path>,
     ) -> Result<Self> {
-        let component: Component = cache::load(engine, bytes, cache)?;
-        let mut linker = Linker::new(engine);
-        if grants.wasi {
-            wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
-        }
-        let pre = linker
-            .instantiate_pre(&component)
-            .context("link packet mod")?;
-        let pre = bindings::PacketModPre::new(pre).context("packet mod exports")?;
-        Ok(Self { pre })
+        cache::load(engine, bytes, cache, |component: &Component| {
+            let mut linker = Linker::new(engine);
+            if grants.wasi {
+                wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+            }
+            let pre = linker
+                .instantiate_pre(component)
+                .context("link packet mod")?;
+            let pre = bindings::PacketModPre::new(pre).context("packet mod exports")?;
+            Ok(Self { pre })
+        })
     }
 
     /// Instantiates the component; its start function runs under the load deadline.

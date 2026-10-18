@@ -298,3 +298,34 @@ fn compiled_code_is_cached_and_a_corrupt_artifact_recompiles() {
         assert!(compiled.instantiate().is_ok(), "{form}");
     }
 }
+
+/// Rejecting an incompatible ABI must leave the last admitted compiled artifact intact.
+#[test]
+fn rejected_programs_leave_the_compiled_cache_unchanged() {
+    for (form, bytes) in programs(false) {
+        let directory = tempfile::tempdir().unwrap();
+        CompiledPacketMod::compile(&bytes, &grants(false), Some(directory.path())).unwrap();
+        let path = std::fs::read_dir(directory.path())
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let previous = std::fs::read(&path).unwrap();
+        let invalid = wat::parse_str(match form {
+            "core" => "(module)",
+            "component" => "(component)",
+            _ => unreachable!(),
+        })
+        .unwrap();
+        assert!(
+            CompiledPacketMod::compile(&invalid, &grants(false), Some(directory.path())).is_err()
+        );
+        assert_eq!(
+            std::fs::read_dir(directory.path()).unwrap().count(),
+            1,
+            "{form}"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), previous, "{form}");
+    }
+}

@@ -60,35 +60,36 @@ impl Program {
         grants: &ModGrants,
         cache: Option<&Path>,
     ) -> Result<Self> {
-        let module: Module = cache::load(engine, bytes, cache)?;
-        for (name, params, results) in SIGNATURES {
-            let required = name != INITIALIZE;
-            match module.get_export(name) {
-                Some(ExternType::Func(ty)) => ensure!(
-                    ty.params().len() == params
-                        && ty.results().len() == results
-                        && ty.params().chain(ty.results()).all(|ty| ty.is_i32()),
-                    "packet mod export {name} has the wrong signature"
-                ),
-                None if !required => {}
-                _ => bail!("packet mod does not export function {name}"),
+        cache::load(engine, bytes, cache, |module: &Module| {
+            for (name, params, results) in SIGNATURES {
+                let required = name != INITIALIZE;
+                match module.get_export(name) {
+                    Some(ExternType::Func(ty)) => ensure!(
+                        ty.params().len() == params
+                            && ty.results().len() == results
+                            && ty.params().chain(ty.results()).all(|ty| ty.is_i32()),
+                        "packet mod export {name} has the wrong signature"
+                    ),
+                    None if !required => {}
+                    _ => bail!("packet mod does not export function {name}"),
+                }
             }
-        }
-        let native_capabilities = NativeExports::from_module(&module).negotiate(grants)?;
-        ensure!(
-            matches!(module.get_export(MEMORY), Some(ExternType::Memory(_))),
-            "packet mod does not export its memory"
-        );
-        let mut linker = wasmtime::Linker::new(engine);
-        if grants.wasi {
-            wasmtime_wasi::preview1::add_to_linker_async(&mut linker, |state: &mut State| {
-                &mut state.wasi
-            })?;
-        }
-        let pre = linker.instantiate_pre(&module).context("link packet mod")?;
-        Ok(Self {
-            pre,
-            native_capabilities,
+            let native_capabilities = NativeExports::from_module(module).negotiate(grants)?;
+            ensure!(
+                matches!(module.get_export(MEMORY), Some(ExternType::Memory(_))),
+                "packet mod does not export its memory"
+            );
+            let mut linker = wasmtime::Linker::new(engine);
+            if grants.wasi {
+                wasmtime_wasi::preview1::add_to_linker_async(&mut linker, |state: &mut State| {
+                    &mut state.wasi
+                })?;
+            }
+            let pre = linker.instantiate_pre(module).context("link packet mod")?;
+            Ok(Self {
+                pre,
+                native_capabilities,
+            })
         })
     }
 

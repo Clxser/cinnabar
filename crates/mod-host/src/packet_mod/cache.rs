@@ -47,11 +47,17 @@ impl Artifact for Module {
     }
 }
 
-/// Compiles `bytes`, reusing the artifact in `dir` when present. A missing, stale or unreadable
-/// artifact falls back to compiling, and a failed store only logs.
-pub(super) fn load<A: Artifact>(engine: &Engine, bytes: &[u8], dir: Option<&Path>) -> Result<A> {
+/// Compiles or reuses `bytes` and admits its ABI through `prepare` before writing any cache.
+/// A missing or unreadable artifact recompiles; failed stores only log after admission succeeds.
+pub(super) fn load<A: Artifact, T>(
+    engine: &Engine,
+    bytes: &[u8],
+    dir: Option<&Path>,
+    prepare: impl FnOnce(&A) -> Result<T>,
+) -> Result<T> {
     let Some(dir) = dir else {
-        return A::compile(engine, bytes).context("compile packet mod");
+        let artifact = A::compile(engine, bytes).context("compile packet mod")?;
+        return prepare(&artifact);
     };
     let path = dir.join(file_name(engine, bytes));
     if path.is_file() {
@@ -59,11 +65,12 @@ pub(super) fn load<A: Artifact>(engine: &Engine, bytes: &[u8], dir: Option<&Path
         // serialized from the same bytes and engine settings; wasmtime still refuses artifacts
         // whose header does not match the engine.
         match unsafe { A::deserialize_file(engine, &path) } {
-            Ok(artifact) => return Ok(artifact),
+            Ok(artifact) => return prepare(&artifact),
             Err(error) => tracing::info!(error = format!("{error:#}"), "recompiling packet mod"),
         }
     }
     let artifact = A::compile(engine, bytes).context("compile packet mod")?;
+    let prepared = prepare(&artifact)?;
     if let Err(error) = artifact
         .serialize()
         .and_then(|bytes| store(dir, &path, &bytes))
@@ -73,7 +80,7 @@ pub(super) fn load<A: Artifact>(engine: &Engine, bytes: &[u8], dir: Option<&Path
             "packet mod compile cache unavailable"
         );
     }
-    Ok(artifact)
+    Ok(prepared)
 }
 
 /// Names an artifact by the component bytes and the engine's compatibility settings.
