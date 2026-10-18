@@ -62,7 +62,7 @@ func isOwnMovement(id uint32) bool {
 
 func ownRuntimeID(source, destination packetSession) uint64 {
 	for _, session := range []packetSession{source, destination} {
-		if data, ok := session.(interface{ GameData() minecraft.GameData }); ok {
+		if data, ok := unwrapUpstream(session).(interface{ GameData() minecraft.GameData }); ok {
 			return data.GameData().EntityRuntimeID
 		}
 	}

@@ -251,6 +251,7 @@ func (server *sessionServer) prepare(
 	}
 	// The caller reports a disconnect read above, so the disconnect observer wraps only the relay.
 	prepared.upstream = observeDisconnects(prepared.upstream, server.onDisconnect)
+	prepared.upstream = observeUpstreamPositions(prepared.upstream, server.delay, intercepted.gameData.EntityRuntimeID)
 	selected, packs, err := selectSessionPacks(prepared.packStack, server.logger)
 	prepared.packAdmission.observePolicyOutcome(prepared.packStack, err == nil)
 	if err != nil {
@@ -359,7 +360,7 @@ func forwardStartupRest(session *sessionConn, rest [][]byte, intercept SessionIn
 				raw.Decoded = []packet.Packet{value}
 			}
 		}
-		if _, err := forwardPacket(session, raw, login.IdentityData{}, intercept, FromServer); err != nil {
+		if err := forwardPacket(session, raw, login.IdentityData{}, intercept, FromServer); err != nil {
 			return err
 		}
 	}

@@ -95,6 +95,10 @@ func upstreamLatency(session packetSession) func() time.Duration {
 func unwrapUpstream(session packetSession) packetSession {
 	for {
 		switch wrapper := session.(type) {
+		case *positionUpstream:
+			session = wrapper.packetSession
+		case *positionWriter:
+			session = wrapper.packetSession
 		case *transferObservingSession:
 			session = wrapper.upstreamSession
 		case *disconnectObservingSession:

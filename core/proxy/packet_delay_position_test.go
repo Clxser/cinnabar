@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
+	"net"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/go-gl/mathgl/mgl32"
+	"github.com/hashimthearab/rust-mcbe/core/internal/streamnet"
 	"github.com/sandertv/gophertunnel/minecraft"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
@@ -161,6 +164,95 @@ func TestPacketDelayPositionFiltersOwnFiniteMovement(t *testing.T) {
 	}
 	if got := ownMovementPosition(decoded(&packet.MovePlayer{EntityRuntimeID: 9, Position: mgl32.Vec3{1, 2, 3}}), 9); got == nil || got.Y != 2 {
 		t.Fatal("own network position was changed")
+	}
+}
+
+func TestPacketDelayPositionIncludesInterceptorInjections(t *testing.T) {
+	for _, phase := range []string{"before", "after", "flush"} {
+		for _, drop := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/drop_original=%t", phase, drop), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					delay := new(PacketDelay)
+					id := delay.beginSession()
+					_ = delay.SetWithPosition(200, true)
+					up := newFakeUpstream(nil)
+					up.useBatchReads = true
+					up.data.EntityRuntimeID = 9
+					up.batchReads <- batchResult{packets: []packet.Packet{&packet.StartGame{EntityRuntimeID: 9}}}
+					logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+					connections := newPreparedConnections("", nil, logger)
+					connections.connectPrepared = func(context.Context, dialerDownstream) (*preparedConnection, error) {
+						return &preparedConnection{upstream: up, packStack: &selectedResourcePackStack{}}, nil
+					}
+					var intercepted *InterceptedSession
+					// inject appends a movement through the interceptor's public writer.
+					inject := func() error {
+						return intercepted.WriteToServer(&packet.MovePlayer{EntityRuntimeID: 9, Position: mgl32.Vec3{4, 71, 6}})
+					}
+					intercept := &scriptedIntercept{
+						selects: map[uint32]bool{packet.IDPlayerAuthInput: true},
+						handle: func(Direction, packet.Packet) (Verdict, error) {
+							if phase == "before" {
+								if err := inject(); err != nil {
+									return Forward, err
+								}
+							}
+							if drop {
+								return Drop, nil
+							}
+							return Forward, nil
+						},
+						end: func(Direction) error {
+							if phase == "before" {
+								return nil
+							}
+							if err := inject(); err != nil {
+								return err
+							}
+							if phase == "flush" {
+								return intercepted.FlushServer()
+							}
+							return nil
+						},
+					}
+					server := &sessionServer{prepared: connections, delay: delay, logger: logger,
+						interceptor: interceptorFunc(func(_ context.Context, session *InterceptedSession) (SessionInterceptor, error) {
+							intercepted = session
+							return intercept, nil
+						})}
+					local, peer := net.Pipe()
+					defer peer.Close()
+					client := newSessionConn(streamnet.NewFramedConn(local))
+					defer client.Close()
+					ctx, cancel := context.WithCancelCause(context.Background())
+					defer cancel(nil)
+					downstream, err := newSessionDownstream(testSessionConnect(t), nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					_, prepared, err := server.prepare(ctx, cancel, client, downstream, nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer prepared.close()
+					src := newFakeDownstream(nil)
+					defer src.Close()
+					src.useBatchReads = true
+					src.batchReads <- batchResult{packets: []packet.Packet{&packet.PlayerAuthInput{Position: mgl32.Vec3{1, 70, 3}}}}
+					src.batchReads <- batchResult{err: io.EOF}
+					if err := pumpPacketsWithDelay(ctx, delay, prepared.intercept, src, prepared.upstream, true, id); !errors.Is(err, io.EOF) {
+						t.Fatal(err)
+					}
+					want := ForwardedPosition{4, 71, 6}
+					if phase == "before" && !drop {
+						want = ForwardedPosition{1, 70, 3}
+					}
+					if _, got := delay.PositionSnapshot(); got == nil || *got != want {
+						t.Fatalf("injected movement position = %#v", got)
+					}
+				})
+			})
+		}
 	}
 }
 

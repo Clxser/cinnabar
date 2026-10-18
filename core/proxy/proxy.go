@@ -374,6 +374,7 @@ func relayPackets(
 ) error {
 	session := delay.beginSession()
 	defer delay.endSession(session)
+	upstream = trackPositionWrites(upstream, delay, session, ownRuntimeID(downstream, upstream))
 	pumpCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	type result struct {
@@ -477,7 +478,7 @@ func pumpPacketsWithDelay(ctx context.Context, delay *PacketDelay, intercept Ses
 	if fromDownstream {
 		// Local logins carry a transport identity; the upstream connection owns
 		// the server's canonical player identity.
-		if identitySession, ok := destination.(interface {
+		if identitySession, ok := unwrapUpstream(destination).(interface {
 			IdentityData() login.IdentityData
 		}); ok {
 			upstreamIdentity = identitySession.IdentityData()
@@ -494,6 +495,7 @@ func pumpPacketsWithDelay(ctx context.Context, delay *PacketDelay, intercept Ses
 		if len(sessions) != 0 {
 			session = sessions[0]
 		}
+		destination = trackPositionWrites(destination, delay, session, ownID)
 		inspect = func(id uint32) bool {
 			if inspectsUpstreamIdentity(id, upstreamIdentity) {
 				return true
@@ -524,20 +526,12 @@ func pumpPacketsWithDelay(ctx context.Context, delay *PacketDelay, intercept Ses
 			return err
 		}
 		trace.read(batch, reader.readAt, destination)
-		epoch, tracking := delay.positionToken()
-		var position *ForwardedPosition
 		if intercept != nil {
 			intercept.BeginBatch(direction)
 		}
 		for _, raw := range batch {
-			forwarded, err := forwardPacket(destination, raw, upstreamIdentity, intercept, direction)
-			if err != nil {
+			if err := forwardPacket(destination, raw, upstreamIdentity, intercept, direction); err != nil {
 				return attributeRelayError(err, fromDownstream)
-			}
-			if tracking && fromDownstream {
-				if candidate := ownMovementPosition(forwarded, ownID); candidate != nil {
-					position = candidate
-				}
 			}
 		}
 		if intercept != nil {
@@ -549,7 +543,6 @@ func pumpPacketsWithDelay(ctx context.Context, delay *PacketDelay, intercept Ses
 			return err
 		}
 		trace.forwarded()
-		delay.commitPosition(session, epoch, position)
 	}
 }
 
@@ -565,9 +558,8 @@ func inspectsUpstreamIdentity(id uint32, identity login.IdentityData) bool {
 }
 
 // forwardPacket writes raw's received bytes unless the proxy rewrote one of its decoded packets or an
-// intercept changed or dropped one. It returns only decoded packets actually written, reusing raw's
-// decoded slice. intercept is optional.
-func forwardPacket(destination packetSession, raw minecraft.RawPacket, identity login.IdentityData, intercept SessionInterceptor, direction Direction) ([]packet.Packet, error) {
+// intercept changed or dropped one. intercept is optional.
+func forwardPacket(destination packetSession, raw minecraft.RawPacket, identity login.IdentityData, intercept SessionInterceptor, direction Direction) error {
 	intercepted := intercept != nil && len(raw.Decoded) != 0 && intercept.Intercepts(direction, raw.ID)
 	var verdictBuffer [4]Verdict
 	verdicts := verdictBuffer[:0]
@@ -577,30 +569,29 @@ func forwardPacket(destination packetSession, raw minecraft.RawPacket, identity 
 		if intercepted {
 			var err error
 			if verdict, err = intercept.HandlePacket(direction, value); err != nil {
-				return nil, err
+				return err
 			}
 		}
 		verdicts = append(verdicts, verdict)
 		rewritten = rewritten || verdict != Forward || normalizeUpstreamIdentity(value, identity) != value
 	}
 	if !rewritten {
-		if err := destination.WritePacketRaw(raw.Data); err != nil {
-			return nil, err
+		if writer, ok := destination.(interface {
+			writeReceived(minecraft.RawPacket) error
+		}); ok {
+			return writer.writeReceived(raw)
 		}
-		return raw.Decoded, nil
+		return destination.WritePacketRaw(raw.Data)
 	}
-	forwarded := raw.Decoded[:0]
 	for index, value := range raw.Decoded {
 		if verdicts[index] == Drop {
 			continue
 		}
-		value = normalizeUpstreamIdentity(value, identity)
-		if err := destination.WritePacket(value); err != nil {
-			return nil, err
+		if err := destination.WritePacket(normalizeUpstreamIdentity(value, identity)); err != nil {
+			return err
 		}
-		forwarded = append(forwarded, value)
 	}
-	return forwarded, nil
+	return nil
 }
 
 // relayIdleFlush bounds how long a packet written outside a forwarded batch stays buffered;
