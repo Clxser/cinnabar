@@ -165,6 +165,7 @@ mod tests {
         let prepared = mod_ui::PreparedPanelUi::prepare(Arc::new(ui::mod_panel::PanelBundle {
             panel: panel.clone(),
             surfaces: Default::default(),
+            control_schemas: Default::default(),
         }))
         .unwrap();
         Arc::new(client_extensions::modding::packet_relay::MenuOutput {
@@ -287,6 +288,7 @@ mod tests {
 
         let mut panel = mod_ui::test_support::sample_panel();
         panel.surface = Some(Surface {
+            collections: Default::default(),
             previews: Default::default(),
             screen: format!("temporal.{screen}"),
             document: serde_json::json!({"namespace":"temporal",screen:{
@@ -320,6 +322,7 @@ mod tests {
         let prepared = mod_ui::PreparedPanelUi::prepare(Arc::new(ui::mod_panel::PanelBundle {
             panel: panel.clone(),
             surfaces: Default::default(),
+            control_schemas: Default::default(),
         }))
         .unwrap();
         Arc::new(client_extensions::modding::packet_relay::MenuOutput {

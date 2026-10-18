@@ -87,6 +87,7 @@ impl UiPresentationRuntime {
             .value(SettingId::HideHud)
             != 0
             || self.hud_frame.death_screen
+            || self.screens.mod_ui.mod_panel_open() && !self.screens.mod_ui.mod_hud_editor_open()
         {
             return Ok(true);
         }

@@ -22,6 +22,11 @@ mod guest;
 pub mod native_frame;
 pub mod native_menu;
 
+/// Converts observed actor YXZ degrees (forward -Z, pitch up) to Bedrock view degrees.
+pub fn bedrock_view_angles(yaw: f32, pitch: f32) -> [f32; 2] {
+    [(180. - yaw).rem_euclid(360.), -pitch]
+}
+
 pub use guest::PlayerMod;
 
 /// Exclusive bound for guest time overrides: ticks in one Bedrock day.
@@ -50,6 +55,12 @@ pub const PANEL_BUNDLE_SECTION: &str = "cinnabar:extension/panel-bundle@1";
 pub const PANEL_FONT_SECTION: &str = "cinnabar:extension/font@1";
 /// Maximum source bytes in an embedded or explicitly selected personal panel font.
 pub const MAX_PANEL_FONT_BYTES: usize = 2 * 1024 * 1024;
+/// Nominal outline-font em size in personal-panel GUI coordinates.
+pub const PANEL_FONT_EM_GUI_PIXELS: f32 = 9.0;
+/// First private-use character reserved for optional personal-panel icon glyphs.
+pub const PANEL_ICON_GLYPH_START: u32 = 0xE800;
+/// Maximum number of dense icon glyphs in one personal-panel font.
+pub const MAX_PANEL_ICON_GLYPHS: u32 = 64;
 /// Optional top-level PNG data replacing the local main-menu logo.
 pub const MENU_LOGO_SECTION: &str = "cinnabar:extension/menu-logo@1";
 /// Optional top-level UTF-8 text replacing the local menu's product heading.

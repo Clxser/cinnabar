@@ -337,6 +337,7 @@ pub(super) fn prepare(
                 None => mod_ui::PreparedPanelUi::prepare(Arc::new(ui::mod_panel::PanelBundle {
                     panel: panel.clone(),
                     surfaces: Default::default(),
+                    control_schemas: Default::default(),
                 }))?,
             },
         ),

@@ -33,6 +33,7 @@ fn panel(reference: &str) -> Panel {
         label: "Outer action".into(),
     }];
     panel.surface=Some(Surface {
+        collections: Default::default(),
         screen:"preview_menu.root".into(),
         document:json!({"namespace":"preview_menu","root":{"type":"screen","controls":[{"card":{"type":"button","offset":[20,20],"size":[100,50],
             "button_mappings":[{"from_button_id":"button.menu_select","to_button_id":"mod.control:0","mapping_type":"pressed"}],

@@ -19,9 +19,11 @@ use client_shell::ui_resources::{UiPresentationResource, UiRuntimeResource};
 #[cfg(test)]
 use client_ui::ui_runtime::{UiRuntime, presentation::UiPresentationRuntime};
 
-/// Pointer messages and wheel accumulation routed while a personal panel owns input.
+/// Physical messages and shared services routed while a personal panel owns input.
 #[derive(SystemParam)]
-pub(super) struct PanelPointerInput<'w> {
+pub(super) struct PanelInput<'w> {
+    keyboard_events: Option<Res<'w, Messages<KeyboardInput>>>,
+    clipboard: Option<ResMut<'w, client_shell::menu::MenuClipboard>>,
     mouse_events: Option<Res<'w, Messages<MouseButtonInput>>>,
     scroll: Option<Res<'w, AccumulatedMouseScroll>>,
     reserved: Option<ResMut<'w, super::ReservedControls>>,
@@ -32,6 +34,7 @@ const POINTER_BUTTONS: [(MouseButton, &str); 3] = [
     (MouseButton::Right, "MouseRight"),
     (MouseButton::Middle, "MouseMiddle"),
 ];
+const TEXT_INPUT: &str = "TextInput";
 
 #[derive(Default)]
 pub(super) struct PhysicalControls {
@@ -47,6 +50,42 @@ pub(super) struct PhysicalControls {
     packet_pointer_active: bool,
 }
 
+/// Applies native editor shortcuts without forwarding command letters or touching unfocused fields.
+fn native_editor_shortcut(
+    ui: &mut mod_ui::ModUi,
+    clipboard: Option<&mut client_shell::menu::MenuClipboard>,
+    key: &str,
+) -> bool {
+    if key == "KeyA" {
+        ui.mod_panel_key("SelectAll", None);
+        return true;
+    }
+    if !matches!(key, "KeyC" | "KeyX" | "KeyV") {
+        return false;
+    }
+    let Some(selection) = ui.mod_panel_field_selection() else {
+        return true;
+    };
+    let Some(clipboard) = clipboard else {
+        return true;
+    };
+    if key == "KeyV" {
+        let maximum = ui::mod_panel::MAX_PANEL_VALUE_CHARS * char::MAX.len_utf8();
+        if let Some(text) = ui::ChatClipboard::read_text_bounded(clipboard, maximum)
+            .ok()
+            .flatten()
+        {
+            ui.mod_panel_key("Paste", Some(&text));
+        }
+    } else if !selection.is_empty() {
+        clipboard.write_text(selection.to_owned());
+        if key == "KeyX" {
+            ui.mod_panel_key("Delete", None);
+        }
+    }
+    true
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "Routes one physical frame before gameplay authority."
@@ -55,8 +94,7 @@ pub(super) fn prepare_mod_input(
     extension: Option<ResMut<ModRuntime>>,
     mut packets: Option<ResMut<super::packets::PacketMods>>,
     mut physical: Local<PhysicalControls>,
-    keyboard_events: Option<Res<Messages<KeyboardInput>>>,
-    pointer_input: PanelPointerInput,
+    input: PanelInput,
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut mouse: Option<ResMut<ButtonInput<MouseButton>>>,
     mut motion: Option<ResMut<AccumulatedMouseMotion>>,
@@ -69,11 +107,13 @@ pub(super) fn prepare_mod_input(
     mut focus: Option<ResMut<client_state::CursorFocus>>,
     driven: Option<Res<client_state::DrivenInput>>,
 ) {
-    let PanelPointerInput {
+    let PanelInput {
+        keyboard_events,
+        mut clipboard,
         mouse_events,
         scroll,
         mut reserved,
-    } = pointer_input;
+    } = input;
     if let Some(reserved) = reserved.as_mut() {
         reserved.0.clear();
     }
@@ -117,14 +157,35 @@ pub(super) fn prepare_mod_input(
     }
     let mut panel_keys = Vec::new();
     if let Some(events) = keyboard_events {
-        let mut transitions = Vec::new();
-        for event in physical.keys.read(&events) {
-            if event.window != entity || matches!(event.key_code, KeyCode::Unidentified(_)) {
+        let samples: Vec<_> = physical.keys.read(&events).cloned().collect();
+        for event in samples {
+            if event.window != entity {
                 continue;
             }
-            let name = format!("{:?}", event.key_code);
+            let identified = !matches!(event.key_code, KeyCode::Unidentified(_));
+            let name = if identified {
+                format!("{:?}", event.key_code)
+            } else {
+                TEXT_INPUT.into()
+            };
             let down = event.state == ButtonState::Pressed;
-            transitions.push((name.clone(), down));
+            if identified {
+                physical.track_held(name.clone(), down);
+            }
+            if down
+                && !event.repeat
+                && extension.as_ref().is_some_and(|extension| {
+                    (0..extension.hosts.host_count()).any(|index| {
+                        extension
+                            .hosts
+                            .host(index)
+                            .panel()
+                            .is_some_and(|panel| panel.is_toggle_key(&name))
+                    })
+                })
+            {
+                debug!(key = %name, focused, "personal panel hotkey received");
+            }
             if down && focused {
                 panel_keys.push((
                     name,
@@ -137,11 +198,14 @@ pub(super) fn prepare_mod_input(
                         })
                         .map(str::to_owned),
                     event.repeat,
+                    physical.held_keys.iter().any(|key| {
+                        matches!(
+                            key.as_str(),
+                            "ControlLeft" | "ControlRight" | "SuperLeft" | "SuperRight"
+                        )
+                    }),
                 ));
             }
-        }
-        for (name, down) in transitions {
-            physical.track_held(name, down);
         }
     }
     let pointer_pressed =
@@ -156,7 +220,7 @@ pub(super) fn prepare_mod_input(
         pointer_pressed
             .iter()
             .cloned()
-            .map(|key| (key, None, false)),
+            .map(|key| (key, None, false, false)),
     );
     let absorbed = menu.as_deref().map_or_else(
         || ui.ui_focused(&player),
@@ -194,9 +258,9 @@ pub(super) fn prepare_mod_input(
                 .unwrap_or_default();
             packets.menu.pending.keys = panel_keys
                 .iter()
-                .filter(|(key, _, repeat)| !repeat && subscriptions.contains(key))
+                .filter(|(key, _, repeat, _)| !repeat && subscriptions.contains(key))
                 .take(mod_api::MAX_CONTROL_KEYS)
-                .map(|(key, _, _)| mod_api::native_menu::Key {
+                .map(|(key, _, _, _)| mod_api::native_menu::Key {
                     key: key.clone(),
                     text: None,
                 })
@@ -242,26 +306,29 @@ pub(super) fn prepare_mod_input(
             presentation.mod_ui_mut().cancel_mod_panel_edit();
             open = false;
         }
-        for (key, text, _) in panel_keys {
+        for (key, text, _, shortcut) in panel_keys {
             if !open || !focused || absorbed {
                 continue;
             }
             if editing {
-                let key = if key == "KeyA"
-                    && (keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight))
+                if shortcut
+                    && native_editor_shortcut(
+                        presentation.mod_ui_mut(),
+                        clipboard.as_deref_mut(),
+                        &key,
+                    )
                 {
-                    "SelectAll"
+                    continue;
+                }
+                let text = if shortcut && key != TEXT_INPUT {
+                    Some("")
                 } else {
-                    key.as_str()
+                    text.as_deref()
                 };
-                events.extend(
-                    presentation
-                        .mod_ui_mut()
-                        .mod_panel_key(key, text.as_deref()),
-                );
+                events.extend(presentation.mod_ui_mut().mod_panel_key(&key, text));
             } else if key == "Escape" && !capture {
                 open = false;
-            } else {
+            } else if key != TEXT_INPUT {
                 raw_keys.push(mod_api::native_menu::Key {
                     key,
                     text: text
@@ -382,8 +449,8 @@ pub(super) fn prepare_mod_input(
     if focused && !absorbed {
         let toggles: Vec<_> = panel_keys
             .iter()
-            .filter(|(_, _, repeat)| !repeat)
-            .map(|(key, _, _)| key.clone())
+            .filter(|(key, _, repeat, _)| key != TEXT_INPUT && !repeat)
+            .map(|(key, _, _, _)| key.clone())
             .collect();
         if extension.hosts.select_panel(&toggles) {
             presentation.mod_ui_mut().cancel_mod_panel_edit();
@@ -404,9 +471,10 @@ pub(super) fn prepare_mod_input(
     let had_panel = open;
     let editing = open && presentation.mod_ui().mod_panel_editing();
     let interrupt = editing
-        && panel_keys.iter().any(|(key, _, repeat)| {
-            !repeat
-                && (key == "F10"
+        && panel_keys.iter().any(|(key, _, repeat, _)| {
+            key != TEXT_INPUT
+                && !repeat
+                && (key == ui::mod_panel::FALLBACK_TOGGLE_KEY
                     || presentation.mod_ui().mod_panel_toggle_key() == Some(key.as_str()))
         });
     if !focused {
@@ -417,26 +485,27 @@ pub(super) fn prepare_mod_input(
     }
     let mut pressed = pointer_pressed;
     let mut events = Vec::new();
-    for (key, text, repeat) in panel_keys {
+    for (key, text, repeat, shortcut) in panel_keys {
         if POINTER_BUTTONS.iter().any(|(_, name)| *name == key) {
             continue;
         }
         if open && focused && !absorbed && editing && !interrupt {
-            let edit_key = if key == "KeyA"
-                && (keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight))
+            if shortcut
+                && native_editor_shortcut(presentation.mod_ui_mut(), clipboard.as_deref_mut(), &key)
             {
-                "SelectAll"
+                continue;
+            }
+            // An empty text value also suppresses the editor's physical digit fallback.
+            let text = if shortcut && key != TEXT_INPUT {
+                Some("")
             } else {
-                key.as_str()
+                text.as_deref()
             };
-            events.extend(
-                presentation
-                    .mod_ui_mut()
-                    .mod_panel_key(edit_key, text.as_deref()),
-            );
-        } else if !repeat
+            events.extend(presentation.mod_ui_mut().mod_panel_key(&key, text));
+        } else if key != TEXT_INPUT
+            && !repeat
             && (!editing
-                || key == "F10"
+                || key == ui::mod_panel::FALLBACK_TOGGLE_KEY
                 || presentation.mod_ui().mod_panel_toggle_key() == Some(key.as_str()))
         {
             pressed.push(key);
@@ -455,11 +524,14 @@ pub(super) fn prepare_mod_input(
         .hosts
         .host(owner)
         .panel()
-        .is_some_and(|panel| pressed.contains(&panel.toggle_key));
+        .is_some_and(|panel| pressed.iter().any(|key| panel.is_toggle_key(key)));
     if !extension.hosts.host(owner).is_active() || (focused && (absorbed || close_requested)) {
         open = false;
     } else if toggle_requested {
         open = !open;
+    }
+    if toggle_requested {
+        debug!(focused, absorbed, open, "personal panel hotkey resolved");
     }
     extension.hosts.host_mut(owner).set_panel_open(open);
     presentation.mod_ui_mut().set_mod_panel_open(open);
@@ -533,7 +605,7 @@ pub(super) fn prepare_mod_input(
         keys_pressed: if focused {
             pressed
                 .into_iter()
-                .filter(|key| !absorbed || key == "F10")
+                .filter(|key| !absorbed || key == ui::mod_panel::FALLBACK_TOGGLE_KEY)
                 .take(mod_api::MAX_CONTROL_KEYS)
                 .collect()
         } else {
@@ -546,6 +618,19 @@ pub(super) fn prepare_mod_input(
         },
         events,
     };
+    let text_events = presentation
+        .mod_ui_mut()
+        .take_mod_panel_text_events(extension.panel_ui_owner(owner));
+    if focused
+        && !absorbed
+        && !text_events.is_empty()
+        && let Err(error) = extension
+            .hosts
+            .host_mut(owner)
+            .queue_text_events(text_events)
+    {
+        warn!(%error,"native mod text edit rejected");
+    }
     finish_capture(
         open,
         was_open,
@@ -560,6 +645,7 @@ pub(super) fn prepare_mod_input(
         for index in 0..extension.hosts.host_count() {
             if let Some(panel) = extension.hosts.host(index).panel() {
                 subscriptions.push(panel.toggle_key.clone());
+                subscriptions.push(ui::mod_panel::FALLBACK_TOGGLE_KEY.into());
             }
         }
         let toggle = extension
@@ -613,18 +699,20 @@ fn finish_capture(
 
 /// A locally handled toggle cannot also become an immediate guest close action.
 fn take_packet_toggle(
-    keys: &mut Vec<(String, Option<String>, bool)>,
+    keys: &mut Vec<(String, Option<String>, bool, bool)>,
     toggle: &str,
     owned: bool,
     open: bool,
     capture: bool,
 ) -> bool {
     if (open && (!owned || capture))
-        || !keys.iter().any(|(key, _, repeat)| !repeat && key == toggle)
+        || !keys
+            .iter()
+            .any(|(key, _, repeat, _)| !repeat && key == toggle)
     {
         return false;
     }
-    keys.retain(|(key, _, _)| key != toggle);
+    keys.retain(|(key, _, _, _)| key != toggle);
     true
 }
 

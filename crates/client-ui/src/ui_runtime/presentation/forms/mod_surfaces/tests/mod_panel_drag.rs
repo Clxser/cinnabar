@@ -42,6 +42,7 @@ fn draggable() -> Panel {
         })
         .collect();
     panel.surface = Some(Surface {
+        collections: Default::default(),
         previews: Default::default(),
         screen: "drag.root".into(),
         transitions: Default::default(),
@@ -78,6 +79,7 @@ fn publish(presentation: &mut UiPresentationRuntime, panel: &Panel) {
     let prepared = PreparedPanelUi::prepare(Arc::new(PanelBundle {
         panel: panel.clone(),
         surfaces: Default::default(),
+        control_schemas: Default::default(),
     }))
     .unwrap();
     presentation

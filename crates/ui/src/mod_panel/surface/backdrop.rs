@@ -159,6 +159,7 @@ mod tests {
             .unwrap()
             .extend(glass.as_object().unwrap().clone());
         Surface {
+            collections: Default::default(),
             previews: Default::default(),
             screen: "glass.root".into(),
             document: serde_json::json!({"namespace":"glass","root":{
@@ -225,6 +226,7 @@ mod tests {
     /// A surface whose root panel holds `pane`.
     fn holding(pane: Value) -> Surface {
         Surface {
+            collections: Default::default(),
             previews: Default::default(),
             screen: "glass.root".into(),
             document: serde_json::json!({"namespace":"glass","root":{

@@ -1,11 +1,44 @@
 use super::*;
 use crate::test_support::sample_panel as panel;
 
+/// Custom artwork follows both toggle states through the actual global binding pipeline.
+#[test]
+fn authored_toggle_faces_follow_native_control_values() {
+    let surface = ui::mod_panel::Surface { previews: Default::default(), collections: Default::default(),
+        screen: "extension.screen".into(), bindings: Default::default(), transitions: Default::default(),
+        document: serde_json::json!({"namespace":"extension","screen":{"type":"screen","controls":[
+            {"enabled":{"type":"panel","bindings":[{"binding_name":"#row_0_toggle_enabled","binding_name_override":"#visible"}]}},
+            {"disabled":{"type":"panel","bindings":[{"binding_name":"#row_0_toggle_disabled","binding_name_override":"#visible"}]}}
+        ]}}).to_string(),
+    };
+    let catalog = super::surface::catalog(&surface).unwrap();
+    let root = json_ui::resolve(&catalog, &surface.screen, &Context::default())
+        .control
+        .unwrap();
+    let mut settings = panel();
+    for enabled in [false, true, false] {
+        if let Control::Toggle { value, .. } = &mut settings.controls[0] {
+            *value = enabled;
+        }
+        let data = data::control_data(&settings);
+        let bound = json_ui::bind(&root, &data, &json_ui::EmptyLibrary);
+        assert_eq!(
+            bound.child("enabled").unwrap().properties.get("visible"),
+            Some(&serde_json::json!(enabled))
+        );
+        assert_eq!(
+            bound.child("disabled").unwrap().properties.get("visible"),
+            Some(&serde_json::json!(!enabled))
+        );
+    }
+}
+
 /// Prepares two authored routes with distinct wrapper facts for each owner or revision.
 fn prepared_panels(title: &str) -> ([Panel; 2], Arc<prepared::PreparedPanelUi>) {
     let mut content = panel();
     content.title = title.into();
     content.surface = Some(ui::mod_panel::Surface {
+        collections: Default::default(),
         previews: Default::default(),
         transitions: Default::default(),
         screen: "extension.screen".into(),
@@ -24,6 +57,7 @@ fn prepared_panels(title: &str) -> ([Panel; 2], Arc<prepared::PreparedPanelUi>) 
     .to_string();
     let bundle = Arc::new(ui::mod_panel::PanelBundle {
         panel: content.clone(),
+        control_schemas: Default::default(),
         surfaces: std::collections::BTreeMap::from([(
             "other".into(),
             other.surface.as_ref().unwrap().clone(),
@@ -31,6 +65,36 @@ fn prepared_panels(title: &str) -> ([Panel; 2], Arc<prepared::PreparedPanelUi>) 
     });
     let prepared = prepared::PreparedPanelUi::prepare(bundle).unwrap();
     ([content, other], prepared)
+}
+
+/// Prepared routes keep the schema used to validate their actions, even with identical artwork.
+#[test]
+fn prepared_routes_match_their_own_control_schema() {
+    let ([initial, _], _) = prepared_panels("Route schemas");
+    let mut options = initial.clone();
+    options.controls = vec![Control::Button {
+        id: "back".into(),
+        label: "Back".into(),
+    }];
+    let bundle = Arc::new(ui::mod_panel::PanelBundle {
+        panel: initial.clone(),
+        surfaces: std::collections::BTreeMap::from([(
+            "options".into(),
+            options.surface.clone().unwrap(),
+        )]),
+        control_schemas: std::collections::BTreeMap::from([(
+            "options".into(),
+            options.controls.clone(),
+        )]),
+    });
+    let prepared = prepared::PreparedPanelUi::prepare(bundle).unwrap();
+    assert!(prepared.route(&initial).is_some());
+    assert!(prepared.route(&options).is_some());
+    options.controls[0] = Control::Button {
+        id: "unregistered".into(),
+        label: "Back".into(),
+    };
+    assert!(prepared.route(&options).is_none());
 }
 
 /// Replacing a registration retires its old bundles and preserves an active environment route.
@@ -581,6 +645,7 @@ fn exiting_panel(exit: Option<f64>) -> Panel {
 
     let mut content = panel();
     content.surface = Some(Surface {
+        collections: Default::default(),
         previews: Default::default(),
         screen: "extension.screen".into(),
         document: serde_json::json!({
@@ -732,4 +797,105 @@ fn route_changes_end_an_exit_and_binding_updates_continue_it() {
         .unwrap();
     assert!(!ui.mod_panel_painting());
     assert!(!ui.mod_panel_motion_active());
+}
+
+/// Packet publication checks the selected route's schema and keeps its current visibility.
+#[test]
+fn packet_prepared_updates_accept_route_schemas_and_reject_changed_previews() {
+    let ([initial, _], _) = prepared_panels("Packet routes");
+    let mut options = initial.clone();
+    options.controls = vec![Control::Button {
+        id: "back".into(),
+        label: "Back".into(),
+    }];
+    options.surface.as_mut().unwrap().previews.insert(
+        "sample".into(),
+        ui::mod_panel::preview::ControlPreview {
+            reference: "fixture.first".into(),
+            ..Default::default()
+        },
+    );
+    let bundle = Arc::new(ui::mod_panel::PanelBundle {
+        panel: initial,
+        surfaces: std::collections::BTreeMap::from([(
+            "options".into(),
+            options.surface.clone().unwrap(),
+        )]),
+        control_schemas: std::collections::BTreeMap::from([(
+            "options".into(),
+            options.controls.clone(),
+        )]),
+    });
+    let prepared = prepared::PreparedPanelUi::prepare(bundle).unwrap();
+    let owner = prepared::PanelUiOwner::PacketSession(1);
+    let mut ui = ModUi::default();
+    ui.set_prepared_mod_panel(owner, Arc::clone(&prepared), &options)
+        .unwrap();
+    ui.set_mod_panel_open(true);
+    let mut changed = options.clone();
+    changed
+        .surface
+        .as_mut()
+        .unwrap()
+        .bindings
+        .insert("#value".into(), ui::mod_panel::SurfaceValue::Number(2.));
+    ui.set_prepared_mod_panel(owner, Arc::clone(&prepared), &changed)
+        .unwrap();
+    assert!(ui.mod_panel_open());
+    changed
+        .surface
+        .as_mut()
+        .unwrap()
+        .previews
+        .get_mut("sample")
+        .unwrap()
+        .reference = "fixture.second".into();
+    assert!(
+        ui.set_prepared_mod_panel(owner, prepared, &changed)
+            .is_err()
+    );
+    assert!(ui.mod_panel_open());
+    assert_eq!(
+        ui.mod_panel.as_ref().unwrap().panel.surface,
+        options.surface.map(|mut surface| {
+            surface
+                .bindings
+                .insert("#value".into(), ui::mod_panel::SurfaceValue::Number(2.));
+            surface
+        })
+    );
+}
+
+/// Host-authored fallback controls retain only their admitted schema between packet updates.
+#[test]
+fn packet_prepared_fallback_accepts_values_and_rejects_new_controls() {
+    let initial = panel();
+    let prepared = prepared::PreparedPanelUi::prepare(Arc::new(ui::mod_panel::PanelBundle {
+        panel: initial.clone(),
+        surfaces: Default::default(),
+        control_schemas: Default::default(),
+    }))
+    .unwrap();
+    let owner = prepared::PanelUiOwner::PacketSession(1);
+    let mut ui = ModUi::default();
+    ui.set_prepared_mod_panel(owner, Arc::clone(&prepared), &initial)
+        .unwrap();
+    let mut changed = initial.clone();
+    if let Control::Toggle { value, .. } = &mut changed.controls[0] {
+        *value = !*value;
+    }
+    ui.set_prepared_mod_panel(owner, Arc::clone(&prepared), &changed)
+        .unwrap();
+    changed.controls.push(Control::Button {
+        id: "new".into(),
+        label: "New".into(),
+    });
+    assert!(
+        ui.set_prepared_mod_panel(owner, prepared, &changed)
+            .is_err()
+    );
+    assert_eq!(
+        ui.mod_panel.as_ref().unwrap().panel.controls.len(),
+        initial.controls.len()
+    );
 }

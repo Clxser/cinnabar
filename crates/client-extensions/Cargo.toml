@@ -20,6 +20,7 @@ bevy.workspace = true
 client-state = { path = "../client-state" }
 client-ui = { path = "../client-ui" }
 client-world = { path = "../client-world" }
+fontdue = "0.9"
 inventory = { path = "../inventory" }
 mod-api = { path = "../mod-api" }
 mod-host = { path = "../mod-host" }
@@ -28,6 +29,7 @@ mod-render = { path = "../mod-render" }
 player-state = { path = "../player-state" }
 protocol = { path = "../protocol" }
 render-model = { path = "../render-model" }
+render-api = { path = "../render-api" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 server-experience = { path = "../server-experience" }
