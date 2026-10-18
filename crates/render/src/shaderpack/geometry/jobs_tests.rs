@@ -90,6 +90,20 @@ fn greedy_quads_expand_to_one_job_per_covered_block_and_categories_stay_contiguo
     // Translucent: the same model drawn translucent, then two-sided water.
     assert_eq!(plan.categories, [0..7, 7..15, 15..19]);
     assert_eq!(plan.faces, 19);
+    // Single-sided cube faces group by direction ahead of everything else in their category.
+    assert_eq!(plan.facing[0][Face::PositiveY as usize], 0..6);
+    assert_eq!(plan.facing[0][FACING_REST], 6..7, "lava");
+    assert_eq!(
+        plan.facing[1][Face::NegativeX as usize],
+        7..9,
+        "face and overlay"
+    );
+    assert_eq!(
+        plan.facing[1][FACING_REST],
+        9..15,
+        "two-sided cubes and the model"
+    );
+    assert_eq!(plan.facing[2][FACING_REST], 15..19);
     let cubes = &plan.jobs[JobKind::Cube as usize];
     let blocks: Vec<_> = cubes[..6]
         .iter()

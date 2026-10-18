@@ -146,6 +146,11 @@ pub(crate) struct PackSettings {
     /// the shadow camera, blocks; -1 stands for the render distance.
     pub shadow_near_plane: f32,
     pub shadow_far_plane: f32,
+    /// `shadowDistanceRenderMul`: scales `shadowDistance` into the shadow pass's cull
+    /// distance; negative leaves it to the player's setting.
+    pub shadow_render_mul: f32,
+    /// `voxelDistance`: blocks around the camera the safe-zone shadow culler always keeps.
+    pub voxel_distance: f32,
 }
 
 impl Default for PackSettings {
@@ -160,6 +165,8 @@ impl Default for PackSettings {
             center_depth_halflife: SECONDS_PER_HALFLIFE_UNIT,
             shadow_near_plane: SHADOW_NEAR_PLANE,
             shadow_far_plane: SHADOW_FAR_PLANE,
+            shadow_render_mul: -1.0,
+            voxel_distance: 0.0,
         }
     }
 }
@@ -180,6 +187,8 @@ impl PackSettings {
                 "shadowIntervalSize" => (&mut s.shadow_interval, 1.0),
                 "shadowNearPlane" => (&mut s.shadow_near_plane, 1.0),
                 "shadowFarPlane" => (&mut s.shadow_far_plane, 1.0),
+                "shadowDistanceRenderMul" => (&mut s.shadow_render_mul, 1.0),
+                "voxelDistance" => (&mut s.voxel_distance, 1.0),
                 "wetnessHalflife" => (&mut s.wetness_halflife, SECONDS_PER_HALFLIFE_UNIT),
                 "drynessHalflife" => {
                     dryness = number(&c.value).or(dryness);

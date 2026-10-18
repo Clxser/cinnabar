@@ -8,7 +8,7 @@ use bevy::math::{DVec3, IVec3};
 use bevy::prelude::Entity;
 
 use super::allocator::FaceAllocator;
-use super::jobs::SectionPlan;
+use super::jobs::{FACING_GROUPS, SectionPlan};
 use super::vertex::IRIS_VERTEX_STRIDE;
 
 /// Bytes of one expanded face: four vertices.
@@ -38,6 +38,8 @@ pub(crate) struct ResidentFaces {
     pub(crate) page: usize,
     pub(crate) faces: Range<u32>,
     pub(crate) categories: [Range<u32>; 3],
+    /// Each category's faces by facing group (`jobs::FACING_GROUPS`).
+    pub(crate) facing: [[Range<u32>; FACING_GROUPS]; 3],
     /// Section origin in blocks.
     pub(crate) origin: [i32; 3],
     /// Origin epoch the positions were written against; stale faces are not drawn.
@@ -83,6 +85,9 @@ pub(crate) struct Residency {
     budget_faces: u64,
     pub(crate) origin: Option<IVec3>,
     pub(crate) epoch: u64,
+    /// Bumped whenever the resident sections or their faces change, so draw lists built from
+    /// them know when to rebuild.
+    pub(crate) revision: u64,
 }
 
 impl Residency {
@@ -102,6 +107,7 @@ impl Residency {
             budget_faces: budget_bytes / FACE_BYTES,
             origin: None,
             epoch: 0,
+            revision: 0,
         }
     }
 
@@ -189,6 +195,7 @@ impl Residency {
     pub(crate) fn remove(&mut self, entity: Entity) {
         if let Some(resident) = self.sections.remove(&entity) {
             self.pages[resident.page].faces.release(resident.faces);
+            self.revision += 1;
         }
         self.waiting.remove(&entity);
         if self.queued.remove(&entity) {
@@ -200,6 +207,7 @@ impl Residency {
     pub(crate) fn evict(&mut self, entity: Entity) {
         if let Some(resident) = self.sections.remove(&entity) {
             self.pages[resident.page].faces.release(resident.faces);
+            self.revision += 1;
             self.wait(entity);
         }
     }
@@ -214,6 +222,7 @@ impl Residency {
             _ => {
                 self.origin = Some(snapped);
                 self.epoch += 1;
+                self.revision += 1;
                 true
             }
         }
@@ -345,10 +354,12 @@ impl Residency {
                 page: placement.page,
                 faces: placement.faces.clone(),
                 categories: plan.categories.clone(),
+                facing: plan.facing.clone(),
                 origin,
                 epoch: self.epoch,
             },
         );
+        self.revision += 1;
     }
 
     /// Drops every page and section, as when the mode turns off.
@@ -359,6 +370,7 @@ impl Residency {
         self.queued.clear();
         self.waiting.clear();
         self.origin = None;
+        self.revision += 1;
     }
 }
 

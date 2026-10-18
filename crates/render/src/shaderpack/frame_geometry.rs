@@ -353,16 +353,19 @@ pub(crate) fn record_shadow(
     clear_depth(encoder, &shadow.depth_view);
     let side = shadow.slots.resolution;
     let depth = Some((&shadow.depth_view, [side, side]));
-    for kind in [DrawKind::ShadowSolid, DrawKind::ShadowCutout] {
-        record_kind(encoder, state, geometry, kind, 0, depth, None);
+    if pack.shadow_terrain {
+        for kind in [DrawKind::ShadowSolid, DrawKind::ShadowCutout] {
+            record_kind(encoder, state, geometry, kind, 0, depth, None);
+        }
     }
     for kind in [DrawKind::ShadowEntities, DrawKind::ShadowBlock] {
         super::actors::record(encoder, state, kind, 0, depth);
     }
-    let translucent = pack
-        .draws
-        .iter()
-        .any(|d| d.kind == DrawKind::ShadowTranslucent);
+    let translucent = pack.shadow_translucent
+        && pack
+            .draws
+            .iter()
+            .any(|d| d.kind == DrawKind::ShadowTranslucent);
     if translucent {
         copy_shadow_depth(device, encoder, &pack, &[1]);
         record_kind(

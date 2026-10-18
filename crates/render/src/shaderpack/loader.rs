@@ -151,6 +151,12 @@ pub(crate) struct PackGpu {
     pub shadowcomp: Vec<PassStep>,
     /// Present when some shadow draw resolved.
     pub shadow: Option<ShadowMaps>,
+    /// How the shadow pass culls terrain sections.
+    pub shadow_culling: super::geometry::ShadowCullSettings,
+    /// `shadowTerrain` and `shadowTranslucent`: whether the shadow pass draws opaque and
+    /// translucent terrain (both by default).
+    pub shadow_terrain: bool,
+    pub shadow_translucent: bool,
     /// `mc_Entity` id per Bedrock block state (by sequential id) from `block.properties`.
     pub block_ids: Option<Arc<Vec<i32>>>,
     /// `entityId` and item ids per Bedrock identifier; empty without geometry draws.
@@ -546,6 +552,24 @@ pub(crate) fn build(
     };
     let all_consts = all.iter().flat_map(|p| &p.consts);
     let settings = PackSettings::read(all_consts);
+    let shadow_culling = super::geometry::ShadowCullSettings {
+        culling: translation
+            .properties
+            .get("shadow.culling")
+            .and_then(super::geometry::ShadowCulling::parse)
+            .unwrap_or_default(),
+        // Iris takes a geometry stage on `shadow` for voxelization.
+        voxelizes: translation.programs.iter().any(|p| {
+            p.enabled
+                && p.program.name == "shadow"
+                && p.stages
+                    .iter()
+                    .any(|s| s.stage == shaderpack::StageKind::Geometry)
+        }),
+        shadow_distance: settings.shadow_distance,
+        render_mul: settings.shadow_render_mul,
+        voxel_distance: settings.voxel_distance,
+    };
 
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
     let key = content_key(pack, &config);
@@ -842,6 +866,9 @@ pub(crate) fn build(
         draws,
         shadowcomp,
         shadow,
+        shadow_culling,
+        shadow_terrain: translation.properties.get("shadowTerrain") != Some("false"),
+        shadow_translucent: translation.properties.get("shadowTranslucent") != Some("false"),
         block_ids,
         actor_ids,
         separate_ao: flag("separateAo"),

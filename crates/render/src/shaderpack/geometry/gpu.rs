@@ -2,10 +2,12 @@
 //! recording the expansion before any camera draws.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::time::{Duration, Instant};
 
 use bevy::log::{debug, warn};
 use bevy::math::{DVec3, IVec3, Vec3};
+use bevy::platform::hash::FixedHasher;
 use bevy::prelude::{Entity, FromWorld, Has, Query, Res, ResMut, Resource, World, default};
 use bevy::render::camera::ExtractedCamera;
 use bevy::render::render_phase::TrackedRenderPass;
@@ -13,7 +15,7 @@ use bevy::render::render_resource::{
     BindGroup, BindGroupEntry, Buffer, BufferDescriptor, BufferId, BufferInitDescriptor,
     BufferUsages, ComputePassDescriptor, PipelineCache,
 };
-use bevy::render::renderer::{RenderAdapter, RenderContext, RenderDevice};
+use bevy::render::renderer::{RenderAdapter, RenderContext, RenderDevice, RenderQueue};
 use bevy::render::view::{ExtractedView, RenderVisibleEntities};
 use render_scene::{ChunkRenderInstance, ChunkTextureAssets, RuntimeStage, RuntimeStageProfiler};
 
@@ -29,6 +31,7 @@ use super::pipelines::{
 use super::residency::{
     Eviction, FACE_BYTES, Placement, Residency, ResidentFaces, SECTION_RADIUS, section_distance,
 };
+use super::shadow_cull::ShadowFrustum;
 use super::vertex::CONSTANT_STREAM_WORDS;
 use crate::chunk::shaderpack_sources::{
     PackedChunkBuffers, PackedChunkSources, ResidentSections, terrain_multi_draw_indirect,
@@ -126,8 +129,10 @@ pub struct ShaderpackGeometry {
     attributes: Vec<u32>,
     attribute_key: Option<AttributeKey>,
     inputs: Option<ExpansionInputs>,
+    /// Camera draw lists by render-world view entity.
     views: HashMap<Entity, ViewDraws>,
-    resident: ViewDraws,
+    /// Shadow-pass draw lists by the camera view they cast shadows for.
+    shadows: HashMap<Entity, ViewDraws>,
     multi_draw: bool,
     supported: bool,
     prepared: PreparedExpansion,
@@ -172,7 +177,7 @@ impl FromWorld for ShaderpackGeometry {
             attribute_key: None,
             inputs: None,
             views: HashMap::new(),
-            resident: ViewDraws::default(),
+            shadows: HashMap::new(),
             multi_draw: draw_mode == Some(true),
             supported,
             prepared: PreparedExpansion::default(),
@@ -219,27 +224,64 @@ impl ShaderpackGeometry {
         self.budget_horizon
     }
 
-    /// Records `category` for `view` (a render-world view entity with visible chunks), or for
-    /// every resident section when `view` is `None` (shadow passes). The pass must already hold
-    /// a pipeline built with [`super::vertex_buffer_layouts`] and the program's bind groups.
-    /// Returns the draws issued.
+    /// Records `category` for `view` (a render-world view entity with visible chunks): its
+    /// camera list, or with `shadow` its shadow-pass list from
+    /// [`Self::prepare_shadow_view`]. The pass must already hold a pipeline built with
+    /// [`super::vertex_buffer_layouts`] and the program's bind groups. Returns the draws
+    /// issued.
     pub fn draw<'w>(
         &'w self,
         pass: &mut TrackedRenderPass<'w>,
         category: GeometryCategory,
-        view: Option<Entity>,
+        view: Entity,
+        shadow: bool,
     ) -> u32 {
         let Some(index_buffer) = &self.index_buffer else {
             return 0;
         };
-        let draws = match view {
-            Some(view) => match self.views.get(&view) {
-                Some(draws) => draws,
-                None => return 0,
-            },
-            None => &self.resident,
+        let lists = if shadow { &self.shadows } else { &self.views };
+        let Some(draws) = lists.get(&view) else {
+            return 0;
         };
         draws.record(pass, category, &self.pages, index_buffer, &self.constants)
+    }
+
+    /// Builds (or keeps, when nothing it depends on changed) `view`'s shadow-pass list: the
+    /// resident sections `frustum` keeps.
+    pub(crate) fn prepare_shadow_view(
+        &mut self,
+        view: Entity,
+        frustum: &ShadowFrustum,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+    ) {
+        let mut hasher = FixedHasher.build_hasher();
+        self.residency.revision.hash(&mut hasher);
+        frustum.key().hash(&mut hasher);
+        let key = hasher.finish();
+        let draws = self.shadows.entry(view).or_default();
+        if draws.is_current(key) {
+            return;
+        }
+        let built = ViewDraws::build(
+            self.residency
+                .sections
+                .values()
+                .filter(|faces| frustum.visible(faces.origin)),
+            None,
+            self.residency.epoch,
+            None,
+        );
+        let max_faces = built.max_faces();
+        draws.replace(built, key, self.multi_draw.then_some((device, queue)));
+        if max_faces > 0 {
+            self.ensure_index_buffer(device, max_faces);
+        }
+    }
+
+    /// Drops the shadow lists of views no longer drawn.
+    pub(crate) fn retain_shadow_views(&mut self, mut keep: impl FnMut(Entity) -> bool) {
+        self.shadows.retain(|view, _| keep(*view));
     }
 
     fn release_all(&mut self) {
@@ -249,7 +291,7 @@ impl ShaderpackGeometry {
         self.index_faces = 0;
         self.inputs = None;
         self.views.clear();
-        self.resident = ViewDraws::default();
+        self.shadows.clear();
         self.prepared = PreparedExpansion::default();
         self.complete_radius = None;
         self.budget_horizon = None;
@@ -348,6 +390,7 @@ pub(crate) struct GeometryInputs<'w> {
     pipelines: Res<'w, ExpansionPipelines>,
     cache: Res<'w, PipelineCache>,
     device: Res<'w, RenderDevice>,
+    queue: Res<'w, RenderQueue>,
     profiler: Option<Res<'w, RuntimeStageProfiler>>,
 }
 
@@ -479,7 +522,14 @@ pub(crate) fn prepare_shaderpack_geometry(
         .as_deref()
         .map(|frame| frame.render_distance)
         .filter(|far| *far > 0.0);
-    build_draws(geometry, &inputs.device, &sources, &views, far);
+    build_draws(
+        geometry,
+        &inputs.device,
+        &inputs.queue,
+        &sources,
+        &views,
+        far,
+    );
 }
 
 impl ShaderpackGeometry {
@@ -660,20 +710,45 @@ fn plan_frame(
 }
 
 /// Draw lists per camera view of its visible resident sections within `far` horizontally, as
-/// Java culls render sections by render distance, plus the shadow list of every resident one.
+/// Java culls render sections by render distance, leaving out faces the camera sees only
+/// from behind. A view's list is rebuilt only when its sections, the camera or `far` change.
 fn build_draws(
     geometry: &mut ShaderpackGeometry,
     device: &RenderDevice,
+    queue: &RenderQueue,
     sources: &PackedChunkSources,
     views: &GeometryViews,
     far: Option<f32>,
 ) {
     let epoch = geometry.residency.epoch;
     let mut max_faces = 0;
-    geometry.views.clear();
+    geometry
+        .views
+        .retain(|entity, _| views.get(*entity).is_ok());
     let reach = far.map(|far| f64::from(far) + 8.0);
     for (entity, view, visible, _) in views.iter() {
         let eye = view.world_from_view.translation().as_dvec3();
+        let visible_sections = || {
+            visible
+                .get::<ChunkRenderInstance>()
+                .into_iter()
+                .flat_map(|class| class.iter_visible())
+                .map(|(entity, _)| *entity)
+                .filter(|entity| !sources.is_hidden(*entity))
+        };
+        let mut hasher = FixedHasher.build_hasher();
+        geometry.residency.revision.hash(&mut hasher);
+        eye.to_array().map(f64::to_bits).hash(&mut hasher);
+        reach.map(f64::to_bits).hash(&mut hasher);
+        visible_sections().for_each(|entity| entity.hash(&mut hasher));
+        let key = hasher.finish();
+        if geometry
+            .views
+            .get(&entity)
+            .is_some_and(|draws| draws.is_current(key))
+        {
+            continue;
+        }
         let within = |faces: &ResidentFaces| {
             reach.is_none_or(|reach| {
                 let [x, _, z] = faces.origin;
@@ -682,30 +757,17 @@ fn build_draws(
                 dx * dx + dz * dz <= reach * reach
             })
         };
-        let sections = visible
-            .get::<ChunkRenderInstance>()
-            .into_iter()
-            .flat_map(|class| class.iter_visible())
-            .map(|(entity, _)| *entity)
-            .filter(|entity| !sources.is_hidden(*entity))
+        let sections = visible_sections()
             .filter_map(|entity| geometry.residency.sections.get(&entity))
             .filter(|faces| within(faces));
-        let mut draws = ViewDraws::build(sections, Some(eye), epoch);
-        if draws.commands.is_empty() {
-            continue;
-        }
-        max_faces = max_faces.max(draws.max_faces());
-        if geometry.multi_draw {
-            draws.upload_indirect(device);
-        }
-        geometry.views.insert(entity, draws);
+        let built = ViewDraws::build(sections, Some(eye), epoch, Some(eye));
+        max_faces = max_faces.max(built.max_faces());
+        geometry.views.entry(entity).or_default().replace(
+            built,
+            key,
+            geometry.multi_draw.then_some((device, queue)),
+        );
     }
-    let mut resident = ViewDraws::build(geometry.residency.sections.values(), None, epoch);
-    max_faces = max_faces.max(resident.max_faces());
-    if geometry.multi_draw {
-        resident.upload_indirect(device);
-    }
-    geometry.resident = resident;
     if max_faces > 0 {
         geometry.ensure_index_buffer(device, max_faces);
     }

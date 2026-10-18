@@ -34,9 +34,11 @@
 //!   `gtexture`/`texture`/`tex`, `normals` and `specular`.
 //! - Drawing: inside a pass holding the program's pipeline and bind groups, call
 //!   [`ShaderpackGeometry::draw`] per [`GeometryCategory`] (Iris `gbuffers_terrain` for solid and
-//!   cutout, `gbuffers_water` for translucent), with the camera's render view entity, or `None`
-//!   for every resident section (shadow passes). Camera draws honour the packed renderer's
-//!   frustum and cave culling.
+//!   cutout, `gbuffers_water` for translucent) with the camera's render view entity. Camera
+//!   draws honour the packed renderer's frustum and cave culling and leave out solid and cutout
+//!   faces the camera sees only from behind, as Sodium's block face culling does. Shadow
+//!   passes draw the view's shadow list, which `ShaderpackGeometry::prepare_shadow_view` builds
+//!   from the pack's shadow culling (see `shadow_cull`).
 //! - Block ids: insert [`ShaderpackBlockIds`] to supply `mc_Entity` ids; without it they read -1.
 //!
 //! # Memory
@@ -53,6 +55,7 @@ mod gpu;
 pub(crate) mod jobs;
 mod pipelines;
 mod residency;
+mod shadow_cull;
 mod vertex;
 
 use bevy::math::Mat4;
@@ -66,6 +69,7 @@ pub use gpu::{
     ShaderpackGeometrySettings, device_geometry_budget,
 };
 pub use jobs::GeometryCategory;
+pub(crate) use shadow_cull::{ShadowCullSettings, ShadowCulling, ShadowFrustum};
 pub(crate) use vertex::{
     CONSTANT_STREAM_WORDS, host_vertex, substitute_layout_constants, textured_host_vertex,
 };

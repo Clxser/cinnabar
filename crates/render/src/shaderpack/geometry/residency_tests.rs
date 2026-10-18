@@ -4,6 +4,7 @@ fn plan(faces: u32) -> SectionPlan {
     SectionPlan {
         faces,
         categories: [0..faces, faces..faces, faces..faces],
+        facing: Default::default(),
         jobs: Default::default(),
     }
 }

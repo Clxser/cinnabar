@@ -11,7 +11,7 @@ use super::effects::{Effect, EffectCamera, EffectInputs};
 use super::frame_geometry::{FrameGeometry, TerrainDraws};
 use super::geometry::{
     GeometryCategory, ShaderpackBlockIds, ShaderpackGeometry, ShaderpackGeometryPlugin,
-    ShaderpackGeometrySettings, device_geometry_budget,
+    ShaderpackGeometrySettings, ShadowFrustum, device_geometry_budget,
 };
 use super::loader::{GpuContext, PackGpu, load};
 use super::passes::{DrawContext, FrameIo, ViewState, record_frame};
@@ -260,7 +260,8 @@ fn replaced_effects(pack: &PackGpu) -> ShaderPackEffects {
     }
 }
 
-/// Allocates or resizes view targets and writes this frame's uniforms.
+/// Allocates or resizes view targets, writes this frame's uniforms and builds each view's
+/// shadow-pass terrain list from the pack's shadow culling.
 #[allow(clippy::too_many_arguments, reason = "one frame's view inputs")]
 fn prepare_views(
     mut views: ResMut<ShaderPackViews>,
@@ -270,7 +271,7 @@ fn prepare_views(
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     time: Option<Res<Time>>,
-    geometry: Option<Res<ShaderpackGeometry>>,
+    mut geometry: Option<ResMut<ShaderpackGeometry>>,
     atlas: Option<Res<ShaderpackAtlas>>,
     effect_textures: Option<Res<ShaderpackEffectTextures>>,
     hand: Option<Res<render_scene::HandRigScene>>,
@@ -291,7 +292,11 @@ fn prepare_views(
         return;
     };
     states.retain(|entity, _| cameras.contains(*entity));
+    let render_distance = inputs.render_distance;
     let inputs = pack_inputs(&inputs, geometry.as_deref());
+    if let Some(geometry) = geometry.as_deref_mut() {
+        geometry.retain_shadow_views(|view| cameras.contains(view) && pack.shadow.is_some());
+    }
     let clock = FrameClock {
         delta_seconds: time.map_or(0.0, |t| t.delta_secs()),
     };
@@ -334,6 +339,22 @@ fn prepare_views(
             hand_projection: actors::hand_projection(hand_fov, screen, far),
         };
         state.write_uniforms(&queue, &frame, clock.delta_seconds, &context);
+        if let Some(geometry) = geometry.as_deref_mut()
+            && pack.shadow.is_some()
+        {
+            let light = frame
+                .shadow_model_view()
+                .inverse()
+                .transform_vector3(Vec3::Z);
+            let frustum = ShadowFrustum::new(
+                &pack.shadow_culling,
+                render_distance,
+                position.as_dvec3(),
+                frame.projection() * frame.model_view(),
+                light,
+            );
+            geometry.prepare_shadow_view(entity, &frustum, &device, &queue);
+        }
     }
 }
 
@@ -371,8 +392,7 @@ impl TerrainDraws for ViewTerrain<'_> {
         category: GeometryCategory,
         shadow: bool,
     ) -> u32 {
-        let view = (!shadow).then_some(self.view);
-        self.geometry.draw(pass, category, view)
+        self.geometry.draw(pass, category, self.view, shadow)
     }
 }
 
