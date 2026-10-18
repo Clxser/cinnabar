@@ -1,5 +1,8 @@
 //! Production overlay vertices must stay in front of two-sided leaf depth from either view.
-use crate::{gpu_snapshot::Gpu, shader_safety, shader_source};
+use crate::{
+    gpu_snapshot::{self, Gpu, WorldLighting},
+    shader_safety, shader_source,
+};
 use render_model::{
     BlockEntityScene, BlockSelectionFrame, BlockSelectionTarget, CrackInstance,
     MIN_DYNAMIC_ATLAS_WIDTH, SceneClock,
@@ -84,32 +87,13 @@ fn bamboo_leaf_overlays_survive_front_and_reverse_depth_without_duplicate_quads(
         .chain(cracks.iter())
         .copied()
         .collect();
-    let shader = shader_safety::from_block_entity_wesl(
-        include_str!("../../src/block_entity/block_entity.wesl"),
-        "bamboo-overlay-depth.wesl",
-        render_model::BLOCK_ENTITY_VERTEX_WORDS,
-        render_model::BLOCK_SELECTION_VERTICES_PER_EDGE,
-    );
-    let bevy::shader::Source::Wesl(source) = shader.source else {
-        panic!("block overlay shader must retain WGSL");
-    };
-    let source = shader_source::standalone(&source, &[])
-        .replace("@group(1) @binding(0)", "@group(0) @binding(6)")
-        .replace(
-            "@vertex\nfn block_overlay_vertex(@builtin(vertex_index) vertex_index: u32)",
-            "fn overlay_vertex(vertex_index: u32)",
-        );
-    let source = format!(
-        "{source}\n@group(0) @binding(5) var<storage,read_write> results: array<vec4<f32>>;\n@compute @workgroup_size(1) fn witness(@builtin(global_invocation_id) id: vec3<u32>) {{ results[id.x] = vec4(overlay_vertex({}u + id.x * {}u).world_position,1.0); }}",
-        assets::BlockFace::ALL.len() * 6,
-        expected_vertices
-    );
+    let source = source(expected_vertices);
     let validation_scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
     let module = gpu
         .device
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
-            source: wgpu::ShaderSource::Wgsl(source.into()),
+            source: wgpu::ShaderSource::Wgsl(source.clone().into()),
         });
     let pipeline = gpu
         .device
@@ -134,6 +118,7 @@ fn bamboo_leaf_overlays_survive_front_and_reverse_depth_without_duplicate_quads(
     let lightmap = gpu.lightmap(bytemuck::cast_slice(
         &render_model::LightmapInputs::default().build(),
     ));
+    let lighting = WorldLighting::new(&gpu, &lightmap, None);
     let output = gpu.words(
         &[0; 8],
         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -152,9 +137,13 @@ fn bamboo_leaf_overlays_survive_front_and_reverse_depth_without_duplicate_quads(
             (0, view.as_entire_binding()),
             (1, words.as_entire_binding()),
             (5, output.as_entire_binding()),
-            (6, lightmap.as_entire_binding()),
         ]
         .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource });
+        let entries = entries
+            .into_iter()
+            .chain(lighting.flat_bindings())
+            .collect::<Vec<_>>();
+        let entries = gpu_snapshot::bindings_for(&source, &["witness"], 0, &entries);
         let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -188,4 +177,31 @@ fn bamboo_leaf_overlays_survive_front_and_reverse_depth_without_duplicate_quads(
             );
         }
     }
+}
+
+/// Composes the production overlay vertex with a two-vertex position witness.
+fn source(expected_vertices: usize) -> String {
+    let shader = shader_safety::from_block_entity_wesl(
+        include_str!("../../src/block_entity/block_entity.wesl"),
+        "bamboo-overlay-depth.wesl",
+        render_model::BLOCK_ENTITY_VERTEX_WORDS,
+        render_model::BLOCK_SELECTION_VERTICES_PER_EDGE,
+    );
+    let bevy::shader::Source::Wesl(source) = shader.source else {
+        panic!("block overlay shader must retain WGSL");
+    };
+    let source = shader_source::bind_lighting(&shader_source::standalone(&source, &[])).replace(
+        "@vertex\nfn block_overlay_vertex(@builtin(vertex_index) vertex_index: u32)",
+        "fn overlay_vertex(vertex_index: u32)",
+    );
+    format!(
+        "{source}\n@group(0) @binding(5) var<storage,read_write> results: array<vec4<f32>>;\n@compute @workgroup_size(1) fn witness(@builtin(global_invocation_id) id: vec3<u32>) {{ results[id.x] = vec4(overlay_vertex({}u + id.x * {}u).world_position,1.0); }}",
+        assets::BlockFace::ALL.len() * 6,
+        expected_vertices
+    )
+}
+
+#[test]
+fn bamboo_overlay_probe_needs_only_its_bound_resource_group() {
+    shader_source::assert_single_bind_group(&source(6), &["witness"]);
 }

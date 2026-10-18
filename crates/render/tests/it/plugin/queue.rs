@@ -456,8 +456,8 @@ fn world_shaders_sample_shared_lightmap_at_their_native_stage() {
     let lighting = include_str!("../../../src/lighting.wesl");
     assert_eq!(lighting.matches("fn lit_colour(").count(), 1);
     assert!(lighting.contains("world_lightmap.raw[sample & 255u].rgb"));
-    for (shader, liquid) in [
-        (include_str!("../../../src/chunk.wesl"), false),
+    for (shader, vertex_atmosphere) in [
+        (include_str!("../../../src/chunk.wesl"), true),
         (include_str!("../../../src/model.wesl"), false),
         (include_str!("../../../src/liquid.wesl"), true),
     ] {
@@ -485,8 +485,8 @@ fn world_shaders_sample_shared_lightmap_at_their_native_stage() {
         ));
         assert_eq!(
             entry_points_use_binding(&module, naga::ShaderStage::Vertex, 15),
-            liquid,
-            "only liquid vertices read the native opacity-distance atmosphere uniform"
+            vertex_atmosphere,
+            "chunk and liquid vertices read terrain atmosphere inputs"
         );
         assert!(entry_points_use_binding(
             &module,

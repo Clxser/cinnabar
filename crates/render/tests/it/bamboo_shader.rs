@@ -1,12 +1,15 @@
 //! Execute production model vertices with packed offsets and ordinary quarter turns.
 use crate::{
-    gpu_snapshot::{Draw, Gpu, SNAPSHOT_SIDE},
+    gpu_snapshot::{self, Draw, Gpu, SNAPSHOT_SIDE, WorldLighting},
     shader_source,
 };
 
+/// Composes the model vertices and their compute and raster witnesses.
 fn source() -> String {
-    let source = shader_source::standalone(include_str!("../../src/model.wesl"), &["ENHANCED"])
-        .replace("@group(1) @binding(0)", "@group(0) @binding(34)");
+    let source = shader_source::bind_lighting(&shader_source::standalone(
+        include_str!("../../src/model.wesl"),
+        &["ENHANCED"],
+    ));
     let source = (0..7).fold(source, |source, binding| {
         source.replace(
             &format!("@group(2) @binding({binding})"),
@@ -14,6 +17,14 @@ fn source() -> String {
         )
     });
     format!("{source}\n{WITNESS}")
+}
+
+#[test]
+fn bamboo_normal_probe_needs_only_its_bound_resource_group() {
+    shader_source::assert_single_bind_group(
+        &source(),
+        &["witness", "normal_vertex", "normal_fragment"],
+    );
 }
 
 #[test]
@@ -52,6 +63,7 @@ fn bamboo_offsets_do_not_rotate_enhanced_surface_normals() {
     let lightmap = gpu.lightmap(bytemuck::cast_slice(
         &render_model::LightmapInputs::default().build(),
     ));
+    let lighting = WorldLighting::new(&gpu, &lightmap, None);
     let classes = gpu
         .device
         .create_texture(&wgpu::TextureDescriptor {
@@ -92,13 +104,17 @@ fn bamboo_offsets_do_not_rotate_enhanced_surface_normals() {
         (27, frame.as_entire_binding()),
         (30, wgpu::BindingResource::TextureView(&classes)),
         (31, output.as_entire_binding()),
-        (34, lightmap.as_entire_binding()),
     ]
     .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource });
+    let bindings = bindings
+        .into_iter()
+        .chain(lighting.flat_bindings())
+        .collect::<Vec<_>>();
+    let compute_bindings = gpu_snapshot::bindings_for(&source, &["witness"], 0, &bindings);
     let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: &pipeline.get_bind_group_layout(0),
-        entries: &bindings,
+        entries: &compute_bindings,
     });
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
     {

@@ -8,8 +8,9 @@ use render_model::{
     BlockSelectionFrame, BlockSelectionTarget, CrackShape,
 };
 
+/// Composes selection shaders with the shared world lighting group relocated together.
 fn source() -> String {
-    shader_source::standalone(
+    let source = shader_source::standalone(
         include_str!("../../src/block_entity/block_entity.wesl"),
         &[],
     )
@@ -20,10 +21,8 @@ fn source() -> String {
     .replace(
         "BLOCK_SELECTION_VERTICES_PER_EDGE",
         &format!("{BLOCK_SELECTION_VERTICES_PER_EDGE}u"),
-    )
-    // Lighting moves past the shader's own portal binding.
-    .replace("@group(1) @binding(0)", "@group(0) @binding(5)")
-    .replace("@group(1) @binding(1)", "@group(0) @binding(6)")
+    );
+    shader_source::bind_lighting(&source)
 }
 
 #[test]
@@ -72,6 +71,7 @@ fn selection_pixels_show_black_edges_or_a_brighter_surface() {
     let texture_view = texture.create_view(&Default::default());
     let sampler = gpu.device.create_sampler(&Default::default());
     let lightmap = gpu.lightmap(&[1.0; 256 * 4]);
+    let lighting = gpu_snapshot::WorldLighting::new(&gpu, &lightmap, None);
     let source = source();
     let blend = wgpu::BlendState {
         color: wgpu::BlendComponent {
@@ -116,11 +116,11 @@ fn selection_pixels_show_black_edges_or_a_brighter_surface() {
                 binding: 3,
                 resource: wgpu::BindingResource::Sampler(&sampler),
             },
-            wgpu::BindGroupEntry {
-                binding: 5,
-                resource: lightmap.as_entire_binding(),
-            },
         ];
+        let bindings = bindings
+            .into_iter()
+            .chain(lighting.flat_bindings())
+            .collect::<Vec<_>>();
         let mut draws = vec![Draw {
             fragment: "block_entity_overlay",
             vertices: 0..base.len() as u32,

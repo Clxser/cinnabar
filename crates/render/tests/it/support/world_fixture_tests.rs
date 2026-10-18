@@ -33,7 +33,7 @@ fn shared_atmosphere_and_cloud_words_match_shader_uniform_sizes() {
 }
 
 #[test]
-fn shared_lighting_constructor_covers_world_fragment_resources() {
+fn shared_lighting_constructor_covers_world_vertex_and_fragment_resources() {
     let (device, queue) = wgpu::Device::noop(&Default::default());
     let gpu = Gpu {
         device,
@@ -61,7 +61,6 @@ fn shared_lighting_constructor_covers_world_fragment_resources() {
             let entries = module
                 .entry_points
                 .iter()
-                .filter(|entry| entry.stage == naga::ShaderStage::Fragment)
                 .map(|entry| entry.name.as_str())
                 .collect::<Vec<_>>();
             gpu_snapshot::bindings_for(&source, &entries, 1, &resources);
