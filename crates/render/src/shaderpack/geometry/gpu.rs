@@ -41,8 +41,11 @@ use crate::chunk::shaderpack_sources::{
 };
 use crate::shaderpack::atlas::ShaderpackAtlas;
 
-/// Faces expanded per frame outside an origin move, bounding the frame's expansion work.
-pub const FRAME_EXPANSION_FACES: u32 = 1 << 18;
+/// Faces expanded per frame outside an origin move, bounding the frame's expansion work: a
+/// streaming burst spreads over frames instead of costing one frame its planning (~25 µs a
+/// section on the render thread) and dispatch. About 27 average sections, 2.3M faces a
+/// second at 140 fps, above the rate sections arrive from the server.
+pub const FRAME_EXPANSION_FACES: u32 = 1 << 14;
 /// Camera travel, in blocks, after which sections waiting for room are tried again.
 const RETRY_DISTANCE: f64 = 16.0;
 

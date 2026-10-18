@@ -57,14 +57,22 @@ pub(super) fn prepare_publication_removals(
         zero_byte_operations = zero_byte_operations.saturating_add(1);
     }
 
+    // Resident keys are collected once per frame, when a removal first needs them, instead of
+    // walking every allocation for each removal (1.6 ms in streaming frames with ~6.5k sections).
+    let mut resident_keys: Option<HashSet<_>> = None;
     let completed_removals = gpu_removals.take_ready(maximum_zero_byte_operations, |key| {
         if physically_removed_keys.contains(&key) {
             return true;
         }
-        if arena
-            .allocations
-            .values()
-            .any(|allocation| allocation.gpu.key == key)
+        if resident_keys
+            .get_or_insert_with(|| {
+                arena
+                    .allocations
+                    .values()
+                    .map(|allocation| allocation.gpu.key)
+                    .collect()
+            })
+            .contains(&key)
         {
             return false;
         }
