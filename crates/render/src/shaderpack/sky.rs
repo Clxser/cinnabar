@@ -1,17 +1,22 @@
-//! The vanilla sky geometry `gbuffers_skybasic` draws: the sky disc above the camera, the dark
-//! disc below it when the camera is under the horizon, and the sunrise/sunset fan, positioned
-//! relative to the camera with their colours in the vertices (Iris's `gl_Color`).
+//! The vanilla sky geometry `gbuffers_skybasic` draws: Iris's horizon cone, the sky disc
+//! above the camera, the dark disc below it when the camera is under the horizon, and the
+//! sunrise/sunset fan, positioned relative to the camera with their colours in the vertices
+//! (Iris's `gl_Color`).
 //!
 //! Geometry and colours follow Java's sky renderer: a 512-block disc 16 blocks above the
 //! camera in eight 45° segments, the dark disc 4 blocks below, and a 16-segment fan whose
-//! colour and height track the sun near the horizon.
+//! colour and height track the sun near the horizon. Before them Iris's `HorizonRenderer`
+//! draws an inverted eight-sided cone in the fog colour, from 16 below the camera to the
+//! disc's height at the render distance (at most 256 blocks), so the band between the
+//! horizon and the disc's rim is sky the pack shades rather than the cleared fog colour.
 
 use super::geometry::{IRIS_VERTEX_STRIDE, host_vertex};
 use bevy::math::{Mat3, Vec3};
 use std::ops::Range;
 
-/// Most vertices one frame's sky uses: two eight-segment discs and a sixteen-segment fan.
-pub(crate) const MAX_SKY_VERTICES: u32 = (8 + 8 + 16) * 3;
+/// Most vertices one frame's sky uses: the horizon cone, two eight-segment discs and a
+/// sixteen-segment fan.
+pub(crate) const MAX_SKY_VERTICES: u32 = (8 + 8 + 8 + 16) * 3;
 /// Bytes of the per-view sky vertex buffer.
 pub(crate) const SKY_BUFFER_BYTES: u64 = MAX_SKY_VERTICES as u64 * IRIS_VERTEX_STRIDE;
 /// Java's horizon height of a normal world: the dark disc shows below it.
@@ -20,6 +25,9 @@ const DISC_RADIUS: f32 = 512.0;
 const LIGHT_DISC_HEIGHT: f32 = 16.0;
 /// The dark disc sits at -16, drawn translated 12 blocks up.
 const DARK_DISC_HEIGHT: f32 = -4.0;
+/// Iris's horizon cone: apex height, and its rim radius cap (`HorizonRenderer`).
+const HORIZON_BOTTOM: f32 = -16.0;
+const MAX_HORIZON_RADIUS: f32 = 256.0;
 
 /// One frame's sky: vertex bytes and the vertex ranges each draw covers.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -36,6 +44,10 @@ pub(crate) struct SkyGeometry {
 pub(crate) struct SkyInputs {
     /// `skyColor`, gamma.
     pub sky_color: [f32; 3],
+    /// `fogColor`, gamma: the horizon cone's colour.
+    pub fog_color: [f32; 3],
+    /// The render distance in blocks, which sets the horizon cone's radius.
+    pub render_distance: f32,
     /// Java's time of day, 0 at noon (`ShaderPackFrameInputs::celestial_angle`).
     pub celestial_angle: f32,
     /// The camera's world Y.
@@ -87,8 +99,32 @@ fn disc(out: &mut Vec<u8>, height: f32, colour: [f32; 4]) -> u32 {
 /// Builds this frame's sky.
 pub(crate) fn sky_geometry(inputs: SkyInputs) -> SkyGeometry {
     let mut bytes = Vec::with_capacity(SKY_BUFFER_BYTES as usize);
+    let mut count = 0;
+    if inputs.sunrise {
+        // Iris draws the horizon for skylit skies, before the vanilla sky.
+        let [r, g, b] = inputs.fog_color;
+        let radius = inputs.render_distance.min(MAX_HORIZON_RADIUS);
+        let ring: Vec<_> = (0..=8)
+            .map(|step| {
+                let angle = -(step as f32) * std::f32::consts::FRAC_PI_4;
+                (
+                    [
+                        radius * angle.cos(),
+                        LIGHT_DISC_HEIGHT,
+                        radius * angle.sin(),
+                    ],
+                    [r, g, b, 1.0],
+                )
+            })
+            .collect();
+        count += fan(
+            &mut bytes,
+            ([0.0, HORIZON_BOTTOM, 0.0], [r, g, b, 1.0]),
+            &ring,
+        );
+    }
     let [r, g, b] = inputs.sky_color;
-    let mut count = disc(&mut bytes, LIGHT_DISC_HEIGHT, [r, g, b, 1.0]);
+    count += disc(&mut bytes, LIGHT_DISC_HEIGHT, [r, g, b, 1.0]);
     if inputs.camera_y < HORIZON_HEIGHT {
         count += disc(&mut bytes, DARK_DISC_HEIGHT, [0.0, 0.0, 0.0, 1.0]);
     }
@@ -130,6 +166,8 @@ mod tests {
     fn inputs(celestial_angle: f32, camera_y: f32) -> SkyInputs {
         SkyInputs {
             sky_color: [0.5, 0.7, 1.0],
+            fog_color: [0.75, 0.85, 1.0],
+            render_distance: 752.0,
             celestial_angle,
             camera_y,
             sunrise: true,
@@ -141,26 +179,55 @@ mod tests {
         u32::from_le_bytes(sky.bytes[at..at + 4].try_into().unwrap())
     }
 
+    fn position(sky: &SkyGeometry, vertex: u32) -> Vec3 {
+        Vec3::from_array(std::array::from_fn(|axis| {
+            f32::from_bits(vertex_word(sky, vertex, axis))
+        }))
+    }
+
     #[test]
-    fn noon_draws_only_the_sky_disc_above_the_camera() {
+    fn noon_draws_the_horizon_cone_then_the_sky_disc_above_the_camera() {
         let sky = sky_geometry(inputs(0.0, 80.0));
-        assert_eq!(sky.discs, 0..24, "eight triangles");
+        assert_eq!(sky.discs, 0..48, "eight cone and eight disc triangles");
         assert!(sky.sunset.is_empty());
-        assert_eq!(sky.bytes.len(), 24 * IRIS_VERTEX_STRIDE as usize);
-        for vertex in sky.discs.clone() {
-            assert_eq!(f32::from_bits(vertex_word(&sky, vertex, 1)), 16.0);
+        assert_eq!(sky.bytes.len(), 48 * IRIS_VERTEX_STRIDE as usize);
+        // Iris's cone: apex 16 below the camera, rim at the disc's height, 256 blocks out
+        // however far the render distance reaches, in the fog colour.
+        for triangle in 0..8 {
+            let [apex, a, b] = [0, 1, 2].map(|corner| position(&sky, triangle * 3 + corner));
+            assert_eq!(apex, Vec3::new(0.0, -16.0, 0.0));
+            for rim in [a, b] {
+                assert_eq!(rim.y, 16.0);
+                assert!((rim.x.hypot(rim.z) - 256.0).abs() < 1e-3, "{rim}");
+            }
         }
         assert_eq!(
             vertex_word(&sky, 0, 3),
+            u32::from_le_bytes([191, 217, 255, 255])
+        );
+        for vertex in 24..48 {
+            assert_eq!(position(&sky, vertex).y, 16.0);
+        }
+        assert_eq!(
+            vertex_word(&sky, 24, 3),
             u32::from_le_bytes([128, 179, 255, 255])
         );
     }
 
     #[test]
+    fn skies_without_skylight_have_no_horizon_cone() {
+        let sky = sky_geometry(SkyInputs {
+            sunrise: false,
+            ..inputs(0.0, 80.0)
+        });
+        assert_eq!(sky.discs, 0..24);
+    }
+
+    #[test]
     fn under_the_horizon_adds_the_dark_disc_and_sunset_adds_the_fan() {
         let sky = sky_geometry(inputs(0.25, 40.0));
-        assert_eq!(sky.discs, 0..48);
-        assert_eq!(sky.sunset, 48..96, "sixteen fan triangles at sunset");
+        assert_eq!(sky.discs, 0..72);
+        assert_eq!(sky.sunset, 72..120, "sixteen fan triangles at sunset");
         assert!(sky.bytes.len() as u64 <= SKY_BUFFER_BYTES);
         let colour = sunrise_color(0.25).expect("the sun sets at a quarter day");
         assert!(

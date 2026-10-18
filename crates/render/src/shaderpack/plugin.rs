@@ -43,6 +43,8 @@ use std::{
 
 /// Java's first-person field of view, for the hand projection while no hand rig draws.
 const DEFAULT_HAND_FOV_DEGREES: f32 = 70.0;
+/// The least `far` a pack sees: Java's smallest render distance, two chunks.
+const MIN_PACK_FAR: f32 = 32.0;
 
 /// The loaded pack, shared with the render world.
 #[derive(Resource, ExtractResource, Clone, Default)]
@@ -281,6 +283,7 @@ fn prepare_views(
         return;
     };
     states.retain(|entity, _| cameras.contains(*entity));
+    let inputs = pack_inputs(&inputs, geometry.as_deref());
     let clock = FrameClock {
         delta_seconds: time.map_or(0.0, |t| t.delta_secs()),
     };
@@ -332,6 +335,21 @@ type PostQuery = (
     &'static ExtractedView,
 );
 
+/// The game state the pack sees. `far` is the render distance, as Iris gives it, except
+/// that it stops where the vertex budget leaves terrain undrawn: Iris draws terrain to `far`
+/// and packs fade it into the sky there, so a larger `far` would leave the edge of what
+/// the pack draws unfogged against the sky.
+fn pack_inputs(
+    inputs: &ShaderPackFrameInputs,
+    geometry: Option<&ShaderpackGeometry>,
+) -> ShaderPackFrameInputs {
+    let mut inputs = *inputs;
+    if let Some(horizon) = geometry.and_then(ShaderpackGeometry::budget_horizon) {
+        inputs.render_distance = inputs.render_distance.min(horizon.max(MIN_PACK_FAR));
+    }
+    inputs
+}
+
 /// The camera view's terrain through the geometry adapter.
 struct ViewTerrain<'a> {
     geometry: &'a ShaderpackGeometry,
@@ -366,10 +384,13 @@ fn shaderpack_post(
     let Some(state) = states.get_mut(&entity) else {
         return Ok(());
     };
-    let inputs = world
-        .get_resource::<ShaderPackFrameInputs>()
-        .copied()
-        .unwrap_or_default();
+    let inputs = pack_inputs(
+        &world
+            .get_resource::<ShaderPackFrameInputs>()
+            .copied()
+            .unwrap_or_default(),
+        world.get_resource::<ShaderpackGeometry>(),
+    );
     let render_device = world.resource::<RenderDevice>();
     let device = render_device.wgpu_device().clone();
     let queue: wgpu::Queue = (**world.resource::<RenderQueue>()).clone();
@@ -444,6 +465,8 @@ fn shaderpack_post(
         effect_textures: world.get_resource::<ShaderpackEffectTextures>(),
         sky: SkyInputs {
             sky_color: colours.sky,
+            fog_color: colours.fog,
+            render_distance: inputs.render_distance,
             celestial_angle: inputs.celestial_angle,
             camera_y: position.y,
             sunrise: inputs.dimension == 0,

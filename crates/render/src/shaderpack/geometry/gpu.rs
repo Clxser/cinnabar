@@ -119,6 +119,9 @@ pub struct ShaderpackGeometry {
     overflow_reported: bool,
     /// Eye distance within which every visible section is expanded; `None` when all are.
     complete_radius: Option<f32>,
+    /// Eye distance of the nearest section the vertex budget left unexpanded at its last
+    /// overflow; `None` once no section waits.
+    budget_horizon: Option<f32>,
     /// Camera position when waiting sections were last retried.
     retry_eye: Option<DVec3>,
 }
@@ -156,6 +159,7 @@ impl FromWorld for ShaderpackGeometry {
             prepared: PreparedExpansion::default(),
             overflow_reported: false,
             complete_radius: None,
+            budget_horizon: None,
             retry_eye: None,
         }
     }
@@ -185,6 +189,13 @@ impl ShaderpackGeometry {
     /// when nothing waits. Beyond it terrain may be missing from the pack's geometry.
     pub fn complete_radius(&self) -> Option<f32> {
         self.complete_radius
+    }
+
+    /// Eye distance past which the vertex budget leaves terrain undrawn, `None` while every
+    /// section fits. Unlike [`Self::complete_radius`] it ignores sections merely queued for
+    /// this frame's expansion, so it holds steady while terrain streams in.
+    pub fn budget_horizon(&self) -> Option<f32> {
+        self.budget_horizon
     }
 
     /// Records `category` for `view` (a render-world view entity with visible chunks), or for
@@ -220,6 +231,7 @@ impl ShaderpackGeometry {
         self.resident = ViewDraws::default();
         self.prepared = PreparedExpansion::default();
         self.complete_radius = None;
+        self.budget_horizon = None;
         self.retry_eye = None;
     }
 
@@ -417,6 +429,9 @@ pub(crate) fn prepare_shaderpack_geometry(
             .min_by(f64::total_cmp)
             .map(|nearest| (nearest.sqrt() - SECTION_RADIUS).max(0.0) as f32)
     });
+    if geometry.residency.pending_len() == 0 {
+        geometry.budget_horizon = None;
+    }
     let far = inputs
         .frame
         .as_deref()
@@ -499,6 +514,8 @@ fn plan_frame(
             // Nothing farther is left to give up its room: this and every farther section
             // wait until room frees up or the camera moves.
             overflow = true;
+            geometry.budget_horizon =
+                eye.map(|_| (distance.sqrt() - SECTION_RADIUS).max(0.0) as f32);
             geometry.residency.wait(entity);
             queue
                 .by_ref()
