@@ -456,6 +456,57 @@ fn a_buffer_sampled_and_written_as_an_image_reads_a_snapshot() {
     });
 }
 
+/// Solas's floodfill: each frame samples one custom image and writes the other, binding
+/// both images and both samplers either way. Here frame 0 inverts `pongSampler` (cleared
+/// to zero) into `ping`.
+const PING_PONG: &str = "#version 430
+layout(local_size_x = 1, local_size_y = 1) in;
+const ivec3 workGroups = ivec3(1, 1, 1);
+uniform int frameCounter;
+writeonly uniform image2D ping, pong;
+uniform sampler2D pingSampler, pongSampler;
+void main() {
+    if ((frameCounter & 1) == 0) {
+        imageStore(ping, ivec2(0), vec4(1.0 - texelFetch(pongSampler, ivec2(0), 0).rgb, 1.0));
+    } else {
+        imageStore(pong, ivec2(0), vec4(1.0 - texelFetch(pingSampler, ivec2(0), 0).rgb, 1.0));
+    }
+}
+";
+
+/// Writes `ping`'s texel to every pixel.
+const SHOW_PING: &str = "#version 430
+uniform sampler2D pingSampler;
+void main() {
+/* DRAWBUFFERS:0 */
+    gl_FragData[0] = vec4(texelFetch(pingSampler, ivec2(0), 0).rgb, 1.0);
+}
+";
+
+#[test]
+fn images_sampled_and_written_in_one_dispatch_read_snapshots() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    let bytes = render(
+        &gpu,
+        &[
+            (
+                "shaders.properties",
+                "image.ping = pingSampler RGBA RGBA8 UNSIGNED_BYTE true false 1 1\n\
+                 image.pong = pongSampler RGBA RGBA8 UNSIGNED_BYTE true false 1 1\n",
+            ),
+            ("composite.csh", PING_PONG),
+            ("composite.vsh", PASS_VERTEX),
+            ("composite.fsh", SHOW_PING),
+            ("final.vsh", PASS_VERTEX),
+            ("final.fsh", FINAL),
+        ],
+    );
+    assert_pixels(&bytes, |_| [255, 255, 255]);
+}
+
 /// Counts its 16 invocations into an `r32ui` custom image with an image atomic.
 const COUNT_ATOMICALLY: &str = "#version 430
 layout(local_size_x = 4, local_size_y = 4) in;

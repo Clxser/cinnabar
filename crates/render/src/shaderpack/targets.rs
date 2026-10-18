@@ -86,6 +86,8 @@ pub(crate) struct ViewTargets {
     pub storage: Vec<(u32, wgpu::Buffer)>,
     /// Per colour buffer, the copy sampled by programs that also write it as an image.
     pub snapshots: Vec<Option<Target>>,
+    /// Per custom image, the copy sampled by programs that also write it as an image.
+    pub image_snapshots: Vec<Option<Target>>,
 }
 
 impl ViewTargets {
@@ -204,12 +206,20 @@ impl ViewTargets {
             screen_size,
             sampled,
         );
-        let images = pack
+        let image_snapshotted: Vec<bool> = (0..pack.custom_images.len())
+            .map(|index| {
+                pack.programs
+                    .iter()
+                    .any(|program| program.image_sampled_while_written(index))
+            })
+            .collect();
+        let images: Vec<(wgpu::Texture, TextureView)> = pack
             .custom_images
             .iter()
             .zip(&pack.image_formats)
             .zip(&pack.atomic_images)
-            .map(|((image, format), &atomic)| {
+            .zip(&image_snapshotted)
+            .map(|(((image, format), &atomic), &snapshotted)| {
                 let (dimension, size) = match image.size {
                     ImageSize::Relative { width, height } => (
                         wgpu::TextureDimension::D2,
@@ -246,11 +256,36 @@ impl ViewTargets {
                             TextureUsages::STORAGE_ATOMIC
                         } else {
                             TextureUsages::empty()
+                        }
+                        | if snapshotted {
+                            TextureUsages::COPY_SRC
+                        } else {
+                            TextureUsages::empty()
                         },
                     view_formats: &[],
                 });
                 let view = texture.create_view(&Default::default());
                 (texture, view)
+            })
+            .collect();
+        let image_snapshots = images
+            .iter()
+            .zip(&image_snapshotted)
+            .map(|((image, _), &snapshotted)| {
+                snapshotted.then(|| {
+                    let texture = device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("shader pack custom image snapshot"),
+                        size: image.size(),
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: image.dimension(),
+                        format: image.format(),
+                        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                        view_formats: &[],
+                    });
+                    let view = texture.create_view(&Default::default());
+                    Target { texture, view }
+                })
             })
             .collect();
         let storage = pack
@@ -299,11 +334,13 @@ impl ViewTargets {
             images,
             storage,
             snapshots,
+            image_snapshots,
         }
     }
 
     /// Copies the side a pass reads of each buffer it samples while writing into its
-    /// snapshot; [`pass_bind_groups`] binds the snapshot for those samplers.
+    /// snapshot, and each custom image it samples while writing; [`pass_bind_groups`] binds
+    /// the snapshots for those samplers.
     pub(crate) fn take_snapshots(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -327,6 +364,20 @@ impl ViewTargets {
                     height: buffer.size[1],
                     depth_or_array_layers: 1,
                 },
+            );
+        }
+        for (index, snapshot) in self.image_snapshots.iter().enumerate() {
+            let Some(snapshot) = snapshot else {
+                continue;
+            };
+            if !program.image_sampled_while_written(index) {
+                continue;
+            }
+            let image = &self.images[index].0;
+            encoder.copy_texture_to_texture(
+                image.as_image_copy(),
+                snapshot.texture.as_image_copy(),
+                image.size(),
             );
         }
     }
@@ -428,6 +479,12 @@ pub(crate) fn pass_bind_groups<'a>(
                 &targets.snapshots[index as usize]
                     .as_ref()
                     .expect("snapshots are allocated for every such buffer")
+                    .view
+            }
+            TextureSource::Image { index, .. } if program.image_sampled_while_written(index) => {
+                &targets.image_snapshots[index]
+                    .as_ref()
+                    .expect("snapshots are allocated for every such image")
                     .view
             }
             source => targets.texture_view(pack, source, read_alt, atlas),

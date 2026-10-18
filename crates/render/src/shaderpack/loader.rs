@@ -111,6 +111,20 @@ impl GpuProgram {
         }));
         sampled & written
     }
+
+    /// Whether the program both samples custom image `index` (its sampler name) and writes
+    /// it as a storage image, as ping-pong compute passes do (Solas's floodfill reads one
+    /// image and writes the other, binding both ways each frame). OpenGL allows it; wgpu
+    /// forbids it within one dispatch, so the host samples a copy taken before the pass.
+    pub fn image_sampled_while_written(&self, index: usize) -> bool {
+        self.textures
+            .iter()
+            .any(|s| matches!(*s, TextureSource::Image { index: i, .. } if i == index))
+            && self
+                .images
+                .iter()
+                .any(|s| matches!(*s, ImageSource::Image(i) if i == index))
+    }
 }
 
 /// A loaded pack, immutable and shared by every view.
