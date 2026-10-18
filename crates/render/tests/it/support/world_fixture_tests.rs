@@ -40,10 +40,10 @@ fn shared_lighting_constructor_covers_world_fragment_resources() {
         queue,
         backend: wgpu::Backend::Noop,
     };
-    let lighting = gpu_snapshot::WorldLighting::new(&gpu);
     let lightmap = gpu.lightmap(&[1.0; 256 * 4]);
+    let lighting = gpu_snapshot::WorldLighting::new(&gpu, &lightmap, None);
     let resources = lighting
-        .flat_bindings(&lightmap, None)
+        .flat_bindings()
         .map(|mut entry| {
             entry.binding -= gpu_snapshot::FIXTURE_LIGHTING_BASE;
             entry

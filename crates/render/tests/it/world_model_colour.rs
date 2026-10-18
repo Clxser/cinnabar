@@ -102,6 +102,9 @@ fn snow_and_other_world_models_use_native_terrain_colour_at_day_and_night() {
             words.extend([fog_amount * 100.0, f32::from(blend_frames), ao_face, 0.0]);
         }
         let cases = gpu.buffer(&words, wgpu::BufferUsages::STORAGE);
+        let water_info = gpu.water_info();
+        let lighting = gpu_snapshot::WorldLighting::new(&gpu, &lightmap, Some(&atmosphere))
+            .with_water(&atlas, &sampler, &water_info);
         let bindings = [
             wgpu::BindGroupEntry {
                 binding: 0,
@@ -144,16 +147,9 @@ fn snow_and_other_world_models_use_native_terrain_colour_at_day_and_night() {
                 resource: cases.as_entire_binding(),
             },
         ];
-        let water_info = gpu.water_info();
         let bindings = bindings
             .into_iter()
-            .chain(gpu_snapshot::flat_lighting_bindings(
-                &lightmap,
-                &atmosphere,
-                &atlas,
-                &sampler,
-                &water_info,
-            ))
+            .chain(lighting.flat_bindings())
             .collect::<Vec<_>>();
         for (material, fragment, flags) in [
             ("opaque", "fragment", 0),

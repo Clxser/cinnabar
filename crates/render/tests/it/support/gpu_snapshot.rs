@@ -64,45 +64,12 @@ pub fn cloud_bindings<'a>(
     })
 }
 
-/// Lists the shared world-lighting resources in the production bind-group order.
-pub fn lighting_bindings<'a>(
-    lightmap: &'a wgpu::Buffer,
-    atmosphere: &'a wgpu::Buffer,
-    water: &'a wgpu::TextureView,
-    sampler: &'a wgpu::Sampler,
-    water_info: &'a wgpu::Buffer,
-) -> [wgpu::BindGroupEntry<'a>; 5] {
-    [
-        (0, lightmap.as_entire_binding()),
-        (1, atmosphere.as_entire_binding()),
-        (2, wgpu::BindingResource::TextureView(water)),
-        (3, wgpu::BindingResource::Sampler(sampler)),
-        (4, water_info.as_entire_binding()),
-    ]
-    .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource })
-}
-
 /// Reserves one range for all flattened production lighting resources.
 pub const FIXTURE_LIGHTING_BASE: u32 = 64;
 
-/// Reuses the production-order lighting constructor in flattened raster fixtures.
-pub fn flat_lighting_bindings<'a>(
-    lightmap: &'a wgpu::Buffer,
-    atmosphere: &'a wgpu::Buffer,
-    water: &'a wgpu::TextureView,
-    sampler: &'a wgpu::Sampler,
-    water_info: &'a wgpu::Buffer,
-) -> impl Iterator<Item = wgpu::BindGroupEntry<'a>> {
-    lighting_bindings(lightmap, atmosphere, water, sampler, water_info)
-        .into_iter()
-        .map(|mut entry| {
-            entry.binding += FIXTURE_LIGHTING_BASE;
-            entry
-        })
-}
-
-/// Owns neutral lighting resources for probes that only customize the lightmap or atmosphere.
+/// Owns shared fixture lighting so additional shader resources have one constructor.
 pub struct WorldLighting {
+    lightmap: wgpu::Buffer,
     atmosphere: wgpu::Buffer,
     water: wgpu::TextureView,
     sampler: wgpu::Sampler,
@@ -110,29 +77,84 @@ pub struct WorldLighting {
 }
 
 impl WorldLighting {
-    /// Supplies all optional world resources without requiring game assets.
-    pub fn new(gpu: &Gpu) -> Self {
+    /// Uses a probe's lightmap and atmosphere, supplying neutral optional resources.
+    pub fn new(gpu: &Gpu, lightmap: &wgpu::Buffer, frame: Option<&wgpu::Buffer>) -> Self {
         Self {
-            atmosphere: gpu.buffer(&atmosphere(), wgpu::BufferUsages::UNIFORM),
+            lightmap: lightmap.clone(),
+            atmosphere: frame
+                .cloned()
+                .unwrap_or_else(|| gpu.buffer(&atmosphere(), wgpu::BufferUsages::UNIFORM)),
             water: gpu.colour_texture_array(&[[255; 4]; 2]),
             sampler: gpu.device.create_sampler(&Default::default()),
             water_info: gpu.water_info(),
         }
     }
 
-    /// Uses the common lighting table with an optional probe-specific atmosphere.
-    pub fn flat_bindings<'a>(
-        &'a self,
-        lightmap: &'a wgpu::Buffer,
-        atmosphere: Option<&'a wgpu::Buffer>,
-    ) -> impl Iterator<Item = wgpu::BindGroupEntry<'a>> {
-        flat_lighting_bindings(
-            lightmap,
-            atmosphere.unwrap_or(&self.atmosphere),
-            &self.water,
-            &self.sampler,
-            &self.water_info,
-        )
+    /// Selects authored water resources for probes that exercise texture selection.
+    pub fn with_water(
+        mut self,
+        water: &wgpu::TextureView,
+        sampler: &wgpu::Sampler,
+        info: &wgpu::Buffer,
+    ) -> Self {
+        self.water = water.clone();
+        self.sampler = sampler.clone();
+        self.water_info = info.clone();
+        self
+    }
+
+    /// Lists the complete shared lighting group in production binding order.
+    pub fn bindings(&self) -> impl Iterator<Item = wgpu::BindGroupEntry<'_>> {
+        [
+            (0, self.lightmap.as_entire_binding()),
+            (1, self.atmosphere.as_entire_binding()),
+            (2, wgpu::BindingResource::TextureView(&self.water)),
+            (3, wgpu::BindingResource::Sampler(&self.sampler)),
+            (4, self.water_info.as_entire_binding()),
+        ]
+        .into_iter()
+        .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource })
+    }
+
+    /// Creates the complete lighting layout for fixtures that combine several pipelines.
+    pub fn layout(&self, gpu: &Gpu) -> wgpu::BindGroupLayout {
+        let entries = self
+            .bindings()
+            .map(|entry| wgpu::BindGroupLayoutEntry {
+                binding: entry.binding,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: match entry.resource {
+                    wgpu::BindingResource::Buffer(_) => wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    wgpu::BindingResource::TextureView(_) => wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    wgpu::BindingResource::Sampler(_) => {
+                        wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
+                    }
+                    _ => panic!("unsupported world fixture resource"),
+                },
+                count: None,
+            })
+            .collect::<Vec<_>>();
+        gpu.device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("world fixture lighting"),
+                entries: &entries,
+            })
+    }
+
+    /// Relocates the same resource group for single-group raster probes.
+    pub fn flat_bindings(&self) -> impl Iterator<Item = wgpu::BindGroupEntry<'_>> {
+        self.bindings().map(|mut entry| {
+            entry.binding += FIXTURE_LIGHTING_BASE;
+            entry
+        })
     }
 }
 

@@ -224,8 +224,7 @@ struct Fixture {
     tints: wgpu::Buffer,
     query_tables: wgpu::Buffer,
     atmosphere: wgpu::Buffer,
-    lightmap: wgpu::Buffer,
-    water_info: wgpu::Buffer,
+    lighting: gpu_snapshot::WorldLighting,
     atlas: wgpu::TextureView,
     sampler: wgpu::Sampler,
 }
@@ -237,6 +236,11 @@ impl Fixture {
         let storage = wgpu::BufferUsages::STORAGE;
         let uniform = wgpu::BufferUsages::UNIFORM;
         let frame = render_scene::AtmosphereFrame::default();
+        let atmosphere = gpu.buffer(&crate::gpu_snapshot::atmosphere_words(&frame), uniform);
+        let lightmap = gpu.lightmap(bytemuck::cast_slice(
+            &render_model::LightmapInputs::default().build(),
+        ));
+        let lighting = gpu_snapshot::WorldLighting::new(&gpu, &lightmap, Some(&atmosphere));
         Some(Self {
             materials: gpu.words(&[0, 0, assets::NO_ANIMATION, 0, 0, 0], storage),
             zeros: gpu.words(&UNUSED, storage),
@@ -249,17 +253,15 @@ impl Fixture {
                 &meshing::biome_lattice::query_table_words(),
                 wgpu::BufferUsages::UNIFORM,
             ),
-            atmosphere: gpu.buffer(&crate::gpu_snapshot::atmosphere_words(&frame), uniform),
-            lightmap: gpu.lightmap(bytemuck::cast_slice(
-                &render_model::LightmapInputs::default().build(),
-            )),
+            atmosphere,
+            lighting,
+
             atlas: solid_terrain_raster::pattern_texture(&gpu),
             sampler: gpu.device.create_sampler(&wgpu::SamplerDescriptor {
                 address_mode_u: wgpu::AddressMode::Repeat,
                 address_mode_v: wgpu::AddressMode::Repeat,
                 ..material_shader::native_leaf_sampler_descriptor()
             }),
-            water_info: gpu.water_info(),
             gpu,
         })
     }
@@ -319,14 +321,9 @@ impl Fixture {
         ]
         .into_iter()
         .chain(
-            gpu_snapshot::flat_lighting_bindings(
-                &self.lightmap,
-                &self.atmosphere,
-                &self.atlas,
-                &self.sampler,
-                &self.water_info,
-            )
-            .map(|entry| (entry.binding, entry.resource)),
+            self.lighting
+                .flat_bindings()
+                .map(|entry| (entry.binding, entry.resource)),
         )
         .collect()
     }

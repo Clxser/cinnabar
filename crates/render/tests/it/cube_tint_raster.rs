@@ -413,6 +413,12 @@ fn render_fixture(cache_admission: bool) {
     let native_sampler = gpu
         .device
         .create_sampler(&material_shader::native_leaf_sampler_descriptor());
+    let water_info = gpu.water_info();
+    let lighting = gpu_snapshot::WorldLighting::new(&gpu, &lightmap, Some(&atmosphere)).with_water(
+        &native_atlas,
+        &sampler,
+        &water_info,
+    );
     let bindings = [
         (0, view.as_entire_binding()),
         (1, quads.as_entire_binding()),
@@ -456,16 +462,9 @@ fn render_fixture(cache_admission: bool) {
         ),
     ]
     .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource });
-    let water_info = gpu.water_info();
     let bindings = bindings
         .into_iter()
-        .chain(gpu_snapshot::flat_lighting_bindings(
-            &lightmap,
-            &atmosphere,
-            &native_atlas,
-            &sampler,
-            &water_info,
-        ))
+        .chain(lighting.flat_bindings())
         .collect::<Vec<_>>();
     let draw = |fragment| Draw {
         fragment,

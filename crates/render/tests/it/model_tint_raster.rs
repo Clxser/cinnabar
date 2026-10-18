@@ -408,6 +408,12 @@ fn model_tint_pixels_match_fragment_biome_reference() {
     ));
     let atlas = atlas(&gpu);
     let sampler = gpu.device.create_sampler(&Default::default());
+    let water_info = gpu.water_info();
+    let lighting = gpu_snapshot::WorldLighting::new(&gpu, &lightmap, Some(&atmosphere)).with_water(
+        &atlas,
+        &sampler,
+        &water_info,
+    );
     let bindings = [
         (0, view.as_entire_binding()),
         (2, origins.as_entire_binding()),
@@ -451,16 +457,9 @@ fn model_tint_pixels_match_fragment_biome_reference() {
         ),
     ]
     .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource });
-    let water_info = gpu.water_info();
     let bindings = bindings
         .into_iter()
-        .chain(gpu_snapshot::flat_lighting_bindings(
-            &lightmap,
-            &atmosphere,
-            &atlas,
-            &sampler,
-            &water_info,
-        ))
+        .chain(lighting.flat_bindings())
         .collect::<Vec<_>>();
     for (definitions, reference, candidate) in shaders {
         for clock_words in [[1, 0.25_f32.to_bits(), 0, 0], [2, 0, 0, 0]] {

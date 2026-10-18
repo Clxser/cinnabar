@@ -285,8 +285,8 @@ pub(crate) fn render_at(
             resource: wgpu::BindingResource::TextureView(&atlas),
         }),
     );
-    let lighting = crate::gpu_snapshot::WorldLighting::new(gpu);
-    bindings.extend(lighting.flat_bindings(&lightmap, Some(&atmosphere)));
+    let lighting = crate::gpu_snapshot::WorldLighting::new(gpu, &lightmap, Some(&atmosphere));
+    bindings.extend(lighting.flat_bindings());
     let mut cube_bindings = bindings
         .iter()
         .filter(|entry| entry.binding != 12 && entry.binding != 13)

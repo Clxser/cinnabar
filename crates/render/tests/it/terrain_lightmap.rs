@@ -137,6 +137,9 @@ fn terrain_fragments_sample_interpolated_levels_not_interpolated_light_rgb() {
                 &[lower[0], lower[1], 0.0, 0.0, upper[0], upper[1], 0.0, 0.0],
                 wgpu::BufferUsages::STORAGE,
             );
+            let water_info = gpu.water_info();
+            let lighting = gpu_snapshot::WorldLighting::new(&gpu, &lightmap, Some(&atmosphere))
+                .with_water(&atlas, &sampler, &water_info);
             let mut bindings = vec![
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -175,14 +178,7 @@ fn terrain_fragments_sample_interpolated_levels_not_interpolated_light_rgb() {
                     resource: case.as_entire_binding(),
                 },
             ];
-            let water_info = gpu.water_info();
-            bindings.extend(gpu_snapshot::flat_lighting_bindings(
-                &lightmap,
-                &atmosphere,
-                &atlas,
-                &sampler,
-                &water_info,
-            ));
+            bindings.extend(lighting.flat_bindings());
             if kind == "model" {
                 bindings.push(wgpu::BindGroupEntry {
                     binding: material_shader::NATIVE_LEAF_SAMPLER_BINDING,

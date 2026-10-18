@@ -296,28 +296,17 @@ impl Fixture {
             layout: &layout,
             entries: &entries,
         });
-        let lighting_layout =
-            gpu.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("transparent terrain fixture lighting"),
-                    entries: &[
-                        buffer(0, wgpu::BufferBindingType::Uniform),
-                        buffer(1, wgpu::BufferBindingType::Uniform),
-                        texture(2),
-                        sampler_entry(3),
-                        buffer(4, wgpu::BufferBindingType::Uniform),
-                    ],
-                });
+        let lighting_resources = gpu_snapshot::WorldLighting::new(
+            gpu,
+            &lightmap,
+            Some(&atmosphere),
+        )
+        .with_water(&water_atlas, &sampler, &water_info);
+        let lighting_layout = lighting_resources.layout(gpu);
         let lighting = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &lighting_layout,
-            entries: &gpu_snapshot::lighting_bindings(
-                &lightmap,
-                &atmosphere,
-                &water_atlas,
-                &sampler,
-                &water_info,
-            ),
+            entries: &lighting_resources.bindings().collect::<Vec<_>>(),
         });
         Self {
             group,

@@ -951,6 +951,8 @@ impl Raster {
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
         let water_info = gpu.water_info();
+        let lighting = gpu_snapshot::WorldLighting::new(gpu, &lightmap, Some(&atmosphere))
+            .with_water(&atlas, &sampler, &water_info);
         let group = |pipeline: &wgpu::RenderPipeline, depth_only: bool, fragment: &str| {
             let entries = [
                 (0, view.as_entire_binding()),
@@ -997,13 +999,7 @@ impl Raster {
             .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource });
             let entries = entries
                 .into_iter()
-                .chain(gpu_snapshot::flat_lighting_bindings(
-                    &lightmap,
-                    &atmosphere,
-                    &atlas,
-                    &sampler,
-                    &water_info,
-                ))
+                .chain(lighting.flat_bindings())
                 .collect::<Vec<_>>();
             let stages = [vertex, fragment];
             let entries = gpu_snapshot::bindings_for(

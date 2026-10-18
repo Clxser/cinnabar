@@ -70,8 +70,9 @@ fn native_liquid_faces_admit_only_their_original_and_marked_reverse_windings() {
     let lightmap = gpu.lightmap(bytemuck::cast_slice(&table));
     let clock = gpu.words(&[0; 4], wgpu::BufferUsages::UNIFORM);
     let water_info = gpu.water_info();
-    let lighting =
-        gpu_snapshot::lighting_bindings(&lightmap, &atmosphere, &atlas, &sampler, &water_info);
+    let lighting_resources = gpu_snapshot::WorldLighting::new(&gpu, &lightmap, Some(&atmosphere))
+        .with_water(&atlas, &sampler, &water_info);
+    let lighting = lighting_resources.bindings().collect::<Vec<_>>();
     let mut failures = Vec::new();
     for face in Face::ALL {
         // The ordinary top duplicates its reverse; sides do so only

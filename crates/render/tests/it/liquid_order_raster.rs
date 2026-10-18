@@ -76,8 +76,9 @@ fn render(
     let lightmap = gpu.lightmap(bytemuck::cast_slice(&table));
     let clock = gpu.words(&[0; 4], wgpu::BufferUsages::UNIFORM);
     let water_info = gpu.water_info();
-    let lighting =
-        gpu_snapshot::lighting_bindings(&lightmap, &atmosphere, &atlas, &sampler, &water_info);
+    let lighting_resources = gpu_snapshot::WorldLighting::new(gpu, &lightmap, Some(&atmosphere))
+        .with_water(&atlas, &sampler, &water_info);
+    let lighting = lighting_resources.bindings().collect::<Vec<_>>();
     let eye = Vec3::new(2.0, 3.0, -4.0);
     let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(
         std::f32::consts::FRAC_PI_3,

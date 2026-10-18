@@ -290,6 +290,10 @@ impl Fixture {
             &gpu_snapshot::view(view.clip_from_world, view.eye),
             wgpu::BufferUsages::UNIFORM,
         );
+        let water_info = self.gpu.water_info();
+        let lighting =
+            gpu_snapshot::WorldLighting::new(&self.gpu, &self.lightmap, Some(&self.atmosphere))
+                .with_water(&self.atlas, &self.sampler, &water_info);
         let bindings = [
             (0, uniform.as_entire_binding()),
             (1, streams.quads.as_entire_binding()),
@@ -333,16 +337,9 @@ impl Fixture {
             ),
         ]
         .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource });
-        let water_info = self.gpu.water_info();
         let bindings = bindings
             .into_iter()
-            .chain(gpu_snapshot::flat_lighting_bindings(
-                &self.lightmap,
-                &self.atmosphere,
-                &self.atlas,
-                &self.sampler,
-                &water_info,
-            ))
+            .chain(lighting.flat_bindings())
             .collect::<Vec<_>>();
         let draw = Draw {
             fragment,

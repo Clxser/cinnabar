@@ -213,16 +213,10 @@ fn render_edge(gpu: &Gpu, held: bool, samples: u32, back: bool) -> Vec<u8> {
             },
         ]
     };
-    let water_info = gpu.water_info();
+    let lighting = crate::gpu_snapshot::WorldLighting::new(gpu, &lightmap, Some(&atmosphere));
     let entries = entries
         .into_iter()
-        .chain(crate::gpu_snapshot::flat_lighting_bindings(
-            &lightmap,
-            &atmosphere,
-            &view,
-            &sampler,
-            &water_info,
-        ))
+        .chain(lighting.flat_bindings())
         .collect::<Vec<_>>();
     gpu.render_with_samples(
         &source,

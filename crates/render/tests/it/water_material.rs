@@ -104,13 +104,13 @@ fn water_fragment_preserves_submerged_receiver_and_native_gamma_lighting() {
                     resource: case.as_entire_binding(),
                 },
             ];
-            let lighting = gpu_snapshot::lighting_bindings(
+            let lighting_resources = gpu_snapshot::WorldLighting::new(
+                &gpu,
                 &lightmap,
-                &atmosphere,
-                &atlas,
-                &sampler,
-                &water_info,
-            );
+                Some(&atmosphere),
+            )
+            .with_water(&atlas, &sampler, &water_info);
+            let lighting = lighting_resources.bindings().collect::<Vec<_>>();
             let pixels = gpu.render_with_bind_groups(
                 &source,
                 "witness",

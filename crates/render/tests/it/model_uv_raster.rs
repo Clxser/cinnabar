@@ -168,10 +168,10 @@ fn world_model_uvs_rotate_top_and_bottom_by_position_and_preserve_side_and_stati
         (21, expected.as_entire_binding()),
     ]
     .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource });
-    let lighting = crate::gpu_snapshot::WorldLighting::new(&gpu);
+    let lighting = crate::gpu_snapshot::WorldLighting::new(&gpu, &lightmap, None);
     let bindings = bindings
         .into_iter()
-        .chain(lighting.flat_bindings(&lightmap, None))
+        .chain(lighting.flat_bindings())
         .collect::<Vec<_>>();
     let source = shader_source::bind_lighting(&shader_source::standalone(
         include_str!("../../src/model.wesl"),
