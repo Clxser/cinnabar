@@ -7,7 +7,9 @@ use super::actors::ActorSources;
 use super::draws::DrawKind;
 use super::effects::textures::ShaderpackEffectTextures;
 use super::effects::{Effect, EffectInputs, prepare_effects};
-use super::geometry::{CONSTANT_VERTEX_BUFFER, GEOMETRY_VERTEX_BUFFER, GeometryCategory};
+use super::geometry::{
+    CONSTANT_VERTEX_BUFFER, GEOMETRY_VERTEX_BUFFER, GeometryCategory, PulledArena,
+};
 use super::loader::PackGpu;
 use super::passes::{ViewState, clear_attachment, load_attachment, pass};
 use super::sky::{SkyGeometry, SkyInputs, sky_geometry};
@@ -27,6 +29,9 @@ pub(crate) trait TerrainDraws {
         category: GeometryCategory,
         shadow: bool,
     ) -> u32;
+
+    /// The arenas pulled terrain draws bind, once they exist.
+    fn pulled_arena(&self) -> Option<&PulledArena>;
 }
 
 /// What a view supplies for the pack's geometry this frame.
@@ -154,9 +159,14 @@ fn record_kind(
         return;
     };
     let mut tracked = TrackedRenderPass::new(geometry.device, render);
+    let groups = &state.bindings.draws[index].groups;
+    if pack.draws[index].pulled.is_some() && groups[3].is_none() {
+        // The arenas a pulled draw reads do not exist yet.
+        return;
+    }
     {
         let raw = tracked.wgpu_pass();
-        for (i, group) in state.bindings.draws[index].groups.iter().enumerate() {
+        for (i, group) in groups.iter().enumerate() {
             if let Some(group) = group {
                 raw.set_bind_group(i as u32, group, &[]);
             }
@@ -283,21 +293,27 @@ fn copy_shadow_depth(
 
 /// Brings the view's draw bind groups up to date with the atlas and effect textures.
 pub(crate) fn bind_geometry(device: &Device, state: &mut ViewState, geometry: &FrameGeometry<'_>) {
+    let arena = geometry.terrain.pulled_arena();
     let generation = (
         geometry.atlas.as_ref().map(|(_, g)| *g),
         geometry.effect_textures.map(|t| t.generation),
+        arena.map(|arena| arena.key),
     );
     if state.atlas_generation == Some(generation) {
         return;
     }
     let pack = std::sync::Arc::clone(&state.pack);
     let atlas = geometry.atlas.as_ref().map(|(views, _)| *views);
-    state
-        .bindings
-        .bind_draws(device, &pack, &state.targets, |kind| match kind {
+    state.bindings.bind_draws(
+        device,
+        &pack,
+        &state.targets,
+        |kind| match kind {
             DrawKind::Effect(effect) => geometry.effect_textures?.views(effect),
             _ => atlas,
-        });
+        },
+        arena,
+    );
     state.atlas_generation = Some(generation);
 }
 

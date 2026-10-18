@@ -167,7 +167,7 @@ struct UploadedLists {
 }
 
 #[derive(Resource)]
-struct BlockEntityGpu {
+pub(crate) struct BlockEntityGpu {
     solid: VertexList,
     overlay: VertexList,
     outline: VertexList,
@@ -232,7 +232,7 @@ fn init_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
     });
 }
 
-fn prepare_resources(
+pub(crate) fn prepare_resources(
     frame: Res<render_scene::BlockEntityFrameResource>,
     selection: Res<render_scene::BlockSelectionFrameResource>,
     atmosphere: Option<Res<render_scene::AtmosphereFrame>>,

@@ -52,9 +52,10 @@ pub(crate) struct ViewState {
     audit: Option<super::uniform_audit::UniformAudit>,
     /// Programs and draws already reported as skipped.
     pub skipped: BTreeSet<String>,
-    /// The atlas and effect texture generations the draw bind groups were built over
-    /// (`None` inside: placeholders); `None` before the first frame.
-    pub atlas_generation: Option<(Option<u64>, Option<u64>)>,
+    /// The atlas and effect texture generations and the pulled arenas' key the draw bind
+    /// groups were built over (`None` inside: placeholders or no arenas); `None` before the
+    /// first frame.
+    pub atlas_generation: Option<(Option<u64>, Option<u64>, Option<u64>)>,
     /// This frame's effect geometry.
     pub effects: super::effects::EffectBuffers,
 }
