@@ -22,7 +22,7 @@ use crate::reflection::{
 };
 use crate::token::{Tok, lex};
 pub(crate) use assemble::{UboMember, assemble, merge_uniforms};
-use body::{BodyContext, SamplerUse, rewrite_body, rewrite_params};
+use body::{BodyContext, SamplerUse, convert_returns, rewrite_body, rewrite_params};
 pub(crate) use interface::ProgramInterface;
 use items::{Item, parse_decl, split_items};
 use std::collections::{HashMap, HashSet};
@@ -200,6 +200,13 @@ pub(crate) fn transform(
                 let brace = toks.iter().position(|t| t.is("{")).unwrap_or(toks.len());
                 let mut local = c.samplers.clone();
                 let mut header = rewrite_params(&toks[..brace], &mut local);
+                let return_ty = header
+                    .iter()
+                    .position(|t| t.is("("))
+                    .and_then(|lp| lp.checked_sub(2))
+                    .and_then(|i| header[i].ident())
+                    .unwrap_or_default()
+                    .to_owned();
                 if name == "main"
                     && wrapper
                     && let Some(lp) = header.iter().position(|t| t.is("("))
@@ -213,7 +220,10 @@ pub(crate) fn transform(
                     bools: &c.bools,
                     user_funcs: &user_funcs,
                 };
-                out_body.extend(rewrite_body(&toks[brace..], &cx, &mut used));
+                out_body.extend(convert_returns(
+                    rewrite_body(&toks[brace..], &cx, &mut used),
+                    &return_ty,
+                ));
             }
             Item::Decl(_, toks) | Item::Other(toks) => {
                 let cx = BodyContext {
