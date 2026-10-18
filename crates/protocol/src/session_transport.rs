@@ -16,7 +16,6 @@ use crate::session_wire::{CoreMessage, SessionDisconnect, SessionTransfer};
 use crate::{Packet, ProtocolError, SessionError};
 use bridge::{BridgeError, FrameQueue, FramedReader};
 use bytes::{Bytes, BytesMut};
-use futures::StreamExt;
 
 /// A server may batch a whole pack transfer, or a large item registry, into one batch,
 /// so the local leg accepts batches far larger than a typical client's 16 MiB default.
@@ -61,12 +60,13 @@ pub(crate) struct SessionTransport<R = FramedReader> {
     timers: bridge::tasks::Timers,
     writer: BatchWriter,
     relay: Option<RelayLink>,
+    prefer_injected: bool, // alternate ready upstream frames and relay injections
     startup: VecDeque<Bytes>, // startup batch bodies, read before any core frame
     received: VecDeque<RawPacket>, // packets split from a batch but not yet read
     ahead: VecDeque<Option<Result<Bytes, BridgeError>>>, // reader items `read_ahead` took
-    joining: bool,            // retain the relay startup budget through spawn
-    ahead_bytes: usize,       // frame bytes held in `ahead`
-    ended: bool,              // a terminal message was delivered
+    joining: bool,         // retain the relay startup budget through spawn
+    ahead_bytes: usize,    // frame bytes held in `ahead`
+    ended: bool,           // a terminal message was delivered
     sending: VecDeque<InFlightSend>,
     tap: Option<Arc<dyn PacketTap>>,
     current: Option<CurrentPacket>, // the tapped packet the session is processing
@@ -80,6 +80,12 @@ struct CurrentPacket {
     record: PacketRecordId,
     packet_id: u32,
     body: Bytes,
+}
+
+/// The next upstream frame or synthetic batch, selected without starving either source.
+enum IncomingFrame {
+    Core(Option<Result<Bytes, BridgeError>>),
+    Injected(Bytes),
 }
 
 type FrameSend = Pin<Box<dyn Future<Output = Result<(), BridgeError>> + Send>>;
@@ -119,6 +125,7 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
             timers,
             writer: BatchWriter::direct(frames),
             relay: None,
+            prefer_injected: false,
             startup: startup_batches(startup).into(),
             received: VecDeque::new(),
             ahead: VecDeque::new(),
@@ -194,24 +201,12 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
             if self.ended {
                 return Err(SessionFailure::ConnectionClosed.into());
             }
-            let next = match self.ahead.pop_front() {
-                Some(next) => {
-                    if let Some(Ok(frame)) = &next {
-                        self.ahead_bytes -= frame.len();
-                    }
-                    next
+            let next = match poll_fn(|cx| self.poll_next_frame(cx)).await {
+                IncomingFrame::Core(next) => next,
+                IncomingFrame::Injected(body) => {
+                    self.receive_relayed(body, 0);
+                    continue;
                 }
-                None => match &mut self.relay {
-                    None => self.reader.next().await,
-                    Some(relay) => tokio::select! {
-                        biased;
-                        next = self.reader.next() => next,
-                        Some(body) = relay.injected.recv() => {
-                            self.receive_relayed(body, 0);
-                            continue;
-                        }
-                    },
-                },
             };
             let frame = match next {
                 Some(Ok(frame)) => frame,
@@ -240,6 +235,37 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
             self.ended = true;
             return Ok(Inbound::Terminal(terminal));
         }
+    }
+
+    /// Alternates ready sources, including upstream frames retained during read-ahead.
+    fn poll_next_frame(&mut self, cx: &mut Context<'_>) -> Poll<IncomingFrame> {
+        if self.prefer_injected
+            && let Some(relay) = &mut self.relay
+            && let Poll::Ready(Some(body)) = relay.injected.poll_recv(cx)
+        {
+            self.prefer_injected = false;
+            return Poll::Ready(IncomingFrame::Injected(body));
+        }
+        let upstream = match self.ahead.pop_front() {
+            Some(next) => {
+                if let Some(Ok(frame)) = &next {
+                    self.ahead_bytes -= frame.len();
+                }
+                Poll::Ready(next)
+            }
+            None => Pin::new(&mut self.reader).poll_next(cx),
+        };
+        if let Poll::Ready(next) = upstream {
+            self.prefer_injected = true;
+            return Poll::Ready(IncomingFrame::Core(next));
+        }
+        if let Some(relay) = &mut self.relay
+            && let Poll::Ready(Some(body)) = relay.injected.poll_recv(cx)
+        {
+            self.prefer_injected = false;
+            return Poll::Ready(IncomingFrame::Injected(body));
+        }
+        Poll::Pending
     }
 
     /// Queues a relay-produced body, logging malformed relay output instead of ending the session.

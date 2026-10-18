@@ -1,6 +1,11 @@
 //! The packet mod's WASI preview 2 context: clocks, randomness and captured output only.
 
-use std::sync::{Arc, Mutex, PoisonError};
+use anyhow::Result;
+use std::{
+    future::Future,
+    sync::{Arc, Mutex, PoisonError},
+    time::{Duration, Instant},
+};
 use wasmtime_wasi::{
     WasiCtxBuilder,
     cli::{IsTerminal, StdoutStream},
@@ -22,8 +27,40 @@ pub(super) fn builder(budget: &LogBudget) -> WasiCtxBuilder {
         .allow_tcp(false)
         .allow_udp(false)
         .allow_ip_name_lookup(false)
-        .allow_blocking_current_thread(true);
+        .allow_blocking_current_thread(false);
     builder
+}
+
+/// Cancels suspended WASI work at the same deadline used for guest execution.
+pub(super) struct CallDeadline {
+    runtime: tokio::runtime::Runtime,
+    expires: Instant,
+}
+
+impl CallDeadline {
+    /// Creates the worker's private runtime and arms its initial load budget.
+    pub(super) fn new(budget: Duration) -> Result<Self> {
+        Ok(Self {
+            runtime: tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?,
+            expires: Instant::now() + budget,
+        })
+    }
+
+    /// Shares one absolute deadline across all lowered calls and post-return work.
+    pub(super) fn arm(&mut self, budget: Duration) {
+        self.expires = Instant::now() + budget;
+    }
+
+    /// Drives an interruptible guest call, dropping its suspended host future on expiry.
+    pub(super) fn run<T>(&self, call: impl Future<Output = Result<T>>) -> Result<T> {
+        self.runtime.block_on(async {
+            tokio::time::timeout_at(self.expires.into(), call)
+                .await
+                .map_err(|_| wasmtime::Trap::Interrupt)?
+        })
+    }
 }
 
 /// The per-call log allowance shared by standard output and error.

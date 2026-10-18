@@ -41,18 +41,27 @@ pub fn read_source(path: &Path) -> Result<Vec<u8>> {
 pub fn validate_source(bytes: &[u8], cache: Option<&Path>) -> Result<()> {
     check_size(bytes)?;
     match SourceKind::of(bytes) {
-        SourceKind::Component => ModHost::validate_component(bytes),
-        SourceKind::Packet => packet_mod::CompiledPacketMod::compile(
-            bytes,
-            &ModGrants {
-                packets: true,
-                wasi: true,
-                ..Default::default()
-            },
-            cache,
-        )
-        .map(|_| ()),
+        SourceKind::Component => ModHost::validate_component(bytes).or_else(|component_error| {
+            validate_packet_source(bytes, cache).map_err(|packet_error| {
+                component_error.context(format!("packet mod validation: {packet_error:#}"))
+            })
+        }),
+        SourceKind::Packet => validate_packet_source(bytes, cache),
     }
+}
+
+/// Checks the packet world's ABI without executing guest code or granting a live instance.
+fn validate_packet_source(bytes: &[u8], cache: Option<&Path>) -> Result<()> {
+    packet_mod::CompiledPacketMod::compile(
+        bytes,
+        &ModGrants {
+            packets: true,
+            wasi: true,
+            ..Default::default()
+        },
+        cache,
+    )
+    .map(|_| ())
 }
 
 /// Applies the owning host's source ceiling even when bytes came from a captured snapshot.

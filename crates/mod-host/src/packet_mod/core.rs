@@ -81,7 +81,7 @@ impl Program {
         );
         let mut linker = wasmtime::Linker::new(engine);
         if grants.wasi {
-            wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |state: &mut State| {
+            wasmtime_wasi::preview1::add_to_linker_async(&mut linker, |state: &mut State| {
                 &mut state.wasi
             })?;
         }
@@ -105,16 +105,21 @@ impl Program {
         );
         store.limiter(|state| &mut state.limits);
         execution::arm_deadline(&mut store, PACKET_MOD_LOAD_DEADLINE);
-        let instance = self.pre.instantiate(&mut store)?;
+        let deadline = wasi::CallDeadline::new(PACKET_MOD_LOAD_DEADLINE)?;
+        let instance = deadline.run(self.pre.instantiate_async(&mut store))?;
         if instance.get_func(&mut store, INITIALIZE).is_some() {
-            instance
-                .get_typed_func::<(), ()>(&mut store, INITIALIZE)?
-                .call(&mut store, ())?;
+            deadline.run(
+                instance
+                    .get_typed_func::<(), ()>(&mut store, INITIALIZE)?
+                    .call_async(&mut store, ()),
+            )?;
         }
         if instance.get_func(&mut store, NATIVE_INIT).is_some() {
-            instance
-                .get_typed_func::<i32, ()>(&mut store, NATIVE_INIT)?
-                .call(&mut store, self.native_capabilities as i32)?;
+            deadline.run(
+                instance
+                    .get_typed_func::<i32, ()>(&mut store, NATIVE_INIT)?
+                    .call_async(&mut store, self.native_capabilities as i32),
+            )?;
         }
         let memory = instance
             .get_memory(&mut store, MEMORY)
@@ -157,6 +162,7 @@ impl Program {
             store,
             memory,
             calls,
+            deadline,
         }))
     }
 }
@@ -178,6 +184,7 @@ struct CoreGuest {
     store: Store<State>,
     memory: Memory,
     calls: Calls,
+    deadline: wasi::CallDeadline,
 }
 
 impl CoreGuest {
@@ -185,10 +192,11 @@ impl CoreGuest {
     /// a UTF-8 string, and returns its pointer and length.
     fn lower(&mut self, bytes: &[u8]) -> Result<(i32, i32)> {
         let length = i32::try_from(bytes.len()).context("argument exceeds guest memory")?;
-        let pointer = self
-            .calls
-            .realloc
-            .call(&mut self.store, (0, 0, 1, length))?;
+        let pointer = self.deadline.run(
+            self.calls
+                .realloc
+                .call_async(&mut self.store, (0, 0, 1, length)),
+        )?;
         self.memory
             .write(&mut self.store, pointer as u32 as usize, bytes)
             .context("guest allocation is out of bounds")?;
@@ -222,7 +230,8 @@ impl CoreGuest {
         reader.range(address, 12)?;
         let value = read(&mut reader, address)?;
         if let Some(post) = &self.calls.posts[post] {
-            post.call(&mut self.store, result)?;
+            self.deadline
+                .run(post.call_async(&mut self.store, result))?;
         }
         Ok(value)
     }
@@ -230,6 +239,7 @@ impl CoreGuest {
 
 impl Guest for CoreGuest {
     fn arm(&mut self, deadline: Duration) {
+        self.deadline.arm(deadline);
         self.store.data().log.refill();
         execution::arm_deadline(&mut self.store, deadline);
     }
@@ -248,7 +258,9 @@ impl Guest for CoreGuest {
         let params = (
             name.0, name.1, xuid.0, xuid.1, uuid.0, uuid.1, data.0, data.1, startup.0, startup.1,
         );
-        let result = self.calls.start.call(&mut self.store, params)?;
+        let result = self
+            .deadline
+            .run(self.calls.start.call_async(&mut self.store, params))?;
         self.lift(0, result, |reader, at| {
             reader.result(at, |reader, at| {
                 let (pointer, count) = (reader.u32(at)?, reader.u32(at + 4)?);
@@ -278,10 +290,11 @@ impl Guest for CoreGuest {
             Direction::FromServer => 1,
         };
         let (pointer, length) = self.lower(batch)?;
-        let result = self
-            .calls
-            .on_batch
-            .call(&mut self.store, (direction, pointer, length))?;
+        let result = self.deadline.run(
+            self.calls
+                .on_batch
+                .call_async(&mut self.store, (direction, pointer, length)),
+        )?;
         self.lift(1, result, |reader, at| {
             reader.result(at, |reader, at| match reader.u8(at)? {
                 0 => Ok(None),
@@ -292,7 +305,9 @@ impl Guest for CoreGuest {
     }
 
     fn tick(&mut self) -> Result<Result<Outbound, String>> {
-        let result = self.calls.tick.call(&mut self.store, ())?;
+        let result = self
+            .deadline
+            .run(self.calls.tick.call_async(&mut self.store, ()))?;
         self.lift(2, result, |reader, at| {
             reader.result(at, |reader, at| {
                 Ok(Outbound {
@@ -304,7 +319,8 @@ impl Guest for CoreGuest {
     }
 
     fn stop(&mut self) -> Result<()> {
-        self.calls.stop.call(&mut self.store, ())
+        self.deadline
+            .run(self.calls.stop.call_async(&mut self.store, ()))
     }
 
     fn has_native_frame(&self) -> bool {
@@ -316,7 +332,9 @@ impl Guest for CoreGuest {
             return Ok(Ok(None));
         };
         let input = self.lower(json)?;
-        let result = frame.call(&mut self.store, input)?;
+        let result = self
+            .deadline
+            .run(frame.call_async(&mut self.store, input))?;
         self.lift_bounded(3, result, mod_api::native_frame::MAX_BYTES, |reader, at| {
             reader.result(at, |reader, at| reader.list(at).map(Some))
         })
@@ -331,7 +349,7 @@ impl Guest for CoreGuest {
             return Ok(Ok(None));
         };
         let input = self.lower(json)?;
-        let result = menu.call(&mut self.store, input)?;
+        let result = self.deadline.run(menu.call_async(&mut self.store, input))?;
         self.lift_bounded(
             4,
             result,

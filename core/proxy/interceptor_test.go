@@ -259,6 +259,52 @@ func TestSessionPrepareStartsTheInterceptor(t *testing.T) {
 	}
 }
 
+// Cancellation during pack admission must close the interceptor before any handoff.
+func TestCancelledPackDeliveryClosesTheInterceptor(t *testing.T) {
+	upstream := newFakeUpstream(nil)
+	upstream.useBatchReads = true
+	upstream.batchReads <- batchResult{packets: []packet.Packet{&packet.StartGame{EntityRuntimeID: 9}}}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	connections := newPreparedConnections("", nil, logger)
+	connections.connectPrepared = func(context.Context, dialerDownstream) (*preparedConnection, error) {
+		return &preparedConnection{upstream: upstream, packStack: &selectedResourcePackStack{}}, nil
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	pack := testAdmissionPack(t)
+	intercept := &scriptedIntercept{packs: func() ([]*resource.Pack, []*resource.Pack) {
+		cancel()
+		return []*resource.Pack{pack}, nil
+	}}
+	server := &sessionServer{prepared: connections, transfers: new(TransferState), logger: logger,
+		interceptor: interceptorFunc(func(context.Context, *InterceptedSession) (SessionInterceptor, error) {
+			return intercept, nil
+		})}
+	local, peer := net.Pipe()
+	defer local.Close()
+	defer peer.Close()
+	done := make(chan error, 1)
+	go func() {
+		done <- server.serveConnWithPacks(ctx, local, &sessionPackDelivery{SessionPackStream: SessionPackStream{Join: 1}})
+	}()
+	frame, err := encodeSessionJSON(bridgecontract.SessionKindConnect, testSessionConnect(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := streamnet.NewFramedConn(peer).Write(frame); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("serveConnWithPacks() = %v, want cancellation", err)
+	}
+	if len(intercept.closed) != 1 || !errors.Is(intercept.closed[0], context.Canceled) {
+		t.Fatalf("interceptor close causes = %v, want one cancellation", intercept.closed)
+	}
+	if !upstream.isClosed() {
+		t.Fatal("pack admission failure kept its upstream open")
+	}
+}
+
 // Server packs keep their own position when an interceptor offers the same identity.
 func TestAddInterceptedPacksKeepsServerPositions(t *testing.T) {
 	server := admissionPackWithUUID(t, "00000000-0000-0000-0000-000000000001")

@@ -30,6 +30,7 @@ use {
 use std::{path::PathBuf, time::Instant};
 
 mod client_id;
+mod startup;
 
 use client_session::MAX_TRANSFER_CHAIN_HOPS;
 

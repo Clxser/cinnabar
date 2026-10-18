@@ -65,10 +65,7 @@ use {
         local_player::publish_local_player_frame,
         present_mode::{PresentModeRuntime, apply_present_mode},
         runtime::{
-            network::{
-                receive_network_events,
-                session::{NetworkConfig, spawn_network},
-            },
+            network::receive_network_events,
             shutdown::{
                 TerminalCause, exit_on_fatal_runtime_error, exit_on_window_close_requested,
             },
@@ -539,42 +536,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     );
     crate::runtime::network::await_overlay_texture_device();
     let packet_mods = crate::modding::packets::from_environment();
-    let network = if connection_requested {
-        match spawn_network(
-            NetworkConfig {
-                registry_base: crate::runtime::network::session_registries::RegistryBase::new(
-                    &runtime_assets,
-                    &collision_registries,
-                ),
-                session_generation: simulation_clock::identity::SessionGeneration::new(1),
-                socket_dir,
-                display_name: args.display_name.clone(),
-                client_random_id: client_random_id.expect("connection requested"),
-                client_blob_cache: client_blob_cache.cache(),
-                player_skin: local_player_skin.clone(),
-                login_settings: {
-                    let mut settings = crate::session::login_settings(&menu, None);
-                    settings.server_address = args.address.clone().unwrap_or_default();
-                    settings
-                },
-                actor_artwork: Some(actor_artwork.clone()),
-                ui_catalog: Some(ui_catalog.0.clone()),
-                log_dir: menu.layout().log_dir(),
-                record_session: menu.settings_snapshot().0.record_network_session(),
-            },
-            packet_mods.session_relay(),
-        )
-        .context("spawn Bedrock network worker")
-        {
-            Ok(network) => network,
-            Err(error) => {
-                launcher_host::core_process::stop_core_then(&mut core_process, |_| ());
-                return Err(error);
-            }
-        }
-    } else {
-        NetworkHandle::<PackApplication>::disconnected()
-    };
+    let network = NetworkHandle::<PackApplication>::disconnected();
     let movement_ticker = client_interaction::movement::MovementTicker::with_epoch_publisher(
         network.physics_epoch_publisher(),
     );
@@ -675,7 +637,11 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     .insert_resource(
         SessionController::new(core_process)
             .with_client_random_id(client_random_id)
-            .with_address(args.address.as_deref()),
+            .with_address(args.address.as_deref())
+            .with_startup_endpoint(
+                connection_requested.then_some(socket_dir),
+                args.address.as_deref(),
+            ),
     )
     .insert_resource(ui_catalog)
     .insert_resource(client_blob_cache)

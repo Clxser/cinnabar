@@ -133,7 +133,7 @@ func (server *sessionServer) serveConn(ctx context.Context, raw net.Conn) error 
 }
 
 // serveConnWithPacks injects archive delivery at the existing handoff owner.
-func (server *sessionServer) serveConnWithPacks(ctx context.Context, raw net.Conn, delivery *sessionPackDelivery) error {
+func (server *sessionServer) serveConnWithPacks(ctx context.Context, raw net.Conn, delivery *sessionPackDelivery) (err error) {
 	framed := streamnet.NewFramedConn(raw)
 	if err := raw.SetReadDeadline(time.Now().Add(sessionConnectTimeout)); err != nil {
 		return err
@@ -166,6 +166,7 @@ func (server *sessionServer) serveConnWithPacks(ctx context.Context, raw net.Con
 		}
 		return err
 	}
+	defer func() { closeIntercept(prepared.intercept, err) }()
 	if server.onNetwork != nil && prepared.packAdmission != nil {
 		attempt := prepared.packAdmission.attemptID
 		server.onNetwork(NetworkObservation{AttemptID: attempt, LocalRuntimeID: session.runtimeID.Load(), RoundTripMillis: plan.latency})
@@ -303,9 +304,7 @@ func (server *sessionServer) intercept(
 }
 
 // handOffSession writes the handoff, the pack archives and the rest of StartGame's batch, then relays.
-// It ends the session interceptor, if any, with the session.
-func handOffSession(ctx context.Context, session *sessionConn, prepared *preparedConnection, plan sessionPlan) (err error) {
-	defer func() { closeIntercept(prepared.intercept, err) }()
+func handOffSession(ctx context.Context, session *sessionConn, prepared *preparedConnection, plan sessionPlan) error {
 	if err := writeSessionHandoff(session, plan, prepared.intercept); err != nil {
 		if errors.Is(err, errSessionEnded) {
 			err = nil

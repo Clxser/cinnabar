@@ -21,6 +21,7 @@ pub(super) mod bindings {
             "../mod-api/wit",
         ],
         world: "cinnabar:extension/packet-mod@0.1.0",
+        exports: { default: async },
         additional_derives: [PartialEq, Eq],
     });
 }
@@ -58,7 +59,7 @@ impl Program {
         let component: Component = cache::load(engine, bytes, cache)?;
         let mut linker = Linker::new(engine);
         if grants.wasi {
-            wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
+            wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
         }
         let pre = linker
             .instantiate_pre(&component)
@@ -82,18 +83,25 @@ impl Program {
         store.limiter(|state| &mut state.limits);
         store.set_hostcall_fuel(PACKET_MOD_TRANSFER_BYTES);
         execution::arm_deadline(&mut store, PACKET_MOD_LOAD_DEADLINE);
-        let bindings = self.pre.instantiate(&mut store)?;
-        Ok(Box::new(ComponentGuest { store, bindings }))
+        let deadline = wasi::CallDeadline::new(PACKET_MOD_LOAD_DEADLINE)?;
+        let bindings = deadline.run(self.pre.instantiate_async(&mut store))?;
+        Ok(Box::new(ComponentGuest {
+            store,
+            bindings,
+            deadline,
+        }))
     }
 }
 
 struct ComponentGuest {
     store: Store<State>,
     bindings: bindings::PacketMod,
+    deadline: wasi::CallDeadline,
 }
 
 impl Guest for ComponentGuest {
     fn arm(&mut self, deadline: Duration) {
+        self.deadline.arm(deadline);
         self.store.data().log.refill();
         execution::arm_deadline(&mut self.store, deadline);
     }
@@ -104,8 +112,10 @@ impl Guest for ComponentGuest {
         client_data: &str,
         startup: &[u8],
     ) -> Result<Result<Vec<SessionPack>, String>> {
-        self.bindings
-            .call_start(&mut self.store, identity, client_data, startup)
+        self.deadline.run(
+            self.bindings
+                .call_start(&mut self.store, identity, client_data, startup),
+        )
     }
 
     fn on_batch(
@@ -113,16 +123,18 @@ impl Guest for ComponentGuest {
         direction: Direction,
         batch: &[u8],
     ) -> Result<Result<Option<Vec<u8>>, String>> {
-        self.bindings
-            .call_on_batch(&mut self.store, direction, batch)
+        self.deadline.run(
+            self.bindings
+                .call_on_batch(&mut self.store, direction, batch),
+        )
     }
 
     fn tick(&mut self) -> Result<Result<Outbound, String>> {
-        self.bindings.call_tick(&mut self.store)
+        self.deadline.run(self.bindings.call_tick(&mut self.store))
     }
 
     fn stop(&mut self) -> Result<()> {
-        self.bindings.call_stop(&mut self.store)
+        self.deadline.run(self.bindings.call_stop(&mut self.store))
     }
 
     fn peak_memory(&self) -> usize {

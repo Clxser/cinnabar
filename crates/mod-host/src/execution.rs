@@ -45,6 +45,7 @@ pub(crate) fn trusted_engine() -> Result<(Engine, EpochTicker)> {
     config
         .wasm_component_model(true)
         .consume_fuel(false)
+        .async_support(true)
         .epoch_interruption(true)
         .wasm_memory64(false)
         .wasm_relaxed_simd(false)

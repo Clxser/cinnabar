@@ -225,6 +225,43 @@ fn granted_wasi_has_no_files_environment_or_sockets() {
 }
 
 #[test]
+fn source_admission_accepts_packet_components_with_wasi() {
+    let directory = tempfile::tempdir().unwrap();
+    for (form, bytes) in programs(true) {
+        crate::validate_source(&bytes, Some(directory.path()))
+            .unwrap_or_else(|error| panic!("{form}: {error:#}"));
+    }
+    assert!(crate::validate_source(b"(component)", None).is_err());
+}
+
+#[test]
+fn wasi_clock_waits_quarantine_at_the_callback_deadline() {
+    let source = include_str!("tests/guest.wat")
+        .replace(
+            "$IMPORTS",
+            r#"(import "wasi_snapshot_preview1" "poll_oneoff"
+            (func $poll (param i32 i32 i32 i32) (result i32)))"#,
+        )
+        .replace("$START", "")
+        .replace(
+            "(local $op i32)",
+            r#"(local $op i32)
+            (i32.store8 (i32.const 2056) (i32.const 0))
+            (i32.store (i32.const 2064) (i32.const 1))
+            (i64.store (i32.const 2072) (i64.const 1000000000))
+            (drop (call $poll (i32.const 2048) (i32.const 2112) (i32.const 1) (i32.const 2176)))"#,
+        );
+    let core = wat::parse_str(source).unwrap();
+    for bytes in [&core, &packet_mod_component(&core).unwrap()] {
+        let mut guest = instance(bytes, true);
+        guest.call_deadline = Duration::from_millis(20);
+        assert!(guest.on_batch(Direction::FromClient, &[0]).is_err());
+        assert!(!guest.is_active());
+        assert_eq!(guest.on_batch(Direction::FromClient, &[1]).unwrap(), None);
+    }
+}
+
+#[test]
 fn granted_wasi_refuses_sockets() {
     let core = core_module(true, SOCKET_CHECK);
     let mut guest = instance(&core, true);
