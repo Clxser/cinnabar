@@ -250,7 +250,8 @@ impl Residency {
     }
 
     /// Moves the origin when `camera` has left its range; returns whether it moved, in which
-    /// case every resident section needs expanding again.
+    /// case every resident section needs expanding again, unless its positions are packed
+    /// ([`Self::keep_faces_across_rebase`]).
     pub(crate) fn follow_camera(&mut self, camera: DVec3) -> bool {
         let snapped = (camera / f64::from(ORIGIN_GRID)).round() * f64::from(ORIGIN_GRID);
         let snapped = IVec3::new(snapped.x as i32, snapped.y as i32, snapped.z as i32);
@@ -261,6 +262,15 @@ impl Residency {
                 self.epoch += 1;
                 true
             }
+        }
+    }
+
+    /// Marks every resident section's faces as written against the current origin: packed
+    /// positions are section-relative, so a rebase only moves their draw origins.
+    pub(crate) fn keep_faces_across_rebase(&mut self) {
+        let epoch = self.epoch;
+        for faces in self.sections.values_mut() {
+            faces.epoch = epoch;
         }
     }
 

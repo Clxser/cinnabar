@@ -116,6 +116,19 @@ fn the_origin_follows_the_camera_on_a_grid_and_counts_epochs() {
 }
 
 #[test]
+fn packed_faces_stay_current_across_a_rebase() {
+    let mut residency = Residency::new(100 * FACE_BYTES, 100 * FACE_BYTES, STRIDE);
+    residency.follow_camera(DVec3::ZERO);
+    let placement = residency.place(entity(1), &plan(10)).unwrap();
+    residency.commit(entity(1), &placement, &plan(10), [0; 3]);
+    assert!(residency.follow_camera(DVec3::new(6000.0, 0.0, 0.0)));
+    assert_ne!(residency.sections[&entity(1)].epoch, residency.epoch);
+    residency.keep_faces_across_rebase();
+    assert_eq!(residency.sections[&entity(1)].epoch, residency.epoch);
+    assert_eq!(residency.pending_len(), 0, "nothing re-expands");
+}
+
+#[test]
 fn the_queue_holds_each_section_once_and_forgets_removed_ones() {
     let mut residency = Residency::new(1 << 20, 1 << 20, STRIDE);
     residency.enqueue_all([entity(1), entity(2), entity(1)]);

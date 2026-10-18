@@ -381,30 +381,41 @@ impl ShaderpackGeometry {
         section: [i32; 3],
         anchor: IVec3,
     ) {
-        let anchor = anchor.to_array();
         if slot >= self.draw_origin_capacity || self.draw_origins.is_none() {
-            let capacity = self.residency.slot_count().next_power_of_two().max(1024);
-            let buffer = device.create_buffer(&BufferDescriptor {
-                label: Some("shader-pack terrain draw origins"),
-                size: u64::from(capacity) * DRAW_ORIGIN_BYTES,
-                usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let mut entries = vec![[0.0_f32; 4]; self.residency.slot_count() as usize];
-            for resident in self.residency.sections.values() {
-                entries[resident.slot as usize] = draw_origin(resident.origin, anchor);
-            }
-            queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&entries));
-            self.draw_origins = Some(buffer);
-            self.draw_origin_capacity = capacity;
+            self.write_draw_origins(device, queue, anchor);
             return;
         }
         if let Some(buffer) = &self.draw_origins {
             queue.write_buffer(
                 buffer,
                 u64::from(slot) * DRAW_ORIGIN_BYTES,
-                bytemuck::cast_slice(&draw_origin(section, anchor)),
+                bytemuck::cast_slice(&draw_origin(section, anchor.to_array())),
             );
+        }
+    }
+
+    /// Writes every resident section's draw origin for positions relative to `anchor`, into
+    /// a new table when the current one cannot hold every slot. Packed vertices are
+    /// section-relative, so this alone moves them to a new anchor.
+    fn write_draw_origins(&mut self, device: &RenderDevice, queue: &RenderQueue, anchor: IVec3) {
+        let anchor = anchor.to_array();
+        let slots = self.residency.slot_count();
+        if slots > self.draw_origin_capacity || self.draw_origins.is_none() {
+            let capacity = slots.next_power_of_two().max(1024);
+            self.draw_origins = Some(device.create_buffer(&BufferDescriptor {
+                label: Some("shader-pack terrain draw origins"),
+                size: u64::from(capacity) * DRAW_ORIGIN_BYTES,
+                usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            self.draw_origin_capacity = capacity;
+        }
+        let mut entries = vec![[0.0_f32; 4]; slots as usize];
+        for resident in self.residency.sections.values() {
+            entries[resident.slot as usize] = draw_origin(resident.origin, anchor);
+        }
+        if let Some(buffer) = &self.draw_origins {
+            queue.write_buffer(buffer, 0, bytemuck::cast_slice(&entries));
         }
     }
 
@@ -603,7 +614,16 @@ pub(crate) fn prepare_shaderpack_geometry(
         old_lighting: settings.old_lighting,
     };
     let rebased = camera.is_some_and(|camera| geometry.residency.follow_camera(camera));
-    if rebased || geometry.inputs.as_ref() != Some(&expansion_inputs) {
+    // Packed vertices are section-relative: a rebase only moves each draw's origin.
+    let reexpand_rebased = rebased && (geometry.pulled || !geometry.layout.packed());
+    if rebased
+        && !reexpand_rebased
+        && let Some(origin) = geometry.residency.origin
+    {
+        geometry.residency.keep_faces_across_rebase();
+        geometry.write_draw_origins(&inputs.device, &inputs.queue, origin);
+    }
+    if reexpand_rebased || geometry.inputs.as_ref() != Some(&expansion_inputs) {
         debug!(
             target: "cinnabar::shaderpack",
             rebased,
@@ -619,7 +639,7 @@ pub(crate) fn prepare_shaderpack_geometry(
     if (geometry.pulled || kernels_ready)
         && let Some(origin) = geometry.residency.origin
     {
-        let budget = if rebased {
+        let budget = if reexpand_rebased {
             u32::MAX
         } else {
             FRAME_EXPANSION_FACES
