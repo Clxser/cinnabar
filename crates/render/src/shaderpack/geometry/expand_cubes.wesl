@@ -78,6 +78,7 @@ fn cube_face(job: vec4<u32>) -> JobFace {
     source.chunk_origin = cube.chunk_origin.xyz;
     source.material_id = cube.selected_material_id;
     source.material = material;
-    source.two_sided = (material.flags & MATERIAL_TWO_SIDED_FLAG) != 0u;
+    // Cube faces are one-sided, as Java's: `plan_section` reserves them no back slot.
+    source.two_sided = false;
     return JobFace(corners, source, true);
 }

@@ -112,8 +112,8 @@ impl SectionPlan {
 }
 
 /// Slots a material may need beyond its face: an overlay when it or a positional variant
-/// masks a grass-side overlay, a back face when any is two-sided.
-fn material_flags(materials: &[Material], id: u32) -> u32 {
+/// masks a grass-side overlay.
+fn overlay_flag(materials: &[Material], id: u32) -> u32 {
     let Some(base) = materials.get(id as usize) else {
         return 0;
     };
@@ -124,14 +124,11 @@ fn material_flags(materials: &[Material], id: u32) -> u32 {
     let flags = variants
         .iter()
         .fold(base.flags, |flags, variant| flags | variant.flags);
-    let mut job = 0;
     if flags & assets::MATERIAL_FLAG_OVERLAY_MASK != 0 {
-        job |= JOB_OVERLAY_FACE;
+        JOB_OVERLAY_FACE
+    } else {
+        0
     }
-    if flags & assets::MATERIAL_FLAG_TWO_SIDED != 0 {
-        job |= JOB_REVERSE_FACE;
-    }
-    job
 }
 
 /// Output slots of a job with `flags`.
@@ -153,7 +150,7 @@ fn model_flags(
     let quad = tables
         .model_quads
         .get(template.quad_start.checked_add(quad_index)? as usize)?;
-    let overlay = material_flags(tables.materials, quad.material) & JOB_OVERLAY_FACE;
+    let overlay = overlay_flag(tables.materials, quad.material);
     let reverse = if quad.flags & assets::MODEL_QUAD_FLAG_TWO_SIDED != 0 {
         JOB_REVERSE_FACE
     } else {
@@ -187,7 +184,7 @@ pub(crate) fn plan_section(
     for (index, quad) in section.cube_quads.iter().enumerate() {
         // Two-sided cube materials are leaves, whose shared planes the mesher splits into each
         // leaf's own face for shader packs (`MeshOptions::cutout_leaves`): one-sided, as Java's.
-        let flags = material_flags(tables.materials, quad.material_id()) & !JOB_REVERSE_FACE;
+        let flags = overlay_flag(tables.materials, quad.material_id());
         let category = if (index as u32) < section.solid_len && flags & JOB_OVERLAY_FACE == 0 {
             GeometryCategory::Solid
         } else {

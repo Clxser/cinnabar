@@ -280,10 +280,11 @@ fn a_skinned_actor_triangle_writes_iris_entity_vertices_and_its_back_face() {
         assert!(close(uv(index), front_uv), "front uv {index}");
         assert_eq!(normal(index), [0, 0, 127, 0]);
         let v = vertex(index);
-        assert_eq!(f32::from_bits(v[BLOCK_ID.word as usize]), ENTITY_ID as f32);
+        let ids = v[BLOCK_ID.word as usize];
+        assert_eq!((ids & 0xffff) as u16 as i16, ENTITY_ID as i16);
         assert_eq!(
-            f32::from_bits(v[BLOCK_ID.word as usize + 1]),
-            -1.0,
+            (ids >> 16) as u16 as i16,
+            -1,
             "entities read Iris's BLOCK_RENDER_TYPE in mc_Entity.y"
         );
         let light = v[LIGHTMAP.word as usize];

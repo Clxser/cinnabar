@@ -487,9 +487,9 @@ fn greedy_top_face_expands_to_per_block_faces_with_java_attributes() {
     let Some(expanded) = expand_fixture("shader-pack cube expansion") else {
         return;
     };
-    // Solid: two blocks of the greedy quad; cutout: the two-sided face and its back.
-    assert_eq!(expanded.categories, [0..2, 2..4, 4..4]);
-    assert_eq!(expanded.faces, 4);
+    // Solid: two blocks of the greedy quad; cutout: the two-sided (leaf) face, one-sided.
+    assert_eq!(expanded.categories, [0..2, 2..3, 3..3]);
+    assert_eq!(expanded.faces, 3);
     let offset = Vec3::new(16.0, 0.0, 0.0);
     let top_positions = [
         [
@@ -569,27 +569,22 @@ fn greedy_top_face_expands_to_per_block_faces_with_java_attributes() {
     }
 }
 
+/// Two-sided cube materials (leaves) expand one face, as Java's one-sided cube faces: the
+/// shader-pack mesher gives each leaf its own face of a shared plane instead.
 #[test]
-fn two_sided_faces_gain_an_explicit_back_face() {
+fn two_sided_cube_materials_expand_one_sided_faces() {
     let Some(expanded) = expand_fixture("shader-pack two-sided expansion") else {
         return;
     };
+    assert_eq!(
+        expanded.words.len(),
+        3 * 4 * IRIS_VERTEX_WORDS as usize,
+        "no back face"
+    );
     let front: Vec<_> = (8..12)
         .map(|vertex| decode(&expanded.words, vertex))
         .collect();
-    let back: Vec<_> = (12..16)
-        .map(|vertex| decode(&expanded.words, vertex))
-        .collect();
     assert_eq!(front[0].normal, [-127, 0, 0, 0]);
-    assert_eq!(back[0].normal, [127, 0, 0, 0]);
-    let order = [0, 3, 2, 1];
-    for (corner, from) in order.into_iter().enumerate() {
-        assert_eq!(
-            back[corner].position, front[from].position,
-            "back face winds the other way"
-        );
-        assert_eq!(back[corner].uv, front[from].uv);
-    }
     assert_eq!(
         front[0].block_id, -1,
         "materials without an id read Iris's -1"
@@ -599,10 +594,6 @@ fn two_sided_faces_gain_an_explicit_back_face() {
         &atlas_uv(LEAF_RECT, [0.0, 1.0]),
         1e-4,
         "west face uv",
-    );
-    assert!(
-        front[0].tangent[3] != back[0].tangent[3],
-        "mirroring flips handedness"
     );
 }
 
