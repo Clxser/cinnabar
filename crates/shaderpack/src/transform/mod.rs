@@ -8,6 +8,7 @@
 mod assemble;
 mod body;
 mod declare;
+mod dot;
 mod interface;
 mod items;
 mod legacy;
@@ -88,7 +89,9 @@ pub(crate) fn transform(
     names: &ResourceNames<'_>,
 ) -> Result<StageDraft, TransformError> {
     let wide = narrow::lower(&pp.tokens);
-    let lg = legacy::rewrite(wide.as_deref().unwrap_or(&pp.tokens), stage, pp.version)?;
+    let wide = wide.as_deref().unwrap_or(&pp.tokens);
+    let fused = dot::order(wide);
+    let lg = legacy::rewrite(fused.as_deref().unwrap_or(wide), stage, pp.version)?;
     let mut items: Vec<Item> = vec![];
     let mut user_funcs: HashSet<String> = HashSet::new();
     for it in split_items(&lg.toks) {
