@@ -331,6 +331,10 @@ validation; retain only the explicitly permitted diagnostic/optional fallbacks.
   contract. Pack-specific translation fixes, render-host integration and in-game
   acceptance remain incomplete; parsed custom uniform expressions are not executed or
   rendered.
+  and enable rules. Translation, render-host integration and in-game acceptance
+  remain incomplete; parsed custom uniform expressions are not executed or rendered.
+  Pack block, item and entity ids, Java biome values and Java sky and fog colours are
+  computed from the pinned Bedrock→Java mappings but not yet uploaded to shaders.
 - Runtime pack compatibility still includes custom texture inheritance/tints, authored
   geometry and block/item component behavior beyond the currently supported cases.
 
