@@ -17,6 +17,11 @@ mod environment;
 mod expr;
 mod options;
 mod pack;
+#[allow(
+    dead_code,
+    reason = "wired into ShaderPack::translate later in the translator stack"
+)]
+mod preprocess;
 mod programs;
 mod properties;
 mod source;
@@ -31,6 +36,7 @@ pub use environment::{Environment, GpuVendor, HostOs};
 pub use expr::{BinaryOp, Expr, ExprError, UnaryOp};
 pub use options::{OptionKind, OptionValues, PackOption};
 pub use pack::ShaderPack;
+pub use preprocess::ConstDirective;
 pub use programs::{
     GEOMETRY_FALLBACKS, ProgramGroup, ProgramKind, ProgramSource, StageKind, geometry_fallback,
     program_group,
