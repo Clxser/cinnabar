@@ -508,6 +508,24 @@ pub const STATES: &[State] = &[
         fixture: || settings_general_toggle(SettingId::EcomodeToggle),
     },
     State {
+        name: "settings-updates",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || updates::settings(launcher::menu::updates::Status::UpToDate),
+    },
+    State {
+        name: "settings-updates-downloading",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || updates::settings(launcher::menu::updates::Status::Downloading),
+    },
+    State {
+        name: "settings-updates-small",
+        size: [640, 480],
+        gui_scale: GUI_SCALE,
+        fixture: || updates::settings(launcher::menu::updates::Status::Failed),
+    },
+    State {
         name: "settings-general-mod-updates-passive",
         size: [1280, 1200],
         gui_scale: GUI_SCALE,
@@ -785,7 +803,7 @@ fn tab_list_head_columns() -> Fixture {
 pub fn settings(section: &str) -> MenuView {
     let mut view = MenuView::new(true, "Player".into());
     view.screen = MenuScreen::Settings;
-    view.settings_section = launcher::menu::settings_sections::SETTINGS_SECTIONS
+    view.settings.section = launcher::menu::settings_sections::SETTINGS_SECTIONS
         .iter()
         .find_map(|(name, index)| (*name == section).then_some(*index))
         .expect("registered settings category");
