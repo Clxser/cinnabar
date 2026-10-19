@@ -7,6 +7,7 @@
 //! binary asset reads from folders, ZIP archives or memory.
 //!
 //! Shader translation, render-host integration and in-game acceptance remain incomplete.
+mod buffers;
 #[allow(
     dead_code,
     reason = "wired into ShaderPack::translate later in the translator stack"
@@ -24,6 +25,7 @@ mod pack;
 mod preprocess;
 mod programs;
 mod properties;
+mod reflection;
 mod source;
 #[allow(
     dead_code,
@@ -31,6 +33,7 @@ mod source;
 )]
 mod token;
 
+pub use buffers::{BufferDirectives, BufferFormat, BufferId, BufferSettings};
 pub use diagnostics::{Diagnostic, Phase, SourceLocation};
 pub use environment::{Environment, GpuVendor, HostOs};
 pub use expr::{BinaryOp, Expr, ExprError, UnaryOp};
@@ -42,4 +45,12 @@ pub use programs::{
     program_group,
 };
 pub use properties::{CustomImage, ImageSize, ProgramRule, PropertiesDiagnostic, ShaderProperties};
+pub use reflection::{
+    BufferBinding, ColorOutput, ComputeDispatch, FIRST_OTHER_ATTRIBUTE_LOCATION,
+    FIRST_TEXTURE_BINDING, IMAGE_GROUP, LEGACY_UNIFORMS, LOOSE_UNIFORM_BINDING,
+    LOOSE_UNIFORM_BLOCK, ProgramReflection, SAMPLER_BINDING, SAMPLER_NAME, SHADOW_SAMPLER_BINDING,
+    SHADOW_SAMPLER_NAME, STORAGE_BUFFER_GROUP, SampleType, SamplerBinding, ScalarType, StageMask,
+    StorageImageBinding, TEXTURE_GROUP, TextureBinding, TextureDimension, UNIFORM_GROUP,
+    UniformBlock, UniformMember, ValueType, VertexAttribute, VertexInput,
+};
 pub use source::{PackError, PackOrigin, PackSource};
