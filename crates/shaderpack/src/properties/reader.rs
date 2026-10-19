@@ -336,14 +336,5 @@ impl Conditionals {
 
 /// Splits `#define`/`#undef` arguments into the macro name and its (trimmed) value.
 fn macro_name(args: &str) -> Option<(&str, &str)> {
-    let name_len = args
-        .bytes()
-        .take_while(|&b| b.is_ascii_alphanumeric() || b == b'_')
-        .count();
-    let (name, value) = args.split_at(name_len);
-    if name.bytes().next().is_some_and(|b| !b.is_ascii_digit()) {
-        Some((name, value.trim()))
-    } else {
-        None
-    }
+    crate::options::split_ident(args).map(|(name, value)| (name, value.trim()))
 }

@@ -328,7 +328,7 @@ validation; retain only the explicitly permitted diagnostic/optional fallbacks.
   shader-pack source loading and configuration metadata are implemented in
   `shaderpack`, including options, dimensions, parsed properties, program discovery
   and enable rules. Translation, render-host integration and in-game acceptance
-  remain incomplete; parsed custom expressions are not executed or rendered.
+  remain incomplete.
 - Runtime pack compatibility still includes custom texture inheritance/tints, authored
   geometry and block/item component behavior beyond the currently supported cases.
 

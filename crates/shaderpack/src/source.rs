@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
 
 /// Why a pack could not be opened.
 #[derive(Debug)]
@@ -84,7 +83,7 @@ impl LoadLimits {
 #[derive(Clone, Debug)]
 pub struct PackSource {
     origin: PackOrigin,
-    files: BTreeMap<Arc<str>, String>,
+    files: BTreeMap<String, String>,
 }
 
 impl PackSource {
@@ -110,7 +109,7 @@ impl PackSource {
             origin: PackOrigin::Memory,
             files: files
                 .into_iter()
-                .map(|(k, v)| (Arc::from(k.into()), v.into()))
+                .map(|(k, v)| (k.into(), v.into()))
                 .collect(),
         }
     }
@@ -155,7 +154,7 @@ impl PackSource {
                 }
                 let file = std::fs::File::open(&p).map_err(io_err(&p))?;
                 if let Some(text) = budget.text(file, &p)? {
-                    files.insert(Arc::from(rel), text);
+                    files.insert(rel, text);
                 }
             }
         }
@@ -199,7 +198,7 @@ impl PackSource {
                 continue;
             }
             if let Some(text) = budget.text(&mut entry, &path.join(&rel))? {
-                files.insert(Arc::from(rel), text);
+                files.insert(rel, text);
             }
         }
         Ok(PackSource {
@@ -224,13 +223,6 @@ impl PackSource {
     /// Every loaded text file, sorted by path.
     pub fn files(&self) -> impl Iterator<Item = (&str, &str)> {
         self.files.iter().map(|(k, v)| (k.as_ref(), v.as_str()))
-    }
-
-    /// Shares exact source keys with option metadata without copying their path storage.
-    pub(crate) fn shared_files(&self) -> impl Iterator<Item = (Arc<str>, &str)> {
-        self.files
-            .iter()
-            .map(|(path, text)| (path.clone(), text.as_str()))
     }
 
     /// Reads any `shaders/`-relative file as bytes, including binary assets. Directory

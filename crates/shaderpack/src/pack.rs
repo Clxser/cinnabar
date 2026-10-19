@@ -28,7 +28,7 @@ impl ShaderPack {
 
     /// Wraps loaded files and discovers the pack's options.
     pub fn new(source: PackSource) -> ShaderPack {
-        let options = discover_options(source.shared_files().filter(|(path, _)| {
+        let options = discover_options(source.files().filter(|(path, _)| {
             path.rsplit_once('.')
                 .is_some_and(|(_, ext)| SHADER_EXTENSIONS.contains(&ext))
         }));

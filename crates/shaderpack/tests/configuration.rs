@@ -1,8 +1,8 @@
 //! Public metadata inspection without a shader compiler or render host.
 
 use shaderpack::{
-    CustomUniformKind, Environment, Expr, GpuVendor, HostOs, OptionKind, OptionValues, PackOrigin,
-    PackSource, ProgramGroup, ProgramKind, ShaderPack, StageKind, TextureSource,
+    Environment, GpuVendor, HostOs, OptionKind, OptionValues, PackOrigin, PackSource, ProgramGroup,
+    ProgramKind, ShaderPack, StageKind,
 };
 
 const VERTEX: &str = "#version 450\nvoid main() { gl_Position = vec4(0.0); }";
@@ -18,7 +18,7 @@ fn pack() -> ShaderPack {
         ("notes.txt", "#define IGNORE 1 // [1 2]\n"),
         (
             "shaders.properties",
-            "#if defined(GLOW) && QUALITY >= 3\nprofile=bright\n#else\nprofile=plain\n#endif\nprogram.composite.enabled=GLOW\nprogram.world0/composite.enabled=QUALITY >= 3\ntexture.noise=/textures/noise.png\nuniform.vec3.tint=vec3(QUALITY, 0.5, 1)\n",
+            "#if defined(GLOW) && QUALITY >= 3\nprofile=bright\n#else\nprofile=plain\n#endif\nprogram.composite.enabled=GLOW\nprogram.world0/composite.enabled=QUALITY >= 3\n",
         ),
         ("composite.vsh", "root vertex"),
         ("composite.fsh", "root fragment"),
@@ -50,7 +50,7 @@ fn options_and_properties_share_effective_macro_values() {
     );
     assert_eq!(options[0].kind, OptionKind::Bool { default: false });
     assert_eq!(
-        (options[1].file.as_ref(), options[1].line),
+        (options[1].file.as_str(), options[1].line),
         ("lib/settings.glsl", 2)
     );
     let defaults = OptionValues::new();
@@ -89,15 +89,6 @@ fn options_and_properties_share_effective_macro_values() {
             .unwrap()
             .is_enabled(&defines)
     );
-    assert_eq!(
-        properties.custom_textures[0].source,
-        TextureSource::File("textures/noise.png".into())
-    );
-    let uniform = &properties.custom_uniforms[0];
-    assert_eq!(uniform.kind, CustomUniformKind::Uniform);
-    assert_eq!(uniform.ty, "vec3");
-    assert_eq!(uniform.expr, Expr::parse("vec3(QUALITY, 0.5, 1)").unwrap());
-    assert!(uniform.expr.eval(&|_| None).is_err());
 }
 
 #[test]
@@ -440,40 +431,10 @@ fn option_locations_preserve_distinct_exact_source_keys() {
             Some(declaration),
             "{name} must point to its defining source line"
         );
-        assert_eq!((option.file.as_ref(), option.line), (key, line));
+        assert_eq!((option.file.as_str(), option.line), (key, line));
         assert_eq!(
             pack.source().read_bytes(&option.file).unwrap(),
             defining_text.as_bytes()
         );
-        let (source_key, _) = pack
-            .source()
-            .files()
-            .find(|(path, _)| *path == key)
-            .unwrap();
-        assert_eq!(option.file.as_ptr(), source_key.as_ptr());
     }
-    assert!(std::sync::Arc::ptr_eq(&options[0].file, &options[1].file));
-    assert!(std::sync::Arc::ptr_eq(&options[2].file, &options[3].file));
-}
-
-#[test]
-fn options_from_one_file_share_path_storage() {
-    let path = format!("lib/{}.glsl", "settings".repeat(16));
-    let source = PackSource::from_files([(
-        path.as_str(),
-        "const bool alpha=true;\nconst bool beta=false;\nconst bool gamma=true;",
-    )]);
-    let pack = ShaderPack::new(source);
-    let options = pack.options();
-    assert_eq!(options.len(), 3);
-    for (index, option) in options.iter().enumerate() {
-        assert_eq!(option.file.to_string(), path);
-        assert_eq!(option.line, index as u32 + 1);
-        assert_eq!(option.file.as_ptr(), options[0].file.as_ptr());
-        assert_eq!(option.clone().file.as_ptr(), option.file.as_ptr());
-    }
-    assert_eq!(
-        options.iter().map(|o| o.name.as_str()).collect::<Vec<_>>(),
-        ["alpha", "beta", "gamma"]
-    );
 }

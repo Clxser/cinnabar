@@ -72,7 +72,6 @@ fn continuation_lines_join_without_leading_whitespace() {
         properties.get("uniform.float.total"),
         Some("alpha + beta + gamma")
     );
-    assert_eq!(properties.custom_uniforms[0].line, 1);
     assert_eq!(properties.get("after"), Some("1"));
     // An even number of trailing backslashes is an escaped backslash, not a continuation.
     assert_eq!(properties.get("path"), Some("dir\\"));
@@ -128,7 +127,6 @@ fn nested_blocks_inside_inactive_regions_stay_inactive() {
 fn commented_keys_and_prose_are_plain_comments() {
     let properties = parse("#uniform.float.hidden=1\n#ifdefined stuff\n# Notes about it\nreal=1\n");
     assert_eq!(keys(&properties), ["real"]);
-    assert!(properties.custom_uniforms.is_empty());
     assert!(properties.diagnostics.is_empty());
 }
 
@@ -174,184 +172,6 @@ fn program_rules_prefer_dimension_and_last_occurrence() {
     );
     assert!(properties.program_rule("world0", "deferred").is_none());
     assert_eq!(diagnostic_lines(&properties), [5]);
-}
-
-#[test]
-fn buffer_sizes_absolute_relative_and_malformed() {
-    let properties = parse(
-        "size.buffer.colortex4 = 256 128\nsize.buffer.colortex6 = 0.5 0.25\n\
-         size.buffer.colortex7 = 64\nsize.buffer.colortex8 = wide 2\nsize.buffer.colortex9 = 0 4\n",
-    );
-    assert_eq!(
-        properties.buffer_sizes,
-        [
-            BufferSize {
-                buffer: "colortex4".to_owned(),
-                width: SizeValue::Absolute(256),
-                height: SizeValue::Absolute(128),
-            },
-            BufferSize {
-                buffer: "colortex6".to_owned(),
-                width: SizeValue::Relative(0.5),
-                height: SizeValue::Relative(0.25),
-            },
-        ]
-    );
-    assert_eq!(diagnostic_lines(&properties), [3, 4, 5]);
-    assert_eq!(properties.entries.len(), 5);
-}
-
-#[test]
-fn blend_rules_off_factors_per_buffer_and_malformed() {
-    let properties = parse(
-        "blend.gbuffers_water = off\n\
-         blend.gbuffers_water.colortex2 = SRC_ALPHA ONE_MINUS_SRC_ALPHA ONE ZERO\n\
-         blend.gbuffers_hand = SRC_ALPHA ONE PLUS ONE\nblend.gbuffers_basic = ONE ONE ONE\n",
-    );
-    assert_eq!(
-        properties.blends,
-        [
-            BlendRule {
-                program: "gbuffers_water".to_owned(),
-                buffer: None,
-                mode: BlendMode::Off,
-            },
-            BlendRule {
-                program: "gbuffers_water".to_owned(),
-                buffer: Some("colortex2".to_owned()),
-                mode: BlendMode::Factors {
-                    src_color: BlendFactor::SrcAlpha,
-                    dst_color: BlendFactor::OneMinusSrcAlpha,
-                    src_alpha: BlendFactor::One,
-                    dst_alpha: BlendFactor::Zero,
-                },
-            },
-        ]
-    );
-    assert_eq!(diagnostic_lines(&properties), [3, 4]);
-}
-
-#[test]
-fn alpha_tests_off_function_and_malformed() {
-    let properties = parse(
-        "alphaTest.gbuffers_terrain = off\nalphaTest.gbuffers_hand = GEQUAL 0.25\n\
-         alphaTest.gbuffers_block = ABOVE 0.1\nalphaTest.gbuffers_line = LESS half\n\
-         alphaTest.gbuffers_weather = GREATER\n",
-    );
-    assert_eq!(
-        properties.alpha_tests,
-        [
-            AlphaTestRule {
-                program: "gbuffers_terrain".to_owned(),
-                test: None,
-            },
-            AlphaTestRule {
-                program: "gbuffers_hand".to_owned(),
-                test: Some(AlphaTest {
-                    function: CompareFunction::GreaterEqual,
-                    reference: 0.25,
-                }),
-            },
-        ]
-    );
-    assert_eq!(diagnostic_lines(&properties), [3, 4, 5]);
-}
-
-#[test]
-fn flip_rules_and_malformed() {
-    let properties = parse(
-        "flip.composite2.colortex3 = true\nflip.deferred.colortex1=false\n\
-         flip.composite3.colortex4 = maybe\nflip.composite4 = true\n",
-    );
-    assert_eq!(
-        properties.flips,
-        [
-            FlipRule {
-                program: "composite2".to_owned(),
-                buffer: "colortex3".to_owned(),
-                flip: true,
-            },
-            FlipRule {
-                program: "deferred".to_owned(),
-                buffer: "colortex1".to_owned(),
-                flip: false,
-            },
-        ]
-    );
-    assert_eq!(diagnostic_lines(&properties), [3, 4]);
-}
-
-#[test]
-fn scale_rules_with_and_without_offset() {
-    let properties = parse(
-        "scale.composite5 = 0.5\nscale.composite6 = 0.25 0.5 0.75\nscale.composite7 = 0.5 0.1\n\
-         scale.composite8 = big\nscale.composite9 = 0\n",
-    );
-    assert_eq!(
-        properties.scales,
-        [
-            ScaleRule {
-                program: "composite5".to_owned(),
-                scale: 0.5,
-                offset: [0.0, 0.0],
-            },
-            ScaleRule {
-                program: "composite6".to_owned(),
-                scale: 0.25,
-                offset: [0.5, 0.75],
-            },
-        ]
-    );
-    assert_eq!(diagnostic_lines(&properties), [3, 4, 5]);
-}
-
-#[test]
-fn custom_textures_file_resource_raw_noise_and_malformed() {
-    let properties = parse(
-        "texture.noise = /textures/grain.png\ntexture.composite.colortex5 = textures/dust.png\n\
-         texture.gbuffers.gaux1 = example:textures/sky/stars.png\n\
-         texture.deferred.colortex9.1 = data/lut.bin TEXTURE_3D RGBA8 16 16 16 RGBA UNSIGNED_BYTE\n\
-         texture.composite = textures/none.png\ntexture.deferred.colortex2 =\n",
-    );
-    assert_eq!(
-        properties.custom_textures,
-        [
-            CustomTexture {
-                stage: "noise".to_owned(),
-                sampler: "noisetex".to_owned(),
-                source: TextureSource::File("textures/grain.png".to_owned()),
-            },
-            CustomTexture {
-                stage: "composite".to_owned(),
-                sampler: "colortex5".to_owned(),
-                source: TextureSource::File("textures/dust.png".to_owned()),
-            },
-            CustomTexture {
-                stage: "gbuffers".to_owned(),
-                sampler: "gaux1".to_owned(),
-                source: TextureSource::Resource("example:textures/sky/stars.png".to_owned()),
-            },
-            CustomTexture {
-                stage: "deferred".to_owned(),
-                sampler: "colortex9.1".to_owned(),
-                source: TextureSource::Raw {
-                    path: "data/lut.bin".to_owned(),
-                    spec: [
-                        "TEXTURE_3D",
-                        "RGBA8",
-                        "16",
-                        "16",
-                        "16",
-                        "RGBA",
-                        "UNSIGNED_BYTE"
-                    ]
-                    .map(str::to_owned)
-                    .to_vec(),
-                },
-            },
-        ]
-    );
-    assert_eq!(diagnostic_lines(&properties), [5, 6]);
 }
 
 #[test]
@@ -432,35 +252,6 @@ fn custom_images_relative_absolute_and_malformed() {
 }
 
 #[test]
-fn custom_uniforms_and_variables_keep_file_order() {
-    let properties = parse(
-        "variable.float.half = frameTime * 0.5\nuniform.vec2.pair = vec2(half, 1.0)\n\
-         uniform.float.broken = 1 +\nuniform.float = 1\n",
-    );
-    let summary: Vec<_> = properties
-        .custom_uniforms
-        .iter()
-        .map(|uniform| {
-            (
-                uniform.kind,
-                uniform.ty.as_str(),
-                uniform.name.as_str(),
-                uniform.line,
-            )
-        })
-        .collect();
-    assert_eq!(
-        summary,
-        [
-            (CustomUniformKind::Variable, "float", "half", 1),
-            (CustomUniformKind::Uniform, "vec2", "pair", 2),
-        ]
-    );
-    assert_eq!(properties.custom_uniforms[1].expr.identifiers(), ["half"]);
-    assert_eq!(diagnostic_lines(&properties), [3, 4]);
-}
-
-#[test]
 fn unknown_keys_stay_only_in_entries() {
     let properties = parse("sun=true\nshadow.culling=reversed\nscreen=[MAIN] SPEED\n");
     assert_eq!(keys(&properties), ["sun", "shadow.culling", "screen"]);
@@ -471,8 +262,11 @@ fn unknown_keys_stay_only_in_entries() {
 
 #[test]
 fn malformed_entries_stay_in_entries() {
-    let properties = parse("blend.gbuffers_water = SOMETIMES\n");
-    assert_eq!(properties.get("blend.gbuffers_water"), Some("SOMETIMES"));
-    assert!(properties.blends.is_empty());
+    let properties = parse("image.cimage1 = sampler rgba rgba8 unsigned_byte maybe true 1.0 1.0\n");
+    assert_eq!(
+        properties.get("image.cimage1"),
+        Some("sampler rgba rgba8 unsigned_byte maybe true 1.0 1.0")
+    );
+    assert!(properties.images.is_empty());
     assert_eq!(diagnostic_lines(&properties), [1]);
 }

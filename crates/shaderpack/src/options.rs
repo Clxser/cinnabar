@@ -6,7 +6,6 @@
 //! program enable rules; shader source rewriting belongs to translation.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 
 /// An option discovered in the pack's shader sources.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,7 +16,7 @@ pub struct PackOption {
     pub kind: OptionKind,
     /// Exact pack-relative source key of the first definition. Directory keys use forward
     /// slashes; ZIP and memory keys retain their supplied spelling.
-    pub file: Arc<str>,
+    pub file: String,
     /// 1-based line of the first definition in `file`.
     pub line: u32,
 }
@@ -60,12 +59,11 @@ pub type OptionValues = BTreeMap<String, String>;
 /// the `[...]` allowed-values list in its trailing `//` comment; `const` options need the list
 /// except `const bool`. First definition in sorted-path order wins; later conflicting
 /// definitions are ignored. The result is sorted by name.
-/// Source keys are retained exactly as supplied, sharing their path allocation.
 pub fn discover_options<'a>(
-    files: impl IntoIterator<Item = (Arc<str>, &'a str)>,
+    files: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) -> Vec<PackOption> {
     let mut files: Vec<_> = files.into_iter().collect();
-    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files.sort_by(|a, b| a.0.cmp(b.0));
     let tested = tested_names(files.iter().map(|(_, text)| *text));
     let mut options: BTreeMap<&'a str, PackOption> = BTreeMap::new();
     for (path, text) in files {
@@ -84,7 +82,7 @@ pub fn discover_options<'a>(
                 PackOption {
                     name: definition.name.to_owned(),
                     kind,
-                    file: path.clone(),
+                    file: path.to_owned(),
                     line: u32::try_from(index + 1).unwrap_or(u32::MAX),
                 },
             );
@@ -278,7 +276,7 @@ fn is_ident_byte(byte: u8) -> bool {
 }
 
 /// Splits a leading C identifier off `text`.
-fn split_ident(text: &str) -> Option<(&str, &str)> {
+pub(crate) fn split_ident(text: &str) -> Option<(&str, &str)> {
     let len = text.bytes().take_while(|&b| is_ident_byte(b)).count();
     let (ident, rest) = text.split_at(len);
     if ident.bytes().next().is_some_and(|b| !b.is_ascii_digit()) {
@@ -340,11 +338,7 @@ mod tests {
 
     /// Supplies one shared path per original test file to option discovery.
     fn discover<'a>(files: impl IntoIterator<Item = (&'a str, &'a str)>) -> Vec<PackOption> {
-        discover_options(
-            files
-                .into_iter()
-                .map(|(path, text)| (Arc::from(path), text)),
-        )
+        discover_options(files)
     }
 
     /// Builds owned option overrides from borrowed test values.
@@ -462,7 +456,7 @@ const vec3 tint = vec3(1.0); // [a b]
         );
         let quality = find(&options, "QUALITY").expect("QUALITY");
         assert_eq!(
-            (quality.file.as_ref(), quality.line),
+            (quality.file.as_str(), quality.line),
             ("shaders/settings.glsl", 6)
         );
     }
@@ -483,7 +477,7 @@ const vec3 tint = vec3(1.0); // [a b]
                 allowed: strings(&["2", "3"]),
             }
         );
-        assert_eq!((level.file.as_ref(), level.line), ("shaders/alpha.glsl", 2));
+        assert_eq!((level.file.as_str(), level.line), ("shaders/alpha.glsl", 2));
         let toggle = find(&options, "TOGGLE").expect("TOGGLE");
         assert_eq!(toggle.kind, OptionKind::Bool { default: true });
     }

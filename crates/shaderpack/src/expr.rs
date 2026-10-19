@@ -5,9 +5,7 @@
 //! Parsing never panics on malformed text and bounds nesting so hostile packs cannot
 //! exhaust the stack.
 
-use std::collections::BTreeSet;
 use std::fmt;
-use std::ops::ControlFlow;
 
 /// Deepest expression tree accepted; bounds evaluation and drop recursion.
 const MAX_TREE_DEPTH: u32 = 256;
@@ -129,46 +127,25 @@ impl Expr {
     /// names. Names tested with `defined` count as referenced.
     pub fn identifiers(&self) -> Vec<&str> {
         let mut out = Vec::new();
-        self.visit_identifiers(|name| {
-            out.push(name);
-            ControlFlow::Continue(())
-        });
+        self.collect_identifiers(&mut out);
         out
     }
 
-    /// Visits distinct names in first-use order, stopping as soon as the visitor breaks.
-    pub(crate) fn visit_identifiers<'a>(
-        &'a self,
-        mut visit: impl FnMut(&'a str) -> ControlFlow<()>,
-    ) {
-        let _ = self.walk_identifiers(&mut BTreeSet::new(), &mut visit);
-    }
-
-    /// Walks operands in source order while sharing indexed membership and early termination.
-    fn walk_identifiers<'a>(
-        &'a self,
-        seen: &mut BTreeSet<&'a str>,
-        visit: &mut impl FnMut(&'a str) -> ControlFlow<()>,
-    ) -> ControlFlow<()> {
+    fn collect_identifiers<'a>(&'a self, out: &mut Vec<&'a str>) {
         match self {
             Expr::Number(_) | Expr::Bool(_) => {}
             Expr::Ident(name) | Expr::Defined(name) => {
-                if seen.insert(name) {
-                    visit(name)?;
+                if !out.contains(&name.as_str()) {
+                    out.push(name);
                 }
             }
-            Expr::Unary(_, operand) => operand.walk_identifiers(seen, visit)?,
+            Expr::Unary(_, operand) => operand.collect_identifiers(out),
             Expr::Binary(_, lhs, rhs) => {
-                lhs.walk_identifiers(seen, visit)?;
-                rhs.walk_identifiers(seen, visit)?;
+                lhs.collect_identifiers(out);
+                rhs.collect_identifiers(out);
             }
-            Expr::Call(_, args) => {
-                for arg in args {
-                    arg.walk_identifiers(seen, visit)?;
-                }
-            }
+            Expr::Call(_, args) => args.iter().for_each(|arg| arg.collect_identifiers(out)),
         }
-        ControlFlow::Continue(())
     }
 
     /// Scalar evaluation. `lookup(name)` returns `Some(value)` for a defined name
@@ -799,22 +776,6 @@ mod tests {
     fn identifiers_are_deduplicated_and_skip_function_names() {
         let expr = Expr::parse("clamp(a + b, defined C, a) * vec3(b, d.x, 1)").expect("parses");
         assert_eq!(expr.identifiers(), ["a", "b", "C", "d.x"]);
-    }
-
-    #[test]
-    fn identifier_visits_stop_in_source_order() {
-        let expression = Expr::parse("max(a, a, defined B, c, d)").unwrap();
-        let mut visited = Vec::new();
-        expression.visit_identifiers(|name| {
-            visited.push(name);
-            if visited.len() == 2 {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        });
-        assert_eq!(visited, ["a", "B"]);
-        assert_eq!(expression.identifiers(), ["a", "B", "c", "d"]);
     }
 
     #[test]
