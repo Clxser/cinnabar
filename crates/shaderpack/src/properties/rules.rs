@@ -29,8 +29,6 @@ fn apply_rule(
             .program_rules
             .push(program_rule(target, value, line)?);
     } else if let Some(image) = key.strip_prefix("image.") {
-        // Like java.util.Properties, a repeated key replaces the earlier declaration.
-        properties.images.retain(|existing| existing.name != image);
         properties.images.push(custom_image(image, value)?);
     }
     Ok(())

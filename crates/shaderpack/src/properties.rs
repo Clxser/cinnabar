@@ -20,9 +20,9 @@ pub struct ShaderProperties {
     /// Every key/value in file order after `#if` processing (later duplicates kept; typed
     /// accessors use the last occurrence, matching java.util.Properties).
     pub entries: Vec<(String, String)>,
-    /// `program.[<dimension>/]<program>.enabled` rules in file order.
+    /// `program.[<dimension>/]<program>.enabled` rules, one per key.
     pub program_rules: Vec<ProgramRule>,
-    /// `image.<name>` declarations in file order; a repeated name keeps only its last declaration.
+    /// `image.<name>` declarations, one per key.
     pub images: Vec<CustomImage>,
     /// Malformed lines and expressions (never fatal), with 1-based line numbers.
     pub diagnostics: Vec<PropertiesDiagnostic>,
@@ -46,11 +46,25 @@ impl ShaderProperties {
     /// `#define`/`#undef` in active regions affect later conditionals.
     pub fn parse(text: &str, defines: &BTreeMap<String, String>) -> ShaderProperties {
         let mut properties = ShaderProperties::default();
-        for entry in reader::read_entries(text, defines, &mut properties.diagnostics) {
+        let raw = reader::read_entries(text, defines, &mut properties.diagnostics);
+        // Iris interprets java.util.Properties, so only each key's last value becomes a rule;
+        // a malformed last value leaves no rule for that key.
+        for entry in last_by_key(&raw, |entry| &entry.key) {
             rules::apply(&mut properties, entry.line, &entry.key, &entry.value);
-            properties.entries.push((entry.key, entry.value));
         }
+        properties.entries = raw
+            .into_iter()
+            .map(|entry| (entry.key, entry.value))
+            .collect();
         properties
+    }
+
+    /// Each key once, at its first position with its last value, as java.util.Properties holds it.
+    pub fn effective_entries(&self) -> Vec<(&str, &str)> {
+        last_by_key(&self.entries, |(key, _)| key)
+            .into_iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect()
     }
 
     /// Last value for `key`, trimmed.
@@ -63,7 +77,7 @@ impl ShaderProperties {
     }
 
     /// The enable rule for `program` in `dimension` (folder name like "world0"): a
-    /// `program.<dimension>/<program>.enabled` rule wins over `program.<program>.enabled`; last wins.
+    /// `program.<dimension>/<program>.enabled` rule wins over `program.<program>.enabled`.
     pub fn program_rule(&self, dimension: &str, program: &str) -> Option<&ProgramRule> {
         let for_program = || {
             self.program_rules
@@ -75,6 +89,22 @@ impl ShaderProperties {
             .find(|rule| rule.dimension.as_deref() == Some(dimension))
             .or_else(|| for_program().find(|rule| rule.dimension.is_none()))
     }
+}
+
+/// Keeps the last item for each key, ordered by the key's first occurrence.
+fn last_by_key<T>(items: &[T], key: impl Fn(&T) -> &str) -> Vec<&T> {
+    let mut positions = BTreeMap::new();
+    let mut kept: Vec<&T> = Vec::new();
+    for item in items {
+        match positions.entry(key(item)) {
+            std::collections::btree_map::Entry::Occupied(index) => kept[*index.get()] = item,
+            std::collections::btree_map::Entry::Vacant(index) => {
+                index.insert(kept.len());
+                kept.push(item);
+            }
+        }
+    }
+    kept
 }
 
 /// `program.[<dimension>/]<program>.enabled=<expr>`: whether a program runs.

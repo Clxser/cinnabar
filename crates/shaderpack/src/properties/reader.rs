@@ -1,6 +1,6 @@
-//! Line-level reading of `shaders.properties`: the conditional preprocessor and the
-//! java.util.Properties key/value syntax, in one pass so that continuation lines are
-//! never mistaken for directives.
+//! Line-level reading of `shaders.properties` in Iris's two stages: a line-by-line
+//! conditional preprocessor, then java.util.Properties over the surviving text. Directives
+//! are recognised on every physical line, so a continuation never joins one.
 
 use std::collections::BTreeMap;
 
@@ -26,45 +26,59 @@ pub(super) fn read_entries(
         defines: defines.clone(),
         frames: Vec::new(),
     };
-    let mut entries = Vec::new();
-    // Logical line being joined from continuation lines: (first line, text so far).
-    let mut pending: Option<(u32, String)> = None;
+    // Preprocessed lines: blank lines are dropped, while directives, comments and inactive
+    // lines leave an empty line that ends any continuation.
+    let mut lines: Vec<(u32, String)> = Vec::new();
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     for (index, physical) in text.lines().enumerate() {
         let line = u32::try_from(index + 1).unwrap_or(u32::MAX);
+        let trimmed = physical.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let kept = if let Some(rest) = trimmed.strip_prefix('#') {
+            if let Some(directive) = Directive::parse(rest) {
+                conditionals.apply(directive, line, diagnostics);
+            }
+            String::new()
+        } else if conditionals.active() {
+            // Iris strips `#` from content so the preprocessor never reads it as a directive.
+            trimmed.replace('#', "")
+        } else {
+            String::new()
+        };
+        lines.push((line, kept));
+    }
+    conditionals.finish(diagnostics);
+
+    let mut entries = Vec::new();
+    // Logical line being joined from continuation lines: (first line, text so far).
+    let mut pending: Option<(u32, String)> = None;
+    for (line, text) in &lines {
         if let Some((start, mut logical)) = pending.take() {
-            let piece = physical.trim_start();
-            match strip_continuation(piece) {
+            match strip_continuation(text) {
                 Some(head) => {
                     logical.push_str(head);
                     pending = Some((start, logical));
                 }
                 None => {
-                    logical.push_str(piece);
+                    logical.push_str(text);
                     entries.push(parse_entry(start, &logical));
                 }
             }
             continue;
         }
-        let trimmed = physical.trim_start();
-        if let Some(rest) = trimmed.strip_prefix('#') {
-            if let Some(directive) = Directive::parse(rest) {
-                conditionals.apply(directive, line, diagnostics);
-            }
+        if text.is_empty() || text.starts_with('!') {
             continue;
         }
-        if !conditionals.active() || trimmed.is_empty() || trimmed.starts_with('!') {
-            continue;
-        }
-        match strip_continuation(trimmed) {
-            Some(head) => pending = Some((line, head.to_owned())),
-            None => entries.push(parse_entry(line, trimmed)),
+        match strip_continuation(text) {
+            Some(head) => pending = Some((*line, head.to_owned())),
+            None => entries.push(parse_entry(*line, text)),
         }
     }
     if let Some((start, logical)) = pending {
         entries.push(parse_entry(start, &logical));
     }
-    conditionals.finish(diagnostics);
     entries
 }
 

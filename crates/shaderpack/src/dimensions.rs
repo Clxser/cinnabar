@@ -37,21 +37,7 @@ impl DimensionSelector {
                 String::new()
             }
         } else {
-            // Property replacement keeps the key's original position in the file.
-            let mut entries: Vec<(&str, &str)> = Vec::new();
-            let mut positions = BTreeMap::<&str, usize>::new();
-            for (key, value) in &properties.entries {
-                match positions.entry(key) {
-                    std::collections::btree_map::Entry::Occupied(index) => {
-                        entries[*index.get()].1 = value;
-                    }
-                    std::collections::btree_map::Entry::Vacant(index) => {
-                        index.insert(entries.len());
-                        entries.push((key, value));
-                    }
-                }
-            }
-            for (key, value) in entries {
+            for (key, value) in properties.effective_entries() {
                 if let Some(folder) = key.strip_prefix("dimension.") {
                     for id in value.split_whitespace() {
                         mappings.insert(normalize_id(id), folder.to_string());

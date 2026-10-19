@@ -79,9 +79,21 @@ fn continuation_lines_join_without_leading_whitespace() {
 }
 
 #[test]
-fn continuation_lines_starting_with_hash_are_content() {
-    let properties = parse("list=one \\\n#two\n");
-    assert_eq!(properties.get("list"), Some("one #two"));
+fn comment_lines_end_a_continuation_and_content_loses_hashes() {
+    let properties = parse("list=one \\\n#two\nnext=a#b\n");
+    assert_eq!(properties.get("list"), Some("one"));
+    assert_eq!(properties.get("next"), Some("ab"));
+}
+
+#[test]
+fn directives_apply_on_every_physical_line() {
+    // An inactive continued entry cannot hide the `#endif` that closes its block.
+    let properties = parse("#ifdef MISSING\nhidden=a \\\n#endif\nshown=1\n");
+    assert_eq!(keys(&properties), ["shown"]);
+    // A continuation backslash on a directive is part of its condition, as in Iris.
+    let properties = parse_with("#if FLAG \\\n&& FLAG\n#endif\nafter=1\n", &[("FLAG", "")]);
+    assert_eq!(keys(&properties), ["after"]);
+    assert_eq!(diagnostic_lines(&properties), [1]);
 }
 
 #[test]
@@ -152,7 +164,7 @@ fn program_rules_prefer_dimension_and_last_occurrence() {
          program.world0/composite1.enabled = TAA\nprogram.shadow.enabled=SHADOW\n\
          program.world0/shadow.enabled = (\n",
     );
-    assert_eq!(properties.program_rules.len(), 4);
+    assert_eq!(properties.program_rules.len(), 3);
     let rule = properties
         .program_rule("world0", "composite1")
         .expect("rule");
@@ -234,21 +246,21 @@ fn custom_images_relative_absolute_and_malformed() {
                 },
             ),
             (
-                image("lineImg", "lineSampler", "red", "r32f", "float"),
-                false,
-                ImageSize::Absolute {
-                    width: 256,
-                    height: None,
-                    depth: None,
-                },
-            ),
-            (
                 image("cubeImg", "cubeSampler", "red", "r32f", "float"),
                 false,
                 ImageSize::Absolute {
                     width: 8,
                     height: Some(8),
                     depth: Some(8),
+                },
+            ),
+            (
+                image("lineImg", "lineSampler", "red", "r32f", "float"),
+                false,
+                ImageSize::Absolute {
+                    width: 256,
+                    height: None,
+                    depth: None,
                 },
             ),
         ]
@@ -263,6 +275,15 @@ fn unknown_keys_stay_only_in_entries() {
     assert_eq!(properties.get("screen"), Some("[MAIN] SPEED"));
     assert!(properties.program_rules.is_empty());
     assert!(properties.diagnostics.is_empty());
+}
+
+#[test]
+fn a_malformed_last_declaration_leaves_no_rule_for_its_key() {
+    let properties = parse(
+        "image.lut = s red r32f float false false 16\nimage.lut = s red r32f float false false 0\n",
+    );
+    assert!(properties.images.is_empty());
+    assert_eq!(diagnostic_lines(&properties), [2]);
 }
 
 #[test]
