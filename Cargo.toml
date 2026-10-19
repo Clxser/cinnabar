@@ -163,17 +163,16 @@ wit-component = "=0.247.0"
 # Keep Metal display-link delivery, bounded submissions and indirect validation on wgpu 30.0.1,
 # plus naga GLSL frontend fixes for Java shader packs (glsl-in builtins, overloads, barriers).
 [patch.crates-io]
-# LOCAL ONLY: branch shaderpack-naga-next (cinnabar-mc/wgpu b9611d40 plus the GLSL frontend and
-# SPIR-V `fma` NoContraction fixes shader packs need) is not yet published to cinnabar-mc/wgpu.
-# Every wgpu crate must come from the same checkout so wgpu and the shaderpack crate share one
-# naga; restore the git rev before any PR.
-naga = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga-next/naga" }
-wgpu = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga-next/wgpu" }
-wgpu-core = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga-next/wgpu-core" }
-wgpu-hal = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga-next/wgpu-hal" }
-wgpu-types = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga-next/wgpu-types" }
+# cinnabar-mc/wgpu branch shaderpack-naga-next (wgpu PR #2): b9611d40 plus the GLSL frontend and
+# SPIR-V `fma` NoContraction fixes shader packs need. Every wgpu crate comes from the same rev so
+# wgpu and the shaderpack crate share one naga.
+naga = { git = "https://github.com/cinnabar-mc/wgpu", rev = "3c49bd59cf628fe8246a5c4a465a7c30e724ca67" }
+wgpu = { git = "https://github.com/cinnabar-mc/wgpu", rev = "3c49bd59cf628fe8246a5c4a465a7c30e724ca67" }
+wgpu-core = { git = "https://github.com/cinnabar-mc/wgpu", rev = "3c49bd59cf628fe8246a5c4a465a7c30e724ca67" }
+wgpu-hal = { git = "https://github.com/cinnabar-mc/wgpu", rev = "3c49bd59cf628fe8246a5c4a465a7c30e724ca67" }
+wgpu-types = { git = "https://github.com/cinnabar-mc/wgpu", rev = "3c49bd59cf628fe8246a5c4a465a7c30e724ca67" }
 
-wgpu-naga-bridge = { path = "C:/Users/jvigu/orca/scratch/wgpu-naga-next/wgpu-naga-bridge" }
+wgpu-naga-bridge = { git = "https://github.com/cinnabar-mc/wgpu", rev = "3c49bd59cf628fe8246a5c4a465a7c30e724ca67" }
 
 [profile.dev]
 opt-level = 1
