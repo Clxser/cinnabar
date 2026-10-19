@@ -8,6 +8,7 @@ use bevy::prelude::IntoSystemSet;
 mod categories;
 pub(crate) use categories::draw_categories;
 mod health;
+mod memory;
 pub(crate) use health::requested as query_health_requested;
 #[cfg(target_os = "macos")]
 mod metal_frame;
@@ -123,6 +124,7 @@ impl Plugin for GpuTimingPlugin {
             return;
         };
         crate::device_poll::install(render_app);
+        memory::install(render_app);
         #[cfg(target_os = "macos")]
         metal_frame::install(render_app);
         if overdraw::requested() {

@@ -278,6 +278,11 @@ Both modes retain unchanged viewport uniforms. Use this same-binary control
 for matched comparisons, with equal warm-up and alternating run order. The switch
 is sampled at startup and has no effect without UI diagnostics.
 
+`CINNABAR_GPU_MEMORY_REPORT=<seconds>` logs the device allocator's allocated and reserved
+totals at that interval (target `cinnabar::gpu_memory`), its largest allocations summed by
+label, and the memory blocks with the most reserved-but-unused room with what holds each.
+Backends without an allocator report (Metal, GL) log nothing.
+
 After the startup visibility probe stops, ordinary world-publication logs keep
 current stream and upload counters but mark the inactive visibility witness as
 `visibility_snapshot_valid=false`, with null frame, pose, view and draw-mode
