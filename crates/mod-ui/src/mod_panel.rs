@@ -285,8 +285,8 @@ impl ModUi {
         })
     }
 
-    /// Follows the Screen animations setting. When disabled, surface transitions, exits and
-    /// `motion: true` panel feedback change at once, including values already moving.
+    /// Explicitly overrides mod surface motion, independently of built-in screen preferences.
+    /// Disabling settles transitions, exits and opted-in feedback, including values already moving.
     pub fn configure_motion(&mut self, enabled: bool) {
         self.reduced_motion = !enabled;
     }

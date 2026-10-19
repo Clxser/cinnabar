@@ -44,6 +44,10 @@ output contains `open`, optional `panel` using `ui::mod_panel::Panel`, and optio
 {"open":true,"panel":{"title":"Example","toggle_key":"ShiftRight","dark":true,"controls":[]},"keys":["KeyR"]}
 ```
 
+Panel `motion` and authored surface transitions belong to the mod and remain
+independent of Cinnabar's built-in Screen animations setting. Mods implement their
+own motion preference by choosing `motion` and which transitions to declare.
+
 Panel `show_gameplay_hud: true` keeps the resource-pack gameplay HUD visible behind
 an open panel, for example for a placement editor. It defaults to false and can
 change with full panel updates while retaining pointer capture. The player's Hide

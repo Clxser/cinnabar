@@ -17,6 +17,8 @@ struct Scenario {
     player_block: Option<[i32; 3]>,
     #[serde(default)]
     coordinates_visible: bool,
+    #[serde(default)]
+    screen_animations: Option<bool>,
     steps: Vec<Step>,
 }
 
@@ -53,6 +55,8 @@ struct Step {
     expect_panel_document_unchanged: bool,
     #[serde(default)]
     expect_paint_change: bool,
+    #[serde(default)]
+    expect_motion_active: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -240,6 +244,14 @@ fn external_reactor_runs_retained_menu_and_actual_pack_hud_scenario() {
         "camera grants remain independent"
     );
     let mut presentation = UiPresentationResource(presentation);
+    if let Some(enabled) = scenario.screen_animations {
+        let mut options = launcher::menu::settings_options::SettingsOptions::default();
+        options.set(
+            launcher::menu::settings_options::SettingId::ScreenAnimations.index(),
+            i32::from(enabled),
+        );
+        presentation.set_chat_settings_snapshot((Arc::new(options), None));
+    }
     let (pack, glyphs) = pack(packs);
     presentation.set_server_ui_pack(&pack);
     let mut runtime = UiRuntime::new(1);
@@ -412,6 +424,14 @@ fn external_reactor_runs_retained_menu_and_actual_pack_hud_scenario() {
                 previous_vertices.as_ref(),
                 Some(&frame.vertices),
                 "{}: clock did not change painted vertices",
+                step.name
+            );
+        }
+        if let Some(active) = step.expect_motion_active {
+            assert_eq!(
+                presentation.mod_ui().mod_panel_motion_active(),
+                active,
+                "{}: unexpected mod animation state",
                 step.name
             );
         }
