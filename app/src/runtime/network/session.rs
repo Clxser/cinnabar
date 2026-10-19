@@ -44,6 +44,9 @@ pub fn spawn_network(
     config: NetworkConfig,
     packet_relay: Option<std::sync::Arc<dyn protocol::PacketRelay>>,
 ) -> Result<NetworkHandle<PackApplication>, std::io::Error> {
+    if bridge::join_profile::JoinProfile::current().id().is_none() {
+        bridge::join_profile::JoinProfile::begin();
+    }
     let socket_dir = config.socket_dir.clone();
     let preparation = Preparation {
         registry_base: config.registry_base,

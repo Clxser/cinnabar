@@ -8275,7 +8275,8 @@ and rendered qualification, not initial implementation of those systems.
   and matched inventory/held-item presentation. Shared cube face sheets are bounded coverage.
 
 Remaining qualification includes attachables and custom item models, action/use timing,
-projectile interpolation and shake, sleep/mount poses, name tags, capes, shadows,
+projectile interpolation and shake, sleep/mount poses, name tags (including over
+oversized server cosmetics), capes, shadows,
 particles and equipment materials. Preserve existing accepted Java animation/cape/name-tag
 and combat-visual deviations described in [AGENTS.md](AGENTS.md).
 
@@ -8373,8 +8374,13 @@ validation; retain only the explicitly permitted diagnostic/optional fallbacks.
 - Local mods and server experiences still need runtime/input isolation, reload/reorder/
   removal, consent, custom screen transitions and media qualification. Unmeasured shared
   blur, element blur, route exits and current-world visual integration remain incomplete.
+- Native extension UI and HUD APIs (retained modules, profile fields, text plates,
+  compass markers, totem annotations and bounded camera overrides) still need
+  displayed-frame pacing and complete rendering acceptance.
 - Enhanced rendering remains restricted until its GPU faults and freezes are resolved.
-  Diagnostics or bounded fixtures do not establish safe general gameplay use.
+  Diagnostics or bounded fixtures do not establish safe general gameplay use. Java
+  shader-pack source loading is implemented in `shaderpack`; configuration parsing,
+  translation, render-host integration and in-game acceptance remain incomplete.
 - Runtime pack compatibility still includes custom texture inheritance/tints, authored
   geometry and block/item component behavior beyond the currently supported cases.
 
