@@ -319,6 +319,7 @@ fn prepare_views(
             focal: [view.clip_from_view.x_axis.x, view.clip_from_view.y_axis.y],
             screen,
         };
+        state.enter_world(inputs.biome.is_some());
         let frame = FrameUniforms::new(
             camera,
             &inputs,

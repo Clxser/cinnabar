@@ -278,6 +278,18 @@ fn smooth_converges_on_a_step_over_its_fade_time() {
 }
 
 #[test]
+fn restarted_smoothing_starts_again_from_the_current_value() {
+    // Photon's `biome_temperature`: a 1000 s fade that must start from the world's biome.
+    let mut uniforms = compile_ok(&["uniform.float.level = smooth(target, 1000, 1000)"]);
+    let at = |value: f32| builtins(&[("target", UniformValue::Float(value))]);
+    assert_eq!(float(uniforms.evaluate(&at(-1.0), 0.1), "level"), -1.0);
+    let held = float(uniforms.evaluate(&at(0.6), 0.1), "level");
+    assert!(held < -0.99, "a long fade barely moves: {held}");
+    uniforms.restart_smoothing();
+    assert_eq!(float(uniforms.evaluate(&at(0.6), 0.1), "level"), 0.6);
+}
+
+#[test]
 fn smooth_uses_separate_rise_and_fall_times() {
     let mut uniforms = compile_ok(&[
         "uniform.float.instant_fall = smooth(target, 2.0, 0.0)",

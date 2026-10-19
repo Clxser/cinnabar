@@ -58,6 +58,8 @@ pub(crate) struct ViewState {
     pub atlas_generation: Option<(Option<u64>, Option<u64>, Option<u64>)>,
     /// This frame's effect geometry.
     pub effects: super::effects::EffectBuffers,
+    /// Whether a frame has seen the player's biome: see [`Self::enter_world`].
+    in_world: bool,
 }
 
 impl ViewState {
@@ -86,12 +88,27 @@ impl ViewState {
             skipped: BTreeSet::new(),
             atlas_generation: None,
             effects: Default::default(),
+            in_world: false,
         }
     }
 
     /// Whether the state still matches `pack` and the screen size.
     pub(crate) fn matches(&self, pack: &Arc<PackGpu>, screen: [u32; 2]) -> bool {
         Arc::ptr_eq(&self.pack, pack) && self.targets.screen_size == screen
+    }
+
+    /// Restarts every smoothed uniform (`smooth()` custom uniforms, `wetness`,
+    /// `eyeBrightnessSmooth`, `centerDepthSmooth`) on the first frame that knows the player's
+    /// biome. Iris builds a pack's uniforms once the world renders, so they start from world
+    /// values; frames before that (joining, terrain arriving) read placeholder biome values,
+    /// and smoothing from them would hold Photon's 1000 s `biome_temperature` near the
+    /// placeholder for the whole session.
+    pub(crate) fn enter_world(&mut self, biome_known: bool) {
+        if biome_known && !self.in_world {
+            self.in_world = true;
+            self.custom.restart_smoothing();
+            self.history.started = false;
+        }
     }
 
     /// Evaluates custom uniforms and writes every program's and geometry draw's uniform

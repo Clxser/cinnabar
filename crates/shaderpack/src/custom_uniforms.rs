@@ -177,6 +177,14 @@ impl CustomUniforms {
         self.inputs.iter().map(String::as_str)
     }
 
+    /// Forgets every `smooth()` accumulator, so each call next returns its current value,
+    /// as on the first evaluation. Iris builds a pack's uniforms when the world starts
+    /// rendering; a host that evaluates them earlier (before the player's biome is known)
+    /// restarts here so smoothing starts from world values, not placeholders.
+    pub fn restart_smoothing(&mut self) {
+        self.smooth.fill(SmoothState::default());
+    }
+
     /// Evaluates every definition in order and returns the `uniform.*` results (not
     /// `variable.*`) in definition order.
     ///
