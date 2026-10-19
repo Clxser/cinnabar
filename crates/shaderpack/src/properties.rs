@@ -22,7 +22,7 @@ pub struct ShaderProperties {
     pub entries: Vec<(String, String)>,
     /// `program.[<dimension>/]<program>.enabled` rules in file order.
     pub program_rules: Vec<ProgramRule>,
-    /// `image.<name>` declarations in file order.
+    /// `image.<name>` declarations in file order; a repeated name keeps only its last declaration.
     pub images: Vec<CustomImage>,
     /// Malformed lines and expressions (never fatal), with 1-based line numbers.
     pub diagnostics: Vec<PropertiesDiagnostic>,
@@ -121,15 +121,15 @@ pub struct CustomImage {
     pub size: ImageSize,
 }
 
-/// Size of a custom image; relative images are 2D, absolute images 2D or 3D.
+/// Size of a custom image; relative images are 2D, absolute images 1D, 2D or 3D.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ImageSize {
     /// Positive fractions of the screen width and height.
     Relative { width: f32, height: f32 },
-    /// Positive pixel sizes; `depth` is set for 3D images.
+    /// Positive pixel sizes; `height` is set for 2D and 3D images, `depth` for 3D.
     Absolute {
         width: u32,
-        height: u32,
+        height: Option<u32>,
         depth: Option<u32>,
     },
 }

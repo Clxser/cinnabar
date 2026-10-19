@@ -2,7 +2,7 @@
 
 use crate::dimensions::DimensionSelector;
 use crate::environment::Environment;
-use crate::options::{OptionValues, PackOption, discover_options, option_defines};
+use crate::options::{OptionValues, PackOption, discover_options, property_defines};
 use crate::programs::{ProgramGroup, ProgramSource, enumerate_programs};
 use crate::properties::ShaderProperties;
 use crate::source::{PackError, PackSource};
@@ -62,7 +62,7 @@ impl ShaderPack {
         options: &OptionValues,
     ) -> BTreeMap<String, String> {
         let mut d: BTreeMap<String, String> = environment.standard_defines().into_iter().collect();
-        d.extend(option_defines(&self.options, options));
+        d.extend(property_defines(&self.options, options));
         d
     }
 

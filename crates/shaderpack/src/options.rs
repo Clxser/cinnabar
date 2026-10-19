@@ -56,8 +56,8 @@ pub type OptionValues = BTreeMap<String, String>;
 /// any order). Rules (OptiFine/Iris): the directive must start the line (leading whitespace
 /// allowed); a boolean `#define`/`//#define` counts only if NAME is tested by `#ifdef NAME`,
 /// `#ifndef NAME`, `defined NAME` or `defined(NAME)` somewhere in `files`; a value define needs
-/// the `[...]` allowed-values list in its trailing `//` comment; `const` options need the list
-/// except `const bool`. First definition in sorted-path order wins; later conflicting
+/// the `[...]` allowed-values list in its trailing `//` comment; `const` options must use a
+/// configurable const name and need the list except `const bool`. First definition in sorted-path order wins; later conflicting
 /// definitions are ignored. The result is sorted by name.
 pub fn discover_options<'a>(
     files: impl IntoIterator<Item = (&'a str, &'a str)>,
@@ -128,6 +128,71 @@ pub fn option_defines(options: &[PackOption], values: &OptionValues) -> BTreeMap
     defines
 }
 
+/// Macros visible to `shaders.properties` conditions and enable rules: [`option_defines`]
+/// plus const options, an enabled `const bool` as a flag and other consts by value.
+pub(crate) fn property_defines(
+    options: &[PackOption],
+    values: &OptionValues,
+) -> BTreeMap<String, String> {
+    let mut defines = option_defines(options, values);
+    for option in options {
+        if let OptionKind::Const { ty, .. } = &option.kind {
+            let value = option.value(values);
+            if ty != "bool" {
+                defines.insert(option.name.clone(), value.to_owned());
+            } else if value == "true" {
+                defines.insert(option.name.clone(), String::new());
+            }
+        }
+    }
+    defines
+}
+
+/// Const names packs may expose as options; other `const` declarations are ordinary GLSL.
+const CONFIGURABLE_CONSTS: &[&str] = &[
+    "shadowMapResolution",
+    "shadowDistance",
+    "voxelDistance",
+    "shadowDistanceRenderMul",
+    "entityShadowDistanceMul",
+    "shadowIntervalSize",
+    "generateShadowMipmap",
+    "generateShadowColorMipmap",
+    "shadowHardwareFiltering",
+    "shadowtex0Mipmap",
+    "shadowtexMipmap",
+    "shadowtex1Mipmap",
+    "shadowtex0Nearest",
+    "shadowtexNearest",
+    "shadow0MinMagNearest",
+    "shadowtex1Nearest",
+    "shadow1MinMagNearest",
+    "wetnessHalflife",
+    "drynessHalflife",
+    "eyeBrightnessHalflife",
+    "centerDepthHalflife",
+    "sunPathRotation",
+    "ambientOcclusionLevel",
+    "superSamplingLevel",
+    "noiseTextureResolution",
+];
+
+/// Matches [`CONFIGURABLE_CONSTS`] and the per-buffer shadow-color consts for buffers 0–7.
+fn is_configurable_const(name: &str) -> bool {
+    let indexed = |prefix: &str, suffixes: &[&str]| {
+        name.strip_prefix(prefix)
+            .and_then(|rest| rest.split_at_checked(1))
+            .is_some_and(|(index, suffix)| {
+                matches!(index.as_bytes()[0], b'0'..=b'7') && suffixes.contains(&suffix)
+            })
+    };
+    CONFIGURABLE_CONSTS.contains(&name)
+        || ["shadowcolor", "shadowColor"]
+            .into_iter()
+            .any(|prefix| indexed(prefix, &["Mipmap", "Nearest", "MinMagNearest"]))
+        || indexed("shadowHardwareFiltering", &[""])
+}
+
 /// A line shaped like an option definition (before the discovery rules are applied).
 struct Definition<'a> {
     name: &'a str,
@@ -161,6 +226,9 @@ fn option_kind(definition: &Definition<'_>, tested: &BTreeSet<&str>) -> Option<O
             allowed: allowed?,
         }),
         Form::Const { ty, value } => {
+            if !is_configurable_const(definition.name) {
+                return None;
+            }
             let allowed = if ty == "bool" {
                 if value != "true" && value != "false" {
                     return None;
@@ -372,10 +440,11 @@ mod tests {
 //#define COMMENTED_VALUE 3 // [1 2 3]
 #define MACRO_FN(x) x // [1 2]
 int late; #define LATE 1 // [1 2]
+const int shadowMapResolution = 2048; // [1024 2048 4096]
 const int samples = 8; // [4 8 16]
-const float unlisted = 1.0;
-const bool fancyWater = true;
-const bool maybeWater = sometimes;
+const float sunPathRotation = 1.0;
+const bool generateShadowMipmap = true;
+const bool shadowtex0Nearest = sometimes;
 const vec3 tint = vec3(1.0); // [a b]
 ";
 
@@ -406,8 +475,8 @@ const vec3 tint = vec3(1.0); // [a b]
                 "SOFT_SHADOWS",
                 "SPACED_OFF",
                 "TIGHT",
-                "fancyWater",
-                "samples",
+                "generateShadowMipmap",
+                "shadowMapResolution",
             ]
         );
         let kind = |name: &str| find(&options, name).map(|option| option.kind.clone());
@@ -439,15 +508,15 @@ const vec3 tint = vec3(1.0); // [a b]
             })
         );
         assert_eq!(
-            kind("samples"),
+            kind("shadowMapResolution"),
             Some(OptionKind::Const {
                 ty: "int".to_owned(),
-                default: "8".to_owned(),
-                allowed: strings(&["4", "8", "16"]),
+                default: "2048".to_owned(),
+                allowed: strings(&["1024", "2048", "4096"]),
             })
         );
         assert_eq!(
-            kind("fancyWater"),
+            kind("generateShadowMipmap"),
             Some(OptionKind::Const {
                 ty: "bool".to_owned(),
                 default: "true".to_owned(),
@@ -508,7 +577,7 @@ const vec3 tint = vec3(1.0); // [a b]
         assert_eq!(value("SPACED_OFF"), Some("false"));
         assert_eq!(value("QUALITY"), Some("5"));
         assert_eq!(value("TIGHT"), Some("0.5"));
-        assert_eq!(value("samples"), Some("8"));
+        assert_eq!(value("shadowMapResolution"), Some("2048"));
 
         let defines = option_defines(&options, &overrides);
         let expected: BTreeMap<String, String> = [

@@ -119,7 +119,7 @@ pub const GEOMETRY_FALLBACKS: &[(&str, Option<&str>)] = &[
     ("gbuffers_hand_water", Some("gbuffers_hand")),
     ("dh_terrain", None),
     ("dh_water", Some("dh_terrain")),
-    ("dh_generic", None),
+    ("dh_generic", Some("dh_terrain")),
     ("dh_shadow", None),
     ("shadow", None),
     ("shadow_solid", Some("shadow")),
@@ -149,6 +149,13 @@ pub fn program_group(name: &str) -> Option<ProgramGroup> {
 
 /// Resolves a known name and whether its family and suffix permit render stages.
 fn program_name(name: &str) -> Option<(ProgramGroup, bool)> {
+    // `shadow_a`…`shadow_z` are compute variants of the shadow pass.
+    if name
+        .strip_prefix("shadow_")
+        .is_some_and(|s| s.len() == 1 && s.as_bytes()[0].is_ascii_lowercase())
+    {
+        return Some((ProgramGroup::Shadow, false));
+    }
     if GEOMETRY_FALLBACKS.iter().any(|(n, _)| *n == name) {
         return Some((
             if name.starts_with("dh_") {
@@ -359,6 +366,11 @@ mod tests {
             geometry_fallback("gbuffers_hand_water"),
             Some("gbuffers_hand")
         );
+        assert_eq!(geometry_fallback("dh_generic"), Some("dh_terrain"));
+        assert_eq!(program_group("shadow_a"), Some(ProgramGroup::Shadow));
+        assert!(program_file("shadow_z.csh").is_some());
+        assert!(program_file("shadow_a.fsh").is_none());
+        assert_eq!(program_group("shadow_aa"), None);
     }
 
     #[test]

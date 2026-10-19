@@ -182,8 +182,10 @@ fn custom_images_relative_absolute_and_malformed() {
          image.cubeImg = cubeSampler red_integer r8ui unsigned_byte true false 16 16 16\n\
          image.badBool = s rgba rgba8 unsigned_byte sometimes false 4 4\n\
          image.badRelative = s rgba rgba8 unsigned_byte true true 1 1 1\n\
-         image.tooShort = s rgba rgba8 unsigned_byte true false 4\n\
-         image.zero = s rgba rgba8 unsigned_byte true false 0 4\n",
+         image.tooShort = s rgba rgba8 unsigned_byte true false\n\
+         image.zero = s rgba rgba8 unsigned_byte true false 0 4\n\
+         image.lineImg = lineSampler red r32f float false false 256\n\
+         image.cubeImg = cubeSampler red r32f float false false 8 8 8\n",
     );
     let image = |name: &str, sampler: &str, format: &str, internal: &str, pixel: &str| {
         (
@@ -227,23 +229,26 @@ fn custom_images_relative_absolute_and_malformed() {
                 false,
                 ImageSize::Absolute {
                     width: 32,
-                    height: 8,
+                    height: Some(8),
                     depth: None,
                 },
             ),
             (
-                image(
-                    "cubeImg",
-                    "cubeSampler",
-                    "red_integer",
-                    "r8ui",
-                    "unsigned_byte"
-                ),
-                true,
+                image("lineImg", "lineSampler", "red", "r32f", "float"),
+                false,
                 ImageSize::Absolute {
-                    width: 16,
-                    height: 16,
-                    depth: Some(16),
+                    width: 256,
+                    height: None,
+                    depth: None,
+                },
+            ),
+            (
+                image("cubeImg", "cubeSampler", "red", "r32f", "float"),
+                false,
+                ImageSize::Absolute {
+                    width: 8,
+                    height: Some(8),
+                    depth: Some(8),
                 },
             ),
         ]

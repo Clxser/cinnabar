@@ -13,7 +13,7 @@ fn pack() -> ShaderPack {
     ShaderPack::new(PackSource::from_files([
         (
             "lib/settings.glsl",
-            "//#define GLOW\n#define QUALITY 2 // [1 2 3]\nconst bool fancyWater = true;\n#ifdef GLOW\n#endif\n",
+            "//#define GLOW\n#define QUALITY 2 // [1 2 3]\nconst bool generateShadowMipmap = true;\nconst int shadowMapResolution = 2048; // [1024 2048]\n#ifdef GLOW\n#endif\n",
         ),
         ("notes.txt", "#define IGNORE 1 // [1 2]\n"),
         (
@@ -46,7 +46,12 @@ fn options_and_properties_share_effective_macro_values() {
             .iter()
             .map(|option| option.name.as_str())
             .collect::<Vec<_>>(),
-        ["GLOW", "QUALITY", "fancyWater"]
+        [
+            "GLOW",
+            "QUALITY",
+            "generateShadowMipmap",
+            "shadowMapResolution"
+        ]
     );
     assert_eq!(options[0].kind, OptionKind::Bool { default: false });
     assert_eq!(
@@ -59,7 +64,15 @@ fn options_and_properties_share_effective_macro_values() {
     assert_eq!(options[2].value(&defaults), "true");
     let defines = pack.defines(&environment, &defaults);
     assert!(!defines.contains_key("GLOW"));
-    assert!(!defines.contains_key("fancyWater"));
+    // Const options reach property conditions, as flags or by value.
+    assert_eq!(
+        defines.get("generateShadowMipmap").map(String::as_str),
+        Some("")
+    );
+    assert_eq!(
+        defines.get("shadowMapResolution").map(String::as_str),
+        Some("2048")
+    );
     assert_eq!(defines.get("QUALITY").map(String::as_str), Some("2"));
     let properties = pack.properties(&environment, &defaults);
     assert!(properties.diagnostics.is_empty());
@@ -409,20 +422,40 @@ fn option_locations_preserve_distinct_exact_source_keys() {
     let pack = ShaderPack::new(PackSource::from_files([
         (
             r"a\b.glsl",
-            "const bool alpha=true;\nconst bool beta=false;",
+            "const bool shadowtex0Mipmap=true;\nconst bool shadowtex1Mipmap=false;",
         ),
         (
             "a/b.glsl",
-            "\nconst bool gamma=true;\nconst bool delta=false;",
+            "\nconst bool shadowtex0Nearest=true;\nconst bool shadowtex1Nearest=false;",
         ),
     ]));
     let options = pack.options();
     assert_eq!(options.len(), 4);
     for (name, key, line, declaration) in [
-        ("alpha", r"a\b.glsl", 1, "const bool alpha=true;"),
-        ("beta", r"a\b.glsl", 2, "const bool beta=false;"),
-        ("gamma", "a/b.glsl", 2, "const bool gamma=true;"),
-        ("delta", "a/b.glsl", 3, "const bool delta=false;"),
+        (
+            "shadowtex0Mipmap",
+            r"a\b.glsl",
+            1,
+            "const bool shadowtex0Mipmap=true;",
+        ),
+        (
+            "shadowtex1Mipmap",
+            r"a\b.glsl",
+            2,
+            "const bool shadowtex1Mipmap=false;",
+        ),
+        (
+            "shadowtex0Nearest",
+            "a/b.glsl",
+            2,
+            "const bool shadowtex0Nearest=true;",
+        ),
+        (
+            "shadowtex1Nearest",
+            "a/b.glsl",
+            3,
+            "const bool shadowtex1Nearest=false;",
+        ),
     ] {
         let option = options.iter().find(|option| option.name == name).unwrap();
         let defining_text = pack.source().text(&option.file).unwrap();

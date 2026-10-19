@@ -29,6 +29,8 @@ fn apply_rule(
             .program_rules
             .push(program_rule(target, value, line)?);
     } else if let Some(image) = key.strip_prefix("image.") {
+        // Like java.util.Properties, a repeated key replaces the earlier declaration.
+        properties.images.retain(|existing| existing.name != image);
         properties.images.push(custom_image(image, value)?);
     }
     Ok(())
@@ -115,14 +117,19 @@ fn custom_image(image: &str, value: &str) -> Result<CustomImage, String> {
             width: positive_f32(width)?,
             height: positive_f32(height)?,
         },
+        (false, &[width]) => ImageSize::Absolute {
+            width: positive_u32(width)?,
+            height: None,
+            depth: None,
+        },
         (false, &[width, height]) => ImageSize::Absolute {
             width: positive_u32(width)?,
-            height: positive_u32(height)?,
+            height: Some(positive_u32(height)?),
             depth: None,
         },
         (false, &[width, height, depth]) => ImageSize::Absolute {
             width: positive_u32(width)?,
-            height: positive_u32(height)?,
+            height: Some(positive_u32(height)?),
             depth: Some(positive_u32(depth)?),
         },
         _ => return Err(image_usage(value)),
@@ -142,6 +149,6 @@ fn custom_image(image: &str, value: &str) -> Result<CustomImage, String> {
 fn image_usage(value: &str) -> String {
     format!(
         "expected `<sampler> <format> <internalFormat> <pixelType> <clear> <relative> \
-         <width> <height> [<depth>]`, found `{value}`"
+         <width> [<height> [<depth>]]`, found `{value}`"
     )
 }
