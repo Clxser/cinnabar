@@ -25,7 +25,7 @@ pub use programs::{
     program_group,
 };
 pub use properties::{
-    BufferSize, CustomImage, FlipRule, ImageSize, ProgramRule, PropertiesDiagnostic, ScaleRule,
-    ShaderProperties, SizeValue,
+    BufferSize, CustomImage, CustomTexture, FlipRule, ImageSize, ProgramRule, PropertiesDiagnostic,
+    ScaleRule, ShaderProperties, SizeValue, TextureSource,
 };
 pub use source::{PackError, PackOrigin, PackSource};

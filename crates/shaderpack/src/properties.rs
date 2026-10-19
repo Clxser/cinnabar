@@ -1,8 +1,8 @@
 //! `shaders.properties`: the pack-wide settings file of OptiFine/Iris packs.
 //!
 //! The file is first run through a C-like conditional preprocessor (`#if`, `#ifdef`, ...),
-//! then read as java.util.Properties. Program enable rules, buffer sizes, flips, scales and
-//! custom images are typed; other keys stay in `entries`.
+//! then read as java.util.Properties. Program enable rules, buffer sizes, flips, scales, custom
+//! texture bindings and custom images are typed; other keys stay in `entries`.
 //! Malformed input never fails the whole file: it becomes a [`PropertiesDiagnostic`].
 
 mod reader;
@@ -13,6 +13,7 @@ mod tests;
 use std::collections::BTreeMap;
 
 use crate::expr::{Expr, macro_value};
+use crate::programs::ProgramGroup;
 
 /// Parsed shaders.properties after conditional preprocessing.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -28,6 +29,8 @@ pub struct ShaderProperties {
     pub flips: Vec<FlipRule>,
     /// `scale.<program>` rules, one per key.
     pub scales: Vec<ScaleRule>,
+    /// `texture.<stage>.<sampler>` and `texture.noise` bindings, one per key.
+    pub custom_textures: Vec<CustomTexture>,
     /// `image.<name>` declarations, one per key.
     pub images: Vec<CustomImage>,
     /// Malformed lines and expressions (never fatal), with 1-based line numbers.
@@ -179,6 +182,47 @@ pub struct ScaleRule {
     pub scale: f32,
     /// Viewport offset as a fraction of the screen; `[0.0, 0.0]` when omitted.
     pub offset: [f32; 2],
+}
+
+/// `texture.<stage>.<sampler>=<value>`; stage e.g. "gbuffers", "deferred", "composite",
+/// "shadowcomp", "prepare". `texture.noise` yields stage "noise" with sampler "noisetex",
+/// the uniform it binds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CustomTexture {
+    /// Program stage group the binding applies to.
+    pub stage: String,
+    /// Sampler name, possibly dotted (e.g. "colortex6.1").
+    pub sampler: String,
+    /// Where the texture comes from.
+    pub source: TextureSource,
+}
+
+impl CustomTexture {
+    /// The uniform it binds: [`Self::sampler`] without a texture-unit suffix
+    /// (`colortex6.1` → `colortex6`).
+    pub fn uniform(&self) -> &str {
+        match self.sampler.rsplit_once('.') {
+            Some((name, unit)) if unit.bytes().all(|b| b.is_ascii_digit()) => name,
+            _ => &self.sampler,
+        }
+    }
+
+    /// Whether it binds in programs of `group` (`texture.noise` binds everywhere).
+    pub fn applies_to(&self, group: ProgramGroup) -> bool {
+        self.stage == group.texture_stage() || self.stage == "noise"
+    }
+}
+
+/// Source of a custom texture.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TextureSource {
+    /// Pack-relative path (leading '/' stripped), e.g. "tex/noise.png".
+    File(String),
+    /// `namespace:path` resource location.
+    Resource(String),
+    /// Raw texture: `<path> <TYPE> <internalFormat> <dims...> <pixelFormat> <pixelType>`;
+    /// `path` has its leading '/' stripped and `spec` keeps the remaining tokens unvalidated.
+    Raw { path: String, spec: Vec<String> },
 }
 
 /// `image.<name> = <sampler> <format> <internalFormat> <pixelType> <clear> <relative> <w> <h> [<d>]`.

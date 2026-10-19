@@ -1,8 +1,8 @@
 //! Typed parsing of the recognised `shaders.properties` keys.
 
 use super::{
-    BufferSize, CustomImage, FlipRule, ImageSize, ProgramRule, PropertiesDiagnostic, ScaleRule,
-    ShaderProperties, SizeValue,
+    BufferSize, CustomImage, CustomTexture, FlipRule, ImageSize, ProgramRule, PropertiesDiagnostic,
+    ScaleRule, ShaderProperties, SizeValue, TextureSource,
 };
 use crate::expr::Expr;
 
@@ -47,6 +47,17 @@ fn apply_rule(
         });
     } else if let Some(program) = key.strip_prefix("scale.") {
         properties.scales.push(scale_rule(program, value)?);
+    } else if let Some(target) = key.strip_prefix("texture.") {
+        let (stage, sampler) = if target == "noise" {
+            ("noise".to_owned(), "noisetex".to_owned())
+        } else {
+            split_target(target, "stage", "sampler")?
+        };
+        properties.custom_textures.push(CustomTexture {
+            stage,
+            sampler,
+            source: texture_source(value)?,
+        });
     } else if let Some(image) = key.strip_prefix("image.") {
         properties.images.push(custom_image(image, value)?);
     }
@@ -163,6 +174,27 @@ fn scale_rule(program: &str, value: &str) -> Result<ScaleRule, String> {
         scale,
         offset,
     })
+}
+
+/// Classifies a texture value: extra tokens make a raw texture, a `:` a resource location,
+/// anything else a pack file. Leading `/` is stripped from pack paths.
+fn texture_source(value: &str) -> Result<TextureSource, String> {
+    let mut tokens = value.split_whitespace();
+    let Some(first) = tokens.next() else {
+        return Err("missing texture path".to_owned());
+    };
+    let spec: Vec<String> = tokens.map(str::to_owned).collect();
+    let path = first.trim_start_matches('/');
+    if !spec.is_empty() {
+        return Ok(TextureSource::Raw {
+            path: name(path, "texture path")?,
+            spec,
+        });
+    }
+    if first.contains(':') {
+        return Ok(TextureSource::Resource(first.to_owned()));
+    }
+    Ok(TextureSource::File(name(path, "texture path")?))
 }
 
 /// Parses an image declaration with positive absolute or relative dimensions.
