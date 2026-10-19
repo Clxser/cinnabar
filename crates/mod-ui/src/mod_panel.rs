@@ -253,6 +253,15 @@ impl ModUi {
         self.mod_panel.as_ref().is_some_and(|panel| panel.open)
     }
 
+    /// Whether the active panel retains resource-pack HUD content for placement or inspection.
+    pub fn mod_panel_shows_gameplay_hud(&self) -> bool {
+        self.mod_hud_editor_open()
+            || self
+                .mod_panel
+                .as_ref()
+                .is_some_and(|panel| panel.open && panel.panel.show_gameplay_hud)
+    }
+
     /// Whether focused keys are owned by guest behavior instead of the native close shortcut.
     pub fn mod_panel_capture_key(&self) -> bool {
         self.mod_panel

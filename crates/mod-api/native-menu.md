@@ -44,6 +44,12 @@ output contains `open`, optional `panel` using `ui::mod_panel::Panel`, and optio
 {"open":true,"panel":{"title":"Example","toggle_key":"ShiftRight","dark":true,"controls":[]},"keys":["KeyR"]}
 ```
 
+Panel `show_gameplay_hud: true` keeps the resource-pack gameplay HUD visible behind
+an open panel, for example for a placement editor. It defaults to false and can
+change with full panel updates while retaining pointer capture. The player's Hide
+HUD setting and death screen still take priority; a focused panel always hides
+the crosshair. Other extensions' overlay cards remain suppressed during menus.
+
 Omitting `panel` retains its previous document, allowing HUD-only updates before or
 while the menu is closed. Optional `hud_bindings` supplies a bounded map of trusted
 resource-pack HUD globals: names begin with `#mod_`, values are booleans, finite

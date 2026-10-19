@@ -899,3 +899,31 @@ fn packet_prepared_fallback_accepts_values_and_rejects_new_controls() {
         initial.controls.len()
     );
 }
+
+/// Visibility is live panel metadata; changing it must preserve a captured gesture.
+#[test]
+fn gameplay_hud_policy_updates_without_replacing_panel_or_capture() {
+    let mut ui = crate::ModUi::default();
+    let mut settings = panel();
+    let owner = PanelUiOwner::Environment(0);
+    ui.set_mod_panel(owner, Some(&settings)).unwrap();
+    ui.set_mod_panel_open(true);
+    ui.mod_panel.as_mut().unwrap().drag = Some(1);
+    for visible in [true, false, true] {
+        settings.show_gameplay_hud = visible;
+        ui.set_mod_panel(owner, Some(&settings)).unwrap();
+        assert_eq!(ui.mod_panel_shows_gameplay_hud(), visible);
+        assert!(ui.mod_panel_open());
+        assert_eq!(ui.mod_panel.as_ref().unwrap().drag, Some(1));
+    }
+    ui.set_mod_panel_open(false);
+    assert!(!ui.mod_panel_shows_gameplay_hud());
+    settings.show_gameplay_hud = false;
+    ui.set_mod_panel(PanelUiOwner::Environment(1), Some(&settings))
+        .unwrap();
+    ui.set_mod_panel_open(true);
+    assert!(
+        !ui.mod_panel_shows_gameplay_hud(),
+        "new owner does not inherit policy"
+    );
+}

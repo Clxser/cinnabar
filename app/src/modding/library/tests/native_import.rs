@@ -63,15 +63,19 @@ fn native_packet_source() -> Vec<u8> {
 }
 
 /// Drives the real registration worker until its latest packet candidate is ready for a join.
-fn await_next_join(app: &mut App, mods: &Path, registration: &Path) {
-    test_time::eventually("imported packet mod is admitted for the next join", || {
-        app.update();
-        !app.world().resource::<Watcher>().preparing()
-            && scan(mods, registration, String::new())
-                .active
-                .first()
-                .is_some_and(|active| active.status == launcher::mods::Status::NextJoin)
-    });
+fn await_next_join(app: &mut App, mods: &Path, registration: &Path, timeout: std::time::Duration) {
+    test_time::eventually_within(
+        timeout,
+        "imported packet mod is admitted for the next join",
+        || {
+            app.update();
+            !app.world().resource::<Watcher>().preparing()
+                && scan(mods, registration, String::new())
+                    .active
+                    .first()
+                    .is_some_and(|active| active.status == launcher::mods::Status::NextJoin)
+        },
+    );
 }
 
 /// A serialized relay tick completes the queued menu call without timing assumptions.
@@ -157,7 +161,7 @@ fn imported_native_menu_requests_explicit_consent_and_starts_on_the_next_join() 
         Update,
         (crate::modding::registration::install_pending, ApplyDeferred).chain(),
     );
-    await_next_join(&mut app, &mods, &registration);
+    await_next_join(&mut app, &mods, &registration, test_time::DEFAULT_TIMEOUT);
     let identity = protocol::session_wire::SessionIdentity {
         display_name: "Steve".into(),
         xuid: "1".into(),
@@ -186,7 +190,7 @@ fn imported_native_menu_requests_explicit_consent_and_starts_on_the_next_join() 
             ..Default::default()
         }
     );
-    await_next_join(&mut app, &mods, &registration);
+    await_next_join(&mut app, &mods, &registration, test_time::DEFAULT_TIMEOUT);
     assert_eq!(
         old.outbound(&[1]),
         None,
@@ -296,7 +300,14 @@ fn imported_external_reactor_keeps_native_menu_alive_after_explicit_consent() {
         Update,
         (crate::modding::registration::install_pending, ApplyDeferred).chain(),
     );
-    await_next_join(&mut app, &mods, &registration);
+    // A cold external reactor may carry a full language runtime. Use the
+    // packet loader's readiness bound rather than the small WAT fixture wait.
+    await_next_join(
+        &mut app,
+        &mods,
+        &registration,
+        client_extensions::modding::packet_relay::PACKET_MOD_READY_WAIT,
+    );
     let relay = app
         .world()
         .resource::<PacketMods>()
