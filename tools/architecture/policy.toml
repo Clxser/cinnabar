@@ -1376,6 +1376,11 @@ literal = "flat"
 reason = "GLSL interpolation qualifier in translated shader source."
 
 [[identifier_literal_exceptions]]
+path = "crates/shaderpack/src/transform/legacy.rs"
+literal = "active"
+reason = "GLSL reserved word that 1.20 shaders may use as a name."
+
+[[identifier_literal_exceptions]]
 path = "tools/devtool/src/web.rs"
 literal = "web"
 reason = "wasm-bindgen's static browser output target, unrelated to a game identifier."
