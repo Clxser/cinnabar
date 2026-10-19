@@ -329,7 +329,8 @@ validation; retain only the explicitly permitted diagnostic/optional fallbacks.
   `shaderpack`, including options, dimensions, parsed properties, program discovery
   and enable rules, and its programs translate to validated naga modules with a binding
   contract. Pack-specific translation fixes, render-host integration and in-game
-  acceptance remain incomplete.
+  acceptance remain incomplete; parsed custom uniform expressions are not executed or
+  rendered.
 - Runtime pack compatibility still includes custom texture inheritance/tints, authored
   geometry and block/item component behavior beyond the currently supported cases.
 
