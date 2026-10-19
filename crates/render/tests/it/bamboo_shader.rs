@@ -324,10 +324,9 @@ fn read_vertices(
         frame_words[time] = 1.0;
     }
     let frame = gpu.buffer(&frame_words, uniform);
-    let lightmap = gpu.buffer(
-        bytemuck::cast_slice(&render_model::LightmapInputs::default().build()),
-        uniform,
-    );
+    let lightmap = gpu.lightmap(bytemuck::cast_slice(
+        &render_model::LightmapInputs::default().build(),
+    ));
     let class_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: None,
         size: wgpu::Extent3d {

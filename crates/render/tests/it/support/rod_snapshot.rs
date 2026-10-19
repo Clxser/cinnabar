@@ -246,10 +246,9 @@ pub(crate) fn render_at(
         glam::camera::rh::proj::directx::orthographic(-1.35, 1.35, -1.35, 1.35, 10.0, 0.1);
     let view = gpu.buffer(&gpu_snapshot::view(projection * camera, eye), uniform);
     let empty = gpu.words(&[0; 64], storage);
-    let lightmap = gpu.buffer(
-        bytemuck::cast_slice(&render_model::LightmapInputs::default().build()),
-        uniform,
-    );
+    let lightmap = gpu.lightmap(bytemuck::cast_slice(
+        &render_model::LightmapInputs::default().build(),
+    ));
     let query = gpu.words(
         &material_shader::world_uniform_words(&[0; material_shader::WORLD_CLOCK_WORDS]),
         uniform,

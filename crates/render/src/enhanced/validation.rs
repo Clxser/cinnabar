@@ -523,15 +523,10 @@ fn build_native_pipelines() {
 // Night and brightness darken the lightmap, never the open-sky gate on direct moonlight.
 #[test]
 fn full_sky_exposure_keeps_direct_light_under_a_night_lightmap() {
-    let instance = native_instance();
-    let Ok(adapter) =
-        bevy::tasks::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-    else {
-        eprintln!("missing fixture: native GPU adapter for full-sky night-lightmap validation");
+    let Some(gpu) = crate::gpu_snapshot::Gpu::for_fixture("Enhanced sky exposure") else {
         return;
     };
-    let (device, queue) =
-        bevy::tasks::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
+    let (device, queue) = (gpu.device, gpu.queue);
     let source = shader_source::composed(
         "import render::enhanced::view::sky_illumination;
 import render::lighting::light_colour;
@@ -567,7 +562,10 @@ import render::lighting::light_colour;
     };
     // Midnight at brightness zero: open sky is about 0.129 in every lightmap channel.
     let night = [[0.129_f32, 0.129, 0.129, 1.0]; 256];
-    let lightmap = buffer(wgpu::BufferUsages::UNIFORM, bytemuck::cast_slice(&night));
+    let lightmap = buffer(
+        wgpu::BufferUsages::UNIFORM,
+        bytemuck::bytes_of(&render_model::LightmapUniform::new(night)),
+    );
     let results = buffer(
         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         &[0; 12],

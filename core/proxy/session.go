@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hashimthearab/rust-mcbe/core/internal/bridgecontract"
+	"github.com/hashimthearab/rust-mcbe/core/internal/joinprofile"
 	"github.com/hashimthearab/rust-mcbe/core/internal/redact"
 	"github.com/hashimthearab/rust-mcbe/core/internal/streamnet"
 	"github.com/sandertv/gophertunnel/minecraft"
@@ -126,7 +127,13 @@ func (server *sessionServer) close() error {
 	return err
 }
 
+// serveConn keeps native archive delivery on the play connection.
 func (server *sessionServer) serveConn(ctx context.Context, raw net.Conn) error {
+	return server.serveConnWithPacks(ctx, raw, nil)
+}
+
+// serveConnWithPacks injects archive delivery at the existing handoff owner.
+func (server *sessionServer) serveConnWithPacks(ctx context.Context, raw net.Conn, delivery *sessionPackDelivery) error {
 	framed := streamnet.NewFramedConn(raw)
 	if err := raw.SetReadDeadline(time.Now().Add(sessionConnectTimeout)); err != nil {
 		return err
@@ -146,7 +153,7 @@ func (server *sessionServer) serveConn(ctx context.Context, raw net.Conn) error 
 	if err != nil {
 		return errors.Join(err, refuseSessionConnect(raw, framed, err))
 	}
-	sessionCtx, cancel := context.WithCancelCause(ctx)
+	sessionCtx, cancel := context.WithCancelCause(joinprofile.Start(ctx, request.JoinProfileID))
 	defer cancel(nil)
 	session := newSessionConn(framed)
 	defer func() { _ = session.Close() }()
@@ -164,16 +171,22 @@ func (server *sessionServer) serveConn(ctx context.Context, raw net.Conn) error 
 		server.onNetwork(NetworkObservation{AttemptID: attempt, LocalRuntimeID: session.runtimeID.Load(), RoundTripMillis: plan.latency})
 		defer server.onNetwork(NetworkObservation{AttemptID: attempt})
 	}
+	if delivery != nil {
+		if err := delivery.prepare(sessionCtx, &plan); err != nil {
+			return errors.Join(err, prepared.close())
+		}
+	}
 	return handOffSession(sessionCtx, session, prepared, plan)
 }
 
 // sessionPlan is what the handoff carries, taken from a prepared upstream.
 type sessionPlan struct {
-	latency func() *uint32
-	handoff sessionHandoff
-	packs   []*resource.Pack // content of handoff.Packs, in the same order
-	startup [][]byte         // packets through StartGame
-	rest    [][]byte         // the rest of StartGame's batch
+	packSink func([]*resource.Pack) error // nil preserves native serial delivery
+	latency  func() *uint32
+	handoff  sessionHandoff
+	packs    []*resource.Pack // content of handoff.Packs, in the same order
+	startup  [][]byte         // packets through StartGame
+	rest     [][]byte         // the rest of StartGame's batch
 }
 
 // prepare joins upstream while watching the client, then reads startup and selects the packs.
@@ -260,12 +273,15 @@ func (server *sessionServer) prepare(
 
 // handOffSession writes the handoff, the pack archives and the rest of StartGame's batch, then relays.
 func handOffSession(ctx context.Context, session *sessionConn, prepared *preparedConnection, plan sessionPlan) error {
+	deliveryDone := joinprofile.Stage(ctx, "core_pack_handoff")
 	if err := writeSessionHandoff(session, plan); err != nil {
 		if errors.Is(err, errSessionEnded) {
 			err = nil
 		}
+		deliveryDone()
 		return errors.Join(err, prepared.close())
 	}
+	deliveryDone()
 	prepared.packAdmission.observeLocalHandoff(prepared.packStack)
 	return servePreparedConnection(ctx, session, prepared)
 }
@@ -281,7 +297,11 @@ func writeSessionHandoff(session *sessionConn, plan sessionPlan) error {
 	if err := session.writeFrame(frame); err != nil {
 		return err
 	}
-	if err := writeSessionPacks(session.writeFrame, plan.packs); err != nil {
+	sink := plan.packSink
+	if sink == nil {
+		sink = func(packs []*resource.Pack) error { return writeSessionPacks(session.writeFrame, packs) }
+	}
+	if err := sink(plan.packs); err != nil {
 		return err
 	}
 	for _, data := range plan.rest {

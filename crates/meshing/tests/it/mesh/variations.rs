@@ -109,7 +109,7 @@ fn mixed_biome_option_keeps_tinted_faces_one_block_wide() {
             &meshing::lighting::FullBrightLightSampler,
             meshing::MeshOptions {
                 split_tinted_faces: split,
-                ..meshing::MeshOptions::default()
+                ..Default::default()
             },
         );
         if split {

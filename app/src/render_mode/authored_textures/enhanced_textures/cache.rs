@@ -14,8 +14,8 @@ use sha2::{Digest, Sha256};
 use super::{LOW_PBR_TILE_SIZE, Source};
 
 const CACHE_PATH: &str = ".local/enhanced-pbr.cache";
-// Includes material-owned alias references and terrain atlas tints.
-const MAGIC: &[u8; 8] = b"CINPBR13";
+// Includes unclamped signed normal filtering and opacity-weighted resizing.
+const MAGIC: &[u8; 8] = b"CINPBR16";
 const MAX_CACHE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 static OVERSIZED_CACHE_WARNED: AtomicBool = AtomicBool::new(false);
 
@@ -28,6 +28,7 @@ pub(super) struct Payload {
 }
 
 impl Payload {
+    /// Validates cached references before exposing the decoded pages.
     pub(super) fn into_assets(self) -> Option<render_scene::EnhancedTextureAssets> {
         render_scene::EnhancedTextureAssets::new(
             self.color,
@@ -38,6 +39,7 @@ impl Payload {
     }
 }
 
+/// Collects relevant pack files in every directory while rejecting symlinks.
 fn files(root: &Path, result: &mut Vec<PathBuf>) -> Option<()> {
     for entry in fs::read_dir(root).ok()? {
         let entry = entry.ok()?;
@@ -47,13 +49,6 @@ fn files(root: &Path, result: &mut Vec<PathBuf>) -> Option<()> {
         }
         let path = entry.path();
         if kind.is_dir() {
-            let name = entry.file_name();
-            if [".git", "src", "node_modules", "target", ".local"]
-                .iter()
-                .any(|skip| name == *skip)
-            {
-                continue;
-            }
             files(&path, result)?;
         } else if kind.is_file()
             && path
@@ -72,6 +67,7 @@ fn files(root: &Path, result: &mut Vec<PathBuf>) -> Option<()> {
     Some(())
 }
 
+/// Hashes pack contents, decode options and carrier ownership within a byte budget.
 pub(super) fn fingerprint(
     packs: &[PbrPack],
     sources: &std::collections::BTreeMap<(String, String), Vec<Source>>,
@@ -151,11 +147,16 @@ pub(super) fn fingerprint(
             digest.update((source.frame as u64).to_le_bytes());
             digest.update((source.count as u64).to_le_bytes());
             digest.update([u8::from(source.cutout), u8::from(source.overlay_mask)]);
+            digest.update([u8::from(source.baked_tint.is_some())]);
+            if let Some(tint) = source.baked_tint {
+                digest.update(tint);
+            }
         }
     }
     Some(digest.finalize().into())
 }
 
+/// Reads one little-endian reference or array-header word.
 fn word(input: &mut impl Read) -> Option<u32> {
     let mut bytes = [0; 4];
     input.read_exact(&mut bytes).ok()?;
@@ -179,6 +180,7 @@ fn mip_byte_len(layers: u32, size: u32) -> Option<u64> {
         .checked_mul(4)
 }
 
+/// Reads a complete mip chain within the remaining cache byte budget.
 fn array(input: &mut impl Read, remaining: &mut u64) -> Option<TextureArray> {
     let layers = word(input)?;
     let side = word(input)?;
@@ -205,6 +207,7 @@ fn array(input: &mut impl Read, remaining: &mut u64) -> Option<TextureArray> {
     })
 }
 
+/// Reads six bounded arrays and their reference table for the expected key.
 fn decode(input: &mut impl Read, size: u64, key: &[u8; 32], max_bytes: u64) -> Option<Payload> {
     if size > max_bytes {
         return None;
@@ -236,6 +239,7 @@ fn decode(input: &mut impl Read, size: u64, key: &[u8; 32], max_bytes: u64) -> O
     })
 }
 
+/// Loads a bounded cache payload for the current pack fingerprint.
 pub(super) fn load(key: &[u8; 32]) -> Option<Payload> {
     let mut file = fs::File::open(CACHE_PATH).ok()?;
     let size = file.metadata().ok()?.len();
@@ -243,6 +247,7 @@ pub(super) fn load(key: &[u8; 32]) -> Option<Payload> {
     Some(result)
 }
 
+/// Writes validated mip arrays and their reference table in cache order.
 fn encode(output: &mut impl Write, key: &[u8; 32], payload: &Payload) -> std::io::Result<()> {
     output.write_all(MAGIC)?;
     output.write_all(key)?;
@@ -357,6 +362,45 @@ pub(super) fn save(key: &[u8; 32], payload: &Payload) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn referenced_images_in_any_directory_invalidate_cached_artwork() {
+        let root = tempfile::tempdir().unwrap();
+        let pack = PbrPack::new(root.path(), None);
+        let packs = std::slice::from_ref(&pack);
+        for directory in ["src", "target", "node_modules", ".local", ".git"] {
+            let texture = format!("textures/blocks/{directory}/cache_fixture");
+            let path = root.path().join(format!("{texture}.png"));
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            image::RgbaImage::from_pixel(2, 2, image::Rgba([20, 80, 140, 255]))
+                .save(&path)
+                .unwrap();
+            let before = fingerprint(packs, &Default::default()).unwrap();
+            let mut cached = Vec::new();
+            encode(&mut cached, &before, &payload(1, 1)).unwrap();
+            image::RgbaImage::from_pixel(2, 2, image::Rgba([140, 80, 20, 255]))
+                .save(&path)
+                .unwrap();
+            let decoded = pack_compiler::pbr::load_pbr_texture(packs, &texture)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                decoded.frame(0, 1).unwrap().color.get_pixel(0, 0).0,
+                [140, 80, 20, 255]
+            );
+            let after = fingerprint(packs, &Default::default()).unwrap();
+            assert_ne!(before, after, "referenced image in {directory}");
+            assert!(
+                decode(
+                    &mut cached.as_slice(),
+                    cached.len() as u64,
+                    &after,
+                    MAX_CACHE_BYTES
+                )
+                .is_none()
+            );
+        }
+    }
 
     /// Builds small complete mip chains with distinct bytes for each material map and page.
     fn payload(side: u32, layers: u32) -> Payload {
@@ -485,6 +529,32 @@ mod tests {
             assets::texture::PBR_REF_COLOR | 1
         );
         assert_eq!(maps.material_reference(3, texture), u32::MAX);
+    }
+
+    #[test]
+    fn cache_rejects_mips_from_clamped_signed_normal_filtering() {
+        let key = [7; 32];
+        let mut bytes = Vec::new();
+        encode(&mut bytes, &key, &payload(1, 1)).unwrap();
+        assert!(
+            decode(
+                &mut bytes.as_slice(),
+                bytes.len() as u64,
+                &key,
+                MAX_CACHE_BYTES
+            )
+            .is_some()
+        );
+        bytes[..MAGIC.len()].copy_from_slice(b"CINPBR15");
+        assert!(
+            decode(
+                &mut bytes.as_slice(),
+                bytes.len() as u64,
+                &key,
+                MAX_CACHE_BYTES
+            )
+            .is_none()
+        );
     }
 
     #[test]

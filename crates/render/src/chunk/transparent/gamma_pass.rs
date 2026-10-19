@@ -134,9 +134,11 @@ pub(crate) fn gamma_transparent<const NAMETAGS_ONLY: bool>(
     if !nametags_only && let Some(client) = tracy_client::Client::running() {
         use tracy_client::plot_name;
         let mut counts = [0_usize; 3];
+        let mut previous = None;
         for (range, gamma, _) in ranges() {
             counts[usize::from(gamma)] += range.len();
-            counts[2] += 1;
+            counts[2] += usize::from(previous != Some(gamma));
+            previous = Some(gamma);
         }
         let switches = phase
             .items
@@ -160,7 +162,8 @@ pub(crate) fn gamma_transparent<const NAMETAGS_ONLY: bool>(
     );
     // Phase encoding holds the shared draw-functions lock, so worker ranges cannot draw
     // concurrently. Keep their ordered colour-space passes in one encoder without a worker wait.
-    for (range, gamma, water) in ranges() {
+    let mut ranges = ranges().peekable();
+    while let Some((gamma, water)) = ranges.peek().map(|(_, gamma, water)| (*gamma, *water)) {
         // Terrain ranges also write water identity for Enhanced underwater transport.
         let coverage = water
             .then(|| {
@@ -190,12 +193,17 @@ pub(crate) fn gamma_transparent<const NAMETAGS_ONLY: bool>(
             Some(None) => false,
             None => true,
         };
-        if draw && let Err(error) = phase.render_range(&mut pass, world, view_entity, range) {
-            bevy::log::error!("Error rendering sorted transparency: {error:?}");
-        }
         // Even an empty viewport begins one pass so the target's first use still clears it.
         if !draw {
             break;
+        }
+        // Deferred names leave gaps in the phase, but do not change this pass's attachments.
+        while let Some((range, _, _)) = ranges
+            .next_if(|(_, next_gamma, next_water)| (*next_gamma, *next_water) == (gamma, water))
+        {
+            if let Err(error) = phase.render_range(&mut pass, world, view_entity, range) {
+                bevy::log::error!("Error rendering sorted transparency: {error:?}");
+            }
         }
     }
     Ok(())

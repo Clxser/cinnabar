@@ -4,30 +4,6 @@ use anyhow::{Context, Result};
 use bevy::render::settings::{WgpuSettings, WgpuSettingsPriority};
 use launcher::graphics_backend::{Adapter, Backend};
 
-/// Applies renderer limits, compiler and allocator policy to Bevy's defaults.
-pub(super) fn configure_render_settings(settings: &mut WgpuSettings) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        settings.priority = WgpuSettingsPriority::WebGPU;
-        settings.backends = Some(wgpu::Backends::BROWSER_WEBGPU);
-    }
-    // Shipping installs use FXC; a DLL in the launch directory must not change that.
-    settings.dx12_shader_compiler = wgpu::Dx12Compiler::Fxc;
-    settings.limits.max_storage_buffers_per_shader_stage = settings
-        .limits
-        .max_storage_buffers_per_shader_stage
-        .max(render::required_vertex_storage_buffers());
-    // Bevy's default (`Performance`) sub-allocates from 128–256 MiB blocks the allocator
-    // keeps while any allocation in them lives; on a 2 GiB working set that left about
-    // 1 GiB reserved but unused, and `MemoryUsage`'s 64 MiB blocks still left a few hundred
-    // MiB (one or two 15 MiB targets in a 64 MiB block). Blocks of at most 16 MiB hold a
-    // full-screen target with little to spare, and anything larger (shader-pack vertex pages,
-    // HDR targets, the chunk arena) gets memory of its own.
-    settings.memory_hints = wgpu::MemoryHints::Manual {
-        suballocated_device_memory_block_size: (4 << 20)..(16 << 20),
-    };
-}
-
 /// Converts the policy's backend to wgpu's flags without keeping a separate order table.
 pub(super) fn flags(backend: Backend) -> wgpu::Backends {
     match backend {

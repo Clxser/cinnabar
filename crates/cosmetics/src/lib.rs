@@ -10,6 +10,10 @@ use std::{
     },
 };
 
+pub mod emotes;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+
 /// Number of supported slots, checked against the pinned wire schema.
 pub const SLOT_COUNT: usize = 6;
 pub const MAX_ITEMS: usize = 256;
@@ -20,6 +24,8 @@ pub type Slots = BTreeMap<String, Option<String>>;
 pub struct Catalog {
     pub version: u64,
     pub items: Vec<Descriptor>,
+    #[serde(default)]
+    pub emotes: Vec<emotes::Descriptor>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -39,6 +45,14 @@ pub struct Assets {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct RenderFlags {
     pub double_sided: bool,
+    /// Draws every opaque texel fullbright in the world; previews keep the authored texture.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub emissive: bool,
+}
+
+/// Omits disabled optional flags so catalogs written before they existed round-trip unchanged.
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -174,21 +188,23 @@ pub fn known_slot(slot: &str) -> bool {
 
 /// Returns a stable slot index from the pinned schema for attachment layers.
 pub fn slot_index(slot: &str) -> Option<usize> {
+    known_slots().iter().position(|known| known == slot)
+}
+
+/// Lists the pinned schema's slot vocabulary in its stable attachment-layer order.
+pub fn known_slots() -> &'static [String] {
     static SLOTS: OnceLock<Vec<String>> = OnceLock::new();
-    SLOTS
-        .get_or_init(|| {
-            let schema: serde_json::Value =
-                serde_json::from_str(include_str!("../../../core/cinnabarapi/schema/v1.json"))
-                    .expect("pinned API schema");
-            schema["$defs"]["CosmeticSlot"]["x-known-slots"]
-                .as_array()
-                .expect("slot vocabulary")
-                .iter()
-                .map(|slot| slot.as_str().expect("slot name").to_owned())
-                .collect()
-        })
-        .iter()
-        .position(|known| known == slot)
+    SLOTS.get_or_init(|| {
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../../../core/cinnabarapi/schema/v1.json"))
+                .expect("pinned API schema");
+        schema["$defs"]["CosmeticSlot"]["x-known-slots"]
+            .as_array()
+            .expect("slot vocabulary")
+            .iter()
+            .map(|slot| slot.as_str().expect("slot name").to_owned())
+            .collect()
+    })
 }
 
 /// Rejects unsafe metadata while ignoring item kinds this client cannot render.
@@ -210,15 +226,18 @@ pub fn supported(item: &Descriptor) -> bool {
         && [&item.assets.geometry, &item.assets.texture]
             .into_iter()
             .chain(item.assets.animation.iter())
-            .all(|asset| {
-                asset.bytes > 0
-                    && asset.bytes <= MAX_ASSET_BYTES
-                    && asset.sha256.len() == 64
-                    && asset
-                        .sha256
-                        .bytes()
-                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            })
+            .all(valid_asset)
+}
+
+/// Checks common content-addressed asset metadata before any disk or network access.
+pub fn valid_asset(asset: &Asset) -> bool {
+    asset.bytes > 0
+        && asset.bytes <= MAX_ASSET_BYTES
+        && asset.sha256.len() == 64
+        && asset
+            .sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// Resolves only supported, free or explicitly entitled selections in their declared slot.

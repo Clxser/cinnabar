@@ -153,7 +153,7 @@ fn join_first_frame_keeps_current_artwork_after_reversed_biome_completion_and_se
         world.entity_assets = Some(entities.clone());
     }
     *app.world_mut()
-        .resource_mut::<crate::environment::WorldClock>() = Default::default();
+        .resource_mut::<client_presentation::environment::WorldClock>() = Default::default();
     let (network, sender) =
         NetworkHandle::<resource_packs::PackApplication>::stub_with_control_sender();
     sender.try_send(bootstrap(packs, blocks.clone())).unwrap();
@@ -223,7 +223,7 @@ fn join_first_frame_keeps_current_artwork_after_reversed_biome_completion_and_se
     let replacement = gpu.preparation().unwrap();
     test_time::eventually("current pack GPU preparation", || {
         render::settle_publication_noop_frame(&mut app);
-        gpu.status(replacement.assets().identity()) == Some(Ok(()))
+        gpu.status(replacement.assets().binding_identity()) == Some(Ok(()))
     });
     assert!(
         !gpu.finish(&obsolete, true),
@@ -274,4 +274,49 @@ fn join_first_frame_keeps_current_artwork_after_reversed_biome_completion_and_se
             .0
             .is_none()
     );
+}
+
+/// A queued failure belongs to its session even after a replacement request is accepted.
+#[cfg(feature = "acceptance")]
+#[test]
+fn old_session_failure_preserves_replacement_join_profile() {
+    let (mut app, _) = crate::runtime::world::committed_ui::tests::fixture_app();
+    app.init_resource::<PublicationController>()
+        .init_resource::<ChunkUploadAcknowledgements>()
+        .init_resource::<LocalAvatarPresentation>()
+        .insert_resource(PhysicsAuthorityGate::ProductionEnabled)
+        .insert_resource(AutoFly::new(false))
+        .insert_resource(crate::runtime::visibility::AppMetrics(
+            diagnostics::metrics::MetricsCollector::new(),
+        ));
+    let old = bridge::join_profile::JoinProfile::begin();
+    let (network, sender) = old.run(NetworkHandle::<PackApplication>::stub_with_control_sender);
+    sender
+        .try_send(NetworkControlEvent::Failed {
+            message: "old session failed".into(),
+            decode_error_count: 0,
+            server_disconnect: None,
+            origin: client_session::NetworkFailureOrigin::Receive,
+        })
+        .unwrap();
+    app.insert_resource(network);
+    let replacement = bridge::join_profile::JoinProfile::begin();
+    let expected = replacement.id().expect("replacement profile is active");
+    replacement.run(|| {
+        app.world_mut()
+            .run_system_cached(receive_network_events)
+            .unwrap()
+    });
+    assert!(
+        app.world()
+            .resource::<crate::runtime::shutdown::FatalError>()
+            .0
+            .is_some()
+    );
+    assert_eq!(
+        replacement.id(),
+        Some(expected),
+        "old session must not finish the replacement request"
+    );
+    replacement.finish("test_complete");
 }

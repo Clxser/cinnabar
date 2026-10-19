@@ -29,6 +29,7 @@ enhanced-diagnostics = ["enhanced", "render-model/enhanced-diagnostics", "render
 shaderpacks = ["render-model/shaderpacks", "dep:shaderpack", "dep:naga", "dep:png", "dep:wesl", "wgpu/naga-ir"]
 
 [dependencies]
+web-time.workspace = true
 env-compat = { path = "../env-compat" }
 render-scene = { path = "../render-scene" }
 block-transform = { path = "../block-transform" }

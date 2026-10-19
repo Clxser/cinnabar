@@ -50,14 +50,20 @@ impl ScreenState {
     }
     /// Releases a departing owner without dispatching its events to the shifted successor.
     pub(super) fn remove_host(&mut self, index: usize) {
+        self.replace_host(index);
+        if let Some(owner) = self.owner.as_mut()
+            && *owner > index
+        {
+            *owner -= 1;
+        }
+    }
+
+    /// Makes a replacement receive its own layout and data notifications on the next frame.
+    pub(super) fn replace_host(&mut self, index: usize) {
         if self.owner == Some(index) {
             self.owner = None;
             self.layout = None;
             self.data_change = None;
-        } else if let Some(owner) = self.owner.as_mut()
-            && *owner > index
-        {
-            *owner -= 1;
         }
     }
 }
@@ -521,6 +527,10 @@ pub(super) fn publish(host: &ModHost, presentation: &mut UiPresentationRuntime) 
 #[cfg(test)]
 #[path = "screens/input_tests.rs"]
 mod input_tests;
+
+#[cfg(test)]
+#[path = "screens/lifecycle_tests.rs"]
+mod lifecycle_tests;
 
 #[cfg(test)]
 mod tests {

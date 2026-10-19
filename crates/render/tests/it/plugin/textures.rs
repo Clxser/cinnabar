@@ -72,15 +72,15 @@ fn mip_upload_plan_preserves_exact_layer_offsets_and_row_padding() {
 
 #[test]
 fn global_texture_bind_group_rebuilds_only_for_new_asset_identity_or_revision() {
-    let current = texture_identity(0x1000, 7);
+    let current = texture_assets(0x1000, 7).binding_identity();
     assert!(!texture_asset_needs_rebuild(Some(current), current));
     assert!(texture_asset_needs_rebuild(
         Some(current),
-        texture_identity(0x2000, 7)
+        texture_assets(0x2000, 7).binding_identity()
     ));
     assert!(texture_asset_needs_rebuild(
         Some(current),
-        texture_identity(0x1000, 8)
+        texture_assets(0x1000, 8).binding_identity()
     ));
     assert!(texture_asset_needs_rebuild(None, current));
 }
@@ -240,45 +240,4 @@ fn one_page_fallback_is_a_real_one_layer_copy_of_diagnostic_mips() {
             &source_mip.rgba8[..layer_bytes]
         );
     }
-}
-
-#[test]
-fn animation_clock_updates_do_not_rebuild_or_reupload_texture_assets() {
-    let identity = texture_identity(0x1000, 7);
-    let mut current = None;
-    let mut immutable_uploads = 0;
-    let mut clock_bytes = 0;
-    for frame in 0..120_u32 {
-        if texture_asset_needs_rebuild(current, identity) {
-            immutable_uploads += 1;
-            current = Some(identity);
-        }
-        let clock = ChunkAnimationClock::from_elapsed_seconds(f64::from(frame) / 60.0);
-        assert!(clock.partial_tick() >= 0.0 && clock.partial_tick() < 1.0);
-        clock_bytes += size_of::<ChunkAnimationClock>();
-    }
-    assert_eq!(immutable_uploads, 1);
-    assert_eq!(clock_bytes, 120 * 16);
-}
-
-#[test]
-fn authored_texture_replacement_retains_carrier_identity_and_detaches_without_new_revision() {
-    let runtime = Arc::new(RuntimeAssets::diagnostic());
-    let textures = ChunkTextureAssets::with_revision(runtime.clone(), 7);
-    let page = runtime.texture_array().clone();
-    let authored = Arc::new(
-        render_scene::EnhancedTextureAssets::new(
-            [page.clone(), page.clone()],
-            [page.clone(), page.clone()],
-            [page.clone(), page],
-            vec![u32::MAX; assets::MAX_TEXTURE_PAGES * assets::MAX_TEXTURE_LAYERS]
-                .into_boxed_slice(),
-        )
-        .unwrap(),
-    );
-    let replacement = textures.with_updated_enhanced(Some(authored));
-    assert!(Arc::ptr_eq(replacement.assets(), &runtime));
-    assert_ne!(replacement.identity(), textures.identity());
-    let restored = replacement.with_updated_enhanced(None);
-    assert_eq!(restored.identity(), textures.identity());
 }

@@ -31,6 +31,7 @@ func registerChatCommands() {
 	cmd.Register(cmd.New("tp", "Teleports to a position", []string{"teleport"}, teleport{}))
 	cmd.Register(cmd.New("give", "Adds a vanilla item to your inventory", nil, giveItem{}))
 	cmd.Register(cmd.New("weather", "Sets the weather: clear, rain or thunder", nil, weatherSet{}))
+	cmd.Register(cmd.New("fixture_totem", "Applies server damage while holding a protective totem", nil, totemFixture{}))
 }
 
 // defaultWeatherSeconds keeps a requested weather for an hour unless a duration is given.

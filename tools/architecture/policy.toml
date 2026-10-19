@@ -69,8 +69,8 @@ forbidden_dependencies = ["asset-compiler", "bevy", "wgpu"]
 [[crates]]
 name = "web-client"
 path = "web/client"
-allowed_dependencies = ["assets", "bridge", "web-transport", "semantic-input"]
-forbidden_dependencies = ["cinnabar", "launcher-host", "bevy", "wgpu"]
+allowed_dependencies = ["assets", "bridge", "web-transport", "semantic-input", "app", "launcher", "protocol", "client-session", "client-audio"]
+forbidden_dependencies = ["launcher-host", "bevy", "wgpu"]
 
 [[crates]]
 name = "web-transport"
@@ -148,7 +148,7 @@ forbidden_transitive_dependencies = ["app", "cinnabar", "client-world", "chunk-p
 [[crates]]
 name = "actor-animation"
 path = "crates/actor-animation"
-allowed_dependencies = ["simulation-clock", "assets", "protocol", "render-api", "render-model", "world", "protocol-ids"]
+allowed_dependencies = ["cosmetics", "simulation-clock", "assets", "protocol", "render-api", "render-model", "world", "protocol-ids"]
 forbidden_dependencies = ["asset-compiler", "pack-compiler", "pack-compile-input", "pack-entity-compiler", "pack-font-compiler", "client-world", "chunk-pipeline", "bevy", "wgpu"]
 forbidden_transitive_dependencies = ["app", "cinnabar", "client-world", "chunk-pipeline", "meshing", "ui", "json-ui", "render", "bevy", "bevy_*", "wgpu*"]
 test_support_features = ["test-support"]
@@ -192,7 +192,7 @@ forbidden_transitive_dependencies = ["app", "cinnabar", "asset-compiler", "clap"
 name = "pack-runtime"
 path = "crates/pack-runtime"
 forbidden_dependencies = ["pack-compiler", "pack-font-compiler"]
-allowed_dependencies = ["pack-json", "assets", "block-transform", "json-ui", "pack-compile-input", "pack-entity-compiler", "protocol", "resource-pack", "sim"]
+allowed_dependencies = ["bridge", "pack-json", "assets", "block-transform", "json-ui", "pack-compile-input", "pack-entity-compiler", "protocol", "resource-pack", "sim"]
 forbidden_transitive_dependencies = ["app", "cinnabar", "asset-compiler", "client-session", "client-ui", "client-presentation", "render", "bevy", "bevy_*", "wgpu*"]
 test_support_features = ["test-support"]
 
@@ -201,7 +201,7 @@ name = "chunk-pipeline"
 path = "crates/chunk-pipeline"
 test_support_features = ["publication-test-support", "benchmark-support", "runtime-profile", "benchmark-mimalloc"]
 allowed_dependencies = ["simulation-clock", "actor-animation", "client-world", "far-terrain", "meshing", "assets", "world", "render-api", "test-time", "protocol-ids"]
-# Protocol is permitted only in fixtures; production consumes client-world's admitted contracts.
+# Protocol is permitted only in fixtures; production consumes admitted world and publication contracts.
 forbidden_dependencies = ["asset-compiler", "pack-compiler", "pack-compile-input", "pack-entity-compiler", "pack-font-compiler", "protocol", "bevy", "wgpu"]
 forbidden_transitive_dependencies = ["app", "cinnabar", "asset-compiler", "pack-compiler", "pack-compile-input", "pack-entity-compiler", "pack-font-compiler", "ui", "json-ui", "render", "bevy", "bevy_*", "wgpu*"]
 
@@ -229,7 +229,7 @@ test_support_features = ["test-support"]
 [[crates]]
 name = "client-session"
 path = "crates/client-session"
-allowed_dependencies = ["simulation-clock", "bridge", "crash-report", "protocol", "server-experience", "world", "protocol-ids"]
+allowed_dependencies = ["simulation-clock", "render-api", "bridge", "crash-report", "protocol", "server-experience", "world", "protocol-ids"]
 forbidden_transitive_dependencies = ["app", "cinnabar", "gameplay", "client-presentation", "acceptance", "launcher", "client-ui", "client-world", "chunk-pipeline", "inventory", "player-state", "semantic-input", "ui", "json-ui", "render", "asset-compiler", "pack-compiler", "pack-compile-input", "pack-entity-compiler", "pack-font-compiler", "pack-runtime", "bevy", "bevy_*", "wgpu*"]
 test_support_features = ["test-support"]
 
@@ -271,7 +271,7 @@ test_support_features = ["test-support"]
 [[crates]]
 name = "client-extensions"
 path = "crates/client-extensions"
-allowed_dependencies = ["assets", "client-state", "client-ui", "client-world", "inventory", "mod-api", "mod-host", "mod-render", "player-state", "protocol", "render-model", "server-experience", "ui"]
+allowed_dependencies = ["assets", "client-state", "client-ui", "client-world", "inventory", "mod-api", "mod-host", "mod-render", "player-state", "protocol", "render-api", "render-model", "server-experience", "ui"]
 forbidden_transitive_dependencies = ["app", "cinnabar", "client-runtime", "client-interaction", "client-shell", "client-presentation", "client-audio", "render"]
 
 [[crates]]
@@ -434,7 +434,7 @@ forbidden_dependencies = ["bevy", "wgpu", "protocol", "world"]
 [[crates]]
 name = "mod-render"
 path = "crates/mod-render"
-allowed_dependencies = ["mod-api"]
+allowed_dependencies = ["mod-api", "test-alloc"]
 forbidden_dependencies = ["bevy", "wgpu", "protocol", "world"]
 forbidden_transitive_dependencies = ["bevy", "bevy_*", "wgpu*"]
 
@@ -449,7 +449,7 @@ forbidden_transitive_dependencies = ["bevy", "bevy_*", "wgpu*"]
 [[crates]]
 name = "mod-host"
 path = "crates/mod-host"
-allowed_dependencies = ["experience-sdk", "mod-api", "mod-render", "server-experience", "ui", "test-alloc", "test-time"]
+allowed_dependencies = ["assets", "experience-sdk", "mod-api", "mod-render", "render-api", "server-experience", "ui", "test-alloc", "test-time"]
 forbidden_dependencies = ["bevy", "wgpu", "protocol", "world"]
 
 [[crates]]
@@ -528,7 +528,7 @@ test_support_features = ["test-support"]
 [[crates]]
 name = "ui-screens"
 path = "crates/ui-screens"
-allowed_dependencies = ["actor-animation", "assets", "bridge", "inventory", "json-ui", "launcher", "player-state", "protocol", "render-api", "render-model", "resource-pack", "ui", "ui-engine"]
+allowed_dependencies = ["cosmetics", "assets", "bridge", "inventory", "json-ui", "launcher", "player-state", "protocol", "render-api", "render-model", "resource-pack", "semantic-input", "ui", "ui-engine"]
 forbidden_dependencies = ["asset-compiler", "bevy", "wgpu", "client-ui", "launcher-host", "oreui", "mod-ui"]
 forbidden_transitive_dependencies = ["app", "cinnabar", "client-ui", "launcher-host", "oreui", "mod-ui", "render", "bevy", "bevy_*", "wgpu*"]
 test_support_features = ["test-support"]
@@ -1055,6 +1055,11 @@ forbidden_modules = ["cinnabar", "gameplay", "client_session", "NetworkHandle", 
 forbidden_crate_modules = ["app", "runtime", "movement", "item_use", "mining", "melee", "menu", "acceptance", "asset_startup", "player_runtime", "semantic_controls", "settings_runtime", "screen_policy"]
 forbidden_owned_types = ["WorldStream", "PlayerState", "PlayerInventoryLedger", "InventorySession", "LocalPlayerFacts"]
 
+# Environment derivation consumes observations without app world or preference wrappers.
+[[module_boundaries]]
+path = "crates/client-presentation/src/environment"
+forbidden_modules = ["client_shell", "ClientWorld", "UiRuntimeResource", "BrowserOptions", "MenuRuntime"]
+
 [[module_boundaries]]
 path = "crates/client-audio/src"
 forbidden_modules = ["cinnabar", "client_presentation", "render", "gameplay", "client_session", "NetworkHandle", "MovementTicker", "LocalPhysicsController"]
@@ -1355,21 +1360,20 @@ vocabularies = [
     { path = "crates/protocol/data/item_tags_dragonfly.tsv", column = 0 },
 ]
 block_registries = ["crates/assets/data/block-registry-v2193.bin"]
-# The Enhanced PBR loader's Bedrock-to-Java texture-name map is a provisional hand table: the
-# pinned Java/Bedrock mapping has no texture names, so it waits for a model-derived source (plan.md).
+# The provisional PBR texture-name table must move to a generated mapping (plan.md).
 baselines = [
     { path = "crates/pack-compiler/src/pbr/sources/names.rs", max = 55 },
 ]
 
 [[identifier_literal_exceptions]]
+path = "tools/devtool/src/web.rs"
+literal = "web"
+reason = "wasm-bindgen's static browser output target, unrelated to a game identifier."
+
+[[identifier_literal_exceptions]]
 path = "tools/architecture/src/identifiers/scan.rs"
 literal = "trim_"
 reason = "Recognizes the trim_*_matches Rust string method family."
-
-[[identifier_literal_exceptions]]
-path = "app/src/render_mode/authored_textures/enhanced_textures/cache.rs"
-literal = "target"
-reason = "Cargo build directory skipped while hashing local authored packs, not a game identifier."
 
 [[identifier_literal_exceptions]]
 path = "crates/json-ui/src/transform.rs"
@@ -1802,6 +1806,36 @@ literal = "crafting_table"
 reason = "Recipe packet station vocabulary, normalized at the protocol boundary before facts admission."
 
 [[identifier_literal_exceptions]]
+path = "crates/protocol/src/inventory/recipes/identity.rs"
+literal = "cartography_table"
+reason = "Recipe unlock tag vocabulary is normalized at the protocol boundary and exercised by wire fixtures."
+
+[[identifier_literal_exceptions]]
+path = "crates/protocol/src/inventory/recipes/identity.rs"
+literal = "smithing_table"
+reason = "Recipe unlock tag vocabulary is normalized at the protocol boundary and exercised by wire fixtures."
+
+[[identifier_literal_exceptions]]
+path = "crates/protocol/src/inventory/recipes/identity.rs"
+literal = "stonecutter"
+reason = "Recipe unlock tag vocabulary is normalized at the protocol boundary and exercised by wire fixtures."
+
+[[identifier_literal_exceptions]]
+path = "crates/protocol/src/inventory/recipes/identity.rs"
+literal = "campfire"
+reason = "Recipe unlock tag vocabulary is normalized at the protocol boundary and exercised by wire fixtures."
+
+[[identifier_literal_exceptions]]
+path = "crates/protocol/src/inventory/recipes/identity.rs"
+literal = "soul_campfire"
+reason = "Recipe unlock tag vocabulary is normalized at the protocol boundary and exercised by wire fixtures."
+
+[[identifier_literal_exceptions]]
+path = "crates/protocol/src/inventory/recipes/identity.rs"
+literal = "deprecated"
+reason = "Recipe unlock tag vocabulary is normalized at the protocol boundary and exercised by wire fixtures."
+
+[[identifier_literal_exceptions]]
 path = "crates/protocol/src/item/attack.rs"
 literal = "minecraft:is_spear"
 reason = "Authored component tag vocabulary parsed at the assets-free protocol boundary and checked against the pinned tag fixture."
@@ -1825,6 +1859,26 @@ reason = "Custom-block placement-state schema names admitted from the wire."
 path = "crates/protocol/src/world/custom_blocks.rs"
 literal = "facing_direction"
 reason = "Custom-block placement-state schema names admitted from the wire."
+
+[[identifier_literal_exceptions]]
+path = "crates/protocol/src/world/custom_blocks.rs"
+literal = "connection_north"
+reason = "Custom-block connection trait state key admitted from enabled_states at the assets-free protocol boundary."
+
+[[identifier_literal_exceptions]]
+path = "crates/protocol/src/world/custom_blocks.rs"
+literal = "connection_east"
+reason = "Custom-block connection trait state key admitted from enabled_states at the assets-free protocol boundary."
+
+[[identifier_literal_exceptions]]
+path = "crates/protocol/src/world/custom_blocks.rs"
+literal = "connection_south"
+reason = "Custom-block connection trait state key admitted from enabled_states at the assets-free protocol boundary."
+
+[[identifier_literal_exceptions]]
+path = "crates/protocol/src/world/custom_blocks.rs"
+literal = "connection_west"
+reason = "Custom-block connection trait state key admitted from enabled_states at the assets-free protocol boundary."
 
 [[identifier_literal_exceptions]]
 path = "crates/sim/src/conformance.rs"
@@ -1860,6 +1914,11 @@ reason = "JSON-UI animation property schema used by mod controls."
 path = "crates/ui/src/mod_panel/surface/static_templates.rs"
 literal = "color"
 reason = "JSON-UI animation property schema used by static mod templates."
+
+[[identifier_literal_exceptions]]
+path = "crates/ui/src/mod_panel/surface/collection.rs"
+literal = "color"
+reason = "JSON-UI paint property on the host-owned collection scrollbar."
 
 [[identifier_literal_exceptions]]
 path = "examples/experiences/probe/src/contract.rs"
@@ -2041,3 +2100,10 @@ name = "cosmetics"
 path = "crates/cosmetics"
 allowed_dependencies = []
 forbidden_dependencies = ["bevy", "wgpu"]
+
+test_support_features = ["test-support"]
+
+[[identifier_literal_exceptions]]
+path = "app/src/runtime/network/item_icons/tints.rs"
+literal = "grass_carried"
+reason = "Terrain-atlas carried-grass colour source; this selects authored inventory tint metadata, not a block identity."

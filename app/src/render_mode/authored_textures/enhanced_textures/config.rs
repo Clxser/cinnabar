@@ -26,6 +26,7 @@ struct Pack {
     color_style: Option<String>,
 }
 
+/// Parses explicit pack formats and resolves paths relative to the config file.
 fn configuration(bytes: &[u8], parent: &Path) -> Result<Vec<PbrPack>, String> {
     let config: Config = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
     config
@@ -81,6 +82,7 @@ fn environment_packs(value: &str) -> Vec<PbrPack> {
         .collect()
 }
 
+/// Selects existing pack directories from the override or local configuration.
 pub(super) fn selected_packs() -> Option<Vec<PbrPack>> {
     let packs: Vec<PbrPack> = if let Some(value) = env::var_os(super::ENHANCED_PBR_DIR_ENVIRONMENT)
     {

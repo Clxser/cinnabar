@@ -113,10 +113,9 @@ fn world_model_uvs_rotate_top_and_bottom_by_position_and_preserve_side_and_stati
         ),
         uniform,
     );
-    let lightmap = gpu.buffer(
-        bytemuck::cast_slice(&render_model::LightmapInputs::default().build()),
-        uniform,
-    );
+    let lightmap = gpu.lightmap(bytemuck::cast_slice(
+        &render_model::LightmapInputs::default().build(),
+    ));
     let expected = gpu.buffer(&expected, uniform);
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("original asymmetric UV witness"),

@@ -1,6 +1,8 @@
 use std::path::Path;
 
+/// Applies the provisional Bedrock-to-Java texture-name substitutions.
 fn java_name(stem: &str) -> String {
+    /// Normalizes legacy wood names used by the provisional mapping.
     fn wood(name: &str) -> &str {
         match name {
             "big_oak" | "roofed_oak" => "dark_oak",
@@ -121,6 +123,7 @@ fn java_name(stem: &str) -> String {
     .to_owned()
 }
 
+/// Lists provisional pack-path variants for one carrier texture alias.
 pub(super) fn variants(alias: &str) -> Vec<String> {
     let alias = alias.replace('\\', "/");
     // Lookup appends each supported extension itself, so drop any the catalog already names.

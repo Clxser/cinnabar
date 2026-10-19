@@ -15,6 +15,8 @@ use pack_compiler::pbr::{
 mod audit;
 mod cache;
 mod config;
+#[cfg(test)]
+mod tint_tests;
 
 /// Semicolon- or newline-separated pack directories that replace the local PBR configuration.
 pub(crate) const ENHANCED_PBR_DIR_ENVIRONMENT: &str = "CINNABAR_ENHANCED_PBR_DIR";
@@ -33,6 +35,7 @@ struct Source {
     count: usize,
     cutout: bool,
     overlay_mask: bool,
+    baked_tint: Option<[u8; 3]>,
 }
 
 /// Keeps every alias and material owner until its authored image has been resolved.
@@ -43,10 +46,20 @@ fn sources(
     let mut references = BTreeMap::<(String, String, u32, u32), Source>::new();
     for (key, alias) in keys.aliases() {
         for &id in keys.materials(key) {
+            // This resolver admits only the catalog's variant-zero source.
+            if keys.material_source(id).is_some_and(|source| {
+                source.key.as_ref() != key || source.variant != 0 || source.path.as_ref() != alias
+            }) || keys.flipbook_selector(id) != (0, 0)
+            {
+                continue;
+            }
             let Some(material) = runtime.materials().get(id as usize) else {
                 continue;
             };
             let overlay_mask = material.flags & assets::MATERIAL_FLAG_OVERLAY_MASK != 0;
+            let baked_tint = keys
+                .material_source(id)
+                .and_then(|source| source.baked_tint);
             let cutout = material.flags & assets::MATERIAL_FLAG_ALPHA_CUTOUT != 0;
             let animation = (material.animation != NO_ANIMATION)
                 .then(|| runtime.animations().get(material.animation as usize))
@@ -65,6 +78,7 @@ fn sources(
                     count,
                     cutout,
                     overlay_mask,
+                    baked_tint,
                 });
             if let Some(animation) = animation {
                 let start = animation.frame_start as usize;
@@ -93,6 +107,7 @@ fn sources(
                             count,
                             cutout,
                             overlay_mask,
+                            baked_tint,
                         });
                 }
             }
@@ -112,6 +127,7 @@ struct Page {
 }
 
 impl Page {
+    /// Creates empty layer buffers for every mip of a power-of-two page.
     fn new(size: u32) -> Self {
         Self {
             size,
@@ -119,12 +135,14 @@ impl Page {
             data: (0..=size.ilog2()).map(|_| Vec::new()).collect(),
         }
     }
+    /// Adds one complete layer to the page in mip order.
     fn append(&mut self, mips: &[TextureMip]) {
         for (data, mip) in self.data.iter_mut().zip(mips) {
             data.extend_from_slice(&mip.rgba8);
         }
         self.layers += 1;
     }
+    /// Freezes accumulated layer bytes into a texture array.
     fn finish(self) -> TextureArray {
         TextureArray {
             layers: self.layers,
@@ -142,6 +160,7 @@ impl Page {
     }
 }
 
+/// Builds a neutral layer for an otherwise empty authored page.
 fn fallback(size: u32) -> PbrMipLayer {
     let image = |pixel| ImageBuffer::from_pixel(1, 1, Rgba(pixel));
     build_pbr_mips(
@@ -158,6 +177,7 @@ fn fallback(size: u32) -> PbrMipLayer {
     .expect("constant authored fallback is valid")
 }
 
+/// Resolves material aliases into sparse authored pages and coverage records.
 fn load(
     groups: BTreeMap<(String, String), Vec<Source>>,
     packs: &[PbrPack],
@@ -202,6 +222,7 @@ fn load(
                 source.count,
                 source.cutout,
                 source.overlay_mask,
+                texture.inherited_tint(source.baked_tint),
             );
             let encoded = if let Some(&reference) = completed.get(&key) {
                 reference
@@ -210,9 +231,11 @@ fn load(
                     audit_alias.fallback = true;
                     break;
                 }
-                let mip = texture.frame(source.frame, source.count).and_then(|frame| {
-                    build_pbr_mips(&frame, tile_size, source.cutout, source.overlay_mask)
-                });
+                let mip = texture
+                    .frame_with_inherited_tint(source.frame, source.count, source.baked_tint)
+                    .and_then(|frame| {
+                        build_pbr_mips(&frame, tile_size, source.cutout, source.overlay_mask)
+                    });
                 let mip = match mip {
                     Ok(mip) => mip,
                     Err(error) => {
@@ -268,6 +291,7 @@ fn reference_slot(texture: u32) -> Option<usize> {
     Some(texture.page() as usize * assets::MAX_TEXTURE_LAYERS + texture.layer() as usize)
 }
 
+/// Loads selected packs from a valid cache or decodes their authored maps.
 pub(crate) fn load_optional_enhanced_textures(
     runtime: &RuntimeAssets,
     keys: &MaterialKeys,
@@ -322,7 +346,7 @@ mod tests {
     use super::*;
 
     /// Creates two distinct materials that share one carrier image.
-    fn shared_carrier() -> (RuntimeAssets, MaterialKeys) {
+    pub(super) fn shared_carrier() -> (RuntimeAssets, MaterialKeys) {
         let base = RuntimeAssets::diagnostic();
         let material = assets::Material {
             texture: TextureRef::new(1, 0).unwrap(),
@@ -347,7 +371,7 @@ mod tests {
     }
 
     /// Reads an authored layer's first albedo texel through the production reference lookup.
-    fn albedo(
+    pub(super) fn albedo(
         maps: &render_scene::EnhancedTextureAssets,
         runtime: &RuntimeAssets,
         id: u32,
@@ -454,6 +478,59 @@ mod tests {
         assert_eq!(matched[0].texture, runtime.materials()[0].texture.raw());
         assert_eq!(matched[0].frame, 0);
         assert_eq!(matched[0].count, 1);
+    }
+
+    #[test]
+    fn unsupported_material_variants_keep_their_carrier_fallback() {
+        let (runtime, _) = shared_carrier();
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("textures/blocks")).unwrap();
+        for (alias, pixel) in [
+            ("primary", [20u8, 80, 140, 255]),
+            ("secondary", [140, 80, 20, 255]),
+        ] {
+            ImageBuffer::from_pixel(2, 2, Rgba(pixel))
+                .save(root.path().join(format!("textures/blocks/{alias}.png")))
+                .unwrap();
+        }
+        std::fs::write(root.path().join("textures/terrain_texture.json"), br#"{
+            "texture_data":{"fixture":{"textures":["textures/blocks/primary","textures/blocks/secondary"]}}
+        }"#).unwrap();
+        for (variant, path, selector_only) in [
+            (1, "textures/blocks/secondary", false),
+            (0, "textures/blocks/secondary", false),
+            (1, "textures/blocks/primary", true),
+        ] {
+            let mut keys = MaterialKeys::from_entries([(1, "fixture"), (2, "fixture")])
+                .with_aliases([("fixture", "textures/blocks/primary")]);
+            if selector_only {
+                keys = keys.with_flipbook_selectors([(2, (variant, 0))]);
+            } else {
+                keys = keys.with_sources(
+                    [],
+                    [(
+                        2,
+                        assets::material_keys::MaterialTextureSource {
+                            key: "fixture".into(),
+                            variant,
+                            path: path.into(),
+                            raster: format!("{path}.png").into(),
+                            baked_tint: None,
+                        },
+                    )],
+                    [],
+                );
+            }
+            let pack = PbrPack::new(root.path(), None).with_terrain_aliases(keys.aliases());
+            let (payload, _) = load(sources(&runtime, &keys), &[pack]);
+            let maps = payload.unwrap().into_assets().unwrap();
+            assert_eq!(albedo(&maps, &runtime, 1), Some([20, 80, 140, 255]));
+            assert_eq!(
+                albedo(&maps, &runtime, 2),
+                None,
+                "unsupported variant must retain its carrier"
+            );
+        }
     }
 
     /// Carrier layers above the old 11-bit range must not alias lower table slots.

@@ -1,8 +1,11 @@
 //! Authored-only replacements preserve the carrier and publish after bounded complete uploads.
 
 use crate::chunk::*;
-use render_scene::{ChunkTextureAssetIdentity, EnhancedTextureAssets};
+use crate::queue_writes::ProfiledQueue as _;
+use render_scene::{ChunkTextureBindingIdentity, EnhancedTextureAssets};
 
+#[cfg(test)]
+use super::bind_groups::same_carrier;
 use super::bind_groups::{ChunkTextureUploadStats, PreparedChunkTextureAssets};
 
 pub(super) const FRAME_UPLOAD_BYTES: usize = 8 * 1024 * 1024;
@@ -11,13 +14,6 @@ const _: () =
 const _: () = assert!(
     EnhancedTextureAssets::REFERENCE_BASE_WORDS * std::mem::size_of::<u32>() <= FRAME_UPLOAD_BYTES
 );
-
-pub(super) fn same_carrier(
-    current: ChunkTextureAssetIdentity,
-    next: ChunkTextureAssetIdentity,
-) -> bool {
-    current.pointer == next.pointer && current.revision == next.revision
-}
 
 #[derive(Clone, Copy, Debug)]
 struct MipTask {
@@ -48,6 +44,7 @@ struct Schedule {
 }
 
 impl Schedule {
+    /// Validates every mip and starts a layer-major upload schedule.
     fn new(pages: &[&TextureArray; 6]) -> Option<Self> {
         let mut tasks = Vec::new();
         for (page, array) in pages.iter().enumerate() {
@@ -83,6 +80,7 @@ impl Schedule {
         })
     }
 
+    /// Takes complete rows or layers that fit the remaining byte budget.
     fn next(&mut self, budget: usize) -> Option<Stripe> {
         let task = *self.tasks.get(self.task)?;
         let row_bytes = task.size as usize * 4;
@@ -124,13 +122,14 @@ impl Schedule {
         Some(stripe)
     }
 
+    /// Reports whether every scheduled source byte has been submitted.
     fn complete(&self) -> bool {
         self.task == self.tasks.len()
     }
 }
 
 pub(super) struct AuthoredUpload {
-    identity: ChunkTextureAssetIdentity,
+    identity: ChunkTextureBindingIdentity,
     source: Arc<EnhancedTextureAssets>,
     textures: [Texture; 6],
     views: [TextureView; 6],
@@ -156,12 +155,12 @@ impl AuthoredUpload {
         {
             return None;
         }
-        Self::new(assets.identity(), source.clone(), device)
+        Self::new(assets.binding_identity(), source.clone(), device)
     }
 
     /// Allocates unpublished resources for device-admitted maps and their reference table.
     pub(super) fn new(
-        identity: ChunkTextureAssetIdentity,
+        identity: ChunkTextureBindingIdentity,
         source: Arc<EnhancedTextureAssets>,
         device: &RenderDevice,
     ) -> Option<Self> {
@@ -221,7 +220,8 @@ impl AuthoredUpload {
         })
     }
 
-    pub(super) fn matches(&self, identity: ChunkTextureAssetIdentity) -> bool {
+    /// Checks whether the upload still belongs to the current asset generation.
+    pub(super) fn matches(&self, identity: ChunkTextureBindingIdentity) -> bool {
         self.identity == identity
     }
 
@@ -235,7 +235,7 @@ impl AuthoredUpload {
             let end = self.reference_words_written + words;
             let bytes =
                 bytemuck::cast_slice(&self.source.texture_refs[self.reference_words_written..end]);
-            queue.write_buffer(
+            queue.profiled_write_buffer(
                 &self.references,
                 (self.reference_words_written * word_bytes) as u64,
                 bytes,
@@ -246,7 +246,7 @@ impl AuthoredUpload {
         let arrays = self.source.pages();
         while let Some(stripe) = self.schedule.next(remaining) {
             let mip = &arrays[stripe.page].mips[stripe.mip as usize];
-            queue.write_texture(
+            queue.profiled_write_texture(
                 TexelCopyTextureInfo {
                     texture: &self.textures[stripe.page],
                     mip_level: stripe.mip,
@@ -276,10 +276,12 @@ impl AuthoredUpload {
         written
     }
 
+    /// Reports whether all reference words and texture bytes have been submitted.
     pub(super) fn complete(&self) -> bool {
         self.reference_words_written == self.source.texture_refs.len() && self.schedule.complete()
     }
 
+    /// Replaces authored resources together only after the upload is complete.
     pub(super) fn publish(
         self,
         prepared: &mut PreparedChunkTextureAssets,
@@ -295,6 +297,7 @@ impl AuthoredUpload {
     }
 }
 
+/// Replaces the authored contribution without recounting the retained carrier.
 fn replace_stats(
     prepared: &mut PreparedChunkTextureAssets,
     stats: &mut ChunkTextureUploadStats,
@@ -314,9 +317,10 @@ fn replace_stats(
     prepared.authored_upload_bytes = upload_bytes;
 }
 
+/// Restores neutral authored resources while retaining the carrier atlas.
 pub(super) fn detach(
     prepared: &mut PreparedChunkTextureAssets,
-    identity: ChunkTextureAssetIdentity,
+    identity: ChunkTextureBindingIdentity,
     device: &RenderDevice,
     stats: &mut ChunkTextureUploadStats,
 ) {

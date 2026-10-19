@@ -13,6 +13,7 @@ use chunk_pipeline::WorldStream;
 use client_interaction::movement::LocalPhysicsController;
 use client_presentation::{
     camera::{FlyCamera, ServerCameraView, VisionEffects},
+    environment::{WorldClock, visual_world_time},
     local_player::LocalPlayerFrameSet,
 };
 use client_shell::ui_resources::UiRuntimeResource;
@@ -29,8 +30,8 @@ use render_scene::{
 
 use crate::{
     environment::{
-        CameraMediumState, DebugTimeOverride, FixedTime, VisualTimeOverride, WorldClock,
-        rendered_clock, update_atmosphere_frame, visual_world_time,
+        CameraMediumState, DebugTimeOverride, FixedTime, VisualTimeOverride, rendered_clock,
+        update_atmosphere_frame,
     },
     runtime::world::ClientWorld,
 };

@@ -139,6 +139,7 @@ fn rig() -> ActorRigSnapshot<'static> {
         skin_geometry: None,
         skin_mesh: None,
         skin_layers: &[],
+        held_item_scale: None,
         hand: [actor_animation::HandPhase::default(); 2],
         item_animation: [actor_animation::ItemAnimationState::default(); 2],
         off_hand_animation: [actor_animation::ItemAnimationState::default(); 2],

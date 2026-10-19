@@ -8,12 +8,14 @@ use assets::texture::{
     PBR_REF_SUBSURFACE,
 };
 
+/// Writes a test image and creates its parent directory.
 fn save(root: &Path, name: &str, image: &RgbaImage) {
     let path = root.join(name);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     image.save(path).unwrap();
 }
 
+/// Creates a small constant RGBA image for material tests.
 fn rgba(pixel: [u8; 4]) -> RgbaImage {
     ImageBuffer::from_pixel(2, 2, Rgba(pixel))
 }
@@ -55,6 +57,7 @@ fn terrain_atlas_tint_reaches_authored_albedo_before_mip_filtering() {
     }
 }
 
+/// Combines test images and channel flags into an authored surface.
 fn surface(color: RgbaImage, normal: RgbaImage, material: RgbaImage, flags: u32) -> PbrSurface {
     PbrSurface {
         color,
@@ -355,6 +358,160 @@ fn standalone_height_generates_normal_gradients_in_increasing_v_basis() {
 }
 
 #[test]
+fn smaller_authored_normals_preserve_separate_height_detail() {
+    let directory = tempfile::tempdir().unwrap();
+    save(
+        directory.path(),
+        "textures/blocks/fixture.png",
+        &rgba([255; 4]),
+    );
+    save(
+        directory.path(),
+        "textures/blocks/fixture_n.png",
+        &ImageBuffer::from_pixel(1, 1, Rgba([192, 128, 255, 128])),
+    );
+    let heights = RgbaImage::from_fn(4, 4, |x, y| Rgba([(x + y * 4) as u8 * 16; 4]));
+    save(directory.path(), "textures/blocks/fixture_h.png", &heights);
+    let frame = load_pbr_texture(
+        &[PbrPack::new(directory.path(), Some(PbrFormat::LabPbr13))],
+        "textures/blocks/fixture",
+    )
+    .unwrap()
+    .unwrap()
+    .frame(0, 1)
+    .unwrap();
+    assert_ne!(frame.flags & PBR_REF_HEIGHT, 0);
+    assert_ne!(frame.flags & PBR_REF_NORMAL, 0);
+    assert_eq!(frame.normal.dimensions(), heights.dimensions());
+    for (normal, height) in frame.normal.pixels().zip(heights.pixels()) {
+        assert_eq!(normal.0[..3], [192, 128, 255]);
+        assert_eq!(normal[3], height[0]);
+    }
+}
+
+#[test]
+fn initial_resizing_weights_surface_channels_by_opacity() {
+    let color = RgbaImage::from_fn(4, 4, |x, _| {
+        Rgba([255, 255, 255, if x % 2 == 0 { 255 } else { 0 }])
+    });
+    let normal = RgbaImage::from_fn(4, 4, |x, _| {
+        Rgba(if x % 2 == 0 {
+            [64, 96, 180, 40]
+        } else {
+            [240, 128, 0, 220]
+        })
+    });
+    let material = RgbaImage::from_fn(4, 4, |x, _| {
+        Rgba(if x % 2 == 0 {
+            [20, 30, 64, 40]
+        } else {
+            [200, 220, 255, 240]
+        })
+    });
+    for format in [0, PBR_REF_LABPBR] {
+        for side in [1, 2, 8] {
+            let mips = build_pbr_mips(
+                &surface(
+                    color.clone(),
+                    normal.clone(),
+                    material.clone(),
+                    PBR_REF_NORMAL | PBR_REF_MATERIAL | format,
+                ),
+                side,
+                false,
+                false,
+            )
+            .unwrap();
+            for ((color, normal), material) in mips.color[0]
+                .rgba8
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(mips.normal[0].rgba8.as_chunks::<4>().0)
+                .zip(mips.material[0].rgba8.as_chunks::<4>().0)
+                .filter(|((color, _), _)| color[3] > 0)
+            {
+                assert!(color[3] > 0);
+                assert_eq!(*normal, [64, 96, 180, 40]);
+                for (&actual, expected) in material.iter().zip([20, 30, 64, 40]) {
+                    assert!(
+                        (actual as i32 - expected).abs() <= 1,
+                        "material: {material:?}"
+                    );
+                }
+            }
+        }
+    }
+    let overlay = build_pbr_mips(
+        &surface(color, normal, material, PBR_REF_NORMAL | PBR_REF_MATERIAL),
+        1,
+        false,
+        true,
+    )
+    .unwrap();
+    assert!(overlay.normal[0].rgba8[0] > 128);
+    assert_eq!(overlay.normal[0].rgba8[2..], [90, 130]);
+    assert!(overlay.material[0].rgba8[2] > 200);
+}
+
+#[test]
+fn initial_resizing_preserves_signed_normals_and_constant_roughness() {
+    for normal in [[64, 96, 180, 40], [64, 160, 180, 40], [192, 96, 180, 40]] {
+        for side in [1, 2, 8] {
+            let mips = build_pbr_mips(
+                &surface(
+                    rgba([255, 255, 255, 128]),
+                    RgbaImage::from_pixel(4, 4, Rgba(normal)),
+                    rgba([20, 30, 96, 40]),
+                    PBR_REF_NORMAL | PBR_REF_MATERIAL,
+                ),
+                side,
+                false,
+                false,
+            )
+            .unwrap();
+            for mip in &mips.normal {
+                for actual in mip.rgba8.as_chunks::<4>().0 {
+                    assert_eq!(*actual, normal, "normal {normal:?} resized to {side}");
+                }
+            }
+            for mip in &mips.material {
+                for actual in mip.rgba8.as_chunks::<4>().0 {
+                    assert!(
+                        (actual[2] as i32 - 96).abs() <= 1,
+                        "constant normal {normal:?} resized to {side} changed roughness: {actual:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn initial_resizing_filters_opposing_normals_before_roughness_correction() {
+    for horizontal in [false, true] {
+        let normals = RgbaImage::from_fn(4, 4, |x, y| {
+            let coordinate = if horizontal { x } else { y };
+            Rgba([if coordinate % 2 == 0 { 25 } else { 230 }, 128, 255, 128])
+        });
+        let mips = build_pbr_mips(
+            &surface(
+                rgba([255, 255, 255, 255]),
+                normals,
+                rgba([0, 0, 0, 0]),
+                PBR_REF_NORMAL | PBR_REF_MATERIAL,
+            ),
+            2,
+            false,
+            false,
+        )
+        .unwrap();
+        assert!((mips.normal.last().unwrap().rgba8[0] as i32 - 128).abs() <= 1);
+        assert!(mips.material.last().unwrap().rgba8[2] > 128);
+    }
+}
+
+#[test]
 fn color_filtering_is_linear_premultiplied_and_cutout_coverage_survives_mips() {
     let color = RgbaImage::from_fn(2, 2, |x, _| {
         Rgba(if x == 0 {
@@ -421,7 +578,7 @@ fn normal_mips_are_unit_vectors_and_unresolved_detail_raises_roughness() {
     assert_eq!(normal[2..], [255, 128]);
     assert!(mip.material[1].rgba8[2] > mip.material[0].rgba8[2] + 64);
     let material = RgbaImage::from_fn(2, 2, |x, _| {
-        Rgba([if x == 0 { 230 } else { 237 }, 0, 64, 12])
+        Rgba([if x == 0 { 237 } else { 230 }, 0, 64, 12])
     });
     let mip = build_pbr_mips(
         &surface(
@@ -435,7 +592,7 @@ fn normal_mips_are_unit_vectors_and_unresolved_detail_raises_roughness() {
         false,
     )
     .unwrap();
-    assert!([230, 237].contains(&mip.material[1].rgba8[0]));
+    assert_eq!(mip.material[1].rgba8[0], 230);
     let material = RgbaImage::from_fn(4, 4, |x, _| {
         Rgba([if x % 2 == 0 { 237 } else { 229 }, 0, 64, 12])
     });
@@ -460,6 +617,71 @@ fn normal_mips_are_unit_vectors_and_unresolved_detail_raises_roughness() {
             .all(|pixel| [229, 237].contains(&pixel[0])),
         "initial normalization must preserve encoded F0/metal identity"
     );
+}
+
+#[test]
+fn labpbr_categories_ignore_transparent_texels_but_keep_overlay_mask_texels() {
+    for (visible, hidden) in [
+        ([20, 0, 64, 30], [237, 0, 64, 200]),
+        ([237, 0, 64, 200], [20, 0, 64, 30]),
+    ] {
+        let color = RgbaImage::from_fn(2, 2, |x, _| {
+            Rgba([255, 255, 255, if x == 0 { 255 } else { 0 }])
+        });
+        let material = RgbaImage::from_fn(2, 2, |x, _| Rgba(if x == 0 { visible } else { hidden }));
+        for overlay_mask in [false, true] {
+            let mip = build_pbr_mips(
+                &surface(
+                    color.clone(),
+                    rgba([128, 128, 255, 128]),
+                    material.clone(),
+                    PBR_REF_MATERIAL | PBR_REF_LABPBR,
+                ),
+                2,
+                false,
+                overlay_mask,
+            )
+            .unwrap();
+            let expected = if overlay_mask {
+                [237, 0, 64, 200]
+            } else {
+                visible
+            };
+            assert_eq!(mip.material[1].rgba8[0], expected[0]);
+            assert_eq!(mip.material[1].rgba8[3], expected[3]);
+        }
+    }
+}
+
+#[test]
+fn labpbr_category_averages_and_metal_modes_use_opacity_weights() {
+    for (values, expected) in [([20, 100, 20, 100], 40), ([230, 237, 230, 237], 230)] {
+        let color = RgbaImage::from_fn(2, 2, |x, _| {
+            Rgba([255, 255, 255, if x == 0 { 255 } else { 85 }])
+        });
+        let material = RgbaImage::from_fn(2, 2, |x, y| {
+            Rgba([
+                values[(y * 2 + x) as usize],
+                0,
+                64,
+                if x == 0 { 100 } else { 200 },
+            ])
+        });
+        let mip = build_pbr_mips(
+            &surface(
+                color,
+                rgba([128, 128, 255, 128]),
+                material,
+                PBR_REF_MATERIAL | PBR_REF_LABPBR,
+            ),
+            2,
+            false,
+            false,
+        )
+        .unwrap();
+        assert_eq!(mip.material[1].rgba8[0], expected);
+        assert_eq!(mip.material[1].rgba8[3], 125);
+    }
 }
 
 #[test]

@@ -15,6 +15,7 @@ pub(super) mod terrain;
 const IMAGE_BYTES_LIMIT: u64 = 64 * 1024 * 1024;
 const JSON_BYTES_LIMIT: u64 = 1024 * 1024;
 
+/// Reads an explicit pack material-format declaration when one is present.
 pub(super) fn declared_format(root: &Path) -> PbrFormat {
     for relative in [
         "assets/minecraft/optifine/texture.properties",
@@ -33,6 +34,7 @@ pub(super) fn declared_format(root: &Path) -> PbrFormat {
     PbrFormat::Unspecified
 }
 
+/// Rejects absolute paths and parent traversal in authored image references.
 fn safe_relative(value: &str) -> Option<PathBuf> {
     let value = value.replace('\\', "/");
     let path = Path::new(&value);
@@ -48,6 +50,7 @@ fn safe_relative(value: &str) -> Option<PathBuf> {
 /// Image formats an authored map may use, in lookup priority order.
 pub(super) const IMAGE_EXTENSIONS: [&str; 4] = ["tga", "png", "jpg", "jpeg"];
 
+/// Builds supported image paths within the defining pack.
 fn candidates(pack: &PbrPack, alias: &str, suffix: &str, extension: &str) -> Vec<PathBuf> {
     names::variants(alias)
         .into_iter()
@@ -62,6 +65,7 @@ fn candidates(pack: &PbrPack, alias: &str, suffix: &str, extension: &str) -> Vec
         .collect()
 }
 
+/// Finds the first supported image matching an alias and suffix.
 fn find(pack: &PbrPack, alias: &str, suffix: &str) -> Option<PathBuf> {
     IMAGE_EXTENSIONS
         .into_iter()
@@ -69,12 +73,14 @@ fn find(pack: &PbrPack, alias: &str, suffix: &str) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
+/// Finds texture-set metadata for a supported alias.
 fn json_path(pack: &PbrPack, alias: &str) -> Option<PathBuf> {
     candidates(pack, alias, ".texture_set", "json")
         .into_iter()
         .find(|path| path.is_file())
 }
 
+/// Decodes a size-bounded image with the required channel count.
 fn image(path: &Path, channels: &[u8]) -> Result<RgbaImage, String> {
     if fs::metadata(path)
         .map_err(|error| format!("{}: {error}", path.display()))?
@@ -102,10 +108,12 @@ fn image(path: &Path, channels: &[u8]) -> Result<RgbaImage, String> {
     Ok(DynamicImage::into_rgba8(image))
 }
 
+/// Creates a single-texel image for a uniform material channel.
 fn solid(pixel: [u8; 4]) -> RgbaImage {
     ImageBuffer::from_pixel(1, 1, Rgba(pixel))
 }
 
+/// Requires a finite integral texture-set constant in the byte range.
 fn byte(value: &Value) -> Result<u8, String> {
     value
         .as_f64()
@@ -116,6 +124,7 @@ fn byte(value: &Value) -> Result<u8, String> {
         .ok_or_else(|| "texture set constants must be integers between 0 and 255".to_owned())
 }
 
+/// Parses supported numeric and hexadecimal texture-set constants.
 fn uniform(value: &Value, channels: usize) -> Result<Option<[u8; 4]>, String> {
     let mut result = [0, 0, 0, 255];
     if let Some(values) = value.as_array() {
@@ -156,6 +165,7 @@ fn uniform(value: &Value, channels: usize) -> Result<Option<[u8; 4]>, String> {
     Ok(None)
 }
 
+/// Resolves a constant or image reference within its defining pack.
 fn layer(
     pack: &PbrPack,
     json: &Path,
@@ -193,6 +203,7 @@ fn layer(
     image(&path, allowed)
 }
 
+/// Reads bounded texture metadata using the shared JSONC parser.
 fn read_json(path: &Path) -> Result<Value, String> {
     if fs::metadata(path).map_err(|error| error.to_string())?.len() > JSON_BYTES_LIMIT {
         return Err("texture metadata exceeds byte limit".to_owned());
@@ -201,6 +212,7 @@ fn read_json(path: &Path) -> Result<Value, String> {
     pack_json::parse_jsonc(&bytes).map_err(|error| error.to_string())
 }
 
+/// Decodes a texture set while rejecting conflicting channel definitions.
 fn texture_set(pack: &PbrPack, path: &Path) -> Result<PbrTexture, String> {
     let json = read_json(path)?;
     let set = json
@@ -287,9 +299,11 @@ fn texture_set(pack: &PbrPack, path: &Path) -> Result<PbrTexture, String> {
         timeline: Vec::new(),
         height,
         source,
+        terrain_override: false,
     })
 }
 
+/// Reads supported frame indices from bounded animation metadata.
 fn animation(path: &Path) -> Result<Vec<u32>, String> {
     let meta = PathBuf::from(format!("{}.mcmeta", path.display()));
     if !meta.is_file() {
@@ -329,13 +343,15 @@ fn animation(path: &Path) -> Result<Vec<u32>, String> {
 }
 
 /// Applies the shared atlas-space multiplier before frame extraction and mip filtering.
-fn tinted(mut texture: PbrTexture, tint: Option<[u8; 3]>) -> PbrTexture {
-    if let Some(tint) = tint {
+fn tinted(mut texture: PbrTexture, terrain: Option<&terrain::TerrainSource>) -> PbrTexture {
+    texture.terrain_override = terrain.is_some();
+    if let Some(tint) = terrain.and_then(|source| source.tint) {
         pack_compile_input::apply_atlas_tint(texture.surface.color.as_mut(), tint);
     }
     texture
 }
 
+/// Resolves aliases and companion maps while respecting explicit material formats.
 pub(super) fn load(
     packs: &[PbrPack],
     alias: &str,
@@ -348,10 +364,9 @@ pub(super) fn load(
             Some(key) => owner.terrain_key_source(key)?,
             None => owner.terrain_source(alias)?,
         };
-        let tint = terrain.and_then(|source| source.tint);
         let alias = terrain.map_or(alias, |source| source.path.as_str());
         if let Some(path) = json_path(owner, alias) {
-            let texture = tinted(texture_set(owner, &path)?, tint);
+            let texture = tinted(texture_set(owner, &path)?, terrain);
             if !prefer_complete || texture.has_complete_material() {
                 return Ok(Some(texture));
             }
@@ -456,8 +471,9 @@ pub(super) fn load(
                 timeline: animation(&color_path)?,
                 height,
                 source,
+                terrain_override: false,
             },
-            tint,
+            terrain,
         );
         if !prefer_complete || texture.has_complete_material() {
             return Ok(Some(texture));

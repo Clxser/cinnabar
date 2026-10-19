@@ -34,7 +34,7 @@ pub(super) fn build_carrier_texture_assets(
 ) -> Option<(PreparedChunkTextureAssets, ChunkTextureUploadStats)> {
     let carrier = assets.with_updated_enhanced(None);
     let (mut prepared, mut stats) = build_chunk_texture_assets(&carrier, device, queue)?;
-    prepared.identity = assets.identity();
+    prepared.identity = assets.binding_identity();
     #[cfg(feature = "enhanced")]
     if let Some(previous) = _previous.filter(|previous| {
         previous
@@ -57,6 +57,10 @@ pub(super) fn build_carrier_texture_assets(
     Some((prepared, stats))
 }
 
+#[cfg(all(test, not(feature = "enhanced")))]
+#[path = "texture_upload/tests.rs"]
+mod atlas_tests;
+
 /// Builds replacement GPU tables off the render thread, retaining the previous generation until ready.
 pub(in crate::chunk) fn build_chunk_texture_assets(
     assets: &ChunkTextureAssets,
@@ -64,7 +68,7 @@ pub(in crate::chunk) fn build_chunk_texture_assets(
     render_queue: &RenderQueue,
 ) -> Option<(PreparedChunkTextureAssets, ChunkTextureUploadStats)> {
     let _zone = bevy::log::info_span!("pack_apply.gpu_atlas").entered();
-    let identity = assets.identity();
+    let identity = assets.binding_identity();
     let pages = assets.assets().texture_pages();
     let Some(page_bindings) = plan_texture_page_bindings(pages.len()) else {
         bevy::log::error!(
@@ -115,7 +119,7 @@ pub(in crate::chunk) fn build_chunk_texture_assets(
         let texture = match match binding {
             TexturePageBinding::Asset(index) => assets.assets().terrain_texture_page(index),
             TexturePageBinding::DiagnosticFallback => {
-                assets::texture::rebuild_legacy_terrain_mips(texture).map(std::borrow::Cow::Owned)
+                assets::rebuild_legacy_terrain_mips(texture).map(std::borrow::Cow::Owned)
             }
         } {
             Ok(texture) => texture,
@@ -535,13 +539,11 @@ pub(in crate::chunk) fn build_chunk_texture_assets(
         native_leaf_views,
         native_leaf_sampler,
         sampler,
-        #[cfg(feature = "enhanced")]
-        enhanced_sampler: render_device
-            .create_sampler(&crate::material_shader::pbr_sampler_descriptor()),
     };
     Some((prepared, stats))
 }
 
+/// Uploads validated sRGB carrier or authored color mip bytes.
 pub(in crate::chunk) fn upload_texture_page(
     render_device: &RenderDevice,
     render_queue: &RenderQueue,
@@ -560,6 +562,7 @@ pub(in crate::chunk) fn upload_texture_page(
     )
 }
 
+/// Uploads authored normal or material channels without sRGB conversion.
 #[cfg(feature = "enhanced")]
 fn upload_linear_texture_page(
     render_device: &RenderDevice,
@@ -579,6 +582,7 @@ fn upload_linear_texture_page(
     )
 }
 
+/// Creates a texture and uploads its validated mip bytes in the selected format.
 fn upload_texture_page_format(
     render_device: &RenderDevice,
     render_queue: &RenderQueue,
@@ -660,7 +664,7 @@ mod tests {
         let queue = RenderQueue::new(queue);
         let carrier = ChunkTextureAssets::default();
         let (prepared, stats) = build_chunk_texture_assets(&carrier, &device, &queue).unwrap();
-        assert_eq!(prepared.identity, carrier.identity());
+        assert_eq!(prepared.identity, carrier.binding_identity());
         let pages = carrier.assets().texture_pages();
         let fallback = diagnostic_texture_page(&pages[0].texture).unwrap();
         let bindings = plan_texture_page_bindings(pages.len()).unwrap();
@@ -672,7 +676,7 @@ mod tests {
                         carrier.assets().terrain_texture_page(index).unwrap()
                     }
                     TexturePageBinding::DiagnosticFallback => std::borrow::Cow::Owned(
-                        assets::texture::rebuild_legacy_terrain_mips(&fallback).unwrap(),
+                        assets::rebuild_legacy_terrain_mips(&fallback).unwrap(),
                     ),
                 };
                 page.mips
@@ -721,7 +725,7 @@ mod tests {
         let current = carrier.with_updated_enhanced(Some(authored.clone()));
         assert!(
             super::super::authored_upload::AuthoredUpload::new(
-                current.identity(),
+                current.binding_identity(),
                 authored,
                 &device,
             )
@@ -738,11 +742,11 @@ mod tests {
         let prepared = build_chunk_texture_assets(&replacement, &device, &queue);
         reload.finish(&request, prepared.is_some());
         assert_eq!(
-            reload.status(replacement.identity()),
+            reload.status(replacement.binding_identity()),
             Some(Ok(())),
             "rejected optional maps must not abort a valid server atlas replacement",
         );
-        assert_eq!(prepared.unwrap().0.identity, replacement.identity());
+        assert_eq!(prepared.unwrap().0.identity, replacement.binding_identity());
     }
 
     #[cfg(feature = "enhanced")]

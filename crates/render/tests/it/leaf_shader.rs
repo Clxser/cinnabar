@@ -82,7 +82,7 @@ fn native_leaf_colour_is_world_material_gated_and_enhanced_keeps_its_existing_pa
 }
 
 #[test]
-fn alternate_atlas_views_and_native_sampler_fit_baseline_limits_without_more_storage() {
+fn alternate_atlas_views_and_native_sampler_fit_baseline_limits() {
     let baseline = wgpu::Limits::default();
     assert!(material_shader::chunk_atlas_views_fit(&baseline));
     let required = material_shader::CHUNK_SAMPLED_TEXTURE_BINDINGS;

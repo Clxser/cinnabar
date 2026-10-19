@@ -1,4 +1,5 @@
 use super::*;
+use crate::game_frame::configure_client_frame_schedule;
 use crate::runtime::network::resource_packs::PackApplication;
 use bevy::ecs::schedule::{IntoSystemSet, NodeId, ScheduleGraph, Schedules, SystemSet};
 use client_runtime::network::NetworkHandle;
@@ -10,7 +11,7 @@ use server_experience::{
 use std::collections::BTreeSet;
 use {
     crate::{
-        app::{configure_client_frame_schedule, configure_client_production_frame_systems},
+        app::configure_client_production_frame_systems,
         runtime::world::{ClientWorld, drain_committed_ui_before_authority},
     },
     ui_engine::test_support::fixture_font,
@@ -51,6 +52,7 @@ fn offer() -> VerifiedOffer {
                 origins: BTreeSet::new(),
                 memory_bytes: 0,
                 gpu_bytes: 0,
+                personal_mods: Default::default(),
             },
             packages: Vec::new(),
             fallback: String::new(),
@@ -332,7 +334,7 @@ fn committed_dimension_transition_revokes_live_runtime_in_the_same_frame() {
             ..Default::default()
         })
         .init_resource::<crate::runtime::shutdown::FatalError>()
-        .init_resource::<crate::environment::WorldClock>()
+        .init_resource::<client_presentation::environment::WorldClock>()
         .init_resource::<Time<Real>>()
         .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<ButtonInput<MouseButton>>()

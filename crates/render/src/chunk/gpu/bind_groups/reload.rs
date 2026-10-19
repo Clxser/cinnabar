@@ -18,7 +18,7 @@ pub(in crate::chunk) fn prepare_chunk_texture_assets(
     reload: Res<ChunkTextureReload>,
     mut coverage: Option<ResMut<TerrainCoverage>>,
 ) {
-    let identity = assets.identity();
+    let identity = assets.binding_identity();
     if gpu_assets
         .pending
         .as_ref()
@@ -120,12 +120,20 @@ pub(in crate::chunk) fn prepare_chunk_texture_assets(
     {
         gpu_assets.authored_pending = None;
     }
+    #[cfg(feature = "enhanced")]
+    let authored_only = gpu_assets
+        .prepared
+        .as_ref()
+        .is_some_and(|prepared| same_carrier(prepared.identity, identity));
+    #[cfg(not(feature = "enhanced"))]
+    let authored_only = false;
     // Bootstrap may publish without an optional reload transaction.
     if texture_asset_needs_rebuild(gpu_assets.attempted_identity, identity)
         && requested
             .as_ref()
-            .is_none_or(|candidate| candidate.assets().identity() != identity)
+            .is_none_or(|candidate| candidate.assets().binding_identity() != identity)
         && (gpu_assets.prepared.is_none()
+            || authored_only
             || arena.allocations.is_empty() && arena.retired_allocations.is_empty())
     {
         gpu_assets.attempted_identity = Some(identity);
@@ -160,7 +168,9 @@ pub(in crate::chunk) fn prepare_chunk_texture_assets(
     };
     if gpu_assets.staged.is_some()
         || gpu_assets.pending.is_some()
-        || reload.status(candidate.assets().identity()).is_some()
+        || reload
+            .status(candidate.assets().binding_identity())
+            .is_some()
     {
         return;
     }
@@ -185,7 +195,7 @@ pub(in crate::chunk) fn prepare_chunk_texture_assets(
             },
         );
     let previous = gpu_assets.prepared.clone();
-    std::thread::spawn(move || {
+    let work = move || {
         let result = build_carrier_texture_assets(&candidate, previous.as_ref(), &device, &queue)
             .and_then(|(atlas, stats)| {
                 let geometry = match geometry {
@@ -202,7 +212,11 @@ pub(in crate::chunk) fn prepare_chunk_texture_assets(
                 Some((atlas, stats, geometry))
             });
         let _ = sender.send(result);
-    });
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    std::thread::spawn(work);
+    #[cfg(target_arch = "wasm32")]
+    crate::browser_jobs::submit(crate::browser_jobs::Lane::Textures, work);
 }
 
 /// Installs the current atlas without a reload transaction. Enhanced keeps an unchanged carrier
@@ -215,12 +229,12 @@ fn rebuild_bootstrap_atlas(
     render_queue: &RenderQueue,
 ) {
     #[cfg(feature = "enhanced")]
-    let identity = assets.identity();
+    let identity = assets.binding_identity();
     #[cfg(feature = "enhanced")]
     if gpu_assets
         .prepared
         .as_ref()
-        .is_some_and(|prepared| authored_upload::same_carrier(prepared.identity, identity))
+        .is_some_and(|prepared| same_carrier(prepared.identity, identity))
     {
         if let Some(authored) = assets.enhanced() {
             gpu_assets.authored_pending =

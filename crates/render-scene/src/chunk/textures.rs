@@ -39,11 +39,28 @@ mod authored_reference_tests {
             "duplicate keys are ambiguous"
         );
         words[start + EnhancedTextureAssets::REFERENCE_OVERRIDE_WORDS] = 2;
-        words[start + 1] = 1 << 30;
-        assert!(
-            !EnhancedTextureAssets::references_are_valid(&words),
-            "keys contain only carrier bits"
-        );
+        for page in 0..assets::MAX_TEXTURE_PAGES as u32 {
+            words[start + 1] = TextureRef::new(page, assets::TEXTURE_LAYER_MASK)
+                .unwrap()
+                .raw();
+            assert!(EnhancedTextureAssets::references_are_valid(&words));
+        }
+        let carrier_bits =
+            (assets::TEXTURE_PAGE_MASK << assets::TEXTURE_PAGE_SHIFT) | assets::TEXTURE_LAYER_MASK;
+        for bit in 0..u32::BITS {
+            let raw = 1 << bit;
+            if raw & carrier_bits == 0 {
+                words[start + 1] = raw;
+                assert!(
+                    !EnhancedTextureAssets::references_are_valid(&words),
+                    "keys reject invalid carrier bits: {raw:#010x}"
+                );
+            }
+        }
+        for page in assets::MAX_TEXTURE_PAGES as u32..=assets::TEXTURE_PAGE_MASK {
+            words[start + 1] = page << assets::TEXTURE_PAGE_SHIFT;
+            assert!(!EnhancedTextureAssets::references_are_valid(&words));
+        }
     }
 }
 
@@ -157,6 +174,7 @@ impl EnhancedTextureAssets {
             [texture.page() as usize * assets::MAX_TEXTURE_LAYERS + texture.layer() as usize]
     }
 
+    /// Counts authored layers on pages referenced by the sparse lookup table.
     #[must_use]
     pub fn authored_layer_count(&self) -> usize {
         self.color_pages
@@ -245,6 +263,7 @@ impl ChunkTextureAssets {
         }
     }
 
+    /// Pairs carrier ownership with optional validated authored maps and a revision.
     #[must_use]
     pub fn with_optional_enhanced(
         assets: Arc<RuntimeAssets>,
@@ -258,6 +277,7 @@ impl ChunkTextureAssets {
         }
     }
 
+    /// Pairs carrier ownership with validated authored maps and a revision.
     #[must_use]
     pub fn with_enhanced(
         assets: Arc<RuntimeAssets>,
@@ -272,6 +292,7 @@ impl ChunkTextureAssets {
         &self.assets
     }
 
+    /// Returns the optional authored map source retained by this generation.
     #[must_use]
     pub fn enhanced(&self) -> Option<&Arc<EnhancedTextureAssets>> {
         self.enhanced.as_ref()
@@ -287,15 +308,24 @@ impl ChunkTextureAssets {
         }
     }
 
+    /// Identifies the carrier tables and geometry independently of authored bindings.
     #[must_use]
     pub fn identity(&self) -> ChunkTextureAssetIdentity {
         ChunkTextureAssetIdentity {
             pointer: Arc::as_ptr(&self.assets) as usize,
+            revision: self.revision,
+        }
+    }
+
+    /// Identifies every texture binding, including the optional authored map source.
+    #[must_use]
+    pub fn binding_identity(&self) -> ChunkTextureBindingIdentity {
+        ChunkTextureBindingIdentity {
+            carrier: self.identity(),
             enhanced_pointer: self
                 .enhanced
                 .as_ref()
                 .map_or(0, |enhanced| Arc::as_ptr(enhanced) as usize),
-            revision: self.revision,
         }
     }
 }
@@ -314,29 +344,32 @@ impl bevy::render::extract_resource::ExtractResource<bevy::render::RenderApp>
     }
 }
 
+/// Carrier ownership and revision used by geometry and address caches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChunkTextureAssetIdentity {
     pub pointer: usize,
-    pub enhanced_pointer: usize,
     pub revision: u64,
+}
+
+/// Complete texture bindings; authored updates leave the carrier identity unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ChunkTextureBindingIdentity {
+    pub carrier: ChunkTextureAssetIdentity,
+    pub enhanced_pointer: usize,
 }
 
 impl ChunkTextureAssetIdentity {
     #[cfg(any(test, feature = "publication-test-support"))]
     #[must_use]
     pub const fn new(pointer: usize, revision: u64) -> Self {
-        Self {
-            pointer,
-            enhanced_pointer: 0,
-            revision,
-        }
+        Self { pointer, revision }
     }
 }
 
 #[must_use]
 pub fn texture_asset_needs_rebuild(
-    current: Option<ChunkTextureAssetIdentity>,
-    next: ChunkTextureAssetIdentity,
+    current: Option<ChunkTextureBindingIdentity>,
+    next: ChunkTextureBindingIdentity,
 ) -> bool {
     current != Some(next)
 }

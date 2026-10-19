@@ -18,6 +18,8 @@ pub mod lighting;
 pub mod liquid;
 mod palette_bits;
 mod publication;
+mod render_settings;
+pub use render_settings::MeshRenderSettings;
 mod types;
 pub use light_emitters::BlockLightEmitter;
 

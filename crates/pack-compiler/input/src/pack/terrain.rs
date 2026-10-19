@@ -407,6 +407,7 @@ impl TerrainVariant {
     }
 }
 
+/// Reads and validates the terrain atlas texture catalog.
 pub fn read_terrain(path: &Path) -> Result<TerrainTextureMap, AssetError> {
     let document: TerrainDocument = read_json(path)?;
     let texture_data = match document.texture_data.issue {

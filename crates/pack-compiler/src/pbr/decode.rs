@@ -3,10 +3,12 @@ use image::{Rgba, RgbaImage};
 use super::{PbrFormat, PbrNormalFormat};
 use assets::texture::{PBR_REF_LABPBR, PBR_REF_MATERIAL, PBR_REF_OCCLUSION, PBR_REF_SUBSURFACE};
 
+/// Clamps a normalized channel and rounds it to an eight-bit value.
 pub(super) fn byte(value: f32) -> u8 {
     (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
+/// Normalizes a vector, using the flat surface normal for a zero vector.
 pub(super) fn unit(mut value: [f32; 3]) -> [f32; 3] {
     let length = value.iter().map(|v| v * v).sum::<f32>().sqrt();
     if length < 0.000001 {
@@ -18,6 +20,7 @@ pub(super) fn unit(mut value: [f32; 3]) -> [f32; 3] {
     value
 }
 
+/// Converts declared normal channels into XY, occlusion and height channels.
 pub(super) fn normal(
     mut image: RgbaImage,
     format: PbrFormat,
@@ -52,6 +55,7 @@ pub(super) fn normal(
     (image, flags)
 }
 
+/// Converts the declared Java specular format into packed material channels.
 pub(super) fn specular(mut image: RgbaImage, format: PbrFormat) -> (RgbaImage, u32) {
     let lab = format == PbrFormat::LabPbr13;
     let mut flags = PBR_REF_MATERIAL | (u32::from(lab) * PBR_REF_LABPBR);
@@ -77,6 +81,7 @@ pub(super) fn specular(mut image: RgbaImage, format: PbrFormat) -> (RgbaImage, u
     (image, flags)
 }
 
+/// Resolves MER or mutually exclusive MERS metalness and subsurface channels.
 pub(super) fn mer(mut image: RgbaImage, subsurface: bool) -> (RgbaImage, u32) {
     for pixel in image.pixels_mut() {
         if !subsurface {

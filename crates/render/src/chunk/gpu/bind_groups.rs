@@ -1,28 +1,27 @@
 use super::resource_geometry::PreparedResourceGeometry;
 use super::texture_upload::build_carrier_texture_assets;
+#[cfg(test)]
+use super::texture_upload::build_chunk_texture_assets;
 #[cfg(feature = "enhanced")]
 use super::{authored_upload, authored_upload::AuthoredUpload};
+#[cfg(feature = "enhanced")]
+use render_scene::EnhancedTextureAssets;
+#[cfg(all(test, feature = "enhanced"))]
+mod carrier_tests;
+
+mod reload;
 use crate::chunk::*;
 use bevy::color::ColorToPacked;
 #[cfg(feature = "enhanced")]
 use bevy::render::render_resource::TextureViewId;
-
-mod reload;
 pub(in crate::chunk) use reload::prepare_chunk_texture_assets;
 
-#[cfg(feature = "enhanced")]
-use render_scene::EnhancedTextureAssets;
 use render_scene::{
-    BiomeTint, ChunkAnimationClock, ChunkBiomeTints, ChunkRenderInstance,
-    ChunkTextureAssetIdentity, ChunkTextureAssets, ChunkTexturePreparation, ChunkTextureReload,
-    TextureMipUploadPlan, TextureUploadPlanError, plan_texture_mip_uploads,
-    texture_asset_needs_rebuild,
+    BiomeTint, ChunkAnimationClock, ChunkBiomeTints, ChunkRenderInstance, ChunkTextureAssets,
+    ChunkTextureBindingIdentity, ChunkTexturePreparation, ChunkTextureReload, TextureMipUploadPlan,
+    TextureUploadPlanError, plan_texture_mip_uploads, texture_asset_needs_rebuild,
 };
 
-#[cfg(test)]
-use super::texture_upload::build_chunk_texture_assets;
-#[cfg(all(test, feature = "enhanced"))]
-mod carrier_tests;
 #[cfg(test)]
 mod water_tint_tests;
 
@@ -48,9 +47,7 @@ pub(in crate::chunk) struct ChunkBindGroupBuffers {
     pub(in crate::chunk) biome_tints: BufferId,
     pub(in crate::chunk) atmosphere: BufferId,
     pub(in crate::chunk) biome_tint_table: ChunkBiomeTintResourceIdentity,
-    pub(in crate::chunk) textures: ChunkTextureAssetIdentity,
-    #[cfg(feature = "enhanced")]
-    pub(in crate::chunk) enhanced_texture_refs: BufferId,
+    pub(in crate::chunk) textures: ChunkTextureBindingIdentity,
 }
 
 #[repr(C)]
@@ -161,6 +158,14 @@ pub(in crate::chunk) fn biome_tint_bind_group_needs_rebuild(
     current != Some(next)
 }
 
+/// Checks carrier ownership and revision independently of optional authored maps.
+pub(super) fn same_carrier(
+    current: ChunkTextureBindingIdentity,
+    next: ChunkTextureBindingIdentity,
+) -> bool {
+    current.carrier == next.carrier
+}
+
 pub(in crate::chunk) fn prepare_chunk_biome_tints(
     render_device: Res<RenderDevice>,
     source: Res<ChunkBiomeTints>,
@@ -172,7 +177,7 @@ pub(in crate::chunk) fn prepare_chunk_biome_tints(
         && textures
             .prepared
             .as_ref()
-            .is_none_or(|prepared| prepared.identity != assets.identity())
+            .is_none_or(|prepared| !same_carrier(prepared.identity, assets.binding_identity()))
     {
         return;
     }
@@ -198,7 +203,7 @@ pub(in crate::chunk) struct PreparedChunkTextureAssets {
     /// Retains the authored source represented by the current GPU bindings.
     #[cfg(feature = "enhanced")]
     pub(super) authored_source: Option<Arc<EnhancedTextureAssets>>,
-    pub(in crate::chunk) identity: ChunkTextureAssetIdentity,
+    pub(in crate::chunk) identity: ChunkTextureBindingIdentity,
     pub(in crate::chunk) material_buffer: Buffer,
     pub(in crate::chunk) animation_buffer: Buffer,
     pub(in crate::chunk) animation_frame_buffer: Buffer,
@@ -222,8 +227,6 @@ pub(in crate::chunk) struct PreparedChunkTextureAssets {
     pub(in crate::chunk) authored_upload_bytes: u64,
     pub(in crate::chunk) native_leaf_views: [TextureView; assets::MAX_TEXTURE_PAGES],
     pub(in crate::chunk) sampler: Sampler,
-    #[cfg(feature = "enhanced")]
-    pub(in crate::chunk) enhanced_sampler: Sampler,
     pub(in crate::chunk) native_leaf_sampler: Sampler,
 }
 
@@ -275,7 +278,7 @@ struct StagedTextures {
 
 #[derive(Resource, Default)]
 pub(crate) struct ChunkGpuTextureAssets {
-    pub(in crate::chunk) attempted_identity: Option<ChunkTextureAssetIdentity>,
+    pub(in crate::chunk) attempted_identity: Option<ChunkTextureBindingIdentity>,
     pub(in crate::chunk) _attempted_assets: Option<Arc<RuntimeAssets>>,
     pub(in crate::chunk) prepared: Option<PreparedChunkTextureAssets>,
     pending: Option<PendingTextures>,
@@ -310,6 +313,7 @@ pub struct ChunkTextureUploadStats {
     pub queue_upload_bytes: u64,
 }
 
+/// Array layers repeat atlas tiles without changing vanilla's texel or mip filtering.
 pub(in crate::chunk) fn chunk_sampler_descriptor() -> SamplerDescriptor<'static> {
     SamplerDescriptor {
         label: Some("global chunk repeat sampler"),
@@ -409,8 +413,6 @@ pub(in crate::chunk) fn prepare_chunk_bind_group(
         atmosphere: atmosphere.buffer.id(),
         biome_tint_table: biome_tints.identity,
         textures: texture_assets.identity,
-        #[cfg(feature = "enhanced")]
-        enhanced_texture_refs: texture_assets.enhanced_texture_refs.id(),
     };
     if !bind_group_needs_rebuild(
         arena.bind_group.is_some() && arena.transparent_bind_group.is_some(),
@@ -469,10 +471,6 @@ pub(in crate::chunk) fn prepare_chunk_bind_group(
             resource: texture_assets.animation_frame_buffer.as_entire_binding(),
         },
         BindGroupEntry {
-            binding: crate::material_shader::BIOME_QUERY_TABLES_BINDING,
-            resource: clock.buffer.as_entire_binding(),
-        },
-        BindGroupEntry {
             binding: 12,
             resource: texture_assets.model_template_buffer.as_entire_binding(),
         },
@@ -492,45 +490,9 @@ pub(in crate::chunk) fn prepare_chunk_bind_group(
             binding: crate::material_shader::NATIVE_LEAF_SAMPLER_BINDING,
             resource: BindingResource::Sampler(&texture_assets.native_leaf_sampler),
         },
-        #[cfg(feature = "enhanced")]
         BindGroupEntry {
-            binding: crate::material_shader::ENHANCED_COLOR_TEXTURE_BINDINGS[0],
-            resource: BindingResource::TextureView(&texture_assets.enhanced_views[0]),
-        },
-        #[cfg(feature = "enhanced")]
-        BindGroupEntry {
-            binding: crate::material_shader::ENHANCED_COLOR_TEXTURE_BINDINGS[1],
-            resource: BindingResource::TextureView(&texture_assets.enhanced_views[1]),
-        },
-        #[cfg(feature = "enhanced")]
-        BindGroupEntry {
-            binding: crate::material_shader::ENHANCED_NORMAL_TEXTURE_BINDINGS[0],
-            resource: BindingResource::TextureView(&texture_assets.enhanced_views[2]),
-        },
-        #[cfg(feature = "enhanced")]
-        BindGroupEntry {
-            binding: crate::material_shader::ENHANCED_NORMAL_TEXTURE_BINDINGS[1],
-            resource: BindingResource::TextureView(&texture_assets.enhanced_views[3]),
-        },
-        #[cfg(feature = "enhanced")]
-        BindGroupEntry {
-            binding: crate::material_shader::ENHANCED_MER_TEXTURE_BINDINGS[0],
-            resource: BindingResource::TextureView(&texture_assets.enhanced_views[4]),
-        },
-        #[cfg(feature = "enhanced")]
-        BindGroupEntry {
-            binding: crate::material_shader::ENHANCED_MER_TEXTURE_BINDINGS[1],
-            resource: BindingResource::TextureView(&texture_assets.enhanced_views[5]),
-        },
-        #[cfg(feature = "enhanced")]
-        BindGroupEntry {
-            binding: crate::material_shader::ENHANCED_SAMPLER_BINDING,
-            resource: BindingResource::Sampler(&texture_assets.enhanced_sampler),
-        },
-        #[cfg(feature = "enhanced")]
-        BindGroupEntry {
-            binding: crate::material_shader::ENHANCED_TEXTURE_REF_BINDING,
-            resource: texture_assets.enhanced_texture_refs.as_entire_binding(),
+            binding: crate::material_shader::BIOME_QUERY_TABLES_BINDING,
+            resource: clock.buffer.as_entire_binding(),
         },
     ];
     entries.extend(

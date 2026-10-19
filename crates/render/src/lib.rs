@@ -32,6 +32,7 @@ mod chunk;
 
 mod cloud_render;
 mod device_poll;
+pub mod device_settings;
 
 mod enhanced;
 #[cfg(all(feature = "enhanced", target_os = "windows"))]
@@ -46,9 +47,14 @@ mod gpu_timing;
 pub use gpu_timing::{DetailedGpuTiming, GpuTimingPlugin};
 
 mod dropped_item_render;
+mod frame_boundary;
 mod hand_rig_render;
+pub use device_poll::FrameSubmissions;
+pub use frame_boundary::{FrameEnd, FrameStart};
+#[cfg(not(target_arch = "wasm32"))]
 mod input_pacing;
-pub use input_pacing::{FrameEnd, FramePacing, FrameStart, InputPacingPlugin};
+#[cfg(not(target_arch = "wasm32"))]
+pub use input_pacing::{FramePacing, InputPacingPlugin};
 
 mod lightning_render;
 mod media;
@@ -184,3 +190,6 @@ mod runtime_profile_trace;
 
 #[cfg(feature = "publication-test-support")]
 pub use actor_render::publication_test_support::{PreparedActorDraw, prepare_actor_test_frame};
+
+#[cfg(target_arch = "wasm32")]
+pub mod browser_jobs;

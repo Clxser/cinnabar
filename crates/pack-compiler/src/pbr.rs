@@ -43,6 +43,7 @@ pub enum PbrColorStyle {
 }
 
 impl PbrColorStyle {
+    /// Parses a supported explicit configuration value.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
@@ -54,6 +55,7 @@ impl PbrColorStyle {
         }
     }
 
+    /// Returns the stable configuration spelling of this color style.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -66,6 +68,7 @@ impl PbrColorStyle {
 }
 
 impl PbrNormalFormat {
+    /// Parses a supported explicit configuration value.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
@@ -77,6 +80,7 @@ impl PbrNormalFormat {
 }
 
 impl PbrFormat {
+    /// Parses a supported explicit configuration value.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
@@ -101,6 +105,7 @@ pub struct PbrPack {
 }
 
 impl PbrPack {
+    /// Indexes a pack directory using its explicit or declared material format.
     #[must_use]
     pub fn new(root: impl Into<PathBuf>, override_format: Option<PbrFormat>) -> Self {
         let root = root.into();
@@ -118,11 +123,13 @@ impl PbrPack {
         }
     }
 
+    /// Returns the directory that owns this pack.
     #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
     }
 
+    /// Returns the declared or explicitly selected material channel format.
     #[must_use]
     pub const fn format(&self) -> PbrFormat {
         self.format
@@ -135,18 +142,21 @@ impl PbrPack {
         self
     }
 
+    /// Selects the handedness used to decode authored normal maps.
     #[must_use]
     pub fn with_normal_format(mut self, format: PbrNormalFormat) -> Self {
         self.normal_format = format;
         self
     }
 
+    /// Records the declared style of the supplied color artwork.
     #[must_use]
     pub fn with_color_style(mut self, style: PbrColorStyle) -> Self {
         self.color_style = style;
         self
     }
 
+    /// Returns the declared color-artwork style.
     #[must_use]
     pub const fn color_style(&self) -> PbrColorStyle {
         self.color_style
@@ -159,6 +169,7 @@ impl PbrPack {
         self
     }
 
+    /// Reports whether complete material sets take priority over color-only matches.
     #[must_use]
     pub const fn prefers_complete_material(&self) -> bool {
         self.prefer_complete_material
@@ -213,11 +224,13 @@ impl PbrPack {
         Ok(self.terrain_index.as_ref().map_err(Clone::clone)?.get(key))
     }
 
+    /// Returns the companion group allowed to share maps with this pack.
     #[must_use]
     pub fn material_group(&self) -> Option<&str> {
         self.group.as_deref()
     }
 
+    /// Returns the selected normal-map handedness.
     #[must_use]
     pub const fn normal_format(&self) -> PbrNormalFormat {
         self.normal_format
@@ -240,6 +253,8 @@ pub struct PbrTexture {
     timeline: Vec<u32>,
     height: Option<RgbaImage>,
     source: PbrTextureSource,
+    /// An explicit winning terrain entry replaces the carrier's atlas tint.
+    terrain_override: bool,
 }
 
 /// Image paths refer to pack inputs, before frame extraction and upload resizing.
@@ -256,6 +271,7 @@ pub struct PbrTextureSource {
 }
 
 impl PbrTexture {
+    /// Returns the source paths and dimensions recorded during decoding.
     #[must_use]
     pub const fn source(&self) -> &PbrTextureSource {
         &self.source
@@ -277,6 +293,7 @@ impl PbrTexture {
         .unwrap_or(1)
     }
 
+    /// Reports whether color, authored normals and material channels are present.
     #[must_use]
     pub fn has_complete_material(&self) -> bool {
         self.source.normal.is_some() && self.surface.flags & PBR_REF_MATERIAL != 0
@@ -293,6 +310,12 @@ impl PbrTexture {
         self.height.is_some()
     }
 
+    /// Returns the carrier tint that remains applicable after the winning terrain override.
+    #[must_use]
+    pub fn inherited_tint(&self, tint: Option<[u8; 3]>) -> Option<[u8; 3]> {
+        tint.filter(|_| !self.terrain_override)
+    }
+
     /// Maps authored frame order onto the carrier's slots; the carrier retains its clock.
     /// Custom frame counts and durations are sampled into those slots, not scheduled independently.
     pub fn frame(
@@ -300,13 +323,27 @@ impl PbrTexture {
         timeline_index: usize,
         timeline_count: usize,
     ) -> Result<PbrSurface, String> {
-        frames::extract(
+        self.frame_with_inherited_tint(timeline_index, timeline_count, None)
+    }
+
+    /// Applies a carrier's atlas tint unless the winning pack declares its own terrain entry.
+    pub fn frame_with_inherited_tint(
+        &self,
+        timeline_index: usize,
+        timeline_count: usize,
+        inherited_tint: Option<[u8; 3]>,
+    ) -> Result<PbrSurface, String> {
+        let mut frame = frames::extract(
             &self.surface,
             self.height.as_ref(),
             &self.timeline,
             timeline_index,
             timeline_count,
-        )
+        )?;
+        if let Some(tint) = self.inherited_tint(inherited_tint) {
+            pack_compile_input::apply_atlas_tint(frame.color.as_mut(), tint);
+        }
+        Ok(frame)
     }
 }
 

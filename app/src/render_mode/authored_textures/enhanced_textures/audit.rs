@@ -51,6 +51,7 @@ pub(super) struct Alias {
 }
 
 impl Alias {
+    /// Starts a coverage record for one alias and its carrier sources.
     pub(super) fn new(alias: String, sources: usize) -> Self {
         Self {
             alias,
@@ -85,6 +86,7 @@ impl Alias {
         }
     }
 
+    /// Records the supplied maps and their original dimensions.
     pub(super) fn apply_source(&mut self, texture: &pack_compiler::pbr::PbrTexture) {
         let source = texture.source();
         let path = |path: &Option<PathBuf>| {
@@ -103,6 +105,7 @@ impl Alias {
         self.authored_material = texture.flags() & PBR_REF_MATERIAL != 0;
     }
 
+    /// Counts the maps selected by one published authored reference.
     pub(super) fn apply_reference(&mut self, reference: u32) {
         if reference == REF_FALLBACK {
             self.fallback = true;
@@ -117,6 +120,7 @@ impl Alias {
         self.subsurface |= reference & PBR_REF_SUBSURFACE != 0;
     }
 
+    /// Derives coverage categories after all carrier sources have been visited.
     pub(super) fn finish(&mut self) {
         self.fallback |= self.mapped_sources < self.sources;
         self.authored_normal &= self.normal;
@@ -160,6 +164,7 @@ pub(super) struct Report {
 }
 
 impl Report {
+    /// Builds a report for newly decoded maps and their cache key.
     pub(super) fn decoded(
         key: &[u8; 32],
         aliases: Vec<Alias>,
@@ -179,6 +184,7 @@ impl Report {
         }
     }
 
+    /// Totals the coverage categories across all aliases.
     fn summary(&self) -> Summary {
         let mut summary = Summary::default();
         for alias in &self.aliases {
@@ -205,6 +211,7 @@ impl Report {
         summary
     }
 
+    /// Logs material coverage and fallback counts for the selected packs.
     pub(super) fn print(&self) {
         let summary = self.summary();
         let pages = self.page_sizes.map_or_else(
@@ -268,10 +275,12 @@ struct Summary {
     authored_color: usize,
 }
 
+/// Encodes a cache key as lowercase hexadecimal.
 fn fingerprint(key: &[u8; 32]) -> String {
     key.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// Reads a bounded report only when its schema and cache key match.
 pub(super) fn load(key: &[u8; 32]) -> Option<Report> {
     let path = Path::new(PATH);
     let size = fs::metadata(path).ok()?.len();
@@ -282,6 +291,7 @@ pub(super) fn load(key: &[u8; 32]) -> Option<Report> {
     (report.schema == SCHEMA && report.fingerprint == fingerprint(key)).then_some(report)
 }
 
+/// Replaces the local coverage report with a complete JSON encoding.
 pub(super) fn save(report: &Report) {
     let temporary = PathBuf::from(format!("{PATH}.{}.tmp", std::process::id()));
     let result = (|| -> std::io::Result<()> {

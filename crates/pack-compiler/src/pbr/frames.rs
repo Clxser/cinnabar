@@ -16,6 +16,7 @@ fn frame_count(image: &RgbaImage) -> Result<u32, String> {
     Ok(width.max(height) / side)
 }
 
+/// Extracts the source frame selected by the carrier clock and authored timeline.
 fn image_frame(
     image: &RgbaImage,
     index: usize,
@@ -45,6 +46,7 @@ fn image_frame(
     Ok(image::imageops::crop_imm(image, x, y, side, side).to_image())
 }
 
+/// Extracts aligned material frames and derives normals from varying height when needed.
 pub(super) fn extract(
     source: &PbrSurface,
     height_source: Option<&RgbaImage>,
@@ -59,10 +61,13 @@ pub(super) fn extract(
     let mut flags = source.flags;
     if let Some(height) = height_source {
         let height = image_frame(height, index, count, timeline, color_frames)?;
-        let side = height.width();
+        let side = height.width().max(normal.width());
         let has_normal = flags & PBR_REF_NORMAL != 0;
         if !has_normal {
             normal = ImageBuffer::from_pixel(side, side, Rgba([128, 128, 255, 128]));
+        } else if normal.width() != side {
+            normal =
+                image::imageops::resize(&normal, side, side, image::imageops::FilterType::Triangle);
         }
         let aligned_height = image::imageops::resize(
             &height,
@@ -91,6 +96,7 @@ pub(super) fn extract(
     })
 }
 
+/// Derives wrapped surface gradients while retaining the authored height channel.
 fn derive_height_normals(normal: &mut RgbaImage) {
     let side = normal.width();
     let heights = normal.pixels().map(|pixel| pixel[3]).collect::<Vec<_>>();

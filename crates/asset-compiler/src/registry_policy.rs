@@ -53,6 +53,7 @@ struct BlockFact {
     friction: f64,
     emission: u8,
     filter: u8,
+    can_contain_liquid_source: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -1,3 +1,4 @@
+mod input_host;
 use crate::{
     CallbackOutcome, CameraDelta, FRAME_FUEL, GameplayCameraRig, GameplayMob,
     GameplayMovementSnapshot, GameplaySnapshot, MAX_LABEL_BYTES, MEMORY_BYTES, ModCue, ModEvent,
@@ -10,10 +11,7 @@ use server_experience::{
     session_data::SessionData,
 };
 use std::{collections::BTreeSet, sync::Arc};
-use wasmtime::{
-    Engine, Store, StoreLimits, StoreLimitsBuilder,
-    component::{Component, HasSelf, Linker},
-};
+use wasmtime::{Store, StoreLimits, StoreLimitsBuilder};
 
 // `player-mod` includes `extension`, so one linker serves both worlds' components.
 wasmtime::component::bindgen!({
@@ -27,13 +25,17 @@ wasmtime::component::bindgen!({
     additional_derives: [PartialEq],
 });
 
-const MAX_IMPORT_WRITES: u32 = 8;
+pub(crate) const MAX_IMPORT_WRITES: u32 = 8;
 #[path = "block_highlights.rs"]
 mod block_highlights;
 #[path = "camera.rs"]
 mod camera;
 #[path = "controls.rs"]
 mod controls;
+#[path = "drawing.rs"]
+mod drawing;
+#[cfg(test)]
+mod drawing_tests;
 mod exports;
 #[path = "gameplay.rs"]
 mod gameplay;
@@ -42,6 +44,9 @@ mod hud;
 mod inventory;
 #[path = "item_use.rs"]
 mod item_use;
+mod loading;
+#[path = "masks.rs"]
+mod masks;
 pub(crate) mod player_mod;
 #[path = "player_state.rs"]
 mod player_state;
@@ -95,6 +100,7 @@ struct State {
     item_use_policy: item_use::ItemUsePolicy,
     player_state: player_state::PlayerState,
     render: render::RenderState,
+    drawing_policy: Option<mod_api::drawing::DrawingSession>,
     declared: Declared,
     layout: Option<HostLayout>,
     session: Arc<SessionData>,
@@ -116,6 +122,7 @@ impl State {
             || self.camera_delta.is_some()
             || self.camera_policy.committed
             || self.camera_policy.committed_view_scale.is_some()
+            || self.camera_policy.committed_hurt_style.is_some()
     }
 
     fn new(grants: ModGrants, settings: String, declared: Declared) -> Self {
@@ -163,6 +170,7 @@ impl State {
             item_use_policy: item_use::ItemUsePolicy::default(),
             player_state: player_state::PlayerState::default(),
             render: render::RenderState::new(),
+            drawing_policy: None,
             declared,
             layout: None,
             session: Arc::default(),
@@ -197,6 +205,11 @@ impl cinnabar::extension::hud::Host for State {
     }
     fn set_content(&mut self, json: String) -> Result<Result<(), String>> {
         hud::set_content(self, json)
+    }
+
+    /// Applies a bounded retained HUD update inside the current callback transaction.
+    fn update_content(&mut self, json: String) -> Result<Result<(), String>> {
+        hud::update_content(self, json)
     }
 
     fn set_crosshair(&mut self, json: String) -> Result<Result<(), String>> {
@@ -250,28 +263,6 @@ impl cinnabar::extension::environment::Host for State {
     }
 }
 
-impl cinnabar::extension::input::Host for State {
-    /// Reads only the host's one-frame action edge, never raw keyboard state.
-    fn demo_pressed(&mut self) -> Result<bool> {
-        Ok(self.pressed)
-    }
-
-    fn read_controls(&mut self) -> Result<Result<crate::ControlFrame, String>> {
-        controls::read(self)
-    }
-
-    fn read_selected_controls(
-        &mut self,
-        selection: cinnabar::extension::input::Selection,
-    ) -> Result<Result<crate::ControlFrame, String>> {
-        controls::read_selected(self, selection)
-    }
-
-    fn reserve_keys(&mut self, keys: Vec<String>) -> Result<Result<(), String>> {
-        controls::reserve(self, keys)
-    }
-}
-
 /// An authority revocation may be rebuilt; a trapped guest requires an intentional replacement.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum InstanceStatus {
@@ -290,95 +281,6 @@ pub(super) struct Instance {
 }
 
 impl Instance {
-    /// Compiles a component and checks its imports and callbacks without running guest code.
-    pub(super) fn check(engine: &Engine, bytes: &[u8]) -> Result<()> {
-        let component = Component::new(engine, bytes)?;
-        let mut linker = Linker::new(engine);
-        PlayerMod::add_to_linker::<_, HasSelf<_>>(&mut linker, |state: &mut State| state)?;
-        exports::Exports::check(&linker.instantiate_pre(&component)?)
-    }
-
-    /// Initializes a candidate store without changing the published instance. An `extension`
-    /// component's instantiation and `init` share `FRAME_FUEL`; a `player-mod` component's
-    /// `init`, which may read the whole session, gets `LOAD_FUEL`.
-    pub(super) fn new(
-        engine: &Engine,
-        bytes: &[u8],
-        grants: ModGrants,
-        settings: String,
-        declared: Declared,
-        panel_bundle: Option<Arc<ui::mod_panel::PanelBundle>>,
-    ) -> Result<Self> {
-        let component = Component::new(engine, bytes)?;
-        let mut linker = Linker::new(engine);
-        PlayerMod::add_to_linker::<_, HasSelf<_>>(&mut linker, |state: &mut State| state)?;
-        let mut state = State::new(grants, settings, declared);
-        if let Some(bundle) = panel_bundle.filter(|_| state.grants.controls) {
-            state.controls.panel = Some(bundle.panel.clone());
-            state.controls.bundle = Some(bundle);
-        }
-        let pre = linker.instantiate_pre(&component)?;
-        exports::Exports::check(&pre)?;
-        let mut store = Store::new(engine, state);
-        store.limiter(|state| &mut state.limits);
-        let initial = FRAME_FUEL;
-        crate::execution::arm(&mut store, initial, true)?;
-        let instance = pre.instantiate(&mut store)?;
-        let (init, exports) = exports::Exports::find(&mut store, &instance)?;
-        let instantiated = initial - store.get_fuel().unwrap_or(0).min(initial);
-        let mut armed = initial;
-        if exports.loads_session() {
-            armed = LOAD_FUEL;
-            crate::execution::arm(&mut store, armed, true)?;
-        }
-        init.call(&mut store, ())?;
-        init.post_return(&mut store)?;
-        commit(&mut store);
-        let last_fuel = armed - store.get_fuel().unwrap_or(0).min(armed)
-            + if exports.loads_session() {
-                instantiated
-            } else {
-                0
-            };
-        Ok(Self {
-            store,
-            exports,
-            status: InstanceStatus::Running,
-            last_fuel,
-            callback_budget: None,
-        })
-    }
-
-    /// Initializes a replacement through the bounded loading lane with its full guest limits.
-    pub(super) fn replacement(
-        &self,
-        engine: &Engine,
-        bytes: &[u8],
-        grants: ModGrants,
-        settings: String,
-        declared: Declared,
-        panel_bundle: Option<Arc<ui::mod_panel::PanelBundle>>,
-    ) -> Result<Self> {
-        let budget = self.callback_budget.clone();
-        if let Some(budget) = &budget {
-            anyhow::ensure!(
-                budget.reserve(LOAD_FUEL).is_some(),
-                "loading callback deferred"
-            );
-        }
-        let mut candidate = Self::new(engine, bytes, grants, settings, declared, panel_bundle)?;
-        candidate.callback_budget = budget;
-        candidate.store.data_mut().exclusive = self.store.data().exclusive.clone();
-        Ok(candidate)
-    }
-
-    /// Defers an on-frame hot reload when earlier callbacks have consumed the allowance.
-    pub(super) fn can_reload(&self) -> bool {
-        self.callback_budget
-            .as_ref()
-            .is_none_or(|budget| budget.can_load())
-    }
-
     /// Validates presentation observations before they enter the callback sandbox.
     pub(super) fn observe_presentation(
         &mut self,
@@ -479,8 +381,8 @@ impl Instance {
         state.pressed = false;
     }
 
-    /// Restores the call budget and commits output only on successful return.
-    pub(super) fn frame(
+    /// Validates and stages current observations even when lifecycle delivery defers.
+    pub(super) fn observe_frame(
         &mut self,
         pressed: bool,
         snapshot: Option<GameplaySnapshot>,
@@ -513,7 +415,31 @@ impl Instance {
         state.world.mobs = mobs;
         state.player_state.set_snapshot(player_state)?;
         state.controls.frame = controls;
-        let result = self.run(FRAME_FUEL, commit, |exports, store| exports.frame(store));
+        Ok(())
+    }
+
+    /// Refreshes native presentation on deferred delivery and publishes guest output on success.
+    pub(super) fn frame(&mut self, delivery: CallbackOutcome) -> Result<()> {
+        if !self.is_active() {
+            return Ok(());
+        }
+        self.store.data_mut().controls.begin_text_frame();
+        let result = match delivery {
+            CallbackOutcome::Executed => {
+                self.run(FRAME_FUEL, commit, |exports, store| exports.frame(store))
+            }
+            CallbackOutcome::Deferred => Ok(CallbackOutcome::Deferred),
+        };
+        if matches!(&result, Ok(CallbackOutcome::Deferred)) {
+            hud::sources::refresh(self.store.data_mut());
+        }
+        self.store
+            .data_mut()
+            .controls
+            .finish_text_frame(matches!(&result, Ok(CallbackOutcome::Deferred)));
+        if result.is_ok() {
+            hud::bounds::update(self.store.data_mut());
+        }
         result.map(|_| ())
     }
 
@@ -569,6 +495,7 @@ impl Instance {
         state.output = 0;
         state.pending_screens = None;
         state.inventory.begin();
+        state.render.begin_callback();
         crate::execution::arm(&mut self.store, allowance, fuel == LOAD_FUEL)?;
         let called = call(&self.exports, &mut self.store);
         self.last_fuel = allowance - self.store.get_fuel().unwrap_or(0).min(allowance);
@@ -704,6 +631,13 @@ impl Instance {
             .flatten()
     }
 
+    /// Successful frame-local presentation remains independent of gameplay input ownership.
+    pub(super) fn camera_hurt_style(&self) -> Option<render_api::HurtCameraStyle> {
+        (!self.store.data().exclusive.camera)
+            .then_some(self.store.data().camera_policy.committed_hurt_style)
+            .flatten()
+    }
+
     /// Consumes the committed cancellation once.
     pub(super) fn take_jump_cancel(&mut self) -> bool {
         std::mem::take(&mut self.store.data_mut().jump_cancel)
@@ -782,7 +716,8 @@ impl Instance {
     }
 
     pub(super) fn hud(&self) -> Option<&ui::mod_hud::Hud> {
-        self.store.data().hud.content.as_ref()
+        let hud = &self.store.data().hud;
+        hud.resolved.as_ref().or(hud.content.as_ref())
     }
 
     /// Consumes committed local-only system feedback once.
@@ -894,6 +829,11 @@ impl Instance {
         self.last_fuel
     }
 
+    /// Returns only the movement policy committed by the current successful frame.
+    pub(super) fn movement_toggles(&self) -> Option<&crate::MovementToggles> {
+        self.store.data().world.movement_toggles.as_ref()
+    }
+
     pub(super) fn set_session(&mut self, session: Arc<SessionData>) {
         self.store.data_mut().session = session;
     }
@@ -914,6 +854,7 @@ fn commit(store: &mut Store<State>) {
         && !state.controls.frame.panel_open)
         .then_some(state.camera_policy.pending_view_scale)
         .flatten();
+    state.camera_policy.committed_hurt_style = state.camera_policy.pending_hurt_style;
     state.item_use_policy.commit(state.snapshot.as_ref());
     state.camera_delta = state.pending_camera.take();
     state.exclusive.camera_claimed = state.camera_output();
@@ -926,11 +867,12 @@ fn commit(store: &mut Store<State>) {
     commit_event(store);
 }
 
-/// Publishes what an event callback may retain: the label, visual time, panel, settings and
-/// screens. Render, camera and command output belongs to `frame` alone, so an event never
-/// replaces the frame's drawn set; what an event stages there is dropped by the next frame.
+/// Publishes retained drawing, label, visual time, panel, settings and screen changes.
+/// Immediate primitives, camera and command output belong to `frame` alone;
+/// an event's staged changes to those outputs are dropped by the next frame.
 fn commit_event(store: &mut Store<State>) {
     let state = store.data_mut();
+    state.render.commit_retained();
     state.hud.commit();
     if let Some(claims) = &state.exclusive.hud {
         claims.release(state.exclusive.owner);
@@ -958,40 +900,8 @@ fn commit_event(store: &mut Store<State>) {
     {
         state.screens = screens;
     }
+    hud::sources::refresh(state);
 }
 
 #[cfg(test)]
-mod epoch_tests {
-    use super::*;
-
-    #[test]
-    fn epoch_traps_quarantine_callbacks_before_output_is_committed() {
-        let (engine, _ticker) = crate::execution::engine().unwrap();
-        let mut instance = Instance::new(
-            &engine,
-            br#"(component
-            (core module $code
-                (memory 1)
-                (func (export "init"))
-                (func (export "frame") (loop $work
-                    i32.const 0 i32.const 0 i32.const 65536 memory.fill br $work)))
-            (core instance $run (instantiate $code))
-            (func (export "init") (canon lift (core func $run "init")))
-            (func (export "frame") (canon lift (core func $run "frame"))))"#,
-            ModGrants::default(),
-            String::new(),
-            Declared::default(),
-            None,
-        )
-        .unwrap();
-        let result = instance.run(u64::MAX, commit, |exports, store| {
-            // Explicitly expire this newly armed callback without waiting on wall time.
-            store.epoch_deadline_callback(|_| Err(wasmtime::Trap::Interrupt.into()));
-            store.set_epoch_deadline(0);
-            exports.frame(store)
-        });
-        assert!(result.is_err());
-        assert!(!instance.is_active());
-        assert!(instance.label().is_none());
-    }
-}
+mod epoch_tests;

@@ -9,6 +9,7 @@ mod flames;
 mod geometry;
 mod hand_frame;
 mod hats;
+pub use hats::{CosmeticEmitterKey, CosmeticEmitterPlacement, CosmeticEmitterPlacements};
 mod layers;
 mod occlusion;
 mod paintings;
@@ -71,7 +72,7 @@ pub struct ActorFrameInput {
     pub swing_progress: Option<actor_animation::LocalSwingProgress>,
     pub renders_game: bool,
     pub hide_hand: bool,
-    pub custom_emote: Option<(actor_animation::CustomEmote, f64)>,
+    pub custom_emote: Option<(cosmetics::emotes::Item, f64)>,
     /// API-authenticated playback already resolved to this session's actor lifetimes.
     pub remote_emotes: Vec<RemoteEmote>,
 }
@@ -81,7 +82,7 @@ pub struct ActorFrameInput {
 pub struct RemoteEmote {
     pub runtime_id: u64,
     pub spawn_revision: u64,
-    pub emote: actor_animation::CustomEmote,
+    pub emote: cosmetics::emotes::Item,
     pub elapsed: f64,
 }
 
@@ -152,6 +153,7 @@ pub struct ActorFramePublication<'w, 's> {
     profiler: Option<Res<'w, render_scene::RuntimeStageProfiler>>,
     partial_tick: ResMut<'w, ActorFramePartialTick>,
     flames: Option<ResMut<'w, WorldActorFlames>>,
+    cosmetic_emitters: Option<ResMut<'w, CosmeticEmitterPlacements>>,
 }
 
 /// Builds final actor and hand poses after admission, without advancing remote actor ticks.
@@ -164,6 +166,9 @@ pub fn prepare_actor_render_frame(
 ) {
     let state = &mut *params.state;
     let Some(input) = state.input.take() else {
+        if let Some(placements) = params.cosmetic_emitters.as_deref_mut() {
+            placements.0.clear();
+        }
         return;
     };
     let step = state
@@ -326,6 +331,11 @@ pub fn prepare_actor_render_frame(
         culling::shadow_only_caster_layers(&mut batch);
     }
     layers::apply_style_and_visibility(&mut batch, stream, params.actor_style.as_deref());
+    if let Some(placements) = params.cosmetic_emitters.as_deref_mut() {
+        state
+            .hat_state
+            .place_emitters(&batch, step.partial_tick, &mut placements.0);
+    }
     state
         .body_scratch
         .recycle(bodies.java_posed, bodies.remote_skin_layers);
