@@ -11,9 +11,15 @@ use serde_json::{Value, json};
 use super::{Animator, ControlAnims, GEOMETRY_KEY, GRAPH_KEY};
 use crate::{FormRender, LaidOut, LayoutEnv, MeasureCache, ResolvedControl, ViewState};
 
+#[cfg(test)]
+mod tests;
+
 struct Program {
     path: Vec<usize>,
     animation: Arc<ControlAnims>,
+    gates: Vec<crate::emit::StateGate>,
+    size: Option<Value>,
+    offset: Option<Value>,
 }
 
 /// A bound screen's geometry animation programs and its latest measured frame.
@@ -40,7 +46,7 @@ impl GeometryLayout {
         }
         let mut paths = HashMap::new();
         control_paths(bound, &mut Vec::new(), &mut paths);
-        let (laid, _) = crate::layout_with(bound, root, env, view);
+        let (laid, _) = crate::layout_with(bound, root, env, &view.layout_part());
         let mut programs = Vec::new();
         collect(&laid, &paths, &mut programs);
         if programs.is_empty() {
@@ -65,6 +71,11 @@ impl GeometryLayout {
 
     /// Samples caller-supplied time before measuring changed geometry. Unchanged writes
     /// reuse the complete frame, including its clips, scroll extents and hit regions.
+    /// `allowed` applies the caller's paint omissions; interaction-hidden programs also stop.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "layout and paint share caller-owned frame inputs"
+    )]
     pub fn sample(
         &mut self,
         animator: &mut Animator,
@@ -72,29 +83,44 @@ impl GeometryLayout {
         clocks: Option<&BTreeMap<String, f64>>,
         env: &LayoutEnv,
         view: &ViewState,
+        allowed: impl Fn(&str) -> bool,
     ) -> Arc<FormRender> {
         let mut writes = Vec::with_capacity(self.programs.len());
         for program in &self.programs {
-            let (written, samples) = animator.sample_geometry(&program.animation, now, clocks);
+            let (written, samples) = if program.gates.iter().all(|gate| gate.shown(view))
+                && allowed(&program.animation.key)
+                && !animator.is_destroyed(&program.animation.key)
+            {
+                animator.sample_geometry(&program.animation, now, clocks)
+            } else {
+                (
+                    super::Written::default(),
+                    super::runtime::LayoutWrites::default(),
+                )
+            };
             writes.push(
                 [
-                    ("size", written.size, samples.size),
-                    ("offset", written.offset, samples.offset),
+                    ("size", written.size, samples.size, &program.size),
+                    ("offset", written.offset, samples.offset, &program.offset),
                 ]
                 .into_iter()
-                .filter_map(|(name, pixels, sample)| {
-                    let pixels = pixels?;
-                    let value = sample.map_or_else(
-                        || json!(pixels),
-                        |sample| {
-                            layout_value(
-                                &program.animation.graph.nodes[sample.node],
-                                sample.progress,
-                                pixels,
-                            )
+                .map(|(name, pixels, sample, baseline)| {
+                    let value = pixels.map_or_else(
+                        || baseline.clone(),
+                        |pixels| {
+                            Some(sample.map_or_else(
+                                || json!(pixels),
+                                |sample| {
+                                    layout_value(
+                                        &program.animation.graph.nodes[sample.node],
+                                        sample.progress,
+                                        pixels,
+                                    )
+                                },
+                            ))
                         },
                     );
-                    Some((name, value))
+                    (name, value)
                 })
                 .collect::<Vec<_>>(),
             );
@@ -104,7 +130,7 @@ impl GeometryLayout {
             let properties = &at_ref(&saved.bound, &program.path).properties;
             write
                 .iter()
-                .any(|(name, value)| properties.get(*name) != Some(value))
+                .any(|(name, value)| properties.get(*name) != value.as_ref())
         });
         let rendered = if changed || !self.view.same_layout(view) {
             let mut saved = match Arc::try_unwrap(saved) {
@@ -115,19 +141,31 @@ impl GeometryLayout {
                     (*saved).clone()
                 }
             };
-            for (program, write) in self.programs.iter().zip(writes) {
-                self.measures
-                    .update_properties(&mut saved.bound, &program.path, |properties| {
-                        let mut changed = false;
-                        for (name, value) in write {
-                            if properties.get(name) != Some(&value) {
-                                properties.insert(name.into(), value);
-                                changed = true;
+            self.measures.update_properties(
+                &mut saved.bound,
+                self.programs.iter().zip(writes).map(|(program, write)| {
+                    (
+                        program.path.as_slice(),
+                        move |properties: &mut crate::tree::Properties| {
+                            let mut changed = false;
+                            for (name, value) in write {
+                                if properties.get(name) != value.as_ref() {
+                                    match value {
+                                        Some(value) => {
+                                            properties.insert(name.into(), value);
+                                        }
+                                        None => {
+                                            properties.remove(name);
+                                        }
+                                    }
+                                    changed = true;
+                                }
                             }
-                        }
-                        changed
-                    });
-            }
+                            changed
+                        },
+                    )
+                }),
+            );
             self.view = view.layout_part();
             Arc::new(crate::render_bound_gated(
                 saved.bound,
@@ -195,22 +233,21 @@ fn control_paths(
     }
 }
 
-/// Retains each visible control's own geometry program, including controls without primitives.
+/// Captures all interaction states before clipping, including controls without primitives.
 fn collect(laid: &LaidOut, paths: &HashMap<usize, Vec<usize>>, out: &mut Vec<Program>) {
-    if !laid.visible {
-        return;
-    }
-    if let Some(own) = laid.anim.as_ref().and_then(|anim| anim.own.as_ref())
-        && own.moves()
-    {
-        out.push(Program {
-            path: paths[&std::ptr::from_ref(laid.control).addr()].clone(),
-            animation: Arc::clone(own),
-        });
-    }
-    for child in &laid.children {
-        collect(child, paths, out);
-    }
+    crate::emit::visit_gated(laid, |laid, gates| {
+        if let Some(own) = laid.anim.as_ref().and_then(|anim| anim.own.as_ref())
+            && own.moves()
+        {
+            out.push(Program {
+                path: paths[&std::ptr::from_ref(laid.control).addr()].clone(),
+                animation: Arc::clone(own),
+                gates: gates.to_vec(),
+                size: laid.control.properties.get("size").cloned(),
+                offset: laid.control.properties.get("offset").cloned(),
+            });
+        }
+    });
 }
 
 /// Borrows one control by its stable child-index path.

@@ -56,8 +56,10 @@ pub struct AnimNode {
     /// length expressions until layout gives them pixels.
     pub from: [f32; 4],
     pub to: [f32; 4],
+    /// Layout endpoints, with context-bound terms resolved during placement.
     #[serde(default)]
     pub from_expr: Value,
+    /// The destination expression in the same context as `from_expr`.
     #[serde(default)]
     pub to_expr: Value,
     pub play_event: Option<String>,

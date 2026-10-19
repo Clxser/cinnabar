@@ -213,6 +213,9 @@ pub(super) fn suppress(panel: usize, hidden: bool) -> bool {
 /// whenever the tree, the root size or the measurement environment changes.
 #[derive(Default)]
 pub struct MeasureCache {
+    /// Length entries visited during invalidation, for deterministic work regressions.
+    #[cfg(test)]
+    pub(crate) length_entries_scanned: usize,
     children: Memo<Key, Children>,
     natural: Memo<Key, Option<[f64; 2]>>,
     sizes: Memo<Key, Sizes>,
@@ -230,13 +233,20 @@ pub struct MeasureCache {
 }
 
 impl MeasureCache {
-    /// Edits one control's properties, invalidating its measurements and its ancestors.
-    pub(crate) fn update_properties(
+    /// Counts retained length entries before a test starts changing the bound tree.
+    #[cfg(test)]
+    pub(crate) fn length_entries(&self) -> usize {
+        self.lengths.len()
+    }
+    /// Edits a batch of controls, then invalidates their combined measurements once.
+    pub(crate) fn update_properties<'a, F>(
         &mut self,
         tree: &mut ResolvedControl,
-        path: &[usize],
-        update: impl FnOnce(&mut crate::tree::Properties) -> bool,
-    ) -> bool {
+        updates: impl IntoIterator<Item = (&'a [usize], F)>,
+    ) -> bool
+    where
+        F: FnOnce(&mut crate::tree::Properties) -> bool,
+    {
         /// Applies the edit at its path and marks every owner whose measurements depend on it.
         fn edit(
             tree: &mut ResolvedControl,
@@ -254,7 +264,10 @@ impl MeasureCache {
             changed
         }
         let mut dirty = Dirty::default();
-        let changed = edit(tree, path, update, &mut dirty);
+        let mut changed = false;
+        for (path, update) in updates {
+            changed |= edit(tree, path, update, &mut dirty);
+        }
         if changed {
             self.forget(dirty);
         }
@@ -299,6 +312,10 @@ impl MeasureCache {
         self.children.retain(|key, _| !dirty.contains(&key.0));
         self.natural.retain(|key, _| !dirty.contains(&key.0));
         self.sizes.retain(|key, _| !dirty.contains(&key.0));
+        #[cfg(test)]
+        {
+            self.length_entries_scanned += self.lengths.len();
+        }
         self.lengths.retain(|key, _| !dirty.contains(&key.0));
         self.flags.retain(|key, _| !dirty.contains(key));
         self.placed.retain(|key, _| !dirty.contains(&key.0));

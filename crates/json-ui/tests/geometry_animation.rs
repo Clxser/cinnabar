@@ -50,12 +50,156 @@ impl Screen {
     fn frame(&mut self, now: f64, view: &ViewState) -> Arc<FormRender> {
         let frame = self
             .layout
-            .sample(&mut self.animator, now, None, &env(), view);
+            .sample(&mut self.animator, now, None, &env(), view, |_| true);
         for node in frame.nodes.iter() {
-            node.animate(&mut self.animator, now, None, Some(&Metrics));
+            if node.shown(view) {
+                node.animate(&mut self.animator, now, None, Some(&Metrics));
+            }
         }
         self.animator.end_frame();
         frame
+    }
+}
+
+#[test]
+fn size_animation_resolves_own_axes_against_its_original_dimensions() {
+    for to in [["200%x", "200%y"], ["400%y", "100%x"]] {
+        let mut screen = Screen::new(json!({
+            "grow":{"anim_type":"size","from":["100%x","100%y"],"to":to,"duration":1},
+            "root":{"type":"button","size":[40,20],"anims":["@fixture.grow"],"anchor_from":"top_left","anchor_to":"top_left"}
+        }));
+        let initial = screen.frame(0.0, &ViewState::default());
+        assert_eq!(
+            [hit(&initial, "root").rect.w, hit(&initial, "root").rect.h],
+            [40.0, 20.0]
+        );
+        let halfway = screen.frame(0.5, &ViewState::default());
+        assert_eq!(
+            [hit(&halfway, "root").rect.w, hit(&halfway, "root").rect.h],
+            [60.0, 30.0]
+        );
+        let final_frame = screen.frame(1.0, &ViewState::default());
+        assert_eq!(
+            [
+                hit(&final_frame, "root").rect.w,
+                hit(&final_frame, "root").rect.h
+            ],
+            [80.0, 40.0]
+        );
+    }
+}
+
+#[test]
+fn maximum_terms_interpolate_their_resolved_contributions() {
+    for (from, to, midpoint, end) in [
+        ("0px", "100%cm", 20.0, 40.0),
+        ("0px", "-100%cm + 100%cm", 40.0, 80.0),
+        ("100%cm + 100%cm", "0px", 40.0, 0.0),
+        ("100%cm", "0%cm", 20.0, 0.0),
+    ] {
+        for channel in ["offset", "size"] {
+            let mut screen = Screen::new(json!({
+                "move":{"anim_type":channel,"from":[from,10],"to":[to,10],"duration":1},
+                "root":{"type":"button","size":[100,20],"anims":["@fixture.move"],"anchor_from":"top_left","anchor_to":"top_left","controls":[
+                    {"child":{"type":"panel","size":[40,10]}}
+                ]}
+            }));
+            screen.frame(0.0, &ViewState::default());
+            for (now, expected) in [(0.5, midpoint), (1.0, end)] {
+                let frame = screen.frame(now, &ViewState::default());
+                let rect = hit(&frame, "root").rect;
+                assert_eq!(
+                    if channel == "size" { rect.w } else { rect.x },
+                    expected,
+                    "{channel}: {from} to {to}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn interaction_hidden_geometry_retires_and_restarts_without_hidden_events() {
+    let mut screen = Screen::new(json!({
+        "move":{"anim_type":"offset","from":[0,0],"to":[20,0],"duration":1,"end_event":"fixture.done"},
+        "fade":{"anim_type":"alpha","from":0,"to":1,"duration":1,"end_event":"fixture.faded"},
+        "root":{"type":"button","size":[100,50],"anchor_from":"top_left","anchor_to":"top_left","default_control":"idle","hover_control":"over","pressed_control":"pressed","controls":[
+            {"idle":{"type":"image","size":[20,10],"color":[1,0,0],"anims":["@fixture.move","@fixture.fade"]}},
+            {"over":{"type":"image","size":[20,10],"color":[0,1,0],"offset":"@fixture.move"}},
+            {"pressed":{"type":"image","size":[20,10],"color":[0,0,1],"offset":"@fixture.move"}}
+        ]}
+    }));
+    screen.frame(0.0, &ViewState::default());
+    let mut hidden = ViewState {
+        hovered: Some("/root".into()),
+        ..ViewState::default()
+    };
+    screen.frame(0.5, &hidden);
+    assert!(screen.animator.take_events().is_empty());
+    hidden.hovered = None;
+    hidden.pressed = Some("/root".into());
+    screen.frame(2.0, &hidden);
+    assert!(
+        screen.animator.take_events().is_empty(),
+        "hidden state programs must not complete"
+    );
+    let back = screen.frame(3.0, &ViewState::default());
+    let idle = draw(&back, "idle");
+    let paint = idle.animate(&mut screen.animator, 3.0, None, Some(&Metrics));
+    assert_eq!(paint.dest, idle.dest);
+    assert_eq!(
+        paint.opacity, 0.0,
+        "hidden alpha channel must restart with geometry"
+    );
+    assert_eq!(
+        idle.dest.x, 40.0,
+        "centered idle returns to its initial offset"
+    );
+    assert!(screen.animator.take_events().is_empty());
+}
+
+#[test]
+fn geometry_programs_in_initially_hidden_states_use_layout_when_shown() {
+    let mut screen = Screen::new(json!({
+        "grow":{"anim_type":"size","from":[0,0],"to":[40,20],"duration":1},
+        "root":{"type":"button","size":[100,50],"anchor_from":"top_left","anchor_to":"top_left","default_control":"idle","hover_control":"over","controls":[
+            {"idle":{"type":"image","size":[10,10],"color":[1,0,0]}},
+            {"over":{"type":"image","size":"@fixture.grow","color":[0,1,0]}}
+        ]}
+    }));
+    screen.frame(0.0, &ViewState::default());
+    let view = ViewState {
+        hovered: Some("/root".into()),
+        ..ViewState::default()
+    };
+    screen.frame(1.0, &view);
+    let frame = screen.frame(2.0, &view);
+    let rect = draw(&frame, "over").dest;
+    assert_eq!([rect.x, rect.y, rect.w, rect.h], [30.0, 15.0, 40.0, 20.0]);
+}
+
+#[test]
+fn recreated_waiting_instances_restore_both_present_and_absent_baselines() {
+    for offset in [Some(json!([3, 4])), None] {
+        let mut root = json!({"type":"button","size":[40,20],"anchor_from":"top_left","anchor_to":"top_left","anims":["@fixture.move","@fixture.grow"]});
+        if let Some(offset) = offset {
+            root["offset"] = offset;
+        }
+        let mut screen = Screen::new(json!({
+            "move":{"anim_type":"offset","from":[10,10],"to":[20,20],"duration":1,"play_event":"fixture.play"},
+            "grow":{"anim_type":"size","from":[50,30],"to":[60,40],"duration":1,"play_event":"fixture.play"},
+            "root":root
+        }));
+        let original = hit(&screen.frame(0.0, &ViewState::default()), "root").rect;
+        screen.animator.fire("fixture.play");
+        screen.frame(1.0, &ViewState::default());
+        screen.animator.end_frame();
+        let reopened = screen.frame(2.0, &ViewState::default());
+        assert_eq!(
+            hit(&reopened, "root").rect,
+            original,
+            "waiting channels use original properties"
+        );
     }
 }
 /// Returns a drawn primitive by its original fixture name.
@@ -130,6 +274,64 @@ fn mixed_units_follow_a_parent_resizing_at_the_same_clock() {
     let frame = screen.frame(0.5, &ViewState::default());
     let rect = hit(&frame, "press").rect;
     assert_eq!([rect.x, rect.y, rect.w, rect.h], [42.5, -37.5, 10.0, 10.0]);
+}
+
+#[test]
+fn offset_expressions_keep_live_own_and_child_sum_dimensions() {
+    for unit in ["own", "children"] {
+        let mut screen = Screen::new(if unit == "own" {
+            json!({
+                "grow":{"anim_type":"size","from":[40,20],"to":[80,40],"duration":1},
+                "move":{"anim_type":"offset","from":[0,0],"to":["100%x","100%y"],"duration":1},
+                "root":{"type":"button","size":[40,20],"anchor_from":"top_left","anchor_to":"top_left","anims":["@fixture.grow","@fixture.move"]}
+            })
+        } else {
+            json!({
+                "grow":{"anim_type":"size","from":[40,20],"to":[80,40],"duration":1},
+                "move":{"anim_type":"offset","from":[0,0],"to":["100%c","100%c"],"duration":1},
+                "root":{"type":"button","size":[100,50],"offset":"@fixture.move","anchor_from":"top_left","anchor_to":"top_left","controls":[
+                    {"child":{"type":"panel","size":[40,20],"anims":["@fixture.grow"]}}
+                ]}
+            })
+        });
+        screen.frame(0.0, &ViewState::default());
+        let frame = screen.frame(0.5, &ViewState::default());
+        let rect = hit(&frame, "root").rect;
+        assert_eq!(
+            [rect.x, rect.y],
+            [30.0, 15.0],
+            "{unit} dimensions remain live"
+        );
+    }
+}
+
+#[test]
+fn geometry_resets_write_from_and_changed_birth_clocks_restore_waiting_baselines() {
+    let mut screen = Screen::new(json!({
+        "move":{"anim_type":"offset","from":[10,10],"to":[30,30],"duration":1,"play_event":"fixture.play","reset_event":"fixture.reset"},
+        "grow":{"anim_type":"size","from":[50,30],"to":[70,50],"duration":1,"play_event":"fixture.play","reset_event":"fixture.reset"},
+        "root":{"type":"button","size":[40,20],"offset":[3,4],"anims":["@fixture.move","@fixture.grow"],"anim_clock":"fixture.birth","anchor_from":"top_left","anchor_to":"top_left"}
+    }));
+    screen.frame(0.0, &ViewState::default());
+    screen.animator.fire("fixture.play");
+    let frame = screen.frame(0.5, &ViewState::default());
+    let rect = hit(&frame, "root").rect;
+    assert_eq!([rect.x, rect.y, rect.w, rect.h], [20.0, 20.0, 60.0, 40.0]);
+    screen.animator.fire("fixture.reset");
+    let reset = screen.frame(0.75, &ViewState::default());
+    let rect = hit(&reset, "root").rect;
+    assert_eq!([rect.x, rect.y, rect.w, rect.h], [10.0, 10.0, 50.0, 30.0]);
+    let clocks = std::collections::BTreeMap::from([("fixture.birth".into(), 1.0)]);
+    let recreated = screen.layout.sample(
+        &mut screen.animator,
+        1.0,
+        Some(&clocks),
+        &env(),
+        &ViewState::default(),
+        |_| true,
+    );
+    let rect = hit(&recreated, "root").rect;
+    assert_eq!([rect.x, rect.y, rect.w, rect.h], [3.0, 4.0, 40.0, 20.0]);
 }
 
 #[test]

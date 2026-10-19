@@ -67,7 +67,36 @@ pub enum Resolved {
 }
 
 impl Length {
+    /// Resolves terms that cannot be interpolated as live layout coefficients.
+    /// Size endpoints read their original own dimensions, before either axis is solved.
+    pub(crate) fn animation_terms(&self, ctx: &AxisContext, size: bool) -> Self {
+        match self {
+            Self::Terms(terms) => Self::Terms(
+                terms
+                    .iter()
+                    .map(|term| {
+                        let resolve = match term.unit {
+                            Unit::PercentChildrenMax | Unit::PercentSiblingMax => true,
+                            Unit::PercentX | Unit::PercentY => size,
+                            Unit::Px | Unit::Percent | Unit::PercentChildren => false,
+                        };
+                        if resolve {
+                            Term {
+                                unit: Unit::Px,
+                                coeff: term.value(ctx),
+                            }
+                        } else {
+                            *term
+                        }
+                    })
+                    .collect(),
+            ),
+            _ => self.clone(),
+        }
+    }
+
     /// Blends coefficients while retaining the dimensional units layout must resolve later.
+    /// Endpoints first resolve nonlinear and size-self terms with `animation_terms`.
     pub(crate) fn blend(&self, other: &Self, blend: impl Fn(f64, f64) -> f64) -> Option<Self> {
         let (Self::Terms(from), Self::Terms(to)) = (self, other) else {
             return None;
@@ -443,6 +472,55 @@ mod tests {
         assert_eq!(parse_length("50%sm").eval_pixels(&ctx), 40.0);
         assert_eq!(parse_length("-100%cm").eval_pixels(&ctx), 40.0);
         assert_eq!(parse_length("0%cm").eval_pixels(&ctx), 0.0);
+    }
+
+    #[test]
+    fn animation_terms_keep_linear_dependencies_and_resolve_endpoint_contributions() {
+        let original = AxisContext {
+            parent: 200.0,
+            own_width: Some(40.0),
+            own_height: Some(20.0),
+            children: Some(60.0),
+            children_max: Some(40.0),
+            sibling_max: Some(30.0),
+            natural: None,
+        };
+        let current = AxisContext {
+            parent: 400.0,
+            own_width: Some(80.0),
+            own_height: Some(40.0),
+            children: Some(120.0),
+            children_max: Some(80.0),
+            sibling_max: Some(90.0),
+            natural: None,
+        };
+        for (text, offset, size) in [
+            ("7px", 7.0, 7.0),
+            ("25%", 100.0, 100.0),
+            ("50%c", 60.0, 60.0),
+            ("100%cm", 40.0, 40.0),
+            ("-100%cm + 100%cm", 80.0, 80.0),
+            ("-100%sm + 100%sm", 60.0, 60.0),
+            ("0%cm + 0%sm", 0.0, 0.0),
+            ("50%x", 40.0, 20.0),
+            ("50%y", 20.0, 10.0),
+        ] {
+            for (size_channel, expected) in [(false, offset), (true, size)] {
+                let endpoint = parse_length(text).animation_terms(&original, size_channel);
+                let half = Length::pixels(0.0)
+                    .blend(&endpoint, |a, b| (a + b) * 0.5)
+                    .unwrap();
+                assert_eq!(
+                    half.eval_pixels(&current),
+                    expected * 0.5,
+                    "{text}, size={size_channel}"
+                );
+                assert_eq!(
+                    length_from_value(&half.to_value()).eval_pixels(&current),
+                    expected * 0.5
+                );
+            }
+        }
     }
 
     #[test]

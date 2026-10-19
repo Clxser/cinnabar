@@ -33,6 +33,7 @@ impl GeometryLayouts {
         animator: &mut Animator,
         now: f64,
         clocks: Option<&std::collections::BTreeMap<String, f64>>,
+        allowed: impl Fn(&str) -> bool,
     ) -> Option<Arc<FormRender>> {
         self.entries
             .retain(|entry| entry.source.strong_count() != 0);
@@ -55,7 +56,7 @@ impl GeometryLayouts {
             self.entries[index]
                 .layout
                 .as_mut()?
-                .sample(animator, now, clocks, env, view),
+                .sample(animator, now, clocks, env, view, allowed),
         )
     }
 }

@@ -533,10 +533,15 @@ pub struct ScreenArt<'a> {
 }
 
 impl ScreenArt<'_> {
+    /// Whether the caller replaced this drawn control or an ancestor with native artwork.
     fn omits(&self, node: &DrawNode) -> bool {
+        self.omits_key(&node.key)
+    }
+
+    /// Applies the same caller omissions before geometry sampling and painting.
+    fn omits_key(&self, key: &str) -> bool {
         self.omit_controls.iter().any(|name| {
-            node.key
-                .split('/')
+            key.split('/')
                 .any(|part| part.split(['[', '~']).next() == Some(*name))
         })
     }

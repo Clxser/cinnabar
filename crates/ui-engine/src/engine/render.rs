@@ -123,7 +123,16 @@ pub(super) fn render_with<R: Borrow<FormRender>>(
             .geometry
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
-            .sample(render, root, env, art.view, &mut animator, now, art.clocks)
+            .sample(
+                render,
+                root,
+                env,
+                art.view,
+                &mut animator,
+                now,
+                art.clocks,
+                |key| !art.omits_key(key),
+            )
     });
     let render = animated.as_deref().unwrap_or(render);
     if animated.is_some() {
@@ -161,11 +170,12 @@ pub(super) fn render_with<R: Borrow<FormRender>>(
             .unwrap_or_else(|poison| poison.into_inner()),
     };
     let renderers = &mut *frame.renderers;
-    let view = art.view;
+    let default_view = json_ui::ViewState::default();
+    let view = art.view.unwrap_or(&default_view);
     let mut top: Vec<std::ops::Range<usize>> = Vec::new();
     let overlay_start = render.nodes.len();
     for (index, node) in render.nodes.iter().chain(art.overlay).enumerate() {
-        if !art.omits(node) && view.is_none_or(|view| node.shown(view)) {
+        if !art.omits(node) && node.shown(view) {
             canvas.enter_filter(node)?;
             let start = canvas.nodes.len();
             canvas.paint(node, renderers)?;
