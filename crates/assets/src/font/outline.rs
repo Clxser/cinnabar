@@ -113,6 +113,8 @@ pub fn rasterize_outline_font(
         .map(|font| {
             font.with_glyphs(&atlas.glyphs, |_| true)
                 .with_linear_sampling()
+                .with_rendering(super::FontRendering::OutlineCoverage)
+                .with_coverage_pages()
         })
         .map_err(|error| error.to_string())
 }

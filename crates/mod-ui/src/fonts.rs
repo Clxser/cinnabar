@@ -45,13 +45,18 @@ mod tests {
         assert_eq!(font.glyph('A'), base.glyph('A'));
         let sans = font.font_named(ui::mod_panel::SANS_FONT_NAME);
         assert!(sans.linear_sampling());
+        for page in sans.pages() {
+            for index in 0..(page.width as usize * page.height as usize) {
+                assert_eq!(
+                    page.pixels.texel(index).unwrap()[..3],
+                    [255; 3],
+                    "filtered monochrome glyphs need white transparent gutters"
+                );
+            }
+        }
         assert!(sans.pages().iter().any(|page| {
-            page.pixels
-                .bytes()
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .any(|pixel| (1..255).contains(&pixel[3]))
+            (0..(page.width as usize * page.height as usize))
+                .any(|index| (1..255).contains(&page.pixels.texel(index).unwrap()[3]))
         }));
         assert!(Arc::ptr_eq(&font, &install(Arc::clone(&font)).unwrap()));
     }
