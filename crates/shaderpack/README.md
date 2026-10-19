@@ -7,6 +7,12 @@ program enable rules, buffer sizes, flips, scales, custom texture bindings, cust
 and custom uniform and variable definitions; other keys stay as raw entries. Custom uniform
 expressions are parsed, not evaluated.
 
+Java world identities come from the pinned Bedrock→Java mappings (`assets`): `IdMaps`
+reads `block.properties`, `item.properties` and `entity.properties` (Iris's legacy block
+ids when a pack has no block.properties) and resolves them for Bedrock block states,
+entities and items; `BiomeUniforms` and the `BIOME_*`/`CAT_*`/`PPT_*` macros describe Java
+biomes; `sky_fog` and `BiomeColors` give Java's sky and fog colours.
+
 Shader translation, render-host integration and in-game acceptance remain incomplete.
 Opening or inspecting a pack does not activate it in the client.
 

@@ -5,7 +5,7 @@
 //! texture bindings and custom images are typed; other keys stay in `entries`.
 //! Malformed input never fails the whole file: it becomes a [`PropertiesDiagnostic`].
 
-mod reader;
+pub(crate) mod reader;
 mod rules;
 #[cfg(test)]
 mod tests;
