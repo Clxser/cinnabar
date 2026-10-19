@@ -324,7 +324,9 @@ validation; retain only the explicitly permitted diagnostic/optional fallbacks.
   compass markers, totem annotations and bounded camera overrides) still need
   displayed-frame pacing and complete rendering acceptance.
 - Enhanced rendering remains restricted until its GPU faults and freezes are resolved.
-  Diagnostics or bounded fixtures do not establish safe general gameplay use.
+  Diagnostics or bounded fixtures do not establish safe general gameplay use. Java
+  shader-pack source loading is implemented in `shaderpack`; configuration parsing,
+  translation, render-host integration and in-game acceptance remain incomplete.
 - Runtime pack compatibility still includes custom texture inheritance/tints, authored
   geometry and block/item component behavior beyond the currently supported cases.
 
