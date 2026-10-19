@@ -244,6 +244,9 @@ draws add `gpu_terrain_solid`, `gpu_terrain_cutout`, `gpu_terrain_model`,
 commands expose no in-pass spans), `gpu_terrain_transparent`, `gpu_actors`,
 `gpu_particles`, `gpu_sky`, `gpu_panorama` and `gpu_mod_primitives`. Personal-mod post passes
 add `gpu_mod_pass_0`–`gpu_mod_pass_7` by execution slot. F3 shows the latest GPU frame.
+`gpu_idle` is the GPU gap from the previous timed frame's last timestamp to this frame's
+first, reported only when both consecutive frames were timed; untimed work between them,
+such as uploads and presentation, counts as idle.
 
 `CINNABAR_GPU_CATEGORIES=1` splits the main opaque phase into category passes
 and disables in-pass spans to avoid double counting; separate late GPU-cull draws
