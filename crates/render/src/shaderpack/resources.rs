@@ -207,6 +207,11 @@ impl<'a> ConstantBuilder<'a> {
         (index, format)
     }
 
+    /// The pack-wide texture at `index`.
+    pub(crate) fn constant(&self, index: usize) -> &ConstantTexture {
+        &self.out.textures[index]
+    }
+
     fn texture(
         &self,
         label: &str,
@@ -535,6 +540,7 @@ impl<'a> ConstantBuilder<'a> {
             TextureDimension::D2,
             TextureUsages::TEXTURE_BINDING
                 | TextureUsages::RENDER_ATTACHMENT
+                | TextureUsages::COPY_SRC
                 | TextureUsages::COPY_DST,
         );
         let found = self.push(key, texture, view);

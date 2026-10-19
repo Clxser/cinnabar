@@ -280,7 +280,7 @@ fn copy_view_depth(
 }
 
 /// Copies the shadow depth into `shadowtex{index}` (and `shadowtex0` too when `index` is 1
-/// and nothing translucent follows).
+/// and nothing translucent follows), except into the `shadowtex0` texture the pass drew into.
 fn copy_shadow_depth(
     device: &Device,
     encoder: &mut CommandEncoder,
@@ -296,7 +296,11 @@ fn copy_shadow_depth(
         .map(|slot| &pack.constants.textures[slot].view)
         .collect();
     copy_depth_to_floats(device, encoder, pack, &shadow.depth_view, &floats);
-    for slot in indices.iter().filter_map(|i| shadow.slots.depth[*i]) {
+    for slot in indices
+        .iter()
+        .filter_map(|i| shadow.slots.depth[*i])
+        .filter(|slot| Some(*slot) != shadow.attachment_slot)
+    {
         encoder.copy_texture_to_texture(
             shadow.depth.as_image_copy(),
             pack.constants.textures[slot].texture.as_image_copy(),

@@ -835,10 +835,21 @@ pub(crate) fn build(
         &buffer_formats,
         &shadow_slots,
     );
+    // `shadowtex0` can be the attachment itself unless a shadow program samples it while
+    // the pass draws.
+    let shadowtex0 = shadow_slots.depth[0]
+        .filter(|slot| {
+            !draws.iter().filter(|d| d.kind.shadow()).any(|d| {
+                programs[d.program].textures.iter().any(
+                    |source| matches!(source, TextureSource::Constant { index, .. } if index == slot),
+                )
+            })
+        })
+        .map(|slot| (slot, constants.constant(slot)));
     let shadow = draws
         .iter()
         .any(|d| d.kind.shadow())
-        .then(|| shadow_maps(gpu, shadow_slots, &translation.buffers));
+        .then(|| shadow_maps(gpu, shadow_slots, &translation.buffers, shadowtex0));
     let shadowcomp = (runnable.len() + geometry.len()..programs.len())
         .map(|program| PassStep {
             program,
