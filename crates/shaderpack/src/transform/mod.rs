@@ -7,12 +7,14 @@
 
 mod assemble;
 mod body;
+mod declare;
 mod interface;
 mod items;
 
 use crate::token::Tok;
 use assemble::UboMember;
 use body::SamplerUse;
+use interface::ProgramInterface;
 
 /// A transform failure at a 1-based line of the include-expanded source (0 if unknown).
 #[derive(Debug)]
