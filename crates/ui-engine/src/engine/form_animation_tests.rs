@@ -16,6 +16,8 @@ use crate::{
     text_metrics::TextMetrics,
 };
 
+mod placement;
+
 struct Offline;
 impl RemoteSource for Offline {
     /// Synthetic texture readiness never starts a download.

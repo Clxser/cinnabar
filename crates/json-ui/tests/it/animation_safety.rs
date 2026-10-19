@@ -32,6 +32,7 @@ fn program(graph: AnimGraph) -> Arc<ControlAnims> {
         disable_fast_forward: false,
         reset_name: Some("reset".into()),
         has_sprite: true,
+        layout_authoritative: true,
     })
 }
 

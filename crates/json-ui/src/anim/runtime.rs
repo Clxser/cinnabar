@@ -534,6 +534,7 @@ mod tests {
             disable_fast_forward: false,
             reset_name: None,
             has_sprite: false,
+            layout_authoritative: true,
         });
         assert_eq!(anim.entrance_property(), Some("offset"));
         let mut animator = Animator::new();

@@ -34,6 +34,8 @@ pub struct ControlAnims {
     pub reset_name: Option<String>,
     /// Sprite animations (clip, color, uv) only run on a control with a sprite.
     pub has_sprite: bool,
+    /// Placement consumes the entrance's authored property without replacing it.
+    pub layout_authoritative: bool,
 }
 
 impl ControlAnims {
@@ -51,8 +53,9 @@ impl ControlAnims {
             disable_fast_forward,
             reset_name,
             has_sprite: _,
+            layout_authoritative,
         } = self;
-        if *disable_fast_forward || reset_name.is_some() {
+        if !layout_authoritative || *disable_fast_forward || reset_name.is_some() {
             return None;
         }
         graph.entrance_property()
