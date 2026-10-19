@@ -34,12 +34,15 @@ pub fn rasterize_outline_font(
         if metrics.width > 64 || metrics.height > 64 || !metrics.advance_width.is_finite() {
             return Err("font glyph dimensions exceed local bounds".into());
         }
+        // Leave a logical pixel around ink so filtering sees transparent coverage at
+        // glyph edges. Moving the bearing keeps the ink and advance in the same place.
         // Empty glyphs keep their advance and get a transparent texel with valid carrier UVs.
         let empty = metrics.width == 0 || metrics.height == 0;
+        let padding = u32::from(!empty);
         let logical_size = if empty {
             [1, 1]
         } else {
-            [metrics.width as u32, metrics.height as u32]
+            [metrics.width as u32, metrics.height as u32].map(|size| size + padding * 2)
         };
         let size = if empty {
             [1, 1]
@@ -52,9 +55,11 @@ pub fn rasterize_outline_font(
         }
         if !empty {
             let (dense, alpha) = font.rasterize(source, em * raster_scale as f32);
-            let left = dense.xmin - metrics.xmin * raster_scale as i32;
+            let left =
+                dense.xmin - metrics.xmin * raster_scale as i32 + (padding * raster_scale) as i32;
             let top = (metrics.ymin + metrics.height as i32) * raster_scale as i32
-                - (dense.ymin + dense.height as i32);
+                - (dense.ymin + dense.height as i32)
+                + (padding * raster_scale) as i32;
             if left < 0
                 || top < 0
                 || left as usize + dense.width > size[0] as usize
@@ -75,8 +80,8 @@ pub fn rasterize_outline_font(
             size,
             rgba8: rgba8.into(),
             bearing: [
-                metrics.xmin as i16,
-                -(metrics.ymin + metrics.height as i32) as i16,
+                (metrics.xmin - padding as i32) as i16,
+                -(metrics.ymin + metrics.height as i32 + padding as i32) as i16,
             ],
             advance_64: (metrics.advance_width * 64.0)
                 .round()

@@ -45,6 +45,22 @@ mod tests {
         assert_eq!(font.glyph('A'), base.glyph('A'));
         let sans = font.font_named(ui::mod_panel::SANS_FONT_NAME);
         assert!(sans.linear_sampling());
+        for character in ['A', 'g', 'y'] {
+            let glyph = sans.glyph(character).unwrap();
+            let page = &sans.pages()[glyph.page as usize];
+            let [left, top, right, bottom] = glyph.uv.map(usize::from);
+            for y in top..bottom {
+                for x in left..right {
+                    if x == left || x == right - 1 || y == top || y == bottom - 1 {
+                        assert_eq!(
+                            page.pixels.texel(y * page.width as usize + x).unwrap()[3],
+                            0,
+                            "filtered glyph {character} needs transparent room around its ink"
+                        );
+                    }
+                }
+            }
+        }
         for page in sans.pages() {
             for index in 0..(page.width as usize * page.height as usize) {
                 assert_eq!(
