@@ -187,10 +187,12 @@ pub enum VertexAttribute {
     /// `dhMaterialId`.
     DhMaterialId,
     /// `iris_PackedPosition` (`uvec4`): a position in unsigned fixed point, scaled and offset
-    /// by [`VertexAttribute::DrawOrigin`]. The translator unpacks every position input
-    /// (`gl_Vertex`, `vaPosition`) as `stored + origin.xyz + vec3(packed.xyz) * origin.w`,
-    /// so a vertex stream supplies either float positions or packed ones and the other
-    /// part reads zero. Its location is the first one the stage leaves free.
+    /// by [`VertexAttribute::DrawOrigin`], with the lightmap coordinates' two bytes in `w`.
+    /// The translator unpacks every position input (`gl_Vertex`, `vaPosition`) as
+    /// `stored + origin.xyz + vec3(packed.xyz) * origin.w` and every lightmap input as
+    /// `stored + vec2(packed.w & 255, packed.w >> 8)`, so a vertex stream supplies either
+    /// float values or packed ones and the other part reads zero. Its location is the first
+    /// one the stage leaves free.
     PackedPosition,
     /// `iris_DrawOrigin` (`vec4`): the origin (`xyz`) and scale (`w`) of
     /// [`VertexAttribute::PackedPosition`], per draw.
@@ -272,8 +274,9 @@ impl VertexAttribute {
 
     /// How the host's vertex stream stores this attribute, for those a declaration of the
     /// other kind reads converted rather than as declared, as GL converts integer vertex
-    /// data for float inputs. The lightmap is stored once as exact floats (`in ivec2 vaUV2`
-    /// reads them and rounds); `mc_Entity` and `at_midBlock` as the integers Iris stores
+    /// data for float inputs. The lightmap is stored as exact floats or bytes, summed into
+    /// floats (`in ivec2 vaUV2` reads them and rounds); `mc_Entity` and `at_midBlock` as the
+    /// integers Iris stores
     /// (`in vec4 mc_Entity` reads them and converts). `None` for every other attribute.
     pub fn stored_numbers(&self) -> Option<StoredNumbers> {
         match self {

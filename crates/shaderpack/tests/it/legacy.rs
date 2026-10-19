@@ -486,9 +486,20 @@ fn an_integer_lightmap_declaration_reads_the_float_lightmap_and_converts() {
         .as_ref()
         .expect("vertex compiles")
         .glsl;
+    // Packed vertices carry the lightmap in the packed position's `w`, block then sky byte;
+    // the stage sums both sources (one of which reads zero) and rounds.
     assert!(
-        glsl.contains("vaUV2 = ivec2(round(iris_float_vaUV2));"),
+        glsl.contains(
+            "vaUV2 = ivec2(round((iris_float_vaUV2 + vec2(float(iris_PackedPosition.w - \
+             iris_PackedPosition.w / 256u * 256u), float(iris_PackedPosition.w / 256u)))));"
+        ),
         "{glsl}"
+    );
+    assert!(
+        r.vertex_inputs
+            .iter()
+            .any(|i| i.attribute == VertexAttribute::PackedPosition),
+        "a lightmap input reads the packed position"
     );
 }
 

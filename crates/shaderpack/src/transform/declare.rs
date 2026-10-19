@@ -46,8 +46,8 @@ pub(super) struct Collected {
     pub resource_names: Vec<(u32, u32, String)>,
     /// The next location an `Other` vertex input would take.
     pub next_attribute: u32,
-    /// A position input was declared, so the raw position parts must be too.
-    pub unpacks_position: bool,
+    /// A position or lightmap input was declared, so the raw position parts must be too.
+    pub reads_packed_parts: bool,
 }
 
 fn first_line(toks: &[Tok]) -> u32 {
@@ -74,10 +74,24 @@ fn position_unpack(stored: &str, ty: &str) -> String {
     }
 }
 
+/// The lightmap coordinates a packed vertex stores in the `w` of its packed position: block
+/// light in the low byte, sky light in the high byte, as Java's level × 16. (Generated GLSL
+/// keeps to the operators `token::lex` knows.)
+const PACKED_LIGHTMAP: &str = "vec2(float(iris_PackedPosition.w - iris_PackedPosition.w / 256u * 256u), float(iris_PackedPosition.w / 256u))";
+
+/// Whether input `attribute` reads the raw position parts ([`position_parts`]).
+fn reads_packed_parts(attribute: &VertexAttribute) -> bool {
+    matches!(
+        attribute,
+        VertexAttribute::Position | VertexAttribute::Lightmap | VertexAttribute::MultiTexCoord2
+    )
+}
+
 /// An input whose declared type differs from what the vertex stream stores for its
-/// attribute: positions, which are unpacked ([`position_unpack`]), and attributes stored as
-/// the other kind of number ([`VertexAttribute::stored_numbers`]). Returns the name and type
-/// of the input the stage reads instead, and the expression converting that into the
+/// attribute: positions, which are unpacked ([`position_unpack`]), lightmap coordinates,
+/// stored as floats or in the packed position ([`PACKED_LIGHTMAP`]), and attributes stored
+/// as the other kind of number ([`VertexAttribute::stored_numbers`]). Returns the name and
+/// type of the input the stage reads instead, and the expression converting that into the
 /// declared type `ty`.
 fn converted_input(
     attribute: &VertexAttribute,
@@ -101,14 +115,42 @@ fn converted_input(
         .trim_start_matches("vec")
         .parse::<u8>()
         .ok();
-    match attribute.stored_numbers()? {
-        // Lightmap levels are stored as exact floats; integers round them back.
-        StoredNumbers::Float if is_integer(ty) => {
-            let read = size.map_or("float".to_string(), |size| format!("vec{size}"));
-            let stored = format!("iris_float_{name}");
-            let convert = format!("{ty}(round({stored}))");
-            Some((stored, read, convert))
+    if matches!(
+        attribute,
+        VertexAttribute::Lightmap | VertexAttribute::MultiTexCoord2
+    ) {
+        if !is_integer(ty) && ty != "float" && !ty.starts_with("vec") {
+            return None;
         }
+        // A vertex stream supplies either float coordinates or packed ones and zero for the
+        // other, so the sum is exact; integers round it back.
+        let stored = format!("iris_float_{name}");
+        let (read, sum) = match size {
+            None => (
+                "float".to_string(),
+                format!("({stored} + {PACKED_LIGHTMAP}.x)"),
+            ),
+            Some(2) => (
+                "vec2".to_string(),
+                format!("({stored} + {PACKED_LIGHTMAP})"),
+            ),
+            Some(3) => (
+                "vec3".to_string(),
+                format!("({stored} + vec3({PACKED_LIGHTMAP}, 0.0))"),
+            ),
+            Some(_) => (
+                "vec4".to_string(),
+                format!("({stored} + vec4({PACKED_LIGHTMAP}, 0.0, 0.0))"),
+            ),
+        };
+        let convert = if is_integer(ty) {
+            format!("{ty}(round({sum}))")
+        } else {
+            sum
+        };
+        return Some((stored, read, convert));
+    }
+    match attribute.stored_numbers()? {
         StoredNumbers::Int if ty == "float" || ty.starts_with("vec") => {
             let read = size.map_or("int".to_string(), |size| format!("ivec{size}"));
             let stored = format!("iris_int_{name}");
@@ -120,9 +162,9 @@ fn converted_input(
 }
 
 /// Declares the raw position parts at the first locations the stage's inputs leave free,
-/// once a position input reads them.
+/// once a position or lightmap input reads them.
 pub(super) fn position_parts(io: &mut String, c: &mut Collected) {
-    if !c.unpacks_position {
+    if !c.reads_packed_parts {
         return;
     }
     let others =
@@ -246,7 +288,7 @@ pub(super) fn collect(
                             .map(|t| t.at(line)),
                     );
                     c.before_main.push(format!("{name} = {convert};"));
-                    c.unpacks_position |= attribute == VertexAttribute::Position;
+                    c.reads_packed_parts |= reads_packed_parts(&attribute);
                     continue;
                 }
                 c.io.extend(
@@ -421,7 +463,7 @@ pub(super) fn vertex_input(io: &mut String, c: &mut Collected, name: &str, ty: &
                 "layout(location = {loc}) in {read} {stored};\n{ty} {name};\n"
             ));
             c.before_main.push(format!("{name} = {convert};"));
-            c.unpacks_position |= attribute == VertexAttribute::Position;
+            c.reads_packed_parts |= reads_packed_parts(&attribute);
         }
         None => io.push_str(&format!("layout(location = {loc}) in {ty} {name};\n")),
     }

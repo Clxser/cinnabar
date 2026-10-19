@@ -47,8 +47,9 @@
 //! - Block ids: insert [`ShaderpackBlockIds`] to supply `mc_Entity` ids; without it they read -1.
 //!
 //! # Memory
-//! One face is four vertices of the pack's layout: 8 bytes of packed position plus 4 bytes
-//! per other field its terrain programs read (at most 40 bytes). Faces live in vertex pages
+//! One face is four vertices of the pack's layout: 8 bytes of packed position (with the
+//! lightmap coordinates in its `w`) plus 4 bytes per other field its terrain programs read
+//! (at most 36 bytes). Faces live in vertex pages
 //! no larger than one storage binding, within [`ShaderpackGeometrySettings::budget_bytes`];
 //! sections that do not fit wait, undrawn, until space frees (a warning is logged once).
 //! Expansion is bounded to [`FRAME_EXPANSION_FACES`] per frame, except after an origin move,

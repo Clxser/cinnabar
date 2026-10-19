@@ -186,8 +186,10 @@ fn write_vertex(index: u32, vertex: IrisVertex) {
             vec3(65535.0),
         );
         let packed = vec3<u32>(steps);
+        // The lightmap coordinates ride in `w`: block then sky, a byte each.
+        let light = vec2<u32>(clamp(round(vertex.light), vec2(0.0), vec2(255.0)));
         vertices[base + packed_position] = packed.x | (packed.y << 16u);
-        vertices[base + packed_position + 1u] = packed.z;
+        vertices[base + packed_position + 1u] = packed.z | (light.x << 16u) | (light.y << 24u);
     }
     put_word(base, layout_byte(words.x, 3u), pack4x8unorm(vertex.colour));
     put_word(base, layout_byte(words.y, 0u), pack2x16unorm(vertex.uv));

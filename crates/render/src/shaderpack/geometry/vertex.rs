@@ -34,7 +34,8 @@ pub(crate) const UV0: StoredField = field("IRIS_WORD_UV0", 4, VertexFormat::Unor
 pub(crate) const MID_TEX: StoredField = field("IRIS_WORD_MID_TEX", 5, VertexFormat::Unorm16x2);
 /// Java lightmap coordinates, light level × 16 for block then sky (`gl_MultiTexCoord1/2`).
 /// Half floats hold them exactly; the translator converts integer declarations
-/// (`in ivec2 vaUV2`) from this one copy.
+/// (`in ivec2 vaUV2`) from this one copy. Wide layouts only: the packed layout keeps them
+/// in the packed position's `w` ([`TerrainLayout`]).
 pub(crate) const LIGHTMAP: StoredField = field("IRIS_WORD_LIGHTMAP", 6, VertexFormat::Float16x2);
 /// Face normal (`gl_Normal` / `vaNormal`).
 pub(crate) const NORMAL: StoredField = field("IRIS_WORD_NORMAL", 7, VertexFormat::Snorm8x4);
@@ -198,15 +199,17 @@ const ABSENT_WORD: u32 = 0xff;
 /// The expanded terrain vertex of one pack: which fields are stored, at which words, and
 /// whether positions are packed.
 ///
-/// The packed layout ([`Self::compact`]) stores only the fields some terrain program reads,
+/// The packed layout ([`Self::compact`]) stores the other fields some terrain program reads
 /// in their [`STORED_FIELDS`] formats (so they reach the shader exactly as from the wide
 /// layout), and the position as four `u16`: section-local components in 1/2048 blocks
-/// from −8 (`PACKED_POSITION_BIAS`), with `w` unused. The translator unpacks every position
-/// input as `float + origin.xyz + packed.xyz * origin.w`: packed draws read float zero
-/// and the section's [`draw_origin`] per draw ([`DRAW_ORIGIN_VERTEX_BUFFER`]); wide draws
-/// (sky, effects, actors, and the [`Self::WIDE`] terrain layout) read their float
-/// position and zero for the rest. Positions on the 1/2048 grid (every cube face and every
-/// model element on Java's 1/16 grid) come out identical to float positions.
+/// from −8 (`PACKED_POSITION_BIAS`), with the lightmap coordinates in `w` (block then sky,
+/// a byte each, level × 16 rounded as Java stores them). The translator unpacks every
+/// position input as `float + origin.xyz + packed.xyz * origin.w` and every lightmap input
+/// as `float + packed.w`'s bytes: packed draws read float zero and the section's
+/// [`draw_origin`] per draw ([`DRAW_ORIGIN_VERTEX_BUFFER`]); wide draws (sky, effects,
+/// actors, and the [`Self::WIDE`] terrain layout) read their float position and lightmap
+/// and zero for the rest. Positions on the 1/2048 grid (every cube face and every model
+/// element on Java's 1/16 grid) come out identical to float positions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TerrainLayout {
     packed: bool,
@@ -249,10 +252,10 @@ impl TerrainLayout {
             }
         }
         let mut words = [None; STORED_FIELDS.len()];
-        // The packed position takes the first two words.
+        // The packed position takes the first two words, the lightmap its `w`.
         let mut next = 2_u8;
         for (index, field) in STORED_FIELDS.iter().enumerate() {
-            if *field == POSITION || !needed[index] {
+            if *field == POSITION || *field == LIGHTMAP || !needed[index] {
                 continue;
             }
             words[index] = Some(next);
@@ -381,9 +384,12 @@ fn constant_format(attribute: &VertexAttribute, class: Class, size: u8) -> (u32,
         _ => ZERO_INT_WORD,
     };
     // Overlay and chunk fade carry their own component counts; zeros take the declared one.
+    // The packed layout's lightmap reads two zeros, as the wide layout's two stored halves,
+    // so a `vec4` declaration still gets GL's `(…, 0, 1)` and texture-matrix offsets apply.
     let size = match attribute {
         VertexAttribute::ChunkFade => 1,
         VertexAttribute::Overlay => size.min(2),
+        VertexAttribute::Lightmap | VertexAttribute::MultiTexCoord2 => size.min(2),
         _ => size,
     };
     let format = match (class, size) {
@@ -435,7 +441,8 @@ pub(crate) fn input_fetches(
                 )
             };
             let (buffer, (word, format)) = match (&input.attribute, layout.packed) {
-                (VertexAttribute::Position, true) => constant(),
+                (VertexAttribute::Position, true)
+                | (VertexAttribute::Lightmap | VertexAttribute::MultiTexCoord2, true) => constant(),
                 (VertexAttribute::PackedPosition, true) if class == Class::Uint => (
                     GEOMETRY_VERTEX_BUFFER,
                     (

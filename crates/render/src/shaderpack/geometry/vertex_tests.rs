@@ -186,29 +186,33 @@ fn packed_layouts_store_only_what_terrain_reads_and_unpack_positions_per_draw() 
     ];
     let layout = TerrainLayout::compact(&inputs);
     assert!(layout.packed());
-    // Packed position (two words), colour, uv, mid uv, lightmap, normal, block id.
-    assert_eq!(layout.stride(), 32);
+    // Packed position (two words, the lightmap in its `w`), colour, uv, mid uv, normal,
+    // block id.
+    assert_eq!(layout.stride(), 28);
     assert_eq!(layout.word(TANGENT), None);
     assert_eq!(layout.word(MID_BLOCK), None);
+    assert_eq!(layout.word(LIGHTMAP), None);
     let layouts = vertex_buffer_layouts(&inputs, &layout).unwrap();
     let [geometry, constant, origins] = &layouts[..] else {
         panic!("packed layouts bind three buffers");
     };
-    assert_eq!(geometry.array_stride, 32);
+    assert_eq!(geometry.array_stride, 28);
     assert_eq!(attribute(geometry, 5), (VertexFormat::Uint16x4, 0));
     assert_eq!(attribute(geometry, 1), (COLOR.format, 8));
-    for (location, field) in [
-        (1, COLOR),
-        (2, NORMAL),
-        (3, UV0),
-        (4, LIGHTMAP),
-        (8, BLOCK_ID),
-    ] {
+    for (location, field) in [(1, COLOR), (2, NORMAL), (3, UV0), (8, BLOCK_ID)] {
         assert_eq!(
             attribute(geometry, location),
             (field.format, u64::from(layout.word(field).unwrap()) * 4)
         );
     }
+    // The float lightmap reads two zeros (GL fills `(…, 0, 1)` as for the stored halves); the
+    // translator adds the packed position's `w` bytes.
+    let (format, offset) = attribute(constant, 4);
+    assert_eq!(format, VertexFormat::Float32x2);
+    assert_eq!(
+        (0..2).map(|i| constant_word(offset + i * 4)).sum::<u32>(),
+        0
+    );
     // The float position reads zero; the origin comes per draw.
     let (format, offset) = attribute(constant, 0);
     assert_eq!(format, VertexFormat::Float32x3);
