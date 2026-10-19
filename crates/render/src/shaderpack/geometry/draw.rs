@@ -180,14 +180,18 @@ impl ViewDraws {
                 let visible = facing.map_or([true; FACING_GROUPS], |eye| {
                     facing_visible(section.origin, eye)
                 });
-                // Visible groups that follow one another merge into one command.
+                // Visible groups that follow one another merge into one command. A
+                // translucent section is one command, as Sodium draws it: the groups it
+                // spans but the eye cannot see face away and the culling rasterizer drops
+                // them, which costs less than a draw each.
+                let bridge = category == GeometryCategory::Translucent;
                 let mut pending: Option<Range<u32>> = None;
                 for (group, faces) in groups.iter().enumerate() {
                     if !visible[group] || faces.is_empty() {
                         continue;
                     }
                     match &mut pending {
-                        Some(open) if open.end == faces.start => open.end = faces.end,
+                        Some(open) if bridge || open.end == faces.start => open.end = faces.end,
                         _ => {
                             if let Some(done) = pending.replace(faces.clone()) {
                                 draws.push(category, section, done, instanced);
@@ -483,6 +487,44 @@ mod tests {
         );
         assert_eq!(draws.commands.len(), 1);
         assert_eq!(draws.max_faces(), 12);
+    }
+
+    #[test]
+    fn a_translucent_section_is_one_command_spanning_its_visible_groups() {
+        // Translucent faces 0..14, two per facing group, the last two sloped (rest).
+        let mut section = section(0, 0..14, 0..14, [0, 0, 0]);
+        section.facing[GeometryCategory::Translucent.index()] = std::array::from_fn(|group| {
+            let start = group as u32 * 2;
+            start..start + 2
+        });
+        // Above and beyond +X and +Z: -X, -Y and -Z face away.
+        let eye = DVec3::new(40.0, 40.0, 40.0);
+        let draws = ViewDraws::build(
+            &DrawInputs::new([&section].into_iter(), Some(eye), 1, Some(eye)),
+            false,
+        );
+        let commands: Vec<_> = draws
+            .commands
+            .iter()
+            .map(|c| (c.base_vertex / 4, c.index_count / 6))
+            .collect();
+        assert_eq!(
+            commands,
+            [(2, 12)],
+            "+X through the rest group, in one draw"
+        );
+        // Straight above, only the down faces face away; the one command spans them too.
+        let above = DVec3::new(8.0, 40.0, 8.0);
+        let draws = ViewDraws::build(
+            &DrawInputs::new([&section].into_iter(), Some(above), 1, Some(above)),
+            false,
+        );
+        let commands: Vec<_> = draws
+            .commands
+            .iter()
+            .map(|c| (c.base_vertex / 4, c.index_count / 6))
+            .collect();
+        assert_eq!(commands, [(0, 14)]);
     }
 
     #[test]
