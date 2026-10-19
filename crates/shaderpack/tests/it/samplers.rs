@@ -1,0 +1,68 @@
+//! Pack helpers that take a sampler: each call with a global texture gets its own copy.
+
+use crate::program;
+use shaderpack::{CompiledStage, PackSource, ShaderPack, StageKind, TranslateConfig};
+
+const VERTEX: &str = "#version 120\nvarying vec2 uv;\nvoid main() { gl_Position = ftransform(); uv = gl_MultiTexCoord0.st; }\n";
+
+/// A pack whose only program is `composite`, with `fragment` as its fragment stage.
+fn pack(fragment: &str) -> ShaderPack {
+    ShaderPack::new(PackSource::from_files([
+        ("composite.vsh", VERTEX),
+        ("composite.fsh", fragment),
+    ]))
+}
+
+fn fragment_glsl(t: &shaderpack::ProgramTranslation) -> &str {
+    let stage: &CompiledStage = t
+        .stages
+        .iter()
+        .find(|s| s.stage == StageKind::Fragment)
+        .and_then(|s| s.result.as_ref().ok())
+        .expect("fragment compiles");
+    &stage.glsl
+}
+
+#[test]
+fn a_helper_taking_a_sampler_gets_a_copy_per_global_texture() {
+    let fragment = "#version 120\n\
+        uniform sampler2D colortex0;\n\
+        uniform sampler2D colortex1;\n\
+        varying vec2 uv;\n\
+        vec4 tap(sampler2D s) { return texture2D(s, uv); }\n\
+        void main() { gl_FragData[0] = tap(colortex0) + tap(colortex1); }\n";
+    let t = pack(fragment).translate(&TranslateConfig::default());
+    let glsl = fragment_glsl(program(&t, "composite"));
+    assert!(glsl.contains("vec4 tap__colortex0()"), "{glsl}");
+    assert!(glsl.contains("vec4 tap__colortex1()"), "{glsl}");
+    assert!(
+        glsl.contains("tap__colortex0() + tap__colortex1()"),
+        "{glsl}"
+    );
+}
+
+#[test]
+fn overloads_taking_a_sampler_each_get_a_specialized_copy() {
+    // Solas's water `Raytrace(depthtex1, …)` (10 parameters) calls its 9-parameter overload
+    // with the same sampler; both copies are `Raytrace__depthtex1`, told apart by arity.
+    // A `#====` banner line is an unknown directive Iris's preprocessor skips.
+    let fragment = "#version 120\n\
+        #====================#\n\
+        #   Copyright banner #\n\
+        uniform sampler2D depthtex1;\n\
+        varying vec2 uv;\n\
+        vec4 trace(sampler2D depth, vec2 p, float s) { return texture2D(depth, p) * s; }\n\
+        vec3 trace(sampler2D depth, vec2 p, float s, out float hit) { vec4 c = trace(depth, p, s); hit = c.a; return c.rgb; }\n\
+        void main() { float hit; vec3 c = trace(depthtex1, uv, 2.0, hit); gl_FragData[0] = vec4(c, hit); }\n";
+    let t = pack(fragment).translate(&TranslateConfig::default());
+    let glsl = fragment_glsl(program(&t, "composite"));
+    assert!(
+        glsl.contains("vec4 trace__depthtex1(vec2 p, float s)"),
+        "{glsl}"
+    );
+    assert!(
+        glsl.contains("vec3 trace__depthtex1(vec2 p, float s, out float hit)"),
+        "{glsl}"
+    );
+    assert!(!glsl.contains("Copyright"), "{glsl}");
+}

@@ -128,10 +128,6 @@ pub(super) fn split_args(toks: &[Tok]) -> Vec<Vec<Tok>> {
 
 /// A function parameter.
 #[derive(Clone)]
-#[allow(
-    dead_code,
-    reason = "used by helper specialization, the next translator step"
-)]
 pub(super) struct Param {
     pub toks: Vec<Tok>,
     pub opaque: bool,
@@ -139,10 +135,6 @@ pub(super) struct Param {
 }
 
 /// The `(` index and parameters of a function definition's tokens.
-#[allow(
-    dead_code,
-    reason = "used by helper specialization, the next translator step"
-)]
 pub(super) fn func_params(toks: &[Tok]) -> Option<(usize, Vec<Param>)> {
     let lp = toks.iter().position(|t| t.is("("))?;
     let rp = matching(toks, lp, "(", ")");

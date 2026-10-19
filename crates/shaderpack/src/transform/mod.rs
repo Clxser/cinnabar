@@ -11,6 +11,7 @@ mod declare;
 mod interface;
 mod items;
 mod legacy;
+mod specialize;
 
 use crate::preprocess::Preprocessed;
 use crate::programs::StageKind;
@@ -92,6 +93,7 @@ pub(crate) fn transform(
             items.push(Item::Other(it));
         }
     }
+    let items = specialize::specialize_opaque_params(items);
     let mut c = declare::collect(items, stage, iface, image_formats)?;
 
     let mut ubo: Vec<UboMember> = LEGACY_UNIFORMS
