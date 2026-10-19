@@ -296,3 +296,36 @@ fn malformed_entries_stay_in_entries() {
     assert!(properties.images.is_empty());
     assert_eq!(diagnostic_lines(&properties), [1]);
 }
+
+#[test]
+fn conditions_use_c_integer_arithmetic_and_macro_aliases() {
+    let defines = [
+        ("MC_VERSION", "12111"),
+        ("ALIAS", "QUALITY"),
+        ("QUALITY", "2"),
+    ];
+    let properties = parse_with(
+        "#if MC_VERSION / 10000 == 1\ndivided=1\n#endif\n\
+         #if ALIAS >= 2\naliased=1\n#endif\n#if UNDEFINED\nhidden=1\n#endif\n",
+        &defines,
+    );
+    assert_eq!(keys(&properties), ["divided", "aliased"]);
+    assert!(properties.diagnostics.is_empty());
+}
+
+#[test]
+fn values_expand_object_like_macros() {
+    let properties = parse_with(
+        "#define LUT_SIZE SIZE\nimage.lut = s red r32f float false false LUT_SIZE\nflag=FLAG 0.5\n",
+        &[("SIZE", "256"), ("FLAG", "")],
+    );
+    assert_eq!(
+        properties.images[0].size,
+        ImageSize::Absolute {
+            width: 256,
+            height: None,
+            depth: None,
+        }
+    );
+    assert_eq!(properties.get("flag"), Some("1 0.5"));
+}

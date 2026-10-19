@@ -418,18 +418,21 @@ mod tests {
             ("world0/final.fsh", ""),
         ]);
         assert_eq!(
-            DimensionSelector::new(&source).folder("minecraft:the_nether"),
+            DimensionSelector::new(&source, &BTreeMap::new()).folder("minecraft:the_nether"),
             "world-1"
         );
         assert_eq!(
-            DimensionSelector::new(&source).folder("mymod:moon"),
+            DimensionSelector::new(&source, &BTreeMap::new()).folder("mymod:moon"),
             "world0"
         );
         let bare = PackSource::from_files([("a.fsh", "")]);
         assert_eq!(
-            DimensionSelector::new(&bare).folder("minecraft:the_end"),
+            DimensionSelector::new(&bare, &BTreeMap::new()).folder("minecraft:the_end"),
             ""
         );
-        assert_eq!(DimensionSelector::new(&bare).folder("mymod:moon"), "");
+        assert_eq!(
+            DimensionSelector::new(&bare, &BTreeMap::new()).folder("mymod:moon"),
+            ""
+        );
     }
 }

@@ -17,7 +17,6 @@ const SHADER_EXTENSIONS: &[&str] = &["glsl", "vsh", "fsh", "gsh", "csh", "tcs", 
 pub struct ShaderPack {
     source: PackSource,
     options: Vec<PackOption>,
-    dimensions: DimensionSelector,
 }
 
 impl ShaderPack {
@@ -32,12 +31,7 @@ impl ShaderPack {
             path.rsplit_once('.')
                 .is_some_and(|(_, ext)| SHADER_EXTENSIONS.contains(&ext))
         }));
-        let dimensions = DimensionSelector::new(&source);
-        ShaderPack {
-            source,
-            options,
-            dimensions,
-        }
+        ShaderPack { source, options }
     }
 
     /// Borrows the loaded pack files and their origin.
@@ -50,9 +44,16 @@ impl ShaderPack {
         &self.options
     }
 
-    /// The folder used for a dimension id such as `minecraft:overworld`.
-    pub fn dimension_folder(&self, dimension: &str) -> String {
-        self.dimensions.folder(dimension)
+    /// The folder used for a dimension id such as `minecraft:overworld`; `dimension.properties`
+    /// conditions see the environment's macros.
+    pub fn dimension_folder(&self, dimension: &str, environment: &Environment) -> String {
+        self.dimensions(environment).folder(dimension)
+    }
+
+    /// Resolves `dimension.properties` under the environment's macros, as Iris does.
+    fn dimensions(&self, environment: &Environment) -> DimensionSelector {
+        let defines = environment.standard_defines().into_iter().collect();
+        DimensionSelector::new(&self.source, &defines)
     }
 
     /// Macros visible to `shaders.properties` and enable rules: standard macros and options.
@@ -80,7 +81,8 @@ impl ShaderPack {
     /// An empty folder selects the root set; `dh_*` programs require Distant Horizons.
     /// Enable rules are available separately through [`ShaderProperties::program_rule`].
     pub fn programs(&self, folder: &str, environment: &Environment) -> Vec<ProgramSource> {
-        enumerate_programs(&self.source, self.dimensions.program_folder(folder))
+        let dimensions = self.dimensions(environment);
+        enumerate_programs(&self.source, dimensions.program_folder(folder))
             .into_iter()
             .filter(|p| environment.distant_horizons || p.group != ProgramGroup::DistantHorizons)
             .collect()

@@ -5,7 +5,8 @@
 use std::collections::BTreeMap;
 
 use super::PropertiesDiagnostic;
-use crate::expr::{Expr, macro_value};
+use pp_rs::pp::Preprocessor;
+use pp_rs::token::TokenValue;
 
 /// One key/value pair from an active logical line.
 pub(super) struct RawEntry {
@@ -43,7 +44,7 @@ pub(super) fn read_entries(
             String::new()
         } else if conditionals.active() {
             // Iris strips `#` from content so the preprocessor never reads it as a directive.
-            trimmed.replace('#', "")
+            expand(&trimmed.replace('#', ""), &conditionals.defines, false)
         } else {
             String::new()
         };
@@ -80,6 +81,54 @@ pub(super) fn read_entries(
         entries.push(parse_entry(start, &logical));
     }
     entries
+}
+
+/// Iris defines flag macros (enabled boolean options, valueless environment macros) as `1`.
+fn flag_value(value: &str) -> &str {
+    if value.is_empty() { "1" } else { value }
+}
+
+/// Most macro substitutions one content line may perform; bounds recursive and fan-out growth.
+const MAX_EXPANSIONS: usize = 1024;
+
+/// Expands object-like macros, as Iris's preprocessor does in content and conditions. Numbers
+/// and the spacing between tokens are left unchanged; in a condition, the operand of `defined`
+/// stays a name.
+fn expand(text: &str, defines: &BTreeMap<String, String>, condition: bool) -> String {
+    let mut budget = MAX_EXPANSIONS;
+    let mut out = String::with_capacity(text.len());
+    expand_into(text, defines, condition, &mut budget, &mut out);
+    out
+}
+
+/// Appends `text` to `out`, replacing each defined identifier while `budget` lasts.
+fn expand_into(
+    text: &str,
+    defines: &BTreeMap<String, String>,
+    condition: bool,
+    budget: &mut usize,
+    out: &mut String,
+) {
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut rest = text;
+    let mut after_defined = false;
+    while let Some(start) = rest.bytes().position(is_word) {
+        out.push_str(&rest[..start]);
+        let len = rest[start..].bytes().take_while(|&b| is_word(b)).count();
+        let word = &rest[start..start + len];
+        rest = &rest[start + len..];
+        match defines.get(word) {
+            Some(value)
+                if *budget > 0 && !after_defined && !word.as_bytes()[0].is_ascii_digit() =>
+            {
+                *budget -= 1;
+                expand_into(flag_value(value), defines, condition, budget, out);
+            }
+            _ => out.push_str(word),
+        }
+        after_defined = condition && word == "defined";
+    }
+    out.push_str(rest);
 }
 
 /// `text` without its continuation backslash when it ends in an odd number of `\`.
@@ -318,22 +367,27 @@ impl Conditionals {
         }
     }
 
-    /// Evaluates an `#if`/`#elif` condition; malformed conditions are reported and false.
+    /// Evaluates an `#if`/`#elif` condition with C preprocessor semantics (integer arithmetic,
+    /// macro expansion, undefined names as 0); malformed conditions are reported and false.
     fn test(&self, text: &str, report: &mut impl FnMut(&str)) -> bool {
-        let expr = match Expr::parse(text) {
-            Ok(expr) => expr,
-            Err(err) => {
-                report(&format!("invalid condition `{text}`: {err}"));
-                return false;
+        // pp-rs mis-parses some operators after its own macro expansion, so names are expanded
+        // here and pp-rs evaluates literals and `defined` only.
+        let condition = expand(text, &self.defines, true);
+        let source = format!("#if {condition}\n1\n#else\n0\n#endif\n");
+        let mut preprocessor = Preprocessor::new(&source);
+        for (name, value) in &self.defines {
+            // A macro that cannot be defined is simply absent, as an undefined name.
+            let _ = preprocessor.add_define(name, flag_value(value));
+        }
+        match preprocessor.next() {
+            Some(Ok(token)) => {
+                matches!(token.value, TokenValue::Integer(value) if value.value != 0)
             }
-        };
-        let lookup = |name: &str| self.defines.get(name).map(|value| macro_value(value));
-        match expr.eval(&lookup) {
-            Ok(value) => value != 0.0,
-            Err(err) => {
-                report(&format!("cannot evaluate condition `{text}`: {err}"));
+            Some(Err((error, _))) => {
+                report(&format!("invalid condition `{text}`: {error:?}"));
                 false
             }
+            None => false,
         }
     }
 

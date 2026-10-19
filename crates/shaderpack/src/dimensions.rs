@@ -12,16 +12,15 @@ pub(crate) struct DimensionSelector {
 }
 
 impl DimensionSelector {
-    /// Resolves properties once, including duplicate keys and dimension identifier defaults.
-    pub fn new(source: &PackSource) -> Self {
+    /// Resolves `dimension.properties` under `defines` (Iris's environment macros), including
+    /// duplicate keys and dimension identifier defaults.
+    pub fn new(source: &PackSource, defines: &BTreeMap<String, String>) -> Self {
         let folders: BTreeSet<String> = source
             .files()
             .filter_map(|(path, _)| program_file(path).map(|(dir, _, _)| dir.to_string()))
             .collect();
-        let properties = ShaderProperties::parse(
-            source.text("dimension.properties").unwrap_or(""),
-            &BTreeMap::new(),
-        );
+        let properties =
+            ShaderProperties::parse(source.text("dimension.properties").unwrap_or(""), defines);
         let mut mappings = BTreeMap::new();
         let base = if properties.entries.is_empty() {
             for (id, folder) in [
@@ -96,7 +95,7 @@ mod tests {
             ("a/final.vsh", ""),
             ("m/final.vsh", ""),
         ]);
-        let dimensions = DimensionSelector::new(&source);
+        let dimensions = DimensionSelector::new(&source, &BTreeMap::new());
         assert_eq!(dimensions.folder("minecraft:the_end"), "a");
         assert_eq!(dimensions.folder("custom:moon"), "a");
         assert_eq!(dimensions.folder("overworld"), "m");

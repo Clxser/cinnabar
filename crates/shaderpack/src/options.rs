@@ -29,7 +29,7 @@ pub enum OptionKind {
         /// Whether the define is active (not commented out) in the source.
         default: bool,
     },
-    /// `#define NAME VALUE // [V1 V2 ...]` (optionally `//` comment text after the list).
+    /// `#define NAME VALUE // [V1 V2 ...]` (the list may sit anywhere in the comment).
     Value {
         /// The value written in the source.
         default: String,
@@ -246,12 +246,10 @@ fn option_kind(definition: &Definition<'_>, tested: &BTreeSet<&str>) -> Option<O
     }
 }
 
-/// The values of a `// [V1 V2 ...] description` comment; `None` without a non-empty list.
+/// The values of the first `[V1 V2 ...]` list anywhere in a `//` comment; `None` without a
+/// non-empty list.
 fn allowed_values(comment: Option<&str>) -> Option<Vec<String>> {
-    let list = comment?
-        .strip_prefix("//")?
-        .trim_start()
-        .strip_prefix('[')?;
+    let (_, list) = comment?.strip_prefix("//")?.split_once('[')?;
     let (list, _) = list.split_once(']')?;
     let values: Vec<String> = list.split_whitespace().map(str::to_owned).collect();
     if values.is_empty() {
@@ -435,6 +433,7 @@ mod tests {
     #define INDENTED_ON
 #define QUALITY 2 // [1 2 3] Rendering quality
 #define TIGHT 0.5 //[0.25 0.5 1.0]
+#define LEVEL 2 // Quality level [1 2 3] for shadows
 #define NO_LIST 4
 #define EMPTY_LIST 4 // []
 //#define COMMENTED_VALUE 3 // [1 2 3]
@@ -471,6 +470,7 @@ const vec3 tint = vec3(1.0); // [a b]
             [
                 "GLOW",
                 "INDENTED_ON",
+                "LEVEL",
                 "QUALITY",
                 "SOFT_SHADOWS",
                 "SPACED_OFF",
@@ -495,6 +495,13 @@ const vec3 tint = vec3(1.0); // [a b]
         );
         assert_eq!(
             kind("QUALITY"),
+            Some(OptionKind::Value {
+                default: "2".to_owned(),
+                allowed: strings(&["1", "2", "3"]),
+            })
+        );
+        assert_eq!(
+            kind("LEVEL"),
             Some(OptionKind::Value {
                 default: "2".to_owned(),
                 allowed: strings(&["1", "2", "3"]),
@@ -583,6 +590,7 @@ const vec3 tint = vec3(1.0); // [a b]
         let expected: BTreeMap<String, String> = [
             ("GLOW", ""),
             ("INDENTED_ON", ""),
+            ("LEVEL", "2"),
             ("QUALITY", "5"),
             ("TIGHT", "0.5"),
         ]

@@ -108,9 +108,18 @@ fn options_and_properties_share_effective_macro_values() {
 fn discovery_selects_complete_sets_and_keeps_disabled_programs_inspectable() {
     let pack = pack();
     let mut environment = Environment::default();
-    assert_eq!(pack.dimension_folder("overworld"), "world0");
-    assert_eq!(pack.dimension_folder("minecraft:the_nether"), "world-1");
-    assert_eq!(pack.dimension_folder("minecraft:the_end"), "world0");
+    assert_eq!(
+        pack.dimension_folder("overworld", &Environment::default()),
+        "world0"
+    );
+    assert_eq!(
+        pack.dimension_folder("minecraft:the_nether", &Environment::default()),
+        "world-1"
+    );
+    assert_eq!(
+        pack.dimension_folder("minecraft:the_end", &Environment::default()),
+        "world0"
+    );
     let programs = pack.programs("world0", &environment);
     assert_eq!(
         programs
@@ -142,7 +151,10 @@ fn discovery_selects_complete_sets_and_keeps_disabled_programs_inspectable() {
     assert_eq!(root.len(), 1);
     assert_eq!(root[0].folder, "");
     assert_eq!(root[0].stages[1].1, "composite.fsh");
-    let nether = pack.programs(&pack.dimension_folder("the_nether"), &environment);
+    let nether = pack.programs(
+        &pack.dimension_folder("the_nether", &Environment::default()),
+        &environment,
+    );
     assert_eq!(nether.len(), 1);
     assert_eq!(nether[0].name, "final");
 
@@ -164,10 +176,22 @@ fn dimension_mappings_preserve_duplicate_order_wildcard_and_root() {
         ("final.fsh", ""),
     ]));
     let environment = Environment::default();
-    assert_eq!(pack.dimension_folder("the_end"), "a");
-    assert_eq!(pack.dimension_folder("custom:moon"), "a");
-    assert_eq!(pack.dimension_folder("custom:absent"), "a");
-    assert_eq!(pack.dimension_folder("overworld"), "a");
+    assert_eq!(
+        pack.dimension_folder("the_end", &Environment::default()),
+        "a"
+    );
+    assert_eq!(
+        pack.dimension_folder("custom:moon", &Environment::default()),
+        "a"
+    );
+    assert_eq!(
+        pack.dimension_folder("custom:absent", &Environment::default()),
+        "a"
+    );
+    assert_eq!(
+        pack.dimension_folder("overworld", &Environment::default()),
+        "a"
+    );
     assert_eq!(pack.programs("", &environment)[0].name, "final");
 
     let root_mapping = ShaderPack::new(PackSource::from_files([
@@ -175,8 +199,14 @@ fn dimension_mappings_preserve_duplicate_order_wildcard_and_root() {
         ("world0/composite.fsh", ""),
         ("final.fsh", ""),
     ]));
-    assert_eq!(root_mapping.dimension_folder("custom:root"), "");
-    assert_eq!(root_mapping.dimension_folder("custom:unknown"), "");
+    assert_eq!(
+        root_mapping.dimension_folder("custom:root", &Environment::default()),
+        ""
+    );
+    assert_eq!(
+        root_mapping.dimension_folder("custom:unknown", &Environment::default()),
+        ""
+    );
     assert_eq!(
         root_mapping.programs("missing", &environment)[0].name,
         "final"
@@ -341,8 +371,11 @@ fn explicit_dimension_mappings_use_root_for_unmapped_ids() {
         ("world0/composite.vsh", VERTEX),
         ("world0/composite.fsh", FRAGMENT),
     ]));
-    assert_eq!(pack.dimension_folder("minecraft:overworld"), "");
-    let folder = pack.dimension_folder("minecraft:overworld");
+    assert_eq!(
+        pack.dimension_folder("minecraft:overworld", &Environment::default()),
+        ""
+    );
+    let folder = pack.dimension_folder("minecraft:overworld", &Environment::default());
     let selected = pack.programs(&folder, &Environment::default());
     assert_eq!(selected.len(), 1);
     assert_eq!(selected[0].name, "final");
@@ -359,10 +392,22 @@ fn dimension_ids_normalize_namespaces_and_last_mapping_wins() {
         ("last/final.vsh", VERTEX),
         ("other/final.vsh", VERTEX),
     ]));
-    assert_eq!(pack.dimension_folder("minecraft:the_nether"), "last");
-    assert_eq!(pack.dimension_folder("the_nether"), "last");
-    assert_eq!(pack.dimension_folder("minecraft:the_end"), "other");
-    assert_eq!(pack.dimension_folder("custom:moon"), "other");
+    assert_eq!(
+        pack.dimension_folder("minecraft:the_nether", &Environment::default()),
+        "last"
+    );
+    assert_eq!(
+        pack.dimension_folder("the_nether", &Environment::default()),
+        "last"
+    );
+    assert_eq!(
+        pack.dimension_folder("minecraft:the_end", &Environment::default()),
+        "other"
+    );
+    assert_eq!(
+        pack.dimension_folder("custom:moon", &Environment::default()),
+        "other"
+    );
 }
 
 #[test]
@@ -375,8 +420,14 @@ fn dimension_properties_replace_keys_without_reordering_them() {
         ("a/final.vsh", VERTEX),
         ("b/final.vsh", VERTEX),
     ]));
-    assert_eq!(pack.dimension_folder("overworld"), "");
-    assert_eq!(pack.dimension_folder("the_end"), "b");
+    assert_eq!(
+        pack.dimension_folder("overworld", &Environment::default()),
+        ""
+    );
+    assert_eq!(
+        pack.dimension_folder("the_end", &Environment::default()),
+        "b"
+    );
 }
 
 #[test]
@@ -388,9 +439,18 @@ fn legacy_and_absent_override_folders_choose_one_base_set() {
             ("world-1/composite.vsh", VERTEX),
             ("final.vsh", VERTEX),
         ]));
-        assert_eq!(pack.dimension_folder("the_nether"), "world-1");
-        assert_eq!(pack.dimension_folder("the_end"), "world0");
-        assert_eq!(pack.dimension_folder("custom:moon"), "world0");
+        assert_eq!(
+            pack.dimension_folder("the_nether", &Environment::default()),
+            "world-1"
+        );
+        assert_eq!(
+            pack.dimension_folder("the_end", &Environment::default()),
+            "world0"
+        );
+        assert_eq!(
+            pack.dimension_folder("custom:moon", &Environment::default()),
+            "world0"
+        );
         let selected = pack.programs("missing", &Environment::default());
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].folder, "world0");
@@ -409,7 +469,7 @@ fn unqualified_dimension_mappings_match_namespaced_queries() {
         ("world-1/composite.vsh", ""),
         ("world-1/composite.fsh", ""),
     ]));
-    let folder = pack.dimension_folder("minecraft:the_nether");
+    let folder = pack.dimension_folder("minecraft:the_nether", &Environment::default());
     assert_eq!(folder, "customNether");
     let selected = pack.programs(&folder, &Environment::default());
     assert_eq!(selected.len(), 1);
@@ -470,4 +530,20 @@ fn option_locations_preserve_distinct_exact_source_keys() {
             defining_text.as_bytes()
         );
     }
+}
+
+#[test]
+fn dimension_properties_see_environment_macros() {
+    let pack = ShaderPack::new(PackSource::from_files([
+        (
+            "dimension.properties",
+            "#ifdef IS_IRIS\ndimension.iris = overworld\n#else\ndimension.other = overworld\n#endif\n",
+        ),
+        ("iris/final.fsh", FRAGMENT),
+        ("other/final.fsh", FRAGMENT),
+    ]));
+    assert_eq!(
+        pack.dimension_folder("overworld", &Environment::default()),
+        "iris"
+    );
 }
