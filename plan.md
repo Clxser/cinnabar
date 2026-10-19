@@ -258,6 +258,9 @@ across these existing features; they are not a list of missing screens or system
 - [ ] `P5.6-FORMS` — Close modal/menu/custom form navigation, validation, cancellation
   and responses, including server-pack definitions, structured text, custom controls,
   scaling and image/layout behavior against matched native views.
+  Size and offset animations feed dimensional expressions into layout, clipping, culling,
+  and hit regions. Chained/hidden/render-wait lifecycles, keyword endpoints, complex
+  child/sibling dependencies and complete native-view acceptance remain unverified.
 - [ ] `P5.7-PARITY-PERF` — Qualify combined chat, scoreboard, boss bars, inventory and
   forms at supported scales/aspects and devices, with bounded memory and stable frame work.
 - [ ] `P5.8-SETTINGS` — Close menu, control, video and persistence acceptance. Desktop

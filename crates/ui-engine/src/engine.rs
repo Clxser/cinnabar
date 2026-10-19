@@ -25,6 +25,7 @@ mod dependencies;
 mod fill_renderers;
 mod filter;
 mod formatting_colors;
+mod geometry;
 pub mod glass;
 pub mod host_edit;
 pub mod item_renderer;
@@ -70,13 +71,15 @@ pub struct FormEngine {
     pub server_ui: bool,
     /// The last form's bound tree and laid-out output, reused while unchanged.
     pub cache: Option<FormCache>,
-    /// Resolve+bind and layout passes run, for cache tests and profiling.
+    /// Base form resolve/bind and layout passes, excluding sampled geometry refreshes.
     pub passes: [usize; 2],
     screens: screen_cache::ScreenCache,
     /// Logical dependencies of recent immutable draw-node snapshots.
     dependencies: std::sync::Mutex<dependencies::DependencyCache>,
     /// Animation state of every drawn control, keyed by layout key.
     animator: std::sync::Mutex<json_ui::Animator>,
+    /// Sampled geometry belongs to the same immutable layout snapshots as painting.
+    geometry: std::sync::Mutex<geometry::GeometryLayouts>,
 }
 
 pub struct FormCache {
@@ -106,6 +109,7 @@ struct Art<'a> {
     set: &'a TextureSet,
     animator: &'a std::sync::Mutex<json_ui::Animator>,
     dependencies: &'a std::sync::Mutex<dependencies::DependencyCache>,
+    geometry: &'a std::sync::Mutex<geometry::GeometryLayouts>,
 }
 
 /// A carrier catalog extended and layered with a registry's built-in screens: the costly part
@@ -180,6 +184,7 @@ impl FormEngine {
             passes: [0; 2],
             animator: std::sync::Mutex::default(),
             dependencies: std::sync::Mutex::default(),
+            geometry: std::sync::Mutex::default(),
         }
     }
 
@@ -189,6 +194,7 @@ impl FormEngine {
             set: &self.textures,
             animator: &self.animator,
             dependencies: &self.dependencies,
+            geometry: &self.geometry,
         }
     }
 
@@ -309,6 +315,10 @@ impl FormEngine {
             .animator
             .get_mut()
             .unwrap_or_else(|poison| poison.into_inner()) = json_ui::Animator::new();
+        *self
+            .geometry
+            .get_mut()
+            .unwrap_or_else(|poison| poison.into_inner()) = geometry::GeometryLayouts::default();
     }
 
     /// Render `model`; `Ok(None)` without its template. Layout holds until model or scroll change.
@@ -344,6 +354,7 @@ impl FormEngine {
             set: &self.textures,
             animator: &self.animator,
             dependencies: &self.dependencies,
+            geometry: &self.geometry,
         };
         let screen_cancel = self
             .cache
@@ -447,6 +458,7 @@ impl FormEngine {
             set: textures,
             animator: &self.animator,
             dependencies: &self.dependencies,
+            geometry: &self.geometry,
         };
         render_with(sources, frame, art, draw)
     }

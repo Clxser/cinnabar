@@ -48,6 +48,20 @@ pub struct Written {
     pub size: Option<[f32; 2]>,
 }
 
+/// The last layout writer and its normalized progress, before resolving dimensional terms.
+#[derive(Clone, Copy)]
+pub(super) struct LayoutSample {
+    pub(super) node: usize,
+    pub(super) progress: f32,
+}
+
+/// Layout channels keep their writer identity while ordinary paint channels keep pixel values.
+#[derive(Clone, Copy, Default)]
+pub(super) struct LayoutWrites {
+    pub(super) size: Option<LayoutSample>,
+    pub(super) offset: Option<LayoutSample>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
     Playing,
@@ -70,6 +84,7 @@ struct Component {
     instances: Vec<Instance>,
     active: Vec<usize>,
     written: Written,
+    layout_writes: LayoutWrites,
     rendered: bool,
     /// Clock value the component was created at, when set by the caller.
     born: Option<f64>,
@@ -107,6 +122,22 @@ fn initial_state(node: &AnimNode, rendered: bool) -> State {
 }
 
 impl Animator {
+    /// Samples once, then exposes the authored layout writers at that same clock value.
+    pub(super) fn sample_geometry(
+        &mut self,
+        anims: &Arc<ControlAnims>,
+        now: f64,
+        clocks: Option<&BTreeMap<String, f64>>,
+    ) -> (Written, LayoutWrites) {
+        let written = self.sample(anims, now, clocks);
+        let layout = self
+            .components
+            .get(&anims.key)
+            .map(|component| component.layout_writes)
+            .unwrap_or_default();
+        (written, layout)
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -225,6 +256,7 @@ impl Component {
             anims,
             instances,
             written: Written::default(),
+            layout_writes: LayoutWrites::default(),
             rendered: false,
             born,
             last: now,
@@ -316,8 +348,20 @@ impl Component {
                 written.aseprite_ms = None;
                 written.uv = Some([0.0, 0.0]);
             }
-            AnimKind::Offset => written.offset = Some([node.from[0], node.from[1]]),
-            AnimKind::Size => written.size = Some([node.from[0], node.from[1]]),
+            AnimKind::Offset => {
+                written.offset = Some([node.from[0], node.from[1]]);
+                self.layout_writes.offset = Some(LayoutSample {
+                    node: index,
+                    progress: 0.0,
+                });
+            }
+            AnimKind::Size => {
+                written.size = Some([node.from[0], node.from[1]]);
+                self.layout_writes.size = Some(LayoutSample {
+                    node: index,
+                    progress: 0.0,
+                });
+            }
             _ => {}
         }
     }
@@ -420,8 +464,20 @@ impl Component {
             AnimKind::Clip => written.clip = Some(ease(0)),
             AnimKind::Color => written.color = Some([ease(0), ease(1), ease(2), ease(3)]),
             AnimKind::Uv => written.uv = Some([ease(0), ease(1)]),
-            AnimKind::Offset => written.offset = Some([ease(0), ease(1)]),
-            AnimKind::Size => written.size = Some([ease(0), ease(1)]),
+            AnimKind::Offset => {
+                written.offset = Some([ease(0), ease(1)]);
+                self.layout_writes.offset = Some(LayoutSample {
+                    node: index,
+                    progress: t,
+                });
+            }
+            AnimKind::Size => {
+                written.size = Some([ease(0), ease(1)]);
+                self.layout_writes.size = Some(LayoutSample {
+                    node: index,
+                    progress: t,
+                });
+            }
             _ => {}
         }
         (raw >= 1.0).then(|| (instance.elapsed - node.duration.max(0.0)).max(0.0))

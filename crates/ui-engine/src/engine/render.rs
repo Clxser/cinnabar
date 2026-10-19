@@ -36,12 +36,24 @@ fn prepare_with<R: Borrow<FormRender>>(
     art: ScreenArt<'_>,
     draw: impl FnOnce(&LayoutEnv, [f64; 2]) -> Option<R>,
 ) -> Option<R> {
+    let render = with_environment(textures, frame, art, draw)?;
+    require_textures(textures, frame, art, render.borrow());
+    Some(render)
+}
+
+/// Borrows the same font and texture measurements for initial and animated layouts.
+fn with_environment<R>(
+    textures: Art<'_>,
+    frame: &mut PaintFrame<'_>,
+    art: ScreenArt<'_>,
+    run: impl FnOnce(&LayoutEnv, [f64; 2]) -> R,
+) -> R {
     let px = frame.metrics.scale.get() * FONT_DESIGN_PIXEL_TEXELS as f32;
     let root = [
         f64::from(frame.content[0] / px),
         f64::from(frame.content[1] / px),
     ];
-    let render = {
+    {
         let cache = RefCell::new(&mut *frame.layouts);
         let atlas = textures.set.lock();
         let view = Textures {
@@ -61,15 +73,22 @@ fn prepare_with<R: Borrow<FormRender>>(
             text: &measure,
             textures: &view,
         };
-        draw(&env, root)
-    };
-    let render = render?;
-    let laid_render = render.borrow();
+        run(&env, root)
+    }
+}
+
+/// Requests dependencies of the frame that will actually paint, including entering controls.
+fn require_textures(
+    textures: Art<'_>,
+    frame: &mut PaintFrame<'_>,
+    art: ScreenArt<'_>,
+    render: &FormRender,
+) {
     let base = textures
         .dependencies
         .lock()
         .unwrap_or_else(|poison| poison.into_inner())
-        .get(&laid_render.nodes, art);
+        .get(&render.nodes, art);
     let mut atlas = textures.set.lock();
     let paths = dependencies::paths(&base, art, frame.renderers);
     let drawn = Textures {
@@ -81,7 +100,6 @@ fn prepare_with<R: Borrow<FormRender>>(
     .atlas_keys(paths.into_iter());
     atlas.require(drawn.iter().map(std::ops::Deref::deref));
     drop(base);
-    Some(render)
 }
 
 /// Paints a prepared screen and publishes its input geometry.
@@ -95,6 +113,22 @@ pub(super) fn render_with<R: Borrow<FormRender>>(
         return Ok(None);
     };
     let render = render.borrow();
+    let now = frame.now;
+    let animated = with_environment(textures, frame, art, |env, root| {
+        let mut animator = textures
+            .animator
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        textures
+            .geometry
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .sample(render, root, env, art.view, &mut animator, now, art.clocks)
+    });
+    let render = animated.as_deref().unwrap_or(render);
+    if animated.is_some() {
+        require_textures(textures, frame, art, render);
+    }
     let px = frame.metrics.scale.get() * FONT_DESIGN_PIXEL_TEXELS as f32;
     let atlas = textures.set.lock();
     let layouts = &mut *frame.layouts;

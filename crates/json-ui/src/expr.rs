@@ -67,6 +67,59 @@ pub enum Resolved {
 }
 
 impl Length {
+    /// Blends coefficients while retaining the dimensional units layout must resolve later.
+    pub(crate) fn blend(&self, other: &Self, blend: impl Fn(f64, f64) -> f64) -> Option<Self> {
+        let (Self::Terms(from), Self::Terms(to)) = (self, other) else {
+            return None;
+        };
+        let mut units = Vec::new();
+        for term in from.iter().chain(to) {
+            if !units.contains(&term.unit) {
+                units.push(term.unit);
+            }
+        }
+        let coefficient = |terms: &[Term], unit| {
+            terms
+                .iter()
+                .filter(|term| term.unit == unit)
+                .map(|term| term.coeff)
+                .sum()
+        };
+        Some(Self::Terms(
+            units
+                .into_iter()
+                .map(|unit| Term {
+                    unit,
+                    coeff: blend(coefficient(from, unit), coefficient(to, unit)),
+                })
+                .collect(),
+        ))
+    }
+
+    /// Writes a layout expression back into the existing property representation.
+    pub(crate) fn to_value(&self) -> Value {
+        Value::String(match self {
+            Self::Default => "default".to_owned(),
+            Self::Fill => "fill".to_owned(),
+            Self::Terms(terms) => terms
+                .iter()
+                .map(|term| {
+                    let suffix = match term.unit {
+                        Unit::Px => "px",
+                        Unit::Percent => "%",
+                        Unit::PercentChildren => "%c",
+                        Unit::PercentChildrenMax => "%cm",
+                        Unit::PercentSiblingMax => "%sm",
+                        Unit::PercentX => "%x",
+                        Unit::PercentY => "%y",
+                    };
+                    format!("{}{suffix}", term.coeff)
+                })
+                .collect::<Vec<_>>()
+                .join(" + "),
+        })
+    }
+
     /// `N%` of the parent axis.
     pub fn percent(value: f64) -> Self {
         Length::Terms(vec![Term {

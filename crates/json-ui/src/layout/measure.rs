@@ -230,6 +230,37 @@ pub struct MeasureCache {
 }
 
 impl MeasureCache {
+    /// Edits one control's properties, invalidating its measurements and its ancestors.
+    pub(crate) fn update_properties(
+        &mut self,
+        tree: &mut ResolvedControl,
+        path: &[usize],
+        update: impl FnOnce(&mut crate::tree::Properties) -> bool,
+    ) -> bool {
+        /// Applies the edit at its path and marks every owner whose measurements depend on it.
+        fn edit(
+            tree: &mut ResolvedControl,
+            path: &[usize],
+            update: impl FnOnce(&mut crate::tree::Properties) -> bool,
+            dirty: &mut Dirty,
+        ) -> bool {
+            let changed = match path.split_first() {
+                Some((&index, rest)) => edit(&mut tree.children[index], rest, update, dirty),
+                None => update(&mut tree.properties),
+            };
+            if changed {
+                dirty.changed(std::ptr::from_ref(tree).addr());
+            }
+            changed
+        }
+        let mut dirty = Dirty::default();
+        let changed = edit(tree, path, update, &mut dirty);
+        if changed {
+            self.forget(dirty);
+        }
+        changed
+    }
+
     /// Replace changed controls in place and retain measurements of untouched subtrees.
     pub fn update_tree(&mut self, tree: &mut ResolvedControl, next: ResolvedControl) {
         let mut dirty = Dirty::default();
