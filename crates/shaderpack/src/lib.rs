@@ -7,7 +7,9 @@
 //! binary asset reads from folders, ZIP archives or memory.
 //!
 //! Shader translation, render-host integration and in-game acceptance remain incomplete.
-//! Parsing custom uniform expressions does not execute or render them.
+//! [`CustomUniforms`] evaluates a pack's custom uniform and variable expressions each frame;
+//! nothing uploads or renders them yet.
+mod custom_uniforms;
 mod dimensions;
 mod environment;
 mod expr;
@@ -17,6 +19,7 @@ mod programs;
 mod properties;
 mod source;
 
+pub use custom_uniforms::{CustomUniformError, CustomUniforms, UniformValue};
 pub use environment::{Environment, GpuVendor, HostOs};
 pub use expr::{BinaryOp, Expr, ExprError, UnaryOp};
 pub use options::{OptionKind, OptionValues, PackOption};
