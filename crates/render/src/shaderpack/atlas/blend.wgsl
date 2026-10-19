@@ -1,5 +1,6 @@
-// Writes one animated display sprite at one atlas mip: the current and next frame-store
-// texels mixed by the frame blend, in the sampled view's colour space.
+// Writes animated display sprites at one atlas mip: the current and next frame-store texels
+// mixed by the frame blend, in each sampled view's colour space. With LabPBR frame stores one
+// pass writes the colour, normal and specular atlases together.
 
 struct Instance {
     // Display square at this mip: x, y, side, mip level.
@@ -18,7 +19,15 @@ struct Varyings {
     @location(2) @interpolate(flat) blend: f32,
 }
 
-@group(0) @binding(0) var frames: texture_2d<f32>;
+struct Layers {
+    @location(0) colour: vec4<f32>,
+    @location(1) normal: vec4<f32>,
+    @location(2) specular: vec4<f32>,
+}
+
+@group(0) @binding(0) var colour_frames: texture_2d<f32>;
+@group(0) @binding(1) var normal_frames: texture_2d<f32>;
+@group(0) @binding(2) var specular_frames: texture_2d<f32>;
 
 @vertex
 fn vertex(@builtin(vertex_index) index: u32, instance: Instance) -> Varyings {
@@ -34,10 +43,19 @@ fn vertex(@builtin(vertex_index) index: u32, instance: Instance) -> Varyings {
     return out;
 }
 
-@fragment
-fn fragment(in: Varyings) -> @location(0) vec4<f32> {
+fn mixed(frames: texture_2d<f32>, in: Varyings) -> vec4<f32> {
     let local = vec2<i32>(floor(in.position.xy)) - in.origin_mip.xy;
     let current = textureLoad(frames, in.sources.xy + local, in.origin_mip.z);
     let next = textureLoad(frames, in.sources.zw + local, in.origin_mip.z);
     return mix(current, next, in.blend);
+}
+
+@fragment
+fn fragment_colour(in: Varyings) -> @location(0) vec4<f32> {
+    return mixed(colour_frames, in);
+}
+
+@fragment
+fn fragment_layers(in: Varyings) -> Layers {
+    return Layers(mixed(colour_frames, in), mixed(normal_frames, in), mixed(specular_frames, in));
 }

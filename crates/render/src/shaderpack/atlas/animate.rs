@@ -3,7 +3,8 @@
 //! Frame pixels live in a separate frame store, because a texture subresource cannot be
 //! sampled and written in one pass. Non-blending frames are copied mip by mip; blending
 //! animations draw one instanced quad per display sprite and mip that mixes the current and
-//! next frame in the sampled colour space, as the chunk shaders do.
+//! next frame in the sampled colour space, as the chunk shaders do. One pass per mip writes
+//! every animated atlas (colour and, with LabPBR frames, normal and specular) as attachments.
 
 use super::pack::SpriteRect;
 use super::plan::AnimationLayout;
@@ -16,17 +17,22 @@ use render_scene::{ChunkAnimationClock, select_animation_frames};
 /// Vertex-buffer layout of [`BlendInstance`].
 pub(crate) const BLEND_INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 4] =
     wgpu::vertex_attr_array![0 => Uint32x4, 1 => Uint32x2, 2 => Uint32x4, 3 => Float32];
-/// The frame store the blend pass reads with `textureLoad`.
-pub(crate) const BLEND_SOURCE_ENTRY: wgpu::BindGroupLayoutEntry = wgpu::BindGroupLayoutEntry {
-    binding: 0,
-    visibility: wgpu::ShaderStages::FRAGMENT,
-    ty: wgpu::BindingType::Texture {
-        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-        view_dimension: wgpu::TextureViewDimension::D2,
-        multisampled: false,
-    },
-    count: None,
-};
+/// The colour, normal and specular frame stores the blend pass reads with `textureLoad`.
+pub(crate) const BLEND_SOURCE_ENTRIES: [wgpu::BindGroupLayoutEntry; 3] =
+    [blend_source(0), blend_source(1), blend_source(2)];
+
+const fn blend_source(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
 /// Two triangles per display sprite.
 const QUAD_VERTICES: u32 = 6;
 
@@ -99,21 +105,22 @@ struct AnimatedLayer {
     frames_view: wgpu::TextureView,
     /// Render target of each atlas mip, in the storage format.
     targets: Vec<wgpu::TextureView>,
-    srgb: bool,
-    bind_group: Option<wgpu::BindGroup>,
 }
 
-/// Blend pipelines for the sRGB colour atlas and the linear LabPBR atlases.
+/// Blend pipelines writing the sRGB colour atlas alone, or it and both linear LabPBR atlases.
 #[derive(Clone, Copy)]
 pub(crate) struct BlendPipelines<'a> {
-    pub srgb: &'a wgpu::RenderPipeline,
-    pub linear: &'a wgpu::RenderPipeline,
+    pub colour: &'a wgpu::RenderPipeline,
+    pub layers: &'a wgpu::RenderPipeline,
 }
 
 /// Animated display state of the published atlas generation.
 #[derive(Resource)]
 pub(crate) struct AtlasAnimations {
+    /// Colour first, then normal and specular when the frame store carries LabPBR frames.
     layers: Vec<AnimatedLayer>,
+    /// Every layer's frame store, bound for the blend pass.
+    blend_sources: Option<wgpu::BindGroup>,
     animations: Box<[Animation]>,
     frames: Box<[TextureRef]>,
     layouts: Vec<Option<AnimationLayout>>,
@@ -162,8 +169,6 @@ impl AtlasAnimations {
                             })
                         })
                         .collect(),
-                    srgb,
-                    bind_group: None,
                 });
             };
             pair(&uploaded.atlas.color, &store.color, true);
@@ -174,6 +179,7 @@ impl AtlasAnimations {
         }
         Self {
             layers,
+            blend_sources: None,
             animations: animations.into(),
             frames: frames.into(),
             shown: vec![None; layouts.len()],
@@ -185,23 +191,29 @@ impl AtlasAnimations {
         }
     }
 
-    /// Whether blend sources still need bind groups.
+    /// Whether blend sources still need a bind group.
     pub fn needs_blend_sources(&self) -> bool {
-        self.layers.iter().any(|layer| layer.bind_group.is_none())
+        !self.layers.is_empty() && self.blend_sources.is_none()
     }
 
-    /// Binds each frame store for the blend pass with the pipelines' group-zero layout.
+    /// Binds the frame stores for the blend pass with the pipelines' group-zero layout. Without
+    /// LabPBR frames the colour store fills the unread normal and specular bindings.
     pub fn bind_blend_sources(&mut self, device: &wgpu::Device, layout: &wgpu::BindGroupLayout) {
-        for layer in &mut self.layers {
-            layer.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("shader-pack frame blend sources"),
-                layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: BLEND_SOURCE_ENTRY.binding,
-                    resource: wgpu::BindingResource::TextureView(&layer.frames_view),
-                }],
-            }));
-        }
+        let entries = BLEND_SOURCE_ENTRIES.map(|entry| wgpu::BindGroupEntry {
+            binding: entry.binding,
+            resource: wgpu::BindingResource::TextureView(
+                &self
+                    .layers
+                    .get(entry.binding as usize)
+                    .unwrap_or(&self.layers[0])
+                    .frames_view,
+            ),
+        });
+        self.blend_sources = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shader-pack frame blend sources"),
+            layout,
+            entries: &entries,
+        }));
     }
 
     /// Records the refreshes `clock` requires and returns how many display sprites changed.
@@ -286,12 +298,20 @@ impl AtlasAnimations {
         let buffer = self.instances.as_ref().expect("instances were allocated");
         queue.profiled_write_buffer(buffer, 0, bytes);
         let per_level = (blended.len() * size_of::<BlendInstance>()) as u64;
-        for layer in &self.layers {
-            let bind_group = layer.bind_group.as_ref().expect("blend sources are bound");
-            for level in 0..self.mip_levels {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("shader-pack animated sprite blend"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+        let bind_group = self
+            .blend_sources
+            .as_ref()
+            .expect("blend sources are bound");
+        let pipeline = if self.layers.len() == 1 {
+            pipelines.colour
+        } else {
+            pipelines.layers
+        };
+        for level in 0..self.mip_levels {
+            let attachments: [_; 3] = std::array::from_fn(|index| {
+                self.layers
+                    .get(index)
+                    .map(|layer| wgpu::RenderPassColorAttachment {
                         view: &layer.targets[level as usize],
                         depth_slice: None,
                         resolve_target: None,
@@ -299,19 +319,18 @@ impl AtlasAnimations {
                             load: wgpu::LoadOp::Load,
                             store: wgpu::StoreOp::Store,
                         },
-                    })],
-                    ..Default::default()
-                });
-                pass.set_pipeline(if layer.srgb {
-                    pipelines.srgb
-                } else {
-                    pipelines.linear
-                });
-                pass.set_bind_group(0, bind_group, &[]);
-                let start = u64::from(level) * per_level;
-                pass.set_vertex_buffer(0, buffer.slice(start..start + per_level));
-                pass.draw(0..QUAD_VERTICES, 0..blended.len() as u32);
-            }
+                    })
+            });
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("shader-pack animated sprite blend"),
+                color_attachments: &attachments[..self.layers.len()],
+                ..Default::default()
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, bind_group, &[]);
+            let start = u64::from(level) * per_level;
+            pass.set_vertex_buffer(0, buffer.slice(start..start + per_level));
+            pass.draw(0..QUAD_VERTICES, 0..blended.len() as u32);
         }
     }
 }

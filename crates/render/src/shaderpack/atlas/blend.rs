@@ -1,7 +1,7 @@
 //! Render-world pipelines for blending animation frames into the atlas.
 
 use super::animate::{
-    BLEND_INSTANCE_ATTRIBUTES, BLEND_SOURCE_ENTRY, BlendInstance, BlendPipelines,
+    BLEND_INSTANCE_ATTRIBUTES, BLEND_SOURCE_ENTRIES, BlendInstance, BlendPipelines,
 };
 use super::upload::{COLOR_STORAGE_FORMAT, PBR_FORMAT};
 use bevy::{
@@ -22,23 +22,24 @@ pub(crate) const BLEND_SHADER: Handle<Shader> =
 #[derive(Resource)]
 pub(crate) struct AtlasBlendPipelines {
     pub layout: BindGroupLayoutDescriptor,
-    srgb: CachedRenderPipelineId,
-    linear: CachedRenderPipelineId,
+    colour: CachedRenderPipelineId,
+    layers: CachedRenderPipelineId,
 }
 
 impl AtlasBlendPipelines {
     /// Both pipelines once compiled.
     pub fn get<'a>(&self, cache: &'a PipelineCache) -> Option<BlendPipelines<'a>> {
         Some(BlendPipelines {
-            srgb: cache.get_render_pipeline(self.srgb)?,
-            linear: cache.get_render_pipeline(self.linear)?,
+            colour: cache.get_render_pipeline(self.colour)?,
+            layers: cache.get_render_pipeline(self.layers)?,
         })
     }
 }
 
 fn descriptor(
     layout: &BindGroupLayoutDescriptor,
-    format: TextureFormat,
+    entry_point: &'static str,
+    formats: &[TextureFormat],
 ) -> RenderPipelineDescriptor {
     RenderPipelineDescriptor {
         label: Some("shader-pack animated sprite blend".into()),
@@ -55,25 +56,38 @@ fn descriptor(
         },
         fragment: Some(FragmentState {
             shader: BLEND_SHADER,
-            entry_point: Some("fragment".into()),
-            targets: vec![Some(ColorTargetState {
-                format,
-                blend: None,
-                write_mask: ColorWrites::ALL,
-            })],
+            entry_point: Some(entry_point.into()),
+            targets: formats
+                .iter()
+                .map(|&format| {
+                    Some(ColorTargetState {
+                        format,
+                        blend: None,
+                        write_mask: ColorWrites::ALL,
+                    })
+                })
+                .collect(),
             ..Default::default()
         }),
         ..Default::default()
     }
 }
 
-/// Queues the colour (sRGB storage) and LabPBR (linear) blend pipelines.
+/// Queues the colour-only (sRGB storage) pipeline and the colour + LabPBR (linear) one.
 pub(crate) fn init_blend_pipelines(mut commands: Commands, cache: Res<PipelineCache>) {
     let layout =
-        BindGroupLayoutDescriptor::new("shader-pack frame blend sources", &[BLEND_SOURCE_ENTRY]);
+        BindGroupLayoutDescriptor::new("shader-pack frame blend sources", &BLEND_SOURCE_ENTRIES);
     commands.insert_resource(AtlasBlendPipelines {
-        srgb: cache.queue_render_pipeline(descriptor(&layout, COLOR_STORAGE_FORMAT)),
-        linear: cache.queue_render_pipeline(descriptor(&layout, PBR_FORMAT)),
+        colour: cache.queue_render_pipeline(descriptor(
+            &layout,
+            "fragment_colour",
+            &[COLOR_STORAGE_FORMAT],
+        )),
+        layers: cache.queue_render_pipeline(descriptor(
+            &layout,
+            "fragment_layers",
+            &[COLOR_STORAGE_FORMAT, PBR_FORMAT, PBR_FORMAT],
+        )),
         layout,
     });
 }

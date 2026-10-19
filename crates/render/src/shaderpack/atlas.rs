@@ -53,7 +53,7 @@ use bevy::{
     render::{
         Render, RenderApp, RenderStartup, RenderSystems,
         render_resource::{Buffer, PipelineCache, Sampler, TextureView},
-        renderer::{RenderDevice, RenderQueue},
+        renderer::{PendingCommandBuffers, RenderDevice, RenderQueue},
     },
     tasks::{AsyncComputeTaskPool, Task, block_on},
 };
@@ -293,7 +293,8 @@ fn publish(built: BuiltAtlas, generation: u64) -> (ShaderpackAtlas, AtlasAnimati
     (atlas, animations)
 }
 
-/// Refreshes animated display sprites for the extracted world animation clock.
+/// Refreshes animated display sprites for the extracted world animation clock. The refresh
+/// joins the frame's graph submission ahead of the graph's own command buffers.
 fn update_shaderpack_animations(
     animations: Option<ResMut<AtlasAnimations>>,
     clock: Option<Res<ChunkAnimationClock>>,
@@ -301,6 +302,7 @@ fn update_shaderpack_animations(
     queue: Res<RenderQueue>,
     pipelines: Option<Res<blend::AtlasBlendPipelines>>,
     cache: Option<Res<PipelineCache>>,
+    mut pending: ResMut<PendingCommandBuffers>,
 ) {
     let (Some(mut animations), Some(clock)) = (animations, clock) else {
         return;
@@ -317,6 +319,6 @@ fn update_shaderpack_animations(
         label: Some("shader-pack animated sprites"),
     });
     if animations.encode(device.wgpu_device(), &queue, &mut encoder, *clock, blend) > 0 {
-        queue.submit([encoder.finish()]);
+        pending.push_encoder(encoder, "shader-pack animated sprites");
     }
 }
