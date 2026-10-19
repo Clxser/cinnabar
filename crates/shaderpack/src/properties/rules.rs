@@ -1,8 +1,8 @@
 //! Typed parsing of the recognised `shaders.properties` keys.
 
 use super::{
-    BufferSize, CustomImage, CustomTexture, FlipRule, ImageSize, ProgramRule, PropertiesDiagnostic,
-    ScaleRule, ShaderProperties, SizeValue, TextureSource,
+    BufferSize, CustomImage, CustomTexture, CustomUniform, CustomUniformKind, FlipRule, ImageSize,
+    ProgramRule, PropertiesDiagnostic, ScaleRule, ShaderProperties, SizeValue, TextureSource,
 };
 use crate::expr::Expr;
 
@@ -60,6 +60,12 @@ fn apply_rule(
         });
     } else if let Some(image) = key.strip_prefix("image.") {
         properties.images.push(custom_image(image, value)?);
+    } else if let Some(target) = key.strip_prefix("uniform.") {
+        let uniform = custom_uniform(CustomUniformKind::Uniform, target, value, line)?;
+        properties.custom_uniforms.push(uniform);
+    } else if let Some(target) = key.strip_prefix("variable.") {
+        let variable = custom_uniform(CustomUniformKind::Variable, target, value, line)?;
+        properties.custom_uniforms.push(variable);
     }
     Ok(())
 }
@@ -251,4 +257,22 @@ fn image_usage(value: &str) -> String {
         "expected `<sampler> <format> <internalFormat> <pixelType> <clear> <relative> \
          <width> [<height> [<depth>]]`, found `{value}`"
     )
+}
+
+/// Parses a `<type>.<name>` custom uniform or variable target and its expression.
+fn custom_uniform(
+    kind: CustomUniformKind,
+    target: &str,
+    value: &str,
+    line: u32,
+) -> Result<CustomUniform, String> {
+    let (ty, name) = split_target(target, "type", "name")?;
+    let expr = Expr::parse(value).map_err(|err| format!("invalid expression: {err}"))?;
+    Ok(CustomUniform {
+        kind,
+        ty,
+        name,
+        expr,
+        line,
+    })
 }

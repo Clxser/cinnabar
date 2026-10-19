@@ -7,6 +7,7 @@
 //! binary asset reads from folders, ZIP archives or memory.
 //!
 //! Shader translation, render-host integration and in-game acceptance remain incomplete.
+//! Parsing custom uniform expressions does not execute or render them.
 mod dimensions;
 mod environment;
 mod expr;
@@ -25,7 +26,7 @@ pub use programs::{
     program_group,
 };
 pub use properties::{
-    BufferSize, CustomImage, CustomTexture, FlipRule, ImageSize, ProgramRule, PropertiesDiagnostic,
-    ScaleRule, ShaderProperties, SizeValue, TextureSource,
+    BufferSize, CustomImage, CustomTexture, CustomUniform, CustomUniformKind, FlipRule, ImageSize,
+    ProgramRule, PropertiesDiagnostic, ScaleRule, ShaderProperties, SizeValue, TextureSource,
 };
 pub use source::{PackError, PackOrigin, PackSource};
