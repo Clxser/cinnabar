@@ -7,6 +7,11 @@
 //! binary asset reads from folders, ZIP archives or memory.
 //!
 //! Shader translation, render-host integration and in-game acceptance remain incomplete.
+#[allow(
+    dead_code,
+    reason = "wired into ShaderPack::translate later in the translator stack"
+)]
+mod diagnostics;
 mod dimensions;
 mod environment;
 mod expr;
@@ -15,7 +20,13 @@ mod pack;
 mod programs;
 mod properties;
 mod source;
+#[allow(
+    dead_code,
+    reason = "wired into ShaderPack::translate later in the translator stack"
+)]
+mod token;
 
+pub use diagnostics::{Diagnostic, Phase, SourceLocation};
 pub use environment::{Environment, GpuVendor, HostOs};
 pub use expr::{BinaryOp, Expr, ExprError, UnaryOp};
 pub use options::{OptionKind, OptionValues, PackOption};
