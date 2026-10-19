@@ -187,7 +187,8 @@ fn full_64_mib_quad_arena_migrates_across_frames_then_publishes_a_positive_uploa
     let frames = published_frame.expect("a legal arena growth must finish and publish");
     assert!(frames <= 4, "migration took {frames} frames");
     let arena = gpu_app.world().resource::<ChunkGpuArena>();
-    assert_eq!(arena.quad_capacity, full_items * 2);
+    // Growing a full stream adds a quarter.
+    assert_eq!(arena.quad_capacity, full_items + full_items / 4);
     assert!(arena.migration.is_none());
     assert_eq!(arena.allocations.len(), 1);
     assert_eq!(allowance.live_permits(), 0);
@@ -238,7 +239,7 @@ fn arena_growth_that_runs_out_of_memory_waits_and_retries() {
     assert!(published, "growth retries and publishes once memory frees");
     assert_eq!(
         gpu_app.world().resource::<ChunkGpuArena>().quad_capacity,
-        full_items * 2
+        full_items + full_items / 4
     );
 }
 
@@ -338,6 +339,6 @@ fn growth_after_a_committed_upload_migrates_and_publishes_next_frame() {
     assert_eq!(acknowledgements.drain().len(), 1);
     let arena = gpu_app.world().resource::<ChunkGpuArena>();
     assert!(arena.migration.is_none());
-    assert_eq!(arena.quad_capacity, capacity * 2);
+    assert_eq!(arena.quad_capacity, capacity + capacity / 4);
     assert_eq!(arena.allocations.len(), 2);
 }
