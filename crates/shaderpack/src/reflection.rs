@@ -186,6 +186,17 @@ pub enum VertexAttribute {
     ChunkFade,
     /// `dhMaterialId`.
     DhMaterialId,
+    /// `iris_PackedPosition` (`uvec4`): a position in unsigned fixed point, scaled and offset
+    /// by [`VertexAttribute::DrawOrigin`], with the lightmap coordinates' two bytes in `w`.
+    /// The translator unpacks every position input (`gl_Vertex`, `vaPosition`) as
+    /// `stored + origin.xyz + vec3(packed.xyz) * origin.w` and every lightmap input as
+    /// `stored + vec2(packed.w & 255, packed.w >> 8)`, so a vertex stream supplies either
+    /// float values or packed ones and the other part reads zero. Its location is the first
+    /// one the stage leaves free.
+    PackedPosition,
+    /// `iris_DrawOrigin` (`vec4`): the origin (`xyz`) and scale (`w`) of
+    /// [`VertexAttribute::PackedPosition`], per draw.
+    DrawOrigin,
     /// An input the pack declares that Iris does not supply.
     Other(String),
 }
@@ -212,6 +223,8 @@ const ATTRIBUTE_NAMES: &[(&str, VertexAttribute)] = &[
     ("at_velocity", VertexAttribute::Velocity),
     ("mc_chunkFade", VertexAttribute::ChunkFade),
     ("dhMaterialId", VertexAttribute::DhMaterialId),
+    ("iris_PackedPosition", VertexAttribute::PackedPosition),
+    ("iris_DrawOrigin", VertexAttribute::DrawOrigin),
 ];
 
 /// Supplied attributes in location order; `Other` inputs take locations after these.
@@ -236,6 +249,13 @@ const SUPPLIED: &[VertexAttribute] = &[
 /// First location used for [`VertexAttribute::Other`] inputs.
 pub const FIRST_OTHER_ATTRIBUTE_LOCATION: u32 = SUPPLIED.len() as u32;
 
+/// Whether the host's vertex stream stores an attribute as floats or as integers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StoredNumbers {
+    Float,
+    Int,
+}
+
 impl VertexAttribute {
     /// The attribute a translated vertex input name stands for.
     pub fn from_glsl_name(name: &str) -> VertexAttribute {
@@ -246,9 +266,26 @@ impl VertexAttribute {
             .unwrap_or_else(|| VertexAttribute::Other(name.to_string()))
     }
 
-    /// The fixed shader location of a supplied attribute; `None` for `Other`.
+    /// The fixed shader location of a supplied attribute; `None` for `Other` and the raw
+    /// position parts, which take free locations.
     pub fn location(&self) -> Option<u32> {
         SUPPLIED.iter().position(|a| a == self).map(|i| i as u32)
+    }
+
+    /// How the host's vertex stream stores this attribute, for those a declaration of the
+    /// other kind reads converted rather than as declared, as GL converts integer vertex
+    /// data for float inputs. The lightmap is stored as exact floats or bytes, summed into
+    /// floats (`in ivec2 vaUV2` reads them and rounds); `mc_Entity` and `at_midBlock` as the
+    /// integers Iris stores
+    /// (`in vec4 mc_Entity` reads them and converts). `None` for every other attribute.
+    pub fn stored_numbers(&self) -> Option<StoredNumbers> {
+        match self {
+            VertexAttribute::Lightmap | VertexAttribute::MultiTexCoord2 => {
+                Some(StoredNumbers::Float)
+            }
+            VertexAttribute::BlockId | VertexAttribute::MidBlock => Some(StoredNumbers::Int),
+            _ => None,
+        }
     }
 }
 
@@ -465,8 +502,13 @@ mod tests {
 
     #[test]
     fn every_named_attribute_has_a_location_and_every_location_a_name() {
+        let position_parts = [VertexAttribute::PackedPosition, VertexAttribute::DrawOrigin];
         for (name, attribute) in ATTRIBUTE_NAMES {
-            assert!(attribute.location().is_some(), "{name} has no location");
+            assert_eq!(
+                attribute.location().is_some(),
+                !position_parts.contains(attribute),
+                "{name}: only the position parts take free locations"
+            );
             assert_eq!(&VertexAttribute::from_glsl_name(name), attribute);
         }
         for attribute in SUPPLIED {
