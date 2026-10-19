@@ -4,8 +4,9 @@
 `ShaderPack` discovers options, dimension mappings and shader programs, and parses
 `shaders.properties` under a caller-supplied `Environment` and option values, typing
 program enable rules, buffer sizes, flips, scales, custom texture bindings, custom images
-and custom uniform and variable definitions; other keys stay as raw entries. Custom uniform
-expressions are parsed, not evaluated.
+and custom uniform and variable definitions; other keys stay as raw entries.
+`CustomUniforms` evaluates the custom uniform and variable expressions each frame as Iris
+does (types, built-in functions, `smooth` state); nothing uploads them to shaders yet.
 
 `ShaderPack::translate` turns a folder's programs into validated naga modules: Iris-style
 includes and option overrides, pp-rs preprocessing, a compatibility-profile to GLSL 4.50

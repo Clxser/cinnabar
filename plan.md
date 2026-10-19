@@ -335,6 +335,9 @@ validation; retain only the explicitly permitted diagnostic/optional fallbacks.
   remain incomplete; parsed custom uniform expressions are not executed or rendered.
   Pack block, item and entity ids, Java biome values and Java sky and fog colours are
   computed from the pinned Bedrock→Java mappings but not yet uploaded to shaders.
+  and enable rules, and custom uniform expressions evaluate per frame. Translation,
+  render-host integration and in-game acceptance remain incomplete; evaluated custom
+  uniforms are not uploaded or rendered.
 - Runtime pack compatibility still includes custom texture inheritance/tints, authored
   geometry and block/item component behavior beyond the currently supported cases.
 
