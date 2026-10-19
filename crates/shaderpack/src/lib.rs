@@ -12,6 +12,11 @@ mod buffers;
     dead_code,
     reason = "wired into ShaderPack::translate later in the translator stack"
 )]
+mod compile;
+#[allow(
+    dead_code,
+    reason = "wired into ShaderPack::translate later in the translator stack"
+)]
 mod diagnostics;
 mod dimensions;
 mod environment;
@@ -25,6 +30,11 @@ mod pack;
 mod preprocess;
 mod programs;
 mod properties;
+#[allow(
+    dead_code,
+    reason = "wired into ShaderPack::translate later in the translator stack"
+)]
+mod reflect;
 mod reflection;
 mod source;
 #[allow(
@@ -34,6 +44,7 @@ mod source;
 mod token;
 
 pub use buffers::{BufferDirectives, BufferFormat, BufferId, BufferSettings};
+pub use compile::CompiledStage;
 pub use diagnostics::{Diagnostic, Phase, SourceLocation};
 pub use environment::{Environment, GpuVendor, HostOs};
 pub use expr::{BinaryOp, Expr, ExprError, UnaryOp};
