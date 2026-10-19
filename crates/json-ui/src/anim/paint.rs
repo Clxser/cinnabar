@@ -135,14 +135,14 @@ impl DrawNode {
             hidden: false,
             transform: None,
         };
-        let Some(anim) = &self.anim else {
-            return out;
-        };
-        out.transform = anim.transform;
         if animator.hides(&self.key) {
             out.hidden = true;
             return out;
         }
+        let Some(anim) = &self.anim else {
+            return out;
+        };
+        out.transform = anim.transform;
         out.opacity = anim
             .alpha
             .iter()

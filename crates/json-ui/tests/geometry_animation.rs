@@ -50,7 +50,7 @@ impl Screen {
     fn frame(&mut self, now: f64, view: &ViewState) -> Arc<FormRender> {
         let frame = self
             .layout
-            .sample(&mut self.animator, now, None, &env(), view, |_| true);
+            .sample(&mut self.animator, now, None, &env(), view);
         for node in frame.nodes.iter() {
             if node.shown(view) {
                 node.animate(&mut self.animator, now, None, Some(&Metrics));
@@ -239,6 +239,31 @@ fn zero_sized_growth_uses_current_size_and_anchor() {
 }
 
 #[test]
+fn destroyed_geometry_hides_static_descendants_across_frames() {
+    let mut screen = Screen::new(json!({
+        "move":{"anim_type":"offset","from":[0,0],"to":[20,0],"duration":1,"destroy_at_end":"root"},
+        "root":{"type":"panel","size":[100,50],"offset":"@fixture.move","controls":[
+            {"fill":{"type":"image","size":[20,10],"color":[1,0,0]}}
+        ]}
+    }));
+    for now in [0.0, 1.0, 2.0, 3.0] {
+        let frame = screen.layout.sample(
+            &mut screen.animator,
+            now,
+            None,
+            &env(),
+            &ViewState::default(),
+        );
+        let painted = draw(&frame, "fill").animate(&mut screen.animator, now, None, Some(&Metrics));
+        assert_eq!(painted.hidden, now >= 1.0);
+        screen.animator.end_frame();
+        if now >= 1.0 {
+            assert!(screen.animator.is_destroyed("/root/fill"));
+        }
+    }
+}
+
+#[test]
 fn parent_growth_reflows_fixed_and_percentage_children() {
     let mut screen = Screen::new(json!({
         "grow":{"anim_type":"size","from":[0,0],"to":[200,100],"duration":1},
@@ -328,7 +353,6 @@ fn geometry_resets_write_from_and_changed_birth_clocks_restore_waiting_baselines
         Some(&clocks),
         &env(),
         &ViewState::default(),
-        |_| true,
     );
     let rect = hit(&recreated, "root").rect;
     assert_eq!([rect.x, rect.y, rect.w, rect.h], [3.0, 4.0, 40.0, 20.0]);

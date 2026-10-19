@@ -87,6 +87,15 @@ pub struct AnimGraph {
 }
 
 impl AnimGraph {
+    /// Whether layout can sample this entire component without starting other channels.
+    pub(crate) fn is_layout_only(&self) -> bool {
+        !self.nodes.is_empty()
+            && self
+                .nodes
+                .iter()
+                .all(|node| matches!(node.kind, AnimKind::Size | AnimKind::Offset))
+    }
+
     /// Whether every head and link addresses a node in this graph.
     pub(crate) fn valid(&self) -> bool {
         self.heads.iter().all(|&index| index < self.nodes.len())

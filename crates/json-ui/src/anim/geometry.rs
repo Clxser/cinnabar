@@ -1,5 +1,5 @@
-//! Size and offset writes are layout inputs: measure, clipping, culling and input must
-//! observe them before emission. Paint still samples the other animation channels.
+//! Explicit layout projection for components containing only size and offset channels.
+//! Mixed components retain their ordinary paint-time activation and resource readiness.
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -33,8 +33,13 @@ pub struct GeometryLayout {
 }
 
 impl GeometryLayout {
-    /// Captures geometry programs before culling can omit an entering control. Screens
-    /// with no size or offset animation keep their existing retained rendering path.
+    /// Borrows the last published frame for diagnostics without advancing its animations.
+    pub fn current(&self) -> &FormRender {
+        self.rendered.as_deref().expect("geometry frame retained")
+    }
+
+    /// Captures layout-only programs before culling can omit an entering control.
+    /// Returns none when every component needs the ordinary paint-time lifecycle.
     pub fn new(
         bound: &ResolvedControl,
         root: [f64; 2],
@@ -59,11 +64,11 @@ impl GeometryLayout {
                 .insert(GEOMETRY_KEY.into(), Value::Bool(true));
         }
         let mut measures = MeasureCache::default();
-        let rendered = crate::render_bound_gated(bound, root, env, view, &mut measures);
+        let rendered = crate::render_bound_cached(bound, root, env, view, &mut measures);
         Some(Self {
             programs,
             root,
-            view: view.layout_part(),
+            view: view.clone(),
             measures,
             rendered: Some(Arc::new(rendered)),
         })
@@ -71,11 +76,7 @@ impl GeometryLayout {
 
     /// Samples caller-supplied time before measuring changed geometry. Unchanged writes
     /// reuse the complete frame, including its clips, scroll extents and hit regions.
-    /// `allowed` applies the caller's paint omissions; interaction-hidden programs also stop.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "layout and paint share caller-owned frame inputs"
-    )]
+    /// Interaction-hidden programs stop; clipped entering controls still advance.
     pub fn sample(
         &mut self,
         animator: &mut Animator,
@@ -83,12 +84,10 @@ impl GeometryLayout {
         clocks: Option<&BTreeMap<String, f64>>,
         env: &LayoutEnv,
         view: &ViewState,
-        allowed: impl Fn(&str) -> bool,
     ) -> Arc<FormRender> {
         let mut writes = Vec::with_capacity(self.programs.len());
         for program in &self.programs {
             let (written, samples) = if program.gates.iter().all(|gate| gate.shown(view))
-                && allowed(&program.animation.key)
                 && !animator.is_destroyed(&program.animation.key)
             {
                 animator.sample_geometry(&program.animation, now, clocks)
@@ -132,42 +131,25 @@ impl GeometryLayout {
                 .iter()
                 .any(|(name, value)| properties.get(*name) != value.as_ref())
         });
-        let rendered = if changed || !self.view.same_layout(view) {
-            let mut saved = match Arc::try_unwrap(saved) {
-                Ok(saved) => saved,
-                Err(saved) => {
-                    // A retained snapshot requires a new tree with new control addresses.
-                    self.measures = MeasureCache::default();
-                    (*saved).clone()
+        let rendered = if changed || self.view != *view {
+            let mut saved = Arc::unwrap_or_clone(saved);
+            for (program, write) in self.programs.iter().zip(writes) {
+                let properties = &mut at(&mut saved.bound, &program.path).properties;
+                for (name, value) in write {
+                    match value {
+                        Some(value) => {
+                            properties.insert(name.into(), value);
+                        }
+                        None => {
+                            properties.remove(name);
+                        }
+                    }
                 }
-            };
-            self.measures.update_properties(
-                &mut saved.bound,
-                self.programs.iter().zip(writes).map(|(program, write)| {
-                    (
-                        program.path.as_slice(),
-                        move |properties: &mut crate::tree::Properties| {
-                            let mut changed = false;
-                            for (name, value) in write {
-                                if properties.get(name) != value.as_ref() {
-                                    match value {
-                                        Some(value) => {
-                                            properties.insert(name.into(), value);
-                                        }
-                                        None => {
-                                            properties.remove(name);
-                                        }
-                                    }
-                                    changed = true;
-                                }
-                            }
-                            changed
-                        },
-                    )
-                }),
-            );
-            self.view = view.layout_part();
-            Arc::new(crate::render_bound_gated(
+            }
+            self.view = view.clone();
+            // Measurements belong to this frame's dimensions, never historical extents.
+            self.measures = MeasureCache::default();
+            Arc::new(crate::render_bound_cached(
                 saved.bound,
                 self.root,
                 env,
@@ -204,18 +186,13 @@ fn layout_value(node: &super::AnimNode, progress: f32, pixels: [f32; 2]) -> Valu
     )
 }
 
-/// Whether this bound subtree contains a linked size or offset program.
+/// Whether this bound subtree contains a component made entirely of layout channels.
 fn has_geometry(control: &ResolvedControl) -> bool {
     control
         .properties
         .get(GRAPH_KEY)
         .and_then(|value| serde_json::from_value::<super::AnimGraph>(value.clone()).ok())
-        .is_some_and(|graph| {
-            graph
-                .nodes
-                .iter()
-                .any(|node| matches!(node.kind, super::AnimKind::Size | super::AnimKind::Offset))
-        })
+        .is_some_and(|graph| graph.is_layout_only())
         || control.children.iter().any(has_geometry)
 }
 
@@ -237,7 +214,7 @@ fn control_paths(
 fn collect(laid: &LaidOut, paths: &HashMap<usize, Vec<usize>>, out: &mut Vec<Program>) {
     crate::emit::visit_gated(laid, |laid, gates| {
         if let Some(own) = laid.anim.as_ref().and_then(|anim| anim.own.as_ref())
-            && own.moves()
+            && own.graph.is_layout_only()
         {
             out.push(Program {
                 path: paths[&std::ptr::from_ref(laid.control).addr()].clone(),
