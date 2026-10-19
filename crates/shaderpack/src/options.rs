@@ -155,10 +155,6 @@ pub(crate) fn property_defines(
 ///
 /// `options` must be sorted by name (as [`discover_options`] returns them); lookup is a
 /// binary search. A line whose shape does not match the option's kind is left alone.
-#[allow(
-    dead_code,
-    reason = "wired into ShaderPack::translate later in the translator stack"
-)]
 pub(crate) fn rewrite_option_line(
     line: &str,
     options: &[PackOption],
@@ -240,10 +236,6 @@ fn is_configurable_const(name: &str) -> bool {
 /// A line shaped like an option definition (before the discovery rules are applied).
 struct Definition<'a> {
     /// Leading whitespace of the line.
-    #[allow(
-        dead_code,
-        reason = "wired into ShaderPack::translate later in the translator stack"
-    )]
     indent: &'a str,
     name: &'a str,
     form: Form<'a>,

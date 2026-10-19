@@ -207,10 +207,6 @@ pub struct StageMask {
 }
 
 impl StageMask {
-    #[allow(
-        dead_code,
-        reason = "wired into ShaderPack::translate later in the translator stack"
-    )]
     pub(crate) fn add(&mut self, stage: StageKind) {
         match stage {
             StageKind::Fragment => self.fragment = true,

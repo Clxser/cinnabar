@@ -19,9 +19,9 @@ use crate::reflection::{
     TEXTURE_GROUP, VertexAttribute,
 };
 use crate::token::{Tok, lex};
-use assemble::UboMember;
+pub(crate) use assemble::{UboMember, assemble, merge_uniforms};
 use body::{BodyContext, SamplerUse, rewrite_body, rewrite_params};
-use interface::ProgramInterface;
+pub(crate) use interface::ProgramInterface;
 use items::{Item, parse_decl, split_items};
 use std::collections::{HashMap, HashSet};
 
@@ -259,7 +259,6 @@ fn vertex_input(io: &mut String, inputs: &mut Vec<(u32, String)>, name: &str, ty
 
 #[cfg(test)]
 mod tests {
-    use super::assemble::{assemble, merge_uniforms};
     use super::*;
     use crate::compile::{OutputMap, compile};
     use crate::options::OptionValues;

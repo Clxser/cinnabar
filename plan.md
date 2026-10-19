@@ -327,8 +327,9 @@ validation; retain only the explicitly permitted diagnostic/optional fallbacks.
   Diagnostics or bounded fixtures do not establish safe general gameplay use. Java
   shader-pack source loading and configuration metadata are implemented in
   `shaderpack`, including options, dimensions, parsed properties, program discovery
-  and enable rules. Translation, render-host integration and in-game acceptance
-  remain incomplete.
+  and enable rules, and its programs translate to validated naga modules with a binding
+  contract. Pack-specific translation fixes, render-host integration and in-game
+  acceptance remain incomplete.
 - Runtime pack compatibility still includes custom texture inheritance/tints, authored
   geometry and block/item component behavior beyond the currently supported cases.
 

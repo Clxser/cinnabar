@@ -1,4 +1,5 @@
-//! Java Edition OptiFine/Iris shader-pack loading and configuration metadata.
+//! Java Edition OptiFine/Iris shader packs: loading, configuration metadata and translation
+//! to validated naga modules with a binding contract for the render host.
 //!
 //! Open a pack with [`ShaderPack::open`], inspect [`ShaderPack::options`], select a
 //! [`ShaderPack::dimension_folder`] and discover [`ShaderPack::programs`]. Chosen options
@@ -6,47 +7,33 @@
 //! [`ProgramRule::is_enabled`]. [`PackSource`] also exposes sorted text and bounded
 //! binary asset reads from folders, ZIP archives or memory.
 //!
-//! Shader translation, render-host integration and in-game acceptance remain incomplete.
+//! [`ShaderPack::translate`] translates a folder's programs with a [`TranslateConfig`]; a host
+//! binds each [`ProgramTranslation`]'s naga modules ([`CompiledStage`]) using its
+//! [`ProgramReflection`]. Translation per stage: Iris-style `#include` expansion with option
+//! overrides, the standard Iris macros, full preprocessing with pp-rs, a
+//! compatibility-profile to GLSL 4.50 rewrite (legacy built-ins, separate samplers, fixed
+//! bindings, interface locations shared between stages), then naga's GLSL frontend and
+//! validator. Errors are [`Diagnostic`]s located in the pack's own files; a failing program
+//! never stops the others.
+//!
+//! Render-host integration and in-game acceptance remain incomplete.
 mod buffers;
-#[allow(
-    dead_code,
-    reason = "wired into ShaderPack::translate later in the translator stack"
-)]
 mod compile;
-#[allow(
-    dead_code,
-    reason = "wired into ShaderPack::translate later in the translator stack"
-)]
 mod diagnostics;
 mod dimensions;
 mod environment;
 mod expr;
 mod options;
 mod pack;
-#[allow(
-    dead_code,
-    reason = "wired into ShaderPack::translate later in the translator stack"
-)]
 mod preprocess;
 mod programs;
 mod properties;
-#[allow(
-    dead_code,
-    reason = "wired into ShaderPack::translate later in the translator stack"
-)]
 mod reflect;
 mod reflection;
 mod source;
-#[allow(
-    dead_code,
-    reason = "wired into ShaderPack::translate later in the translator stack"
-)]
 mod token;
-#[allow(
-    dead_code,
-    reason = "wired into ShaderPack::translate later in the translator stack"
-)]
 mod transform;
+mod translate;
 
 pub use buffers::{BufferDirectives, BufferFormat, BufferId, BufferSettings};
 pub use compile::CompiledStage;
@@ -54,7 +41,7 @@ pub use diagnostics::{Diagnostic, Phase, SourceLocation};
 pub use environment::{Environment, GpuVendor, HostOs};
 pub use expr::{BinaryOp, Expr, ExprError, UnaryOp};
 pub use options::{OptionKind, OptionValues, PackOption};
-pub use pack::ShaderPack;
+pub use pack::{PackTranslation, ShaderPack, TranslateConfig};
 pub use preprocess::ConstDirective;
 pub use programs::{
     GEOMETRY_FALLBACKS, ProgramGroup, ProgramKind, ProgramSource, StageKind, geometry_fallback,
@@ -70,3 +57,4 @@ pub use reflection::{
     UniformBlock, UniformMember, ValueType, VertexAttribute, VertexInput,
 };
 pub use source::{PackError, PackOrigin, PackSource};
+pub use translate::{ProgramTranslation, StageTranslation};
