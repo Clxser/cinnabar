@@ -226,6 +226,13 @@ impl PackSource {
         self.files.iter().map(|(k, v)| (k.as_ref(), v.as_str()))
     }
 
+    /// Shares exact source keys with option metadata without copying their path storage.
+    pub(crate) fn shared_files(&self) -> impl Iterator<Item = (Arc<str>, &str)> {
+        self.files
+            .iter()
+            .map(|(path, text)| (path.clone(), text.as_str()))
+    }
+
     /// Reads any `shaders/`-relative file as bytes, including binary assets. Directory
     /// targets must resolve inside the root at the time of the check.
     pub fn read_bytes(&self, path: &str) -> io::Result<Vec<u8>> {

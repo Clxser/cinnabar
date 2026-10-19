@@ -1,13 +1,13 @@
-# Shader-pack loading
+# Shader-pack loading and configuration
 
-`shaderpack` loads Java Edition OptiFine/Iris shader packs from a folder (the pack or its
-`shaders/` directory), a ZIP archive (`shaders/` at the root or under one top-level folder)
-or in-memory text. `PackSource::files` lists text in path order; `PackSource::read_bytes`
-reads any asset, including binaries, without leaving `shaders/`. Ingestion is bounded per
-file, per pack and by entry count.
+`PackSource` loads text and bounded binary assets from a folder, ZIP archive or memory.
+`ShaderPack` discovers options, dimension mappings and shader programs, and parses
+`shaders.properties` under a caller-supplied `Environment` and option values.
+Program enable rules can be evaluated separately; custom expressions are parsed only.
+See the public API documentation for supported metadata and discovery rules.
 
-Configuration parsing, shader translation and render-host integration are not implemented
-yet; loading a pack does not activate it.
+Shader translation, render-host integration and in-game acceptance remain incomplete.
+Opening or inspecting a pack does not activate it in the client.
 
 ```sh
 cargo test --locked -p shaderpack
