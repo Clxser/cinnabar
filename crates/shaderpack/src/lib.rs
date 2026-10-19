@@ -42,6 +42,11 @@ mod source;
     reason = "wired into ShaderPack::translate later in the translator stack"
 )]
 mod token;
+#[allow(
+    dead_code,
+    reason = "wired into ShaderPack::translate later in the translator stack"
+)]
+mod transform;
 
 pub use buffers::{BufferDirectives, BufferFormat, BufferId, BufferSettings};
 pub use compile::CompiledStage;
