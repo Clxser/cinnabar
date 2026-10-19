@@ -55,13 +55,6 @@ pub(super) struct LayoutSample {
     pub(super) progress: f32,
 }
 
-/// Layout channels keep their writer identity while ordinary paint channels keep pixel values.
-#[derive(Clone, Copy, Default)]
-pub(super) struct LayoutWrites {
-    pub(super) size: Option<LayoutSample>,
-    pub(super) offset: Option<LayoutSample>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
     Playing,
@@ -84,7 +77,7 @@ struct Component {
     instances: Vec<Instance>,
     active: Vec<usize>,
     written: Written,
-    layout_writes: LayoutWrites,
+    layout_sample: Option<LayoutSample>,
     rendered: bool,
     /// Clock value the component was created at, when set by the caller.
     born: Option<f64>,
@@ -122,20 +115,17 @@ fn initial_state(node: &AnimNode, rendered: bool) -> State {
 }
 
 impl Animator {
-    /// Samples once, then exposes the authored layout writers at that same clock value.
-    pub(super) fn sample_geometry(
+    /// Samples an eligible entrance and returns its last actual geometry write.
+    pub(super) fn sample_entrance(
         &mut self,
         anims: &Arc<ControlAnims>,
         now: f64,
         clocks: Option<&BTreeMap<String, f64>>,
-    ) -> (Written, LayoutWrites) {
-        let written = self.sample(anims, now, clocks);
-        let layout = self
-            .components
+    ) -> Option<LayoutSample> {
+        self.sample(anims, now, clocks);
+        self.components
             .get(&anims.key)
-            .map(|component| component.layout_writes)
-            .unwrap_or_default();
-        (written, layout)
+            .and_then(|component| component.layout_sample)
     }
 
     pub fn new() -> Self {
@@ -256,7 +246,7 @@ impl Component {
             anims,
             instances,
             written: Written::default(),
-            layout_writes: LayoutWrites::default(),
+            layout_sample: None,
             rendered: false,
             born,
             last: now,
@@ -348,20 +338,8 @@ impl Component {
                 written.aseprite_ms = None;
                 written.uv = Some([0.0, 0.0]);
             }
-            AnimKind::Offset => {
-                written.offset = Some([node.from[0], node.from[1]]);
-                self.layout_writes.offset = Some(LayoutSample {
-                    node: index,
-                    progress: 0.0,
-                });
-            }
-            AnimKind::Size => {
-                written.size = Some([node.from[0], node.from[1]]);
-                self.layout_writes.size = Some(LayoutSample {
-                    node: index,
-                    progress: 0.0,
-                });
-            }
+            AnimKind::Offset => written.offset = Some([node.from[0], node.from[1]]),
+            AnimKind::Size => written.size = Some([node.from[0], node.from[1]]),
             _ => {}
         }
     }
@@ -464,21 +442,15 @@ impl Component {
             AnimKind::Clip => written.clip = Some(ease(0)),
             AnimKind::Color => written.color = Some([ease(0), ease(1), ease(2), ease(3)]),
             AnimKind::Uv => written.uv = Some([ease(0), ease(1)]),
-            AnimKind::Offset => {
-                written.offset = Some([ease(0), ease(1)]);
-                self.layout_writes.offset = Some(LayoutSample {
-                    node: index,
-                    progress: t,
-                });
-            }
-            AnimKind::Size => {
-                written.size = Some([ease(0), ease(1)]);
-                self.layout_writes.size = Some(LayoutSample {
-                    node: index,
-                    progress: t,
-                });
-            }
+            AnimKind::Offset => written.offset = Some([ease(0), ease(1)]),
+            AnimKind::Size => written.size = Some([ease(0), ease(1)]),
             _ => {}
+        }
+        if matches!(node.kind, AnimKind::Offset | AnimKind::Size) {
+            self.layout_sample = Some(LayoutSample {
+                node: index,
+                progress: t,
+            });
         }
         (raw >= 1.0).then(|| (instance.elapsed - node.duration.max(0.0)).max(0.0))
     }
@@ -523,4 +495,56 @@ fn flip_step(
         vertical: node.vertical,
     });
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::anim::{AnimGraph, Easing};
+
+    #[test]
+    fn entrance_sample_identifies_the_last_write_when_a_chain_yields() {
+        let count = MAX_LINKS_PER_TICK + 2;
+        let graph = AnimGraph {
+            heads: vec![0],
+            nodes: (0..count)
+                .map(|index| {
+                    let mut node = AnimNode::parse(
+                        serde_json::json!({"anim_type":"offset","duration":1})
+                            .as_object()
+                            .unwrap(),
+                    )
+                    .unwrap();
+                    node.from = [index as f32, 0.0, 0.0, 0.0];
+                    node.to = [index as f32 + 1.0, 0.0, 0.0, 0.0];
+                    node.next = (index + 1 < count).then_some(index + 1);
+                    node
+                })
+                .collect(),
+        };
+        let anim = Arc::new(ControlAnims {
+            key: "/root".into(),
+            graph,
+            rest_alpha: 1.0,
+            rest_offset: [0.0; 2],
+            rect: [0.0, 0.0, 10.0, 10.0],
+            anchor: [0.0; 2],
+            born: None,
+            clock: None,
+            disable_fast_forward: false,
+            reset_name: None,
+            has_sprite: false,
+        });
+        assert_eq!(anim.entrance_property(), Some("offset"));
+        let mut animator = Animator::new();
+        animator.sample_entrance(&anim, 0.0, None);
+        let sample = animator.sample_entrance(&anim, count as f64, None).unwrap();
+        let written = animator.sample(&anim, count as f64, None).offset.unwrap();
+        let node = &anim.graph.nodes[sample.node];
+        assert_eq!(
+            written[0],
+            Easing::Linear.apply(node.from[0], node.to[0], sample.progress)
+        );
+        assert_eq!(written[0], MAX_LINKS_PER_TICK as f32);
+    }
 }

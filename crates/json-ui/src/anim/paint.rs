@@ -37,6 +37,27 @@ pub struct ControlAnims {
 }
 
 impl ControlAnims {
+    /// Selects an automatic entrance using only the existing component clock.
+    pub(crate) fn entrance_property(&self) -> Option<&'static str> {
+        let Self {
+            key: _,
+            graph,
+            rest_alpha: _,
+            rest_offset: _,
+            rect: _,
+            anchor: _,
+            born: _,
+            clock: _,
+            disable_fast_forward,
+            reset_name,
+            has_sprite: _,
+        } = self;
+        if *disable_fast_forward || reset_name.is_some() {
+            return None;
+        }
+        graph.entrance_property()
+    }
+
     /// Whether `other` runs the same animations, whatever their pixel ends.
     pub(crate) fn same_program(&self, other: &ControlAnims) -> bool {
         let graph = (&self.graph, &other.graph);

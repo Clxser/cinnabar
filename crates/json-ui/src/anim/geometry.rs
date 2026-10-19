@@ -1,5 +1,5 @@
-//! Explicit layout projection for components containing only size and offset channels.
-//! Mixed components retain their ordinary paint-time activation and resource readiness.
+//! Explicit layout projection for simple automatic size or offset entrance chains.
+//! Other components retain their ordinary paint-time lifecycle and resource readiness.
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -18,14 +18,15 @@ struct Program {
     path: Vec<usize>,
     animation: Arc<ControlAnims>,
     gates: Vec<crate::emit::StateGate>,
-    size: Option<Value>,
-    offset: Option<Value>,
+    property: &'static str,
+    baseline: Option<Value>,
 }
 
 /// A bound screen's geometry animation programs and its latest measured frame.
 /// Recreate it when the bound screen, viewport or measurement environment changes.
 pub struct GeometryLayout {
     programs: Vec<Program>,
+    owned_controls: Vec<String>,
     root: [f64; 2],
     view: ViewState,
     measures: MeasureCache,
@@ -38,7 +39,7 @@ impl GeometryLayout {
         self.rendered.as_deref().expect("geometry frame retained")
     }
 
-    /// Captures layout-only programs before culling can omit an entering control.
+    /// Captures automatic entrances before culling can omit an entering control.
     /// Returns none when every component needs the ordinary paint-time lifecycle.
     pub fn new(
         bound: &ResolvedControl,
@@ -46,14 +47,15 @@ impl GeometryLayout {
         env: &LayoutEnv,
         view: &ViewState,
     ) -> Option<Self> {
-        if !has_geometry(bound) {
+        if !has_entrance(bound) {
             return None;
         }
         let mut paths = HashMap::new();
         control_paths(bound, &mut Vec::new(), &mut paths);
         let (laid, _) = crate::layout_with(bound, root, env, &view.layout_part());
         let mut programs = Vec::new();
-        collect(&laid, &paths, &mut programs);
+        let mut owned_controls = Vec::new();
+        collect(&laid, &paths, &mut programs, &mut owned_controls);
         if programs.is_empty() {
             return None;
         }
@@ -67,6 +69,7 @@ impl GeometryLayout {
         let rendered = crate::render_bound_cached(bound, root, env, view, &mut measures);
         Some(Self {
             programs,
+            owned_controls,
             root,
             view: view.clone(),
             measures,
@@ -85,64 +88,42 @@ impl GeometryLayout {
         env: &LayoutEnv,
         view: &ViewState,
     ) -> Arc<FormRender> {
+        // Form ownership keeps removals alive independently of sampling or emitted primitives.
+        for key in &self.owned_controls {
+            animator.hides(key);
+        }
         let mut writes = Vec::with_capacity(self.programs.len());
         for program in &self.programs {
-            let (written, samples) = if program.gates.iter().all(|gate| gate.shown(view))
-                && !animator.is_destroyed(&program.animation.key)
-            {
-                animator.sample_geometry(&program.animation, now, clocks)
+            let hidden = animator.is_destroyed(&program.animation.key);
+            let value = if !hidden && program.gates.iter().all(|gate| gate.shown(view)) {
+                animator
+                    .sample_entrance(&program.animation, now, clocks)
+                    .map(|sample| {
+                        layout_value(&program.animation.graph.nodes[sample.node], sample.progress)
+                    })
+                    .or_else(|| program.baseline.clone())
             } else {
-                (
-                    super::Written::default(),
-                    super::runtime::LayoutWrites::default(),
-                )
+                program.baseline.clone()
             };
-            writes.push(
-                [
-                    ("size", written.size, samples.size, &program.size),
-                    ("offset", written.offset, samples.offset, &program.offset),
-                ]
-                .into_iter()
-                .map(|(name, pixels, sample, baseline)| {
-                    let value = pixels.map_or_else(
-                        || baseline.clone(),
-                        |pixels| {
-                            Some(sample.map_or_else(
-                                || json!(pixels),
-                                |sample| {
-                                    layout_value(
-                                        &program.animation.graph.nodes[sample.node],
-                                        sample.progress,
-                                        pixels,
-                                    )
-                                },
-                            ))
-                        },
-                    );
-                    (name, value)
-                })
-                .collect::<Vec<_>>(),
-            );
+            writes.push(value);
         }
         let saved = self.rendered.take().expect("geometry frame retained");
-        let changed = self.programs.iter().zip(&writes).any(|(program, write)| {
-            let properties = &at_ref(&saved.bound, &program.path).properties;
-            write
-                .iter()
-                .any(|(name, value)| properties.get(*name) != value.as_ref())
+        let changed = self.programs.iter().zip(&writes).any(|(program, value)| {
+            at_ref(&saved.bound, &program.path)
+                .properties
+                .get(program.property)
+                != value.as_ref()
         });
         let rendered = if changed || self.view != *view {
             let mut saved = Arc::unwrap_or_clone(saved);
-            for (program, write) in self.programs.iter().zip(writes) {
+            for (program, value) in self.programs.iter().zip(writes) {
                 let properties = &mut at(&mut saved.bound, &program.path).properties;
-                for (name, value) in write {
-                    match value {
-                        Some(value) => {
-                            properties.insert(name.into(), value);
-                        }
-                        None => {
-                            properties.remove(name);
-                        }
+                match value {
+                    Some(value) => {
+                        properties.insert(program.property.into(), value);
+                    }
+                    None => {
+                        properties.remove(program.property);
                     }
                 }
             }
@@ -165,7 +146,7 @@ impl GeometryLayout {
 }
 
 /// Interpolates authored coefficients so percentages keep following current layout dimensions.
-fn layout_value(node: &super::AnimNode, progress: f32, pixels: [f32; 2]) -> Value {
+fn layout_value(node: &super::AnimNode, progress: f32) -> Value {
     Value::Array(
         (0..2)
             .map(|axis| {
@@ -180,20 +161,23 @@ fn layout_value(node: &super::AnimNode, progress: f32, pixels: [f32; 2]) -> Valu
                             },
                         )
                     })
-                    .map_or_else(|| json!(pixels[axis]), |length| length.to_value())
+                    .map_or_else(
+                        || json!(node.easing.apply(node.from[axis], node.to[axis], progress)),
+                        |length| length.to_value(),
+                    )
             })
             .collect(),
     )
 }
 
-/// Whether this bound subtree contains a component made entirely of layout channels.
-fn has_geometry(control: &ResolvedControl) -> bool {
+/// Whether this subtree can contain an automatic entrance before placement checks its context.
+fn has_entrance(control: &ResolvedControl) -> bool {
     control
         .properties
         .get(GRAPH_KEY)
         .and_then(|value| serde_json::from_value::<super::AnimGraph>(value.clone()).ok())
-        .is_some_and(|graph| graph.is_layout_only())
-        || control.children.iter().any(has_geometry)
+        .is_some_and(|graph| graph.entrance_property().is_some())
+        || control.children.iter().any(has_entrance)
 }
 
 /// Associates immutable control addresses with paths in the owned bound tree.
@@ -211,17 +195,28 @@ fn control_paths(
 }
 
 /// Captures all interaction states before clipping, including controls without primitives.
-fn collect(laid: &LaidOut, paths: &HashMap<usize, Vec<usize>>, out: &mut Vec<Program>) {
+fn collect(
+    laid: &LaidOut,
+    paths: &HashMap<usize, Vec<usize>>,
+    out: &mut Vec<Program>,
+    owned: &mut Vec<String>,
+) {
     crate::emit::visit_gated(laid, |laid, gates| {
-        if let Some(own) = laid.anim.as_ref().and_then(|anim| anim.own.as_ref())
-            && own.graph.is_layout_only()
+        owned.push(laid.key.clone());
+        if let Some(context) = &laid.anim
+            && let Some(own) = &context.own
+            && let Some(property) = own.entrance_property()
+            && context
+                .movers
+                .iter()
+                .all(|mover| mover.entrance_property().is_some())
         {
             out.push(Program {
                 path: paths[&std::ptr::from_ref(laid.control).addr()].clone(),
                 animation: Arc::clone(own),
                 gates: gates.to_vec(),
-                size: laid.control.properties.get("size").cloned(),
-                offset: laid.control.properties.get("offset").cloned(),
+                property,
+                baseline: laid.control.properties.get(property).cloned(),
             });
         }
     });

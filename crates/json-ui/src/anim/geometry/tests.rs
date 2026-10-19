@@ -115,3 +115,74 @@ fn mixed_components_keep_their_original_paint_activation() {
         assert!(GeometryLayout::new(&only_mixed, [200.0, 100.0], &env, &view).is_none());
     }
 }
+
+#[test]
+fn only_single_automatic_geometry_chains_enter_layout() {
+    let base = json!({"anim_type":"offset","from":[0,0],"to":[20,10],"duration":1});
+    for (key, value) in [
+        ("wait_until_rendered_to_play", json!(true)),
+        ("play_event", json!("fixture.play")),
+        ("reset_event", json!("fixture.reset")),
+        ("end_event", json!("fixture.done")),
+        ("destroy_at_end", json!("root")),
+        ("duration", json!(0)),
+        ("duration", json!(-1)),
+        ("duration", json!(1e100)),
+        ("anim_type", json!("size")),
+        ("next", json!("@fixture.first")),
+    ] {
+        let mut second = base.clone();
+        second[key] = value;
+        let mut catalog = crate::Catalog::default();
+        catalog.overlay_text("ui/fixture.json",&json!({
+            "namespace":"fixture","first":{"anim_type":"offset","from":[0,0],"to":[0,0],"duration":0.25,"next":"@fixture.second"},
+            "second":second,"root":{"type":"panel","offset":"@fixture.first"}
+        }).to_string());
+        let bound = crate::resolve(&catalog, "fixture.root", &crate::Context::desktop())
+            .control
+            .unwrap();
+        assert!(
+            GeometryLayout::new(
+                &bound,
+                [200.0, 100.0],
+                &LayoutEnv {
+                    text: &Metrics,
+                    textures: &Metrics
+                },
+                &ViewState::default()
+            )
+            .is_none(),
+            "unsupported {key}"
+        );
+    }
+    for properties in [
+        json!({"animation_reset_name":"fixture.reset"}),
+        json!({"disable_anim_fast_forward":true}),
+        json!({"anims":["@fixture.move","@fixture.move"]}),
+    ] {
+        let mut root = json!({"type":"panel","offset":"@fixture.move"});
+        root.as_object_mut()
+            .unwrap()
+            .extend(properties.as_object().unwrap().clone());
+        let mut catalog = crate::Catalog::default();
+        catalog.overlay_text(
+            "ui/fixture.json",
+            &json!({"namespace":"fixture","move":base,"root":root}).to_string(),
+        );
+        let bound = crate::resolve(&catalog, "fixture.root", &crate::Context::desktop())
+            .control
+            .unwrap();
+        assert!(
+            GeometryLayout::new(
+                &bound,
+                [200.0, 100.0],
+                &LayoutEnv {
+                    text: &Metrics,
+                    textures: &Metrics
+                },
+                &ViewState::default()
+            )
+            .is_none()
+        );
+    }
+}

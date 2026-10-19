@@ -31,7 +31,7 @@ enum FormLayout {
 }
 
 impl FormLayout {
-    /// Chooses explicit size/offset projection without admitting other channels to its prepass.
+    /// Selects automatic entrances while other programs keep their paint lifecycle.
     fn new(bound: ResolvedControl, root: [f64; 2], env: &LayoutEnv, view: &ViewState) -> Self {
         match GeometryLayout::new(&bound, root, env, view) {
             Some(layout) => Self::Geometry(Box::new(layout)),
@@ -45,7 +45,7 @@ impl FormLayout {
         }
     }
 
-    /// Publishes the current form's paint and input geometry; only supported programs pre-sample.
+    /// Publishes the current form's paint and input geometry; only automatic entrances pre-sample.
     fn frame(
         &mut self,
         animator: &Mutex<json_ui::Animator>,

@@ -330,7 +330,7 @@ fn server_form_entry_moves_paint_and_input_together() {
                 ]}}
             ]
         }),
-        json!({"enter":{"anim_type":"offset","from":[0,100],"to":[20,10],"duration":1,"end_event":"fixture.arrived"}}),
+        json!({"enter":{"anim_type":"offset","from":[0,100],"to":[20,10],"duration":1}}),
     ));
     let mut previous = None;
     for now in [0.0, 1.0, 2.0] {
@@ -358,7 +358,7 @@ fn server_form_entry_moves_paint_and_input_together() {
             previous = Some(Arc::clone(&frame.hits));
         }
     }
-    assert_eq!(engine.animator().take_events().len(), 1);
+    assert!(engine.animator().take_events().is_empty());
 }
 
 #[test]
@@ -418,7 +418,7 @@ fn server_form_chained_growth_and_parent_percentage_slide_remain_usable() {
 }
 
 #[test]
-fn server_form_destruction_hides_static_children_without_restarting() {
+fn server_form_legacy_destruction_hides_children_without_restarting() {
     let name = json_ui::form_template(&model()).split_once('.').unwrap().1;
     let mut engine = engine(catalog(
         json!({
@@ -432,7 +432,231 @@ fn server_form_destruction_hides_static_children_without_restarting() {
         let (_, nodes) = paint(&mut engine, now, |engine, frame| {
             engine.render(&model(), &ViewState::default(), frame)
         });
-        assert_eq!(nodes.is_empty(), now >= 1.0);
+        assert_eq!(nodes.is_empty(), now >= 2.0);
     }
     assert_eq!(engine.animator().take_events().len(), 1);
+}
+
+struct NoArtwork;
+impl json_ui::TextMeasure for NoArtwork {
+    /// These original lifecycle fixtures contain no text.
+    fn extent(&self, _: &str) -> [f64; 2] {
+        [0.0; 2]
+    }
+}
+impl json_ui::TextureSource for NoArtwork {
+    /// Missing metadata must not manufacture a first paint.
+    fn texture(&self, _: &str) -> Option<json_ui::TextureMeta> {
+        None
+    }
+}
+
+#[test]
+fn legacy_ancestor_destruction_survives_frames_without_draws() {
+    let name = json_ui::form_template(&model()).split_once('.').unwrap().1;
+    for remove_ancestor in [true, false] {
+        let root_animation = if remove_ancestor {
+            json!({"alpha":"@fixture.remove"})
+        } else {
+            json!({"offset":"@fixture.enter"})
+        };
+        let child_animation = if remove_ancestor {
+            json!({"offset":"@fixture.enter"})
+        } else {
+            json!({"alpha":"@fixture.remove"})
+        };
+        let mut child = json!({"type":"panel","size":[20,10]});
+        child
+            .as_object_mut()
+            .unwrap()
+            .extend(child_animation.as_object().unwrap().clone());
+        let mut root = json!({"type":"panel","size":[200,100],"controls":[{"empty":child}]});
+        root.as_object_mut()
+            .unwrap()
+            .extend(root_animation.as_object().unwrap().clone());
+        let catalog = catalog(
+            root,
+            json!({
+                "remove":{"anim_type":"alpha","from":1,"to":1,"duration":1,"destroy_at_end":if remove_ancestor{name}else{"empty"}},
+                "enter":{"anim_type":"offset","from":[0,100],"to":[0,0],"duration":1}
+            }),
+        );
+        let bound = json_ui::resolve(
+            &catalog,
+            json_ui::form_template(&model()),
+            &Context::desktop(),
+        )
+        .control
+        .unwrap();
+        let (laid, _) = json_ui::layout_with(
+            &bound,
+            [200.0, 100.0],
+            &json_ui::LayoutEnv {
+                text: &NoArtwork,
+                textures: &NoArtwork,
+            },
+            &ViewState::default(),
+        );
+        let removed = if remove_ancestor {
+            &laid
+        } else {
+            &laid.children[0]
+        };
+        let legacy = Arc::clone(removed.anim.as_ref().unwrap().own.as_ref().unwrap());
+        let mut engine = engine(catalog);
+        for now in [0.0, 1.0, 2.0, 3.0] {
+            // An existing legacy paint can remove a control before form layout visits it.
+            if now <= 1.0 {
+                engine.animator().sample(&legacy, now, None);
+            }
+            let (_, nodes) = paint(&mut engine, now, |engine, frame| {
+                engine.render(&model(), &ViewState::default(), frame)
+            });
+            assert!(nodes.is_empty());
+            if now >= 1.0 {
+                assert!(
+                    engine.animator().is_destroyed(&format!("/{name}/empty")),
+                    "the form still owns the removed control at {now}"
+                );
+            }
+        }
+        assert_eq!(engine.animator().take_events().len(), 1);
+    }
+}
+
+#[test]
+fn legacy_first_paint_wait_does_not_advance_without_metadata() {
+    let mut engine = engine(catalog(
+        json!({"type":"panel","size":[200,100],"offset":"@fixture.still","controls":[
+            {"art":{"type":"image","size":[20,10],"texture":"textures/fixture_wait",
+                "allow_debug_missing_texture":false,"offset":"@fixture.move"}}
+        ]}),
+        json!({
+            "still":{"anim_type":"offset","from":[0,0],"to":[0,0],"duration":1},
+            "move":{"anim_type":"offset","from":[0,0],"to":[20,0],"duration":1,
+                "wait_until_rendered_to_play":true,"end_event":"fixture.ready"}
+        }),
+    ));
+    for now in [0.0, 2.0] {
+        let (_, nodes) = paint(&mut engine, now, |engine, frame| {
+            engine.render(&model(), &ViewState::default(), frame)
+        });
+        assert!(nodes.is_empty());
+        assert!(
+            engine.animator().take_events().is_empty(),
+            "unpainted component advanced"
+        );
+    }
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::RgbaImage::from_pixel(20, 10, image::Rgba([255; 4]))
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap();
+    engine.set_server_atlas(
+        crate::atlas::ServerAtlas::new(
+            &[("textures/fixture_wait.png".into(), bytes.into_inner())],
+            None,
+            1,
+        ),
+        7,
+    );
+    for now in [3.0, 4.0] {
+        let (_, nodes) = paint(&mut engine, now, |engine, frame| {
+            engine.render(&model(), &ViewState::default(), frame)
+        });
+        assert!(!nodes.is_empty());
+        assert_eq!(
+            engine.animator().take_events().len(),
+            usize::from(now == 4.0)
+        );
+    }
+}
+
+#[test]
+fn legacy_reset_wait_keeps_exact_from_with_exponential_easing() {
+    let mut engine = engine(catalog(
+        json!({"type":"panel","size":[200,100],"offset":"@fixture.still","controls":[
+            {"art":{"type":"image","size":[20,10],"color":[1,0,0],
+                "anchor_from":"top_left","anchor_to":"top_left","offset":"@fixture.move"}}
+        ]}),
+        json!({
+            "still":{"anim_type":"offset","from":[0,0],"to":[0,0],"duration":10},
+            "move":{"anim_type":"offset","from":[0,0],"to":[1024,0],"duration":1,
+                "easing":"in_expo","play_event":"fixture.play","reset_event":"fixture.reset"}
+        }),
+    ));
+    paint(&mut engine, 0.0, |engine, frame| {
+        engine.render(&model(), &ViewState::default(), frame)
+    });
+    engine.animator().fire("fixture.play");
+    paint(&mut engine, 0.5, |engine, frame| {
+        engine.render(&model(), &ViewState::default(), frame)
+    });
+    engine.animator().fire("fixture.reset");
+    for now in [0.75, 1.0] {
+        let (_, nodes) = paint(&mut engine, now, |engine, frame| {
+            engine.render(&model(), &ViewState::default(), frame)
+        });
+        let solid = nodes
+            .iter()
+            .find(|node| matches!(node.visual(), UiVisual::Solid { .. }))
+            .unwrap();
+        assert_eq!(
+            solid.bounds().min().x(),
+            0.0,
+            "reset must write exact from, including while waiting"
+        );
+    }
+}
+
+#[test]
+fn unsupported_moving_ancestor_keeps_child_transform_composition() {
+    let catalog = catalog(
+        json!({"type":"panel","size":[100,50],"anims":["@fixture.grow","@fixture.fade"],
+        "anchor_from":"top_left","anchor_to":"top_left","controls":[
+            {"child":{"type":"panel","size":"@fixture.child","anchor_from":"top_left","anchor_to":"top_left","controls":[
+                {"fill":{"type":"image","size":[5,5],"color":[1,0,0],"anchor_from":"top_left","anchor_to":"top_left"}}
+            ]}}
+        ]}),
+        json!({"grow":{"anim_type":"size","from":[100,50],"to":[200,100],"duration":1},
+            "fade":{"anim_type":"alpha","from":1,"to":1,"duration":1},
+            "child":{"anim_type":"size","from":[10,10],"to":[20,20],"duration":1}}),
+    );
+    let mut form = engine(catalog.clone());
+    let mut baseline = engine(catalog);
+    let catalog = Arc::clone(baseline.catalog());
+    let mut cached = CachedScreen::default();
+    for now in [0.0, 0.5, 1.0] {
+        let (_, actual) = paint(&mut form, now, |engine, frame| {
+            engine.render(&model(), &ViewState::default(), frame)
+        });
+        let (_, expected) = paint(&mut baseline, now, |engine, frame| {
+            let px = frame.metrics.scale.get() * ui::FONT_DESIGN_PIXEL_TEXELS as f32;
+            engine.draw(ScreenArt::default(), frame, |env, root| {
+                cached.render_with(
+                    "fixture.root",
+                    &catalog,
+                    &Context::desktop(),
+                    DataSource::new(),
+                    (root, px, [0; 3]),
+                    env,
+                    &ViewState::default(),
+                )
+            })
+        });
+        let actual: Vec<_> = actual
+            .iter()
+            .filter(|node| matches!(node.visual(), UiVisual::Solid { .. }))
+            .map(UiNode::bounds)
+            .collect();
+        let expected: Vec<_> = expected
+            .iter()
+            .filter(|node| matches!(node.visual(), UiVisual::Solid { .. }))
+            .map(UiNode::bounds)
+            .collect();
+        assert!(!expected.is_empty());
+        assert_eq!(
+            actual, expected,
+            "a child must retain the ancestor's legacy composition at {now}"
+        );
+    }
 }

@@ -87,13 +87,66 @@ pub struct AnimGraph {
 }
 
 impl AnimGraph {
-    /// Whether layout can sample this entire component without starting other channels.
-    pub(crate) fn is_layout_only(&self) -> bool {
-        !self.nodes.is_empty()
-            && self
-                .nodes
-                .iter()
-                .all(|node| matches!(node.kind, AnimKind::Size | AnimKind::Offset))
+    /// Selects one automatic, finite chain writing only size or only offset.
+    /// Other graphs keep their existing paint lifecycle, without rejecting their data.
+    pub(crate) fn entrance_property(&self) -> Option<&'static str> {
+        let Self { nodes, heads } = self;
+        let [head] = heads.as_slice() else {
+            return None;
+        };
+        let kind = nodes.get(*head)?.kind;
+        let property = match kind {
+            AnimKind::Size => "size",
+            AnimKind::Offset => "offset",
+            AnimKind::Alpha
+            | AnimKind::Clip
+            | AnimKind::Color
+            | AnimKind::FlipBook
+            | AnimKind::Aseprite
+            | AnimKind::Uv
+            | AnimKind::Wait => return None,
+        };
+        let mut cursor = Some(*head);
+        // A single chain must exhaust the graph exactly once, with no remaining cycle.
+        for _ in nodes {
+            let node = nodes.get(cursor?)?;
+            // Sprite/alpha options do not affect geometry, and resettable has no trigger here.
+            let AnimNode {
+                kind: channel,
+                duration,
+                easing: _,
+                from: _,
+                to: _,
+                from_expr: _,
+                to_expr: _,
+                play_event,
+                reset_event,
+                end_event,
+                destroy_at_end,
+                wait_until_rendered,
+                resettable: _,
+                scale_from_starting_alpha: _,
+                fps: _,
+                frame_count: _,
+                reversible: _,
+                vertical: _,
+                looping: _,
+                next,
+            } = node;
+            if *channel != kind
+                || !duration.is_finite()
+                || *duration <= 0.0
+                || play_event.is_some()
+                || reset_event.is_some()
+                || end_event.is_some()
+                || destroy_at_end.is_some()
+                || *wait_until_rendered
+            {
+                return None;
+            }
+            cursor = *next;
+        }
+        cursor.is_none().then_some(property)
     }
 
     /// Whether every head and link addresses a node in this graph.
