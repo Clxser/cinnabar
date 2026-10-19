@@ -3,6 +3,7 @@ use crate::runtime::network::resource_packs::PackApplication;
 use crate::runtime::visibility::AppMetrics;
 #[cfg(feature = "acceptance")]
 use ::acceptance::AcceptanceRun;
+use client_presentation::environment::{WeatherState, WorldClock, apply_environment_control};
 use client_runtime::network::NetworkHandle;
 #[cfg(feature = "acceptance")]
 use {
@@ -66,12 +67,9 @@ use render_scene::{
 
 use client_shell::ui_resources::UiRuntimeResource;
 use {
-    crate::{
-        environment::{WeatherState, WorldClock, apply_environment_control},
-        runtime::{
-            shutdown::{FatalError, record_fatal_error},
-            visibility::{CaveVisibilityCache, DiagnosticQuads},
-        },
+    crate::runtime::{
+        shutdown::{FatalError, record_fatal_error},
+        visibility::{CaveVisibilityCache, DiagnosticQuads},
     },
     client_interaction::movement::{
         LocalMovementEffectTimeline, LocalMovementSpeedAuthority, LocalPhysicsController,
@@ -689,6 +687,17 @@ pub(crate) fn drive_world_stream(
         frame_poll.report.mesh_results += report.mesh_results;
         frame_poll.report.mesh_jobs_dispatched += report.mesh_jobs_dispatched;
     }
+    let profile = bridge::join_profile::JoinProfile::current();
+    use bridge::join_profile::Milestone;
+    if frame_poll.report.decoded_results > 0 {
+        profile.mark_once(Milestone::ChunkDecoded);
+    }
+    if frame_poll.report.light_results > 0 {
+        profile.mark_once(Milestone::LightingReady);
+    }
+    if frame_poll.report.mesh_results > 0 {
+        profile.mark_once(Milestone::MeshReady);
+    }
     local_retention::retain_completed_player_terrain(
         stream,
         &local_physics,
@@ -702,6 +711,7 @@ pub(crate) fn drive_world_stream(
     #[cfg(feature = "acceptance")]
     let mutation_cohort = frame_poll.cohort;
     for acknowledgement in acknowledgements.drain() {
+        profile.mark_once(Milestone::MeshUploaded);
         block_use.prediction_frames.uploaded(
             frame.0,
             acknowledgement.key,

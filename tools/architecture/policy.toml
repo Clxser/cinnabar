@@ -94,9 +94,21 @@ allowed_dependencies = []
 forbidden_dependencies = ["asset-compiler", "assets", "bevy", "wgpu"]
 
 [[crates]]
+name = "zip-footer"
+path = "crates/zip-footer"
+allowed_dependencies = []
+forbidden_dependencies = ["bevy", "wgpu"]
+
+[[crates]]
+name = "shaderpack"
+path = "crates/shaderpack"
+allowed_dependencies = ["zip-footer"]
+forbidden_dependencies = ["bevy", "wgpu"]
+
+[[crates]]
 name = "resource-pack"
 path = "crates/resource-pack"
-allowed_dependencies = ["pack-json", "protocol"]
+allowed_dependencies = ["pack-json", "protocol", "zip-footer"]
 forbidden_dependencies = ["asset-compiler", "assets", "bevy", "wgpu"]
 test_support_features = ["test-support"]
 
@@ -188,7 +200,7 @@ forbidden_transitive_dependencies = ["app", "cinnabar", "asset-compiler", "clap"
 name = "pack-runtime"
 path = "crates/pack-runtime"
 forbidden_dependencies = ["pack-compiler", "pack-font-compiler"]
-allowed_dependencies = ["pack-json", "assets", "block-transform", "json-ui", "pack-compile-input", "pack-entity-compiler", "protocol", "resource-pack", "sim"]
+allowed_dependencies = ["bridge", "pack-json", "assets", "block-transform", "json-ui", "pack-compile-input", "pack-entity-compiler", "protocol", "resource-pack", "sim"]
 forbidden_transitive_dependencies = ["app", "cinnabar", "asset-compiler", "client-session", "client-ui", "client-presentation", "render", "bevy", "bevy_*", "wgpu*"]
 test_support_features = ["test-support"]
 
@@ -267,7 +279,7 @@ test_support_features = ["test-support"]
 [[crates]]
 name = "client-extensions"
 path = "crates/client-extensions"
-allowed_dependencies = ["assets", "client-state", "client-ui", "client-world", "inventory", "mod-api", "mod-host", "mod-render", "player-state", "protocol", "render-model", "server-experience", "ui"]
+allowed_dependencies = ["assets", "client-state", "client-ui", "client-world", "inventory", "mod-api", "mod-host", "mod-render", "player-state", "protocol", "render-api", "render-model", "server-experience", "ui"]
 forbidden_transitive_dependencies = ["app", "cinnabar", "client-runtime", "client-interaction", "client-shell", "client-presentation", "client-audio", "render"]
 
 [[crates]]
@@ -437,7 +449,7 @@ forbidden_transitive_dependencies = ["bevy", "bevy_*", "wgpu*"]
 [[crates]]
 name = "mod-host"
 path = "crates/mod-host"
-allowed_dependencies = ["experience-sdk", "mod-api", "mod-render", "server-experience", "ui", "test-alloc", "test-time"]
+allowed_dependencies = ["assets", "experience-sdk", "mod-api", "mod-render", "render-api", "server-experience", "ui", "test-alloc", "test-time"]
 forbidden_dependencies = ["bevy", "wgpu", "protocol", "world"]
 
 [[crates]]
@@ -1042,6 +1054,11 @@ path = "crates/client-presentation/src"
 forbidden_modules = ["cinnabar", "gameplay", "client_session", "NetworkHandle", "MovementTicker", "LocalPhysicsController", "ItemUseRuntime", "MiningRuntime"]
 forbidden_crate_modules = ["app", "runtime", "movement", "item_use", "mining", "melee", "menu", "acceptance", "asset_startup", "player_runtime", "semantic_controls", "settings_runtime", "screen_policy"]
 forbidden_owned_types = ["WorldStream", "PlayerState", "PlayerInventoryLedger", "InventorySession", "LocalPlayerFacts"]
+
+# Environment derivation consumes observations without app world or preference wrappers.
+[[module_boundaries]]
+path = "crates/client-presentation/src/environment"
+forbidden_modules = ["client_shell", "ClientWorld", "UiRuntimeResource", "BrowserOptions", "MenuRuntime"]
 
 [[module_boundaries]]
 path = "crates/client-audio/src"
@@ -1857,6 +1874,11 @@ reason = "JSON-UI animation property schema used by mod controls."
 path = "crates/ui/src/mod_panel/surface/static_templates.rs"
 literal = "color"
 reason = "JSON-UI animation property schema used by static mod templates."
+
+[[identifier_literal_exceptions]]
+path = "crates/ui/src/mod_panel/surface/collection.rs"
+literal = "color"
+reason = "JSON-UI paint property on the host-owned collection scrollbar."
 
 [[identifier_literal_exceptions]]
 path = "examples/experiences/probe/src/contract.rs"

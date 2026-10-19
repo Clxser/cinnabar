@@ -59,8 +59,8 @@ pub(crate) struct PublishExtras<'w, 's> {
     actor_partial: Res<'w, client_presentation::actor_publication::ActorFramePartialTick>,
     local_frame: Res<'w, client_presentation::local_player::LocalPlayerFrameCarrier>,
     local_visibility: Res<'w, client_presentation::local_player::LocalAvatarVisibilityCarrier>,
-    clock: Res<'w, crate::environment::WorldClock>,
-    weather: Res<'w, crate::environment::WeatherState>,
+    clock: Res<'w, client_presentation::environment::WorldClock>,
+    weather: Res<'w, client_presentation::environment::WeatherState>,
     network: Res<'w, NetworkHandle<PackApplication>>,
     glint_settings: Option<ResMut<'w, render_scene::UiGlintSettings>>,
     item_use: Res<'w, client_interaction::item_use::ItemUseRuntime>,
@@ -141,6 +141,22 @@ pub(crate) fn prepare_ui_runtime(
         .as_deref()
         .map(|profiler| profiler.time(render_scene::RuntimeStage::UiPreparation));
     prepared.0 = None;
+    let totem_style = presentation
+        .mod_ui()
+        .mod_actor_style()
+        .and_then(|style| style.totems.as_ref())
+        .cloned();
+    if let Some(stream) = client_world.stream.as_mut() {
+        stream.set_totem_tracking(totem_style.is_some());
+        runtime.player_roster.set_totem_annotations(
+            totem_style.as_ref(),
+            stream.authority().player_totem_activations(),
+        );
+    } else {
+        runtime
+            .player_roster
+            .set_totem_annotations(None, std::iter::empty());
+    }
     let now_millis = u64::try_from(time.elapsed().as_millis()).unwrap_or(u64::MAX);
     runtime.advance_item_activation(now_millis);
     runtime.set_toast_lifetime(settings_snapshot.0.toast_lifetime_millis());
@@ -379,10 +395,9 @@ pub(crate) fn prepare_ui_runtime(
         .stream
         .as_ref()
         .map_or(0, |stream| stream.current_dimension());
-    presentation.hud_frame_mut().world_time = Some(crate::environment::visual_world_time(
-        *clock,
-        time.elapsed_secs_f64(),
-    ));
+    presentation.hud_frame_mut().world_time = Some(
+        client_presentation::environment::visual_world_time(*clock, time.elapsed_secs_f64()),
+    );
     // When the local player's first-person rig is drawing near-camera, it owns the hand; the
     // static empty-hand scene and the HUD's CPU hand/item carriers are retired so nothing
     // double-draws.
@@ -410,8 +425,18 @@ pub(crate) fn prepare_ui_runtime(
         .mod_ui()
         .mod_actor_style()
         .and_then(|style| style.nametags.as_ref());
-    let show_self_tag =
-        tag_style.is_some_and(|style| style.show_self && !style.hide_players) && !first_person;
+    let show_counter_self = totem_style
+        .as_ref()
+        .is_some_and(|style| style.show_self && style.show_nametag)
+        && client_world.stream.as_ref().is_some_and(|stream| {
+            let authority = stream.authority();
+            authority
+                .totem_activations(authority.local_player_runtime_id())
+                .is_some_and(|count| count != 0)
+        });
+    let show_self_tag = (tag_style.is_some_and(|style| style.show_self) || show_counter_self)
+        && !tag_style.is_some_and(|style| style.hide_players)
+        && !first_person;
     let names_with_hidden_hud = tag_style.is_some_and(|style| style.show_when_hud_hidden);
     let nametags = client_world
         .stream
@@ -498,6 +523,14 @@ pub(crate) fn prepare_ui_runtime(
                         .actor_player_roster_identity(tag.runtime_id())
                         .is_some_and(|(xuid, uuid)| runtime.player_roster.has_badge(xuid, uuid)),
                 );
+                if totem_style.as_ref().is_some_and(|style| style.show_nametag)
+                    && let Some(actor) = authority.actor(tag.runtime_id())
+                    && let protocol::ActorKind::Player { uuid, .. } = &actor.kind
+                {
+                    tag.set_counter_annotation(
+                        runtime.player_roster.totem_annotation(uuid).cloned(),
+                    );
+                }
             }
             tags
         })
