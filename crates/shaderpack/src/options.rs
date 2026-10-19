@@ -15,7 +15,8 @@ pub struct PackOption {
     pub name: String,
     /// Shape and default of the option.
     pub kind: OptionKind,
-    /// Pack-relative path (forward slashes) and 1-based line of the first definition.
+    /// Exact pack-relative source key of the first definition. Directory keys use forward
+    /// slashes; ZIP and memory keys retain their supplied spelling.
     pub file: Arc<str>,
     /// 1-based line of the first definition in `file`.
     pub line: u32,
@@ -59,7 +60,7 @@ pub type OptionValues = BTreeMap<String, String>;
 /// the `[...]` allowed-values list in its trailing `//` comment; `const` options need the list
 /// except `const bool`. First definition in sorted-path order wins; later conflicting
 /// definitions are ignored. The result is sorted by name.
-/// Backslashes in paths are normalised to `/`.
+/// Source keys are retained exactly as supplied, sharing their path allocation.
 pub fn discover_options<'a>(
     files: impl IntoIterator<Item = (Arc<str>, &'a str)>,
 ) -> Vec<PackOption> {
@@ -68,11 +69,6 @@ pub fn discover_options<'a>(
     let tested = tested_names(files.iter().map(|(_, text)| *text));
     let mut options: BTreeMap<&'a str, PackOption> = BTreeMap::new();
     for (path, text) in files {
-        let path = if path.contains('\\') {
-            Arc::from(path.replace('\\', "/"))
-        } else {
-            path
-        };
         for (index, line) in text.lines().enumerate() {
             let Some(definition) = parse_definition(line) else {
                 continue;
@@ -476,8 +472,8 @@ const vec3 tint = vec3(1.0); // [a b]
         let later = "#define LEVEL 1 // [1 2]\n#ifdef TOGGLE\n#endif\n";
         let earlier = "\n#define LEVEL 2 // [2 3]\n#define TOGGLE\n";
         let options = discover([
-            ("shaders\\zeta.glsl", later),
-            ("shaders\\alpha.glsl", earlier),
+            ("shaders/zeta.glsl", later),
+            ("shaders/alpha.glsl", earlier),
         ]);
         let level = find(&options, "LEVEL").expect("LEVEL");
         assert_eq!(

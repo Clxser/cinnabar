@@ -414,6 +414,49 @@ fn unqualified_dimension_mappings_match_namespaced_queries() {
 }
 
 #[test]
+fn option_locations_preserve_distinct_exact_source_keys() {
+    let pack = ShaderPack::new(PackSource::from_files([
+        (
+            r"a\b.glsl",
+            "const bool alpha=true;\nconst bool beta=false;",
+        ),
+        (
+            "a/b.glsl",
+            "\nconst bool gamma=true;\nconst bool delta=false;",
+        ),
+    ]));
+    let options = pack.options();
+    assert_eq!(options.len(), 4);
+    for (name, key, line, declaration) in [
+        ("alpha", r"a\b.glsl", 1, "const bool alpha=true;"),
+        ("beta", r"a\b.glsl", 2, "const bool beta=false;"),
+        ("gamma", "a/b.glsl", 2, "const bool gamma=true;"),
+        ("delta", "a/b.glsl", 3, "const bool delta=false;"),
+    ] {
+        let option = options.iter().find(|option| option.name == name).unwrap();
+        let defining_text = pack.source().text(&option.file).unwrap();
+        assert_eq!(
+            defining_text.lines().nth((option.line - 1) as usize),
+            Some(declaration),
+            "{name} must point to its defining source line"
+        );
+        assert_eq!((option.file.as_ref(), option.line), (key, line));
+        assert_eq!(
+            pack.source().read_bytes(&option.file).unwrap(),
+            defining_text.as_bytes()
+        );
+        let (source_key, _) = pack
+            .source()
+            .files()
+            .find(|(path, _)| *path == key)
+            .unwrap();
+        assert_eq!(option.file.as_ptr(), source_key.as_ptr());
+    }
+    assert!(std::sync::Arc::ptr_eq(&options[0].file, &options[1].file));
+    assert!(std::sync::Arc::ptr_eq(&options[2].file, &options[3].file));
+}
+
+#[test]
 fn options_from_one_file_share_path_storage() {
     let path = format!("lib/{}.glsl", "settings".repeat(16));
     let source = PackSource::from_files([(
