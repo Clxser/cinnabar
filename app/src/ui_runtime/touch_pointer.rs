@@ -7,6 +7,7 @@
 use std::collections::VecDeque;
 
 use bevy::{
+    ecs::message::MessageId,
     input::{
         ButtonState,
         mouse::{MouseButton, MouseButtonInput},
@@ -46,6 +47,8 @@ pub(crate) struct TouchPointer {
     held: bool,
     /// True when this frame delivered a touch cursor change or button edge.
     pub(crate) delivered: bool,
+    /// The synthesized button message delivered this frame, if any.
+    pub(crate) button_message: Option<MessageId<MouseButtonInput>>,
     queue: VecDeque<PointerEvent>,
 }
 
@@ -121,6 +124,7 @@ pub(crate) fn emulate_ui_pointer(
     mut pointer: ResMut<TouchPointer>,
 ) {
     pointer.delivered = false;
+    pointer.button_message = None;
     let Ok((entity, mut window)) = windows.single_mut() else {
         return;
     };
@@ -142,7 +146,7 @@ pub(crate) fn emulate_ui_pointer(
         window.bypass_change_detection().set_cursor_position(cursor);
     }
     if let Some(edge) = edge {
-        buttons.write(MouseButtonInput {
+        pointer.button_message = Some(buttons.write(MouseButtonInput {
             button: MouseButton::Left,
             state: if edge == PointerEdge::Press {
                 ButtonState::Pressed
@@ -150,7 +154,7 @@ pub(crate) fn emulate_ui_pointer(
                 ButtonState::Released
             },
             window: entity,
-        });
+        }));
     }
 }
 

@@ -116,6 +116,11 @@ fn controller_mapping_receives_gamepad_mode_and_keyboard_keeps_focus_navigation(
             .focused
             .is_some()
     );
+    // A delivered touch movement owns presentation without changing this key's source.
+    app.init_resource::<crate::ui_runtime::touch_pointer::TouchPointer>();
+    app.world_mut()
+        .resource_mut::<crate::ui_runtime::touch_pointer::TouchPointer>()
+        .delivered = true;
     app.world_mut()
         .get_mut::<Gamepad>(pad)
         .unwrap()

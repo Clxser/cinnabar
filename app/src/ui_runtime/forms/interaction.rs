@@ -114,17 +114,30 @@ pub(crate) fn drive_server_form_input(
         pressed: mouse.just_pressed(MouseButton::Left),
         released: mouse.just_released(MouseButton::Left),
         held: false,
+        mode: if touch.as_ref().is_some_and(|touch| touch.delivered) {
+            json_ui::InputMode::Touch
+        } else {
+            json_ui::InputMode::Mouse
+        },
     };
     let mut pointer_edges = Vec::new();
     let mut mouse_used = mouse.get_just_pressed().next().is_some()
         || mouse.get_just_released().next().is_some()
         || motion.delta != bevy::math::Vec2::ZERO;
     if let Some(messages) = button_messages.as_deref() {
-        for input in button_cursor.read(messages) {
+        for (input, id) in button_cursor.read_with_id(messages) {
             mouse_used = true;
             if input.button == MouseButton::Left {
                 let down = input.state == ButtonState::Pressed;
-                pointer_edges.push(down);
+                let mode = if touch
+                    .as_ref()
+                    .is_some_and(|touch| touch.button_message == Some(id))
+                {
+                    json_ui::InputMode::Touch
+                } else {
+                    json_ui::InputMode::Mouse
+                };
+                pointer_edges.push((down, mode));
                 if down {
                     pointer.pressed = true;
                 } else {
@@ -135,16 +148,16 @@ pub(crate) fn drive_server_form_input(
     }
     if pointer_edges.is_empty() {
         if pointer.pressed {
-            pointer_edges.push(true);
+            pointer_edges.push((true, pointer.mode));
         }
         if pointer.released {
-            pointer_edges.push(false);
+            pointer_edges.push((false, pointer.mode));
         }
         if pointer_edges.is_empty() {
             *held |= mouse.pressed(MouseButton::Left);
         }
     }
-    for down in &pointer_edges {
+    for (down, _) in &pointer_edges {
         *held = *down;
     }
     pointer.held = *held;
@@ -194,12 +207,11 @@ pub(crate) fn drive_server_form_input(
     let typed: Vec<_> = keyboard
         .read()
         .filter(|input| input.state == ButtonState::Pressed)
-        .map(|input| {
-            (
-                keyboard_key(input.key_code),
-                input.text.as_ref().map(|text| text.to_string()),
-                input.repeat,
-            )
+        .map(|input| engine_input::KeyInput {
+            key: keyboard_key(input.key_code),
+            text: input.text.as_ref().map(|text| text.to_string()),
+            repeat: input.repeat,
+            mode: json_ui::InputMode::Mouse,
         })
         .collect();
     let wheel: Vec<_> = wheel
@@ -239,7 +251,16 @@ pub(crate) fn drive_server_form_input(
             wheel,
             typed: typed
                 .into_iter()
-                .chain(pad_keys.into_iter().map(|(key, text)| (key, text, false)))
+                .chain(
+                    pad_keys
+                        .into_iter()
+                        .map(|(key, text)| engine_input::KeyInput {
+                            key,
+                            text,
+                            repeat: false,
+                            mode: json_ui::InputMode::Gamepad,
+                        }),
+                )
                 .collect(),
             now: time.map_or(0.0, |time| time.elapsed_secs_f64()),
             animator: presentation.form_animator(),

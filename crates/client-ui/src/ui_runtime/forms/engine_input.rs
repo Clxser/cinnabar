@@ -5,8 +5,8 @@
 //! turning the resulting screen events into form values and answers.
 
 use json_ui::{
-    ButtonEvent, ButtonInput as EngineButton, Dispatch, HitKind, HitRegion, PointerInput,
-    ScreenEvent, hit_test,
+    ButtonEvent, ButtonInput as EngineButton, Dispatch, HitKind, HitRegion, InputMode,
+    PointerInput, ScreenEvent, hit_test,
 };
 use protocol::{CustomFormElement, MenuElement, ServerFormModel};
 use semantic_input::{KeyboardKey, ScrollUnit};
@@ -35,6 +35,16 @@ pub struct PointerButtons {
     pub pressed: bool,
     pub released: bool,
     pub held: bool,
+    /// The source of the pointer position, independent of the presentation mode.
+    pub mode: InputMode,
+}
+
+/// A keyboard press or translated controller press with its original device.
+pub struct KeyInput {
+    pub key: KeyboardKey,
+    pub text: Option<String>,
+    pub repeat: bool,
+    pub mode: InputMode,
 }
 
 /// One frame of raw input for the engine path.
@@ -43,11 +53,11 @@ pub struct EngineInput<'a> {
     /// Keys held this frame.
     pub keys: &'a [KeyboardKey],
     pub pointer: PointerButtons,
-    pub pointer_edges: Vec<bool>,
+    /// Ordered button edges and the device that produced each edge.
+    pub pointer_edges: Vec<(bool, InputMode)>,
     pub wheel: Vec<(f32, ScrollUnit)>,
-    /// Pressed keys this frame with their produced text.
-    /// Key presses with their text and whether the OS auto-repeated them.
-    pub typed: Vec<(KeyboardKey, Option<String>, bool)>,
+    /// Pressed keys with their text, repeat flag and source device.
+    pub typed: Vec<KeyInput>,
     /// Seconds on the app clock.
     pub now: f64,
     /// The form's animator: button events play and reset its animations.
@@ -92,7 +102,7 @@ pub fn drive(runtime: &mut UiRuntime, frame: &EngineFrame, mut input: EngineInpu
         let pointer = PointerInput {
             point,
             held: input.pointer.held,
-            mode: engine.view.input_mode,
+            mode: input.pointer.mode,
             now: input.now,
         };
         events.extend(
@@ -114,6 +124,7 @@ pub fn drive(runtime: &mut UiRuntime, frame: &EngineFrame, mut input: EngineInpu
         ]
         .into_iter()
         .flatten()
+        .map(|down| (down, input.pointer.mode))
         .collect()
     } else {
         std::mem::take(&mut input.pointer_edges)
@@ -122,18 +133,20 @@ pub fn drive(runtime: &mut UiRuntime, frame: &EngineFrame, mut input: EngineInpu
     // consumes them while capture is still down.
     // Move the existing capture once before any release, even when the final state is up.
     if let Some(point) = point
-        && (input.pointer.held || edges.contains(&false))
+        && (input.pointer.held || edges.iter().any(|(down, _)| !down))
     {
         engine_scroll::drag(runtime, frame, point);
     }
     // Each release answers only for the control its press went down on.
     let mut releases = Vec::new();
-    for down in edges {
+    for (down, mode) in edges {
         if down {
             if let Some(point) = point {
                 let region = hit_test(&frame.hits, point);
                 engine_scroll::press(runtime, frame, region, point);
-                events.extend(button(runtime, frame, SELECT, true, Some(point), input.now).events);
+                events.extend(
+                    button(runtime, frame, SELECT, true, Some(point), input.now, mode).events,
+                );
             }
         } else {
             runtime.server_forms_mut().engine_mut().drag = None;
@@ -146,7 +159,7 @@ pub fn drive(runtime: &mut UiRuntime, frame: &EngineFrame, mut input: EngineInpu
                 .pressed
                 .clone()
                 .filter(|_| tapped);
-            let up = button(runtime, frame, SELECT, false, point, input.now).events;
+            let up = button(runtime, frame, SELECT, false, point, input.now, mode).events;
             releases.push((events.len()..events.len() + up.len(), pressed));
             events.extend(up);
         }
@@ -156,7 +169,13 @@ pub fn drive(runtime: &mut UiRuntime, frame: &EngineFrame, mut input: EngineInpu
     {
         engine_scroll::wheel(runtime, frame, point, &input.wheel);
     }
-    for (key, text, repeat) in input.typed {
+    for KeyInput {
+        key,
+        text,
+        repeat,
+        mode,
+    } in input.typed
+    {
         // Held keys repeat text into an edit box, but never re-press a control.
         if repeat && !editing(runtime, frame) {
             continue;
@@ -168,6 +187,7 @@ pub fn drive(runtime: &mut UiRuntime, frame: &EngineFrame, mut input: EngineInpu
             text.as_deref(),
             control,
             input.now,
+            mode,
         ));
     }
     if let Some(animator) = input.animator.as_mut() {
@@ -238,13 +258,14 @@ fn button(
     down: bool,
     point: Option<[f64; 2]>,
     now: f64,
+    mode: InputMode,
 ) -> Dispatch {
     let engine = runtime.server_forms_mut().engine_mut();
     let input = EngineButton {
         id,
         down,
         point,
-        mode: engine.view.input_mode,
+        mode,
         now,
     };
     engine
@@ -272,6 +293,7 @@ fn keyboard(
     text: Option<&str>,
     control: bool,
     now: f64,
+    mode: InputMode,
 ) -> Vec<ScreenEvent> {
     let editing = editing(runtime, frame);
     let typed = editing.then(|| typed_text(key, text, control)).flatten();
@@ -295,10 +317,10 @@ fn keyboard(
         }
         _ => return Vec::new(),
     };
-    let down = button(runtime, frame, id, true, None, now);
+    let down = button(runtime, frame, id, true, None, now, mode);
     let consumed = down.consumed;
     let mut events = down.events;
-    events.extend(button(runtime, frame, id, false, None, now).events);
+    events.extend(button(runtime, frame, id, false, None, now, mode).events);
     // Content subtrees omit the screen's global cancel mapping.
     if !consumed && key == KeyboardKey::Escape
         && let Some(target) = &frame.cancel_target
