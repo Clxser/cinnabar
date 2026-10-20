@@ -6,6 +6,9 @@ use super::*;
 use crate::raw_packet::decode_batch_body;
 use crate::session_transport::batch_frame;
 
+#[cfg(not(target_arch = "wasm32"))]
+mod latency;
+
 fn body(packets: &[Packet]) -> Bytes {
     batch_frame(packets).unwrap().slice(1..)
 }
