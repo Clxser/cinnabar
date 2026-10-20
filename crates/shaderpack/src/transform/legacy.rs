@@ -91,6 +91,27 @@ pub(super) fn rewrite(
     stage: StageKind,
     version: u32,
 ) -> Result<Legacy, TransformError> {
+    let mut delimiters = Vec::new();
+    for token in src {
+        if token.is("(") || token.is("[") || token.is("{") {
+            delimiters.push(token);
+        } else if token.is(")") || token.is("]") || token.is("}") {
+            let expected = match token.text() {
+                ")" => "(",
+                "]" => "[",
+                _ => "{",
+            };
+            if !delimiters.pop().is_some_and(|open| open.is(expected)) {
+                return Err(TransformError::new(
+                    "unmatched closing delimiter",
+                    token.line,
+                ));
+            }
+        }
+    }
+    if let Some(open) = delimiters.last() {
+        return Err(TransformError::new("unclosed delimiter", open.line));
+    }
     let legacy = version < 130;
     let sized = size_unsized_arrays(src);
     let src = &sized;
@@ -126,11 +147,6 @@ pub(super) fn rewrite(
             i += 1;
             continue;
         };
-        if i > 0 && src[i - 1].is(".") {
-            toks.push(t.clone());
-            i += 1;
-            continue;
-        }
         let name = name.as_str();
         let called = src.get(i + 1).is_some_and(|n| n.is("("));
         if legacy && name == "texture" && !called {
@@ -140,6 +156,11 @@ pub(super) fn rewrite(
         }
         if (legacy && RESERVED_SINCE_130.contains(&name)) || RESERVED_VULKAN.contains(&name) {
             toks.push(id(&format!("_r_{name}")).at(line));
+            i += 1;
+            continue;
+        }
+        if i > 0 && src[i - 1].is(".") {
+            toks.push(t.clone());
             i += 1;
             continue;
         }
