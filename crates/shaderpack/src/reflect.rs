@@ -484,6 +484,7 @@ fn has_builtin(
 struct ConstValue(Vec<naga::Literal>);
 
 impl ConstValue {
+    /// Reads a fixed-size constant containing nonnegative integer components.
     fn as_u32s<const N: usize>(&self) -> Option<[u32; N]> {
         let v: Option<Vec<u32>> = self
             .0

@@ -374,10 +374,12 @@ mod tests {
     use super::*;
     use crate::token::lex;
 
+    /// Joins fixture token spellings.
     fn text(toks: &[Tok]) -> String {
         toks.iter().map(Tok::text).collect::<Vec<_>>().join(" ")
     }
 
+    /// Creates the sampled-resource bindings used by the body fixtures.
     fn samplers() -> SamplerKinds {
         SamplerKinds::from([
             (

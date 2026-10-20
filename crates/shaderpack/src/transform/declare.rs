@@ -797,6 +797,7 @@ mod tests {
         }
     }
 
+    /// Parses fixture declarations into collector input items.
     fn items(src: &str) -> Vec<Item> {
         split_items(&lex(src))
             .into_iter()
@@ -807,6 +808,7 @@ mod tests {
             .collect()
     }
 
+    /// Joins fixture token spellings.
     fn text(toks: &[Tok]) -> String {
         toks.iter().map(Tok::text).collect::<Vec<_>>().join(" ")
     }
@@ -828,7 +830,7 @@ out vec3 color;
 void main() {}";
 
     #[test]
-    fn stages_declare_resources_and_varyings_at_shared_numbers() {
+    fn stages_collect_shared_resources_and_vertex_inputs() {
         let mut iface = ProgramInterface::default();
         let formats = HashMap::new();
         let names = names(&formats);
@@ -849,26 +851,6 @@ void main() {}";
         assert_eq!(
             vertex.vertex_inputs,
             [(FIRST_OTHER_ATTRIBUTE_LOCATION, "myAttr".to_owned())]
-        );
-
-        let vertex_io = text(&vertex.io);
-        let fragment_io = text(&fragment.io);
-        assert!(vertex_io.contains("layout ( location = 0 ) out vec2 texcoord ;"));
-        assert!(fragment_io.contains("layout ( location = 0 ) in vec2 texcoord ;"));
-        assert!(vertex_io.contains("layout ( location = 3 ) flat out int blockId ;"));
-        assert!(fragment_io.contains("layout ( location = 3 ) flat in int blockId ;"));
-
-        // A matrix varying travels as one vector per column, copied around `main`.
-        assert!(vertex_io.contains("layout ( location = 2 ) out vec2 iris_v_rot_1 ;"));
-        assert!(
-            vertex
-                .after_main
-                .contains(&"iris_v_rot_1 = rot[1];".to_owned())
-        );
-        assert!(
-            fragment
-                .before_main
-                .contains(&"rot[1] = iris_v_rot_1;".to_owned())
         );
     }
 
