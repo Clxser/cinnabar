@@ -635,3 +635,19 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+## Android platform certificate verification
+
+Android packages the JVM component from [rustls-platform-verifier](https://github.com/rustls/rustls-platform-verifier),
+under the MIT license retained in `packaging/android/licenses/rustls-platform-verifier-LICENSE-MIT`.
+Its original network-security resource supports certificate revocation checks.
+The checked artifact/version owner is `packaging/android/platform-verifier.json`; Cargo
+version drift fails packaging rather than selecting an unrelated JVM component.
+
+The Kotlin standard library and its JDK7 compatibility artifact use Apache-2.0.
+The original upstream copyright, license and notice texts are retained in
+`packaging/android/licenses/kotlin-{COPYRIGHT,LICENSE,NOTICE}.txt`.
+JetBrains annotations 13.0 are Copyright 2000–2012 JetBrains s.r.o., under Apache-2.0;
+the source license header is retained in
+`packaging/android/licenses/annotations-13.0-source-license-header.txt`.
+These notices are also included as APK assets. No JVM binaries are committed here.

@@ -448,6 +448,10 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
 
 ## Experimental hosts and extensions
 
+- Android selects the native Rust transport, initializes the platform certificate verifier,
+  packages its checked JVM dependencies/resources, and uses Android browser handoff plus
+  the existing Go local-server helper. Physical TLS/sign-in/terrain/local-world and Activity
+  lifecycle acceptance remains incomplete.
 - Browser/Android implementation and CI checks do not close their complete join, pack,
   transfer/reconnect, input/UI, audio, memory or hardware-performance acceptance matrices.
   Keep browser gesture activation and background work within the host's event-loop rules.
