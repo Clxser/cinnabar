@@ -10,7 +10,7 @@ use std::io;
 /// Binds only one acquired archive; it carries no account, source URL or admission authority.
 pub(in crate::login::native_network) struct ArchiveFacts {
     id: uuid::Uuid,
-    version: String,
+    version: Vec<u8>,
     size: u64,
     key_hash: [u8; 32],
     hash: [u8; 32],
@@ -24,12 +24,7 @@ pub(in crate::login::native_network) fn describe(
     offer: &PackInfoData,
 ) -> io::Result<ArchiveFacts> {
     let id = offer.pack_id_version.pack_uuid;
-    let version = offer
-        .pack_id_version
-        .pack_version
-        .version
-        .to_str()
-        .map_err(|_| invalid())?;
+    let version = offer.pack_id_version.pack_version.version.as_bytes();
     let kind = resource_pack::verify_archive_identity(bytes, id, version).map_err(|_| invalid())?;
     Ok(ArchiveFacts {
         id,

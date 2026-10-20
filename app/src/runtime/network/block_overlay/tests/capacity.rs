@@ -56,7 +56,7 @@ fn larger_overlays_keep_every_texture_that_fits_the_device() {
                 bedrock_packs::ResourcePackArchive::unencrypted(
                     id.parse().unwrap(),
                     "1.0.0".into(),
-                    String::new(),
+                    Vec::new(),
                     writer.finish().unwrap().into_inner(),
                 ),
             ]),

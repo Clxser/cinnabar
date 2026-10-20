@@ -106,7 +106,12 @@ fn fixture_pack(paths: &str) -> ServerUiPack {
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(".");
-            bedrock_packs::ResourcePackArchive::unencrypted(id, version, String::new(), bytes)
+            bedrock_packs::ResourcePackArchive::unencrypted(
+                id,
+                version.into_bytes(),
+                Vec::new(),
+                bytes,
+            )
         })
         .collect();
     let stack = resource_pack::validate_handoff(bedrock_packs::ResourcePackHandoff::from_archives(

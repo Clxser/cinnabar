@@ -17,7 +17,7 @@ pub(super) fn local_pack_view_at(path: &Path) -> Option<LayeredPackView> {
     let archive = bedrock_packs::ResourcePackArchive::with_content_key(
         id.parse().unwrap(),
         version.into(),
-        String::new(),
+        Vec::new(),
         std::fs::read(path).unwrap(),
         key,
     );

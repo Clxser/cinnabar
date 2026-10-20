@@ -326,7 +326,7 @@ fn undeclared_server_subpack_names_fall_back_to_root_resources() {
             ("subpacks/server label/base.txt", b"undeclared"),
         ]);
         let pack = validate_fixture(archive, "server label").expect("root fallback");
-        assert_eq!(pack.sub_pack_name(), "server label");
+        assert_eq!(pack.sub_pack_name(), b"server label");
         assert_eq!(
             pack.read_file("base.txt").unwrap().unwrap().as_ref(),
             b"root"

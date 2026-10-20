@@ -59,14 +59,9 @@ pub(super) async fn preload(
     cancelled: Arc<AtomicBool>,
 ) -> Preload {
     let id = offer.pack_id_version.pack_uuid;
-    let version = offer
-        .pack_id_version
-        .pack_version
-        .version
-        .to_string_lossy()
-        .into_owned();
+    let version = offer.pack_id_version.pack_version.version.as_bytes();
     let size = offer.pack_size.0;
-    let key = ArchiveCacheKey::new(id, &version, size).ok();
+    let key = ArchiveCacheKey::new(id, version, size).ok();
     if let (Some(cache), Some(key)) = (&cache, &key) {
         let (cache, key, cancelled) = (Arc::clone(cache), key.clone(), Arc::clone(&cancelled));
         match tokio::task::spawn_blocking(move || {
@@ -185,7 +180,7 @@ impl Stores {
         let id = offer.pack_id_version.pack_uuid;
         if let Ok(key) = ArchiveCacheKey::new(
             id,
-            &offer.pack_id_version.pack_version.version.to_string_lossy(),
+            offer.pack_id_version.pack_version.version.as_bytes(),
             offer.pack_size.0,
         ) {
             self.pending.insert(id, (key, offer.pack_size.0));

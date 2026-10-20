@@ -158,7 +158,7 @@ fn server_handoff_keeps_last_subpack_and_layer_precedence() {
                     ResourcePackArchive::unencrypted(
                         lower_id,
                         VERSION.into(),
-                        String::new(),
+                        Vec::new(),
                         lower.clone(),
                     ),
                 ]),
@@ -166,7 +166,7 @@ fn server_handoff_keeps_last_subpack_and_layer_precedence() {
             );
             assert!(stack.rejections().is_empty(), "{stack:?}");
             assert_eq!(stack.packs().len(), 2);
-            assert_eq!(stack.packs()[1].sub_pack_name(), expected);
+            assert_eq!(stack.packs()[1].sub_pack_name(), expected.as_bytes());
             let view = LayeredPackView::new(stack);
             assert_eq!(
                 view.read("marker.txt").unwrap().as_ref(),

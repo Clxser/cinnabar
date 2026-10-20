@@ -26,7 +26,7 @@ fn captured_entity_stack_retains_animation_payloads() {
             bedrock_packs::ResourcePackArchive::with_content_key(
                 id.parse().unwrap(),
                 version.into(),
-                entry.subpack,
+                entry.subpack.into_bytes(),
                 std::fs::read(&path).unwrap(),
                 std::fs::read(path.with_extension("key")).unwrap_or_default(),
             )

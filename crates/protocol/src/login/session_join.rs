@@ -306,8 +306,8 @@ fn resource_pack_handoff(
                 .map_err(|_| unexpected("handoff pack identity is not a UUID"))?;
             Ok(ResourcePackArchive::with_content_key(
                 id,
-                pack.version.clone(),
-                pack.sub_pack.clone(),
+                pack.version.as_bytes().to_vec(),
+                pack.sub_pack.as_bytes().to_vec(),
                 archive,
                 pack.content_key.expose().as_bytes().to_vec(),
             ))

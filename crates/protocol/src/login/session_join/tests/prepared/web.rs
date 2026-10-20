@@ -148,7 +148,7 @@ async fn injected_web_join_verifies_packs_and_preserves_play_order_and_trace() {
         let archives = packs.into_archives();
         assert_eq!(archives.len(), 1);
         assert_eq!(archives[0].archive, b"abc");
-        assert_eq!(archives[0].sub_pack_name, "high");
+        assert_eq!(archives[0].sub_pack_name, b"high");
         assert_eq!(archives[0].content_key.expose(), b"key");
         for (expected_time, expected_frame) in [(1, 0), (2, 1)] {
             let crate::session_transport::Inbound::Packet(raw) =

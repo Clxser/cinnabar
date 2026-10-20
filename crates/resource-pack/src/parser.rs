@@ -61,7 +61,7 @@ pub fn validate_archive_bytes(bytes: &[u8]) -> Result<(), AdmissionError> {
 pub fn verify_archive_identity(
     bytes: &[u8],
     pack_id: Uuid,
-    version: &str,
+    version: impl AsRef<[u8]>,
 ) -> Result<ArchiveKind, AdmissionError> {
     validate_archive_parts(
         pack_id,
@@ -167,8 +167,8 @@ fn admit_stack_entry<T>(
 /// Admits one archive with its own bounded read cache.
 pub(crate) fn validate_archive_parts(
     pack_id: Uuid,
-    version: &str,
-    sub_pack_name: &str,
+    version: impl AsRef<[u8]>,
+    sub_pack_name: impl AsRef<[u8]>,
     archive_bytes: Vec<u8>,
     key: Option<ContentKey>,
     memory: Option<u32>,
@@ -188,13 +188,15 @@ pub(crate) fn validate_archive_parts(
 /// Admits a pack whose plaintext storage shares the caller's byte budget.
 pub(crate) fn validate_archive_parts_cached(
     pack_id: Uuid,
-    version: &str,
-    sub_pack_name: &str,
+    version: impl AsRef<[u8]>,
+    sub_pack_name: impl AsRef<[u8]>,
     mut archive_bytes: Vec<u8>,
     key: Option<ContentKey>,
     options: AdmissionOptions,
     reads: Arc<ReadCache>,
 ) -> Result<(ValidatedPack, u64, ArchiveKind), AdmissionError> {
+    let version = version.as_ref();
+    let sub_pack_name = sub_pack_name.as_ref();
     let expected_entries = prepare_zip_bytes(&mut archive_bytes)?;
     let bytes = Arc::new(archive_bytes);
     let mut zip = ZipArchive::new(Cursor::new(ArchiveBytes(Arc::clone(&bytes))))
@@ -297,12 +299,12 @@ pub(crate) fn validate_archive_parts_cached(
         manifest
             .subpacks
             .iter()
-            .find(|pack| pack.folder == sub_pack_name)
+            .find(|pack| pack.folder.as_bytes() == sub_pack_name)
             .map_or("", |pack| pack.folder.as_str())
     };
     pack.files = logical_files(&pack.files, selected)?;
     if options.memory.is_some() {
-        pack.sub_pack_name = selected.into();
+        pack.sub_pack_name = selected.as_bytes().into();
     }
     pack.folded = pack
         .files

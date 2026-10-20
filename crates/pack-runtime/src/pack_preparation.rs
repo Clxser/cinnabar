@@ -348,7 +348,7 @@ mod tests {
             let archive = bedrock_packs::ResourcePackArchive::unencrypted(
                 "11111111-2222-3333-4444-555555555555".parse().unwrap(),
                 "1.2.3".into(),
-                String::new(),
+                Vec::new(),
                 vec![0; 32],
             );
             let preparation = PackPreparation {
@@ -387,7 +387,7 @@ mod tests {
         let archive = bedrock_packs::ResourcePackArchive::unencrypted(
             "11111111-2222-3333-4444-555555555555".parse().unwrap(),
             "1.2.3".into(),
-            String::new(),
+            Vec::new(),
             vec![0; 32],
         );
         let game_data = protocol::GameData::default();
@@ -443,7 +443,7 @@ mod tests {
             bedrock_packs::ResourcePackArchive::unencrypted(
                 server.parse().unwrap(),
                 "1.0.0".into(),
-                String::new(),
+                Vec::new(),
                 pack_zip(server),
             ),
         ])

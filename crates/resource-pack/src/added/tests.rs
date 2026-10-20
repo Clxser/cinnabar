@@ -28,13 +28,13 @@ fn server(id: u128) -> ValidatedPackStack {
         bedrock_packs::ResourcePackArchive::unencrypted(
             Uuid::from_u128(id),
             "1.0.0".into(),
-            String::new(),
+            Vec::new(),
             pack_zip(id),
         ),
         bedrock_packs::ResourcePackArchive::unencrypted(
             Uuid::from_u128(99),
             "1.0.0".into(),
-            String::new(),
+            Vec::new(),
             b"not a zip".to_vec(),
         ),
     ];

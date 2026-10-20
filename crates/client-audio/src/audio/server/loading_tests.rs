@@ -28,7 +28,7 @@ fn view(files: &[(&str, &[u8])]) -> LayeredPackView {
     let archive = bedrock_packs::ResourcePackArchive::unencrypted(
         id.parse().unwrap(),
         "1.0.0".into(),
-        String::new(),
+        Vec::new(),
         zip.finish().unwrap().into_inner(),
     );
     LayeredPackView::new(validate_handoff(
@@ -171,8 +171,12 @@ fn admitted_custom_sound_reaches_the_output_mixer() {
         .collect::<Vec<_>>()
         .join(".");
     drop(zip);
-    let archive =
-        bedrock_packs::ResourcePackArchive::unencrypted(id, version, String::new(), bytes);
+    let archive = bedrock_packs::ResourcePackArchive::unencrypted(
+        id,
+        version.into_bytes(),
+        Vec::new(),
+        bytes,
+    );
     let view = LayeredPackView::new(validate_handoff(
         bedrock_packs::ResourcePackHandoff::from_archives(vec![archive]),
     ));

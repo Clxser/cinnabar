@@ -273,15 +273,15 @@ async fn check_handed_off_packs(cached: bool) {
         [
             (
                 "00112233-4455-6677-8899-aabbccddeeff".to_owned(),
-                "1.0.0".to_owned(),
-                "high".to_owned(),
+                b"1.0.0".to_vec(),
+                b"high".to_vec(),
                 b"key-a".to_vec(),
                 b"abcde".to_vec()
             ),
             (
                 "11223344-5566-7788-99aa-bbccddeeff00".to_owned(),
-                "2.0.0".to_owned(),
-                String::new(),
+                b"2.0.0".to_vec(),
+                Vec::new(),
                 Vec::new(),
                 b"xyz".to_vec()
             ),

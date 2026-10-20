@@ -13,17 +13,29 @@ use crate::{AdmissionError, Subpack};
 pub(crate) struct Version(pub(crate) [u32; 3]);
 
 impl Version {
-    /// Parses a dotted triple; leading zeros are tolerated and a semver
-    /// pre-release or build suffix on the patch is ignored.
-    pub(crate) fn parse(text: &str) -> Option<Self> {
-        let mut parts = text.trim().splitn(3, '.');
-        let mut parsed = [0; 3];
+    /// Parses three numeric prefixes without normalizing the original wire bytes.
+    /// Leading whitespace and opaque component suffixes retain the text parser's leniency.
+    pub(crate) fn parse(text: impl AsRef<[u8]>) -> Option<Self> {
+        let text = text.as_ref();
+        let prefix = text.utf8_chunks().next()?.valid();
+        let text = &text[prefix.len() - prefix.trim_start().len()..];
+        let mut parts = text.splitn(3, |byte| *byte == b'.');
+        let mut parsed = [0u32; 3];
         for part in &mut parsed {
-            let text = parts.next()?;
-            let digits = text
-                .find(|c: char| !c.is_ascii_digit())
-                .map_or(text, |end| &text[..end]);
-            *part = digits.parse().ok()?;
+            let digits = parts
+                .next()?
+                .iter()
+                .take_while(|byte| byte.is_ascii_digit());
+            let mut count = 0;
+            for digit in digits {
+                *part = part
+                    .checked_mul(10)?
+                    .checked_add(u32::from(*digit - b'0'))?;
+                count += 1;
+            }
+            if count == 0 {
+                return None;
+            }
         }
         Some(Self(parsed))
     }
@@ -61,7 +73,7 @@ pub(crate) struct Manifest {
 pub(crate) fn read_manifest(
     bytes: &[u8],
     pack_id: Uuid,
-    version: &str,
+    version: impl AsRef<[u8]>,
     purpose: Purpose,
 ) -> Result<Manifest, AdmissionError> {
     let root: Value = parse_jsonc_lenient(bytes).map_err(|_| AdmissionError::MalformedManifest)?;

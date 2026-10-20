@@ -29,13 +29,14 @@ const OBJECT_SUFFIX: &str = ".mcpack";
 #[derive(Clone, Debug)]
 pub struct ArchiveCacheKey {
     id: Uuid,
-    version: String,
+    version: Vec<u8>,
     size: u64,
 }
 
 impl ArchiveCacheKey {
     /// Rejects identities that cannot represent a bounded original archive.
-    pub fn new(id: Uuid, version: &str, size: u64) -> io::Result<Self> {
+    pub fn new(id: Uuid, version: impl AsRef<[u8]>, size: u64) -> io::Result<Self> {
+        let version = version.as_ref();
         if id.is_nil()
             || version.is_empty()
             || version.len() > bedrock_packs::MAX_PACK_VERSION_BYTES
@@ -57,7 +58,7 @@ impl ArchiveCacheKey {
         hash.update(self.id.as_bytes());
         hash.update((self.version.len() as u64).to_be_bytes());
         hash.update(self.size.to_be_bytes());
-        hash.update(self.version.as_bytes());
+        hash.update(&self.version);
         format!("{:x}", hash.finalize())
     }
 }

@@ -21,7 +21,7 @@ fn fixture_stack(payload: &[u8]) -> Arc<resource_pack::ValidatedPackStack> {
             bedrock_packs::ResourcePackArchive::unencrypted(
                 id.parse().unwrap(),
                 "1.0.0".into(),
-                String::new(),
+                Vec::new(),
                 archive.finish().unwrap().into_inner(),
             ),
         ]));
@@ -97,8 +97,8 @@ fn join_stack(paths: &std::ffi::OsStr) -> Arc<resource_pack::ValidatedPackStack>
                 .join(".");
             bedrock_packs::ResourcePackArchive::unencrypted(
                 header["uuid"].as_str().unwrap().parse().unwrap(),
-                version,
-                String::new(),
+                version.into_bytes(),
+                Vec::new(),
                 bytes,
             )
         })

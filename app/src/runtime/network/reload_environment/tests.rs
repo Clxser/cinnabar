@@ -21,7 +21,7 @@ pub(super) fn stack(layers: &[&[(&str, &[u8])]]) -> LayeredPackView {
             writer.start_file(path, SimpleFileOptions::default()).unwrap();
             writer.write_all(bytes).unwrap();
         }
-        bedrock_packs::ResourcePackArchive::unencrypted(id, "1.0.0".into(), String::new(), writer.finish().unwrap().into_inner())
+        bedrock_packs::ResourcePackArchive::unencrypted(id, "1.0.0".into(), Vec::new(), writer.finish().unwrap().into_inner())
     }).collect();
     LayeredPackView::new(resource_pack::validate_handoff(
         bedrock_packs::ResourcePackHandoff::from_archives(archives),
@@ -378,8 +378,12 @@ fn supplied_skybox_pack_fixture_survives_archive_admission_and_reload() {
         .collect::<Vec<_>>()
         .join(".");
     drop(zip);
-    let archive =
-        bedrock_packs::ResourcePackArchive::unencrypted(id, version, String::new(), bytes);
+    let archive = bedrock_packs::ResourcePackArchive::unencrypted(
+        id,
+        version.into_bytes(),
+        Vec::new(),
+        bytes,
+    );
     let view = LayeredPackView::new(resource_pack::validate_handoff(
         bedrock_packs::ResourcePackHandoff::from_archives(vec![archive]),
     ));

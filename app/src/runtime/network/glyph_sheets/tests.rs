@@ -32,7 +32,7 @@ fn archive(id: u8, files: &[(&str, Vec<u8>)]) -> bedrock_packs::ResourcePackArch
     bedrock_packs::ResourcePackArchive::unencrypted(
         id.parse().unwrap(),
         "1.0.0".into(),
-        String::new(),
+        Vec::new(),
         writer.finish().unwrap().into_inner(),
     )
 }

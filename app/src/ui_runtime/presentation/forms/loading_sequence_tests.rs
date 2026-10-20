@@ -25,7 +25,7 @@ pub(super) fn lazy(mut pack: ServerUiPack) -> ServerUiPack {
     let archive = bedrock_packs::ResourcePackArchive::unencrypted(
         id,
         "1.0.0".into(),
-        String::new(),
+        Vec::new(),
         zip.finish().unwrap().into_inner(),
     );
     let stack =

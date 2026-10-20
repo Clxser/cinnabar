@@ -79,7 +79,7 @@ fn absent_or_rejected_application_preserves_optional_admission() {
     let pack = bedrock_packs::ResourcePackArchive::unencrypted(
         "11111111-2222-3333-4444-555555555555".parse().unwrap(),
         "1.2.3".into(),
-        String::new(),
+        Vec::new(),
         vec![0; 32],
     );
     let application = super::prepare_pack_application(
@@ -110,7 +110,7 @@ fn a_rejected_required_pack_refuses_the_join() {
         let broken = bedrock_packs::ResourcePackArchive::unencrypted(
             "11111111-2222-3333-4444-555555555555".parse().unwrap(),
             "1.2.3".into(),
-            String::new(),
+            Vec::new(),
             vec![0; 32],
         );
         let handoff =
@@ -158,7 +158,7 @@ fn archive(id: u128, files: &[(&str, &[u8])]) -> bedrock_packs::ResourcePackArch
     bedrock_packs::ResourcePackArchive::unencrypted(
         id.parse().unwrap(),
         "1.0.0".into(),
-        String::new(),
+        Vec::new(),
         archive,
     )
 }
@@ -181,7 +181,7 @@ fn files_pack(files: &[(&str, &[u8])]) -> resource_pack::LayeredPackView {
     let archive = bedrock_packs::ResourcePackArchive::unencrypted(
         id.parse().unwrap(),
         "1.0.0".into(),
-        String::new(),
+        Vec::new(),
         writer.finish().unwrap().into_inner(),
     );
     resource_pack::LayeredPackView::new(resource_pack::validate_handoff(

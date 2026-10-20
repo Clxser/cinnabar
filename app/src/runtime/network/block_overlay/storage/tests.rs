@@ -25,7 +25,7 @@ fn view(files: &[(&str, &[u8])]) -> LayeredPackView {
             bedrock_packs::ResourcePackArchive::unencrypted(
                 id.parse().unwrap(),
                 "1.0.0".into(),
-                String::new(),
+                Vec::new(),
                 writer.finish().unwrap().into_inner(),
             ),
         ]),

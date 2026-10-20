@@ -36,7 +36,7 @@ pub(super) fn view() -> LayeredPackView {
     let archive = bedrock_packs::ResourcePackArchive::unencrypted(
         id.parse().unwrap(),
         "1.0.0".into(),
-        String::new(),
+        Vec::new(),
         writer.finish().unwrap().into_inner(),
     );
     LayeredPackView::new(resource_pack::validate_handoff(
@@ -171,7 +171,7 @@ fn stack(packs: &[&[(&str, Vec<u8>)]]) -> LayeredPackView {
             bedrock_packs::ResourcePackArchive::unencrypted(
                 id.parse().unwrap(),
                 "1.0.0".into(),
-                String::new(),
+                Vec::new(),
                 writer.finish().unwrap().into_inner(),
             )
         })

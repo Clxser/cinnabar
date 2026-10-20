@@ -28,7 +28,7 @@ pub fn layered_pack_view(layers: &[&[(String, Vec<u8>)]]) -> crate::LayeredPackV
             bedrock_packs::ResourcePackArchive::unencrypted(
                 id.parse().unwrap(),
                 "1.0.0".into(),
-                String::new(),
+                Vec::new(),
                 archive_bytes(id.parse().unwrap(), files),
             )
         })

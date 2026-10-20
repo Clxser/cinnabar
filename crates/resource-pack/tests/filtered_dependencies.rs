@@ -22,7 +22,7 @@ fn view(paths: &[&str]) -> LayeredPackView {
     let archive = bedrock_packs::ResourcePackArchive::unencrypted(
         id.parse().unwrap(),
         "1.0.0".into(),
-        String::new(),
+        Vec::new(),
         zip.finish().unwrap().into_inner(),
     );
     LayeredPackView::tracked(validate_handoff(

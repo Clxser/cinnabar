@@ -230,7 +230,7 @@ async fn parallel_urls() {
         assert_eq!(received.len(), archives.len());
         for (index, pack) in received.iter().enumerate() {
             assert_eq!(pack.pack_id, ids[index]);
-            assert_eq!(pack.version, VERSION);
+            assert_eq!(pack.version, VERSION.as_bytes());
             assert_eq!(pack.archive, archives[index]);
         }
         play.finish_loading().await.unwrap();

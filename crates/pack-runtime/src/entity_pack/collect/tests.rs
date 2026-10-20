@@ -249,7 +249,7 @@ fn archive(id: u128, material: serde_json::Value) -> bedrock_packs::ResourcePack
     bedrock_packs::ResourcePackArchive::unencrypted(
         id.parse().unwrap(),
         "1.0.0".into(),
-        String::new(),
+        Vec::new(),
         zip.finish().unwrap().into_inner(),
     )
 }

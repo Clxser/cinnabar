@@ -253,7 +253,7 @@ pub(super) fn session_pack(
             bedrock_packs::ResourcePackArchive::unencrypted(
                 id,
                 "1.0.0".into(),
-                String::new(),
+                Vec::new(),
                 archive.finish().unwrap().into_inner(),
             ),
         ]));

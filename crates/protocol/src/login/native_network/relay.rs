@@ -173,8 +173,18 @@ impl NativeRelayConnecting {
             metadata.push(HandoffPack {
                 sha256: Some(Sha256::digest(&pack.archive).into()),
                 uuid: pack.pack_id.to_string(),
-                version: pack.version,
-                sub_pack: pack.sub_pack_name,
+                version: String::from_utf8(pack.version).map_err(|_| {
+                    failure(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "browser pack version is not UTF-8",
+                    ))
+                })?,
+                sub_pack: String::from_utf8(pack.sub_pack_name).map_err(|_| {
+                    failure(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "browser subpack name is not UTF-8",
+                    ))
+                })?,
                 content_key: PackContentKey::new(
                     String::from_utf8(pack.content_key.expose().to_vec()).map_err(|_| {
                         failure(io::Error::new(

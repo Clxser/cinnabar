@@ -68,7 +68,7 @@ mod tests {
                 writer.write_all(bytes).unwrap();
             }
             bedrock_packs::ResourcePackArchive::unencrypted(
-                id.parse().unwrap(), "1.0.0".into(), String::new(), writer.finish().unwrap().into_inner(),
+                id.parse().unwrap(), "1.0.0".into(), Vec::new(), writer.finish().unwrap().into_inner(),
             )
         }).collect();
         LayeredPackView::new(resource_pack::validate_handoff(

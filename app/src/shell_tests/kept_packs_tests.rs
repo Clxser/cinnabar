@@ -54,7 +54,7 @@ fn kept_stacks() -> &'static CompiledStacks {
             bedrock_packs::ResourcePackArchive::unencrypted(
                 "00000000-0000-0000-0000-00000000ca7e".parse().unwrap(),
                 "1.0.0".into(),
-                String::new(),
+                Vec::new(),
                 vec![0; 32],
             ),
         ]));
