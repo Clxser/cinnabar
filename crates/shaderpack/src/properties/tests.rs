@@ -420,3 +420,17 @@ fn hash_comments_do_not_open_directive_block_comments() {
     assert_eq!(properties.get("after"), Some("ok"));
     assert!(properties.diagnostics.is_empty());
 }
+
+#[test]
+fn macro_expansion_preserves_condition_token_boundaries() {
+    let properties = parse("#define NEG -1\n#if -NEG > 0\nselected=yes\n#endif\n");
+    assert_eq!(properties.get("selected"), Some("yes"));
+    assert!(properties.diagnostics.is_empty());
+}
+
+#[test]
+fn content_block_comments_hide_conditional_directives() {
+    let properties = parse("/*\n#if 0\n*/\nprogram.final.enabled=false\n");
+    assert_eq!(properties.get("program.final.enabled"), Some("false"));
+    assert!(properties.diagnostics.is_empty());
+}
