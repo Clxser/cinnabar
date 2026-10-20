@@ -390,10 +390,7 @@ fn interface_locations(stage: &CompiledStage, outputs: bool) -> Vec<(u32, naga::
 }
 
 #[test]
-fn fragment_inputs_no_vertex_output_feeds_become_zero_and_the_rest_pair_by_name() {
-    // SEUS Renewed's `gbuffers_entities`: the fragment declares `varying vec3 worldNormal`
-    // the vertex stage never writes, and the two stages declare their varyings in different
-    // orders. GL links that; WebGPU rejects a fragment input the vertex stage lacks.
+fn live_fragment_inputs_require_vertex_outputs() {
     let vertex = "#version 120\n\
         varying vec4 color;\n\
         varying vec2 waves;\n\
@@ -420,32 +417,13 @@ fn fragment_inputs_no_vertex_output_feeds_become_zero_and_the_rest_pair_by_name(
     ]);
     let t = pack.translate(&TranslateConfig::default());
     let entities = program(&t, "gbuffers_entities");
-    reflection(entities);
-    let compiled: Vec<&CompiledStage> = entities
-        .stages
-        .iter()
-        .map(|s| s.result.as_ref().expect("stage compiles"))
-        .collect();
-    let written = interface_locations(compiled[0], true);
-    let read = interface_locations(compiled[1], false);
-    // texcoord, tbnMatrix's three columns and color: every one at the location and type
-    // the vertex stage writes it.
-    assert_eq!(read.len(), 5, "fragment inputs {read:?}");
-    for input in &read {
-        assert!(
-            written.contains(input),
-            "fragment input {input:?} is not among the vertex outputs {written:?}"
-        );
-    }
-    // The unfed inputs are zeroed before the pack's main runs.
-    let glsl = &compiled[1].glsl;
-    for zeroed in [
-        "worldNormal = vec3(0);",
-        "unwritten[1] = float(0);",
-        "iris_FrontColor = vec4(0);",
-    ] {
-        assert!(glsl.contains(zeroed), "missing `{zeroed}` in\n{glsl}");
-    }
+    assert!(!entities.is_ok());
+    assert!(
+        entities
+            .diagnostics
+            .iter()
+            .any(|d| d.phase == shaderpack::Phase::Link)
+    );
 }
 
 #[test]

@@ -2,7 +2,7 @@
 //! integer-backed bool uniforms.
 
 use super::TransformError;
-use super::items::{arr_len, mat_cols, matching, sampler_info};
+use super::items::{arr_len, mat_cols, matching, parse_decl, sampler_info};
 use crate::reflection::{SHADOW_SAMPLER_NAME, SamplerClass};
 use crate::token::{Tok, TokKind, id, int, p};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -75,6 +75,7 @@ pub(super) fn rewrite_params(header: &[Tok], samplers: &mut SamplerKinds) -> Vec
 /// their block from the end of their declarator on, as GLSL scopes them: SEUS's
 /// `vec4 tex = texture2D(tex, …)` still samples the global in the initializer.
 pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut SamplerUse) -> Vec<Tok> {
+    let declarators = local_declarators(toks);
     let mut out = vec![];
     let mut calls: Vec<Option<String>> = vec![];
     // Names declared by each open block.
@@ -111,7 +112,7 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
             out.push(t.clone());
             continue;
         }
-        if (cx.samplers.contains_key(n) || cx.bools.contains_key(n)) && declares_local(toks, i) {
+        if (cx.samplers.contains_key(n) || cx.bools.contains_key(n)) && declarators.contains(&i) {
             pending = Some((n, calls.len()));
             out.push(t.clone());
             continue;
@@ -173,14 +174,45 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
     out
 }
 
-/// Whether the identifier at `i` is the name in a local declaration (`float specular = …`,
-/// `vec3 specular;`, `int n[2]`): a type name before it and a declarator end after it.
-fn declares_local(toks: &[Tok], i: usize) -> bool {
-    let ty = i.checked_sub(1).and_then(|j| toks[j].ident());
-    let ends = toks
-        .get(i + 1)
-        .is_some_and(|x| x.is("=") || x.is(";") || x.is(",") || x.is("["));
-    ends && ty.is_some_and(|ty| !matches!(ty, "return" | "else" | "do" | "case"))
+/// Finds every local declarator with the shared declaration parser, excluding initializer uses.
+fn local_declarators(toks: &[Tok]) -> HashSet<usize> {
+    let mut declarations = HashSet::new();
+    for start in 0..toks.len() {
+        if start > 0
+            && !toks[start - 1].is("{")
+            && !toks[start - 1].is(";")
+            && !toks[start - 1].is("}")
+            && !(toks[start - 1].is("(") && start > 1 && toks[start - 2].is("for"))
+        {
+            continue;
+        }
+        let mut depth = 0;
+        let end = (start..toks.len()).find(|&index| {
+            let token = &toks[index];
+            if token.is("(") || token.is("[") {
+                depth += 1;
+            } else if token.is(")") || token.is("]") {
+                depth -= 1;
+            }
+            (token.is(";") || token.is("{") || token.is("}")) && depth == 0
+        });
+        let Some(end) = end.filter(|&end| toks[end].is(";")) else {
+            continue;
+        };
+        let Some(declaration) = parse_decl(&toks[start..=end]) else {
+            continue;
+        };
+        if matches!(declaration.ty.as_str(), "return" | "else" | "do" | "case") {
+            continue;
+        }
+        let mut cursor = end;
+        for (_, array, initializer) in declaration.decls.iter().rev() {
+            cursor -= initializer.len() + usize::from(!initializer.is_empty()) + array.len() + 1;
+            declarations.insert(cursor);
+            cursor = cursor.saturating_sub(1);
+        }
+    }
+    declarations
 }
 
 /// Struct name → members as (type, name, array tokens).
