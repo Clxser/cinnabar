@@ -136,7 +136,7 @@ async fn signed_hosted_packless_upstream_preserves_startup_initialized_and_live_
             visitor.as_ref().map(|_| ()).map_err(ToString::to_string));
         assert!(matches!(local, Some(Ok(()))), "original upstream did not observe initialization, marker and EOF: {local:?}");
         let (played, closed) = server.unwrap();
-        assert_eq!(played, Err(io::ErrorKind::Other));
+        assert_eq!(played, Err(io::ErrorKind::UnexpectedEof));
         assert_eq!(closed, played, "original hosted close replaced its play terminal");
         let (empty, runtime_id, prefix, marker) = visitor.unwrap();
         assert!(empty, "packless upstream invented archives");
