@@ -177,14 +177,9 @@ impl SemanticInputRuntime {
     }
 
     fn stamp_activity(&mut self, frame: &mut DeviceFrame) {
-        let desktop_event = frame
-            .desktop_events
-            .as_ref()
-            .is_some_and(|events| !events.events().is_empty());
         if let Some(current) = frame.keyboard_mouse.as_mut() {
             let previous = self.previous.keyboard_mouse.as_ref();
-            current.activity_sequence = if !desktop_event
-                && current.mouse_motion.iter().all(|delta| *delta == 0.0)
+            current.activity_sequence = if current.mouse_motion.iter().all(|delta| *delta == 0.0)
                 && previous.is_some_and(|previous| keyboard_physical_eq(previous, current))
             {
                 previous.map_or(0, |previous| previous.activity_sequence)

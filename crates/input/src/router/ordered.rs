@@ -17,7 +17,7 @@ impl SemanticInputRouter {
         }
         let mut output = OrderedActions::default();
         output.set_neutral(
-            frame.routed_keyboard_mouse().is_some_and(|keyboard| {
+            frame.keyboard_mouse.as_ref().is_some_and(|keyboard| {
                 keyboard.keys.is_empty() && keyboard.mouse_buttons.is_empty()
             }),
         );
@@ -32,7 +32,6 @@ impl SemanticInputRouter {
         {
             return Some(output);
         }
-        frame.routed_keyboard_mouse()?;
         let mut state = frame.clone();
         state.desktop_events = None;
         state.controllers.clear();

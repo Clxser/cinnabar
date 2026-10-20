@@ -141,11 +141,10 @@ struct BoundedSamples<T> {
     ignored: usize,
 }
 
-/// Retains the lowest-key samples and counts those outside the allowance.
-fn select_lowest_by_key<T, K: Ord>(
+fn select_lowest_by_key<T>(
     samples: impl IntoIterator<Item = T>,
     limit: usize,
-    key: impl Fn(&T) -> K,
+    key: impl Fn(&T) -> u64,
 ) -> BoundedSamples<T> {
     let mut selected = Vec::with_capacity(limit);
     let mut observed = 0_usize;
@@ -205,7 +204,7 @@ fn translate_device_frame(inputs: SemanticPhysicalInputs) -> TranslatedDeviceFra
         };
     }
 
-    let keyboard_mouse = Some({
+    let keyboard_mouse = gates.keyboard_mouse.then(|| {
         let mut keyboard_keys = keys
             .get_pressed()
             .filter_map(|key| keyboard_usage(*key))
@@ -220,7 +219,6 @@ fn translate_device_frame(inputs: SemanticPhysicalInputs) -> TranslatedDeviceFra
         buttons.dedup();
         let sampled_key = |key| keys.pressed(key) || keys.just_pressed(key);
         KeyboardMouseFrame {
-            activity_only: !gates.keyboard_mouse,
             activity_sequence: 0,
             keys: keyboard_keys,
             mouse_buttons: buttons,
@@ -303,12 +301,13 @@ fn translate_device_frame(inputs: SemanticPhysicalInputs) -> TranslatedDeviceFra
                 .unwrap_or([touch.delta().x / width, touch.delta().y / height]),
             hit_id: touch_targets.target(touch.id()),
         };
-        contacts.push(contact);
+        if contact.hit_id.is_some() {
+            contacts.push(contact);
+        }
     }
     contacts.extend(touch_targets.take_pulses());
-    let bounded_contacts = select_lowest_by_key(contacts, MAX_TOUCH_CONTACTS, |contact| {
-        (contact.hit_id.is_none(), contact.contact_id)
-    });
+    let bounded_contacts =
+        select_lowest_by_key(contacts, MAX_TOUCH_CONTACTS, |contact| contact.contact_id);
     TranslatedDeviceFrame {
         frame: DeviceFrame {
             keyboard_mouse,

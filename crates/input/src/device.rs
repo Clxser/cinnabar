@@ -17,8 +17,6 @@ pub struct ButtonEdges<T> {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct KeyboardMouseFrame {
-    /// Observes device activity while excluding this sample from routed actions.
-    pub activity_only: bool,
     /// Last change stamp from one translator-wide monotonically increasing counter.
     pub activity_sequence: u64,
     pub keys: Vec<u16>,
@@ -224,13 +222,6 @@ pub enum FrameError {
 }
 
 impl DeviceFrame {
-    /// Returns desktop controls admitted to action routing by the platform.
-    pub(crate) fn routed_keyboard_mouse(&self) -> Option<&KeyboardMouseFrame> {
-        self.keyboard_mouse
-            .as_ref()
-            .filter(|sample| !sample.activity_only)
-    }
-
     pub(crate) fn validate(&self, touch_layout: &TouchControlLayout) -> Result<(), FrameError> {
         if let Some(events) = &self.desktop_events {
             for event in events.events() {

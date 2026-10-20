@@ -11,11 +11,11 @@ use bevy::{
         mouse::{AccumulatedMouseMotion, MouseButtonInput, MouseScrollUnit, MouseWheel},
     },
     prelude::{
-        ButtonInput, KeyCode, Local, MessageReader, MouseButton, Query, Res, ResMut, Single, Time,
-        Window, With,
+        ButtonInput, Entity, KeyCode, Local, MessageReader, MouseButton, Query, Res, ResMut,
+        Single, Time, Window, With,
     },
     time::Real,
-    window::{CursorOptions, PrimaryWindow},
+    window::{CursorMoved, CursorOptions, PrimaryWindow, WindowEvent},
 };
 use client_shell::{
     menu::MenuRuntime,
@@ -76,7 +76,7 @@ fn gamepad_keys<'a>(
 pub(crate) fn drive_server_form_input(
     (player_runtime, window, mut focus, driven): (
         bevy::prelude::Res<client_state::PlayerRuntime>,
-        Single<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
+        Single<(Entity, &Window, &mut CursorOptions), With<PrimaryWindow>>,
         Option<ResMut<client_state::CursorFocus>>,
         Option<Res<client_state::DrivenInput>>,
     ),
@@ -85,18 +85,33 @@ pub(crate) fn drive_server_form_input(
     mut motion: ResMut<AccumulatedMouseMotion>,
     mut wheel: MessageReader<MouseWheel>,
     mut keyboard: MessageReader<KeyboardInput>,
-    button_messages: Option<Res<Messages<MouseButtonInput>>>,
-    mut button_cursor: Local<MessageCursor<MouseButtonInput>>,
+    (button_messages, window_events): (
+        Option<Res<Messages<MouseButtonInput>>>,
+        Option<Res<Messages<WindowEvent>>>,
+    ),
+    mut pointer_cursors: Local<(MessageCursor<MouseButtonInput>, MessageCursor<WindowEvent>)>,
     mut held: Local<bool>,
     menu: Option<Res<MenuRuntime>>,
-    presentation: Res<UiPresentationResource>,
+    mut presentation: ResMut<UiPresentationResource>,
     mut runtime: ResMut<UiRuntimeResource>,
     mut owned_last_frame: Local<bool>,
     time: Option<Res<Time<Real>>>,
     pads: Query<&Gamepad>,
     mut stick: Local<[bool; 4]>,
 ) {
-    let (window, mut cursor) = window.into_inner();
+    let (window_id, window, mut cursor) = window.into_inner();
+    let (button_cursor, window_cursor) = &mut *pointer_cursors;
+    let mut mouse_activity = false;
+    if let Some(events) = window_events.as_deref() {
+        // Touch emulation updates Window and MouseButtonInput, not this physical event stream.
+        for event in window_cursor.read(events) {
+            mouse_activity |= matches!(event,
+                WindowEvent::CursorMoved(CursorMoved { window, .. })
+                | WindowEvent::MouseButtonInput(MouseButtonInput { window, .. })
+                | WindowEvent::MouseWheel(MouseWheel { window, .. }) if *window == window_id
+            );
+        }
+    }
     let input_available = driven.is_some()
         || (window.focused && focus.as_ref().is_none_or(|focus| focus.available()));
     let had_active_form = runtime.server_forms().active().is_some();
@@ -180,6 +195,9 @@ pub(crate) fn drive_server_form_input(
             &mut motion,
         );
         return;
+    }
+    if had_active_form && mouse_activity {
+        presentation.note_form_mouse_input();
     }
     let engine_frame = runtime
         .server_forms()

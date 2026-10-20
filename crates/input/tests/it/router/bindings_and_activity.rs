@@ -191,11 +191,13 @@ fn modified_keyboard_and_mouse_bindings_do_not_fire_unmodified() {
     router
         .route(DeviceFrame {
             keyboard_mouse: Some(KeyboardMouseFrame {
+                key_edges: Default::default(),
+                mouse_edges: Default::default(),
                 activity_sequence: 1,
                 keys: vec![0x2c],
                 mouse_buttons: vec![1],
                 mouse_motion: [4.0, 0.0],
-                ..Default::default()
+                modifiers: ModifierChord::default(),
             }),
             ..DeviceFrame::default()
         })

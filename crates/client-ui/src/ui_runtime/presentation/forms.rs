@@ -111,6 +111,8 @@ use ui::{UiNode, UiPoint, UiRect};
 pub(super) struct ScreenStates {
     /// App-wide input mode supplied before presentation refreshes form bindings.
     form_input_mode: json_ui::InputMode,
+    /// Real mouse input overrides form bindings until the app-wide mode changes.
+    form_mouse_override: bool,
     /// The engine menu's regions by action, for next frame's hover state.
     menu_keys: Vec<(launcher::menu::MenuAction, String)>,
     /// The engine menu's press sounds by action.
@@ -561,9 +563,17 @@ impl UiPresentationRuntime {
         Some(self.engine.as_ref()?.animator())
     }
 
-    /// Uses the app-wide device for form bindings without changing event dispatch.
+    /// Observes the app-wide device, clearing the form override when that mode changes.
     pub fn set_form_input_mode(&mut self, mode: json_ui::InputMode) {
+        if self.screens.form_input_mode != mode {
+            self.screens.form_mouse_override = false;
+        }
         self.screens.form_input_mode = mode;
+    }
+
+    /// Uses mouse bindings until the app-wide input mode next changes.
+    pub fn note_form_mouse_input(&mut self) {
+        self.screens.form_mouse_override = true;
     }
 
     /// The engine frame for `identity`, when the engine drew that form.
@@ -745,7 +755,11 @@ impl UiPresentationRuntime {
                         match renderer.render(
                             &form,
                             &state.view,
-                            self.screens.form_input_mode,
+                            if self.screens.form_mouse_override {
+                                json_ui::InputMode::Mouse
+                            } else {
+                                self.screens.form_input_mode
+                            },
                             &mut frame,
                         ) {
                             Ok(Some(frame)) => {
