@@ -113,7 +113,7 @@ impl PackIo for AcquisitionIo<'_> {
                 );
                 async move {
                     let result = acquisition::preload(offer, cache, client, cancelled).await;
-                    (index, offer, result)
+                    (index, result)
                 }
             },
         ))
@@ -121,10 +121,11 @@ impl PackIo for AcquisitionIo<'_> {
         .collect::<Vec<_>>()
         .await;
         let mut preloads = preloads;
-        preloads.sort_unstable_by_key(|(index, _, _)| *index);
+        preloads.sort_unstable_by_key(|(index, _)| *index);
         preloads
             .into_iter()
-            .map(|(_, offer, preload)| {
+            .map(|(index, preload)| {
+                let offer = &offers[index];
                 if self.cache.is_some() && !preload.cache_hit {
                     self.stores.register(offer);
                 }
