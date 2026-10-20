@@ -399,6 +399,10 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   displayed-frame pacing and complete rendering acceptance.
 - Enhanced rendering remains restricted until its GPU faults and freezes are resolved.
   Diagnostics or bounded fixtures do not establish safe general gameplay use. Java
+  shader-pack source loading and configuration metadata are implemented in
+  `shaderpack`, including options, dimensions, parsed properties, program discovery
+  and enable rules. Translation, render-host integration and in-game acceptance
+  remain incomplete.
   shader-pack source loading is implemented in `shaderpack`; configuration parsing,
   translation, render-host integration and in-game acceptance remain incomplete.
 - `registryc --kind java-mapping` generates `crates/assets/data/java-mapping-v2193.bin` from

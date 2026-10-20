@@ -7048,6 +7048,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
+name = "pp-rs"
+version = "0.2.1"
+source = "git+https://github.com/cinnabar-mc/glslpp-rs?rev=e67c2d3796526e539cf9b1678a83fbdfcfae87c1#e67c2d3796526e539cf9b1678a83fbdfcfae87c1"
+dependencies = [
+ "unicode-xid",
+]
+
+[[package]]
 name = "ppv-lite86"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8283,6 +8291,7 @@ dependencies = [
 name = "shaderpack"
 version = "0.1.22"
 dependencies = [
+ "pp-rs",
  "zip",
  "zip-footer",
 ]
