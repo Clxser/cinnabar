@@ -1,8 +1,6 @@
 //! Per-frame evaluation of compiled [`Node`] trees, including Iris's `smooth()`
 //! filter and the deterministic generator behind `random()`.
 
-use std::f32::consts::PI;
-
 use crate::BinaryOp;
 
 use super::compile::{Access, Fold, Func1, Func2, Func3, Node, SmoothNode};
@@ -304,22 +302,23 @@ fn numbers<const N: usize>(args: &[Node; N], frame: &mut Frame<'_>) -> Result<[f
 
 /// Applies a one-argument function to one component.
 fn apply1(func: Func1, x: f32) -> f32 {
+    let wide = f64::from(x);
     match func {
-        Func1::Sin => x.sin(),
-        Func1::Cos => x.cos(),
-        Func1::Tan => x.tan(),
-        Func1::Asin => x.asin(),
-        Func1::Acos => x.acos(),
-        Func1::Atan => x.atan(),
-        Func1::Radians => x * (PI / 180.0),
-        Func1::Degrees => x * (180.0 / PI),
-        Func1::Exp => x.exp(),
-        Func1::Exp2 => x.exp2(),
-        Func1::Exp10 => 10.0_f32.powf(x),
-        Func1::Ln => x.ln(),
-        Func1::Log2 => x.log2(),
-        Func1::Log10 => x.log10(),
-        Func1::Sqrt => x.sqrt(),
+        Func1::Sin => wide.sin() as f32,
+        Func1::Cos => wide.cos() as f32,
+        Func1::Tan => wide.tan() as f32,
+        Func1::Asin => wide.asin() as f32,
+        Func1::Acos => wide.acos() as f32,
+        Func1::Atan => wide.atan() as f32,
+        Func1::Radians => wide.to_radians() as f32,
+        Func1::Degrees => wide.to_degrees() as f32,
+        Func1::Exp => wide.exp() as f32,
+        Func1::Exp2 => 2.0_f64.powf(wide) as f32,
+        Func1::Exp10 => 10.0_f64.powf(wide) as f32,
+        Func1::Ln => wide.ln() as f32,
+        Func1::Log2 => (wide.ln() / 2.0_f64.ln()) as f32,
+        Func1::Log10 => wide.log10() as f32,
+        Func1::Sqrt => wide.sqrt() as f32,
         Func1::Abs => x.abs(),
         // Java `Math.signum`: keeps ±0 and NaN.
         Func1::Sign => {
@@ -333,7 +332,7 @@ fn apply1(func: Func1, x: f32) -> f32 {
         }
         Func1::Floor => x.floor(),
         Func1::Ceil => x.ceil(),
-        Func1::Frac => x - x.floor(),
+        Func1::Frac => (wide - wide.floor()) as f32,
         // Java `Math.round`: halves round up, NaN is 0, saturates to the int range.
         Func1::Round => {
             if x.is_nan() {
@@ -350,8 +349,8 @@ fn apply1(func: Func1, x: f32) -> f32 {
 /// Applies a two-argument function to one pair of components.
 fn apply2(func: Func2, a: f32, b: f32) -> f32 {
     match func {
-        Func2::Pow => a.powf(b),
-        Func2::Atan2 => a.atan2(b),
+        Func2::Pow => f64::from(a).powf(f64::from(b)) as f32,
+        Func2::Atan2 => f64::from(a).atan2(f64::from(b)) as f32,
         Func2::Fmod => a - b * (a / b).floor(),
         Func2::Edge => {
             if b < a {
@@ -360,7 +359,7 @@ fn apply2(func: Func2, a: f32, b: f32) -> f32 {
                 1.0
             }
         }
-        Func2::LogBase => b.ln() / a.ln(),
+        Func2::LogBase => (f64::from(b).ln() / f64::from(a).ln()) as f32,
     }
 }
 

@@ -665,3 +665,12 @@ fn numeric_functions_keep_integer_precision_and_propagate_nan() {
     assert_eq!(get(results, "absolute"), UniformValue::Int(16777217));
     assert!(float(results, "nan").is_nan());
 }
+
+#[test]
+fn math_functions_round_their_library_result_to_float() {
+    let mut uniforms = compile_ok(&["uniform.float.angle = degrees(1.0)"]);
+    assert_eq!(
+        float(uniforms.evaluate(&no_builtins, 0.0), "angle"),
+        57.29578
+    );
+}
