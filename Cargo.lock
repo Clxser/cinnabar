@@ -903,26 +903,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bedrock-replay"
-version = "0.1.22"
-dependencies = [
- "anyhow",
- "bedrock-packs",
- "bridge",
- "bytes",
- "futures",
- "protocol",
- "resource-pack",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "tokio",
- "uuid",
- "zip",
-]
-
-[[package]]
 name = "bedrock-services"
 version = "0.1.0"
 source = "git+https://github.com/cinnabar-mc/bedrock-services?rev=a8126ea814db5ce9929ec3897f54a70f359288b5#a8126ea814db5ce9929ec3897f54a70f359288b5"
@@ -2157,10 +2137,8 @@ dependencies = [
 name = "bridge"
 version = "0.1.22"
 dependencies = [
- "anyhow",
  "bytes",
  "futures",
- "rustix 1.1.4",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -8221,6 +8199,7 @@ dependencies = [
  "test-time",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
  "url",
  "uuid",
