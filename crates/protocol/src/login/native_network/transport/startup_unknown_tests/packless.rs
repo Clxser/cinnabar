@@ -155,8 +155,11 @@ async fn exercise_packless(early_spawn: bool) -> (Result<Received, ProtocolError
         let (server, client) = tokio::join!(server, client);
         listener.close().await.unwrap();
         drop(listener);
-        let rebound = tokio::net::UdpSocket::bind(fixture.address).await.unwrap();
-        drop(rebound);
+        tokio::task::spawn_blocking(move || {
+            test_time::eventually("original packless discovery socket retired", || {
+                std::net::UdpSocket::bind(fixture.address).is_ok()
+            });
+        }).await.unwrap();
         (client, server)
     }).await.expect("finite original packless native fixture stalled")
 }
