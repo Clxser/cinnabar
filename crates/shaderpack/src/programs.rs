@@ -139,17 +139,17 @@ const PASS_FAMILIES: &[(&str, ProgramGroup)] = &[
 
 /// The pass of a program name, or `None` for names Iris does not load.
 pub fn program_group(name: &str) -> Option<ProgramGroup> {
-    program_name(name).map(|(group, _)| group)
+    program_name(name).map(|(group, _, _)| group)
 }
 
-/// Resolves a known name and whether its family and suffix permit render stages.
-fn program_name(name: &str) -> Option<(ProgramGroup, bool)> {
+/// Resolves a known name and its separate render and compute eligibility.
+fn program_name(name: &str) -> Option<(ProgramGroup, bool, bool)> {
     // `shadow_a`…`shadow_z` are compute variants of the shadow pass.
     if name
         .strip_prefix("shadow_")
         .is_some_and(|s| s.len() == 1 && s.as_bytes()[0].is_ascii_lowercase())
     {
-        return Some((ProgramGroup::Shadow, false));
+        return Some((ProgramGroup::Shadow, false, true));
     }
     if GEOMETRY_FALLBACKS.iter().any(|(n, _)| *n == name) {
         return Some((
@@ -161,6 +161,7 @@ fn program_name(name: &str) -> Option<(ProgramGroup, bool)> {
                 ProgramGroup::Gbuffers
             },
             true,
+            name == "shadow",
         ));
     }
     for (family, group) in PASS_FAMILIES {
@@ -178,7 +179,11 @@ fn program_name(name: &str) -> Option<(ProgramGroup, bool)> {
                 && !index.starts_with('0'));
         let suffix_ok = suffix.is_none_or(|s| s.len() == 1 && s.as_bytes()[0].is_ascii_lowercase());
         if index_ok && suffix_ok {
-            return Some((*group, *group != ProgramGroup::Setup && suffix.is_none()));
+            return Some((
+                *group,
+                *group != ProgramGroup::Setup && suffix.is_none(),
+                true,
+            ));
         }
     }
     None
@@ -196,9 +201,14 @@ pub fn geometry_fallback(name: &str) -> Option<&'static str> {
 pub(crate) fn program_file(path: &str) -> Option<(&str, &str, StageKind)> {
     let (directory, file) = path.rsplit_once('/').unwrap_or(("", path));
     let (stem, extension) = file.rsplit_once('.')?;
-    let (_, render) = program_name(stem)?;
+    let (_, render, compute) = program_name(stem)?;
     let stage = StageKind::from_extension(extension)?;
-    (stage == StageKind::Compute || render).then_some((directory, stem, stage))
+    (if stage == StageKind::Compute {
+        compute
+    } else {
+        render
+    })
+    .then_some((directory, stem, stage))
 }
 
 /// A program's stage files as (stage, `shaders/`-relative path).
@@ -274,8 +284,16 @@ mod tests {
             StageKind::ALL.map(|stage| (format!("{name}.{}", stage.extension()), ""))
         }));
         let programs = enumerate_programs(&source, "");
-        assert_eq!(programs.len(), GEOMETRY_FALLBACKS.len() * 2);
+        assert_eq!(programs.len(), GEOMETRY_FALLBACKS.len() + 1);
         for &(name, fallback) in GEOMETRY_FALLBACKS {
+            assert_eq!(
+                programs
+                    .iter()
+                    .filter(|program| program.name == name && program.kind == ProgramKind::Compute)
+                    .count(),
+                usize::from(name == "shadow"),
+                "{name}"
+            );
             assert_eq!(geometry_fallback(name), fallback);
             let mut visited = std::collections::BTreeSet::new();
             let mut current = Some(name);
@@ -399,6 +417,25 @@ mod tests {
                 (StageKind::Vertex, "world0/composite.vsh".to_string()),
                 (StageKind::Fragment, "world0/composite.fsh".to_string()),
             ]
+        );
+    }
+
+    #[test]
+    fn unsupported_compute_stages_do_not_select_a_dimension() {
+        let source = PackSource::from_files([
+            ("final.fsh", ""),
+            ("gbuffers_terrain.csh", ""),
+            ("shadow_solid.csh", ""),
+            ("world0/gbuffers_terrain.csh", ""),
+            ("world0/shadow_solid.csh", ""),
+        ]);
+        assert!(enumerate_programs(&source, "world0").is_empty());
+        let root = enumerate_programs(&source, "");
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].name, "final");
+        assert_eq!(
+            DimensionSelector::new(&source, &BTreeMap::new()).folder("overworld"),
+            ""
         );
     }
 
