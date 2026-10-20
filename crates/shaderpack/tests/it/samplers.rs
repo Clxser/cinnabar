@@ -264,3 +264,52 @@ fn sampler_class_bindings_precede_textures_and_round_trip() {
     };
     assert_eq!(unit.uniform(), "colortex6");
 }
+#[test]
+fn sampler_compatibility_buffer_aliases_share_custom_classes() {
+    for (property, uniform) in [
+        ("gaux1", "colortex4"),
+        ("colortex4", "gaux1"),
+        ("shadowcolor", "shadowcolor0"),
+    ] {
+        let fragment = format!(
+            "#version 330\nuniform sampler2D {uniform}; out vec4 color; void main() {{ color = texture({uniform}, vec2(0.5)); }}"
+        );
+        let properties = format!("texture.composite.{property} = sample.png");
+        let translated = pack(&fragment, &properties, &[]).translate(&TranslateConfig::default());
+        let classes: Vec<_> = reflection(program(&translated, "composite"))
+            .samplers
+            .iter()
+            .filter_map(|sampler| sampler.class())
+            .collect();
+        assert_eq!(
+            classes,
+            [SamplerClass::RepeatNearest],
+            "{property} and {uniform}"
+        );
+    }
+}
+
+#[test]
+fn sampler_compatibility_modern_texture_members() {
+    let fragment = "#version 330\nstruct Surface { vec4 texture; }; out vec4 color; void main() { Surface surface; surface.texture = vec4(1.0); color = surface.texture; }";
+    let translated = pack(fragment, "", &[]).translate(&TranslateConfig::default());
+    reflection(program(&translated, "composite"));
+}
+
+#[test]
+fn sampler_compatibility_renamed_texture_uses_metadata() {
+    let fragment = "#version 330\nuniform sampler2D texture; out vec4 color; void main() { color = texture2D(texture, vec2(0.5)); }";
+    let metadata = r#"{"texture":{"blur":true,"clamp":true}}"#;
+    let translated = pack(
+        fragment,
+        "texture.composite.texture = sample.png",
+        &[("sample.png.mcmeta", metadata)],
+    )
+    .translate(&TranslateConfig::default());
+    let classes: Vec<_> = reflection(program(&translated, "composite"))
+        .samplers
+        .iter()
+        .filter_map(|sampler| sampler.class())
+        .collect();
+    assert_eq!(classes, [SamplerClass::ClampLinear]);
+}
