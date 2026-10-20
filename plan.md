@@ -441,6 +441,10 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   displayed-frame pacing and complete rendering acceptance. Panel previews now
   select owner-scoped HUD cards, including preview-only cards, and share retained
   gameplay artwork. Focused rendering and cache regressions cover visible previews;
+  populated-world and displayed-frame acceptance remain pending.
+  Personal panels and HUD editor surfaces can bind the host local player's name
+  and skin head, with neutral artwork when the identity is unavailable. Skin and
+  session changes retire the previous portrait; full in-world acceptance remains pending.
   populated-world and displayed-frame acceptance remain pending. Panel motion
   preferences now settle feedback, wheel scrolling and surface transitions
   immediately, retain prepared routes and apply across route changes.
