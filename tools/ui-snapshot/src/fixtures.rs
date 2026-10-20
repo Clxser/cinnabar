@@ -25,6 +25,8 @@ pub struct State {
 
 /// Inputs borrowed by the same screen painters the client uses.
 pub enum Fixture {
+    /// A label whose unavailable primary face selects its installed backup.
+    BackupFont,
     /// An original checker repeated beyond a small sprite's former draw cutoff.
     TiledImage {
         scale: f64,
@@ -78,6 +80,12 @@ const TALL_SIZE: [u32; 2] = [1280, 900];
 const KEYBOARD_SIZE: [u32; 2] = [SIZE[0], 2000];
 
 pub const STATES: &[State] = &[
+    State {
+        name: "backup-font",
+        size: [640, 360],
+        gui_scale: 2,
+        fixture: || Fixture::BackupFont,
+    },
     State {
         name: "jsonui-tiled-image",
         size: [256, 128],
