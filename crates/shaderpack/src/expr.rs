@@ -117,7 +117,7 @@ impl Expr {
 
     /// Parses a complete expression using the requested operator groups.
     fn parse_with_precedence(text: &str, iris: bool) -> Result<Expr, ExprError> {
-        let tokens = lex(text)?;
+        let tokens = lex(text, iris)?;
         let mut parser = Parser {
             tokens,
             pos: 0,
@@ -378,7 +378,7 @@ impl Token {
 }
 
 /// Tokenizes an expression, reporting unsupported characters and invalid numbers.
-fn lex(text: &str) -> Result<Vec<Token>, ExprError> {
+fn lex(text: &str, iris: bool) -> Result<Vec<Token>, ExprError> {
     let bytes = text.as_bytes();
     let mut tokens = Vec::new();
     let mut i = 0;
@@ -420,7 +420,13 @@ fn lex(text: &str) -> Result<Vec<Token>, ExprError> {
             (b'|', Some(b'|')) => (Token::OrOr, 2),
             _ => {
                 let found = text[i..].chars().next().unwrap_or('?');
-                return Err(ExprError::new(format!("unexpected character `{found}`")));
+                let token = match (iris, found) {
+                    (true, '≠') => Token::NotEq,
+                    (true, '≤') => Token::Le,
+                    (true, '≥') => Token::Ge,
+                    _ => return Err(ExprError::new(format!("unexpected character `{found}`"))),
+                };
+                (token, found.len_utf8())
             }
         };
         tokens.push(token);
