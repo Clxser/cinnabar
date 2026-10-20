@@ -1,4 +1,5 @@
 use super::*;
+use crate::launcher_account::LauncherAccount;
 use base64::{
     Engine as _,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
@@ -136,13 +137,17 @@ async fn acquired_account_drives_product_wire_and_retires_its_pending_lookup() {
             let PlayerSync::Current(granted)=api.sync(local.clone()) else {panic!("welcomed ownership unavailable");};
             assert_eq!(granted.ownership_xuid,identity.xuid());
             assert_eq!(granted.owned_cosmetics,["fixture:paid"]);
+            let visible=LauncherAccount::observed_product_updates(api.clone(),granted.clone(),false);
+            let stale=LauncherAccount::observed_product_updates(api.clone(),granted.clone(),true);
             let lease=store.try_native_lease().unwrap();
             assert!(matches!(api.sync(local.clone()),PlayerSync::Pending));
+            let pending_ownership=LauncherAccount::observed_product_updates(api.clone(),granted.clone(),false);
             drop(lease);
             let epoch=api.with(|state| state.epoch);
             api.receive(epoch.wrapping_add(1),Inbound::parse(r#"{"type":"cosmetic_ownership","owned_cosmetics":["fixture:stale"]}"#).unwrap(),Instant::now());
             let PlayerSync::Current(unchanged)=api.sync(local.clone()) else {panic!("ownership lost after ordinary lease contention");};
             assert_eq!(unchanged.owned_cosmetics,["fixture:paid"]);
+            let restored=LauncherAccount::observed_product_updates(api.clone(),unchanged,false);
             let remote=loop {
                 if let PlayerSync::Current(remote)=api.sync(local.clone()) && !remote.emotes.is_empty() && !remote.loadouts.is_empty() && remote.owned_cosmetics==["fixture:replacement"] {break remote;}
                 // Drive the actual nonblocking exchange while the original socket delivers its finite frames.
@@ -172,10 +177,11 @@ async fn acquired_account_drives_product_wire_and_retires_its_pending_lookup() {
             api.finished().await;
             api.receive(epoch,Inbound::parse(r#"{"type":"cosmetic_ownership","owned_cosmetics":["fixture:late"]}"#).unwrap(),Instant::now());
             assert!(matches!(api.sync(CinnabarPlayerState::default()),PlayerSync::Unavailable));
-            (remote,release,retired)
+            let retired_ownership=LauncherAccount::observed_product_updates(api.clone(),remote.clone(),false);
+            (remote,release,retired,[visible,pending_ownership,restored,stale,retired_ownership])
         };
         let owner=async {api.run_at(Arc::clone(&account),&url).await;api.finish();};
-        let ((),minted_der,(remote,release,retired))=tokio::join!(owner,server,driver);
+        let ((),minted_der,(remote,release,retired,ownership))=tokio::join!(owner,server,driver);
         let observed=peer.abort_activation().await;
         assert_eq!(observed.verified_http_requests,9);
         assert_eq!(observed.minted_public_key,minted_der);
@@ -184,5 +190,14 @@ async fn acquired_account_drives_product_wire_and_retires_its_pending_lookup() {
         assert_eq!(release.version,"2.0.0");
         assert!(retired);
         assert!(store.try_native_lease().is_err());
+        // All original account/socket/service owners have retired before the publication oracle.
+        let [visible,pending,restored,stale,retired]=ownership;
+        for hidden in [&pending,&stale,&retired] {
+            assert!(hidden.ownership_xuid.is_empty() && hidden.owned_cosmetics.is_empty());
+        }
+        assert_eq!(visible.ownership_xuid,identity.xuid());
+        assert_eq!(visible.owned_cosmetics,["fixture:paid"]);
+        assert_eq!(restored.ownership_xuid,identity.xuid());
+        assert_eq!(restored.owned_cosmetics,["fixture:paid"]);
     }).await.expect("finite product API fixture stalled");
 }

@@ -28,47 +28,72 @@ impl LauncherAccount {
         });
     }
 
+    /// Observes the same read boundary over actual acquired Product API data; grants are never fabricated.
+    #[cfg(test)]
+    pub(crate) fn observed_product_updates(
+        api: crate::product_api::Client,
+        remote: CinnabarPlayerUpdates,
+        stale: bool,
+    ) -> CinnabarPlayerUpdates {
+        project(&Snapshot {
+            native_product_api: Some(api),
+            shared_players: Exchange {
+                remote,
+                received: Instant::now().checked_sub(if stale {
+                    Duration::from_millis(STALE_EXCHANGE_MS)
+                } else {
+                    Duration::ZERO
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+    }
+
     /// Returns current session loadouts and unexpired playback, including when the account API is unavailable.
     pub fn shared_player_updates(&self) -> CinnabarPlayerUpdates {
-        self.with(|snapshot| {
-            let age = snapshot.shared_players.received.map_or(u64::MAX, |time| {
-                u64::try_from(time.elapsed().as_millis()).unwrap_or(u64::MAX)
-            });
-            let remote = &snapshot.shared_players.remote;
-            let ownership_current = age < STALE_EXCHANGE_MS
-                && snapshot
-                    .account
-                    .as_ref()
-                    .is_some_and(|account| matches!(account.state, AccountAuth::SignedIn));
-            CinnabarPlayerUpdates {
-                ownership_xuid: if ownership_current {
-                    remote.ownership_xuid.clone()
-                } else {
-                    String::new()
-                },
-                owned_cosmetics: if ownership_current {
-                    remote.owned_cosmetics.clone()
-                } else {
-                    Vec::new()
-                },
-                emotes: remote
-                    .emotes
-                    .iter()
-                    .filter(|value| age < value.valid_for_ms)
-                    .map(|value| {
-                        let mut value = value.clone();
-                        value.elapsed_ms = value.elapsed_ms.saturating_add(age);
-                        value.valid_for_ms -= age;
-                        value
-                    })
-                    .collect(),
-                loadouts: if age < STALE_EXCHANGE_MS {
-                    remote.loadouts.clone()
-                } else {
-                    Vec::new()
-                },
-            }
-        })
+        self.with(|snapshot| project(snapshot))
+    }
+}
+
+/// Projects the original retained exchange without consuming or replacing service data.
+fn project(snapshot: &Snapshot) -> CinnabarPlayerUpdates {
+    let age = snapshot.shared_players.received.map_or(u64::MAX, |time| {
+        u64::try_from(time.elapsed().as_millis()).unwrap_or(u64::MAX)
+    });
+    let remote = &snapshot.shared_players.remote;
+    let ownership_current = age < STALE_EXCHANGE_MS
+        && snapshot
+            .account
+            .as_ref()
+            .is_some_and(|account| matches!(account.state, AccountAuth::SignedIn));
+    CinnabarPlayerUpdates {
+        ownership_xuid: if ownership_current {
+            remote.ownership_xuid.clone()
+        } else {
+            String::new()
+        },
+        owned_cosmetics: if ownership_current {
+            remote.owned_cosmetics.clone()
+        } else {
+            Vec::new()
+        },
+        emotes: remote
+            .emotes
+            .iter()
+            .filter(|value| age < value.valid_for_ms)
+            .map(|value| {
+                let mut value = value.clone();
+                value.elapsed_ms = value.elapsed_ms.saturating_add(age);
+                value.valid_for_ms -= age;
+                value
+            })
+            .collect(),
+        loadouts: if age < STALE_EXCHANGE_MS {
+            remote.loadouts.clone()
+        } else {
+            Vec::new()
+        },
     }
 }
 
