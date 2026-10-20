@@ -1,9 +1,7 @@
 //! Full-ICE HTTP signaling using the original native proof and accepted transport owners.
 
 use super::{Transport, identity::TransportIdentity};
-use nethernet_tokio::{
-    ClientIceConfig, ConnectionConfig, NetherClient, signaling::http::HttpSignaling,
-};
+use nethernet_tokio::{ClientIceConfig, ConnectionConfig, signaling::http::HttpSignaling};
 use std::{io, net::SocketAddr, sync::Arc, time::Instant};
 
 /// Uses the same actual ready association/Inbox/retirement owner as accepting connections.
@@ -25,12 +23,14 @@ pub(in crate::login::native_network) async fn connect(
         check_deadline(cutoff, identity.expires)?;
         let mut bind = address;
         bind.set_port(0);
-        let client = dial(
-            &format!("http://{address}"),
-            &identity,
-            client(cutoff)?,
-            Some(bind),
+        let signaling =
+            HttpSignaling::with_client(rand::random::<u64>().to_string(), client(cutoff)?);
+        let client = bedrock_client_tokio::connect::http::connect(
+            signaling,
+            format!("http://{address}"),
+            config(&identity, Some(bind)),
             cutoff,
+            identity.expires,
         )
         .await?;
         check_deadline(cutoff, identity.expires)?;
@@ -61,17 +61,9 @@ pub(super) fn client(deadline: tokio::time::Instant) -> io::Result<reqwest::Clie
         .map_err(io::Error::other)
 }
 
-/// Establishes one actual HTTP/ICE/DTLS/SCTP association, retaining the original proof and cutoff.
-pub(super) async fn dial(
-    endpoint: &str,
-    identity: &TransportIdentity,
-    client: reqwest::Client,
-    bind: Option<SocketAddr>,
-    deadline: tokio::time::Instant,
-) -> io::Result<NetherClient> {
-    check_deadline(deadline, identity.expires)?;
-    let signaling = HttpSignaling::with_client(rand::random::<u64>().to_string(), client);
-    let mut config = ConnectionConfig {
+/// Supplies the original proof, trust, incoming bound and explicit ICE binding without dialing.
+pub(super) fn config(identity: &TransportIdentity, bind: Option<SocketAddr>) -> ConnectionConfig {
+    ConnectionConfig {
         max_incoming_message_bytes: bedrock_net::BatchLimits::default().max_encoded_bytes,
         identity: Some(Arc::clone(&identity.identity)),
         server_trust: Some(identity.trust.clone()),
@@ -83,20 +75,7 @@ pub(super) async fn dial(
         }),
         attempts: 1,
         ..Default::default()
-    };
-    config.timeouts.negotiation = config
-        .timeouts
-        .negotiation
-        .min(deadline.saturating_duration_since(tokio::time::Instant::now()));
-    let client = tokio::time::timeout_at(
-        deadline,
-        NetherClient::connect_with(signaling, endpoint.to_owned(), config),
-    )
-    .await
-    .map_err(|_| timed_out())?
-    .map_err(io::Error::other)?;
-    check_deadline(deadline, identity.expires)?;
-    Ok(client)
+    }
 }
 
 /// Rechecks original cutoffs even when an awaited result is already ready.

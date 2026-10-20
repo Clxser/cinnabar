@@ -154,7 +154,18 @@ async fn connect_http(
     let mut trusted = Vec::new();
     loop {
         check(deadline, identity.expires)?;
-        let client = http::dial(&endpoint, identity, http_client.clone(), bind, deadline).await?;
+        let signaling = nethernet_tokio::HttpSignaling::with_client(
+            rand::random::<u64>().to_string(),
+            http_client.clone(),
+        );
+        let client = bedrock_client_tokio::connect::http::connect(
+            signaling,
+            endpoint.clone(),
+            http::config(identity, bind),
+            deadline,
+            identity.expires,
+        )
+        .await?;
         let Some(key) = client.server_public_key() else {
             drop(client.close());
             return Err(untrusted());

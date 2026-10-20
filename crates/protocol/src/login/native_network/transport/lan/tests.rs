@@ -1,4 +1,5 @@
 use super::*;
+use crate::login::native_network::transport::LAN_CONNECTION_TYPE;
 use bytes::Bytes;
 use futures::FutureExt;
 use nethernet::{
@@ -8,7 +9,7 @@ use nethernet::{
         packet::discovery::{Packets, ResponsePacket, decode, encode},
     },
 };
-use nethernet_tokio::{NetherServer, ServerData};
+use nethernet_tokio::{LanConfig, LanSignaling, NetherServer, ServerData};
 use std::{
     sync::Arc,
     time::{Duration, SystemTime},
