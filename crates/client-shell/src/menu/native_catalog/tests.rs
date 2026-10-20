@@ -1,26 +1,5 @@
 use super::*;
 use launcher::menu::view::{MenuFriendCard, MenuRealmCard};
-use launcher_host::account_control::{AccountControl, AccountEvent};
-
-/// Supplies only legacy account feeds; no process, HTTP or credentials are involved.
-struct Legacy;
-impl AccountControl for Legacy {
-    fn account_status(&mut self) -> Option<AuthState> {
-        None
-    }
-    fn realms(&mut self) -> Option<Vec<MenuRealmCard>> {
-        Some(vec![realm("legacy")])
-    }
-    fn friends(&mut self) -> Option<Vec<MenuFriendCard>> {
-        Some(vec![friend("legacy")])
-    }
-    fn sign_out(&mut self) -> bool {
-        false
-    }
-    fn poll_event(&mut self) -> Option<AccountEvent> {
-        None
-    }
-}
 
 /// Creates an ordinary existing menu model for ownership assertions.
 fn realm(name: &str) -> MenuRealmCard {
@@ -42,7 +21,7 @@ pub(super) fn friend(world: &str) -> MenuFriendCard {
 /// Native results own both feeds, survive independent section failures and share the account with joins.
 #[test]
 fn native_catalog_owns_both_feeds_and_shares_the_selected_account_with_joins() {
-    let mut menu = MenuRuntime::new(true, 2, "Synthetic".into()).with_native_sign_in(true);
+    let mut menu = MenuRuntime::new(true, 2, "Synthetic".into());
     menu.feeds.account_active_id = Some("123".into());
     let path = menu.layout.auth_cache();
     let first = menu.native_account_for(path.clone());
@@ -50,7 +29,6 @@ fn native_catalog_owns_both_feeds_and_shares_the_selected_account_with_joins() {
         realms: Ok(vec![realm("native")]),
         friends: Ok(vec![friend("native").into()]),
     });
-    menu.sync_account_control(&mut Legacy);
     assert_eq!(menu.realms[0].name, "native");
     assert_eq!(menu.friends[0].world_name, "native");
     menu.apply_native_catalog(CatalogCards {

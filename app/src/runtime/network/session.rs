@@ -6,7 +6,7 @@ use client_runtime::network::NetworkHandle;
 #[cfg(not(target_arch = "wasm32"))]
 use std::ffi::OsStr;
 #[cfg(not(target_arch = "wasm32"))]
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[cfg(feature = "native-networking")]
 pub(crate) mod friend;
@@ -64,12 +64,11 @@ pub fn spawn_network(
     if bridge::join_profile::JoinProfile::current().id().is_none() {
         bridge::join_profile::JoinProfile::begin();
     }
-    let socket_dir = config.endpoint.core_directory().map(Path::to_path_buf);
     #[cfg(feature = "native-networking")]
     if matches!(&config.endpoint, protocol::SessionEndpoint::Native(target)
         if launcher_host::native_account::is_realm_target(&target.address)
             || protocol::NativeRawTarget::recognizes(&target.address)
-            || matches!(launcher_host::launcher_core::target_for(&target.address), bridge::ConnectTarget::Gathering(_)))
+            || matches!(launcher_host::destination::target_for(&target.address), bridge::ConnectTarget::Gathering(_)))
         && config.native_account.is_none()
         && config.native_gathering.is_none()
     {
@@ -125,9 +124,7 @@ pub fn spawn_network(
                 "selected native transport does not support account preparation",
             ));
         }
-        let protocol::SessionEndpoint::Native(target) = &config.endpoint else {
-            unreachable!("checked native endpoint")
-        };
+        let protocol::SessionEndpoint::Native(target) = &config.endpoint;
         let target = target.clone();
         let skin = player_skin.clone();
         let settings = config.login_settings.clone();
@@ -215,10 +212,7 @@ pub fn spawn_network(
     #[cfg(not(feature = "native-networking"))]
     let result =
         client_session::spawn_network(domain, runtime, tasks, prepare, trace, packet_relay);
-    result.map(|inner| match socket_dir {
-        Some(directory) => NetworkHandle::connected(inner, directory),
-        None => NetworkHandle::native(inner),
-    })
+    result.map(NetworkHandle::native)
 }
 
 /// The session's capture: [`client_session::markers::PACKET_CAPTURE`] decides when set

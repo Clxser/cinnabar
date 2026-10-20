@@ -2,8 +2,6 @@
 
 use bridge::tasks::Timers;
 use std::future::Future;
-#[cfg(not(target_arch = "wasm32"))]
-use std::path::PathBuf;
 
 /// A session reader movable between native runtime workers.
 #[cfg(not(target_arch = "wasm32"))]
@@ -52,15 +50,14 @@ pub trait NetworkExecutor: Clone {
     }
 }
 
-/// Native execution retains Tokio tasks, timers and the core's pack-application observer.
-#[cfg(not(target_arch = "wasm32"))]
+/// Native execution retains the original Tokio tasks and timer driver.
+#[cfg(all(not(target_arch = "wasm32"), any(feature = "native-networking", test)))]
 #[derive(Clone, Default)]
 pub(super) struct NativeNetworkExecutor {
-    pub(super) socket_dir: Option<PathBuf>,
     pub(super) tasks: tokio_util::task::TaskTracker,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), any(feature = "native-networking", test)))]
 impl NetworkExecutor for NativeNetworkExecutor {
     type OutboundTask = NativeOutboundTask;
 
@@ -74,23 +71,12 @@ impl NetworkExecutor for NativeNetworkExecutor {
     fn timers(&self) -> Timers {
         Timers::tokio()
     }
-
-    async fn report_packs(&self, applied: bool) {
-        if let Some(directory) = &self.socket_dir {
-            // Reporting is best effort; an unresponsive core must not strand terminal cleanup.
-            let _ = tokio::time::timeout(
-                super::FINAL_CONTROL_FLUSH_TIMEOUT,
-                protocol::report_pack_application(directory, applied),
-            )
-            .await;
-        }
-    }
 }
 
 /// Aborts the native outbound task when its pump stops.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), any(feature = "native-networking", test)))]
 pub(super) struct NativeOutboundTask(tokio::task::JoinHandle<()>);
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), any(feature = "native-networking", test)))]
 impl Drop for NativeOutboundTask {
     fn drop(&mut self) {
         self.0.abort();

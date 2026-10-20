@@ -1,9 +1,9 @@
 //! The play screen's worlds tab over the local-worlds module: its list feeds
 //! the tab's cards, the create/edit/template screens and their modals relay
-//! presses to the module, an opened world is joined through the launcher core
+//! presses to the module, an opened world is joined by its retained native selection
 //! and closed when its session ends, and the pause menu pauses it.
 
-use bridge::{Backend, GameMode};
+use bridge::GameMode;
 use launcher::local_worlds::world::Difficulty;
 
 use {
@@ -32,7 +32,7 @@ pub(super) struct LocalWorldsUi {
     /// The world being joined, for the loading screen's connect stage.
     joining: Option<String>,
     world_id: Option<String>,
-    /// The joined world runs on the dedicated server, which the core hosts for Xbox friends.
+    /// The joined world runs on the dedicated server, whose native host owner serves Xbox friends.
     hosted: bool,
     /// The open world's player limit, as its server reported it.
     max_players: Option<u32>,
@@ -78,7 +78,7 @@ impl MenuRuntime {
         self.visible && self.screen == MenuScreen::Play
     }
 
-    /// The core's stable local-world identifier, independent of a rename or invite.
+    /// The manager's stable local-world identifier, independent of a rename or invite.
     pub fn local_world_identity(&self) -> Option<&str> {
         self.local_ui.world_id.as_deref()
     }
@@ -143,17 +143,15 @@ impl MenuRuntime {
         }
         if let Some(id) = worlds.take_ready() {
             let world = worlds.menu().worlds().iter().find(|world| world.id == id);
-            let hosted = world.is_some_and(|world| world.backend == Backend::Bds);
             self.local_ui.world_id = Some(id.clone());
             let name = world.map_or_else(|| id.clone(), |world| world.name.clone());
             #[cfg(feature = "native-networking")]
-            if self.native_sign_in {
-                self.request_native_local_world(worlds, &id, name);
-            } else {
-                self.request_local_world_join(name, hosted);
-            }
+            self.request_native_local_world(worlds, &id, name);
             #[cfg(not(feature = "native-networking"))]
-            self.request_local_world_join(name, hosted);
+            {
+                let _ = name;
+                self.message = Some("Native networking is unavailable in this build.".into());
+            }
             self.local_ui.max_players = worlds.menu().max_players();
         }
         if self.local_world_joined && self.is_connecting() {
@@ -168,7 +166,7 @@ impl MenuRuntime {
             if active {
                 worlds.set_playing(true);
             } else {
-                // The core saves and stops the world once its session is over.
+                // The manager saves and stops the original world when its session is over.
                 worlds.leave_world();
                 self.local_world_joined = false;
                 self.local_ui.joining = None;
@@ -338,7 +336,6 @@ impl MenuRuntime {
         }
         self.retry_target = None;
         self.remember_session_origin();
-        self.stop_catalog();
         self.local_world_joined = true;
         self.local_ui.joining = Some(name.clone());
         self.local_ui.hosted = hosted;

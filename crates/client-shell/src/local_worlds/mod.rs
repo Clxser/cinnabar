@@ -1,7 +1,7 @@
 //! Local single-player worlds on BDS or the built-in Dragonfly server, run by the launcher.
 //!
 //! [`WorldsMenu`] is a pure screen model; [`LocalWorlds`] wires it to the world manager and tells
-//! the attached core where the open world is. The menu module embeds it by calling `attach`,
+//! the original native session which opening to retain. The menu module embeds it through native attachment,
 //! `input`, `menu` and `take_ready`.
 
 use launcher::menu::settings_options::SettingId;
@@ -13,8 +13,11 @@ use launcher::local_worlds::model;
 #[cfg(test)]
 mod settings_storage_flow_tests;
 
-use std::{collections::HashMap, io, path::PathBuf, sync::Arc};
+#[cfg(feature = "native-networking")]
+use std::io;
+use std::{collections::HashMap, sync::Arc};
 
+#[cfg(feature = "native-networking")]
 use launcher::install_layout::InstallLayout;
 use launcher_host::local_worlds::Manager;
 
@@ -37,7 +40,7 @@ const IMPORT_UNAVAILABLE: &str = "Local worlds are not ready; try the import aga
 #[derive(Resource)]
 pub struct LocalWorlds {
     menu: WorldsMenu,
-    /// Opened on the first attach and kept across core restarts.
+    /// Opened on the first attach and kept across account attachment changes.
     manager: Option<Manager>,
     client: Option<WorldsClient>,
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
@@ -78,19 +81,8 @@ impl Drop for LocalWorlds {
 }
 
 impl LocalWorlds {
-    /// Opens the install's worlds, routes the core at `socket_dir` to the open one and requests
-    /// the world list.
-    pub fn attach(&mut self, socket_dir: PathBuf, layout: &InstallLayout) -> io::Result<()> {
-        let manager = self.attach_manager(layout)?;
-        self.client = Some(WorldsClient::spawn(manager, socket_dir)?);
-        self.playing = false;
-        self.menu = WorldsMenu::default();
-        self.input(Input::Refresh);
-        self.dispatch(vec![Effect::LoadPrefs]);
-        Ok(())
-    }
-
-    /// Preserves the existing manager across account-core attachment changes.
+    /// Preserves the existing manager across account attachment changes.
+    #[cfg(feature = "native-networking")]
     fn attach_manager(&mut self, layout: &InstallLayout) -> io::Result<Manager> {
         let manager = match &self.manager {
             Some(manager) => manager.clone(),
@@ -107,7 +99,7 @@ impl LocalWorlds {
         Ok(manager)
     }
 
-    /// Drops the worker and closes the open world, whose route left with the old core.
+    /// Drops the worker and closes the open world, whose original session has retired.
     pub fn detach(&mut self) {
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
         {

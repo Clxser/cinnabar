@@ -1,9 +1,9 @@
 use super::{ArgsError, ClientArgs, HELP, ParseOutcome};
 use std::path::PathBuf;
 
-/// A native build selects ordinary addressed discovery until the user selects the legacy owner.
+/// A native build selects addressed discovery; a build without it cannot create a native endpoint.
 #[test]
-fn native_default_selects_addressed_and_keeps_an_explicit_legacy_endpoint() {
+fn native_default_selects_addressed_without_a_process_backend() {
     let expected = cfg!(all(
         feature = "native-networking",
         not(target_arch = "wasm32")
@@ -21,111 +21,38 @@ fn native_default_selects_addressed_and_keeps_an_explicit_legacy_endpoint() {
         panic!("direct arguments");
     };
     assert_eq!(direct.native_transport, expected);
-    let directory = PathBuf::from("original-legacy-endpoint");
-    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-    assert!(matches!(
-        direct.session_endpoint(directory.clone()).unwrap(),
-        protocol::SessionEndpoint::Native(target)
-            if target.transport == protocol::NativeTransport::Addressed
-                && target.address == "fixture.invalid"
-    ));
-    let ParseOutcome::Run(legacy) = ClientArgs::parse_from([
-        "client",
-        "--legacy-networking",
-        "--address",
-        "fixture.invalid",
-    ])
-    .unwrap() else {
-        panic!("legacy arguments");
-    };
-    assert_eq!(legacy.native_transport, None);
-    assert!(matches!(
-        legacy.session_endpoint(directory.clone()).unwrap(),
-        protocol::SessionEndpoint::Core(selected) if selected == directory
-    ));
-}
-
-/// An operator's explicit Core socket remains an intentional backend choice.
-#[test]
-fn native_default_external_socket_keeps_the_original_core_endpoint() {
-    for flags in [
-        vec!["--socket-dir", "operator.sock"],
-        vec!["--socket-dir", "operator.sock", "--legacy-networking"],
-        vec!["--legacy-networking", "--socket-dir", "operator.sock"],
-    ] {
-        let ParseOutcome::Run(args) = ClientArgs::parse_from(
-            ["client", "--address", "fixture.invalid"]
-                .into_iter()
-                .chain(flags),
-        )
-        .unwrap() else {
-            panic!("external Core arguments");
-        };
-        assert!(args.socket_dir_explicit);
-        assert_eq!(args.native_transport, None);
-        let directory = args.socket_dir.clone();
-        assert_eq!(
-            args.session_endpoint(directory.clone())
-                .unwrap()
-                .core_directory(),
-            Some(directory.as_path())
-        );
-    }
-}
-
-/// Explicit choices conflict independently of argument order rather than using the last flag.
-#[test]
-fn native_default_rejects_explicit_backend_conflicts_in_both_orders() {
-    for flags in [
-        vec!["--native-networking", "addressed", "--legacy-networking"],
-        vec!["--legacy-networking", "--native-networking", "addressed"],
-    ] {
-        let error = ClientArgs::parse_from(["client"].into_iter().chain(flags)).unwrap_err();
-        assert!(
-            !matches!(error, ArgsError::Unknown(_)),
-            "the explicit legacy switch was not recognized"
-        );
-    }
-    for flags in [
-        vec![
-            "--native-networking",
-            "addressed",
-            "--socket-dir",
-            "operator.sock",
-        ],
-        vec![
-            "--socket-dir",
-            "operator.sock",
-            "--native-networking",
-            "addressed",
-        ],
-    ] {
+    if expected.is_some() {
+        let protocol::SessionEndpoint::Native(target) = direct.session_endpoint().unwrap();
+        assert_eq!(target.transport, protocol::NativeTransport::Addressed);
+        assert_eq!(target.address, "fixture.invalid");
+    } else {
         assert!(matches!(
-            ClientArgs::parse_from(["client"].into_iter().chain(flags)),
+            direct.session_endpoint(),
             Err(ArgsError::NativeNetworkingUnavailable)
         ));
     }
 }
 
-/// Address-less timed sessions cannot silently select Core from a native default.
+#[test]
+fn removed_process_backend_options_are_rejected() {
+    for option in ["--legacy-networking", "--socket-dir"] {
+        assert!(
+            matches!(ClientArgs::parse_from(["client", option]), Err(ArgsError::Unknown(value)) if value == option)
+        );
+    }
+}
+
 #[cfg(all(
     feature = "native-networking",
     feature = "acceptance",
     not(target_arch = "wasm32")
 ))]
 #[test]
-fn native_default_timed_sessions_require_a_destination_or_explicit_legacy_owner() {
+fn native_timed_sessions_require_a_destination() {
     assert!(matches!(
         ClientArgs::parse_from(["client", "--acceptance-seconds", "1"]),
         Err(ArgsError::NativeNetworkingUnavailable)
     ));
-    let ParseOutcome::Run(legacy) =
-        ClientArgs::parse_from(["client", "--legacy-networking", "--acceptance-seconds", "1"])
-            .unwrap()
-    else {
-        panic!("legacy timed arguments");
-    };
-    assert_eq!(legacy.native_transport, None);
 }
 
 #[test]
@@ -150,14 +77,6 @@ fn parallel_pack_urls_require_the_selected_native_backend() {
             Err(ArgsError::ParallelPackUrlsRequireNativeNetworking)
         ));
     }
-    assert!(matches!(
-        ClientArgs::parse_from([
-            "client",
-            "--legacy-networking",
-            "--parallel-resource-pack-urls"
-        ]),
-        Err(ArgsError::ParallelPackUrlsRequireNativeNetworking)
-    ));
     if !cfg!(feature = "native-networking") {
         assert!(matches!(
             ClientArgs::parse_from([
@@ -186,24 +105,13 @@ fn native_networking_allows_menu_selection_and_rejects_ambiguous_endpoints() {
     } else {
         assert!(matches!(menu, Err(ArgsError::NativeNetworkingUnavailable)));
     }
-    for arguments in [
-        vec![
-            "client",
-            "--address",
-            "127.0.0.1:19132",
-            "--native-networking",
-            "raknet",
-            "--socket-dir",
-            "custom",
-        ],
-        vec![
-            "client",
-            "--native-networking",
-            "raknet",
-            "--acceptance-seconds",
-            "1",
-        ],
-    ] {
+    for arguments in [vec![
+        "client",
+        "--native-networking",
+        "raknet",
+        "--acceptance-seconds",
+        "1",
+    ]] {
         assert!(matches!(
             ClientArgs::parse_from(arguments),
             Err(ArgsError::NativeNetworkingUnavailable)
@@ -220,20 +128,6 @@ fn native_networking_allows_menu_selection_and_rejects_ambiguous_endpoints() {
 #[test]
 fn explicit_native_friend_startup_never_selects_core_from_a_display_target() {
     let address = format!("{}2535", bridge::contract::FRIEND_TARGET_PREFIX);
-    let directory = PathBuf::from("unused-friend-cli-endpoint");
-    let ParseOutcome::Run(go) = ClientArgs::parse_from([
-        "client",
-        "--legacy-networking",
-        "--address",
-        address.as_str(),
-    ])
-    .unwrap() else {
-        panic!("explicit Go fixture arguments");
-    };
-    assert!(matches!(
-        go.session_endpoint(directory.clone()).unwrap(),
-        protocol::SessionEndpoint::Core(selected) if selected == directory
-    ));
     let mut outcomes = Vec::new();
     for mode in ["addressed", "raknet", "nethernet-lan"] {
         let ParseOutcome::Run(native) = ClientArgs::parse_from([
@@ -246,7 +140,7 @@ fn explicit_native_friend_startup_never_selects_core_from_a_display_target() {
         .unwrap() else {
             panic!("explicit native fixture arguments");
         };
-        outcomes.push(native.session_endpoint(directory.clone()));
+        outcomes.push(native.session_endpoint());
     }
     assert!(
         outcomes.iter().all(Result::is_err),
@@ -279,7 +173,6 @@ fn defaults_are_stable() {
     let ParseOutcome::Run(args) = ClientArgs::parse_from(["client"]).unwrap() else {
         panic!("expected run args")
     };
-    assert_eq!(args.socket_dir, PathBuf::from(".local/run"));
     assert_eq!(args.assets, None);
     assert_eq!(args.display_name, launcher::PRODUCT_NAME);
     assert_eq!(args.acceptance_seconds, None);
@@ -301,8 +194,8 @@ fn defaults_are_stable() {
 fn parses_every_acceptance_flag() {
     let ParseOutcome::Run(args) = ClientArgs::parse_from([
         "client",
-        "--socket-dir",
-        "run/socket",
+        "--address",
+        "fixture.invalid:19132",
         "--assets",
         "assets/vanilla.mcbea",
         "--display-name",
@@ -329,7 +222,6 @@ fn parses_every_acceptance_flag() {
     .unwrap() else {
         panic!("expected run args")
     };
-    assert_eq!(args.socket_dir, PathBuf::from("run/socket"));
     assert_eq!(args.assets, Some(PathBuf::from("assets/vanilla.mcbea")));
     assert_eq!(args.display_name, "TestBot");
     assert_eq!(args.acceptance_seconds, Some(900));
@@ -401,7 +293,7 @@ fn help_documents_all_acceptance_flags() {
         ParseOutcome::Help
     );
     for flag in [
-        "--socket-dir",
+        "--address",
         "--assets",
         "--acceptance-seconds",
         "--metrics-out",
@@ -504,10 +396,8 @@ fn fixed_time_is_a_validated_developer_only_pin() {
 #[test]
 fn malformed_arguments_are_rejected() {
     assert!(matches!(
-        ClientArgs::parse_from(["client", "--socket-dir"]),
-        Err(ArgsError::MissingValue {
-            flag: "--socket-dir"
-        })
+        ClientArgs::parse_from(["client", "--address"]),
+        Err(ArgsError::MissingValue { flag: "--address" })
     ));
     assert!(matches!(
         ClientArgs::parse_from(["client", "--vsync", "--no-vsync"]),

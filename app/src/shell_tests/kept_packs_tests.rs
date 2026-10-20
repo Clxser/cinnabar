@@ -80,7 +80,6 @@ fn run_session<M>(
         missing_core_layout(root),
         client_shell::player_skin::LocalPlayerSkin::generated_default("Player"),
     );
-    menu_fixture::suppress_catalog(&mut menu);
     menu.show_world();
     prepare(&mut menu);
     let mut app = App::new();

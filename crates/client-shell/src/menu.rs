@@ -26,7 +26,9 @@ mod invite;
 mod join_requests;
 mod realm_membership;
 pub use join_requests::open_join_requests_from_key;
+#[cfg(feature = "native-networking")]
 pub mod launcher_account;
+#[cfg(feature = "native-networking")]
 mod launcher_services;
 mod minecraft_import;
 #[cfg(feature = "native-networking")]
@@ -43,6 +45,7 @@ pub mod screen_focus;
 mod server_input_tests;
 mod services;
 mod session_intents;
+#[cfg(feature = "native-networking")]
 pub use services::sync_cinnabar_players;
 use session_intents::SessionIntents;
 pub mod settings_options;
@@ -57,13 +60,14 @@ mod view;
 mod worlds_tab;
 mod xbox_presence;
 
+use launcher::menu::auth::AuthState;
+#[cfg(feature = "native-networking")]
+use launcher_host::auth::AuthSupervisor;
 use launcher_host::{
-    auth, core_process, launcher_core::target_for, server_trust, servers, sign_in_browser,
+    auth::auth_cache_path, destination::target_for, server_trust, servers, sign_in_browser,
 };
 use ui::RenderMode;
-use {auth::AuthSupervisor, launcher::menu::auth::AuthState};
 
-use core_process::{auth_cache_path, core_executable};
 pub use input::clipboard::MenuClipboard;
 pub(crate) use input::context::observe_keyboard_labels;
 pub use input::{HOTKEY_OPTIONS, drive_menu_input};
@@ -74,6 +78,7 @@ use launcher::menu::view::{
 };
 
 pub use account::SignInStatus;
+#[cfg(feature = "native-networking")]
 pub use launcher_services::LauncherServices;
 use servers::{ServerWriter, load_servers};
 pub use video_settings::persist_video_settings;
@@ -153,17 +158,13 @@ pub struct MenuRuntime {
     realms: MenuList<MenuRealmCard>,
     friends: MenuList<MenuFriendCard>,
     catalog_message: Option<String>,
-    catalog_started: bool,
-    catalog: launcher_host::catalog::Catalog,
     catalog_art: Option<launcher_host::catalog_art::CatalogArt>,
+    #[cfg(feature = "native-networking")]
     auth_process: Option<AuthSupervisor>,
-    native_sign_in: bool,
     #[cfg(feature = "native-networking")]
     native_catalog: native_catalog::Controller,
     auth_attempted: bool,
     auth_restart_requested: bool,
-    /// The account core a held join may still use; `None` when it cannot start for the join.
-    account_core: Option<launcher_services::AccountCore>,
     layout: InstallLayout,
     /// The client's own skin, cloned into every reconnection's `NetworkConfig`.
     player_skin: crate::player_skin::LocalPlayerSkin,
@@ -402,7 +403,6 @@ impl MenuRuntime {
             self.disconnect_message = Some(message);
             self.focused = 0;
             self.hovered = None;
-            self.catalog_started = false;
         }
     }
 
@@ -414,7 +414,7 @@ impl MenuRuntime {
     /// Resets the join progress screen for a join to `address`.
     pub fn begin_join_progress(&mut self, address: &str, local_world: bool) {
         self.feeds.join = launcher::menu::view::JoinProgress::new(
-            launcher_host::launcher_core::join_kind(address, local_world),
+            launcher_host::destination::join_kind(address, local_world),
         );
     }
 
@@ -435,7 +435,6 @@ impl MenuRuntime {
         self.message = None;
         self.disconnect_message = Some(error.to_owned());
         // Let the account catalog repopulate now that the session is gone.
-        self.catalog_started = false;
         true
     }
 
@@ -603,8 +602,6 @@ impl MenuRuntime {
             MenuAction::RefreshCatalog => {
                 #[cfg(feature = "native-networking")]
                 self.native_catalog.refresh();
-                self.stop_catalog();
-                self.catalog_started = false;
                 self.catalog_message = None;
             }
             MenuAction::StartSignIn => self.start_sign_in(),
@@ -639,7 +636,7 @@ impl MenuRuntime {
                 if let Some(server) = self.featured.get(index) {
                     let address = server.address.clone();
                     #[cfg(feature = "native-networking")]
-                    if self.native_sign_in && self.request_native_gathering(&address) {
+                    if self.request_native_gathering(&address) {
                         return;
                     }
                     self.request_featured_connect(address);
@@ -690,20 +687,12 @@ impl MenuRuntime {
                 self.dialog = None;
             }
             MenuAction::PlayFriend(index) => {
-                if let Some(friend) = self.friends.get(index) {
-                    if self.native_sign_in {
-                        #[cfg(feature = "native-networking")]
-                        self.request_native_friend(index);
-                    } else if friend.xuid.is_empty() {
-                        self.message =
-                            Some("That friend world has no stable Xbox identity.".to_owned());
-                    } else {
-                        self.request_connect(format!(
-                            "{}{}",
-                            launcher::menu::FRIEND_ADDRESS_PREFIX,
-                            friend.xuid
-                        ));
-                    }
+                #[cfg(feature = "native-networking")]
+                self.request_native_friend(index);
+                #[cfg(not(feature = "native-networking"))]
+                {
+                    let _ = index;
+                    self.message = Some("Native networking is unavailable in this build.".into());
                 }
             }
             MenuAction::AddName
@@ -944,7 +933,6 @@ impl MenuRuntime {
         }
         bridge::join_profile::JoinProfile::begin();
         self.remember_session_origin();
-        self.stop_catalog();
         self.hold_join_for_sign_in();
         let auth_cache = self.launcher_auth_cache();
         self.remember_retry_target(&address, auth_cache.as_deref(), false);
@@ -975,7 +963,6 @@ impl Drop for MenuRuntime {
             bevy::log::warn!("could not save settings at shutdown: {error}");
         }
         self.stop_sign_in();
-        self.stop_catalog();
     }
 }
 

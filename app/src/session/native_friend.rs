@@ -35,11 +35,9 @@ pub(super) fn begin(
         address: String::new(),
         auth_cache: None,
         local_world: false,
-        stage: JoinStage::Prepared(protocol::SessionEndpoint::Native(
-            protocol::NativeConnectionTarget::new(
-                String::new(),
-                protocol::NativeTransport::NetherNetMessaging,
-            ),
+        endpoint: protocol::SessionEndpoint::Native(protocol::NativeConnectionTarget::new(
+            String::new(),
+            protocol::NativeTransport::NetherNetMessaging,
         )),
     });
 }

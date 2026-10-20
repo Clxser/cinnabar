@@ -54,7 +54,6 @@ fn native_gathering_replacement_restores_destination_for_world_consumers() {
         layout.clone(),
         client_shell::player_skin::LocalPlayerSkin::generated_default("Fixture"),
     );
-    menu_fixture::suppress_catalog(&mut menu);
     menu.show_world();
     let mut controller = SessionController::default()
         .with_native_transport(Some(protocol::NativeTransport::RakNet))
@@ -95,11 +94,8 @@ fn native_gathering_replacement_restores_destination_for_world_consumers() {
     assert!(controller.connecting && controller.native_gathering.is_some());
     let join = controller.join.as_ref().unwrap();
     assert_eq!(join.generation, controller.generation);
-    let JoinStage::Prepared(protocol::SessionEndpoint::Native(target)) = &join.stage else {
-        panic!("the selected Gathering did not retain its native preparation owner");
-    };
+    let protocol::SessionEndpoint::Native(target) = &join.endpoint;
     assert_eq!(target.address, address);
-    assert!(controller.core.id().is_none() && controller.directory.is_none());
     let identity = controller.destination_identity().map(str::to_owned);
     let trust_retired = controller.trust.is_none();
     let presence = controller.presence_target().cloned();

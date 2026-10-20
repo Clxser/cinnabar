@@ -1,24 +1,26 @@
-use std::{
-    collections::HashSet,
-    io,
-    path::PathBuf,
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
-    thread,
-    time::Duration,
-};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+#[cfg(any(feature = "native-networking", test))]
+use std::{collections::HashSet, io, path::PathBuf, thread, time::Duration};
 
-use crossbeam_channel::{Receiver, Sender, unbounded};
-use launcher::local_worlds::world::{PrefsUpdate, WorldThumbnail};
+#[cfg(any(feature = "native-networking", test))]
+use crossbeam_channel::unbounded;
+use crossbeam_channel::{Receiver, Sender};
+#[cfg(any(feature = "native-networking", test))]
+use launcher::local_worlds::world::PrefsUpdate;
+use launcher::local_worlds::world::WorldThumbnail;
+#[cfg(any(feature = "native-networking", test))]
 use launcher_host::desktop::picker::{self, Filter};
-use launcher_host::local_worlds::{
-    CoreLink, CoreRoute, Manager, WORLD_ARCHIVE_EXTENSION, WorldError,
-};
+use launcher_host::local_worlds::Manager;
+#[cfg(any(feature = "native-networking", test))]
+use launcher_host::local_worlds::{WORLD_ARCHIVE_EXTENSION, WorldError};
 
 use super::model::{Effect, Event};
 
 /// Spaces preference polls, and bounds a status poll that no world change answers sooner.
+#[cfg(any(feature = "native-networking", test))]
 const POLL_DELAY: Duration = Duration::from_millis(250);
 
+#[cfg(any(feature = "native-networking", test))]
 const WORLD_FILES: Filter = Filter {
     title: "Import world",
     name: "Minecraft worlds",
@@ -61,6 +63,7 @@ pub(super) struct Reply {
 }
 
 /// Reads uncached thumbnails on the worker and forgets deleted worlds.
+#[cfg(any(feature = "native-networking", test))]
 fn read_thumbnails(
     manager: &Manager,
     event: &Event,
@@ -93,55 +96,26 @@ fn read_thumbnails(
 }
 
 /// Runs [`Effect`]s against the world manager on a worker thread, in order, and keeps the
-/// attached core's route to the open world current.
+/// original manager's process lifetime current.
 pub struct WorldsClient {
     effects: Sender<Request>,
     events: Receiver<Reply>,
     /// Set once the client is detached; an open in progress finishes before it is set.
     revoked: Arc<Mutex<bool>>,
-    _core: Option<CoreLink>,
-    #[cfg(all(test, feature = "native-networking", not(target_arch = "wasm32")))]
+    #[cfg(test)]
     worker: Option<thread::JoinHandle<()>>,
 }
 
 impl WorldsClient {
-    /// Starts the worker; it exits when the client is dropped.
-    pub fn spawn(manager: Manager, socket_dir: PathBuf) -> io::Result<Self> {
-        Self::spawn_polling(manager, socket_dir, POLL_DELAY)
+    /// Starts the original world worker; it exits when its final request owner is dropped.
+    #[cfg(any(feature = "native-networking", test))]
+    pub fn spawn(manager: Manager) -> io::Result<Self> {
+        Self::spawn_polling(manager, POLL_DELAY)
     }
 
-    fn spawn_polling(
-        manager: Manager,
-        socket_dir: PathBuf,
-        poll_delay: Duration,
-    ) -> io::Result<Self> {
-        let core = CoreLink::spawn(manager.clone(), socket_dir)?;
-        Self::spawn_worker(manager, Some(core), poll_delay)
-    }
-
-    /// Starts the same world worker without a Go connection route or an additional runtime.
-    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-    pub(super) fn spawn_native(manager: Manager) -> io::Result<Self> {
-        Self::spawn_worker(manager, None, POLL_DELAY)
-    }
-
-    /// Only the actual native constructor omits Core routing.
-    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-    pub(super) fn native(&self) -> bool {
-        self._core.is_none()
-    }
-
-    /// Runs the original effect queue and status loop with the selected concrete routing owner.
-    fn spawn_worker(
-        manager: Manager,
-        core: Option<CoreLink>,
-        poll_delay: Duration,
-    ) -> io::Result<Self> {
-        let route = core.as_ref().map(CoreLink::route);
+    #[cfg(any(feature = "native-networking", test))]
+    fn spawn_polling(manager: Manager, poll_delay: Duration) -> io::Result<Self> {
         let changes = manager.subscribe();
-        let routed = route
-            .as_ref()
-            .map_or_else(crossbeam_channel::never, CoreRoute::changes);
         let revoked = Arc::new(Mutex::new(false));
         let worker_revoked = Arc::clone(&revoked);
         let (effects, effect_rx) = unbounded::<Request>();
@@ -167,10 +141,9 @@ impl WorldsClient {
                         }
                     };
                     match effect {
-                        // A world change or the core routing it answers at once.
+                        // A world change answers at once.
                         Effect::PollStatus => crossbeam_channel::select! {
                             recv(changes) -> _ => {}
-                            recv(routed) -> _ => {}
                             default(poll_delay) => {}
                         },
                         Effect::PollPrefs => thread::sleep(poll_delay),
@@ -185,16 +158,18 @@ impl WorldsClient {
                         // An active native session may still own original-opening retirement.
                         // Its final sender keeps only this existing worker alive for that request.
                         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-                        if route.is_none() {
-                            continue;
-                        }
+                        continue;
+                        #[cfg(not(all(
+                            feature = "native-networking",
+                            not(target_arch = "wasm32")
+                        )))]
                         break;
                     }
                     // Only an open holds the gate, so a revoked client never starts a world
                     // while slow requests (a Docker probe) never delay a detach.
                     let gate = matches!(effect, Effect::Open(_)).then_some(gate);
                     let cancelled = || *lock(&worker_revoked);
-                    let event = execute(&manager, route.as_ref(), effect, &cancelled);
+                    let event = execute(&manager, effect, &cancelled);
                     drop(gate);
                     let event = event.map(|event| match event {
                         Event::Failed(message) if preferences => Event::FailedPrefs(message),
@@ -206,10 +181,14 @@ impl WorldsClient {
                             // Retained native retirement senders still own this request receiver.
                             // Seal ordinary effects while the same queue finishes their cleanup.
                             #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-                            if route.is_none() {
+                            {
                                 *lock(&worker_revoked) = true;
                                 continue;
                             }
+                            #[cfg(not(all(
+                                feature = "native-networking",
+                                not(target_arch = "wasm32")
+                            )))]
                             break;
                         }
                     }
@@ -219,8 +198,7 @@ impl WorldsClient {
             effects,
             events,
             revoked,
-            _core: core,
-            #[cfg(all(test, feature = "native-networking", not(target_arch = "wasm32")))]
+            #[cfg(test)]
             worker: Some(_worker),
         })
     }
@@ -270,24 +248,23 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+#[cfg(any(feature = "native-networking", test))]
 fn failed(error: WorldError) -> Event {
     Event::Failed(error.public_message())
 }
 
-fn prefs_event(manager: &Manager, route: Option<&CoreRoute>, update: PrefsUpdate) -> Event {
-    manager.prefs(update).map_or_else(failed, |prefs| {
-        Event::Prefs(
-            prefs,
-            route.map_or_else(|| manager.status(), |route| route.status(manager)),
-        )
-    })
+#[cfg(any(feature = "native-networking", test))]
+fn prefs_event(manager: &Manager, update: PrefsUpdate) -> Event {
+    manager
+        .prefs(update)
+        .map_or_else(failed, |prefs| Event::Prefs(prefs, manager.status()))
 }
 
-/// Runs one effect; reported statuses hold a running world at starting until the core routes it.
+/// Runs one effect against the same original manager.
 /// `cancelled` reports a detach, which an import in progress obeys by publishing nothing.
+#[cfg(any(feature = "native-networking", test))]
 fn execute(
     manager: &Manager,
-    route: Option<&CoreRoute>,
     effect: Effect,
     cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Option<Event> {
@@ -302,21 +279,16 @@ fn execute(
             .update(&id, &update)
             .map_or_else(failed, Event::Updated),
         Effect::Open(id) => match manager.open(&id, None) {
-            Ok(()) => {
-                Event::Status(route.map_or_else(|| manager.status(), |route| route.status(manager)))
-            }
+            Ok(()) => Event::Status(manager.status()),
             Err(WorldError::EulaRequired) => Event::EulaRequired,
             Err(error) => failed(error),
         },
-        Effect::LoadPrefs | Effect::PollPrefs => {
-            prefs_event(manager, route, PrefsUpdate::default())
-        }
+        Effect::LoadPrefs | Effect::PollPrefs => prefs_event(manager, PrefsUpdate::default()),
         Effect::SetPrefs {
             dismiss_docker_prompt,
             redetect,
         } => prefs_event(
             manager,
-            route,
             PrefsUpdate {
                 docker_prompt_dismissed: dismiss_docker_prompt.then_some(true),
                 redetect,
@@ -333,9 +305,7 @@ fn execute(
                 errors: vec![error],
             },
         },
-        Effect::PollStatus => {
-            Event::Status(route.map_or_else(|| manager.status(), |route| route.status(manager)))
-        }
+        Effect::PollStatus => Event::Status(manager.status()),
         Effect::Close => {
             manager.close();
             return None;
@@ -353,6 +323,7 @@ fn execute(
 }
 
 /// Imports each file in turn; a refusal names its file.
+#[cfg(any(feature = "native-networking", test))]
 fn import_files(
     manager: &Manager,
     files: Vec<PathBuf>,
@@ -402,16 +373,13 @@ mod tests {
                 ..NewWorld::default()
             })
             .expect("create");
-        let client = WorldsClient::spawn(manager.clone(), worlds.path().join("no-core-here"))
-            .expect("spawn worker");
+        let client = WorldsClient::spawn(manager.clone()).expect("spawn worker");
         client.revoke();
         client.send(Effect::Open(world.id));
-        test_time::eventually_within(Duration::from_secs(5), "the revoked worker to stop", || {
-            matches!(
-                client.events.try_recv(),
-                Err(crossbeam_channel::TryRecvError::Disconnected)
-            )
-        });
+        let mut client = client;
+        let worker = client.worker.take().unwrap();
+        drop(client);
+        worker.join().unwrap();
         assert_eq!(manager.status().state, bridge::WorldState::Idle);
     }
 
@@ -429,12 +397,8 @@ mod tests {
                 ..NewWorld::default()
             })
             .expect("create");
-        let client = WorldsClient::spawn_polling(
-            manager.clone(),
-            worlds.path().join("no-core-here"),
-            Duration::from_secs(3600),
-        )
-        .expect("spawn worker");
+        let client = WorldsClient::spawn_polling(manager.clone(), Duration::from_secs(3600))
+            .expect("spawn worker");
         client.send(Effect::PollStatus);
         manager.open(&world.id, None).expect("open");
         let mut events = Vec::new();
@@ -460,8 +424,7 @@ mod tests {
         std::fs::write(&good, zip.finish().expect("zip").into_inner()).expect("archive");
         let bad = worlds.path().join("Broken.mcworld");
         std::fs::write(&bad, b"not a zip").expect("archive");
-        let client =
-            WorldsClient::spawn(manager, worlds.path().join("no-core-here")).expect("spawn worker");
+        let client = WorldsClient::spawn(manager).expect("spawn worker");
         client.send(Effect::Import(Some(vec![good, bad])));
         let mut events = Vec::new();
         test_time::eventually_within(Duration::from_secs(5), "the import result", || {
@@ -484,8 +447,7 @@ mod tests {
         let worlds = tempfile::tempdir().expect("worlds folder");
         let manager =
             launcher_host::local_worlds::open_store(worlds.path().to_path_buf()).expect("manager");
-        let core = worlds.path().join("no-core-here");
-        let client = WorldsClient::spawn(manager, core).expect("spawn worker");
+        let client = WorldsClient::spawn(manager).expect("spawn worker");
         client.send(Effect::List);
         let mut events = Vec::new();
         test_time::eventually_within(Duration::from_secs(5), "an event from the worker", || {

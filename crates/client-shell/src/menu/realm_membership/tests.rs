@@ -136,17 +136,8 @@ impl AccountControl for ChangingAccount {
     fn account_generation(&mut self) -> Option<u64> {
         Some(self.generation)
     }
-    fn realms(&mut self) -> Option<Vec<MenuRealmCard>> {
-        None
-    }
-    fn friends(&mut self) -> Option<Vec<launcher::menu::view::MenuFriendCard>> {
-        None
-    }
     fn sign_out(&mut self) -> bool {
         false
-    }
-    fn poll_event(&mut self) -> Option<launcher_host::account_control::AccountEvent> {
-        None
     }
     fn request_realm_membership(&mut self, _: u64, _: String, _: bool) -> bool {
         true

@@ -33,7 +33,7 @@ impl NativeLocalWorldIntent {
 }
 
 impl MenuRuntime {
-    /// Selects native local play without the Core connection/report acknowledgement path.
+    /// Transfers one original world opening to native preparation.
     pub(super) fn request_native_local_world(
         &mut self,
         worlds: &mut crate::local_worlds::LocalWorlds,
@@ -83,8 +83,7 @@ impl MenuRuntime {
     /// Revokes a pending action if account selection or its original process has changed.
     pub fn take_native_local_world_intent(&mut self) -> Option<NativeLocalWorldIntent> {
         let intent = self.intents.native_world.take()?;
-        if !self.native_sign_in
-            || self.account_change_pending()
+        if self.account_change_pending()
             || intent.path != self.launcher_auth_cache()
             || intent.identity.as_deref() != self.selected_account_id()
             || intent.selection.validate().is_err()

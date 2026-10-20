@@ -448,7 +448,9 @@ mod tests {
             ],
         ] {
             let ParseOutcome::Run(args) = ClientArgs::parse_from(
-                ["cinnabar", "--legacy-networking"].into_iter().chain(flags),
+                ["cinnabar", "--address", "fixture.invalid"]
+                    .into_iter()
+                    .chain(flags),
             )
             .unwrap() else {
                 panic!("expected runtime arguments")
@@ -461,32 +463,4 @@ mod tests {
             .validate_acceptance_support(false)
             .unwrap();
     }
-}
-
-/// Owns app-derived session directories and only creates operator-provided directories.
-pub(super) fn bind_direct_session_directory(
-    args: &args::ClientArgs,
-    socket_dir: std::path::PathBuf,
-) -> Result<ScopedSessionDirectory> {
-    if args.address.is_some()
-        && args
-            .session_endpoint(socket_dir.clone())?
-            .core_directory()
-            .is_none()
-    {
-        return Ok(ScopedSessionDirectory::none());
-    }
-    if args.address.is_some() && !args.socket_dir_explicit {
-        return ScopedSessionDirectory::bind(socket_dir.clone()).with_context(|| {
-            format!(
-                "prepare direct-connect session directory {}",
-                socket_dir.display()
-            )
-        });
-    }
-    if args.address.is_some() {
-        fs::create_dir_all(&socket_dir)
-            .with_context(|| format!("prepare socket directory {}", socket_dir.display()))?;
-    }
-    Ok(ScopedSessionDirectory::none())
 }

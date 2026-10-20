@@ -91,7 +91,6 @@ fn actual_catalog_retirement_coalesces_refresh_and_rejects_stale_publication() {
             layout,
             crate::player_skin::LocalPlayerSkin::generated_default("Fixture"),
         )
-        .with_native_sign_in(true)
         .with_io(runtime.handle().clone(), tasks.clone());
         menu.auth_process = Some(native_state(AuthState::Authenticated));
         menu.feeds.account_active_id = Some("123".into());

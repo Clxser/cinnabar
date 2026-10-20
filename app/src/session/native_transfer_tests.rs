@@ -15,19 +15,15 @@ fn native_lan_transfer_selects_addressed_transport_after_tearing_down_the_origin
         layout,
         client_shell::player_skin::LocalPlayerSkin::generated_default("Fixture"),
     );
-    menu_fixture::suppress_catalog(&mut menu);
     menu.show_world();
     let cache = BlobCache::default();
     let mut controller = SessionController::default()
         .with_native_transport(Some(protocol::NativeTransport::NetherNetLan))
         .with_client_random_id(Some(protocol::ClientRandomId::new(1).unwrap()));
     let old_generation = controller.generation;
-    let JoinStage::Prepared(protocol::SessionEndpoint::Native(original)) = controller
-        .start_core(&menu, &cache, "127.0.0.1:19132", None, old_generation, None)
-        .unwrap()
-    else {
-        panic!("original directed LAN join retains its native owner");
-    };
+    let protocol::SessionEndpoint::Native(original) = controller
+        .prepare_endpoint(&menu, "127.0.0.1:19132", None, None)
+        .unwrap();
     assert_eq!(original.transport, protocol::NativeTransport::NetherNetLan);
     let mut app = App::new();
     app.insert_resource(menu)
@@ -60,14 +56,10 @@ fn native_lan_transfer_selects_addressed_transport_after_tearing_down_the_origin
         .join
         .as_ref()
         .expect("transfer retained the native join");
-    let JoinStage::Prepared(protocol::SessionEndpoint::Native(target)) = &join.stage else {
-        panic!("native transfer started a Core owner");
-    };
+    let protocol::SessionEndpoint::Native(target) = &join.endpoint;
     assert_eq!(target.address, "127.0.0.1:19133");
     assert_eq!(target.transport, protocol::NativeTransport::Addressed);
     target.validate().unwrap();
-    assert!(controller.directory.is_none());
-    assert!(controller.core.id().is_none());
     assert!(
         app.world()
             .resource::<crate::runtime::world::ClientWorld>()
@@ -80,20 +72,14 @@ fn native_lan_transfer_selects_addressed_transport_after_tearing_down_the_origin
         .remove_resource::<SessionController>()
         .unwrap();
     controller.begin_fresh_transfer_chain();
-    let generation = controller.generation;
-    let JoinStage::Prepared(protocol::SessionEndpoint::Native(next)) = controller
-        .start_core(
+    let protocol::SessionEndpoint::Native(next) = controller
+        .prepare_endpoint(
             app.world().resource::<MenuRuntime>(),
-            app.world().resource::<BlobCache>(),
             "127.0.0.1:19134",
             None,
-            generation,
             None,
         )
-        .unwrap()
-    else {
-        panic!("the next user join must retain its native owner");
-    };
+        .unwrap();
     next.validate().unwrap();
     drop(controller);
     drop(app);

@@ -17,9 +17,8 @@ fn native_world_worker_retains_original_request_receiver_after_ui_reply_closes()
         effects,
         events,
         revoked,
-        _core,
         worker,
-    } = WorldsClient::spawn_native(manager.clone()).unwrap();
+    } = WorldsClient::spawn(manager.clone()).unwrap();
     // This is the actual sender a retirement capability retains, not a replacement channel/worker.
     let retained = effects.clone();
     drop(effects);
@@ -32,7 +31,7 @@ fn native_world_worker_retains_original_request_receiver_after_ui_reply_closes()
     });
     drop(retained);
     worker.unwrap().join().unwrap();
-    drop((_core, revoked));
+    drop(revoked);
     let observed = manager.thumbnail(&world.id).unwrap();
     manager.close();
     drop(manager);

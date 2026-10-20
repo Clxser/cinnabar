@@ -7,16 +7,12 @@ const STALE: &str = "The native friend catalog changed. Read it again before joi
 const UNAVAILABLE: &str = "The native friend catalog is unavailable for the selected account.";
 
 impl MenuRuntime {
-    /// Reports current rows or queues their original selection without enabling ordinary UI joins.
+    /// Reports current rows or queues the same opaque selection used by ordinary UI joins.
     pub fn developer_native_friends(
         &mut self,
         join: Option<NativeFriendChoice>,
     ) -> Result<NativeFriendsReport, String> {
-        if !self.native_sign_in
-            || self.fixture_active()
-            || self.presentation_accounts
-            || self.account_change_pending()
-        {
+        if self.fixture_active() || self.presentation_accounts || self.account_change_pending() {
             return Err(UNAVAILABLE.into());
         }
         let selected = self.native_catalog.selected.as_ref().ok_or(UNAVAILABLE)?;

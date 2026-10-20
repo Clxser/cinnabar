@@ -32,7 +32,6 @@ pub async fn attach(menu: &mut MenuRuntime, fixture: &Fixture) -> std::io::Resul
     menu.feeds.account_active_id = Some(profile.id);
     menu.auth_process = Some(native_state(AuthState::Authenticated));
     menu.auth_attempted = true;
-    menu.native_sign_in = true;
     menu.screen = MenuScreen::Servers;
     menu.visible = true;
     Ok(())

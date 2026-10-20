@@ -19,7 +19,6 @@ fn menu(layout: &InstallLayout) -> MenuRuntime {
         layout.clone(),
         client_shell::player_skin::LocalPlayerSkin::generated_default("Synthetic"),
     )
-    .with_native_sign_in(true)
 }
 
 /// Writes synthetic refresh-only input; these credentials must never reach a service.
@@ -89,9 +88,7 @@ async fn startup_account_shares_the_original_menu_owner_and_rejects_replacement_
     assert_eq!(lease.selected_id(), Some("456"));
     assert_eq!(lease.generation(), "replacement");
     drop(lease);
-    let protocol::SessionEndpoint::Native(target) = endpoint else {
-        panic!("the raw service requires the native preparation owner");
-    };
+    let protocol::SessionEndpoint::Native(target) = endpoint;
     let error = match original
         .prepare_connection(
             target,
@@ -138,17 +135,15 @@ fn startup_account_preserves_offline_scope_and_rejects_a_lost_selected_cache() {
         .err()
         .expect("an invalid selected cache downgraded to offline play");
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-    for endpoint in [
-        protocol::SessionEndpoint::Core(layout.runtime_root.clone()),
-        protocol::SessionEndpoint::Native(
+    {
+        let endpoint = protocol::SessionEndpoint::Native(
             protocol::NativeConnectionTarget::local_lan(
                 "127.0.0.1:19132".parse().unwrap(),
                 "World".into(),
                 protocol::NATIVE_JOIN_TIMEOUT,
             )
             .unwrap(),
-        ),
-    ] {
+        );
         assert!(
             controller
                 .native_startup_account(&mut menu, Some(&endpoint))

@@ -156,10 +156,7 @@ impl Original {
             .await
             .is_ok();
         let controller = self.app.world().resource::<SessionController>();
-        joined
-            && controller.core.id().is_none()
-            && controller.directory.is_none()
-            && controller.friend_cleanup.observation() == (false, false)
+        joined && controller.friend_cleanup.observation() == (false, false)
     }
 
     /// Joins the original leave observation only after successful worker retirement; otherwise aborts
