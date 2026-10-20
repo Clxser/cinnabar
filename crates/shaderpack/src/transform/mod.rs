@@ -34,6 +34,7 @@ pub(crate) struct TransformError {
 }
 
 impl TransformError {
+    /// Creates a transform error at the expanded source line.
     pub fn new(message: impl Into<String>, line: u32) -> TransformError {
         TransformError {
             message: message.into(),
@@ -134,7 +135,7 @@ pub(crate) fn transform(
         let front = (stage == StageKind::Vertex && lg.builtins.contains("gl_FrontColor"))
             || (stage == StageKind::Fragment && lg.builtins.contains("gl_Color"));
         let mut varying = |name: &str, ty: &str| {
-            let loc = iface.varying(name, 1);
+            let loc = iface.varying(stage, name, 1, None);
             builtin_io.push_str(&format!("layout(location = {loc}) {dir} {ty} {name};\n"));
         };
         if front {
@@ -252,6 +253,7 @@ pub(crate) fn transform(
     })
 }
 
+/// Emits a supplied vertex input at its fixed host location.
 fn vertex_input(io: &mut String, inputs: &mut Vec<(u32, String)>, name: &str, ty: &str) {
     if let Some(loc) = VertexAttribute::from_glsl_name(name).location() {
         io.push_str(&format!("layout(location = {loc}) in {ty} {name};\n"));

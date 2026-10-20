@@ -46,6 +46,7 @@ pub(super) struct Collected {
     pub resource_names: Vec<(u32, u32, String)>,
 }
 
+/// Finds the first non-generated source line in a declaration.
 fn first_line(toks: &[Tok]) -> u32 {
     toks.iter().map(|t| t.line).find(|l| *l != 0).unwrap_or(0)
 }
@@ -102,7 +103,7 @@ pub(super) fn collect(
         }
         if let Some((bname, members, inst)) = &d.block {
             if d.has("uniform") || d.has("buffer") {
-                block(&mut c, &d, bname, members, inst, iface);
+                block(&mut c, &d, bname, members, inst, iface, line)?;
                 continue;
             }
             if d.has("in") || d.has("out") {
@@ -147,12 +148,20 @@ pub(super) fn collect(
             } else {
                 "in"
             };
+            let mut explicit = layout_key(&d.layout, "location");
             for (name, arr, _) in &d.decls {
                 let mut a = d.ty_arr.clone();
                 a.extend(arr.iter().cloned());
-                varying(
-                    &mut c, iface, &structs, name, &d.ty, &a, &d.quals, dir, line,
+                let size = varying(
+                    &mut c, iface, &structs, name, &d.ty, &a, &d.quals, dir, explicit, line,
                 )?;
+                explicit = explicit
+                    .map(|start| {
+                        start
+                            .checked_add(size)
+                            .ok_or_else(|| TransformError::new("varying location overflow", line))
+                    })
+                    .transpose()?;
             }
             continue;
         }
@@ -203,6 +212,8 @@ pub(super) fn collect(
     Ok(c)
 }
 
+/// Emits a bound uniform or storage block, rejecting binding conflicts.
+#[allow(clippy::too_many_arguments)]
 fn block(
     c: &mut Collected,
     d: &Decl,
@@ -210,12 +221,15 @@ fn block(
     members: &[Tok],
     inst: &[Tok],
     iface: &mut ProgramInterface,
-) {
+    line: u32,
+) -> Result<(), TransformError> {
     let storage = d.has("buffer");
     let (set, binding) = if storage {
         (
             STORAGE_BUFFER_GROUP,
-            iface.storage_binding(bname, layout_key(&d.layout, "binding")),
+            iface
+                .storage_binding(bname, layout_key(&d.layout, "binding"))
+                .map_err(|message| TransformError::new(message, line))?,
         )
     } else {
         (UNIFORM_GROUP, iface.uniform_block_binding(bname))
@@ -244,8 +258,10 @@ fn block(
     c.resources.push(p("}"));
     c.resources.extend(inst.iter().cloned());
     c.resources.push(p(";"));
+    Ok(())
 }
 
+/// Lowers loose uniforms, sampled textures and storage images.
 fn uniforms(
     c: &mut Collected,
     d: &Decl,
@@ -333,8 +349,14 @@ fn varying(
     arr: &[Tok],
     quals: &[String],
     dir: &str,
+    explicit: Option<u32>,
     line: u32,
-) -> Result<(), TransformError> {
+) -> Result<u32, TransformError> {
+    let stage = if dir == "out" {
+        StageKind::Vertex
+    } else {
+        StageKind::Fragment
+    };
     let interp: Vec<&str> = quals
         .iter()
         .map(String::as_str)
@@ -348,7 +370,8 @@ fn varying(
         q.join(" ")
     };
     if arr.is_empty() && mat_cols(ty).is_none() && !structs.contains_key(ty) {
-        let loc = iface.varying(name, loc_size(ty, 1));
+        let size = loc_size(ty, 1);
+        let loc = iface.varying(stage, name, size, explicit);
         let q = if dir == "in" {
             qualifiers(ty)
         } else {
@@ -359,17 +382,20 @@ fn varying(
                 .into_iter()
                 .map(|t| t.at(line)),
         );
-        return Ok(());
+        return Ok(size);
     }
     let mut leaves = vec![];
     flatten_leaves(name.to_string(), ty, arr, structs, line, &mut leaves)?;
     c.split_globals.extend([id(ty).at(line), id(name).at(line)]);
     c.split_globals.extend_from_slice(arr);
     c.split_globals.push(p(";"));
-    let base = iface.varying(name, leaves.len() as u32);
+    let size = leaves.iter().map(|(_, ty)| loc_size(ty, 1)).sum();
+    let base = iface.varying(stage, name, size, explicit);
+    let mut offset = 0;
     for (k, (path, leaf_ty)) in leaves.iter().enumerate() {
         let vname = format!("iris_v_{name}_{k}");
-        let loc = base + k as u32;
+        let loc = format!("{base} + {offset}");
+        offset += loc_size(leaf_ty, 1);
         c.io.extend(
             lex(&format!(
                 "layout(location = {loc}) {} {dir} {leaf_ty} {vname};",
@@ -384,7 +410,7 @@ fn varying(
             c.before_main.push(format!("{path} = {vname};"));
         }
     }
-    Ok(())
+    Ok(size)
 }
 
 /// Declares a fragment output. GL lets a vec3 output feed an RGBA buffer; WebGPU needs at

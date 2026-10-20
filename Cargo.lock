@@ -8185,6 +8185,7 @@ version = "0.1.21"
 dependencies = [
  "naga",
  "pp-rs",
+ "rayon",
  "zip",
  "zip-footer",
 ]
