@@ -640,3 +640,13 @@ fn boolean_array_lengths_keep_the_array_receiver() {
         "#version 330\nuniform bool flags[2]; out vec4 color; void main() { color = vec4(float(flags.length())); }",
     );
 }
+#[test]
+fn atomic_access_is_merged_across_render_stages() {
+    let translation = success(
+        "#version 450\nlayout(r32ui, binding=0) uniform uimage2D counter; void main() { gl_Position = vec4(float(imageLoad(counter, ivec2(0)).r)); }",
+        "#version 450\nlayout(r32ui, binding=0) uniform uimage2D counter; out vec4 color; void main() { imageAtomicAdd(counter, ivec2(0), 1u); color = vec4(float(imageLoad(counter, ivec2(0)).r)); }",
+    );
+    let image = &reflection(program(&translation, "composite")).storage_images[0];
+    assert!(image.read && image.write && image.atomic);
+    assert!(image.stages.vertex && image.stages.fragment);
+}

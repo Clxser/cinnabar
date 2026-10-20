@@ -277,6 +277,8 @@ pub struct StorageImageBinding {
     pub format: naga::StorageFormat,
     pub read: bool,
     pub write: bool,
+    /// Used with `imageAtomic*`: bind with atomic storage access.
+    pub atomic: bool,
     pub stages: StageMask,
 }
 

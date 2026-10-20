@@ -263,6 +263,7 @@ fn resource(
                             format: *format,
                             read: access.contains(naga::StorageAccess::LOAD),
                             write: access.contains(naga::StorageAccess::STORE),
+                            atomic: access.contains(naga::StorageAccess::ATOMIC),
                             stages,
                         })
                     }
@@ -313,6 +314,7 @@ fn merge(existing: &mut Resource, new: Resource, rb: &naga::ResourceBinding) -> 
         {
             a.read |= b.read;
             a.write |= b.write;
+            a.atomic |= b.atomic;
             union(&mut a.stages, b.stages);
         }
         _ => return Err(conflict()),
