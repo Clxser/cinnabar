@@ -1,5 +1,6 @@
 //! Application packet, UI-limit and terminal projection at the runtime driver's boundary.
 
+#[cfg(test)]
 use crate::{Packet, packet::GameHeader};
 use bedrock_client_tokio::{connection::Connection, error::DeferredLimit, transport::Transport};
 use bedrock_net::BatchLimits;
@@ -20,6 +21,7 @@ pub(super) fn upstream(transport: Transport) -> Connection {
 }
 
 /// Projects the generated packet into the application's existing packet owner.
+#[cfg(test)]
 pub(super) async fn next_packet(connection: &mut Connection) -> io::Result<Packet> {
     let (header, data) = connection.next_packet().await?;
     Ok(Packet::from_parts(
@@ -33,6 +35,7 @@ pub(super) async fn next_packet(connection: &mut Connection) -> io::Result<Packe
 }
 
 /// Sends the application's encoded packet projection, preserving received terminal causes.
+#[cfg(test)]
 pub(super) async fn send<P>(
     connection: &mut Connection,
     packet: P,
@@ -44,6 +47,7 @@ where
 }
 
 /// Encodes application packets once, without interposing another transport/FIFO owner.
+#[cfg(test)]
 pub(super) async fn send_packets(
     connection: &mut Connection,
     packets: &[Packet],
@@ -51,6 +55,7 @@ pub(super) async fn send_packets(
     send_packets_until(connection, packets, None).await
 }
 
+#[cfg(test)]
 async fn send_packets_until(
     connection: &mut Connection,
     packets: &[Packet],
