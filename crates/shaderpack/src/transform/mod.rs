@@ -89,6 +89,27 @@ pub(crate) fn transform(
     iface: &mut ProgramInterface,
     names: &ResourceNames<'_>,
 ) -> Result<StageDraft, TransformError> {
+    let mut delimiters = Vec::new();
+    for token in &pp.tokens {
+        if token.is("(") || token.is("[") || token.is("{") {
+            delimiters.push(token);
+        } else if token.is(")") || token.is("]") || token.is("}") {
+            let expected = match token.text() {
+                ")" => "(",
+                "]" => "[",
+                _ => "{",
+            };
+            if !delimiters.pop().is_some_and(|open| open.is(expected)) {
+                return Err(TransformError::new(
+                    "unmatched closing delimiter",
+                    token.line,
+                ));
+            }
+        }
+    }
+    if let Some(open) = delimiters.last() {
+        return Err(TransformError::new("unclosed delimiter", open.line));
+    }
     let wide = narrow::lower(&pp.tokens);
     let wide = wide.as_deref().unwrap_or(&pp.tokens);
     let fused = dot::order(wide);

@@ -3,7 +3,7 @@
 
 use super::TransformError;
 use super::declare::integer_bool;
-use super::items::{arr_len, mat_cols, matching, sampler_info, shadowed_bindings};
+use super::items::{arr_len, assignment_end, mat_cols, matching, sampler_info, shadowed_bindings};
 use crate::reflection::{SHADOW_SAMPLER_NAME, SamplerClass};
 use crate::token::{Tok, TokKind, id, int, p};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -91,7 +91,6 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
     );
     let mut out = vec![];
     let mut calls: Vec<Option<String>> = vec![];
-    // Paren depths of open writes to integer-backed bools, closed at their expression's end.
     let mut writes: Vec<usize> = vec![];
     let mut read_ends: Vec<(usize, bool)> = Vec::new();
     let mut write_starts: HashMap<usize, String> = HashMap::new();
@@ -103,9 +102,9 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
             }
             out.push(p(")").at(t.line));
         }
-        while writes.last() == Some(&calls.len()) && (t.is(";") || t.is(",") || t.is(")")) {
+        while writes.last() == Some(&i) {
             writes.pop();
-            out.push(p(")").at(t.line));
+            out.extend([p(")").at(t.line), p(")").at(t.line)]);
         }
         if let Some(ctor) = write_starts.remove(&i) {
             out.extend([
@@ -113,7 +112,7 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
                 id(&integer_bool(&ctor)).at(t.line),
                 p("(").at(t.line),
             ]);
-            writes.push(calls.len());
+            writes.push(assignment_end(toks, i + 1));
             continue;
         }
         if t.is("(") {
@@ -172,7 +171,7 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
                 continue;
             };
             if toks.get(end).is_some_and(|token| token.is("=")) {
-                out.push(t.clone());
+                out.extend([id(&ctor).at(line), p("(").at(line), t.clone()]);
                 write_starts.insert(end, ctor);
             } else {
                 let scalar = ctor == "bool";
@@ -248,12 +247,12 @@ pub(super) fn convert_returns(body: Vec<Tok>, ty: &str) -> Vec<Tok> {
     let mut open = false;
     for (i, t) in body.iter().enumerate() {
         if open && t.is(";") {
-            out.push(p(")").at(t.line));
+            out.extend([p(")").at(t.line), p(")").at(t.line)]);
             open = false;
         }
         out.push(t.clone());
         if t.ident() == Some("return") && body.get(i + 1).is_some_and(|n| !n.is(";")) {
-            out.extend([id(ty).at(t.line), p("(").at(t.line)]);
+            out.extend([id(ty).at(t.line), p("(").at(t.line), p("(").at(t.line)]);
             open = true;
         }
     }
