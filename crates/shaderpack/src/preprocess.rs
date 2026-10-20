@@ -666,7 +666,7 @@ mod tests {
             .tokens
             .iter()
             .filter_map(|t| match &t.kind {
-                TokKind::Int(n) => Some(n.as_str()),
+                TokKind::Int(n) => Some(n.trim_end_matches('u')),
                 _ => None,
             })
             .collect();

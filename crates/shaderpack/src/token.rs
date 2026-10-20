@@ -246,9 +246,14 @@ mod boundary_tests {
             emitter.tokens(&tokens);
             let (text, _) = emitter.finish();
             let parsed: Vec<_> = pp_rs::pp::Preprocessor::new(&text)
-                .map(Result::unwrap)
+                .map(|token| token.unwrap().value)
                 .collect();
-            assert_eq!(parsed.len(), tokens.len(), "{text}");
+            let expected: Vec<_> = tokens
+                .iter()
+                .flat_map(|token| pp_rs::pp::Preprocessor::new(token.text()))
+                .map(|token| token.unwrap().value)
+                .collect();
+            assert_eq!(parsed, expected, "{text}");
         }
     }
 }
