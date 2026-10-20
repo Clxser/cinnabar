@@ -214,10 +214,13 @@ fn smooth_step(previous: f32, target: f32, elapsed: f32, fade_up: f32, fade_down
     if fade == 0.0 {
         return target;
     }
+    let decay = (1.0 / (f64::from(fade * 0.1) / std::f64::consts::LN_2)) as f32;
+    if decay == 0.0 {
+        return target;
+    }
     if elapsed <= 0.0 {
         return previous;
     }
-    let decay = (1.0 / (f64::from(fade * 0.1) / std::f64::consts::LN_2)) as f32;
     let fraction = 1.0 - f64::from(-decay * elapsed).exp() as f32;
     (1.0 - fraction) * previous + fraction * target
 }

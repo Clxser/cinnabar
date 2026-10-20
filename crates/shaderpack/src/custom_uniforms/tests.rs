@@ -674,3 +674,19 @@ fn math_functions_round_their_library_result_to_float() {
         57.29578
     );
 }
+
+#[test]
+fn smooth_zero_decay_uses_the_target_even_without_elapsed_time() {
+    let mut uniforms = compile_ok(&["uniform.float.level = smooth(target, fade, fade)"]);
+    let at = |target| {
+        builtins(&[
+            ("target", UniformValue::Float(target)),
+            ("fade", UniformValue::Float(f32::INFINITY)),
+        ])
+    };
+    for elapsed in [0.0, 0.1] {
+        uniforms.restart_smoothing();
+        uniforms.evaluate(&at(0.0), 0.1);
+        assert_eq!(float(uniforms.evaluate(&at(1.0), elapsed), "level"), 1.0);
+    }
+}
