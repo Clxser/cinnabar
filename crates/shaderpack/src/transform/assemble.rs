@@ -111,6 +111,7 @@ mod tests {
     use crate::transform::body::SamplerUse;
     use std::collections::BTreeSet;
 
+    /// Creates a stage fixture with the supplied uniforms, body and sampler usage.
     fn draft(ubo: &[(&str, &str)], body: &str, samplers: SamplerUse) -> StageDraft {
         StageDraft {
             header: "#version 450\n".to_owned(),
