@@ -405,9 +405,8 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   remain incomplete; parsed custom uniform expressions are not executed or rendered.
   Pack block, item and entity ids, Java biome values and Java sky and fog colours are
   computed from the pinned Bedrock→Java mappings but not yet uploaded to shaders.
-  remain incomplete.
-  shader-pack source loading is implemented in `shaderpack`; configuration parsing,
-  translation, render-host integration and in-game acceptance remain incomplete.
+  Sky/fog time curves and sunrise colours remain provisional; lightning, status effects,
+  underwater colour easing and the water-vision ramp are not implemented.
 - `registryc --kind java-mapping` generates `crates/assets/data/java-mapping-v2193.bin` from
   the GeyserMC data pinned in `assets/geyser-mappings-source.json`: Java block states, block
   tags, biomes and their colours, entity types and items for every Bedrock id Geyser maps.
