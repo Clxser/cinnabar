@@ -364,7 +364,7 @@ fn unused_fragment_inputs_are_removed_from_the_compiled_interface() {
 
 #[test]
 fn explicit_block_locations_link_distinct_block_and_member_names() {
-    success(
+    let translated = success(
         "#version 450
         layout(location=2) out FIRST { vec2 uv; mat2 basis; } vertexData;
         out vec2 automatic;
@@ -375,4 +375,15 @@ fn explicit_block_locations_link_distinct_block_and_member_names() {
         in vec2 automatic; out vec4 color;
         void main() { color = vec4(fragmentData.transform * fragmentData.renamed + automatic, 0.0, 1.0); }",
     );
+    for stage in &program(&translated, "composite").stages {
+        let mut locations: Vec<_> = interface_locations(
+            &stage.result.as_ref().unwrap().module,
+            stage.stage == shaderpack::StageKind::Vertex,
+        )
+        .into_iter()
+        .map(|(_, location)| location)
+        .collect();
+        locations.sort_unstable();
+        assert_eq!(locations, [0, 2, 3, 4]);
+    }
 }
