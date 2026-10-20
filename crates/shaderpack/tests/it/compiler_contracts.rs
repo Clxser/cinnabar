@@ -376,3 +376,27 @@ fn explicit_block_locations_link_distinct_block_and_member_names() {
         void main() { color = vec4(fragmentData.transform * fragmentData.renamed + automatic, 0.0, 1.0); }",
     );
 }
+
+#[test]
+fn boolean_storage_writes_follow_array_and_swizzle_accesses() {
+    for declaration in ["bool flags[2];", "bvec2 flags;", "bvec2 flags[2];"] {
+        let (write, read) = match declaration {
+            "bool flags[2];" => ("flags[0] = true; flags[1] = flags[0];", "flags[1]"),
+            "bvec2 flags;" => ("flags.x = true; flags[1] = flags.x;", "flags.y"),
+            _ => (
+                "flags[0].x = true; flags[1].xy = bvec2(flags[0].x);",
+                "flags[1].y",
+            ),
+        };
+        let source = format!(
+            "#version 450
+            layout(local_size_x=1) in;
+            layout(std430, binding=0) buffer State {{ {declaration} }};
+            void main() {{ {write} if ({read}) {{ {write} }} }}"
+        );
+        let pack = ShaderPack::new(PackSource::from_files([("begin.csh", source)]));
+        let translated = pack.translate(&TranslateConfig::default());
+        let reflected = reflection(program(&translated, "begin"));
+        assert!(!reflected.storage_buffers[0].read_only);
+    }
+}
