@@ -99,6 +99,7 @@ pub(super) async fn acceptor(
     };
     server_ice.ice.servers = resolved.datagrams;
     let config = ConnectionConfig {
+        max_incoming_message_bytes: bedrock_net::BatchLimits::default().max_encoded_bytes,
         identity: Some(identity.sdp_identity()),
         token_trust: Some(identity.offer_trust()),
         allow_anonymous_offers: true,

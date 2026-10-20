@@ -188,6 +188,7 @@ impl LanTransport {
             ));
         }
         let mut config = ConnectionConfig {
+            max_incoming_message_bytes: bedrock_net::BatchLimits::default().max_encoded_bytes,
             allow_unsigned_answers: true,
             attempts: 1,
             ..ConnectionConfig::default()

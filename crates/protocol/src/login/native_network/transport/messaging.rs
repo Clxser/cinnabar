@@ -55,6 +55,8 @@ impl MessagingTransport {
             .prepared
             .connect(
                 ConnectionConfig {
+                    max_incoming_message_bytes: bedrock_net::BatchLimits::default()
+                        .max_encoded_bytes,
                     identity: Some(admission.identity),
                     server_trust: Some(admission.trust),
                     allow_anonymous_answers: admission.target.allow_anonymous_answers(),

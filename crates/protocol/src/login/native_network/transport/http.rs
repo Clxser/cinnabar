@@ -74,6 +74,7 @@ pub(super) async fn dial(
     check_deadline(deadline, identity.expires)?;
     let signaling = HttpSignaling::with_client(rand::random::<u64>().to_string(), client);
     let mut config = ConnectionConfig {
+        max_incoming_message_bytes: bedrock_net::BatchLimits::default().max_encoded_bytes,
         identity: Some(Arc::clone(&identity.identity)),
         server_trust: Some(identity.trust.clone()),
         client_ice: Some(ClientIceConfig {
