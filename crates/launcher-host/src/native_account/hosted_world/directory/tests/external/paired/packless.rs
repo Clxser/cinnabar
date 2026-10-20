@@ -53,13 +53,13 @@ async fn signed_hosted_packless_upstream_preserves_startup_initialized_and_live_
             let mut stopped = stopped;
             let accepted = tokio::select! { biased;
                 accepted = upstream_listener.accept() => Some(accepted),
-                _ = &mut stopped => None,
+                Ok(()) = &mut stopped => None,
             };
             let Some(accepted) = accepted else { return (None, true); };
             let mut peer = accepted.unwrap();
             let result = tokio::select! { biased;
                 result = upstream::run(&mut peer, startup_sent) => Some(result),
-                _ = &mut stopped => None,
+                Ok(()) = &mut stopped => None,
             };
             let retired = peer.close();
             let joined = tokio::time::timeout_at(deadline.into(), retired.session.closed()).await.is_ok();
@@ -76,7 +76,9 @@ async fn signed_hosted_packless_upstream_preserves_startup_initialized_and_live_
                 Ok::<_, io::Error>((played.map_err(|e| e.kind()), closed.map_err(|e| e.kind())))
             }.await;
             // Original rejection cancels only this fixture's held upstream continuation.
-            let _ = stop.send(());
+            if result.is_err() {
+                let _ = stop.send(());
+            }
             result
         };
         let visitor = async {
