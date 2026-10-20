@@ -8,10 +8,7 @@ def declarations(root):
     """Keep process message identities, records and bounded flow in one source."""
     source = json.loads((root / "crates/bridge/data/host-world.json").read_text(encoding="utf-8"))
     shared = json.loads((root / "crates/bridge/data/contract.json").read_text(encoding="utf-8"))
-    control = next(row["value"] for row in shared["constants"]
-                   if row["rust_name"] == "CONTROL_MAX_FRAME_LEN")
-    constants = {"VERSION": source["version"], "MAX_CONTROL_BYTES": control,
-                 **source["constants"]}
+    constants = {"VERSION": source["version"], **source["constants"]}
     for name, shared_name in source.get("shared_constants", {}).items():
         constants[name] = next(row["value"] for row in shared["constants"]
                                if row["rust_name"] == shared_name)
