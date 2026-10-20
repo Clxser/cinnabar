@@ -4,9 +4,9 @@ use std::{
     time::Duration,
 };
 
-use bridge::{Backend, LocalTarget, Transport, WorldState};
 #[cfg(test)]
-use bridge::{LocalWorld, LocalWorldInfo};
+use bridge::LocalWorld;
+use bridge::{Backend, LocalTarget, LocalWorldInfo, Transport, WorldState};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError};
 use launcher::local_worlds::world::{
     NewWorld, Prefs, PrefsUpdate, SetupState, World, WorldStatus, WorldUpdate,
