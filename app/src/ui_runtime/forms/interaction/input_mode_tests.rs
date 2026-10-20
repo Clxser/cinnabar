@@ -9,7 +9,9 @@ use crate::{
 use bevy::{
     input::{
         InputPlugin,
-        gamepad::GamepadAxis,
+        gamepad::{
+            GamepadAxis, RawGamepadAxisChangedEvent, RawGamepadButtonChangedEvent, RawGamepadEvent,
+        },
         mouse::MouseMotion,
         touch::{TouchInput, TouchPhase},
     },
@@ -178,6 +180,70 @@ fn real_mouse_pointer_events_override_form_mode_until_shared_mode_changes() {
     ];
     for event in events {
         mouse_overrides_form_mode(event);
+    }
+}
+
+/// Exercises renewed controller input while the shared mode remains GamePad.
+fn controller_after_mouse(event: impl FnOnce(Entity) -> RawGamepadEvent) {
+    let (mut app, pad, window) = host();
+    let mouse = pixels(&mut app);
+    controller(&mut app, pad, 0.8);
+    let gamepad = pixels(&mut app);
+    assert!(gamepad != mouse);
+    app.world_mut()
+        .write_message(WindowEvent::CursorMoved(CursorMoved {
+            window,
+            position: Vec2::ZERO,
+            delta: Some(Vec2::X),
+        }));
+    app.update();
+    assert_eq!(input(&app).input_mode, GamePad);
+    assert!(pixels(&mut app) == mouse);
+    app.update();
+    assert!(
+        pixels(&mut app) == mouse,
+        "a held stick must not reclaim the form"
+    );
+    app.world_mut()
+        .write_message(RawGamepadEvent::Axis(RawGamepadAxisChangedEvent::new(
+            pad,
+            GamepadAxis::LeftStickX,
+            0.2,
+        )));
+    app.update();
+    assert!(
+        pixels(&mut app) == mouse,
+        "small stick input must retain mouse bindings"
+    );
+    app.world_mut().write_message(event(pad));
+    app.update();
+    assert_eq!(input(&app).input_mode, GamePad);
+    assert_eq!(
+        app.world().get::<CursorOptions>(window).unwrap().grab_mode,
+        CursorGrabMode::None
+    );
+    assert!(
+        pixels(&mut app) == gamepad,
+        "fresh controller input must restore gamepad artwork"
+    );
+}
+
+#[test]
+fn fresh_controller_input_clears_the_form_mouse_override() {
+    for axis in [
+        GamepadAxis::RightStickX,
+        GamepadAxis::RightStickY,
+        GamepadAxis::LeftStickX,
+        GamepadAxis::LeftStickY,
+    ] {
+        controller_after_mouse(|pad| {
+            RawGamepadEvent::Axis(RawGamepadAxisChangedEvent::new(pad, axis, 0.9))
+        });
+    }
+    for button in [GamepadButton::North, GamepadButton::Other(7)] {
+        controller_after_mouse(|pad| {
+            RawGamepadEvent::Button(RawGamepadButtonChangedEvent::new(pad, button, 1.0))
+        });
     }
 }
 

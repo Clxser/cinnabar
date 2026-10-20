@@ -111,7 +111,7 @@ use ui::{UiNode, UiPoint, UiRect};
 pub(super) struct ScreenStates {
     /// App-wide input mode supplied before presentation refreshes form bindings.
     form_input_mode: json_ui::InputMode,
-    /// Real mouse input overrides form bindings until the app-wide mode changes.
+    /// Mouse bindings persist until the shared mode changes or the controller is used.
     form_mouse_override: bool,
     /// The engine menu's regions by action, for next frame's hover state.
     menu_keys: Vec<(launcher::menu::MenuAction, String)>,
@@ -571,9 +571,14 @@ impl UiPresentationRuntime {
         self.screens.form_input_mode = mode;
     }
 
-    /// Uses mouse bindings until the app-wide input mode next changes.
+    /// Uses mouse bindings until the shared mode changes or controller input arrives.
     pub fn note_form_mouse_input(&mut self) {
         self.screens.form_mouse_override = true;
+    }
+
+    /// Clears the mouse override when the form receives fresh controller input.
+    pub fn note_form_gamepad_input(&mut self) {
+        self.screens.form_mouse_override = false;
     }
 
     /// The engine frame for `identity`, when the engine drew that form.

@@ -6,7 +6,7 @@ use bevy::{
     ecs::message::{MessageCursor, Messages},
     input::{
         ButtonState,
-        gamepad::{Gamepad, GamepadButton},
+        gamepad::{Gamepad, GamepadAxis, GamepadButton, GamepadEvent},
         keyboard::KeyboardInput,
         mouse::{AccumulatedMouseMotion, MouseButtonInput, MouseScrollUnit, MouseWheel},
     },
@@ -85,11 +85,16 @@ pub(crate) fn drive_server_form_input(
     mut motion: ResMut<AccumulatedMouseMotion>,
     mut wheel: MessageReader<MouseWheel>,
     mut keyboard: MessageReader<KeyboardInput>,
-    (button_messages, window_events): (
+    (button_messages, window_events, gamepad_events): (
         Option<Res<Messages<MouseButtonInput>>>,
         Option<Res<Messages<WindowEvent>>>,
+        Option<Res<Messages<GamepadEvent>>>,
     ),
-    mut pointer_cursors: Local<(MessageCursor<MouseButtonInput>, MessageCursor<WindowEvent>)>,
+    mut input_cursors: Local<(
+        MessageCursor<MouseButtonInput>,
+        MessageCursor<WindowEvent>,
+        MessageCursor<GamepadEvent>,
+    )>,
     mut held: Local<bool>,
     menu: Option<Res<MenuRuntime>>,
     mut presentation: ResMut<UiPresentationResource>,
@@ -100,7 +105,7 @@ pub(crate) fn drive_server_form_input(
     mut stick: Local<[bool; 4]>,
 ) {
     let (window_id, window, mut cursor) = window.into_inner();
-    let (button_cursor, window_cursor) = &mut *pointer_cursors;
+    let (button_cursor, window_cursor, gamepad_cursor) = &mut *input_cursors;
     let mut mouse_activity = false;
     if let Some(events) = window_events.as_deref() {
         // Touch emulation updates Window and MouseButtonInput, not this physical event stream.
@@ -110,6 +115,25 @@ pub(crate) fn drive_server_form_input(
                 | WindowEvent::MouseButtonInput(MouseButtonInput { window, .. })
                 | WindowEvent::MouseWheel(MouseWheel { window, .. }) if *window == window_id
             );
+        }
+    }
+    let mut gamepad_activity = false;
+    if let Some(events) = gamepad_events.as_deref() {
+        for event in gamepad_cursor.read(events) {
+            gamepad_activity |= match event {
+                GamepadEvent::Button(event) => event.state == ButtonState::Pressed,
+                GamepadEvent::Axis(event) => {
+                    event.value.abs() > STICK_PRESS
+                        && matches!(
+                            event.axis,
+                            GamepadAxis::LeftStickX
+                                | GamepadAxis::LeftStickY
+                                | GamepadAxis::RightStickX
+                                | GamepadAxis::RightStickY
+                        )
+                }
+                GamepadEvent::Connection(_) => false,
+            };
         }
     }
     let input_available = driven.is_some()
@@ -198,6 +222,9 @@ pub(crate) fn drive_server_form_input(
     }
     if had_active_form && mouse_activity {
         presentation.note_form_mouse_input();
+    }
+    if had_active_form && gamepad_activity {
+        presentation.note_form_gamepad_input();
     }
     let engine_frame = runtime
         .server_forms()
