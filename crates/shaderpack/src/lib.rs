@@ -29,9 +29,7 @@ pub use biomes::{BiomeCategory, BiomeUniforms};
 pub use environment::{Environment, GpuVendor, HostOs};
 pub use expr::{BinaryOp, Expr, ExprError, UnaryOp};
 pub use ids::{BlockIdMap, IdMaps, NamedIdMap, RenderLayer, UNMAPPED_BLOCK_ID};
-pub use java_sky::{
-    BiomeColors, FogMedium, SkyDimension, SkyFogColors, SkyFogInputs, sky_fog, sunrise_color,
-};
+pub use java_sky::{BiomeColors, FogMedium, SkyFogColors, SkyFogInputs, sky_fog, sunrise_color};
 pub use options::{OptionKind, OptionValues, PackOption};
 pub use pack::ShaderPack;
 pub use programs::{
