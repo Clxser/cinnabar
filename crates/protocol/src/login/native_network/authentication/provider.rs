@@ -243,7 +243,8 @@ impl NativeProvider {
     }
 }
 
-/// Matches the configured Go URL.JoinPath() path cleaning, preserving whether a trailing slash existed.
+/// Matches configured Go URL.JoinPath() cleaning, adding a root slash for an empty path.
+/// Nonempty paths preserve whether a trailing slash existed.
 /// The expected issuer is independent of Rust's HTTP URL serialization (which adds a root slash).
 fn intended_issuer(value: &str) -> io::Result<String> {
     let url = secure_url(value)?;
@@ -254,7 +255,7 @@ fn intended_issuer(value: &str) -> io::Result<String> {
     let path = &value[path_start..];
     let authority = format!("{}://{}", url.scheme(), &value[authority..path_start]);
     if path.is_empty() {
-        return Ok(authority);
+        return Ok(format!("{authority}/"));
     }
     let mut segments = Vec::new();
     for segment in path.split('/') {
