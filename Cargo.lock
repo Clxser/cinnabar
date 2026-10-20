@@ -837,7 +837,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "bedrock-client"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=18cda941a0c314cec5a6d3a8bfc10c0b79a3df81#18cda941a0c314cec5a6d3a8bfc10c0b79a3df81"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=4c19903ab5798cbb2978fc5349a1352148043d75#4c19903ab5798cbb2978fc5349a1352148043d75"
 dependencies = [
  "bedrock-net",
  "bedrock-packs",
@@ -855,7 +855,7 @@ dependencies = [
 [[package]]
 name = "bedrock-net"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=18cda941a0c314cec5a6d3a8bfc10c0b79a3df81#18cda941a0c314cec5a6d3a8bfc10c0b79a3df81"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=4c19903ab5798cbb2978fc5349a1352148043d75#4c19903ab5798cbb2978fc5349a1352148043d75"
 dependencies = [
  "aes 0.9.3",
  "base64 0.22.1",
@@ -883,7 +883,7 @@ dependencies = [
 [[package]]
 name = "bedrock-packs"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=18cda941a0c314cec5a6d3a8bfc10c0b79a3df81#18cda941a0c314cec5a6d3a8bfc10c0b79a3df81"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=4c19903ab5798cbb2978fc5349a1352148043d75#4c19903ab5798cbb2978fc5349a1352148043d75"
 dependencies = [
  "serde",
  "serde_json",
@@ -925,7 +925,7 @@ dependencies = [
 [[package]]
 name = "bedrock-services"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-services?rev=68dc48e9a57e3fc966a206c69300a17f198c7949#68dc48e9a57e3fc966a206c69300a17f198c7949"
+source = "git+https://github.com/cinnabar-mc/bedrock-services?rev=82ab478c05373106c9543aadb6616bea30cc76d6#82ab478c05373106c9543aadb6616bea30cc76d6"
 dependencies = [
  "aws-lc-rs",
  "base64 0.22.1",
@@ -6846,7 +6846,7 @@ dependencies = [
 [[package]]
 name = "nethernet"
 version = "0.0.1"
-source = "git+https://github.com/cinnabar-mc/nethernet?rev=08ddd3278b67f8a14999ae5fcf191159f90ebf9e#08ddd3278b67f8a14999ae5fcf191159f90ebf9e"
+source = "git+https://github.com/cinnabar-mc/nethernet?rev=d053651e93abcb00e34f932c5f29cd0913239aef#d053651e93abcb00e34f932c5f29cd0913239aef"
 dependencies = [
  "aes 0.9.3",
  "base64 0.23.1",
@@ -6871,7 +6871,7 @@ dependencies = [
 [[package]]
 name = "nethernet-tokio"
 version = "0.2.0"
-source = "git+https://github.com/cinnabar-mc/nethernet?rev=08ddd3278b67f8a14999ae5fcf191159f90ebf9e#08ddd3278b67f8a14999ae5fcf191159f90ebf9e"
+source = "git+https://github.com/cinnabar-mc/nethernet?rev=d053651e93abcb00e34f932c5f29cd0913239aef#d053651e93abcb00e34f932c5f29cd0913239aef"
 dependencies = [
  "bytes",
  "futures",

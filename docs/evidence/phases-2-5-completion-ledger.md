@@ -28,8 +28,10 @@ audio behavior, live accounts, deployment and the supported-browser/network matr
 The isolated signed Dragonfly-world fixture exercises actual Login, packs, initialization,
 terrain, live traffic and original transport/process/membership retirement using the existing
 Go world backend. Hosted CDN preloads preserve real archive identity without inventing DataInfo.
-Neither establishes live advertised hosting or invitations. Hosted packless upstreams remain
-unsupported in this integration. Ordinary native friend UI joining also remains disabled.
+A controlled hosted packless fixture preserves actual startup, initialization, live traffic
+and normal EOF without inventing pack metadata or acknowledgments. These fixtures do not
+establish live advertised hosting or invitations. Ordinary native friend UI joining remains
+disabled.
 A separate controlled fixture passes cancellation; full friend play remains unqualified.
 
 Menu, account, presence-retirement, invite-picker and stale-result controls pass, including

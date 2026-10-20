@@ -95,8 +95,9 @@ worker retirement before credential mutation. Owning cancellation, contention,
 process handoff and stale-account controls pass. Ordinary native friend UI joining
 remains disabled. Separate controlled cancellation evidence does not qualify friend play,
 which remains open. Advertised hosting, host messaging/renewal, WAN/device
-compatibility and retained memory/frame budgets remain open. Hosted upstreams without
-an advertised pack phase remain unsupported in this integration.
+compatibility and retained memory/frame budgets remain open. A controlled hosted fixture
+relays actual startup without an advertised pack phase through initialization, live traffic
+and normal EOF; real backend acceptance remains separate.
 
 Android uses native networking and the platform TLS verifier; target checks and APK
 assembly are verified. Physical-device sign-in, TLS, terrain and lifecycle acceptance
@@ -421,7 +422,8 @@ the source implementation alone does not qualify the route or its UI/default gat
 Native desktop, public-gateway and hosted-upstream negotiation accept an actual StartGame
 without an advertised pack phase, preserving the original spawn prerequisites. Hosted
 absence uses a consumed verified Login and flushed LoginSuccess, without invented pack
-metadata or acknowledgments. Live packless acceptance remains open.
+metadata or acknowledgments. Controlled two-leg startup, initialization, live traffic and
+normal EOF pass; live backend packless acceptance remains open.
 
 Cosmetics require live authenticated multi-account acceptance, catalog/motion envelope
 coverage, supported slot/ownership enforcement, player-preview acceptance and hardware
