@@ -190,7 +190,7 @@ impl Expr {
 /// Parses a lone numeric literal with an optional sign (`12`, `-0.5`, `0x1F`, `2u`),
 /// as used for macro values in `#if` conditions. Anything else is `None`.
 pub(crate) fn parse_number_literal(text: &str) -> Option<f64> {
-    let tokens = lex(text).ok()?;
+    let tokens = lex(text, false).ok()?;
     match tokens.as_slice() {
         [Token::Number(value)] | [Token::Plus, Token::Number(value)] => Some(*value),
         [Token::Minus, Token::Number(value)] => Some(-value),
