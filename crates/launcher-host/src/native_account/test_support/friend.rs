@@ -199,6 +199,16 @@ impl Fixture {
         self.peer.hold_rta_reconnect()
     }
 
+    /// Holds this original signed member's applied rebind response until caller cancellation.
+    pub fn hold_rebind_response(&mut self) -> bedrock_services::test_support::HostedRebindHold {
+        self.peer.hold_friend_rebind_response()
+    }
+
+    /// Retains this original verified PUT before application while one cleanup read sees old state.
+    pub fn hold_rebind_application(&mut self) -> bedrock_services::test_support::HostedRebindHold {
+        self.peer.hold_friend_rebind_application()
+    }
+
     /// Waits for the actual original handle-join response flush, without admitting its nonce.
     pub async fn joined(&mut self) -> io::Result<()> {
         tokio::time::timeout_at(

@@ -2,6 +2,9 @@ use super::*;
 use bedrock_services::xbox::social;
 use serde_json::{Value, json};
 
+#[cfg(feature = "test-support")]
+mod recovery;
+
 /// Supplies original synthetic title metadata and real member identities, without service traffic.
 fn snapshot() -> Value {
     json!({
