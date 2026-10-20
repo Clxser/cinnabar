@@ -62,6 +62,7 @@ fn hosted_snapshot_accepts_actual_preloaded_archive_without_invented_data_info()
         "a verified original preloaded archive required nonexistent upstream DataInfo"
     );
     let (snapshot, archives) = result.unwrap();
+    let snapshot = snapshot.expect("actual advertised preload keeps its metadata");
     assert_eq!(archives.as_slice(), &[Bytes::from(original)]);
     assert_eq!(
         snapshot.offer.resource_packs[0].pack_id_version.pack_uuid,
@@ -108,4 +109,24 @@ fn hosted_preloaded_snapshot_rejects_replaced_version_size_and_key() {
             "replacement {replaced} bypassed the original verified archive descriptor"
         );
     }
+}
+
+#[test]
+fn hosted_absent_pack_phase_keeps_absence_and_rejects_orphaned_archives() {
+    let (snapshot, archives) = snapshot(packs::Acquired {
+        handoff: Default::default(),
+        metadata: None,
+        preloaded: Default::default(),
+    })
+    .unwrap();
+    assert!(snapshot.is_none());
+    assert!(archives.is_empty());
+
+    let id = uuid::Uuid::from_u128(1);
+    let mut acquired = preloaded(resource_pack::test_support::archive_bytes(id, &[]), id);
+    acquired.metadata = None;
+    assert!(
+        super::snapshot(acquired).is_err(),
+        "absent upstream packs hid an original acquired archive"
+    );
 }

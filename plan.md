@@ -418,9 +418,10 @@ Native friend serving has separate Dragonfly and BDS HTTP/LAN backend owners.
 BDS hosting acceptance remains incomplete until the original process, authenticated
 guests, pack delivery, initialization, live traffic and retirement pass together;
 the source implementation alone does not qualify the route or its UI/default gates.
-Native desktop and public-gateway negotiation also accept an actual StartGame without
-an advertised pack phase, preserving the original spawn prerequisites. Hosted upstream
-absence remains unsupported; live packless acceptance remains open.
+Native desktop, public-gateway and hosted-upstream negotiation accept an actual StartGame
+without an advertised pack phase, preserving the original spawn prerequisites. Hosted
+absence uses a consumed verified Login and flushed LoginSuccess, without invented pack
+metadata or acknowledgments. Live packless acceptance remains open.
 
 Cosmetics require live authenticated multi-account acceptance, catalog/motion envelope
 coverage, supported slot/ownership enforcement, player-preview acceptance and hardware

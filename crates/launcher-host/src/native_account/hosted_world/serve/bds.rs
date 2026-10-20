@@ -1,6 +1,7 @@
 //! Actual local BDS Login, retained pack delivery and raw initialized relay handoff.
 use super::*;
 use crate::local_worlds::HostOpening;
+use bedrock_client::server::session::{ServerPackDelivery, ServerRelayProgress};
 use protocol::{
     NativeConnectionTarget, NativeHostedRelay, NativeHostedRelayProgress, NativeHostedUpstream,
 };
@@ -44,16 +45,45 @@ impl NativeHostedWorld {
                 .await?;
             self.wait_process(opening, deadline).await?;
             let upstream = upstream.as_mut().expect("original upstream retained");
-            let snapshot = upstream.take_packs()?;
-            self.deliver_packs(
-                &mut wire,
-                ready,
-                snapshot,
-                packs::PackSource::Bds(upstream),
-                &policy,
-                deadline,
-            )
-            .await
+            match upstream.take_packs()? {
+                Some(snapshot) => self
+                    .deliver_packs(
+                        &mut wire,
+                        ready,
+                        snapshot,
+                        packs::PackSource::Bds(upstream),
+                        &policy,
+                        deadline,
+                    )
+                    .await?
+                    .relay_world(
+                        &policy,
+                        Instant::now(),
+                        policy.utc().map_err(|_| rejected())?,
+                    )
+                    .map_err(|error| io::Error::other(error.into_parts().1)),
+                None => {
+                    let pending = ready
+                        .relay_without_packs(
+                            ServerPackDelivery::default().max_metadata_bytes,
+                            &policy,
+                            Instant::now(),
+                            policy.utc().map_err(|_| rejected())?,
+                        )
+                        .map_err(|_| rejected())?;
+                    self.send_setup(
+                        wire.prepare_packets(vec![pending.packet().clone()], deadline)?,
+                        SendAuthority::Login(pending.login(), &policy, pending.grant()),
+                    )
+                    .await?;
+                    self.wait_login(pending.login(), &policy, pending.grant())
+                        .await?;
+                    match pending.flushed(Instant::now()).map_err(|_| rejected())? {
+                        ServerRelayProgress::Continue(relay) => Ok(relay),
+                        ServerRelayProgress::Initialized(_) => Err(rejected()),
+                    }
+                }
+            }
         }
         .await;
         let ready = match preparation {
@@ -70,9 +100,7 @@ impl NativeHostedWorld {
         let mut relay = upstream.expect("prepared original upstream").relay_world(
             wire,
             ready,
-            &policy,
             Instant::now(),
-            policy.utc().map_err(|_| rejected())?,
         )?;
         let result = self.relay_bds_startup(&mut relay, &policy, opening).await;
         if let Err(error) = result {

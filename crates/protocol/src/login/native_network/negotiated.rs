@@ -367,12 +367,6 @@ pub(super) async fn negotiate_connected(
     }
     let packs = match receive_login(connection, handshake).await? {
         Some(offer) => packs::acquire(connection, offer, acquisition).await?,
-        None if matches!(acquisition, packs::Acquisition::Hosted) => {
-            return Err(failure(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "hosted upstream requires an advertised resource-pack phase",
-            )));
-        }
         None => packs::Acquired {
             handoff: ResourcePackHandoff::default(),
             metadata: None,
