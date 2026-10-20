@@ -41,7 +41,7 @@ async fn one(address: &str) -> ServerPing {
         address: address.to_owned(),
         ..Default::default()
     };
-    let bridge::ConnectTarget::RakNet(target) = crate::launcher_core::target_for(address) else {
+    let bridge::ConnectTarget::RakNet(target) = crate::destination::target_for(address) else {
         return result;
     };
     if address.trim().is_empty() {

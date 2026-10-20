@@ -31,7 +31,6 @@ mod artwork_tests;
 /// Generation/source changes and terminal stop drop it before a replacement starts.
 /// Fetch has a hard deadline; the image owner returns partial artwork at its own finite budget.
 pub(super) async fn run(
-    socket_dir: Option<&std::path::Path>,
     images: &ImageDirectory,
     shared: &Mutex<Snapshot>,
     selection: &Selection,
@@ -42,7 +41,7 @@ pub(super) async fn run(
     let fetch_deadline = AsyncInstant::now() + timeout;
     let result = async {
         let mut profile = wait(
-            selection.source.fetch(socket_dir),
+            selection.source.fetch(),
             shared,
             selection,
             requests,

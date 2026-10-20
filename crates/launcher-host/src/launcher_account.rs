@@ -1,10 +1,9 @@
-//! [`AccountControl`] over the selected native services or a real Core control endpoint.
+//! [`AccountControl`] over the selected native account and its original service lifetimes.
 //! Workers poll auth/events often, catalogs and Home/public feeds rarely. Profile has an
 //! independent worker woken by opening, retry and account changes, so it never
 //! waits on unrelated feeds. Sign-out requests queue to the events worker.
 
 use std::{
-    collections::HashSet,
     path::PathBuf,
     sync::{Arc, Mutex},
     thread,
@@ -12,23 +11,16 @@ use std::{
 };
 
 use bridge::{
-    self, Account, AuthState as CoreAuth, ConnectProgress, ConnectStage, FeaturedServer, Friend,
-    Home, Message, MessageEvent, Profile, Realm, ServerPing,
+    self, Account, AuthState as AccountAuth, FeaturedServer, Home, MessageEvent, Profile,
+    ServerPing,
 };
 use crossbeam_channel::{Receiver, Sender, bounded};
 use tokio::runtime::Handle;
 use tokio_util::task::TaskTracker;
 
-use super::account_control::{AccountControl, AccountEvent, RealmMembershipResponse};
-use launcher::menu::view::{
-    ButtonArt, InboxItem, JoinStage, LiveEventCard, MenuHome, MenuProfile, PingInfo,
-    ServerTrustPrompt,
-};
-use launcher::menu::{
-    CATALOG_REFRESH_INTERVAL,
-    auth::AuthState,
-    view::{MenuFriendCard, MenuRealmCard},
-};
+use super::account_control::{AccountControl, RealmMembershipResponse, menu_home};
+use launcher::menu::auth::AuthState;
+use launcher::menu::view::{MenuHome, MenuProfile, PingInfo};
 
 #[cfg(test)]
 mod home_promo;
@@ -44,7 +36,6 @@ mod shared_players;
 mod workers;
 #[cfg(test)]
 use featured_feed::card as featured_card;
-use feeds::{CoreFeeds, catalog_round};
 mod events;
 mod invites;
 mod message_reports;
@@ -63,32 +54,18 @@ mod native_presence;
 ))]
 pub mod retirement_test_support;
 
-#[cfg(all(test, unix))]
-mod presence_polling_tests;
-#[cfg(all(test, unix))]
-mod profile_polling_tests;
-
 /// How often auth state and events refresh.
 const EVENT_INTERVAL: Duration = Duration::from_secs(1);
 /// How often events refresh while a join is under way, so its progress bar moves smoothly.
 const JOIN_EVENT_INTERVAL: Duration = Duration::from_millis(250);
-/// How often the screen feeds are read; the core answers from its catalog cache
-/// and refreshes upstream on its own schedule, so this only picks up fresh data.
+/// How often screen feeds adopt freshly acquired service data.
 const FEED_INTERVAL: Duration = Duration::from_secs(30);
 /// How soon a feed that failed is asked again.
 const FEED_RETRY: Duration = Duration::from_secs(15);
-/// The longest one feed waits for its artwork downloads, as the core bounded a refresh.
+/// The original finite budget for optional feed artwork.
 pub const ARTWORK_BUDGET: Duration = Duration::from_secs(40);
 /// How often shown server rows are pinged.
 const PING_INTERVAL: Duration = Duration::from_secs(15);
-
-/// The concrete account constructor owns authentication independently of session/presence routes.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-enum AccountSource {
-    #[default]
-    Core,
-    Native,
-}
 
 #[derive(Default)]
 struct Snapshot {
@@ -98,10 +75,7 @@ struct Snapshot {
         not(target_arch = "wasm32")
     ))]
     retirement_probe: Option<Arc<retirement_test_support::State>>,
-    account_source: AccountSource,
     auth_generation: u64,
-    /// Wakes the catalog worker when its account identity changes.
-    catalog_wake: Option<Sender<()>>,
     /// Wakes featured details when their count subscription changes.
     feed_wake: Option<Sender<()>>,
     /// Wakes Home independently when its account identity changes.
@@ -129,14 +103,13 @@ struct Snapshot {
     realm_source: realm_membership::Source,
     realm_wake: Option<tokio::sync::watch::Sender<realm_membership::Wake>>,
     xbox_presence: bridge::XboxPresenceState,
-    title_presence_owner: crate::launcher_core::TitlePresenceOwner,
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     native_presence_account: Option<Arc<crate::native_account::NativeAccount>>,
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     native_host_wake: Option<tokio::sync::watch::Sender<native_host::Desired>>,
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     native_host_invitation: Option<crate::native_account::HostedInvitation>,
-    /// The Cinnabar API identity and visibility the events worker keeps the core configured with.
+    /// The Cinnabar API identity and visibility applied by the original event worker.
     cinnabar_api: Option<bridge::CinnabarApiConfig>,
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     native_product_api: Option<crate::product_api::Client>,
@@ -146,12 +119,6 @@ struct Snapshot {
     /// The `(session, revision)` roster last sent to the lookup worker.
     cinnabar_roster_key: Option<(u64, u64)>,
     account: Option<Account>,
-    realms: Option<Vec<Realm>>,
-    /// Prevents a catalog request started before acceptance from removing the new membership.
-    realm_catalog_revision: u64,
-    /// Native mode owns Realms and friend-world reads; other account services remain enabled.
-    native_catalog: bool,
-    friends: Option<Vec<Friend>>,
     /// Delivered once per fetch.
     featured: Option<Vec<FeaturedServer>>,
     player_counts_visible: bool,
@@ -159,12 +126,6 @@ struct Snapshot {
     ping_targets: Vec<String>,
     pings: Option<Vec<ServerPing>>,
     home: Option<Home>,
-    events: Vec<AccountEvent>,
-    last_disconnect: Option<u64>,
-    connect: Option<ConnectProgress>,
-    server_trust: Option<bridge::ServerTrustPrompt>,
-    /// The prompt last answered, hidden until the core withdraws it.
-    answered_trust: Option<u64>,
     /// The menu is connecting, so the events worker polls faster.
     joining: bool,
     /// The invite screen's friends list, delivered once per request.
@@ -176,21 +137,19 @@ struct Snapshot {
 
 impl Snapshot {
     /// An asynchronous account reply belongs only to the exact source and generation that began it.
-    fn same_account_source(&self, generation: u64, source: AccountSource) -> bool {
-        self.auth_generation == generation && self.account_source == source
+    fn same_generation(&self, generation: u64) -> bool {
+        self.auth_generation == generation
     }
 
     /// The concrete native account-service source shared by its original constructor and owner.
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     fn native(account: Option<Arc<crate::native_account::NativeAccount>>, language: &str) -> Self {
         Snapshot {
-            account_source: AccountSource::Native,
-            title_presence_owner: crate::launcher_core::TitlePresenceOwner::Native,
-            profile_source: profile_worker::Source::Native(account.clone()),
-            people_source: invites::Source::Native(account.clone()),
-            realm_source: realm_membership::Source::Native(account.clone()),
-            home_source: home_feed::Source::Native(account.clone()),
-            featured_source: featured_feed::Source::Native(account.clone()),
+            profile_source: profile_worker::Source(account.clone()),
+            people_source: invites::Source(account.clone()),
+            realm_source: realm_membership::Source(account.clone()),
+            home_source: home_feed::Source(account.clone()),
+            featured_source: featured_feed::Source(account.clone()),
             native_product_api: Some(crate::product_api::Client::default()),
             home_language: if language.is_empty() {
                 bridge::contract::DEFAULT_SERVICE_LANGUAGE.to_owned()
@@ -212,8 +171,6 @@ impl Snapshot {
             self.cinnabar_roster_key = None;
         }
         self.auth_generation = self.auth_generation.wrapping_add(1);
-        self.realms = None;
-        self.friends = None;
         self.featured = None;
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
         self.featured_gatherings.clear();
@@ -243,10 +200,6 @@ impl Snapshot {
         if let Some(wake) = &self.realm_wake {
             realm_membership::retire(wake);
         }
-        if let Some(wake) = &self.catalog_wake {
-            // A queued wake already covers the newest snapshot; never block a frame.
-            let _ = wake.try_send(());
-        }
         if let Some(wake) = &self.profile_wake {
             profile_worker::refresh(wake);
         }
@@ -258,7 +211,8 @@ impl Snapshot {
         }
     }
 
-    /// Advances the identity boundary when the core changes account or sign-in state.
+    /// Advances the identity boundary when the selected account or sign-in state changes.
+    #[cfg(test)]
     fn set_account(&mut self, account: Account) {
         if self
             .account
@@ -271,7 +225,7 @@ impl Snapshot {
     }
 }
 
-/// The menu's selected account services and their optional real legacy control transport.
+/// The menu's selected account services and their original cancellation owners.
 pub struct LauncherAccount {
     snapshot: Arc<Mutex<Snapshot>>,
     sign_out: Sender<()>,
@@ -282,7 +236,6 @@ pub struct LauncherAccount {
     cinnabar_rosters: Sender<cinnabar_players::Roster>,
     /// Dropping it stops the catalog and feed workers.
     _alive: Sender<()>,
-    socket_dir: Option<PathBuf>,
     presence_lifetime: TitlePresenceLifetime,
 }
 
@@ -314,21 +267,8 @@ impl Drop for LauncherAccount {
 }
 
 impl LauncherAccount {
-    /// Start polling the control endpoint under `socket_dir`, caching artwork under `artwork`;
-    /// the workers stop when this is dropped. Events, the slow catalog and the screen feeds
-    /// each poll on their own worker, publishing every answer as it arrives.
-    pub fn new(socket_dir: PathBuf, artwork: PathBuf, runtime: Handle, tasks: TaskTracker) -> Self {
-        Self::start(
-            Some(socket_dir),
-            artwork,
-            Snapshot::default(),
-            runtime,
-            tasks,
-        )
-    }
-
-    /// Starts native services without a Core endpoint on the application's existing reactor.
-    /// Account operations share the menu's original selected owner; absence never selects Core.
+    /// Starts native services on the application's existing reactor.
+    /// Account operations share the menu's original selected owner; absence remains unavailable.
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     pub fn native(
         artwork: PathBuf,
@@ -337,33 +277,12 @@ impl LauncherAccount {
         runtime: Handle,
         tasks: TaskTracker,
     ) -> Self {
-        Self::start(
-            None,
-            artwork,
-            Snapshot::native(account, language),
-            runtime,
-            tasks,
-        )
+        Self::start(artwork, Snapshot::native(account, language), runtime, tasks)
     }
 
     /// Retains the existing worker's retirement proof independently of the Bevy resource.
     pub fn title_presence_lifetime(&self) -> TitlePresenceLifetime {
         self.presence_lifetime.clone()
-    }
-
-    /// Retires Go Realms/friend-world results and polling when the native menu owns discovery.
-    pub fn set_native_catalog(&self, native: bool) {
-        self.with(|snapshot| {
-            if snapshot.native_catalog != native {
-                snapshot.native_catalog = native;
-                snapshot.realm_catalog_revision = snapshot.realm_catalog_revision.wrapping_add(1);
-                snapshot.realms = None;
-                snapshot.friends = None;
-                if let Some(wake) = &snapshot.catalog_wake {
-                    let _ = wake.try_send(());
-                }
-            }
-        });
     }
 
     /// Supplies only the actual played opening; the existing native worker owns all service IO.
@@ -390,7 +309,7 @@ impl LauncherAccount {
         }
     }
 
-    /// Keeps the core's Cinnabar API connection on `channel`, showing this player when `visible`.
+    /// Configures the original Cinnabar API connection and explicit visibility.
     pub fn set_cinnabar_api(&self, channel: update_manifest::channel::Channel, visible: bool) {
         self.with(|snapshot| {
             if snapshot
@@ -446,11 +365,6 @@ impl LauncherAccount {
         self.with(|snapshot| Arc::clone(&snapshot.cinnabar_players))
     }
 
-    /// The actual legacy control directory; native services have no Core transport.
-    pub fn core_directory(&self) -> Option<&std::path::Path> {
-        self.socket_dir.as_deref()
-    }
-
     fn with<T>(&self, read: impl FnOnce(&mut Snapshot) -> T) -> T {
         let mut snapshot = self
             .snapshot
@@ -479,14 +393,6 @@ fn worker_runtime() -> tokio::runtime::Runtime {
         .expect("fixture I/O runtime")
 }
 
-/// Completes the actual counted fixture workers before releasing their reactor.
-#[cfg(all(test, unix))]
-fn finish_workers(runtime: tokio::runtime::Runtime, tasks: TaskTracker) {
-    tasks.close();
-    runtime.block_on(tasks.wait());
-    runtime.shutdown_background();
-}
-
 fn publish(shared: &Mutex<Snapshot>, write: impl FnOnce(&mut Snapshot)) {
     write(&mut shared.lock().unwrap_or_else(|poison| poison.into_inner()));
 }
@@ -500,6 +406,7 @@ fn auth_generation(shared: &Mutex<Snapshot>) -> u64 {
 }
 
 /// Publishes a worker response under the identity that requested it.
+#[cfg(test)]
 fn publish_account(shared: &Mutex<Snapshot>, generation: u64, write: impl FnOnce(&mut Snapshot)) {
     let mut snapshot = shared.lock().unwrap_or_else(|poison| poison.into_inner());
     if snapshot.auth_generation == generation {
@@ -515,27 +422,6 @@ fn wait(stop: &Receiver<()>, interval: Duration) -> bool {
     )
 }
 
-/// Waits for the next catalog poll, an identity change, or the link being dropped.
-fn wait_catalog(stop: &Receiver<()>, changes: &Receiver<()>) -> bool {
-    crossbeam_channel::select! {
-        recv(stop) -> _ => false,
-        recv(changes) -> result => result.is_ok(),
-        default(CATALOG_REFRESH_INTERVAL) => true,
-    }
-}
-
-#[cfg(test)]
-fn poll_events(socket_dir: &std::path::Path, shared: &Mutex<Snapshot>, requests: &Receiver<()>) {
-    let runtime = worker_runtime();
-    events::poll(
-        Some(socket_dir),
-        shared,
-        requests,
-        &TitlePresenceLifetime::new(),
-        runtime.handle(),
-    );
-}
-
 /// The announced release when its identity differs from the last one seen.
 fn new_release<'a>(
     seen: &mut Option<bridge::CinnabarRelease>,
@@ -547,37 +433,6 @@ fn new_release<'a>(
     }
     *seen = Some(latest.clone());
     Some(latest)
-}
-
-fn poll_catalog(
-    socket_dir: Option<&std::path::Path>,
-    shared: &Mutex<Snapshot>,
-    stop: &Receiver<()>,
-    changes: &Receiver<()>,
-    runtime: &Handle,
-) {
-    loop {
-        // Adopt all changes already present before starting this account's requests.
-        while changes.try_recv().is_ok() {}
-        let generation = {
-            let snapshot = shared.lock().unwrap_or_else(|poison| poison.into_inner());
-            snapshot
-                .account
-                .as_ref()
-                .filter(|account| account.state == CoreAuth::SignedIn)
-                .map(|_| snapshot.auth_generation)
-        };
-        if let Some(generation) = generation {
-            let feeds = CoreFeeds {
-                socket_dir,
-                art: None,
-            };
-            runtime.block_on(catalog_round(&feeds, shared, generation));
-        }
-        if !wait_catalog(stop, changes) {
-            return;
-        }
-    }
 }
 
 /// One result per pinged address: a server that sent no pong reads offline, as
@@ -598,192 +453,18 @@ fn round_results(targets: &[String], pongs: Vec<ServerPing>) -> Vec<ServerPing> 
         .collect()
 }
 
-/// A feed's value, or `None` after logging which feed failed; the core logs the
-/// upstream cause, redacted.
-fn settle<T, E: std::fmt::Display>(
-    feed: &str,
-    result: Result<T, E>,
-    failed: &mut bool,
-) -> Option<T> {
-    match result {
-        Ok(value) => Some(value),
-        Err(error) => {
-            *failed = true;
-            tracing::warn!(feed, %error, "launcher feed failed; retrying soon");
-            None
-        }
-    }
-}
-
-/// Button-art surfaces the start screen shows, reported once per message instance.
-const SHOWN_SURFACES: [&str; 1] = [bridge::contract::MESSAGE_SURFACE_PLAY_BUTTON];
-
-fn report_impressions(
-    runtime: &Handle,
-    socket_dir: Option<&std::path::Path>,
-    home: &Home,
-    reported: &mut HashSet<String>,
-) {
-    let Some(socket_dir) = socket_dir else { return };
-    for message in &home.messages {
-        if !SHOWN_SURFACES.contains(&message.surface.as_str())
-            || !reported.insert(message.instance_id.clone())
-        {
-            continue;
-        }
-        let event = MessageEvent {
-            event_type: bridge::contract::MESSAGE_EVENT_IMPRESSION.to_owned(),
-            instance_id: message.instance_id.clone(),
-            report_id: message.report_id.clone(),
-            button_id: String::new(),
-        };
-        let _ = runtime.block_on(bridge::report_message_event(socket_dir, &event));
-    }
-}
-
-/// The start screen's view of the core's home feed.
-pub fn menu_home(home: &Home, now_unix: i64) -> MenuHome {
-    let art = |surface: &str| {
-        home.messages
-            .iter()
-            .find(|message| message.surface == surface)
-            .map(button_art)
-    };
-    let live_event = home
-        .live_events
-        .iter()
-        .find(|event| event.end_unix == 0 || now_unix < event.end_unix)
-        .map(|event| LiveEventCard {
-            button_text: if event.button_text.is_empty() {
-                "gathering.button.liveEventFallback".to_owned()
-            } else {
-                event.button_text.clone()
-            },
-            caption: event.caption_text.clone(),
-            countdown: event.caption_countdown,
-            start_unix: event.start_unix,
-            badge_path: event.badge.path.clone(),
-            address: event.address.clone(),
-            route_to_servers: event.route_to_servers,
-        });
-    MenuHome {
-        message_session: None,
-        play_art: art(bridge::contract::MESSAGE_SURFACE_PLAY_BUTTON),
-        inbox_unread: home
-            .inbox
-            .categories
-            .iter()
-            .filter(|category| launcher::menu::inbox::category_index(&category.kind).is_some())
-            .fold(0_u32, |total, category| {
-                total.saturating_add(category.unread)
-            }),
-        inbox_counts: home
-            .inbox
-            .categories
-            .iter()
-            .filter_map(|category| {
-                Some((
-                    launcher::menu::inbox::category_index(&category.kind)?,
-                    category.unread,
-                ))
-            })
-            .collect(),
-        realm_invites: home.realm_invites,
-        live_event,
-        persona_head: home.persona_head.path.clone(),
-        inbox: home
-            .messages
-            .iter()
-            .filter(|message| {
-                message.surface == bridge::contract::MESSAGE_SURFACE_INBOX_MESSAGE
-                    && launcher::menu::inbox::category_index(&message.category).is_some()
-            })
-            .map(|message| InboxItem {
-                instance_id: message.instance_id.clone(),
-                report_id: message.report_id.clone(),
-                received: message.received.clone(),
-                source: message.sender.clone(),
-                header: message.header.clone(),
-                body: message.body.clone(),
-                category: message.category.clone(),
-                unread: !message
-                    .status
-                    .eq_ignore_ascii_case(bridge::contract::MESSAGE_STATUS_READ),
-            })
-            .collect(),
-    }
-}
-
-/// Sorts a tile's images into the button's layers by their ids (hover, foreground).
-fn button_art(message: &Message) -> ButtonArt {
-    let mut art = ButtonArt {
-        banner: message.banner.clone(),
-        colors: message.colors.clone(),
-        ..ButtonArt::default()
-    };
-    for image in message.images.iter().filter(|image| !image.path.is_empty()) {
-        let id = image.id.to_ascii_lowercase();
-        if id.contains(bridge::contract::MESSAGE_ART_BANNER) {
-            art.banner_texture = image.path.clone();
-            continue;
-        }
-        let hover = id.contains(bridge::contract::MESSAGE_ART_HOVER);
-        let foreground = id.contains(bridge::contract::MESSAGE_ART_FORE)
-            || id.contains(bridge::contract::MESSAGE_ART_FG);
-        let slot = match (hover, foreground) {
-            (true, true) => &mut art.hover_foreground,
-            (true, false) => &mut art.hover_background,
-            (false, true) => &mut art.default_foreground,
-            (false, false) => &mut art.default_background,
-        };
-        if slot.is_empty() {
-            *slot = image.path.clone();
-        }
-    }
-    art
-}
-
-/// The core's account state as the menu's sign-in state; an offline core
-/// knows nothing about the account, so the auth supervisor's state stands.
+/// Projects verified account presentation, leaving unavailable state with the auth supervisor.
 fn auth_state(account: &Account) -> Option<AuthState> {
     Some(match account.state {
-        CoreAuth::Offline => return None,
-        CoreAuth::SignedOut => AuthState::SignedOut,
-        CoreAuth::AwaitingCode => AuthState::AwaitingCode {
+        AccountAuth::Offline => return None,
+        AccountAuth::SignedOut => AuthState::SignedOut,
+        AccountAuth::AwaitingCode => AuthState::AwaitingCode {
             uri: account.verification_uri.clone().unwrap_or_default(),
             code: account.user_code.clone().unwrap_or_default(),
         },
-        CoreAuth::SignedIn => AuthState::Authenticated,
-        CoreAuth::Failed => AuthState::Failed(account.reason.clone().unwrap_or_default()),
+        AccountAuth::SignedIn => AuthState::Authenticated,
+        AccountAuth::Failed => AuthState::Failed(account.reason.clone().unwrap_or_default()),
     })
-}
-
-fn join_stage(progress: &ConnectProgress) -> JoinStage {
-    match progress.stage {
-        ConnectStage::Realm => JoinStage::Realm,
-        ConnectStage::Idle | ConnectStage::Connecting => JoinStage::Connecting,
-        ConnectStage::Packs => JoinStage::Packs {
-            done: progress.packs_done,
-            total: progress.packs_total,
-            received_bytes: progress.received_bytes,
-            total_bytes: progress.total_bytes,
-        },
-    }
-}
-
-fn friend_card(friend: &Friend) -> MenuFriendCard {
-    let members = if friend.max_members > 0 {
-        format!("{}/{} players", friend.members, friend.max_members)
-    } else {
-        format!("{} players", friend.members)
-    };
-    MenuFriendCard {
-        gamertag: friend.gamertag.clone(),
-        world_name: friend.world_name.clone(),
-        members,
-        xuid: friend.xuid.clone(),
-        max_members: friend.max_members,
-    }
 }
 
 impl AccountControl for LauncherAccount {
@@ -802,59 +483,12 @@ impl AccountControl for LauncherAccount {
         self.with(|snapshot| snapshot.account.as_ref().and_then(auth_state))
     }
 
-    fn join_stage(&mut self) -> Option<JoinStage> {
-        self.with(|snapshot| snapshot.connect.as_ref().map(join_stage))
-    }
-
     fn set_joining(&mut self, joining: bool) {
         self.with(|snapshot| snapshot.joining = joining);
     }
 
-    fn server_trust(&mut self) -> Option<ServerTrustPrompt> {
-        self.with(|snapshot| {
-            let prompt = snapshot.server_trust.as_ref()?;
-            (snapshot.answered_trust != Some(prompt.id)).then(|| ServerTrustPrompt {
-                id: prompt.id,
-                url: prompt.url.clone(),
-                from_session_core: false,
-            })
-        })
-    }
-
-    fn answer_server_trust(&mut self, id: u64, trusted: bool) {
-        let Some(directory) = self.socket_dir.clone() else {
-            return;
-        };
-        self.with(|snapshot| snapshot.answered_trust = Some(id));
-        let snapshot = Arc::clone(&self.snapshot);
-        super::server_trust::send(directory, id, trusted, move || {
-            let mut snapshot = snapshot.lock().unwrap_or_else(|poison| poison.into_inner());
-            if snapshot.answered_trust == Some(id) {
-                snapshot.answered_trust = None;
-            }
-        });
-    }
-
     fn account_generation(&mut self) -> Option<u64> {
         Some(self.with(|snapshot| snapshot.auth_generation))
-    }
-
-    fn realms(&mut self) -> Option<Vec<MenuRealmCard>> {
-        self.with(|snapshot| {
-            snapshot
-                .realms
-                .as_ref()
-                .map(|realms| realms.iter().map(realm_membership::realm_card).collect())
-        })
-    }
-
-    fn friends(&mut self) -> Option<Vec<MenuFriendCard>> {
-        self.with(|snapshot| {
-            snapshot
-                .friends
-                .as_ref()
-                .map(|friends| friends.iter().map(friend_card).collect())
-        })
     }
 
     fn sign_out(&mut self) -> bool {
@@ -867,10 +501,6 @@ impl AccountControl for LauncherAccount {
             });
         }
         queued
-    }
-
-    fn poll_event(&mut self) -> Option<AccountEvent> {
-        self.with(|snapshot| (!snapshot.events.is_empty()).then(|| snapshot.events.remove(0)))
     }
 
     fn featured(&mut self) -> Option<Vec<crate::account_control::FeaturedRow>> {

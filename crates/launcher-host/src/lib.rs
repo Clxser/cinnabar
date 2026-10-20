@@ -3,13 +3,12 @@
 pub mod account_control;
 pub mod accounts;
 pub mod auth;
-pub mod catalog;
 pub mod catalog_art;
 pub mod client_random_id;
-pub mod core_process;
 pub mod desktop;
+pub mod destination;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub mod launcher_account;
-pub mod launcher_core;
 pub mod lifecycle;
 pub mod local_worlds;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]

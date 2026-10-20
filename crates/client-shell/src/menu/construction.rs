@@ -145,16 +145,13 @@ impl MenuRuntime {
             realms: initial.realms,
             friends: initial.friends,
             catalog_message: initial.catalog_message,
-            catalog_started: false,
-            catalog: launcher_host::catalog::Catalog::new(layout.catalog_file(std::process::id())),
             catalog_art: None,
+            #[cfg(feature = "native-networking")]
             auth_process: None,
-            native_sign_in: false,
             #[cfg(feature = "native-networking")]
             native_catalog: Default::default(),
             auth_attempted: false,
             auth_restart_requested: false,
-            account_core: None,
             layout,
             player_skin,
             dressing_room: initial.dressing_room,

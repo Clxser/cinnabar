@@ -154,7 +154,7 @@ mod tests {
             code: Option<String>,
         }
         let cases: Vec<Case> = serde_json::from_str(include_str!(
-            "../../../../core/catalog/realm_membership_conformance.json"
+            "../../../../crates/launcher/data/realm_membership_conformance.json"
         ))
         .unwrap();
         for case in cases {

@@ -6,8 +6,7 @@ mod active;
 mod source;
 pub(super) use source::Source;
 
-/// A local RPC guard, longer than the core's service deadline and response write allowance.
-/// This is transport recovery, not a vanilla animation or service timeout constant.
+/// The original finite account-read budget, separate from optional artwork.
 pub(super) const RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The single coalesced profile wake is also its one-way retirement signal.
@@ -57,27 +56,18 @@ impl Selection {
     }
 }
 
-/// Publishes a terminal result even if a control endpoint accepts but never answers.
+/// Publishes only the selected account's bounded result or unavailable state.
 pub(super) fn poll(
-    socket_dir: Option<&std::path::Path>,
     artwork_dir: &std::path::Path,
     shared: &Mutex<Snapshot>,
     requests: tokio::sync::watch::Receiver<Wake>,
     runtime: &Handle,
 ) {
-    poll_with_timeout(
-        socket_dir,
-        artwork_dir,
-        shared,
-        requests,
-        RESPONSE_TIMEOUT,
-        runtime,
-    );
+    poll_with_timeout(artwork_dir, shared, requests, RESPONSE_TIMEOUT, runtime);
 }
 
 /// Uses the same request source and publication rules with a shorter deadline in fixtures.
 fn poll_with_timeout(
-    socket_dir: Option<&std::path::Path>,
     artwork_dir: &std::path::Path,
     shared: &Mutex<Snapshot>,
     mut requests: tokio::sync::watch::Receiver<Wake>,
@@ -103,7 +93,6 @@ fn poll_with_timeout(
             );
         }
         let completed = runtime.block_on(active::run(
-            socket_dir,
             &images,
             shared,
             &selection,
@@ -198,58 +187,11 @@ pub fn log_unavailable(outcome: &'static str) {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::{io::Read, os::unix::net::UnixListener};
 
     /// A loaded Profile reloads only when opened, retried or the account changes, not on a timer.
     #[test]
     fn loaded_profile_waits_for_a_request() {
         assert_eq!(idle_wait(false), None);
         assert_eq!(idle_wait(true), Some(FEED_RETRY));
-    }
-
-    #[test]
-    fn profile_loading_ends_when_control_accepts_without_reply() {
-        let dir = std::env::temp_dir().join(format!("profile-timeout-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let listener = UnixListener::bind(dir.join("control.sock")).unwrap();
-        let fixture = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut size = [0; 4];
-            stream.read_exact(&mut size).unwrap();
-            let mut request = vec![0; u32::from_be_bytes(size) as usize];
-            stream.read_exact(&mut request).unwrap();
-            let request: serde_json::Value = serde_json::from_slice(&request).unwrap();
-            assert_eq!(request["method"], "profile.v1");
-            let mut byte = [0];
-            assert_eq!(
-                stream.read(&mut byte).unwrap(),
-                0,
-                "timeout must close the request"
-            );
-        });
-        let shared = Arc::new(Mutex::new(Snapshot::default()));
-        let (sender, requests) = channel();
-        let snapshot = Arc::clone(&shared);
-        let endpoint = dir.clone();
-        let runtime = worker_runtime();
-        let executor = runtime.handle().clone();
-        let worker = thread::spawn(move || {
-            poll_with_timeout(
-                Some(&endpoint),
-                &endpoint.join("artwork"),
-                &snapshot,
-                requests,
-                Duration::from_millis(100),
-                &executor,
-            )
-        });
-        test_time::wait_until(Duration::from_secs(2), || {
-            shared.lock().unwrap().profile.is_some()
-        });
-        stop(&sender);
-        worker.join().unwrap();
-        fixture.join().unwrap();
-        assert!(matches!(shared.lock().unwrap().profile, Some(Err(()))));
-        std::fs::remove_dir_all(dir).unwrap();
     }
 }

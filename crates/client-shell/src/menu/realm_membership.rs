@@ -83,18 +83,15 @@ impl MenuRuntime {
                 let target = state.realm.as_ref().map(|realm| realm.target.clone());
                 self.close_realm_membership();
                 #[cfg(feature = "native-networking")]
-                if self.native_sign_in {
+                {
                     if let Some(target) = target {
                         self.request_connect(target);
                     }
-                    return;
                 }
-                if let Some(index) = self
-                    .realms
-                    .iter()
-                    .position(|realm| Some(&realm.target) == target.as_ref())
+                #[cfg(not(feature = "native-networking"))]
                 {
-                    self.activate(MenuAction::PlayRealm(index));
+                    let _ = target;
+                    self.message = Some("Native networking is unavailable in this build.".into());
                 }
             }
             _ => {}
@@ -162,7 +159,7 @@ impl MenuRuntime {
         let success = state.finish(accept, result);
         self.focused = 0;
         #[cfg(feature = "native-networking")]
-        if success && accept && self.native_sign_in {
+        if success && accept {
             self.native_catalog.refresh();
             return;
         }

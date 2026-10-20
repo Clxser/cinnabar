@@ -142,7 +142,7 @@ impl Cache {
                 }
             }
         }
-        // Native impressions use the same scoped queue; only Core reports inline.
+        // Impressions retain the same scoped ordered queue as other interactions.
         (None, false)
     }
 }

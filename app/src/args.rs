@@ -15,15 +15,13 @@ cinnabar — ",
 Usage: cinnabar [OPTIONS] [PACK.mcpack|PACK.mcaddon|PACK.zip]...
 
 Desktop builds with native-networking use Rust addressed discovery by default.
-Builds without it use Go. Select --legacy-networking to use Go explicitly.
+Builds without it cannot open native server connections.
 
 Options:
   --address <HOST:PORT>       Directly join a server
   --native-networking <KIND>  Select Rust transport: addressed, raknet or nethernet-lan
-  --legacy-networking         Use the retained Go account and networking backend
   --parallel-resource-pack-urls
                                Opt native pack URL downloads into bounded parallel reads
-  --socket-dir <PATH>          Use an external Go Core socket directory
   --import-pack <PATH>        Import an optional global resource pack
   --assets <PATH>              Compiled vanilla asset blob
   --display-name <NAME>        Offline display name (default: ",
@@ -104,15 +102,12 @@ impl acceptance::movement_evidence::EvidenceTargetLabel for EvidenceTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientArgs {
-    /// Optional upstream address for the fast direct-connect path. Without it
-    /// (and without an explicit socket directory) the client opens the menu.
+    /// Optional upstream address for the fast direct-connect path. Without it the client opens the menu.
     pub address: Option<String>,
-    /// Resolved launch backend: a native transport, or the retained legacy Core owner.
+    /// Selected native transport; absent when this build cannot open native connections.
     pub native_transport: Option<protocol::NativeTransport>,
     /// Native-only URL scheduling choice retained across joins and server transfers.
     pub parallel_resource_pack_urls: bool,
-    pub socket_dir: PathBuf,
-    pub socket_dir_explicit: bool,
     pub assets: Option<PathBuf>,
     /// Files opened by the user, imported after the window starts.
     pub import_packs: Vec<PathBuf>,
@@ -160,8 +155,6 @@ impl Default for ClientArgs {
             ))
             .then_some(protocol::NativeTransport::Addressed),
             parallel_resource_pack_urls: false,
-            socket_dir: PathBuf::from(".local/run"),
-            socket_dir_explicit: false,
             assets: None,
             import_packs: Vec::new(),
             display_name: launcher::PRODUCT_NAME.to_owned(),
@@ -199,11 +192,9 @@ pub enum ParseOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ArgsError {
     #[error(
-        "native networking requires --features native-networking and no --socket-dir; direct sessions also require --address"
+        "native networking requires --features native-networking; direct sessions also require --address"
     )]
     NativeNetworkingUnavailable,
-    #[error("--native-networking and --legacy-networking cannot be used together")]
-    ConflictingNetworkingFlags,
     #[error("native friend-world startup requires a verified friend selection")]
     NativeFriendSelectionRequired,
     #[error("--native-networking must be addressed, raknet or nethernet-lan")]
@@ -311,8 +302,6 @@ impl ClientArgs {
         let mut arguments = arguments.into_iter().map(Into::into);
         let _program = arguments.next();
         let mut parsed = Self::default();
-        let mut native_explicit = false;
-        let mut legacy_explicit = false;
 
         while let Some(argument) = arguments.next() {
             match argument.to_str() {
@@ -345,12 +334,6 @@ impl ClientArgs {
                         Some("nethernet-lan") => protocol::NativeTransport::NetherNetLan,
                         _ => return Err(ArgsError::InvalidNativeTransport),
                     });
-                    native_explicit = true;
-                }
-                Some("--legacy-networking") => legacy_explicit = true,
-                Some("--socket-dir") => {
-                    parsed.socket_dir_explicit = true;
-                    parsed.socket_dir = PathBuf::from(next_value(&mut arguments, "--socket-dir")?);
                 }
                 Some("--import-pack") => {
                     parsed
@@ -502,15 +485,6 @@ impl ClientArgs {
                 _ => return Err(ArgsError::Unknown(argument)),
             }
         }
-        if native_explicit && legacy_explicit {
-            return Err(ArgsError::ConflictingNetworkingFlags);
-        }
-        if native_explicit && parsed.socket_dir_explicit {
-            return Err(ArgsError::NativeNetworkingUnavailable);
-        }
-        if legacy_explicit || parsed.socket_dir_explicit {
-            parsed.native_transport = None;
-        }
         if parsed.movement_candidate_physics && parsed.movement_evidence_target.is_none() {
             return Err(ArgsError::MovementCandidateRequiresEvidence);
         }
@@ -523,9 +497,10 @@ impl ClientArgs {
             return Err(ArgsError::MovementEvidenceRequiresAttributableRun);
         }
         if parsed.native_transport.is_some()
-            && (!cfg!(feature = "native-networking")
-                || (parsed.connection_requested() && parsed.address.is_none())
-                || parsed.socket_dir_explicit)
+            && (!cfg!(all(
+                feature = "native-networking",
+                not(target_arch = "wasm32")
+            )) || (parsed.connection_requested() && parsed.address.is_none()))
         {
             return Err(ArgsError::NativeNetworkingUnavailable);
         }
@@ -539,22 +514,14 @@ impl ClientArgs {
 
     #[must_use]
     pub fn connection_requested(&self) -> bool {
-        self.address.is_some()
-            || self.socket_dir_explicit
-            || self.acceptance_seconds.is_some()
-            || self.metrics_out.is_some()
+        self.address.is_some() || self.acceptance_seconds.is_some() || self.metrics_out.is_some()
     }
 
-    /// Selects a real connection backend without assigning a fictitious Go endpoint to native I/O.
-    pub(crate) fn session_endpoint(
-        &self,
-        directory: PathBuf,
-    ) -> Result<protocol::SessionEndpoint, ArgsError> {
+    /// Selects the native target; builds without native capability refuse the request.
+    pub(crate) fn session_endpoint(&self) -> Result<protocol::SessionEndpoint, ArgsError> {
         if let Some(transport) = self.native_transport {
             #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-            if !self.socket_dir_explicit
-                && let Some(address) = &self.address
-            {
+            if let Some(address) = &self.address {
                 return match crate::session::destination::classify(address, transport, false) {
                     crate::session::destination::Destination::Network(target) => {
                         Ok(protocol::SessionEndpoint::Native(target))
@@ -570,7 +537,7 @@ impl ClientArgs {
             let _ = transport;
             return Err(ArgsError::NativeNetworkingUnavailable);
         }
-        Ok(protocol::SessionEndpoint::Core(directory))
+        Err(ArgsError::NativeNetworkingUnavailable)
     }
 }
 

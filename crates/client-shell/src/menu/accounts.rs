@@ -15,18 +15,14 @@ const PRESENTATION_ACCOUNTS: [(&str, &str); 4] = [
 
 #[derive(Debug, Default)]
 pub(super) struct Manager {
-    session_core_exit: Option<launcher_host::core_process::CoreExitBarrier>,
     pub operation: Option<Operation>,
-    remembered: Option<(String, Option<String>)>,
     pub pending_ready: bool,
     pub skip_control: bool,
     pub work: Option<crossbeam_channel::Receiver<(bool, bool)>>,
-    pub(super) remember: Option<crossbeam_channel::Receiver<bool>>,
-    remember_retry: Option<std::time::Instant>,
     reload_pending: bool,
 }
 
-use launcher_host::accounts::{Operation, operation_job, remember};
+use launcher_host::accounts::{Operation, operation_job};
 
 impl MenuRuntime {
     /// Identity selected by the account picker, captured before an asynchronous native join.
@@ -37,32 +33,6 @@ impl MenuRuntime {
     /// Whether account storage is about to change, so a native acquisition must be cancelled first.
     pub fn account_operation_pending(&self) -> bool {
         self.sign_out_requested || self.accounts.operation.is_some() || self.accounts.work.is_some()
-    }
-
-    /// Retains exit evidence from the application's actual session Core owner before services run.
-    pub fn observe_session_core_exit(
-        &mut self,
-        exit: launcher_host::core_process::CoreExitBarrier,
-    ) {
-        self.accounts.session_core_exit = Some(exit);
-    }
-
-    /// A detached stop attempt is not authority to mutate the original credential cache.
-    pub(super) fn account_session_retired(&mut self) -> bool {
-        use launcher_host::core_process::CoreExitState;
-        match self
-            .accounts
-            .session_core_exit
-            .as_ref()
-            .map(|exit| exit.state())
-        {
-            None | Some(CoreExitState::Confirmed) => true,
-            Some(CoreExitState::Pending) => false,
-            Some(CoreExitState::Unconfirmed) => {
-                self.feeds.account_error = Some("The previous game process has not confirmed exit. Restart before changing accounts.".into());
-                false
-            }
-        }
     }
 
     pub(super) fn account_change_pending(&self) -> bool {
@@ -94,9 +64,9 @@ impl MenuRuntime {
         if enabled
             && (self.account_change_pending()
                 || self.auth_restart_requested
-                || self.auth_process.as_ref().is_some_and(|process| {
+                || self.owned_auth().is_some_and(|state| {
                     matches!(
-                        process.state(),
+                        state,
                         AuthState::Checking
                             | AuthState::AwaitingCode { .. }
                             | AuthState::Authenticated
@@ -227,10 +197,7 @@ impl MenuRuntime {
         self.dialog = Some(MenuDialog::Accounts);
         if self.layout.auth_cache().is_file()
             && self.feeds.account_active_id.is_none()
-            && matches!(
-                self.auth_process.as_ref().map(|p| p.state()),
-                Some(AuthState::Authenticated)
-            )
+            && matches!(self.owned_auth(), Some(AuthState::Authenticated))
         {
             self.feeds.account_error =
                 Some("Your Xbox profile is loading. Try again shortly.".into());
@@ -317,25 +284,11 @@ impl MenuRuntime {
             }
             return;
         }
-        if let Some(receiver) = &self.accounts.remember {
-            let result = receiver.try_recv();
-            if !matches!(result, Err(crossbeam_channel::TryRecvError::Empty)) {
-                let success = result.unwrap_or(false);
-                self.accounts.remember = None;
-                if !success {
-                    self.accounts.remembered = None;
-                    self.accounts.remember_retry =
-                        Some(std::time::Instant::now() + std::time::Duration::from_secs(1));
-                } else {
-                    self.reload_accounts();
-                }
-            }
-        }
         if self.accounts.operation.is_some() {
             return;
         }
         if self.feeds.account_adding {
-            match self.auth_process.as_ref().map(|p| p.state()) {
+            match self.owned_auth() {
                 Some(AuthState::Authenticated) if !self.accounts.pending_ready => {
                     self.accounts.pending_ready = true;
                     self.feeds.profile = Default::default();
@@ -355,34 +308,17 @@ impl MenuRuntime {
         if !profile.loaded || profile.xuid.is_empty() || profile.gamertag.is_empty() {
             return;
         }
-        let identity = (
-            profile.xuid.clone(),
-            (!profile.picture_path.is_empty()).then(|| profile.picture_path.clone()),
-        );
-        if self.feeds.account_adding {
-            if self.accounts.pending_ready && self.accounts.operation.is_none() {
-                self.accounts.operation = Some(Operation::Commit(AccountProfile {
-                    id: profile.xuid.clone(),
-                    gamertag: profile.gamertag.clone(),
-                    picture_path: (!profile.picture_path.is_empty())
-                        .then(|| profile.picture_path.clone()),
-                }));
-            }
-        } else if !self.native_sign_in
-            && self
-                .accounts
-                .remember_retry
-                .is_none_or(|retry| std::time::Instant::now() >= retry)
-            && self.accounts.remember.is_none()
-            && self.accounts.remembered.as_ref() != Some(&identity)
-            && let Some(receiver) = remember(self.account_store(), profile.clone())
-        {
-            self.accounts.remembered = Some(identity);
-            self.accounts.remember = Some(receiver);
-        }
     }
 
-    /// Runs only after the core releases its active credential cache.
+    /// Dispatches the original storage job after its session and publication owners retire.
+    pub(super) fn start_account_operation(&mut self) {
+        let job = self.account_operation_job();
+        let _ = std::thread::Builder::new()
+            .name("account-switch".into())
+            .spawn(job);
+    }
+
+    /// Runs only after original account publication has confirmed retirement.
     pub(super) fn account_operation_job(&mut self) -> impl FnOnce() + Send + 'static {
         let operation = self
             .accounts
@@ -401,7 +337,6 @@ impl MenuRuntime {
         }
         self.feeds.account_adding = false;
         self.accounts.pending_ready = false;
-        self.accounts.remembered = None;
         self.feeds.profile = Default::default();
         self.feeds.home = Default::default();
         self.feeds.inbox_state = Default::default();
@@ -409,12 +344,14 @@ impl MenuRuntime {
         self.feeds.details.clear();
         self.realms.replace(Vec::new());
         self.friends.replace(Vec::new());
-        self.catalog_started = false;
         self.control_auth = None;
         self.reload_accounts();
         if !signed_out {
             if self.sign_in_cancelled && !self.layout.auth_cache().is_file() {
-                self.auth_process = None;
+                #[cfg(feature = "native-networking")]
+                {
+                    self.auth_process = None;
+                }
             } else {
                 let cancelled = self.sign_in_cancelled;
                 self.start_sign_in();
@@ -492,7 +429,7 @@ mod tests {
         menu.activate(MenuAction::StartSignIn);
         menu.activate(MenuAction::SignOut);
         menu.activate(MenuAction::CancelSignIn);
-        assert!(menu.auth_process.is_none());
+        assert!(menu.owned_auth().is_none());
         assert!(menu.accounts.operation.is_none());
         assert!(!menu.feeds.account_adding && !menu.sign_out_requested);
         menu.activate(MenuAction::SwitchAccount(2));
@@ -569,7 +506,7 @@ mod tests {
         assert!(!menu.sign_in_requested);
         assert!(menu.sign_in_cancelled);
         assert_eq!(menu.current_auth().as_ref(), &AuthState::SignedOut);
-        assert!(menu.auth_process.is_none());
+        assert!(menu.owned_auth().is_none());
     }
 
     #[test]

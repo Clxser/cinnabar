@@ -6,22 +6,13 @@ use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-#[cfg(not(target_arch = "wasm32"))]
-use futures::Sink;
 use futures::{SinkExt, Stream};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
-#[cfg(not(target_arch = "wasm32"))]
-use tokio_util::codec::Framed;
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
 
 use crate::BridgeError;
 use crate::contract::QUEUED_FRAMES;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::endpoint::{PlatformReadHalf, PlatformStream};
-#[cfg(target_arch = "wasm32")]
-use tokio::io::Empty as PlatformReadHalf;
-
 /// Shared u32 big-endian framing, with payload bounds checked before assembly grows.
 pub struct BridgeCodec {
     expected_payload: Option<usize>,
@@ -112,33 +103,6 @@ fn validate_frame_length(length: usize, maximum: usize) -> Result<(), BridgeErro
     Ok(())
 }
 
-/// A local byte stream framed as unsigned 32-bit big-endian payloads.
-#[cfg(not(target_arch = "wasm32"))]
-pub struct FramedStream {
-    inner: Framed<PlatformStream, BridgeCodec>,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl FramedStream {
-    pub(crate) fn with_max(stream: PlatformStream, maximum: usize) -> Self {
-        Self {
-            inner: Framed::new(stream, BridgeCodec::with_max(maximum)),
-        }
-    }
-}
-
-/// Splits a fresh stream so a spawned writer task owns its write half.
-///
-/// Requires a Tokio runtime. The writer exits once every [`FrameQueue`] clone is dropped.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn queued(stream: PlatformStream, maximum: usize) -> (FramedReader, FrameQueue) {
-    let (read, write) = stream.into_split();
-    let trace_conn = crate::latency_trace::active().map(|_| Arc::new(AtomicU64::new(0)));
-    let (reader, frames, writer) = prepare_bounded(read, write, maximum, None, trace_conn);
-    tokio::spawn(writer);
-    (reader, frames)
-}
-
 /// Builds the shared framing task without choosing a host executor or stream implementation.
 pub(crate) fn prepare<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     read: R,
@@ -182,8 +146,8 @@ pub(crate) fn prepare_bounded<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
 }
 
 /// The read half of a queued game connection. Browser callers supply their reader type;
-/// native callers use the default socket read half.
-pub struct FramedReader<R = PlatformReadHalf> {
+/// native packet connections do not read through this framed transport.
+pub struct FramedReader<R = tokio::io::Empty> {
     inner: FramedRead<R, BridgeCodec>,
     trace: FrameTrace,
 }
@@ -423,36 +387,6 @@ async fn write_queued_frames<W: AsyncWrite + Unpin>(
         if result.is_err() {
             return;
         }
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl Stream for FramedStream {
-    type Item = Result<Bytes, BridgeError>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.get_mut().inner).poll_next(cx)
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl Sink<Bytes> for FramedStream {
-    type Error = BridgeError;
-
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.get_mut().inner).poll_ready(cx)
-    }
-
-    fn start_send(self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
-        Pin::new(&mut self.get_mut().inner).start_send(item)
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
-    }
-
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.get_mut().inner).poll_close(cx)
     }
 }
 

@@ -10,7 +10,7 @@ on:
       - .github/scripts/networking_upstream_watch.py
       - .github/tests/test_networking_upstream_watch.py
       - .github/workflows/networking-upstream-watch.yml
-      - core/go.mod
+      - tools/localserver/go.mod
       - Cargo.lock
 
 permissions:

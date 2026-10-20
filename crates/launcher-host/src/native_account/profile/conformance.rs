@@ -26,10 +26,8 @@ fn retail_profile_projections_match_shared_go_vectors() {
         statistics: Vec<StatisticsCase>,
         achievements: Vec<AchievementsCase>,
     }
-    let vectors: Vectors = serde_json::from_str(include_str!(
-        "../../../../../core/catalog/native_profile_conformance.json"
-    ))
-    .unwrap();
+    let vectors: Vectors =
+        serde_json::from_str(include_str!("data/native_profile_conformance.json")).unwrap();
     for vector in vectors.statistics {
         let users = vector.response["users"]
             .as_array()

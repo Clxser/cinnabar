@@ -5,7 +5,10 @@ use crate::login::client_data::raw::{RawClientData, schema_generated};
 #[test]
 fn generated_schema_matches_the_active_go_source() {
     use schema_generated::{SOURCE_IMPORT_MODULE, SOURCE_MODULE, SOURCE_SUM, SOURCE_VERSION};
-    let module = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../core/go.mod"));
+    let module = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tools/localserver/go.mod"
+    ));
     let replacements = replacements(module);
     let selected: Vec<_> = replacements
         .into_iter()
@@ -15,7 +18,10 @@ fn generated_schema_matches_the_active_go_source() {
         selected,
         [[SOURCE_IMPORT_MODULE, SOURCE_MODULE, SOURCE_VERSION]]
     );
-    let sums = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../core/go.sum"));
+    let sums = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tools/localserver/go.sum"
+    ));
     assert_eq!(
         sums.lines()
             .filter(|line| line
@@ -23,7 +29,7 @@ fn generated_schema_matches_the_active_go_source() {
                 .eq([SOURCE_MODULE, SOURCE_VERSION, SOURCE_SUM]))
             .count(),
         1,
-        "generated client-data source checksum differs from core/go.sum"
+        "generated client-data source checksum differs from tools/localserver/go.sum"
     );
 }
 

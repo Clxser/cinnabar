@@ -11,8 +11,7 @@ fn menu() -> MenuRuntime {
         "Fixture".into(),
         layout,
         crate::player_skin::LocalPlayerSkin::generated_default("Fixture"),
-    )
-    .with_native_sign_in(true);
+    );
     menu.auth_process = Some(native_state(AuthState::Authenticated));
     menu.feeds.account_active_id = Some("123".into());
     menu.native_account_for(menu.layout.auth_cache());
@@ -114,10 +113,5 @@ fn native_friend_control_uses_only_the_current_real_account_mode() {
         UNAVAILABLE
     );
     menu.sign_in_fixture = None;
-    menu.native_sign_in = false;
-    assert_eq!(
-        menu.developer_native_friends(None).unwrap_err(),
-        UNAVAILABLE
-    );
     assert!(menu.take_native_friend_intent().is_none());
 }

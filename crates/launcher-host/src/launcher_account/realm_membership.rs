@@ -102,38 +102,17 @@ pub(super) fn retire(sender: &watch::Sender<Wake>) {
 }
 
 /// Starts exactly the original tracked membership worker on the shared application reactor.
-pub(super) fn start(
-    socket_dir: Option<PathBuf>,
-    shared: Arc<Mutex<Snapshot>>,
-    runtime: Handle,
-    tasks: TaskTracker,
-) -> Requests {
+pub(super) fn start(shared: Arc<Mutex<Snapshot>>, runtime: Handle, tasks: TaskTracker) -> Requests {
     let (requests, receiver) = tokio::sync::mpsc::unbounded_channel();
     let (wake, changed) = watch::channel(Wake::Account);
     shared.lock().unwrap_or_else(|p| p.into_inner()).realm_wake = Some(wake.clone());
     thread::spawn(crate::worker::tracked(
         move || {
-            runtime.block_on(worker::run(socket_dir, shared, receiver, changed));
+            runtime.block_on(worker::run(shared, receiver, changed));
         },
         &tasks,
     ));
     Requests { requests, wake }
-}
-
-/// Maps the core's verified catalog entry for the menu, without selecting a transport.
-pub(super) fn realm_card(realm: &Realm) -> MenuRealmCard {
-    MenuRealmCard {
-        name: realm.name.clone(),
-        state: realm.state.clone(),
-        target: realm.target.clone(),
-        address: realm.address.clone().unwrap_or_default(),
-        owner: realm.owner.clone(),
-        online_players: realm.online_players,
-        max_players: realm.max_players,
-        days_left: realm.days_left,
-        expired: realm.expired,
-        member: realm.member,
-    }
 }
 
 impl LauncherAccount {

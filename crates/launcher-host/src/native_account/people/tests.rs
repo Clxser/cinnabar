@@ -58,7 +58,7 @@ fn native_invite_people_match_shared_go_projection_vectors() {
         people: Vec<User>,
         expected: Vec<bridge::Person>,
     }
-    let corpus = include_str!("../../../../../core/catalog/native_people_conformance.json")
+    let corpus = include_str!("data/native_people_conformance.json")
         .replace("$SIDE", &bridge::contract::INVITE_GAMERPIC_SIDE.to_string());
     let cases: Vec<Case> = serde_json::from_str(&corpus).unwrap();
     for case in cases {

@@ -9,7 +9,7 @@ fn local_selection_uses_the_actual_endpoint_and_cannot_close_a_replacement_openi
     let target = selection.connection_target().unwrap();
     assert_eq!(
         target.address,
-        world.manager.core_report().target.unwrap().address
+        world.manager.world_report().target.unwrap().address
     );
     assert_eq!(target.transport, protocol::NativeTransport::RakNet);
     world.manager.close();

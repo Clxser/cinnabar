@@ -27,7 +27,7 @@ pub(super) fn begin(
         address: target.address.clone(),
         auth_cache: None,
         local_world: false,
-        stage: JoinStage::Prepared(protocol::SessionEndpoint::Native(target)),
+        endpoint: protocol::SessionEndpoint::Native(target),
     });
 }
 

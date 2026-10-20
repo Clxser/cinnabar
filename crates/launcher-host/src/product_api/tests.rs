@@ -8,7 +8,7 @@ mod connection;
 #[test]
 fn operating_limits_and_validation_match_the_pinned_product_contract() {
     let schema: Value =
-        serde_json::from_str(include_str!("../../../../core/cinnabarapi/schema/v1.json")).unwrap();
+        serde_json::from_str(include_str!("../../../bridge/data/cinnabar-api/v1.json")).unwrap();
     let defs = &schema["$defs"];
     let welcome = &defs["Welcome"]["properties"];
     let p = Parameters::default();

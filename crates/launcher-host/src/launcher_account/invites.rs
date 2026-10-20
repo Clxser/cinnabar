@@ -26,44 +26,27 @@ struct Selection {
     destination: Destination,
 }
 
-enum Destination {
-    Core,
-    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-    Native(Option<crate::native_account::HostedInvitation>),
-}
+struct Destination(Option<crate::native_account::HostedInvitation>);
 
 impl Destination {
-    /// Separates the actual hosting owner from the independently selected People reader.
+    /// Captures only the actual native hosting incarnation selected at enqueue.
     fn capture(snapshot: &Snapshot) -> Self {
-        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-        if snapshot
+        let host = snapshot
             .native_host_wake
             .as_ref()
             .is_some_and(|wake| matches!(&*wake.borrow(), super::native_host::Desired::Host(_)))
-        {
-            return Self::Native(snapshot.native_host_invitation.clone());
-        }
-        let _ = snapshot;
-        Self::Core
+            .then(|| snapshot.native_host_invitation.clone())
+            .flatten();
+        Self(host)
     }
-
-    /// Uses only the host selected when queued; an unavailable native incarnation never falls back.
-    async fn send(&self, socket_dir: Option<&std::path::Path>, xuid: &str) -> Result<(), ()> {
-        match self {
-            Self::Core => bridge::invite_to_world(
-                super::workers::require_core_directory(socket_dir).map_err(|_| ())?,
-                xuid,
-            )
+    /// Never substitutes another host when the original incarnation is unavailable.
+    async fn send(&self, xuid: &str) -> Result<(), ()> {
+        self.0
+            .as_ref()
+            .ok_or(())?
+            .send(xuid, Instant::now() + RESPONSE_TIMEOUT)
             .await
-            .map_err(|_| ()),
-            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-            Self::Native(host) => host
-                .as_ref()
-                .ok_or(())?
-                .send(xuid, Instant::now() + RESPONSE_TIMEOUT)
-                .await
-                .map_err(|_| ()),
-        }
+            .map_err(|_| ())
     }
 }
 
@@ -126,7 +109,6 @@ enum Request {
 
 /// Starts the worker; dropping the account link stops it and drops what is still queued.
 pub(super) fn start(
-    socket_dir: Option<PathBuf>,
     artwork_dir: PathBuf,
     shared: Arc<Mutex<Snapshot>>,
     stop: Receiver<()>,
@@ -149,25 +131,16 @@ pub(super) fn start(
                 };
                 match request {
                     Request::People(selected) => {
-                        let people = runtime.block_on(people(
-                            socket_dir.as_deref(),
-                            &images,
-                            &shared,
-                            &selected,
-                            &mut changed,
-                        ));
+                        let people =
+                            runtime.block_on(people(&images, &shared, &selected, &mut changed));
                         let mut snapshot = shared.lock().unwrap_or_else(|p| p.into_inner());
                         if *changed.borrow() != Wake::Stop && selected.current(&snapshot) {
                             snapshot.people = Some(people);
                         }
                     }
-                    Request::Send(selected, xuids) => runtime.block_on(send(
-                        socket_dir.as_deref(),
-                        &xuids,
-                        &shared,
-                        &selected,
-                        &mut changed,
-                    )),
+                    Request::Send(selected, xuids) => {
+                        runtime.block_on(send(&xuids, &shared, &selected, &mut changed))
+                    }
                 }
                 if *changed.borrow() == Wake::Stop {
                     return;
@@ -184,14 +157,13 @@ pub(super) fn start(
 
 /// Keeps one actual fetch and one actual artwork future through unrelated wakeups.
 async fn people(
-    socket_dir: Option<&std::path::Path>,
     images: &crate::remote_images::ImageDirectory,
     shared: &Mutex<Snapshot>,
     selected: &Selection,
     changed: &mut watch::Receiver<Wake>,
 ) -> Result<Vec<bridge::Person>, ()> {
     let loaded = wait(
-        tokio::time::timeout(RESPONSE_TIMEOUT, selected.source.fetch(socket_dir)),
+        tokio::time::timeout(RESPONSE_TIMEOUT, selected.source.fetch()),
         shared,
         selected,
         changed,
@@ -240,7 +212,6 @@ async fn wait<T>(
 
 /// Invites through the captured selected owner; native commands never resolve a replacement Go host.
 async fn send(
-    socket_dir: Option<&std::path::Path>,
     xuids: &[String],
     shared: &Mutex<Snapshot>,
     selected: &Selection,
@@ -248,10 +219,7 @@ async fn send(
 ) {
     for xuid in xuids {
         let sent = wait(
-            tokio::time::timeout(
-                RESPONSE_TIMEOUT,
-                selected.destination.send(socket_dir, xuid),
-            ),
+            tokio::time::timeout(RESPONSE_TIMEOUT, selected.destination.send(xuid)),
             shared,
             selected,
             changed,

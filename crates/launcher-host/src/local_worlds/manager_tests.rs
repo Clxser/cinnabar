@@ -81,7 +81,7 @@ fn open_runs_the_world_and_close_stops_its_server() {
     manager.open(&world.id, None).expect("open");
     let status = wait_for(manager, WorldState::Running);
     assert_eq!(status.world_id.as_deref(), Some(world.id.as_str()));
-    let report = manager.core_report();
+    let report = manager.world_report();
     let target = report.target.expect("running target");
     assert_eq!(
         (target.address.as_str(), target.transport),
@@ -94,7 +94,7 @@ fn open_runs_the_world_and_close_stops_its_server() {
     manager.close();
     wait_for(manager, WorldState::Idle);
     assert!(instance.stopped(), "the server was not stopped");
-    assert_eq!(manager.core_report(), LocalWorld::default());
+    assert_eq!(manager.world_report(), LocalWorld::default());
 }
 
 /// The native directory token follows the actual live instance, including failure before watcher delivery.
@@ -299,7 +299,7 @@ fn a_failed_start_stays_failed_and_hides_detail() {
     let status = wait_for(manager, WorldState::Failed);
     let error = status.error.expect("failure text");
     assert!(!error.is_empty() && !error.contains("secret"), "{error}");
-    let report = manager.core_report();
+    let report = manager.world_report();
     assert!(
         report.target.is_none() && report.error.is_some(),
         "a failed world must not fall through"
@@ -321,7 +321,7 @@ fn closing_while_starting_cancels_the_start() {
 
 /// The core holds a session while the world starts, then gets its target.
 #[test]
-fn the_core_report_follows_the_start() {
+fn the_world_report_follows_the_start() {
     let (runner, release) = FakeRunner::gated();
     let fixture = with_runner(&Arc::new(runner));
     let manager = &fixture.manager;
@@ -331,13 +331,13 @@ fn the_core_report_follows_the_start() {
     changes
         .recv_timeout(test_time::DEFAULT_TIMEOUT)
         .expect("a change for the start");
-    let starting = manager.core_report();
+    let starting = manager.world_report();
     assert_eq!(starting.state, WorldState::Starting);
     assert!(starting.target.is_none());
     assert_eq!(starting.world.expect("world").id, world.id);
     drop(release);
     wait_for(manager, WorldState::Running);
-    assert!(manager.core_report().target.is_some());
+    assert!(manager.world_report().target.is_some());
 }
 
 #[test]
@@ -506,7 +506,7 @@ fn bds_worlds_need_a_supported_platform_and_the_eula() {
     let status = wait_for(manager, WorldState::Running);
     assert_eq!(status.backend, Some(Backend::Bds));
     assert_eq!(
-        manager.core_report().target.expect("target").transport,
+        manager.world_report().target.expect("target").transport,
         Transport::NetherNet
     );
     let unsupported = fixture(|parts, dir| parts.setup = Some(provisioner(dir, MAC)));
@@ -608,7 +608,7 @@ fn native_local_bds_lan_selection_uses_the_original_process_discovery_endpoint()
         )
     );
     assert_eq!(
-        manager.core_report().target.unwrap().transport,
+        manager.world_report().target.unwrap().transport,
         Transport::NetherNetLan
     );
     selection.request_close();

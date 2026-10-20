@@ -44,6 +44,11 @@ impl std::fmt::Debug for Controller {
 }
 
 impl Controller {
+    /// A retained original listing is still pending until its current-account result can apply.
+    pub(super) fn loading(&self) -> bool {
+        self.request.is_some()
+    }
+
     /// Retires an unconsumed service selection when a different session intent wins.
     pub(super) fn cancel_join(&mut self) {
         self.join = None;
@@ -151,7 +156,6 @@ impl MenuRuntime {
     /// Sends the original selected owner through the same menu-to-session handoff.
     fn queue_native_friend(&mut self, selection: NativeFriendSelection) {
         self.remember_session_origin();
-        self.stop_catalog();
         self.intents.join = None;
         self.intents.native_world = None;
         self.native_catalog.join = Some(selection);
@@ -168,7 +172,7 @@ impl MenuRuntime {
     }
     /// Borrows the selected row's opaque service/account owner; display text never resolves a handle.
     fn native_friend_selection(&mut self, index: usize) -> Option<NativeFriendSelection> {
-        if !self.native_sign_in || self.account_change_pending() {
+        if self.account_change_pending() {
             return None;
         }
         let selected = self.native_catalog.selected.as_ref()?;
@@ -230,9 +234,6 @@ impl MenuRuntime {
     /// Advances listing after account observations; Go catalog/control results never own this native feed.
     pub(super) fn poll_native_catalog(&mut self, now: Instant) {
         self.native_catalog.reap_retiring();
-        if !self.native_sign_in {
-            return;
-        }
         let Some(path) = self
             .launcher_auth_cache()
             .filter(|_| !self.account_change_pending())

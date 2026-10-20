@@ -4,7 +4,7 @@ use super::*;
 use std::sync::Arc;
 
 impl LauncherServices {
-    /// Attaches only after the original publisher and any legacy child have retired.
+    /// Attaches only after the original publisher has retired.
     pub(super) fn drive_native(
         &mut self,
         commands: &mut Commands,
@@ -13,7 +13,7 @@ impl LauncherServices {
     ) {
         let cache = menu.launcher_auth_cache();
         let identity = menu.selected_account_id().map(str::to_owned);
-        if let Some(Running::Native {
+        if let Some(Attachment {
             cache: previous,
             identity: selected,
             account: retained,
@@ -36,11 +36,7 @@ impl LauncherServices {
                 return;
             }
             self.detach_clients(commands, menu, worlds);
-            if let Some(Running::Core(core)) = self.running.take() {
-                self.begin_retirement(core, || {});
-            }
-            self.failed = None;
-            self.restart_at = None;
+            self.running = None;
             return;
         }
         let (runtime, tasks) = match menu.io_execution() {
@@ -59,14 +55,11 @@ impl LauncherServices {
             tasks,
         );
         self.presence_lifetime = Some(services.title_presence_lifetime());
-        self.running = Some(Running::Native {
+        self.running = Some(Attachment {
             cache,
             identity,
             account,
         });
-        self.failed = None;
-        self.restart_at = None;
-        self.started = None;
         commands.insert_resource(LauncherAccount(services));
         if let Some(worlds) = worlds
             && let Err(error) = worlds.attach_native(&menu.layout)

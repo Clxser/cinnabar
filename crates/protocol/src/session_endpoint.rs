@@ -384,20 +384,5 @@ impl NativeConnectionTarget {
 /// A core endpoint or a native direct connection, chosen once for the join.
 #[derive(Debug, Clone)]
 pub enum SessionEndpoint {
-    /// Continue a connection acquired by the existing Go account/session owner.
-    Core(std::path::PathBuf),
-    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-    /// Establish and retain the server connection in Rust.
     Native(crate::NativeConnectionTarget),
-}
-
-impl SessionEndpoint {
-    /// Returns a control endpoint only for a session that actually uses the Go core.
-    pub fn core_directory(&self) -> Option<&std::path::Path> {
-        match self {
-            Self::Core(directory) => Some(directory),
-            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-            Self::Native(_) => None,
-        }
-    }
 }

@@ -26,8 +26,6 @@ use client_presentation::environment::{
 use client_runtime::blob_cache::ClientBlobCacheOwner;
 use client_runtime::network::NetworkHandle;
 use client_state::ClientFrameSet;
-use launcher_host::core_process::{CoreProcessGuard, spawn_core_for_address, wait_for_core};
-use launcher_host::session_cleanup::reclaim_stale_session_directories;
 use render_api::PublicationServiceConfig;
 use std::io::Write;
 use std::{ffi::OsStr, path::Path, sync::Arc};
@@ -46,7 +44,6 @@ use {
 pub(crate) mod logging;
 pub(crate) mod session;
 mod startup;
-use startup::bind_direct_session_directory;
 
 use crate::runtime::telemetry::AcceptanceRuntimeConfig;
 use client_presentation::{camera::FlyCameraUpdateSet, local_player::LocalPlayerFrameSet};
@@ -106,7 +103,6 @@ use {
         PhysicsAuthorityGate,
     },
     client_runtime::{
-        endpoint::{preflight_bridge_endpoint, resolve_socket_dir},
         pack_admission::ResourcePackAdmissionState,
         publication::PublicationController,
         shutdown::{
@@ -284,9 +280,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     #[cfg(feature = "enhanced-diagnostics")]
     let diagnostic_budget = crate::enhanced_diagnostics::configure(&args)?;
     #[cfg(feature = "developer-control")]
-    crate::developer_control::prepare_native_application(
-        args.address.is_some() || args.socket_dir_explicit,
-    )?;
+    crate::developer_control::prepare_native_application(args.address.is_some())?;
     crate::thread_budget::ThreadBudget::configure_global_rayon();
     // Keep the clipboard hook registered until the child guard runs on return or unwind.
     let _clipboard_exit =
@@ -304,36 +298,8 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     pack_runtime::compile_cache::set_compile_cache_dir(layout.compiled_pack_cache_dir());
     pack_runtime::entity_pack::set_vanilla_pack_dir(layout.vanilla_pack_dir());
     let far_terrain_dir = layout.far_terrain_cache_dir();
-    // Reclaim leftovers of crashed earlier sessions before this process
-    // binds anything new; failures are logged and never fatal.
-    reclaim_stale_session_directories(&layout);
     let connection_requested = args.connection_requested();
-    let socket_dir = if args.address.is_some() && !args.socket_dir_explicit {
-        layout.direct_socket_dir(std::process::id())
-    } else if !args.socket_dir_explicit {
-        layout.runtime_root.clone()
-    } else {
-        resolve_socket_dir(&args.socket_dir)
-    };
-    // Owned before any core spawn so the direct-connect path below derives
-    // the upstream client-cache advertisement from the same cache it later
-    // hands to the network session.
     let client_blob_cache = ClientBlobCacheOwner::persistent(layout.client_blob_cache_file());
-    // Bound before the core guard is declared so Rust's reverse local-drop
-    // order always stops the core before releasing this directory, including
-    // every startup `?` before the app takes ownership of the guard.
-    let endpoint = connection_requested
-        .then(|| args.session_endpoint(socket_dir.clone()))
-        .transpose()?;
-    #[cfg(feature = "native-networking")]
-    let (endpoint, initial_trust) = crate::session::native_trust::initial(endpoint, &layout)?;
-    #[cfg(not(feature = "native-networking"))]
-    let initial_trust = None;
-    let core_connection = endpoint
-        .as_ref()
-        .is_some_and(|endpoint| endpoint.core_directory().is_some());
-    let _direct_session_directory = bind_direct_session_directory(&args, socket_dir.clone())?;
-    let mut core_process = CoreProcessGuard::default();
     let selected_assets =
         select_asset_path_from_environment(args.assets.as_deref(), &layout.world_assets());
     let carriers = startup::load_startup_carriers(selected_assets, &layout.physics_registry);
@@ -504,31 +470,17 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         .transpose()
         .context("bind movement evidence to this exact build and collision registry")?;
 
+    let endpoint = connection_requested
+        .then(|| args.session_endpoint())
+        .transpose()?;
+    #[cfg(feature = "native-networking")]
+    let (endpoint, initial_trust) = crate::session::native_trust::initial(endpoint, &layout)?;
+    #[cfg(not(feature = "native-networking"))]
+    let initial_trust = None;
     let client_random_id = connection_requested
         .then(|| launcher_host::client_random_id::load(&layout.user_data_root))
         .transpose()
         .context("load persistent login client ID")?;
-
-    // Validate local carriers before starting a connection: an asset failure
-    // must not launch the core or wait on a server the client cannot render.
-    if let Some(address) = args.address.as_deref().filter(|_| core_connection) {
-        let child = spawn_core_for_address(
-            &layout,
-            &socket_dir,
-            address,
-            None,
-            client_blob_cache.enables_upstream_client_cache(),
-            false,
-        )
-        .with_context(|| format!("spawn Go core for direct connection to {address}"))?;
-        core_process.replace(child);
-        if let Err(error) = wait_for_core(&socket_dir) {
-            launcher_host::core_process::stop_core_then(&mut core_process, |_| ());
-            return Err(error).with_context(|| format!("wait for Go core endpoint for {address}"));
-        }
-    } else if core_connection {
-        preflight_bridge_endpoint(&socket_dir)?;
-    }
 
     // The local player's own skin, loaded once here and shared by Arc into the login upload, the
     // menu's reconnection config, and the render feed resource below. Cosmetic: never fatal.
@@ -550,13 +502,11 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         loaded_assets.selected_path.clone(),
         args.language.as_deref(),
     );
-    #[cfg(feature = "native-networking")]
-    let menu = menu.with_native_sign_in(args.native_transport.is_some());
     let mut menu = menu;
     if initial_trust.is_some() {
         menu.show_connecting();
     }
-    let mut session_controller = SessionController::new(core_process)
+    let mut session_controller = SessionController::new()
         .with_native_transport(args.native_transport)
         .with_parallel_resource_pack_urls(args.parallel_resource_pack_urls)
         .with_client_random_id(client_random_id)
@@ -652,7 +602,8 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         screenshots_dir,
         debug_overlay: args.dev_debug_overlay,
     });
-    // Account feeds also serve Profile in direct-address and external-socket runs.
+    // Account feeds also serve Profile in direct-address sessions.
+    #[cfg(feature = "native-networking")]
     app.init_resource::<client_shell::menu::LauncherServices>();
     app.add_plugins(render::PresentModePolicyPlugin::new(present_mode_policy));
     if diagnostics_enabled {

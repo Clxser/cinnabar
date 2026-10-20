@@ -2,7 +2,6 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    path::PathBuf,
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -16,8 +15,6 @@ use bridge::{
 };
 use crossbeam_channel::{Receiver, Sender, bounded, select, unbounded};
 
-#[cfg(all(test, unix))]
-use super::worker_runtime;
 use super::{Snapshot, publish};
 use tokio::runtime::Handle;
 use tokio_util::task::TaskTracker;
@@ -222,26 +219,20 @@ impl Lookups {
 
 /// Starts the lookup worker; it stops when the returned sender is dropped.
 pub(super) fn start(
-    socket_dir: Option<PathBuf>,
     shared: Arc<Mutex<Snapshot>>,
     runtime: Handle,
     tasks: TaskTracker,
 ) -> Sender<Roster> {
     let (rosters, requests) = unbounded();
     thread::spawn(crate::worker::tracked(
-        move || run(socket_dir.as_deref(), &shared, &requests, &runtime),
+        move || run(&shared, &requests, &runtime),
         &tasks,
     ));
     rosters
 }
 
 /// Schedules lookups and expirations while the network thread handles a single pending request.
-fn run(
-    socket_dir: Option<&std::path::Path>,
-    shared: &Mutex<Snapshot>,
-    requests: &Receiver<Roster>,
-    runtime: &Handle,
-) {
+fn run(shared: &Mutex<Snapshot>, requests: &Receiver<Roster>, runtime: &Handle) {
     thread::scope(|scope| {
         let (send, work) = bounded::<Vec<String>>(1);
         let (results, answers) = bounded(1);
@@ -260,11 +251,7 @@ fn run(
                                 return api.lookup(&batch).await;
                             }
                         }
-                        bridge::lookup_cinnabar_players(
-                            super::workers::require_core_directory(socket_dir)?,
-                            &batch,
-                        )
-                        .await
+                        Err(BridgeError::ControlClosed)
                     })
                     .await
                 });
@@ -591,6 +578,3 @@ mod tests {
         assert_eq!(lookups.next_wake(start), None);
     }
 }
-
-#[cfg(all(test, unix))]
-mod worker_tests;

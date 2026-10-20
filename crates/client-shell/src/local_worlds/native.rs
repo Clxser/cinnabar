@@ -12,7 +12,7 @@ impl LocalWorlds {
     /// Selects native session routing while retaining the same manager/store/process worker.
     pub fn attach_native(&mut self, layout: &InstallLayout) -> io::Result<()> {
         let manager = self.attach_manager(layout)?;
-        self.client = Some(WorldsClient::spawn_native(manager)?);
+        self.client = Some(WorldsClient::spawn(manager)?);
         self.playing = false;
         self.menu = WorldsMenu::default();
         self.input(Input::Refresh);
@@ -25,7 +25,7 @@ impl LocalWorlds {
         &mut self,
         id: &str,
     ) -> io::Result<launcher_host::local_worlds::NativeLocalWorldSelection> {
-        if self.client.as_ref().is_none_or(|client| !client.native()) {
+        if self.client.is_none() {
             return Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "native world worker is unavailable",
@@ -50,16 +50,12 @@ impl LocalWorlds {
         &self,
         selection: launcher_host::local_worlds::NativeLocalWorldSelection,
     ) -> io::Result<NativeLocalWorldRetirement> {
-        let client = self
-            .client
-            .as_ref()
-            .filter(|client| client.native())
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotConnected,
-                    "native world worker is unavailable",
-                )
-            })?;
+        let client = self.client.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotConnected,
+                "native world worker is unavailable",
+            )
+        })?;
         Ok(client.native_retirement(selection))
     }
 

@@ -28,7 +28,7 @@ fn account_switch_cancels_home_lease_before_waiting_for_original_presence_cleanu
         retirement_test_support::account(namespace.path(), runtime.handle().clone(), tasks.clone());
     let lifetime = account.title_presence_lifetime();
     let mut slot = LauncherServices {
-        running: Some(Running::Native {
+        running: Some(Attachment {
             cache: None,
             identity: None,
             account: None,
@@ -43,8 +43,7 @@ fn account_switch_cancels_home_lease_before_waiting_for_original_presence_cleanu
         layout,
         crate::player_skin::LocalPlayerSkin::generated_default("Fixture"),
     )
-    .with_io(runtime.handle().clone(), tasks.clone())
-    .with_native_sign_in(true);
+    .with_io(runtime.handle().clone(), tasks.clone());
     let mut world = World::new();
     world.insert_resource(LauncherAccount(account));
     runtime.block_on(receive(signals.read_entered));
@@ -54,9 +53,7 @@ fn account_switch_cancels_home_lease_before_waiting_for_original_presence_cleanu
         &mut Commands::new(&mut queue, &world),
         &mut menu,
         true,
-        false,
         None,
-        Instant::now(),
     );
     queue.apply(&mut world);
     runtime.block_on(receive(signals.cleanup_entered));

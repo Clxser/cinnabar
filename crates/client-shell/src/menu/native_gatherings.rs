@@ -28,7 +28,6 @@ impl MenuRuntime {
             return true;
         }
         self.remember_session_origin();
-        self.stop_catalog();
         self.remember_retry_target(address, Some(&path), false);
         self.intents.join = None;
         self.intents.native_world = None;
@@ -39,7 +38,7 @@ impl MenuRuntime {
 
     /// Moves the captured owner; account mutation revokes the pending action before dispatch.
     pub fn take_native_gathering_intent(&mut self) -> Option<NativeGatheringSelection> {
-        if self.account_change_pending() || !self.native_sign_in {
+        if self.account_change_pending() {
             self.intents.gathering = None;
             return None;
         }

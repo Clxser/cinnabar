@@ -1,5 +1,5 @@
-//! Session lifecycle: the one owner of joins, transfers, the session core, its
-//! runtime directory and teardown. The menu raises intents and renders the
+//! Session lifecycle: the one owner of joins, transfers and teardown.
+//! The menu raises intents and renders the
 //! [`SessionStatus`] published here.
 
 use crate::runtime::network::resource_packs::PackApplication;
@@ -7,15 +7,9 @@ use bevy::{
     ecs::system::SystemParam,
     prelude::{AppExit, Commands, MessageWriter, Res, ResMut, Resource},
 };
-use bridge::CORE_START_TIMEOUT;
 use client_runtime::network::NetworkHandle;
 use client_runtime::session::{format_transfer_address, transfer_handoff_address};
 use launcher::menu::settings_options::SettingId;
-use launcher_host::{
-    core_process::{CoreProcessGuard, spawn_core_for_address},
-    server_trust::SessionTrust,
-    session_cleanup::SessionDirectoryGuard,
-};
 
 use client_shell::presence_target::presence_target;
 use {
@@ -24,10 +18,8 @@ use {
         shutdown::record_fatal_error,
         world::TransferNotice,
     },
-    client_shell::menu::{LauncherServices, MenuRuntime},
+    client_shell::menu::MenuRuntime,
 };
-
-use std::time::Instant;
 
 pub(crate) mod account_retirement;
 mod client_id;
@@ -53,17 +45,13 @@ mod url_policy;
 use client_session::MAX_TRANSFER_CHAIN_HOPS;
 
 type BlobCache = client_runtime::blob_cache::ClientBlobCacheOwner;
-type JoinAttempt = client_session::connection::JoinAttempt<SessionDirectoryGuard>;
-pub(crate) type JoinStage = client_session::connection::JoinStage<SessionDirectoryGuard>;
+use client_session::connection::JoinAttempt;
 pub(crate) type TrustOwner = Box<dyn launcher_host::server_trust::TrustSource + Send + Sync>;
 
 use client_state::{JoinIntent, SessionStatus};
 
 #[derive(Resource)]
 pub(crate) struct SessionController {
-    core: CoreProcessGuard, // declared first: the core stops before the directories below go
-    /// Identity-checked owner of the live session's runtime directory.
-    directory: Option<SessionDirectoryGuard>,
     /// The join provisioning behind the connecting screen.
     join: Option<JoinAttempt>,
     generation: u64,
@@ -98,7 +86,7 @@ pub(crate) struct SessionController {
         Option<crate::runtime::network::session::local_world::WorldConnectionRequest>,
     #[cfg(feature = "native-networking")]
     friend_cleanup: crate::runtime::network::session::friend::FriendCleanupOwner,
-    /// Retains this join's original Core or native server trust question and answer lifetime.
+    /// Retains this join's original native server trust question and answer lifetime.
     trust: Option<TrustOwner>,
     /// Server packs recent joins compiled; released once no join follows.
     kept_packs: &'static CompiledStacks,
@@ -106,7 +94,7 @@ pub(crate) struct SessionController {
 
 impl Default for SessionController {
     fn default() -> Self {
-        Self::new(CoreProcessGuard::default())
+        Self::new()
     }
 }
 
@@ -129,28 +117,9 @@ impl SessionController {
         }
     }
 
-    /// Keeps explicit native requests, including local refusals, out of Core provisioning.
-    fn native_provisioning_selected(&self, address: &str, local_world: bool) -> bool {
-        #[cfg(feature = "native-networking")]
-        {
-            self.native_transport.is_some_and(|transport| {
-                !matches!(
-                    destination::classify(address, transport, local_world),
-                    destination::Destination::LocalWorld
-                )
-            })
-        }
-        #[cfg(not(feature = "native-networking"))]
-        {
-            let _ = (address, local_world);
-            false
-        }
-    }
-    /// Adopts `core`, already started for a direct `--address` session.
-    pub(crate) fn new(core: CoreProcessGuard) -> Self {
+    /// Starts with no selected transport or active join.
+    pub(crate) fn new() -> Self {
         Self {
-            core,
-            directory: None,
             join: None,
             generation: 1,
             client_random_id: None,
@@ -228,17 +197,9 @@ impl SessionController {
         self.presence.as_ref()
     }
 
-    /// Endpoint directory of the live session core; unavailable during teardown.
-    pub(crate) fn socket_directory(&self) -> Option<&std::path::Path> {
-        self.directory
-            .as_ref()
-            .map(SessionDirectoryGuard::directory)
-    }
-
     pub(crate) fn status(&self) -> SessionStatus {
         SessionStatus {
             connecting: self.connecting,
-            owns_directory: self.directory.is_some(),
         }
     }
 
@@ -249,11 +210,6 @@ impl SessionController {
     fn next_generation(&mut self) -> u64 {
         self.generation = self.generation.saturating_add(1).max(1);
         self.generation
-    }
-
-    /// Binds the live session's directory, releasing any previous one first.
-    pub(crate) fn bind_directory(&mut self, directory: SessionDirectoryGuard) {
-        self.directory = Some(directory);
     }
 
     fn begin_fresh_transfer_chain(&mut self) {
@@ -285,18 +241,16 @@ impl SessionController {
         self.kept_packs.keep_for_rejoin();
     }
 
-    /// Provisions one endpoint, applying any native override only to this attempt.
-    fn start_core(
+    /// Selects one native endpoint without provisioning another process or backend.
+    fn prepare_endpoint(
         &mut self,
         menu: &MenuRuntime,
-        cache: &BlobCache,
         address: &str,
         auth_cache: Option<&std::path::Path>,
-        generation: u64,
         native_transport_override: Option<protocol::NativeTransport>,
-    ) -> Result<JoinStage, String> {
+    ) -> Result<protocol::SessionEndpoint, String> {
         #[cfg(not(feature = "native-networking"))]
-        let _ = native_transport_override;
+        let _ = (menu, address, auth_cache, native_transport_override);
         #[cfg(feature = "native-networking")]
         match self.native_transport.map(|configured| {
             destination::classify(
@@ -313,7 +267,7 @@ impl SessionController {
                 let service = launcher_host::native_account::is_realm_target(address)
                     || protocol::NativeRawTarget::recognizes(address)
                     || matches!(
-                        launcher_host::launcher_core::target_for(address),
+                        launcher_host::destination::target_for(address),
                         bridge::ConnectTarget::Gathering(_)
                     );
                 if service && auth_cache.is_none() {
@@ -338,47 +292,10 @@ impl SessionController {
                     target = selected;
                     self.trust = Some(Box::new(trust));
                 }
-                return Ok(JoinStage::Prepared(protocol::SessionEndpoint::Native(
-                    target,
-                )));
+                return Ok(protocol::SessionEndpoint::Native(target));
             }
         }
-        // Namespaced by process id like the `--address` path: a bare
-        // generation counter restarts at the same value every launch, so a
-        // previous run's directory would be reused for this session.
-        let socket_dir = menu
-            .layout()
-            .connect_socket_dir(std::process::id(), generation);
-        // The guard owns the directory across every teardown path; an identity
-        // conflict fails this connect loudly instead of reusing another
-        // session's directory.
-        let directory = SessionDirectoryGuard::bind(socket_dir.clone())
-            .map_err(|error| format!("Could not start {address}: {error}"))?;
-        let child = spawn_core_for_address(
-            menu.layout(),
-            &socket_dir,
-            address,
-            auth_cache,
-            // Advertise upstream cache capability exactly because this same
-            // connect hands the verified blob cache to the new network
-            // session; that ownership is what makes the client answer
-            // LoginSuccess with cache-enabled status downstream.
-            cache.enables_upstream_client_cache(),
-            true,
-        )
-        .map_err(|error| format!("Could not start {address}: {error}"))?;
-        self.core.replace(child);
-        self.trust = Some(Box::new(SessionTrust::watch(socket_dir.clone())));
-        Ok(JoinStage::Core {
-            socket_dir,
-            directory,
-            deadline: Instant::now() + CORE_START_TIMEOUT,
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn release_directory(&mut self) {
-        self.directory = None;
+        Err(crate::args::ArgsError::NativeNetworkingUnavailable.to_string())
     }
 
     /// Advances with every join, transfer and leave, so each session is told apart even on
@@ -388,14 +305,19 @@ impl SessionController {
         self.generation
     }
 
-    #[cfg(all(test, unix))]
+    #[cfg(test)]
     pub(crate) fn join_pending(&self) -> bool {
         self.join.is_some()
     }
 
     /// Installs a connecting join at the current generation.
-    #[cfg(all(test, unix))]
-    pub(crate) fn adopt_join(&mut self, address: &str, local_world: bool, stage: JoinStage) {
+    #[cfg(test)]
+    pub(crate) fn adopt_join(
+        &mut self,
+        address: &str,
+        local_world: bool,
+        endpoint: protocol::SessionEndpoint,
+    ) {
         self.local_world = local_world;
         self.client_random_id = Some(protocol::ClientRandomId::new(-7).unwrap());
         self.join = Some(JoinAttempt {
@@ -403,7 +325,7 @@ impl SessionController {
             address: address.to_owned(),
             auth_cache: None,
             local_world,
-            stage,
+            endpoint,
         });
         self.connecting = true;
     }
@@ -411,12 +333,6 @@ impl SessionController {
     #[cfg(test)]
     pub(crate) fn set_connecting(&mut self, connecting: bool) {
         self.connecting = connecting;
-    }
-
-    /// Borrows the original process owner for cleanup fixtures.
-    #[cfg(test)]
-    pub(crate) fn core_mut(&mut self) -> &mut CoreProcessGuard {
-        &mut self.core
     }
 }
 
@@ -426,7 +342,6 @@ pub(crate) struct SessionResources<'w> {
     state: crate::game_session::SessionWorld<'w>,
     network: ResMut<'w, NetworkHandle<PackApplication>>,
     collisions: Res<'w, client_interaction::movement::PhysicsCollisionRegistries>,
-    launcher: Option<Res<'w, LauncherServices>>,
     actor_artwork: Option<Res<'w, render_scene::ActorArtworkResource>>,
     ui_catalog: Option<Res<'w, crate::runtime::network::PackUiCatalog>>,
     input: Option<Res<'w, client_state::SemanticInputSnapshot>>,
@@ -443,16 +358,11 @@ impl SessionResources<'_> {
         self.controller.kept_packs.keep_for_rejoin();
     }
 
-    /// Ends the live session and fences a fresh generation. The core stops off
-    /// the frame, and its directories go only once it has exited.
+    /// Cancels the live network owner and fences a fresh generation before replacement.
     fn retire(&mut self) -> u64 {
         *self.network = NetworkHandle::<PackApplication>::disconnected();
         let controller = &mut *self.controller;
-        let directory = controller.directory.take();
-        let join = controller.join.take();
-        controller
-            .core
-            .stop_detached(move || drop((join, directory)));
+        controller.join = None;
         controller.connecting = false;
         controller.trust = None;
         controller.presence = None;
@@ -519,7 +429,7 @@ pub(crate) fn drive_session(
         session.controller.native_account = None;
     }
     session.controller.publish(&mut menu);
-    // A queued answer reaches its core before a decline below retires that core.
+    // A queued answer reaches its original trust owner before a decline retires the join.
     if let Some(trust) = session.controller.trust.as_ref() {
         menu.sync_session_trust(trust.as_ref());
     }
@@ -560,8 +470,6 @@ fn drive_intents(
         session.network.send_form_packet(generation, packet).is_ok()
     });
     if menu.take_exit_request() {
-        // Exit stops the core inline, inside the shutdown watchdog's envelope.
-        session.controller.core.stop();
         session.retire();
         exits.write(AppExit::Success);
         return;
@@ -587,7 +495,7 @@ fn drive_intents(
     if let Some(intent) = menu.take_join_intent() {
         // A user-initiated join always starts a fresh transfer chain.
         session.controller.begin_fresh_transfer_chain();
-        attempt_connect(menu, session, cache, intent, None);
+        attempt_connect(menu, session, intent, None);
     }
     #[cfg(feature = "native-networking")]
     if let Some(selection) = menu.take_native_friend_intent() {
@@ -633,21 +541,16 @@ pub(crate) fn recover_session_failure(
 /// end with the transfer named explicitly. The automatic chain is bounded so
 /// a transfer loop ends in a visible menu state instead of reconnecting
 /// forever.
-pub(crate) fn follow_server_transfer(
-    mut menu: ResMut<MenuRuntime>,
-    client_blob_cache: Res<BlobCache>,
-    mut session: SessionResources,
-) {
+pub(crate) fn follow_server_transfer(mut menu: ResMut<MenuRuntime>, mut session: SessionResources) {
     let Some(notice) = session.state.client_world.transfer_notice.take() else {
         return;
     };
-    follow_transfer(&mut menu, &client_blob_cache, &mut session, notice);
+    follow_transfer(&mut menu, &mut session, notice);
     session.controller.publish(&mut menu);
 }
 
 fn follow_transfer(
     menu: &mut MenuRuntime,
-    cache: &BlobCache,
     session: &mut SessionResources<'_>,
     notice: TransferNotice,
 ) {
@@ -691,7 +594,6 @@ fn follow_transfer(
     attempt_connect(
         menu,
         session,
-        cache,
         JoinIntent {
             address: address.clone(),
             auth_cache,
@@ -720,19 +622,32 @@ fn end_transfer_without_follow(
 mod tests {
     use super::*;
 
+    #[test]
+    fn missing_native_selection_never_provisions_another_backend() {
+        let menu = MenuRuntime::new(true, 2, "Fixture".into());
+        let mut controller = SessionController::default();
+        assert!(
+            matches!(controller.prepare_endpoint(&menu, "fixture.invalid", None, None), Err(message) if message == crate::args::ArgsError::NativeNetworkingUnavailable.to_string())
+        );
+    }
+
     /// Native service provisioning and unverified friend refusals cannot select Core.
     #[cfg(feature = "native-networking")]
     #[test]
     fn native_routing_preserves_gathering_and_friend_provisioning_owners() {
-        let controller = SessionController::default()
-            .with_native_transport(Some(protocol::NativeTransport::RakNet));
-        assert!(controller.native_provisioning_selected("play.example.net", false));
-        assert!(controller.native_provisioning_selected(
+        let selected = |address, local_world| {
+            !matches!(
+                destination::classify(address, protocol::NativeTransport::RakNet, local_world),
+                destination::Destination::LocalWorld
+            )
+        };
+        assert!(selected("play.example.net", false));
+        assert!(selected(
             &format!("{}7", bridge::contract::REALM_TARGET_PREFIX),
             false
         ));
-        assert!(!controller.native_provisioning_selected("play.example.net", true));
-        assert!(controller.native_provisioning_selected(
+        assert!(!selected("play.example.net", true));
+        assert!(selected(
             &format!("{}123", bridge::contract::FRIEND_TARGET_PREFIX),
             false
         ));
@@ -742,11 +657,11 @@ mod tests {
             "00000000-0000-0000-0000-000000000007"
         );
         assert!(matches!(
-            launcher_host::launcher_core::target_for(&gathering),
+            launcher_host::destination::target_for(&gathering),
             bridge::ConnectTarget::Gathering(_)
         ));
         assert!(
-            controller.native_provisioning_selected(&gathering, false),
+            selected(&gathering, false),
             "gathering destinations must reach their native account allocation owner"
         );
     }
@@ -754,7 +669,7 @@ mod tests {
     /// The real native provisioning branch preserves the ordinary target owner's endpoint grammar.
     #[cfg(feature = "native-networking")]
     #[test]
-    fn native_start_core_normalizes_saved_direct_host_and_ipv6_destinations() {
+    fn native_endpoint_normalizes_saved_direct_host_and_ipv6_destinations() {
         let layout = launcher::test_support::scratch("native-direct-addresses");
         let menu = MenuRuntime::new_with_layout(
             false,
@@ -765,7 +680,6 @@ mod tests {
         );
         let mut controller = SessionController::default()
             .with_native_transport(Some(protocol::NativeTransport::RakNet));
-        let cache = BlobCache::default();
         for address in [
             "play.example.net:19133",
             "[2001:db8::7]:19134",
@@ -774,52 +688,41 @@ mod tests {
             " play.example.net ",
         ] {
             let bridge::ConnectTarget::RakNet(expected) =
-                launcher_host::launcher_core::target_for(address)
+                launcher_host::destination::target_for(address)
             else {
                 panic!("direct fixture must use the ordinary endpoint owner");
             };
-            let JoinStage::Prepared(protocol::SessionEndpoint::Native(target)) = controller
-                .start_core(&menu, &cache, address, None, 1, None)
-                .expect("direct native provisioning must not start a Go process")
-            else {
-                panic!("explicit native direct destination did not retain native I/O");
-            };
+            let protocol::SessionEndpoint::Native(target) = controller
+                .prepare_endpoint(&menu, address, None, None)
+                .expect("direct native provisioning must not start a Go process");
             assert_eq!(target.transport, protocol::NativeTransport::RakNet);
             assert_eq!(
                 target.address, expected,
                 "native provisioning lost the existing endpoint grammar for {address}"
             );
-            assert!(controller.directory.is_none());
         }
         let realm = format!("{}7", bridge::contract::REALM_TARGET_PREFIX);
         assert!(
             controller
-                .start_core(&menu, &cache, &realm, None, 1, None)
+                .prepare_endpoint(&menu, &realm, None, None)
                 .is_err()
         );
-        let JoinStage::Prepared(protocol::SessionEndpoint::Native(target)) = controller
-            .start_core(
+        let protocol::SessionEndpoint::Native(target) = controller
+            .prepare_endpoint(
                 &menu,
-                &cache,
                 &realm,
                 Some(std::path::Path::new("unread.json")),
-                1,
                 None,
             )
-            .unwrap()
-        else {
-            panic!("Realm keeps native account resolution");
-        };
+            .unwrap();
         assert_eq!(target.address, realm, "Realm locator is not a DNS endpoint");
 
         let friend = format!("{}123", bridge::contract::FRIEND_TARGET_PREFIX);
         assert!(matches!(
-            controller.start_core(&menu, &cache, &friend, None, 1, None),
+            controller.prepare_endpoint(&menu, &friend, None, None),
             Err(message)
                 if message == crate::args::ArgsError::NativeFriendSelectionRequired.to_string()
         ));
-        assert!(controller.directory.is_none());
-        assert!(controller.core.id().is_none());
     }
 
     #[test]

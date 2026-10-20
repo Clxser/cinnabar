@@ -63,11 +63,7 @@ install -m 0755 "$rust_out/lib$client_library.so" "$libs/lib$client_library.so"
 install -m 0755 "$rust_out/assetc" "$libs/$(pin compiler_library)"
 install -m 0644 "$toolchain/sysroot/usr/lib/$triple/libc++_shared.so" "$libs/libc++_shared.so"
 
-# Pion's Android interface lookup (anet) needs Go's private net linknames.
-CGO_ENABLED=1 GOOS=android GOARCH=arm64 CC="$toolchain/bin/$triple$min_sdk-clang" \
-    go build -buildmode=pie -trimpath \
-    -ldflags "-s -w -checklinkname=0 -extldflags=$page_flags $(bash "$here/../common/core-ldflags.sh")" \
-    -o "$libs/$(pin core_library)" ./core/cmd/bedrock-core
+# The allowed Dragonfly server integration runs as a PIE helper.
 GOWORK=off CGO_ENABLED=1 GOOS=android GOARCH=arm64 CC="$toolchain/bin/$triple$min_sdk-clang" \
     go -C "$repo_root/tools/localserver" build -buildmode=pie -trimpath \
     -ldflags "-s -w -checklinkname=0 -extldflags=$page_flags" \

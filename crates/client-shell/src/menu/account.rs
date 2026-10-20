@@ -1,6 +1,5 @@
 use launcher::menu::auth::select_auth;
-use launcher::menu::view::MenuProfile;
-use launcher::menu::{MenuAction, MenuDialog, MenuScreen};
+use launcher::menu::{MenuAction, MenuDialog};
 use {super::*, launcher::install_layout::InstallLayout, launcher::menu::auth::AuthState};
 
 /// Longest a join waits for the saved account's check before going ahead signed out.
@@ -63,49 +62,40 @@ impl MenuRuntime {
             )
         })
     }
-    /// Selects the native sign-in worker before any account activity, preserving the existing presenter.
-    #[cfg(feature = "native-networking")]
-    pub fn with_native_sign_in(mut self, enabled: bool) -> Self {
-        self.native_sign_in = enabled;
-        self
-    }
-
-    fn start_catalog(&mut self) {
-        if self.native_sign_in || self.catalog_started || !self.visible || self.is_connecting() {
-            return;
+    /// Reads only the original supervisor's presentation state when native auth is available.
+    pub(super) fn owned_auth(&self) -> Option<&AuthState> {
+        #[cfg(feature = "native-networking")]
+        {
+            self.auth_process.as_ref().map(AuthSupervisor::state)
         }
-        if self.auth_attempted && self.auth_process.is_none() {
-            return;
-        }
-        if matches!(
-            self.auth_process.as_ref().map(AuthSupervisor::state),
-            Some(
-                AuthState::Checking
-                    | AuthState::AwaitingCode { .. }
-                    | AuthState::AwaitingXboxSignup { .. }
-            )
-        ) || matches!(
-            self.auth_process.as_ref().map(AuthSupervisor::state),
-            Some(AuthState::Failed(_) | AuthState::SignedOut)
-        ) {
-            return;
-        }
-        self.catalog_started = true;
-        if let Err(message) = self.catalog.start(&self.layout) {
-            self.catalog_message = Some(message);
+        #[cfg(not(feature = "native-networking"))]
+        {
+            None
         }
     }
 
-    /// `core_feeds`: a launcher core serves the lists, so the one-shot catalog
-    /// process (which would overwrite them with other join addresses) stays off.
-    pub fn poll_catalog(&mut self, core_feeds: bool) {
+    /// A pending original auth operation must retire before a storage mutation or join.
+    pub(super) fn auth_cleanup_complete(&self) -> bool {
+        #[cfg(feature = "native-networking")]
+        {
+            self.auth_process
+                .as_ref()
+                .is_none_or(AuthSupervisor::cleanup_complete)
+        }
+        #[cfg(not(feature = "native-networking"))]
+        {
+            true
+        }
+    }
+
+    /// Polls the normal native sign-in presenter without starting a separate catalog process.
+    pub fn poll_account(&mut self, services_available: bool) {
         if self.external.is_some() {
             return;
         }
+        #[cfg(feature = "native-networking")]
         self.poll_sign_in();
         self.cancel_join_fallback_prompt();
-        // Cached validation also runs when a signed-out account core is already
-        // attached, as happens before opening the menu in a direct session.
         if self.visible
             && !self.is_connecting()
             && self.should_auto_start_sign_in(auth_cache_path(&self.layout).is_some())
@@ -114,38 +104,14 @@ impl MenuRuntime {
         }
         self.update_sign_in_browser(false);
         self.poll_catalog_art();
-        if core_feeds || self.native_sign_in {
-            self.stop_catalog();
-            return;
-        }
-        if self.screen == MenuScreen::Profile && !self.feeds.profile.loaded {
-            self.feeds.profile = MenuProfile::unavailable();
+        if !services_available
+            && self.screen == launcher::menu::MenuScreen::Profile
+            && !self.feeds.profile.loaded
+        {
+            self.feeds.profile = launcher::menu::view::MenuProfile::unavailable();
+            #[cfg(feature = "native-networking")]
             launcher_host::launcher_account::profile_worker::log_unavailable("worker_unavailable");
         }
-        self.start_catalog();
-        match self.catalog.poll() {
-            Ok(Some(catalog)) => self.apply_catalog(catalog),
-            Ok(None) => {}
-            Err(message) => self.catalog_message = Some(message),
-        }
-    }
-
-    pub(super) fn stop_catalog(&mut self) {
-        self.catalog.stop();
-    }
-
-    fn apply_catalog(&mut self, catalog: CatalogFile) {
-        let featured = self.catalog_cards(catalog.featured);
-        self.featured.replace(featured);
-        if !self.native_sign_in {
-            self.realms.replace(catalog.realms);
-            self.friends
-                .replace(catalog.friends.into_iter().map(Into::into).collect());
-        }
-        // Service errors may contain URLs, response bodies, or account material.
-        // Keep successful sections, but expose only controlled recovery copy.
-        self.catalog_message =
-            (!catalog.errors.is_empty()).then(|| "Social: Refresh to try again.".to_owned());
     }
 
     /// Validates the saved account in the background, without taking focus for a prompt.
@@ -159,10 +125,7 @@ impl MenuRuntime {
         !self.sign_in_requested
             && !self.feeds.account_adding
             && !self.auth_restart_requested
-            && matches!(
-                self.auth_process.as_ref().map(AuthSupervisor::state),
-                Some(AuthState::Checking)
-            )
+            && matches!(self.owned_auth(), Some(AuthState::Checking))
     }
 
     /// A new join waits on the saved account's check instead of cancelling it, starting the
@@ -170,11 +133,11 @@ impl MenuRuntime {
     pub(super) fn hold_join_for_sign_in(&mut self) {
         #[cfg(feature = "native-networking")]
         self.native_catalog.pause();
-        self.intents.native_auth_required = self.native_sign_in
+        self.intents.native_auth_required = cfg!(feature = "native-networking")
             && (self.feeds.account_active_id.is_some()
                 || auth_cache_path(&self.layout).is_some()
                 || matches!(
-                    self.auth_process.as_ref().map(AuthSupervisor::state),
+                    self.owned_auth(),
                     Some(
                         AuthState::Checking
                             | AuthState::AwaitingCode { .. }
@@ -194,8 +157,7 @@ impl MenuRuntime {
         }
     }
 
-    /// Gives a held join the account its check settled on, once the check settles and the account
-    /// core serves that account, or the wait expires.
+    /// Settles the original saved-account check or returns its bounded pending state.
     pub(super) fn settle_join_sign_in(&mut self, now: std::time::Instant) -> JoinSignIn {
         let Some(deadline) = self.intents.join_sign_in_deadline else {
             return JoinSignIn::Settled;
@@ -208,21 +170,6 @@ impl MenuRuntime {
         if !checking && auth_cache.is_none() {
             // A check that failed or fell back to a prompt is abandoned, as for any join.
             self.stop_sign_in();
-        }
-        let native_direct = self.native_sign_in
-            && self.intents.join.as_ref().is_some_and(|join| {
-                !join.local_world
-                    && matches!(
-                        target_for(&join.address),
-                        bridge::ConnectTarget::RakNet(_) | bridge::ConnectTarget::Realm(_)
-                    )
-            });
-        let core_ready = native_direct
-            || self
-                .account_core
-                .is_none_or(|core| core.ready_for(auth_cache.is_some()));
-        if !checking && !core_ready && now < deadline {
-            return JoinSignIn::Waiting;
         }
         self.intents.join_sign_in_deadline = None;
         if let Some(join) = self.intents.join.as_mut() {
@@ -271,12 +218,7 @@ impl MenuRuntime {
             );
             return None;
         }
-        if !helper_outlives_join
-            && self
-                .auth_process
-                .as_ref()
-                .is_some_and(|process| !process.cleanup_complete())
-        {
+        if !helper_outlives_join && !self.auth_cleanup_complete() {
             return None;
         }
         let join = self.intents.join.take();
@@ -291,7 +233,7 @@ impl MenuRuntime {
         if !self.intents.join_sign_in_check {
             return;
         }
-        match self.auth_process.as_ref().map(AuthSupervisor::state) {
+        match self.owned_auth() {
             Some(AuthState::Checking) => return,
             Some(state) if state.awaiting_browser() => self.stop_sign_in(),
             _ => {}
@@ -299,7 +241,7 @@ impl MenuRuntime {
         self.intents.join_sign_in_check = false;
     }
 
-    /// A join is under way beyond waiting for the saved account, so the account core stays put.
+    /// A join is under way beyond waiting for the saved account, so the selected account service stays put.
     pub(super) fn joining_past_sign_in(&self) -> bool {
         self.is_connecting() && self.intents.join_sign_in_deadline.is_none()
     }
@@ -337,9 +279,8 @@ impl MenuRuntime {
         self.sign_in_cancelled = false;
         self.focus_sign_in_prompt();
         self.auth_attempted = true;
-        self.stop_catalog();
-        self.catalog_started = false;
         self.catalog_message = None;
+        #[cfg(feature = "native-networking")]
         if let Some(process) = self.auth_process.as_mut()
             && !process.cleanup_complete()
         {
@@ -347,7 +288,10 @@ impl MenuRuntime {
             self.auth_restart_requested = true;
             return;
         }
-        self.auth_process = None;
+        #[cfg(feature = "native-networking")]
+        {
+            self.auth_process = None;
+        }
         self.auth_restart_requested = false;
         self.control_auth = None;
         self.spawn_sign_in();
@@ -355,7 +299,7 @@ impl MenuRuntime {
 
     fn spawn_sign_in(&mut self) {
         #[cfg(feature = "native-networking")]
-        if self.native_sign_in {
+        {
             let result = self
                 .io_execution()
                 .map_err(Into::into)
@@ -378,33 +322,16 @@ impl MenuRuntime {
                     ));
                 }
             }
-            return;
         }
-        let Some(executable) = core_executable(&self.layout) else {
-            self.auth_process = None;
-            let failure = "Sign-in is unavailable. Try again.";
-            self.sign_in_failure = Some(AuthState::Failed(failure.into()));
-            self.message = Some(failure.into());
-            return;
-        };
-        let cache = if self.feeds.account_adding {
-            launcher::accounts::AccountStore::new(self.layout.auth_cache()).pending_cache()
-        } else {
-            self.layout.auth_cache()
-        };
-        match AuthSupervisor::spawn(&executable, &cache) {
-            Ok(process) => self.auth_process = Some(process),
-            Err(error) => {
-                self.auth_process = None;
-                bevy::log::warn!(%error, "sign-in could not start");
-                let failure = "Sign-in could not start. Try again.";
-                self.sign_in_failure = Some(AuthState::Failed(failure.into()));
-                self.message = Some(failure.into());
-            }
+        #[cfg(not(feature = "native-networking"))]
+        {
+            self.sign_in_failure = Some(AuthState::Failed(
+                "Sign-in is unavailable in this build.".into(),
+            ));
         }
     }
 
-    /// Uses the same auth precedence as presentation, including launcher-core codes.
+    /// Uses the same auth precedence as presentation, including the original account feed.
     pub(super) fn update_sign_in_browser(&mut self, explicit: bool) {
         if self.external.is_some() {
             return;
@@ -420,10 +347,7 @@ impl MenuRuntime {
         {
             return;
         }
-        let state = select_auth(
-            self.auth_process.as_ref().map(AuthSupervisor::state),
-            self.control_auth.as_ref(),
-        );
+        let state = select_auth(self.owned_auth(), self.control_auth.as_ref());
         if state.awaiting_browser() {
             #[cfg(not(test))]
             self.sign_in_browser
@@ -433,7 +357,7 @@ impl MenuRuntime {
         }
     }
 
-    /// The active auth prompt, with a pending helper ahead of the launcher core.
+    /// The active auth prompt, with the original supervisor ahead of account feed status.
     pub(super) fn current_auth(&self) -> std::borrow::Cow<'_, AuthState> {
         #[cfg(feature = "developer-control")]
         if let Some(state) = self.sign_in_fixture {
@@ -449,10 +373,7 @@ impl MenuRuntime {
         if let Some(state) = self.owned_sign_in_failure() {
             return std::borrow::Cow::Borrowed(state);
         }
-        let state = select_auth(
-            self.auth_process.as_ref().map(AuthSupervisor::state),
-            self.control_auth.as_ref(),
-        );
+        let state = select_auth(self.owned_auth(), self.control_auth.as_ref());
         std::borrow::Cow::Borrowed(
             if self.sign_in_cancelled && !matches!(state, AuthState::Authenticated) {
                 &AuthState::SignedOut
@@ -475,10 +396,7 @@ impl MenuRuntime {
             self.control_auth = Some(state);
             return;
         }
-        let next = select_auth(
-            self.auth_process.as_ref().map(AuthSupervisor::state),
-            Some(&state),
-        );
+        let next = select_auth(self.owned_auth(), Some(&state));
         let ready = next.awaiting_browser();
         let finished = !self.auth_restart_requested
             && matches!(next, AuthState::Authenticated | AuthState::SignedOut);
@@ -543,6 +461,7 @@ impl MenuRuntime {
         })
     }
 
+    #[cfg(feature = "native-networking")]
     fn poll_sign_in(&mut self) {
         let Some(process) = self.auth_process.as_mut() else {
             return;
@@ -576,7 +495,6 @@ impl MenuRuntime {
             return;
         }
         if !was_authenticated && matches!(process.state(), AuthState::Authenticated) {
-            self.catalog_started = false;
             self.catalog_message = Some("Signed in. Loading account destinations…".to_owned());
         }
         #[cfg(feature = "native-networking")]
@@ -625,6 +543,7 @@ impl MenuRuntime {
         }
         self.auth_attempted = true;
         self.auth_restart_requested = false;
+        #[cfg(feature = "native-networking")]
         if let Some(mut process) = self.auth_process.take() {
             process.cancel_prompt();
             self.auth_process = Some(process);
@@ -632,7 +551,36 @@ impl MenuRuntime {
     }
 
     fn should_auto_start_sign_in(&self, cache_exists: bool) -> bool {
-        cache_exists && !self.auth_attempted && self.auth_process.is_none()
+        cfg!(feature = "native-networking")
+            && cache_exists
+            && !self.auth_attempted
+            && self.owned_auth().is_none()
+    }
+}
+
+impl MenuRuntime {
+    /// The validated sign-in's original cache, retained for account services and joins.
+    pub fn launcher_auth_cache(&self) -> Option<PathBuf> {
+        if self.external.is_some() {
+            return None;
+        }
+        if self.feeds.account_adding && self.accounts.pending_ready {
+            return Some(
+                launcher::accounts::AccountStore::new(self.layout.auth_cache()).pending_cache(),
+            );
+        }
+        validated_auth_cache(&self.layout, self.owned_auth())
+    }
+
+    pub(super) fn sign_in_in_flight(&self) -> bool {
+        matches!(
+            self.owned_auth(),
+            Some(
+                AuthState::Checking
+                    | AuthState::AwaitingCode { .. }
+                    | AuthState::AwaitingXboxSignup { .. }
+            )
+        )
     }
 }
 
@@ -641,7 +589,7 @@ mod profile_tests;
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "native-networking"))]
 mod auth_tests;
 
 #[cfg(all(test, feature = "native-networking"))]

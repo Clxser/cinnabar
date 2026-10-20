@@ -4,16 +4,6 @@ use super::MenuRuntime;
 #[cfg(feature = "native-networking")]
 pub mod friend;
 
-/// Prevents catalog workers from starting in an isolated session fixture.
-pub fn suppress_catalog(menu: &mut MenuRuntime) {
-    menu.catalog_started = true;
-}
-
-/// Points a fixture at a missing core without changing its user directories.
-pub fn use_missing_core(menu: &mut MenuRuntime) {
-    menu.layout.core_executable = menu.layout.user_data_root.join("missing-test-core");
-}
-
 /// Publishes a controlled external join stage for teardown fixtures.
 pub fn set_join_stage(menu: &mut MenuRuntime, stage: launcher::menu::view::JoinStage) {
     menu.feeds.join =

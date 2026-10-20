@@ -36,7 +36,10 @@ fn generated_semantic_data_matches_the_selected_go_sources() {
             locale::UNICODE_VERSION
         ],
     );
-    let module = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../core/go.mod"));
+    let module = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tools/localserver/go.mod"
+    ));
     assert_eq!(
         module
             .lines()
@@ -50,7 +53,10 @@ fn generated_semantic_data_matches_the_selected_go_sources() {
         1,
         "generated locale source differs from the unique core requirement",
     );
-    let sums = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../core/go.sum"));
+    let sums = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tools/localserver/go.sum"
+    ));
     assert_eq!(
         sums.lines()
             .filter(|line| line.split_whitespace().eq([
@@ -60,6 +66,6 @@ fn generated_semantic_data_matches_the_selected_go_sources() {
             ]))
             .count(),
         1,
-        "generated locale checksum differs from core/go.sum",
+        "generated locale checksum differs from tools/localserver/go.sum",
     );
 }

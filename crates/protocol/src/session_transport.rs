@@ -1,7 +1,5 @@
 use std::collections::VecDeque;
 use std::future::{Future, poll_fn};
-#[cfg(not(target_arch = "wasm32"))]
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, ready};
@@ -29,18 +27,6 @@ pub(crate) const MAX_SESSION_BATCH_BYTES: usize =
     bridge::contract::MAX_UPSTREAM_DECOMPRESSED_BATCH_BYTES;
 /// Bounds frames read while packs prepare or the world consumer is full; past it the core waits.
 pub(crate) const MAX_READ_AHEAD_BYTES: usize = 64 * 1024 * 1024;
-
-/// Best-effort: tells the core whether this client applied (or reverted) the
-/// newest attempt's handed-off packs; returns whether the core recorded it.
-#[cfg(not(target_arch = "wasm32"))]
-pub async fn report_pack_application(socket_dir: &Path, applied: bool) -> bool {
-    let Ok(status) = bridge::read_status(socket_dir).await else {
-        return false;
-    };
-    bridge::report_pack_application(socket_dir, status.pack_admission.attempt_id, applied)
-        .await
-        .is_ok()
-}
 
 /// What the core delivers next: a server packet, or the terminal message that ends the session.
 pub(crate) enum Inbound {
@@ -119,7 +105,7 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     pub(crate) fn packet_delay(&self) -> Option<native::delay::NativePacketDelay> {
         match self.writer.sender() {
-            PacketSender::Core(_) => None,
+            PacketSender::Framed(_) => None,
             PacketSender::Native(sender) => Some(sender.delay.clone()),
         }
     }
@@ -127,7 +113,7 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
     /// Clones only the native transport's read-only observation, never its lifecycle owner.
     pub(crate) fn observe_rtt(&self) -> Option<crate::RoundTripTime> {
         match &self.reader {
-            Reader::Core(_) => None,
+            Reader::Framed(_) => None,
             #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
             Reader::Native(reader) => reader.rtt.clone(),
         }
@@ -159,9 +145,9 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
         timers: bridge::tasks::Timers,
     ) -> Self {
         Self {
-            reader: Reader::Core(reader),
+            reader: Reader::Framed(reader),
             timers,
-            writer: BatchWriter::direct(PacketSender::Core(frames)),
+            writer: BatchWriter::direct(PacketSender::Framed(frames)),
             relay: None,
             prefer_injected: false,
             joining: true,
@@ -209,7 +195,7 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
     #[cfg(test)]
     pub(crate) fn frame_queue(&self) -> FrameQueue {
         match self.writer.sender().clone() {
-            PacketSender::Core(frames) => frames,
+            PacketSender::Framed(frames) => frames,
             #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
             PacketSender::Native(_) => panic!("this fixture requires the original Core queue"),
         }
@@ -266,10 +252,10 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
                 None => return Err(SessionFailure::ConnectionClosed.into()),
             };
             #[cfg(not(all(feature = "native-networking", not(target_arch = "wasm32"))))]
-            let ReadItem::Core(frame) = frame;
+            let ReadItem::Framed(frame) = frame;
             #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
             let frame = match frame {
-                ReadItem::Core(frame) => frame,
+                ReadItem::Framed(frame) => frame,
                 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
                 ReadItem::Native(batch) => {
                     self.split_frames += 1;
@@ -368,7 +354,7 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
             return Ok(None);
         }
         let Some(ReadAhead {
-            item: Some(Ok(ReadItem::Core(frame))),
+            item: Some(Ok(ReadItem::Framed(frame))),
             ..
         }) = self.ahead.back()
         else {

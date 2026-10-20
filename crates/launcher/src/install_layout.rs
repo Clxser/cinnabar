@@ -4,7 +4,7 @@ use thiserror::Error;
 mod android;
 mod executables;
 pub use android::configure_android;
-use executables::{core_filename, local_server_filename};
+use executables::local_server_filename;
 
 const APP_DIR: &str = crate::PRODUCT_NAME;
 
@@ -60,8 +60,7 @@ pub struct InstallLayout {
     pub resource_root: PathBuf,
     pub compiled_assets: PathBuf,
     pub physics_registry: PathBuf,
-    pub core_executable: PathBuf,
-    /// The Dragonfly integration executable, resolved independently of the legacy client.
+    /// The executable for the allowed Dragonfly local-server integration.
     pub local_server_executable: PathBuf,
     pub user_config_root: PathBuf,
     pub user_data_root: PathBuf,
@@ -89,7 +88,6 @@ impl InstallLayout {
                 physics_registry: local
                     .join("assets/compiled")
                     .join(assets::carriers::physics_registry_basename()),
-                core_executable: binary_dir.join(core_filename(platform)),
                 local_server_executable: binary_dir.join(local_server_filename(platform)),
                 user_config_root: config,
                 user_data_root: data,
@@ -143,7 +141,6 @@ impl InstallLayout {
                 .join("assets")
                 .join(assets::carriers::physics_registry_basename()),
             resource_root,
-            core_executable: executable_dir.join(core_filename(platform)),
             local_server_executable: executable_dir.join(local_server_filename(platform)),
             user_config_root,
             user_data_root,
@@ -275,7 +272,7 @@ impl InstallLayout {
         self.auth_cache().with_file_name("device.json")
     }
 
-    /// Downloaded launcher artwork, beside the auth cache with the core's persona art.
+    /// Downloaded launcher artwork beside the preserved account cache.
     #[must_use]
     pub fn launcher_artwork_dir(&self) -> PathBuf {
         self.auth_cache()
@@ -353,35 +350,10 @@ impl InstallLayout {
         self.user_config_root.join("graphics.json")
     }
 
-    #[must_use]
-    pub fn catalog_file(&self, process_id: u32) -> PathBuf {
-        self.transient_runtime_root
-            .join(format!("catalog-{process_id}.json"))
-    }
-
-    /// Root holding per-session runtime directories and endpoint artifacts.
+    /// Root holding transient local helper and session artifacts.
     #[must_use]
     pub fn transient_runtime_root(&self) -> &Path {
         &self.transient_runtime_root
-    }
-
-    #[must_use]
-    pub fn direct_socket_dir(&self, process_id: u32) -> PathBuf {
-        self.transient_runtime_root
-            .join(format!("direct-{process_id}"))
-    }
-
-    /// Account-core incarnations have separate endpoints from each other and game sessions.
-    #[must_use]
-    pub fn account_socket_dir(&self, pid: u32, incarnation: u64) -> PathBuf {
-        self.transient_runtime_root
-            .join(format!("account-{pid}-{incarnation}"))
-    }
-
-    #[must_use]
-    pub fn connect_socket_dir(&self, process_id: u32, generation: u64) -> PathBuf {
-        self.transient_runtime_root
-            .join(format!("connect-{process_id}-{generation}"))
     }
 }
 
@@ -748,18 +720,6 @@ mod tests {
             PathBuf::from("/work/cinnabar/.local/run")
         );
         assert_eq!(
-            layout.direct_socket_dir(41),
-            PathBuf::from("/work/cinnabar/.local/cinnabar/direct-41")
-        );
-        assert_eq!(
-            layout.connect_socket_dir(41, 3),
-            PathBuf::from("/work/cinnabar/.local/cinnabar/connect-41-3")
-        );
-        assert_eq!(
-            layout.catalog_file(41),
-            PathBuf::from("/work/cinnabar/.local/cinnabar/catalog-41.json")
-        );
-        assert_eq!(
             layout.resource_pack_cache_dir(),
             PathBuf::from("/work/cinnabar/.local/resource-packs/v1/objects")
         );
@@ -839,10 +799,6 @@ mod tests {
         assert_eq!(
             layout.compiled_assets,
             PathBuf::from("/Applications/Cinnabar.app/Contents/Resources/assets")
-        );
-        assert_eq!(
-            layout.core_executable,
-            PathBuf::from("/Applications/Cinnabar.app/Contents/MacOS/bedrock-core")
         );
         assert_eq!(
             layout.resource_pack_cache_dir(),

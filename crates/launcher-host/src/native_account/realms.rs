@@ -44,7 +44,7 @@ impl NativeAccount {
             return self.prepare_raw_nethernet(raw, claims, random_id).await;
         }
         if let bridge::ConnectTarget::Gathering(id) =
-            crate::launcher_core::target_for(&target.address)
+            crate::destination::target_for(&target.address)
         {
             let experience = uuid::Uuid::parse_str(&id)
                 .ok()

@@ -26,7 +26,7 @@ pub(crate) fn classify(
             NativeTransport::RakNet,
         ));
     }
-    match launcher_host::launcher_core::target_for(address) {
+    match launcher_host::destination::target_for(address) {
         bridge::ConnectTarget::RakNet(normalized) => {
             let address = if transport == NativeTransport::Addressed {
                 address.trim().to_owned()

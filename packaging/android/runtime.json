@@ -5,7 +5,6 @@
   "build_tools": "36.1.0",
   "ndk": "28.2.13676358",
   "cargo_ndk": "3.5.4",
-  "core_library": "libbedrock_core.so",
   "compiler_library": "libassetc.so",
   "local_server_library": "libbedrock_local_server.so"
 }

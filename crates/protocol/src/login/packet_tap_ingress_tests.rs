@@ -4,7 +4,6 @@ use bedrock_protocol_1_26_51::packets::{PacketId, SetTime};
 use bedrock_protocol_1_26_51::wire;
 use bytes::Bytes;
 use tokio::io::AsyncWriteExt;
-use tokio::net::UnixListener;
 
 use super::PlaySession;
 use crate::packet_tap::{PacketDirection, PacketOutcome};
@@ -16,10 +15,7 @@ use crate::{Packet, WorldEvent};
 /// the packets it accepted.
 #[tokio::test]
 async fn a_malformed_world_packet_is_reported_failed_with_its_body() {
-    let dir = tempfile::tempdir().unwrap();
-    let listener = UnixListener::bind(bridge::session_endpoint_path(dir.path())).unwrap();
-    let (reader, frames) = bridge::connect_session(dir.path()).await.unwrap();
-    let (mut peer, _) = listener.accept().await.unwrap();
+    let (reader, frames, mut peer, _writer) = crate::tests::framed::pair();
     let tap = Arc::new(RecordingTap::default());
     let transport = SessionTransport::new(reader, frames, &[]).with_tap(Some(tap.clone()));
     let mut session = PlaySession::new(transport, None, crate::login::startup::ready_fixture(1));
@@ -72,10 +68,7 @@ async fn accepted_packets_release_the_observers_batch_storage() {
             true,
         ),
     ] {
-        let dir = tempfile::tempdir().unwrap();
-        let listener = UnixListener::bind(bridge::session_endpoint_path(dir.path())).unwrap();
-        let (reader, frames) = bridge::connect_session(dir.path()).await.unwrap();
-        let (_peer, _) = listener.accept().await.unwrap();
+        let (reader, frames, _peer, _writer) = crate::tests::framed::pair();
         let tap = Arc::new(RecordingTap::default());
         let packet = crate::session_transport::tests::packet_bytes(&Packet::new(SetTime {
             time: wire::ZigZag32(5),
@@ -125,10 +118,7 @@ async fn cache_rejections_are_tapped_before_recovery() {
         (Packet::new(invalid_shape), true),
         (verified, false),
     ] {
-        let dir = tempfile::tempdir().unwrap();
-        let listener = UnixListener::bind(bridge::session_endpoint_path(dir.path())).unwrap();
-        let (reader, frames) = bridge::connect_session(dir.path()).await.unwrap();
-        let (_peer, _) = listener.accept().await.unwrap();
+        let (reader, frames, _peer, _writer) = crate::tests::framed::pair();
         let tap = Arc::new(RecordingTap::default());
         let wire = crate::session_transport::tests::packet_bytes(&rejected);
         let mut reader_body = wire::Reader::new(&wire);
@@ -178,10 +168,7 @@ async fn cache_rejections_are_tapped_before_recovery() {
 async fn an_unusable_transfer_is_tapped_as_skipped() {
     use bedrock_protocol_1_26_51::packets::Transfer;
     for cache in [None, Some(crate::ClientBlobCache::default())] {
-        let dir = tempfile::tempdir().unwrap();
-        let listener = UnixListener::bind(bridge::session_endpoint_path(dir.path())).unwrap();
-        let (reader, frames) = bridge::connect_session(dir.path()).await.unwrap();
-        let (_peer, _) = listener.accept().await.unwrap();
+        let (reader, frames, _peer, _writer) = crate::tests::framed::pair();
         let tap = Arc::new(RecordingTap::default());
         let packet = crate::session_transport::tests::packet_bytes(&Packet::new(Transfer {
             server_address: "".into(),

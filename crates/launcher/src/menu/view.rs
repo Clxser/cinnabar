@@ -201,8 +201,6 @@ pub struct MenuFeeds {
 pub struct ServerTrustPrompt {
     pub id: u64,
     pub url: String,
-    /// Asked by a per-session core rather than the launcher core; ids are per core.
-    pub from_session_core: bool,
 }
 
 /// Which kind of join is under way; picks vanilla's connect title and progress screen.

@@ -553,12 +553,6 @@ forbidden_transitive_dependencies = ["app", "cinnabar", "client-ui", "launcher-h
 test_support_features = ["test-support"]
 
 [[crates]]
-name = "bedrock-replay"
-path = "tools/bedrock-replay"
-allowed_dependencies = ["bridge", "protocol", "resource-pack"]
-forbidden_dependencies = ["asset-compiler", "bevy", "wgpu"]
-
-[[crates]]
 name = "architecture"
 path = "tools/architecture"
 allowed_dependencies = ["assets", "workspace-declarations"]
@@ -1160,20 +1154,6 @@ sleep_exceptions = [
     { path = "crates/launcher-host/src/remote_images/disk/tests.rs", reason = "a fixture image server that answers slowly or stalls" },
     { path = "crates/client-session/src/session/tests.rs", reason = "a worker still busy when the network handle drops" },
     { path = "tools/cinnabar-mcp/src/tests.rs", reason = "a reply slower than the client's timeout, then the late reply arriving" },
-    { path = "core/authcache/concurrency_test.go", reason = "a fake token source that is slow to refresh" },
-    { path = "core/authcache/derived_test.go", reason = "a fake service that is slow to answer" },
-    { path = "core/authcache/flight_test.go", reason = "racy: sleeps to let goroutines block; needs a ready signal" },
-    { path = "core/cmd/bedrock-core/lifecycle_unix_test.go", reason = "a helper process that stays alive until the test kills it" },
-    { path = "core/internal/lifeline/lifeline_unix_test.go", reason = "a helper process that stays alive until the test kills it" },
-    { path = "core/internal/lockfile/lockfile_test.go", reason = "a lock holder that stays alive until the test kills it" },
-    { path = "core/internal/streamnet/conn_test.go", reason = "racy: sleeps to let a write block; needs a ready signal" },
-    { path = "core/proxy/first_join_token_live_test.go", reason = "a live, opt-in join profile that keeps credentials warm" },
-    { path = "core/proxy/packet_delay_position_test.go", reason = "virtual time inside synctest bubbles" },
-    { path = "core/proxy/packet_delay_test.go", reason = "virtual time inside synctest bubbles" },
-    { path = "core/proxy/prepared_transport_test.go", reason = "stands in for credential acquisition time" },
-    { path = "core/proxy/proxy_test.go", reason = "asserts nothing else arrives within a window" },
-    { path = "core/proxy/relay_backpressure_test.go", reason = "a stalled sink; racy wait for the pump to block needs a ready signal" },
-    { path = "core/proxy/resource_pack_admission_test.go", reason = "a server that trickles a slow download" },
     { path = "tools/localserver/experience/client_test.go", reason = "separate Go module without core's testwait; convert with its own helper" },
     { path = "tools/localserver/experience/dispatch_test.go", reason = "separate Go module without core's testwait; convert with its own helper" },
     { path = "tools/localserver/experience/helpers_test.go", reason = "separate Go module without core's testwait; convert with its own helper" },
