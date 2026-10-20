@@ -837,7 +837,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "bedrock-client"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=2d00e2030d33bd008056244cea8750a190b63e0b#2d00e2030d33bd008056244cea8750a190b63e0b"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=4d3d106b482be7b0a46d595403fe702ae09866a1#4d3d106b482be7b0a46d595403fe702ae09866a1"
 dependencies = [
  "bedrock-net",
  "bedrock-packs",
@@ -855,13 +855,16 @@ dependencies = [
 [[package]]
 name = "bedrock-client-tokio"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=2d00e2030d33bd008056244cea8750a190b63e0b#2d00e2030d33bd008056244cea8750a190b63e0b"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=4d3d106b482be7b0a46d595403fe702ae09866a1#4d3d106b482be7b0a46d595403fe702ae09866a1"
 dependencies = [
+ "bedrock-client",
  "bedrock-net",
+ "bedrock-packs",
  "bedrock-protocol-1-26-51",
  "bytes",
  "futures",
  "nethernet-tokio",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -872,7 +875,7 @@ dependencies = [
 [[package]]
 name = "bedrock-net"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=2d00e2030d33bd008056244cea8750a190b63e0b#2d00e2030d33bd008056244cea8750a190b63e0b"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=4d3d106b482be7b0a46d595403fe702ae09866a1#4d3d106b482be7b0a46d595403fe702ae09866a1"
 dependencies = [
  "aes 0.9.3",
  "base64 0.22.1",
@@ -900,7 +903,7 @@ dependencies = [
 [[package]]
 name = "bedrock-packs"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=2d00e2030d33bd008056244cea8750a190b63e0b#2d00e2030d33bd008056244cea8750a190b63e0b"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=4d3d106b482be7b0a46d595403fe702ae09866a1#4d3d106b482be7b0a46d595403fe702ae09866a1"
 dependencies = [
  "serde",
  "serde_json",
