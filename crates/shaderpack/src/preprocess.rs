@@ -86,7 +86,6 @@ struct Expander<'a> {
     out: String,
     map: LineMap,
     directives: Vec<Directive>,
-    pending: Vec<usize>,
 }
 
 /// Expands `#include`s of the `shaders/`-relative `path` textually, like Iris: absolute
@@ -105,7 +104,6 @@ pub(crate) fn expand(
         out: String::new(),
         map: LineMap::default(),
         directives: Vec::new(),
-        pending: Vec::new(),
     };
     x.file(path, None)?;
     Ok(Expanded {
@@ -120,7 +118,6 @@ struct FileFrame<'a> {
     path: String,
     file: u32,
     lines: std::iter::Enumerate<std::str::Lines<'a>>,
-    in_block: bool,
 }
 
 impl<'a> Expander<'a> {
@@ -138,7 +135,6 @@ impl<'a> Expander<'a> {
             path: path.to_string(),
             file: self.map.file_index(path),
             lines: text.lines().enumerate(),
-            in_block: false,
         })
     }
 
@@ -146,23 +142,44 @@ impl<'a> Expander<'a> {
     fn file(&mut self, path: &str, from: Option<SourceLocation>) -> Result<(), Diagnostic> {
         let mut frames = vec![self.frame(path, from)?];
         while let Some(frame) = frames.last_mut() {
-            let Some((n, line)) = frame.lines.next() else {
-                if frame.in_block {
-                    return Err(
-                        Diagnostic::new(Phase::Preprocess, "unterminated block comment").at(Some(
-                            SourceLocation {
-                                file: frame.path.clone(),
-                                line: self
-                                    .source
-                                    .text(&frame.path)
-                                    .map_or(0, |text| text.lines().count() as u32),
-                            },
-                        )),
-                    );
-                }
+            let Some((n, first)) = frame.lines.next() else {
                 frames.pop();
                 continue;
             };
+            let mut line = first.to_string();
+            let mut logical = first.to_string();
+            let mut in_block = false;
+            loop {
+                let continued = logical.ends_with('\\');
+                if !continued {
+                    scan_line(&logical, &mut in_block);
+                    if !in_block {
+                        break;
+                    }
+                }
+                let Some((_, next)) = frame.lines.next() else {
+                    if in_block {
+                        return Err(Diagnostic::new(
+                            Phase::Preprocess,
+                            "unterminated block comment",
+                        )
+                        .at(Some(SourceLocation {
+                            file: frame.path.clone(),
+                            line: n as u32 + 1,
+                        })));
+                    }
+                    break;
+                };
+                line.push('\n');
+                line.push_str(next);
+                if continued {
+                    logical.pop();
+                    logical.push_str(next);
+                } else {
+                    logical = next.to_string();
+                }
+            }
+            let line = line.as_str();
             let here = SourceLocation {
                 file: frame.path.clone(),
                 line: n as u32 + 1,
@@ -179,11 +196,14 @@ impl<'a> Expander<'a> {
             } else {
                 line.to_string()
             };
-            let mut out = self.directives_in(&line, &mut frame.in_block);
-            if is_unknown_directive(out.trim_start()) {
+            let logical = line.replace("\\\n", "");
+            let mut code = scan_line(&logical, &mut false).code;
+            let (mut out, marker_before) = self.directives_in(&logical, &line);
+            if is_unknown_directive(code.trim_start()) {
                 out.clear();
+                code.clear();
             }
-            let directive = out.trim_start().strip_prefix('#').map(str::trim_start);
+            let directive = code.trim_start().strip_prefix('#').map(str::trim_start);
             if let Some(rest) = directive
                 .and_then(|d| d.strip_prefix("include"))
                 .filter(|rest| {
@@ -205,36 +225,66 @@ impl<'a> Expander<'a> {
             } else {
                 self.out.push_str(&out);
                 self.out.push('\n');
-                self.map.lines.push((frame.file, n as u32 + 1));
+                let count = line.lines().count().max(1);
+                self.map.lines.extend((0..out.split('\n').count()).map(|j| {
+                    let original = if marker_before {
+                        j.saturating_sub(1)
+                    } else {
+                        j
+                    };
+                    (frame.file, (n + original.min(count - 1) + 1) as u32)
+                }));
             }
         }
         Ok(())
     }
 
-    /// Removes comments and places directive markers in code so conditional preprocessing
-    /// selects them in source order.
-    fn directives_in(&mut self, line: &str, in_block: &mut bool) -> String {
-        let scan = scan_line(line, in_block);
+    /// Keeps source text intact and emits metadata markers in the same conditional group.
+    fn directives_in(&mut self, line: &str, original: &str) -> (String, bool) {
+        let scan = scan_line(line, &mut false);
+        let mut found = Vec::new();
         for comment in &scan.block_comments {
             if let Some(d) = comment_directive(comment) {
-                self.directives.push(d);
-                self.pending.push(self.directives.len() - 1);
+                found.push(d);
             }
         }
-        let trimmed = line.trim_start();
-        if let Some(c) = trimmed.strip_prefix("const ").and_then(parse_const) {
-            self.directives.push(Directive::Const(c));
-            self.pending.push(self.directives.len() - 1);
+        for line in line.lines() {
+            if let Some(c) = line
+                .trim_start()
+                .strip_prefix("const")
+                .filter(|s| s.starts_with(char::is_whitespace))
+                .and_then(parse_const)
+            {
+                found.push(Directive::Const(c));
+            }
         }
-        let preprocessor_line = scan.code.trim_start().starts_with('#');
-        if self.pending.is_empty() || preprocessor_line || scan.code.trim_end().ends_with('\\') {
-            return scan.code;
+        let mut markers = String::new();
+        for directive in found {
+            let i = self.directives.len();
+            self.directives.push(directive);
+            markers.push_str(&format!(" {MARKER}{i} "));
         }
-        let mut out = scan.code;
-        for i in self.pending.drain(..) {
-            out.push_str(&format!(" {MARKER}{i} "));
+        let control = scan
+            .code
+            .trim_start()
+            .strip_prefix('#')
+            .map(str::trim_start);
+        let closes_group = control.is_some_and(|s| {
+            ["endif", "else", "elif"].iter().any(|name| {
+                s.strip_prefix(name)
+                    .is_some_and(|tail| tail.is_empty() || tail.starts_with(char::is_whitespace))
+            })
+        });
+        let mut out = original.to_string();
+        if !markers.is_empty() {
+            if closes_group {
+                out = format!("{markers}\n{out}");
+            } else {
+                out.push('\n');
+                out.push_str(&markers);
+            }
         }
-        out
+        (out, closes_group && !markers.is_empty())
     }
 }
 
@@ -379,7 +429,7 @@ fn comment_directive(comment: &str) -> Option<Directive> {
     }
     if let Some(rest) = text.strip_prefix("DRAWBUFFERS:") {
         let list: Option<Vec<u32>> = rest.trim().chars().map(|c| c.to_digit(10)).collect();
-        return list.filter(|l| !l.is_empty()).map(Directive::DrawBuffers);
+        return list.map(Directive::DrawBuffers);
     }
     None
 }
@@ -425,6 +475,7 @@ pub(crate) fn preprocess(
         line_starts.partition_point(|s| *s <= offset) as u32
     };
     let mut pp = Preprocessor::new(text);
+    pp.set_source_lines(expanded.map.lines.iter().map(|(_, line)| *line).collect());
     for (k, v) in defines {
         pp.add_define(k, v).map_err(|e| {
             Diagnostic::new(Phase::Preprocess, format!("cannot define `{k}`: {e:?}"))
@@ -439,7 +490,9 @@ pub(crate) fn preprocess(
         render_targets: None,
         consts: Vec::new(),
     };
-    for item in pp {
+    pp.add_define("__VERSION__", "110")
+        .expect("valid version macro");
+    while let Some(item) = pp.next() {
         let tok = item.map_err(|(e, loc)| {
             Diagnostic::new(Phase::Preprocess, format!("{e:?}"))
                 .at(expanded.map.locate(line_of(loc.start)))
@@ -476,6 +529,8 @@ pub(crate) fn preprocess(
                         _ => {}
                     }
                 }
+                pp.add_define("__VERSION__", &out.version.to_string())
+                    .expect("valid version macro");
                 continue;
             }
             TokenValue::Extension(e) => {
@@ -577,6 +632,101 @@ mod tests {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
         preprocess(expanded, &defines).expect("preprocesses")
+    }
+
+    #[test]
+    fn frontend_version_condition() {
+        for (version, text) in [(450, "#version 450\n"), (110, "")] {
+            let src = format!(
+                "{text}#if __VERSION__ == {version}\nint selected;\n#else\n#error wrong version\n#endif"
+            );
+            assert!(
+                run(&[("a.fsh", &src)], "a.fsh", &[])
+                    .tokens
+                    .iter()
+                    .any(|t| t.ident() == Some("selected"))
+            );
+        }
+    }
+
+    #[test]
+    fn frontend_marker_scope() {
+        for control in ["#endif", "#else\n#endif", "#elif 1\n#endif"] {
+            let src =
+                format!("#if 0\n#define X 1 /* RENDERTARGETS:3 */\n{control}\nvoid main() {{}}");
+            assert_eq!(run(&[("a.fsh", &src)], "a.fsh", &[]).render_targets, None);
+        }
+        let pp = run(
+            &[("a.fsh", "#if 1\n#define X 1 /* RENDERTARGETS:4 */\n#endif")],
+            "a.fsh",
+            &[],
+        );
+        assert_eq!(pp.render_targets, Some(vec![4]));
+    }
+
+    #[test]
+    fn frontend_multiline_macro_comment() {
+        let pp = run(
+            &[(
+                "a.fsh",
+                "#define X /* first\nsecond */ 1\n#if X != 1\n#error wrong macro\n#endif\nint visible;",
+            )],
+            "a.fsh",
+            &[],
+        );
+        assert!(pp.tokens.iter().any(|t| t.ident() == Some("visible")));
+        assert!(!pp.tokens.iter().any(|t| t.text() == "1"));
+    }
+
+    #[test]
+    fn frontend_splices_before_line_comments() {
+        let pp = run(
+            &[("a.fsh", "// ignored \\\n#error hidden\nint visible;")],
+            "a.fsh",
+            &[],
+        );
+        assert!(pp.tokens.iter().any(|t| t.ident() == Some("visible")));
+    }
+
+    #[test]
+    fn frontend_original_line_numbers_survive_metadata_and_comments() {
+        let pp = run(
+            &[(
+                "a.fsh",
+                "#define X 1 /* DRAWBUFFERS:0 */\nint a = __LINE__;\n#define Y /* one\ntwo */ 2\nint b = __LINE__;\n#line 80\nint c = __LINE__;",
+            )],
+            "a.fsh",
+            &[],
+        );
+        let values: Vec<_> = pp
+            .tokens
+            .iter()
+            .filter_map(|t| match &t.kind {
+                TokKind::Int(n) => Some(n.trim_end_matches('u')),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(values, ["2", "5", "81"]);
+    }
+
+    #[test]
+    fn frontend_empty_drawbuffers() {
+        let pp = run(
+            &[("a.fsh", "/* DRAWBUFFERS:01 */\n/* DRAWBUFFERS: */")],
+            "a.fsh",
+            &[],
+        );
+        assert_eq!(pp.render_targets, Some(vec![]));
+    }
+
+    #[test]
+    fn frontend_const_whitespace() {
+        let pp = run(
+            &[("a.fsh", "const\tint shadowMapResolution = 2048;")],
+            "a.fsh",
+            &[],
+        );
+        assert_eq!(pp.consts.len(), 1);
     }
 
     #[test]
