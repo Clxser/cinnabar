@@ -301,6 +301,11 @@ OS Alt-Tab acceptance on macOS, Windows and Linux remains incomplete.
   effective item durability and live mining acceptance remain incomplete.
 - [ ] `P5.6-FORMS` — Close modal/menu/custom form navigation, validation, cancellation
   and responses, including server-pack definitions, structured text, custom controls,
+  scaling and image/layout behavior against matched native views. Server settings
+  replies are cached until their tab is selected; embedding their controls within
+  the settings panel instead of a separate form remains incomplete. URL images use
+  the UI texture-file allowance; aggregate encoded-image cache bounds and remaining
+  image admission and download-deadline parity remain incomplete.
   scaling and image/layout behavior against matched native views. Custom forms
   retain control locks and publish enabled bindings for the current game phase
   without removing locked response values; device acceptance remains open. Server
