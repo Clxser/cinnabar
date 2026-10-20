@@ -114,30 +114,17 @@ pub(crate) fn drive_server_form_input(
         pressed: mouse.just_pressed(MouseButton::Left),
         released: mouse.just_released(MouseButton::Left),
         held: false,
-        mode: if touch.as_ref().is_some_and(|touch| touch.delivered) {
-            json_ui::InputMode::Touch
-        } else {
-            json_ui::InputMode::Mouse
-        },
     };
     let mut pointer_edges = Vec::new();
     let mut mouse_used = mouse.get_just_pressed().next().is_some()
         || mouse.get_just_released().next().is_some()
         || motion.delta != bevy::math::Vec2::ZERO;
     if let Some(messages) = button_messages.as_deref() {
-        for (input, id) in button_cursor.read_with_id(messages) {
+        for input in button_cursor.read(messages) {
             mouse_used = true;
             if input.button == MouseButton::Left {
                 let down = input.state == ButtonState::Pressed;
-                let mode = if touch
-                    .as_ref()
-                    .is_some_and(|touch| touch.button_message == Some(id))
-                {
-                    json_ui::InputMode::Touch
-                } else {
-                    json_ui::InputMode::Mouse
-                };
-                pointer_edges.push((down, mode));
+                pointer_edges.push(down);
                 if down {
                     pointer.pressed = true;
                 } else {
@@ -148,16 +135,16 @@ pub(crate) fn drive_server_form_input(
     }
     if pointer_edges.is_empty() {
         if pointer.pressed {
-            pointer_edges.push((true, pointer.mode));
+            pointer_edges.push(true);
         }
         if pointer.released {
-            pointer_edges.push((false, pointer.mode));
+            pointer_edges.push(false);
         }
         if pointer_edges.is_empty() {
             *held |= mouse.pressed(MouseButton::Left);
         }
     }
-    for (down, _) in &pointer_edges {
+    for down in &pointer_edges {
         *held = *down;
     }
     pointer.held = *held;

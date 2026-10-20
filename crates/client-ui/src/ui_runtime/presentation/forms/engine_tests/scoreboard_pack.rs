@@ -205,12 +205,11 @@ fn submit(presentation: &UiPresentationRuntime, runtime: &mut UiRuntime) {
                 cursor: Some(cursor),
                 keys: &[],
                 pointer: PointerButtons {
-                    mode: json_ui::InputMode::Mouse,
                     pressed: down,
                     released: !down,
                     held: down,
                 },
-                pointer_edges: vec![(down, json_ui::InputMode::Mouse)],
+                pointer_edges: vec![down],
                 wheel: Vec::new(),
                 typed: Vec::new(),
                 now: if down { 0.5 } else { 0.51 },

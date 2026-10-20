@@ -188,12 +188,11 @@ fn shop_item_back_and_close_send_distinct_responses_and_preserve_inventory() {
                     cursor: Some(cursor),
                     keys: &[],
                     pointer: PointerButtons {
-                        mode: json_ui::InputMode::Mouse,
                         pressed: down,
                         released: !down,
                         held: down,
                     },
-                    pointer_edges: vec![(down, json_ui::InputMode::Mouse)],
+                    pointer_edges: vec![down],
                     wheel: Vec::new(),
                     typed: Vec::new(),
                     now: if down { 0.0 } else { 0.01 },

@@ -35,8 +35,6 @@ pub struct PointerButtons {
     pub pressed: bool,
     pub released: bool,
     pub held: bool,
-    /// The source of the pointer position, independent of the presentation mode.
-    pub mode: InputMode,
 }
 
 /// A keyboard press or translated controller press with its original device.
@@ -53,8 +51,7 @@ pub struct EngineInput<'a> {
     /// Keys held this frame.
     pub keys: &'a [KeyboardKey],
     pub pointer: PointerButtons,
-    /// Ordered button edges and the device that produced each edge.
-    pub pointer_edges: Vec<(bool, InputMode)>,
+    pub pointer_edges: Vec<bool>,
     pub wheel: Vec<(f32, ScrollUnit)>,
     /// Pressed keys with their text, repeat flag and source device.
     pub typed: Vec<KeyInput>,
@@ -102,7 +99,7 @@ pub fn drive(runtime: &mut UiRuntime, frame: &EngineFrame, mut input: EngineInpu
         let pointer = PointerInput {
             point,
             held: input.pointer.held,
-            mode: input.pointer.mode,
+            mode: InputMode::Mouse,
             now: input.now,
         };
         events.extend(
@@ -124,7 +121,6 @@ pub fn drive(runtime: &mut UiRuntime, frame: &EngineFrame, mut input: EngineInpu
         ]
         .into_iter()
         .flatten()
-        .map(|down| (down, input.pointer.mode))
         .collect()
     } else {
         std::mem::take(&mut input.pointer_edges)
@@ -133,19 +129,28 @@ pub fn drive(runtime: &mut UiRuntime, frame: &EngineFrame, mut input: EngineInpu
     // consumes them while capture is still down.
     // Move the existing capture once before any release, even when the final state is up.
     if let Some(point) = point
-        && (input.pointer.held || edges.iter().any(|(down, _)| !down))
+        && (input.pointer.held || edges.contains(&false))
     {
         engine_scroll::drag(runtime, frame, point);
     }
     // Each release answers only for the control its press went down on.
     let mut releases = Vec::new();
-    for (down, mode) in edges {
+    for down in edges {
         if down {
             if let Some(point) = point {
                 let region = hit_test(&frame.hits, point);
                 engine_scroll::press(runtime, frame, region, point);
                 events.extend(
-                    button(runtime, frame, SELECT, true, Some(point), input.now, mode).events,
+                    button(
+                        runtime,
+                        frame,
+                        SELECT,
+                        true,
+                        Some(point),
+                        input.now,
+                        InputMode::Mouse,
+                    )
+                    .events,
                 );
             }
         } else {
@@ -159,7 +164,16 @@ pub fn drive(runtime: &mut UiRuntime, frame: &EngineFrame, mut input: EngineInpu
                 .pressed
                 .clone()
                 .filter(|_| tapped);
-            let up = button(runtime, frame, SELECT, false, point, input.now, mode).events;
+            let up = button(
+                runtime,
+                frame,
+                SELECT,
+                false,
+                point,
+                input.now,
+                InputMode::Mouse,
+            )
+            .events;
             releases.push((events.len()..events.len() + up.len(), pressed));
             events.extend(up);
         }

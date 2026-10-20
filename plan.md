@@ -313,7 +313,8 @@ OS Alt-Tab acceptance on macOS, Windows and Linux remains incomplete.
   Busy cancellations retain every request through transport backpressure.
   Custom forms retain control locks and publish enabled bindings for the current
   game phase without removing locked response values. Form bindings follow the active
-  keyboard/mouse, controller or touch mode; dispatch retains each event's source device.
+  keyboard/mouse, controller or touch mode; key events retain their source device.
+  Native touch dispatch semantics remain an unverified gap.
   Live device acceptance remains open.
   Server settings replies are cached until their tab is selected; embedding their
   controls within the settings panel instead of a separate form remains incomplete.

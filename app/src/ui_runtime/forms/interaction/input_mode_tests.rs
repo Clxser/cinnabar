@@ -166,65 +166,106 @@ fn controller_mapping_receives_gamepad_mode_and_keyboard_keeps_focus_navigation(
 }
 
 #[test]
-fn touch_toggle_changes_on_release_through_the_host_pointer_adapter() {
+fn cancelled_touch_scroll_ending_over_a_toggle_leaves_it_unchanged() {
     use crate::ui_runtime::touch_pointer::{TouchPointer, emulate_ui_pointer};
     use bevy::{
         input::touch::{TouchInput, TouchPhase},
         prelude::PreUpdate,
     };
-    let (mut app, _) = host();
-    app.add_message::<TouchInput>()
-        .init_resource::<TouchPointer>()
-        .add_systems(PreUpdate, emulate_ui_pointer);
-    control_pack(
-        &mut app,
-        r#"{"type":"toggle","size":[100,30],"toggle_name":"test_toggle",
-        "button_mappings":[{"from_button_id":"button.menu_select","to_button_id":"button.toggle","mapping_type":"pressed"}]}"#,
-    );
-    let runtime = app.world().resource::<UiRuntimeResource>();
-    let identity = runtime.server_forms().active().unwrap().identity;
-    let frame = app
-        .world()
-        .resource::<UiPresentationResource>()
-        .form_engine_frame(identity)
-        .unwrap();
-    let hit = frame
-        .hits
-        .iter()
-        .find(|hit| hit.kind == json_ui::HitKind::Toggle)
-        .unwrap();
-    let key = hit.key.clone();
-    let position = bevy::math::Vec2::new(
-        frame.origin[0] + (hit.rect.x + 2.0) as f32 * frame.scale,
-        frame.origin[1] + (hit.rect.y + 2.0) as f32 * frame.scale,
-    );
-    let window = app
-        .world_mut()
-        .query_filtered::<bevy::prelude::Entity, With<PrimaryWindow>>()
-        .single(app.world())
-        .unwrap();
-    for (phase, checked) in [(TouchPhase::Started, false), (TouchPhase::Ended, true)] {
-        app.world_mut().write_message(TouchInput {
-            phase,
-            position,
-            window,
-            force: None,
-            id: 1,
-        });
-        app.update();
-        let engine = app
+
+    for end in [TouchPhase::Ended, TouchPhase::Canceled] {
+        let (mut app, _) = host();
+        app.add_message::<TouchInput>()
+            .init_resource::<TouchPointer>()
+            .add_systems(PreUpdate, emulate_ui_pointer);
+        control_pack(
+            &mut app,
+            r#"{"type":"scroll_view","size":[200,100],
+                "scroll_view_port":"viewport","scroll_content":"content",
+                "scrollbar_track":"track","scrollbar_box":"box",
+                "gesture_control_enabled":true,"scrollbar_touch_button":"button.scroll_touch",
+                "button_mappings":[{"from_button_id":"button.menu_select","to_button_id":"button.scroll_touch","mapping_type":"pressed"}],
+                "controls":[{"viewport":{"type":"panel","size":[200,100],
+                    "anchor_from":"top_left","anchor_to":"top_left","controls":[{
+                    "content":{"type":"panel","size":[200,200],
+                        "anchor_from":"top_left","anchor_to":"top_left","controls":[{
+                        "toggle":{"type":"toggle","size":[40,20],"offset":[50,60],
+                            "anchor_from":"top_left","anchor_to":"top_left","toggle_name":"test_toggle",
+                            "button_mappings":[{"from_button_id":"button.menu_select","to_button_id":"button.toggle","mapping_type":"pressed"}]}
+                    }]}
+                }]}},
+                {"track":{"type":"scroll_track","size":[4,100],"offset":[196,0],
+                    "anchor_from":"top_left","anchor_to":"top_left"}},
+                {"box":{"type":"scrollbar_box","size":[4,20],"offset":[196,0],
+                    "anchor_from":"top_left","anchor_to":"top_left","draggable":"vertical"}}]}
+            "#,
+        );
+        let runtime = app.world().resource::<UiRuntimeResource>();
+        let identity = runtime.server_forms().active().unwrap().identity;
+        let frame = app
             .world()
-            .resource::<UiRuntimeResource>()
-            .server_forms()
-            .engine();
-        assert_eq!(engine.view.input_mode, json_ui::InputMode::Touch);
-        let actual = engine
-            .view
-            .components
-            .bag(&key)
-            .and_then(|bag| bag.get("#toggle_state"))
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false);
-        assert_eq!(actual, checked, "touch activation belongs to release");
+            .resource::<UiPresentationResource>()
+            .form_engine_frame(identity)
+            .unwrap();
+        let hit = frame
+            .hits
+            .iter()
+            .find(|hit| hit.kind == json_ui::HitKind::Toggle)
+            .unwrap();
+        let key = hit.key.clone();
+        let target = bevy::math::Vec2::new(
+            frame.origin[0] + (hit.rect.x + 2.0) as f32 * frame.scale,
+            frame.origin[1] + (hit.rect.y + 2.0) as f32 * frame.scale,
+        );
+        let start = target - bevy::math::Vec2::Y * 40.0 * frame.scale;
+        let window = app
+            .world_mut()
+            .query_filtered::<bevy::prelude::Entity, With<PrimaryWindow>>()
+            .single(app.world())
+            .unwrap();
+        for (phase, position) in [
+            (TouchPhase::Started, start),
+            (TouchPhase::Moved, target),
+            (end, target),
+        ] {
+            app.world_mut().write_message(TouchInput {
+                phase,
+                position,
+                window,
+                force: None,
+                id: 1,
+            });
+            app.update();
+            let engine = app
+                .world()
+                .resource::<UiRuntimeResource>()
+                .server_forms()
+                .engine();
+            assert_eq!(engine.view.input_mode, json_ui::InputMode::Touch);
+            if phase == TouchPhase::Started {
+                assert!(
+                    engine.scroll_touch.is_some(),
+                    "the gesture must start in the scroll view"
+                );
+            }
+            if phase == TouchPhase::Moved {
+                let (view, _) = engine.scroll_touch.as_ref().unwrap();
+                assert!(
+                    !engine.view.clone().end_scroll_touch(view),
+                    "the scroll must travel beyond tap slop"
+                );
+            }
+            let checked = engine
+                .view
+                .components
+                .bag(&key)
+                .and_then(|bag| bag.get("#toggle_state"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            assert!(
+                !checked,
+                "a cancelled scroll must not change the toggle: {phase:?}"
+            );
+        }
     }
 }
