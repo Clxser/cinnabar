@@ -246,7 +246,7 @@ fn block(
         }
         lay.push(id(if storage { "std430" } else { "std140" }));
     }
-    lay.extend(lex(&format!(", set = {set}, binding = {binding}")));
+    lay.extend(lex(&format!(", set = {set}, binding = {binding}u")));
     c.resources.extend([id("layout"), p("(")]);
     c.resources.extend(lay);
     c.resources.push(p(")"));
