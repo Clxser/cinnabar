@@ -12,6 +12,7 @@ use bedrock_client::handshake::{
 };
 use bedrock_net::login::OfflineIdentity;
 use bedrock_packs::ResourcePackHandoff;
+use bedrock_protocol_1_26_51::packets;
 use p384::{ecdsa::SigningKey, elliptic_curve::Generate};
 use rand::rngs::SysRng;
 use serde_json::{Value, json};
@@ -364,17 +365,30 @@ pub(super) async fn negotiate_connected(
         Some(deadline) => connection.send_before(packet, deadline).await?,
         None => connection.send(packet).await?,
     }
-    let offer = receive_offer(connection, handshake).await?;
-    let packs = packs::acquire(connection, offer, acquisition).await?;
+    let packs = match receive_login(connection, handshake).await? {
+        Some(offer) => packs::acquire(connection, offer, acquisition).await?,
+        None if matches!(acquisition, packs::Acquisition::Hosted) => {
+            return Err(failure(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "hosted upstream requires an advertised resource-pack phase",
+            )));
+        }
+        None => packs::Acquired {
+            handoff: ResourcePackHandoff::default(),
+            metadata: None,
+            preloaded: Default::default(),
+        },
+    };
     connection.identity = Some(identity.clone());
     Ok((packs, identity))
 }
 
-/// Processes post-Login controls until the actual offer moves the same key into pack transfer.
-async fn receive_offer(
+/// Processes post-Login controls until an actual offer or StartGame ends Login.
+/// Without an offer, the received StartGame remains in the original bounded deferred FIFO.
+async fn receive_login(
     connection: &mut Connection,
     mut handshake: ClientLogin,
-) -> Result<ClientPackOffer, ProtocolError> {
+) -> Result<Option<ClientPackOffer>, ProtocolError> {
     loop {
         let packet = connection.next_packet().await.map_err(failure)?;
         match handshake.receive(*packet.data).map_err(handshake_failure)? {
@@ -392,7 +406,11 @@ async fn receive_offer(
                 if let Some(status) = cache_status {
                     connection.send(status).await?;
                 }
-                return Ok(packs);
+                return Ok(Some(packs));
+            }
+            LoginEvent::Startup { start_game } => {
+                connection.defer_unhandled(packets::Packet::StartGame(start_game))?;
+                return Ok(None);
             }
             LoginEvent::Unhandled { login, packet } => {
                 connection.defer_unhandled(*packet)?;
