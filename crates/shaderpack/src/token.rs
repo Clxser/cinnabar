@@ -208,11 +208,7 @@ fn needs_space(prev: &Tok, t: &Tok) -> bool {
         || prev.is("[")
         || prev.is(".")
         || (t.is("(") && matches!(prev.kind, TokKind::Ident(_)))
-        || (t.is("[") && !prev.is("="))
-        || t.is("++")
-        || t.is("--")
-        || prev.is("!")
-        || prev.is("~");
+        || (t.is("[") && !prev.is("="));
     !tight
 }
 
@@ -235,5 +231,24 @@ mod tests {
         assert_eq!(origins[1], 7);
         assert_eq!(text.lines().nth(1), Some("float a = 1.0;"));
         assert!(origins[2..].iter().all(|o| *o == 9));
+    }
+}
+
+#[cfg(test)]
+mod boundary_tests {
+    use super::*;
+
+    #[test]
+    fn frontend_operator_boundaries() {
+        for (a, b) in [("+", "++"), ("-", "--"), ("!", "="), ("~", "~")] {
+            let tokens = vec![id("a"), p(a), p(b), id("b")];
+            let mut emitter = Emitter::default();
+            emitter.tokens(&tokens);
+            let (text, _) = emitter.finish();
+            let parsed: Vec<_> = pp_rs::pp::Preprocessor::new(&text)
+                .map(Result::unwrap)
+                .collect();
+            assert_eq!(parsed.len(), tokens.len(), "{text}");
+        }
     }
 }
