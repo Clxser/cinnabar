@@ -173,6 +173,7 @@ mod tests {
         let output = output();
         let mut guest = instance(&output, output.len(), true);
         assert!(guest.has_native_menu());
+        assert!(!guest.has_native_frame());
         let menu = guest.menu(&Input::default()).unwrap().unwrap();
         assert!(menu.open);
         assert_eq!(menu.keys, ["KeyR"]);
@@ -378,6 +379,10 @@ mod tests {
         .instantiate()
         .unwrap();
         assert!(guest.has_native_menu());
+        assert!(
+            !guest.has_native_frame(),
+            "camera support is independently denied"
+        );
         guest.start(identity, client_data, startup).unwrap();
         if let Some(initial) = guest.menu(&Input::default()).unwrap() {
             assert!(!initial.open);
