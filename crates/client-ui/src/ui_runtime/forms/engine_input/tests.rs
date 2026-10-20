@@ -600,7 +600,7 @@ fn repeated_directional_input_uses_the_snapped_slider_position() {
                 id: "button.menu_ok",
                 down: true,
                 point: None,
-                mode: InputMode::Gamepad,
+                mode: json_ui::InputMode::Gamepad,
                 now: -0.1,
             },
         );

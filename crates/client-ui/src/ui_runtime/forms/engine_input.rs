@@ -5,8 +5,8 @@
 //! turning the resulting screen events into form values and answers.
 
 use json_ui::{
-    ButtonEvent, ButtonInput as EngineButton, Dispatch, HitKind, HitRegion, InputMode,
-    PointerInput, ScreenEvent, hit_test,
+    ButtonEvent, ButtonInput as EngineButton, Dispatch, HitKind, HitRegion, PointerInput,
+    ScreenEvent, hit_test,
 };
 use protocol::{CustomFormElement, MenuElement, ServerFormModel};
 use semantic_input::{KeyboardKey, ScrollUnit};
@@ -92,7 +92,7 @@ pub fn drive(runtime: &mut UiRuntime, frame: &EngineFrame, mut input: EngineInpu
         let pointer = PointerInput {
             point,
             held: input.pointer.held,
-            mode: InputMode::Mouse,
+            mode: engine.view.input_mode,
             now: input.now,
         };
         events.extend(
@@ -244,7 +244,7 @@ fn button(
         id,
         down,
         point,
-        mode: InputMode::Mouse,
+        mode: engine.view.input_mode,
         now,
     };
     engine

@@ -304,7 +304,8 @@ OS Alt-Tab acceptance on macOS, Windows and Linux remains incomplete.
   scaling and image/layout behavior against matched native views. Overlapping requests
   keep the active form and answer busy, including reused IDs.
   Custom forms retain control locks and publish enabled bindings for the current
-  game phase without removing locked response values; device acceptance remains open.
+  game phase without removing locked response values. Form bindings and dispatch share
+  the active keyboard/mouse, controller or touch mode; live device acceptance remains open.
   Server settings replies are cached until their tab is selected; embedding their
   controls within the settings panel instead of a separate form remains incomplete.
   URL images use the UI texture-file allowance; aggregate encoded-image cache bounds

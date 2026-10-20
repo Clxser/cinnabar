@@ -25,6 +25,9 @@ pub struct State {
 
 /// Inputs borrowed by the same screen painters the client uses.
 pub enum Fixture {
+    /// A form's gamepad-only artwork after controller use.
+    #[cfg(feature = "test-support")]
+    FormGamepad,
     /// A server form whose editable controls are locked during a session.
     #[cfg(feature = "test-support")]
     ControlLocked,
@@ -69,6 +72,13 @@ const TALL_SIZE: [u32; 2] = [1280, 900];
 const KEYBOARD_SIZE: [u32; 2] = [SIZE[0], 2000];
 
 pub const STATES: &[State] = &[
+    #[cfg(feature = "test-support")]
+    State {
+        name: "form-gamepad",
+        size: [640, 360],
+        gui_scale: 2,
+        fixture: || Fixture::FormGamepad,
+    },
     #[cfg(feature = "test-support")]
     State {
         name: "form-overlap",

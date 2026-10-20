@@ -257,7 +257,7 @@ pub fn form_data_source(model: &FormModel) -> DataSource {
     let mut data = DataSource::new();
     // Server packs may inherit the shared container-only overlay in form content.
     data.set_global(Binding::IsContainerScreen.as_str(), Scalar::Bool(false));
-    // Forms take pointer input, so gamepad-only chrome (focus outlines) stays hidden.
+    // A model without live interaction state starts in keyboard/mouse mode.
     data.set_global(Binding::IsUsingGamepad.as_str(), Scalar::Bool(false));
     match model {
         FormModel::Action(form) => long_form_source(&mut data, form),
@@ -666,15 +666,15 @@ pub fn bind_form(
     catalog: &Catalog,
     context: &Context,
 ) -> Option<ResolvedControl> {
-    bind_form_over(model, catalog, context, &crate::Components::default())
+    bind_form_over(model, catalog, context, &ViewState::default())
 }
 
-/// [`bind_form`] over what the form's components wrote into their bags.
+/// Binds a form using its current device and retained component values.
 pub fn bind_form_over(
     model: &FormModel,
     catalog: &Catalog,
     context: &Context,
-    components: &crate::Components,
+    view: &ViewState,
 ) -> Option<ResolvedControl> {
     let capacity = crate::bind::feed::MAX_FACTORY_ITEMS;
     let within_capacity = match model {
@@ -694,7 +694,11 @@ pub fn bind_form_over(
     }
     let context = form_context(model, context);
     let mut data = form_data_source(model);
-    data.set_components(components.clone());
+    data.set_global(
+        Binding::IsUsingGamepad.as_str(),
+        Scalar::Bool(view.input_mode == crate::InputMode::Gamepad),
+    );
+    data.set_components(view.components.clone());
     // Action and custom forms open through the screen's content factory, so a
     // pack's screen override applies; the bare template is the fallback.
     let routed = form_factory_id(model).and_then(|id| {
@@ -742,7 +746,7 @@ pub fn render_form_with(
     env: &LayoutEnv,
     state: &ViewState,
 ) -> Option<FormRender> {
-    let bound = bind_form(model, catalog, context)?;
+    let bound = bind_form_over(model, catalog, context, state)?;
     Some(finish(bound, root_size, env, state))
 }
 

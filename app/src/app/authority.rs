@@ -20,6 +20,7 @@ pub(crate) fn configure_client_authority_systems(app: &mut App) {
     .init_resource::<WorldStreamFramePoll>()
     .init_resource::<crate::ui_runtime::presentation::publish::PreparedUiPublication>()
     .init_resource::<client_state::EmoteInputConsumed>()
+    .init_resource::<crate::ui_runtime::touch_pointer::TouchPointer>()
     .add_systems(
         Update,
         (drive_gameplay_touch_targets, collect_raw_input)

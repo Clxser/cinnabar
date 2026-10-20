@@ -9,6 +9,8 @@ mod cosmetic_particles;
 mod crafting;
 mod edit_selection;
 #[cfg(feature = "test-support")]
+mod form_gamepad;
+#[cfg(feature = "test-support")]
 mod form_overlap;
 mod panorama;
 
@@ -75,6 +77,10 @@ pub fn png(state: &State, dir: &Path) -> Result<Vec<u8>, Error> {
 pub fn png_at(state: &State, dir: &Path, seconds: f64) -> Result<Vec<u8>, Error> {
     let fixture = (state.fixture)();
     #[cfg(feature = "test-support")]
+    if matches!(&fixture, Fixture::FormGamepad) {
+        return form_gamepad::png(state, dir);
+    }
+    #[cfg(feature = "test-support")]
     if matches!(&fixture, Fixture::ControlLocked) {
         return control_locked::png(state, dir);
     }
@@ -95,6 +101,7 @@ pub fn png_at(state: &State, dir: &Path, seconds: f64) -> Result<Vec<u8>, Error>
         Fixture::CraftOverlap { .. }
         | Fixture::CursorDurability
         | Fixture::FormOverlap
+        | Fixture::FormGamepad
         | Fixture::ControlLocked
         | Fixture::CosmeticParticles { .. } => false,
     };
@@ -132,7 +139,10 @@ pub fn png_at(state: &State, dir: &Path, seconds: f64) -> Result<Vec<u8>, Error>
     };
     match fixture {
         #[cfg(feature = "test-support")]
-        Fixture::CosmeticParticles { .. } | Fixture::FormOverlap | Fixture::ControlLocked => {
+        Fixture::CosmeticParticles { .. }
+        | Fixture::FormOverlap
+        | Fixture::ControlLocked
+        | Fixture::FormGamepad => {
             unreachable!("specialized capture returned above")
         }
         #[cfg(feature = "test-support")]
