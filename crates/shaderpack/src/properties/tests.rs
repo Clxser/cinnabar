@@ -410,6 +410,15 @@ fn an_entry_with_a_preprocessing_error_is_discarded_whole() {
 }
 
 #[test]
+fn a_nested_expansion_error_discards_the_invoking_entry() {
+    let properties =
+        parse("#define ID(x) x\n#define BAD ID(1,2)\nprogram.final.enabled=false BAD\nafter=ok\n");
+    assert_eq!(properties.get("program.final.enabled"), None);
+    assert_eq!(properties.get("after"), Some("ok"));
+    assert_eq!(diagnostic_lines(&properties), [3]);
+}
+
+#[test]
 fn deep_conditions_return_a_recoverable_diagnostic() {
     let nested = format!("{}1{}", "(".repeat(10_000), ")".repeat(10_000));
     let properties = parse(&format!("#if {nested}\nhidden=1\n#endif\nafter=ok\n"));
