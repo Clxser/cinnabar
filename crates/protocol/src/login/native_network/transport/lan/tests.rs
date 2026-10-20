@@ -1,4 +1,6 @@
 use super::*;
+use crate::login::native_network::transport::LAN_CONNECTION_TYPE;
+use bytes::Bytes;
 use futures::FutureExt;
 use nethernet::{
     identity::SdpIdentity,
@@ -7,7 +9,7 @@ use nethernet::{
         packet::discovery::{Packets, ResponsePacket, decode, encode},
     },
 };
-use nethernet_tokio::{NetherServer, ServerData};
+use nethernet_tokio::{LanConfig, LanSignaling, NetherServer, ServerData};
 use std::{
     sync::Arc,
     time::{Duration, SystemTime},
@@ -99,7 +101,7 @@ async fn selected_local_lan_skips_another_level_and_keeps_the_actual_selected_re
             peer.reliable.recv().await.unwrap().unwrap(),
             "selected process"
         );
-        connected.close();
+        connected.close().await.unwrap();
         peer.close().session.closed().await;
         server.close().await.unwrap();
     })

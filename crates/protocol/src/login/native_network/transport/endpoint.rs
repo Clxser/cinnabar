@@ -1,9 +1,8 @@
 //! Resolved alternatives share the original join cutoff and own their actual connection attempts.
 
 use super::{NativeConnectionTarget, NativeTransport, Transport, lan};
-use bedrock_net::raknet::{RakNetConnection, RakNetOptions};
-use futures::{StreamExt, stream::FuturesUnordered};
-use std::{future::Future, io, net::SocketAddr};
+use bedrock_net::raknet::RakNetOptions;
+use std::{future::Future, io};
 use tokio::time::Instant;
 
 /// Resolves once without extending the caller's existing transport/Login/packs/spawn budget.
@@ -13,69 +12,26 @@ pub(super) async fn connect(
     deadline: Instant,
 ) -> io::Result<Transport> {
     let addresses = before_deadline(deadline, tokio::net::lookup_host(&target.address)).await?;
-    connect_resolved(target.transport, addresses, identity, deadline).await
-}
-
-/// Drives every compatible resolved alternative so a silent first answer cannot starve the rest.
-/// Returning one ready transport or canceling this wait drops all other actual socket owners.
-async fn connect_resolved(
-    transport: NativeTransport,
-    addresses: impl Iterator<Item = SocketAddr>,
-    identity: Option<&super::identity::TransportIdentity>,
-    deadline: Instant,
-) -> io::Result<Transport> {
-    before_deadline(deadline, async {
-        let mut candidates = FuturesUnordered::new();
-        let mut seen = std::collections::HashSet::new();
-        for address in addresses {
-            if address.port() == 0
-                || (transport == NativeTransport::NetherNetLan && !address.is_ipv4())
-                || !seen.insert(address)
-            {
-                continue;
-            }
-            candidates.push(async move {
-                match transport {
-                    NativeTransport::RakNet => {
-                        let defaults = RakNetOptions::default();
-                        let options = RakNetOptions {
-                            connect_timeout: defaults
-                                .connect_timeout
-                                .min(deadline.saturating_duration_since(Instant::now())),
-                            ..defaults
-                        };
-                        RakNetConnection::connect(address, options)
-                            .await
-                            .map(Transport::from_raknet)
-                            .map_err(io::Error::other)
-                    }
-                    NativeTransport::NetherNetLan => {
-                        lan::connect(address, identity, deadline).await
-                    }
-                    NativeTransport::Addressed
-                    | NativeTransport::NetherNetMessaging
-                    | NativeTransport::NetherNetLegacy
-                    | NativeTransport::LocalNetherNetHttp
-                    | NativeTransport::LocalNetherNetLan => Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "messaging handoff cannot resolve direct endpoints",
-                    )),
-                }
-            });
+    match target.transport {
+        NativeTransport::RakNet => {
+            bedrock_client_tokio::connect::raknet::connect_resolved(
+                addresses,
+                RakNetOptions::default(),
+                deadline,
+            )
+            .await
         }
-        let mut failure = io::Error::new(
-            io::ErrorKind::AddrNotAvailable,
-            "native endpoint has no compatible resolved address",
-        );
-        while let Some(result) = candidates.next().await {
-            match result {
-                Ok(transport) => return Ok(transport),
-                Err(error) => failure = error,
-            }
+        NativeTransport::NetherNetLan => {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            let options = lan::direct_options(identity);
+            bedrock_client_tokio::connect::lan::connect_resolved(addresses, &options, deadline)
+                .await
         }
-        Err(failure)
-    })
-    .await
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "messaging handoff cannot resolve direct endpoints",
+        )),
+    }
 }
 
 /// Rejects even a ready result at the original cutoff, retaining no newly successful owner afterward.
@@ -99,6 +55,3 @@ async fn before_deadline<T>(
 fn timed_out() -> io::Error {
     io::Error::new(io::ErrorKind::TimedOut, "native join timed out")
 }
-
-#[cfg(test)]
-mod tests;

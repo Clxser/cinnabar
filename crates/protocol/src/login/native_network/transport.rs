@@ -1,4 +1,4 @@
-//! Application route selection; established wire lifecycles belong to bedrock-client.
+//! Application route selection; wire setup/lifecycles belong to bedrock-client-tokio.
 
 pub(super) mod addressed;
 mod endpoint;
@@ -14,6 +14,7 @@ use std::io;
 #[cfg(test)]
 use std::net::SocketAddr;
 
+#[cfg(test)]
 pub(super) const LAN_CONNECTION_TYPE: u8 = 4;
 
 /// Resolves the requested endpoint and establishes its explicitly selected transport.
@@ -76,3 +77,12 @@ mod inbox_actor_tests;
 #[cfg(test)]
 #[path = "transport/raknet/tests.rs"]
 mod raknet_tests;
+
+/// Checks fixture advertisements against the selected library's LAN wire default.
+#[test]
+fn fixture_lan_connection_type_tracks_the_selected_wire_owner() {
+    assert_eq!(
+        LAN_CONNECTION_TYPE,
+        nethernet_tokio::ServerData::new(String::new(), String::new()).connection_type
+    );
+}
