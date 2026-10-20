@@ -9,7 +9,6 @@
 mod account;
 mod account_control;
 mod accounts;
-mod catalog_art;
 mod construction;
 mod death;
 pub mod disconnect;
@@ -71,7 +70,7 @@ use ui::RenderMode;
 pub use input::clipboard::MenuClipboard;
 pub(crate) use input::context::observe_keyboard_labels;
 pub use input::{HOTKEY_OPTIONS, drive_menu_input};
-use launcher::menu::view::{CatalogFile, MenuFeeds};
+use launcher::menu::view::MenuFeeds;
 
 use launcher::menu::view::{
     JoinKind, LocalWorldCard, MenuFriendCard, MenuRealmCard, MenuServerCard, SavedServer,
@@ -158,7 +157,6 @@ pub struct MenuRuntime {
     realms: MenuList<MenuRealmCard>,
     friends: MenuList<MenuFriendCard>,
     catalog_message: Option<String>,
-    catalog_art: Option<launcher_host::catalog_art::CatalogArt>,
     #[cfg(feature = "native-networking")]
     auth_process: Option<AuthSupervisor>,
     #[cfg(feature = "native-networking")]

@@ -62,8 +62,6 @@ const JOIN_EVENT_INTERVAL: Duration = Duration::from_millis(250);
 const FEED_INTERVAL: Duration = Duration::from_secs(30);
 /// How soon a feed that failed is asked again.
 const FEED_RETRY: Duration = Duration::from_secs(15);
-/// The original finite budget for optional feed artwork.
-pub const ARTWORK_BUDGET: Duration = Duration::from_secs(40);
 /// How often shown server rows are pinged.
 const PING_INTERVAL: Duration = Duration::from_secs(15);
 

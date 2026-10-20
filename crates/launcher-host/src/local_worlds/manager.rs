@@ -4,7 +4,9 @@ use std::{
     time::Duration,
 };
 
-use bridge::{Backend, LocalTarget, LocalWorld, LocalWorldInfo, Transport, WorldState};
+use bridge::{Backend, LocalTarget, Transport, WorldState};
+#[cfg(test)]
+use bridge::{LocalWorld, LocalWorldInfo};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError};
 use launcher::local_worlds::world::{
     NewWorld, Prefs, PrefsUpdate, SetupState, World, WorldStatus, WorldUpdate,
@@ -633,7 +635,8 @@ impl Manager {
         }
     }
 
-    /// The open world as the core routes and hosts it.
+    /// Observes the original manager world and target for its owning lifecycle fixtures.
+    #[cfg(test)]
     pub(crate) fn world_report(&self) -> LocalWorld {
         let life = lock(&self.inner.life);
         let target = match (&life.instance, &life.world) {

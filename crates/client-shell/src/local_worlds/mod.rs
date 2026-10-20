@@ -191,7 +191,7 @@ impl LocalWorlds {
         self.playing = false;
         self.paused = false;
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-        if let Some(client) = self.client.as_ref().filter(|client| client.native()) {
+        if let Some(client) = self.client.as_ref() {
             if let Some(selection) = self.native_playing.take() {
                 client.close_native(selection);
             }

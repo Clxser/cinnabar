@@ -1,4 +1,5 @@
 use super::*;
+use crate::catalog_art::ARTWORK_BUDGET;
 use crate::remote_images::{LAUNCHER_ART, Surface};
 use serde_json::json;
 use std::{

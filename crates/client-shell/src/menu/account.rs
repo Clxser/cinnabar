@@ -1,4 +1,6 @@
 use launcher::menu::auth::select_auth;
+#[cfg(feature = "native-networking")]
+use launcher::menu::view::MenuProfile;
 use launcher::menu::{MenuAction, MenuDialog};
 use {super::*, launcher::install_layout::InstallLayout, launcher::menu::auth::AuthState};
 
@@ -103,7 +105,6 @@ impl MenuRuntime {
             self.start_cached_sign_in();
         }
         self.update_sign_in_browser(false);
-        self.poll_catalog_art();
         if !services_available
             && self.screen == launcher::menu::MenuScreen::Profile
             && !self.feeds.profile.loaded
@@ -347,7 +348,11 @@ impl MenuRuntime {
         {
             return;
         }
-        let state = select_auth(self.owned_auth(), self.control_auth.as_ref());
+        #[cfg(feature = "native-networking")]
+        let owned = self.auth_process.as_ref().map(AuthSupervisor::state);
+        #[cfg(not(feature = "native-networking"))]
+        let owned = None;
+        let state = select_auth(owned, self.control_auth.as_ref());
         if state.awaiting_browser() {
             #[cfg(not(test))]
             self.sign_in_browser

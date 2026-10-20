@@ -11,7 +11,7 @@ use std::{
 use crate::remote_images::{ImageDirectory, LAUNCHER_ART};
 use crossbeam_channel::Sender;
 
-use super::ARTWORK_BUDGET;
+use crate::catalog_art::ARTWORK_BUDGET;
 use bridge::{Artwork, FeaturedServer, Home, Person, Profile};
 use launcher::menu::profile_achievements::visible_achievements;
 

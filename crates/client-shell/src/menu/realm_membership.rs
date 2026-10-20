@@ -5,7 +5,7 @@ use launcher::menu::realm_membership::{Action, State};
 use launcher_host::account_control::AccountControl;
 use {
     super::MenuRuntime,
-    launcher::menu::{MenuAction, MenuField, MenuScreen, auth::AuthState, view::MenuRealmCard},
+    launcher::menu::{MenuField, MenuScreen, auth::AuthState, view::MenuRealmCard},
 };
 
 /// A request generation prevents a closed or reopened flow from consuming an old answer.

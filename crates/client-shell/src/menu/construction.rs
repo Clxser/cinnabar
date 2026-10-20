@@ -145,7 +145,6 @@ impl MenuRuntime {
             realms: initial.realms,
             friends: initial.friends,
             catalog_message: initial.catalog_message,
-            catalog_art: None,
             #[cfg(feature = "native-networking")]
             auth_process: None,
             #[cfg(feature = "native-networking")]
