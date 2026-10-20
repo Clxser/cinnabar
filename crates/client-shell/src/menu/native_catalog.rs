@@ -1,6 +1,9 @@
 //! The opt-in Realms and friend-world catalog has one selected account and one caller-driven request owner.
 
 use super::*;
+
+#[cfg(feature = "test-support")]
+mod fixture;
 use launcher::menu::CATALOG_REFRESH_INTERVAL;
 use launcher_host::native_account::{
     CatalogCards, CatalogListing, CatalogWorker, NativeAccount, NativeFriendSelection,
@@ -9,8 +12,6 @@ use launcher_host::native_account::{
 use std::{sync::Arc, time::Instant};
 
 const FAILURE_MESSAGE: &str = "Realms and friends: Refresh to try again.";
-// Enable only after the application owner passes admission, cancellation and cleanup qualification.
-const NATIVE_FRIEND_JOINS_QUALIFIED: bool = false;
 
 #[derive(Default)]
 pub(super) struct Controller {
@@ -137,12 +138,8 @@ impl Controller {
 }
 
 impl MenuRuntime {
-    /// Captures the selected opaque owner; the qualification gate keeps this action unavailable meanwhile.
+    /// Captures only the current row's opaque account and service selection.
     pub(super) fn request_native_friend(&mut self, index: usize) {
-        if !NATIVE_FRIEND_JOINS_QUALIFIED {
-            self.message = Some("Native friend-world joining is not available yet.".into());
-            return;
-        }
         let Some(selection) = self.native_friend_selection(index) else {
             self.message =
                 Some("That friend world is no longer available. Refresh to try again.".into());

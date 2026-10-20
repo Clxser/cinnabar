@@ -1,6 +1,9 @@
 //! Fixture setup for app tests that exercise the real session controller.
 use super::MenuRuntime;
 
+#[cfg(feature = "native-networking")]
+pub mod friend;
+
 /// Prevents catalog workers from starting in an isolated session fixture.
 pub fn suppress_catalog(menu: &mut MenuRuntime) {
     menu.catalog_started = true;

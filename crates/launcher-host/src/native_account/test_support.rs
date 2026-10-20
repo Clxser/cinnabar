@@ -1,7 +1,10 @@
-//! Service ownership fixtures without authentication or a second account owner.
+//! Service ownership fixtures, including fixed acquired-account scenarios on the original owner.
 
 use super::NativeAccount;
 use std::{io, sync::Arc};
+
+/// Fixed acquired-account friend service and its original controlled game peer.
+pub mod friend;
 
 /// Supplies an inert typed intent for frame admission without granting service authority.
 pub fn gathering_selection(

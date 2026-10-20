@@ -27,7 +27,7 @@ struct CleanupLease {
 
 impl FriendCleanupOwner {
     /// Observes the original reservation and uncertain-member slot for developer acceptance.
-    #[cfg(feature = "developer-control")]
+    #[cfg(any(test, feature = "developer-control"))]
     pub(crate) fn observation(&self) -> (bool, bool) {
         let state = self
             .0

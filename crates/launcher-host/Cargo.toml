@@ -13,7 +13,7 @@ reads = [
 ]
 
 [features]
-test-support = []
+test-support = ["bedrock-services?/test-support", "protocol/test-support", "dep:rsa", "dep:nethernet"]
 native-networking = ["dep:bedrock-services", "dep:p384", "dep:rand", "dep:uuid", "dep:zeroize", "dep:base64", "dep:image", "bedrock-services/signaling-tokio", "dep:bedrock-net", "dep:bedrock-client", "dep:nethernet-tokio", "dep:bytes", "dep:raknet", "dep:futures", "dep:tokio-websockets", "dep:tokio-rustls", "dep:webpki-roots", "dep:httpdate", "protocol/native-networking"]
 
 [dependencies]
@@ -65,6 +65,8 @@ rand = { version = "0.10", optional = true }
 uuid = { workspace = true, features = ["v4", "v5", "serde"], optional = true }
 zeroize = { version = "1", optional = true }
 base64 = { version = "0.22", optional = true }
+rsa = { workspace = true, features = ["encoding"], optional = true }
+nethernet = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 rsa = { workspace = true, features = ["encoding"] }

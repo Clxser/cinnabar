@@ -76,12 +76,13 @@ fn native_catalog_owns_both_feeds_and_shares_the_selected_account_with_joins() {
     menu.activate(MenuAction::PlayFriend(0));
     assert!(
         menu.intents.join.is_none(),
-        "listing enabled an unsupported native join"
+        "a display-only row supplied an addressed join"
     );
+    assert!(menu.take_native_friend_intent().is_none());
     assert!(
         menu.message
             .as_deref()
-            .is_some_and(|message| message.contains("not available"))
+            .is_some_and(|message| message.contains("no longer available"))
     );
     menu.feeds.account_active_id = Some("456".into());
     let next = menu.native_account_for(path);

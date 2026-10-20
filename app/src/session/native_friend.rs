@@ -2,6 +2,9 @@
 
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 /// Starts worker provisioning for the selected owner without converting display fields into authority.
 pub(super) fn begin(
     menu: &mut MenuRuntime,

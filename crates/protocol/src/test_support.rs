@@ -9,6 +9,9 @@ pub mod remote_equipment;
 pub mod startup;
 pub mod transactions;
 
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub mod friend_peer;
+
 #[cfg(all(
     feature = "native-networking",
     feature = "test-support",
