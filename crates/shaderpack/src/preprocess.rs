@@ -609,15 +609,15 @@ mod tests {
     #[test]
     fn includes_resolve_absolute_and_relative_paths() {
         assert_eq!(
-            resolve_include("world0/a.fsh", " \"/lib/x.glsl\""),
+            resolve_include("world0/a.fsh", " \"/lib/x.glsl\"").unwrap(),
             "lib/x.glsl"
         );
         assert_eq!(
-            resolve_include("world0/a.fsh", " \"../lib/x.glsl\""),
+            resolve_include("world0/a.fsh", " \"../lib/x.glsl\"").unwrap(),
             "lib/x.glsl"
         );
         assert_eq!(
-            resolve_include("program/a.glsl", " \"b.glsl\""),
+            resolve_include("program/a.glsl", " \"b.glsl\"").unwrap(),
             "program/b.glsl"
         );
     }
