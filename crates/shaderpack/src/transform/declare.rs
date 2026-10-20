@@ -8,6 +8,7 @@ use super::items::{
     parse_decl, sampler_info, split_items, strip_layout_keys,
 };
 use super::{ProgramInterface, ResourceNames, TransformError, UboMember};
+use crate::buffers::canonical_sampler_name;
 use crate::programs::StageKind;
 use crate::reflection::{
     FIRST_OTHER_ATTRIBUTE_LOCATION, IMAGE_GROUP, STORAGE_BUFFER_GROUP, SamplerClass, StoredNumbers,
@@ -477,10 +478,11 @@ fn uniforms(
                 let b = iface.texture_binding(name);
                 c.resource_names.push((TEXTURE_GROUP, b, name.clone()));
                 let classes = names.sampler_classes;
-                let shaped = (name.clone(), Some(texture_dimension(tex_ty)));
+                let key = canonical_sampler_name(name);
+                let shaped = (key.clone(), Some(texture_dimension(tex_ty)));
                 let class = classes
                     .get(&shaped)
-                    .or_else(|| classes.get(&(name.clone(), None)))
+                    .or_else(|| classes.get(&(key, None)))
                     .copied()
                     .unwrap_or_else(|| SamplerClass::for_name(name));
                 c.samplers
@@ -551,7 +553,8 @@ fn texture_dimension(tex_ty: &str) -> TextureDimension {
         .trim_start_matches(['i', 'u'])
         .trim_start_matches("texture");
     match shape {
-        "1D" | "1DArray" => TextureDimension::D1,
+        "1D" => TextureDimension::D1,
+        "1DArray" => TextureDimension::D1Array,
         "2DArray" => TextureDimension::D2Array,
         "3D" => TextureDimension::D3,
         "Cube" => TextureDimension::Cube,
@@ -805,6 +808,17 @@ flat in int blockId;
 out vec3 color;
 void main() {}";
 
+    #[test]
+    fn sampler_compatibility_array_dimensions_stay_distinct() {
+        assert_ne!(
+            texture_dimension("texture1D"),
+            texture_dimension("texture1DArray")
+        );
+        assert_ne!(
+            texture_dimension("texture2D"),
+            texture_dimension("texture2DArray")
+        );
+    }
     #[test]
     fn stages_collect_shared_resources_and_vertex_inputs() {
         let mut iface = ProgramInterface::default();
