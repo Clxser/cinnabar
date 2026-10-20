@@ -1,5 +1,6 @@
 //! Production screen painting into the JSON-UI editor's existing CPU target.
 
+mod backup_font;
 mod character;
 #[cfg(feature = "test-support")]
 mod control_locked;
@@ -13,6 +14,8 @@ mod form_gamepad;
 #[cfg(feature = "test-support")]
 mod form_overlap;
 mod panorama;
+#[cfg(feature = "test-support")]
+mod settings_draft;
 mod tiled_image;
 
 use std::{
@@ -131,6 +134,10 @@ fn png_fixture(
     if matches!(&fixture, Fixture::FormOverlap) {
         return form_overlap::png(state, dir);
     }
+    #[cfg(feature = "test-support")]
+    if matches!(&fixture, Fixture::SettingsDraft) {
+        return settings_draft::png(state, dir);
+    }
     let menu = matches!(&fixture, Fixture::Menu(_) | Fixture::Loading(_));
     let show_panorama = match &fixture {
         Fixture::Menu(view) => view.out_of_game(),
@@ -138,6 +145,7 @@ fn png_fixture(
         Fixture::Chat { .. }
         | Fixture::TabList(_)
         | Fixture::EditSelection
+        | Fixture::BackupFont
         | Fixture::TiledImage { .. }
         | Fixture::ModPanel(_) => false,
         #[cfg(feature = "test-support")]
@@ -145,10 +153,11 @@ fn png_fixture(
         | Fixture::CursorDurability
         | Fixture::FormOverlap
         | Fixture::FormGamepad
+        | Fixture::SettingsDraft
         | Fixture::ControlLocked
         | Fixture::CosmeticParticles { .. } => false,
     };
-    let mut carriers = carriers::load(dir, menu)?;
+    let mut carriers = carriers::load(dir, menu || matches!(&fixture, Fixture::BackupFont))?;
     #[cfg(feature = "test-support")]
     let craft_icons = matches!(
         &fixture,
@@ -181,12 +190,17 @@ fn png_fixture(
         renderers: &mut [],
     };
     match fixture {
+        Fixture::BackupFont => {
+            let engine = json_engine(&carriers)?;
+            backup_font::paint(&engine, &mut frame)?;
+        }
         Fixture::TiledImage { .. } => unreachable!("tiled image capture returned above"),
         #[cfg(feature = "test-support")]
         Fixture::CosmeticParticles { .. }
         | Fixture::FormOverlap
-        | Fixture::ControlLocked
-        | Fixture::FormGamepad => {
+        | Fixture::FormGamepad
+        | Fixture::SettingsDraft
+        | Fixture::ControlLocked => {
             unreachable!("specialized capture returned above")
         }
         #[cfg(feature = "test-support")]
