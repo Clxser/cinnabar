@@ -10,6 +10,8 @@ use crate::Packet;
 use crate::session_transport::tests::unix::{Pair, pair, write_frame};
 use crate::session_transport::{Inbound, batch_frame};
 
+mod unknown;
+
 /// A relay that records what it sees and answers from scripted replies; an empty script forwards.
 #[derive(Default)]
 pub(crate) struct FakeRelay {
