@@ -355,40 +355,6 @@ fn a_texture_sampler_is_gtexture_in_every_version_and_const_in_parameters_compil
     assert_eq!(texture_names(r), ["gtexture"]);
 }
 
-/// (location, type) of each user-location input or output of `stage`'s entry point.
-fn interface_locations(stage: &CompiledStage, outputs: bool) -> Vec<(u32, naga::TypeInner)> {
-    let module = &stage.module;
-    let entry = &module.entry_points[0].function;
-    let mut found = vec![];
-    let mut push = |binding: &Option<naga::Binding>, ty: naga::Handle<naga::Type>| {
-        if let Some(naga::Binding::Location { location, .. }) = binding {
-            found.push((*location, module.types[ty].inner.clone()));
-        }
-    };
-    let mut visit = |binding: &Option<naga::Binding>, ty: naga::Handle<naga::Type>| match &module
-        .types[ty]
-        .inner
-    {
-        naga::TypeInner::Struct { members, .. } => {
-            for m in members {
-                push(&m.binding, m.ty);
-            }
-        }
-        _ => push(binding, ty),
-    };
-    if outputs {
-        if let Some(result) = &entry.result {
-            visit(&result.binding, result.ty);
-        }
-    } else {
-        for argument in &entry.arguments {
-            visit(&argument.binding, argument.ty);
-        }
-    }
-    found.sort_by_key(|(l, _)| *l);
-    found
-}
-
 #[test]
 fn live_fragment_inputs_require_vertex_outputs() {
     let vertex = "#version 120\n\
