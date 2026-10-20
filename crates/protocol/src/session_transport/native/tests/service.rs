@@ -38,7 +38,7 @@ pub(crate) fn connection() -> (
     )
 }
 
-impl PacketConnection for ServiceConnection {
+impl PacketIo for ServiceConnection {
     async fn send_body(&mut self, _: Bytes) -> io::Result<()> {
         Ok(())
     }

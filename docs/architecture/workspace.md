@@ -22,6 +22,7 @@ connection. Local worlds retain their Dragonfly or official BDS process owners. 
 | Library | Used for |
 | --- | --- |
 | [bedrock-net](https://github.com/cinnabar-mc/bedrock-net) | Native framing, encryption, Login, resource packs and typed session lifecycle. |
+| [bedrock-client-tokio](https://github.com/cinnabar-mc/bedrock-net/tree/dev/crates/bedrock-client-tokio) | Native-only retained connection/codec/cipher/FIFO and established transport I/O. The separate bedrock-client typestates stay runtime-free on every target. |
 | [bedrock-services](https://github.com/cinnabar-mc/bedrock-services) | Native Microsoft/Xbox authentication, Realms, profiles, presence and signaling. |
 | [raknet](https://github.com/cinnabar-mc/raknet) | Native RakNet protocol core and its runtime adapter. |
 | [nethernet](https://github.com/cinnabar-mc/nethernet) | Native ICE, DTLS and SCTP with explicit Tokio and Bevy adapters. |
@@ -91,7 +92,7 @@ coordinates work that crosses these owners.
 | Workspace member | Package | Ownership and caller guidance | Related owners |
 | --- | --- | --- | --- |
 | `crates/bridge` | `bridge` | Shared local/web framing and contracts; use its bounded bridge messages. | `web-transport` and `web-gateway` share the framed browser contract; `protocol` interprets Bedrock packets. |
-| `crates/protocol` | `protocol` | Bedrock packet codecs, shared wire contracts and session adapters; use its packet and codec APIs. | `bridge` owns browser framing; the native backend composes `cinnabar-mc/bedrock-net` and `cinnabar-mc/nethernet`, including its pure JWS/JWK credential primitives; the codec is one pinned protocolgen Git dependency shared with bedrock-client. |
+| `crates/protocol` | `protocol` | Bedrock packet codecs, shared wire contracts and session adapters; use its packet and codec APIs. | `bridge` owns browser framing; the native backend uses `bedrock-client-tokio` directly for connection I/O and retains account admission, UI limits and bridge/tap/trace projection. Pure negotiation and provider validation stay in bedrock-net; the codec is one pinned protocolgen dependency shared with those libraries. |
 | `crates/protocol-ids` | `protocol-ids` | Dependency-free named wire IDs and pinned air identities; import its constants and enums directly. | `protocol` and `assets` share these facts; the editor can consume them on WebAssembly. |
 | `crates/zip-footer` | `zip-footer` | ZIP end-record admission for in-memory archives; run `prepare_zip_bytes` before handing bytes to a ZIP parser. | `resource-pack` and `shaderpack` share this archive policy. |
 | `crates/resource-pack` | `resource-pack` | Bounded archive admission, decryption and pack-stack views; use its read-only admitted packs. | Native protocol I/O or the legacy Core acquires packs; `pack-runtime` prepares them; pack compiler owners compile them. |

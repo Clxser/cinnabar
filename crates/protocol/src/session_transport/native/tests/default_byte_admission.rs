@@ -78,7 +78,7 @@ struct ObservedConnection {
     closed: Option<oneshot::Sender<()>>,
 }
 
-impl PacketConnection for ObservedConnection {
+impl PacketIo for ObservedConnection {
     async fn send_body(&mut self, _: Bytes) -> io::Result<()> {
         Ok(())
     }

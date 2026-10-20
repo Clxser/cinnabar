@@ -10,7 +10,7 @@ struct DuplexConnection {
     outgoing: mpsc::Sender<Bytes>,
 }
 
-impl PacketConnection for DuplexConnection {
+impl PacketIo for DuplexConnection {
     async fn send_body(&mut self, body: Bytes) -> io::Result<()> {
         self.outgoing.send(body).await.map_err(io::Error::other)
     }

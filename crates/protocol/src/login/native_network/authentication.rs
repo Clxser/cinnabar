@@ -347,9 +347,10 @@ pub(super) fn ensure_current(expires: Instant, now: Instant) -> io::Result<()> {
 
 /// Identifies only the finite credential deadline, preserving transport errors separately.
 pub(super) fn is_expired(error: &io::Error) -> bool {
-    error
-        .get_ref()
-        .is_some_and(|cause| cause.is::<ExpiredCredential>())
+    error.get_ref().is_some_and(|cause| {
+        cause.is::<ExpiredCredential>()
+            || cause.is::<bedrock_client_tokio::transport::ExpiredAdmission>()
+    })
 }
 
 #[derive(Debug, thiserror::Error)]

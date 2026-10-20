@@ -42,7 +42,7 @@ async fn filtered_cursor_preserves_accepted_prefix_before_a_later_invalid_header
                 (count, sent)
             };
             let client = async {
-                let transport = transport::Transport::connect(
+                let transport = crate::login::native_network::transport::connect(
                     &target,
                     None,
                     None,
@@ -50,7 +50,7 @@ async fn filtered_cursor_preserves_accepted_prefix_before_a_later_invalid_header
                 )
                 .await
                 .unwrap();
-                let mut connection = Connection::new(transport);
+                let mut connection = crate::login::native_network::connection::upstream(transport);
                 connection.primary_only();
                 let first = connection.recv_body().await;
                 let second = connection.recv_body().await;
@@ -187,7 +187,7 @@ async fn one_incoming_batch_cursor_survives_pack_replay_and_bounded_handoff_read
             peer.session.closed().await;
         };
         let client = async {
-            let transport = transport::Transport::connect(
+            let transport = crate::login::native_network::transport::connect(
                 &target,
                 None,
                 None,
@@ -196,7 +196,7 @@ async fn one_incoming_batch_cursor_survives_pack_replay_and_bounded_handoff_read
             .await
             .unwrap();
             let observations = Arc::new(Mutex::new(Vec::new()));
-            let mut connection = Connection::new(transport);
+            let mut connection = crate::login::native_network::connection::upstream(transport);
             connection.observe_batches(Arc::clone(&observations));
             let mut joining = NativeRelayConnecting::from_connection(connection, target.address);
             let claims = crate::login_client_data(

@@ -1,5 +1,6 @@
 //! One concrete paired play lifetime, owned and polled by the existing application worker.
 
+use bedrock_client_tokio::connection::send::SendOutcome;
 pub(in crate::native_account::hosted_world) mod output;
 use output::Output;
 mod backend;
@@ -11,7 +12,7 @@ pub(in crate::native_account::hosted_world) use step::Step;
 use super::{HostedApproval, HostedLoginApproval, NativeHostedWorld, SendAuthority};
 use bedrock_client::server::session::AcceptedSession;
 use bridge::host_world::{ActiveBackendPeer, ClosingBackendPeer, contract::CLOSE_MILLIS};
-use protocol::{NativeAcceptingIo, NativeAcceptingRetired, NativeAcceptingSendOutcome};
+use protocol::{NativeAcceptingIo, NativeAcceptingRetired};
 use std::{
     io,
     sync::Arc,
@@ -249,9 +250,7 @@ impl ClosingHostedPeer {
     async fn settle_output(&mut self) {
         let wire = self.wire.as_mut().expect("original wire until retirement");
         let result = wire.begin_send_retirement(self.deadline).finish().await;
-        if matches!(result, Ok(NativeAcceptingSendOutcome::Complete))
-            && self.output.deadline().is_some()
-        {
+        if matches!(result, Ok(SendOutcome::Complete)) && self.output.deadline().is_some() {
             self.output.externally_complete();
             if let Some(backend) = &mut self.backend
                 && backend.received().await.is_ok()

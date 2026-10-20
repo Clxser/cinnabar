@@ -343,7 +343,8 @@ async fn held_relay_preparation(
             )
             .await
             .unwrap();
-            let startup_packets = negotiated.connection.take_deferred();
+            let startup_packets =
+                crate::login::native_network::connection::take_deferred(&mut negotiated.connection);
             let mut transport = SessionTransport::from_native(negotiated.connection);
             if let Some(relay) = &relay {
                 transport.set_relay(relay.clone());

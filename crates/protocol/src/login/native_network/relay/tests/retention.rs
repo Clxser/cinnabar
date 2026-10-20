@@ -120,7 +120,7 @@ async fn tiny_relay_startup_detaches_from_discarded_batch_backing() {
         let client = async {
             let target =
                 NativeConnectionTarget::new(address.to_string(), NativeTransport::NetherNetLan);
-            let transport = transport::Transport::connect(
+            let transport = crate::login::native_network::transport::connect(
                 &target,
                 None,
                 None,
@@ -129,7 +129,7 @@ async fn tiny_relay_startup_detaches_from_discarded_batch_backing() {
             .await
             .unwrap();
             let observations = Arc::new(Mutex::new(Vec::new()));
-            let mut connection = Connection::new(transport);
+            let mut connection = crate::login::native_network::connection::upstream(transport);
             connection.observe_batches(Arc::clone(&observations));
             let mut joining = NativeRelayConnecting::from_connection(connection, target.address);
             let claims = crate::login_client_data(

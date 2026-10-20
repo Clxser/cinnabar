@@ -104,7 +104,7 @@ async fn completed_handoff_releases_the_consumed_start_game_backing() {
         let client = async {
             let target =
                 NativeConnectionTarget::new(address.to_string(), NativeTransport::NetherNetLan);
-            let transport = transport::Transport::connect(
+            let transport = crate::login::native_network::transport::connect(
                 &target,
                 None,
                 None,
@@ -113,7 +113,7 @@ async fn completed_handoff_releases_the_consumed_start_game_backing() {
             .await
             .unwrap();
             let observations = Arc::new(Mutex::new(Vec::new()));
-            let mut connection = Connection::new(transport);
+            let mut connection = crate::login::native_network::connection::upstream(transport);
             connection.observe_batches(Arc::clone(&observations));
             let mut joining = NativeRelayConnecting::from_connection(connection, target.address);
             let claims = crate::login_client_data(

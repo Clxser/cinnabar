@@ -1,10 +1,11 @@
 //! Original local HTTP/LAN upstream and real signed guest startup; no world or Ready is fabricated.
 
 use super::*;
+use bedrock_client_tokio::connection::send::PreparedSend;
 use bedrock_net::login::provider::ProviderVerifier;
 mod cdn;
 use crate::login::native_network::{
-    NativeAcceptingSend, NativeHostedRelayProgress, NativeHostedUpstream,
+    NativeHostedRelayProgress, NativeHostedUpstream,
     accepting::send::tests::{Pair, signed_pair_with_key},
     transport::early_spawn_tests::{
         FixtureRoute, Route, fixture_route, offline_login_identity, receive, send,
@@ -512,7 +513,7 @@ async fn original_upstream_with_archive(
 }
 
 /// Drives only the original accepting prepared-send protocol, without changing authority policy.
-async fn finish_send(mut sending: NativeAcceptingSend<'_>) {
+async fn finish_send(mut sending: PreparedSend<'_>) {
     while let Some(capacity) = sending.next().await.unwrap() {
         capacity.commit().unwrap();
     }
@@ -868,7 +869,7 @@ async fn local_bds_startup_detaches_from_a_discarded_secondary_batch_sibling() {
             .unwrap();
             let observations = Arc::new(std::sync::Mutex::new(Vec::new()));
             let deadline = Instant::now() + TIMEOUT;
-            let mut upstream = crate::login::native_network::connection::OBSERVE_BATCHES
+            let mut upstream = bedrock_client_tokio::connection::observation::OBSERVE_BATCHES
                 .scope(
                     Arc::clone(&observations),
                     NativeHostedUpstream::connect(&target, &login, false, deadline),

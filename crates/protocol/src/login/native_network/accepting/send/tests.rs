@@ -2,6 +2,7 @@
 
 use super::*;
 use bedrock_client::server::ServerHandshakeOptions;
+use bedrock_client_tokio::connection::send::SendOutcome;
 use bedrock_net::{
     BatchCodec, BatchHeader, BatchLimits, DecodeOutcome,
     encryption::{BatchDecryptor, BatchEncryptor},
@@ -180,7 +181,7 @@ async fn cancelled_borrows_retain_reservation_permit_receipt_and_cipher_order() 
             "the actual committed receipt was not observed pending"
         );
         assert!(empty_complete && completed && original_deadline == deadline && sealed);
-        assert_eq!(outcome, NativeAcceptingSendOutcome::Complete);
+        assert_eq!(outcome, SendOutcome::Complete);
         assert_eq!(repeated, outcome);
         assert_eq!(first_received, [first]);
         assert_eq!(second_received, [second]);

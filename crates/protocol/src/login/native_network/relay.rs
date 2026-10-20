@@ -1,8 +1,8 @@
 //! The same typed native Login/pack prefix, retained for an application-owned browser relay.
 
-use super::{
-    Connection, NativeAuthentication, PacketConnection, failure, negotiated, packs, transport,
-};
+#[cfg(test)]
+use super::transport;
+use super::{Connection, NativeAuthentication, PacketIo, failure, negotiated, packs};
 use crate::{
     ProtocolError,
     session_wire::{
@@ -70,7 +70,9 @@ impl NativeRelayConnecting {
     /// Admission, original overall deadline and controller cancellation remain the caller's job.
     /// Only primary-player input reaches the raw handoff/play; typed Login skips unused IDs.
     pub fn from_raknet(connection: RakNetConnection, address: String) -> Self {
-        let mut connection = Connection::new(transport::Transport::from_raknet(connection));
+        let mut connection = crate::login::native_network::connection::upstream(
+            bedrock_client_tokio::transport::Transport::from_raknet(connection),
+        );
         connection.primary_only();
         Self::from_connection(connection, address)
     }
@@ -109,7 +111,8 @@ impl NativeRelayConnecting {
             .negotiate_inner(claims, client_cache, authentication)
             .await;
         if result.is_err() && self.terminal.is_none() {
-            self.terminal = self.connection.current_terminal().map_err(failure)?;
+            self.terminal =
+                super::connection::current_terminal(&self.connection).map_err(failure)?;
         }
         result
     }

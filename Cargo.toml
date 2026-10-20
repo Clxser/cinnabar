@@ -106,6 +106,7 @@ nethernet = { git = "https://github.com/cinnabar-mc/nethernet", rev = "c5c8ee5f8
 nethernet-tokio = { git = "https://github.com/cinnabar-mc/nethernet", rev = "c5c8ee5f859a0e195091c5672c64287f3d0ef2ea" }
 bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "45d8a1b44eaae5bce3a2aece36be0e9cf03e62eb" }
 bedrock-client = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "45d8a1b44eaae5bce3a2aece36be0e9cf03e62eb" }
+bedrock-client-tokio = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "45d8a1b44eaae5bce3a2aece36be0e9cf03e62eb" }
 bedrock-packs = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "45d8a1b44eaae5bce3a2aece36be0e9cf03e62eb" }
 glam = { version = "0.33.2", default-features = false, features = ["std", "f64"] }
 # One feature set per heavy dependency: any per-crate difference rebuilds it and every dependent.

@@ -1,16 +1,14 @@
 //! Concrete wire ownership for an already admitted NetherNet server association.
 
+use bedrock_client_tokio::transport::Transport;
 mod packs;
 pub(super) mod send;
 mod world;
 pub use packs::native_host_packs;
-pub use send::{
-    NativeAcceptingCapacity, NativeAcceptingSend, NativeAcceptingSendOutcome,
-    NativeAcceptingSendRetirement,
-};
+
 pub use world::NativeHostWorld;
 
-use super::{Connection, PacketConnection, transport::Transport};
+use super::{Connection, PacketIo};
 use bedrock_client::server::{ServerHandshake, ServerHandshakeOptions};
 use bedrock_net::encryption::{BatchDecryptor, BatchEncryptor};
 use bedrock_net::{BatchLimits, CompressionSettings};
@@ -60,7 +58,12 @@ impl NativeAcceptingIo {
         };
         Ok((
             Self {
-                connection: Connection::with_limits(Transport::from_accepted(accepted), limits),
+                connection: Connection::new(
+                    Transport::from_accepted(accepted),
+                    limits,
+                    wire::Limits::receiving_from(wire::Peer::Client),
+                    super::super::startup::MAX_DEFERRED_PACKET_BYTES,
+                ),
                 skipped: 0,
             },
             handshake,
@@ -128,7 +131,7 @@ impl NativeAcceptingIo {
 
     /// Consumes local send capability and retains the actual accepted receiver and decoded FIFO.
     pub fn begin_close(mut self) -> NativeAcceptingRetired {
-        self.connection.transport.retire_accepted();
+        self.connection.transport_mut().retire_accepted();
         NativeAcceptingRetired {
             connection: self.connection,
         }

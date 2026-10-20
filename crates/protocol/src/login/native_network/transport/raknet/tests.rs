@@ -1,11 +1,11 @@
 //! Valid aggregate pressure must retain the original negotiated RakNet owner.
 
-use crate::login::native_network::{Connection, transport::Transport};
 use crate::session_transport::{batch_body, native};
 use ::raknet::prelude::{
     Established, RakClock, RakPriority, RakReliability, RakServer, RakServerConfig, RakServerInput,
     RakServerOutput, RakSession, RakSessionInput, RakSessionOutput, Sans,
 };
+use bedrock_client_tokio::transport::Transport;
 use bedrock_net::{
     BatchCodec, BatchHeader, BatchLimits,
     raknet::{RakNetConnection, RakNetOptions},
@@ -206,7 +206,8 @@ async fn stalled_native_consumer_keeps_raknet_control_and_accepted_prefix() {
                 .await
                 .map_err(|error| format!("actual client negotiation: {error}"))?;
             local = Some(actual.local_addr());
-            let connection = Connection::new(Transport::from_raknet(actual));
+            let connection =
+                crate::login::native_network::connection::upstream(Transport::from_raknet(actual));
             let native::PreparedPump {
                 sender,
                 mut incoming,

@@ -22,9 +22,7 @@ pub struct RoundTripTime {
 #[derive(Clone, Debug)]
 enum Source {
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-    RakNet(bedrock_net::raknet::RttObservation),
-    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-    NetherNet(nethernet_tokio::RttObservation),
+    Native(bedrock_client_tokio::rtt::RoundTripTime),
     #[cfg(feature = "test-support")]
     Controlled(std::sync::Arc<std::sync::atomic::AtomicU64>),
 }
@@ -39,9 +37,7 @@ impl RoundTripTime {
         {
             match &self.source {
                 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-                Source::RakNet(source) => source.get(),
-                #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-                Source::NetherNet(source) => source.get(),
+                Source::Native(source) => source.get(),
                 #[cfg(feature = "test-support")]
                 Source::Controlled(source) => {
                     match source.load(std::sync::atomic::Ordering::Relaxed) {
@@ -60,19 +56,11 @@ impl RoundTripTime {
         }
     }
 
-    /// Wraps only the actual selected RakNet connection's observation.
+    /// Projects the selected transport's original read-only observation into session presentation.
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-    pub(crate) fn raknet(source: bedrock_net::raknet::RttObservation) -> Self {
+    pub(crate) fn native(source: bedrock_client_tokio::rtt::RoundTripTime) -> Self {
         Self {
-            source: Source::RakNet(source),
-        }
-    }
-
-    /// Wraps only the actual established NetherNet actor's observation.
-    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-    pub(crate) fn nethernet(source: nethernet_tokio::RttObservation) -> Self {
-        Self {
-            source: Source::NetherNet(source),
+            source: Source::Native(source),
         }
     }
 }

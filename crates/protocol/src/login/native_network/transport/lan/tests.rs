@@ -64,7 +64,7 @@ async fn selected_local_lan_skips_another_level_and_keeps_the_actual_selected_re
     tokio::time::timeout(Duration::from_secs(20), async {
         let neighbor = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let address = neighbor.local_addr().unwrap();
-        let mut connecting = Box::pin(LanTransport::connect_local(
+        let mut connecting = Box::pin(crate::login::native_network::transport::lan::connect_local(
             address,
             "World",
             crate::NATIVE_JOIN_TIMEOUT,
@@ -111,7 +111,7 @@ async fn selected_local_lan_skips_another_level_and_keeps_the_actual_selected_re
 async fn selected_local_lan_refuses_an_online_only_advertisement() {
     tokio::time::timeout(Duration::from_secs(20), async {
         let (mut server, address) = listener(false, None).await;
-        let result = LanTransport::connect_local(
+        let result = crate::login::native_network::transport::lan::connect_local(
             address,
             "World",
             crate::NATIVE_JOIN_TIMEOUT,
@@ -141,7 +141,7 @@ impl SdpIdentity for MalformedIdentity {
 async fn selected_local_lan_does_not_treat_a_malformed_present_identity_as_anonymous() {
     tokio::time::timeout(Duration::from_secs(20), async {
         let (mut server, address) = listener(true, Some(Arc::new(MalformedIdentity))).await;
-        let result = LanTransport::connect_local(
+        let result = crate::login::native_network::transport::lan::connect_local(
             address,
             "World",
             crate::NATIVE_JOIN_TIMEOUT,
@@ -173,7 +173,7 @@ async fn selected_local_lan_cancellation_and_original_cutoff_retire_the_actual_d
         let blackhole = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let address = blackhole.local_addr().unwrap();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        let mut connecting = Box::pin(LanTransport::connect_local(
+        let mut connecting = Box::pin(crate::login::native_network::transport::lan::connect_local(
             address,
             "World",
             crate::NATIVE_JOIN_TIMEOUT,

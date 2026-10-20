@@ -3,8 +3,7 @@
 mod accepting;
 mod authentication;
 pub use accepting::{
-    NativeAcceptingCapacity, NativeAcceptingIo, NativeAcceptingRetired, NativeAcceptingSend,
-    NativeAcceptingSendOutcome, NativeAcceptingSendRetirement, NativeHostWorld, native_host_packs,
+    NativeAcceptingIo, NativeAcceptingRetired, NativeHostWorld, native_host_packs,
 };
 pub use authentication::{
     NativeAuthentication, NativeCredential, NativeHostingIdentity, NativeProvider,
@@ -28,7 +27,7 @@ pub use relay::{
 };
 mod spawn;
 mod transport;
-pub(crate) use connection::{Connection, PacketConnection};
+use bedrock_client_tokio::{PacketIo, connection::Connection};
 
 use super::{LoginSequence, PlaySession, SessionLogin};
 use crate::codec::SessionFailure;
@@ -41,7 +40,7 @@ use std::io;
 
 /// Retains a decoded negotiation boundary when a response write fails.
 async fn preserve_negotiation_boundary(
-    connection: &mut impl PacketConnection,
+    connection: &mut impl PacketIo,
     error: io::Error,
 ) -> ProtocolError {
     let drain = async {
@@ -177,7 +176,7 @@ async fn apply_key_exchange<C>(
     if let Some(ciphers) = ciphers {
         connection.enable_encryption(*ciphers).map_err(failure)?;
     }
-    connection.send(response).await?;
+    connection::send(connection, response).await?;
     Ok(continuation)
 }
 

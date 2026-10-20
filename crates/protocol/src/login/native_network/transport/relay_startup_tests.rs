@@ -151,7 +151,7 @@ async fn native_relay_adopts_negotiated_deferred_packet_with_original_subclient_
             .await
             .unwrap();
             let mut connection = negotiated.connection;
-            let deferred = connection.take_deferred();
+            let deferred = crate::login::native_network::connection::take_deferred(&mut connection);
             let deferred_count = deferred.len();
             let mut transport = SessionTransport::from_native(connection);
             transport.set_relay(relay.clone());

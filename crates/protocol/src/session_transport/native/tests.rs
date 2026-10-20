@@ -109,7 +109,7 @@ async fn aborting_the_connection_task_retires_its_uncommitted_permits() {
     );
 }
 
-impl PacketConnection for ReplayConnection {
+impl PacketIo for ReplayConnection {
     async fn send_body(&mut self, _: Bytes) -> io::Result<()> {
         Err(io::Error::new(io::ErrorKind::BrokenPipe, "peer closed"))
     }

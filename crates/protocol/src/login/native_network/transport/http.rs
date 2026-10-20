@@ -34,9 +34,7 @@ pub(in crate::login::native_network) async fn connect(
         )
         .await?;
         check_deadline(cutoff, identity.expires)?;
-        Ok(Transport::Http(Box::new(super::AcceptedTransport::new(
-            client.into_accepted(),
-        ))))
+        Ok(Transport::from_http(client))
     })
     .await;
     // Credential expiry keeps its authentication classification rather than becoming a transport timeout.

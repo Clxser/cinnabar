@@ -74,7 +74,7 @@ async fn selected_local_lan_refuses_an_online_handoff_before_discovery() {
 
 struct PendingPackets(std::collections::VecDeque<bytes::Bytes>);
 
-impl PacketConnection for PendingPackets {
+impl PacketIo for PendingPackets {
     async fn send_body(&mut self, _: bytes::Bytes) -> io::Result<()> {
         unreachable!("receive-only replay")
     }

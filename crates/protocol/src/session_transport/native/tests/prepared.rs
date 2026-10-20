@@ -42,7 +42,7 @@ struct ClosingConnection {
     closed: Option<oneshot::Sender<()>>,
 }
 
-impl PacketConnection for ClosingConnection {
+impl PacketIo for ClosingConnection {
     async fn send_body(&mut self, body: Bytes) -> io::Result<()> {
         self.sent.send(body).await.map_err(io::Error::other)
     }

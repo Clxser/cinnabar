@@ -21,7 +21,7 @@ reads = [
 [features]
 # Fixture builders and semantic observations for other crates' tests.
 test-support = []
-native-networking = ["dep:bedrock-net", "dep:p384", "dep:rand", "dep:nethernet", "dep:nethernet-tokio", "dep:rustls", "dep:reqwest", "dep:provider_http", "dep:url", "dep:webpki-roots", "dep:md-5", "uuid/serde", "uuid/v5", "serde_json/raw_value"]
+native-networking = ["dep:bedrock-client-tokio", "dep:bedrock-net", "dep:p384", "dep:rand", "dep:nethernet", "dep:nethernet-tokio", "dep:rustls", "dep:reqwest", "dep:provider_http", "dep:url", "dep:webpki-roots", "dep:md-5", "uuid/serde", "uuid/v5", "serde_json/raw_value"]
 
 [[test]]
 name = "it"
@@ -60,6 +60,7 @@ bedrock-protocol-1-26-51.workspace = true
 uuid = { workspace = true, features = ["js"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bedrock-client-tokio = { workspace = true, features = ["raknet", "nethernet"], optional = true }
 provider_http = { package = "reqwest", version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
 url = { version = "2", optional = true }
 md-5 = { version = "0.10", optional = true }
@@ -86,3 +87,6 @@ test-time = { path = "../test-time" }
 
 [lints]
 workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+bedrock-client-tokio = { workspace = true, features = ["test-support"] }
