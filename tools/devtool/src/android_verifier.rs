@@ -185,6 +185,7 @@ mod tests {
             "../../../packaging/android/platform-verifier.json"
         ))
         .unwrap();
+        check_versions(include_str!("../../../Cargo.lock"), &inputs).unwrap();
         let lock = format!(
             "[[package]]\nname = 'rustls-platform-verifier'\nversion = '{}'\n[[package]]\nname = 'rustls-platform-verifier-android'\nversion = '{}'\n",
             inputs.verifier_version, inputs.shim_version
