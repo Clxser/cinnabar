@@ -6983,8 +6983,7 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 [[package]]
 name = "pp-rs"
 version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb458bb7f6e250e6eb79d5026badc10a3ebb8f9a15d1fff0f13d17c71f4d6dee"
+source = "git+https://github.com/cinnabar-mc/glslpp-rs?rev=c302b527268aaf0a93e28cfc01a86d621e7640c6#c302b527268aaf0a93e28cfc01a86d621e7640c6"
 dependencies = [
  "unicode-xid",
 ]

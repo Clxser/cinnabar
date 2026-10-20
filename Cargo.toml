@@ -174,6 +174,9 @@ wgpu-types = { git = "https://github.com/cinnabar-mc/wgpu", rev = "df1d406a7b13f
 
 wgpu-naga-bridge = { git = "https://github.com/cinnabar-mc/wgpu", rev = "df1d406a7b13f68beff962f393adff5ed9249852" }
 
+# Float option macros in conditions use integer truncation, as Iris preprocesses them.
+pp-rs = { git = "https://github.com/cinnabar-mc/glslpp-rs", rev = "c302b527268aaf0a93e28cfc01a86d621e7640c6" }
+
 [profile.dev]
 opt-level = 1
 # Line tables keep backtraces and panics readable; full debuginfo made local builds 20-45% slower.
