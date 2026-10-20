@@ -47,8 +47,8 @@ pub struct Observation {
     pub minted: bool,
     /// Whether protected client signaling was upgraded.
     pub signaling_started: bool,
-    /// Both original signaling sockets observed Close/EOF after their owners retired.
-    pub signaling_closed: bool,
+    /// The client socket retired through its original abort/EOF or Close; the host closed cleanly.
+    pub signaling_retired: bool,
     /// The original held RTA socket observed its expected local-abort EOF.
     pub rta_retired: bool,
 }
@@ -240,19 +240,26 @@ impl Fixture {
             host.socket.as_mut().unwrap().abort();
         }
         let observed = self.peer.finish_friend().await;
-        let closed = |terminal| {
-            matches!(
-                terminal,
-                Some(HostedSocketTerminal::Close | HostedSocketTerminal::Eof)
+        // The client transport aborts its protected socket on retirement; the host finishes Close.
+        let client_retired = matches!(
+            &observed.signaling,
+            Some(
+                HostedSocketTerminal::Close
+                    | HostedSocketTerminal::Eof
+                    | HostedSocketTerminal::Io(io::ErrorKind::UnexpectedEof)
             )
-        };
+        );
+        let host_closed = matches!(
+            &observed.host,
+            Some(HostedSocketTerminal::Close | HostedSocketTerminal::Eof)
+        );
         Observation {
             joins: observed.joins,
             leaves: observed.leaves,
             nonce_published: observed.nonce_published,
             minted: !observed.minted_public_key.is_empty(),
             signaling_started: observed.signaling.is_some(),
-            signaling_closed: closed(observed.signaling) && closed(observed.host),
+            signaling_retired: client_retired && host_closed,
             rta_retired: observed.rta == HostedSocketTerminal::Io(io::ErrorKind::UnexpectedEof),
         }
     }

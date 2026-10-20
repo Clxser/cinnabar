@@ -14,7 +14,7 @@ struct CleanupFacts {
     leaves: Option<usize>,
     nonce_published: bool,
     minted: bool,
-    signaling_closed: bool,
+    signaling_retired: bool,
     rta_retired: bool,
     host_retired: Result<(), std::io::ErrorKind>,
     tasks_joined: bool,
@@ -28,7 +28,7 @@ impl CleanupFacts {
             && self.leaves == Some(1)
             && self.nonce_published
             && self.minted
-            && self.signaling_closed
+            && self.signaling_retired
             && self.rta_retired
             && self.host_retired.is_ok()
             && self.tasks_joined
@@ -109,7 +109,7 @@ fn controlled_native_friend_play_initializes_both_dialects_and_leaves_once() {
                 leaves: facts.as_ref().map(|facts| facts.leaves),
                 nonce_published: facts.as_ref().is_some_and(|facts| facts.nonce_published),
                 minted: facts.as_ref().is_some_and(|facts| facts.minted),
-                signaling_closed: facts.as_ref().is_some_and(|facts| facts.signaling_closed),
+                signaling_retired: facts.as_ref().is_some_and(|facts| facts.signaling_retired),
                 rta_retired: facts.as_ref().is_some_and(|facts| facts.rta_retired),
                 host_retired: peer.retired.map_err(|error| error.kind()),
                 tasks_joined: joined,
