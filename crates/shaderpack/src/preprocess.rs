@@ -4,9 +4,9 @@
 use crate::diagnostics::{Diagnostic, Phase, SourceLocation};
 use crate::options::{OptionValues, PackOption, rewrite_option_line};
 use crate::source::PackSource;
-use crate::token::{Tok, TokKind};
+use crate::token::{Tok, TokKind, punct};
 use pp_rs::pp::Preprocessor;
-use pp_rs::token::{Punct, TokenValue};
+use pp_rs::token::TokenValue;
 
 /// Identifier prefix of the markers that stand in for comment and `const` directives while
 /// the preprocessor decides which of them sit in active code. Stripped before transforming.
@@ -548,58 +548,6 @@ fn float_literal(v: f32) -> String {
         s
     } else {
         format!("{s}.0")
-    }
-}
-
-/// Returns the GLSL spelling of a punctuation token.
-fn punct(p: Punct) -> &'static str {
-    use Punct::*;
-    match p {
-        AddAssign => "+=",
-        SubAssign => "-=",
-        MulAssign => "*=",
-        DivAssign => "/=",
-        ModAssign => "%=",
-        LeftShiftAssign => "<<=",
-        RightShiftAssign => ">>=",
-        AndAssign => "&=",
-        XorAssign => "^=",
-        OrAssign => "|=",
-        Increment => "++",
-        Decrement => "--",
-        LogicalAnd => "&&",
-        LogicalOr => "||",
-        LogicalXor => "^^",
-        LessEqual => "<=",
-        GreaterEqual => ">=",
-        EqualEqual => "==",
-        NotEqual => "!=",
-        LeftShift => "<<",
-        RightShift => ">>",
-        LeftBrace => "{",
-        RightBrace => "}",
-        LeftParen => "(",
-        RightParen => ")",
-        LeftBracket => "[",
-        RightBracket => "]",
-        LeftAngle => "<",
-        RightAngle => ">",
-        Semicolon => ";",
-        Comma => ",",
-        Colon => ":",
-        Dot => ".",
-        Equal => "=",
-        Bang => "!",
-        Minus => "-",
-        Tilde => "~",
-        Plus => "+",
-        Star => "*",
-        Slash => "/",
-        Percent => "%",
-        Pipe => "|",
-        Caret => "^",
-        Ampersand => "&",
-        Question => "?",
     }
 }
 
