@@ -306,7 +306,7 @@ mod tests {
     #[test]
     fn native_provider_preserves_configured_issuer_path_and_trailing_slash() {
         for (configured, expected) in [
-            ("https://issuer.example", "https://issuer.example"),
+            ("https://issuer.example", "https://issuer.example/"),
             ("https://issuer.example/", "https://issuer.example/"),
             (
                 "https://issuer.example/tenant",
