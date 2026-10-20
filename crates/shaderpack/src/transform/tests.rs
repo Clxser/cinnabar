@@ -26,6 +26,7 @@ gl_FragData[0] = texture2D(colortex0, texcoord) * color * viewWidth;
 }
 ";
 
+/// Expands and transforms an in-memory stage with a shared program interface.
 fn draft(
     file: &str,
     text: &str,
