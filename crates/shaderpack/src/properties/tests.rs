@@ -738,3 +738,19 @@ fn custom_expression_operator_groups_follow_iris() {
         }
     }
 }
+
+#[test]
+fn custom_comparison_aliases_match_ascii_operators() {
+    for expression in ["1 ≠ 2", "1 ≤ 2", "2 ≥ 1"] {
+        let properties = parse(&format!("uniform.bool.result={expression}\n"));
+        assert!(
+            properties.diagnostics.is_empty(),
+            "{:?}",
+            properties.diagnostics
+        );
+        assert_eq!(
+            properties.custom_uniforms[0].expr.eval(&|_| None).unwrap(),
+            1.0
+        );
+    }
+}
