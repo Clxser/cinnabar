@@ -2,7 +2,7 @@
 //! integer-backed bool uniforms.
 
 use super::TransformError;
-use super::items::{arr_len, mat_cols, matching, parse_decl, sampler_info};
+use super::items::{arr_len, mat_cols, matching, sampler_info, shadowed_bindings};
 use crate::reflection::{SHADOW_SAMPLER_NAME, SamplerClass};
 use crate::token::{Tok, TokKind, id, int, p};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -10,11 +10,28 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 /// Sampler name → (combined sampler type to construct, compares depth, filtering class).
 pub(super) type SamplerKinds = HashMap<String, (String, bool, SamplerClass)>;
 
+/// A boolean value stored as integers, including its array dimensions.
+#[derive(Clone, Debug)]
+pub(super) struct BoolStorage {
+    pub ty: String,
+    pub array_depth: usize,
+}
+
+impl BoolStorage {
+    /// Records the value type and dimensions of an integer-backed boolean declaration.
+    pub fn new<'a>(ty: &str, arrays: impl IntoIterator<Item = &'a Tok>) -> Self {
+        Self {
+            ty: ty.to_string(),
+            array_depth: arrays.into_iter().filter(|token| token.is("[")).count(),
+        }
+    }
+}
+
 /// What body rewriting needs to know about the stage's globals.
 pub(super) struct BodyContext<'a> {
     pub samplers: &'a SamplerKinds,
-    /// Bool uniform name → constructor (`bool` or `bvecN`) of its integer storage.
-    pub bools: &'a HashMap<String, String>,
+    /// Boolean global names and the value types and array dimensions of their storage.
+    pub bools: &'a HashMap<String, BoolStorage>,
     pub user_funcs: &'a HashSet<String>,
 }
 
@@ -53,17 +70,6 @@ pub(super) fn rewrite_params(header: &[Tok], samplers: &mut SamplerKinds) -> Vec
             out.push(id(tex).at(t.line));
             continue;
         }
-        if let Some(n) = t.ident()
-            && i > 0
-            && header[i - 1]
-                .ident()
-                .is_some_and(|ty| sampler_info(ty).is_none())
-            && header
-                .get(i + 1)
-                .is_some_and(|x| x.is(",") || x.is(")") || x.is("["))
-        {
-            samplers.remove(n);
-        }
         out.push(t.clone());
     }
     out
@@ -75,14 +81,24 @@ pub(super) fn rewrite_params(header: &[Tok], samplers: &mut SamplerKinds) -> Vec
 /// their block from the end of their declarator on, as GLSL scopes them: SEUS's
 /// `vec4 tex = texture2D(tex, …)` still samples the global in the initializer.
 pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut SamplerUse) -> Vec<Tok> {
-    let declarators = local_declarators(toks);
+    let shadowed = shadowed_bindings(
+        toks,
+        cx.samplers
+            .keys()
+            .chain(cx.bools.keys())
+            .map(String::as_str),
+    );
+    let mut read_ends: Vec<(usize, bool)> = Vec::new();
     let mut out = vec![];
     let mut calls: Vec<Option<String>> = vec![];
-    // Names declared by each open block.
-    let mut scopes: Vec<Vec<&str>> = vec![vec![]];
-    // A shadowing declaration whose declarator is still open, with its paren depth.
-    let mut pending: Option<(&str, usize)> = None;
     for (i, t) in toks.iter().enumerate() {
+        while read_ends.last().is_some_and(|(end, _)| *end == i) {
+            let (_, scalar) = read_ends.pop().unwrap();
+            if scalar {
+                out.extend([p("!=").at(t.line), int(0).at(t.line)]);
+            }
+            out.push(p(")").at(t.line));
+        }
         if t.is("(") {
             calls.push(
                 i.checked_sub(1)
@@ -91,18 +107,6 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
             );
         } else if t.is(")") {
             calls.pop();
-        } else if t.is("{") {
-            scopes.push(vec![]);
-        } else if t.is("}") && scopes.len() > 1 {
-            scopes.pop();
-        } else if (t.is(";") || t.is(","))
-            && let Some((name, depth)) = pending
-            && depth == calls.len()
-        {
-            pending = None;
-            if let Some(scope) = scopes.last_mut() {
-                scope.push(name);
-            }
         }
         let TokKind::Ident(n) = &t.kind else {
             out.push(t.clone());
@@ -112,12 +116,7 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
             out.push(t.clone());
             continue;
         }
-        if (cx.samplers.contains_key(n) || cx.bools.contains_key(n)) && declarators.contains(&i) {
-            pending = Some((n, calls.len()));
-            out.push(t.clone());
-            continue;
-        }
-        if scopes.iter().any(|s| s.contains(&n.as_str())) {
+        if shadowed.contains(&i) {
             out.push(t.clone());
             continue;
         }
@@ -150,23 +149,17 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
             }
             continue;
         }
-        if let Some(ctor) = cx.bools.get(n) {
-            if ctor == "bool" {
-                out.extend([
-                    p("(").at(line),
-                    t.clone(),
-                    p("!=").at(line),
-                    int(0).at(line),
-                    p(")").at(line),
-                ]);
-            } else {
-                out.extend([
-                    id(ctor).at(line),
-                    p("(").at(line),
-                    t.clone(),
-                    p(")").at(line),
-                ]);
+        if let Some(storage) = cx.bools.get(n) {
+            let Some((end, ctor)) = boolean_access(toks, i, storage) else {
+                out.push(t.clone());
+                continue;
+            };
+            let scalar = ctor == "bool";
+            if !scalar {
+                out.push(id(&ctor).at(line));
             }
+            out.extend([p("(").at(line), t.clone()]);
+            read_ends.push((end, scalar));
             continue;
         }
         out.push(t.clone());
@@ -174,45 +167,36 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
     out
 }
 
-/// Finds every local declarator with the shared declaration parser, excluding initializer uses.
-fn local_declarators(toks: &[Tok]) -> HashSet<usize> {
-    let mut declarations = HashSet::new();
-    for start in 0..toks.len() {
-        if start > 0
-            && !toks[start - 1].is("{")
-            && !toks[start - 1].is(";")
-            && !toks[start - 1].is("}")
-            && !(toks[start - 1].is("(") && start > 1 && toks[start - 2].is("for"))
-        {
-            continue;
-        }
-        let mut depth = 0;
-        let end = (start..toks.len()).find(|&index| {
-            let token = &toks[index];
-            if token.is("(") || token.is("[") {
-                depth += 1;
-            } else if token.is(")") || token.is("]") {
-                depth -= 1;
+/// Classifies a boolean value access, leaving array methods on their integer-backed receiver.
+fn boolean_access(toks: &[Tok], start: usize, storage: &BoolStorage) -> Option<(usize, String)> {
+    let mut end = start + 1;
+    let mut arrays = storage.array_depth;
+    let mut ty = storage.ty.clone();
+    loop {
+        if toks.get(end).is_some_and(|token| token.is("[")) {
+            end = matching(toks, end, "[", "]") + 1;
+            if arrays > 0 {
+                arrays -= 1;
+            } else {
+                ty = "bool".to_string();
             }
-            (token.is(";") || token.is("{") || token.is("}")) && depth == 0
-        });
-        let Some(end) = end.filter(|&end| toks[end].is(";")) else {
-            continue;
-        };
-        let Some(declaration) = parse_decl(&toks[start..=end]) else {
-            continue;
-        };
-        if matches!(declaration.ty.as_str(), "return" | "else" | "do" | "case") {
-            continue;
-        }
-        let mut cursor = end;
-        for (_, array, initializer) in declaration.decls.iter().rev() {
-            cursor -= initializer.len() + usize::from(!initializer.is_empty()) + array.len() + 1;
-            declarations.insert(cursor);
-            cursor = cursor.saturating_sub(1);
+        } else if toks.get(end).is_some_and(|token| token.is("."))
+            && let Some(member) = toks.get(end + 1).and_then(Tok::ident)
+        {
+            if arrays > 0 && member == "length" {
+                return None;
+            }
+            ty = if member.len() == 1 {
+                "bool".to_string()
+            } else {
+                format!("bvec{}", member.len())
+            };
+            end += 2;
+        } else {
+            break;
         }
     }
-    declarations
+    Some((end, ty))
 }
 
 /// Struct name → members as (type, name, array tokens).
@@ -323,8 +307,8 @@ mod tests {
     fn textures_passed_to_user_functions_stay_separate_and_bool_uniforms_read_as_bools() {
         let samplers = samplers();
         let bools = HashMap::from([
-            ("isDay".to_owned(), "bool".to_owned()),
-            ("mask".to_owned(), "bvec2".to_owned()),
+            ("isDay".to_owned(), BoolStorage::new("bool", &[])),
+            ("mask".to_owned(), BoolStorage::new("bvec2", &[])),
         ]);
         let user_funcs = HashSet::from(["blur".to_owned()]);
         let cx = BodyContext {
@@ -340,7 +324,7 @@ mod tests {
         );
         assert_eq!(
             text(&body),
-            "blur ( colortex0 , uv ) ; if ( ( isDay != 0 ) && bvec2 ( mask ) . x ) { }"
+            "blur ( colortex0 , uv ) ; if ( ( isDay != 0 ) && ( mask . x != 0 ) ) { }"
         );
         assert!(used.filtering.is_empty());
 
