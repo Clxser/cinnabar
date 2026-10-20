@@ -604,7 +604,8 @@ fn layout_and_profile_values_keep_option_names() {
 fn expanded_properties_bytes_are_bounded_across_lines() {
     use crate::source::{MAX_EXPANDED_PROPERTIES_BYTES, MAX_TEXT_FILE_BYTES};
 
-    let chunk = ".".repeat(64 * 1024);
+    // One identifier per reference keeps this about bytes, not the separate token budget.
+    let chunk = "m".repeat(64 * 1024);
     let repetitions = MAX_EXPANDED_PROPERTIES_BYTES / chunk.len() / 2 + 1;
     let references = vec!["BIG"; repetitions].join(" ");
     let text = format!("#define BIG {chunk}\na={references}\nb={references}\nafter=ok\n");
@@ -615,6 +616,60 @@ fn expanded_properties_bytes_are_bounded_across_lines() {
         (chunk.len() + 1) * repetitions - 1
     );
     assert!(properties.get("b").is_none());
+    assert_eq!(properties.get("after"), Some("ok"));
+    assert_eq!(diagnostic_lines(&properties), [3]);
+}
+
+#[test]
+fn recursively_doubled_macros_stop_at_the_preprocessing_work_limit() {
+    let mut text = format!("#define M0 {}\n", "m".repeat(64 * 1024));
+    for level in 1..=24 {
+        text += &format!("#define M{level} M{p} M{p}\n", p = level - 1);
+    }
+    text += "value=M24\n";
+    let properties = parse(&text);
+    assert!(properties.get("value").is_none());
+    assert!(
+        properties
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("work limit"))
+    );
+}
+
+#[test]
+fn doubled_macros_in_conditions_stop_at_the_preprocessing_work_limit() {
+    let mut text = String::from("#define M0 0\n");
+    for level in 1..=40 {
+        text += &format!("#define M{level} M{p} + M{p}\n", p = level - 1);
+    }
+    text += "#if M40\nhidden=1\n#endif\n";
+    let properties = parse(&text);
+    assert_eq!(properties.get("hidden"), None);
+    assert!(
+        properties
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("work limit"))
+    );
+}
+
+#[test]
+fn an_entry_with_a_preprocessing_error_is_discarded_whole() {
+    let properties = parse(
+        "#define ID(x) x\nprogram.final.enabled=false ID(1,2)\nsplit=a \\\n  ID(1,2)\nafter=ok\n",
+    );
+    assert_eq!(properties.get("program.final.enabled"), None);
+    assert_eq!(properties.get("split"), None);
+    assert_eq!(properties.get("after"), Some("ok"));
+    assert_eq!(diagnostic_lines(&properties), [2, 4]);
+}
+
+#[test]
+fn a_nested_expansion_error_discards_the_invoking_entry() {
+    let properties =
+        parse("#define ID(x) x\n#define BAD ID(1,2)\nprogram.final.enabled=false BAD\nafter=ok\n");
+    assert_eq!(properties.get("program.final.enabled"), None);
     assert_eq!(properties.get("after"), Some("ok"));
     assert_eq!(diagnostic_lines(&properties), [3]);
 }
@@ -675,4 +730,33 @@ fn hash_comments_do_not_open_directive_block_comments() {
     let properties = parse("# Notes mentioning /* without a matching end\nafter=ok\n");
     assert_eq!(properties.get("after"), Some("ok"));
     assert!(properties.diagnostics.is_empty());
+}
+
+#[test]
+fn macro_expansion_preserves_condition_token_boundaries() {
+    let properties = parse("#define NEG -1\n#if -NEG > 0\nselected=yes\n#endif\n");
+    assert_eq!(properties.get("selected"), Some("yes"));
+    assert!(properties.diagnostics.is_empty());
+}
+
+#[test]
+fn content_block_comments_hide_conditional_directives() {
+    let properties = parse("/*\n#if 0\n*/\nprogram.final.enabled=false\n");
+    assert_eq!(properties.get("program.final.enabled"), Some("false"));
+    assert!(properties.diagnostics.is_empty());
+}
+
+#[test]
+fn alpha_test_false_and_off_disable_comparisons() {
+    for value in ["false", "FALSE", "off", "OFF"] {
+        let properties = parse(&format!("alphaTest.composite={value}\n"));
+        assert!(
+            properties.diagnostics.is_empty(),
+            "{:?}",
+            properties.diagnostics
+        );
+        assert_eq!(properties.alpha_tests.len(), 1);
+        assert_eq!(properties.alpha_tests[0].program, "composite");
+        assert_eq!(properties.alpha_tests[0].test, None);
+    }
 }
