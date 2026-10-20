@@ -343,3 +343,21 @@ fn sampler_locals_cover_every_declarator_and_restore_outer_resources() {
         }",
     );
 }
+
+#[test]
+fn unused_fragment_inputs_are_removed_from_the_compiled_interface() {
+    let translated = success(
+        VERTEX,
+        "#version 450\nin vec2 unusedUv; in mat3 unusedBasis; in float unusedValues[2];
+        out vec4 color; void main() { color = vec4(1.0); }",
+    );
+    let stage = program(&translated, "composite")
+        .stages
+        .iter()
+        .find(|stage| stage.stage == shaderpack::StageKind::Fragment)
+        .unwrap()
+        .result
+        .as_ref()
+        .unwrap();
+    assert!(stage.module.entry_points[0].function.arguments.is_empty());
+}
