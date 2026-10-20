@@ -476,11 +476,19 @@ impl Compiler<'_> {
     }
 
     /// `smooth([id,] value[, fadeUpTime[, fadeDownTime]])`. As in OptiFine, a leading
-    /// numeric literal followed by more arguments is an ignored compatibility id. Every
+    /// constant expression followed by more arguments is an ignored compatibility id. Every
     /// call site has its own accumulator.
     fn smooth(&mut self, args: &[Expr]) -> Result<Compiled, String> {
+        let constant_id = args.first().is_some_and(|expr| {
+            expr.identifiers()
+                .iter()
+                .all(|name| *name == PI_NAME && !self.bindings.contains_key(PI_NAME))
+                && expr
+                    .eval(&|name| (name == PI_NAME).then_some(f64::from(PI)))
+                    .is_ok()
+        });
         let rest = match args {
-            [Expr::Number(_), rest @ ..] if !rest.is_empty() => rest,
+            [_, rest @ ..] if constant_id && !rest.is_empty() => rest,
             _ => args,
         };
         let (value, fades) = match rest.split_first() {

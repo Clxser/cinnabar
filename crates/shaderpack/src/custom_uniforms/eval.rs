@@ -60,7 +60,10 @@ impl Node {
                     Some(index) => component(value, *index),
                 }
             }
-            Node::Neg(operand) => Ok(operand.eval(frame)?.map(|n| -n)),
+            Node::Neg(operand) => Ok(match operand.eval(frame)? {
+                Value::Int(value) => Value::Int(value.wrapping_neg()),
+                value => value.map(|n| -n),
+            }),
             Node::Not(operand) => Ok(Value::Bool(!truth(operand.eval(frame)?)?)),
             Node::Binary(op, lhs, rhs) => binary(*op, lhs, rhs, frame),
             Node::If {
@@ -82,7 +85,10 @@ impl Node {
                 let len = u8::try_from(items.len()).map_err(|_| Mismatch)?;
                 Ok(super::value::from_lanes(Some(len), lanes))
             }
-            Node::Map1(func, operand) => Ok(operand.eval(frame)?.map(|n| apply1(*func, n))),
+            Node::Map1(func, operand) => Ok(match (func, operand.eval(frame)?) {
+                (Func1::Abs, Value::Int(value)) => Value::Int(value.wrapping_abs()),
+                (_, value) => value.map(|n| apply1(*func, n)),
+            }),
             Node::Map2(func, args) => {
                 let [a, b] = &**args;
                 a.eval(frame)?
@@ -97,9 +103,21 @@ impl Node {
                 let mut items = items.iter();
                 let first = items.next().ok_or(Mismatch)?.eval(frame)?;
                 items.try_fold(first, |acc, item| {
-                    acc.zip(item.eval(frame)?, |x, y| match fold {
-                        Fold::Min => x.min(y),
-                        Fold::Max => x.max(y),
+                    let value = item.eval(frame)?;
+                    if let (Value::Int(a), Value::Int(b)) = (acc, value) {
+                        return Ok(Value::Int(match fold {
+                            Fold::Min => a.min(b),
+                            Fold::Max => a.max(b),
+                        }));
+                    }
+                    acc.zip(value, |x, y| {
+                        if x.is_nan() || y.is_nan() {
+                            return f32::NAN;
+                        }
+                        match fold {
+                            Fold::Min => x.min(y),
+                            Fold::Max => x.max(y),
+                        }
                     })
                 })
             }
@@ -160,7 +178,7 @@ impl Node {
 }
 
 impl SmoothNode {
-    /// OptiFine `Smoother.getSmoothValue`: the first call returns its value; later calls
+    /// The first call returns its value; later calls
     /// move the previous result toward the value using the fade-up time when rising and
     /// the fade-down time when falling (defaulting to the fade-up time, itself 1 s).
     /// Vectors smooth per component; a change of shape restarts from the value.
@@ -209,20 +227,49 @@ fn smooth_step(previous: f32, target: f32, elapsed: f32, fade_up: f32, fade_down
 /// Evaluates a binary operator; `&&` and `||` short-circuit.
 fn binary(op: BinaryOp, lhs: &Node, rhs: &Node, frame: &mut Frame<'_>) -> Eval {
     let l = lhs.eval(frame)?;
+    if op == BinaryOp::And {
+        return Ok(Value::Bool(truth(l)? && truth(rhs.eval(frame)?)?));
+    }
+    if op == BinaryOp::Or {
+        return Ok(Value::Bool(truth(l)? || truth(rhs.eval(frame)?)?));
+    }
+    let r = rhs.eval(frame)?;
+    if let (Value::Int(a), Value::Int(b)) = (l, r) {
+        let result = match op {
+            BinaryOp::Add => Value::Int(a.wrapping_add(b)),
+            BinaryOp::Sub => Value::Int(a.wrapping_sub(b)),
+            BinaryOp::Mul => Value::Int(a.wrapping_mul(b)),
+            BinaryOp::Rem => Value::Int(if b == 0 {
+                return Err(Mismatch);
+            } else {
+                a.wrapping_rem(b)
+            }),
+            BinaryOp::Lt => Value::Bool(a < b),
+            BinaryOp::Le => Value::Bool(a <= b),
+            BinaryOp::Gt => Value::Bool(a > b),
+            BinaryOp::Ge => Value::Bool(a >= b),
+            _ => return scalar_binary(op, l, r),
+        };
+        return Ok(result);
+    }
+    scalar_binary(op, l, r)
+}
+
+/// Applies a non-short-circuit operator to numeric values with float promotion.
+fn scalar_binary(op: BinaryOp, l: Value, r: Value) -> Eval {
     match op {
-        BinaryOp::And => Ok(Value::Bool(truth(l)? && truth(rhs.eval(frame)?)?)),
-        BinaryOp::Or => Ok(Value::Bool(truth(l)? || truth(rhs.eval(frame)?)?)),
-        BinaryOp::Mul => l.zip(rhs.eval(frame)?, |a, b| a * b),
-        BinaryOp::Div => l.zip(rhs.eval(frame)?, |a, b| a / b),
-        BinaryOp::Rem => l.zip(rhs.eval(frame)?, |a, b| a % b),
-        BinaryOp::Add => l.zip(rhs.eval(frame)?, |a, b| a + b),
-        BinaryOp::Sub => l.zip(rhs.eval(frame)?, |a, b| a - b),
-        BinaryOp::Lt => compare(l, rhs.eval(frame)?, |a, b| a < b),
-        BinaryOp::Le => compare(l, rhs.eval(frame)?, |a, b| a <= b),
-        BinaryOp::Gt => compare(l, rhs.eval(frame)?, |a, b| a > b),
-        BinaryOp::Ge => compare(l, rhs.eval(frame)?, |a, b| a >= b),
-        BinaryOp::Eq => l.equals(rhs.eval(frame)?).map(Value::Bool),
-        BinaryOp::Ne => l.equals(rhs.eval(frame)?).map(|equal| Value::Bool(!equal)),
+        BinaryOp::And | BinaryOp::Or => Err(Mismatch),
+        BinaryOp::Mul => l.zip(r, |a, b| a * b),
+        BinaryOp::Div => l.zip(r, |a, b| a / b),
+        BinaryOp::Rem => l.zip(r, |a, b| a % b),
+        BinaryOp::Add => l.zip(r, |a, b| a + b),
+        BinaryOp::Sub => l.zip(r, |a, b| a - b),
+        BinaryOp::Lt => compare(l, r, |a, b| a < b),
+        BinaryOp::Le => compare(l, r, |a, b| a <= b),
+        BinaryOp::Gt => compare(l, r, |a, b| a > b),
+        BinaryOp::Ge => compare(l, r, |a, b| a >= b),
+        BinaryOp::Eq => l.equals(r).map(Value::Bool),
+        BinaryOp::Ne => l.equals(r).map(|equal| Value::Bool(!equal)),
     }
 }
 

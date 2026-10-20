@@ -609,3 +609,59 @@ fn smooth_call_sites_are_independent_and_use_only_the_current_frame() {
     }
     assert_eq!(float(uniforms.evaluate(&at(1.0, true), 0.1), "gated"), 0.75);
 }
+
+#[test]
+fn integer_inputs_and_random_bounds_keep_all_signed_bits() {
+    let mut uniforms = compile_ok(&[
+        "uniform.int.direct = large",
+        "uniform.int.difference = large - smaller",
+        "uniform.bool.ordered = smaller < large",
+        "uniform.bool.distinct = smaller != large",
+        "uniform.int.bounded = randomInt(smaller, large)",
+        "uniform.int.invalid = randomInt(5, 5)",
+    ]);
+    let at = builtins(&[
+        ("large", UniformValue::Int(16777217)),
+        ("smaller", UniformValue::Int(16777216)),
+    ]);
+    let results = uniforms.evaluate(&at, 0.0);
+    assert_eq!(get(results, "direct"), UniformValue::Int(16777217));
+    assert_eq!(get(results, "difference"), UniformValue::Int(1));
+    assert_eq!(get(results, "ordered"), UniformValue::Bool(true));
+    assert_eq!(get(results, "distinct"), UniformValue::Bool(true));
+    assert_eq!(get(results, "bounded"), UniformValue::Int(16777216));
+    assert_eq!(get(results, "invalid"), UniformValue::Int(0));
+}
+
+#[test]
+fn smooth_accepts_constant_expressions_as_compatibility_ids() {
+    let mut uniforms = compile_ok(&[
+        "uniform.float.negative = smooth(-7, target, 1, 1)",
+        "uniform.float.expression = smooth(2 + 3, target, 1, 1)",
+        "uniform.float.named = smooth(pi, target, 1, 1)",
+    ]);
+    let at = |target| builtins(&[("target", UniformValue::Float(target))]);
+    uniforms.evaluate(&at(0.0), 0.1);
+    let results = uniforms.evaluate(&at(1.0), 0.1);
+    for name in ["negative", "expression", "named"] {
+        assert_eq!(float(results, name), 0.5);
+    }
+}
+
+#[test]
+fn numeric_functions_keep_integer_precision_and_propagate_nan() {
+    let mut uniforms = compile_ok(&[
+        "uniform.int.minimum = min(large, larger)",
+        "uniform.int.absolute = abs(negative)",
+        "uniform.float.nan = min(0.0 / 0.0, 1.0)",
+    ]);
+    let at = builtins(&[
+        ("large", UniformValue::Int(16777217)),
+        ("larger", UniformValue::Int(16777218)),
+        ("negative", UniformValue::Int(-16777217)),
+    ]);
+    let results = uniforms.evaluate(&at, 0.0);
+    assert_eq!(get(results, "minimum"), UniformValue::Int(16777217));
+    assert_eq!(get(results, "absolute"), UniformValue::Int(16777217));
+    assert!(float(results, "nan").is_nan());
+}
