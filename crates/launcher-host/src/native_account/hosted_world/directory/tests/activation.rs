@@ -204,3 +204,27 @@ pub(in crate::native_account::hosted_world) fn activation_nonce(
 }
 
 mod cutoff;
+
+/// Retains the actual original socket loss before a ready backend result can reach admission.
+pub(in crate::native_account::hosted_world) async fn interrupt_rta(
+    host: &mut NativeHostedWorld,
+    recovery: &mut bedrock_services::test_support::HostedRtaReconnect,
+) {
+    recovery
+        .disconnect_ready(host.directory.as_mut().unwrap().socket.as_mut().unwrap())
+        .await;
+}
+
+/// Checks the same reference and current acknowledged binding without exposing private identity data.
+pub(in crate::native_account::hosted_world) fn same_host_member(
+    host: &NativeHostedWorld,
+    approval: &HostedApproval,
+) -> bool {
+    let directory = host.directory.as_ref().unwrap();
+    directory.reference.same(&approval.reference)
+        && directory.session.as_ref().is_some_and(|session| {
+            directory
+                .live_binding()
+                .is_ok_and(|binding| session.is_bound(binding))
+        })
+}

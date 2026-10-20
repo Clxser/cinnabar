@@ -86,6 +86,12 @@ impl NativeHostedWorld {
 }
 
 impl NativeHostedProcess {
+    /// Borrows the same established backend for owning in-crate lifecycle controls.
+    #[cfg(test)]
+    pub(in crate::native_account::hosted_world) fn test_process(&mut self) -> &mut HostProcess {
+        &mut self.process
+    }
+
     /// Explicitly closes this original IPC bridge even after its account/world authority retires.
     /// Failure/cancellation retains the real owner and first finite cleanup deadline for retry.
     pub async fn close(&mut self, deadline: Instant) -> io::Result<()> {
