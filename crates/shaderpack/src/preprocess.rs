@@ -308,22 +308,6 @@ fn defined_name(trimmed: &str) -> Option<&str> {
 
 /// A `#` line whose directive name GLSL doesn't define. A lone `#` is the null directive.
 fn is_unknown_directive(trimmed: &str) -> bool {
-    const KNOWN: [&str; 14] = [
-        "define",
-        "undef",
-        "if",
-        "ifdef",
-        "ifndef",
-        "else",
-        "elif",
-        "endif",
-        "include",
-        "line",
-        "error",
-        "pragma",
-        "extension",
-        "version",
-    ];
     let Some(rest) = trimmed.strip_prefix('#') else {
         return false;
     };
@@ -335,7 +319,7 @@ fn is_unknown_directive(trimmed: &str) -> bool {
     if word.is_empty() {
         return !rest.is_empty() && !rest.starts_with("//") && !rest.starts_with("/*");
     }
-    !KNOWN.contains(&word)
+    word != "include" && !Preprocessor::is_directive(word)
 }
 
 /// `shaders/`-relative target of an `#include` argument written in `from`.
