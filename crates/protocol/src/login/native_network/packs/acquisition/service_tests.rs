@@ -1,6 +1,5 @@
 use super::super::{MAX_CDN_DOWNLOADS, wait_io};
 use super::*;
-use crate::login::native_network::PacketConnection;
 use crate::packet_tap::{PacketDirection, PacketOutcome};
 use crate::session_transport::{
     Inbound, SessionTransport,
@@ -8,6 +7,7 @@ use crate::session_transport::{
     tests::{RecordingTap, TapEvent},
 };
 use bedrock_client::packs::{PackEvent, PackOffer, PackTransferLimits};
+use bedrock_client_tokio::PacketIo;
 use bedrock_protocol_1_26_51::{packets, types::PackInstanceId, wire};
 use futures::{StreamExt, stream};
 use resource_pack::test_support::archive_bytes;

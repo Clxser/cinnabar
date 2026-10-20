@@ -271,7 +271,7 @@ fn newer_connect() -> Bytes {
     assert!(
         protocol::NativeDeviceProfile::fresh()
             .validate_relay(
-                protocol::RawClientData::from_raw(&raw).unwrap(),
+                bedrock_net::login::client_data::RawClientData::from_raw(&raw).unwrap(),
                 protocol::PROTOCOL_VERSION,
             )
             .is_ok(),

@@ -1,7 +1,7 @@
 //! Actual prepared-pump reads and cursor ownership under a small caller-owned byte budget.
 
 use super::*;
-use crate::login::native_network::PacketConnection;
+use bedrock_client_tokio::PacketIo;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[tokio::test]
@@ -184,13 +184,13 @@ async fn fixture(byte_budget: Option<usize>, bodies: [Bytes; 3]) -> Fixture {
     )
 }
 
-/// Observes only actual PacketConnection reads driven by the existing prepared pump.
+/// Observes only actual PacketIo reads driven by the existing prepared pump.
 struct ObservedConnection {
     input: mpsc::Receiver<Bytes>,
     reads: Arc<AtomicUsize>,
 }
 
-impl PacketConnection for ObservedConnection {
+impl PacketIo for ObservedConnection {
     async fn send_body(&mut self, _: Bytes) -> io::Result<()> {
         Ok(())
     }

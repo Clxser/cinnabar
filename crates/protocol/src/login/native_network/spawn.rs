@@ -15,11 +15,12 @@ pub(super) async fn continue_join<P: Send + 'static>(
     let NegotiatedConnection {
         mut connection,
         packs,
+        identity,
     } = negotiated;
     if login.relay.is_some() {
-        connection.defer_through_start_game().await?;
+        super::connection::defer_through_start_game(&mut connection).await?;
     }
-    let deferred = connection.take_deferred();
+    let deferred = super::connection::take_deferred(&mut connection);
     let packs = if let Some(relay) = &login.relay {
         let last = deferred
             .iter()
@@ -31,11 +32,7 @@ pub(super) async fn continue_join<P: Send + 'static>(
             .collect();
         let added = crate::packet_relay::start(
             std::sync::Arc::clone(relay),
-            connection
-                .identity
-                .as_ref()
-                .expect("negotiation retains the actual Login identity")
-                .clone(),
+            identity,
             super::super::client_data::login_client_data(
                 login.display_name,
                 login.client_random_id,

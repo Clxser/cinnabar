@@ -1,15 +1,14 @@
 //! One verified guest's original local BDS upstream, without another runtime or world process.
 
+use bedrock_client_tokio::connection::send::PreparedSend;
+use bedrock_net::login::client_data::RawClientData;
 mod startup;
 #[cfg(test)]
 mod tests;
 pub use startup::{NativeHostedRelay, NativeHostedRelayClosing, NativeHostedRelayProgress};
 
-use super::{
-    Connection, NativeAcceptingIo, NativeAcceptingSend, PacketConnection, failure, negotiated,
-    packs,
-};
-use crate::{NativeConnectionTarget, ProtocolError, RawClientData};
+use super::{Connection, NativeAcceptingIo, PacketIo, failure, negotiated, packs};
+use crate::{NativeConnectionTarget, ProtocolError};
 use bedrock_client::server::session::{
     AcceptedSession, ServerPackContent, ServerPackSnapshot, ServerRelaying,
 };
@@ -87,7 +86,7 @@ impl NativeHostedUpstream {
             check(deadline).map_err(failure)?;
             let (transport, address) =
                 negotiated::connect_local(target, &credentials, deadline.into()).await?;
-            let mut connection = Connection::new(transport);
+            let mut connection = crate::login::native_network::connection::upstream(transport);
             connection.primary_only();
             let (acquired, _) = negotiated::negotiate_connected(
                 &mut connection,
@@ -179,36 +178,26 @@ impl NativeHostedUpstream {
         if !self.initialized {
             return Err(invalid());
         }
-        let terminal = self.connection.current_terminal()?.is_some();
+        let terminal = super::connection::current_terminal(&self.connection)?.is_some();
         self.connection.finish_current();
         Ok(terminal)
     }
 
     /// Prepares one original guest packet on the same upstream without committing its cipher/permit.
-    pub fn prepare_raw(
-        &mut self,
-        raw: Bytes,
-        deadline: Instant,
-    ) -> io::Result<NativeAcceptingSend<'_>> {
+    pub fn prepare_raw(&mut self, raw: Bytes, deadline: Instant) -> io::Result<PreparedSend<'_>> {
         if !self.initialized {
             return Err(invalid());
         }
         let body = self.connection.raw_body(raw)?;
-        self.connection.prepare_send(body, deadline)?;
-        Ok(NativeAcceptingSend {
-            connection: &mut self.connection,
-        })
+        self.connection.prepare_body(body, deadline)
     }
 
     /// Resumes the exact original prepared prefix, granted permit or admission receipt.
-    pub fn resume_send(&mut self) -> io::Result<NativeAcceptingSend<'_>> {
+    pub fn resume_send(&mut self) -> io::Result<PreparedSend<'_>> {
         if !self.initialized {
             return Err(invalid());
         }
-        self.connection.prepared_deadline()?;
-        Ok(NativeAcceptingSend {
-            connection: &mut self.connection,
-        })
+        self.connection.resume_send()
     }
 
     /// Seals new sends while retaining only original receipt/transport/source cleanup.

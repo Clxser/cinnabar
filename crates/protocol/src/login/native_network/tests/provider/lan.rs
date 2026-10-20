@@ -1,10 +1,7 @@
 use super::*;
 use crate::login::native_network::{
     negotiated::Credentials,
-    transport::{
-        Transport,
-        early_spawn_tests::{receive, send},
-    },
+    transport::early_spawn_tests::{receive, send},
 };
 use bedrock_net::{
     BatchCodec, BatchHeader, BatchLimits, CompressionAlgorithm, CompressionSettings,
@@ -277,7 +274,7 @@ async fn signed_lan_refuses_offline_only_and_missing_or_malformed_answers_withou
         ] {
             let (mut listener, address) = listener(online, true, identity).await;
             let proof = proof();
-            let result = Transport::connect(
+            let result = crate::login::native_network::transport::connect(
                 &NativeConnectionTarget::new(address.to_string(), NativeTransport::NetherNetLan),
                 None,
                 Some(&proof),
@@ -317,7 +314,7 @@ async fn signed_lan_expiry_rejects_association_and_send_without_losing_the_ready
             NativeConnectionTarget::new(address.to_string(), NativeTransport::NetherNetLan);
         let mut expired = proof();
         expired.expires = Some(Instant::now());
-        let result = Transport::connect(
+        let result = crate::login::native_network::transport::connect(
             &target,
             None,
             Some(&expired),
@@ -331,7 +328,7 @@ async fn signed_lan_expiry_rejects_association_and_send_without_losing_the_ready
         ));
         let proof = proof();
         let (connected, accepted) = tokio::join!(
-            Transport::connect(
+            crate::login::native_network::transport::connect(
                 &target,
                 None,
                 Some(&proof),

@@ -93,8 +93,9 @@ dependency_free = true
 name = "protocol"
 path = "crates/protocol"
 # Native networking uses external cinnabar-mc/bedrock-net and nethernet libraries;
-# generated handshake, pack negotiation and spawn owners are external; adapters
-# retain account admission, I/O, raw FIFO bounds and presentation policy.
+# generated handshake, pack negotiation and spawn owners are external. The native-only
+# bedrock-client-tokio dependency owns retained codec/FIFO/cipher and concrete transport I/O;
+# protocol retains account admission, UI field limits, tap/trace and bridge presentation.
 # NetherNet's pure JWS/JWK owner supplies credential verification primitives.
 # Optional Player Messaging composes the SDK socket in the external networking edge.
 # Addressed HTTP uses the same native HTTP/Nether owners with explicit Rustls and WebPKI roots;

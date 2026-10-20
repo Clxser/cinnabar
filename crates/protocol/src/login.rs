@@ -22,9 +22,7 @@ mod cache_status;
 mod cache_status_ingress_tests;
 mod client_data;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-pub use client_data::{
-    ClientDataRefusal, NativeDeviceProfile, RawClientData, ValidatedClientData, relay_url_host,
-};
+pub use client_data::{NativeDeviceProfile, ValidatedRelayData};
 mod game_data;
 mod latency_probe;
 mod outbound;
@@ -39,14 +37,12 @@ pub use session_join::{JoinPreparation, SessionIo, SessionLogin};
 pub(crate) mod native_network;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub use native_network::{
-    NativeAcceptingCapacity, NativeAcceptingIo, NativeAcceptingRetired, NativeAcceptingSend,
-    NativeAcceptingSendOutcome, NativeAcceptingSendRetirement, NativeAuthentication,
-    NativeCredential, NativeHostWorld, NativeHostedRelay, NativeHostedRelayClosing,
-    NativeHostedRelayProgress, NativeHostedUpstream, NativeHostedUpstreamClosing,
-    NativeHostingIdentity, NativeProvider, NativeRelayClosing, NativeRelayConnecting,
-    NativeRelayConnection, NativeRelayDriver, NativeRelayHandoff, NativeRelayInbound,
-    NativeRelayRetired, NativeRelaySender, NativeRelayWritten, NativeServiceClock,
-    NativeTokenVerifier, native_host_packs,
+    NativeAcceptingIo, NativeAcceptingRetired, NativeAuthentication, NativeCredential,
+    NativeHostWorld, NativeHostedRelay, NativeHostedRelayClosing, NativeHostedRelayProgress,
+    NativeHostedUpstream, NativeHostedUpstreamClosing, NativeHostingIdentity, NativeProvider,
+    NativeRelayClosing, NativeRelayConnecting, NativeRelayConnection, NativeRelayDriver,
+    NativeRelayHandoff, NativeRelayInbound, NativeRelayRetired, NativeRelaySender,
+    NativeRelayWritten, NativeServiceClock, native_host_packs,
 };
 mod unused_packets;
 mod web_handoff;

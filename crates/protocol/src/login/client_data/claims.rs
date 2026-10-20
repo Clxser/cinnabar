@@ -1,6 +1,7 @@
 //! One signing boundary for canonical desktop maps and original relay value representations.
 
-use super::{DISPLAY_NAME, RawClientData};
+use super::DISPLAY_NAME;
+use bedrock_net::login::client_data::RawClientData;
 use serde_json::{Map, Value, value::RawValue};
 use std::io;
 

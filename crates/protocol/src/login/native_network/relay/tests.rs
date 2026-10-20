@@ -131,7 +131,7 @@ async fn relay_handoff_preserves_raw_startup_siblings_and_consuming_close() {
         let client = async {
             let target =
                 NativeConnectionTarget::new(address.to_string(), NativeTransport::NetherNetLan);
-            let connected = transport::Transport::connect(
+            let connected = crate::login::native_network::transport::connect(
                 &target,
                 None,
                 None,
@@ -139,14 +139,16 @@ async fn relay_handoff_preserves_raw_startup_siblings_and_consuming_close() {
             )
             .await
             .unwrap();
-            let mut joining =
-                NativeRelayConnecting::from_connection(Connection::new(connected), target.address);
+            let mut joining = NativeRelayConnecting::from_connection(
+                crate::login::native_network::connection::upstream(connected),
+                target.address,
+            );
             let random = crate::ClientRandomId::new(1).unwrap();
             let claims =
                 crate::login_client_data("Fixture", random, None, &crate::LoginSettings::default());
             joining
                 .negotiate(
-                    crate::RawClientData::from_value(&claims).unwrap(),
+                    bedrock_net::login::client_data::RawClientData::from_value(&claims).unwrap(),
                     false,
                     None,
                 )

@@ -111,7 +111,7 @@ async fn deferred_and_unread_siblings_reframe_within_the_original_packet_bound()
         let client = async {
             let target =
                 NativeConnectionTarget::new(address.to_string(), NativeTransport::NetherNetLan);
-            let transport = transport::Transport::connect(
+            let transport = crate::login::native_network::transport::connect(
                 &target,
                 None,
                 None,
@@ -119,7 +119,7 @@ async fn deferred_and_unread_siblings_reframe_within_the_original_packet_bound()
             )
             .await
             .unwrap();
-            let connection = Connection::new(transport);
+            let connection = crate::login::native_network::connection::upstream(transport);
             let mut joining = NativeRelayConnecting::from_connection(connection, target.address);
             let claims = crate::login_client_data(
                 "Fixture",
@@ -129,7 +129,7 @@ async fn deferred_and_unread_siblings_reframe_within_the_original_packet_bound()
             );
             joining
                 .negotiate(
-                    crate::RawClientData::from_value(&claims).unwrap(),
+                    bedrock_net::login::client_data::RawClientData::from_value(&claims).unwrap(),
                     false,
                     None,
                 )

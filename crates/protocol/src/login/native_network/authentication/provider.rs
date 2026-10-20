@@ -1,7 +1,8 @@
 //! Bounded provider acquisition shared by actual native account owners.
 
-use super::{NativeAuthentication, NativeCredential, NativeHostingIdentity, NativeTokenVerifier};
-use crate::RawClientData;
+use super::{NativeAuthentication, NativeCredential, NativeHostingIdentity};
+use bedrock_net::login::client_data::RawClientData;
+use bedrock_net::login::provider::ProviderVerifier;
 use p384::ecdsa::SigningKey;
 use provider_http::{Client, StatusCode};
 use serde::Deserialize;
@@ -23,7 +24,7 @@ pub struct NativeProvider {
     expected_issuer: String,
     client: Client,
     configuration: Option<Configuration>,
-    verifier: Option<NativeTokenVerifier>,
+    verifier: Option<ProviderVerifier>,
     fetched: Option<Instant>,
 }
 
@@ -44,7 +45,7 @@ impl NativeProvider {
         now: Instant,
     ) -> io::Result<Self> {
         let mut provider = Self::new(issuer, user_agent)?;
-        provider.verifier = Some(NativeTokenVerifier::new(
+        provider.verifier = Some(ProviderVerifier::new(
             provider.expected_issuer.clone(),
             &["RS256".into()],
             jwks,
@@ -163,7 +164,7 @@ impl NativeProvider {
     }
 
     /// Acquires the same bounded public peer-verifier snapshot without minting a player credential.
-    pub async fn peer_verifier(&mut self) -> io::Result<NativeTokenVerifier> {
+    pub async fn peer_verifier(&mut self) -> io::Result<ProviderVerifier> {
         self.refresh_if_needed(true).await?;
         self.verifier.clone().ok_or_else(failed)
     }
@@ -201,7 +202,7 @@ impl NativeProvider {
             .as_ref()
             .expect("acquired OpenID configuration");
         let bytes = self.document(secure_url(&configuration.jwks_uri)?).await?;
-        let verifier = NativeTokenVerifier::new(
+        let verifier = ProviderVerifier::new(
             self.expected_issuer.clone(),
             configuration
                 .id_token_signing_alg_values_supported
@@ -224,7 +225,7 @@ impl NativeProvider {
             .send()
             .await
             .map_err(|_| failed())?;
-        let limit = NativeTokenVerifier::MAX_DOCUMENT_BYTES;
+        let limit = ProviderVerifier::MAX_DOCUMENT_BYTES;
         if response.status() != StatusCode::OK
             || response
                 .content_length()
@@ -276,8 +277,7 @@ fn intended_issuer(value: &str) -> io::Result<String> {
 
 /// Public verification metadata never follows plaintext, credentials, fragments or query policy overrides.
 fn secure_url(value: &str) -> io::Result<Url> {
-    if value.len() > NativeTokenVerifier::MAX_PROVIDER_URL_BYTES
-        || value.chars().any(char::is_control)
+    if value.len() > ProviderVerifier::MAX_PROVIDER_URL_BYTES || value.chars().any(char::is_control)
     {
         return Err(failed());
     }

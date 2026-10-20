@@ -1,12 +1,13 @@
 //! Fixed controlled world over the original accepting Login, pack and initialization owners.
 
-use crate::{NativeAcceptingIo, NativeTokenVerifier};
+use crate::NativeAcceptingIo;
 use bedrock_client::server::{
     ServerApprovalEvent, ServerHandshakeOptions, ServerLoginEvent, ServerSettingsEvent,
     session::{
         ServerPackDelivery, ServerPackEvent, ServerPackSnapshot, ServerSpawnEvent, ServerWorld,
     },
 };
+use bedrock_net::login::provider::ProviderVerifier;
 use bedrock_net::login::{LoginError, LoginVerifier, TrustedIdentity};
 use bedrock_protocol_1_26_51::{packets, types::ActorRuntimeID};
 use p384::ecdsa::SigningKey;
@@ -23,13 +24,13 @@ pub const MARKER_RADIUS: u8 = 3;
 
 /// Strict provider proof with the original acquired service clock, not generic fixture host UTC.
 pub struct Policy {
-    verifier: NativeTokenVerifier,
+    verifier: ProviderVerifier,
     clock: crate::NativeServiceClock,
 }
 
 impl Policy {
     /// Retains the original public verifier and calibrated monotonic service observation.
-    pub fn new(verifier: NativeTokenVerifier, clock: crate::NativeServiceClock) -> Self {
+    pub fn new(verifier: ProviderVerifier, clock: crate::NativeServiceClock) -> Self {
         Self { verifier, clock }
     }
 }

@@ -6,12 +6,12 @@ use super::{
     session::{PlayLease, closed, progress},
     upstream,
 };
+use bedrock_net::login::client_data::{RawClientData, ValidationError};
 use bridge::{FrameQueue, FrameRead, contract::*};
 use bytes::Bytes;
 use futures::StreamExt;
 use protocol::{
-    ClientDataRefusal, NativeRelayClosing, NativeRelayConnecting, NativeRelayDriver,
-    NativeRelayRetired, RawClientData,
+    NativeRelayClosing, NativeRelayConnecting, NativeRelayDriver, NativeRelayRetired,
     session_wire::{self, CoreMessage},
 };
 use std::{io, sync::Arc, time::Instant};
@@ -184,7 +184,7 @@ impl Playing {
             Ok(request) => request,
             Err(_) => {
                 return self
-                    .refuse(&frames, ClientDataRefusal::Generic, deadline)
+                    .refuse(&frames, ValidationError::Generic, deadline)
                     .await;
             }
         };
@@ -238,13 +238,20 @@ impl Playing {
     async fn refuse(
         &mut self,
         frames: &FrameQueue,
-        refusal: ClientDataRefusal,
+        refusal: ValidationError,
         deadline: Instant,
     ) -> io::Result<()> {
         upstream::current(&self.lease, deadline)?;
         let terminal = CoreMessage::Disconnect(session_wire::SessionDisconnect {
             reason: 0,
-            message: refusal.disconnect_key().into(),
+            message: match refusal {
+                ValidationError::Generic => bridge::contract::DISCONNECT_KEY_CANT_CONNECT,
+                ValidationError::OutdatedClient => bridge::contract::DISCONNECT_KEY_OUTDATED_CLIENT,
+                ValidationError::OutdatedServer => bridge::contract::DISCONNECT_KEY_OUTDATED_SERVER,
+                ValidationError::InvalidSkin => bridge::contract::DISCONNECT_KEY_INVALID_SKIN,
+                ValidationError::InvalidName => bridge::contract::DISCONNECT_KEY_INVALID_NAME,
+            }
+            .into(),
             filtered_message: String::new(),
             hide_screen: false,
         });

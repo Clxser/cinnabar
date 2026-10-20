@@ -12,7 +12,7 @@ use std::{
 use tokio::sync::{mpsc, oneshot};
 
 use super::{PacketSender, Reader, SessionTransport};
-use crate::login::native_network::{Connection, PacketConnection};
+use bedrock_client_tokio::{PacketIo, connection::Connection};
 
 mod budget;
 pub(crate) mod delay;
@@ -235,7 +235,7 @@ impl NativeSender {
         &self,
         body: Bytes,
     ) -> io::Result<oneshot::Receiver<io::Result<()>>> {
-        Connection::check_body_size(&body)?;
+        Connection::check_body_size(&body, bedrock_net::BatchLimits::default().max_decoded_bytes)?;
         if *self
             .closed
             .lock()
@@ -283,13 +283,13 @@ impl NativeSender {
 
 /// Prepares the original count-only incoming owner without polling or spawning it.
 #[cfg(test)]
-pub(crate) fn prepare(connection: impl PacketConnection) -> PreparedPump {
+pub(crate) fn prepare(connection: impl PacketIo) -> PreparedPump {
     prepare_with_byte_budget(connection, None)
 }
 
 /// Prepares the same incoming owner; byte credit must be attached before FIFO commitment.
 pub(crate) fn prepare_with_byte_budget(
-    mut connection: impl PacketConnection,
+    mut connection: impl PacketIo,
     byte_budget: Option<usize>,
 ) -> PreparedPump {
     let mut budget = byte_budget.map(ByteBudget::new);
@@ -381,11 +381,7 @@ pub(crate) fn prepare_with_byte_budget(
 }
 
 /// Completes one original accepted write without letting a policy wake cancel cipher progress.
-async fn write_batch(
-    connection: &mut impl PacketConnection,
-    writes: &mut Writes,
-    batch: SendBatch,
-) {
+async fn write_batch(connection: &mut impl PacketIo, writes: &mut Writes, batch: SendBatch) {
     let tracking = writes.delay.tracking(delay::now());
     let position =
         tracking.and_then(|tracking| position::own_position(&batch.body, tracking.actor));
@@ -400,8 +396,8 @@ async fn write_batch(
 
 impl SessionTransport {
     /// Moves login's connection and unread packets into the same play FIFO.
-    pub(crate) fn from_native(connection: impl PacketConnection) -> Self {
-        let rtt = connection.observe_rtt();
+    pub(crate) fn from_native(connection: impl PacketIo) -> Self {
+        let rtt = connection.observe_rtt().map(crate::RoundTripTime::native);
         let PreparedPump {
             sender,
             incoming,

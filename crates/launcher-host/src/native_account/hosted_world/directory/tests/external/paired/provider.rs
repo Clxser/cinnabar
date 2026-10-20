@@ -83,7 +83,7 @@ impl Provider {
         let token = format!("{input}.{}", URL_SAFE_NO_PAD.encode(signature.to_vec()));
         let credential =
             protocol::NativeCredential::new(token, service_time, expires, observed).unwrap();
-        let verifier = protocol::NativeTokenVerifier::new(
+        let verifier = bedrock_net::login::provider::ProviderVerifier::new(
             HOSTED_WORLD_ISSUER.into(),
             &["RS256".into()],
             &self.jwks,

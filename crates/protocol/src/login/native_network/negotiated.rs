@@ -4,13 +4,14 @@ use super::{
     Connection, NativeAuthentication, apply_key_exchange, authentication, failure,
     handshake_failure, packs, transport,
 };
-use crate::login::client_data::{NativeClaims, RawClientData};
+use crate::login::client_data::NativeClaims;
 use crate::session_wire::SessionIdentity;
 use crate::{NativeConnectionTarget, ProtocolError, SessionLogin};
 use bedrock_client::handshake::{
     ClientHandshake, ClientLogin, ClientPackOffer, HandshakeOptions, LoginEvent, SettingsEvent,
 };
 use bedrock_net::login::OfflineIdentity;
+use bedrock_net::login::client_data::RawClientData;
 use bedrock_packs::ResourcePackHandoff;
 use bedrock_protocol_1_26_51::packets;
 use p384::{ecdsa::SigningKey, elliptic_curve::Generate};
@@ -25,6 +26,7 @@ mod identity;
 pub(super) struct NegotiatedConnection {
     pub(super) connection: Connection,
     pub(super) packs: ResourcePackHandoff,
+    pub(super) identity: SessionIdentity,
 }
 
 /// Completes the sole transport, Login and pack negotiation under the caller's join deadline.
@@ -71,7 +73,9 @@ pub(super) async fn negotiate(
         let cutoff = identity
             .expires
             .map_or(deadline, |expires| deadline.min(expires.into()));
-        let connected = transport::Transport::connect(target, None, Some(&identity), cutoff).await;
+        let connected =
+            crate::login::native_network::transport::connect(target, None, Some(&identity), cutoff)
+                .await;
         if let Some(expires) = identity.expires {
             authentication::ensure_current(expires, Instant::now())
                 .map_err(ProtocolError::Authentication)?;
@@ -79,8 +83,13 @@ pub(super) async fn negotiate(
         (connected, target.address.clone())
     } else {
         (
-            transport::Transport::connect(target, credentials.messaging.take(), None, deadline)
-                .await,
+            crate::login::native_network::transport::connect(
+                target,
+                credentials.messaging.take(),
+                None,
+                deadline,
+            )
+            .await,
             target.address.clone(),
         )
     };
@@ -91,8 +100,8 @@ pub(super) async fn negotiate(
             failure(error)
         }
     })?;
-    let mut connection = Connection::new(transport);
-    let (packs, _) = negotiate_connected(
+    let mut connection = crate::login::native_network::connection::upstream(transport);
+    let (packs, identity) = negotiate_connected(
         &mut connection,
         &address,
         LoginData::Desktop(login),
@@ -109,6 +118,7 @@ pub(super) async fn negotiate(
     Ok(NegotiatedConnection {
         connection,
         packs: packs.handoff,
+        identity,
     })
 }
 
@@ -189,19 +199,15 @@ pub(super) async fn connect_local(
     target: &NativeConnectionTarget,
     credentials: &Credentials,
     deadline: tokio::time::Instant,
-) -> Result<(transport::Transport, String), ProtocolError> {
+) -> Result<(bedrock_client_tokio::transport::Transport, String), ProtocolError> {
     target.validate().map_err(failure)?;
     let (transport, label) = match target.transport {
         crate::NativeTransport::LocalNetherNetLan => {
             let (address, level, budget) = target.local_lan_route().map_err(failure)?;
-            let (transport, id) =
-                transport::lan::LanTransport::connect_local(address, level, budget, deadline)
-                    .await
-                    .map_err(failure)?;
-            (
-                transport::Transport::NetherNetLan(Box::new(transport)),
-                id.to_string(),
-            )
+            let (transport, id) = transport::lan::connect_local(address, level, budget, deadline)
+                .await
+                .map_err(failure)?;
+            (transport, id.to_string())
         }
         crate::NativeTransport::LocalNetherNetHttp => {
             let address = target.local_http_address().map_err(failure)?;
@@ -272,7 +278,7 @@ pub(super) async fn negotiate_connected(
     let configured = ClientHandshake::new(
         key,
         HandshakeOptions {
-            batch_encryption: connection.transport.batch_encryption(),
+            batch_encryption: connection.transport().batch_encryption(),
             blob_cache: input.client_cache(),
             max_login_bytes: connection.max_decoded_bytes(),
             ..Default::default()
@@ -285,9 +291,11 @@ pub(super) async fn negotiate_connected(
         configured
     };
     let (mut settings, request) = configured.start().map_err(handshake_failure)?;
-    connection.send(request).await?;
+    super::connection::send(connection, request).await?;
     let login_ready = loop {
-        let packet = connection.next_packet().await.map_err(failure)?;
+        let packet = super::connection::next_packet(connection)
+            .await
+            .map_err(failure)?;
         match settings.receive(*packet.data).map_err(handshake_failure)? {
             SettingsEvent::Ready { login, compression } => {
                 connection
@@ -299,7 +307,7 @@ pub(super) async fn negotiate_connected(
                 settings: pending,
                 packet,
             } => {
-                connection.defer_unhandled(*packet)?;
+                super::connection::defer_unhandled(connection, *packet)?;
                 settings = pending;
             }
         }
@@ -339,7 +347,7 @@ pub(super) async fn negotiate_connected(
         },
     };
     claims
-        .set_transport(address, connection.transport.nonce())
+        .set_transport(address, connection.transport().nonce())
         .map_err(failure)?;
     let claims = claims.into_raw().map_err(failure)?;
     let deadline = token.as_ref().map(|(_, expires)| *expires);
@@ -362,8 +370,8 @@ pub(super) async fn negotiate_connected(
     }
     .map_err(|error| handshake_failure(error.into_parts().1))?;
     match deadline {
-        Some(deadline) => connection.send_before(packet, deadline).await?,
-        None => connection.send(packet).await?,
+        Some(deadline) => super::connection::send_before(connection, packet, deadline).await?,
+        None => super::connection::send(connection, packet).await?,
     }
     let packs = match receive_login(connection, handshake).await? {
         Some(offer) => packs::acquire(connection, offer, acquisition).await?,
@@ -373,7 +381,11 @@ pub(super) async fn negotiate_connected(
             preloaded: Default::default(),
         },
     };
-    connection.identity = Some(identity.clone());
+    connection.set_identity(bedrock_client_tokio::connection::identity::WireIdentity {
+        display_name: identity.display_name.clone(),
+        xuid: identity.xuid.clone(),
+        uuid: identity.uuid.clone(),
+    });
     Ok((packs, identity))
 }
 
@@ -384,7 +396,9 @@ async fn receive_login(
     mut handshake: ClientLogin,
 ) -> Result<Option<ClientPackOffer>, ProtocolError> {
     loop {
-        let packet = connection.next_packet().await.map_err(failure)?;
+        let packet = super::connection::next_packet(connection)
+            .await
+            .map_err(failure)?;
         match handshake.receive(*packet.data).map_err(handshake_failure)? {
             LoginEvent::Send { login, packets } => {
                 packs::send_packets(connection, packets).await?;
@@ -398,16 +412,19 @@ async fn receive_login(
                 packs,
             } => {
                 if let Some(status) = cache_status {
-                    connection.send(status).await?;
+                    super::connection::send(connection, status).await?;
                 }
                 return Ok(Some(packs));
             }
             LoginEvent::Startup { start_game } => {
-                connection.defer_unhandled(packets::Packet::StartGame(start_game))?;
+                super::connection::defer_unhandled(
+                    connection,
+                    packets::Packet::StartGame(start_game),
+                )?;
                 return Ok(None);
             }
             LoginEvent::Unhandled { login, packet } => {
-                connection.defer_unhandled(*packet)?;
+                super::connection::defer_unhandled(connection, *packet)?;
                 handshake = login;
             }
         }

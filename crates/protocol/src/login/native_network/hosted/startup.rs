@@ -5,6 +5,7 @@ use crate::session_wire::CoreMessage;
 use bedrock_client::server::session::{
     PendingServerRelay, ServerRelayInitialized, ServerRelayProgress, ServerRelaying,
 };
+use bedrock_client_tokio::connection::send::PreparedSend;
 
 /// Original accepting relay owner paired with its same guest/local upstream through initialization.
 /// The caller still owns current account/opening/member approval at every actual send commit.
@@ -140,9 +141,7 @@ impl<A> NativeHostedRelay<A> {
     /// Prepares the retained original effect once, without committing the actual permit/cipher.
     /// Returned disjoint Login/grant borrows permit fresh checks after actual capacity waits.
     /// Drive its original capacity/receipt, then call `complete_forward` instead of send `finish`.
-    pub fn prepare_forward(
-        &mut self,
-    ) -> io::Result<(&AuthenticatedLogin, &A, NativeAcceptingSend<'_>)> {
+    pub fn prepare_forward(&mut self) -> io::Result<(&AuthenticatedLogin, &A, PreparedSend<'_>)> {
         self.live()?;
         if let Err(error) = self.prepare_effect() {
             self.failed = true;
@@ -215,17 +214,13 @@ impl<A> NativeHostedRelay<A> {
     }
 
     /// Reborrows the same destination's original prefix/permit/receipt after cancellation.
-    pub fn resume_forward(
-        &mut self,
-    ) -> io::Result<(&AuthenticatedLogin, &A, NativeAcceptingSend<'_>)> {
+    pub fn resume_forward(&mut self) -> io::Result<(&AuthenticatedLogin, &A, PreparedSend<'_>)> {
         self.live()?;
         self.borrow_prepared()
     }
 
     /// Splits original authority and destination fields so checks remain possible after capacity waits.
-    fn borrow_prepared(
-        &mut self,
-    ) -> io::Result<(&AuthenticatedLogin, &A, NativeAcceptingSend<'_>)> {
+    fn borrow_prepared(&mut self) -> io::Result<(&AuthenticatedLogin, &A, PreparedSend<'_>)> {
         let effect = self
             .effect
             .as_ref()
@@ -241,8 +236,7 @@ impl<A> NativeHostedRelay<A> {
             Source::Client => &mut self.upstream.connection,
             Source::Server => &mut self.wire.connection,
         };
-        connection.prepared_deadline()?;
-        Ok((login, grant, NativeAcceptingSend { connection }))
+        Ok((login, grant, connection.resume_send()?))
     }
 
     /// Requires the SAME destination's complete retained send before advancing typed startup.

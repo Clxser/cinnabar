@@ -1,12 +1,13 @@
 //! Pending original cache work must not stop the negotiated RakNet I/O owner.
 
 use super::*;
-use crate::login::native_network::{Connection, PacketConnection, transport::Transport};
 use ::raknet::prelude::{
     Established, RakClock, RakPriority, RakReliability, RakServer, RakServerConfig, RakServerInput,
     RakServerOutput, RakSession, RakSessionInput, RakSessionOutput, RakSessionState, Sans,
 };
 use bedrock_client::packs::{PackOffer, PackTransferLimits};
+use bedrock_client_tokio::PacketIo;
+use bedrock_client_tokio::transport::Transport;
 use bedrock_net::{
     BatchCodec, BatchHeader, BatchLimits,
     raknet::{DisconnectReason, RakNetConnection, RakNetError, RakNetOptions},
@@ -225,7 +226,8 @@ async fn pending_pack_cache_io_keeps_original_raknet_ack_and_packet_prefix() {
                 .await
                 .map_err(|error| format!("actual public RakNet connection: {error}"))?;
             client_address = Some(actual.local_addr());
-            let mut connection = Connection::new(Transport::from_raknet(actual));
+            let mut connection =
+                crate::login::native_network::connection::upstream(Transport::from_raknet(actual));
             let observed = async {
                 let mut waiting = Box::pin(super::super::wait_io(&mut connection, stores.finish()));
                 if !futures::poll!(waiting.as_mut()).is_pending() {
@@ -235,12 +237,10 @@ async fn pending_pack_cache_io_keeps_original_raknet_ack_and_packet_prefix() {
                     .send(())
                     .map_err(|_| "original peer did not retain cache observation".to_owned())?;
                 waiting.await;
-                let first = connection
-                    .next_packet()
+                let first = crate::login::native_network::connection::next_packet(&mut connection)
                     .await
                     .map_err(|error| format!("first original retained packet: {error}"))?;
-                let second = connection
-                    .next_packet()
+                let second = crate::login::native_network::connection::next_packet(&mut connection)
                     .await
                     .map_err(|error| format!("second original retained packet: {error}"))?;
                 let terminal =

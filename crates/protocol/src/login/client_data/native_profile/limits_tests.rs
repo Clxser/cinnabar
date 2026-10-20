@@ -1,8 +1,8 @@
-use super::{ClientDataRefusal, RawClientData};
 use crate::{
     ClientRandomId, LoginSettings, NativeDeviceProfile, PROTOCOL_VERSION, login_client_data,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use bedrock_net::login::client_data::{RawClientData, ValidationError};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::net::{Ipv4Addr, SocketAddr};
@@ -27,7 +27,7 @@ fn metadata_limits_reject_brackets_in_port_before_service_lookup() {
     claims["ServerAddress"] = json!(inputs.bracketed_port);
     let result = profile.validate_relay(raw(&claims), PROTOCOL_VERSION);
     assert!(
-        matches!(result, Err(ClientDataRefusal::Generic)),
+        matches!(result, Err(ValidationError::Generic)),
         "SplitHostPort must reject a bracket in the port before service lookup: {result:?}",
     );
 }
@@ -54,7 +54,7 @@ fn metadata_limits_accept_valid_decoded_skin_json_above_value_depth() {
 /// These two bounded synthetic inputs are shared with the actual pinned Go consumer.
 fn inputs() -> Inputs {
     serde_json::from_str(include_str!(
-        "../../../../../tests/fixtures/native-client-data-limits.json"
+        "../../../../tests/fixtures/native-client-data-limits.json"
     ))
     .unwrap()
 }

@@ -1,6 +1,7 @@
 //! One provider-qualified host proof shared by SDP answers and the accepting Login key exchange.
 
-use super::{NativeCredential, NativeTokenVerifier, messaging};
+use super::{NativeCredential, messaging};
+use bedrock_net::login::provider::ProviderVerifier;
 use nethernet::identity::{SdpIdentity, TokenTrust};
 use p384::ecdsa::SigningKey;
 use std::{io, sync::Arc, time::Instant};
@@ -23,7 +24,7 @@ impl NativeHostingIdentity {
     pub fn new(
         key: Arc<SigningKey>,
         credential: NativeCredential,
-        verifier: &NativeTokenVerifier,
+        verifier: &ProviderVerifier,
         selected_xuid: &str,
         now: Instant,
     ) -> io::Result<Self> {

@@ -177,12 +177,7 @@ async fn connect_http(
             }
         }
         let address = format!("{endpoint}:{port}");
-        return Ok((
-            Transport::Http(Box::new(super::AcceptedTransport::new(
-                client.into_accepted(),
-            ))),
-            address,
-        ));
+        return Ok((Transport::from_http(client), address));
     }
 }
 

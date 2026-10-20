@@ -3,16 +3,17 @@
 mod wait;
 
 use super::*;
+use bedrock_net::login::provider::ProviderVerifier;
 use bedrock_net::login::{AuthenticatedLogin, LoginError, LoginVerifier, TrustedIdentity};
 use p384::ecdsa::VerifyingKey;
-use protocol::{NativeServiceClock, NativeTokenVerifier};
+use protocol::NativeServiceClock;
 use sha2::{Digest, Sha256};
 use std::time::SystemTime;
 
 /// One host's immutable public verification snapshot and original service-clock/deadline observation.
 /// This grants no world access, starts no worker and owns no authentication cache or proof key.
 pub struct NativeHostedLoginPolicy {
-    verifier: NativeTokenVerifier,
+    verifier: ProviderVerifier,
     clock: NativeServiceClock,
     deadline: Instant,
     opening: HostOpening,
@@ -23,7 +24,7 @@ pub struct NativeHostedLoginPolicy {
 impl NativeHostedLoginPolicy {
     /// Captures only the original directory/account/world and existing public provider owner.
     pub(super) fn new(
-        verifier: NativeTokenVerifier,
+        verifier: ProviderVerifier,
         clock: NativeServiceClock,
         deadline: Instant,
         opening: HostOpening,

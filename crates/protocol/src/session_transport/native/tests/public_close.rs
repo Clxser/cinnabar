@@ -117,7 +117,7 @@ struct HeldClose {
     dropped: Option<oneshot::Sender<()>>,
 }
 
-impl PacketConnection for HeldClose {
+impl PacketIo for HeldClose {
     async fn send_body(&mut self, _: Bytes) -> io::Result<()> {
         Ok(())
     }

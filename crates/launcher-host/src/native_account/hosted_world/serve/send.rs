@@ -1,8 +1,9 @@
 //! Fresh concrete application authority at the original retained transport commit boundary.
 
 use super::{HostedApproval, HostedLoginApproval, NativeHostedLoginPolicy, NativeHostedWorld};
+use bedrock_client_tokio::connection::send::PreparedSend;
 use bedrock_net::login::AuthenticatedLogin;
-use protocol::{NativeAcceptingIo, NativeAcceptingSend};
+use protocol::NativeAcceptingIo;
 use std::{io, time::Instant};
 
 /// Borrows the exact existing predicate owners for this accepting continuation.
@@ -46,7 +47,7 @@ impl NativeHostedWorld {
     /// Drives original capacity/receipts; every new synchronous commit follows current service authority.
     pub(super) async fn advance_send(
         &mut self,
-        send: &mut NativeAcceptingSend<'_>,
+        send: &mut PreparedSend<'_>,
         authority: SendAuthority<'_>,
     ) -> io::Result<()> {
         let deadline = send.deadline();
@@ -63,7 +64,7 @@ impl NativeHostedWorld {
     /// Completes setup output before its original typed flushed or codec-install continuation.
     pub(super) async fn send_setup(
         &mut self,
-        mut send: NativeAcceptingSend<'_>,
+        mut send: PreparedSend<'_>,
         authority: SendAuthority<'_>,
     ) -> io::Result<()> {
         self.advance_send(&mut send, authority).await?;

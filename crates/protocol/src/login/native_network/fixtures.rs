@@ -1,10 +1,8 @@
 //! Nondefault paired-host fixtures over the same provider, negotiation and spawn owners.
 
-use super::{
-    Connection, NativeAuthentication, NativeProvider, negotiated, packs, spawn,
-    transport::Transport,
-};
+use super::{NativeAuthentication, NativeProvider, negotiated, packs, spawn};
 use crate::{GameData, PlaySession, ProtocolError, SessionLogin};
+use bedrock_client_tokio::transport::Transport;
 use bedrock_packs::ResourcePackHandoff;
 use nethernet_tokio::NetherClient;
 use std::{io, time::Instant};
@@ -34,8 +32,10 @@ pub async fn hosted_client<P: Send + 'static>(
     prepare: impl FnOnce(ResourcePackHandoff, GameData) -> P + Send + 'static,
 ) -> Result<(PlaySession, P), ProtocolError> {
     let credentials = negotiated::Credentials::new(Some(authentication))?;
-    let mut connection = Connection::new(Transport::fixture_nether(client, nonce));
-    let (packs, _) = negotiated::negotiate_connected(
+    let mut connection = crate::login::native_network::connection::upstream(
+        Transport::from_ready_client(client, nonce),
+    );
+    let (packs, identity) = negotiated::negotiate_connected(
         &mut connection,
         &address,
         negotiated::LoginData::Desktop(&login),
@@ -47,6 +47,7 @@ pub async fn hosted_client<P: Send + 'static>(
         negotiated::NegotiatedConnection {
             connection,
             packs: packs.handoff,
+            identity,
         },
         login,
         prepare,

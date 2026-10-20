@@ -158,7 +158,7 @@ async fn relay_acquires_cdn_only_archive_without_requesting_any_game_chunks() {
         let client = async {
             let target =
                 NativeConnectionTarget::new(address.to_string(), NativeTransport::NetherNetLan);
-            let connected = transport::Transport::connect(
+            let connected = crate::login::native_network::transport::connect(
                 &target,
                 None,
                 None,
@@ -166,15 +166,18 @@ async fn relay_acquires_cdn_only_archive_without_requesting_any_game_chunks() {
             )
             .await
             .unwrap();
-            let mut joining =
-                NativeRelayConnecting::from_connection(Connection::new(connected), target.address);
+            let mut joining = NativeRelayConnecting::from_connection(
+                crate::login::native_network::connection::upstream(connected),
+                target.address,
+            );
             let claims = crate::login_client_data(
                 "Fixture",
                 crate::ClientRandomId::new(1).unwrap(),
                 None,
                 &crate::LoginSettings::default(),
             );
-            let claims = crate::RawClientData::from_value(&claims).unwrap();
+            let claims =
+                bedrock_net::login::client_data::RawClientData::from_value(&claims).unwrap();
             PUBLIC_CDN_ENDPOINT
                 .scope(endpoint, joining.negotiate(claims, false, None))
                 .await

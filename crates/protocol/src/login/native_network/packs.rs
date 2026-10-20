@@ -3,7 +3,7 @@
 mod acquisition;
 pub(super) mod verified;
 
-use super::{Connection, PacketConnection, apply_key_exchange, failure, handshake_failure};
+use super::{Connection, PacketIo, apply_key_exchange, failure, handshake_failure};
 use crate::ProtocolError;
 use bedrock_client::{
     handshake::{ClientPackOffer, PacksEvent},
@@ -107,9 +107,11 @@ pub(super) async fn acquire(
     }
     let (mut negotiation, response) = preloading.start().map_err(pack_failure)?;
     stores.queue_completed(&cache, |id| negotiation.completed_archive(id), &cancelled.0);
-    connection.send(response).await?;
+    super::connection::send(connection, response).await?;
     loop {
-        let packet = connection.next_packet().await.map_err(failure)?;
+        let packet = super::connection::next_packet(connection)
+            .await
+            .map_err(failure)?;
         if matches!(&*packet.data, packets::Packet::ResourcePackStack(_)) {
             // The library transfers exclusive archive ownership at the stack boundary.
             wait_io(connection, stores.finish()).await;
@@ -135,7 +137,7 @@ pub(super) async fn acquire(
                     let (response, handoff) = complete.into_parts();
                     (response, handoff, None)
                 };
-                connection.send(response).await?;
+                super::connection::send(connection, response).await?;
                 return Ok(Acquired {
                     handoff,
                     metadata,
@@ -146,7 +148,7 @@ pub(super) async fn acquire(
                 negotiation = apply_key_exchange(connection, exchange).await?;
             }
             PacksEvent::Unhandled { packs, packet } => {
-                connection.defer_unhandled(*packet)?;
+                super::connection::defer_unhandled(connection, *packet)?;
                 negotiation = packs;
             }
         }
@@ -155,7 +157,7 @@ pub(super) async fn acquire(
 
 /// Drives service work beside one retained I/O wait; ordinary reads still own staged terminals.
 async fn wait_io<T>(
-    connection: &mut impl PacketConnection,
+    connection: &mut impl PacketIo,
     operation: impl std::future::Future<Output = T>,
 ) -> T {
     tokio::pin!(operation);
@@ -178,7 +180,7 @@ pub(super) async fn send_packets(
         .map(crate::Packet::new)
         .collect::<Vec<_>>();
     for batch in packets.chunks(bedrock_net::BatchLimits::default().max_packets) {
-        connection.send_packets(batch).await?;
+        super::connection::send_packets(connection, batch).await?;
     }
     Ok(())
 }

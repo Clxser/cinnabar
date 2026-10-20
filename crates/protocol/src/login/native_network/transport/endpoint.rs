@@ -1,6 +1,6 @@
 //! Resolved alternatives share the original join cutoff and own their actual connection attempts.
 
-use super::{LanTransport, NativeConnectionTarget, NativeTransport, RakNetTransport, Transport};
+use super::{NativeConnectionTarget, NativeTransport, Transport, lan};
 use bedrock_net::raknet::{RakNetConnection, RakNetOptions};
 use futures::{StreamExt, stream::FuturesUnordered};
 use std::{future::Future, io, net::SocketAddr};
@@ -46,15 +46,11 @@ async fn connect_resolved(
                         };
                         RakNetConnection::connect(address, options)
                             .await
-                            .map(RakNetTransport::new)
-                            .map(Transport::RakNet)
+                            .map(Transport::from_raknet)
                             .map_err(io::Error::other)
                     }
                     NativeTransport::NetherNetLan => {
-                        LanTransport::connect(address, identity, deadline)
-                            .await
-                            .map(Box::new)
-                            .map(Transport::NetherNetLan)
+                        lan::connect(address, identity, deadline).await
                     }
                     NativeTransport::Addressed
                     | NativeTransport::NetherNetMessaging

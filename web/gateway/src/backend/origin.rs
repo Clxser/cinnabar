@@ -34,7 +34,7 @@ fn authority(origin: &str) -> Option<String> {
     {
         return None;
     }
-    let decoded = protocol::relay_url_host(host)?;
+    let decoded = bedrock_net::login::client_data::decode_url_host(host)?;
     if let Some(literal) = decoded.strip_prefix('[') {
         let (literal, _) = literal.rsplit_once(']')?;
         let address = match literal.split_once('%') {

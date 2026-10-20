@@ -15,7 +15,7 @@ pub fn decode_connect(frame: &[u8]) -> Result<ConnectRequest, BridgeError> {
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub fn decode_native_connect(
     frame: &[u8],
-) -> Result<ConnectRequest<crate::RawClientData>, BridgeError> {
+) -> Result<ConnectRequest<bedrock_net::login::client_data::RawClientData>, BridgeError> {
     connect(frame)
 }
 

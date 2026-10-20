@@ -1,18 +1,18 @@
 //! Qualified provider credentials and their original finite validity.
 
+use bedrock_net::login::client_data::RawClientData;
 mod answer;
 mod hosting;
 pub(super) use answer::offline_answer_trust;
 pub use hosting::NativeHostingIdentity;
 mod messaging;
 mod provider;
-pub use provider::NativeProvider;
-mod verifier;
+use bedrock_net::login::provider::{ProviderVerifier, VerifiedClaims};
 pub(super) use messaging::identity_policy;
 pub(super) use messaging::{MessagingAdmission, MessagingTarget};
-pub use verifier::NativeTokenVerifier;
+pub use provider::NativeProvider;
 
-use crate::login::client_data::{NativeClaims, RawClientData};
+use crate::login::client_data::NativeClaims;
 use p384::ecdsa::SigningKey;
 use serde_json::value::RawValue;
 use std::{
@@ -40,12 +40,12 @@ impl NativeCredential {
     ) -> io::Result<Self> {
         let token = Zeroizing::new(token);
         if token.is_empty()
-            || token.len() > verifier::MAX_TOKEN_BYTES
+            || token.len() > ProviderVerifier::MAX_DOCUMENT_BYTES
             || hard_expiry <= service_time
         {
             return Err(expired());
         }
-        verifier::parsed(&token)?;
+        ProviderVerifier::validate_format(&token)?;
         Ok(Self {
             token,
             clock: NativeServiceClock {
@@ -79,12 +79,13 @@ impl NativeCredential {
     fn qualify(
         &self,
         key: &p384::ecdsa::VerifyingKey,
-        verifier: &NativeTokenVerifier,
+        verifier: &ProviderVerifier,
         selected_xuid: &str,
         now: Instant,
-    ) -> io::Result<(nethernet::identity::jwt::Claims, Instant)> {
-        let identity = verifier.verify(&self.token, key, selected_xuid, self.now(now)?)?;
+    ) -> io::Result<(VerifiedClaims, Instant)> {
+        let identity = verifier.verify_bound(&self.token, key, selected_xuid, self.now(now)?)?;
         let expiry = identity
+            .claims()
             .expiry()
             .expect("qualified identity has expiry")
             .min(self.hard_expiry);
@@ -114,7 +115,7 @@ pub struct NativeAuthentication {
     pub(super) expires: Instant,
     pub(super) identity: crate::session_wire::SessionIdentity,
     clock: NativeServiceClock,
-    verifier: Arc<NativeTokenVerifier>,
+    verifier: Arc<ProviderVerifier>,
     messaging: Option<(bedrock_net::messaging::PreparedMessaging, MessagingTarget)>,
 }
 
@@ -132,7 +133,7 @@ impl NativeAuthentication {
         key: SigningKey,
         credential: NativeCredential,
         client_data: &RawValue,
-        verifier: &NativeTokenVerifier,
+        verifier: &ProviderVerifier,
         selected_xuid: &str,
         now: Instant,
     ) -> io::Result<Self> {
@@ -154,7 +155,7 @@ impl NativeAuthentication {
         key: SigningKey,
         credential: NativeCredential,
         client_data: RawClientData,
-        verifier: &NativeTokenVerifier,
+        verifier: &ProviderVerifier,
         selected_xuid: &str,
         now: Instant,
     ) -> io::Result<Self> {
@@ -174,7 +175,7 @@ impl NativeAuthentication {
         key: SigningKey,
         credential: NativeCredential,
         mut claims: NativeClaims,
-        verifier: &NativeTokenVerifier,
+        verifier: &ProviderVerifier,
         selected_xuid: &str,
         now: Instant,
     ) -> io::Result<Self> {
@@ -182,6 +183,7 @@ impl NativeAuthentication {
             credential.qualify(key.verifying_key(), verifier, selected_xuid, now)?;
         claims.set_display_name(
             identity
+                .claims()
                 .display_name()
                 .expect("qualified identity has name"),
         )?;
@@ -191,7 +193,7 @@ impl NativeAuthentication {
             claims,
             expires,
             clock: credential.clock,
-            identity: verifier::session_identity(&identity)?,
+            identity: session_identity(&identity)?,
             verifier: Arc::new(verifier.clone()),
             messaging: None,
         })
@@ -305,7 +307,7 @@ pub(super) struct AuthenticationHandoff {
 /// Pure original credential policy retained only for an actual signaling consumer.
 pub(super) struct SdpPolicy {
     pub(super) clock: NativeServiceClock,
-    pub(super) verifier: Arc<NativeTokenVerifier>,
+    pub(super) verifier: Arc<ProviderVerifier>,
 }
 
 /// The mint's original calibrated service observation, shared by local SDP and peer verification.
@@ -345,9 +347,10 @@ pub(super) fn ensure_current(expires: Instant, now: Instant) -> io::Result<()> {
 
 /// Identifies only the finite credential deadline, preserving transport errors separately.
 pub(super) fn is_expired(error: &io::Error) -> bool {
-    error
-        .get_ref()
-        .is_some_and(|cause| cause.is::<ExpiredCredential>())
+    error.get_ref().is_some_and(|cause| {
+        cause.is::<ExpiredCredential>()
+            || cause.is::<bedrock_client_tokio::transport::ExpiredAdmission>()
+    })
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -357,4 +360,27 @@ struct ExpiredCredential;
 /// Omits token, identity, provider URL and key diagnostics.
 pub(super) fn expired() -> io::Error {
     io::Error::new(io::ErrorKind::PermissionDenied, ExpiredCredential)
+}
+
+/// Maps already verified provider identity into the application's bridge projection.
+fn session_identity(claims: &VerifiedClaims) -> io::Result<crate::session_wire::SessionIdentity> {
+    let trusted = claims.identity().map_err(|_| credential_rejected())?;
+    let player = trusted.player_identity().ok_or_else(credential_rejected)?;
+    Ok(crate::session_wire::SessionIdentity {
+        xuid: claims
+            .claims()
+            .xuid()
+            .ok_or_else(credential_rejected)?
+            .to_owned(),
+        display_name: player.display_name().to_owned(),
+        uuid: player.uuid().to_string(),
+    })
+}
+
+/// Omits credential, identity and key details at the application's handoff boundary.
+fn credential_rejected() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "native multiplayer credential verification failed",
+    )
 }
