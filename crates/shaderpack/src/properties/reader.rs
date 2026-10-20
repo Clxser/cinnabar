@@ -35,7 +35,8 @@ pub(super) fn read_entries(
     let mut remaining_bytes = MAX_EXPANDED_PROPERTIES_BYTES;
     let mut raw_continuation = None;
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    for (index, physical) in text.lines().enumerate() {
+    let mut physical_lines = text.lines().enumerate();
+    while let Some((index, physical)) = physical_lines.next() {
         let line = u32::try_from(index + 1).unwrap_or(u32::MAX);
         let trimmed = physical.trim();
         if trimmed.is_empty() {
@@ -43,7 +44,25 @@ pub(super) fn read_entries(
         }
         let continuation = raw_continuation.take();
         let kept = if let Some(rest) = trimmed.strip_prefix('#') {
-            if let Some(directive) = Directive::parse(rest) {
+            if Directive::parse(rest).is_none() {
+                lines.push((line, String::new()));
+                continue;
+            }
+            let mut in_comment = false;
+            let mut code = directive_code(rest, &mut in_comment);
+            while in_comment {
+                let Some((_, physical)) = physical_lines.next() else {
+                    break;
+                };
+                code.push(' ');
+                code.push_str(&directive_code(physical, &mut in_comment));
+            }
+            if in_comment {
+                diagnostics.push(PropertiesDiagnostic {
+                    line,
+                    message: "directive comment is missing its */".to_owned(),
+                });
+            } else if let Some(directive) = Directive::parse(&code) {
                 conditionals.apply(directive, line, diagnostics);
             }
             String::new()
@@ -163,12 +182,10 @@ fn expand_into<'a>(
     out: &mut String,
     max_bytes: usize,
 ) -> Result<(), &'static str> {
-    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
     let mut rest = text;
     let mut after_defined = false;
-    while let Some(start) = rest.bytes().position(is_word) {
+    while let Some((start, len)) = crate::options::next_code_word(rest) {
         append_expanded(out, &rest[..start], max_bytes)?;
-        let len = rest[start..].bytes().take_while(|&b| is_word(b)).count();
         let word = &rest[start..start + len];
         rest = &rest[start + len..];
         match defines.get_key_value(word) {
@@ -283,7 +300,36 @@ fn unescape(text: &str) -> String {
     out
 }
 
-/// A preprocessor directive; arguments are trimmed and stripped of `//` comments.
+/// Removes directive comments while preserving quoted text and multi-line block state.
+fn directive_code(mut text: &str, in_comment: &mut bool) -> String {
+    let mut out = String::new();
+    while !text.is_empty() {
+        if *in_comment {
+            let Some((_, rest)) = text.split_once("*/") else {
+                break;
+            };
+            text = rest;
+            *in_comment = false;
+            out.push(' ');
+        } else if text.starts_with("//") {
+            break;
+        } else if let Some(rest) = text.strip_prefix("/*") {
+            text = rest;
+            *in_comment = true;
+            out.push(' ');
+        } else if let Some(len) = crate::options::quoted_len(text) {
+            out.push_str(&text[..len]);
+            text = &text[len..];
+        } else {
+            let c = text.chars().next().unwrap();
+            out.push(c);
+            text = &text[c.len_utf8()..];
+        }
+    }
+    out
+}
+
+/// A preprocessor directive with trimmed, comment-free arguments.
 #[derive(Clone, Copy)]
 enum Directive<'a> {
     If(&'a str),
@@ -310,7 +356,7 @@ impl<'a> Directive<'a> {
         {
             return None;
         }
-        let args = args.split_once("//").map_or(args, |(code, _)| code).trim();
+        let args = args.trim();
         Some(match word {
             "if" => Directive::If(args),
             "ifdef" => Directive::Ifdef(args),
@@ -461,6 +507,7 @@ impl Conditionals {
         };
         let source = format!("#if {condition}\n1\n#else\n0\n#endif\n");
         let mut preprocessor = Preprocessor::new(&source);
+        preprocessor.set_iris_conditions(true);
         for (name, value) in &self.defines {
             // A macro that cannot be defined is simply absent, as an undefined name.
             let _ = preprocessor.add_define(name, flag_value(value));
