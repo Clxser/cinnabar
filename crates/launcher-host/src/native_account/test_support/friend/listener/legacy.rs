@@ -105,12 +105,11 @@ async fn maintain(
                     driver.prepare_delivery_before(signal.sender(), signal.signal(), deadline)
                         .map_err(failed)?.await.map_err(failed)?;
                 }
-                Event::Completed { request, result } => {
-                    if pending.as_ref().is_some_and(|(id, _)| *id == request) {
-                        let (_, original) = pending.take().unwrap();
-                        if result.is_err() { return Err(failed(())); }
-                        original.finish(Ok(SignalDelivery::ServiceAccepted));
-                    }
+                Event::Completed { request, result }
+                    if pending.as_ref().is_some_and(|(id, _)| *id == request) => {
+                    let (_, original) = pending.take().unwrap();
+                    if result.is_err() { return Err(failed(())); }
+                    original.finish(Ok(SignalDelivery::ServiceAccepted));
                 }
                 _ => {},
             }
