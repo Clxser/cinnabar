@@ -8,8 +8,13 @@ mod tests;
 use super::prepare::check_preparation_deadline;
 use super::{read_identity::ReadIdentity, *};
 use bedrock_services::minecraft::gatherings::{ExperiencePlayerCount, SearchFilter};
+use std::collections::HashSet;
 use tokio::time::Instant;
 use uuid::Uuid;
+
+// Application resource limits for a complete refresh, independent of service/vanilla policy.
+const MAX_CATALOG_PAGES: usize = 32;
+const MAX_CATALOG_ITEMS: usize = 1024;
 
 /// One explicit experience selection from an original verified account's catalog.
 /// The service must still resolve and authorize its actual connection when selected.
@@ -73,7 +78,7 @@ impl NativeFeatured {
 }
 
 impl NativeAccount {
-    /// Reads one source-ordered catalog page without allocating any experience server.
+    /// Reads the complete bounded catalog without allocating any experience server.
     pub(crate) async fn read_featured(
         self: Arc<Self>,
         deadline: Instant,
@@ -90,10 +95,44 @@ impl NativeAccount {
                 .await
                 .map_err(service_error)?;
             check_preparation_deadline(deadline)?;
-            let result = gatherings.search_items(&SearchFilter::default()).await;
+            let result = async {
+                let mut filter = SearchFilter::default();
+                let mut continuations = HashSet::new();
+                let mut items = Vec::new();
+                for _ in 0..MAX_CATALOG_PAGES {
+                    check_preparation_deadline(deadline)?;
+                    let page = gatherings
+                        .search_items(&filter)
+                        .await
+                        .map_err(service_error)?;
+                    check_preparation_deadline(deadline)?;
+                    if page.items.len() > MAX_CATALOG_ITEMS - items.len() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "featured catalog item limit exceeded",
+                        ));
+                    }
+                    items.extend(page.items);
+                    if page.continuation_token.is_empty() {
+                        return Ok(items);
+                    }
+                    if !continuations.insert(page.continuation_token.clone()) {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "featured catalog continuation repeated",
+                        ));
+                    }
+                    filter.continuation_token = page.continuation_token;
+                }
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "featured catalog page limit exceeded",
+                ))
+            }
+            .await;
             operation.persist()?;
             check_preparation_deadline(deadline)?;
-            let rows = projection::rows(result.map_err(service_error)?.items);
+            let rows = projection::rows(result?);
             let (servers, gatherings) = rows
                 .into_iter()
                 .map(|(server, experience)| {
