@@ -635,12 +635,12 @@ mod tests {
     #[cfg(feature = "native-networking")]
     #[test]
     fn native_routing_preserves_gathering_and_friend_provisioning_owners() {
-        let selected = |address, local_world| {
+        fn selected(address: &str, local_world: bool) -> bool {
             !matches!(
                 destination::classify(address, protocol::NativeTransport::RakNet, local_world),
                 destination::Destination::LocalWorld
             )
-        };
+        }
         assert!(selected("play.example.net", false));
         assert!(selected(
             &format!("{}7", bridge::contract::REALM_TARGET_PREFIX),

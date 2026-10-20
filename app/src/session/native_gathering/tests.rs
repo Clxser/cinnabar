@@ -1,6 +1,6 @@
 use super::*;
 use bevy::prelude::{App, Update};
-use client_shell::{menu::test_support as menu_fixture, ui_resources::UiRuntimeResource};
+use client_shell::ui_resources::UiRuntimeResource;
 use client_ui::ui_runtime::UiRuntime;
 use launcher::{accounts::AccountStore, install_layout::Platform};
 use std::sync::Arc;

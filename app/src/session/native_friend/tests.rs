@@ -4,7 +4,7 @@ mod fixture;
 
 use super::*;
 use fixture::Original;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Retains only bounded ownership facts and error kinds for the final post-cleanup assertion.
 #[derive(Debug)]

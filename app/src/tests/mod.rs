@@ -22,7 +22,6 @@ use render_model::{
     GraphicsAdapterMetadata, OpaqueDrawMode, VisibilityDiagnosticSnapshot, VisibilityKeyDigest,
 };
 use std::{
-    path::Path,
     sync::{Arc, mpsc},
     time::{Duration, Instant},
 };

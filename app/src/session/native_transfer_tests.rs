@@ -1,6 +1,5 @@
 use super::*;
 use bevy::prelude::{App, Update};
-use client_shell::menu::test_support as menu_fixture;
 use client_shell::ui_resources::UiRuntimeResource;
 use client_ui::ui_runtime::UiRuntime;
 

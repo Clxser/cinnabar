@@ -1,5 +1,4 @@
 use client_shell::menu::MenuRuntime;
-use client_shell::menu::test_support as menu_fixture;
 use launcher::menu::{MenuAction, MenuScreen};
 #[test]
 fn reconnect_drives_two_fresh_production_attempts_and_retires_old_controls() {

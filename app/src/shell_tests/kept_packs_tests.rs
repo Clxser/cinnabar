@@ -1,5 +1,4 @@
 //! Leaving for the menu keeps the newest server packs recent joins compiled, for a rejoin.
-use client_shell::menu::test_support as menu_fixture;
 use client_shell::ui_resources::UiRuntimeResource;
 
 use crate::runtime::network::resource_packs::PackApplication;
