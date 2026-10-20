@@ -634,18 +634,31 @@ fn integer_inputs_and_random_bounds_keep_all_signed_bits() {
 }
 
 #[test]
-fn smooth_accepts_constant_expressions_as_compatibility_ids() {
+fn smooth_only_literal_arguments_select_the_compatibility_id_overload() {
     let mut uniforms = compile_ok(&[
-        "uniform.float.negative = smooth(-7, target, 1, 1)",
-        "uniform.float.expression = smooth(2 + 3, target, 1, 1)",
-        "uniform.float.named = smooth(pi, target, 1, 1)",
+        "uniform.float.negative = smooth(-7, fade, fade)",
+        "uniform.float.expression = smooth(2 + 3, fade, fade)",
+        "uniform.float.named = smooth(pi, fade, fade)",
+        "uniform.float.literal = smooth(7, target, 1, 1)",
     ]);
-    let at = |target| builtins(&[("target", UniformValue::Float(target))]);
-    uniforms.evaluate(&at(0.0), 0.1);
-    let results = uniforms.evaluate(&at(1.0), 0.1);
-    for name in ["negative", "expression", "named"] {
-        assert_eq!(float(results, name), 0.5);
-    }
+    let at = |target| {
+        builtins(&[
+            ("target", UniformValue::Float(target)),
+            ("fade", UniformValue::Float(1.0)),
+        ])
+    };
+    let results = uniforms.evaluate(&at(0.0), 0.1);
+    assert_eq!(float(results, "negative"), -7.0);
+    assert_eq!(float(results, "expression"), 5.0);
+    assert_eq!(float(results, "named"), PI);
+    assert_eq!(float(results, "literal"), 0.0);
+    assert_eq!(float(uniforms.evaluate(&at(1.0), 0.1), "literal"), 0.5);
+    assert_eq!(
+        compile(&["uniform.float.invalid = smooth(2 + 3, target, 1, 1)"])
+            .1
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -689,4 +702,50 @@ fn smooth_zero_decay_uses_the_target_even_without_elapsed_time() {
         uniforms.evaluate(&at(0.0), 0.1);
         assert_eq!(float(uniforms.evaluate(&at(1.0), elapsed), "level"), 1.0);
     }
+}
+
+#[test]
+fn integer_literals_remain_distinct_from_float_literals() {
+    let mut uniforms = compile_ok(&[
+        "uniform.int.literal = 16777217",
+        "uniform.int.sum = 16777216 + 1",
+        "uniform.int.overflow = 2147483647 + 1",
+        "uniform.bool.distinct = 16777217 != 16777216",
+        "uniform.bool.float_equal = 16777217.0 == 16777216.0",
+        "uniform.float.division = 7 / 2",
+    ]);
+    let results = uniforms.evaluate(&no_builtins, 0.0);
+    assert_eq!(get(results, "literal"), UniformValue::Int(16777217));
+    assert_eq!(get(results, "sum"), UniformValue::Int(16777217));
+    assert_eq!(get(results, "overflow"), UniformValue::Int(i32::MIN));
+    assert_eq!(get(results, "distinct"), UniformValue::Bool(true));
+    assert_eq!(get(results, "float_equal"), UniformValue::Bool(true));
+    assert_eq!(float(results, "division"), 3.5);
+}
+
+#[test]
+fn integer_function_overloads_keep_integer_precision() {
+    let mut uniforms = compile_ok(&[
+        "uniform.int.clamped = clamp(large, low, high)",
+        "uniform.int.edge_value = edge(large, low)",
+        "uniform.bool.inside = between(large, low, low)",
+        "uniform.int.modulo = fmod(large, ten)",
+    ]);
+    let at = builtins(&[
+        ("large", UniformValue::Int(16777217)),
+        ("low", UniformValue::Int(16777216)),
+        ("high", UniformValue::Int(16777218)),
+        ("ten", UniformValue::Int(10)),
+    ]);
+    let results = uniforms.evaluate(&at, 0.0);
+    assert_eq!(get(results, "clamped"), UniformValue::Int(16777217));
+    assert_eq!(get(results, "edge_value"), UniformValue::Int(0));
+    assert_eq!(get(results, "inside"), UniformValue::Bool(false));
+    assert_eq!(get(results, "modulo"), UniformValue::Int(7));
+}
+
+#[test]
+fn float_modulo_uses_remainders_without_cancellation() {
+    let mut uniforms = compile_ok(&["uniform.float.modulo = fmod(1e20, 3.0)"]);
+    assert_eq!(float(uniforms.evaluate(&no_builtins, 0.0), "modulo"), 2.0);
 }

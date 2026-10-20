@@ -118,7 +118,7 @@ pub(super) enum Func2 {
     Pow,
     /// `atan2(y, x)` / `atan(y, x)`.
     Atan2,
-    /// `fmod(x, y)`: floor modulus `x - y * floor(x / y)`.
+    /// `fmod(x, y)`: remainder with the divisor's sign.
     Fmod,
     /// `edge(k, x)`: 0 when `x < k`, else 1 (GLSL `step`).
     Edge,
@@ -214,6 +214,7 @@ impl Compiler<'_> {
     pub(super) fn compile(&mut self, expr: &Expr) -> Result<Compiled, String> {
         match expr {
             Expr::Number(value) => Ok((Node::Const(Value::Num(*value as f32)), Shape::Scalar)),
+            Expr::Integer(value) => Ok((Node::Const(Value::Int(*value)), Shape::Scalar)),
             Expr::Bool(value) => Ok((Node::Const(Value::Bool(*value)), Shape::Scalar)),
             Expr::Ident(name) => self.ident(name),
             Expr::Defined(name) => Err(format!(
@@ -475,18 +476,11 @@ impl Compiler<'_> {
         ))
     }
 
-    /// `smooth([id,] value[, fadeUpTime[, fadeDownTime]])`. As in OptiFine, a leading
-    /// constant expression followed by more arguments is an ignored compatibility id. Every
+    /// `smooth([id,] value[, fadeUpTime[, fadeDownTime]])`. A leading numeric literal
+    /// followed by more arguments is an ignored compatibility id. Every
     /// call site has its own accumulator.
     fn smooth(&mut self, args: &[Expr]) -> Result<Compiled, String> {
-        let constant_id = args.first().is_some_and(|expr| {
-            expr.identifiers()
-                .iter()
-                .all(|name| *name == PI_NAME && !self.bindings.contains_key(PI_NAME))
-                && expr
-                    .eval(&|name| (name == PI_NAME).then_some(f64::from(PI)))
-                    .is_ok()
-        });
+        let constant_id = matches!(args.first(), Some(Expr::Number(_) | Expr::Integer(_)));
         let rest = match args {
             [_, rest @ ..] if constant_id && !rest.is_empty() => rest,
             _ => args,

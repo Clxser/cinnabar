@@ -89,12 +89,35 @@ impl Node {
             }),
             Node::Map2(func, args) => {
                 let [a, b] = &**args;
-                a.eval(frame)?
-                    .zip(b.eval(frame)?, |x, y| apply2(*func, x, y))
+                let (a, b) = (a.eval(frame)?, b.eval(frame)?);
+                match (*func, a, b) {
+                    (Func2::Edge, Value::Int(edge), Value::Int(value)) => {
+                        Ok(Value::Int(i32::from(value >= edge)))
+                    }
+                    (Func2::Fmod, Value::Int(a), Value::Int(b)) => {
+                        if b == 0 {
+                            return Err(Mismatch);
+                        }
+                        let remainder = a.wrapping_rem(b);
+                        Ok(Value::Int(
+                            if remainder != 0 && (remainder < 0) != (b < 0) {
+                                remainder + b
+                            } else {
+                                remainder
+                            },
+                        ))
+                    }
+                    _ => a.zip(b, |x, y| apply2(*func, x, y)),
+                }
             }
             Node::Map3(func, args) => {
                 let [a, b, c] = &**args;
                 let (a, b, c) = (a.eval(frame)?, b.eval(frame)?, c.eval(frame)?);
+                if let (Func3::Clamp, Value::Int(value), Value::Int(min), Value::Int(max)) =
+                    (*func, a, b, c)
+                {
+                    return Ok(Value::Int(value.min(max).max(min)));
+                }
                 Value::zip3(a, b, c, |x, y, z| apply3(*func, x, y, z))
             }
             Node::Fold(fold, items) => {
@@ -120,8 +143,13 @@ impl Node {
                 })
             }
             Node::Between(args) => {
-                let [x, min, max] = numbers(args, frame)?;
-                Ok(Value::Bool((min..=max).contains(&x)))
+                let [x, min, max] = &**args;
+                let (x, min, max) = (x.eval(frame)?, min.eval(frame)?, max.eval(frame)?);
+                let inside = match (x, min, max) {
+                    (Value::Int(x), Value::Int(min), Value::Int(max)) => (min..=max).contains(&x),
+                    _ => (number(min)?..=number(max)?).contains(&number(x)?),
+                };
+                Ok(Value::Bool(inside))
             }
             Node::Equals(args) => {
                 let [a, b, epsilon] = numbers(args, frame)?;
@@ -354,7 +382,7 @@ fn apply2(func: Func2, a: f32, b: f32) -> f32 {
     match func {
         Func2::Pow => f64::from(a).powf(f64::from(b)) as f32,
         Func2::Atan2 => f64::from(a).atan2(f64::from(b)) as f32,
-        Func2::Fmod => a - b * (a / b).floor(),
+        Func2::Fmod => (a % b + b) % b,
         Func2::Edge => {
             if b < a {
                 0.0
@@ -369,14 +397,12 @@ fn apply2(func: Func2, a: f32, b: f32) -> f32 {
 /// Applies a three-argument function to one triple of components.
 fn apply3(func: Func3, a: f32, b: f32, c: f32) -> f32 {
     match func {
-        // OptiFine `NumUtils.limit`: the lower bound wins when the bounds cross.
+        // Java min/max propagate NaN; the lower bound wins when bounds cross.
         Func3::Clamp => {
-            if a < b {
-                b
-            } else if a > c {
-                c
+            if a.is_nan() || b.is_nan() || c.is_nan() {
+                f32::NAN
             } else {
-                a
+                a.min(c).max(b)
             }
         }
         Func3::Mix => a + (b - a) * c,
