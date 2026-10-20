@@ -199,7 +199,8 @@ pub(crate) fn drive_server_form_input(
         );
         return;
     }
-    let pad_keys = gamepad_keys(pads.iter(), &mut stick);
+    let mut next_stick = *stick;
+    let pad_keys = gamepad_keys(pads.iter(), &mut next_stick);
     let pad_used = !pad_keys.is_empty()
         || pads
             .iter()
@@ -240,6 +241,7 @@ pub(crate) fn drive_server_form_input(
         .and_then(|entry| presentation.form_engine_frame(entry.identity))
         .cloned();
     if input_available && let Some(frame) = engine_frame {
+        *stick = next_stick;
         let held: Vec<_> = keys.get_pressed().map(|key| keyboard_key(*key)).collect();
         let input = engine_input::EngineInput {
             pointer_edges,

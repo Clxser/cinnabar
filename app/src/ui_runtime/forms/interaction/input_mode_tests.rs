@@ -86,6 +86,34 @@ fn control_pack(app: &mut App, control: &str) {
 }
 
 #[test]
+fn held_stick_navigates_the_first_rendered_form_frame() {
+    use bevy::input::gamepad::GamepadAxis;
+
+    let (mut app, pad) = host();
+    app.world_mut()
+        .get_mut::<Gamepad>(pad)
+        .unwrap()
+        .analog_mut()
+        .set(GamepadAxis::LeftStickY, -0.9);
+    app.update();
+    control_pack(
+        &mut app,
+        r#"{"type":"button","focus_enabled":true,"size":[100,30],"collection_index":0}"#,
+    );
+    app.update();
+    assert!(
+        app.world()
+            .resource::<UiRuntimeResource>()
+            .server_forms()
+            .engine()
+            .view
+            .focused
+            .is_some(),
+        "a stick held before rendering must navigate when the form frame becomes available"
+    );
+}
+
+#[test]
 fn controller_mapping_receives_gamepad_mode_and_keyboard_keeps_focus_navigation() {
     let (mut app, pad) = host();
     control_pack(
