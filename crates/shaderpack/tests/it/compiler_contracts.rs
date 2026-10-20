@@ -324,3 +324,26 @@ fn unused_fragment_inputs_are_removed_from_the_compiled_interface() {
         .unwrap();
     assert!(stage.module.entry_points[0].function.arguments.is_empty());
 }
+
+#[test]
+fn array_and_matrix_varyings_have_matching_compiled_locations() {
+    let translated = success(
+        "#version 450
+        out mat2 basis; out vec2 uv[2]; flat out int index;
+        void main() { basis = mat2(1.0); uv[0] = vec2(0.25); uv[1] = vec2(0.75);
+            index = 1; gl_Position = vec4(0.0); }",
+        "#version 450
+        in mat2 basis; in vec2 uv[2]; flat in int index;
+        out vec4 color; void main() { color = vec4(basis * (uv[0] + uv[1]), float(index), 1.0); }",
+    );
+    for stage in &program(&translated, "composite").stages {
+        let locations: std::collections::BTreeSet<_> = interface_locations(
+            &stage.result.as_ref().unwrap().module,
+            stage.stage == shaderpack::StageKind::Vertex,
+        )
+        .into_iter()
+        .map(|(_, location)| location)
+        .collect();
+        assert_eq!(locations, (0..5).collect());
+    }
+}
