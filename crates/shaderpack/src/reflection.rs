@@ -37,52 +37,42 @@ pub const SAMPLER_NAME: &str = "iris_sampler";
 /// Name of the shared comparison sampler in translated GLSL.
 pub const SHADOW_SAMPLER_NAME: &str = "iris_samplerShadow";
 
-/// The filtering sampler a texture is read with, by Iris's per-texture rules: render
-/// targets clamp and filter linearly, depth textures clamp without filtering, `noisetex`
-/// repeats, and custom textures follow their `.mcmeta` (`blur`, `clamp`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum SamplerClass {
-    /// Repeat, linear: the shared sampler, for `noisetex` and names without a rule.
-    RepeatLinear,
-    /// Clamp to edge, linear: `colortex`/`shadowcolor`/`shadowtex`, `lightmap` and custom
-    /// images.
-    ClampLinear,
-    /// Clamp to edge, nearest: `depthtex`.
-    ClampNearest,
-    /// Repeat, nearest (blending mip levels, as Java's atlas does): the block atlas and its
-    /// `normals`/`specular` companions, and custom textures without `blur` or `clamp`.
-    RepeatNearest,
+/// Declares sampler classes, their binding order and GLSL names together.
+macro_rules! sampler_classes {
+    ($($(#[$doc:meta])* $class:ident => ($binding:expr, $name:expr)),+ $(,)?) => {
+        /// Filtering and addressing settings used by a sampled texture.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub enum SamplerClass { $($(#[$doc])* $class),+ }
+
+        impl SamplerClass {
+            /// Every class, in binding order.
+            pub const ALL: [Self; [$(stringify!($class)),+].len()] = [$(Self::$class),+];
+
+            /// Binding in the texture group.
+            pub const fn binding(self) -> u32 {
+                match self { $(Self::$class => $binding),+ }
+            }
+
+            /// Name in translated GLSL.
+            pub const fn glsl_name(self) -> &'static str {
+                match self { $(Self::$class => $name),+ }
+            }
+        }
+    };
+}
+
+sampler_classes! {
+    /// Repeat, linear: noise textures and names without a rule.
+    RepeatLinear => (SAMPLER_BINDING, SAMPLER_NAME),
+    /// Clamp to edge, linear: colour and shadow targets.
+    ClampLinear => (2, "iris_samplerClampLinear"),
+    /// Clamp to edge, nearest: depth textures.
+    ClampNearest => (3, "iris_samplerClampNearest"),
+    /// Repeat, nearest: the block atlas and its PBR companions.
+    RepeatNearest => (4, "iris_samplerRepeatNearest"),
 }
 
 impl SamplerClass {
-    /// Every class, in binding order.
-    pub const ALL: [SamplerClass; 4] = [
-        SamplerClass::RepeatLinear,
-        SamplerClass::ClampLinear,
-        SamplerClass::ClampNearest,
-        SamplerClass::RepeatNearest,
-    ];
-
-    /// Binding in [`TEXTURE_GROUP`].
-    pub const fn binding(self) -> u32 {
-        match self {
-            SamplerClass::RepeatLinear => SAMPLER_BINDING,
-            SamplerClass::ClampLinear => 2,
-            SamplerClass::ClampNearest => 3,
-            SamplerClass::RepeatNearest => 4,
-        }
-    }
-
-    /// Name in translated GLSL.
-    pub const fn glsl_name(self) -> &'static str {
-        match self {
-            SamplerClass::RepeatLinear => SAMPLER_NAME,
-            SamplerClass::ClampLinear => "iris_samplerClampLinear",
-            SamplerClass::ClampNearest => "iris_samplerClampNearest",
-            SamplerClass::RepeatNearest => "iris_samplerRepeatNearest",
-        }
-    }
-
     /// The class bound at `binding` of [`TEXTURE_GROUP`].
     pub fn from_binding(binding: u32) -> Option<SamplerClass> {
         Self::ALL.into_iter().find(|c| c.binding() == binding)
