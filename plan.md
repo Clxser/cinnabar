@@ -51,58 +51,60 @@ closes no gate and provides no new runtime or performance evidence.
 
 ## Phase 1 — Core service
 
-Desktop builds now select native Rust by default and retain explicit `--legacy-networking`
-for the Go backend; this source migration does not establish full compatibility qualification.
-The native Rust backend composes the
-Cinnabar service SDK, Bedrock session libraries and RakNet/NetherNet transports.
-Its transport cores use caller-driven state machines; runtime adapters are explicit.
-Native account checkpoints, resource packs, local-world joins and hosted-peer
-lifecycles have focused owning coverage. Local Dragonfly worlds retain their
-existing world-process owner.
+Desktop builds select native Rust account and network services by default. Explicit
+`--legacy-networking` selects the retained Go backend for the whole launch; native
+failures do not retry through Go. Reusable service, Bedrock and RakNet/NetherNet
+libraries own authentication, framing and protocol transitions. Transport cores are
+caller-driven state machines with explicit runtime adapters. Native menus need no
+Core process or control endpoint. Dragonfly and official BDS local worlds retain
+their existing server-process owners.
+
+Saved-account restore, complete Profile service loading and a native default desktop
+server join have passed actual application acceptance, including rendered terrain,
+entities, HUD and held item, ordinary leave and normal shutdown. Featured catalogue
+joins and several server implementations also have scoped native acceptance. These
+results do not qualify every account operation, server or platform. Realms, invitations,
+account switching, forced refresh, friends-visible presence and the remaining service
+and network matrix still need end-to-end acceptance.
 
 Generic signed LAN joins require the selected account's original proof and an
 online-capable advertisement; they do not retry unsigned. Advertisement-driven
 authentication preference and fallback remain unverified. Selected own-world LAN
-joins retain their explicit offline policy.
+joins retain their explicit offline policy. Incoming NetherNet associations select
+the existing encoded-batch wire allowance before peer admission. Real oversized-input
+and startup regressions pass; this does not change presentation byte credits or
+qualify every SCTP record, fragmentation and network policy.
 
-The native browser gateway has an opt-in HTTPS/WebSocket operator using the existing
-ephemeral account and play owners, with validated certificate-file replacement and
-explicit shutdown. Its new operator controls still require execution. WebTransport
-listener and dedicated pack-stream adoption remain incomplete; WebSocket fallback
-does not close browser transport or deployment acceptance.
-Gateway pack acquisition now has a guarded public HTTP/HTTPS source candidate; CDN-only
-owning controls require execution. Hosted CDN-only packs remain incomplete where original
-upstream data metadata is unavailable; their existing chunk/metadata path is preserved.
-explicit shutdown. The optional paired WebTransport source reuses that registry,
-controller generation, native play pump and original archives on a dedicated uni stream.
-The coherent HTTP/3 header/capsule dependency and paired transport/BDS owning controls
-still require qualification. Latest-draft browser, deployment and live-account acceptance
-remain incomplete; WebSocket fallback does not close those gates.
-Gateway and hosted pack acquisition have a guarded public HTTP/HTTPS source candidate.
-Hosted preloads retain absent upstream DataInfo and derive downstream hash/type from the
-same verified original archive, with the selected delivery policy's false premium default.
-Original in-band metadata is preserved. CDN-only acquisition, downstream delivery and
-retirement controls still require execution. Opaque behavior/skin archive acquisition has a
-separate identity-validation path; strict rendering admission remains unchanged and their
-application remains unsupported. Their CDN-only downstream wire controls require qualification.
+The opt-in native browser operator shares one account registry and play owner across
+HTTPS/WebSocket and paired WebTransport. Certificate replacement, joint shutdown,
+HTTP/3 control progress, blocked pack-stream cancellation and owned BDS joins have
+owning coverage. Actual browser WebSocket and QUIC WebTransport runs reached a world
+and rendered terrain, entities and HUD with control progress and original cleanup.
+Deployment, live browser accounts, supported-browser coverage, transfers/reconnect,
+input/UI, audio parity and memory/frame budgets remain open.
 
-A native signout source candidate now waits for the original session Core's exit
-and the account event owner's completed retirement before credential mutation.
-Owning process, account and production session regressions still require execution.
+Gateway and hosted pack acquisition use guarded public HTTP/HTTPS sources. CDN-only
+acquisition, downstream delivery and retirement have owning coverage. Hosted preloads
+retain absent upstream DataInfo and derive downstream hash/type from the same verified
+archive, preserving original in-band metadata and the existing premium policy. Opaque
+behavior/skin archives use identity validation for relay; strict rendering admission
+is unchanged and applying those archives remains unsupported.
 
-Native menu services now have a source candidate that attaches the original account
-and local-world workers without a Go Core executable or control endpoint. Replacement
-still waits for the original publisher and any real child to retire. The missing-Core
-baseline failed its owning attachment control; the correction and real Core-to-native
-transition still require execution. The ordinary native friend UI gate remains disabled.
+Account replacement and sign-out wait for original session, publisher and account
+worker retirement before credential mutation. Owning cancellation, contention,
+process handoff and stale-account controls pass. Ordinary native friend UI joining
+remains disabled. Separate controlled cancellation evidence does not qualify friend play,
+which remains open. Advertised hosting, host messaging/renewal, WAN/device
+compatibility and retained memory/frame budgets remain open. Hosted upstreams without
+an advertised pack phase remain unsupported in this integration.
 
-Complete host messaging and renewal acceptance, addressed HTTP joins and trust,
-remaining account event ownership, and current client integration. Native friend
-UI joining remains gated on end-to-end qualification. Real-account lifecycle,
-featured-server and server-software coverage, WAN/device compatibility and retained
-memory/frame budgets remain open. Passing focused controls does not close these
-gates. Keep dependency identities shared across the reusable libraries and client.
-The pinned target comes from [the target manifest](assets/bedrock-target.json).
+Android uses native networking and the platform TLS verifier; target checks and APK
+assembly are verified. Physical-device sign-in, TLS, terrain and lifecycle acceptance
+remain open. Keep the explicit legacy client until its replacement acceptance permits
+removal; retaining Go server integrations is independent of that cutover. No result
+here closes full source-based parity or the complete networking goal. Keep dependency
+identities shared across reusable libraries and the client. The pinned target comes
+from [the target manifest](assets/bedrock-target.json).
 
 ## Phase 2 — World rendering
 
@@ -467,8 +469,6 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   `shaderpack`, including options, dimensions, parsed properties, program discovery
   and enable rules. Translation, render-host integration and in-game acceptance
   remain incomplete.
-  shader-pack source loading is implemented in `shaderpack`; configuration parsing,
-  translation, render-host integration and in-game acceptance remain incomplete.
 - `registryc --kind java-mapping` generates `crates/assets/data/java-mapping-v2193.bin` from
   the GeyserMC data pinned in `assets/geyser-mappings-source.json`: Java block states, block
   tags, biomes and their colours, entity types and items for every Bedrock id Geyser maps.

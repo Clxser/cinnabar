@@ -1,19 +1,24 @@
 # Workspace layout
 
-How the client, its default Go backend and opt-in Rust networking libraries fit together, and what each crate and package owns. The crate layering rules are in `tools/architecture/policy.toml`.
+How the client, its default Rust networking libraries and retained Go backend fit together,
+and what each crate and package owns. The crate layering rules are in
+`tools/architecture/policy.toml`.
 
 ## Overview
 
 ```text
-cinnabar (Rust)  ── local socket ──  bedrock-core (Go, gophertunnel)
-                                             ├─ go-raknet ──── servers and BDS
-                                             └─ go-nethernet ─ Realms and friend worlds
+cinnabar (Rust)
+  ├─ bedrock-services ── account and online services
+  ├─ bedrock-net ─────── RakNet / NetherNet sessions
+  └─ explicit --legacy-networking ── local socket ── bedrock-core (Go)
 ```
 
-This is the default backend. With the `native-networking` feature and `--native-networking`
-selection, Rust libraries own authentication, encryption and RakNet/NetherNet sessions directly.
-Native menu services require no Core process or control endpoint. Local-world server integrations
-retain their existing Dragonfly or BDS process owners. See the [native launch instructions](../../README.md#how-it-works).
+Desktop builds enable `native-networking` by default. Its Rust owners perform authentication,
+encryption and RakNet/NetherNet sessions directly. Native menu services need no Core process or
+control endpoint. Explicit `--legacy-networking`, or a build without the native feature, selects
+the retained Go backend; native failures do not retry through it. Local-world server integrations
+retain their existing Dragonfly or official BDS process owners. See the
+[native launch instructions](../../README.md#how-it-works).
 
 | Library | Used for |
 | --- | --- |
@@ -21,8 +26,8 @@ retain their existing Dragonfly or BDS process owners. See the [native launch in
 | [bedrock-services](https://github.com/cinnabar-mc/bedrock-services) | Native Microsoft/Xbox authentication, Realms, profiles, presence and signaling. |
 | [raknet](https://github.com/cinnabar-mc/raknet) | Native RakNet protocol core and its runtime adapter. |
 | [nethernet](https://github.com/cinnabar-mc/nethernet) | Native ICE, DTLS and SCTP with explicit Tokio and Bevy adapters. |
-| [protocolgen](https://github.com/cinnabar-mc/protocolgen) | Generates the Bedrock packet codec vendored in `crates/protocol/vendor`. |
-| [Axolotl Stack](https://github.com/axolotl-stack/axolotl-stack) | Jolyne (client session library), whose raw packet entries and spawn sequence `crates/protocol` adapts. MIT; see `THIRD_PARTY_NOTICES.md`. |
+| [protocolgen](https://github.com/cinnabar-mc/protocolgen) | Owns the pinned generated Bedrock packet codec shared by the client and bedrock-net. |
+| [Axolotl Stack](https://github.com/axolotl-stack/axolotl-stack) | Earlier Jolyne session integration; its MIT attribution remains in `THIRD_PARTY_NOTICES.md`. The current session owner uses bedrock-net. |
 | [gophertunnel](https://github.com/Sandertv/gophertunnel) | Bedrock login, encryption, resource packs and the packet relay. |
 | [go-raknet](https://github.com/Sandertv/go-raknet) | RakNet transport to servers, plus server-list pings. |
 | [go-nethernet](https://github.com/df-mc/go-nethernet) | WebRTC transport for Realms and friend worlds. |
@@ -89,11 +94,11 @@ coordinates work that crosses these owners.
 
 | Workspace member | Package | Ownership and caller guidance | Related owners |
 | --- | --- | --- | --- |
-| `crates/bridge` | `bridge` | Framing and I/O for the local stream to the Go core; use its bounded bridge messages. | The Go core owns upstream transports; `protocol` interprets Bedrock packets. |
-| `crates/protocol` | `protocol` | Bedrock packet codecs, shared wire contracts and session adapters; use its packet and codec APIs. | `bridge` owns local framing; the optional native backend composes `cinnabar-mc/bedrock-net` and `cinnabar-mc/nethernet`, including its pure JWS/JWK credential primitives; the codec is one pinned protocolgen Git dependency shared with bedrock-client. |
+| `crates/bridge` | `bridge` | Shared local/web framing and contracts; use its bounded bridge messages. | The explicit legacy Core uses local framing; `web-transport` and `web-gateway` share the browser contract; `protocol` interprets Bedrock packets. |
+| `crates/protocol` | `protocol` | Bedrock packet codecs, shared wire contracts and session adapters; use its packet and codec APIs. | `bridge` owns local framing; the native backend composes `cinnabar-mc/bedrock-net` and `cinnabar-mc/nethernet`, including its pure JWS/JWK credential primitives; the codec is one pinned protocolgen Git dependency shared with bedrock-client. |
 | `crates/protocol-ids` | `protocol-ids` | Dependency-free named wire IDs and pinned air identities; import its constants and enums directly. | `protocol` and `assets` share these facts; the editor can consume them on WebAssembly. |
 | `crates/zip-footer` | `zip-footer` | ZIP end-record admission for in-memory archives; run `prepare_zip_bytes` before handing bytes to a ZIP parser. | `resource-pack` and `shaderpack` share this archive policy. |
-| `crates/resource-pack` | `resource-pack` | Bounded archive admission, decryption and pack-stack views; use its read-only admitted packs. | The Go core downloads packs; `pack-runtime` prepares them; the pack compiler owners compile them. |
+| `crates/resource-pack` | `resource-pack` | Bounded archive admission, decryption and pack-stack views; use its read-only admitted packs. | Native protocol I/O or the legacy Core acquires packs; `pack-runtime` prepares them; pack compiler owners compile them. |
 | `crates/shaderpack` | `shaderpack` | Java Edition OptiFine/Iris shader-pack loading and configuration; `ShaderPack` owns options, dimensions, property parsing, program discovery and enable rules, while `PackSource` owns bounded source/asset reads. See its [contract](../../crates/shaderpack/README.md). | `resource-pack` owns Bedrock packs; shader translation, render-host integration and in-game acceptance remain incomplete. |
 | `crates/assets` | `assets` | Pack source readers, compiled carrier formats and the pinned item- and entity-facts owner; use bounded loaders and typed asset data. | The pack compiler owners write carriers; `protocol-ids` supplies query metadata IDs; `pack-runtime` prepares active session stacks. |
 | `crates/pack-compiler` | `pack-compiler` | Terrain, materials and independent carriers such as atmosphere, audio and UI; import its compiler APIs directly. | `pack-compile-input` owns shared inputs; `assets` owns formats. |
@@ -172,7 +177,7 @@ the prepared visual data to the GPU.
 | Workspace member | Package | Ownership and caller guidance | Related owners |
 | --- | --- | --- | --- |
 | `crates/launcher` | `launcher` | Bevy-free account, menu and world models plus product identity; use these models across services and screens. | `json-ui` owns vanilla screen names; `launcher-host` owns process and persistence services; `client-shell` integrates them. |
-| `crates/launcher-host` | `launcher-host` | Launcher processes, platform services, persistence and background work; use its service APIs without Bevy. | `launcher` owns models; `resource-pack` validates user pack imports; the optional native account owner consumes `bedrock-services` and owns bounded provider-key acquisition, while default upstream services remain Go-owned; `client-shell` owns ECS adapters. |
+| `crates/launcher-host` | `launcher-host` | Launcher processes, platform services, persistence and background work; use its service APIs without Bevy. | `launcher` owns models; `resource-pack` validates user pack imports; the native account owner consumes `bedrock-services` and owns bounded provider-key acquisition; the explicit legacy backend retains its Go service owner; `client-shell` owns ECS adapters. |
 | `crates/first-run` | `first-run` | Consent, download and preparation of local asset carriers, with the setup window; use its setup runner before launching the game window. | `asset-compiler` builds carriers; `bootstrap-ui` draws the setup window; `launcher-host` owns ordinary launcher services. |
 | `crates/bootstrap-ui` | `bootstrap-ui` | The shared pre-game window stack for the setup and crash windows: panorama presenter, CPU-drawn OreUI canvas and controls, focus input, preferences, window attributes and the UI font lookup; build Bevy-free windows on it. | `first-run` owns the setup window; `crash-monitor` owns the crash window; `ui` owns the OreUI theme; `render-model` owns the panorama shader. |
 | `crates/crash-monitor` | `crash-monitor` | The `--crash-monitor` process: minidump server watching the client, crash report folders, the crash window and native-dialog fallback; run it beside the client and show reports through its window API. | `crash-report` owns the report format; `launcher-host` installs in-process crash handlers; `bootstrap-ui` draws the window. |

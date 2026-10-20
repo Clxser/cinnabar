@@ -2,62 +2,57 @@
 
 ## Native direct networking (in progress)
 
-Current native application all-target and browser WebAssembly checks pass. Fresh
-renderer-free Linux BDS joins over RakNet and directed NetherNet loaded an original
-resource pack, reached spawn, received terrain and closed. The accepted native
-TLS/WebSocket gateway also passes protocol-refusal, upload-pacing, original-deadline
-and channel-mismatch regressions. Its actual BDS join exercises the shared Rust web
-consumer through required-pack verification, spawn, terrain, play-owner handback
-and control cleanup. This is separate from real-browser rendering and live-account
-acceptance. Native app and gateway strict Clippy pass on the qualified snapshots;
-final review and current-base integration gates remain open.
+Desktop builds select native Rust account/network services by default. Actual saved-account
+restore, all Profile service facets and a default desktop server join passed application
+acceptance: terrain, entities, HUD and held item were visually inspected, followed by ordinary
+leave and normal shutdown. Featured-catalogue and multiple server-implementation joins have
+separate scoped native receipts. Explicit `--legacy-networking` retains the Go backend;
+native failures never select it automatically. Its removal still requires replacement acceptance.
 
-The optional native backend consumes reusable Login, pack and spawn negotiation
-and shared JSONC/archive handoffs. Cinnabar retains bounded CDN/cache I/O,
-installation and presentation. Owning protocol tests and strict protocol/host
-clippy pass, including service progress during incoming backpressure. Reusable
-networking and SDK candidates pass Linux/macOS/Windows/MSRV CI; pure protocol and
-client WebAssembly checks pass. Concrete friend/Messaging admission retains its
-membership through connection, loading and play on the existing runtime, with
-reserved cleanup capacity and retained network-terminal ownership. The owning
-session suite passes 119 tests; native app and owning-crate compiler checks pass.
-End-to-end account/signaling/cleanup acceptance and native friend UI qualification
-remain incomplete. Go stays the default. Real-account, broad
-server/device/network, performance and source-based parity gates remain open.
+Reusable Login, pack and spawn owners retain original account/transport identity, deadlines,
+raw packet order and send receipts. Owning controls pass for early PlayerSpawn, requested
+startup latency, absent Desktop/Public pack phases, optional final stacks, unknown well-formed
+packets, incoming backpressure, shared byte-credit lifetimes and cancellation-safe physical
+close. NetherNet callers select the existing encoded-batch wire allowance before peer admission;
+a real multi-megabyte input regression and the original startup controls pass. This changes no
+presentation queue credit and does not certify every SCTP/network admission policy.
 
-Native negotiation passes23 owning tests and transport passes22, including
-early PlayerSpawn, original raw packet observations and held CDN/cache service
-progress. The target-specific resource-pack UUID correction passes its owning
-WebAssembly check. Full current-base browser, application and integration gates
-remain pending; no native default or broader compatibility gate closes.
+Renderer-free owned BDS joins over RakNet and directed NetherNet loaded original resource
+packs, reached spawn, received terrain and closed. Native WebSocket and WebTransport gateway
+controls cover refusals, upload pacing, original cutoffs, channel binding, shared certificate
+replacement/shutdown and blocked pack-writer cancellation. Required-pack and CDN-only controls
+exercise verified downstream delivery and cleanup. Actual headless browser runs over WebSocket
+and QUIC WebTransport reached worlds with terrain, entities and HUD. Browser input/UI, full
+audio behavior, live accounts, deployment and the supported-browser/network matrix remain open.
 
-The unadvertised host directory and native account-lifetime presence owners pass
-the full 450-test host suite. Presence bridge and shell filters pass, including
-actual old-process retirement before policy replacement. Ambiguous updates retain
-the original cleanup authority even after a later successful removal. Live
-account/process handoff and advertised hosting remain unqualified. The complete
-isolated signed Dragonfly-world fixture passes actual Login, pack verification,
-spawn, terrain, a live post-startup radius response and original transport/process/
-membership cleanup. Its real process uses the existing Go world backend; it does
-not establish a live Xbox advertised host or native invitation acceptance.
+The isolated signed Dragonfly-world fixture exercises actual Login, packs, initialization,
+terrain, live traffic and original transport/process/membership retirement using the existing
+Go world backend. Hosted CDN preloads preserve real archive identity without inventing DataInfo.
+Neither establishes live advertised hosting or invitations. Hosted packless upstreams remain
+unsupported in this integration. Ordinary native friend UI joining also remains disabled.
+A separate controlled fixture passes cancellation; full friend play remains unqualified.
 
-Native invite-picker controls pass the actual default RPC, missing-native-owner
-refusal, account retirement, terminal cancellation and protected post-artwork lease
-checks. The Go/Rust projection corpus and existing profile regressions pass, with
-strict host Clippy. Six anonymous Linux CPU Profile fallback pairs are byte-identical
-to the baseline renderer with the same fixture inputs and have been visually
-inspected. These captures establish no live native account or artwork-download
-acceptance. Codec cross-wire checks pass; comparative performance remains open.
+Menu, account, presence-retirement, invite-picker and stale-result controls pass, including
+cancellation and original child/publisher retirement before account mutation. Six anonymous
+CPU Profile fallback pairs preserve their original renderer/input scope; actual authenticated
+Profile loading has separate application evidence. Account switching, forced refresh, Realms,
+invitations, host messaging/renewal, friends-visible presence and remaining service coverage
+still need acceptance. The focused controls and server runs do not close those gates.
+
+Android native selection, platform-verifier bootstrap and checked JVM/resource packaging are
+composed. Target checks, packaging controls and verified APK assembly pass; physical-device
+TLS, sign-in, world, local-server and Activity lifecycle acceptance remain open. Broader
+platform, memory/frame-performance and version-matched source parity remain incomplete.
 
 ## Native protected checkpoint revisions (in progress)
 
-The native store binds opaque checkpoints to the selected account, exact OAuth
-record and SDK snapshot revision. Cross-process changes retire stale caches;
-credential dispatch suppresses active and saved cache reuse until publication.
-Proof and completed refresh survive cancellation, and the SDK still requires
-fresh policy/time admission. Owning checkpoint regressions and the pinned SDK's
-CI pass. Live-account restart acceptance, full application integration gates and
-remaining service coverage are incomplete; no account-release gate closes.
+The native store binds opaque checkpoints to the selected account, exact OAuth record and
+SDK snapshot revision. Cross-process changes retire stale caches; credential dispatch
+suppresses active and saved cache reuse until publication. Proof and completed refresh
+survive cancellation, and fresh policy/time admission remains required. Owning checkpoint
+controls and actual saved-account application restore pass. Multi-account switching,
+forced-refresh/revocation and complete restart/platform coverage remain open; the scoped
+restore does not close the full account-release gate.
 
 This ledger records acceptance evidence, separately from feature implementation. An
 open gate does not mean its feature is absent. Older rows without evidence are not
@@ -67,16 +62,15 @@ a fresh passing run or full gate acceptance.
 
 ## Browser host composition
 
-The browser host uses verified memory carriers, the shared game frame and HUD, injected
-session I/O and canvas input. Native owner checks and a wasm artifact pass. Headless Chrome with
-Metal WebGPU boots, renders an offline world's terrain and HUD, and moves its player. WebSocket
-transfer, disconnect and rejoin pass. Audio ranges feed the existing decoder and Web Audio mixer;
-real nonzero playback, gesture activation, cached suspension/resume and single-close disposal
-pass. Initial terrain latency, interactive UI controls, audio parity and hardware budgets remain
-incomplete. This adds no completed parity or browser-release gate.
-transfer, disconnect and rejoin pass. Initial terrain latency, interactive UI controls, audio
-delivery/playback and hardware budgets remain incomplete. This adds no completed parity or
-browser-release gate.
+The browser host uses verified memory carriers, the shared game frame/HUD, injected session
+I/O and canvas input. Native owner checks and WebAssembly artifacts pass. Headless Chrome
+with Metal WebGPU boots, renders an offline world's terrain and HUD, and moves its player.
+Actual native-gateway WebSocket and QUIC WebTransport runs also reached rendered worlds.
+WebSocket transfer, disconnect and rejoin have separate controls. Audio range/decoder,
+nonzero playback, gesture activation, suspension/resume and single-close disposal controls
+pass. Initial terrain latency, complete interactive UI/audio behavior, supported-browser
+coverage and hardware budgets remain incomplete; no full browser-release or parity gate closes.
+
 ## Local actor presentation flags
 
 The local rig retains animation flags separately from gameplay metadata. Visual
@@ -100,9 +94,12 @@ binding CLI and canonical carrier delivery index. Certificate renewal retains
 relay sessions and rejects invalid replacements while keeping the last good pair.
 The receive-buffer regression runs on the native test target.
 
-Incomplete: valid shared-client join/pack/transfer/reconnect integration and the
-real-browser acceptance matrix follow gameplay composition. No supported-browser,
-release, parity, memory or hardware performance gate closes from these checks.
+Shared-client required-pack joins, control cleanup and actual browser world rendering have
+scoped evidence above. Remaining release work includes the supported-browser matrix, blocked
+UDP, stalled streams, background/navigation/network changes, complete transfer/reconnect,
+live accounts, memory peaks and hardware performance. Target and edge checks alone do not
+close those release or parity gates.
+
 ## Flowerbed stem tint
 
 Wildflower and pink-petal stems retain biome grass tint independently of petal
@@ -345,8 +342,9 @@ in `semantic-input`; its Bevy wrapper stays in `client-state`. The shell also ow
 launcher/local-world resources, appearance selection and Discord presence, using
 shared session observations instead of sibling plugin dependencies. Session,
 network and audio adapters remain in `app`. Menu tests moved with their owner;
-combined session, inventory and present-mode checks remain in `app`. These moves
-have not been compiled or executed and do not close this gate.
+combined session, inventory and present-mode checks remain in `app`. Owning checks and
+actual native menu/Profile/world runs exercise this composition; full input, UI and
+hardware qualification remains open.
 
 Settings now manages ordered local components, independent reloads and per-mod permissions.
 The native mod host is always included; regular callback fuel and separate event/loading
@@ -658,10 +656,12 @@ budgets remain open; these changes do not close those acceptance gates.
 
 ## Protocol session layer
 
-`protocol::login` runs the spawn sequence and play stream over the core's session endpoint, and
-the vendored client session crate is removed. Startup ordering, terminal transfers and
-disconnects, and the one-shot initialization keep their regression coverage through a scripted
-core; those tests have not been executed locally. No existing completion entry is advanced.
+`protocol::login` runs the spawn sequence and play stream over native transports or the
+explicit legacy Core endpoint. Startup ordering, deferred/raw siblings, terminal transfers and
+disconnects, and one-shot initialization retain owning regression coverage. Actual desktop and
+browser joins exercise the shared session path. Full server/platform, parity and performance
+gates remain open.
+
 ## Controller particle attachments
 
 Typed locator and initialization contracts are implemented. Independent pinned
@@ -693,8 +693,9 @@ JSON-UI banner controls draw ordered front-cloth layers from the active artwork.
 
 `protocol` uses protocolgen's pinned Git contract crate as its only codec; Valentine and its
 normalization machinery are gone. Packet routing and UI budgets derive from the generated packet
-table and field sites rather than hand-maintained ID lists. The ported tests have not been
-executed locally. No existing completion entry is advanced.
+table and field sites rather than hand-maintained ID lists. Owning protocol checks, native
+application joins and browser builds exercise the codec. These do not close complete
+version-matched packet/content parity.
 
 ## Graphics API startup recovery
 

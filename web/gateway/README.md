@@ -46,7 +46,7 @@ it does not await protocol retirement. Individual connection refusals are contai
 accepted-stream and service-driver errors are returned to the application.
 
 This crate is a native Tokio edge. A Bevy application can drive it on its existing I/O runtime;
-it does not need a runtime per connection. Browser clients use ordinary WebSocket connections.
+it does not need a runtime per connection. Browser clients use WebSocket or paired WebTransport.
 The default library creates no listener or runtime.
 
 The opt-in native operator supplies the actual HTTPS listener, signal handling and one process
@@ -88,12 +88,13 @@ pump is added per transport. Each play retains the original native connection, v
 data, account lease and incoming FIFO. WebTransport sends its already acquired pack archives
 on one server uni stream with the original join prefix, framed PackData and FIN. The archive
 writer runs beside the same play pump and performs no second fetch. Once opened, cancellation
-resets its writer. Partial WebTransport opener cancellation remains a dependency qualification
-gate. WebSocket archive delivery remains serial on its existing play connection.
+resets its writer. Owning controls cover opener cancellation and blocked archive reset without
+closing the live controller. WebSocket archive delivery remains serial on its existing play connection.
 
 Application close first settles the original CONNECT capsule write and FIN, retaining its actual
 HTTP/3 owner through the finite physical-close stage. Local flush/FIN is not a remote game or
-browser acknowledgement. Dropping a handler remains abortive. These source paths require
-qualification against their coherent h3 dependency and actual paired/BDS controls. Retail browser,
-latest WebTransport draft, deployment and live-account acceptance remain open; WebSocket
-fallback does not close those gates.
+browser acknowledgement. Dropping a handler remains abortive. Paired/BDS controls exercise the
+coherent h3 dependency, certificate reload, joint shutdown and archive cancellation. Actual
+WebSocket and QUIC WebTransport browser runs reached rendered worlds. Supported-browser,
+latest-draft, deployment, live-account and full input/audio/performance acceptance remain open;
+WebSocket fallback does not close those gates.

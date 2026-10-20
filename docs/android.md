@@ -40,8 +40,9 @@ uninstall an earlier build (which clears its data) before installing a newer one
 The locked platform TLS verifier initializes from the application Context before setup or
 network work. Packaging checks the official verifier AAR and its Kotlin runtime hashes,
 includes its original certificate-revocation policy resource, and fails if the Rust/JVM versions
-drift. Browser links use Android ACTION_VIEW; these source paths still need device acceptance.
-
+drift. Target checks, packaging controls and APK assembly are verified. Browser links use
+Android ACTION_VIEW. Physical-device TLS, sign-in, world entry and Activity lifecycle acceptance
+remain open; an assembled APK does not qualify those runtime paths.
 
 ## Controls
 
