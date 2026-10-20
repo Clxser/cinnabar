@@ -35,10 +35,6 @@ async fn native_http_approval_persists_the_actual_key_and_later_use_is_silent() 
         deadline,
     );
     let prompt = question(&owner, &mut decision).await;
-    assert!(
-        prompt.from_session_core,
-        "the original session dialog must own this answer"
-    );
     owner.answer(prompt.id, true);
     assert!(decision.await.unwrap());
     assert!(owner.prompt().is_none());

@@ -30,7 +30,7 @@ struct Shared {
     question: Mutex<Option<Question>>,
 }
 
-/// Owns one menu-visible native join's trust lifetime, independently of account/Core polling.
+/// Owns one menu-visible native join's trust lifetime, independently of account polling.
 pub struct NativeSessionTrust {
     shared: Arc<Shared>,
     path: PathBuf,
@@ -83,8 +83,6 @@ impl TrustSource for NativeSessionTrust {
             .map(|question| ServerTrustPrompt {
                 id: question.id,
                 url: question.endpoint.clone(),
-                // This flag routes to the original session TrustSource, including native joins.
-                from_session_core: true,
             })
     }
 

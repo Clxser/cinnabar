@@ -140,7 +140,7 @@ mod tests {
         struct Envelope {
             result: Session,
         }
-        let fixture = include_str!("../../../../../core/catalog/native_home_session.json");
+        let fixture = include_str!("data/native_home_session.json");
         let envelope: Envelope = serde_json::from_str(fixture).unwrap();
         let (messages, inbox) = flatten(envelope.result).unwrap();
         assert_eq!(messages.len(), 2);

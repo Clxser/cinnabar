@@ -5,7 +5,7 @@ use super::*;
 fn native_featured_projection_matches_the_existing_go_catalog_fixture() {
     let items = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../core/catalog/testdata/featured_projection.json"
+        "/src/native_account/featured/data/featured_projection.json"
     )))
     .unwrap();
     let rows = projection::rows(items);

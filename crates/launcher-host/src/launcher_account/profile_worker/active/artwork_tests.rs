@@ -1,6 +1,6 @@
 use super::*;
 use crate::remote_images::{LAUNCHER_ART, Surface};
-use serde_json::{Value, json};
+use serde_json::json;
 use std::{
     io,
     path::PathBuf,
@@ -8,7 +8,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream, UnixListener},
+    net::{TcpListener, TcpStream},
     sync::oneshot,
 };
 
@@ -58,8 +58,8 @@ async fn serve_images(listener: TcpListener, admitted: oneshot::Sender<()>) {
     );
 }
 
-/// Loads actual Core profile data, then controls only the caller's already-admitted artwork phase.
-async fn artwork_case(action: Action) -> (Outcome, PathBuf) {
+/// Controls the original artwork phase over acquired presentation, without an account service fixture.
+async fn artwork_case(action: Action) -> (Result<(Profile, bool), Exit>, PathBuf) {
     let directory = tempfile::tempdir().unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
@@ -77,27 +77,12 @@ async fn artwork_case(action: Action) -> (Outcome, PathBuf) {
         },
     );
     let cached = images.fetch(&fast_url).await.unwrap();
-    let listener = UnixListener::bind(directory.path().join("control.sock")).unwrap();
-    let core = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        let size = stream.read_u32().await.unwrap();
-        let mut bytes = vec![0; usize::try_from(size).unwrap()];
-        stream.read_exact(&mut bytes).await.unwrap();
-        let request: Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(request["method"], bridge::contract::METHOD_PROFILE);
-        let reply = serde_json::to_vec(&json!({
-            "jsonrpc":bridge::contract::JSON_RPC_VERSION,"id":request["id"],"result":{
-                "schema_version":bridge::contract::CONTROL_SCHEMA_VERSION,"profile":{
-                    "gamertag":"Completed Profile","xuid":"123","friends":3,"followers":4,
-                    "gamerscore":42,"gamerpic":{"url":fast_url},
-                    "featured_screenshot":{"url":stall_url}}}}))
-        .unwrap();
-        stream
-            .write_u32(u32::try_from(reply.len()).unwrap())
-            .await
-            .unwrap();
-        stream.write_all(&reply).await.unwrap();
-    });
+    let loaded: Profile = serde_json::from_value(json!({
+        "gamertag":"Completed Profile","xuid":"123","friends":3,"followers":4,
+        "gamerscore":42,"gamerpic":{"url":fast_url},
+        "featured_screenshot":{"url":stall_url}
+    }))
+    .unwrap();
     let (sender, mut requests) = channel();
     requests.borrow_and_update();
     let shared = Mutex::new(Snapshot {
@@ -105,14 +90,20 @@ async fn artwork_case(action: Action) -> (Outcome, PathBuf) {
         ..Default::default()
     });
     let selection = Selection::capture(&shared);
-    let mut profile = Box::pin(run(
-        Some(directory.path()),
-        &images,
-        &shared,
-        &selection,
-        &mut requests,
-        RESPONSE_TIMEOUT,
-    ));
+    let mut profile = Box::pin(async {
+        let mut loaded = loaded;
+        let mut queued = false;
+        wait(
+            artwork::fill(&images, artwork::profile_slots(&mut loaded)),
+            &shared,
+            &selection,
+            &mut requests,
+            None,
+            &mut queued,
+        )
+        .await?;
+        Ok((loaded, queued))
+    });
     tokio::select! {
         result = admission => result.unwrap(),
         _ = &mut profile => panic!("profile ended before actual artwork admission"),
@@ -139,7 +130,6 @@ async fn artwork_case(action: Action) -> (Outcome, PathBuf) {
         }
     }
     let outcome = profile.await;
-    core.await.unwrap();
     image_server.await.unwrap();
     assert!(
         cached.is_file(),
@@ -154,11 +144,10 @@ async fn artwork_budget_preserves_loaded_profile_and_completed_image() {
     let (outcome, cached) = tokio::time::timeout(RESPONSE_TIMEOUT, artwork_case(Action::Budget))
         .await
         .unwrap();
-    let Outcome::Complete(Ok(profile), queued) = outcome else {
+    let Ok((profile, queued)) = outcome else {
         panic!("optional artwork budget discarded the loaded profile");
     };
     assert!(queued, "same-account refresh must be retained");
-    let profile = profile.into_current().await.unwrap();
     assert_eq!(profile.gamertag, "Completed Profile");
     assert_eq!(profile.xuid, "123");
     assert_eq!(
@@ -176,7 +165,7 @@ async fn account_replacement_retires_actual_pending_artwork() {
         tokio::time::timeout(RESPONSE_TIMEOUT, artwork_case(Action::AccountReplacement))
             .await
             .unwrap();
-    assert!(matches!(outcome, Outcome::Retired));
+    assert!(matches!(outcome, Err(Exit::Retired)));
 }
 
 /// A late account callback cannot revive a stopped real artwork phase.
@@ -185,5 +174,5 @@ async fn stop_retires_actual_pending_artwork_despite_late_account_wake() {
     let (outcome, _) = tokio::time::timeout(RESPONSE_TIMEOUT, artwork_case(Action::Stop))
         .await
         .unwrap();
-    assert!(matches!(outcome, Outcome::Stopped));
+    assert!(matches!(outcome, Err(Exit::Stopped)));
 }

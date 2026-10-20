@@ -21,10 +21,8 @@ pub(super) struct Statistics {
 /// Borrows the single checked policy used by actual native profile requests.
 pub(super) fn get() -> &'static Policy {
     static POLICY: LazyLock<Policy> = LazyLock::new(|| {
-        let policy: Policy = serde_json::from_str(include_str!(
-            "../../../../../core/catalog/native_profile_policy.json"
-        ))
-        .expect("checked native profile policy");
+        let policy: Policy = serde_json::from_str(include_str!("data/native_profile_policy.json"))
+            .expect("checked native profile policy");
         assert_eq!(policy.schema, 1, "supported native profile policy");
         policy
     });

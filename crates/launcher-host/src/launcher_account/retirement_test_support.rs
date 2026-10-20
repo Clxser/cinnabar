@@ -88,7 +88,7 @@ pub fn account(
         retirement_probe: Some(state),
         ..Snapshot::native(None, "")
     };
-    let account = LauncherAccount::start(None, namespace.join("artwork"), initial, runtime, tasks);
+    let account = LauncherAccount::start(namespace.join("artwork"), initial, runtime, tasks);
     (
         account,
         Signals {

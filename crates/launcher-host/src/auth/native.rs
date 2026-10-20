@@ -177,6 +177,12 @@ impl NativeAuth {
     pub(super) fn state(&self) -> &AuthState {
         &self.state
     }
+    /// Reads only the original attempt's cancellation flag for presenter fixtures.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn cancellation_requested(&self) -> bool {
+        self.cancelled
+    }
+
     /// Reports completion after all bounded persistence, without joining a thread on the frame.
     pub(super) fn complete(&self) -> bool {
         self.done.load(Ordering::Acquire)

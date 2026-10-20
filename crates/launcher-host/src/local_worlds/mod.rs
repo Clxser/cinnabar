@@ -1,9 +1,8 @@
 //! Local single-player worlds: the saved-world store, the official dedicated-server download and
-//! the local server processes. The core only learns the open world's loopback address.
+//! the local server processes and their typed loopback connection authority.
 
 mod bds;
 mod container;
-mod core_link;
 mod docker;
 mod download;
 mod import;
@@ -18,7 +17,6 @@ pub(crate) mod test_support;
 mod unpack;
 mod world;
 
-pub use core_link::{CoreLink, CoreRoute};
 pub use import::{WORLD_ARCHIVE_EXTENSION, is_world_archive};
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub(crate) use manager::HostOpening;

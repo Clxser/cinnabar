@@ -7,21 +7,15 @@ use tokio::sync::watch;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 mod native;
 
-#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 #[derive(Clone, Default)]
-pub(super) enum Source {
-    #[default]
-    Core,
-    Native(Option<Arc<crate::native_account::NativeAccount>>),
-}
+pub(super) struct Source(pub(super) Option<Arc<crate::native_account::NativeAccount>>);
 
-#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 impl Source {
-    /// Compares the selected concrete owner without opening an account lease on a frame.
-    fn same_account(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Core, Self::Core) | (Self::Native(None), Self::Native(None)) => true,
-            (Self::Native(Some(first)), Self::Native(Some(second))) => Arc::ptr_eq(first, second),
+    /// Compares the captured concrete account without acquiring credentials on a frame.
+    fn same_account(&self, current: &Self) -> bool {
+        match (&self.0, &current.0) {
+            (Some(first), Some(second)) => Arc::ptr_eq(first, second),
+            (None, None) => true,
             _ => false,
         }
     }
@@ -90,27 +84,17 @@ pub(super) struct Feed {
 }
 
 impl Feed {
-    /// Selects the existing Core source or the original native account; absent native stays absent.
+    /// Reads only the captured native account; an absent owner remains unavailable.
     pub(super) async fn round(
         &mut self,
-        source: &impl super::feeds::FeedSource,
         art: Option<&artwork::FeedArt>,
         shared: &Mutex<Snapshot>,
         changed: &mut watch::Receiver<Wake>,
     ) -> bool {
-        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-        {
-            let selected = Selection::capture(&shared.lock().unwrap_or_else(|p| p.into_inner()));
-            if let Source::Native(account) = &selected.source {
-                return self
-                    .native
-                    .round(account, art, shared, &selected, changed)
-                    .await;
-            }
-            self.native = native::Cache::default();
-        }
-        let _ = (changed, art);
-        super::feeds::featured_round(source, shared).await
+        let selected = Selection::capture(&shared.lock().unwrap_or_else(|p| p.into_inner()));
+        self.native
+            .round(&selected.source.0, art, shared, &selected, changed)
+            .await
     }
 }
 
@@ -138,7 +122,7 @@ pub(super) fn take_rows(
     )
 }
 
-/// Splits the core's featured entry into its menu card and selected details.
+/// Splits the acquired featured entry into its menu card and selected details.
 pub(super) fn card(server: &FeaturedServer) -> (MenuServerCard, ServerDetails) {
     let card = MenuServerCard {
         name: server.name.clone(),
@@ -173,4 +157,18 @@ pub(super) fn card(server: &FeaturedServer) -> (MenuServerCard, ServerDetails) {
         logo_url: server.logo.url.clone(),
     };
     (card, details)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An absent selected owner completes locally without publishing unrelated account data.
+    #[tokio::test]
+    async fn missing_native_featured_owner_remains_unavailable() {
+        let shared = Mutex::new(Snapshot::native(None, ""));
+        let (_wake, mut changed) = watch::channel(Wake::Account);
+        assert!(Feed::default().round(None, &shared, &mut changed).await);
+        assert!(shared.lock().unwrap().featured.is_none());
+    }
 }

@@ -634,7 +634,7 @@ impl Manager {
     }
 
     /// The open world as the core routes and hosts it.
-    pub(crate) fn core_report(&self) -> LocalWorld {
+    pub(crate) fn world_report(&self) -> LocalWorld {
         let life = lock(&self.inner.life);
         let target = match (&life.instance, &life.world) {
             (Some(instance), Some(world)) if life.state == WorldState::Running => {

@@ -114,7 +114,7 @@ async fn reopening_the_same_world_revokes_the_original_host_before_account_or_ne
         .manager
         .native_hosted_world(Arc::clone(&account), deadline())
         .unwrap();
-    let original_target = fixture.manager.core_report().target.unwrap();
+    let original_target = fixture.manager.world_report().target.unwrap();
     fixture.manager.close();
     test_time::eventually("original world closed", || {
         fixture.manager.status().state == bridge::WorldState::Idle
@@ -123,7 +123,7 @@ async fn reopening_the_same_world_revokes_the_original_host_before_account_or_ne
     test_time::eventually("same world reopened", || {
         fixture.manager.status().state == bridge::WorldState::Running
     });
-    let replacement_target = fixture.manager.core_report().target.unwrap();
+    let replacement_target = fixture.manager.world_report().target.unwrap();
     assert_eq!(original_target.address, replacement_target.address);
     assert_eq!(
         host.advance().await.unwrap_err().kind(),

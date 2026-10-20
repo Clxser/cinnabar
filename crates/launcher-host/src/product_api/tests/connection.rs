@@ -40,7 +40,7 @@ async fn acquired_account_drives_product_wire_and_retires_its_pending_lookup() {
             assert_eq!(request.headers()["user-agent"],"cinnabar/1.0.0");
             assert!(!request.headers().contains_key("authorization"));
             let hello:Value=serde_json::from_str(socket.next().await.unwrap().unwrap().as_text().unwrap()).unwrap();
-            let schema:Value=serde_json::from_str(include_str!("../../../../../core/cinnabarapi/schema/v1.json")).unwrap();
+            let schema:Value=serde_json::from_str(include_str!("../../../../bridge/data/cinnabar-api/v1.json")).unwrap();
             assert_eq!(hello["type"],"hello");
             assert_eq!(hello["protocol"],schema["x-protocol"]);
             assert_eq!(hello["client_build"],initial.client_build);
