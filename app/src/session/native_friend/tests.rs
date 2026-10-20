@@ -6,6 +6,35 @@ use super::*;
 use fixture::Original;
 use std::time::Duration;
 
+/// Retains only bounded ownership facts and error kinds for the final post-cleanup assertion.
+#[derive(Debug)]
+struct CleanupFacts {
+    worker_retired: bool,
+    joins: Option<usize>,
+    leaves: Option<usize>,
+    nonce_published: bool,
+    minted: bool,
+    signaling_closed: bool,
+    rta_retired: bool,
+    host_retired: Result<(), std::io::ErrorKind>,
+    tasks_joined: bool,
+}
+
+impl CleanupFacts {
+    /// Requires the same original member, service, host and worker retirement predicates.
+    fn complete(&self) -> bool {
+        self.worker_retired
+            && self.joins == Some(1)
+            && self.leaves == Some(1)
+            && self.nonce_published
+            && self.minted
+            && self.signaling_closed
+            && self.rta_retired
+            && self.host_retired.is_ok()
+            && self.tasks_joined
+    }
+}
+
 /// Ordinary current rows must reach signed game initialization and original conditional leave for both dialects.
 #[test]
 fn controlled_native_friend_play_initializes_both_dialects_and_leaves_once() {
@@ -30,7 +59,7 @@ fn controlled_native_friend_play_initializes_both_dialects_and_leaves_once() {
             let queued = original.play();
             if !queued {
                 let (_, joined) = original.finish(false).await;
-                outcomes.push((queued, false, false, joined, None));
+                outcomes.push((queued, false, false, joined, None, None));
                 continue;
             }
             let host = original.service.listen(&host_xuid, deadline).await.unwrap();
@@ -74,37 +103,41 @@ fn controlled_native_friend_play_initializes_both_dialects_and_leaves_once() {
             let retired = original.retired(deadline).await;
             let peer = peer.await.unwrap();
             let (facts, joined) = original.finish(retired).await;
-            let once = facts.is_some_and(|facts| {
-                facts.joins == 1
-                    && facts.leaves == 1
-                    && facts.nonce_published
-                    && facts.minted
-                    && facts.signaling_closed
-                    && facts.rta_retired
-            });
+            let cleanup = CleanupFacts {
+                worker_retired: retired,
+                joins: facts.as_ref().map(|facts| facts.joins),
+                leaves: facts.as_ref().map(|facts| facts.leaves),
+                nonce_published: facts.as_ref().is_some_and(|facts| facts.nonce_published),
+                minted: facts.as_ref().is_some_and(|facts| facts.minted),
+                signaling_closed: facts.as_ref().is_some_and(|facts| facts.signaling_closed),
+                rta_retired: facts.as_ref().is_some_and(|facts| facts.rta_retired),
+                host_retired: peer.retired.map_err(|error| error.kind()),
+                tasks_joined: joined,
+            };
             outcomes.push((
                 queued,
                 bootstrap && initialized,
                 marker_received,
-                retired && once && peer.retired.is_ok() && joined,
+                cleanup.complete(),
                 Some(peer.play.map_err(|error| error.kind())),
+                Some(cleanup),
             ));
         }
         outcomes
     });
     // Both dialects' original peer/service/worker lifetimes have ended before this capability assertion.
     assert!(
-        outcomes.iter().all(|(_, _, _, retired, _)| *retired),
+        outcomes.iter().all(|(_, _, _, retired, _, _)| *retired),
         "original friend owners did not retire: {outcomes:?}"
     );
     assert!(
-        outcomes.iter().all(|(queued, _, _, _, _)| *queued),
+        outcomes.iter().all(|(queued, _, _, _, _, _)| *queued),
         "ordinary current native friend rows are still refused"
     );
     assert!(
         outcomes
             .iter()
-            .all(|(_, initialized, marker, _, play)| *initialized
+            .all(|(_, initialized, marker, _, play, _)| *initialized
                 && *marker
                 && matches!(play, Some(Ok(true)))),
         "signed original friend game did not initialize, preserve its marker or close cleanly: {outcomes:?}"
