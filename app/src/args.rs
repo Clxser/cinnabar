@@ -14,12 +14,16 @@ cinnabar — ",
 
 Usage: cinnabar [OPTIONS] [PACK.mcpack|PACK.mcaddon|PACK.zip]...
 
+Desktop builds with native-networking use Rust addressed discovery by default.
+Builds without it use Go. Select --legacy-networking to use Go explicitly.
+
 Options:
-  --address <HOST:PORT>       Directly join a server (Go backend by default)
-  --native-networking <KIND>  Opt in to Rust networking: addressed, raknet or nethernet-lan
+  --address <HOST:PORT>       Directly join a server
+  --native-networking <KIND>  Select Rust transport: addressed, raknet or nethernet-lan
+  --legacy-networking         Use the retained Go account and networking backend
   --parallel-resource-pack-urls
                                Opt native pack URL downloads into bounded parallel reads
-  --socket-dir <PATH>          Override the platform runtime socket directory
+  --socket-dir <PATH>          Use an external Go Core socket directory
   --import-pack <PATH>        Import an optional global resource pack
   --assets <PATH>              Compiled vanilla asset blob
   --display-name <NAME>        Offline display name (default: ",
@@ -103,6 +107,7 @@ pub struct ClientArgs {
     /// Optional upstream address for the fast direct-connect path. Without it
     /// (and without an explicit socket directory) the client opens the menu.
     pub address: Option<String>,
+    /// Resolved launch backend: a native transport, or the retained legacy Core owner.
     pub native_transport: Option<protocol::NativeTransport>,
     /// Native-only URL scheduling choice retained across joins and server transfers.
     pub parallel_resource_pack_urls: bool,
@@ -149,7 +154,11 @@ impl Default for ClientArgs {
     fn default() -> Self {
         Self {
             address: None,
-            native_transport: None,
+            native_transport: cfg!(all(
+                feature = "native-networking",
+                not(target_arch = "wasm32")
+            ))
+            .then_some(protocol::NativeTransport::Addressed),
             parallel_resource_pack_urls: false,
             socket_dir: PathBuf::from(".local/run"),
             socket_dir_explicit: false,
@@ -193,6 +202,8 @@ pub enum ArgsError {
         "native networking requires --features native-networking and no --socket-dir; direct sessions also require --address"
     )]
     NativeNetworkingUnavailable,
+    #[error("--native-networking and --legacy-networking cannot be used together")]
+    ConflictingNetworkingFlags,
     #[error("native friend-world startup requires a verified friend selection")]
     NativeFriendSelectionRequired,
     #[error("--native-networking must be addressed, raknet or nethernet-lan")]
@@ -300,6 +311,8 @@ impl ClientArgs {
         let mut arguments = arguments.into_iter().map(Into::into);
         let _program = arguments.next();
         let mut parsed = Self::default();
+        let mut native_explicit = false;
+        let mut legacy_explicit = false;
 
         while let Some(argument) = arguments.next() {
             match argument.to_str() {
@@ -332,7 +345,9 @@ impl ClientArgs {
                         Some("nethernet-lan") => protocol::NativeTransport::NetherNetLan,
                         _ => return Err(ArgsError::InvalidNativeTransport),
                     });
+                    native_explicit = true;
                 }
+                Some("--legacy-networking") => legacy_explicit = true,
                 Some("--socket-dir") => {
                     parsed.socket_dir_explicit = true;
                     parsed.socket_dir = PathBuf::from(next_value(&mut arguments, "--socket-dir")?);
@@ -486,6 +501,15 @@ impl ClientArgs {
                 }
                 _ => return Err(ArgsError::Unknown(argument)),
             }
+        }
+        if native_explicit && legacy_explicit {
+            return Err(ArgsError::ConflictingNetworkingFlags);
+        }
+        if native_explicit && parsed.socket_dir_explicit {
+            return Err(ArgsError::NativeNetworkingUnavailable);
+        }
+        if legacy_explicit || parsed.socket_dir_explicit {
+            parsed.native_transport = None;
         }
         if parsed.movement_candidate_physics && parsed.movement_evidence_target.is_none() {
             return Err(ArgsError::MovementCandidateRequiresEvidence);

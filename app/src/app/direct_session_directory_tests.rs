@@ -111,6 +111,8 @@ fn native_cli_services_retain_native_gathering_and_core_friend_ownership() {
         let mut arguments = vec!["client", "--address", address.as_str()];
         if native {
             arguments.extend(["--native-networking", "raknet"]);
+        } else {
+            arguments.push("--legacy-networking");
         }
         let parsed = run_args(&arguments);
         let directory = root.path().join(format!("direct-{}", std::process::id()));
@@ -261,7 +263,12 @@ fn explicit_non_grammar_socket_dir_starts_without_a_guard() {
 fn derived_default_directory_still_binds_the_guard() {
     let root = temporary_root("derived-sock-dir");
     fs::create_dir_all(&root).expect("create temp root");
-    let parsed = run_args(&["client", "--address", "127.0.0.1:19132"]);
+    let parsed = run_args(&[
+        "client",
+        "--legacy-networking",
+        "--address",
+        "127.0.0.1:19132",
+    ]);
     assert!(!parsed.socket_dir_explicit);
     let socket_dir = root.join("direct-123");
 

@@ -51,7 +51,9 @@ closes no gate and provides no new runtime or performance evidence.
 
 ## Phase 1 — Core service
 
-The Go backend remains the default. The optional native Rust backend composes the
+Desktop builds now select native Rust by default and retain explicit `--legacy-networking`
+for the Go backend; this source migration does not establish full compatibility qualification.
+The native Rust backend composes the
 Cinnabar service SDK, Bedrock session libraries and RakNet/NetherNet transports.
 Its transport cores use caller-driven state machines; runtime adapters are explicit.
 Native account checkpoints, resource packs, local-world joins and hosted-peer
@@ -92,7 +94,7 @@ Native menu services now have a source candidate that attaches the original acco
 and local-world workers without a Go Core executable or control endpoint. Replacement
 still waits for the original publisher and any real child to retire. The missing-Core
 baseline failed its owning attachment control; the correction and real Core-to-native
-transition still require execution. Backend defaults and native friend UI gates are unchanged.
+transition still require execution. The ordinary native friend UI gate remains disabled.
 
 Complete host messaging and renewal acceptance, addressed HTTP joins and trust,
 remaining account event ownership, and current client integration. Native friend

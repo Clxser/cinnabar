@@ -38,7 +38,7 @@ test = false
 # Counts allocation requests and labelled GPU writes for diagnostic runs.
 alloc-stats = ["dep:test-alloc", "test-alloc/global-stats", "render/alloc-stats", "render-scene/alloc-stats"]
 # Developer runs and client MCP keep acceptance; packaging opts out with --no-default-features.
-default = ["acceptance"]
+default = ["acceptance", "native-networking"]
 acceptance = ["dep:acceptance", "bridge/join-profile"]
 enhanced = ["render/enhanced"]
 enhanced-diagnostics = ["enhanced", "developer-control", "acceptance", "render/enhanced-diagnostics"]

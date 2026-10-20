@@ -129,10 +129,33 @@ fn native_default_timed_sessions_require_a_destination_or_explicit_legacy_owner(
 }
 
 #[test]
-fn parallel_pack_urls_require_an_explicit_native_launch() {
+fn parallel_pack_urls_require_the_selected_native_backend() {
     assert!(!ClientArgs::default().parallel_resource_pack_urls);
+    let selected = ClientArgs::parse_from(["client", "--parallel-resource-pack-urls"]);
+    if cfg!(all(
+        feature = "native-networking",
+        not(target_arch = "wasm32")
+    )) {
+        let ParseOutcome::Run(args) = selected.unwrap() else {
+            panic!("native URL policy arguments");
+        };
+        assert!(args.parallel_resource_pack_urls);
+        assert_eq!(
+            args.native_transport,
+            Some(protocol::NativeTransport::Addressed)
+        );
+    } else {
+        assert!(matches!(
+            selected,
+            Err(ArgsError::ParallelPackUrlsRequireNativeNetworking)
+        ));
+    }
     assert!(matches!(
-        ClientArgs::parse_from(["client", "--parallel-resource-pack-urls"]),
+        ClientArgs::parse_from([
+            "client",
+            "--legacy-networking",
+            "--parallel-resource-pack-urls"
+        ]),
         Err(ArgsError::ParallelPackUrlsRequireNativeNetworking)
     ));
     if !cfg!(feature = "native-networking") {
@@ -198,9 +221,13 @@ fn native_networking_allows_menu_selection_and_rejects_ambiguous_endpoints() {
 fn explicit_native_friend_startup_never_selects_core_from_a_display_target() {
     let address = format!("{}2535", bridge::contract::FRIEND_TARGET_PREFIX);
     let directory = PathBuf::from("unused-friend-cli-endpoint");
-    let ParseOutcome::Run(go) =
-        ClientArgs::parse_from(["client", "--address", address.as_str()]).unwrap()
-    else {
+    let ParseOutcome::Run(go) = ClientArgs::parse_from([
+        "client",
+        "--legacy-networking",
+        "--address",
+        address.as_str(),
+    ])
+    .unwrap() else {
         panic!("explicit Go fixture arguments");
     };
     assert!(matches!(

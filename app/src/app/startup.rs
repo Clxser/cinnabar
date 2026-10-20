@@ -447,9 +447,10 @@ mod tests {
                 "--movement-candidate-physics",
             ],
         ] {
-            let ParseOutcome::Run(args) =
-                ClientArgs::parse_from(std::iter::once("cinnabar").chain(flags)).unwrap()
-            else {
+            let ParseOutcome::Run(args) = ClientArgs::parse_from(
+                ["cinnabar", "--legacy-networking"].into_iter().chain(flags),
+            )
+            .unwrap() else {
                 panic!("expected runtime arguments")
             };
             let error = args.validate_acceptance_support(false).unwrap_err();

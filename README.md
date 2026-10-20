@@ -56,14 +56,15 @@ Vanilla behaviour is the default. Everything below is extra:
 
 ## How it works
 
-The Rust client owns rendering, input and gameplay. The default backend still uses a local
-Go core for account and network services. An opt-in native backend connects the client directly
-to reusable Rust libraries. The target game version is pinned in `assets/bedrock-target.json`.
+The Rust client owns rendering, input and gameplay. Desktop builds use native Rust account and
+network services by default, with addressed discovery selecting NetherNet or RakNet. The retained
+Go backend is available with `--legacy-networking`. Builds without the `native-networking` feature
+use Go. The target game version is pinned in `assets/bedrock-target.json`.
 
 Launch the native menu, then sign in or select a saved account and join a server:
 
 ```sh
-cargo run -p cinnabar --features native-networking -- --native-networking raknet
+cargo run -p cinnabar
 ```
 
 Native menu account and local-world services start without a Go Core process or control endpoint.
@@ -82,7 +83,7 @@ packs, startup and play, including retries and transfers.
 Direct startup also uses the selected saved account when one is available:
 
 ```sh
-cargo run -p cinnabar --features native-networking -- --address HOST:PORT --native-networking raknet
+cargo run -p cinnabar -- --address HOST:PORT
 ```
 
 Without a selected account, direct connections can use an offline identity where the server
@@ -90,13 +91,19 @@ permits it. `nethernet-lan` selects directed IPv4 LAN discovery. Selected local 
 original HTTP or LAN route and process generation. Desktop pack acquisition supports CDN
 archives and a verified persistent cache before falling back to game-socket chunks.
 
+Use `--native-networking raknet` to bypass addressed transport discovery, or
+`--native-networking nethernet-lan` for directed LAN discovery. `--legacy-networking` selects the
+whole Go account/network backend for the launch; native failures do not retry through Go.
+An explicit `--socket-dir` also selects its existing Go endpoint and conflicts with an explicit
+native selection. The packaged Go Core and independent Dragonfly local-world server are retained.
+
 Friend-world admission and hosting have native implementations, including legacy and Player
 Messaging signaling, signed peer admission and original Dragonfly or BDS worlds. Their native
 menu join gate remains disabled while end-to-end acceptance is completed. Broader retail
-account, server, browser and platform compatibility also remains under validation; Go stays
-the default until that work passes. The `--address friend_xuid/<xuid>` form uses the default Go
-backend; combined with `--native-networking`, it returns an error because the string supplies no
-verified friend-world selection. The native HTTPS/WebSocket relay has a separate operator;
+account, server, browser and platform compatibility also remains under validation. The
+`--address friend_xuid/<xuid>` form requires `--legacy-networking`; native mode returns an error
+because the string supplies no verified friend-world selection. Android retains its separate
+Go-backed build and selection. The native HTTPS/WebSocket relay has a separate operator;
 see [web/gateway/README.md](web/gateway/README.md) for configuration and current transport limits.
 
 The transport protocol cores are sans I/O. Runtime adapters own their sockets and timers;

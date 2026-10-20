@@ -20,8 +20,10 @@ in a fresh file, and the newest 10 archives up to 64 MiB are kept.
 | Windows setup EXE + MSI (WiX v5) | `make package-windows` | `WINDOWS_CERT_PFX_BASE64`, `WINDOWS_CERT_PASSWORD` |
 | Linux AppImage | `make package-linux` | none |
 
-All native builds include the local mod host and Settings › Mods. Release targets use
-`--no-default-features` to exclude the acceptance harness. Developer defaults stay enabled for `make play`, live
+All native builds include the local mod host and Settings › Mods. Desktop release targets use
+`--no-default-features --features cinnabar/native-networking` to include Rust networking while
+excluding the acceptance harness. The Go Core remains packaged for explicit `--legacy-networking`.
+Developer defaults stay enabled for `make play`, live
 testing, CI and client MCP. A local `cargo build --release` still includes acceptance; use
 `make package-binaries` for shipping.
 
