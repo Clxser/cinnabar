@@ -188,10 +188,6 @@ pub struct StageMask {
 }
 
 impl StageMask {
-    #[allow(
-        dead_code,
-        reason = "wired into ShaderPack::translate later in the translator stack"
-    )]
     /// Marks a stage as using the reflected resource.
     pub(crate) fn add(&mut self, stage: StageKind) {
         match stage {

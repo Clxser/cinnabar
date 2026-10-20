@@ -36,6 +36,7 @@ pub(crate) fn reflect(
     stages: &[(&CompiledStage, StageNames<'_>)],
     draw_buffers: &[u32],
 ) -> Result<ProgramReflection, String> {
+    crate::reflect_link::validate(&stages.iter().map(|(stage, _)| *stage).collect::<Vec<_>>())?;
     let mut out = ProgramReflection {
         kind,
         entry_points: vec![],
@@ -359,7 +360,7 @@ fn scalar(s: naga::Scalar) -> ScalarType {
 }
 
 /// Describes scalar, vector and matrix interface values.
-fn value_type(inner: &TypeInner) -> Option<ValueType> {
+pub(crate) fn value_type(inner: &TypeInner) -> Option<ValueType> {
     Some(match inner {
         TypeInner::Scalar(s) => ValueType::Scalar(scalar(*s)),
         TypeInner::Vector { size, scalar: s } => ValueType::Vector {
