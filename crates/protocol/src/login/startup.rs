@@ -2,7 +2,8 @@
 // Copyright (c) 2025 Jeremy Ianne, MIT License; see crates/protocol/vendor/LICENSE.
 
 //! The client's spawn sequence after the core hands over a session at StartGame: request the view
-//! radius, wait for the spawn prerequisites, and defer every other packet to play in order.
+//! radius, answer requested latency probes, and wait for the spawn prerequisites while deferring
+//! the remaining packets to play in order.
 
 use std::time::Duration;
 
@@ -155,6 +156,30 @@ pub(super) async fn await_spawn<R: bridge::FrameRead>(
                     _ => {}
                 }
                 update
+            }
+            PacketId::NetworkStackLatency => {
+                let packets::Packet::NetworkStackLatency(probe) = *raw.clone().decode()?.data
+                else {
+                    unreachable!("packet ID and decoded variant must agree")
+                };
+                if probe.is_from_server {
+                    transport.accept_current();
+                    let reply = crate::network_stack_latency_reply(probe.creation_time.0);
+                    if let Err(error) = transport.send(&[reply]).await {
+                        return Err(startup_write_failure(
+                            transport,
+                            error,
+                            super::WRITE_FAILURE_DRAIN,
+                        )
+                        .await);
+                    }
+                } else {
+                    negotiation
+                        .receive_deferred(raw.id)
+                        .map_err(spawn_failure)?;
+                    deferred.push(raw)?;
+                }
+                SpawnUpdate::default()
             }
             _ => {
                 negotiation
