@@ -47,6 +47,7 @@ pub(super) struct Decl {
 }
 
 impl Decl {
+    /// Reports whether the declaration carries the requested qualifier.
     pub fn has(&self, q: &str) -> bool {
         self.quals.iter().any(|x| x == q)
     }
@@ -421,6 +422,7 @@ mod tests {
     use super::*;
     use crate::token::lex;
 
+    /// Returns the spellings of a fixture token sequence.
     fn texts(toks: &[Tok]) -> Vec<&str> {
         toks.iter().map(Tok::text).collect()
     }
