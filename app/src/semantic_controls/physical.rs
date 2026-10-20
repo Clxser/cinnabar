@@ -141,10 +141,11 @@ struct BoundedSamples<T> {
     ignored: usize,
 }
 
-fn select_lowest_by_key<T>(
+/// Retains the lowest-key samples and counts those outside the allowance.
+fn select_lowest_by_key<T, K: Ord>(
     samples: impl IntoIterator<Item = T>,
     limit: usize,
-    key: impl Fn(&T) -> u64,
+    key: impl Fn(&T) -> K,
 ) -> BoundedSamples<T> {
     let mut selected = Vec::with_capacity(limit);
     let mut observed = 0_usize;
@@ -305,8 +306,9 @@ fn translate_device_frame(inputs: SemanticPhysicalInputs) -> TranslatedDeviceFra
         contacts.push(contact);
     }
     contacts.extend(touch_targets.take_pulses());
-    let bounded_contacts =
-        select_lowest_by_key(contacts, MAX_TOUCH_CONTACTS, |contact| contact.contact_id);
+    let bounded_contacts = select_lowest_by_key(contacts, MAX_TOUCH_CONTACTS, |contact| {
+        (contact.hit_id.is_none(), contact.contact_id)
+    });
     TranslatedDeviceFrame {
         frame: DeviceFrame {
             keyboard_mouse,
