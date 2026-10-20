@@ -8185,6 +8185,8 @@ version = "0.1.21"
 dependencies = [
  "naga",
  "pp-rs",
+ "rayon",
+ "serde_json",
  "tempfile",
  "zip",
  "zip-footer",
