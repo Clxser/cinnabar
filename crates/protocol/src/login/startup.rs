@@ -56,11 +56,6 @@ impl DeferredPackets {
         self.packets
     }
 
-    /// Borrows the retained wire order without releasing its aggregate byte charge.
-    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-    pub(super) fn as_slice(&self) -> &[RawPacket] {
-        &self.packets
-    }
 }
 
 /// Runs the spawn sequence: requests the radius once StartGame has arrived, then returns once the

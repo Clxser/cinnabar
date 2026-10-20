@@ -9,10 +9,16 @@ mod messaging;
 use super::{NativeConnectionTarget, NativeTransport};
 use bedrock_client_tokio::transport::Transport;
 #[cfg(test)]
+use bedrock_net::BatchHeader;
+#[cfg(test)]
+use bytes::Bytes;
+#[cfg(test)]
 use nethernet_tokio::{ConnectionConfig, LanConfig, LanSignaling};
 use std::io;
 #[cfg(test)]
 use std::net::SocketAddr;
+#[cfg(test)]
+use std::time::Instant;
 
 pub(super) const LAN_CONNECTION_TYPE: u8 = 4;
 

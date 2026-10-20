@@ -837,7 +837,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "bedrock-client"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=45d8a1b44eaae5bce3a2aece36be0e9cf03e62eb#45d8a1b44eaae5bce3a2aece36be0e9cf03e62eb"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=2d00e2030d33bd008056244cea8750a190b63e0b#2d00e2030d33bd008056244cea8750a190b63e0b"
 dependencies = [
  "bedrock-net",
  "bedrock-packs",
@@ -853,9 +853,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "bedrock-client-tokio"
+version = "0.1.0"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=2d00e2030d33bd008056244cea8750a190b63e0b#2d00e2030d33bd008056244cea8750a190b63e0b"
+dependencies = [
+ "bedrock-net",
+ "bedrock-protocol-1-26-51",
+ "bytes",
+ "futures",
+ "nethernet-tokio",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
 name = "bedrock-net"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=45d8a1b44eaae5bce3a2aece36be0e9cf03e62eb#45d8a1b44eaae5bce3a2aece36be0e9cf03e62eb"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=2d00e2030d33bd008056244cea8750a190b63e0b#2d00e2030d33bd008056244cea8750a190b63e0b"
 dependencies = [
  "aes 0.9.3",
  "base64 0.22.1",
@@ -883,7 +900,7 @@ dependencies = [
 [[package]]
 name = "bedrock-packs"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=45d8a1b44eaae5bce3a2aece36be0e9cf03e62eb#45d8a1b44eaae5bce3a2aece36be0e9cf03e62eb"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=2d00e2030d33bd008056244cea8750a190b63e0b#2d00e2030d33bd008056244cea8750a190b63e0b"
 dependencies = [
  "serde",
  "serde_json",
@@ -5925,6 +5942,7 @@ dependencies = [
  "async-io",
  "base64 0.22.1",
  "bedrock-client",
+ "bedrock-client-tokio",
  "bedrock-net",
  "bedrock-packs",
  "bedrock-services",
@@ -8168,6 +8186,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "bedrock-client",
+ "bedrock-client-tokio",
  "bedrock-net",
  "bedrock-packs",
  "bedrock-protocol-1-26-51",
