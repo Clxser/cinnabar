@@ -191,6 +191,28 @@ test("fragmented play bytes retain their bounded FIFO without closing control", 
     assert.ok(maximumBacking <= config.playBytes);
 });
 
+test("play packing preserves removed views and rejects aggregate bytes at the original limit", async () => {
+    const t = adapter.create("https://relay.invalid", false, JSON.stringify(config));
+    const play = await adapter.open(t, values.RELAY_CHANNEL_PLAY, "1"), socket = Socket.instances.at(-1);
+    let held, chunks = 0, backing = 0, rejected = false;
+    try {
+        socket.onmessage({ data: new Uint8Array([3, 4]).buffer });
+        held = await adapter.read(play);
+        socket.onmessage({ data: new ArrayBuffer(config.playBytes) });
+        chunks = play.queue.length;
+        backing = play.queue.reduce((total, chunk) => total + chunk.buffer.byteLength, 0);
+        assert.equal(play.bytes, config.playBytes);
+        socket.onmessage({ data: new ArrayBuffer(1) });
+        rejected = socket.readyState === 3;
+        await assert.rejects(adapter.read(play));
+        await assert.rejects(adapter.write(play, new Uint8Array([1])));
+    } finally { adapter.close(t); await turns(); }
+    assert.equal(socket.readyState, 3); assert.equal(t.channels.size, 0);
+    assert.deepEqual(held, new Uint8Array([3, 4]));
+    assert.equal(rejected, true); assert.ok(chunks <= config.chunks);
+    assert.ok(backing <= config.playBytes);
+});
+
 test("a blocked send re-arms its timer and closure cancels it immediately", async () => {
     const timers = new Map(); let id = 0;
     const originalSet = globalThis.setTimeout, originalClear = globalThis.clearTimeout;
