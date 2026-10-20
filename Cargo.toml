@@ -101,13 +101,13 @@ rust-version = "1.99.0"
 [workspace.dependencies]
 bedrock-protocol-1-26-51 = { git = "https://github.com/cinnabar-mc/protocolgen", rev = "4e9626abbb51b8fa842f49b4aea0fb4d3c01a682" }
 raknet = { git = "https://github.com/cinnabar-mc/raknet", rev = "5879963a0c6290899616c01a02883c4ed4972a76" }
-bedrock-services = { git = "https://github.com/cinnabar-mc/bedrock-services", rev = "5324ddac68bc13d343835de48eb997cb823a7912" }
+bedrock-services = { git = "https://github.com/cinnabar-mc/bedrock-services", rev = "fb1011f8ca2725354cbce10cabfb3fabb71d97e3" }
 nethernet = { git = "https://github.com/cinnabar-mc/nethernet", rev = "c0a1fd56ca88d62cdd0f455055ca02ea797ab704" }
 nethernet-tokio = { git = "https://github.com/cinnabar-mc/nethernet", rev = "c0a1fd56ca88d62cdd0f455055ca02ea797ab704" }
-bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "f1dc51a8511cb6f9b0a1fed4ae2af237fb643787" }
-bedrock-client = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "f1dc51a8511cb6f9b0a1fed4ae2af237fb643787" }
-bedrock-client-tokio = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "f1dc51a8511cb6f9b0a1fed4ae2af237fb643787" }
-bedrock-packs = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "f1dc51a8511cb6f9b0a1fed4ae2af237fb643787" }
+bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "4aa184d883440cad59aa06a27e7faa835e665fbc" }
+bedrock-client = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "4aa184d883440cad59aa06a27e7faa835e665fbc" }
+bedrock-client-tokio = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "4aa184d883440cad59aa06a27e7faa835e665fbc" }
+bedrock-packs = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "4aa184d883440cad59aa06a27e7faa835e665fbc" }
 glam = { version = "0.33.2", default-features = false, features = ["std", "f64"] }
 # One feature set per heavy dependency: any per-crate difference rebuilds it and every dependent.
 # wayland/x11 only select winit backends on Linux; winit ignores them on other targets.
