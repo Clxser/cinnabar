@@ -424,8 +424,8 @@ hosting passes actual Login, verified pack delivery, client initialization, terr
 responses and normal EOF with original transport, process-lease and membership retirement.
 BDS passes HTTP and selected LAN routes using a manually imported, verified installation;
 installer and update workflows remain unqualified. Two visitors retire independently, and
-rejecting a second Login preserves the first connection. Live advertised hosting, invitations
-and WAN/device behavior remain open; ordinary native friend UI joining remains disabled.
+rejecting a second Login preserves the first connection. Live advertised hosting, invitations,
+retail friend joining and WAN/device behavior remain open.
 Native desktop, public-gateway and hosted-upstream negotiation accept an actual StartGame
 without an advertised pack phase, preserving the original spawn prerequisites. Hosted
 absence uses a consumed verified Login and flushed LoginSuccess, without invented pack
