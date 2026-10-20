@@ -103,8 +103,6 @@ pub(crate) enum SessionFailure {
     MalformedEntry(#[source] wire::DecodeError),
     #[error("declared packet length {declared} exceeds available {available}")]
     TruncatedEntry { declared: usize, available: usize },
-    #[error("unknown packet ID {0}")]
-    UnknownPacketId(u32),
     #[error("batch payload exceeds max size ({actual} > {max})")]
     BatchTooLarge { actual: usize, max: usize },
     #[error("batch contains more than {max} packets")]
@@ -242,7 +240,7 @@ pub(crate) fn validate_decoded(packet: &packets::Packet) -> Result<(), ProtocolE
     Ok(())
 }
 
-/// Decodes an uncompressed gophertunnel raw batch into owned protocol packets.
+/// Decodes an uncompressed gophertunnel raw batch, skipping unknown well-framed IDs.
 pub fn decode_batch(bytes: Bytes) -> Result<Vec<Packet>, ProtocolError> {
     if bytes.len() > MAX_BATCH_BYTES {
         return Err(ProtocolError::BatchTooLarge {
@@ -258,11 +256,15 @@ pub fn decode_batch(bytes: Bytes) -> Result<Vec<Packet>, ProtocolError> {
             error => error.into(),
         })?;
     let mut packets = Vec::new();
+    let mut skipped = 0_usize;
     for frame in frames {
         let frame = frame.map_err(framing_error)?;
         let header = frame.header();
-        let id =
-            PacketId::from_raw(header.id).ok_or(wire::DecodeError::UnknownPacketId(header.id))?;
+        let Some(id) = PacketId::from_raw(header.id) else {
+            skipped += 1;
+            tracing::debug!(id = header.id, skipped, "skipped unused decoded packet");
+            continue;
+        };
         let data = decode_body(id, &frame.body()).map_err(body_error)?;
         validate_decoded(&data)?;
         packets.push(Packet::from_parts(

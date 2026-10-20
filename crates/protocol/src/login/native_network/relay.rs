@@ -68,7 +68,7 @@ pub struct NativeRelayRetired {
 impl NativeRelayConnecting {
     /// Takes the caller's actual established numeric socket; `address` is Login metadata only.
     /// Admission, original overall deadline and controller cancellation remain the caller's job.
-    /// Only known primary-player input reaches Login, the startup handoff and play.
+    /// Only primary-player input reaches the raw handoff/play; typed Login skips unused IDs.
     pub fn from_raknet(connection: RakNetConnection, address: String) -> Self {
         let mut connection = Connection::new(transport::Transport::from_raknet(connection));
         connection.primary_only();
@@ -144,7 +144,9 @@ impl NativeRelayConnecting {
                     "upstream ended before relay handoff",
                 )));
             }
-            if packet_id(&raw).map_err(failure)? == PacketId::Transfer {
+            if packet_header(&raw).map_err(failure)?
+                == wire::PacketHeader::new(PacketId::Transfer as u32)
+            {
                 continue;
             }
             self.startup_bytes = self
@@ -157,7 +159,7 @@ impl NativeRelayConnecting {
                         "relay startup exceeds retained byte limit",
                     ))
                 })?;
-            let start_game = packet_id(&raw).map_err(failure)? == PacketId::StartGame;
+            let start_game = packet_header(&raw).map_err(failure)?.id == PacketId::StartGame as u32;
             self.startup.push(Bytes::copy_from_slice(&raw));
             if start_game {
                 break;
@@ -257,7 +259,7 @@ impl NativeRelayConnection {
             return Err(io::ErrorKind::NotConnected.into());
         }
         // Validate complete packet framing before advancing the directional cipher.
-        crate::raw_packet::decode_batch_body(
+        crate::raw_packet::validate_batch_body(
             body.clone(),
             bedrock_net::BatchLimits::default().max_decoded_bytes,
         )
@@ -293,7 +295,7 @@ async fn receive(connection: &mut Connection, ended: &mut bool) -> io::Result<Co
     }
     loop {
         let raw = connection.next_raw().await?;
-        if packet_id(&raw)? == PacketId::Transfer {
+        if packet_header(&raw)? == wire::PacketHeader::new(PacketId::Transfer as u32) {
             if let Some(message) = terminal(&raw)? {
                 *ended = true;
                 return Ok(message);
@@ -309,16 +311,22 @@ async fn receive(connection: &mut Connection, ended: &mut bool) -> io::Result<Co
 }
 
 /// Reads the actual header, including subclients, without reconstructing its original bytes.
-fn packet_id(raw: &Bytes) -> io::Result<PacketId> {
+fn packet_header(raw: &Bytes) -> io::Result<wire::PacketHeader> {
     let mut reader = wire::Reader::from_shared(raw);
-    let header = wire::PacketHeader::from_raw(reader.read_var_u32().map_err(io::Error::other)?);
-    PacketId::from_raw(header.id)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "unknown relay packet"))
+    Ok(wire::PacketHeader::from_raw(
+        reader.read_var_u32().map_err(io::Error::other)?,
+    ))
 }
 
 /// Projects only actual decoded terminal packets, preserving original reason/text/transfer data.
 pub(super) fn terminal(raw: &Bytes) -> io::Result<Option<CoreMessage>> {
-    let id = packet_id(raw)?;
+    let header = packet_header(raw)?;
+    if header.sender_subclient != 0 || header.target_subclient != 0 {
+        return Ok(None);
+    }
+    let Some(id) = PacketId::from_raw(header.id) else {
+        return Ok(None);
+    };
     if !matches!(id, PacketId::Disconnect | PacketId::Transfer) {
         return Ok(None);
     }

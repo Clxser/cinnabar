@@ -75,9 +75,9 @@ impl Shared {
         }
     }
 
-    /// Checks synthetic or replacement framing using the session's packet decoder.
+    /// Checks synthetic or replacement framing without interpreting opaque packet IDs.
     fn valid(&self, body: Bytes) -> bool {
-        if crate::raw_packet::decode_batch_body(
+        if crate::raw_packet::validate_batch_body(
             body,
             crate::session_transport::MAX_SESSION_BATCH_BYTES,
         )

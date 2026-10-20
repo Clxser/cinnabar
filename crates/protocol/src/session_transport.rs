@@ -531,7 +531,10 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
             self.startup
                 .extend(startup_batches(&bodies).into_iter().map(ServerBatch::new));
         } else {
-            self.record_received(&mut packets, 0);
+            for (index, packet) in packets.iter_mut().enumerate() {
+                packet.trace_position = (0, index as u32);
+            }
+            self.record_received(&mut packets);
             self.prepend(packets);
         }
     }
@@ -595,15 +598,15 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
                 tap.reject_batch(len);
             }
         })?;
-        self.record_received(&mut packets, frame);
+        for packet in &mut packets {
+            packet.trace_position.0 = frame;
+        }
+        self.record_received(&mut packets);
         Ok(packets)
     }
 
-    /// Tags newly received packets and records their original bodies once before delivery.
-    fn record_received(&self, packets: &mut [RawPacket], frame: u64) {
-        for (index, packet) in packets.iter_mut().enumerate() {
-            packet.trace_position = (frame, index as u32);
-        }
+    /// Records original packet bodies once after their frame/slot positions have been assigned.
+    fn record_received(&self, packets: &mut [RawPacket]) {
         if let Some(tap) = &self.tap {
             for packet in packets {
                 packet.record = Some(tap.record(
@@ -785,7 +788,8 @@ fn native_batch_terminal(body: &Bytes) -> Result<Option<Terminal>, SessionError>
                 Some(PacketId::Disconnect | PacketId::Transfer)
             )
         {
-            let packet = crate::raw_packet::raw_packet(frame, body.len())?;
+            let packet = crate::raw_packet::raw_packet(frame, body.len())
+                .expect("the selected terminal packet ID is known");
             terminal = native_packet_terminal(&packet)?;
         }
     }

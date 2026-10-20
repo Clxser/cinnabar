@@ -1,4 +1,4 @@
-//! The public relay constructor admits only primary, known input before interpreting controls.
+//! The public relay preserves primary opaque input before interpreting known controls.
 
 use super::*;
 use protocol::{NativeRelayConnecting, RawClientData, session_wire::CoreMessage};
@@ -317,9 +317,24 @@ fn original_prefix(observed: Observed, transfer: bool) {
     assert_eq!(observed.after_terminal, Some(io::ErrorKind::UnexpectedEof));
 }
 
+/// Verifies the exact additional opaque entry before retaining every original known-prefix check.
+fn unknown_prefix(mut observed: Observed, startup: bool) {
+    let raw = if startup {
+        observed
+            .startup
+            .as_mut()
+            .expect("actual relay handoff failed")
+            .remove(0)
+    } else {
+        observed.packets.remove(1)
+    };
+    assert_eq!(raw, negotiation::unknown_server_entry());
+    original_prefix(observed, false);
+}
+
 #[tokio::test]
-async fn native_relay_ingress_skips_unknown_between_stack_and_start_game() {
-    original_prefix(exercise(Case::UnknownStartup).await, false);
+async fn native_relay_ingress_preserves_unknown_between_stack_and_start_game() {
+    unknown_prefix(exercise(Case::UnknownStartup).await, true);
 }
 
 #[tokio::test]
@@ -328,8 +343,8 @@ async fn native_relay_ingress_skips_both_secondary_start_games_before_handoff() 
 }
 
 #[tokio::test]
-async fn native_relay_ingress_skips_unknown_during_actual_live_pump() {
-    original_prefix(exercise(Case::UnknownLive).await, false);
+async fn native_relay_ingress_preserves_unknown_during_actual_live_pump() {
+    unknown_prefix(exercise(Case::UnknownLive).await, false);
 }
 
 #[tokio::test]
@@ -339,7 +354,7 @@ async fn native_relay_ingress_skips_secondary_disconnect_and_transfer_during_pla
 
 #[tokio::test]
 async fn native_relay_ingress_retired_cursor_keeps_the_same_admitted_prefix() {
-    original_prefix(exercise(Case::Retired).await, false);
+    unknown_prefix(exercise(Case::Retired).await, false);
 }
 
 #[tokio::test]

@@ -1,6 +1,6 @@
 //! Concrete application capabilities around the same bounded desktop connection pump.
 
-use super::{NativeRelayConnection, packet_id, terminal};
+use super::{NativeRelayConnection, packet_header, terminal};
 use crate::session_transport::native::{self, DriverEnd, IncomingBody, NativeSender, PreparedPump};
 use crate::session_wire::CoreMessage;
 use bedrock_protocol_1_26_51::{packets::PacketId, wire};
@@ -114,7 +114,7 @@ impl NativeRelaySender {
     /// Checks complete packet framing before committing a batch to the original send queue.
     /// Canceling an uncommitted admission accepts nothing; accepted work belongs to the driver.
     pub async fn accept_body(&self, body: Bytes) -> io::Result<NativeRelayWritten> {
-        crate::raw_packet::decode_batch_body(
+        crate::raw_packet::validate_batch_body(
             body.clone(),
             bedrock_net::BatchLimits::default().max_decoded_bytes,
         )
@@ -200,7 +200,7 @@ impl NativeRelayInbound {
                 self.current = None;
                 return Ok(message);
             }
-            if packet_id(&raw)? != PacketId::Transfer {
+            if packet_header(&raw)? != wire::PacketHeader::new(PacketId::Transfer as u32) {
                 return Ok(CoreMessage::Batch(vec![raw]));
             }
         }

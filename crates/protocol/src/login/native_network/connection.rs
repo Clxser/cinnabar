@@ -139,7 +139,7 @@ impl Connection {
         }
     }
 
-    /// Admits only known primary-player input before any relay body is interpreted.
+    /// Admits only primary-player input; typed reads separately skip unknown IDs.
     pub(super) fn primary_only(&mut self) {
         self.ingress = Ingress::Primary;
     }
@@ -386,17 +386,18 @@ impl Connection {
     /// Filters only the actual FIFO front, keeping one lazy cursor behind every replayed prefix.
     fn pending_ready(&mut self) -> io::Result<bool> {
         while let Some(packet) = self.pending.front() {
-            let primary_only = match self.ingress {
-                Ingress::Raw => return Ok(true),
-                Ingress::Known => false,
-                Ingress::Primary => true,
-            };
+            if matches!(self.ingress, Ingress::Raw) {
+                return Ok(true);
+            }
             let mut reader = wire::Reader::from_shared(packet);
             let header =
                 wire::PacketHeader::from_raw(reader.read_var_u32().map_err(io::Error::other)?);
-            if packets::PacketId::from_raw(header.id).is_some()
-                && (!primary_only || (header.sender_subclient == 0 && header.target_subclient == 0))
-            {
+            let admitted = match self.ingress {
+                Ingress::Raw => true,
+                Ingress::Known => packets::PacketId::from_raw(header.id).is_some(),
+                Ingress::Primary => header.sender_subclient == 0 && header.target_subclient == 0,
+            };
+            if admitted {
                 return Ok(true);
             }
             drop(self.pending.pop_front());
