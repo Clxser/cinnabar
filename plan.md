@@ -23,6 +23,11 @@ evidence; the [workspace map](docs/architecture/workspace.md) explains code owne
 
 1. Identify and resolve confirmed terrain, actor, movement and UI behavior gaps with version-matched evidence.
 2. Qualify frame pacing, streaming, joining and retained memory on the reference hardware.
+   Windows VSync queue depth uses coarse work estimates to try one queued frame and
+   observed acquisition cadence to restore two. Failed probes back off exponentially;
+   missing GPU samples leave the cadence policy running.
+   Displayed cadence, input latency and surface-reconfiguration
+   stalls still need hardware qualification; this closes no acceptance gate.
 3. Verify complete session and input paths across supported platforms.
 4. Simplify existing subsystem ownership without adding unnecessary crates or adapter layers.
 
@@ -41,6 +46,8 @@ closes no gate and provides no new runtime or performance evidence.
   conformance findings, classify every decode error, and qualify frame and mutation
   latency against the current [live-testing requirements](docs/agents/live-testing.md).
   Use the current headless client workflow for scripted tests; keep captures local.
+  Dimension definitions use an exclusive maximum Y and retain complete sub-chunks;
+  live custom-dimension transfer acceptance remains open.
 
 ## Phase 1 — Core service
 
@@ -142,6 +149,12 @@ and resource qualification; they do not imply these systems need to be written.
 - [ ] `P2-CHUNK-PUBLICATION` — Qualify initial publication, steady streaming and full-view
   remesh against current frame/join/streaming budgets. Attribute decode, light readiness,
   queue wait, worker time, upload, submission and present latency independently.
+  Ordinary meshing now rechecks higher-priority deferred revisions within a bounded
+  poll budget, with backoff while neighbours or light remain unavailable. Hardware
+  dirty-to-visible latency qualification remains open.
+  Sparse startup can complete without a publisher update after terrain decodes, stream
+  and render work drain, and a later GPU frame completes. Empty-world initialization is
+  verified; complete server-form and gameplay acceptance remains open.
 - [ ] Close mesh-neighbour readiness acceptance with slow-delivery and seam coverage.
   Distinguish eligible horizontal columns from the provisional full-neighbour/quiet-time
   fallback; its timeout is not established native behavior.
@@ -207,6 +220,18 @@ Implemented: [actor rigs, Molang, controllers, attachables and pose evaluation](
 with [client presentation](crates/client-presentation/src/lib.rs) and
 [rendering](crates/render/src/lib.rs). The open gates require complete behavioral
 and rendered qualification, not initial implementation of those systems.
+Frame sampling retains matching expression, layer and composition results and evaluates
+remote body batches on the caller and available shared workers with ordered budget
+reservations. Equipment placement reuses unchanged owner and attachment inputs. Hardware crowd captures and
+full temporal/visual qualification remain open.
+
+Pure numeric Molang expressions use bound f32 lane programs with load fusion;
+mixed values and effects retain the generic evaluator, including exact budget tails.
+Full rig history and rendered qualification remain part of `P4.3-RIGS`.
+Body and custom-skin composition use shared parent-first programs and caller-owned
+output, including attachable root modes and legacy attacks. Alternate render
+geometries and skin layers retain recursive composition. Rendered and live
+performance qualification remains open.
 
 - [ ] `P4.3-RIGS` — Close bounded asset admission, Molang/controllers, protocol-driven
   poses, skeletal rendering and distinct tick/frame interpolation with native evidence.
@@ -219,6 +244,18 @@ and rendered qualification, not initial implementation of those systems.
   a version-matched rendered comparison.
 - [ ] Close custom block-item texture resolution, non-cube shapes, tinting, animation
   and matched inventory/held-item presentation. Shared cube face sheets are bounded coverage.
+
+Continuous cosmetic cloth uses shared vertices, fixed-step constraints, world-space
+inertia and player-body contacts with standard-armor clearance. Vertical follow and
+damping restrain jump and landing motion, and local cloth keeps advancing while
+first-person visibility hides the body. View changes transfer the drape between
+body pose spaces. Self-collision and world collision remain open.
+Paid cosmetic selections use session ownership from the API database and withdraw
+on disconnect or revocation; production rollout qualification remains open.
+
+Equipped cosmetic emitters also run in visible menu and HUD paper dolls using the
+shared particle engine and attachment poses. Catalog-wide, in-world interaction
+and performance qualification for these previews remains open.
 
 Remaining qualification includes attachables and custom item models, action/use timing,
 projectile interpolation and shake, sleep/mount poses, name tags (including over
@@ -251,9 +288,14 @@ across these existing features; they are not a list of missing screens or system
 - [ ] `P5.5-INTERACTION-COMBAT-INVENTORY` — Close targeting, mining/cracks, placement/use,
   combat, hotbar selection, stack/network-ID reconciliation and container/crafting
   prediction, acknowledgements, rollback and stale-session behavior.
+  Native block requirements now cover every catalog identifier, including no-tool
+  beds; recipe tags share the pinned native catalog. Sword/shears speed rules,
+  effective item durability and live mining acceptance remain incomplete.
 - [ ] `P5.6-FORMS` — Close modal/menu/custom form navigation, validation, cancellation
   and responses, including server-pack definitions, structured text, custom controls,
-  scaling and image/layout behavior against matched native views.
+  scaling and image/layout behavior against matched native views. Server settings
+  replies are cached until their tab is selected; embedding their controls within
+  the settings panel instead of a separate form remains incomplete.
 - [ ] `P5.7-PARITY-PERF` — Qualify combined chat, scoreboard, boss bars, inventory and
   forms at supported scales/aspects and devices, with bounded memory and stable frame work.
 - [ ] `P5.8-SETTINGS` — Close menu, control, video and persistence acceptance. Desktop
@@ -284,10 +326,37 @@ See [inventory ownership](docs/architecture/inventory.md),
 
 ## Phase 6 — Online product surface
 
-Online services are implemented; complete acceptance still covers authenticated
+Online services are implemented. Startup requires login facts and PlayerSpawn;
+radius replies remain ordered play updates without holding startup. Complete
+acceptance still covers authenticated
 server/Realm/friend-world joins, transfers, reconnect/disconnect, account switching,
 presence, invites and required-pack failures. Preserve transport/session identity
 and keep actual account details out of captures and reports published with PRs.
+Core transfer/disconnect terminals can abandon unfinished join preparation; ordinary
+preparation and presentation readiness remain required for a successful join. Live
+server latency impact and the complete transfer acceptance matrix remain unqualified.
+
+Server pack acquisition, handoff and stack composition no longer impose fixed archive-count
+or compressed-byte quotas. Saved server lists retain every imported entry. Declared sizes,
+identity, digests and framing remain validated. Experience selections preserve service errors
+and wait for the account core result. Complete featured-server acceptance remains open:
+large-pack preparation can be slow or fail, and sparse startup terrain can leave loading open.
+Server language loading retains every readable English and selected-locale layer without fixed
+table, entry or process quotas, and folds inserted keys to ASCII lowercase. Unreadable sources
+and allocation failures are diagnosed without discarding other definitions. Complete pack-content
+acceptance remains open. Local imports, decompression, UI/text expansion and other admission limits
+or compressed-byte quotas. Safe member paths have no added byte cutoff; server manifests
+and default member reads retain complete declared content. Manifest subpack lists have no separate
+row-count cutoff; server and local loading share the existing field validation and device-tier
+selection. Native runtime and device acceptance for larger subpack lists remain open.
+Explicit subscriber limits and large-content live and performance acceptance remain open.
+Saved server lists retain every
+imported entry. Declared sizes, identity, digests and framing remain validated. Experience
+selections preserve service errors and wait for the account core result. Complete
+featured-server, menu and gameplay qualification remains open, including large-pack
+preparation and broader sparse-startup coverage.
+Local imports, decompression, UI/text expansion, language memory and other admission limits
+still need version-matched verification; the limit inventory closes no whole-client parity gate.
 
 Cosmetics require live authenticated multi-account acceptance, catalog/motion envelope
 coverage, supported slot/ownership enforcement, player-preview acceptance and hardware
@@ -312,6 +381,9 @@ Complete clean-install, first-run asset preparation, update/install recovery, st
 and crash diagnostics, packaging and platform acceptance. Required carriers must pass
 validation; retain only the explicitly permitted diagnostic/optional fallbacks.
 
+Windows runtime executables use `asInvoker` manifests and allow both normal and elevated
+launches. Native Windows startup, update and crash-restart acceptance remains incomplete.
+
 ## Experimental hosts and extensions
 
 - Browser/Android implementation and CI checks do not close their complete join, pack,
@@ -329,6 +401,15 @@ validation; retain only the explicitly permitted diagnostic/optional fallbacks.
   `shaderpack`, including options, dimensions, parsed properties, program discovery
   and enable rules. Translation, render-host integration and in-game acceptance
   remain incomplete; parsed custom uniform expressions are not executed or rendered.
+  remain incomplete.
+  shader-pack source loading is implemented in `shaderpack`; configuration parsing,
+  translation, render-host integration and in-game acceptance remain incomplete.
+- `registryc --kind java-mapping` generates `crates/assets/data/java-mapping-v2193.bin` from
+  the GeyserMC data pinned in `assets/geyser-mappings-source.json`: Java block states, block
+  tags, biomes and their colours, entity types and items for every Bedrock id Geyser maps.
+  States Geyser never produces take the closest same-block state and are flagged approximate;
+  Bedrock-only biomes and blocks stay unmapped. Nothing reads the carrier yet; Java shader
+  packs' ids, biome uniforms and sky colours are its first consumers.
 - Runtime pack compatibility still includes custom texture inheritance/tints, authored
   geometry and block/item component behavior beyond the currently supported cases.
 
@@ -342,6 +423,14 @@ Use the current [live-testing guide](docs/agents/live-testing.md) as the single 
 reference hardware, frame/hitch, streaming, join and capture budgets. Capture the
 rendered result on the relevant platform and scale; distinguish hidden-window pixel
 coverage from displayed-frame pacing and OS input/focus evidence.
+
+Compiled entities, blocks and icons share a compressed disk cache. Hits restore dependency
+records; archive, session, startup artwork and device inputs invalidate affected entries.
+Actor artwork prepares current demand immediately and prewarms unused pages within a
+per-frame budget. Artwork arrays allocate exactly their source layer count. Skin slots
+keep geometric capacity. Each artwork slot retains its own unchanged texture and bindings.
+Worker rig-plan preparation and measured cold arrival latency remain open acceptance work.
+Hardware join and frame acceptance still needs the full capture matrix below.
 
 Check deterministic work in CI: bounded queues, invalidation, stale-work rejection,
 retained memory, allocations, uploads and unnecessary rebuilds. Measure release
