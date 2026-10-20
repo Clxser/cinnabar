@@ -1,6 +1,7 @@
 //! Controlled ordinary friend actions; the presenter fixture is not a saved-auth or retail-friend claim.
 
 mod fixture;
+mod reconnect;
 
 use super::*;
 use fixture::Original;

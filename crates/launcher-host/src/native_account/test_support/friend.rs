@@ -194,6 +194,11 @@ impl Fixture {
         })
     }
 
+    /// Arms the original protected service's finite interruption before the first friend RTA socket.
+    pub fn hold_rta_reconnect(&mut self) -> bedrock_services::test_support::HostedRtaReconnect {
+        self.peer.hold_rta_reconnect()
+    }
+
     /// Waits for the actual original handle-join response flush, without admitting its nonce.
     pub async fn joined(&mut self) -> io::Result<()> {
         tokio::time::timeout_at(
