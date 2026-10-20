@@ -690,3 +690,51 @@ fn content_block_comments_hide_conditional_directives() {
     assert_eq!(properties.get("program.final.enabled"), Some("false"));
     assert!(properties.diagnostics.is_empty());
 }
+
+#[test]
+fn flip_numeric_booleans_include_macro_expansions() {
+    let properties = parse_with(
+        "flip.composite.colortex0=0\nflip.composite.colortex1=1\nflip.composite.colortex2=OFF\nflip.composite.colortex3=ON\n",
+        &[("OFF", "0"), ("ON", "1")],
+    );
+    assert!(
+        properties.diagnostics.is_empty(),
+        "{:?}",
+        properties.diagnostics
+    );
+    assert_eq!(
+        properties
+            .flips
+            .iter()
+            .map(|rule| rule.flip)
+            .collect::<Vec<_>>(),
+        [false, true, false, true]
+    );
+}
+
+#[test]
+fn custom_expression_operator_groups_follow_iris() {
+    for (expression, expected) in [
+        ("true || false && false", 0.0),
+        ("true || (false && false)", 1.0),
+        ("1 == 2 < 3", 1.0),
+        ("8 - 2 * 3", 2.0),
+        ("if(true || false && false, 1, 2)", 2.0),
+    ] {
+        let properties = parse(&format!(
+            "uniform.float.result={expression}\nvariable.float.result2={expression}\n"
+        ));
+        assert!(
+            properties.diagnostics.is_empty(),
+            "{:?}",
+            properties.diagnostics
+        );
+        for uniform in &properties.custom_uniforms {
+            assert_eq!(
+                uniform.expr.eval(&|_| None).unwrap(),
+                expected,
+                "{expression}"
+            );
+        }
+    }
+}
