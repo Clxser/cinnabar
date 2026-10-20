@@ -20,6 +20,30 @@ impl HostDirectory {
             if let Some(deadline) = deadline {
                 check_deadline(deadline)?;
             }
+            // A terminal already observed by the socket can precede its retained notification.
+            // Consume that original FIFO before the live-binding admission check below.
+            while self.recovery.is_none()
+                && self
+                    .socket
+                    .as_ref()
+                    .is_some_and(|socket| !socket.connection().is_connected())
+            {
+                let cutoff = self.control_deadline(deadline);
+                let event =
+                    bounded(cutoff, self.socket.as_mut().expect("host socket").drive()).await?;
+                let result = event.map_err(socket_error).and_then(|event| {
+                    event_changed(
+                        event,
+                        self.subscription
+                            .ok_or_else(|| invalid("host subscription is unavailable"))?,
+                        &self.reference,
+                        &mut self.changed,
+                    )
+                });
+                if let Err(error) = result {
+                    self.retain_interruption(error)?;
+                }
+            }
             self.changed |= self.session.as_ref().is_some_and(mpsd::Session::needs_sync);
             let mut serviced = false;
             if self.changed || self.recovery.is_some() {
