@@ -68,7 +68,7 @@ CGO_ENABLED=1 GOOS=android GOARCH=arm64 CC="$toolchain/bin/$triple$min_sdk-clang
     go build -buildmode=pie -trimpath \
     -ldflags "-s -w -checklinkname=0 -extldflags=$page_flags $(bash "$here/../common/core-ldflags.sh")" \
     -o "$libs/$(pin core_library)" ./core/cmd/bedrock-core
-CGO_ENABLED=1 GOOS=android GOARCH=arm64 CC="$toolchain/bin/$triple$min_sdk-clang" \
+GOWORK=off CGO_ENABLED=1 GOOS=android GOARCH=arm64 CC="$toolchain/bin/$triple$min_sdk-clang" \
     go -C "$repo_root/tools/localserver" build -buildmode=pie -trimpath \
     -ldflags "-s -w -checklinkname=0 -extldflags=$page_flags" \
     -o "$libs/$(pin local_server_library)" .
