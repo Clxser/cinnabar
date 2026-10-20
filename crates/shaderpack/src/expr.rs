@@ -1,7 +1,7 @@
 //! The OptiFine/Iris expression language.
 //!
-//! One grammar serves `program.*.enabled` rules, `#if`/`#elif` conditions in
-//! `shaders.properties` and the `uniform.*`/`variable.*` custom uniform expressions.
+//! The shared parser supports program conditions and Iris custom uniform expressions
+//! with their respective operator precedence.
 //! Parsing never panics on malformed text and bounds nesting so hostile packs cannot
 //! exhaust the stack.
 
@@ -107,11 +107,22 @@ impl Expr {
     /// with `u`/`U`/`f`/`F` suffixes ignored), `true`/`false`, `defined NAME`,
     /// `defined(NAME)`, dotted identifiers, calls and parenthesised expressions.
     pub fn parse(text: &str) -> Result<Expr, ExprError> {
+        Self::parse_with_precedence(text, false)
+    }
+
+    /// Parses an Iris custom expression, with one logical level and one comparison level.
+    pub(crate) fn parse_custom(text: &str) -> Result<Expr, ExprError> {
+        Self::parse_with_precedence(text, true)
+    }
+
+    /// Parses a complete expression using the requested operator groups.
+    fn parse_with_precedence(text: &str, iris: bool) -> Result<Expr, ExprError> {
         let tokens = lex(text)?;
         let mut parser = Parser {
             tokens,
             pos: 0,
             nesting: 0,
+            iris,
         };
         let (expr, _) = parser.parse_binary(0)?;
         match parser.peek() {
@@ -502,7 +513,7 @@ type Parsed = (Expr, u32);
 const UNARY_LEVEL: u8 = 6;
 
 /// Returns the operator only when it belongs to the requested precedence level.
-fn binary_op(token: &Token, level: u8) -> Option<BinaryOp> {
+fn binary_op(token: &Token, level: u8, iris: bool) -> Option<BinaryOp> {
     let (op, op_level) = match token {
         Token::OrOr => (BinaryOp::Or, 0),
         Token::AndAnd => (BinaryOp::And, 1),
@@ -518,6 +529,15 @@ fn binary_op(token: &Token, level: u8) -> Option<BinaryOp> {
         Token::Slash => (BinaryOp::Div, 5),
         Token::Percent => (BinaryOp::Rem, 5),
         _ => return None,
+    };
+    let op_level = if iris {
+        match op {
+            BinaryOp::And => 0,
+            BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => 2,
+            _ => op_level,
+        }
+    } else {
+        op_level
     };
     (op_level == level).then_some(op)
 }
@@ -536,6 +556,8 @@ struct Parser {
     pos: usize,
     /// Current recursion depth through [`Parser::parse_unary`].
     nesting: u32,
+    /// Whether logical and comparison operators use Iris's shared levels.
+    iris: bool,
 }
 
 impl Parser {
@@ -579,7 +601,10 @@ impl Parser {
             return self.parse_unary();
         }
         let mut lhs = self.parse_binary(level + 1)?;
-        while let Some(op) = self.peek().and_then(|token| binary_op(token, level)) {
+        while let Some(op) = self
+            .peek()
+            .and_then(|token| binary_op(token, level, self.iris))
+        {
             self.pos += 1;
             let rhs = self.parse_binary(level + 1)?;
             let depth = lhs.1.max(rhs.1);
