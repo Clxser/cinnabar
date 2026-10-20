@@ -3,8 +3,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::PropertiesDiagnostic;
-use crate::source::MAX_EXPANDED_PROPERTIES_BYTES;
+use crate::source::{
+    MAX_EXPANDED_PROPERTIES_BYTES, MAX_PROPERTIES_PREPROCESSING_BYTES,
+    MAX_PROPERTIES_PREPROCESSING_TOKENS,
+};
 use pp_rs::pp::Preprocessor;
+
+/// Stands in for a line whose preprocessing failed, so its logical entry is discarded.
+const REJECTED: char = '\0';
 
 /// One key/value pair from an active logical line.
 #[derive(Clone)]
@@ -44,6 +50,7 @@ pub(crate) fn read_entries(
         })
         .collect();
     let mut pp = Preprocessor::new(&source);
+    pp.set_work_limit(MAX_PROPERTIES_PREPROCESSING_TOKENS);
     pp.set_iris_conditions(true);
     pp.set_preserve_text(true);
     for (name, value) in defines {
@@ -57,9 +64,19 @@ pub(crate) fn read_entries(
     let mut lines = BTreeMap::<u32, String>::new();
     let mut rejected = BTreeSet::new();
     let mut remaining = MAX_EXPANDED_PROPERTIES_BYTES;
+    let mut work = MAX_PROPERTIES_PREPROCESSING_BYTES;
     while let Some(token) = pp.next_text() {
         match token {
             Ok(token) => {
+                // Rejected lines still expand, so recursive macros need a budget of their own.
+                let Some(left) = work.checked_sub(token.text.len().max(1)) else {
+                    diagnostics.push(PropertiesDiagnostic {
+                        line: token.line,
+                        message: "properties preprocessing exceeds work limit".to_owned(),
+                    });
+                    break;
+                };
+                work = left;
                 for (index, fragment) in token.text.split('\n').enumerate() {
                     let line = token.line.saturating_add(index as u32);
                     if fragment.is_empty() || rejected.contains(&line) {
@@ -78,10 +95,22 @@ pub(crate) fn read_entries(
                     }
                 }
             }
-            Err((error, location)) => diagnostics.push(PropertiesDiagnostic {
-                line: location.line(),
-                message: format!("invalid properties preprocessing: {error:?}"),
-            }),
+            Err((error, location)) => {
+                // A failed expansion invalidates its whole entry, not just the remaining text.
+                lines.remove(&location.line());
+                rejected.insert(location.line());
+                if pp.work_remaining() == 0 {
+                    diagnostics.push(PropertiesDiagnostic {
+                        line: location.line(),
+                        message: "properties preprocessing exceeds work limit".to_owned(),
+                    });
+                    break;
+                }
+                diagnostics.push(PropertiesDiagnostic {
+                    line: location.line(),
+                    message: format!("invalid properties preprocessing: {error:?}"),
+                });
+            }
         }
     }
     let mut entries: Vec<_> =
@@ -90,9 +119,18 @@ pub(crate) fn read_entries(
                 return None;
             }
             let line = (index + 1) as u32;
+            if rejected.contains(&line) {
+                // Keep the continuation so the marker poisons every line of the entry.
+                let continued = physical.trim_end().ends_with('\\');
+                return Some((
+                    line,
+                    format!("{REJECTED}{}", if continued { "\\" } else { "" }),
+                ));
+            }
             Some((line, lines.remove(&line).unwrap_or_default()))
         }))
         .filter(|entry| !raw_key(&entry.key))
+        .filter(|entry| !entry.key.contains(REJECTED) && !entry.value.contains(REJECTED))
         .collect();
     entries.extend(
         logical_entries(text.lines().enumerate().filter_map(|(index, line)| {
