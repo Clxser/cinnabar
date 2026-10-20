@@ -1,5 +1,6 @@
 //! Explicit friend-world membership, RTA progress and authoritative connection admission.
 
+mod recovery;
 mod selection;
 mod world;
 pub use selection::FriendSelection;
@@ -107,8 +108,8 @@ pub enum JoinProgress {
 }
 
 /// A single explicitly selected join whose membership remains reachable across canceled futures.
-/// No task, runtime or reconnect policy is created. Call advance to admit, drive through play,
-/// and close on every termination path; dropping this value performs no remote I/O.
+/// No task or runtime is created. Call advance to admit, drive through play and bounded SDK
+/// recovery, and close on every termination path; dropping this value performs no remote I/O.
 #[must_use = "retain the friend-world owner and explicitly close its remote membership"]
 pub struct FriendJoin {
     account: Arc<NativeAccount>,
@@ -124,6 +125,7 @@ pub struct FriendJoin {
     ambiguous: bool,
     changed: bool,
     active_refresh_deadline: Option<Instant>,
+    recovery: Option<recovery::Recovery>,
     retry_at: Option<Instant>,
     deadline: Instant,
     admitted: bool,
@@ -155,6 +157,7 @@ impl NativeAccount {
             ambiguous: false,
             changed: false,
             active_refresh_deadline: None,
+            recovery: None,
             retry_at: None,
             deadline,
             admitted: false,
@@ -184,38 +187,10 @@ impl FriendJoin {
     }
 
     /// Drives the live subscription without an idle disconnect deadline.
-    /// Once a refresh starts, its absolute service deadline survives cancellation of this future.
+    /// Once refresh or physical recovery starts, its first absolute service deadline survives
+    /// cancellation. Recovery rebinds the same member; it never rejoins or replaces the game.
     pub async fn drive_active(&mut self) -> io::Result<()> {
-        if !self.admitted || self.closing || self.closed {
-            return Err(invalid("friend membership is not active"));
-        }
-        if !self.changed {
-            let event = self
-                .socket
-                .as_mut()
-                .ok_or_else(|| invalid("friend RTA is unavailable"))?
-                .drive()
-                .await
-                .map_err(socket_error)?;
-            event_changed(
-                event,
-                self.subscription
-                    .ok_or_else(|| invalid("friend subscription is unavailable"))?,
-                &self.selection.reference,
-                &mut self.changed,
-            )?;
-        }
-        if self.changed {
-            let deadline = *self
-                .active_refresh_deadline
-                .get_or_insert_with(|| Instant::now() + super::ACQUISITION_TIMEOUT);
-            while self.changed {
-                self.refresh(deadline).await?;
-            }
-            self.active_refresh_deadline = None;
-        }
-        self.current_admission()?;
-        Ok(())
+        self.drive_membership(None).await
     }
 
     /// Stops local I/O before retaining unresolved membership for another runtime's explicit cleanup.
@@ -412,17 +387,7 @@ impl FriendJoin {
     /// Drives the active subscription and refreshes complete snapshots after matching shoulder taps.
     /// The transport owner polls this alongside game I/O; it must not spawn a detached lifetime task.
     pub async fn drive(&mut self, deadline: Instant) -> io::Result<()> {
-        if !self.admitted || self.closing || self.closed {
-            return Err(invalid("friend membership is not active"));
-        }
-        if !self.changed {
-            self.notification(deadline).await?;
-        }
-        while self.changed {
-            self.refresh(deadline).await?;
-        }
-        self.current_admission()?;
-        Ok(())
+        self.drive_membership(Some(deadline)).await
     }
 
     /// Reconciles an uncertain write and explicitly leaves only this account's membership.
@@ -436,6 +401,15 @@ impl FriendJoin {
         self.closing = true;
         if self.ambiguous && self.session.is_none() {
             self.reconcile(deadline).await?;
+        }
+        if self
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.candidate.is_some())
+        {
+            let mut operation = self.operation(deadline).await?;
+            self.settle_rebind(&mut operation, deadline).await?;
+            operation.persist()?;
         }
         if self
             .session
@@ -485,7 +459,11 @@ impl FriendJoin {
         let expected_generation = self.scope.as_ref().map(|scope| scope.generation.clone());
         let acquire =
             Arc::clone(&self.account).acquire_verified_for(expected_generation.as_deref());
-        let mut operation = if !self.closing {
+        let live = self
+            .socket
+            .as_ref()
+            .is_some_and(|socket| socket.connection().is_connected());
+        let mut operation = if !self.closing && (self.recovery.is_none() || live) {
             if let (Some(socket), Some(subscription)) = (&mut self.socket, self.subscription) {
                 service(
                     socket,
@@ -686,6 +664,9 @@ impl FriendJoin {
 
     /// Requires the joined local membership to reflect this socket's actual acknowledged RTA binding.
     fn check_binding(&self, session: &mpsd::Session) -> io::Result<()> {
+        if !self.subscribed || self.recovery.is_some() {
+            return Err(invalid("friend subscription is not current"));
+        }
         let socket = self
             .socket
             .as_ref()

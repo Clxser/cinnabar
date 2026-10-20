@@ -135,7 +135,17 @@ pub(super) fn event_changed(
             *changed |= changes.iter().any(|change| change.is_for(reference))
         }
         rta::Event::Resync { subscriptions } => *changed |= subscriptions.contains(&subscription),
-        rta::Event::Failed { .. } | rta::Event::Disconnected | rta::Event::Unsubscribed { .. } => {
+        rta::Event::Disconnected
+        | rta::Event::Failed {
+            cause: rta::Failure::Disconnected | rta::Failure::TimedOut,
+            ..
+        } => {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                Interrupted,
+            ));
+        }
+        rta::Event::Failed { .. } | rta::Event::Unsubscribed { .. } => {
             return Err(io::Error::new(
                 io::ErrorKind::ConnectionAborted,
                 "friend-world subscription ended",
@@ -176,9 +186,43 @@ pub(super) fn rta_error(_: rta::Error) -> io::Error {
     io::Error::other("friend-world subscription failed")
 }
 /// Keeps WebSocket responses and close reasons out of diagnostics.
-pub(super) fn socket_error(_: SocketError) -> io::Error {
-    io::Error::other("friend-world realtime connection failed")
+pub(super) fn socket_error(error: SocketError) -> io::Error {
+    io::Error::other(SocketFailure(error))
 }
+
+/// Distinguishes physical interruption from permanent resource, protocol or account rejection.
+/// The disconnection marker is provisional until the original socket's actual terminal drains.
+pub(super) fn interrupted(error: &io::Error) -> bool {
+    error.get_ref().is_some_and(|source| {
+        source.is::<Interrupted>()
+            || source
+                .downcast_ref::<SocketFailure>()
+                .is_some_and(|failure| {
+                    matches!(
+                        failure.0,
+                        SocketError::Closed | SocketError::Transport | SocketError::TimedOut
+                    )
+                })
+    })
+}
+
+#[derive(Debug)]
+struct Interrupted;
+impl std::fmt::Display for Interrupted {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("friend-world subscription ended")
+    }
+}
+impl std::error::Error for Interrupted {}
+
+#[derive(Debug)]
+struct SocketFailure(SocketError);
+impl std::fmt::Display for SocketFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("friend-world realtime connection failed")
+    }
+}
+impl std::error::Error for SocketFailure {}
 /// Reports only application-owned static validation reasons.
 pub(super) fn invalid(reason: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, reason)
@@ -194,4 +238,29 @@ pub(super) fn cleanup_pending() -> io::Error {
         io::ErrorKind::WouldBlock,
         "friend-world membership remains uncertain; retry cleanup",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Only physical failure can enter reconnect; malformed/configuration errors stay terminal.
+    #[test]
+    fn socket_interruption_retains_its_typed_cause_without_changing_safe_diagnostics() {
+        for (cause, recoverable) in [
+            (SocketError::Closed, true),
+            (SocketError::Transport, true),
+            (SocketError::TimedOut, true),
+            (SocketError::Protocol, false),
+            (SocketError::Capacity, false),
+            (SocketError::WrongAccount, false),
+            (SocketError::Configuration, false),
+        ] {
+            let error = socket_error(cause);
+            assert_eq!(interrupted(&error), recoverable);
+            assert_eq!(error.kind(), io::ErrorKind::Other);
+            assert_eq!(error.to_string(), "friend-world realtime connection failed");
+        }
+        assert!(!interrupted(&cleanup_pending()));
+    }
 }
