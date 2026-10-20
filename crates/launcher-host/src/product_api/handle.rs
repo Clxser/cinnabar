@@ -186,6 +186,22 @@ impl Client {
         result.map_or(PlayerSync::Unavailable, PlayerSync::Current)
     }
 
+    /// Allows retained ownership only for this live socket's verified account and unchanged epoch.
+    pub(crate) fn ownership_current(&self, xuid: &str) -> bool {
+        let Some((epoch, scope)) = self.with(|state| {
+            if state.stopped || state.live.is_none() {
+                return None;
+            }
+            Some((state.epoch, state.scope.clone()?))
+        }) else {
+            return false;
+        };
+        if scope.xuid() != xuid || scope.current() != Some(true) {
+            return false;
+        }
+        self.with(|state| !state.stopped && state.epoch == epoch && state.live.is_some())
+    }
+
     /// Delivers only the latest accepted announcement through the launcher's existing release path.
     pub(crate) fn take_release(&self) -> Option<CinnabarRelease> {
         let scope = self.with(|state| state.scope.clone())?;

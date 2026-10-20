@@ -64,9 +64,9 @@ fn project(snapshot: &Snapshot) -> CinnabarPlayerUpdates {
     let remote = &snapshot.shared_players.remote;
     let ownership_current = age < STALE_EXCHANGE_MS
         && snapshot
-            .account
+            .native_product_api
             .as_ref()
-            .is_some_and(|account| matches!(account.state, AccountAuth::SignedIn));
+            .is_some_and(|api| api.ownership_current(&remote.ownership_xuid));
     CinnabarPlayerUpdates {
         ownership_xuid: if ownership_current {
             remote.ownership_xuid.clone()
