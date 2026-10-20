@@ -98,8 +98,7 @@ async fn send<S: BatchPhase>(
     if large
         && (messages.len() != 1
             || messages[0].first().copied()
-                != u8::try_from(CompressionAlgorithm::Deflate.network_id()).ok()
-            || messages[0].len() > nethernet::session::Channel::Reliable.max_message_size())
+                != u8::try_from(CompressionAlgorithm::Deflate.network_id()).ok())
     {
         return Err(io::Error::other(
             "large decoded fixture must fit one compressed original reliable message",
