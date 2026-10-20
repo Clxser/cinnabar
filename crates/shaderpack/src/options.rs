@@ -324,6 +324,7 @@ fn parse_definition(line: &str) -> Option<Definition<'_>> {
     }
     if rest.trim_start().starts_with("/*") {
         return only_block_comments(rest).then_some(Definition {
+            indent,
             name,
             form: Form::Switch { enabled },
             comment: None,
