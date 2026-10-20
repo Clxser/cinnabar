@@ -1,6 +1,5 @@
 //! The same typed native Login/pack prefix, retained for an application-owned browser relay.
 
-#[cfg(test)]
 use super::{Connection, NativeAuthentication, PacketIo, failure, negotiated, packs};
 use crate::{
     ProtocolError,
