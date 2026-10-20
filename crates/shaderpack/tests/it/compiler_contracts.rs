@@ -389,14 +389,14 @@ fn array_and_matrix_varyings_have_matching_compiled_locations() {
 fn explicit_block_locations_link_distinct_block_and_member_names() {
     let translated = success(
         "#version 450
-        layout(location=2) out FIRST { vec2 uv; mat2 basis; } vertexData;
+        layout(location=2) out FIRST { vec2 uv; mat3 basis; } vertexData;
         out vec2 automatic;
-        void main() { vertexData.uv = vec2(0.5); vertexData.basis = mat2(1.0);
+        void main() { vertexData.uv = vec2(0.5); vertexData.basis = mat3(1.0);
         automatic = vec2(0.25); gl_Position = vec4(0.0); }",
         "#version 450
-        layout(location=2) in SECOND { vec2 renamed; mat2 transform; } fragmentData;
+        layout(location=2) in SECOND { vec2 renamed; mat3 transform; } fragmentData;
         in vec2 automatic; out vec4 color;
-        void main() { color = vec4(fragmentData.transform * fragmentData.renamed + automatic, 0.0, 1.0); }",
+        void main() { color = vec4((fragmentData.transform * vec3(fragmentData.renamed, 1.0)).xy + automatic, 0.0, 1.0); }",
     );
     for stage in &program(&translated, "composite").stages {
         let mut locations: Vec<_> = interface_locations(
@@ -407,6 +407,6 @@ fn explicit_block_locations_link_distinct_block_and_member_names() {
         .map(|(_, location)| location)
         .collect();
         locations.sort_unstable();
-        assert_eq!(locations, [0, 2, 3, 4]);
+        assert_eq!(locations, [0, 2, 3, 4, 5]);
     }
 }
