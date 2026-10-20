@@ -6,6 +6,17 @@ under the ignored `.local/assets/block-data/` directory, and the verified
 download cache stays in the ignored sibling `.local/assets/block-data.downloads/`
 directory. This notice is checked in and is not rewritten by the acquisition script.
 
+## Native Bedrock catalog facts
+
+Block hardness, ordinary-tool tags, harvest requirements and recipe item tags
+come from the shared [protocolgen catalog](https://github.com/cinnabar-mc/protocolgen/tree/cf01aa84b74df45df5fa24569e1ac358e4afbb87/generated/data).
+Its selected native 1.26.51 measurements are from
+[didntpot/bedrock-data](https://github.com/didntpot/bedrock-data), commit
+`bb896a46ba856c58383e3cfb962a38c45a0dea78`, under CC0-1.0. The source lock and
+upstream licence are retained in protocolgen. Sword/shears speed targets still
+use the provisional Prismarine input described below; complete mining parity
+remains incomplete.
+
 ## Block property and component data
 
 `crates/assets/data/block-properties-v2193.json` and
@@ -287,6 +298,84 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 <!-- END PRISMARINEJS-MINECRAFT-DATA-MIT -->
 
+## GeyserMC mappings
+
+- Source: https://github.com/GeyserMC/mappings
+- Commit: `81700ab543c1f4e9f9041f58dac4154ecb0d0c8b` (Java Edition 26.3, Bedrock Edition 1.26.50)
+- Archive: the `2.1.0-build.1` release of https://github.com/GeyserMC/mappings-generator,
+  the generator's published output for that commit, pinned in
+  `assets/geyser-mappings-source.json`
+- License: MIT
+- Copyright: Copyright (c) 2019-2026 GeyserMC
+- Upstream license SHA-256:
+  `4f49de5134b13de98672e8f870aae5d36f5b415086fb1c6fdf832b78c47c7094`
+- Use: `crates/assets/data/java-mapping-v2193.bin` is generated from its Java-to-Bedrock
+  block-state, biome and item mappings and from the archive's MCProtocolLib network exports
+  (`mcpl/data/networkTags.nbt` block and biome tags, `mcpl/data/networkCodec.nbt` Java biome
+  registry). GeyserMC licenses only its contributors' own work; it does not relicense
+  Minecraft data owned by Mojang or Microsoft.
+
+<!-- BEGIN GEYSERMC-MAPPINGS-MIT -->
+The MIT License
+
+Copyright (c) 2019-2026 GeyserMC. http://geysermc.org
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+<!-- END GEYSERMC-MAPPINGS-MIT -->
+
+## GeyserMC Geyser
+
+- Source: https://github.com/GeyserMC/Geyser
+- Commit: `8f6a9d20b05c302282f9496314b7c18cf6d4cc53`, pinned in
+  `assets/geyser-mappings-source.json`
+- License: MIT
+- Copyright: Copyright (c) 2019-2025 GeyserMC
+- Upstream license SHA-256:
+  `7380cf017734f26977e907a07fd806e9dcba38023d522b7c6e56bd3a2482b08a`
+- Use: the Java entity type to Bedrock entity id pairs in
+  `crates/assets/data/java-mapping-v2193.bin` are read from its `VanillaEntities.java` and
+  `BedrockEntityDefinitions.java`.
+
+<!-- BEGIN GEYSERMC-GEYSER-MIT -->
+The MIT License
+
+Copyright (c) 2019-2025 GeyserMC. http://geysermc.org
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+<!-- END GEYSERMC-GEYSER-MIT -->
+
 ## Axolotl Stack
 
 - Source: https://github.com/axolotl-stack/axolotl-stack
@@ -332,8 +421,7 @@ SOFTWARE.<!-- END AXOLOTL-STACK-MIT -->
 - Copyright: Copyright (c) 2019 Dragonfly Tech
 - Upstream license SHA-256:
   `9b0866098f4b7bfadafa43adec71dae35968053ceaea0487fb4b23c46cc72755`
-- Item tag table: `crates/protocol/data/item_tags_dragonfly.tsv`, derived from
-  the `hashimthearab/dragonfly` fork at
+- Earlier item-tag tables were derived from the `hashimthearab/dragonfly` fork at
   `3d29a693c54b8412a6a1c619f5b06bd8cb09a0e5` under the same license.
 
 <!-- BEGIN DRAGONFLY-MIT -->
