@@ -13,9 +13,7 @@ use bevy::{
         touch::{TouchInput, TouchPhase},
     },
     math::Vec2,
-    prelude::{
-        DetectChangesMut, Entity, MessageReader, MessageWriter, Query, Res, ResMut, Resource, With,
-    },
+    prelude::{DetectChangesMut, Entity, Local, MessageReader, MessageWriter, Query, Res, With},
     window::{PrimaryWindow, Window},
 };
 use client_shell::{menu::MenuRuntime, ui_resources::UiRuntimeResource};
@@ -39,13 +37,11 @@ enum PointerEvent {
 }
 
 /// The finger that owns the emulated pointer and its undelivered events.
-#[derive(Debug, Default, Resource)]
+#[derive(Debug, Default)]
 pub(crate) struct TouchPointer {
     owner: Option<u64>,
     /// A delivered press still waits for its release.
     held: bool,
-    /// True when this frame delivered a touch cursor change or button edge.
-    pub(crate) delivered: bool,
     queue: VecDeque<PointerEvent>,
 }
 
@@ -118,9 +114,8 @@ pub(crate) fn emulate_ui_pointer(
     ui: Option<Res<UiRuntimeResource>>,
     player: Option<Res<client_state::PlayerRuntime>>,
     menu: Option<Res<MenuRuntime>>,
-    mut pointer: ResMut<TouchPointer>,
+    mut pointer: Local<TouchPointer>,
 ) {
-    pointer.delivered = false;
     let Ok((entity, mut window)) = windows.single_mut() else {
         return;
     };
@@ -136,7 +131,6 @@ pub(crate) fn emulate_ui_pointer(
         let edge = pointer.lose_screen();
         (edge.map(|_| None), edge)
     };
-    pointer.delivered = cursor.is_some() || edge.is_some();
     if let Some(cursor) = cursor {
         // Bypassed so the window backend is not asked to warp a cursor touchscreens lack.
         window.bypass_change_detection().set_cursor_position(cursor);
@@ -210,7 +204,6 @@ mod tests {
             let mut app = App::new();
             app.add_message::<TouchInput>()
                 .add_message::<MouseButtonInput>()
-                .init_resource::<TouchPointer>()
                 .insert_resource(UiRuntimeResource(form_runtime(settings)))
                 .insert_resource(client_state::PlayerRuntime(player_state::PlayerState::new(
                     1,

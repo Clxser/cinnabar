@@ -117,8 +117,6 @@ pub struct ServerFormStore {
     focus: usize,
     scroll: usize,
     engine: FormEngineState,
-    /// Last device activity, retained when admission replaces the form engine.
-    input_mode: json_ui::InputMode,
     /// The settings screen already asked the server for its settings form.
     settings_requested: bool,
     /// Latest settings reply, retained without taking input from another tab.
@@ -126,16 +124,6 @@ pub struct ServerFormStore {
     settings_selected: bool,
 }
 impl ServerFormStore {
-    /// The device used for form bindings, independent of event dispatch.
-    pub const fn input_mode(&self) -> json_ui::InputMode {
-        self.input_mode
-    }
-
-    /// Records device activity without changing the form's interaction state.
-    pub fn set_input_mode(&mut self, mode: json_ui::InputMode) {
-        self.input_mode = mode;
-    }
-
     pub fn admit(
         &mut self,
         event: FormRequestEvent,

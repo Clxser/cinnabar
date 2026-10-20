@@ -20,7 +20,6 @@ pub(crate) fn configure_client_authority_systems(app: &mut App) {
     .init_resource::<WorldStreamFramePoll>()
     .init_resource::<crate::ui_runtime::presentation::publish::PreparedUiPublication>()
     .init_resource::<client_state::EmoteInputConsumed>()
-    .init_resource::<crate::ui_runtime::touch_pointer::TouchPointer>()
     .add_systems(
         Update,
         (drive_gameplay_touch_targets, collect_raw_input)
@@ -40,7 +39,6 @@ pub(crate) fn configure_client_authority_systems(app: &mut App) {
     .add_systems(
         Update,
         (
-            crate::ui_runtime::track_server_form_input_mode,
             crate::ui_runtime::scene_stack::close_scenes_on_player_hurt,
             drive_sign_editor.run_if(client_extensions::server_experiences::input::ordinary_input),
             drive_server_form_input

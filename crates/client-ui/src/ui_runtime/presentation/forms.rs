@@ -109,6 +109,8 @@ use ui::{UiNode, UiPoint, UiRect};
 /// Each screen family's own state, carried across builds.
 #[derive(Default)]
 pub(super) struct ScreenStates {
+    /// App-wide input mode supplied before presentation refreshes form bindings.
+    form_input_mode: json_ui::InputMode,
     /// The engine menu's regions by action, for next frame's hover state.
     menu_keys: Vec<(launcher::menu::MenuAction, String)>,
     /// The engine menu's press sounds by action.
@@ -559,6 +561,11 @@ impl UiPresentationRuntime {
         Some(self.engine.as_ref()?.animator())
     }
 
+    /// Uses the app-wide device for form bindings without changing event dispatch.
+    pub fn set_form_input_mode(&mut self, mode: json_ui::InputMode) {
+        self.screens.form_input_mode = mode;
+    }
+
     /// The engine frame for `identity`, when the engine drew that form.
     pub fn form_engine_frame(&self, identity: ServerFormIdentity) -> Option<&EngineFrame> {
         self.projections
@@ -738,7 +745,7 @@ impl UiPresentationRuntime {
                         match renderer.render(
                             &form,
                             &state.view,
-                            runtime.server_forms().input_mode(),
+                            self.screens.form_input_mode,
                             &mut frame,
                         ) {
                             Ok(Some(frame)) => {

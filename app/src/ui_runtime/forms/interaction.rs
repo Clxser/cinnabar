@@ -72,49 +72,6 @@ fn gamepad_keys<'a>(
     keys
 }
 
-/// Observes device activity for form bindings without consuming the dispatch readers.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub(crate) fn track_server_form_input_mode(
-    desktop: (
-        Res<ButtonInput<KeyCode>>,
-        Res<ButtonInput<MouseButton>>,
-        Res<AccumulatedMouseMotion>,
-    ),
-    mut keyboard: MessageReader<KeyboardInput>,
-    mut wheel: MessageReader<MouseWheel>,
-    mut buttons: MessageReader<MouseButtonInput>,
-    touch: Option<Res<crate::ui_runtime::touch_pointer::TouchPointer>>,
-    pads: Query<&Gamepad>,
-    mut stick: Local<[bool; 4]>,
-    mut runtime: ResMut<UiRuntimeResource>,
-) {
-    let (keys, mouse, motion) = desktop;
-    let desktop_used = keyboard.read().count() + wheel.read().count() + buttons.read().count() > 0
-        || keys.get_just_pressed().next().is_some()
-        || mouse.get_just_pressed().next().is_some()
-        || mouse.get_just_released().next().is_some()
-        || motion.delta != bevy::math::Vec2::ZERO;
-    let gamepad_used = !gamepad_keys(pads.iter(), &mut stick).is_empty()
-        || pads.iter().any(|pad| {
-            pad.get_just_pressed()
-                .chain(pad.get_just_released())
-                .next()
-                .is_some()
-        });
-    let mode = if touch.is_some_and(|touch| touch.delivered) {
-        Some(json_ui::InputMode::Touch)
-    } else if desktop_used {
-        Some(json_ui::InputMode::Mouse)
-    } else if gamepad_used {
-        Some(json_ui::InputMode::Gamepad)
-    } else {
-        None
-    };
-    if let Some(mode) = mode {
-        runtime.server_forms_mut().set_input_mode(mode);
-    }
-}
-
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn drive_server_form_input(
     (player_runtime, window, mut focus, driven): (

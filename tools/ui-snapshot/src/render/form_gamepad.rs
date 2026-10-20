@@ -17,16 +17,14 @@ use crate::{
 pub(super) fn png(state: &State, dir: &Path) -> Result<Vec<u8>, Error> {
     let carriers = carriers::load(dir, false)?;
     let mut player = player_state::PlayerState::new(1);
-    let mut runtime = pack_harness::action_form(&mut player, "Menu", &["Continue"]);
-    runtime
-        .server_forms_mut()
-        .set_input_mode(json_ui::InputMode::Gamepad);
+    let runtime = pack_harness::action_form(&mut player, "Menu", &["Continue"]);
     let mut presentation =
         UiPresentationRuntime::new(carriers.font).map_err(|error| error.to_string())?;
     presentation
         .enable_json_ui(mini_carrier())
         .map_err(|error| error.to_string())?;
     presentation.set_server_ui_pack(&form_input_mode::pack());
+    presentation.set_form_input_mode(json_ui::InputMode::Gamepad);
     presentation.set_gui_scale_preference(Some(state.gui_scale));
     let frame = presentation
         .build(

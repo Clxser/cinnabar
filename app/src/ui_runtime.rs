@@ -21,9 +21,7 @@ pub mod sign_editor;
 pub(crate) mod touch_pointer;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use forms::{
-    drive_server_form_input, flush_server_form_network, track_server_form_input_mode,
-};
+pub(crate) use forms::{drive_server_form_input, flush_server_form_network};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use interaction::{
     drive_chat_keyboard_input, drive_chat_ui_actions, drive_inventory_ui_actions,
