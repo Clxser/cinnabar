@@ -196,7 +196,10 @@ fn program_name(name: &str) -> Option<(ProgramGroup, bool, bool)> {
                 && index.len() <= 2
                 && index.bytes().all(|b| b.is_ascii_digit())
                 && !index.starts_with('0'));
-        let suffix_ok = suffix.is_none_or(|s| s.len() == 1 && s.as_bytes()[0].is_ascii_lowercase());
+        // Setup programs are indexed only; lettered compute variants belong to pass families.
+        let suffix_ok = suffix.is_none_or(|s| {
+            *group != ProgramGroup::Setup && s.len() == 1 && s.as_bytes()[0].is_ascii_lowercase()
+        });
         if index_ok && suffix_ok {
             return Some((
                 *group,
@@ -303,6 +306,16 @@ mod tests {
     use super::*;
     use crate::dimensions::DimensionSelector;
 
+    /// Setup programs are `setup` and `setup1`…`setup99`; lettered variants are not loaded.
+    #[test]
+    fn setup_programs_take_no_letter_suffix() {
+        assert_eq!(program_group("setup"), Some(ProgramGroup::Setup));
+        assert_eq!(program_group("setup99"), Some(ProgramGroup::Setup));
+        assert_eq!(program_group("setup_a"), None);
+        assert_eq!(program_group("setup1_a"), None);
+        assert_eq!(program_group("composite1_a"), Some(ProgramGroup::Composite));
+    }
+
     #[test]
     fn geometry_catalogue_has_unique_names_and_terminating_fallbacks() {
         let names: std::collections::BTreeSet<_> =
@@ -368,10 +381,16 @@ mod tests {
                     "{name}"
                 );
             }
+            // Lettered compute variants exist for every pass family except the indexed setup.
+            let lettered = group != ProgramGroup::Setup;
             for suffix in 'a'..='z' {
                 let name = format!("{family}_{suffix}");
-                assert_eq!(program_group(&name), Some(group));
-                assert!(program_file(&format!("{name}.csh")).is_some());
+                assert_eq!(program_group(&name), lettered.then_some(group), "{name}");
+                assert_eq!(
+                    program_file(&format!("{name}.csh")).is_some(),
+                    lettered,
+                    "{name}"
+                );
                 assert!(program_file(&format!("{name}.fsh")).is_none());
             }
             for suffix in ["00", "01", "_aa", "_A", "_"] {
