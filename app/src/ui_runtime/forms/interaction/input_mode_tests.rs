@@ -90,7 +90,7 @@ fn controller_mapping_receives_gamepad_mode_and_keyboard_keeps_focus_navigation(
     let (mut app, pad) = host();
     control_pack(
         &mut app,
-        r#"{"type":"button","size":[100,30],"collection_index":0,
+        r#"{"type":"button","focus_enabled":true,"size":[100,30],"collection_index":0,
         "button_mappings":[{"from_button_id":"button.menu_ok","to_button_id":"button.form_button_click","mapping_type":"focused","input_mode_condition":"gamepad"}]}"#,
     );
     let window = app
