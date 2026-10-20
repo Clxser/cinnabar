@@ -552,3 +552,77 @@ fn atomic_access_is_merged_across_render_stages() {
     assert!(image.read && image.write && image.atomic);
     assert!(image.stages.vertex && image.stages.fragment);
 }
+
+/// Checks that every stage retains distinct global variable bindings.
+fn assert_unique_globals(translation: &PackTranslation) {
+    for stage in &program(translation, "composite").stages {
+        let module = &stage.result.as_ref().unwrap().module;
+        let names: Vec<_> = module
+            .global_variables
+            .iter()
+            .filter_map(|(_, variable)| variable.name.as_deref())
+            .collect();
+        let unique: std::collections::BTreeSet<_> = names.iter().copied().collect();
+        assert_eq!(
+            names.len(),
+            unique.len(),
+            "duplicate global bindings: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn declaration_lists_preserve_alias_names_after_arrays_and_initializers() {
+    for declarations in [
+        "uniform mat4 view[2], projectionMatrix;",
+        "mat4 view[2], projectionMatrix = mat4(1.0);",
+    ] {
+        success(
+            &format!(
+                "#version 450\n{declarations} void main() {{ gl_Position = projectionMatrix * view[0][0]; }}"
+            ),
+            FRAGMENT,
+        );
+    }
+}
+
+#[test]
+fn declaration_aliases_respect_parameters_locals_and_members() {
+    success(
+        "#version 450\nstruct S { float projectionMatrix; }; float choose(float projectionMatrix) { return projectionMatrix; } void main() { S value; value.projectionMatrix = 1.0; float amount = choose(value.projectionMatrix); { float projectionMatrix = 2.0; amount += projectionMatrix; } gl_Position = projectionMatrix * vec4(amount); }",
+        FRAGMENT,
+    );
+}
+
+#[test]
+fn declaration_block_members_with_underscores_keep_distinct_bindings() {
+    let translated = success(
+        "#version 450\nout A_B { vec4 c; } first; out A { vec4 B_c; } second; void main() { first.c = vec4(0.25); second.B_c = vec4(0.75); gl_Position = vec4(0.0); }",
+        "#version 450\nin A_B { vec4 c; } first; in A { vec4 B_c; } second; out vec4 color; void main() { color = first.c + second.B_c; }",
+    );
+    assert_unique_globals(&translated);
+}
+
+#[test]
+fn declaration_generated_interfaces_do_not_hide_pack_globals() {
+    let translated = success(
+        "#version 450\nvec4 iris_b_DATA_color_0; out DATA { vec4 color; } data; void main() { iris_b_DATA_color_0 = vec4(0.25); data.color = vec4(0.75); gl_Position = iris_b_DATA_color_0; }",
+        "#version 450\nvec4 iris_out_color; in DATA { vec4 color; } data; out vec3 color; void main() { iris_out_color = data.color; color = iris_out_color.rgb; }",
+    );
+    assert_unique_globals(&translated);
+}
+
+#[test]
+fn declaration_converted_inputs_do_not_hide_pack_globals() {
+    let translated = success(
+        "#version 450\nin vec4 vaPosition; vec3 iris_float_vaPosition = vec3(0.25); void main() { gl_Position = vaPosition + vec4(iris_float_vaPosition, 0.0); }",
+        FRAGMENT,
+    );
+    assert!(
+        reflection(program(&translated, "composite"))
+            .vertex_inputs
+            .iter()
+            .any(|input| input.attribute == shaderpack::VertexAttribute::Position)
+    );
+    assert_unique_globals(&translated);
+}
