@@ -165,7 +165,7 @@ fn size_value(text: &str) -> Result<SizeValue, String> {
     }
 }
 
-/// Parses a positive viewport scale and its optional offset.
+/// Reads a program or buffer blend override: `off` or four blend factors.
 fn blend_rule(target: &str, value: &str) -> Result<BlendRule, String> {
     let (program, buffer) = match target.split_once('.') {
         Some((program, buffer)) => (program, Some(name(buffer, "buffer")?)),
