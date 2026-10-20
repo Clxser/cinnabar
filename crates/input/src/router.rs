@@ -333,7 +333,7 @@ impl SemanticInputRouter {
         let pending_mouse_motion = self
             .pending
             .as_ref()
-            .and_then(|frame| frame.keyboard_mouse.as_ref())
+            .and_then(DeviceFrame::routed_keyboard_mouse)
             .is_some_and(|keyboard| keyboard.mouse_motion != [0.0, 0.0]);
         self.pending_release_barrier |= self.physical_down.iter().any(|down| *down)
             || self.quarantined_controls.len() > previous_quarantine_len
@@ -616,7 +616,7 @@ impl SemanticInputRouter {
     }
 
     fn has_more_specific_chord(&self, chord: InputChord, frame: &DeviceFrame) -> bool {
-        let Some(keyboard) = frame.keyboard_mouse.as_ref() else {
+        let Some(keyboard) = frame.routed_keyboard_mouse() else {
             return false;
         };
         self.settings.bindings().iter().any(|candidate| {
@@ -698,7 +698,7 @@ fn quarantine_active_controls(
     output: &mut Vec<QuarantinedControl>,
     settings: &ControlSettings,
 ) {
-    if let Some(keyboard) = frame.keyboard_mouse.as_ref() {
+    if let Some(keyboard) = frame.routed_keyboard_mouse() {
         for code in keyboard.keys.iter().chain(&keyboard.key_edges.pressed) {
             push_quarantine(output, QuarantinedControl::KeyboardUsage(*code));
         }
@@ -885,18 +885,18 @@ fn physical_strength(
 ) -> f32 {
     match chord.control {
         PhysicalControl::KeyboardUsage(code) => {
-            frame.keyboard_mouse.as_ref().map_or(0.0, |sample| {
+            frame.routed_keyboard_mouse().map_or(0.0, |sample| {
                 (chord.modifiers.is_satisfied_by(sample.modifiers) && sample.keys.contains(&code))
                     as u8 as f32
             })
         }
         PhysicalControl::MouseButton(button) => {
-            frame.keyboard_mouse.as_ref().map_or(0.0, |sample| {
+            frame.routed_keyboard_mouse().map_or(0.0, |sample| {
                 (chord.modifiers.is_satisfied_by(sample.modifiers)
                     && sample.mouse_buttons.contains(&button)) as u8 as f32
             })
         }
-        PhysicalControl::MouseAxis(axis) => frame.keyboard_mouse.as_ref().map_or(0.0, |sample| {
+        PhysicalControl::MouseAxis(axis) => frame.routed_keyboard_mouse().map_or(0.0, |sample| {
             if chord.modifiers.is_satisfied_by(sample.modifiers) {
                 directional_axis(
                     mouse_axis_value(sample.mouse_motion, axis),

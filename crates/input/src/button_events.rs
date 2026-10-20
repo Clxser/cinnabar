@@ -7,8 +7,7 @@ pub(crate) fn button_edges(chord: InputChord, frame: &DeviceFrame) -> (bool, boo
     match chord.control {
         PhysicalControl::KeyboardUsage(code) => {
             frame
-                .keyboard_mouse
-                .as_ref()
+                .routed_keyboard_mouse()
                 .map_or((false, false), |sample| {
                     (
                         chord.modifiers.is_satisfied_by(sample.modifiers)
@@ -19,8 +18,7 @@ pub(crate) fn button_edges(chord: InputChord, frame: &DeviceFrame) -> (bool, boo
         }
         PhysicalControl::MouseButton(button) => {
             frame
-                .keyboard_mouse
-                .as_ref()
+                .routed_keyboard_mouse()
                 .map_or((false, false), |sample| {
                     (
                         chord.modifiers.is_satisfied_by(sample.modifiers)

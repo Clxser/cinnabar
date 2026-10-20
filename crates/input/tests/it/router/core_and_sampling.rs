@@ -35,6 +35,46 @@ fn keyboard_jump_has_physical_edges_and_held_state() {
 }
 
 #[test]
+fn desktop_activity_only_updates_mode_and_preserves_action_suppression() {
+    use semantic_input::{DesktopEvent, DesktopEvents, InputMode};
+    let mut events = DesktopEvents::default();
+    events.push(DesktopEvent::Button {
+        control: PhysicalControl::MouseButton(1),
+        pressed: true,
+        modifiers: ModifierChord::default(),
+    });
+    events.push(DesktopEvent::Scroll { next: true });
+    let mut frame = DeviceFrame {
+        keyboard_mouse: Some(KeyboardMouseFrame {
+            activity_only: true,
+            activity_sequence: 1,
+            keys: vec![0x1a, 0x2c],
+            mouse_buttons: vec![1],
+            mouse_motion: [8.0, -3.0],
+            ..Default::default()
+        }),
+        desktop_events: Some(events),
+        ..Default::default()
+    };
+    let mut router = SemanticInputRouter::default();
+    router.route(frame.clone()).unwrap();
+    let suppressed = router.finalize().unwrap();
+    assert_eq!(suppressed.input_mode, InputMode::KeyboardMouse);
+    assert_eq!(suppressed.movement, [0.0; 2]);
+    assert_eq!(suppressed.look_delta, [0.0; 2]);
+    assert!(suppressed.phases.iter().all(|phase| !phase.pressed && !phase.held));
+    assert!(suppressed.ordered.is_none());
+
+    frame.keyboard_mouse.as_mut().unwrap().activity_only = false;
+    frame.desktop_events = None;
+    router.route(frame).unwrap();
+    let captured = router.finalize().unwrap();
+    assert!(captured.phases[Action::Jump as usize].pressed);
+    assert!(captured.phases[Action::Attack as usize].held);
+    assert_ne!(captured.look_delta, [0.0; 2]);
+}
+
+#[test]
 fn route_and_finalize_enforce_exactly_one_pending_frame_transactionally() {
     let mut router = SemanticInputRouter::default();
     assert_eq!(router.finalize(), Err(RouterError::MissingPendingFrame));
