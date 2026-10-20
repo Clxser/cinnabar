@@ -6,7 +6,7 @@ use client_runtime::network::NetworkHandle;
 #[cfg(not(target_arch = "wasm32"))]
 use std::ffi::OsStr;
 #[cfg(not(target_arch = "wasm32"))]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[cfg(feature = "native-networking")]
 pub(crate) mod friend;

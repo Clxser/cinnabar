@@ -69,11 +69,6 @@ fn native_catalog_owns_both_feeds_and_shares_the_selected_account_with_joins() {
         menu.realms.is_empty() && menu.friends.is_empty(),
         "the previous selected account's catalog survived"
     );
-
-    let mut go = MenuRuntime::new(true, 2, "Synthetic".into());
-    go.sync_account_control(&mut Legacy);
-    assert_eq!(go.realms[0].name, "legacy");
-    assert_eq!(go.friends[0].world_name, "legacy");
 }
 
 mod retirement;

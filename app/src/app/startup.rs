@@ -4,7 +4,6 @@ pub(super) use timing::install_first_frame_log;
 use timing::{LoadTimes, join};
 
 use super::{PHYSICS_REGISTRY_GENERATION_GUIDANCE, PHYSICS_REGISTRY_SHA256};
-use crate::args;
 use anyhow::{Context, Result, bail};
 use assets::carriers::startup::{
     self as asset_startup, AssetSelection, AssetStartupError, LoadedAssets, LoadedHudAssets,
@@ -17,7 +16,6 @@ use assets::{
 use client_interaction::movement::PhysicsCollisionRegistries;
 use client_ui::ui_runtime::json_ui_assets::LoadedUiAssets;
 use client_ui::ui_runtime::presentation::PreparedJsonUi;
-use launcher_host::session_cleanup::ScopedSessionDirectory;
 use sha2::Digest;
 use sha2::Sha256;
 use std::{fs, path::Path, sync::Arc, time::Instant};
