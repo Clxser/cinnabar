@@ -1,6 +1,7 @@
 //! Original local HTTP/LAN upstream and real signed guest startup; no world or Ready is fabricated.
 
 use super::*;
+use bedrock_net::login::provider::ProviderVerifier;
 mod cdn;
 use crate::login::native_network::{
     NativeAcceptingSend, NativeHostedRelayProgress, NativeHostedUpstream,
@@ -611,7 +612,7 @@ async fn guest_packs<S: bedrock_net::BatchPhase>(
         &NativeHostedUpstream,
         bedrock_client::server::session::ServerPackSnapshot,
     ),
-    provider: &NativeTokenVerifier,
+    provider: &ProviderVerifier,
     clock: (std::time::SystemTime, Instant, bool, u8),
 ) -> ServerWorldReady<u8> {
     let Pair { wire, client, .. } = pair;

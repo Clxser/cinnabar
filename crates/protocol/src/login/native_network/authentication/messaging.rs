@@ -1,7 +1,10 @@
 //! Signed transport handoff, retaining account qualification separately from peer trust.
 
-use super::{NativeServiceClock, NativeTokenVerifier, ensure_current};
-use bedrock_net::messaging::{PreparedMessaging, Recipient};
+use super::{NativeServiceClock, ensure_current};
+use bedrock_net::{
+    login::provider::ProviderVerifier,
+    messaging::{PreparedMessaging, Recipient},
+};
 use nethernet::identity::{
     SdpIdentity, TokenIdentity, TokenTrust, TokenVerifier,
     error::{IdentityError, Result},
@@ -76,7 +79,7 @@ impl MessagingAdmission {
         key: Arc<SigningKey>,
         token: &str,
         clock: NativeServiceClock,
-        verifier: Arc<NativeTokenVerifier>,
+        verifier: Arc<ProviderVerifier>,
         expires: Instant,
     ) -> io::Result<Self> {
         let (identity, trust) = identity_policy(key, token, clock, verifier, expires)?;
@@ -95,12 +98,12 @@ pub(in crate::login::native_network) fn identity_policy(
     key: Arc<SigningKey>,
     token: &str,
     clock: NativeServiceClock,
-    verifier: Arc<NativeTokenVerifier>,
+    verifier: Arc<ProviderVerifier>,
     expires: Instant,
 ) -> io::Result<(Arc<dyn SdpIdentity>, TokenTrust)> {
     ensure_current(expires, Instant::now())?;
     let identity = TokenIdentity::new(key, token.to_owned(), clock.now(Instant::now())?)
-        .map_err(|_| super::verifier::rejected())?;
+        .map_err(|_| super::credential_rejected())?;
     Ok((
         Arc::new(ServiceIdentity {
             identity,
@@ -128,7 +131,7 @@ impl SdpIdentity for ServiceIdentity {
 }
 
 struct PeerVerifier {
-    verifier: Arc<NativeTokenVerifier>,
+    verifier: Arc<ProviderVerifier>,
     clock: NativeServiceClock,
 }
 

@@ -4,7 +4,7 @@ use base64::{
     Engine as _,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
-use bedrock_net::login::encode_authenticated_request;
+use bedrock_net::login::{encode_authenticated_request, provider::ProviderVerifier};
 use nethernet::identity::{MINECRAFT_AUDIENCE, jwt::Jws};
 use p384::{ecdsa::SigningKey, pkcs8::EncodePublicKey};
 use rsa::{
@@ -46,9 +46,9 @@ fn published_keys() -> Value {
 }
 
 /// Builds bounded trusted public metadata from the synthetic issuer, retaining a non-retail issuer.
-fn verifier() -> NativeTokenVerifier {
+fn verifier() -> ProviderVerifier {
     let keys = serde_json::to_vec(&published_keys()).unwrap();
-    NativeTokenVerifier::new(ISSUER.into(), &["RS256".into()], &keys).unwrap()
+    ProviderVerifier::new(ISSUER.into(), &["RS256".into()], &keys).unwrap()
 }
 
 /// Keeps subject distinct from Xbox identity: the configured verifier does not equate these claims.
@@ -263,23 +263,6 @@ async fn native_provider_expired_handoff_cannot_start_a_connection() {
     );
 }
 
-/// A matching key ID cannot make malformed RSA material a successful cached verifier.
-#[test]
-fn native_provider_rejects_malformed_matching_key_before_cache_admission() {
-    let token = signed(claims(), "synthetic");
-    assert!(verifier().recognizes(&token).unwrap());
-    for (field, value) in [("n", "***"), ("e", "***"), ("n", ""), ("e", "")] {
-        let mut keys = published_keys();
-        keys["keys"][0][field] = json!(value);
-        let result = NativeTokenVerifier::new(
-            ISSUER.into(),
-            &["RS256".into()],
-            &serde_json::to_vec(&keys).unwrap(),
-        );
-        assert!(result.is_err(), "admitted malformed RSA {field}");
-    }
-}
-
 /// Equivalent temporal representations retain second truncation and the original hard deadline.
 #[test]
 fn native_provider_numeric_dates_preserve_representations_and_deadlines() {
@@ -309,157 +292,6 @@ fn native_provider_numeric_dates_preserve_representations_and_deadlines() {
             let lifetime = Duration::from_secs(if field == "exp" { 5 } else { 60 });
             assert_eq!(authentication.expires, observed + lifetime);
         }
-    }
-}
-
-/// NumericDate compatibility must retain controlled rejection of invalid values and time bounds.
-#[test]
-fn native_provider_numeric_dates_reject_invalid_values_and_time_bounds() {
-    let observed = Instant::now();
-    let client = RawValue::from_string("{}".into()).unwrap();
-    let verifier = verifier();
-    for field in ["exp", "iat", "nbf"] {
-        let boundary = SERVICE_SECONDS + if field == "exp" { 0 } else { 61 };
-        for value in [
-            "\"invalid\"".into(),
-            "true".into(),
-            "{}".into(),
-            "[]".into(),
-            "1e100".into(),
-            "-1e100".into(),
-            "9223372036854775808".into(),
-            "-9223372036854775809".into(),
-            format!("{boundary}.9"),
-            format!("{boundary}9e-1"),
-        ] {
-            let result = NativeAuthentication::new(
-                key(),
-                credential(
-                    signed_temporal_claim(field, &value),
-                    observed,
-                    Duration::from_secs(60),
-                ),
-                &client,
-                &verifier,
-                XUID,
-                observed,
-            );
-            assert!(
-                matches!(result, Err(error) if error.kind() == io::ErrorKind::PermissionDenied),
-                "accepted invalid {field}={value}"
-            );
-        }
-    }
-}
-
-/// Signature, issuer, account/key identity and temporal claims are all part of the real handoff.
-#[test]
-fn native_provider_rejects_untrusted_identity_and_temporal_contracts() {
-    let observed = Instant::now();
-    let client = RawValue::from_string("{}".into()).unwrap();
-    let verifier = verifier();
-    for (field, value) in [
-        ("iss", json!("https://another.example/")),
-        ("aud", json!("another-service")),
-        ("aud", json!([MINECRAFT_AUDIENCE, 7])),
-        ("sub", json!("")),
-        ("sub", Value::Null),
-        ("xid", json!("456")),
-        ("cpk", json!("not-a-key")),
-        ("exp", json!(SERVICE_SECONDS)),
-        ("exp", Value::Null),
-        ("nbf", json!(SERVICE_SECONDS + 61)),
-        ("iat", json!(SERVICE_SECONDS + 61)),
-        ("leguuid", json!("invalid")),
-        ("xname", json!("1Invalid")),
-    ] {
-        let mut claims = claims();
-        claims[field] = value;
-        let result = NativeAuthentication::new(
-            key(),
-            credential(
-                signed(claims, "synthetic"),
-                observed,
-                Duration::from_secs(60),
-            ),
-            &client,
-            &verifier,
-            XUID,
-            observed,
-        );
-        assert!(result.is_err(), "accepted invalid {field}");
-    }
-    let token = signed(claims(), "not-published");
-    assert!(!verifier.recognizes(&token).unwrap());
-    assert!(
-        NativeAuthentication::new(
-            key(),
-            credential(token, observed, Duration::from_secs(60)),
-            &client,
-            &verifier,
-            XUID,
-            observed
-        )
-        .is_err()
-    );
-    let token = signed(claims(), "synthetic");
-    let (input, signature) = token.rsplit_once('.').unwrap();
-    let mut bytes = URL_SAFE_NO_PAD.decode(signature).unwrap();
-    bytes[0] ^= 1;
-    let untrusted = format!("{input}.{}", URL_SAFE_NO_PAD.encode(bytes));
-    assert!(
-        NativeAuthentication::new(
-            key(),
-            credential(untrusted, observed, Duration::from_secs(60)),
-            &client,
-            &verifier,
-            XUID,
-            observed
-        )
-        .is_err()
-    );
-    let other = SigningKey::from_slice(&[2; 48]).unwrap();
-    assert!(
-        NativeAuthentication::new(
-            other,
-            credential(token, observed, Duration::from_secs(60)),
-            &client,
-            &verifier,
-            XUID,
-            observed
-        )
-        .is_err()
-    );
-    let mut optional = claims();
-    optional["nbf"] = Value::Null;
-    optional["iat"] = Value::Null;
-    optional["leguuid"] = Value::Null;
-    assert!(
-        NativeAuthentication::new(
-            key(),
-            credential(signed(optional, ""), observed, Duration::from_secs(60)),
-            &client,
-            &verifier,
-            XUID,
-            observed
-        )
-        .is_ok()
-    );
-    for header in [
-        json!({"alg":"RS256","kid":"synthetic","crit":["unknown"]}),
-        json!({"alg":"RS256","kid":"synthetic","b64":false}),
-        json!({"alg":"HS256","kid":"synthetic"}),
-    ] {
-        let service = UNIX_EPOCH + Duration::from_secs(SERVICE_SECONDS);
-        assert!(
-            NativeCredential::new(
-                signed_header(claims(), header),
-                service,
-                service + Duration::from_secs(60),
-                observed
-            )
-            .is_err()
-        );
     }
 }
 

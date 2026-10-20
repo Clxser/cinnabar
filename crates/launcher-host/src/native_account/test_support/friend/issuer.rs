@@ -45,8 +45,8 @@ impl Issuer {
     }
 
     /// Uses the original strict issuer verifier for both peer directions.
-    pub(super) fn verifier(&self) -> io::Result<protocol::NativeTokenVerifier> {
-        protocol::NativeTokenVerifier::new(
+    pub(super) fn verifier(&self) -> io::Result<bedrock_net::login::provider::ProviderVerifier> {
+        bedrock_net::login::provider::ProviderVerifier::new(
             HOSTED_WORLD_ISSUER.into(),
             &["RS256".into()],
             &self.jwks,

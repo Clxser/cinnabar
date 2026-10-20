@@ -38,7 +38,7 @@ impl Host {
     pub(super) async fn bind(
         mut host: HostedFriendHost,
         identity: protocol::NativeHostingIdentity,
-        verifier: protocol::NativeTokenVerifier,
+        verifier: bedrock_net::login::provider::ProviderVerifier,
         clock: protocol::NativeServiceClock,
         deadline: Instant,
     ) -> io::Result<Self> {

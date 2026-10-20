@@ -46,7 +46,7 @@ pub use native_network::{
     NativeHostingIdentity, NativeProvider, NativeRelayClosing, NativeRelayConnecting,
     NativeRelayConnection, NativeRelayDriver, NativeRelayHandoff, NativeRelayInbound,
     NativeRelayRetired, NativeRelaySender, NativeRelayWritten, NativeServiceClock,
-    NativeTokenVerifier, native_host_packs,
+    native_host_packs,
 };
 mod unused_packets;
 mod web_handoff;

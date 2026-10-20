@@ -8,7 +8,7 @@ pub use accepting::{
 };
 pub use authentication::{
     NativeAuthentication, NativeCredential, NativeHostingIdentity, NativeProvider,
-    NativeServiceClock, NativeTokenVerifier,
+    NativeServiceClock,
 };
 mod connection;
 mod hosted;

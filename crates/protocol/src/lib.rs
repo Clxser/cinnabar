@@ -205,8 +205,7 @@ pub use login::{
     NativeHostedUpstreamClosing, NativeHostingIdentity, NativeProvider, NativeRelayClosing,
     NativeRelayConnecting, NativeRelayConnection, NativeRelayDriver, NativeRelayHandoff,
     NativeRelayInbound, NativeRelayRetired, NativeRelaySender, NativeRelayWritten,
-    NativeServiceClock, NativeTokenVerifier, RawClientData, ValidatedClientData, native_host_packs,
-    relay_url_host,
+    NativeServiceClock, RawClientData, ValidatedClientData, native_host_packs, relay_url_host,
 };
 pub use movement::{
     BlockAction, BlockActionKind, BlockActions, BlockActionsFull, BlockItemInteraction,
