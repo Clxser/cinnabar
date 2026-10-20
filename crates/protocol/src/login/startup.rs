@@ -55,7 +55,6 @@ impl DeferredPackets {
     pub(super) fn into_packets(self) -> Vec<RawPacket> {
         self.packets
     }
-
 }
 
 /// Runs the spawn sequence: requests the radius once StartGame has arrived, then returns once the
