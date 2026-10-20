@@ -1,7 +1,7 @@
 //! Bounded provider acquisition shared by actual native account owners.
 
 use super::{NativeAuthentication, NativeCredential, NativeHostingIdentity};
-use crate::RawClientData;
+use bedrock_net::login::client_data::RawClientData;
 use bedrock_net::login::provider::ProviderVerifier;
 use p384::ecdsa::SigningKey;
 use provider_http::{Client, StatusCode};

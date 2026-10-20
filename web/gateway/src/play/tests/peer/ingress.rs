@@ -1,7 +1,8 @@
 //! The public relay preserves primary opaque input before interpreting known controls.
 
 use super::*;
-use protocol::{NativeRelayConnecting, RawClientData, session_wire::CoreMessage};
+use bedrock_net::login::client_data::RawClientData;
+use protocol::{NativeRelayConnecting, session_wire::CoreMessage};
 use std::{io, net::SocketAddr, time::Duration};
 
 const TRANSFER_HOST: &str = "relay-fixture.example.test";

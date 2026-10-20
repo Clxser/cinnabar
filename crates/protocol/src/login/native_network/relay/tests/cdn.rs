@@ -174,7 +174,8 @@ async fn relay_acquires_cdn_only_archive_without_requesting_any_game_chunks() {
                 None,
                 &crate::LoginSettings::default(),
             );
-            let claims = crate::RawClientData::from_value(&claims).unwrap();
+            let claims =
+                bedrock_net::login::client_data::RawClientData::from_value(&claims).unwrap();
             PUBLIC_CDN_ENDPOINT
                 .scope(endpoint, joining.negotiate(claims, false, None))
                 .await

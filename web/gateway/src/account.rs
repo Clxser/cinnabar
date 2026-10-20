@@ -1,5 +1,6 @@
 //! One memory-only SDK account; the control owner retains and cancels its actual futures.
 
+use bedrock_net::login::client_data::{RawClientData, ValidationError};
 use bedrock_services::{
     minecraft,
     oauth::{MicrosoftAuth, Poll},
@@ -8,8 +9,7 @@ use bedrock_services::{
 use bridge::{Account as Observation, AuthState, contract::*};
 use p384::{ecdsa::SigningKey, elliptic_curve::Generate};
 use protocol::{
-    ClientDataRefusal, NativeAuthentication, NativeCredential, NativeDeviceProfile, NativeProvider,
-    RawClientData, ValidatedClientData,
+    NativeAuthentication, NativeCredential, NativeDeviceProfile, NativeProvider, ValidatedRelayData,
 };
 use rand::rngs::SysRng;
 use std::{
@@ -112,14 +112,14 @@ impl Account {
         &self,
         claims: RawClientData,
         protocol: i32,
-    ) -> Result<ValidatedClientData, ClientDataRefusal> {
+    ) -> Result<ValidatedRelayData, ValidationError> {
         self.profile.validate_relay(claims, protocol)
     }
 
     /// Mints on this same SDK account under the caller's original play admission deadline.
     pub(super) async fn prepare(
         &mut self,
-        claims: ValidatedClientData,
+        claims: ValidatedRelayData,
         deadline: Instant,
     ) -> io::Result<NativeAuthentication> {
         tokio::time::timeout_at(deadline.into(), async {

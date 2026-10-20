@@ -1,10 +1,8 @@
 //! Accepted same-origin TLS/WebSocket play reaches metadata refusal before upstream acquisition.
 
 use super::*;
-use protocol::{
-    RawClientData,
-    session_wire::{self, CoreMessage, SessionDisconnect},
-};
+use bedrock_net::login::client_data::RawClientData;
+use protocol::session_wire::{self, CoreMessage, SessionDisconnect};
 use tokio_util::codec::Decoder;
 
 /// A real Play Hello and valid large Connect use the original control capability and selected limits.

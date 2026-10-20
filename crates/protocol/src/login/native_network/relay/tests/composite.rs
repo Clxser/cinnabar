@@ -129,7 +129,7 @@ async fn deferred_and_unread_siblings_reframe_within_the_original_packet_bound()
             );
             joining
                 .negotiate(
-                    crate::RawClientData::from_value(&claims).unwrap(),
+                    bedrock_net::login::client_data::RawClientData::from_value(&claims).unwrap(),
                     false,
                     None,
                 )

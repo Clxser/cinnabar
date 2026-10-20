@@ -4,13 +4,14 @@ use super::{
     Connection, NativeAuthentication, apply_key_exchange, authentication, failure,
     handshake_failure, packs, transport,
 };
-use crate::login::client_data::{NativeClaims, RawClientData};
+use crate::login::client_data::NativeClaims;
 use crate::session_wire::SessionIdentity;
 use crate::{NativeConnectionTarget, ProtocolError, SessionLogin};
 use bedrock_client::handshake::{
     ClientHandshake, ClientLogin, ClientPackOffer, HandshakeOptions, LoginEvent, SettingsEvent,
 };
 use bedrock_net::login::OfflineIdentity;
+use bedrock_net::login::client_data::RawClientData;
 use bedrock_packs::ResourcePackHandoff;
 use bedrock_protocol_1_26_51::packets;
 use p384::{ecdsa::SigningKey, elliptic_curve::Generate};

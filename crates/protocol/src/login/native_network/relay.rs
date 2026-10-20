@@ -3,7 +3,6 @@
 use super::{
     Connection, NativeAuthentication, PacketConnection, failure, negotiated, packs, transport,
 };
-use crate::RawClientData;
 use crate::{
     ProtocolError,
     session_wire::{
@@ -11,6 +10,7 @@ use crate::{
         SessionTransfer,
     },
 };
+use bedrock_net::login::client_data::RawClientData;
 use bedrock_net::raknet::RakNetConnection;
 use bedrock_protocol_1_26_51::{
     packets::{Packet, PacketId},

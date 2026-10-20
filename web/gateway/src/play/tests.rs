@@ -1,6 +1,7 @@
 //! Actual public UDP negotiation and browser TCP EOF under real output backpressure.
 
 use super::*;
+use bedrock_net::login::client_data::RawClientData;
 use bedrock_net::raknet::{RakNetConnection, RakNetOptions};
 use bridge::{BridgeCodec, contract::KIND_HANDOFF};
 use futures::StreamExt;

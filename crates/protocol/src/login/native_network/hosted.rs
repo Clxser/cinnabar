@@ -1,5 +1,6 @@
 //! One verified guest's original local BDS upstream, without another runtime or world process.
 
+use bedrock_net::login::client_data::RawClientData;
 mod startup;
 #[cfg(test)]
 mod tests;
@@ -9,7 +10,7 @@ use super::{
     Connection, NativeAcceptingIo, NativeAcceptingSend, PacketConnection, failure, negotiated,
     packs,
 };
-use crate::{NativeConnectionTarget, ProtocolError, RawClientData};
+use crate::{NativeConnectionTarget, ProtocolError};
 use bedrock_client::server::session::{
     AcceptedSession, ServerPackContent, ServerPackSnapshot, ServerRelaying,
 };

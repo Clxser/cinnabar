@@ -1,6 +1,7 @@
 //! Pure device metadata shared by protected desktop and ephemeral gateway account owners.
 
-use super::{ClientDataRefusal, DISPLAY_NAME, RawClientData, ValidatedClientData};
+use super::DISPLAY_NAME;
+use bedrock_net::login::client_data::{RawClientData, ValidationError};
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -89,8 +90,22 @@ impl NativeDeviceProfile {
         &self,
         claims: RawClientData,
         protocol: i32,
-    ) -> Result<ValidatedClientData, ClientDataRefusal> {
-        claims.validate_relay(self, protocol)
+    ) -> Result<ValidatedRelayData, ValidationError> {
+        let mut claims = claims;
+        self.apply_relay_device(&mut claims)
+            .map_err(|_| ValidationError::Generic)?;
+        let validated = claims.validate(protocol, crate::PROTOCOL_VERSION, crate::GAME_VERSION)?;
+        let name = validated.requested_name().to_owned();
+        let raw = validated.into_raw();
+        let random_id = raw
+            .random_id()
+            .map_err(|_| ValidationError::Generic)?
+            .unwrap_or_default();
+        Ok(ValidatedRelayData {
+            raw,
+            name,
+            derived_id: self.relay_identity(random_id),
+        })
     }
 
     /// Applies only claimed device fields, leaving original name and SelfSignedId for validation.
@@ -225,3 +240,40 @@ mod tests {
         );
     }
 }
+
+/// Metadata validated under this install's device policy, before final identity and transport overlay.
+#[must_use]
+pub struct ValidatedRelayData {
+    raw: RawClientData,
+    name: String,
+    derived_id: uuid::Uuid,
+}
+
+impl std::fmt::Debug for ValidatedRelayData {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ValidatedRelayData")
+            .finish_non_exhaustive()
+    }
+}
+
+impl ValidatedRelayData {
+    /// Returns validated requested presentation, never a verified account name or XUID.
+    pub fn requested_name(&self) -> &str {
+        &self.name
+    }
+
+    /// Applies the canonical account name or validated guest name with this install's derived UUID.
+    ///
+    /// # Errors
+    /// Returns a redacted error if serializing the canonical identity overlay fails.
+    pub fn into_relay_claims(mut self, canonical_name: &str) -> io::Result<RawClientData> {
+        NativeDeviceProfile::apply_relay_identity(&mut self.raw, canonical_name, self.derived_id)?;
+        Ok(self.raw)
+    }
+}
+
+#[cfg(test)]
+mod limits_tests;
+#[cfg(test)]
+mod relay_tests;

@@ -140,7 +140,7 @@ async fn tiny_relay_startup_detaches_from_discarded_batch_backing() {
             );
             joining
                 .negotiate(
-                    crate::RawClientData::from_value(&claims).unwrap(),
+                    bedrock_net::login::client_data::RawClientData::from_value(&claims).unwrap(),
                     false,
                     None,
                 )

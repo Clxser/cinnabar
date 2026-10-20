@@ -146,7 +146,7 @@ async fn relay_handoff_preserves_raw_startup_siblings_and_consuming_close() {
                 crate::login_client_data("Fixture", random, None, &crate::LoginSettings::default());
             joining
                 .negotiate(
-                    crate::RawClientData::from_value(&claims).unwrap(),
+                    bedrock_net::login::client_data::RawClientData::from_value(&claims).unwrap(),
                     false,
                     None,
                 )

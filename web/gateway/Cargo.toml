@@ -49,7 +49,7 @@ x509-parser = { version = "0.18", optional = true }
 tokio = { workspace = true, features = ["net"] }
 protocol = { path = "../../crates/protocol", features = ["native-networking"] }
 bedrock-services.workspace = true
-bedrock-net = { workspace = true, features = ["raknet"] }
+bedrock-net = { workspace = true, features = ["raknet", "login"] }
 p384 = { version = "0.14", default-features = false, features = ["std", "ecdsa"] }
 rand = "0.10"
 httparse = "1"

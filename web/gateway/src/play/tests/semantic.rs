@@ -1,6 +1,7 @@
 //! Shared Go edits through the actual gateway's raw preparation and refusal boundary.
 
 use super::*;
+use bedrock_net::login::client_data::RawClientData;
 use futures::SinkExt;
 use serde::Deserialize;
 use serde_json::value::RawValue;

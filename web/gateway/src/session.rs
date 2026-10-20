@@ -1,8 +1,9 @@
 //! One account lifetime, independent of its replaceable control connection.
 
 use super::{account::Account, bearer::Bearer};
+use bedrock_net::login::client_data::{RawClientData, ValidationError};
 use bridge::{Account as Observation, AuthState, contract::*, relay_control::Capability};
-use protocol::{ClientDataRefusal, NativeDeviceProfile, RawClientData, ValidatedClientData};
+use protocol::{NativeDeviceProfile, ValidatedRelayData};
 use std::{
     io,
     sync::{Arc, Mutex},
@@ -209,12 +210,12 @@ impl Session {
         &self,
         claims: RawClientData,
         protocol: i32,
-    ) -> Result<ValidatedClientData, ClientDataRefusal> {
+    ) -> Result<ValidatedRelayData, ValidationError> {
         self.guest.validate_relay(claims, protocol)
     }
 
     /// Publishes only the already validated guest presentation through the shared identity overlay.
-    pub(super) fn guest_claims(&self, claims: ValidatedClientData) -> io::Result<RawClientData> {
+    pub(super) fn guest_claims(&self, claims: ValidatedRelayData) -> io::Result<RawClientData> {
         let name = claims.requested_name().to_owned();
         claims.into_relay_claims(&name)
     }

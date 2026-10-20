@@ -207,7 +207,7 @@ async fn one_incoming_batch_cursor_survives_pack_replay_and_bounded_handoff_read
             );
             joining
                 .negotiate(
-                    crate::RawClientData::from_value(&claims).unwrap(),
+                    bedrock_net::login::client_data::RawClientData::from_value(&claims).unwrap(),
                     false,
                     None,
                 )

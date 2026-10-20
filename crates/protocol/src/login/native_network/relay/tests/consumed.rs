@@ -124,7 +124,7 @@ async fn completed_handoff_releases_the_consumed_start_game_backing() {
             );
             joining
                 .negotiate(
-                    crate::RawClientData::from_value(&claims).unwrap(),
+                    bedrock_net::login::client_data::RawClientData::from_value(&claims).unwrap(),
                     false,
                     None,
                 )

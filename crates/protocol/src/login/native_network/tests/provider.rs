@@ -362,7 +362,7 @@ fn native_provider_raw_claims_keep_canonical_identity_and_signed_opaque_values()
             observed,
             Duration::from_secs(5),
         ),
-        crate::RawClientData::from_raw(&client).unwrap(),
+        bedrock_net::login::client_data::RawClientData::from_raw(&client).unwrap(),
         &verifier(),
         XUID,
         observed,
@@ -389,7 +389,7 @@ fn native_provider_raw_claims_keep_canonical_identity_and_signed_opaque_values()
     let client = Jws::parse(std::str::from_utf8(&rest[4..4 + length]).unwrap()).unwrap();
     client.verify_es384(handoff.key.verifying_key()).unwrap();
     assert_eq!(client.payload, [raw.get().as_bytes(), b"\n"].concat());
-    let projected = crate::RawClientData::from_raw(&raw).unwrap();
+    let projected = bedrock_net::login::client_data::RawClientData::from_raw(&raw).unwrap();
     assert_eq!(
         projected.display_name().unwrap().as_deref(),
         Some("Synthetic")

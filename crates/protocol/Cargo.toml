@@ -10,8 +10,6 @@ autotests = false
 [package.metadata.cinnabar]
 platform-specific = ["windows", "macos"]
 reads = [
-    "tools/localserver/go.mod",
-    "tools/localserver/go.sum",
     "assets/bedrock-target.json",
     "assets/block-projection-v2193.json",
     "crates/protocol-ids/data/protocol-ids.json",

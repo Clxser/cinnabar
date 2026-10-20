@@ -1,5 +1,6 @@
 //! Qualified provider credentials and their original finite validity.
 
+use bedrock_net::login::client_data::RawClientData;
 mod answer;
 mod hosting;
 pub(super) use answer::offline_answer_trust;
@@ -11,7 +12,7 @@ pub(super) use messaging::identity_policy;
 pub(super) use messaging::{MessagingAdmission, MessagingTarget};
 pub use provider::NativeProvider;
 
-use crate::login::client_data::{NativeClaims, RawClientData};
+use crate::login::client_data::NativeClaims;
 use p384::ecdsa::SigningKey;
 use serde_json::value::RawValue;
 use std::{

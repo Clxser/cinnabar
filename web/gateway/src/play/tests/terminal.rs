@@ -1,6 +1,7 @@
 //! Original join cutoff while a genuine pre-handoff terminal is blocked in FrameQueue.
 
 use super::*;
+use bedrock_net::login::client_data::RawClientData;
 use std::task::Poll;
 use tokio::io::AsyncWrite;
 

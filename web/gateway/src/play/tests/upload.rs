@@ -1,6 +1,7 @@
 //! Post-Hello byte pacing through the actual play consumer and its original controller lease.
 
 use super::*;
+use bedrock_net::login::client_data::ValidationError;
 use bridge::relay_control::Hello;
 use std::{io::Cursor, sync::atomic::AtomicUsize};
 use tokio::io::{AsyncRead, ReadBuf};
@@ -25,8 +26,8 @@ async fn post_hello_upload_initial_burst_is_available_without_delay() {
     assert_eq!(
         error
             .get_ref()
-            .and_then(|error| error.downcast_ref::<ClientDataRefusal>()),
-        Some(&ClientDataRefusal::OutdatedServer),
+            .and_then(|error| error.downcast_ref::<ValidationError>()),
+        Some(&ValidationError::OutdatedServer),
     );
     assert_eq!(read.load(Ordering::Relaxed), total);
     assert_eq!(

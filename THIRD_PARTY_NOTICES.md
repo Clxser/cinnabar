@@ -63,12 +63,12 @@ SOFTWARE.
 
 The original Rust origin policy in `web/gateway/src/backend/origin.rs` follows
 host parsing and unescaping rules from Go's `net/url` package. Canonical claim
-alias matching in `crates/protocol/src/login/client_data/raw.rs` follows Go's
-`encoding/json` ASCII-name folding rules. Shared conformance corpora are original
-synthetic data. The source-attributed locale acceptance predicate and generated
-Unicode letter/locale membership data under
-`crates/protocol/src/login/client_data/raw/semantic/` follow the pinned Go
-`unicode` and `golang.org/x/text/internal/language` owners under the same BSD license.
+alias matching and title metadata validation now live in
+`bedrock-net::login::client_data`; that library retains the Go JSON and metadata
+notices with its original generator. Shared conformance corpora are original
+synthetic data. The source-attributed locale predicate and generated
+Unicode/locale membership data in that library follow its pinned Go `unicode` and
+`golang.org/x/text/internal/language` owners under the same BSD license.
 
 Copyright 2009 The Go Authors.
 Copyright 2013 The Go Authors. All rights reserved.

@@ -22,9 +22,7 @@ mod cache_status;
 mod cache_status_ingress_tests;
 mod client_data;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-pub use client_data::{
-    ClientDataRefusal, NativeDeviceProfile, RawClientData, ValidatedClientData, relay_url_host,
-};
+pub use client_data::{NativeDeviceProfile, ValidatedRelayData};
 mod game_data;
 mod latency_probe;
 mod outbound;
