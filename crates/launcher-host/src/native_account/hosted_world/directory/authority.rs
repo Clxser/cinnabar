@@ -12,7 +12,7 @@ impl HostDirectory {
     pub(super) fn current(&self) -> io::Result<()> {
         self.active()?;
         self.validate_session()?;
-        if self.changed || self.pending.is_some() {
+        if self.changed || self.pending.is_some() || self.recovery.is_some() || !self.subscribed {
             return Err(invalid("host approval publication is unresolved"));
         }
         match self.account_authority()? {

@@ -19,6 +19,8 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 mod authority;
+mod peer_io;
+mod recovery;
 use authority::Authority;
 mod advertised;
 use advertised::Advertisement;
@@ -40,6 +42,7 @@ pub(super) struct HostDirectory {
     socket: Option<RtaSocket>,
     subscription: Option<rta::SubscriptionId>,
     subscribed: bool,
+    recovery: Option<recovery::Recovery>,
     binding: Option<mpsd::Binding>,
     attempt: Option<mpsd::PublishAttempt>,
     session: Option<mpsd::Session>,
@@ -64,103 +67,6 @@ impl HostDirectory {
     pub(super) async fn service_barrier(&mut self, deadline: Option<Instant>) -> io::Result<()> {
         self.peer_io(deadline, std::future::ready(Ok(())), None)
             .await
-    }
-
-    /// Keeps one actual peer future pinned while the sole RTA owner refreshes complete snapshots.
-    /// A refresh is completed under its first deadline before another application result is exposed.
-    pub(super) async fn peer_io<T>(
-        &mut self,
-        deadline: Option<Instant>,
-        future: impl std::future::Future<Output = io::Result<T>>,
-        mut peers: Option<&mut super::active::peers::Peers>,
-    ) -> io::Result<T> {
-        tokio::pin!(future);
-        let mut completed = None;
-        loop {
-            self.active()?;
-            if let Some(deadline) = deadline {
-                check_deadline(deadline)?;
-            }
-            self.changed |= self.session.as_ref().is_some_and(mpsd::Session::needs_sync);
-            let mut serviced = false;
-            if self.changed {
-                let refresh_deadline = *self
-                    .refresh_deadline
-                    .get_or_insert_with(|| Instant::now() + super::super::ACQUISITION_TIMEOUT);
-                let refresh_deadline =
-                    deadline.map_or(refresh_deadline, |d| d.min(refresh_deadline));
-                while self.changed {
-                    self.refresh(refresh_deadline).await?;
-                }
-                serviced = true;
-            }
-            if peers.is_some()
-                && self.advertisement.is_some()
-                && self
-                    .approvals
-                    .as_ref()
-                    .is_some_and(|approvals| !approvals.acknowledged())
-            {
-                let first = *self
-                    .refresh_deadline
-                    .get_or_insert_with(|| Instant::now() + super::super::ACQUISITION_TIMEOUT);
-                let cutoff = deadline.map_or(first, |deadline| first.min(deadline));
-                self.publish_approvals(cutoff).await?;
-                serviced = true;
-            }
-            if serviced {
-                self.refresh_deadline = None;
-                if let Some(peers) = &peers {
-                    peers.changed();
-                }
-            }
-            self.validate_session()?;
-            let busy = matches!(self.account_authority()?, Authority::Busy);
-            let peer_deadline = peers.as_ref().and_then(|peers| peers.ready_deadline());
-            let advance = peers.as_ref().is_some_and(|peers| peers.can_advance(busy));
-            let socket = self
-                .socket
-                .as_mut()
-                .ok_or_else(|| invalid("host RTA is unavailable"))?;
-            tokio::select! { biased;
-                _ = async { match deadline {
-                    Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
-                    None => std::future::pending::<()>().await,
-                }} => return Err(super::super::directory::timed_out()),
-                event = socket.drive() => {
-                    event_changed(event.map_err(socket_error)?, self.subscription
-                        .ok_or_else(|| invalid("host subscription is unavailable"))?,
-                        &self.reference, &mut self.changed)?;
-                }
-                _ = async { match peer_deadline {
-                    Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
-                    None => std::future::pending::<()>().await,
-                }}, if !advance => {}
-                _ = std::future::ready(()), if advance => {
-                    peers.as_mut().expect("ready original peer set").advance(self);
-                }
-                _ = tokio::time::sleep(super::super::LEASE_RETRY), if busy || completed.is_some() => {}
-                _ = std::future::ready(()), if !busy && completed.is_some() => {
-                    match self.current() {
-                        Ok(()) => {
-                            if let Some(deadline) = deadline { check_deadline(deadline)?; }
-                            return completed.take().expect("one actual completed IO result");
-                        }
-                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
-                        Err(error) => return Err(error),
-                    }
-                }
-                result = async {
-                    tokio::select! {
-                        result = &mut future, if completed.is_none() => Some(result),
-                        _ = async { match &mut peers {
-                            Some(peers) => peers.next().await,
-                            None => std::future::pending::<()>().await,
-                        }} => None,
-                    }
-                } => { if let Some(result) = result { completed = Some(result); } }
-            }
-        }
     }
 
     /// Acquires only public provider metadata under the original account lease and live RTA lifetime.
@@ -261,6 +167,7 @@ impl HostDirectory {
             socket: None,
             subscription: None,
             subscribed: false,
+            recovery: None,
             binding: None,
             attempt: None,
             session: None,
@@ -354,7 +261,7 @@ impl HostDirectory {
         .map_err(directory_error)
     }
 
-    /// Drives live controls without idle timeout; a refresh retains its first absolute deadline.
+    /// Drives live controls without idle timeout; refresh and recovery share their first cutoff.
     pub(super) async fn drive(&mut self) -> io::Result<()> {
         self.active()?;
         self.changed |= self
@@ -362,35 +269,40 @@ impl HostDirectory {
             .as_ref()
             .ok_or_else(|| invalid("host membership is unavailable"))?
             .needs_sync();
-        if !self.changed {
-            self.validate_session()?;
+        if !self.changed && self.recovery.is_none() {
+            if self
+                .socket
+                .as_ref()
+                .is_some_and(|socket| socket.connection().is_connected())
+            {
+                self.validate_session()?;
+            }
             let event = self
                 .socket
                 .as_mut()
                 .ok_or_else(|| invalid("host RTA is unavailable"))?
                 .drive()
-                .await
-                .map_err(socket_error)?;
-            event_changed(
-                event,
-                self.subscription
-                    .ok_or_else(|| invalid("host subscription is unavailable"))?,
-                &self.reference,
-                &mut self.changed,
-            )?;
-        }
-        if self.changed {
-            let deadline = *self
-                .refresh_deadline
-                .get_or_insert_with(|| Instant::now() + super::super::ACQUISITION_TIMEOUT);
-            while self.changed {
-                self.refresh(deadline).await?;
+                .await;
+            let result = event.map_err(socket_error).and_then(|event| {
+                event_changed(
+                    event,
+                    self.subscription
+                        .ok_or_else(|| invalid("host subscription is unavailable"))?,
+                    &self.reference,
+                    &mut self.changed,
+                )
+            });
+            if let Err(error) = result {
+                self.retain_interruption(error)?;
             }
+        }
+        if self.changed || self.recovery.is_some() {
+            let deadline = self.control_deadline(None);
+            self.refresh_control(deadline).await?;
             self.refresh_deadline = None;
         }
         self.active()?;
-        self.validate_session()?;
-        Ok(())
+        self.validate_session()
     }
 
     /// Publishes one desired revision; uncertain writes are refreshed before any further conditional write.
@@ -567,6 +479,13 @@ impl HostDirectory {
             .map_err(directory_error)?;
             self.session = Some(session);
         }
+        if self
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.candidate.is_some())
+        {
+            self.settle_rebind(&mut operation, deadline).await?;
+        }
         if let Some(session) = &mut self.session {
             if !session.is_closed() {
                 bounded(deadline, operation.minecraft()?.mpsd().sync(session))
@@ -607,6 +526,10 @@ impl HostDirectory {
                 .attempt
                 .as_ref()
                 .is_some_and(mpsd::PublishAttempt::needs_reconciliation)
+            || self
+                .recovery
+                .as_ref()
+                .is_some_and(|recovery| recovery.pending())
     }
 
     /// Stops local I/O and revokes approvals without authenticating, leaving or stopping the world process.
@@ -627,7 +550,12 @@ impl HostDirectory {
         }
         let generation = self.scope.as_ref().map(|scope| scope.generation.clone());
         let acquire = Arc::clone(&self.account).acquire_verified_for(generation.as_deref());
+        let live = self
+            .socket
+            .as_ref()
+            .is_some_and(|socket| socket.connection().is_connected());
         let mut operation = if !self.closing
+            && (self.recovery.is_none() || live)
             && let (Some(socket), Some(subscription)) = (&mut self.socket, self.subscription)
         {
             service(
