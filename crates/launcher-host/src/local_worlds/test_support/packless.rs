@@ -1,6 +1,5 @@
 //! The original manager lifecycle over the real fixture protocol endpoint, without a BDS binary.
 
-use super::*;
 use crate::local_worlds::{
     Manager,
     manager::Parts,
@@ -9,17 +8,18 @@ use crate::local_worlds::{
     test_support::FakeRunner,
 };
 use launcher::local_worlds::world::{Generator, NewWorld};
+use std::sync::Arc;
 
-pub(super) struct World {
-    pub(super) manager: Manager,
-    pub(super) runner: Arc<FakeRunner>,
+pub(crate) struct World {
+    pub(crate) manager: Manager,
+    pub(crate) runner: Arc<FakeRunner>,
     _directory: tempfile::TempDir,
 }
 
 impl World {
     /// Captures the actual listener address through the same runner/opening/backend selection.
     /// Only local process supervision is in-memory; both protocol associations remain real.
-    pub(super) fn open(address: std::net::SocketAddr) -> Self {
+    pub(crate) fn open(address: std::net::SocketAddr) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let store = Arc::new(Store::open(directory.path().join("worlds")).unwrap());
         let mut provisioner =

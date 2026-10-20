@@ -1,6 +1,6 @@
 //! Actual generated local Login/startup traffic with no ResourcePacksInfo or ResourcePackStack.
 
-use super::*;
+use bedrock_net::{BatchCodec, BatchHeader, BatchLimits, DecodeOutcome};
 use bedrock_net::{BatchPhase, CompressionAlgorithm, CompressionSettings};
 use bedrock_protocol_1_26_51::{
     enums::{PlayStatusType, ServerboundLoadingScreenType},
@@ -8,10 +8,14 @@ use bedrock_protocol_1_26_51::{
     types::ActorRuntimeID,
     wire,
 };
+use bytes::Bytes;
 use nethernet_tokio::AcceptedSession;
+use std::io;
 
-pub(super) const RUNTIME_ID: u64 = 42;
-pub(super) const MARKER_RADIUS: i32 = 3;
+/// Runtime ID emitted by this fixed original packless peer.
+pub const RUNTIME_ID: u64 = 42;
+/// Radius used by the actual post-initialization round trip.
+pub const MARKER_RADIUS: u8 = 3;
 
 /// Sends the same original typed packets through the selected native batch codec.
 async fn send<S: BatchPhase>(
@@ -25,7 +29,10 @@ async fn send<S: BatchPhase>(
         packet
             .encode_frame(wire::Peer::Server, 0, 0, &mut frame)
             .map_err(io::Error::other)?;
-        entries.push(Bytes::from(frame));
+        let frame = Bytes::from(frame);
+        let mut reader = wire::Reader::from_shared(&frame);
+        reader.read_var_u32().map_err(io::Error::other)?;
+        entries.push(frame.slice(reader.position()..));
     }
     for message in codec.encode(&entries).map_err(io::Error::other)? {
         peer.session.send(message).await.map_err(io::Error::other)?;
@@ -65,7 +72,7 @@ async fn receive<S: BatchPhase>(
 }
 
 /// Requires real settings/Login, request/spawn, Initialized and a later play round trip.
-pub(super) async fn run(
+pub async fn run(
     peer: &mut AcceptedSession,
     startup_sent: tokio::sync::oneshot::Sender<()>,
 ) -> io::Result<()> {
@@ -191,7 +198,7 @@ pub(super) async fn run(
         }
     }
     if !matches!(receive(peer, &codec).await?.as_slice(),
-        [packets::Packet::RequestChunkRadius(request)] if request.chunk_radius.0 == MARKER_RADIUS)
+        [packets::Packet::RequestChunkRadius(request)] if request.chunk_radius.0 == i32::from(MARKER_RADIUS))
     {
         return Err(io::Error::other("packless upstream lost live marker"));
     }
@@ -199,7 +206,7 @@ pub(super) async fn run(
         peer,
         &codec,
         &[packets::ChunkRadiusUpdated {
-            chunk_radius: wire::ZigZag32(MARKER_RADIUS),
+            chunk_radius: wire::ZigZag32(i32::from(MARKER_RADIUS)),
         }
         .into()],
     )
@@ -212,4 +219,17 @@ pub(super) async fn run(
             result.is_ok()
         ))),
     }
+}
+
+/// Expected original startup siblings after the actual game/registry/spawn owner consumes its controls.
+pub fn prefix() -> [crate::Packet; 3] {
+    [
+        crate::Packet::new(packets::SetTime {
+            time: wire::ZigZag32(1),
+        }),
+        crate::Packet::new(packets::SetTime {
+            time: wire::ZigZag32(2),
+        }),
+        crate::test_support::packets::chunk_radius_updated_packet(2),
+    ]
 }

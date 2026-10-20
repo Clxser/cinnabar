@@ -1,10 +1,8 @@
 //! Real two-leg hosted protocol admission without an upstream pack advertisement.
 
-mod upstream;
-mod world;
-
 use super::*;
-use bedrock_protocol_1_26_51::{packets, wire};
+use crate::local_worlds::test_support::packless::World;
+use protocol::test_support::{hosted_packless as upstream, packets::chunk_radius_updated_packet};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn signed_hosted_packless_upstream_preserves_startup_initialized_and_live_marker() {
@@ -30,7 +28,7 @@ async fn signed_hosted_packless_upstream_preserves_startup_initialized_and_live_
                 ..Default::default()
             },
         ).await.unwrap();
-        let world = world::World::open(upstream_address);
+        let world = World::open(upstream_address);
         let issuer = Provider::new();
         let namespace = tempfile::tempdir().unwrap();
         let deadline = Instant::now() + ACQUISITION_TIMEOUT;
@@ -141,14 +139,8 @@ async fn signed_hosted_packless_upstream_preserves_startup_initialized_and_live_
         let (empty, runtime_id, prefix, marker) = visitor.unwrap();
         assert!(empty, "packless upstream invented archives");
         assert_eq!(runtime_id, upstream::RUNTIME_ID);
-        assert_eq!(prefix, [
-            protocol::Packet::new(packets::SetTime { time: wire::ZigZag32(1) }),
-            protocol::Packet::new(packets::SetTime { time: wire::ZigZag32(2) }),
-            protocol::Packet::new(packets::ChunkRadiusUpdated { chunk_radius: wire::ZigZag32(2) }),
-        ]);
-        assert_eq!(marker, protocol::Packet::new(packets::ChunkRadiusUpdated {
-            chunk_radius: wire::ZigZag32(upstream::MARKER_RADIUS),
-        }));
+        assert_eq!(prefix, upstream::prefix());
+        assert_eq!(marker, chunk_radius_updated_packet(i32::from(upstream::MARKER_RADIUS)));
     }).await.expect("finite original hosted packless fixture stalled");
 }
 

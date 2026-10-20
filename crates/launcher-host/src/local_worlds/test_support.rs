@@ -2,6 +2,8 @@
 //! servers and an in-memory runner.
 
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub(crate) mod packless;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub(crate) mod paired;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub(crate) mod paired_bds;
