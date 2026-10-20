@@ -310,8 +310,8 @@ fn snapshot(acquired: packs::Acquired) -> io::Result<(Option<ServerPackSnapshot>
                 .pack_id_version
                 .pack_version
                 .version
-                .to_string_lossy()
-                .into_owned(),
+                .as_bytes()
+                .to_vec(),
         );
         let archive = acquired.remove(&id).ok_or_else(invalid)?;
         let size = u64::try_from(archive.archive.len()).map_err(|_| invalid())?;

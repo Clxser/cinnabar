@@ -104,17 +104,19 @@ impl PackIo for AcquisitionIo<'_> {
             } => MAX_CDN_DOWNLOADS,
             _ => 1,
         };
-        let preloads = stream::iter(offers.iter().enumerate().map(|(index, offer)| {
-            let (cache, client, cancelled) = (
-                self.cache.clone(),
-                client.clone(),
-                Arc::clone(&self.cancelled.0),
-            );
-            async move {
-                let result = acquisition::preload(offer, cache, client, cancelled).await;
-                (index, offer, result)
-            }
-        }))
+        let preloads = stream::iter(offers.iter().enumerate().map(
+            |(index, offer): (usize, &PackInfoData)| {
+                let (cache, client, cancelled) = (
+                    self.cache.clone(),
+                    client.clone(),
+                    Arc::clone(&self.cancelled.0),
+                );
+                async move {
+                    let result = acquisition::preload(offer, cache, client, cancelled).await;
+                    (index, offer, result)
+                }
+            },
+        ))
         .buffer_unordered(concurrency)
         .collect::<Vec<_>>()
         .await;

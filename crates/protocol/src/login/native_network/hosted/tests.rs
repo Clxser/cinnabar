@@ -85,7 +85,8 @@ fn hosted_preloaded_snapshot_rejects_replaced_version_size_and_key() {
             "facts" => acquired.preloaded.clear(),
             "version" => {
                 archive.version = "01.0.0".into();
-                offered.pack_id_version.pack_version.version = archive.version.clone().into();
+                offered.pack_id_version.pack_version.version =
+                    bytes::Bytes::from(archive.version.clone()).into();
             }
             "size" => {
                 archive.archive.push(0);
