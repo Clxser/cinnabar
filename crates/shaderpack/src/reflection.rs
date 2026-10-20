@@ -153,85 +153,59 @@ pub const LEGACY_UNIFORMS: &[(&str, &str, &str)] = &[
     ("gl_Fog", "iris_Fog", "iris_FogParameters iris_Fog;"),
 ];
 
-/// A per-vertex input the host's vertex buffers must provide.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum VertexAttribute {
-    /// `gl_Vertex` (vec4) or `vaPosition` (vec3).
-    Position,
-    /// `gl_Color` or `vaColor`.
-    Color,
-    /// `gl_Normal` or `vaNormal`.
-    Normal,
-    /// `gl_MultiTexCoord0` or `vaUV0`: the texture atlas coordinate.
-    TexCoord,
-    /// `gl_MultiTexCoord1` or `vaUV2`: the lightmap coordinate.
-    Lightmap,
-    /// `gl_MultiTexCoord2`.
-    MultiTexCoord2,
-    /// `gl_MultiTexCoord3`.
-    MultiTexCoord3,
-    /// `vaUV1`: the entity overlay coordinate.
-    Overlay,
-    /// `mc_Entity`: block or entity id from `block.properties`.
-    BlockId,
-    /// `mc_midTexCoord`: centre of the sprite.
-    MidTexCoord,
-    /// `at_tangent`.
-    Tangent,
-    /// `at_midBlock`: offset to the block centre and light emission.
-    MidBlock,
-    /// `at_velocity`.
-    Velocity,
-    /// `mc_chunkFade`.
-    ChunkFade,
-    /// `dhMaterialId`.
-    DhMaterialId,
-    /// An input the pack declares that Iris does not supply.
-    Other(String),
+/// Declares supplied vertex inputs, names and location order together.
+macro_rules! vertex_attributes {
+    ($( $(#[$doc:meta])* $kind:ident => [$($name:literal),+]),+ $(,)?) => {
+        /// A per-vertex input the host's vertex buffers must provide.
+        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+        pub enum VertexAttribute {
+            $($(#[$doc])* $kind,)+
+            /// An input the pack declares that Iris does not supply.
+            Other(String),
+        }
+
+        /// GLSL input aliases in location order.
+        const ATTRIBUTE_NAMES: &[(&str, VertexAttribute)] = &[
+            $($(($name, VertexAttribute::$kind),)+)+
+        ];
+
+        /// Supplied attributes in location order.
+        const SUPPLIED: &[VertexAttribute] = &[$(VertexAttribute::$kind),+];
+    };
 }
 
-/// GLSL input names (after legacy renaming) for each supplied attribute, in location order.
-const ATTRIBUTE_NAMES: &[(&str, VertexAttribute)] = &[
-    ("iris_Vertex", VertexAttribute::Position),
-    ("vaPosition", VertexAttribute::Position),
-    ("iris_Color", VertexAttribute::Color),
-    ("vaColor", VertexAttribute::Color),
-    ("iris_Normal", VertexAttribute::Normal),
-    ("vaNormal", VertexAttribute::Normal),
-    ("iris_MultiTexCoord0", VertexAttribute::TexCoord),
-    ("vaUV0", VertexAttribute::TexCoord),
-    ("iris_MultiTexCoord1", VertexAttribute::Lightmap),
-    ("vaUV2", VertexAttribute::Lightmap),
-    ("iris_MultiTexCoord2", VertexAttribute::MultiTexCoord2),
-    ("iris_MultiTexCoord3", VertexAttribute::MultiTexCoord3),
-    ("vaUV1", VertexAttribute::Overlay),
-    ("mc_Entity", VertexAttribute::BlockId),
-    ("mc_midTexCoord", VertexAttribute::MidTexCoord),
-    ("at_tangent", VertexAttribute::Tangent),
-    ("at_midBlock", VertexAttribute::MidBlock),
-    ("at_velocity", VertexAttribute::Velocity),
-    ("mc_chunkFade", VertexAttribute::ChunkFade),
-    ("dhMaterialId", VertexAttribute::DhMaterialId),
-];
-
-/// Supplied attributes in location order; `Other` inputs take locations after these.
-const SUPPLIED: &[VertexAttribute] = &[
-    VertexAttribute::Position,
-    VertexAttribute::Color,
-    VertexAttribute::Normal,
-    VertexAttribute::TexCoord,
-    VertexAttribute::Lightmap,
-    VertexAttribute::MultiTexCoord2,
-    VertexAttribute::MultiTexCoord3,
-    VertexAttribute::Overlay,
-    VertexAttribute::BlockId,
-    VertexAttribute::MidTexCoord,
-    VertexAttribute::Tangent,
-    VertexAttribute::MidBlock,
-    VertexAttribute::Velocity,
-    VertexAttribute::ChunkFade,
-    VertexAttribute::DhMaterialId,
-];
+vertex_attributes! {
+    /// `gl_Vertex` (vec4) or `vaPosition` (vec3).
+    Position => ["iris_Vertex", "vaPosition"],
+    /// `gl_Color` or `vaColor`.
+    Color => ["iris_Color", "vaColor"],
+    /// `gl_Normal` or `vaNormal`.
+    Normal => ["iris_Normal", "vaNormal"],
+    /// `gl_MultiTexCoord0` or `vaUV0`: the texture atlas coordinate.
+    TexCoord => ["iris_MultiTexCoord0", "vaUV0"],
+    /// `gl_MultiTexCoord1` or `vaUV2`: the lightmap coordinate.
+    Lightmap => ["iris_MultiTexCoord1", "vaUV2"],
+    /// `gl_MultiTexCoord2`.
+    MultiTexCoord2 => ["iris_MultiTexCoord2"],
+    /// `gl_MultiTexCoord3`.
+    MultiTexCoord3 => ["iris_MultiTexCoord3"],
+    /// `vaUV1`: the entity overlay coordinate.
+    Overlay => ["vaUV1"],
+    /// `mc_Entity`: block or entity id from `block.properties`.
+    BlockId => ["mc_Entity"],
+    /// `mc_midTexCoord`: centre of the sprite.
+    MidTexCoord => ["mc_midTexCoord"],
+    /// `at_tangent`.
+    Tangent => ["at_tangent"],
+    /// `at_midBlock`: offset to the block centre and light emission.
+    MidBlock => ["at_midBlock"],
+    /// `at_velocity`.
+    Velocity => ["at_velocity"],
+    /// `mc_chunkFade`.
+    ChunkFade => ["mc_chunkFade"],
+    /// `dhMaterialId`.
+    DhMaterialId => ["dhMaterialId"],
+}
 
 /// First location used for [`VertexAttribute::Other`] inputs.
 pub const FIRST_OTHER_ATTRIBUTE_LOCATION: u32 = SUPPLIED.len() as u32;
@@ -296,6 +270,8 @@ pub struct StageMask {
 }
 
 impl StageMask {
+    /// Marks a stage as using the reflected resource.
+
     pub(crate) fn add(&mut self, stage: StageKind) {
         match stage {
             StageKind::Fragment => self.fragment = true,
