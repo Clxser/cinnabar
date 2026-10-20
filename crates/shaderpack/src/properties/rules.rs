@@ -215,9 +215,9 @@ fn blend_factor(text: &str) -> Result<BlendFactor, String> {
     })
 }
 
-/// Reads an alpha comparison and reference, or disables the test with `off`.
+/// Reads an alpha comparison and reference, or disables the test with `off` or `false`.
 fn alpha_test(value: &str) -> Result<Option<AlphaTest>, String> {
-    if value.eq_ignore_ascii_case("off") {
+    if value.eq_ignore_ascii_case("off") || value.eq_ignore_ascii_case("false") {
         return Ok(None);
     }
     let (function, reference) = first_of_two(value)?;

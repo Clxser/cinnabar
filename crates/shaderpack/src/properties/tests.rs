@@ -690,3 +690,18 @@ fn content_block_comments_hide_conditional_directives() {
     assert_eq!(properties.get("program.final.enabled"), Some("false"));
     assert!(properties.diagnostics.is_empty());
 }
+
+#[test]
+fn alpha_test_false_and_off_disable_comparisons() {
+    for value in ["false", "FALSE", "off", "OFF"] {
+        let properties = parse(&format!("alphaTest.composite={value}\n"));
+        assert!(
+            properties.diagnostics.is_empty(),
+            "{:?}",
+            properties.diagnostics
+        );
+        assert_eq!(properties.alpha_tests.len(), 1);
+        assert_eq!(properties.alpha_tests[0].program, "composite");
+        assert_eq!(properties.alpha_tests[0].test, None);
+    }
+}

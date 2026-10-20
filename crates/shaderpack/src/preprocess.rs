@@ -936,4 +936,30 @@ mod tests {
         let diagnostic = preprocess(expanded, &[]).err().expect("depth diagnostic");
         assert_eq!(diagnostic.phase, Phase::Preprocess);
     }
+    #[test]
+    fn repeated_defines_preserve_original_logical_lines() {
+        let pp = run(
+            &[
+                (
+                    "a.fsh",
+                    "#define VALUE 1\nint first = __LINE__;\n#define VALUE 2\nint second = __LINE__;\n#include \"/lib/value.glsl\"\nint third = __LINE__;\n#line 80\n#define VALUE 3\nint explicitLine = __LINE__;",
+                ),
+                (
+                    "lib/value.glsl",
+                    "#define VALUE 4\nint included = __LINE__;",
+                ),
+            ],
+            "a.fsh",
+            &[],
+        );
+        let values: Vec<_> = pp
+            .tokens
+            .iter()
+            .filter_map(|token| match &token.kind {
+                TokKind::Int(value) => Some(value.trim_end_matches('u')),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(values, ["2", "4", "2", "6", "82"]);
+    }
 }
