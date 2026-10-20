@@ -410,7 +410,7 @@ impl<R: bridge::FrameRead> PlaySession<R> {
         self.packet_id_trace.drain()
     }
 
-    /// The latency-trace connection, core batch frame and in-frame index of the packet received
+    /// The latency-trace connection, framed batch and in-frame index of the packet received
     /// last; see [`bridge::latency_trace`].
     #[must_use]
     pub fn latency_trace_position(&self) -> (u64, u64, u32) {
@@ -418,7 +418,7 @@ impl<R: bridge::FrameRead> PlaySession<R> {
         (conn, self.ingress_position.0, self.ingress_position.1)
     }
 
-    /// The core frame and slot of the packet the transport delivered last.
+    /// The framed batch and slot of the packet the transport delivered last.
     fn delivered_position(&self) -> (u64, u32) {
         let (_, frame, index) = self.transport.trace_position();
         (frame, index)

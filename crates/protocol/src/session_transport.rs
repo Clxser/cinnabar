@@ -22,19 +22,19 @@ pub(crate) mod native;
 
 /// A server may batch a whole pack transfer, or a large item registry, into one batch,
 /// so the local leg accepts batches far larger than a typical client's 16 MiB default.
-/// The core already bounds pack transfers before they reach this hop.
+/// The upstream owner validates pack transfers before they reach this hop.
 pub(crate) const MAX_SESSION_BATCH_BYTES: usize =
     bridge::contract::MAX_UPSTREAM_DECOMPRESSED_BATCH_BYTES;
-/// Bounds frames read while packs prepare or the world consumer is full; past it the core waits.
+/// Bounds frames read while packs prepare or the world consumer is full; past it the framed reader waits.
 pub(crate) const MAX_READ_AHEAD_BYTES: usize = 64 * 1024 * 1024;
 
-/// What the core delivers next: a server packet, or the terminal message that ends the session.
+/// What the original reader delivers next: a server packet, or the terminal message that ends the session.
 pub(crate) enum Inbound {
     Packet(RawPacket),
     Terminal(Terminal),
 }
 
-/// The core's last message on a session, standing for the server's own Transfer or Disconnect.
+/// The framed peer's last message on a session, standing for the server's own Transfer or Disconnect.
 pub(crate) enum Terminal {
     Transfer(SessionTransfer),
     Disconnect(SessionDisconnect),
@@ -119,7 +119,7 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
         }
     }
 
-    /// Closes the native connection while its runtime is alive; core I/O belongs to its host.
+    /// Closes the native connection while its runtime is alive; framed I/O belongs to its host.
     pub(crate) async fn close(&mut self) -> Result<(), ProtocolError> {
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
         if let Reader::Native(reader) = &mut self.reader {
@@ -173,7 +173,7 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
     }
 
     /// The latency-trace connection, frame and in-frame index of the packet [`Self::recv`]
-    /// returned last; frames count the core's batch frames from 1, startup packets are frame 0.
+    /// returned last; frames count the peer's batch frames from 1, startup packets are frame 0.
     pub(crate) fn trace_position(&self) -> (u64, u64, u32) {
         (self.reader.trace_conn(), self.delivered.0, self.delivered.1)
     }
@@ -191,13 +191,13 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
         self.writer.sender().clone()
     }
 
-    /// Exposes only the original Core queue for its capacity-controlled fixtures.
+    /// Exposes only the original framed queue for its capacity-controlled fixtures.
     #[cfg(test)]
     pub(crate) fn frame_queue(&self) -> FrameQueue {
         match self.writer.sender().clone() {
             PacketSender::Framed(frames) => frames,
             #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-            PacketSender::Native(_) => panic!("this fixture requires the original Core queue"),
+            PacketSender::Native(_) => panic!("this fixture requires the original framed queue"),
         }
     }
 

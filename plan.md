@@ -51,12 +51,12 @@ closes no gate and provides no new runtime or performance evidence.
 
 ## Phase 1 — Core service
 
-Desktop builds select native Rust account and network services by default. Explicit
-`--legacy-networking` selects the retained Go backend for the whole launch; native
-failures do not retry through Go. Reusable service, Bedrock and RakNet/NetherNet
-libraries own authentication, framing and protocol transitions. Transport cores are
+The client uses native Rust account and network services. The separate Go client,
+account/network process, local IPC endpoint and legacy backend selection are removed.
+This source retirement requires final integrated build and runtime qualification.
+Reusable service, Bedrock and RakNet/NetherNet libraries own authentication, framing and protocol transitions. Transport cores are
 caller-driven state machines with explicit runtime adapters. Native menus need no
-Core process or control endpoint. Dragonfly and official BDS local worlds retain
+separate networking process or control endpoint. Dragonfly and official BDS local worlds retain
 their existing server-process owners.
 
 Saved-account restore, complete Profile service loading and a native default desktop

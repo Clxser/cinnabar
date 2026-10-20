@@ -27,11 +27,8 @@ connection. Local worlds retain their Dragonfly or official BDS process owners. 
 | [nethernet](https://github.com/cinnabar-mc/nethernet) | Native ICE, DTLS and SCTP with explicit Tokio and Bevy adapters. |
 | [protocolgen](https://github.com/cinnabar-mc/protocolgen) | Owns the pinned generated Bedrock packet codec shared by the client and bedrock-net. |
 | [Axolotl Stack](https://github.com/axolotl-stack/axolotl-stack) | Earlier Jolyne session integration; its MIT attribution remains in `THIRD_PARTY_NOTICES.md`. The current session owner uses bedrock-net. |
-| [gophertunnel](https://github.com/Sandertv/gophertunnel) | Bedrock login, encryption, resource packs and the packet relay. |
-| [go-raknet](https://github.com/Sandertv/go-raknet) | RakNet transport to servers, plus server-list pings. |
-| [go-nethernet](https://github.com/df-mc/go-nethernet) | WebRTC transport for Realms and friend worlds. |
-| [go-xsapi](https://github.com/df-mc/go-xsapi) | Xbox Live identity, friends, presence and signaling. |
-| [go-playfab](https://github.com/df-mc/go-playfab) | PlayFab sign-in and the menu catalog (featured servers). |
+| [gophertunnel](https://github.com/Sandertv/gophertunnel) | Bedrock protocol support for the Dragonfly local-server integration and Go fixture tools. |
+| [go-raknet](https://github.com/Sandertv/go-raknet) | RakNet transport for the Go local-server integration. |
 | [dragonfly](https://github.com/df-mc/dragonfly) | The built-in local-world server in `tools/localserver`. |
 
 Mojang assets are never committed or embedded. `make assets` fetches Mojang's official

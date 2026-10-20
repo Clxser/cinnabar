@@ -17,29 +17,26 @@
         '-MetricsOut', $MetricsOut
     )
     Assert-True ($success.ExitCode -eq 0) "dry-run failed: $($success.Output -join [Environment]::NewLine)"
-    $commands = @($success.Output | Where-Object { $_ -match '^(BDS|CORE|APP)_COMMAND=' })
-    Assert-True ($commands.Count -eq 3) "expected exactly three commands, got $($commands.Count)"
+    $commands = @($success.Output | Where-Object { $_ -match '^(BDS|APP)_COMMAND=' })
+    Assert-True ($commands.Count -eq 2) "expected exactly two commands, got $($commands.Count)"
     Assert-True ($commands[0] -match '^BDS_COMMAND=') 'BDS command was not first'
-    Assert-True ($commands[1] -match '^CORE_COMMAND=') 'core command was not second'
-    Assert-True ($commands[2] -match '^APP_COMMAND=') 'app command was not third'
-    Assert-True ($success.Output.Count -eq 6) 'default dry-run output changed'
+    Assert-True ($commands[1] -match '^APP_COMMAND=') 'app command was not second'
+    Assert-True ($success.Output.Count -eq 5) 'default dry-run output changed'
     Assert-True ($success.Output -contains 'BUILD_PROFILE=release') 'default dry-run did not identify the release profile'
     Assert-True ($success.Output -contains 'REQUESTED_PRESENT_MODE=Fifo') 'default dry-run did not request FIFO'
     Assert-True ($success.Output -contains 'EFFECTIVE_PRESENT_MODE=UNPROVEN') 'default dry-run relabeled requested FIFO as effective without surface proof'
     $expectedRuntimeDirectory = Join-Path (Join-Path $ProjectRoot '.local\bds-runtime') (Split-Path -Leaf $BdsDir)
-    $expectedSocketDirectory = Join-Path $DryRunDirectory 'socket'
     $expectedCanonicalMetrics = Join-Path $DryRunDirectory 'app-metrics.json'
     $expectedCommands = @(
         ('BDS_COMMAND=' + (Format-TestResolvedCommand `
             -Executable (Join-Path $expectedRuntimeDirectory 'bedrock_server.exe') `
             -Arguments @()))
-        ('CORE_COMMAND=' + (Format-TestResolvedCommand `
-            -Executable (Join-Path $ProjectRoot 'target\release\bedrock-core.exe') `
-            -Arguments @('-socket-dir', $expectedSocketDirectory, '-upstream', '127.0.0.1:19132')))
         ('APP_COMMAND=' + (Format-TestResolvedCommand `
             -Executable (Join-Path $ProjectRoot 'target\release\cinnabar.exe') `
             -Arguments @(
-                '--socket-dir', $expectedSocketDirectory,
+                '--address', '127.0.0.1:19132',
+                '--native-networking', 'raknet',
+                '--display-name', 'AcceptanceGuest',
                 '--acceptance-seconds', '900',
                 '--metrics-out', $expectedCanonicalMetrics,
                 '--auto-fly'
@@ -49,11 +46,11 @@
         ($expectedCommands -join [Environment]::NewLine) `
         ($commands -join [Environment]::NewLine) `
         'default dry-run commands changed'
-    foreach ($flag in @('--socket-dir', '--acceptance-seconds 900', '--metrics-out', '--auto-fly')) {
-        Assert-True ($commands[2].Contains($flag)) "app command is missing $flag"
+    foreach ($flag in @('--address 127.0.0.1:19132', '--native-networking raknet', '--display-name AcceptanceGuest', '--acceptance-seconds 900', '--metrics-out', '--auto-fly')) {
+        Assert-True ($commands[1].Contains($flag)) "app command is missing $flag"
     }
-    Assert-True (-not $commands[2].Contains('--no-vsync')) 'default acceptance bypassed FIFO'
-    Assert-True (-not $commands[2].Contains('--assets')) 'default app command unexpectedly gained --assets'
+    Assert-True (-not $commands[1].Contains('--no-vsync')) 'default acceptance bypassed FIFO'
+    Assert-True (-not $commands[1].Contains('--assets')) 'default app command unexpectedly gained --assets'
     Assert-True (-not ($success.Output -match '^VISUAL_FIXTURE_POSE=')) 'default dry-run recorded a fixture pose'
     Assert-True ($commands[0].Contains('"')) 'path containing spaces was not quoted'
     Assert-True (-not (Test-Path -LiteralPath $DryRunDirectory)) 'dry-run created its run directory'
@@ -393,7 +390,7 @@
     Assert-True ($source.Contains('[IO.FileOptions]::WriteThrough')) 'child log files are not write-through'
     Assert-True (-not $source.Contains('ReadToEndAsync')) 'child logs are retained in memory'
     Assert-True ($source.Contains('-WorkingDirectory $ProjectRoot')) 'builds are not rooted at the project directory'
-    Assert-True ($source.Contains("Join-Path `$ProjectRoot 'core'")) 'gophertunnel metadata does not read the canonical core/go.mod pin'
+    Assert-True ($source.Contains("Join-Path `$ProjectRoot 'tools/localserver'")) 'gophertunnel metadata does not read the canonical tools/localserver/go.mod pin'
     Assert-True (-not $source.Contains('$ExpectedGophertunnelCommit')) 'acceptance entry duplicates the gophertunnel commit pin'
     Assert-True ($source.Contains('Get-PinnedGophertunnelCommit')) 'gophertunnel metadata does not verify go list -m resolution'
     Assert-True ($source.Contains("'c4540512dc47833bb40363da7ad1161110d64b67'")) 'protocol metadata omitted the Axolotl Stack revision'

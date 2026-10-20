@@ -113,7 +113,7 @@ pub(crate) fn prepare<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
 }
 
 /// Keeps byte permits until flush, admitting a frame larger than the budget alone. A `trace_conn`
-/// records this connection's batch frames in the latency trace once the core's ID is set in it.
+/// records this connection's batch frames in the latency trace once the peer's ID is set in it.
 pub(crate) fn prepare_bounded<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     read: R,
     write: W,
@@ -155,7 +155,7 @@ pub struct FramedReader<R = tokio::io::Empty> {
 /// Ordered bridge frames and their shared latency-trace identity. Implementations retain
 /// partial input when a receive future is cancelled.
 pub trait FrameRead: Stream<Item = Result<Bytes, BridgeError>> + Unpin {
-    /// Returns the core's connection identity, or zero when tracing is disabled.
+    /// Returns the peer's connection identity, or zero when tracing is disabled.
     fn trace_conn(&self) -> u64;
     /// Shares the handed-off identity with this reader's writer.
     fn set_trace_conn(&self, id: u64);
@@ -172,13 +172,13 @@ impl<R: AsyncRead + Unpin> FrameRead for FramedReader<R> {
 }
 
 impl<R> FramedReader<R> {
-    /// The core's latency-trace ID for this connection, or 0 when it is not traced.
+    /// The peer's latency-trace ID for this connection, or 0 when it is not traced.
     #[must_use]
     pub fn trace_conn(&self) -> u64 {
         self.trace.id()
     }
 
-    /// Adopts the latency-trace ID the core sent in its handoff, for this reader and its writer.
+    /// Adopts the latency-trace ID the peer sent in its handoff, for this reader and its writer.
     pub fn set_trace_conn(&self, id: u64) {
         if let Some(conn) = &self.trace.conn {
             conn.store(id, Ordering::Relaxed);
@@ -205,7 +205,7 @@ impl<R: AsyncRead + Unpin> Stream for FramedReader<R> {
     }
 }
 
-/// Numbers one direction's batch frames in the latency trace; inert until the core's ID is set.
+/// Numbers one direction's batch frames in the latency trace; inert until the peer's ID is set.
 struct FrameTrace {
     trace: Option<&'static crate::latency_trace::Trace>,
     conn: Option<Arc<AtomicU64>>, // shared by a connection's reader and writer
@@ -343,7 +343,7 @@ async fn write_queued_frames<W: AsyncWrite + Unpin>(
 ) {
     let mut pending = Vec::with_capacity(QUEUED_FRAMES);
     // First byte, length and feed time of the frames in this flush, kept only while tracing.
-    // Each time is taken before that frame's bytes can go out, so the core never reads a frame
+    // Each time is taken before that frame's bytes can go out, so the peer never reads a frame
     // before its record.
     let mut traced = Vec::new();
     while let Some(first) = frames.recv().await {

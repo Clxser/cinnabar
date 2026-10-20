@@ -16,6 +16,7 @@ reads = [
     "packaging/android/platform-verifier.json",
     "packaging/android/licenses/**",
     "packaging/release-assets.json",
+    "packaging/common/runtime-binaries.txt",
     "tools/cargo-free",
     "tools/compiler_workspace_wrapper.py",
 ]

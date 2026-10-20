@@ -1,7 +1,7 @@
 # Networking upstream observations
 
 The Networking upstream watch runs daily and on manual dispatch. Its summary and
-artifact report public reference heads against current `core/go.mod` replacements,
+artifact report public reference heads against current `tools/localserver/go.mod` replacements,
 `Cargo.lock` Git identities or explicit reference checkpoints. Pull requests run
 only hermetic tool tests. The workflow has read-only repository permissions.
 

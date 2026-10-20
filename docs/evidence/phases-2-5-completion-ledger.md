@@ -6,8 +6,9 @@ Desktop builds select native Rust account/network services by default. Actual sa
 restore, all Profile service facets and a default desktop server join passed application
 acceptance: terrain, entities, HUD and held item were visually inspected, followed by ordinary
 leave and normal shutdown. Featured-catalogue and multiple server-implementation joins have
-separate scoped native receipts. Explicit `--legacy-networking` retains the Go backend;
-native failures never select it automatically. Its removal still requires replacement acceptance.
+separate scoped native receipts. The Go client process, IPC endpoint and legacy backend
+selection are removed from source and shipping inputs. Final integrated checks and runtime
+acceptance of that retirement remain required; earlier receipts keep their original scope.
 
 Reusable Login, pack and spawn owners retain original account/transport identity, deadlines,
 raw packet order and send receipts. Owning controls pass for early PlayerSpawn, requested

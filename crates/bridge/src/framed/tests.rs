@@ -308,7 +308,7 @@ fn declared_payload_does_not_allocate_before_bytes_arrive() {
     assert!(header.capacity() < MAX_FRAME_LEN);
 }
 
-/// A writer whose every write fails, standing in for a closed core socket.
+/// A writer whose every write fails, standing in for a closed framed stream.
 struct FailingWriter;
 
 impl tokio::io::AsyncWrite for FailingWriter {
@@ -396,7 +396,7 @@ async fn failed_bridge_writes_are_not_traced_as_written() {
     );
 }
 
-/// Stamps the trace clock when the first bytes reach it, as the core's read would.
+/// Stamps the trace clock when the first bytes reach it, as the peer's read would.
 struct StampingWriter(
     &'static crate::latency_trace::Trace,
     std::sync::Arc<std::sync::atomic::AtomicI64>,

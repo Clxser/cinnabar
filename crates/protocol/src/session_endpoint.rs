@@ -381,7 +381,7 @@ impl NativeConnectionTarget {
     }
 }
 
-/// A core endpoint or a native direct connection, chosen once for the join.
+/// The native target captured once for this join.
 #[derive(Debug, Clone)]
 pub enum SessionEndpoint {
     Native(crate::NativeConnectionTarget),

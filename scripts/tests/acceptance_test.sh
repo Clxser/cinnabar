@@ -23,17 +23,16 @@ output="$(bash "$script" --dry-run --duration 900 --bds-dir "$bds_dir" --metrics
 commands=()
 while IFS= read -r line; do
     case "$line" in
-        BDS_COMMAND=*|CORE_COMMAND=*|APP_COMMAND=*) commands[${#commands[@]}]=$line ;;
+        BDS_COMMAND=*|APP_COMMAND=*) commands[${#commands[@]}]=$line ;;
     esac
 done <<<"$output"
-[[ ${#commands[@]} -eq 3 ]]
+[[ ${#commands[@]} -eq 2 ]]
 [[ ${commands[0]} == BDS_COMMAND=* ]]
-[[ ${commands[1]} == CORE_COMMAND=* ]]
-[[ ${commands[2]} == APP_COMMAND=* ]]
-for flag in --socket-dir '--acceptance-seconds 900' --metrics-out --auto-fly; do
-    [[ ${commands[2]} == *"$flag"* ]]
+[[ ${commands[1]} == APP_COMMAND=* ]]
+for flag in '--address 127.0.0.1:19132' '--native-networking raknet' '--display-name AcceptanceGuest' '--acceptance-seconds 900' --metrics-out --auto-fly; do
+    [[ ${commands[1]} == *"$flag"* ]]
 done
-[[ ${commands[2]} != *--no-vsync* ]]
+[[ ${commands[1]} != *--no-vsync* ]]
 [[ $output == *'BUILD_PROFILE=release'* ]]
 [[ $output == *'REQUESTED_PRESENT_MODE=Fifo'* ]]
 [[ $output == *'EFFECTIVE_PRESENT_MODE=UNPROVEN'* ]]
@@ -228,7 +227,7 @@ case $(uname -s) in
 esac
 
 upstream="$(bash "$script" --dry-run --duration 900 --upstream 127.0.0.1:19132 --metrics-out "$metrics_out")"
-[[ $(printf '%s\n' "$upstream" | grep -Ec '^(BDS|CORE|APP)_COMMAND=') -eq 3 ]]
+[[ $(printf '%s\n' "$upstream" | grep -Ec '^(BDS|APP)_COMMAND=') -eq 2 ]]
 if bash "$script" --duration 60 --upstream 127.0.0.1:19132 --metrics-out "$metrics_out" >/dev/null 2>&1; then
     echo 'live external upstream without a mutation command was accepted' >&2
     exit 1
@@ -236,14 +235,13 @@ fi
 
 grep -Fq 'fcntl.flock' "$script"
 grep -Fq '6>&- 9>&-' "$script"
-grep -Fq '6>&- 8>&- 9>&-' "$script"
 grep -Fq '6>&- 7>&-' "$script"
 grep -Fq 'External Bedrock upstream ready' "$script"
 grep -Fq -- "--mutation-command is required for a live --upstream run" "$script"
 grep -Fq 'metrics["publisher_radius_chunks"] == 16' "$script"
 grep -Fq 'metrics["frame_count"] > 0' "$script"
 grep -Fq 'math.isfinite(metrics["p99_frame_ms"])' "$script"
-grep -Fq 'str(root / "core"), "mod", "edit", "-json"' "$script"
+grep -Fq 'str(root / "tools" / "localserver"), "mod", "edit", "-json"' "$script"
 grep -Fq 'resolve_pinned_gophertunnel_commit' "$script"
 grep -Fq "pinned_axolotl_stack_commit='c4540512dc47833bb40363da7ad1161110d64b67'" "$script"
 grep -Fq "pinned_jolyne_license_sha256='62c75fcb256604584191434b605dc3fe661d938a94b2c35836ef55011bf24184'" "$script"

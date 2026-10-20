@@ -31,10 +31,10 @@ No Mojang assets are bundled. The release notes explain how to open unsigned bui
 make play
 ```
 
-This fetches and compiles the vanilla assets, builds the Go core, and opens the launcher. Sign-in
-uses a Microsoft device code. The token is cached in `.local/auth/`, so never share or commit
-that folder. `make play PROFILE=release` builds the fully optimised binary, and `make help` lists
-every target.
+This fetches and compiles the vanilla assets and opens the Rust client launcher. Sign-in
+uses a Microsoft device code. Credentials remain in the private per-user account store; never
+share or commit that store. `make play PROFILE=release` builds the fully optimised binary,
+and `make help` lists every target.
 
 On Debian/Ubuntu, install `libwayland-dev` and `libudev-dev` first.
 
@@ -57,9 +57,9 @@ Vanilla behaviour is the default. Everything below is extra:
 ## How it works
 
 The Rust client owns rendering, input and gameplay. Desktop builds use native Rust account and
-network services by default, with addressed discovery selecting NetherNet or RakNet. The retained
-Go backend is available with `--legacy-networking`. Builds without the `native-networking` feature
-use Go. The target game version is pinned in `assets/bedrock-target.json`.
+network services directly, with addressed discovery selecting NetherNet or RakNet. A build
+without the `native-networking` feature cannot open native sessions. The target game version
+is pinned in `assets/bedrock-target.json`.
 
 Launch the native menu, then sign in or select a saved account and join a server:
 
@@ -67,7 +67,7 @@ Launch the native menu, then sign in or select a saved account and join a server
 cargo run -p cinnabar
 ```
 
-Native menu account and local-world services start without a Go Core process or control endpoint.
+Menu account and local-world services run without a separate networking process or control endpoint.
 Native mode uses the existing account menu for Microsoft device-code sign-in and saved-account
 validation. Pending sign-in leaves the active account unchanged until identity verification and
 account commit finish. Account changes, cancellation and expired credentials stop the original
@@ -92,19 +92,18 @@ original HTTP or LAN route and process generation. Desktop pack acquisition supp
 archives and a verified persistent cache before falling back to game-socket chunks.
 
 Use `--native-networking raknet` to bypass addressed transport discovery, or
-`--native-networking nethernet-lan` for directed LAN discovery. `--legacy-networking` selects the
-whole Go account/network backend for the launch; native failures do not retry through Go.
-An explicit `--socket-dir` also selects its existing Go endpoint and conflicts with an explicit
-native selection. The packaged Go Core and independent Dragonfly local-world server are retained.
+`--native-networking nethernet-lan` for directed LAN discovery. The client has no Go
+account/network backend or socket-directory mode. The independent Dragonfly local-world
+server remains a Go integration; official BDS worlds use the Rust process owner.
 
-Friend-world admission and hosting have native implementations, including legacy and Player
-Messaging signaling, signed peer admission and original Dragonfly or BDS worlds. Their native
-menu join gate remains disabled while end-to-end acceptance is completed. Broader retail
-account, server, browser and platform compatibility also remains under validation. The
-`--address friend_xuid/<xuid>` form requires `--legacy-networking`; native mode returns an error
-because the string supplies no verified friend-world selection. Android retains its separate
-Go-backed build and selection. The native HTTPS/WebSocket relay has a separate operator;
-see [web/gateway/README.md](web/gateway/README.md) for configuration and current transport limits.
+Friend-world admission and hosting use current opaque account selections, including legacy
+and Player Messaging signaling, signed peer admission and original Dragonfly or BDS worlds.
+Controlled initialization, live traffic and retirement pass; live retail friend joining and
+advertised hosting remain under validation. A raw `friend_xuid/<xuid>` string supplies no
+verified world selection and is rejected. Android includes native networking and platform
+verification; physical-device acceptance remains open. The native HTTPS/WebSocket relay has
+a separate operator; see [web/gateway/README.md](web/gateway/README.md) for configuration and
+current transport limits.
 
 The transport protocol cores are sans I/O. Runtime adapters own their sockets and timers;
 Tokio is an explicit adapter dependency rather than a requirement of the cores. The NetherNet

@@ -134,10 +134,14 @@ diagnostics are limited to one per 15 seconds.
 
 ## Account service transport
 
-Native mode uses its selected Rust account and the existing Profile presentation state without
-an account control Core. The transport details below describe the default Go backend.
+Profile now uses the selected Rust account service directly. The Go request/RPC description
+below records the historical baseline; it is not a current runtime dependency. Native
+full-Profile acceptance and remaining account-service gates are tracked in the completion ledger.
 
-The default backend's Profile requests use the Go core's existing authenticated Xbox HTTP client.
+Native mode uses its selected Rust account and the existing Profile presentation state without
+an account control Core. The transport details below describe the historical Go backend.
+
+The historical backend's Profile requests used the Go core's existing authenticated Xbox HTTP client.
 Rust receives display data through `profile.v1`, never account credentials.
 Statistics use gophertunnel's typed Profile API. Its Xbox batch reader owns the
 statistic names, service configurations, request body, headers and response decoding;

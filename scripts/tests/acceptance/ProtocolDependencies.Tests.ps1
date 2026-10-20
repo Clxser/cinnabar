@@ -77,21 +77,22 @@ function Assert-GophertunnelPinFixtures {
     }
 
     function go {
+        Assert-Equal 'off' $env:GOWORK 'gophertunnel provenance did not isolate its Go module'
         Assert-Equal '-C' $args[0] 'gophertunnel provenance omitted its explicit Go working directory'
         $global:LASTEXITCODE = 0
         switch ($args[2..($args.Count - 1)] -join ' ') {
             'mod edit -json' {
-                Assert-Equal (Join-Path $fixtureRoot 'core') $args[1] 'pin was not read from canonical core/go.mod'
+                Assert-Equal (Join-Path $fixtureRoot 'tools/localserver') $args[1] 'pin was not read from canonical tools/localserver/go.mod'
                 if ($null -ne $script:pinFixtureSourceJson) { return $script:pinFixtureSourceJson }
                 return ($script:pinFixtureSource | ConvertTo-Json -Depth 6)
             }
             "list -m -json $modulePath" {
-                Assert-Equal $fixtureRoot $args[1] 'module was not resolved against the workspace graph'
+                Assert-Equal (Join-Path $fixtureRoot 'tools/localserver') $args[1] 'module was not resolved against its owning Go module'
                 if ($null -ne $script:pinFixtureModuleJson) { return $script:pinFixtureModuleJson }
                 return ($script:pinFixtureModule | ConvertTo-Json -Depth 6)
             }
             default {
-                Assert-Equal $fixtureRoot $args[1] 'origin was not verified from the workspace root'
+                Assert-Equal (Join-Path $fixtureRoot 'tools/localserver') $args[1] 'origin was not verified from its owning Go module'
                 Assert-Equal "mod download -json $forkPath@$($script:pinFixtureSource.Replace[0].New.Version)" `
                     ($args[2..($args.Count - 1)] -join ' ') 'download query did not follow the canonical replacement'
                 return ($script:pinFixtureDownload | ConvertTo-Json -Depth 6)
@@ -116,15 +117,15 @@ function Assert-GophertunnelPinFixtures {
         Reset-GophertunnelPinFixture
         $script:pinFixtureSource.Replace[0].New.Path = 'github.com/other/gophertunnel'
         Assert-ThrowsLike { Get-PinnedGophertunnelCommit -ProjectRoot $fixtureRoot } `
-            '*core/go.mod*canonical*' 'gophertunnel provenance accepted a different canonical fork'
+            '*tools/localserver/go.mod*canonical*' 'gophertunnel provenance accepted a different canonical fork'
         Reset-GophertunnelPinFixture
         $script:pinFixtureSource.Replace[0].Old.Version = 'v1.0.0'
         Assert-ThrowsLike { Get-PinnedGophertunnelCommit -ProjectRoot $fixtureRoot } `
-            '*core/go.mod*unversioned*' 'gophertunnel provenance accepted a version-scoped replacement'
+            '*tools/localserver/go.mod*unversioned*' 'gophertunnel provenance accepted a version-scoped replacement'
         Reset-GophertunnelPinFixture
         $script:pinFixtureSource.Replace[0].Old.Version = $null
         Assert-ThrowsLike { Get-PinnedGophertunnelCommit -ProjectRoot $fixtureRoot } `
-            '*core/go.mod*unversioned*' 'gophertunnel provenance accepted a malformed null replacement scope'
+            '*tools/localserver/go.mod*unversioned*' 'gophertunnel provenance accepted a malformed null replacement scope'
         Reset-GophertunnelPinFixture
         $script:pinFixtureSource.Replace += $script:pinFixtureSource.Replace[0]
         Assert-ThrowsLike { Get-PinnedGophertunnelCommit -ProjectRoot $fixtureRoot } `
@@ -132,11 +133,11 @@ function Assert-GophertunnelPinFixtures {
         Reset-GophertunnelPinFixture
         $script:pinFixtureSource.Replace[0].New.Version = 'v1.2.3'
         Assert-ThrowsLike { Get-PinnedGophertunnelCommit -ProjectRoot $fixtureRoot } `
-            '*core/go.mod*pseudo-version*' 'gophertunnel provenance accepted an unpinned release version'
+            '*tools/localserver/go.mod*pseudo-version*' 'gophertunnel provenance accepted an unpinned release version'
         Reset-GophertunnelPinFixture
         $script:pinFixtureSource.Replace[0].New.Version = $firstVersion + "`n"
         Assert-ThrowsLike { Get-PinnedGophertunnelCommit -ProjectRoot $fixtureRoot } `
-            '*core/go.mod*pseudo-version*' 'gophertunnel provenance accepted a pseudo-version with trailing LF'
+            '*tools/localserver/go.mod*pseudo-version*' 'gophertunnel provenance accepted a pseudo-version with trailing LF'
         Reset-GophertunnelPinFixture
         $script:pinFixtureSource.Replace[0].New.Version = $firstVersion.Replace('20200102', '20201302')
         Assert-ThrowsLike { Get-PinnedGophertunnelCommit -ProjectRoot $fixtureRoot } `

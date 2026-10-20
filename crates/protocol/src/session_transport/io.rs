@@ -91,7 +91,7 @@ impl<R: bridge::FrameRead> Reader<R> {
         }
     }
 
-    /// Returns the core's trace identity when this session has one.
+    /// Returns the framed peer's trace identity when this session has one.
     pub(super) fn trace_conn(&self) -> u64 {
         match self {
             Self::Framed(reader) => reader.trace_conn(),
