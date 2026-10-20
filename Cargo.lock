@@ -130,6 +130,7 @@ dependencies = [
  "render-model",
  "sha2",
  "simulation-clock",
+ "test-alloc",
  "tracing",
  "world",
 ]

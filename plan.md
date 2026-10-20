@@ -216,6 +216,11 @@ Frame sampling retains matching expression, layer and composition results; equip
 placement reuses unchanged owner and attachment inputs. Hardware crowd captures and
 full temporal/visual qualification remain open.
 
+Body and custom-skin composition use shared parent-first programs and caller-owned
+output, including attachable root modes and legacy attacks. Alternate render
+geometries and skin layers retain recursive composition. Rendered and live
+performance qualification remains open.
+
 - [ ] `P4.3-RIGS` — Close bounded asset admission, Molang/controllers, protocol-driven
   poses, skeletal rendering and distinct tick/frame interpolation with native evidence.
 - [ ] `P4.4-LIVE-ACTOR` — Close spawn, movement, rotation and teleport ground-contact
