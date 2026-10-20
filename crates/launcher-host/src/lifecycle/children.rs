@@ -491,7 +491,7 @@ mod update_tests {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use std::{io::Read, process::Stdio};
+    use std::process::Stdio;
 
     use super::*;
 

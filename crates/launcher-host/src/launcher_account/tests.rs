@@ -1,4 +1,4 @@
-use {super::*, launcher::menu::auth::AuthState};
+use {super::*, bridge::Message, launcher::menu::auth::AuthState};
 
 #[test]
 fn account_changes_wake_feeds_without_repeated_poll_wakes() {

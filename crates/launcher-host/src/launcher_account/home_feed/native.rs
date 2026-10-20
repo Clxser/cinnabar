@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::native_account::{NativeAccount, NativeHomeScope};
+use std::collections::HashSet;
 use tokio::time::Instant;
 
 const REFRESH: Duration = Duration::from_secs(bridge::contract::HOME_FEED_REFRESH_SECONDS as u64);
@@ -124,7 +125,7 @@ impl Cache {
         snapshot.home = Some(home.clone());
         snapshot.pending_home_scope = Scope::Native(scope.clone());
         for message in &home.messages {
-            if SHOWN_SURFACES.contains(&message.surface.as_str())
+            if message.surface == bridge::contract::MESSAGE_SURFACE_PLAY_BUTTON
                 && self.reported.insert(message.instance_id.clone())
             {
                 let event = MessageEvent {
