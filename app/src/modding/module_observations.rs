@@ -513,6 +513,7 @@ impl ModuleObserver {
                 .map(PathBuf::from),
         );
         ModuleObservations {
+            world_day: gameplay.world_day(world),
             local_totem_uses: authority.totem_activations(authority.local_player_runtime_id()),
             motion,
             vitals,

@@ -15,6 +15,7 @@ const STYLE_ALPHA_TEST: u32 = UI_STYLE_ALPHA_TEST;
 const STYLE_COLOR_MASK: u32 = UI_STYLE_COLOR_MASK;
 const STYLE_RADIAL_GRADIENT: u32 = UI_STYLE_RADIAL_GRADIENT;
 const STYLE_COVERAGE_PAINT: u32 = UI_STYLE_COVERAGE_PAINT;
+const STYLE_SPRITE_OUTLINE: u32 = UI_STYLE_SPRITE_OUTLINE;
 
 @group(0) @binding(0) var<uniform> viewport: UiViewport;
 @group(0) @binding(1) var ui_pages: texture_2d_array<f32>;
@@ -122,6 +123,22 @@ fn shade_ui(input: UiVertexOutput, direct: bool) -> vec4<f32> {
     // Preserve source interpolation and SDF derivatives when a glyph moves in the atlas.
     let sample_uv = input.uv + input.atlas_offset;
     let normalized_uv = sample_uv / dimensions;
+    if (input.style_flags & STYLE_SPRITE_OUTLINE) != 0u {
+        let source = input.overlay_color + vec4<f32>(input.atlas_offset, input.atlas_offset);
+        let texel = vec2<i32>(floor(sample_uv));
+        let center = sprite_alpha(texel, source, i32(input.texture_page));
+        var interior = center;
+        for (var y = -1; y <= 1; y += 1) {
+            for (var x = -1; x <= 1; x += 1) {
+                interior = min(interior, sprite_alpha(texel + vec2<i32>(x, y), source,
+                    i32(input.texture_page)));
+            }
+        }
+        let alpha = max(center - interior, 0.0) * input.color.a;
+        var rgb = input.color.rgb;
+        if direct { rgb = srgb_to_linear(rgb); }
+        return vec4<f32>(rgb * alpha, alpha);
+    }
     let native_font = (input.style_flags & STYLE_FONT_GAMMA) != 0u;
     let sdf_font = (input.style_flags & STYLE_FONT_SDF) != 0u;
     let texels_per_pixel = sqrt(abs(uv_dx.x * uv_dy.y - uv_dx.y * uv_dy.x));
@@ -185,6 +202,18 @@ fn shade_ui(input: UiVertexOutput, direct: bool) -> vec4<f32> {
         premultiplied_rgb += shine * viewport.glint_strength * alpha;
     }
     return vec4<f32>(premultiplied_rgb, alpha);
+}
+
+// Restrict mask taps to this sprite, including at atlas and texture-page boundaries.
+fn sprite_alpha(texel: vec2<i32>, source: vec4<f32>, page: i32) -> f32 {
+    let point = vec2<f32>(texel) + vec2<f32>(0.5);
+    let dimensions = vec2<i32>(textureDimensions(ui_pages));
+    if any(point < source.xy) || any(point >= source.zw)
+        || any(texel < vec2<i32>(0)) || any(texel >= dimensions) {
+        return 0.0;
+    }
+    let sample = textureLoad(ui_pages, texel, page, 0);
+    return select(sample.a, sample.r, ui_page_format.x != 0u);
 }
 
 // Keep the existing UI clock and scrolling rates while sampling pack artwork.

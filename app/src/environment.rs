@@ -87,6 +87,15 @@ impl WorldClock {
         self.session_generation
     }
 
+    /// Returns the day of the server-authored clock, leaving missing or overflowed clocks unknown.
+    pub(crate) fn world_day(self, elapsed_seconds: f64) -> Option<u64> {
+        self.server_time?;
+        self.server_time_anchor_seconds?;
+        let days =
+            (visual_world_time(self, elapsed_seconds) / f64::from(world::TICKS_PER_DAY)).floor();
+        (days.is_finite() && days >= 0. && days < u64::MAX as f64).then_some(days as u64)
+    }
+
     #[must_use]
     pub(crate) const fn server_time(self) -> Option<f64> {
         self.server_time

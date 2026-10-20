@@ -65,6 +65,7 @@ pub(super) fn refresh_with_clock(state: &mut State, clock: Option<super::clock::
         state.hud.source_world = None;
         state.hud.source_motion = None;
         state.hud.source_clock = None;
+        state.hud.source_day = None;
         state.hud.source_totem_uses = None;
         state.hud.resolved = None;
         return;
@@ -73,10 +74,12 @@ pub(super) fn refresh_with_clock(state: &mut State, clock: Option<super::clock::
     let mut needs_snapshot = false;
     let mut needs_sidebar = false;
     let mut needs_totems = false;
+    let mut needs_days = false;
     for card in &content.cards {
         match card.source.as_ref().map(|source| &source.kind) {
             Some(NativeRows::Clock { .. }) | None => {}
             Some(NativeRows::TotemUses { .. }) => needs_totems = true,
+            Some(NativeRows::WorldDays) => needs_days = true,
             Some(NativeRows::Sidebar { .. }) => needs_sidebar = true,
             Some(_) => needs_snapshot = true,
         }
@@ -111,7 +114,9 @@ pub(super) fn refresh_with_clock(state: &mut State, clock: Option<super::clock::
     let totem_uses = (needs_totems && state.grants.player_state)
         .then_some(state.player_state.observations.local_totem_uses)
         .flatten();
+    let world_day = needs_days.then(|| super::days::observe(state)).flatten();
     let facts_changed = state.hud.sources_dirty
+        || state.hud.source_day != world_day
         || state.hud.source_totem_uses != totem_uses
         || state.hud.source_snapshot.as_ref() != snapshot
         || state.hud.source_sidebar.as_ref() != sidebar
@@ -123,6 +128,7 @@ pub(super) fn refresh_with_clock(state: &mut State, clock: Option<super::clock::
     let mut resolved = if facts_changed || state.hud.source_clock != clock {
         let mut hud = state.hud.content.clone().expect("bound content");
         super::clock::hydrate(&mut hud, clock);
+        super::days::hydrate(&mut hud, world_day);
         hydrate_totems(&mut hud, totem_uses);
         hydrate(&mut hud, snapshot, sidebar);
         hydrate_health(&mut hud, actors, world);
@@ -144,6 +150,7 @@ pub(super) fn refresh_with_clock(state: &mut State, clock: Option<super::clock::
     }
     state.hud.source_motion = motion;
     state.hud.source_clock = clock;
+    state.hud.source_day = world_day;
     state.hud.source_totem_uses = totem_uses;
     state.hud.sources_dirty = false;
 }
@@ -222,7 +229,7 @@ fn bind_rows(
         let Some(source) = &card.source else { continue };
         let mut rows = Vec::new();
         match &source.kind {
-            NativeRows::Clock { .. } => {
+            NativeRows::Clock { .. } | NativeRows::WorldDays => {
                 continue;
             }
             NativeRows::TotemUses { .. } => {
@@ -440,7 +447,7 @@ fn has_potion_effect(item: &crate::PlayerStateItem, effect: &str) -> bool {
     }
     i16::try_from(item.metadata)
         .ok()
-        .and_then(assets::potion_descriptor)
+        .and_then(assets::potion::potion_descriptor)
         .is_some_and(|potion| potion.effects.iter().any(|entry| entry.effect == effect))
 }
 

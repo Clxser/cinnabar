@@ -1,13 +1,13 @@
-## Native extension UI and HUD support (in progress)
+## Native module follow-up support (in progress)
 
-Personal extensions can publish retained module collections, editable profile fields,
-measured text plates, compass markers and confirmed totem annotations. Native controls
-provide hover, toggle and scroll transitions. Camera styling uses a bounded temporary
-override that resets on omission, unload or a guest trap. Indexed meshes, coverage
-fonts and shared vector passes keep existing frame and texture-byte limits.
-
-Owning contract tests cover the native APIs and UI admission. Displayed-frame pacing,
-complete rendering acceptance and final review remain incomplete.
+Native module observations expose scoped world days without applying visual time
+overrides. HUD saturation artwork supports alpha-only outlines, and backdrop
+rendering bounds its downsample chain to the blur levels referenced by admitted
+paint. Regression tests are included for session boundaries, outline coverage,
+and pruned-versus-full blur pixels. These latest changes still require compilation,
+executed tests, and rendered performance acceptance. They do not close a parity
+or smoothness gate. The separate module client and its probes live outside this
+repository.
 
 ## Catalog cosmetics
 
