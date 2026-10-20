@@ -1,19 +1,15 @@
 //! Exclusive native connection state after Login and resource-pack negotiation.
 
 use super::{
-    Connection, NativeAuthentication, apply_key_exchange, authentication, failure,
-    handshake_failure, packs, transport,
+    Connection, NativeAuthentication, authentication, failure, handshake_failure, packs, transport,
 };
 use crate::login::client_data::NativeClaims;
 use crate::session_wire::SessionIdentity;
 use crate::{NativeConnectionTarget, ProtocolError, SessionLogin};
-use bedrock_client::handshake::{
-    ClientHandshake, ClientLogin, ClientPackOffer, HandshakeOptions, LoginEvent, SettingsEvent,
-};
+use bedrock_client::handshake::{ClientHandshake, HandshakeOptions};
 use bedrock_net::login::OfflineIdentity;
 use bedrock_net::login::client_data::RawClientData;
 use bedrock_packs::ResourcePackHandoff;
-use bedrock_protocol_1_26_51::packets;
 use p384::{ecdsa::SigningKey, elliptic_curve::Generate};
 use rand::rngs::SysRng;
 use serde_json::{Value, json};
@@ -290,28 +286,9 @@ pub(super) async fn negotiate_connected(
     } else {
         configured
     };
-    let (mut settings, request) = configured.start().map_err(handshake_failure)?;
-    super::connection::send(connection, request).await?;
-    let login_ready = loop {
-        let packet = super::connection::next_packet(connection)
-            .await
-            .map_err(failure)?;
-        match settings.receive(*packet.data).map_err(handshake_failure)? {
-            SettingsEvent::Ready { login, compression } => {
-                connection
-                    .enable_compression(compression)
-                    .map_err(failure)?;
-                break login;
-            }
-            SettingsEvent::Pending {
-                settings: pending,
-                packet,
-            } => {
-                super::connection::defer_unhandled(connection, *packet)?;
-                settings = pending;
-            }
-        }
-    };
+    let result =
+        bedrock_client_tokio::handshake::settings(connection, configured, &mut |_| {}).await;
+    let (login_ready, _) = super::connection::driver_result(connection, result).await?;
     let (mut claims, token) = if let Some((token, claims, expires)) = authentication {
         (claims, Some((token, expires)))
     } else {
@@ -350,30 +327,29 @@ pub(super) async fn negotiate_connected(
         .set_transport(address, connection.transport().nonce())
         .map_err(failure)?;
     let claims = claims.into_raw().map_err(failure)?;
-    let deadline = token.as_ref().map(|(_, expires)| *expires);
-    let (handshake, packet) = if let Some((token, expires)) = token {
-        authentication::ensure_current(expires, std::time::Instant::now())
-            .map_err(ProtocolError::Authentication)?;
-        login_ready.login_authenticated(&token, &claims)
+    let input = if let Some((token, expires)) = &token {
+        bedrock_client_tokio::handshake::LoginData::Authenticated {
+            token,
+            claims: &claims,
+            deadline: *expires,
+        }
     } else {
-        login_ready.login_offline(
-            &OfflineIdentity {
+        bedrock_client_tokio::handshake::LoginData::Offline {
+            identity: OfflineIdentity {
                 display_name: &identity.display_name,
                 identity: &identity.uuid,
                 xuid: "",
                 playfab_id: "",
                 playfab_title_id: "",
             },
-            &claims,
-            SystemTime::now(),
-        )
-    }
-    .map_err(|error| handshake_failure(error.into_parts().1))?;
-    match deadline {
-        Some(deadline) => super::connection::send_before(connection, packet, deadline).await?,
-        None => super::connection::send(connection, packet).await?,
-    }
-    let packs = match receive_login(connection, handshake).await? {
+            claims: &claims,
+            now: SystemTime::now(),
+        }
+    };
+    let result =
+        bedrock_client_tokio::handshake::login(connection, login_ready, input, &mut |_| {}).await;
+    let offer = super::connection::driver_result(connection, result).await?;
+    let packs = match offer {
         Some(offer) => packs::acquire(connection, offer, acquisition).await?,
         None => packs::Acquired {
             handoff: ResourcePackHandoff::default(),
@@ -387,48 +363,6 @@ pub(super) async fn negotiate_connected(
         uuid: identity.uuid.clone(),
     });
     Ok((packs, identity))
-}
-
-/// Processes post-Login controls until an actual offer or StartGame ends Login.
-/// Without an offer, the received StartGame remains in the original bounded deferred FIFO.
-async fn receive_login(
-    connection: &mut Connection,
-    mut handshake: ClientLogin,
-) -> Result<Option<ClientPackOffer>, ProtocolError> {
-    loop {
-        let packet = super::connection::next_packet(connection)
-            .await
-            .map_err(failure)?;
-        match handshake.receive(*packet.data).map_err(handshake_failure)? {
-            LoginEvent::Send { login, packets } => {
-                packs::send_packets(connection, packets).await?;
-                handshake = login;
-            }
-            LoginEvent::KeyExchange(exchange) => {
-                handshake = apply_key_exchange(connection, exchange).await?;
-            }
-            LoginEvent::Packs {
-                cache_status,
-                packs,
-            } => {
-                if let Some(status) = cache_status {
-                    super::connection::send(connection, status).await?;
-                }
-                return Ok(Some(packs));
-            }
-            LoginEvent::Startup { start_game } => {
-                super::connection::defer_unhandled(
-                    connection,
-                    packets::Packet::StartGame(start_game),
-                )?;
-                return Ok(None);
-            }
-            LoginEvent::Unhandled { login, packet } => {
-                super::connection::defer_unhandled(connection, *packet)?;
-                handshake = login;
-            }
-        }
-    }
 }
 
 /// Reports the actual host family for a signed-out connection, independently of OAuth titles.

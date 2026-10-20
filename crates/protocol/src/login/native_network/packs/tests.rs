@@ -1,7 +1,8 @@
 use super::*;
 use bedrock_client::packs::{PackEvent, PackOffer, PackTransferLimits};
-use bedrock_protocol_1_26_51::{types::PackInfoData, wire};
+use bedrock_protocol_1_26_51::{packets, types::PackInfoData, wire};
 use resource_pack::test_support::archive_bytes;
+use std::io;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Advertises a synthetic archive without production server identities.

@@ -43,18 +43,6 @@ where
     send_packets_until(connection, &[Packet::new(packet)], None).await
 }
 
-/// Preserves the exact finite credential cutoff through the real transport capacity wait.
-pub(super) async fn send_before<P>(
-    connection: &mut Connection,
-    packet: P,
-    deadline: std::time::Instant,
-) -> Result<(), crate::ProtocolError>
-where
-    packets::Packet: From<P>,
-{
-    send_packets_until(connection, &[Packet::new(packet)], Some(deadline)).await
-}
-
 /// Encodes application packets once, without interposing another transport/FIFO owner.
 pub(super) async fn send_packets(
     connection: &mut Connection,
@@ -209,4 +197,36 @@ fn check_startup_packet(packet: &packets::Packet) -> Result<(), crate::ProtocolE
         .into());
     }
     Ok(())
+}
+
+/// Projects the lower driver's typed cause without moving application UI or redirect policy down.
+pub(super) async fn driver_result<T>(
+    connection: &mut Connection,
+    result: Result<T, bedrock_client_tokio::error::NegotiationError>,
+) -> Result<T, crate::ProtocolError> {
+    use bedrock_client_tokio::error::NegotiationError;
+    match result {
+        Ok(value) => Ok(value),
+        Err(NegotiationError::Io(error)) => Err(deferred_failure(error)),
+        Err(NegotiationError::Write(error)) if super::authentication::is_expired(&error) => {
+            Err(crate::ProtocolError::Authentication(error))
+        }
+        Err(NegotiationError::Write(error)) => {
+            Err(super::preserve_negotiation_boundary(connection, error).await)
+        }
+        Err(NegotiationError::Handshake(error)) => Err(super::handshake_failure(error)),
+        Err(NegotiationError::Packs(error)) => Err(super::failure(io::Error::new(
+            io::ErrorKind::InvalidData,
+            error,
+        ))),
+        Err(NegotiationError::Disconnect(packet)) => Err(super::disconnected(*packet)),
+        Err(NegotiationError::Transfer(target)) => Err(
+            crate::codec::SessionFailure::ServerTransfer(crate::ServerTransferEvent {
+                host: target.host,
+                port: target.port,
+                reload_world: target.reload_world,
+            })
+            .into(),
+        ),
+    }
 }

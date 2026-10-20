@@ -33,7 +33,7 @@ use super::{LoginSequence, PlaySession, SessionLogin};
 use crate::codec::SessionFailure;
 use crate::{GameData, ProtocolError};
 use crate::{NativeConnectionTarget, NativeTransport};
-use bedrock_client::handshake::{ClientKeyExchange, HandshakeError};
+use bedrock_client::handshake::HandshakeError;
 use bedrock_packs::ResourcePackHandoff;
 use bedrock_protocol_1_26_51::packets;
 use std::io;
@@ -165,19 +165,6 @@ async fn connect<P: Send + 'static>(
 ) -> Result<(PlaySession, P), ProtocolError> {
     let negotiated = negotiated::negotiate(target, &login, authentication, deadline).await?;
     spawn::continue_join(negotiated, login, prepare).await
-}
-
-/// Installs the verified streams and flushes their acknowledgment before returning the same owner.
-async fn apply_key_exchange<C>(
-    connection: &mut Connection,
-    exchange: ClientKeyExchange<C>,
-) -> Result<C, ProtocolError> {
-    let (continuation, ciphers, response) = exchange.into_parts();
-    if let Some(ciphers) = ciphers {
-        connection.enable_encryption(*ciphers).map_err(failure)?;
-    }
-    connection::send(connection, response).await?;
-    Ok(continuation)
 }
 
 /// Keeps the reusable handshake failure as a typed cause of the native connection error.

@@ -3,16 +3,17 @@
 mod acquisition;
 pub(super) mod verified;
 
-use super::{Connection, PacketIo, apply_key_exchange, failure, handshake_failure};
+use super::Connection;
 use crate::ProtocolError;
-use bedrock_client::{
-    handshake::{ClientPackOffer, PacksEvent},
-    packs::PackError,
-};
+use bedrock_client::handshake::ClientPackOffer;
+use bedrock_client_tokio::packs::PackIo;
+#[cfg(test)]
+use bedrock_client_tokio::packs::wait_io;
 use bedrock_packs::ResourcePackHandoff;
-use bedrock_protocol_1_26_51::packets;
+use bedrock_protocol_1_26_51::types::PackInfoData;
 use futures::{StreamExt, stream};
-use std::{collections::BTreeMap, io, path::Path, sync::Arc};
+use resource_pack::cache::ArchiveCache;
+use std::{collections::BTreeMap, path::Path, sync::Arc};
 
 pub(super) const MAX_CDN_DOWNLOADS: usize = 4;
 
@@ -44,150 +45,110 @@ pub(super) struct Acquired {
     pub(super) preloaded: BTreeMap<uuid::Uuid, verified::ArchiveFacts>,
 }
 
-/// Drives the same typed pack negotiation without constructing HTTP or filesystem work for an in-band caller.
+/// Supplies application-owned cache/CDN work to the sole reusable wire driver.
 pub(super) async fn acquire(
     connection: &mut Connection,
-    mut preloading: ClientPackOffer,
+    offer: ClientPackOffer,
     policy: Acquisition<'_>,
 ) -> Result<Acquired, ProtocolError> {
-    let cancelled = acquisition::Cancellation::new();
-    let offers = preloading.offers().cloned().collect::<Vec<_>>();
-    let cache = if offers.is_empty() || !matches!(policy, Acquisition::Desktop { .. }) {
-        None
-    } else {
-        let Acquisition::Desktop { cache_root, .. } = policy else {
-            unreachable!("in-band transfer never opens cache")
+    let mut io = AcquisitionIo {
+        policy,
+        cancelled: acquisition::Cancellation::new(),
+        cache: None,
+        stores: acquisition::Stores::new(),
+        preloaded: BTreeMap::new(),
+    };
+    let result =
+        bedrock_client_tokio::packs::acquire(connection, offer, &mut io, &mut |_| {}).await;
+    let acquired = super::connection::driver_result(connection, result).await?;
+    Ok(Acquired {
+        handoff: acquired.handoff,
+        metadata: acquired.metadata,
+        preloaded: io.preloaded,
+    })
+}
+
+/// The existing application acquisition policy; it owns no packet or negotiation state.
+struct AcquisitionIo<'a> {
+    policy: Acquisition<'a>,
+    cancelled: acquisition::Cancellation,
+    cache: Option<Arc<ArchiveCache>>,
+    stores: acquisition::Stores,
+    preloaded: BTreeMap<uuid::Uuid, verified::ArchiveFacts>,
+}
+
+impl PackIo for AcquisitionIo<'_> {
+    async fn preload(&mut self, offers: &[PackInfoData]) -> Vec<Option<Vec<u8>>> {
+        self.cache = if offers.is_empty() || !matches!(self.policy, Acquisition::Desktop { .. }) {
+            None
+        } else {
+            let Acquisition::Desktop { cache_root, .. } = self.policy else {
+                unreachable!("in-band transfer never opens cache")
+            };
+            acquisition::open_cache(cache_root).await
         };
-        wait_io(connection, acquisition::open_cache(cache_root)).await
-    };
-    let client = if offers.iter().any(|offer| !offer.cdn_url.is_empty()) {
-        match policy {
-            Acquisition::Desktop { .. } => acquisition::http_client().ok(),
-            Acquisition::Public | Acquisition::Hosted => acquisition::public_http_client().ok(),
-            #[cfg(feature = "test-support")]
-            Acquisition::InBand => None,
-        }
-    } else {
-        None
-    };
-    let concurrency = match policy {
-        Acquisition::Desktop {
-            parallel_urls: true,
-            ..
-        } => MAX_CDN_DOWNLOADS,
-        _ => 1,
-    };
-    let preloads = stream::iter(offers.into_iter().enumerate().map(|(index, offer)| {
-        let (cache, client, cancelled) = (cache.clone(), client.clone(), Arc::clone(&cancelled.0));
-        async move {
-            let result = acquisition::preload(&offer, cache, client, cancelled).await;
-            (index, offer, result)
-        }
-    }))
-    .buffer_unordered(concurrency)
-    .collect::<Vec<_>>();
-    let mut preloads = wait_io(connection, preloads).await;
-    preloads.sort_unstable_by_key(|(index, _, _)| *index);
-    let mut stores = acquisition::Stores::new();
-    let mut preloaded = BTreeMap::new();
-    for (_, offer, preload) in preloads {
-        if cache.is_some() && !preload.cache_hit {
-            stores.register(&offer);
-        }
-        if let Some(bytes) = preload.archive {
-            if matches!(policy, Acquisition::Hosted)
-                && let Some(facts) = preload.facts
-            {
-                preloaded.insert(offer.pack_id_version.pack_uuid, facts);
+        let client = if offers.iter().any(|offer| !offer.cdn_url.is_empty()) {
+            match self.policy {
+                Acquisition::Desktop { .. } => acquisition::http_client().ok(),
+                Acquisition::Public | Acquisition::Hosted => acquisition::public_http_client().ok(),
+                #[cfg(feature = "test-support")]
+                Acquisition::InBand => None,
             }
-            preloading
-                .supply_preloaded(offer.pack_id_version.pack_uuid, bytes)
-                .map_err(pack_failure)?;
-        }
+        } else {
+            None
+        };
+        let concurrency = match self.policy {
+            Acquisition::Desktop {
+                parallel_urls: true,
+                ..
+            } => MAX_CDN_DOWNLOADS,
+            _ => 1,
+        };
+        let preloads = stream::iter(offers.iter().enumerate().map(|(index, offer)| {
+            let (cache, client, cancelled) = (
+                self.cache.clone(),
+                client.clone(),
+                Arc::clone(&self.cancelled.0),
+            );
+            async move {
+                let result = acquisition::preload(offer, cache, client, cancelled).await;
+                (index, offer, result)
+            }
+        }))
+        .buffer_unordered(concurrency)
+        .collect::<Vec<_>>()
+        .await;
+        let mut preloads = preloads;
+        preloads.sort_unstable_by_key(|(index, _, _)| *index);
+        preloads
+            .into_iter()
+            .map(|(_, offer, preload)| {
+                if self.cache.is_some() && !preload.cache_hit {
+                    self.stores.register(offer);
+                }
+                if matches!(self.policy, Acquisition::Hosted)
+                    && preload.archive.is_some()
+                    && let Some(facts) = preload.facts
+                {
+                    self.preloaded
+                        .insert(offer.pack_id_version.pack_uuid, facts);
+                }
+                preload.archive
+            })
+            .collect()
     }
-    let (mut negotiation, response) = preloading.start().map_err(pack_failure)?;
-    stores.queue_completed(&cache, |id| negotiation.completed_archive(id), &cancelled.0);
-    super::connection::send(connection, response).await?;
-    loop {
-        let packet = super::connection::next_packet(connection)
-            .await
-            .map_err(failure)?;
-        if matches!(&*packet.data, packets::Packet::ResourcePackStack(_)) {
-            // The library transfers exclusive archive ownership at the stack boundary.
-            wait_io(connection, stores.finish()).await;
-        }
-        match negotiation
-            .receive(*packet.data)
-            .map_err(handshake_failure)?
-        {
-            PacksEvent::Send { packs, packets } => {
-                negotiation = packs;
-                stores.queue_completed(
-                    &cache,
-                    |id| negotiation.completed_archive(id),
-                    &cancelled.0,
-                );
-                send_packets(connection, packets).await?;
-            }
-            PacksEvent::Finished(complete) => {
-                let (response, handoff, metadata) = if matches!(policy, Acquisition::Hosted) {
-                    let (response, handoff, metadata) = complete.into_parts_with_metadata();
-                    (response, handoff, metadata.map(Box::new))
-                } else {
-                    let (response, handoff) = complete.into_parts();
-                    (response, handoff, None)
-                };
-                super::connection::send(connection, response).await?;
-                return Ok(Acquired {
-                    handoff,
-                    metadata,
-                    preloaded,
-                });
-            }
-            PacksEvent::KeyExchange(exchange) => {
-                negotiation = apply_key_exchange(connection, exchange).await?;
-            }
-            PacksEvent::Unhandled { packs, packet } => {
-                super::connection::defer_unhandled(connection, *packet)?;
-                negotiation = packs;
-            }
-        }
-    }
-}
 
-/// Drives service work beside one retained I/O wait; ordinary reads still own staged terminals.
-async fn wait_io<T>(
-    connection: &mut impl PacketIo,
-    operation: impl std::future::Future<Output = T>,
-) -> T {
-    tokio::pin!(operation);
-    loop {
-        tokio::select! {
-            biased;
-            () = connection.maintain() => {},
-            output = &mut operation => return output,
-        }
+    fn completed(&mut self, id: uuid::Uuid, archive: Arc<Vec<u8>>) {
+        self.stores.queue_completed(
+            &self.cache,
+            |candidate| (candidate == id).then(|| Arc::clone(&archive)),
+            &self.cancelled.0,
+        );
     }
-}
 
-/// Sends each generated response immediately under the existing batch packet limit.
-pub(super) async fn send_packets(
-    connection: &mut Connection,
-    packets: Vec<packets::Packet>,
-) -> Result<(), ProtocolError> {
-    let packets = packets
-        .into_iter()
-        .map(crate::Packet::new)
-        .collect::<Vec<_>>();
-    for batch in packets.chunks(bedrock_net::BatchLimits::default().max_packets) {
-        super::connection::send_packets(connection, batch).await?;
+    async fn flush(&mut self) {
+        self.stores.finish().await;
     }
-    Ok(())
-}
-
-/// Retains the existing native transport failure classification without exposing server data.
-fn pack_failure(error: PackError) -> ProtocolError {
-    failure(io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
 #[cfg(test)]
