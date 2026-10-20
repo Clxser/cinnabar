@@ -10,6 +10,7 @@ use bedrock_protocol_1_26_51::{enums::PlayStatusType, packets, types::ActorRunti
 use nethernet_tokio::AcceptedSession;
 use std::time::Duration;
 
+mod incoming_batch;
 mod live;
 mod packless;
 
@@ -140,6 +141,15 @@ async fn receive<S: BatchPhase>(
 
 /// Drives the original empty-pack, real StartGame/radius and Initialized exchange.
 async fn serve(peer: &mut AcceptedSession, case: Case) -> io::Result<()> {
+    serve_compressed(peer, case, CompressionAlgorithm::Deflate).await
+}
+
+/// Installs the selected actual NetworkSettings algorithm before the original Login exchange.
+async fn serve_compressed(
+    peer: &mut AcceptedSession,
+    case: Case,
+    algorithm: CompressionAlgorithm,
+) -> io::Result<()> {
     let mut limits = BatchLimits::default();
     if matches!(case, Case::LargeOffer | Case::LargeLive) {
         limits.max_decoded_bytes *= 2;
@@ -158,12 +168,13 @@ async fn serve(peer: &mut AcceptedSession, case: Case) -> io::Result<()> {
         Stage::Settings,
         &[Packet::new(packets::NetworkSettings {
             compression_threshold: wire::U16LE(u16::MAX),
+            compression_algorithm: algorithm.network_id().into(),
             ..Default::default()
         })],
     )
     .await?;
     let codec = codec.negotiate(CompressionSettings {
-        algorithm: CompressionAlgorithm::Deflate,
+        algorithm,
         threshold: u16::MAX,
     });
     if !matches!(
