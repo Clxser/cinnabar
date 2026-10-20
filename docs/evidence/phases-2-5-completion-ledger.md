@@ -33,9 +33,10 @@ open. Two visitors retire independently, and rejection of a second Login preserv
 connection. Hosted CDN preloads preserve real archive identity without inventing DataInfo.
 A controlled hosted packless fixture preserves actual startup, initialization, live traffic
 and normal EOF without inventing pack metadata or acknowledgments. These fixtures do not
-establish live advertised hosting or invitations. Ordinary native friend UI joining remains
-disabled. A separate controlled fixture passes cancellation; full friend play remains
-unqualified.
+establish live advertised hosting or invitations. Ordinary native friend UI uses current
+opaque account selections. Controlled Messaging and Legacy fixtures pass signed game
+initialization, a live marker, ordinary disconnect with exact membership/owner retirement,
+and cancellation after membership. Live retail friend admission remains unqualified.
 
 Menu, account, presence-retirement, invite-picker and stale-result controls pass, including
 cancellation and original child/publisher retirement before account mutation. Six anonymous

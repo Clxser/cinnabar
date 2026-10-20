@@ -92,9 +92,11 @@ is unchanged and applying those archives remains unsupported.
 
 Account replacement and sign-out wait for original session, publisher and account
 worker retirement before credential mutation. Owning cancellation, contention,
-process handoff and stale-account controls pass. Ordinary native friend UI joining
-remains disabled. Separate controlled cancellation evidence does not qualify friend play,
-which remains open. Advertised hosting, host messaging/renewal, WAN/device
+process handoff and stale-account controls pass. Ordinary native friend UI uses only
+current opaque account selections. Controlled Messaging and Legacy fixtures pass signed
+game initialization, a live marker, ordinary disconnect and exact membership/owner
+retirement, plus cancellation after membership. Live retail friend joining remains
+unqualified. Advertised hosting, host messaging/renewal, WAN/device
 compatibility and retained memory/frame budgets remain open. Controlled signed hosting
 passes on actual Dragonfly and BDS backends, including BDS HTTP and selected LAN routes,
 independent visitor retirement and rejection isolation. A separate packless fixture preserves
