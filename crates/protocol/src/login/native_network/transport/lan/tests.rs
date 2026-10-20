@@ -100,7 +100,7 @@ async fn selected_local_lan_skips_another_level_and_keeps_the_actual_selected_re
             peer.reliable.recv().await.unwrap().unwrap(),
             "selected process"
         );
-        connected.close();
+        connected.close().await.unwrap();
         peer.close().session.closed().await;
         server.close().await.unwrap();
     })
