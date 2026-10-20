@@ -224,12 +224,14 @@ async fn two_signed_visitors_share_the_actual_world_and_retire_independently() {
         assert_eq!(occupied, 2);
         assert_eq!((first_retirement.0, first_retirement.1), (2, 1));
         assert_eq!((second_retirement.0, second_retirement.1), (1, 0));
-        let terminal = (
-            io::ErrorKind::Other,
-            nethernet_tokio::NetherError::ConnectionClosed.to_string(),
+        assert_eq!(
+            first_retirement.2.as_ref().map(|(kind, _)| *kind),
+            Some(io::ErrorKind::UnexpectedEof)
         );
-        assert_eq!(first_retirement.2, Some(terminal.clone()));
-        assert_eq!(second_retirement.2, Some(terminal));
+        assert_eq!(
+            second_retirement.2.as_ref().map(|(kind, _)| *kind),
+            Some(io::ErrorKind::UnexpectedEof)
+        );
         let first = first.expect("first actual visitor failed during the second setup");
         let second = second.expect("second actual visitor failed after the first retired");
         // Dragonfly assigns self runtime IDs within each connection, independently of other visitors.

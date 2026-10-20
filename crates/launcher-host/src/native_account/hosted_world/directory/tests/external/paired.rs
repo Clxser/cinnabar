@@ -3,6 +3,7 @@
 mod authority;
 mod bds;
 mod multiple;
+mod packless;
 pub(in crate::native_account::hosted_world) mod provider;
 
 use super::*;
@@ -133,11 +134,8 @@ async fn signed_hosted_peer_reaches_the_actual_dragonfly_world_and_retires() {
         let (play, closed) =
             server.expect("actual provider Login/packs/StartGame/Initialized did not complete");
         assert_eq!(
-            play,
-            Some((
-                io::ErrorKind::Other,
-                nethernet_tokio::NetherError::ConnectionClosed.to_string(),
-            )),
+            play.as_ref().map(|(kind, _)| *kind),
+            Some(io::ErrorKind::UnexpectedEof),
             "unexpected paired play termination: {play:?}; visitor result: {:?}",
             visitor.as_ref().map(|_| ()).map_err(ToString::to_string)
         );

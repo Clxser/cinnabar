@@ -6,7 +6,7 @@ use bedrock_client::server::session::{
     PendingServerRelay, ServerRelayInitialized, ServerRelayProgress, ServerRelaying,
 };
 
-/// Original accepting pack owner paired with its same guest/local upstream through initialization.
+/// Original accepting relay owner paired with its same guest/local upstream through initialization.
 /// The caller still owns current account/opening/member approval at every actual send commit.
 #[must_use]
 pub struct NativeHostedRelay<A> {
@@ -44,23 +44,17 @@ pub enum NativeHostedRelayProgress {
 }
 
 impl<A> NativeHostedRelay<A> {
-    /// Takes both original IO owners and the actual consumed pack-stack acknowledgment.
+    /// Takes both original IO owners after actual packs or flushed no-pack LoginSuccess.
     pub(super) fn new(
         upstream: NativeHostedUpstream,
         wire: NativeAcceptingIo,
-        ready: ServerWorldReady<A>,
-        verifier: &impl LoginVerifier,
+        relay: ServerRelaying<A>,
         now: Instant,
-        utc: SystemTime,
     ) -> io::Result<Self> {
-        let deadline = upstream.deadline.min(ready.deadline());
+        let deadline = upstream.deadline.min(relay.deadline());
         if now >= deadline {
             return Err(expired());
         }
-        let relay = ready.relay_world(verifier, now, utc).map_err(|error| {
-            let (_owner, cause) = error.into_parts();
-            io::Error::other(cause)
-        })?;
         Ok(Self {
             wire,
             upstream,

@@ -11,7 +11,7 @@ use super::{
 };
 use crate::{NativeConnectionTarget, ProtocolError, RawClientData};
 use bedrock_client::server::session::{
-    AcceptedSession, ServerPackContent, ServerPackSnapshot, ServerWorldReady,
+    AcceptedSession, ServerPackContent, ServerPackSnapshot, ServerRelaying,
 };
 use bedrock_net::login::{AuthenticatedLogin, LoginVerifier};
 use bedrock_protocol_1_26_51::{packets, wire};
@@ -29,7 +29,8 @@ use std::{
 #[must_use]
 pub struct NativeHostedUpstream {
     connection: Connection,
-    snapshot: Option<ServerPackSnapshot>,
+    // The outer option is consumed once; an inner None retains actual upstream absence.
+    snapshot: Option<Option<ServerPackSnapshot>>,
     archives: Vec<Bytes>,
     guest: Guest,
     deadline: Instant,
@@ -145,8 +146,9 @@ impl NativeHostedUpstream {
         .map_err(|_| failure(expired()))?
     }
 
-    /// Moves actual original metadata once; archives remain with their same bounded source lease.
-    pub fn take_packs(&mut self) -> io::Result<ServerPackSnapshot> {
+    /// Consumes actual advertised metadata or its original absence once, without inventing a stack.
+    /// Archives remain with their same bounded source lease; a second call is invalid.
+    pub fn take_packs(&mut self) -> io::Result<Option<ServerPackSnapshot>> {
         check(self.deadline)?;
         self.snapshot.take().ok_or_else(invalid)
     }
@@ -220,20 +222,19 @@ impl NativeHostedUpstream {
         }
     }
 
-    /// Pairs only this original guest upstream with its actual acknowledged accepting pack owner.
+    /// Pairs this original guest with its consumed accepting relay continuation.
+    /// That owner follows actual pack acknowledgment or flushed packless LoginSuccess.
     pub fn relay_world<A>(
         self,
         wire: NativeAcceptingIo,
-        ready: ServerWorldReady<A>,
-        verifier: &impl LoginVerifier,
+        ready: ServerRelaying<A>,
         now: Instant,
-        utc: SystemTime,
     ) -> io::Result<NativeHostedRelay<A>> {
         if !self.guest.matches(ready.login()) || self.snapshot.is_some() {
             return Err(invalid());
         }
         check(self.deadline)?;
-        NativeHostedRelay::new(self, wire, ready, verifier, now, utc)
+        NativeHostedRelay::new(self, wire, ready, now)
     }
 }
 
@@ -286,13 +287,23 @@ impl NativeHostedUpstreamClosing {
 }
 
 /// Keeps exact admitted metadata and original archives aligned by actual offer identity/version.
-fn snapshot(acquired: packs::Acquired) -> io::Result<(ServerPackSnapshot, Vec<Bytes>)> {
+fn snapshot(acquired: packs::Acquired) -> io::Result<(Option<ServerPackSnapshot>, Vec<Bytes>)> {
     let packs::Acquired {
-        handoff,
+        mut handoff,
         metadata,
         mut preloaded,
     } = acquired;
-    let metadata = *metadata.ok_or_else(invalid)?;
+    let Some(metadata) = metadata else {
+        if !handoff.is_empty()
+            || handoff.required()
+            || !handoff.take_relay_packs().is_empty()
+            || !preloaded.is_empty()
+        {
+            return Err(invalid());
+        }
+        return Ok((None, Vec::new()));
+    };
+    let metadata = *metadata;
     if metadata.data.len() != metadata.offer.resource_packs.len() {
         return Err(invalid());
     }
@@ -339,11 +350,11 @@ fn snapshot(acquired: packs::Acquired) -> io::Result<(ServerPackSnapshot, Vec<By
         return Err(invalid());
     }
     Ok((
-        ServerPackSnapshot {
+        Some(ServerPackSnapshot {
             offer: metadata.offer,
             stack: metadata.stack,
             contents,
-        },
+        }),
         archives,
     ))
 }

@@ -138,11 +138,8 @@ async fn signed_bds_peer_uses_the_original_http_or_lan_world_and_retires() {
         let (play, closed) =
             server.expect("actual provider Login/packs/StartGame/Initialized did not complete");
         assert_eq!(
-            play,
-            Some((
-                io::ErrorKind::Other,
-                nethernet_tokio::NetherError::ConnectionClosed.to_string(),
-            )),
+            play.as_ref().map(|(kind, _)| *kind),
+            Some(io::ErrorKind::UnexpectedEof),
             "unexpected paired play termination: {play:?}; visitor result: {:?}",
             visitor.as_ref().map(|_| ()).map_err(ToString::to_string)
         );

@@ -25,12 +25,17 @@ exercise verified downstream delivery and cleanup. Actual headless browser runs 
 and QUIC WebTransport reached worlds with terrain, entities and HUD. Browser input/UI, full
 audio behavior, live accounts, deployment and the supported-browser/network matrix remain open.
 
-The isolated signed Dragonfly-world fixture exercises actual Login, packs, initialization,
-terrain, live traffic and original transport/process/membership retirement using the existing
-Go world backend. Hosted CDN preloads preserve real archive identity without inventing DataInfo.
-Neither establishes live advertised hosting or invitations. Hosted packless upstreams remain
-unsupported in this integration. Ordinary native friend UI joining also remains disabled.
-A separate controlled fixture passes cancellation; full friend play remains unqualified.
+Controlled signed hosting reaches actual Dragonfly and BDS worlds through Login, verified
+pack delivery, client initialization, terrain, live responses and normal EOF, with original
+transport, process-lease and membership retirement. BDS passes both HTTP and selected LAN
+routes using a manually imported, verified fixture; installer and update acceptance remain
+open. Two visitors retire independently, and rejection of a second Login preserves the first
+connection. Hosted CDN preloads preserve real archive identity without inventing DataInfo.
+A controlled hosted packless fixture preserves actual startup, initialization, live traffic
+and normal EOF without inventing pack metadata or acknowledgments. These fixtures do not
+establish live advertised hosting or invitations. Ordinary native friend UI joining remains
+disabled. A separate controlled fixture passes cancellation; full friend play remains
+unqualified.
 
 Menu, account, presence-retirement, invite-picker and stale-result controls pass, including
 cancellation and original child/publisher retirement before account mutation. Six anonymous

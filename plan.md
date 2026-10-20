@@ -95,8 +95,11 @@ worker retirement before credential mutation. Owning cancellation, contention,
 process handoff and stale-account controls pass. Ordinary native friend UI joining
 remains disabled. Separate controlled cancellation evidence does not qualify friend play,
 which remains open. Advertised hosting, host messaging/renewal, WAN/device
-compatibility and retained memory/frame budgets remain open. Hosted upstreams without
-an advertised pack phase remain unsupported in this integration.
+compatibility and retained memory/frame budgets remain open. Controlled signed hosting
+passes on actual Dragonfly and BDS backends, including BDS HTTP and selected LAN routes,
+independent visitor retirement and rejection isolation. A separate packless fixture preserves
+initialization, live traffic and normal EOF. The BDS fixture is manually imported and verified;
+these controls do not qualify installation or live advertised hosting.
 
 Android uses native networking and the platform TLS verifier; target checks and APK
 assembly are verified. Physical-device sign-in, TLS, terrain and lifecycle acceptance
@@ -414,13 +417,18 @@ live and performance acceptance remain open. Local imports, decompression, UI/te
 expansion, language memory and other admission limits still need version-matched
 verification; the limit inventory closes no whole-client parity gate.
 
-Native friend serving has separate Dragonfly and BDS HTTP/LAN backend owners.
-BDS hosting acceptance remains incomplete until the original process, authenticated
-guests, pack delivery, initialization, live traffic and retirement pass together;
-the source implementation alone does not qualify the route or its UI/default gates.
-Native desktop and public-gateway negotiation also accept an actual StartGame without
-an advertised pack phase, preserving the original spawn prerequisites. Hosted upstream
-absence remains unsupported; live packless acceptance remains open.
+Native friend serving has separate Dragonfly and BDS backend owners. Controlled signed
+hosting passes actual Login, verified pack delivery, client initialization, terrain, live
+responses and normal EOF with original transport, process-lease and membership retirement.
+BDS passes HTTP and selected LAN routes using a manually imported, verified installation;
+installer and update workflows remain unqualified. Two visitors retire independently, and
+rejecting a second Login preserves the first connection. Live advertised hosting, invitations
+and WAN/device behavior remain open; ordinary native friend UI joining remains disabled.
+Native desktop, public-gateway and hosted-upstream negotiation accept an actual StartGame
+without an advertised pack phase, preserving the original spawn prerequisites. Hosted
+absence uses a consumed verified Login and flushed LoginSuccess, without invented pack
+metadata or acknowledgments. Controlled two-leg startup, initialization, live traffic and
+normal EOF pass; live backend packless acceptance remains open.
 
 Cosmetics require live authenticated multi-account acceptance, catalog/motion envelope
 coverage, supported slot/ownership enforcement, player-preview acceptance and hardware

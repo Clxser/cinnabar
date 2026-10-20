@@ -2,6 +2,8 @@
 //! servers and an in-memory runner.
 
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub(crate) mod packless;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub(crate) mod paired;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub(crate) mod paired_bds;
@@ -350,6 +352,7 @@ pub(crate) struct FakeInstance {
     exited: Receiver<()>,
     pub can_pause: bool,
     pub lan: Option<String>,
+    pub address: Option<String>,
     /// Holds a stop, as a world save would, until disconnected.
     save: Option<Receiver<()>>,
     /// Holds a stop after the process has exited, as removing a container would.
@@ -366,6 +369,7 @@ impl FakeInstance {
             exited,
             can_pause,
             lan: None,
+            address: None,
             save: None,
             cleanup: None,
             cleaned: std::sync::atomic::AtomicBool::new(false),
@@ -390,7 +394,7 @@ impl FakeInstance {
 
 impl Instance for FakeInstance {
     fn address(&self) -> &str {
-        "127.0.0.1:1"
+        self.address.as_deref().unwrap_or("127.0.0.1:1")
     }
 
     fn set_paused(&self, paused: bool) -> std::io::Result<()> {
@@ -438,6 +442,8 @@ pub(crate) struct FakeRunner {
     pub can_pause: Option<bool>,
     /// The original discovery endpoint reported by each started instance.
     pub lan: Option<String>,
+    /// An actual fixture-owned local protocol listener, when the default inert address is unused.
+    pub address: Option<String>,
     pub made: Mutex<Vec<Arc<FakeInstance>>>,
     /// Passed to each instance as its save.
     pub save: Option<Receiver<()>>,
@@ -511,6 +517,7 @@ impl Runner for FakeRunner {
             save: self.save.clone(),
             cleanup: self.cleanup.clone(),
             lan: self.lan.clone(),
+            address: self.address.clone(),
             ..FakeInstance::new(self.can_pause.unwrap_or(true))
         });
         made.push(Arc::clone(&instance));

@@ -373,7 +373,10 @@ async fn original_upstream_with_archive(
             archive.as_slice()
         );
         assert!(upstream.read_pack(0, archive.len() as u64, 1).is_err());
-        let snapshot = upstream.take_packs().unwrap();
+        let snapshot = upstream
+            .take_packs()
+            .unwrap()
+            .expect("original upstream advertised its actual pack snapshot");
         assert_eq!(snapshot.offer, info);
         assert_eq!(snapshot.stack, stack);
         assert_eq!(snapshot.contents.len(), 1);
@@ -391,9 +394,9 @@ async fn original_upstream_with_archive(
             (utc, deadline, cdn.is_none(), pack_type),
         )
         .await;
-        let mut relay = upstream
-            .relay_world(pair.wire, ready, &provider, Instant::now(), utc)
-            .unwrap();
+        let now = Instant::now();
+        let ready = ready.relay_world(&provider, now, utc).unwrap();
+        let mut relay = upstream.relay_world(pair.wire, ready, now).unwrap();
         for expected in [
             packets::PlayStatus::ID,
             packets::SetTime::ID,
