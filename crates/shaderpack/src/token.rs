@@ -195,6 +195,7 @@ impl Emitter {
     }
 }
 
+/// Reports whether adjacent emitted tokens need separating whitespace.
 fn needs_space(prev: &Tok, t: &Tok) -> bool {
     let tight = t.is(";")
         || t.is(",")
