@@ -189,6 +189,7 @@ mod tests {
             },
             layer: 0,
             alpha: 1.,
+            paint_region: None,
             anim: None,
             gates: vec![],
             draw: json_ui::Draw::Sprite {

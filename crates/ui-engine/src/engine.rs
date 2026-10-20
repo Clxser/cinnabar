@@ -33,6 +33,8 @@ pub mod item_renderer;
 #[cfg(test)]
 mod ownership_tests;
 pub mod pack_catalog;
+mod paint_bounds;
+pub use paint_bounds::{PaintBounds, PaintObserver};
 mod paint_transform;
 pub mod pixel_snap;
 mod render;
@@ -505,6 +507,8 @@ pub type TextColor<'a> = &'a dyn Fn(&DrawNode) -> Option<char>;
 pub struct ScreenArt<'a> {
     /// Keeps this screen's sprites on the shared nearest sampler, including pack overrides.
     pub nearest_sampling: bool,
+    /// Optional bounds observation of selected screen artwork, across renderer types.
+    pub paint_bounds: Option<PaintObserver<'a>>,
     /// GUI offset into the source coordinate system used for physical-pixel snapping.
     /// Cached artwork adds this before snapping each control and removes it afterward.
     pub pixel_snap_offset: [f64; 2],
@@ -558,6 +562,8 @@ pub struct Canvas<'a> {
     length_scale: f32,
     /// The paint transform left for the current draw's nodes, in logical px.
     residual: Option<json_ui::transform::Affine>,
+    /// An optional scoped observer of clipped, transformed logical paint bounds.
+    paint_bounds: Option<Option<[f32; 4]>>,
     /// The filter group receiving the current draws.
     filter: Option<filter::OpenFilter>,
 }
@@ -720,6 +726,7 @@ impl Canvas<'_> {
                 _ => {}
             }
         }
+        self.observe_paint_bounds(bounds, clip);
         let id = self.id();
         self.nodes.push(
             UiNode::new(

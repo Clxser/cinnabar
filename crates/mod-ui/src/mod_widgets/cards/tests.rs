@@ -11,9 +11,6 @@ use ui_engine::{
     text_metrics::TextMetrics,
 };
 
-#[global_allocator]
-static ALLOCATOR: test_alloc::CountingAllocator = test_alloc::CountingAllocator;
-
 const OWNER: PanelUiOwner = PanelUiOwner::Environment(0);
 
 struct NoImages;

@@ -297,6 +297,7 @@ fn transformed_fragment(cached: bool) {
         },
         layer: 0,
         alpha: 1.,
+        paint_region: None,
         anim: None,
         gates: Vec::new(),
         draw: json_ui::Draw::Solid {

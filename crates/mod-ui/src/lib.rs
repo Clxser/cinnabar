@@ -17,6 +17,11 @@ pub mod template_screen;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
+/// Counts allocations for the crate's zero-allocation steady-frame tests.
+#[cfg(test)]
+#[global_allocator]
+static ALLOCATOR: test_alloc::CountingAllocator = test_alloc::CountingAllocator;
+
 use ui::{
     IconRef,
     mod_hud::{Hud, MAX_HUD_ROWS},
