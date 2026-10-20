@@ -105,9 +105,9 @@ raknet = { git = "https://github.com/cinnabar-mc/raknet", rev = "014065474467f73
 bedrock-services = { git = "https://github.com/cinnabar-mc/bedrock-services", rev = "1bd66740b364941f31a14c820a4c33b7584db1b7" }
 nethernet = { git = "https://github.com/cinnabar-mc/nethernet", rev = "81e6756558fdc59061eac86cfb0ca7c7d91c3f99" }
 nethernet-tokio = { git = "https://github.com/cinnabar-mc/nethernet", rev = "81e6756558fdc59061eac86cfb0ca7c7d91c3f99" }
-bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "7ece844d4e11bb3a53e02047e51adbbc6b0aba06" }
-bedrock-client = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "7ece844d4e11bb3a53e02047e51adbbc6b0aba06" }
-bedrock-packs = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "7ece844d4e11bb3a53e02047e51adbbc6b0aba06" }
+bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "c4c36546a01f39036faf237b5d9bfffd2d3be111" }
+bedrock-client = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "c4c36546a01f39036faf237b5d9bfffd2d3be111" }
+bedrock-packs = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "c4c36546a01f39036faf237b5d9bfffd2d3be111" }
 glam = { version = "0.33.2", default-features = false, features = ["std", "f64"] }
 # One feature set per heavy dependency: any per-crate difference rebuilds it and every dependent.
 # wayland/x11 only select winit backends on Linux; winit ignores them on other targets.
