@@ -77,7 +77,10 @@ fn parallel_pack_urls_require_the_selected_native_backend() {
             Err(ArgsError::ParallelPackUrlsRequireNativeNetworking)
         ));
     }
-    if !cfg!(feature = "native-networking") {
+    if !cfg!(all(
+        feature = "native-networking",
+        not(target_arch = "wasm32")
+    )) {
         assert!(matches!(
             ClientArgs::parse_from([
                 "client",
@@ -93,7 +96,10 @@ fn parallel_pack_urls_require_the_selected_native_backend() {
 #[test]
 fn native_networking_allows_menu_selection_and_rejects_ambiguous_endpoints() {
     let menu = ClientArgs::parse_from(["client", "--native-networking", "raknet"]);
-    if cfg!(feature = "native-networking") {
+    if cfg!(all(
+        feature = "native-networking",
+        not(target_arch = "wasm32")
+    )) {
         let ParseOutcome::Run(menu) = menu.unwrap() else {
             panic!("menu launch")
         };
@@ -105,18 +111,16 @@ fn native_networking_allows_menu_selection_and_rejects_ambiguous_endpoints() {
     } else {
         assert!(matches!(menu, Err(ArgsError::NativeNetworkingUnavailable)));
     }
-    for arguments in [vec![
-        "client",
-        "--native-networking",
-        "raknet",
-        "--acceptance-seconds",
-        "1",
-    ]] {
-        assert!(matches!(
-            ClientArgs::parse_from(arguments),
-            Err(ArgsError::NativeNetworkingUnavailable)
-        ));
-    }
+    assert!(matches!(
+        ClientArgs::parse_from([
+            "client",
+            "--native-networking",
+            "raknet",
+            "--acceptance-seconds",
+            "1"
+        ]),
+        Err(ArgsError::NativeNetworkingUnavailable)
+    ));
     assert!(matches!(
         ClientArgs::parse_from(["client", "--native-networking", "unknown"]),
         Err(ArgsError::InvalidNativeTransport)
