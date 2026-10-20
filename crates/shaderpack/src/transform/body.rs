@@ -2,7 +2,7 @@
 //! integer-backed bool uniforms.
 
 use super::TransformError;
-use super::items::{arr_len, mat_cols, matching, sampler_info};
+use super::items::{arr_len, mat_cols, matching, sampler_info, shadowed_bindings};
 use crate::reflection::{SAMPLER_NAME, SHADOW_SAMPLER_NAME};
 use crate::token::{Tok, TokKind, id, int, p};
 use std::collections::{HashMap, HashSet};
@@ -10,11 +10,28 @@ use std::collections::{HashMap, HashSet};
 /// Sampler name → (combined sampler type to construct, compares depth).
 pub(super) type SamplerKinds = HashMap<String, (String, bool)>;
 
+/// A boolean value stored as integers, including its array dimensions.
+#[derive(Clone, Debug)]
+pub(super) struct BoolStorage {
+    pub ty: String,
+    pub array_depth: usize,
+}
+
+impl BoolStorage {
+    /// Records the value type and dimensions of an integer-backed boolean declaration.
+    pub fn new<'a>(ty: &str, arrays: impl IntoIterator<Item = &'a Tok>) -> Self {
+        Self {
+            ty: ty.to_string(),
+            array_depth: arrays.into_iter().filter(|token| token.is("[")).count(),
+        }
+    }
+}
+
 /// What body rewriting needs to know about the stage's globals.
 pub(super) struct BodyContext<'a> {
     pub samplers: &'a SamplerKinds,
-    /// Bool uniform name → constructor (`bool` or `bvecN`) of its integer storage.
-    pub bools: &'a HashMap<String, String>,
+    /// Boolean global names and the value types and array dimensions of their storage.
+    pub bools: &'a HashMap<String, BoolStorage>,
     pub user_funcs: &'a HashSet<String>,
 }
 
@@ -51,9 +68,24 @@ pub(super) fn rewrite_params(header: &[Tok], samplers: &mut SamplerKinds) -> Vec
 /// Pairs every texture use with the shared sampler (`sampler2D(colortex0, iris_sampler)`)
 /// unless it is passed straight to a user function, and reads bool uniforms as bools.
 pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut SamplerUse) -> Vec<Tok> {
+    let shadowed = shadowed_bindings(
+        toks,
+        cx.samplers
+            .keys()
+            .chain(cx.bools.keys())
+            .map(String::as_str),
+    );
+    let mut read_ends: Vec<(usize, bool)> = Vec::new();
     let mut out = vec![];
     let mut calls: Vec<Option<String>> = vec![];
     for (i, t) in toks.iter().enumerate() {
+        while read_ends.last().is_some_and(|(end, _)| *end == i) {
+            let (_, scalar) = read_ends.pop().unwrap();
+            if scalar {
+                out.extend([p("!=").at(t.line), int(0).at(t.line)]);
+            }
+            out.push(p(")").at(t.line));
+        }
         if t.is("(") {
             calls.push(
                 i.checked_sub(1)
@@ -68,6 +100,10 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
             continue;
         };
         if i > 0 && toks[i - 1].is(".") {
+            out.push(t.clone());
+            continue;
+        }
+        if shadowed.contains(&i) {
             out.push(t.clone());
             continue;
         }
@@ -100,28 +136,54 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
             }
             continue;
         }
-        if let Some(ctor) = cx.bools.get(n) {
-            if ctor == "bool" {
-                out.extend([
-                    p("(").at(line),
-                    t.clone(),
-                    p("!=").at(line),
-                    int(0).at(line),
-                    p(")").at(line),
-                ]);
-            } else {
-                out.extend([
-                    id(ctor).at(line),
-                    p("(").at(line),
-                    t.clone(),
-                    p(")").at(line),
-                ]);
+        if let Some(storage) = cx.bools.get(n) {
+            let Some((end, ctor)) = boolean_access(toks, i, storage) else {
+                out.push(t.clone());
+                continue;
+            };
+            let scalar = ctor == "bool";
+            if !scalar {
+                out.push(id(&ctor).at(line));
             }
+            out.extend([p("(").at(line), t.clone()]);
+            read_ends.push((end, scalar));
             continue;
         }
         out.push(t.clone());
     }
     out
+}
+
+/// Classifies a boolean value access, leaving array methods on their integer-backed receiver.
+fn boolean_access(toks: &[Tok], start: usize, storage: &BoolStorage) -> Option<(usize, String)> {
+    let mut end = start + 1;
+    let mut arrays = storage.array_depth;
+    let mut ty = storage.ty.clone();
+    loop {
+        if toks.get(end).is_some_and(|token| token.is("[")) {
+            end = matching(toks, end, "[", "]") + 1;
+            if arrays > 0 {
+                arrays -= 1;
+            } else {
+                ty = "bool".to_string();
+            }
+        } else if toks.get(end).is_some_and(|token| token.is("."))
+            && let Some(member) = toks.get(end + 1).and_then(Tok::ident)
+        {
+            if arrays > 0 && member == "length" {
+                return None;
+            }
+            ty = if member.len() == 1 {
+                "bool".to_string()
+            } else {
+                format!("bvec{}", member.len())
+            };
+            end += 2;
+        } else {
+            break;
+        }
+    }
+    Some((end, ty))
 }
 
 /// Struct name → members as (type, name, array tokens).
@@ -221,8 +283,8 @@ mod tests {
     fn textures_passed_to_user_functions_stay_separate_and_bool_uniforms_read_as_bools() {
         let samplers = samplers();
         let bools = HashMap::from([
-            ("isDay".to_owned(), "bool".to_owned()),
-            ("mask".to_owned(), "bvec2".to_owned()),
+            ("isDay".to_owned(), BoolStorage::new("bool", &[])),
+            ("mask".to_owned(), BoolStorage::new("bvec2", &[])),
         ]);
         let user_funcs = HashSet::from(["blur".to_owned()]);
         let cx = BodyContext {
@@ -238,7 +300,7 @@ mod tests {
         );
         assert_eq!(
             text(&body),
-            "blur ( colortex0 , uv ) ; if ( ( isDay != 0 ) && bvec2 ( mask ) . x ) { }"
+            "blur ( colortex0 , uv ) ; if ( ( isDay != 0 ) && ( mask . x != 0 ) ) { }"
         );
         assert!(!used.filtering);
 

@@ -2,7 +2,7 @@
 //! structs, the loose-uniform block, resources with fixed bindings, and interface variables
 //! with locations shared between a program's stages.
 
-use super::body::{SamplerKinds, Structs, flatten_leaves};
+use super::body::{BoolStorage, SamplerKinds, Structs, flatten_leaves};
 use super::items::{
     Decl, Item, arr_len, is_image, is_integer, is_opaque, layout_key, loc_size, mat_cols,
     parse_decl, sampler_info, split_items, strip_layout_keys,
@@ -27,7 +27,7 @@ pub(super) struct Collected {
     /// Functions and remaining statements.
     pub body: Vec<Item>,
     pub samplers: SamplerKinds,
-    pub bools: HashMap<String, String>,
+    pub bools: HashMap<String, BoolStorage>,
     /// Statements run after the user's `main` (vertex varying packing, output widening).
     pub after_main: Vec<String>,
     /// Statements run before the user's `main` (fragment varying unpacking).
@@ -318,11 +318,17 @@ fn uniforms(
         }
         let ty = match d.ty.as_str() {
             "bool" => {
-                c.bools.insert(name.clone(), "bool".into());
+                c.bools.insert(
+                    name.clone(),
+                    BoolStorage::new("bool", d.ty_arr.iter().chain(arr)),
+                );
                 "int".to_string()
             }
             b if b.starts_with("bvec") => {
-                c.bools.insert(name.clone(), b.to_string());
+                c.bools.insert(
+                    name.clone(),
+                    BoolStorage::new(b, d.ty_arr.iter().chain(arr)),
+                );
                 format!("i{}", &b[1..])
             }
             t => t.to_string(),
@@ -510,7 +516,7 @@ void main() {}";
 
         let ubo: Vec<_> = vertex.ubo.iter().map(|m| m.name.as_str()).collect();
         assert_eq!(ubo, ["isDay", "viewWidth"]);
-        assert_eq!(vertex.bools["isDay"], "bool");
+        assert_eq!(vertex.bools["isDay"].ty, "bool");
         assert_eq!(
             vertex.vertex_inputs,
             [(FIRST_OTHER_ATTRIBUTE_LOCATION, "myAttr".to_owned())]

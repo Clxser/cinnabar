@@ -213,10 +213,9 @@ impl ShaderPack {
             .images
             .iter()
             .map(|i| {
-                let q = BufferFormat::parse(&i.internal_format).map_or_else(
-                    || i.internal_format.to_ascii_lowercase(),
-                    BufferFormat::glsl_qualifier,
-                );
+                let q = BufferFormat::parse(&i.internal_format)
+                    .and_then(BufferFormat::glsl_qualifier)
+                    .unwrap_or_else(|| i.internal_format.to_ascii_lowercase());
                 (i.name.clone(), q)
             })
             .collect();
