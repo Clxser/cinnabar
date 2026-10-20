@@ -740,15 +740,22 @@ pub fn bind_form(
     catalog: &Catalog,
     context: &Context,
 ) -> Option<ResolvedControl> {
-    bind_form_over(model, catalog, context, &ViewState::default())
+    bind_form_over(
+        model,
+        catalog,
+        context,
+        &crate::Components::default(),
+        crate::InputMode::Mouse,
+    )
 }
 
-/// Binds a form using its current device and retained component values.
+/// Binds retained component values and uses the device only for screen bindings.
 pub fn bind_form_over(
     model: &FormModel,
     catalog: &Catalog,
     context: &Context,
-    view: &ViewState,
+    components: &crate::Components,
+    input_mode: crate::InputMode,
 ) -> Option<ResolvedControl> {
     let capacity = crate::bind::feed::MAX_FACTORY_ITEMS;
     let within_capacity = match model {
@@ -770,9 +777,9 @@ pub fn bind_form_over(
     let mut data = form_data_source(model);
     data.set_global(
         Binding::IsUsingGamepad.as_str(),
-        Scalar::Bool(view.input_mode == crate::InputMode::Gamepad),
+        Scalar::Bool(input_mode == crate::InputMode::Gamepad),
     );
-    data.set_components(view.components.clone());
+    data.set_components(components.clone());
     // Action and custom forms open through the screen's content factory, so a
     // pack's screen override applies; the bare template is the fallback.
     let routed = form_factory_id(model).and_then(|id| {
@@ -820,7 +827,7 @@ pub fn render_form_with(
     env: &LayoutEnv,
     state: &ViewState,
 ) -> Option<FormRender> {
-    let bound = bind_form_over(model, catalog, context, state)?;
+    let bound = bind_form(model, catalog, context)?;
     Some(finish(bound, root_size, env, state))
 }
 

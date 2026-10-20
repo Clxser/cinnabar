@@ -735,7 +735,12 @@ impl UiPresentationRuntime {
                             renderers: &mut [&mut items],
                         };
                         let catalog = renderer.catalog_label();
-                        match renderer.render(&form, &state.view, &mut frame) {
+                        match renderer.render(
+                            &form,
+                            &state.view,
+                            runtime.server_forms().input_mode(),
+                            &mut frame,
+                        ) {
                             Ok(Some(frame)) => {
                                 self.projections.form.frame = Some((entry.identity, frame));
                                 log_path(

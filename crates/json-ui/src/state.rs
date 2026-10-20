@@ -13,8 +13,6 @@ use crate::widgets::{Draggable, ScrollMotion};
 /// What the caller tells layout about the live pointer/focus/scroll state.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ViewState {
-    /// The last device used by the player, for screen bindings and presentation.
-    pub input_mode: crate::InputMode,
     pub hovered: Option<String>,
     pub pressed: Option<String>,
     pub focused: Option<String>,

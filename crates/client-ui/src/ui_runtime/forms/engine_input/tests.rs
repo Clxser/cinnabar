@@ -7,100 +7,6 @@ use crate::ui_runtime::presentation::{
 };
 
 #[test]
-fn touch_movement_does_not_retag_focused_key_activation() {
-    use json_ui::InputModeCondition;
-    for (mode, condition) in [
-        (InputMode::Gamepad, InputModeCondition::Any),
-        (InputMode::Mouse, InputModeCondition::Any),
-        (InputMode::Gamepad, InputModeCondition::Gamepad),
-        (InputMode::Mouse, InputModeCondition::NotGamepad),
-    ] {
-        let mut player = player_state::PlayerState::new(1);
-        let mut runtime = pack_harness::action_form(&mut player, "Menu", &["Continue"]);
-        let mut presentation = mini_engine_presentation();
-        presentation.set_server_ui_pack(&ServerUiPack {
-            ui_layers: vec![vec![(
-                "ui/server_form.json".into(),
-                br#"{
-                "namespace":"server_form",
-                "long_form":{"type":"panel","factory":null,"collection_name":"",
-                    "size":[200,100],"controls":[{"confirm":{
-                        "type":"button","focus_enabled":true,"size":[100,30],
-                        "collection_index":0,"button_mappings":[{
-                            "from_button_id":"button.menu_ok",
-                            "to_button_id":"button.form_button_click","mapping_type":"focused"
-                        }]
-                    }}]}
-            }"#
-                .to_vec(),
-            )]],
-            ..Default::default()
-        });
-        presentation
-            .build(
-                &player,
-                &runtime,
-                0,
-                [640, 360],
-                ui::DpiScale::new(1.0).unwrap(),
-            )
-            .unwrap();
-        let identity = runtime.server_forms().active().unwrap().identity;
-        let mut frame = presentation.form_engine_frame(identity).unwrap().clone();
-        std::sync::Arc::make_mut(&mut frame.hits)[0].input.mappings[0].input_mode_condition =
-            condition;
-        let engine = runtime.server_forms_mut().engine_mut();
-        engine.view.focused = Some(frame.hits[0].key.clone());
-        engine.view.input_mode = json_ui::InputMode::Touch;
-        drive(
-            &mut runtime,
-            &frame,
-            EngineInput {
-                cursor: Some(UiPoint::new(1.0, 1.0).unwrap()),
-                keys: &[],
-                pointer: PointerButtons {
-                    held: true,
-                    ..Default::default()
-                },
-                pointer_edges: Vec::new(),
-                wheel: Vec::new(),
-                typed: vec![KeyInput {
-                    key: KeyboardKey::Enter,
-                    text: None,
-                    repeat: false,
-                    mode,
-                }],
-                now: 0.1,
-                animator: None,
-            },
-        );
-        assert!(
-            runtime.server_forms().active().is_none(),
-            "{mode:?} confirmation ({condition:?}) must submit despite a touch movement in the same frame"
-        );
-        let mut sent = Vec::new();
-        assert!(
-            super::super::flush_form_response(
-                &mut runtime,
-                |_| false,
-                |packet| {
-                    sent.push(packet);
-                    Ok(())
-                },
-            )
-            .unwrap()
-        );
-        assert_eq!(
-            sent,
-            vec![protocol::modal_form_submit_response(
-                identity.form_id,
-                protocol::ModalFormResponseSelection::ButtonIndex(0),
-            )]
-        );
-    }
-}
-
-#[test]
 fn complete_large_menu_final_button_sends_its_original_wire_index() {
     for count in [257usize, 300] {
         let mut player_runtime = player_state::PlayerState::new(1);
@@ -219,15 +125,7 @@ fn review_escape_dispatches_the_vanilla_form_screen_cancel() {
     let identity = runtime.server_forms().active().unwrap().identity;
     let frame = presentation.form_engine_frame(identity).unwrap().clone();
     assert_eq!(frame.cancel_target.as_deref(), Some("button.menu_exit"));
-    let events = keyboard(
-        &mut runtime,
-        &frame,
-        KeyboardKey::Escape,
-        None,
-        false,
-        0.0,
-        InputMode::Mouse,
-    );
+    let events = keyboard(&mut runtime, &frame, KeyboardKey::Escape, None, false, 0.0);
     assert!(events.iter().any(|event| matches!(event,
         ScreenEvent::Button(button) if mapped_action(&runtime.server_forms().active().unwrap().model, button) == Some(LocalFormAction::Dismiss)
             && button.down && button.interacted
@@ -345,15 +243,7 @@ fn screen_cancel_ignores_unmapped_any_events_but_respects_a_consuming_control() 
     region.input.mappings.clear();
     region.input.any = Some(json_ui::MappingScope::Global);
     frame.hits = vec![region].into();
-    let events = keyboard(
-        &mut runtime,
-        &frame,
-        KeyboardKey::Escape,
-        None,
-        false,
-        0.0,
-        InputMode::Mouse,
-    );
+    let events = keyboard(&mut runtime, &frame, KeyboardKey::Escape, None, false, 0.0);
     assert!(events.iter().any(
         |event| matches!(event, ScreenEvent::Button(button) if button.id == "button.menu_exit")
     ));
@@ -364,15 +254,7 @@ fn screen_cancel_ignores_unmapped_any_events_but_respects_a_consuming_control() 
     let region = &mut std::sync::Arc::make_mut(&mut frame.hits)[0];
     region.widget.consume = true;
     region.input.mappings = vec![mapping];
-    let events = keyboard(
-        &mut runtime,
-        &frame,
-        KeyboardKey::Escape,
-        None,
-        false,
-        1.0,
-        InputMode::Mouse,
-    );
+    let events = keyboard(&mut runtime, &frame, KeyboardKey::Escape, None, false, 1.0);
     assert!(events.iter().any(|event| matches!(event, ScreenEvent::Button(button) if button.id == "button.dropdown_exit" && button.down)));
     assert!(!events.iter().any(
         |event| matches!(event, ScreenEvent::Button(button) if button.id == "button.menu_exit")
@@ -718,7 +600,7 @@ fn repeated_directional_input_uses_the_snapped_slider_position() {
                 id: "button.menu_ok",
                 down: true,
                 point: None,
-                mode: json_ui::InputMode::Gamepad,
+                mode: InputMode::Gamepad,
                 now: -0.1,
             },
         );

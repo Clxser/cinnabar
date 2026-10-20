@@ -37,14 +37,6 @@ pub struct PointerButtons {
     pub held: bool,
 }
 
-/// A keyboard press or translated controller press with its original device.
-pub struct KeyInput {
-    pub key: KeyboardKey,
-    pub text: Option<String>,
-    pub repeat: bool,
-    pub mode: InputMode,
-}
-
 /// One frame of raw input for the engine path.
 pub struct EngineInput<'a> {
     pub cursor: Option<UiPoint>,
@@ -53,8 +45,9 @@ pub struct EngineInput<'a> {
     pub pointer: PointerButtons,
     pub pointer_edges: Vec<bool>,
     pub wheel: Vec<(f32, ScrollUnit)>,
-    /// Pressed keys with their text, repeat flag and source device.
-    pub typed: Vec<KeyInput>,
+    /// Pressed keys this frame with their produced text.
+    /// Key presses with their text and whether the OS auto-repeated them.
+    pub typed: Vec<(KeyboardKey, Option<String>, bool)>,
     /// Seconds on the app clock.
     pub now: f64,
     /// The form's animator: button events play and reset its animations.
@@ -140,18 +133,7 @@ pub fn drive(runtime: &mut UiRuntime, frame: &EngineFrame, mut input: EngineInpu
             if let Some(point) = point {
                 let region = hit_test(&frame.hits, point);
                 engine_scroll::press(runtime, frame, region, point);
-                events.extend(
-                    button(
-                        runtime,
-                        frame,
-                        SELECT,
-                        true,
-                        Some(point),
-                        input.now,
-                        InputMode::Mouse,
-                    )
-                    .events,
-                );
+                events.extend(button(runtime, frame, SELECT, true, Some(point), input.now).events);
             }
         } else {
             runtime.server_forms_mut().engine_mut().drag = None;
@@ -164,16 +146,7 @@ pub fn drive(runtime: &mut UiRuntime, frame: &EngineFrame, mut input: EngineInpu
                 .pressed
                 .clone()
                 .filter(|_| tapped);
-            let up = button(
-                runtime,
-                frame,
-                SELECT,
-                false,
-                point,
-                input.now,
-                InputMode::Mouse,
-            )
-            .events;
+            let up = button(runtime, frame, SELECT, false, point, input.now).events;
             releases.push((events.len()..events.len() + up.len(), pressed));
             events.extend(up);
         }
@@ -183,13 +156,7 @@ pub fn drive(runtime: &mut UiRuntime, frame: &EngineFrame, mut input: EngineInpu
     {
         engine_scroll::wheel(runtime, frame, point, &input.wheel);
     }
-    for KeyInput {
-        key,
-        text,
-        repeat,
-        mode,
-    } in input.typed
-    {
+    for (key, text, repeat) in input.typed {
         // Held keys repeat text into an edit box, but never re-press a control.
         if repeat && !editing(runtime, frame) {
             continue;
@@ -201,7 +168,6 @@ pub fn drive(runtime: &mut UiRuntime, frame: &EngineFrame, mut input: EngineInpu
             text.as_deref(),
             control,
             input.now,
-            mode,
         ));
     }
     if let Some(animator) = input.animator.as_mut() {
@@ -272,14 +238,13 @@ fn button(
     down: bool,
     point: Option<[f64; 2]>,
     now: f64,
-    mode: InputMode,
 ) -> Dispatch {
     let engine = runtime.server_forms_mut().engine_mut();
     let input = EngineButton {
         id,
         down,
         point,
-        mode,
+        mode: InputMode::Mouse,
         now,
     };
     engine
@@ -307,7 +272,6 @@ fn keyboard(
     text: Option<&str>,
     control: bool,
     now: f64,
-    mode: InputMode,
 ) -> Vec<ScreenEvent> {
     let editing = editing(runtime, frame);
     let typed = editing.then(|| typed_text(key, text, control)).flatten();
@@ -331,10 +295,10 @@ fn keyboard(
         }
         _ => return Vec::new(),
     };
-    let down = button(runtime, frame, id, true, None, now, mode);
+    let down = button(runtime, frame, id, true, None, now);
     let consumed = down.consumed;
     let mut events = down.events;
-    events.extend(button(runtime, frame, id, false, None, now, mode).events);
+    events.extend(button(runtime, frame, id, false, None, now).events);
     // Content subtrees omit the screen's global cancel mapping.
     if !consumed && key == KeyboardKey::Escape
         && let Some(target) = &frame.cancel_target

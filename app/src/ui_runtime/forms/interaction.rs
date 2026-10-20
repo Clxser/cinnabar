@@ -8,7 +8,7 @@ use bevy::{
         ButtonState,
         gamepad::{Gamepad, GamepadButton},
         keyboard::KeyboardInput,
-        mouse::{AccumulatedMouseMotion, MouseButtonInput, MouseWheel},
+        mouse::{AccumulatedMouseMotion, MouseButtonInput, MouseScrollUnit, MouseWheel},
     },
     prelude::{
         ButtonInput, KeyCode, Local, MessageReader, MouseButton, Query, Res, ResMut, Single, Time,
@@ -72,14 +72,56 @@ fn gamepad_keys<'a>(
     keys
 }
 
+/// Observes device activity for form bindings without consuming the dispatch readers.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub(crate) fn track_server_form_input_mode(
+    desktop: (
+        Res<ButtonInput<KeyCode>>,
+        Res<ButtonInput<MouseButton>>,
+        Res<AccumulatedMouseMotion>,
+    ),
+    mut keyboard: MessageReader<KeyboardInput>,
+    mut wheel: MessageReader<MouseWheel>,
+    mut buttons: MessageReader<MouseButtonInput>,
+    touch: Option<Res<crate::ui_runtime::touch_pointer::TouchPointer>>,
+    pads: Query<&Gamepad>,
+    mut stick: Local<[bool; 4]>,
+    mut runtime: ResMut<UiRuntimeResource>,
+) {
+    let (keys, mouse, motion) = desktop;
+    let desktop_used = keyboard.read().count() + wheel.read().count() + buttons.read().count() > 0
+        || keys.get_just_pressed().next().is_some()
+        || mouse.get_just_pressed().next().is_some()
+        || mouse.get_just_released().next().is_some()
+        || motion.delta != bevy::math::Vec2::ZERO;
+    let gamepad_used = !gamepad_keys(pads.iter(), &mut stick).is_empty()
+        || pads.iter().any(|pad| {
+            pad.get_just_pressed()
+                .chain(pad.get_just_released())
+                .next()
+                .is_some()
+        });
+    let mode = if touch.is_some_and(|touch| touch.delivered) {
+        Some(json_ui::InputMode::Touch)
+    } else if desktop_used {
+        Some(json_ui::InputMode::Mouse)
+    } else if gamepad_used {
+        Some(json_ui::InputMode::Gamepad)
+    } else {
+        None
+    };
+    if let Some(mode) = mode {
+        runtime.server_forms_mut().set_input_mode(mode);
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn drive_server_form_input(
-    (player_runtime, window, mut focus, driven, touch): (
+    (player_runtime, window, mut focus, driven): (
         bevy::prelude::Res<client_state::PlayerRuntime>,
         Single<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
         Option<ResMut<client_state::CursorFocus>>,
         Option<Res<client_state::DrivenInput>>,
-        Option<Res<crate::ui_runtime::touch_pointer::TouchPointer>>,
     ),
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut mouse: ResMut<ButtonInput<MouseButton>>,
@@ -116,12 +158,8 @@ pub(crate) fn drive_server_form_input(
         held: false,
     };
     let mut pointer_edges = Vec::new();
-    let mut mouse_used = mouse.get_just_pressed().next().is_some()
-        || mouse.get_just_released().next().is_some()
-        || motion.delta != bevy::math::Vec2::ZERO;
     if let Some(messages) = button_messages.as_deref() {
         for input in button_cursor.read(messages) {
-            mouse_used = true;
             if input.button == MouseButton::Left {
                 let down = input.state == ButtonState::Pressed;
                 pointer_edges.push(down);
@@ -186,49 +224,12 @@ pub(crate) fn drive_server_form_input(
         );
         return;
     }
-    let mut next_stick = *stick;
-    let pad_keys = gamepad_keys(pads.iter(), &mut next_stick);
-    let pad_used = !pad_keys.is_empty()
-        || pads
-            .iter()
-            .any(|pad| pad.get_just_pressed().next().is_some());
-    let typed: Vec<_> = keyboard
-        .read()
-        .filter(|input| input.state == ButtonState::Pressed)
-        .map(|input| engine_input::KeyInput {
-            key: keyboard_key(input.key_code),
-            text: input.text.as_ref().map(|text| text.to_string()),
-            repeat: input.repeat,
-            mode: json_ui::InputMode::Mouse,
-        })
-        .collect();
-    let wheel: Vec<_> = wheel
-        .read()
-        .map(|event| (event.y, scroll_unit(event.unit)))
-        .collect();
-    let mode = if touch.is_some_and(|touch| touch.delivered) {
-        Some(json_ui::InputMode::Touch)
-    } else if mouse_used
-        || !typed.is_empty()
-        || !wheel.is_empty()
-        || keys.get_just_pressed().next().is_some()
-    {
-        Some(json_ui::InputMode::Mouse)
-    } else if pad_used {
-        Some(json_ui::InputMode::Gamepad)
-    } else {
-        None
-    };
-    if let Some(mode) = mode {
-        runtime.server_forms_mut().engine_mut().view.input_mode = mode;
-    }
     let engine_frame = runtime
         .server_forms()
         .active()
         .and_then(|entry| presentation.form_engine_frame(entry.identity))
         .cloned();
     if input_available && let Some(frame) = engine_frame {
-        *stick = next_stick;
         let held: Vec<_> = keys.get_pressed().map(|key| keyboard_key(*key)).collect();
         let input = engine_input::EngineInput {
             pointer_edges,
@@ -237,18 +238,24 @@ pub(crate) fn drive_server_form_input(
                 .and_then(|point| ui::UiPoint::new(point.x, point.y).ok()),
             keys: &held,
             pointer,
-            wheel,
-            typed: typed
-                .into_iter()
+            wheel: wheel
+                .read()
+                .map(|event| (event.y, scroll_unit(event.unit)))
+                .collect(),
+            typed: keyboard
+                .read()
+                .filter(|input| input.state == ButtonState::Pressed)
+                .map(|input| {
+                    (
+                        keyboard_key(input.key_code),
+                        input.text.as_ref().map(|text| text.to_string()),
+                        input.repeat,
+                    )
+                })
                 .chain(
-                    pad_keys
+                    gamepad_keys(pads.iter(), &mut stick)
                         .into_iter()
-                        .map(|(key, text)| engine_input::KeyInput {
-                            key,
-                            text,
-                            repeat: false,
-                            mode: json_ui::InputMode::Gamepad,
-                        }),
+                        .map(|(key, text)| (key, text, false)),
                 )
                 .collect(),
             now: time.map_or(0.0, |time| time.elapsed_secs_f64()),
@@ -256,6 +263,7 @@ pub(crate) fn drive_server_form_input(
         };
         engine_input::drive(&mut runtime, &frame, input);
     } else if input_available && let Some(entry) = runtime.server_forms().active() {
+        keyboard.clear();
         let identity = entry.identity;
         if keys.just_pressed(KeyCode::ArrowUp)
             || (keys.just_pressed(KeyCode::Tab) && keys.pressed(KeyCode::ShiftLeft))
@@ -272,10 +280,10 @@ pub(crate) fn drive_server_form_input(
         {
             runtime.server_forms_mut().set_scroll(offset);
         }
-        for (amount, unit) in wheel {
-            let pixels = match unit {
-                semantic_input::ScrollUnit::Line => amount * 44.0,
-                semantic_input::ScrollUnit::Pixel => amount,
+        for event in wheel.read() {
+            let pixels = match event.unit {
+                MouseScrollUnit::Line => event.y * 44.0,
+                MouseScrollUnit::Pixel => event.y,
             };
             runtime
                 .server_forms_mut()
@@ -315,6 +323,9 @@ pub(crate) fn drive_server_form_input(
         if let Some((identity, action)) = action {
             let _ = runtime.respond_to_server_form(identity, action);
         }
+    } else {
+        wheel.clear();
+        keyboard.clear();
     }
     if had_active_form
         && runtime.server_forms().active().is_none()

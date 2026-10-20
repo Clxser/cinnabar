@@ -18,7 +18,9 @@ pub(super) fn png(state: &State, dir: &Path) -> Result<Vec<u8>, Error> {
     let carriers = carriers::load(dir, false)?;
     let mut player = player_state::PlayerState::new(1);
     let mut runtime = pack_harness::action_form(&mut player, "Menu", &["Continue"]);
-    runtime.server_forms_mut().engine_mut().view.input_mode = json_ui::InputMode::Gamepad;
+    runtime
+        .server_forms_mut()
+        .set_input_mode(json_ui::InputMode::Gamepad);
     let mut presentation =
         UiPresentationRuntime::new(carriers.font).map_err(|error| error.to_string())?;
     presentation
