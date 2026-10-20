@@ -316,6 +316,7 @@ fn merge(existing: &mut Resource, new: Resource, rb: &naga::ResourceBinding) -> 
         {
             a.read |= b.read;
             a.write |= b.write;
+            a.atomic |= b.atomic;
             union(&mut a.stages, b.stages);
         }
         _ => return Err(conflict()),
