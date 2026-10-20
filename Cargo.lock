@@ -837,7 +837,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "bedrock-client"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=f1dc51a8511cb6f9b0a1fed4ae2af237fb643787#f1dc51a8511cb6f9b0a1fed4ae2af237fb643787"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=4aa184d883440cad59aa06a27e7faa835e665fbc#4aa184d883440cad59aa06a27e7faa835e665fbc"
 dependencies = [
  "bedrock-net",
  "bedrock-packs",
@@ -855,7 +855,7 @@ dependencies = [
 [[package]]
 name = "bedrock-client-tokio"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=f1dc51a8511cb6f9b0a1fed4ae2af237fb643787#f1dc51a8511cb6f9b0a1fed4ae2af237fb643787"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=4aa184d883440cad59aa06a27e7faa835e665fbc#4aa184d883440cad59aa06a27e7faa835e665fbc"
 dependencies = [
  "bedrock-client",
  "bedrock-net",
@@ -876,7 +876,7 @@ dependencies = [
 [[package]]
 name = "bedrock-net"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=f1dc51a8511cb6f9b0a1fed4ae2af237fb643787#f1dc51a8511cb6f9b0a1fed4ae2af237fb643787"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=4aa184d883440cad59aa06a27e7faa835e665fbc#4aa184d883440cad59aa06a27e7faa835e665fbc"
 dependencies = [
  "aes 0.9.3",
  "base64 0.22.1",
@@ -904,7 +904,7 @@ dependencies = [
 [[package]]
 name = "bedrock-packs"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=f1dc51a8511cb6f9b0a1fed4ae2af237fb643787#f1dc51a8511cb6f9b0a1fed4ae2af237fb643787"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=4aa184d883440cad59aa06a27e7faa835e665fbc#4aa184d883440cad59aa06a27e7faa835e665fbc"
 dependencies = [
  "serde",
  "serde_json",
@@ -926,7 +926,7 @@ dependencies = [
 [[package]]
 name = "bedrock-services"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-services?rev=5324ddac68bc13d343835de48eb997cb823a7912#5324ddac68bc13d343835de48eb997cb823a7912"
+source = "git+https://github.com/cinnabar-mc/bedrock-services?rev=fb1011f8ca2725354cbce10cabfb3fabb71d97e3#fb1011f8ca2725354cbce10cabfb3fabb71d97e3"
 dependencies = [
  "aws-lc-rs",
  "base64 0.22.1",
