@@ -364,6 +364,23 @@ fn expanded_properties_bytes_are_bounded_across_lines() {
 }
 
 #[test]
+fn recursively_doubled_macros_stop_at_the_preprocessing_work_limit() {
+    let mut text = format!("#define M0 {}\n", "m".repeat(64 * 1024));
+    for level in 1..=24 {
+        text += &format!("#define M{level} M{p} M{p}\n", p = level - 1);
+    }
+    text += "value=M24\n";
+    let properties = parse(&text);
+    assert!(properties.get("value").is_none());
+    assert!(
+        properties
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("work limit"))
+    );
+}
+
+#[test]
 fn deep_conditions_return_a_recoverable_diagnostic() {
     let nested = format!("{}1{}", "(".repeat(10_000), ")".repeat(10_000));
     let properties = parse(&format!("#if {nested}\nhidden=1\n#endif\nafter=ok\n"));

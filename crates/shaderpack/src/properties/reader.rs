@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::PropertiesDiagnostic;
-use crate::source::MAX_EXPANDED_PROPERTIES_BYTES;
+use crate::source::{MAX_EXPANDED_PROPERTIES_BYTES, MAX_PROPERTIES_PREPROCESSING_BYTES};
 use pp_rs::pp::Preprocessor;
 
 /// One key/value pair from an active logical line.
@@ -56,9 +56,19 @@ pub(super) fn read_entries(
     let mut lines = BTreeMap::<u32, String>::new();
     let mut rejected = BTreeSet::new();
     let mut remaining = MAX_EXPANDED_PROPERTIES_BYTES;
+    let mut work = MAX_PROPERTIES_PREPROCESSING_BYTES;
     while let Some(token) = pp.next_text() {
         match token {
             Ok(token) => {
+                // Rejected lines still expand, so recursive macros need a budget of their own.
+                let Some(left) = work.checked_sub(token.text.len().max(1)) else {
+                    diagnostics.push(PropertiesDiagnostic {
+                        line: token.line,
+                        message: "properties preprocessing exceeds work limit".to_owned(),
+                    });
+                    break;
+                };
+                work = left;
                 for (index, fragment) in token.text.split('\n').enumerate() {
                     let line = token.line.saturating_add(index as u32);
                     if fragment.is_empty() || rejected.contains(&line) {

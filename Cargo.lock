@@ -7050,7 +7050,7 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 [[package]]
 name = "pp-rs"
 version = "0.2.1"
-source = "git+https://github.com/cinnabar-mc/glslpp-rs?rev=d30c368b512401adda2e3f60b2448492cd1c4947#d30c368b512401adda2e3f60b2448492cd1c4947"
+source = "git+https://github.com/cinnabar-mc/glslpp-rs?rev=d893a389bc78e570f1c19ceb0afede1e3f533b9e#d893a389bc78e570f1c19ceb0afede1e3f533b9e"
 dependencies = [
  "unicode-xid",
 ]

@@ -65,6 +65,8 @@ pub(crate) const MAX_TEXT_FILE_BYTES: usize = 8 * 1024 * 1024;
 
 /// Maximum expanded properties text retained from one input file.
 pub(crate) const MAX_EXPANDED_PROPERTIES_BYTES: usize = 4 * MAX_TEXT_FILE_BYTES;
+/// Preprocessor output, kept or rejected, after which property expansion stops altogether.
+pub(crate) const MAX_PROPERTIES_PREPROCESSING_BYTES: usize = 2 * MAX_EXPANDED_PROPERTIES_BYTES;
 
 /// Bounds eager pack ingestion.
 #[derive(Clone, Copy)]
