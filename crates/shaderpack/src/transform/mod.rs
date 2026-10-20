@@ -23,7 +23,7 @@ use crate::token::{Tok, lex};
 pub(crate) use assemble::{UboMember, assemble, merge_uniforms};
 use body::{BodyContext, SamplerUse, rewrite_body, rewrite_params};
 pub(crate) use interface::ProgramInterface;
-use items::{Item, parse_decl, split_items};
+use items::{Item, func_params, parse_decl, split_items};
 use std::collections::{HashMap, HashSet};
 
 /// A transform failure at a 1-based line of the include-expanded source (0 if unknown).
@@ -192,6 +192,13 @@ pub(crate) fn transform(
             Item::Func { name, toks } => {
                 let brace = toks.iter().position(|t| t.is("{")).unwrap_or(toks.len());
                 let mut local = c.samplers.clone();
+                let mut bools = c.bools.clone();
+                if let Some((_, params)) = func_params(&toks) {
+                    for param in params {
+                        local.remove(&param.name);
+                        bools.remove(&param.name);
+                    }
+                }
                 let mut header = rewrite_params(&toks[..brace], &mut local);
                 if name == "main"
                     && wrapper
@@ -203,10 +210,16 @@ pub(crate) fn transform(
                 out_body.extend(header);
                 let cx = BodyContext {
                     samplers: &local,
-                    bools: &c.bools,
+                    bools: &bools,
                     user_funcs: &user_funcs,
                 };
                 out_body.extend(rewrite_body(&toks[brace..], &cx, &mut used));
+            }
+            Item::Other(toks)
+                if func_params(&toks).is_some()
+                    && toks.last().is_some_and(|token| token.is(";")) =>
+            {
+                out_body.extend(rewrite_params(&toks, &mut HashMap::new()));
             }
             Item::Decl(_, toks) | Item::Other(toks) => {
                 let cx = BodyContext {

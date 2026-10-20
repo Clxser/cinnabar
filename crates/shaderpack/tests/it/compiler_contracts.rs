@@ -410,3 +410,111 @@ fn explicit_block_locations_link_distinct_block_and_member_names() {
         assert_eq!(locations, [0, 2, 3, 4, 5]);
     }
 }
+
+#[test]
+fn compiler_calls_with_unmatched_delimiters_report_diagnostics() {
+    for body in [
+        "void main() { gl_Position = texture2D(",
+        "void main() { gl_Position = shadow2D(",
+        "void main() { float x[] = float[](",
+    ] {
+        let translation = translate(&format!("#version 120\n{body}"), FRAGMENT);
+        let failed = program(&translation, "composite");
+        assert!(!failed.is_ok());
+        assert!(failed.all_diagnostics().next().is_some());
+    }
+}
+
+#[test]
+fn compiler_reserved_members_follow_declaration_names() {
+    success(
+        VERTEX,
+        "#version 330\nstruct S { vec4 sampler; }; out vec4 color; void main() { S s; s.sampler = vec4(1.0); color = s.sampler; }",
+    );
+    success(
+        VERTEX,
+        "#version 120\nstruct S { vec4 sample; vec4 texture; }; void main() { S s; s.sample = vec4(1.0); s.texture = s.sample; gl_FragColor = s.texture; }",
+    );
+}
+
+#[test]
+fn compiler_boolean_uniform_elements_convert_after_access() {
+    success(
+        VERTEX,
+        "#version 330\nuniform bool flags[2]; uniform bvec2 masks[2]; out vec4 color; void main() { int i = 1; color = vec4(flags[i] && masks[i].x ? 1.0 : 0.0); }",
+    );
+}
+
+#[test]
+fn compiler_boolean_uniforms_respect_lexical_bindings() {
+    success(
+        VERTEX,
+        "#version 330\nuniform bool enabled; out vec4 color; bool choose(bool enabled) { return enabled; } void main() { bool result = choose(true); { bool enabled = false; result = result && enabled; } color = vec4(result && enabled ? 1.0 : 0.0); }",
+    );
+    success(
+        VERTEX,
+        "#version 330\nuniform bool enabled; out vec4 color; void main() { bool unused = false, enabled = true; color = vec4(enabled ? 1.0 : 0.0); }",
+    );
+}
+
+#[test]
+fn compiler_specialized_helpers_have_forward_declarations() {
+    success(
+        VERTEX,
+        "#version 330\nuniform sampler2D source; vec4 read(sampler2D s, vec2 uv); out vec4 color; void main() { color = read(source, vec2(0.5)); } vec4 read(sampler2D s, vec2 uv) { return texture(s, uv); }",
+    );
+}
+
+#[test]
+fn compiler_uniforms_share_struct_and_constant_dependencies() {
+    success(
+        VERTEX,
+        "#version 330\nconst int COUNT = 2; struct Light { vec4 color; }; uniform Light lights[COUNT]; out vec4 color; void main() { color = lights[1].color; }",
+    );
+}
+
+#[test]
+fn compiler_loop_bindings_end_after_the_loop_statement() {
+    success(
+        VERTEX,
+        "#version 330\nuniform bool enabled; out vec4 color; void main() { float value = 0.0; for (int enabled = 0; enabled < 2; enabled++) { value += float(enabled); } color = vec4(enabled ? value : 0.0); }",
+    );
+}
+
+#[test]
+fn compiler_specialization_respects_local_parameter_shadows() {
+    success(
+        VERTEX,
+        "#version 330\nuniform sampler2D plane; out vec4 color; vec4 read(sampler2D source, vec2 uv) { vec4 result = texture(source, uv); { float source = 1.0; result += vec4(source); } return result; } void main() { color = read(plane, vec2(0.5)); }",
+    );
+}
+
+#[test]
+fn compiler_specialization_distinguishes_shadowed_resource_arguments() {
+    success(
+        VERTEX,
+        "#version 330\nuniform sampler2D plane; out vec4 color; vec4 read(sampler2D source, vec2 uv) { return texture(source, uv); } vec4 read(float value, vec2 uv) { return vec4(value + uv.x); } void main() { color = read(plane, vec2(0.5)); { float plane = 1.0; color += read(plane, vec2(0.5)); } }",
+    );
+}
+
+#[test]
+fn compiler_resource_specializations_have_distinct_names() {
+    let translation = success(
+        VERTEX,
+        "#version 330\nuniform sampler2D a_b, c, a, b_c; out vec4 color; vec4 combine(sampler2D x, sampler2D y) { return texture(x, vec2(0.5)) + texture(y, vec2(0.5)); } void main() { color = combine(a_b, c) + combine(a, b_c); }",
+    );
+    assert_eq!(
+        reflection(program(&translation, "composite"))
+            .textures
+            .len(),
+        4
+    );
+}
+
+#[test]
+fn boolean_array_lengths_keep_the_array_receiver() {
+    success(
+        VERTEX,
+        "#version 330\nuniform bool flags[2]; out vec4 color; void main() { color = vec4(float(flags.length())); }",
+    );
+}
