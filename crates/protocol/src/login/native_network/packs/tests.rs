@@ -13,15 +13,16 @@ fn offer(id: uuid::Uuid, size: usize) -> PackInfoData {
     offer
 }
 
-/// The active Go fallback and reusable Rust owner share the same request-window policy.
+/// The native request window retains the selected Gophertunnel baseline policy.
 #[test]
 fn reusable_pack_policy_matches_the_existing_go_baseline() {
-    let window: u32 = include_str!("../../../../../../core/proxy/resource_pack_window.txt")
-        .trim()
-        .parse()
-        .unwrap();
+    let window: u32 =
+        include_str!("../../../../../../crates/protocol/data/resource_pack_window.txt")
+            .trim()
+            .parse()
+            .unwrap();
     assert_eq!(window, bedrock_client::packs::DEFAULT_REQUEST_WINDOW);
-    let baseline = include_str!("../../../../../../core/go.mod")
+    let baseline = include_str!("../../../../../../tools/localserver/go.mod")
         .lines()
         .find(|line| {
             line.split_whitespace()

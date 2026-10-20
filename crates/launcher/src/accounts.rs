@@ -12,11 +12,13 @@ pub mod pending;
 
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 /// The shared download and local-copy bound for catalog and Xbox profile artwork.
-pub const MAX_ARTWORK_BYTES: usize =
-    embedded_byte_limit(include_bytes!("../../../core/catalog/artwork_limit.txt"));
+pub const MAX_ARTWORK_BYTES: usize = embedded_byte_limit(include_bytes!(
+    "../../../crates/launcher/data/artwork_limit.txt"
+));
 /// Serialized active OAuth records must remain readable by the existing Go credential owner.
-pub const MAX_OAUTH_CACHE_BYTES: usize =
-    embedded_byte_limit(include_bytes!("../../../core/authcache/cache_limit.txt"));
+pub const MAX_OAUTH_CACHE_BYTES: usize = embedded_byte_limit(include_bytes!(
+    "../../../crates/launcher/data/cache_limit.txt"
+));
 
 const fn embedded_byte_limit(bytes: &[u8]) -> usize {
     let mut limit = 0usize;
@@ -41,7 +43,7 @@ const fn embedded_byte_limit(bytes: &[u8]) -> usize {
     assert!(limit > 0, "invalid embedded byte limit");
     limit
 }
-const DERIVED_SUFFIX: &str = include_str!("../../../core/authcache/derived_suffix.txt");
+const DERIVED_SUFFIX: &str = include_str!("../../../crates/launcher/data/derived_suffix.txt");
 const PICTURE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "gif", "bmp"];
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 

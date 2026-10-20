@@ -152,7 +152,7 @@ async fn forwarded(replacement: Bytes) -> (Option<Bytes>, bool) {
         active: AtomicBool::new(true),
     });
     let sender = BatchWriter {
-        sender: crate::session_transport::PacketSender::Core(frames),
+        sender: crate::session_transport::PacketSender::Framed(frames),
         relay: Some(shared),
         tap: None,
     };

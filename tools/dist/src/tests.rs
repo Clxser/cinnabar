@@ -27,11 +27,9 @@ fn fixture(platform: Platform) -> (PathBuf, Options) {
         fs::write(assets.join(name), format!("synthetic {name}")).unwrap();
     }
     let client = root.join("client.bin");
-    let core = root.join("core.bin");
     let physics = root.join("physics.bin");
     let notices = root.join("THIRD_PARTY_NOTICES.md");
     fs::write(&client, b"synthetic client").unwrap();
-    fs::write(&core, b"synthetic core").unwrap();
     fs::write(&physics, b"synthetic physics").unwrap();
     fs::write(&notices, b"synthetic notices").unwrap();
     let binaries = root.join("runtime");
@@ -51,7 +49,6 @@ fn fixture(platform: Platform) -> (PathBuf, Options) {
     let options = Options {
         platform,
         client,
-        core,
         binaries,
         assets,
         physics,

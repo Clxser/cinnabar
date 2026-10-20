@@ -12,7 +12,7 @@ use bridge::contract::{
 };
 const SERVICE_NAMESPACE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../core/authcache/service_device_namespace.txt"
+    "/../../crates/protocol/data/service_device_namespace.txt"
 ));
 
 /// The install's shared Go-compatible Android login profile, without a copied model catalog.

@@ -1,9 +1,7 @@
-//! Client activity reported to the account core without Xbox credentials.
-use crate::{BridgeError, account::call};
-use serde::{Deserialize, Serialize};
-use std::path::Path;
+//! Native title-presence activity policy.
+use serde::Serialize;
 
-/// Committed world state shared by the account core and native publisher.
+/// Committed world state shared with the native publisher.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct XboxPresenceState {
     pub in_world: bool,
@@ -33,18 +31,6 @@ impl XboxPresenceState {
             mode.to_owned()
         }
     }
-}
-
-#[derive(Deserialize)]
-struct Accepted {}
-
-/// Queues the newest activity in the core; this does not wait for Xbox Live.
-pub async fn report_xbox_presence(
-    socket_dir: &Path,
-    state: &XboxPresenceState,
-) -> Result<(), BridgeError> {
-    call::<Accepted, _>(socket_dir, crate::contract::METHOD_PRESENCE, Some(state)).await?;
-    Ok(())
 }
 
 #[cfg(test)]

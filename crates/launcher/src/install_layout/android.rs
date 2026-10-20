@@ -13,7 +13,6 @@ impl InstallLayout {
     pub fn android(
         files_dir: &Path,
         native_library_dir: &Path,
-        core_library: &str,
         local_server_library: &str,
     ) -> Self {
         let resource_root = files_dir.join("resources");
@@ -24,7 +23,6 @@ impl InstallLayout {
                 .join("assets")
                 .join(assets::carriers::physics_registry_basename()),
             resource_root,
-            core_executable: native_library_dir.join(core_library),
             local_server_executable: native_library_dir.join(local_server_library),
             user_config_root: files_dir.join("config"),
             user_data_root: files_dir.join("data"),
@@ -60,18 +58,15 @@ mod tests {
     #[test]
     fn android_separates_private_data_from_executable_helpers() {
         let files = Path::new("/data/user/0/app/files");
-        let core = Path::new("/data/app/lib/arm64/libbedrock_core.so");
-        let native_library_dir = core.parent().unwrap();
+        let native_library_dir = Path::new("/data/app/lib/arm64");
         let local_server = native_library_dir.join("liblocal_server_fixture.so");
         let layout = InstallLayout::android(
             files,
             native_library_dir,
-            core.file_name().unwrap().to_str().unwrap(),
             local_server.file_name().unwrap().to_str().unwrap(),
         )
         .with_prepared_assets();
         assert!(layout.is_installed());
-        assert_eq!(layout.core_executable, core);
         assert_eq!(layout.local_server_executable, local_server);
         assert_eq!(layout.prep_kit(), files.join("resources/prep-kit"));
         assert_eq!(layout.compiled_assets, files.join("data/assets/compiled"));

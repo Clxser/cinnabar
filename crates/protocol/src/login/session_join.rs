@@ -1,5 +1,4 @@
-//! Joins through the core's session endpoint: the core makes the only login and acquires the packs,
-//! and this client continues from StartGame with its own spawn sequence.
+//! Continues a Rust gateway's framed handoff with the shared client spawn sequence.
 
 use bedrock_packs::{ResourcePackArchive, ResourcePackHandoff};
 use std::path::Path;

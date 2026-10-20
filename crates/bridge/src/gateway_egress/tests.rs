@@ -19,7 +19,7 @@ struct Case {
 #[test]
 fn gateway_egress_matches_shared_address_boundary_corpus() {
     let corpus: Corpus = serde_json::from_str(include_str!(
-        "../../../../core/internal/bridgecontract/testdata/gateway-egress.json"
+        "../../../../crates/bridge/data/gateway-egress-fixtures.json"
     ))
     .unwrap();
     assert_eq!(corpus.schema, 1);

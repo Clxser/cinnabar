@@ -139,8 +139,8 @@ def cargo_pin(lock, url):
 def baseline(selector, manifest, root, api):
     """Derive dependency pins from their owners, with separate explicit reference checkpoints."""
     if set(selector) == {"go_module"}:
-        repo, revision = go_pin((root / "core/go.mod").read_text(), selector["go_module"])
-        source = "core/go.mod: " + selector["go_module"]
+        repo, revision = go_pin((root / "tools/localserver/go.mod").read_text(), selector["go_module"])
+        source = "tools/localserver/go.mod: " + selector["go_module"]
     elif set(selector) == {"cargo_git"}:
         repo, revision = cargo_pin(tomllib.loads((root / "Cargo.lock").read_text()), selector["cargo_git"])
         source = "Cargo.lock: " + selector["cargo_git"]

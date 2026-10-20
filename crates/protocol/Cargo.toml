@@ -10,10 +10,8 @@ autotests = false
 [package.metadata.cinnabar]
 platform-specific = ["windows", "macos"]
 reads = [
-    "core/go.mod",
-    "core/go.sum",
-    "core/authcache/service_device_namespace.txt",
-    "core/proxy/resource_pack_window.txt",
+    "tools/localserver/go.mod",
+    "tools/localserver/go.sum",
     "assets/bedrock-target.json",
     "assets/block-projection-v2193.json",
     "crates/protocol-ids/data/protocol-ids.json",
@@ -79,6 +77,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring"], opti
 webpki-roots = { version = "1", optional = true }
 
 [dev-dependencies]
+tokio-util = { workspace = true, features = ["codec"] }
 rsa.workspace = true
 raknet.workspace = true
 resource-pack = { path = "../resource-pack", features = ["test-support"] }

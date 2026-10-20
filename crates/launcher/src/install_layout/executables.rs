@@ -1,13 +1,5 @@
 use super::Platform;
 
-/// The existing legacy client name for each desktop platform.
-pub(super) const fn core_filename(platform: Platform) -> &'static str {
-    match platform {
-        Platform::Windows => "bedrock-core.exe",
-        Platform::Linux | Platform::MacOs => "bedrock-core",
-    }
-}
-
 /// The Dragonfly executable name from the same table used to stage release binaries.
 pub(super) fn local_server_filename(platform: Platform) -> String {
     let name = include_str!("../../../../packaging/common/runtime-binaries.txt")

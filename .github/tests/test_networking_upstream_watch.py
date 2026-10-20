@@ -65,7 +65,7 @@ class SourceTests(unittest.TestCase):
 
     def test_real_watch_baselines_remain_derived_from_current_owners(self):
         manifest = json.loads((ROOT / ".github/networking-upstreams.json").read_text())
-        go_mod = (ROOT / "core/go.mod").read_text()
+        go_mod = (ROOT / "tools/localserver/go.mod").read_text()
         lock = tomllib.loads((ROOT / "Cargo.lock").read_text())
         for entry in manifest["watches"]:
             selector = entry["baseline"]
@@ -141,8 +141,8 @@ class ObservationTests(unittest.TestCase):
     def test_missing_sources_are_reported_without_discarding_other_refs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "core").mkdir()
-            (root / "core/go.mod").write_text("require github.com/example/reference v1.0.0\n")
+            (root / "tools/localserver").mkdir(parents=True)
+            (root / "tools/localserver/go.mod").write_text("require github.com/example/reference v1.0.0\n")
             manifest = {"schema": 1, "pull_requests": [], "watches": [
                 {"repository": REPO, "refs": ["missing", "lunar"],
                  "baseline": {"go_module": "github.com/example/reference"}}
@@ -191,7 +191,7 @@ class ObservationTests(unittest.TestCase):
         manifest = json.loads((ROOT / ".github/networking-upstreams.json").read_text())
         entry = next(row for row in manifest["watches"]
                      if row["baseline"].get("go_module") == "github.com/sandertv/go-raknet")
-        legacy, revision = watch.go_pin((ROOT / "core/go.mod").read_text(), entry["baseline"]["go_module"])
+        legacy, revision = watch.go_pin((ROOT / "tools/localserver/go.mod").read_text(), entry["baseline"]["go_module"])
         legacy_url = f"{watch.API_ROOT}repos/{legacy}/commits/{revision}"
         pinned = PIN
         redirected = []

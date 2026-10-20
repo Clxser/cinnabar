@@ -100,7 +100,6 @@ mod tests {
         },
         task::{Context, Poll},
     };
-    use tokio::net::UnixListener;
 
     #[derive(Debug)]
     struct ControlledRead {
@@ -134,10 +133,7 @@ mod tests {
     /// Cancelling ingress during a disk read retains the cached packet for one later publication.
     #[tokio::test]
     async fn blob_cache_prefetch_cancellation_retains_packet_and_status() {
-        let dir = tempfile::tempdir().unwrap();
-        let listener = UnixListener::bind(bridge::session_endpoint_path(dir.path())).unwrap();
-        let (reader, frames) = bridge::connect_session(dir.path()).await.unwrap();
-        let (_peer, _) = listener.accept().await.unwrap();
+        let (reader, frames, _peer, _writer) = crate::tests::framed::pair();
         let cache = ClientBlobCache::default();
         let disk = Arc::new(ControlledRead {
             ready: AtomicBool::new(false),
@@ -188,10 +184,7 @@ mod tests {
     /// decoded body is larger than the caller's raw-size hint.
     #[tokio::test]
     async fn blob_cache_prefetch_pressure_uses_normal_miss_recovery() {
-        let dir = tempfile::tempdir().unwrap();
-        let listener = UnixListener::bind(bridge::session_endpoint_path(dir.path())).unwrap();
-        let (reader, frames) = bridge::connect_session(dir.path()).await.unwrap();
-        let (_peer, _) = listener.accept().await.unwrap();
+        let (reader, frames, _peer, _writer) = crate::tests::framed::pair();
         let cache = ClientBlobCache::default();
         let disk = Arc::new(ControlledRead {
             ready: AtomicBool::new(false),

@@ -80,7 +80,6 @@ members = [
     "crates/update-manifest",
     "crates/update-installer",
     "tools/architecture",
-    "tools/bedrock-replay",
     "tools/devtool",
     "tools/workspace-declarations",
     "tools/dist",

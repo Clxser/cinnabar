@@ -19,7 +19,6 @@ use launcher::install_layout::{InstallLayout, configure_android};
 #[derive(serde::Deserialize)]
 struct Runtime {
     application_id: String,
-    core_library: String,
     compiler_library: String,
     local_server_library: String,
 }
@@ -37,7 +36,6 @@ fn layout(files_dir: &Path, native_library_dir: &Path) -> InstallLayout {
     InstallLayout::android(
         files_dir,
         native_library_dir,
-        &runtime().core_library,
         &runtime().local_server_library,
     )
 }

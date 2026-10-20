@@ -118,12 +118,12 @@ async fn reset_before_acceptance_retires_only_status_and_preserves_the_ordinary_
     let (mut session, mut peer, writer) = session();
     #[cfg(feature = "native-networking")]
     let frames = match session.transport.sender() {
-        crate::session_transport::PacketSender::Core(frames) => frames,
+        crate::session_transport::PacketSender::Framed(frames) => frames,
         #[cfg(feature = "native-networking")]
         crate::session_transport::PacketSender::Native(_) => unreachable!("core fixture"),
     };
     #[cfg(not(feature = "native-networking"))]
-    let crate::session_transport::PacketSender::Core(frames) = session.transport.sender();
+    let crate::session_transport::PacketSender::Framed(frames) = session.transport.sender();
     let mut fillers = 0;
     loop {
         let mut accept = std::pin::pin!(frames.accept(Bytes::from_static(b"filler")));
