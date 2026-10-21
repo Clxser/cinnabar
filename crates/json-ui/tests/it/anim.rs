@@ -206,7 +206,8 @@ fn animated_scroll_ancestor_keeps_the_card_image_and_label() {
     use json_ui::{MeasureCache, ViewState, render_bound, render_bound_gated};
     use serde_json::json;
 
-    let mut document = json!({
+    let mut document: serde_json::Value = serde_json::from_str(
+        r#"{
         "namespace":"scroll_entry",
         "slide":{"anim_type":"offset","from":[0,200],"to":[0,0],"duration":1},
         "screen":{"type":"panel","size":[200,200],"clips_children":true,"controls":[
@@ -241,7 +242,9 @@ fn animated_scroll_ancestor_keeps_the_card_image_and_label() {
                         ]}}
                 ]}}
         ]}
-    });
+    }"#,
+    )
+    .unwrap();
     for moving in [false, true] {
         document["screen"]["controls"][0]["moving"]["offset"] = if moving {
             json!("@scroll_entry.slide")
