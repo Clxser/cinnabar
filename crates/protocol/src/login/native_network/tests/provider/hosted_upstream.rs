@@ -878,9 +878,10 @@ async fn local_bds_startup_detaches_from_a_discarded_secondary_batch_sibling() {
             peer.session.closed().await;
         };
         let client = async {
-            let raw = RawValue::from_string(
-                r#"{"ThirdPartyName":"untrusted","Nonce":"original","SkinId":"synthetic"}"#.into(),
-            )
+            let raw = RawValue::from_string(format!(
+                r#"{{"DeviceOS":1,"GameVersion":"{}","LanguageCode":"en_US","ThirdPartyName":"untrusted","Nonce":"original","SkinId":"synthetic"}}"#,
+                crate::GAME_VERSION,
+            ))
             .unwrap();
             let request = encode_authenticated_request(
                 &key(),

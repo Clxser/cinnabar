@@ -171,9 +171,10 @@ fn explicit_raw_answer_policy_keeps_present_provider_and_fingerprint_checks() {
 
 /// Simulates holding an already-qualified handoff without sleeping or changing a production clock.
 fn authentication_at(observed: Instant) -> NativeAuthentication {
-    let client = RawValue::from_string(
-        r#"{"ThirdPartyName":"stale","DeviceOS":1,"SkinId":"synthetic"}"#.into(),
-    )
+    let client = RawValue::from_string(format!(
+        r#"{{"ThirdPartyName":"stale","DeviceOS":1,"GameVersion":"{}","LanguageCode":"en_US","SkinId":"synthetic"}}"#,
+        crate::GAME_VERSION,
+    ))
     .unwrap();
     NativeAuthentication::new(
         key(),
