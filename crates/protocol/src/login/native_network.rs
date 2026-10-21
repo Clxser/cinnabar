@@ -144,7 +144,8 @@ async fn native_join<P: Send + 'static>(
     let deadline = tokio::time::Instant::now() + crate::NATIVE_JOIN_TIMEOUT;
     tokio::time::timeout_at(
         deadline,
-        connect(target, login, authentication, deadline, prepare),
+        // Bound nested polling frames with one heap-owned join continuation.
+        Box::pin(connect(target, login, authentication, deadline, prepare)),
     )
     .await
     .map_err(|_| {
