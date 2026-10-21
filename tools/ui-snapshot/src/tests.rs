@@ -2,7 +2,7 @@ use crate::{carriers, fixtures, render};
 
 #[test]
 fn tiled_image_capture_covers_the_viewport_with_the_original_checker() {
-    let state = fixtures::STATES
+    let state = fixtures::states::STATES
         .iter()
         .find(|state| state.name == "jsonui-tiled-image")
         .unwrap();
@@ -18,7 +18,7 @@ fn tiled_image_capture_covers_the_viewport_with_the_original_checker() {
 
 #[test]
 fn extreme_tiled_image_capture_covers_every_pixel() {
-    let state = fixtures::STATES
+    let state = fixtures::states::STATES
         .iter()
         .find(|state| state.name == "jsonui-tiled-image-extreme")
         .unwrap();
@@ -31,7 +31,7 @@ fn extreme_tiled_image_capture_covers_every_pixel() {
 fn every_registered_state_renders_identical_png_bytes() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/assets/compiled");
     let mut names = std::collections::HashSet::new();
-    for state in fixtures::STATES {
+    for state in fixtures::states::STATES {
         assert!(names.insert(state.name), "duplicate fixture {}", state.name);
         let first = match render::png(state, &dir) {
             Ok(png) => png,

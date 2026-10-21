@@ -187,7 +187,7 @@ pub(super) fn play_worlds() -> Fixture {
         game_mode: "Survival".to_owned(),
         world_type: launcher::local_worlds::world_type_label(
             &launcher::local_worlds::world::Generator::Normal,
-            &launcher::local_worlds::generators::fixture_catalog(),
+            &generator_catalog(),
         )
         .to_owned(),
         server: String::new(),
@@ -245,7 +245,7 @@ pub(super) fn world_create_advanced() -> Fixture {
     view.screen = MenuScreen::Play;
     view.local.screen = launcher::local_worlds::Screen::Create;
     view.local.tab = launcher::local_worlds::Tab::Advanced;
-    view.local.generators = launcher::local_worlds::generators::fixture_catalog();
+    view.local.generators = generator_catalog();
     Fixture::Menu(Box::new(view))
 }
 
@@ -261,4 +261,12 @@ pub(super) fn world_create_custom_generator() -> Fixture {
             label: "Floating Islands".into(),
         });
     Fixture::Menu(view)
+}
+
+/// Loads the server's checked catalog example for service-free screenshots.
+fn generator_catalog() -> Vec<launcher::local_worlds::generators::GeneratorInfo> {
+    launcher::local_worlds::generators::parse_catalog(include_bytes!(
+        "../../../localserver/contract/catalog.example.json"
+    ))
+    .expect("valid server catalog example")
 }

@@ -5,6 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 publish = false
 
+[package.metadata.cinnabar]
+reads = ["tools/localserver/contract/catalog.example.json"]
+
 [features]
 test-support = ["dep:client-ui", "client-ui/test-support", "protocol/test-support", "render-model/test-support", "ui-screens/test-support"]
 # Captures the shader-pack Video settings a `shaderpacks` client build shows.
@@ -19,7 +22,7 @@ inventory = { path = "../../crates/inventory" }
 json-ui = { path = "../../crates/json-ui" }
 jsonui-editor = { path = "../jsonui-editor" }
 bridge = { path = "../../crates/bridge" }
-launcher = { path = "../../crates/launcher", features = ["shader-pack-options", "test-support"] }
+launcher = { path = "../../crates/launcher", features = ["shader-pack-options"] }
 mod-ui = { path = "../../crates/mod-ui" }
 oreui = { path = "../../crates/oreui" }
 player-state = { path = "../../crates/player-state" }
