@@ -202,25 +202,6 @@ impl Manager {
             .map(Option::unwrap_or_default)
     }
 
-    /// Refuses unavailable terrain before any world data or server process is opened.
-    fn validate_generator(
-        &self,
-        backend: Backend,
-        generator: &launcher::local_worlds::world::Generator,
-    ) -> Result<(), WorldError> {
-        if backend == Backend::Bds {
-            if !generator.supported_by_bds() {
-                return Err(WorldError::MissingGenerator(generator.as_str().into()));
-            }
-        } else if let Some(runner) = &self.inner.runners.dragonfly
-            && let Some(catalog) = runner.generators()?
-            && !catalog.iter().any(|entry| entry.id == *generator)
-        {
-            return Err(WorldError::MissingGenerator(generator.as_str().into()));
-        }
-        Ok(())
-    }
-
     /// Saved worlds, most recently played first.
     pub fn list(&self) -> Result<Vec<World>, WorldError> {
         self.inner.store.list()
@@ -243,7 +224,11 @@ impl Manager {
         let mut world = world.clone();
         world.name = validate_name(&world.name)?;
         world.backend = Some(self.creatable_backend(world.backend)?);
-        self.validate_generator(world.backend.expect("resolved backend"), &world.generator)?;
+        if world.backend == Some(Backend::Bds) && !world.generator.supported_by_bds() {
+            return Err(WorldError::MissingGenerator(
+                world.generator.as_str().into(),
+            ));
+        }
         self.inner.store.create(&world)
     }
 
@@ -389,9 +374,13 @@ impl Manager {
             WorldState::Idle | WorldState::Stopping | WorldState::Failed => {}
         }
         let world = self.inner.store.get(id)?;
-        self.validate_generator(world.backend, &world.generator)?;
         let dir = self.inner.store.dir(id)?;
         if world.backend == Backend::Bds {
+            if !world.generator.supported_by_bds() {
+                return Err(WorldError::MissingGenerator(
+                    world.generator.as_str().into(),
+                ));
+            }
             let setup = self
                 .inner
                 .setup

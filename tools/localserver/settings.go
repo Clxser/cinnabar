@@ -14,6 +14,8 @@ import (
 	"github.com/hashimthearab/rust-mcbe/tools/localserver/extension"
 )
 
+var errUnknownGenerator = errors.New("unknown generator")
+
 const defaultChunkWorkers = 4
 
 const maxPlayers = 4 // one local player plus a reconnect overlapping its predecessor
@@ -94,7 +96,7 @@ func parseSettings(args []string, stderr io.Writer) (settings, error) {
 		return settings{}, errors.New("-pregen-radius requires -generator normal without a synthetic fixture")
 	}
 	if _, ok := lookupGenerator(s.generator); !ok {
-		return settings{}, fmt.Errorf("unknown generator %q", s.generator)
+		return settings{}, fmt.Errorf("%w %q", errUnknownGenerator, s.generator)
 	}
 	if s.dir == "" || (s.addr == "" && !s.terrainFixtureGenerate) {
 		return settings{}, errors.New("-dir and -addr are required; generation needs only -dir")

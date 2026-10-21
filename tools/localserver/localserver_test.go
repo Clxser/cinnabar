@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -227,5 +228,44 @@ func TestStandbyServerRefusesExperiences(t *testing.T) {
 	err = Run([]string{standbyFlag}, strings.NewReader(standbyStart+string(start)+"\n"), &stdout, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "standby") || stdout.Len() != 0 {
 		t.Fatalf("err = %v, stdout = %q", err, stdout.String())
+	}
+}
+
+// TestUnknownGeneratorSignalsStartupFailure checks the shared diagnostic before world files open.
+func TestUnknownGeneratorSignalsStartupFailure(t *testing.T) {
+	for _, standby := range []bool{false, true} {
+		t.Run(fmt.Sprint("standby=", standby), func(t *testing.T) {
+			dir := t.TempDir()
+			args := []string{"-dir", dir, "-addr", "127.0.0.1:0", "-generator", "missing"}
+			input := ""
+			if standby {
+				encoded, err := json.Marshal(args)
+				if err != nil {
+					t.Fatal(err)
+				}
+				args, input = []string{standbyFlag}, standbyStart+string(encoded)+"\n"
+			}
+			var stdout, stderr bytes.Buffer
+			err := Run(args, strings.NewReader(input), &stdout, &stderr)
+			if !errors.Is(err, errUnknownGenerator) {
+				t.Fatalf("error = %v", err)
+			}
+			if stderr.String() != generatorUnavailableLine {
+				t.Fatalf("startup signal = %q", stderr.String())
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("server announced startup: %q", stdout.String())
+			}
+			if _, err := os.Stat(filepath.Join(dir, "db")); !os.IsNotExist(err) {
+				t.Fatalf("world data opened: %v", err)
+			}
+		})
+	}
+	var stderr bytes.Buffer
+	if err := Run([]string{"-dir", t.TempDir()}, strings.NewReader(""), io.Discard, &stderr); err == nil {
+		t.Fatal("missing address was accepted")
+	}
+	if strings.Contains(stderr.String(), generatorUnavailableLine) {
+		t.Fatal("an unrelated failure reported a missing generator")
 	}
 }

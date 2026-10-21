@@ -420,7 +420,7 @@ import, persistence and hosting/session teardown. The accepted local-world scope
 not establish full vanilla world-generation parity.
 
 The local server advertises registered generators to Create World. Saved generator ids
-remain stable across server changes; unavailable ids fail before opening the world.
+remain stable across server changes; unavailable ids fail through cancellable server startup.
 This does not establish terrain parity for custom generators.
 
 See [local worlds](docs/local-worlds.md).

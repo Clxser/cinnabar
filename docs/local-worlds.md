@@ -38,7 +38,11 @@ with the same arguments and streams as the shipped command. Copy the module’s
 The command’s `-list-generators` prints the JSON catalog described by
 `tools/localserver/contract/generators.schema.json`, without opening a world or
 constructing a generator. The launcher caches discovery by executable path and
-modification time. Missing saved generator ids produce an error before opening a world.
+modification time. Discovery runs on the Create World worker; creating a world checks
+its fetched catalog. Opening a saved world starts the server without catalog discovery.
+An unavailable generator produces a specific startup error, and startup can be cancelled.
+`Run` signals this failure on stderr with the line in
+`tools/localserver/contract/generator-unavailable-line.txt` before returning its diagnostic.
 Older saves retain their Flat or Normal meaning without rewriting their metadata.
 
 In debug builds, `CINNABAR_LOCAL_SERVER` selects a custom local-server executable.

@@ -9,6 +9,7 @@ package localserver
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +33,11 @@ import (
 	"github.com/hashimthearab/rust-mcbe/tools/localserver/extension"
 )
 
+// generatorUnavailableLine lets hosts recognize a missing saved generator without parsing diagnostics.
+//
+//go:embed contract/generator-unavailable-line.txt
+var generatorUnavailableLine string
+
 // experienceDataDir is the directory under -dir that holds the Experiences' private data.
 const experienceDataDir = "experience-data"
 
@@ -51,6 +57,9 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 	cfg, err := parseSettings(args, stderr)
 	if err != nil {
+		if errors.Is(err, errUnknownGenerator) {
+			_, _ = io.WriteString(stderr, generatorUnavailableLine)
+		}
 		return err
 	}
 	if cfg.listGenerators {

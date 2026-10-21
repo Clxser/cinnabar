@@ -198,3 +198,40 @@ fn rebuilding_the_server_discards_its_old_standby() {
     );
     instance.stop(test_time::DEFAULT_TIMEOUT).unwrap();
 }
+
+/// Startup diagnostics must work for both a fresh process and a warmed standby.
+#[cfg(unix)]
+#[test]
+fn missing_generator_diagnostics_have_a_specific_start_failure() {
+    for prepared in [false, true] {
+        let dir = scratch();
+        let script = format!(
+            "#!/bin/sh\nif [ \"$1\" = -standby ]; then IFS= read -r line; fi\nprintf '%s\\n' '{}' >&2\nexit 1\n",
+            GENERATOR_UNAVAILABLE_LINE.trim_end()
+        );
+        let runner = runner(dir.path(), script.as_bytes());
+        if prepared {
+            runner.prepare();
+        }
+        let error = runner
+            .start(&spec(dir.path()), &Cancel::never())
+            .err()
+            .expect("startup failed");
+        assert!(matches!(error, WorldError::GeneratorUnavailable), "{error}");
+        assert!(error.public_message().contains("generator isn't available"));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn ordinary_stderr_is_not_a_missing_generator_signal() {
+    let dir = scratch();
+    let error = runner(
+        dir.path(),
+        b"#!/bin/sh\necho 'unknown generator missing' >&2\nexit 1\n",
+    )
+    .start(&spec(dir.path()), &Cancel::never())
+    .err()
+    .expect("startup failed");
+    assert!(matches!(error, WorldError::Failed(_)), "{error}");
+}

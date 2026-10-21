@@ -9,6 +9,8 @@ pub enum WorldError {
     NotFound,
     #[error("the local server could not list its world generators")]
     GeneratorCatalog,
+    #[error("This world's generator isn't available in the current local server")]
+    GeneratorUnavailable,
     #[error("this server does not support world generator {0:?}; select a server that provides it")]
     MissingGenerator(String),
     #[error("invalid world settings: {0}")]
