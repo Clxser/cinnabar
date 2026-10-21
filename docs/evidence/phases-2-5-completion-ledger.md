@@ -7,8 +7,10 @@ restore, all Profile service facets and a default desktop server join passed app
 acceptance: terrain, entities, HUD and held item were visually inspected, followed by ordinary
 leave and normal shutdown. Featured-catalogue and multiple server-implementation joins have
 separate scoped native receipts. The Go client process, IPC endpoint and legacy backend
-selection are removed from source and shipping inputs. Final integrated checks and runtime
-acceptance of that retirement remain required; earlier receipts keep their original scope.
+selection are removed from source and shipping inputs. Integrated owner checks and fresh
+macOS default-native runtime acceptance pass for that retirement; earlier receipts keep
+their original scope. The current macOS payload and verified Android package contain no
+Go client payload.
 
 Reusable Login, pack and spawn owners retain original account/transport identity, deadlines,
 raw packet order and send receipts. Owning controls pass for early PlayerSpawn, requested
@@ -37,14 +39,17 @@ and normal EOF without inventing pack metadata or acknowledgments. These fixture
 establish live advertised hosting or invitations. Ordinary native friend UI uses current
 opaque account selections. Controlled Messaging and Legacy fixtures pass signed game
 initialization, a live marker, ordinary disconnect with exact membership/owner retirement,
-and cancellation after membership. Live retail friend admission remains unqualified.
+and cancellation after membership. Controlled RTA reconnect and cancellation also pass
+under the original membership and absolute cutoff. Live retail friend admission remains
+unqualified.
 
 Menu, account, presence-retirement, invite-picker and stale-result controls pass, including
 cancellation and original child/publisher retirement before account mutation. Six anonymous
 CPU Profile fallback pairs preserve their original renderer/input scope; actual authenticated
-Profile loading has separate application evidence. Account switching, forced refresh, Realms,
-invitations, host messaging/renewal, friends-visible presence and remaining service coverage
-still need acceptance. The focused controls and server runs do not close those gates.
+Profile loading has separate application evidence. Native Realm catalogue data also reached
+the ordinary Realms screen. Account switching, forced refresh, Realm joining, invitations,
+live host messaging/renewal, friends-visible presence and remaining service coverage still
+need acceptance. The focused controls and server runs do not close those gates.
 
 Android native selection, platform-verifier bootstrap and checked JVM/resource packaging are
 composed. Target checks, packaging controls and verified APK assembly pass; physical-device

@@ -1,5 +1,6 @@
 """Exercise release build commands without compiling native binaries."""
 
+import argparse
 import json
 import os
 import plistlib
@@ -93,7 +94,15 @@ class PackageBinariesTests(unittest.TestCase):
                     builds = [args for tool, *args in calls if tool == "cargo" and args[0] == "build"]
                     self.assertEqual(len(builds), 1)
                     args = builds[0]
-                    self.assertNotIn("--features", args)
+                    feature_args = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+                    feature_args.add_argument("--features", "-F", action="append", default=[])
+                    selected, _ = feature_args.parse_known_args(args)
+                    self.assertEqual(
+                        [feature for value in selected.features
+                         for feature in value.replace(",", " ").split()],
+                        ["cinnabar/native-networking"],
+                    )
+                    self.assertNotIn("--all-features", args)
                     self.assertIn("--release", args)
                     self.assertIn("--no-default-features", args)
                     runtime = [line.split() for line in (ROOT / "packaging/common/runtime-binaries.txt").read_text().splitlines()]

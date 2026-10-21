@@ -53,7 +53,8 @@ closes no gate and provides no new runtime or performance evidence.
 
 The client uses native Rust account and network services. The separate Go client,
 account/network process, local IPC endpoint and legacy backend selection are removed.
-This source retirement requires final integrated build and runtime qualification.
+Integrated owner checks and a fresh macOS default-native application run qualify the
+retired-client path within that platform scope.
 Reusable service, Bedrock and RakNet/NetherNet libraries own authentication, framing and protocol transitions. Transport cores are
 caller-driven state machines with explicit runtime adapters. Native menus need no
 separate networking process or control endpoint. Dragonfly and official BDS local worlds retain
@@ -63,9 +64,10 @@ Saved-account restore, complete Profile service loading and a native default des
 server join have passed actual application acceptance, including rendered terrain,
 entities, HUD and held item, ordinary leave and normal shutdown. Featured catalogue
 joins and several server implementations also have scoped native acceptance. These
-results do not qualify every account operation, server or platform. Realms, invitations,
-account switching, forced refresh, friends-visible presence and the remaining service
-and network matrix still need end-to-end acceptance.
+results do not qualify every account operation, server or platform. Native Realm catalogue
+data also reached the ordinary Realms screen. Realm joining, invitations, account switching,
+forced refresh, friends-visible presence and the remaining service and network matrix
+still need end-to-end acceptance.
 
 Generic signed LAN joins require the selected account's original proof and an
 online-capable advertisement; they do not retry unsigned. Advertisement-driven
@@ -95,7 +97,8 @@ worker retirement before credential mutation. Owning cancellation, contention,
 process handoff and stale-account controls pass. Ordinary native friend UI uses only
 current opaque account selections. Controlled Messaging and Legacy fixtures pass signed
 game initialization, a live marker, ordinary disconnect and exact membership/owner
-retirement, plus cancellation after membership. Live retail friend joining remains
+retirement, plus cancellation after membership. Controlled RTA reconnect and cancellation
+also pass under the original membership and absolute cutoff. Live retail friend joining remains
 unqualified. Advertised hosting, host messaging/renewal, WAN/device
 compatibility and retained memory/frame budgets remain open. Controlled signed hosting
 passes on actual Dragonfly and BDS backends, including BDS HTTP and selected LAN routes,
@@ -106,8 +109,8 @@ these controls do not qualify installation or live advertised hosting.
 Android uses native networking and the platform TLS verifier; target checks and APK
 assembly are verified. Physical-device sign-in, TLS, terrain and lifecycle acceptance
 remain open. Go server integrations retain their existing process lifecycles.
-The native client source retirement still requires final integrated acceptance. No result
-here closes full source-based parity or the complete networking goal. Keep dependency
+The current macOS runtime and verified Android package contain no Go client payload.
+No result here closes full source-based parity or the complete networking goal. Keep dependency
 identities shared across reusable libraries and the client. The pinned target comes
 from [the target manifest](assets/bedrock-target.json).
 Native recovery from invalid token contents in a safely owned saved cache enters

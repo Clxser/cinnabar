@@ -421,7 +421,45 @@
     Assert-True ($source.Contains("'1.26.52.3'")) 'acceptance does not pin the exact BDS startup release'
     Assert-True ($source.Contains('Move-Item -LiteralPath $temporaryPath -Destination $Path')) 'fixture manifest publication is not an atomic sibling rename'
     Assert-True ($source.Contains('$cpuPercent = 100.0 * $cpuDelta / ($wallDelta * [Environment]::ProcessorCount)')) 'steady CPU normalization formula changed'
-    Assert-True (([regex]::Matches($source, '\.Refresh\(\)')).Count -ge 4) 'resource sampling does not refresh both process handles before/during sampling'
+    & {
+        . (Join-Path $ProjectRoot 'scripts\acceptance\Resources.ps1')
+        # Exercise the real sampler without waiting or starting an operating-system process.
+        function Start-Sleep {
+            param([int]$Seconds)
+            Assert-Equal 1 $Seconds 'steady sampler changed its one-second interval'
+        }
+        $sampledProcess = [pscustomobject]@{
+            HasExited = $false
+            RefreshCount = 0
+            CpuReadCount = 0
+            RssReadCount = 0
+            LastCpuRefresh = 0
+        }
+        $sampledProcess | Add-Member -MemberType ScriptMethod -Name Refresh -Value {
+            $this.RefreshCount++
+        }
+        $sampledProcess | Add-Member -MemberType ScriptProperty -Name TotalProcessorTime -Value {
+            Assert-True ($this.RefreshCount -gt $this.LastCpuRefresh) 'client CPU was read without a fresh process snapshot'
+            $this.LastCpuRefresh = $this.RefreshCount
+            $this.CpuReadCount++
+            return [TimeSpan]::Zero
+        }
+        $sampledProcess | Add-Member -MemberType ScriptProperty -Name WorkingSet64 -Value {
+            Assert-True ($this.RefreshCount -ge 2) 'client RSS was read without refreshing the sampling snapshot'
+            $this.RssReadCount++
+            return [uint64]1MB
+        }
+        $trigger = New-SteadyResourceTriggerEvidence -Kind WorldReady -WorldReadyMarker 'CINNABAR_WORLD_READY test'
+        $document = Measure-SteadyResources -ClientHandle ([pscustomobject]@{ Process = $sampledProcess }) `
+            -RunDirectory $TempRoot -DurationSeconds 1 -Trigger $trigger
+        Assert-Equal 2 $sampledProcess.CpuReadCount 'steady sampler omitted baseline or sample CPU'
+        Assert-Equal 1 $sampledProcess.RssReadCount 'steady sampler omitted the client RSS sample'
+        Assert-Equal 1 $document.samples.Count 'steady sampler did not retain its requested sample'
+        Assert-Equal ([uint64]1MB) $document.samples[0].client_rss_bytes 'steady sampler changed client RSS'
+        Assert-Equal 0 $document.samples[0].cpu_percent 'steady sampler changed zero CPU usage'
+        Assert-Equal 1 $document.summary.sample_count 'steady sampler summary omitted the sample'
+        Assert-True (Test-Path -LiteralPath (Join-Path $TempRoot 'steady-resources.json') -PathType Leaf) 'steady sampler did not publish its artifact'
+    }
     $baselineSourceMutationIndex = $source.IndexOf('$baselineSourceMutationCommand = Publish-BaselineSourceMutation', [StringComparison]::Ordinal)
     $resourceSamplingIndex = $source.IndexOf('$resourceDocument = Measure-SteadyResources', [StringComparison]::Ordinal)
     $baselineForestPlanIndex = $source.IndexOf(
