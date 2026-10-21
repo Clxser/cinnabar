@@ -380,6 +380,10 @@ OS Alt-Tab acceptance on macOS, Windows and Linux remains incomplete.
   Offline rendered fixtures cover the panel, values, palettes and reset confirmation;
   live input acceptance remains incomplete. Font size 5–20/default 10 and spacing
   0–100/default 0 remain provisional host ranges, without confirmed native defaults.
+  Social → Discord now exposes the Rich Presence master switch plus persisted privacy,
+  party-size, elapsed-time and join-request controls; each is applied to the Discord
+  activity payload and the panel has its own reset. Live Discord desktop acceptance and
+  native settings parity remain incomplete.
 
 The inherited interaction acceptance scope also includes full item identity and use phases,
 replacement/deferred releases, mounted inventory, sign filtering/length/structured text,
