@@ -179,28 +179,47 @@ async fn friend_recovery_canceled_borrow_preserves_first_absolute_cutoff() {
             let mut original = Original::admitted(legacy, true, cleanup_deadline).await;
             let first = tokio::time::Instant::now().into_std() + Duration::from_secs(10);
             let reached = original.cancel_rebind(first).await;
-            let retained = original.pending() && original.join.active_refresh_deadline == Some(first);
+            let retained =
+                original.pending() && original.join.active_refresh_deadline == Some(first);
+            // Retain the real checkout so the resumed borrow waits under its original timer,
+            // rather than starting an unrelated TLS request that clock advancement would cancel.
+            let checkout = original.join.account.begin().unwrap();
+            let later = first + Duration::from_secs(10);
             // All real TLS/member work has reached its explicit physical hold before clock control.
             tokio::time::pause();
             let (pending, timed_out) = {
-                let mut next = Box::pin(original.join.drive(first + Duration::from_secs(10)));
+                let mut next = Box::pin(original.join.drive(later));
                 match next.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
-                    Poll::Ready(result) => (false, matches!(result, Err(error) if error.kind() == io::ErrorKind::TimedOut)),
+                    Poll::Ready(result) => (
+                        false,
+                        matches!(result, Err(error) if error.kind() == io::ErrorKind::TimedOut),
+                    ),
                     Poll::Pending => {
                         let remaining = tokio::time::Instant::from_std(first)
                             .saturating_duration_since(tokio::time::Instant::now());
                         tokio::time::advance(remaining).await;
-                        (true, matches!(next.await, Err(error) if error.kind() == io::ErrorKind::TimedOut))
+                        let result = next.await;
+                        (
+                            true,
+                            matches!(result, Err(error) if error.kind() == io::ErrorKind::TimedOut)
+                                && tokio::time::Instant::now().into_std() < later,
+                        )
                     }
                 }
             };
             tokio::time::resume();
-            let unchanged = original.join.active_refresh_deadline == Some(first) && original.pending();
+            drop(checkout);
+            let unchanged =
+                original.join.active_refresh_deadline == Some(first) && original.pending();
             let (closed, owners) = original.finish(cleanup_deadline).await;
-            outcomes.push((legacy, reached, retained, pending, timed_out, unchanged, closed, owners));
+            outcomes.push((
+                legacy, reached, retained, pending, timed_out, unchanged, closed, owners,
+            ));
         }
         outcomes
-    }).await.expect("finite original cutoff cleanup");
+    })
+    .await
+    .expect("finite original cutoff cleanup");
     assert!(
         outcomes.iter().all(
             |(_, reached, retained, pending, timed_out, unchanged, closed, owners)| {
