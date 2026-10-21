@@ -45,13 +45,13 @@ struct Guest {
 }
 
 impl Guest {
-    /// Binds the original verified guest without cloning its token, nonce or signed metadata.
+    /// Binds the verified guest and original signed bytes before any JSON text repair.
     fn new(login: &AuthenticatedLogin) -> io::Result<Self> {
         let player = login.player_identity().ok_or_else(invalid)?;
         Ok(Self {
             xuid: login.xuid().into(),
             key: *login.public_key(),
-            client_data: Sha256::digest(login.client_data().get().as_bytes()).into(),
+            client_data: Sha256::digest(login.client_data_json_bytes()).into(),
             uuid: player.uuid(),
             name: player.display_name().into(),
         })
@@ -64,8 +64,7 @@ impl Guest {
             && login.player_identity().is_some_and(|player| {
                 player.uuid() == self.uuid && player.display_name() == self.name
             })
-            && self.client_data
-                == <[u8; 32]>::from(Sha256::digest(login.client_data().get().as_bytes()))
+            && self.client_data == <[u8; 32]>::from(Sha256::digest(login.client_data_json_bytes()))
     }
 }
 
