@@ -2,8 +2,8 @@
 
 use super::{HostedApproval, HostedLoginApproval, NativeHostedLoginPolicy, NativeHostedWorld};
 use bedrock_client_tokio::connection::send::PreparedSend;
+use bedrock_client_tokio::server::AcceptingConnection;
 use bedrock_net::login::AuthenticatedLogin;
-use protocol::NativeAcceptingIo;
 use std::{io, time::Instant};
 
 /// Borrows the exact existing predicate owners for this accepting continuation.
@@ -72,7 +72,7 @@ impl NativeHostedWorld {
     }
 
     /// Settles only already committed output before consuming the original global close capability.
-    pub(super) async fn retire_wire(wire: &mut NativeAcceptingIo, deadline: Instant) {
+    pub(super) async fn retire_wire(wire: &mut AcceptingConnection, deadline: Instant) {
         let _ = wire.begin_send_retirement(deadline).finish().await;
     }
 
@@ -81,7 +81,7 @@ impl NativeHostedWorld {
     pub(in crate::native_account::hosted_world) async fn send_member_raw(
         &mut self,
         approval: &HostedApproval,
-        wire: &mut NativeAcceptingIo,
+        wire: &mut AcceptingConnection,
         packet: bytes::Bytes,
         deadline: Instant,
     ) -> io::Result<()> {

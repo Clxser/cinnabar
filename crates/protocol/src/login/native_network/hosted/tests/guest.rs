@@ -1,13 +1,10 @@
 //! Real signed Login bindings without another account, backend or transport owner.
 
 use super::super::Guest;
-use crate::login::native_network::{
-    accepting::send::tests::{Pair, signed_pair_with_key},
-    tests::provider::{
-        SERVICE_SECONDS, XUID, claims,
-        hosted_upstream::{TIMEOUT, client_receive, client_send, finish_send},
-        key, signed, verifier,
-    },
+use crate::login::native_network::tests::provider::{
+    SERVICE_SECONDS, XUID, claims,
+    hosted_upstream::{TIMEOUT, client_receive, client_send, finish_send},
+    key, signed, verifier,
 };
 use base64::{
     Engine as _,
@@ -20,6 +17,7 @@ use bedrock_client::{
         ServerSettingsEvent, VerifiedLogin,
     },
 };
+use bedrock_client_tokio::server::test_support::{SignedPair, signed_pair_with_key};
 use bedrock_net::{BatchCodec, BatchHeader, BatchLimits};
 use bytes::Bytes;
 use p384::{
@@ -184,9 +182,10 @@ async fn signed_login(
     signer: Arc<SigningKey>,
     data: &RawValue,
     payload: Option<&[u8]>,
-) -> (Pair, Result<VerifiedLogin, ServerHandshakeError>) {
+) -> (SignedPair, Result<VerifiedLogin, ServerHandshakeError>) {
     let deadline = Instant::now() + TIMEOUT;
-    let (mut pair, handshake) = signed_pair_with_key(transport).await;
+    let (mut pair, handshake) =
+        signed_pair_with_key(transport, crate::MAX_DEFERRED_PACKET_BYTES).await;
     let utc = service_time();
     let provider = verifier();
     let codec = BatchCodec::new(BatchHeader::NetherNet, BatchLimits::default());

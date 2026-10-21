@@ -2,9 +2,7 @@
 
 mod accepting;
 mod authentication;
-pub use accepting::{
-    NativeAcceptingIo, NativeAcceptingRetired, NativeHostWorld, native_host_packs,
-};
+pub use accepting::{NativeHostWorld, native_host_packs};
 pub use authentication::{
     NativeAuthentication, NativeCredential, NativeHostingIdentity, NativeProvider,
     NativeServiceClock,

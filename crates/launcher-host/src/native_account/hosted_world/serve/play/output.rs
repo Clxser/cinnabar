@@ -1,6 +1,6 @@
 //! One backend delivery obligation; packet bytes and wire progress stay with their original owners.
 
-use super::{HostedApproval, NativeAcceptingIo, NativeHostedWorld, SendAuthority};
+use super::{AcceptingConnection, HostedApproval, NativeHostedWorld, SendAuthority};
 use bytes::Bytes;
 use std::{io, time::Instant};
 
@@ -16,7 +16,7 @@ impl Output {
     /// Records backend delivery before any service postcheck can discard its selected result.
     pub(in crate::native_account::hosted_world) fn stage(
         &mut self,
-        wire: &mut NativeAcceptingIo,
+        wire: &mut AcceptingConnection,
         packet: Bytes,
         deadline: Instant,
     ) -> io::Result<()> {
@@ -41,7 +41,7 @@ impl Output {
         &mut self,
         host: &mut NativeHostedWorld,
         approval: &HostedApproval,
-        wire: &mut NativeAcceptingIo,
+        wire: &mut AcceptingConnection,
     ) -> io::Result<()> {
         if let Self::Forwarding(deadline) = *self {
             host.advance_send(&mut wire.resume_send()?, SendAuthority::Member(approval))
@@ -61,7 +61,7 @@ impl Output {
     /// Records actual received completion before its service wrapper can fail a later postcheck.
     pub(in crate::native_account::hosted_world) fn acknowledged(
         &mut self,
-        wire: &mut NativeAcceptingIo,
+        wire: &mut AcceptingConnection,
     ) -> io::Result<()> {
         if !matches!(self, Self::Acknowledging(_)) {
             return Err(invalid());

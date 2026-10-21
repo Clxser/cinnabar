@@ -1,12 +1,12 @@
 //! Fixed controlled world over the original accepting Login, pack and initialization owners.
 
-use crate::NativeAcceptingIo;
 use bedrock_client::server::{
     ServerApprovalEvent, ServerHandshakeOptions, ServerLoginEvent, ServerSettingsEvent,
     session::{
         ServerPackDelivery, ServerPackEvent, ServerPackSnapshot, ServerSpawnEvent, ServerWorld,
     },
 };
+use bedrock_client_tokio::server::AcceptingConnection;
 use bedrock_net::login::provider::ProviderVerifier;
 use bedrock_net::login::{LoginError, LoginVerifier, TrustedIdentity};
 use bedrock_protocol_1_26_51::{packets, types::ActorRuntimeID};
@@ -48,7 +48,7 @@ impl LoginVerifier for Policy {
 
 /// Same accepted FIFO after actual generated initialization; no public constructor can fabricate it.
 pub struct Peer {
-    wire: NativeAcceptingIo,
+    wire: AcceptingConnection,
 }
 
 /// Verifies original SDP/Login signatures and service membership before serving one empty-pack world.
@@ -60,9 +60,14 @@ pub async fn initialize(
     admitted: impl Fn(&str, &str) -> bool,
     deadline: Instant,
 ) -> io::Result<Peer> {
-    let (mut wire, mut handshake) =
-        NativeAcceptingIo::from_nether(accepted, key, ServerHandshakeOptions::default(), deadline)
-            .await?;
+    let (mut wire, mut handshake) = AcceptingConnection::from_nether(
+        accepted,
+        key,
+        ServerHandshakeOptions::default(),
+        crate::MAX_DEFERRED_PACKET_BYTES,
+        deadline,
+    )
+    .await?;
     let result = async {
         let mut login = loop {
             let packet = wire.receive(deadline).await?;
@@ -235,7 +240,7 @@ impl Peer {
 
 /// Commits the exact original generated effect through the retained accepting send receipt.
 async fn send(
-    wire: &mut NativeAcceptingIo,
+    wire: &mut AcceptingConnection,
     packets: Vec<packets::Packet>,
     deadline: Instant,
 ) -> io::Result<()> {

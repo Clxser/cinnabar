@@ -11,11 +11,12 @@ pub(in crate::login::native_network) use startup::drain_original_relay_inputs;
 mod tests;
 pub use startup::{NativeHostedRelay, NativeHostedRelayClosing, NativeHostedRelayProgress};
 
-use super::{Connection, NativeAcceptingIo, PacketIo, failure, negotiated, packs};
+use super::{Connection, PacketIo, failure, negotiated, packs};
 use crate::{NativeConnectionTarget, ProtocolError};
 use bedrock_client::server::session::{
     AcceptedSession, ServerPackContent, ServerPackSnapshot, ServerRelaying,
 };
+use bedrock_client_tokio::server::AcceptingConnection;
 use bedrock_net::login::{AuthenticatedLogin, LoginVerifier};
 use bedrock_protocol_1_26_51::{packets, wire};
 use bytes::Bytes;
@@ -219,7 +220,7 @@ impl NativeHostedUpstream {
     /// That owner follows actual pack acknowledgment or flushed packless LoginSuccess.
     pub fn relay_world<A>(
         self,
-        wire: NativeAcceptingIo,
+        wire: AcceptingConnection,
         ready: ServerRelaying<A>,
         now: Instant,
     ) -> io::Result<NativeHostedRelay<A>> {

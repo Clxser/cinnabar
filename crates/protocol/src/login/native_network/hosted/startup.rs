@@ -11,7 +11,7 @@ use bedrock_client_tokio::connection::send::PreparedSend;
 /// The caller still owns current account/opening/member approval at every actual send commit.
 #[must_use]
 pub struct NativeHostedRelay<A> {
-    wire: NativeAcceptingIo,
+    wire: AcceptingConnection,
     upstream: NativeHostedUpstream,
     relay: Option<ServerRelaying<A>>,
     ready: Option<ServerRelayInitialized<A>>,
@@ -48,7 +48,7 @@ impl<A> NativeHostedRelay<A> {
     /// Takes both original IO owners after actual packs or flushed no-pack LoginSuccess.
     pub(super) fn new(
         upstream: NativeHostedUpstream,
-        wire: NativeAcceptingIo,
+        wire: AcceptingConnection,
         relay: ServerRelaying<A>,
         now: Instant,
     ) -> io::Result<Self> {
@@ -205,7 +205,7 @@ impl<A> NativeHostedRelay<A> {
         }
         let connection = match effect.source {
             Source::Client => &mut self.upstream.connection,
-            Source::Server => &mut self.wire.connection,
+            Source::Server => self.wire.connection_mut(),
         };
         let body = connection.raw_body(effect.raw.clone())?;
         connection.prepare_send(body, self.deadline)?;
@@ -234,7 +234,7 @@ impl<A> NativeHostedRelay<A> {
         };
         let connection = match effect.source {
             Source::Client => &mut self.upstream.connection,
-            Source::Server => &mut self.wire.connection,
+            Source::Server => self.wire.connection_mut(),
         };
         Ok((login, grant, connection.resume_send()?))
     }
@@ -250,11 +250,11 @@ impl<A> NativeHostedRelay<A> {
             .ok_or_else(invalid)?;
         match effect.source {
             Source::Client => self.upstream.connection.finish_send()?,
-            Source::Server => self.wire.connection.finish_send()?,
+            Source::Server => self.wire.connection_mut().finish_send()?,
         }
         let effect = self.effect.take().expect("checked original effect");
         match effect.source {
-            Source::Client => self.wire.connection.finish_current(),
+            Source::Client => self.wire.connection_mut().finish_current(),
             Source::Server => self.upstream.connection.finish_current(),
         }
         if let Some(control) = effect.control {
@@ -293,7 +293,11 @@ impl<A> NativeHostedRelay<A> {
         verifier: &impl LoginVerifier,
         now: Instant,
         utc: SystemTime,
-    ) -> io::Result<(NativeAcceptingIo, NativeHostedUpstream, AcceptedSession<A>)> {
+    ) -> io::Result<(
+        AcceptingConnection,
+        NativeHostedUpstream,
+        AcceptedSession<A>,
+    )> {
         self.live()?;
         if self.effect.is_some() || now >= self.deadline {
             return Err(invalid());
@@ -313,7 +317,7 @@ impl<A> NativeHostedRelay<A> {
 
     /// Seals both send directions and retains their actual original receipt/transport cleanup.
     pub fn begin_close(mut self, deadline: Instant) -> NativeHostedRelayClosing {
-        self.wire.connection.retire_send(deadline);
+        self.wire.connection_mut().retire_send(deadline);
         NativeHostedRelayClosing {
             wire: self.wire,
             upstream: self.upstream.begin_close(deadline),
@@ -335,7 +339,7 @@ impl<A> NativeHostedRelay<A> {
 /// Both original startup legs remain owned through receipt settlement and finite retirement.
 #[must_use]
 pub struct NativeHostedRelayClosing {
-    wire: NativeAcceptingIo,
+    wire: AcceptingConnection,
     upstream: NativeHostedUpstreamClosing,
     deadline: Instant,
     failure: Option<std::sync::Arc<io::Error>>,
@@ -347,7 +351,7 @@ impl NativeHostedRelayClosing {
     pub async fn finish_close(&mut self) -> io::Result<()> {
         if !self.closed {
             let (wire, upstream) = tokio::join!(
-                self.wire.connection.settle_send(),
+                self.wire.connection_mut().settle_send(),
                 self.upstream.finish_close()
             );
             for result in [wire.map(|_| ()), upstream] {
@@ -358,7 +362,7 @@ impl NativeHostedRelayClosing {
             }
             let result = tokio::time::timeout_at(
                 self.deadline.into(),
-                self.wire.connection.transport_mut().finish_close(),
+                self.wire.connection_mut().transport_mut().finish_close(),
             )
             .await
             .unwrap_or_else(|_| Err(expired()));
@@ -379,11 +383,11 @@ impl NativeHostedRelayClosing {
 #[cfg(test)]
 pub(in crate::login::native_network) async fn drain_original_relay_inputs(
     mut closing: NativeHostedRelayClosing,
-) -> (NativeAcceptingIo, [Option<io::ErrorKind>; 2]) {
+) -> (AcceptingConnection, [Option<io::ErrorKind>; 2]) {
     let (wire, upstream) = tokio::join!(
         tokio::time::timeout_at(
             closing.deadline.into(),
-            closing.wire.connection.transport_mut().finish_close(),
+            closing.wire.connection_mut().transport_mut().finish_close(),
         ),
         closing.upstream.finish_close(),
     );

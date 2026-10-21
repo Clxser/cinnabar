@@ -33,7 +33,7 @@ impl NativeHostedWorld {
     /// Delivers one original snapshot/source through actual generated pack flush continuations.
     pub(super) async fn deliver_packs(
         &mut self,
-        wire: &mut NativeAcceptingIo,
+        wire: &mut AcceptingConnection,
         ready: ServerPacksReady<HostedLoginApproval>,
         snapshot: ServerPackSnapshot,
         mut source: PackSource<'_>,

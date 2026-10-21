@@ -9,11 +9,11 @@ use tokio::sync::oneshot;
 #[tokio::test]
 async fn native_nether_inbox_original_signed_actor_drives_pending_write() {
     tokio::time::timeout(Duration::from_secs(20), async {
-        let (mut pair, _) =
-            crate::login::native_network::accepting::send::tests::signed_pair_with_key(Arc::new(
-                SigningKey::generate(),
-            ))
-            .await;
+        let (mut pair, _) = bedrock_client_tokio::server::test_support::signed_pair_with_key(
+            Arc::new(SigningKey::generate()),
+            crate::MAX_DEFERRED_PACKET_BYTES,
+        )
+        .await;
         let marker = Bytes::from_static(b"original-signed-reliable-input");
         pair.sender.send(marker.clone()).await.unwrap();
         let (observed, completion) = oneshot::channel();

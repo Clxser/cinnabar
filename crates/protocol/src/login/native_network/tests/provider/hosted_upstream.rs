@@ -2,12 +2,12 @@
 
 use super::*;
 use bedrock_client_tokio::connection::send::PreparedSend;
+use bedrock_client_tokio::server::test_support::{SignedPair, signed_pair_with_key};
 use bedrock_net::login::provider::ProviderVerifier;
 mod cdn;
 mod retirement;
 use crate::login::native_network::{
     NativeHostedRelayProgress, NativeHostedUpstream,
-    accepting::send::tests::{Pair, signed_pair_with_key},
     transport::early_spawn_tests::{
         FixtureRoute, Route, fixture_route, offline_login_identity, receive, send,
     },
@@ -293,7 +293,8 @@ async fn original_upstream_with_retirement(
         peer.session.closed().await;
     };
     let relay = async {
-        let (mut pair, handshake) = signed_pair_with_key(Arc::new(key())).await;
+        let (mut pair, handshake) =
+            signed_pair_with_key(Arc::new(key()), crate::MAX_DEFERRED_PACKET_BYTES).await;
         let deadline = Instant::now() + TIMEOUT;
         let utc = UNIX_EPOCH + Duration::from_secs(SERVICE_SECONDS);
         let provider = verifier();
@@ -658,7 +659,7 @@ fn assert_offline_name(login: &packets::Login) {
 async fn guest_packs<S: bedrock_net::BatchPhase>(
     ready: ServerPacksReady<u8>,
     mut client_login: ClientLogin,
-    pair: &mut Pair,
+    pair: &mut SignedPair,
     codec: &BatchCodec<S>,
     source: (
         &NativeHostedUpstream,
@@ -667,7 +668,7 @@ async fn guest_packs<S: bedrock_net::BatchPhase>(
     provider: &ProviderVerifier,
     clock: (std::time::SystemTime, Instant, bool, u8),
 ) -> ServerWorldReady<u8> {
-    let Pair { wire, client, .. } = pair;
+    let SignedPair { wire, client, .. } = pair;
     let (upstream, snapshot) = source;
     let (utc, deadline, premium, pack_type) = clock;
     let (mut server, initial) = ready

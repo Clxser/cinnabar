@@ -22,7 +22,7 @@ use crate::{
 };
 
 /// Bounds the bytes deferred to play while the spawn prerequisites arrive.
-pub(super) const MAX_DEFERRED_PACKET_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_DEFERRED_PACKET_BYTES: usize = 16 * 1024 * 1024;
 /// The fallback view radius when the caller supplies no saved preference.
 pub(super) const DEFAULT_CHUNK_RADIUS: u8 = 16;
 /// The stage a join-time Disconnect names once the session has been handed over.

@@ -3,6 +3,7 @@
 use super::*;
 use crate::native_account::ACQUISITION_TIMEOUT;
 use bedrock_client::server::ServerHandshakeOptions;
+use bedrock_client_tokio::server::AcceptingConnection;
 use bedrock_net::{BatchCodec, BatchHeader, BatchLimits, DecodeOutcome};
 use bytes::Bytes;
 use nethernet::identity::{
@@ -19,7 +20,6 @@ use p384::{
     ecdsa::{SigningKey, VerifyingKey},
     elliptic_curve::Generate,
 };
-use protocol::NativeAcceptingIo;
 use std::{future::poll_fn, net::Ipv4Addr, pin::pin, task::Poll, time::SystemTime};
 
 const SERVER: &str = "synthetic-hosted-send-server";
@@ -259,7 +259,7 @@ async fn revoked_original_member_cannot_commit_after_external_send_capacity_wait
 }
 
 struct SignedPair {
-    wire: NativeAcceptingIo,
+    wire: AcceptingConnection,
     sender: SessionSender,
     client: NetherClient,
     listener: NetherServer,
@@ -276,10 +276,15 @@ async fn signed_pair(deadline: Instant) -> SignedPair {
         signaling,
     } = signed_association(Arc::new(SigningKey::generate())).await;
     let sender = accepted.session.sender();
-    let (wire, _handshake) =
-        NativeAcceptingIo::from_nether(accepted, key, ServerHandshakeOptions::default(), deadline)
-            .await
-            .unwrap();
+    let (wire, _handshake) = AcceptingConnection::from_nether(
+        accepted,
+        key,
+        ServerHandshakeOptions::default(),
+        protocol::MAX_DEFERRED_PACKET_BYTES,
+        deadline,
+    )
+    .await
+    .unwrap();
     SignedPair {
         wire,
         sender,

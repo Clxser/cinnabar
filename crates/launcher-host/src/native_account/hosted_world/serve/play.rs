@@ -13,8 +13,8 @@ pub(in crate::native_account::hosted_world) use step::Step;
 
 use super::{HostedApproval, HostedLoginApproval, NativeHostedWorld, SendAuthority};
 use bedrock_client::server::session::AcceptedSession;
+use bedrock_client_tokio::server::{AcceptingConnection, RetiredAcceptingConnection};
 use bridge::host_world::{ActiveBackendPeer, ClosingBackendPeer, contract::CLOSE_MILLIS};
-use protocol::{NativeAcceptingIo, NativeAcceptingRetired};
 use std::{
     io,
     sync::Arc,
@@ -25,7 +25,7 @@ use std::{
 /// No worker is spawned. The caller retains this owner and polls it on its existing runtime.
 #[must_use]
 pub struct NativeHostedPeer {
-    wire: NativeAcceptingIo,
+    wire: AcceptingConnection,
     backend: PeerBackend,
     accepted: AcceptedSession<HostedLoginApproval>,
     output: Output,
@@ -37,8 +37,8 @@ pub struct NativeHostedPeer {
 /// New play admission ended; original backend output can finish before actual transport retirement.
 #[must_use]
 pub struct ClosingHostedPeer {
-    wire: Option<NativeAcceptingIo>,
-    retired: Option<NativeAcceptingRetired>,
+    wire: Option<AcceptingConnection>,
+    retired: Option<RetiredAcceptingConnection>,
     backend: Option<ClosingPeerBackend>,
     accepted: AcceptedSession<HostedLoginApproval>,
     output: Output,
@@ -61,7 +61,7 @@ impl NativeHostedPeer {
     }
     /// Takes only the actual typed initialization and both corresponding live IO owners.
     pub(super) fn new(
-        wire: NativeAcceptingIo,
+        wire: AcceptingConnection,
         backend: ActiveBackendPeer,
         accepted: AcceptedSession<HostedLoginApproval>,
         turn_control: Arc<nethernet_tokio::SessionSender>,
@@ -79,7 +79,7 @@ impl NativeHostedPeer {
 
     /// Takes the actual BDS initialized handoff without creating another transport or coordinator.
     pub(super) fn new_bds(
-        wire: NativeAcceptingIo,
+        wire: AcceptingConnection,
         backend: protocol::NativeHostedUpstream,
         accepted: AcceptedSession<HostedLoginApproval>,
         turn_control: Arc<nethernet_tokio::SessionSender>,

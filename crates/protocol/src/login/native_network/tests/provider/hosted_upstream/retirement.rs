@@ -26,7 +26,7 @@ pub(super) async fn observe_relay<A>(
     deadline: Instant,
     addresses: [std::net::SocketAddr; 2],
 ) -> (
-    crate::login::native_network::NativeAcceptingIo,
+    bedrock_client_tokio::server::AcceptingConnection,
     RelayObservation,
 ) {
     let mut closing = relay.begin_close(deadline);

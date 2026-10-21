@@ -24,7 +24,13 @@ impl NativeHostedWorld {
         let (mut wire, handshake) = self
             .peer_io(
                 Some(deadline),
-                NativeAcceptingIo::from_nether(accepted, key, options, deadline),
+                AcceptingConnection::from_nether(
+                    accepted,
+                    key,
+                    options,
+                    protocol::MAX_DEFERRED_PACKET_BYTES,
+                    deadline,
+                ),
             )
             .await?;
         let mut upstream = None;

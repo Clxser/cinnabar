@@ -33,16 +33,17 @@ mod startup;
 #[cfg(not(target_arch = "wasm32"))]
 pub use session_join::NativeJoinPreparation;
 pub use session_join::{JoinPreparation, SessionIo, SessionLogin};
+pub use startup::MAX_DEFERRED_PACKET_BYTES;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub(crate) mod native_network;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub use native_network::{
-    NativeAcceptingIo, NativeAcceptingRetired, NativeAuthentication, NativeCredential,
-    NativeHostWorld, NativeHostedRelay, NativeHostedRelayClosing, NativeHostedRelayProgress,
-    NativeHostedUpstream, NativeHostedUpstreamClosing, NativeHostingIdentity, NativeProvider,
-    NativeRelayClosing, NativeRelayConnecting, NativeRelayConnection, NativeRelayDriver,
-    NativeRelayHandoff, NativeRelayInbound, NativeRelayRetired, NativeRelaySender,
-    NativeRelayWritten, NativeServiceClock, native_host_packs,
+    NativeAuthentication, NativeCredential, NativeHostWorld, NativeHostedRelay,
+    NativeHostedRelayClosing, NativeHostedRelayProgress, NativeHostedUpstream,
+    NativeHostedUpstreamClosing, NativeHostingIdentity, NativeProvider, NativeRelayClosing,
+    NativeRelayConnecting, NativeRelayConnection, NativeRelayDriver, NativeRelayHandoff,
+    NativeRelayInbound, NativeRelayRetired, NativeRelaySender, NativeRelayWritten,
+    NativeServiceClock, native_host_packs,
 };
 mod unused_packets;
 mod web_handoff;

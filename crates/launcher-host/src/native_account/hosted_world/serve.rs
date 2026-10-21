@@ -17,11 +17,12 @@ use bedrock_client::server::{
     ServerLoginEvent, ServerPacksReady, ServerSettingsEvent,
     session::{AcceptedSession, ServerSpawnEvent},
 };
+use bedrock_client_tokio::server::AcceptingConnection;
 use bridge::host_world::{
     ActiveBackendPeer, BackendWorldReady, HostProcess, PendingBackendPeer, contract::Identity,
 };
 use p384::ecdsa::SigningKey;
-use protocol::{NativeAcceptingIo, NativeHostWorld, native_host_packs};
+use protocol::{NativeHostWorld, native_host_packs};
 use std::{io, sync::Arc, time::Instant};
 
 impl NativeHostedWorld {
@@ -111,7 +112,13 @@ impl NativeHostedWorld {
         let (mut wire, handshake) = self
             .peer_io(
                 Some(deadline),
-                NativeAcceptingIo::from_nether(accepted, key, options, deadline),
+                AcceptingConnection::from_nether(
+                    accepted,
+                    key,
+                    options,
+                    protocol::MAX_DEFERRED_PACKET_BYTES,
+                    deadline,
+                ),
             )
             .await?;
         let result = async {
@@ -181,7 +188,7 @@ impl NativeHostedWorld {
     /// Executes only the reusable typed accepting handshake, with exact flush continuations.
     async fn login(
         &mut self,
-        wire: &mut NativeAcceptingIo,
+        wire: &mut AcceptingConnection,
         mut handshake: ServerHandshake,
         policy: &mut NativeHostedLoginPolicy,
         max_login_bytes: usize,
@@ -229,7 +236,7 @@ impl NativeHostedWorld {
         let verified = loop {
             let packet = self.peer_io(Some(deadline), wire.receive(deadline)).await?;
             self.wait_policy(policy).await?;
-            if let Some(request) = NativeAcceptingIo::login_request(&packet) {
+            if let Some(request) = AcceptingConnection::login_request(&packet) {
                 self.preflight_login(request, policy, max_login_bytes)
                     .await?;
             }
@@ -310,7 +317,7 @@ impl NativeHostedWorld {
     /// Keeps the actual pack continuation/source lease until the real client runtime-ID handoff.
     async fn packs_and_world(
         &mut self,
-        wire: &mut NativeAcceptingIo,
+        wire: &mut AcceptingConnection,
         ready: ServerPacksReady<HostedLoginApproval>,
         mut backend: PendingBackendPeer,
         process: &HostProcess,
