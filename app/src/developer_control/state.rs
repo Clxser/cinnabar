@@ -20,6 +20,8 @@ use {
 const DEFAULT_WAIT: Duration = Duration::from_secs(120);
 /// Actors listed in a state snapshot, nearest first.
 const MAX_LISTED_ACTORS: usize = 32;
+/// Featured menu rows listed in a snapshot, in their current selection order.
+const MAX_LISTED_FEATURED_SERVERS: usize = 32;
 /// Recent chat output is bounded so command tests cannot return a session's entire history.
 const MAX_CHAT_ROWS: usize = 16;
 const MAX_CHAT_CHARS: usize = 1024;
@@ -298,6 +300,18 @@ pub(super) fn snapshot(world: &World) -> Value {
             "focused_action": view.focused_action.map(|action| format!("{action:?}")),
             "sign_in_browser": format!("{:?}", view.sign_in_browser),
             "sign_in_fixture": menu.sign_in_fixture_state(),
+            "featured": {
+                "count": view.featured.len(),
+                "loading": view.catalog_loading,
+                "rows": view.featured.iter().enumerate()
+                    .take(MAX_LISTED_FEATURED_SERVERS)
+                    .map(|(index, server)| json!({
+                        "index": index,
+                        "name": &server.name,
+                        "logical_target": &server.address,
+                    }))
+                    .collect::<Vec<_>>(),
+            },
         })
     });
     let local_mods = crate::modding::developer_state(world);
