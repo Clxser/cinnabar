@@ -84,9 +84,10 @@ pub struct NodeAnim {
     pub alpha: Vec<Arc<ControlAnims>>,
     /// Product of the static alphas of the other contributors.
     pub alpha_static: f32,
-    /// Offset/size animations moving the draw, and its clip, outermost first.
+    /// Offset/size animations moving the draw, outermost first.
     pub movers: Vec<Arc<ControlAnims>>,
-    pub clip_movers: Vec<Arc<ControlAnims>>,
+    /// Unintersected boundaries, each retaining its own animation ancestry.
+    pub clip: Option<Arc<Clip>>,
     /// Static sprite uv origin and size in texture pixels.
     pub uv_rest: [f32; 2],
     pub uv_size_rest: Option<[f32; 2]>,
@@ -98,6 +99,52 @@ pub struct NodeAnim {
     pub transform: Option<crate::transform::Affine>,
     /// The Cinnabar filtered subtree this draw paints into.
     pub filter: Option<std::sync::Arc<crate::filter::FilterGroup>>,
+}
+
+/// A clipping boundary evaluated in its own moving space before ancestor intersection.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Clip {
+    pub(crate) rect: Rect,
+    pub(crate) movers: Vec<Arc<ControlAnims>>,
+    pub(crate) transform: Option<crate::transform::Affine>,
+    pub(crate) parent: Option<Arc<Clip>>,
+}
+
+impl Clip {
+    /// The fixed viewport at the root of a draw's clip ancestry.
+    pub(crate) fn viewport(rect: Rect) -> Arc<Self> {
+        Arc::new(Self {
+            rect,
+            movers: Vec::new(),
+            transform: None,
+            parent: None,
+        })
+    }
+
+    /// Whether an ancestor moves this clipping boundary.
+    pub(crate) fn moves(&self) -> bool {
+        !self.movers.is_empty() || self.parent.as_ref().is_some_and(|parent| parent.moves())
+    }
+
+    /// Move each original boundary before intersecting it with its already-painted parent.
+    fn animate(
+        &self,
+        animator: &mut Animator,
+        now: f64,
+        clocks: Option<&BTreeMap<String, f64>>,
+    ) -> Rect {
+        let mut rect = self.rect.into();
+        for mover in self.movers.iter().rev() {
+            rect = moved(mover, &animator.sample(mover, now, clocks), rect);
+        }
+        let rect = Rect::new(rect.x, rect.y, rect.w, rect.h);
+        let rect = self
+            .transform
+            .map_or(rect, |transform| transform.bounds(rect));
+        self.parent.as_ref().map_or(rect, |parent| {
+            parent.animate(animator, now, clocks).intersect(rect)
+        })
+    }
 }
 
 /// A draw as its animations leave it at one moment.
@@ -190,9 +237,8 @@ impl DrawNode {
             let written = animator.sample(mover, now, clocks);
             out.dest = moved(mover, &written, out.dest);
         }
-        for mover in anim.clip_movers.iter().rev() {
-            let written = animator.sample(mover, now, clocks);
-            out.clip = moved(mover, &written, out.clip);
+        if let Some(clip) = &anim.clip {
+            out.clip = clip.animate(animator, now, clocks).into();
         }
         out
     }

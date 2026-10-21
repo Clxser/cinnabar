@@ -306,7 +306,7 @@ fn lay_out<'a>(
         rect,
         screen,
         (0, true, false, true),
-        &Inherited::default(),
+        &Inherited::viewport(screen),
         &mut ctx,
     );
     (laid, ctx.report)
@@ -525,24 +525,22 @@ fn place_subtree<'a>(
     {
         space.region = std::num::NonZeroU64::new(region);
     }
-    let spaces = space.place(
-        style.transform,
-        crate::transform::ClipInputs {
-            rect,
-            parent: parent_clip,
-            clips,
-            clip_offset: style.clip_offset,
-            allows,
-            screen: ctx.screen,
-        },
-    );
+    let clipping = crate::transform::ClipInputs {
+        rect,
+        parent: parent_clip,
+        clips,
+        clip_offset: style.clip_offset,
+        allows,
+        screen: ctx.screen,
+    };
+    let spaces = space.place(style.transform, clipping);
     let paint = spaces.0;
     let filter = crate::filter::FilterGroup::place(inherited.filter.as_ref(), style.filter, &key);
     let (own_alpha, anim, inherit) = inherited.apply(
         control,
         style.alpha,
         own_anims,
-        clips,
+        clipping,
         spaces,
         filter,
         |node| place::sprite_rest(control, node),
