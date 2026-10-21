@@ -141,3 +141,6 @@ pub(super) async fn saved_profile(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(test, unix))]
+mod cache_tests;
