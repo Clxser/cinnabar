@@ -82,14 +82,17 @@ fn discover(binary: &Path) -> Result<Vec<GeneratorInfo>, String> {
     parse_catalog(&bytes)
 }
 
-/// Resolves an explicit executable override only for a development build.
+/// Resolves an explicit executable override only for a development build. A relative override
+/// is anchored to the working directory so discovery and startup run the same file, never a
+/// `PATH` lookup.
 fn select_binary(
     shipped: PathBuf,
     override_path: Option<std::ffi::OsString>,
     development: bool,
 ) -> PathBuf {
     if development && let Some(path) = override_path {
-        return path.into();
+        let path = PathBuf::from(path);
+        return std::path::absolute(&path).unwrap_or(path);
     }
     shipped
 }
@@ -114,10 +117,9 @@ mod tests {
             select_binary(shipped.clone(), Some("custom".into()), false),
             shipped
         );
-        assert_eq!(
-            select_binary(shipped, Some("custom".into()), true),
-            PathBuf::from("custom")
-        );
+        let selected = select_binary(shipped, Some("custom".into()), true);
+        assert!(selected.is_absolute());
+        assert_eq!(selected, std::env::current_dir().unwrap().join("custom"));
     }
 
     #[cfg(unix)]
