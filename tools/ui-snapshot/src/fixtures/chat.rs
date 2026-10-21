@@ -77,7 +77,7 @@ pub(super) fn chat_history_width() -> Fixture {
 
 /// Shows completions after an anonymous draft with transparent message backgrounds.
 pub(super) fn chat_completion(draft: &'static str, suggestions: &[&str]) -> Fixture {
-    use launcher::menu::settings_options::SettingsOptions;
+    use launcher::menu::settings_options::{SettingId, SettingsOptions};
 
     let mut options = SettingsOptions::default();
     options.set(SettingId::ChatBackgroundOpacity.index(), 0);
