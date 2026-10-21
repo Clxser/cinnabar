@@ -336,10 +336,10 @@ async fn original_upstream_with_retirement(
         claims["mid"] = json!("provider-playfab");
         claims["tid"] = json!("provider-title");
         let token = signed(claims, "synthetic");
-        let raw = RawValue::from_string(
-            r#"{"ThirdPartyName":"untrusted name","Nonce":"original-guest-nonce","opaque":1e1,"SkinId":"synthetic"}"#
-                .into(),
-        )
+        let raw = RawValue::from_string(format!(
+            r#"{{"DeviceOS":1,"GameVersion":"{}","LanguageCode":"en_US","ThirdPartyName":"untrusted name","Nonce":"original-guest-nonce","opaque":1e1,"SkinId":"synthetic"}}"#,
+            crate::GAME_VERSION,
+        ))
         .unwrap();
         let (client, login) = client.login_authenticated(&token, &raw).unwrap();
         client_send(&pair.client, &codec, vec![login.into()]).await;
