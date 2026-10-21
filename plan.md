@@ -463,6 +463,13 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   preferences now settle feedback, wheel scrolling and surface transitions
   immediately, retain prepared routes and apply across route changes.
   displayed-frame pacing and complete rendering acceptance.
+  Saturation overlays prepare source outlines on image workers independently of GPU-sheet
+  capacity and area-filter them to the requested draw size. Paint skips pending sources,
+  unions small masks within the visible viewport and atlas allocation budget, and draws
+  ordinary prepared sprites. A small LRU reuses clamped source grids across GUI scales. Current and held-food
+  coverage share one mask. CPU/GPU regressions cover tint, cropping, unequal translucent
+  edges, independent shake, inversion and high-resolution minification; complete in-game
+  and platform acceptance remain pending.
   HUD layout editing stores nine anchors and GUI-pixel offsets after completed
   moves, resizes and nudges, with an additive anchored-layout read and normalized
   compatibility reads. Editor drags snap to neighboring cards, stacking gaps and
