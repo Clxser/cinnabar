@@ -146,12 +146,33 @@ async fn peer(
         .ok_or_else(|| "original negotiated peer was lost".to_owned())?
         .close(Instant::now().into_std())
         .map_err(|error| format!("original peer close: {error}"))?;
-    while let Some(output) = closing.poll() {
-        if let RakSessionOutput::Datagram(bytes, remote) = output {
-            socket
-                .send_to(&bytes, remote)
-                .await
-                .map_err(|error| format!("original peer terminal output: {error}"))?;
+    loop {
+        while let Some(output) = closing.poll() {
+            if let RakSessionOutput::Datagram(bytes, remote) = output {
+                socket
+                    .send_to(&bytes, remote)
+                    .await
+                    .map_err(|error| format!("original peer terminal output: {error}"))?;
+            }
+        }
+        if closing.state() == RakSessionState::Disconnected {
+            break;
+        }
+        tokio::select! {
+            received = socket.recv_from(&mut buffer) => {
+                let (length, remote) = received
+                    .map_err(|error| format!("original peer closing receive: {error}"))?;
+                if remote != closing.addr() {
+                    return Err("original peer close received another remote".to_owned());
+                }
+                closing.handle(RakSessionInput::Datagram(
+                    buffer[..length].into(), Instant::now().into_std(),
+                )).map_err(|error| format!("original peer closing input: {error}"))?;
+            }
+            _ = updates.tick() => {
+                closing.handle(RakSessionInput::Update(Instant::now().into_std()))
+                    .map_err(|error| format!("original peer closing timer: {error}"))?;
+            }
         }
     }
     if closing.state() != RakSessionState::Disconnected || closing.finish().is_err() {
