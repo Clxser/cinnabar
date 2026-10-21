@@ -299,7 +299,6 @@ impl MenuRuntime {
                     A::Create,
                     A::Tab(Tab::General),
                     A::SeedField,
-                    A::Backend(bridge::Backend::Dragonfly),
                     A::Backend(bridge::Backend::Bds),
                     A::Flat(false),
                     A::Flat(true),
