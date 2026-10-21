@@ -47,8 +47,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install the pinned Rust toolchain
-        run: |
-          rustup toolchain install
+        uses: dtolnay/rust-toolchain@1.99.0
+        with:
+          components: clippy
       - name: Restore Rust build cache
         uses: ./.github/actions/build-cache
       - name: Build and record the native executables
