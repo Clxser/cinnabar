@@ -109,17 +109,31 @@ impl NativeReader {
         let (closing, requested) = oneshot::channel();
         // The sole desktop task owns enforcement even when its caller stops awaiting close.
         // Successful teardown keeps the original desktop close-result and pending-input policy.
+        let process = execution.clone();
         let work = async move {
             let mut driver = driver;
-            let deadline = tokio::select! {
-                result = &mut driver => return Ok(result.pending),
-                deadline = requested => deadline.map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?,
+            let result = tokio::select! {
+                biased;
+                _ = async {
+                    process.as_ref().expect("supplied process execution").stopped().await;
+                }, if process.is_some() => {
+                    Err(io::Error::new(io::ErrorKind::Interrupted, "application stopped native session"))
+                }
+                result = async {
+                    let deadline = tokio::select! {
+                        result = &mut driver => return Ok(result.pending),
+                        deadline = requested => deadline.map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?,
+                    };
+                    let _ = stop.send(());
+                    tokio::time::timeout_at(deadline, &mut driver)
+                        .await
+                        .map(|end| end.pending)
+                        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "native close timed out"))
+                } => result,
             };
-            let _ = stop.send(());
-            tokio::time::timeout_at(deadline, driver)
-                .await
-                .map(|end| end.pending)
-                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "native close timed out"))
+            // A completed task must already have released its connection and incomplete writes.
+            drop(driver);
+            result
         };
         let task = match execution {
             Some(execution) => execution
