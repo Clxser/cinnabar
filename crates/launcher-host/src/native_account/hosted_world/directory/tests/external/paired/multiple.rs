@@ -227,23 +227,25 @@ async fn two_signed_visitors_share_the_actual_world_and_retire_independently() {
         let cleanup_empty = world.manager.native_host_cleanup().unwrap().is_none();
         let world_running = world.manager.status().state == bridge::WorldState::Running;
         assert!(process_closed && first_joined && second_joined && cleanup_empty && world_running);
-        let (occupied, first_retirement, second_retirement) =
-            server.expect("two actual accepting peer lifetimes failed");
+        let (occupied, first_retirement, second_retirement) = server.unwrap_or_else(|error| {
+            panic!(
+                "two actual accepting peer lifetimes failed: {error:?}; first: {first:?}; second: {second:?}"
+            )
+        });
         assert!(
             limit >= 2,
             "actual original world did not admit two visitors"
         );
         assert_eq!(occupied, 2);
-        assert_eq!((first_retirement.0, first_retirement.1), (2, 1));
-        assert_eq!((second_retirement.0, second_retirement.1), (1, 0));
-        assert_eq!(
-            first_retirement.2.as_ref().map(|(kind, _)| *kind),
-            Some(io::ErrorKind::UnexpectedEof)
+        assert_eq!(first_retirement.occupied, (2, 1));
+        assert_eq!(second_retirement.occupied, (1, 0));
+        let visitors_succeeded = first.is_ok() && second.is_ok();
+        assert!(
+            visitors_succeeded,
+            "actual visitors failed: first: {first:?}; second: {second:?}"
         );
-        assert_eq!(
-            second_retirement.2.as_ref().map(|(kind, _)| *kind),
-            Some(io::ErrorKind::UnexpectedEof)
-        );
+        first_retirement.assert_remote_close(visitors_succeeded);
+        second_retirement.assert_remote_close(visitors_succeeded);
         let first = first.expect("first actual visitor failed during the second setup");
         let second = second.expect("second actual visitor failed after the first retired");
         // Dragonfly assigns self runtime IDs within each connection, independently of other visitors.
@@ -257,24 +259,63 @@ async fn two_signed_visitors_share_the_actual_world_and_retire_independently() {
     .expect("finite actual two-visitor world fixture stalled");
 }
 
+/// Keeps the original close result and the same wire's first terminal observation together.
+#[derive(Debug)]
+struct Retirement {
+    occupied: (usize, usize),
+    result: io::Result<()>,
+    incoming: Option<(bool, io::Error)>,
+}
+
+impl Retirement {
+    /// Requires remote EOF before local close and the single-peer fixture's typed forwarding race.
+    fn assert_remote_close(&self, visitors_succeeded: bool) {
+        let (forwarding, incoming) = self
+            .incoming
+            .as_ref()
+            .expect("the original accepting wire had already been locally retired");
+        assert_eq!(
+            incoming.kind(),
+            io::ErrorKind::UnexpectedEof,
+            "the original wire ended before local close: {self:?}"
+        );
+        let error = self.result.as_ref().err();
+        let nether_closed = error.and_then(nether_connection_closed);
+        assert!(
+            visitors_succeeded
+                && (error.map(io::Error::kind) == Some(io::ErrorKind::UnexpectedEof)
+                    || (*forwarding
+                        && error.map(io::Error::kind) == Some(io::ErrorKind::Other)
+                        && nether_closed == Some(true))),
+            "unexpected peer retirement: {self:?}; typed Nether ConnectionClosed: {nether_closed:?}; both visitors succeeded: {visitors_succeeded}"
+        );
+    }
+}
+
 /// Uses the original completed closing owner before releasing its occupied slot.
-async fn retire_one(
-    host: &mut NativeHostedWorld,
-    deadline: Instant,
-) -> io::Result<(usize, usize, Option<(io::ErrorKind, String)>)> {
+async fn retire_one(host: &mut NativeHostedWorld, deadline: Instant) -> io::Result<Retirement> {
     loop {
         if let Some(mut closing) = host.peers.take_closing() {
             let occupied = host.peers.occupied();
+            let incoming = first_incoming_terminal(&mut closing).await;
             let result = closing.finish_close(host).await;
             if !closing.is_finished() || host.peers.occupied() != occupied {
-                return Err(unavailable());
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    format!(
+                        "original close unfinished: finished={}, occupied={occupied}->{}, result={result:?}, nether_closed={:?}, incoming={incoming:?}",
+                        closing.is_finished(),
+                        host.peers.occupied(),
+                        result.as_ref().err().and_then(nether_connection_closed),
+                    ),
+                ));
             }
             host.peers.retired();
-            return Ok((
-                occupied,
-                host.peers.occupied(),
-                result.err().map(|error| (error.kind(), error.to_string())),
-            ));
+            return Ok(Retirement {
+                occupied: (occupied, host.peers.occupied()),
+                result,
+                incoming,
+            });
         }
         let wake = host.peers.wake();
         host.peer_io(Some(deadline), async {
