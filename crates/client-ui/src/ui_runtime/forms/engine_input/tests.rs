@@ -102,7 +102,7 @@ fn an_animated_form_button_answers_only_at_its_painted_position() {
                             "long_form":"@server_form.moving_menu"
                         }}}
                     ]},
-                "moving_menu":{"type":"stack_panel","size":[200,100],"clips_children":true,
+                "moving_menu":{"type":"panel","size":[200,100],"clips_children":true,
                     "anchor_from":"top_left","anchor_to":"top_left",
                     "collection_name":"form_buttons","factory":{"name":"buttons",
                         "control_ids":{"button":"@server_form.moving_button"}}},
