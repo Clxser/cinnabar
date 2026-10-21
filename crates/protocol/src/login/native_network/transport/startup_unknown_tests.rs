@@ -24,6 +24,7 @@ enum Case {
     Stack,
     MalformedHeader,
     MalformedSettings,
+    SecondaryStartGame,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -43,12 +44,21 @@ impl Case {
                 Some(Stage::Settings)
             }
             Self::Offer | Self::LargeOffer => Some(Stage::Offer),
-            Self::Stack => Some(Stage::Stack),
+            Self::Stack | Self::SecondaryStartGame => Some(Stage::Stack),
         }
     }
 
     /// Encodes an actual unused header, or deliberately malformed input for the rejection controls.
     fn entry(self) -> Bytes {
+        if matches!(self, Self::SecondaryStartGame) {
+            let mut secondary = Packet::new(packets::StartGame {
+                runtime_id: ActorRuntimeID(99),
+                ..Default::default()
+            });
+            secondary.header.from_subclient = 1;
+            secondary.header.to_subclient = 2;
+            return crate::session_transport::tests::packet_bytes(&secondary);
+        }
         if matches!(self, Self::MalformedHeader) {
             return Bytes::from_static(&[0x80]);
         }
@@ -426,6 +436,13 @@ async fn native_startup_unknown_before_offer_keeps_original_join() {
 async fn native_startup_unknown_during_packs_keeps_original_join() {
     let (client, server) = exercise(Case::Stack).await;
     client.expect("well-formed unknown before ResourcePackStack stopped the original join");
+    server.unwrap();
+}
+
+#[tokio::test]
+async fn native_desktop_secondary_start_game_cannot_replace_primary_startup() {
+    let (client, server) = exercise(Case::SecondaryStartGame).await;
+    client.expect("secondary StartGame replaced the primary player's startup");
     server.unwrap();
 }
 
