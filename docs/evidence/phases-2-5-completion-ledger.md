@@ -630,7 +630,7 @@ menu integration tests stay in `app`. Account, process and persistence tests bel
 
 ## Xbox presence follow-up
 
-The account core publishes menu, world-default, Realm and generic featured/Experience activity.
+The native account owner publishes menu, world-default, Realm and generic featured/Experience activity.
 Exact heartbeat, platform configuration, server overrides, permission gates and
 friends-visible acceptance remain incomplete. No existing completion entry is
 advanced by this feature; see `docs/reference/xbox-presence.md` and `plan.md`.
@@ -673,8 +673,8 @@ budgets remain open; these changes do not close those acceptance gates.
 
 ## Protocol session layer
 
-`protocol::login` runs the spawn sequence and play stream over native transports or the
-explicit legacy Core endpoint. Startup ordering, deferred/raw siblings, terminal transfers and
+`protocol::login` runs the spawn sequence and play stream over native transports or
+caller-supplied framed I/O. Startup ordering, deferred/raw siblings, terminal transfers and
 disconnects, and one-shot initialization retain owning regression coverage. Actual desktop and
 browser joins exercise the shared session path. Full server/platform, parity and performance
 gates remain open.

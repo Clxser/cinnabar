@@ -433,7 +433,7 @@ acceptance still covers authenticated
 server/Realm/friend-world joins, transfers, reconnect/disconnect, account switching,
 presence, invites and required-pack failures. Preserve transport/session identity
 and keep actual account details out of captures and reports published with PRs.
-Core transfer/disconnect terminals can abandon unfinished join preparation; ordinary
+Session transfer/disconnect terminals can abandon unfinished join preparation; ordinary
 preparation and presentation readiness remain required for a successful join. Live
 server latency impact and the complete transfer acceptance matrix remain unqualified.
 
@@ -450,7 +450,7 @@ Unreadable sources and allocation failures are diagnosed without discarding othe
 definitions. Complete pack-content acceptance remains open.
 
 Saved server lists retain every imported entry. Experience selections preserve service
-errors and wait for the account core result. Complete featured-server, menu and gameplay
+errors and wait for the native account operation. Complete featured-server, menu and gameplay
 qualification remains open: large-pack preparation can be slow or fail, and sparse
 startup terrain can leave loading open. Explicit subscriber limits and large-content
 live and performance acceptance remain open. Local imports, decompression, UI/text
