@@ -142,3 +142,49 @@ fn service(port: &str) -> Option<String> {
     };
     (!negative || number == 0).then(|| number.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Local UDP admission preserves numeric spellings and resolves services independently of zones.
+    #[test]
+    fn udp_os_admission_preserves_local_numeric_and_service_forms() {
+        let cases = [
+            ("localhost:19132", true),
+            ("localhost:", true),
+            ("localhost:+", true),
+            ("localhost:-", true),
+            ("localhost:+0", true),
+            ("localhost:-0", true),
+            ("localhost:00019132", true),
+            ("localhost:domain", true),
+            ("localhost:DoMaIn", true),
+            ("localhost:cinnabar-no-such-udp-service", false),
+            ("127.0.0.1:domain", true),
+            ("[::1]:domain", true),
+            ("[::1%nonexistent-cnbr-zone]:domain", true),
+        ];
+        let observed: Vec<_> = cases
+            .into_iter()
+            .map(|(address, expected)| (address, expected, lookup_udp(address)))
+            .collect();
+        assert!(
+            observed
+                .iter()
+                .all(|(_, expected, actual)| expected == actual),
+            "local UDP admission (address, expected, actual): {observed:?}"
+        );
+    }
+
+    /// An empty zone uses platform host resolution, with the same result for its named UDP port.
+    #[test]
+    fn udp_os_empty_zone_named_service_matches_numeric_port_admission() {
+        let named = lookup_udp("[::1%]:domain");
+        let numeric = lookup_udp("[::1%]:53");
+        assert_eq!(
+            named, numeric,
+            "empty-zone admission depends on the service spelling"
+        );
+    }
+}
