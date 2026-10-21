@@ -430,7 +430,7 @@ pub(crate) fn prepare_with_byte_budget(
         drop(front);
         // Move the same pending input through task completion so close never
         // waits for capacity held by its own caller's receive borrow.
-        let close = connection.close().await;
+        let close = connection.finish_close().await;
         DriverEnd { pending, close }
     });
     PreparedPump {
