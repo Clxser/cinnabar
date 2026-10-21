@@ -4,7 +4,7 @@ use super::*;
 use bedrock_net::login::verify_authenticated_request;
 use bedrock_protocol_1_26_51::packets;
 use dns_lookup::{AddrInfoHints, Protocol, SockType, getaddrinfo};
-use std::cell::RefCell;
+use std::{cell::RefCell, net::Ipv6Addr};
 
 /// Captures a pure-parser cache miss only after the original provider/signature checks.
 struct MissingAddress<'a> {
@@ -108,6 +108,11 @@ fn lookup_udp(address: &str) -> bool {
         host
     } else {
         host
+    };
+    // A literal's nonempty zone remains opaque during address admission.
+    let host = match host.split_once('%') {
+        Some((ip, zone)) if !zone.is_empty() && ip.parse::<Ipv6Addr>().is_ok() => ip,
+        _ => host,
     };
     let Some(service) = service(port) else {
         return false;
