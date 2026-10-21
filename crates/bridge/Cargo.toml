@@ -27,7 +27,7 @@ tokio-util = { workspace = true, features = ["codec"] }
 tracing.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "net"] }
 
 [dev-dependencies]
 test-time = { path = "../test-time" }
