@@ -229,8 +229,10 @@ impl NativeHostedWorld {
         let verified = loop {
             let packet = self.peer_io(Some(deadline), wire.receive(deadline)).await?;
             self.wait_policy(policy).await?;
-            self.preflight_login(&packet, policy, max_login_bytes)
-                .await?;
+            if let Some(request) = NativeAcceptingIo::login_request(&packet) {
+                self.preflight_login(request, policy, max_login_bytes)
+                    .await?;
+            }
             match login
                 .receive(
                     packet,

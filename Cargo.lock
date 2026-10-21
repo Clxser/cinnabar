@@ -5977,7 +5977,6 @@ dependencies = [
  "bedrock-client-tokio",
  "bedrock-net",
  "bedrock-packs",
- "bedrock-protocol-1-26-51",
  "bedrock-services",
  "bridge",
  "bytes",

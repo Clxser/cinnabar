@@ -2,7 +2,6 @@
 
 use super::*;
 use bedrock_net::login::verify_authenticated_request;
-use bedrock_protocol_1_26_51::packets;
 use dns_lookup::{AddrInfoHints, Protocol, SockType, getaddrinfo};
 use std::{cell::RefCell, net::Ipv6Addr};
 
@@ -56,15 +55,12 @@ impl NativeHostedWorld {
     /// Cancellation cannot update the policy, and never claims to interrupt an executing OS call.
     pub(in crate::native_account::hosted_world) async fn preflight_login(
         &mut self,
-        packet: &packets::Packet,
+        request: &[u8],
         policy: &mut NativeHostedLoginPolicy,
         maximum: usize,
     ) -> io::Result<()> {
-        let packets::Packet::Login(login) = packet else {
-            return Ok(());
-        };
         let Some(address) = policy
-            .missing_address(&login.connection_request, maximum)
+            .missing_address(request, maximum)
             .map_err(|_| denied())?
         else {
             return Ok(());

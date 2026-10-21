@@ -90,6 +90,15 @@ impl NativeAcceptingIo {
         }
     }
 
+    /// Borrows the original Login request for bounded application-owned admission work.
+    /// Other packets have no Login request; this grants no authenticated identity or world access.
+    pub fn login_request(packet: &packets::Packet) -> Option<&[u8]> {
+        match packet {
+            packets::Packet::Login(login) => Some(&login.connection_request),
+            _ => None,
+        }
+    }
+
     /// Ends decoded peer terminals and counts known input unused by the accepting continuation.
     pub fn handle_unhandled(&mut self, packet: &packets::Packet) -> io::Result<()> {
         if matches!(
