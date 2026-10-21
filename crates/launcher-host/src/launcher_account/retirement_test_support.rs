@@ -182,3 +182,60 @@ impl Drop for HeldRead<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::task::Waker;
+
+    /// Direct resource removal retires every original worker after its real cleanup acknowledgment.
+    #[test]
+    fn dropping_account_retires_all_workers_after_original_cleanup_ack() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let tasks = TaskTracker::new();
+        let namespace = tempfile::tempdir().unwrap();
+        let (account, signals) = account(namespace.path(), runtime.handle().clone(), tasks.clone());
+        let lifetime = account.title_presence_lifetime();
+        let released = Arc::clone(&signals.lease_released);
+        let (observed, pending_cleanup) = runtime.block_on(async {
+            tokio::time::timeout(test_time::DEFAULT_TIMEOUT, async {
+                signals.read_entered.await.unwrap();
+                drop(account);
+                signals.cleanup_entered.await.unwrap();
+                let _ = signals.inspect_read.send(());
+                let observed = signals.observation.await.unwrap();
+                tasks.close();
+                let pending_cleanup = {
+                    let mut wait = std::pin::pin!(tasks.wait());
+                    let mut context = Context::from_waker(Waker::noop());
+                    wait.as_mut().poll(&mut context).is_pending()
+                };
+                signals.release_cleanup.send(()).unwrap();
+                tasks.wait().await;
+                (observed, pending_cleanup)
+            })
+            .await
+            .unwrap()
+        });
+
+        assert_eq!(observed, ReadObservation::Canceled);
+        assert!(
+            pending_cleanup,
+            "tracked retirement overtook the original cleanup acknowledgment"
+        );
+        assert!(
+            tasks.is_empty(),
+            "an original account worker remained tracked"
+        );
+        assert!(released.load(Ordering::Acquire));
+        assert_eq!(
+            lifetime.retirement(),
+            Some(TitlePresenceRetirement::Complete)
+        );
+        assert!(lifetime.worker_finished());
+    }
+}
