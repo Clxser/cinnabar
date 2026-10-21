@@ -4,6 +4,23 @@ use super::*;
 use crate::native_account::service_route::{ResolvedServiceRoute, host_port};
 use bedrock_services::realms::NetworkProtocol;
 
+/// The selected join's local failure boundary, not an HTTP request classification.
+#[derive(Debug)]
+enum PreparationStage {
+    Acquisition,
+    Discovery,
+    Join,
+    RoutePreparation,
+}
+
+impl PreparationStage {
+    /// Adds only a finite stage to the log, returning the original redacted error intact.
+    fn failed(self, error: io::Error) -> io::Error {
+        tracing::warn!(gathering_stage = ?self, "native Gathering preparation failed");
+        error
+    }
+}
+
 impl std::fmt::Debug for NativeGatheringSelection {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -69,7 +86,10 @@ impl NativeAccount {
             let generation = identity
                 .as_ref()
                 .map(|identity| identity.generation.as_str());
-            let mut operation = Arc::clone(&self).acquire_verified_for(generation).await?;
+            let mut operation = Arc::clone(&self)
+                .acquire_verified_for(generation)
+                .await
+                .map_err(|error| PreparationStage::Acquisition.failed(error))?;
             check_preparation_deadline(deadline)?;
             operation.promote()?;
             let identity = identity.unwrap_or_else(|| ReadIdentity::capture(&operation));
@@ -83,7 +103,7 @@ impl NativeAccount {
                 .minecraft()?
                 .gatherings()
                 .await
-                .map_err(service_error)?;
+                .map_err(|error| PreparationStage::Discovery.failed(service_error(error)))?;
             check_preparation_deadline(deadline)?;
             let response = gatherings.join_experience(experience).await;
             operation.persist()?;
@@ -94,7 +114,8 @@ impl NativeAccount {
                     "Gathering account changed",
                 ));
             }
-            let response = response.map_err(service_error)?;
+            let response =
+                response.map_err(|error| PreparationStage::Join.failed(service_error(error)))?;
             let address = match &response.network_protocol {
                 NetworkProtocol::Default => host_port(response.ip_v4_address.trim(), response.port),
                 _ => response.nethernet_id.trim().to_owned(),
@@ -112,7 +133,7 @@ impl NativeAccount {
             }
             // Keep original destination metadata alive until credential/socket preparation completes.
             drop(response);
-            result
+            result.map_err(|error| PreparationStage::RoutePreparation.failed(error))
         })
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Gathering preparation timed out"))?;
