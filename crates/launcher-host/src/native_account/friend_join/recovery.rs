@@ -267,7 +267,7 @@ impl FriendJoin {
             )
             .await?
             .map_err(|_| cleanup_pending())?;
-            *session = Box::new(current);
+            **session = current;
         } else if !session.is_closed() {
             bounded(deadline, operation.minecraft()?.mpsd().sync(session))
                 .await?
