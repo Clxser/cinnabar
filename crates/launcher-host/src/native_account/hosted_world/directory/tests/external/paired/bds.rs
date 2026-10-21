@@ -30,7 +30,7 @@ async fn signed_bds_peer_uses_the_original_http_or_lan_world_and_retires() {
             mut listener,
             signaling,
         } = signed_association(Arc::clone(&client_key)).await;
-        let address = format!("http://{}", signaling.local_addr());
+        let address = format!("http://{}:{}", signaling.local_addr(), signaling.local_addr().port());
         let settings = LoginSettings {
             view_distance_chunks: 2,
             ..Default::default()

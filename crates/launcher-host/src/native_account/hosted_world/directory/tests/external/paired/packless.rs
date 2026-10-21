@@ -83,7 +83,7 @@ async fn signed_hosted_packless_upstream_preserves_startup_initialized_and_live_
         };
         let visitor = async {
             let (mut play, (archives, runtime_id)) = protocol::test_support::hosted_client(
-                client, nonce, format!("http://{downstream_address}"), authentication,
+                client, nonce, format!("http://{downstream_address}:{}", downstream_address.port()), authentication,
                 SessionLogin {
                     display_name: VISITOR_NAME, client_random_id: random_id, cache: None, skin: None,
                     settings: &settings, tap: None, relay: None, target: None,

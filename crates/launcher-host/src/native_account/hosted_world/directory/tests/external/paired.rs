@@ -14,7 +14,7 @@ use provider::{Provider, VISITOR_NAME};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn signed_hosted_peer_reaches_the_actual_dragonfly_world_and_retires() {
-    signed_hosted_peer(|address| format!("http://{address}")).await;
+    signed_hosted_peer(|address| format!("http://{address}:{}", address.port())).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
