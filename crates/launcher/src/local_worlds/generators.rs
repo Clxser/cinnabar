@@ -28,6 +28,15 @@ pub fn parse_catalog(bytes: &[u8]) -> Result<Vec<GeneratorInfo>, String> {
     Ok(entries)
 }
 
+/// Returns the server's checked example catalog for offline UI fixtures.
+#[cfg(any(test, feature = "test-support"))]
+pub fn fixture_catalog() -> Vec<GeneratorInfo> {
+    parse_catalog(include_bytes!(
+        "../../../../tools/localserver/contract/catalog.example.json"
+    ))
+    .expect("valid server catalog fixture")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -53,13 +62,4 @@ mod tests {
             );
         }
     }
-}
-
-/// Returns the server's checked example catalog for offline UI fixtures.
-#[cfg(any(test, feature = "test-support"))]
-pub fn fixture_catalog() -> Vec<GeneratorInfo> {
-    parse_catalog(include_bytes!(
-        "../../../../tools/localserver/contract/catalog.example.json"
-    ))
-    .expect("valid server catalog fixture")
 }

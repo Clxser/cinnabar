@@ -541,12 +541,6 @@ mod tests {
         assert_eq!(menu.view().local.screen, Screen::List);
         assert_eq!(menu.field, None, "leaving the form drops its field");
     }
-}
-
-#[cfg(test)]
-mod generator_focus_tests {
-    use super::*;
-
     #[test]
     fn custom_generators_join_the_keyboard_focus_order() {
         use launcher::local_worlds::{Tab, generators::parse_catalog};

@@ -105,7 +105,7 @@ pub(super) fn draw(
             bottom += height + space(canvas, 1);
         }
         let height = bottom - y;
-        let description = local_view.generator_error.as_deref().unwrap_or_else(|| {
+        let description = local_view.generator_error.as_deref().unwrap_or({
             if options.is_empty() {
                 "No world generators are available for this server."
             } else {
