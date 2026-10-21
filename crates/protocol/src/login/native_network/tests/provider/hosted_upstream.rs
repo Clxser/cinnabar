@@ -315,7 +315,7 @@ async fn original_upstream_with_archive(
         claims["tid"] = json!("provider-title");
         let token = signed(claims, "synthetic");
         let raw = RawValue::from_string(
-            r#"{"ThirdPartyName":"untrusted name","Nonce":"original-guest-nonce","opaque":1e1}"#
+            r#"{"ThirdPartyName":"untrusted name","Nonce":"original-guest-nonce","opaque":1e1,"SkinId":"synthetic"}"#
                 .into(),
         )
         .unwrap();
@@ -850,7 +850,7 @@ async fn local_bds_startup_detaches_from_a_discarded_secondary_batch_sibling() {
         };
         let client = async {
             let raw = RawValue::from_string(
-                r#"{"ThirdPartyName":"untrusted","Nonce":"original"}"#.into(),
+                r#"{"ThirdPartyName":"untrusted","Nonce":"original","SkinId":"synthetic"}"#.into(),
             )
             .unwrap();
             let request = encode_authenticated_request(
