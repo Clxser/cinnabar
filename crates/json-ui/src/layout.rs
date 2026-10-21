@@ -553,6 +553,7 @@ fn place_subtree<'a>(
         filter,
         |node| place::sprite_rest(control, node),
     );
+    let moving_geometry = anim.as_ref().is_some_and(|anim| anim.moves_geometry());
     let absolute_layer = parent_layer.saturating_add(style.layer);
     let mut scroll = ScrollFrame::open(control, &key, rect, ctx.state, ctx.env);
     // A bar panel hidden or shown again frees or takes back its space: solve again.
@@ -599,6 +600,7 @@ fn place_subtree<'a>(
         Vec::new()
     } else {
         let indexed_clip = (ctx.cull
+            && !moving_geometry
             && grid::is_grid(control)
             && allows
             && !style.unclipped_descendant
@@ -769,6 +771,7 @@ fn place_subtree<'a>(
         }
         // Scroll content wholly outside its viewport neither draws nor takes input.
         if ctx.cull
+            && !moving_geometry
             && ctx
                 .scrolls
                 .last()
