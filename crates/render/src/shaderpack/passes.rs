@@ -16,7 +16,7 @@ use super::uniforms::{
     DrawUniforms, FAR_PLANE_SCALE, FrameUniforms, GL_NEAR, HostValue, pack_block,
 };
 use crate::gpu_timing::{GpuTimestamps, within_stage};
-use bevy::math::Vec3;
+use bevy::math::{Mat4, Vec3};
 use render_scene::RuntimeStage;
 use shaderpack::{CustomUniforms, ProgramGroup};
 use std::collections::BTreeSet;
@@ -32,6 +32,8 @@ pub(crate) struct DrawContext {
     pub atlas_size: [i32; 2],
     /// The particle atlas's texel size (particle draws' `atlasSize`).
     pub particle_atlas_size: [i32; 2],
+    /// The first-person hand's projection, its depth scaled by `MC_HAND_DEPTH`.
+    pub hand_projection: Mat4,
     /// The destroy-stage atlas size for damaged-block draws.
     pub crack_atlas_size: [i32; 2],
 }
@@ -62,6 +64,8 @@ pub(crate) struct ViewState {
     pub(super) depth_parameters: wgpu::Buffer,
     scene_bindings: super::scene_bindings::SceneBindingCache,
     pub history: super::uniforms::UniformHistory,
+    /// Actor, block-entity and hand geometry skinned for the pack, with its draw bindings.
+    pub actors: super::actors::ViewActors,
     custom: CustomUniforms,
     scratch: Vec<u8>,
     unknown: BTreeSet<String>,
@@ -118,6 +122,7 @@ impl ViewState {
             targets,
             bindings,
             history: Default::default(),
+            actors: Default::default(),
             custom,
             scratch: vec![],
             unknown: BTreeSet::new(),
@@ -137,31 +142,34 @@ impl ViewState {
 
     /// Keeps native queues available when a geometry draw would reject its attachments.
     pub(crate) fn geometry_targets_ready(&self) -> bool {
-        self.pack.draws.iter().all(|draw| {
-            let shadow = self.pack.shadow.as_ref().filter(|_| draw.kind.shadow());
-            let mut size = draw.kind.depth().then(|| {
-                shadow.map_or(self.targets.screen_size, |shadow| {
-                    [shadow.slots.resolution; 2]
+        !self.actors.allocation_failed
+            && self.pack.draws.iter().all(|draw| {
+                let shadow = self.pack.shadow.as_ref().filter(|_| draw.kind.shadow());
+                let mut size = draw.kind.depth().then(|| {
+                    shadow.map_or(self.targets.screen_size, |shadow| {
+                        [shadow.slots.resolution; 2]
+                    })
+                });
+                draw.outputs.iter().flatten().all(|index| {
+                    let extent = if let Some(shadow) = shadow {
+                        shadow
+                            .slots
+                            .color
+                            .iter()
+                            .find(|(buffer, ..)| buffer == index)
+                            .map(|_| [shadow.slots.resolution; 2])
+                    } else {
+                        self.targets
+                            .buffers
+                            .get(*index as usize)
+                            .and_then(|buffer| buffer.as_ref())
+                            .map(|buffer| buffer.size)
+                    };
+                    extent.is_some_and(|extent| {
+                        super::frame_geometry::admit_extent(&mut size, extent)
+                    })
                 })
-            });
-            draw.outputs.iter().flatten().all(|index| {
-                let extent = if let Some(shadow) = shadow {
-                    shadow
-                        .slots
-                        .color
-                        .iter()
-                        .find(|(buffer, ..)| buffer == index)
-                        .map(|_| [shadow.slots.resolution; 2])
-                } else {
-                    self.targets
-                        .buffers
-                        .get(*index as usize)
-                        .and_then(|buffer| buffer.as_ref())
-                        .map(|buffer| buffer.size)
-                };
-                extent.is_some_and(|extent| super::frame_geometry::admit_extent(&mut size, extent))
             })
-        })
     }
 
     /// Refreshes atlas dimensions after native texture preparation and before recording draws.
@@ -201,7 +209,7 @@ impl ViewState {
     }
 
     /// Evaluates custom uniforms and writes every program's and geometry draw's uniform
-    /// block.
+    /// block; each draw also keeps its packed bytes, which actor draws patch per actor.
     pub(crate) fn write_uniforms(
         &mut self,
         queue: &Queue,
@@ -266,6 +274,9 @@ impl ViewState {
             };
             let (model_view, projection) = if draw.kind.shadow() {
                 (frame.shadow_model_view(), frame.shadow_projection())
+            } else if draw.kind.hand() {
+                // Hand vertices are in view space already, as Iris draws them.
+                (Mat4::IDENTITY, context.hand_projection)
             } else {
                 (frame.model_view(), frame.projection())
             };
@@ -441,6 +452,7 @@ pub(crate) fn record_frame(
     let timestamps = io.timestamps;
     if let Some(geometry) = geometry {
         bind_geometry(device, state, geometry);
+        super::actors::prepare(device, queue, encoder, state, &geometry.actors);
         within_stage(
             timestamps,
             RuntimeStage::GpuShaderpackShadow,
@@ -944,6 +956,7 @@ mod atlas_tests {
             atlas_size: [1024; 2],
             particle_atlas_size: [512; 2],
             crack_atlas_size: [256, 128],
+            hand_projection: Mat4::IDENTITY,
         };
         assert_eq!(
             context.atlas_size(DrawKind::Effect(Effect::DamagedBlock)),

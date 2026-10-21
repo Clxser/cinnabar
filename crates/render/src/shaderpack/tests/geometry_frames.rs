@@ -11,6 +11,8 @@ fn native_overlay_refreshes_pre_translucent_depth() {
     let (_, bytes) = render_frame_options(
         &gpu,
         &[
+            ("gbuffers_basic.vsh", PASS_VERTEX),
+            ("gbuffers_basic.fsh", FILL),
             ("gbuffers_terrain.vsh", PASS_VERTEX),
             ("gbuffers_terrain.fsh", INVERT),
             ("final.vsh", PASS_VERTEX),
@@ -35,6 +37,8 @@ fn geometry_draws_refresh_custom_image_feedback_before_opening_the_pass() {
         return;
     };
     let source = pack(&[
+        ("gbuffers_basic.vsh", PASS_VERTEX),
+        ("gbuffers_basic.fsh", FILL),
         (
             "shaders.properties",
             "image.marker = markerSampler RGBA RGBA8 UNSIGNED_BYTE true false 1 1\n",

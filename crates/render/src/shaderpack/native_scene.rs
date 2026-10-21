@@ -28,21 +28,40 @@ pub(super) fn needs_native_scene(
 /// Native layers whose pixels cannot yet be composed over replacement terrain.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct NativeSceneLayers<'w> {
+    actors: NativeActorFrames<'w>,
+    pipelines: Option<Res<'w, ActorSkinPipelines>>,
+    cache: Option<Res<'w, PipelineCache>>,
     atmosphere: Option<Res<'w, render_scene::AtmosphereFrame>>,
     particles: Option<Res<'w, render_scene::ParticleGpuFrame>>,
     weather: Option<Res<'w, render_scene::PrecipitationScene>>,
     overlays: Option<Res<'w, render_scene::ScreenOverlayScene>>,
     nametags: Option<Res<'w, render_scene::NametagSceneResource>>,
-    hand_rig: Option<Res<'w, render_scene::HandRigScene>>,
     viewmodel: Option<Res<'w, render_scene::ViewmodelScene>>,
 }
 
 impl NativeSceneLayers<'_> {
-    /// Keeps first-person layers that this geometry host cannot replace on the native path.
+    /// Requires actor kernels and compatible native frames before replacing world queues.
+    fn world_ready(&self) -> bool {
+        self.pipelines
+            .as_deref()
+            .zip(self.cache.as_deref())
+            .and_then(|(pipelines, cache)| pipelines.kernels(cache))
+            .is_some()
+            && actors::compatibility::frame_supported(
+                self.actors.0.as_deref(),
+                self.actors.1.as_deref(),
+                self.actors.2.as_deref().map(|frame| &frame.0),
+            )
+    }
+
+    /// Keeps static viewmodels and hands without a ready actor replacement on the native path.
     pub(super) fn first_person_native(&self) -> bool {
-        self.hand_rig
+        (self
+            .actors
+            .1
             .as_ref()
             .is_some_and(|scene| scene.is_active())
+            && !self.world_ready())
             || self
                 .viewmodel
                 .as_ref()
@@ -55,7 +74,8 @@ impl NativeSceneLayers<'_> {
         pack: &PackGpu,
         textures: Option<&ShaderpackEffectTextures>,
     ) -> bool {
-        self.first_person_native()
+        !self.world_ready()
+            || self.first_person_native()
             || needs_native_scene(
                 self.atmosphere.as_deref(),
                 self.particles.as_deref(),
@@ -87,7 +107,7 @@ pub(super) fn replacement_ready(
         && geometry.is_some_and(|geometry| {
             geometry.supported() && geometry.origin().is_some() && geometry.all_sections_fit()
         })
-        && super::super::draws::complete_terrain(|kind| {
+        && super::super::draws::complete_world(|kind| {
             pack.draws.iter().any(|draw| draw.kind == kind)
         })
         && cameras.peek().is_some()

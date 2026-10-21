@@ -267,6 +267,7 @@ fn render_frame_options(
         chunk_offset: Vec3::ZERO,
         atlas_size: [0; 2],
         particle_atlas_size: [0; 2],
+        hand_projection: bevy::math::Mat4::IDENTITY,
         crack_atlas_size: [0; 2],
     };
     state.write_uniforms(&gpu.queue, &frame, 0.016, &context);
@@ -309,6 +310,7 @@ fn render_frame_options(
             terrain: &terrain,
             atlas: None,
             effect_textures: None,
+            actors: super::actors::ActorSources::default(),
             effects: super::effects::EffectInputs {
                 camera: super::effects::EffectCamera {
                     position: Vec3::new(0., 64., 0.),
@@ -761,6 +763,70 @@ fn programs_without_colour_outputs_load_and_keep_their_stores() {
         ],
     );
     assert_pixels(&bytes, |_| [255, 0, 255]);
+}
+
+#[test]
+fn a_rejected_required_actor_pipeline_keeps_native_world_rendering() {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::NOOP,
+        backend_options: wgpu::BackendOptions {
+            noop: wgpu::NoopBackendOptions {
+                enable: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
+    });
+    let adapter = bevy::tasks::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let (device, queue) =
+        bevy::tasks::block_on(adapter.request_device(&Default::default())).unwrap();
+    let gpu = GpuContext {
+        device,
+        queue,
+        adapter,
+    };
+    // Integer tangents cannot bind the actor vertex stream.
+    let pack = pack(&[
+        ("gbuffers_basic.vsh", PASS_VERTEX),
+        ("gbuffers_basic.fsh", FILL),
+        ("gbuffers_terrain.vsh", PASS_VERTEX),
+        ("gbuffers_terrain.fsh", FILL),
+        (
+            "gbuffers_entities.vsh",
+            "#version 130\nin ivec4 at_tangent; void main() { gl_Position = vec4(at_tangent); }",
+        ),
+        ("gbuffers_entities.fsh", FILL),
+    ]);
+    let pack = build(
+        &pack,
+        "fixture",
+        JAVA_DIMENSIONS[0],
+        None,
+        &gpu,
+        &Default::default(),
+    )
+    .expect("pipeline rejection retains the loaded pack and native scene");
+    let entities = pack
+        .programs
+        .iter()
+        .position(|p| p.name == "gbuffers_entities")
+        .expect("gbuffers_entities translated");
+    assert!(
+        super::actors::layout::vertex_layouts(&pack.programs[entities].reflection.vertex_inputs)
+            .is_err()
+    );
+    assert!(
+        pack.draws.is_empty(),
+        "a rejected required draw retains the native world path"
+    );
+    let kept: Vec<_> = pack
+        .draws
+        .iter()
+        .filter(|d| d.program == entities)
+        .map(|d| d.kind)
+        .collect();
+    assert!(kept.is_empty(), "rejected entities draws kept: {kept:?}");
 }
 
 /// BSL's hash argument `dot(p, vec2(12.9898, 4.1414))` at large `p`, scaled so the red

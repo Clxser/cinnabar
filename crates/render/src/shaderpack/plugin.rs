@@ -1,7 +1,8 @@
 //! Bevy wiring: the main-world load worker, extraction, the geometry adapter's settings and
-//! block ids, the pack's id maps, the Vanilla hand-off, per-view preparation and the
+//! block ids, the actor adapter's id maps and Vanilla hand-off, per-view preparation and the
 //! render-graph system.
 
+use super::actors::{self, ActorSkinPipelines, ActorSources, RigSource};
 use super::atlas::{ShaderpackAtlas, ShaderpackAtlasPlugin};
 use super::draws::DrawKind;
 use super::effects::textures::{ShaderpackEffectTextures, prepare_effect_textures};
@@ -17,9 +18,10 @@ use super::pipelines::GpuContext;
 use super::resources::vanilla::VanillaTextures;
 use super::sky::SkyInputs;
 use super::targets::AtlasViews;
-use super::uniforms::{FrameClock, FrameUniforms, ViewCamera};
+use super::uniforms::{FAR_PLANE_SCALE, FrameClock, FrameUniforms, ViewCamera};
 use assets::facts::java_mapping::JavaDimension;
 use bevy::render::render_phase::TrackedRenderPass;
+use bevy::render::render_resource::PipelineCache;
 use bevy::{
     core_pipeline::{Core3d, Core3dSystems},
     prelude::*,
@@ -33,8 +35,8 @@ use bevy::{
 };
 use render_scene::device_memory::DedicatedGraphicsMemory;
 use render_scene::shaderpack::{
-    ShaderPackDrawnCategories, ShaderPackEffects, ShaderPackFrameInputs, ShaderPackIdMaps,
-    ShaderPackRendering, ShaderPackRequest, ShaderPackStatus,
+    ShaderPackActorIds, ShaderPackDrawnCategories, ShaderPackEffects, ShaderPackFrameInputs,
+    ShaderPackIdMaps, ShaderPackRendering, ShaderPackRequest, ShaderPackStatus,
 };
 use render_scene::{RuntimeStage, RuntimeStageProfiler};
 use std::{
@@ -48,6 +50,8 @@ use std::{
 pub(crate) static JAVA_DIMENSIONS: std::sync::LazyLock<[&str; JavaDimension::ALL.len()]> =
     std::sync::LazyLock::new(|| JavaDimension::ALL.map(JavaDimension::identifier));
 
+/// Java's first-person field of view, for the hand projection while no hand rig draws.
+const DEFAULT_HAND_FOV_DEGREES: f32 = 70.0;
 /// The least `far` a pack sees: Java's smallest render distance, two chunks.
 const MIN_PACK_FAR: f32 = 32.0;
 
@@ -181,8 +185,9 @@ type PreparedView = (Entity, &'static ExtractedView);
 
 /// Enables the geometry adapter while a pack with terrain programs is shown on some camera,
 /// with the pack's `separateAo`/`oldLighting` and a vertex budget sized to the device,
-/// publishes its block ids, tells the Vanilla terrain passes whether the pack draws terrain
-/// itself, and publishes the effects it draws in place of Vanilla's.
+/// publishes its block ids, tells the Vanilla terrain, actor, block-entity and hand passes
+/// which of them the pack draws itself, and publishes the effects it draws in place of
+/// Vanilla's.
 #[allow(clippy::too_many_arguments, reason = "a render-world system's inputs")]
 fn configure_geometry(
     mut commands: Commands,
@@ -280,6 +285,13 @@ impl BlockIdRevisions {
     }
 }
 
+/// Native actor frames checked before shader packs can replace their queues.
+type NativeActorFrames<'w> = (
+    Option<Res<'w, render_scene::ActorRenderFrame>>,
+    Option<Res<'w, render_scene::HandRigScene>>,
+    Option<Res<'w, render_scene::BlockEntityFrameResource>>,
+);
+
 /// Replaces native queues only after every pack view and terrain category is ready.
 #[allow(clippy::too_many_arguments, reason = "native queue replacement inputs")]
 fn configure_replacement(
@@ -304,16 +316,20 @@ fn configure_replacement(
                     })
                 })
         });
+    let replaces = ready.is_some_and(|pack| {
+        replacement_ready(
+            pack,
+            cameras.iter(),
+            geometry.as_deref(),
+            &states,
+            native.needed(pack, textures.as_deref()),
+        )
+    });
     drawn.set_if_neq(ShaderPackDrawnCategories {
-        terrain: ready.is_some_and(|pack| {
-            replacement_ready(
-                pack,
-                cameras.iter(),
-                geometry.as_deref(),
-                &states,
-                native.needed(pack, textures.as_deref()),
-            )
-        }),
+        terrain: replaces,
+        actors: replaces,
+        block_entities: replaces,
+        hand: replaces,
     });
     replaced.set_if_neq(
         ready
@@ -329,6 +345,7 @@ fn atlas_context(
 ) -> DrawContext {
     DrawContext {
         chunk_offset: Vec3::ZERO,
+        hand_projection: Mat4::IDENTITY,
         atlas_size: atlas.map_or([0; 2], |atlas| {
             atlas.size.to_array().map(|side| side as i32)
         }),
@@ -351,12 +368,19 @@ fn prepare_views(
     mut geometry: Option<ResMut<ShaderpackGeometry>>,
     atlas: Option<Res<ShaderpackAtlas>>,
     effect_textures: Option<Res<ShaderpackEffectTextures>>,
+    hand: Option<Res<render_scene::HandRigScene>>,
     profiler: Option<Res<RuntimeStageProfiler>>,
     native: NativeSceneLayers,
 ) {
     let _timer = profiler
         .as_deref()
         .map(|profiler| profiler.time(RuntimeStage::ShaderpackUniforms));
+    let hand_fov = hand
+        .as_ref()
+        .and_then(|hand| hand.frame.as_ref())
+        .map_or(DEFAULT_HAND_FOV_DEGREES.to_radians(), |frame| {
+            frame.fov_radians
+        });
     let ShaderPackViews { states, failed } = &mut *views;
     let states = states.get_mut().unwrap_or_else(|e| e.into_inner());
     let (Some(pack), Some(inputs)) = (pack.and_then(|p| p.0.clone()), inputs) else {
@@ -434,8 +458,10 @@ fn prepare_views(
             .as_ref()
             .and_then(|g| g.chunk_offset(position.as_dvec3()))
             .unwrap_or(Vec3::ZERO);
+        let far = inputs.render_distance.max(16.0) * FAR_PLANE_SCALE;
         let context = DrawContext {
             chunk_offset,
+            hand_projection: actors::hand_projection(hand_fov, screen, far),
             ..atlas_context(atlas.as_deref(), effect_textures.as_deref())
         };
         state.write_uniforms(&queue, &frame, clock.delta_seconds, &context);
@@ -507,7 +533,9 @@ fn pack_terrain(world: &World) -> Option<&ShaderpackGeometry> {
         .filter(|drawn| drawn.terrain)?;
     world
         .get_resource::<ShaderpackGeometry>()
-        .filter(|geometry| geometry.supported() && geometry.origin().is_some())
+        .filter(|geometry| {
+            geometry.supported() && geometry.all_sections_fit() && geometry.origin().is_some()
+        })
 }
 
 /// Whether the pack draws `view`'s sky and world itself this frame, so nothing of the Vanilla
@@ -614,6 +642,22 @@ fn shaderpack_post(
             .get_resource::<Time>()
             .map_or(0.0, |time| time.elapsed_secs()),
     };
+    let actor_rig = crate::actor_render::shaderpack_source::shaderpack_actors(world);
+    let hand_rig = crate::hand_rig_render::shaderpack_source::shaderpack_hand(world);
+    let kernels = world
+        .get_resource::<ActorSkinPipelines>()
+        .zip(world.get_resource::<PipelineCache>())
+        .and_then(|(pipelines, cache)| pipelines.kernels(cache));
+    let actors = ActorSources {
+        kernels,
+        actors: actor_rig.as_ref().map(|rig| rig as &dyn RigSource),
+        hand: hand_rig.as_ref().map(|rig| rig as &dyn RigSource),
+        block_entities: crate::block_entity::shaderpack_block_entities(world),
+        entity_ids: world.get_resource::<ShaderPackActorIds>(),
+        held_items: [inputs.held_item_id, inputs.held_item_id2],
+        camera: view.world_from_view.translation(),
+        view_forward: view.world_from_view.rotation() * Vec3::NEG_Z,
+    };
     let geometry = terrain.as_ref().map(|terrain| FrameGeometry {
         device: render_device,
         terrain,
@@ -629,6 +673,7 @@ fn shaderpack_post(
         },
         effects,
         overlay_radius: terrain.geometry.complete_radius().unwrap_or(f32::MAX),
+        actors,
     });
     let post = target.post_process_write();
     let io = FrameIo {
@@ -714,16 +759,19 @@ fn admit_cameras(
 }
 
 pub(super) fn build(app: &mut App) {
+    actors::load_shaders(app);
     app.init_resource::<ShaderPackRequest>()
         .init_resource::<ShaderPackStatus>()
         .init_resource::<ShaderPackFrameInputs>()
         .init_resource::<ShaderPackIdMaps>()
+        .init_resource::<ShaderPackActorIds>()
         .init_resource::<LoadedShaderPack>()
         .init_resource::<Loader>()
         .add_plugins((
             ExtractComponentPlugin::<ShaderPackRendering>::default(),
             ExtractResourcePlugin::<LoadedShaderPack>::default(),
             ExtractResourcePlugin::<ShaderPackFrameInputs>::default(),
+            ExtractResourcePlugin::<ShaderPackActorIds>::default(),
             ExtractResourcePlugin::<DedicatedGraphicsMemory>::default(),
             ShaderpackGeometryPlugin,
             ShaderpackAtlasPlugin,
@@ -741,6 +789,7 @@ pub(super) fn finish(app: &mut App) {
         .init_resource::<ShaderPackEffects>()
         .init_resource::<ShaderpackEffectTextures>()
         .init_resource::<ShaderPackDrawnCategories>()
+        .init_resource::<ActorSkinPipelines>()
         .add_systems(
             Render,
             (
@@ -775,187 +824,5 @@ mod post_tests;
 mod first_person_tests;
 
 #[cfg(test)]
-mod camera_tests {
-    use super::*;
-    use bevy::render::view::Msaa;
-
-    #[test]
-    fn shaderpack_render_schedule_initializes_without_a_selected_pack() {
-        let mut render_app = bevy::app::SubApp::new();
-        render_app.add_schedule(Render::base_schedule());
-        let mut app = App::new();
-        app.insert_sub_app(RenderApp, render_app);
-        finish(&mut app);
-        app.sub_app_mut(RenderApp)
-            .world_mut()
-            .schedule_scope(Render, |world, schedule| {
-                schedule
-                    .initialize(world)
-                    .expect("shader-pack render schedule must initialize");
-            });
-    }
-
-    #[test]
-    fn particle_streams_keep_independent_replacement_coverage() {
-        let coverage = effect_coverage(
-            |effect| effect == Effect::ParticlesTranslucent || effect == Effect::ParticlesAdditive,
-            |_| false,
-        );
-        assert!(!coverage.particles_opaque);
-        assert!(coverage.particles_translucent && coverage.particles_additive);
-        let native = render_scene::AtmosphereFrame::default();
-        assert!(!needs_native_scene(
-            Some(&native),
-            None,
-            None,
-            None,
-            None,
-            |_| true
-        ));
-    }
-
-    #[test]
-    fn depthless_native_layers_keep_the_scene_copy_path() {
-        let mut overlays = render_scene::ScreenOverlayScene::default();
-        let mut nametags = render_scene::NametagSceneResource::default();
-        assert!(!needs_native_scene(
-            None,
-            None,
-            None,
-            Some(&overlays),
-            Some(&nametags),
-            |_| true
-        ));
-        overlays.layers.push(render_scene::ScreenOverlayLayer {
-            kind: render_scene::ScreenOverlayKind::SpyglassScope,
-            rgb: [1.0; 3],
-            alpha: 1.0,
-        });
-        assert!(needs_native_scene(
-            None,
-            None,
-            None,
-            Some(&overlays),
-            None,
-            |_| true
-        ));
-        nametags
-            .0
-            .records
-            .push(render_model::NametagRecord::default());
-        assert!(needs_native_scene(
-            None,
-            None,
-            None,
-            None,
-            Some(&nametags),
-            |_| true
-        ));
-    }
-
-    #[test]
-    fn scene_copy_inputs_retain_the_native_far_plane() {
-        let inputs = ShaderPackFrameInputs {
-            render_distance: MIN_PACK_FAR * 8.0,
-            ..default()
-        };
-        let horizon = MIN_PACK_FAR * 2.0;
-        assert_eq!(
-            pack_inputs(&inputs, Some(horizon), false).render_distance,
-            inputs.render_distance
-        );
-        assert_eq!(
-            pack_inputs(&inputs, Some(horizon), true).render_distance,
-            horizon
-        );
-        assert_eq!(
-            pack_inputs(&inputs, None, true).render_distance,
-            inputs.render_distance
-        );
-    }
-
-    #[test]
-    fn unresolved_native_layers_keep_the_scene_copy_path() {
-        assert!(!needs_native_scene(None, None, None, None, None, |_| false));
-        assert!(needs_native_scene(
-            Some(&render_scene::AtmosphereFrame::default()),
-            None,
-            None,
-            None,
-            None,
-            |_| false
-        ));
-        for additive in [false, true] {
-            let mut particles = render_scene::ParticleGpuFrame::default();
-            let instances = std::sync::Arc::from([particles::ParticleInstance::default()]);
-            if additive {
-                particles.add = instances;
-            } else {
-                particles.blend = instances;
-            }
-            assert!(needs_native_scene(
-                None,
-                Some(&particles),
-                None,
-                None,
-                None,
-                |_| false
-            ));
-        }
-    }
-
-    #[test]
-    fn replacement_is_published_before_native_queue_consumers() {
-        #[derive(Resource, Default)]
-        struct QueuedTerrain(bool);
-        /// Captures the replacement decision observed by a native queue.
-        fn native_queue(drawn: Res<ShaderPackDrawnCategories>, mut queued: ResMut<QueuedTerrain>) {
-            queued.0 = drawn.terrain;
-        }
-        let mut world = World::new();
-        world.init_resource::<ShaderPackViews>();
-        world.init_resource::<ShaderPackEffects>();
-        world.insert_resource(ShaderPackDrawnCategories { terrain: true });
-        world.init_resource::<QueuedTerrain>();
-        let mut schedule = bevy::ecs::schedule::Schedule::default();
-        schedule.configure_sets(
-            (
-                RenderSystems::PrepareViews,
-                RenderSystems::Queue,
-                RenderSystems::PrepareResources,
-            )
-                .chain(),
-        );
-        schedule.add_systems((
-            crate::chunk::shaderpack_sources::before_native_terrain_queues(configure_replacement),
-            native_queue.in_set(RenderSystems::Queue),
-        ));
-        schedule.run(&mut world);
-        assert!(!world.resource::<QueuedTerrain>().0);
-    }
-
-    #[test]
-    fn opted_in_cameras_admit_single_sample_depth_sampling() {
-        let mut app = App::new();
-        app.init_resource::<Assets<bevy::shader::Shader>>();
-        build(&mut app);
-        let camera = app
-            .world_mut()
-            .spawn((Camera3d::default(), Msaa::Sample4, ShaderPackRendering))
-            .id();
-        app.update();
-        assert_eq!(*app.world().get::<Msaa>(camera).unwrap(), Msaa::Off);
-        assert!(
-            wgpu::TextureUsages::from(
-                app.world()
-                    .get::<Camera3d>(camera)
-                    .unwrap()
-                    .depth_texture_usages
-            )
-            .contains(wgpu::TextureUsages::TEXTURE_BINDING)
-        );
-        *app.world_mut().get_mut::<Msaa>(camera).unwrap() = Msaa::Sample8;
-        app.update();
-        assert_eq!(*app.world().get::<Msaa>(camera).unwrap(), Msaa::Off);
-    }
-}
+#[path = "plugin_camera_tests.rs"]
+mod camera_tests;
