@@ -105,8 +105,8 @@ these controls do not qualify installation or live advertised hosting.
 
 Android uses native networking and the platform TLS verifier; target checks and APK
 assembly are verified. Physical-device sign-in, TLS, terrain and lifecycle acceptance
-remain open. Keep the explicit legacy client until its replacement acceptance permits
-removal; retaining Go server integrations is independent of that cutover. No result
+remain open. Go server integrations retain their existing process lifecycles.
+The native client source retirement still requires final integrated acceptance. No result
 here closes full source-based parity or the complete networking goal. Keep dependency
 identities shared across reusable libraries and the client. The pinned target comes
 from [the target manifest](assets/bedrock-target.json).
