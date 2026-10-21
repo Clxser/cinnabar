@@ -61,6 +61,7 @@ async fn signup_wait_cancels_and_disconnected_presentation_fails_closed() {
     let mut owner = NativeAuth::from_state(AuthState::AwaitingXboxSignup {
         uri: "https://example.invalid/signup".into(),
     });
+    drop(owner._fixture_sender.take());
     owner.poll();
     assert!(matches!(owner.state(), AuthState::Failed(_)));
     assert!(owner.take_profile().is_none());
