@@ -97,6 +97,7 @@ pub(super) async fn negotiate(
         }
     })?;
     let mut connection = crate::login::native_network::connection::upstream(transport);
+    connection.primary_only();
     let (packs, identity) = negotiate_connected(
         &mut connection,
         &address,

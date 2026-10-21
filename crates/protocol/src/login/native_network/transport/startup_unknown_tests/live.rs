@@ -1,4 +1,4 @@
-//! Ordinary upstream play keeps known headers while skipping unused, well-formed IDs.
+//! Desktop upstream play keeps primary input while skipping unused IDs and secondary players.
 
 use super::*;
 use crate::codec::SessionFailure;
@@ -11,8 +11,8 @@ enum LiveCase {
     MalformedTerminal,
 }
 
-/// Preserves both primary markers, a known secondary header and the original primary terminal.
-fn expected() -> [Packet; 4] {
+/// Supplies primary markers around a secondary player and the original primary terminal.
+fn input() -> [Packet; 4] {
     let mut secondary = time(5);
     secondary.header.from_subclient = 1;
     secondary.header.to_subclient = 2;
@@ -30,9 +30,15 @@ fn expected() -> [Packet; 4] {
     ]
 }
 
+/// Retains the primary player's original FIFO and terminal after secondary input is skipped.
+fn expected() -> [Packet; 3] {
+    let [first, second, _, terminal] = input();
+    [first, second, terminal]
+}
+
 /// Inserts one unused or malformed entry between actual generated primary packets.
 fn entries(case: LiveCase) -> Vec<Bytes> {
-    let packets = expected();
+    let packets = input();
     let mut entries = vec![crate::session_transport::tests::packet_bytes(&packets[0])];
     match case {
         LiveCase::Unknown => entries.push(Case::Stack.entry()),
@@ -168,7 +174,7 @@ async fn native_desktop_live_unknown_keeps_primary_fifo_headers_and_terminal() {
 }
 
 #[tokio::test]
-async fn native_desktop_live_known_secondary_headers_and_primary_terminal_keep_fifo() {
+async fn native_desktop_live_secondary_input_keeps_primary_fifo_and_terminal() {
     let (client, server) = exercise_live(LiveCase::Healthy).await;
     server.unwrap();
     let live = startup(client);

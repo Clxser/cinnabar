@@ -1,4 +1,4 @@
-//! Unrelated startup bodies retain their raw owner until a consumer actually uses them.
+//! Desktop raw forwarding retains unrelated primary startup bodies until a consumer uses them.
 
 use super::early_spawn_tests::{FixtureRoute, Route, fixture_route, receive, send};
 use crate::packet::GameHeader;
@@ -37,9 +37,7 @@ impl PacketRelay for Passthrough {
 
 /// Frames a defined packet ID without pretending its unused body was decoded.
 fn unused_entry() -> Bytes {
-    let mut header = wire::PacketHeader::new(packets::PacketId::ShowStoreOffer as u32);
-    header.sender_subclient = 2;
-    header.target_subclient = 3;
+    let header = wire::PacketHeader::new(packets::PacketId::ShowStoreOffer as u32);
     let mut entry = Vec::new();
     wire::Writer::with_limit(&mut entry, BatchLimits::default().max_decoded_bytes)
         .write_var_u32(header.to_raw())
@@ -226,8 +224,8 @@ async fn native_relay_preserves_unrelated_known_raw_body_before_late_start_game(
             raw[1].0,
             GameHeader {
                 id: packets::PacketId::ShowStoreOffer,
-                from_subclient: 2,
-                to_subclient: 3
+                from_subclient: 0,
+                to_subclient: 0
             }
         );
         assert!(

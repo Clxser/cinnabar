@@ -1,4 +1,4 @@
-//! The relay observes full native packet headers and the actual prefix through first StartGame.
+//! Desktop raw forwarding observes the primary player's prefix through first StartGame.
 
 use super::early_spawn_tests::{FixtureRoute, Route, fixture_route, receive, send};
 use crate::login::native_network::negotiated;
@@ -42,14 +42,11 @@ impl PacketRelay for RecordingRelay {
     fn stop(&self) {}
 }
 
-/// Supplies one legal nonzero-subclient entry through the actual generated encoder.
+/// Supplies one primary-player entry through the actual generated encoder.
 fn marker(time: i32) -> Packet {
-    let mut packet = Packet::new(packets::SetTime {
+    Packet::new(packets::SetTime {
         time: wire::ZigZag32(time),
-    });
-    packet.header.from_subclient = 2;
-    packet.header.to_subclient = 3;
-    packet
+    })
 }
 
 /// Completes the real Settings/Login/packs exchange, including the client's stack acknowledgement.
@@ -116,7 +113,7 @@ fn batch(packets: &[Packet]) -> Vec<u8> {
 }
 
 #[tokio::test]
-async fn native_relay_adopts_negotiated_deferred_packet_with_original_subclient_header() {
+async fn native_relay_adopts_negotiated_deferred_packet_with_original_primary_header() {
     tokio::time::timeout(Duration::from_secs(20), async {
         let FixtureRoute {
             mut listener,
