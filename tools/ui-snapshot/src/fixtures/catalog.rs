@@ -297,14 +297,14 @@ pub(super) const STATES: &[State] = &[
         name: "chat-server-content-idle",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat::server_content(false),
+        fixture: || chat_server_content(false),
     },
     #[cfg(feature = "test-support")]
     State {
         name: "chat-server-content-hover",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat::server_content(true),
+        fixture: || chat_server_content(true),
     },
     State {
         name: "home-update-compact",
@@ -556,50 +556,50 @@ pub(super) const STATES: &[State] = &[
         name: "chat-background-transparent",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat::background(0),
+        fixture: || chat_background(0),
     },
     State {
         name: "chat-background-half",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat::background(50),
+        fixture: || chat_background(50),
     },
     State {
         name: "chat-background-opaque",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat::background(100),
+        fixture: || chat_background(100),
     },
     State {
         name: "chat-history-width",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: chat::history_width,
+        fixture: chat_history_width,
     },
     State {
         name: "chat-history-width-small",
         size: SMALL_SIZE,
         gui_scale: 1,
-        fixture: chat::history_width,
+        fixture: chat_history_width,
     },
     State {
         name: "chat-command-background-transparent",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: chat::command_background,
+        fixture: chat_command_background,
     },
     State {
         name: "chat-command-completion",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat::completion("/give @", &["@a", "@e", "@p"]),
+        fixture: || chat_completion("/give @", &["@a", "@e", "@p"]),
     },
     State {
         name: "chat-command-completion-small",
         size: SMALL_SIZE,
         gui_scale: 1,
         fixture: || {
-            chat::completion(
+            chat_completion(
                 "/tell ExamplePlayer AnotherPlayerWithALongName @",
                 &["@Alex", "@ExamplePlayerWithALongName", "@Bo"],
             )
@@ -633,13 +633,13 @@ pub(super) const STATES: &[State] = &[
         name: "chat-mentions",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: chat::mentions,
+        fixture: chat_mentions,
     },
     State {
         name: "chat-command-targets",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: chat::command_targets,
+        fixture: chat_command_targets,
     },
     State {
         name: "tab-list-badges",
