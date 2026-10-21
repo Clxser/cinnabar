@@ -253,6 +253,7 @@ fn animated_scroll_ancestor_keeps_the_card_image_and_label() {
         };
         let bytes = serde_json::to_vec(&document).unwrap();
         let catalog = Catalog::from_files([
+            ("ui/_global_variables.json", b"{}".as_slice()),
             (
                 "ui/_ui_defs.json",
                 br#"{"ui_defs":["ui/scroll_entry.json"]}"#.as_slice(),
