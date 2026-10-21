@@ -2,6 +2,8 @@
 use super::*;
 use tokio::sync::{mpsc, oneshot};
 
+pub(in crate::launcher_account) mod final_stop;
+
 struct LeaseContendedService<'a> {
     account: Arc<NativeAccount>,
     lifetime: &'a TitlePresenceLifetime,

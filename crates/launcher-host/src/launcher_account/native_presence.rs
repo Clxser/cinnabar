@@ -55,6 +55,14 @@ impl Service for NativeService<'_> {
 
 /// Retains one actual acquisition/update/removal future across all unrelated control wakes.
 pub(super) async fn run(shared: &Mutex<Snapshot>, lifetime: &TitlePresenceLifetime) {
+    #[cfg(test)]
+    {
+        let probe = shared.lock().unwrap().pending_presence_probe.clone();
+        if let Some(probe) = probe {
+            publish(probe.as_ref(), shared, lifetime).await;
+            return;
+        }
+    }
     #[cfg(feature = "test-support")]
     {
         let probe = shared.lock().unwrap().retirement_probe.clone();
@@ -222,7 +230,7 @@ async fn wait_latest(
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 
 #[cfg(feature = "test-support")]
 impl Service for Arc<super::retirement_test_support::State> {

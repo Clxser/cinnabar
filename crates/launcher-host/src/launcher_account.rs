@@ -67,6 +67,8 @@ const PING_INTERVAL: Duration = Duration::from_secs(15);
 
 #[derive(Default)]
 struct Snapshot {
+    #[cfg(all(test, feature = "native-networking", not(target_arch = "wasm32")))]
+    pending_presence_probe: Option<Arc<native_presence::tests::final_stop::PendingPresence>>,
     #[cfg(all(
         feature = "test-support",
         feature = "native-networking",
