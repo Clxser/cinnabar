@@ -38,7 +38,7 @@ fn custom_mining_prepared_state_overrides_reach_both_overlay_modes() {
         ..Default::default()
     };
     let prepared = pack_runtime::prepare_session_packs(
-        protocol::ResourcePackHandoff::from_archives(vec![]),
+        bedrock_packs::ResourcePackHandoff::from_archives(vec![]),
         &data,
         u64::MAX,
     );
