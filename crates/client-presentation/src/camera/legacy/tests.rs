@@ -21,6 +21,7 @@ struct TestPhysics {
     ticks: Vec<CameraMovementTick>,
     alpha: f32,
     world_identity: Option<sim::WorldCollisionIdentity>,
+    sneaking: bool,
 }
 impl PhysicsObservation for TestPhysics {
     /// Returns the deterministic completed state.
@@ -35,9 +36,9 @@ impl PhysicsObservation for TestPhysics {
             }
         }
     }
-    /// The fixture never sneaks or sprints.
+    /// The fixture's held sneak; it never sprints.
     fn latest_sneak_sprint(&self) -> Option<(bool, bool)> {
-        Some((false, false))
+        Some((self.sneaking, false))
     }
     /// The fixture uses ordinary walking.
     fn mode(&self) -> sim::MovementMode {
@@ -118,6 +119,33 @@ fn apply(
     );
 }
 
+/// Applies camera effects with the same world observation used to sample hand motion.
+#[allow(clippy::too_many_arguments)]
+fn present(
+    time: Res<Time>,
+    settings: Res<CameraSettingsAuthority>,
+    hand: Res<FirstPersonHandMotion>,
+    view: Res<LocalViewPose>,
+    world: Res<TestWorld>,
+    server: ResMut<ServerCameraView>,
+    cameras: Query<(&mut Transform, Option<&mut Projection>), With<FlyCamera>>,
+) {
+    crate::camera::presentation::apply_camera_presentation(
+        time,
+        settings,
+        None,
+        hand,
+        None,
+        view,
+        Some(WorldObservation {
+            stream: Some(&world.0),
+        }),
+        None,
+        server,
+        cameras,
+    );
+}
+
 /// Creates the camera resources without assets, input devices or a visible window.
 fn camera_app() -> App {
     let mut app = App::new();
@@ -137,6 +165,7 @@ fn camera_app() -> App {
             ticks: Vec::new(),
             alpha: 0.5,
             world_identity: None,
+            sneaking: false,
         });
     app
 }
@@ -689,6 +718,46 @@ fn freelook_release_preserves_hand_sway_winding() {
                 .resource::<FirstPersonHandMotion>()
                 .sway_yaw_radians;
             assert!((actual - ((return_angle + 30.0) * 0.1).to_radians()).abs() < 2e-6);
+        }
+    }
+}
+
+#[test]
+fn sneaking_java_camera_stays_on_the_crouched_gameplay_eye() {
+    for java in [false, true] {
+        let mut app = camera_app();
+        let mut user = ui::UserSettings::default();
+        user.video.java_animations = java;
+        // Isolate eye height from walk bob, which both modes apply to the camera.
+        user.video.view_bobbing = ui::ViewBobbing::Off;
+        app.world_mut()
+            .resource_mut::<CameraSettingsAuthority>()
+            .replace(1, &user)
+            .unwrap();
+        app.world_mut().resource_mut::<TestPhysics>().sneaking = true;
+        let feet = Vec3::new(0.5, 64.0, 0.5);
+        // Bedrock's crouched eye, which block selection also casts from.
+        let eye = feet + Vec3::Y * (protocol::STANDING_PLAYER_EYE_HEIGHT - 0.35);
+        let camera = app
+            .world_mut()
+            .spawn((FlyCamera::default(), Transform::from_translation(eye)))
+            .id();
+        for index in 1..4 {
+            tick(&mut app, index);
+            app.world_mut()
+                .resource_mut::<LocalViewPose>()
+                .set_subject_position(eye, feet);
+            *app.world_mut().get_mut::<Transform>(camera).unwrap() =
+                Transform::from_translation(eye);
+            app.world_mut().run_system_cached(sample).unwrap();
+            app.world_mut().run_system_cached(present).unwrap();
+            let rendered = app.world().get::<Transform>(camera).unwrap().translation;
+            assert!(
+                (rendered.y - eye.y).abs() < 1e-5,
+                "java {java} tick {index}: rendered eye {} left the gameplay eye {}",
+                rendered.y,
+                eye.y
+            );
         }
     }
 }

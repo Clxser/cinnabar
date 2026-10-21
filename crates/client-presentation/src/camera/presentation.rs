@@ -47,8 +47,6 @@ pub struct FirstPersonHandMotion {
     pub hurt: Mat4,
     pub sway_pitch_radians: f32,
     pub sway_yaw_radians: f32,
-    /// World-space eye correction, independent of view bob and the gameplay origin.
-    pub eye_height_adjustment: f32,
 }
 
 impl Default for FirstPersonHandMotion {
@@ -59,7 +57,6 @@ impl Default for FirstPersonHandMotion {
             hurt: Mat4::IDENTITY,
             sway_pitch_radians: 0.0,
             sway_yaw_radians: 0.0,
-            eye_height_adjustment: 0.0,
         }
     }
 }
@@ -123,13 +120,11 @@ pub fn advance_presentation_state(
         .and_then(|physics| physics.state())
         .is_some_and(|state| state.on_ground);
     hurt.advance(dt);
-    hand.eye_height_adjustment = 0.0;
     let look = view.camera_look();
     let local_actor = client_world
         .as_ref()
         .and_then(|world| world.stream)
         .and_then(|stream| stream.authority().actor(stream.local_player_runtime_id()));
-    let sleeping = local_actor.is_some_and(|actor| actor.is_sleeping());
     let alive = local_actor.map_or_else(
         || {
             ui.and_then(|ui| ui.hud().health())
@@ -204,7 +199,6 @@ pub fn advance_presentation_state(
             velocity: vector(state.velocity),
             on_ground: state.on_ground,
             alive,
-            sneaking,
             riding: matches!(physics.mode(), sim::MovementMode::Riding),
             walks: !(matches!(
                 physics.mode(),
@@ -223,22 +217,8 @@ pub fn advance_presentation_state(
             (0.0, 0.0)
         };
     if settings.feel().java_animations {
+        // The rendered eye stays on the gameplay eye, so the crosshair keeps the selected block.
         let alpha = physics.map_or(1.0, |physics| physics.tick_alpha());
-        if !sleeping
-            && physics.is_some_and(|physics| {
-                physics.state().is_some()
-                    && !matches!(
-                        physics.mode(),
-                        sim::MovementMode::Swimming
-                            | sim::MovementMode::Crawling
-                            | sim::MovementMode::Gliding
-                    )
-            })
-        {
-            let eye_height = view.eye_translation().y - view.feet_translation().y;
-            hand.eye_height_adjustment =
-                protocol::STANDING_PLAYER_EYE_HEIGHT - java.sneak_drop(alpha) - eye_height;
-        }
         hand.bob = if settings.feel().view_bobbing.hand_enabled() {
             java.bob(alpha)
         } else {
@@ -457,11 +437,6 @@ pub fn apply_camera_presentation(
         pose = server.collision_safe_pose(&context, pose, &world);
     }
     let mut changed = override_pose.is_some();
-
-    if override_pose.is_none() && hand.eye_height_adjustment != 0.0 {
-        pose.translation.y += hand.eye_height_adjustment;
-        changed = true;
-    }
 
     if override_pose.is_none()
         && let Some(rig) = settings.rig()
@@ -765,18 +740,5 @@ mod tests {
     fn hand_motion_defaults_to_identity() {
         let hand = FirstPersonHandMotion::default();
         assert_eq!(hand.hurt * hand.bob.matrix(), Mat4::IDENTITY);
-    }
-
-    /// The visual sneak correction moves the rendered eye without changing the gameplay ray.
-    #[test]
-    fn java_eye_height_adjustment_only_moves_the_presented_camera() {
-        let mut app = camera_app();
-        let view = *app.world().resource::<LocalViewPose>();
-        app.world_mut()
-            .resource_mut::<FirstPersonHandMotion>()
-            .eye_height_adjustment = 0.27;
-        app.update();
-        assert!((camera_transform(&mut app).translation.y - 2.27).abs() < 1e-6);
-        assert_eq!(*app.world().resource::<LocalViewPose>(), view);
     }
 }
