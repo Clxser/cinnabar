@@ -35,6 +35,40 @@ impl Drop for Fixture {
     }
 }
 
+/// A completed transaction releases its lock even while a duplicate descriptor survives.
+#[cfg(unix)]
+#[test]
+fn completed_account_transactions_release_duplicated_file_leases() {
+    let fixture = Fixture::new();
+    let path = fixture.store.directory.join("store.lock");
+    for nonblocking in [false, true] {
+        let owner = if nonblocking {
+            try_lease(&path)
+        } else {
+            lease(&path)
+        }
+        .unwrap();
+        let duplicate = owner.try_clone().unwrap();
+        assert_eq!(
+            try_lease(&path).err().unwrap().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        drop(owner);
+        let next = try_lease(&path).expect("the completed transaction released its lock");
+        assert_eq!(
+            try_lease(&path).err().unwrap().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        drop(duplicate);
+        assert_eq!(
+            try_lease(&path).err().unwrap().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        drop(next);
+        assert!(try_lease(&path).is_ok());
+    }
+}
+
 /// Native and Go refresh share one lease; publication cannot resurrect retired sign-ins.
 #[test]
 fn rotation_is_persisted_and_generation_replacement_or_removal_cannot_be_undone() {
