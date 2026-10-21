@@ -13,12 +13,15 @@ async fn public_close_preserves_the_pending_fifth_body_before_any_receive() {
         let (incoming, receive) = mpsc::channel(QUEUED_BATCHES + 1);
         let (fifth_read, received_fifth) = oneshot::channel();
         let (closed, observed_close) = oneshot::channel();
-        let mut transport = SessionTransport::from_native(ReplayConnection {
-            incoming: receive,
-            fifth_read: Some(fifth_read),
-            reads: 0,
-            closed: Some(closed),
-        });
+        let mut transport = SessionTransport::from_native(
+            ReplayConnection {
+                incoming: receive,
+                fifth_read: Some(fifth_read),
+                reads: 0,
+                closed: Some(closed),
+            },
+            None,
+        );
         for index in 0..=QUEUED_BATCHES {
             incoming
                 .send(
@@ -67,11 +70,14 @@ async fn cancelled_close_retry_keeps_the_original_driver_cutoff() {
     let (entered, closing) = oneshot::channel();
     let (release, held) = oneshot::channel();
     let (dropped, retired) = oneshot::channel();
-    let mut transport = SessionTransport::from_native(HeldClose {
-        entered: Some(entered),
-        release: held,
-        dropped: Some(dropped),
-    });
+    let mut transport = SessionTransport::from_native(
+        HeldClose {
+            entered: Some(entered),
+            release: held,
+            dropped: Some(dropped),
+        },
+        None,
+    );
     let cutoff = tokio::time::Instant::now() + CLOSE_TIMEOUT;
     {
         let mut first = std::pin::pin!(transport.close());
@@ -149,11 +155,14 @@ async fn abandoned_close_borrow_retires_the_original_driver_without_retry() {
     let (entered, closing) = oneshot::channel();
     let (release, held) = oneshot::channel();
     let (dropped, retired) = oneshot::channel();
-    let mut transport = SessionTransport::from_native(HeldClose {
-        entered: Some(entered),
-        release: held,
-        dropped: Some(dropped),
-    });
+    let mut transport = SessionTransport::from_native(
+        HeldClose {
+            entered: Some(entered),
+            release: held,
+            dropped: Some(dropped),
+        },
+        None,
+    );
     let cutoff = tokio::time::Instant::now() + CLOSE_TIMEOUT;
     {
         let mut close = std::pin::pin!(transport.close());

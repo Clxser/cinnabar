@@ -497,7 +497,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         local_player_skin.clone(),
         minecraft_import,
     )
-    .with_io(io.handle(), io.tasks())
+    .with_io(io.execution())
     .with_language_assets(
         loaded_assets.selected_path.clone(),
         args.language.as_deref(),

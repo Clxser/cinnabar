@@ -127,7 +127,7 @@ async fn service_lease_progress_survives_full_native_receive_capacity() {
     let (_, healthy) = request_service(&service, false).await;
     connection.maintain().await;
     healthy.await.unwrap().unwrap();
-    let mut transport = SessionTransport::from_native(connection);
+    let mut transport = SessionTransport::from_native(connection, None);
     for index in 0..QUEUED_BATCHES + 2 {
         incoming.send(Bytes::from(vec![index as u8])).await.unwrap();
     }

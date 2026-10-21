@@ -85,6 +85,8 @@ async fn signed_hosted_packless_upstream_preserves_startup_initialized_and_live_
             let (mut play, (archives, runtime_id)) = protocol::test_support::hosted_client(
                 client, nonce, format!("http://{downstream_address}"), authentication,
                 SessionLogin {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    execution: None,
                     display_name: VISITOR_NAME, client_random_id: random_id, cache: None, skin: None,
                     settings: &settings, tap: None, relay: None, target: None,
                 },

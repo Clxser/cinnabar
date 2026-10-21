@@ -117,6 +117,8 @@ async fn exercise_packless(early_spawn: bool) -> (Result<Received, ProtocolError
                     LoginSequence::connect_native(
                         &fixture.target,
                         SessionLogin {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            execution: None,
                             display_name: "Fixture",
                             client_random_id: crate::ClientRandomId::new(1).unwrap(),
                             cache: None,

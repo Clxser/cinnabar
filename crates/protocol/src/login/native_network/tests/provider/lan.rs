@@ -214,6 +214,8 @@ async fn signed_lan_public_join_keeps_provider_proof_nonce_startup_and_bidirecti
                         NativeTransport::NetherNetLan,
                     ),
                     SessionLogin {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        execution: None,
                         display_name: "untrusted application name",
                         client_random_id: crate::ClientRandomId::new(1).unwrap(),
                         cache: None,

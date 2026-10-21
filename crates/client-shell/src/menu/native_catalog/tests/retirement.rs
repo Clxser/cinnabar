@@ -84,6 +84,8 @@ fn actual_catalog_retirement_coalesces_refresh_and_rejects_stale_publication() {
             .unwrap();
         let tasks = TaskTracker::new();
         let layout = launcher::test_support::scratch("catalog-retirement");
+        let (execution, _stop) =
+            bridge::tasks::NativeExecution::for_process(runtime.handle().clone(), tasks.clone());
         let mut menu = MenuRuntime::new_with_layout(
             true,
             Some(2),
@@ -91,7 +93,7 @@ fn actual_catalog_retirement_coalesces_refresh_and_rejects_stale_publication() {
             layout,
             crate::player_skin::LocalPlayerSkin::generated_default("Fixture"),
         )
-        .with_io(runtime.handle().clone(), tasks.clone());
+        .with_io(execution);
         menu.auth_process = Some(native_state(AuthState::Authenticated));
         menu.feeds.account_active_id = Some("123".into());
         let path = menu.layout.auth_cache();

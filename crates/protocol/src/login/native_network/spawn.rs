@@ -47,7 +47,8 @@ pub(super) async fn continue_join<P: Send + 'static>(
     } else {
         packs
     };
-    let mut transport = SessionTransport::from_native(connection).with_tap(login.tap);
+    let mut transport =
+        SessionTransport::from_native(connection, login.execution.cloned()).with_tap(login.tap);
     if let Some(relay) = login.relay {
         transport.set_relay(relay);
     }

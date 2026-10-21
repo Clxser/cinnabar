@@ -44,19 +44,15 @@ pub(super) enum JoinSignIn {
 impl MenuRuntime {
     /// Installs the application's retained edge before any menu/account worker is admitted.
     /// Offline UI construction requires no runtime; it cannot start workers without this injection.
-    pub fn with_io(
-        mut self,
-        runtime: tokio::runtime::Handle,
-        tasks: tokio_util::task::TaskTracker,
-    ) -> Self {
-        self.native_io = Some((runtime, tasks));
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_io(mut self, execution: bridge::tasks::NativeExecution) -> Self {
+        self.native_io = Some(execution);
         self
     }
 
     /// Returns execution/accounting capabilities, never ownership of the actual Runtime lifetime.
-    pub fn io_execution(
-        &self,
-    ) -> std::io::Result<(tokio::runtime::Handle, tokio_util::task::TaskTracker)> {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn io_execution(&self) -> std::io::Result<bridge::tasks::NativeExecution> {
         self.native_io.clone().ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
@@ -304,14 +300,14 @@ impl MenuRuntime {
             let result = self
                 .io_execution()
                 .map_err(Into::into)
-                .and_then(|(runtime, tasks)| {
+                .and_then(|execution| {
                     AuthSupervisor::spawn_native(
                         self.account_store(),
                         self.layout.device_profile_file(),
                         self.feeds.account_active_id.clone(),
                         self.feeds.account_adding,
-                        runtime,
-                        tasks,
+                        execution.runtime().clone(),
+                        execution.tasks().clone(),
                     )
                 });
             match result {

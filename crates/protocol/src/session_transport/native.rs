@@ -457,11 +457,14 @@ async fn write_batch(connection: &mut impl PacketIo, writes: &mut Writes, batch:
 
 impl SessionTransport {
     /// Moves login's connection and unread packets into the same play FIFO.
-    pub(crate) fn from_native(connection: impl PacketIo) -> Self {
+    pub(crate) fn from_native(
+        connection: impl PacketIo,
+        execution: Option<bridge::tasks::NativeExecution>,
+    ) -> Self {
         let rtt = connection.observe_rtt().map(crate::RoundTripTime::native);
         let pump =
             prepare_with_byte_budget(connection, Some(bridge::contract::RELAY_QUEUED_FRAME_BYTES));
-        let (sender, reader) = NativeReader::spawn(pump, rtt, None);
+        let (sender, reader) = NativeReader::spawn(pump, rtt, execution);
         Self {
             reader: Reader::Native(reader),
             writer: crate::packet_relay::BatchWriter::direct(PacketSender::Native(sender)),

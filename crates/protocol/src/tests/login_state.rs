@@ -135,6 +135,8 @@ async fn join(script: Script) -> Result<(PlaySession, GameData, Core), ProtocolE
             timers: bridge::tasks::Timers::tokio(),
         },
         protocol::SessionLogin {
+            #[cfg(not(target_arch = "wasm32"))]
+            execution: None,
             display_name: "RustClient",
             client_random_id: protocol::ClientRandomId::new(-7).unwrap(),
             cache: script.cache_enabled.then(ClientBlobCache::default),

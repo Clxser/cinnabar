@@ -246,6 +246,8 @@ async fn native_provider_expired_handoff_cannot_start_a_connection() {
     let result = LoginSequence::connect_native_authenticated(
         &NativeConnectionTarget::new("unresolved.invalid:0".into(), NativeTransport::RakNet),
         SessionLogin {
+            #[cfg(not(target_arch = "wasm32"))]
+            execution: None,
             display_name: "Synthetic",
             client_random_id: crate::ClientRandomId::new(1).unwrap(),
             cache: None,

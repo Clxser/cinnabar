@@ -78,6 +78,8 @@ async fn signed_hosted_peer_reaches_the_actual_dragonfly_world_and_retires() {
                 address,
                 authentication,
                 SessionLogin {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    execution: None,
                     display_name: VISITOR_NAME,
                     client_random_id: random_id,
                     cache: None,

@@ -36,6 +36,8 @@ fn account_switch_cancels_home_lease_before_waiting_for_original_presence_cleanu
         presence_lifetime: Some(lifetime.clone()),
         ..Default::default()
     };
+    let (execution, _stop) =
+        bridge::tasks::NativeExecution::for_process(runtime.handle().clone(), tasks.clone());
     let mut menu = MenuRuntime::new_with_layout(
         true,
         Some(2),
@@ -43,7 +45,7 @@ fn account_switch_cancels_home_lease_before_waiting_for_original_presence_cleanu
         layout,
         crate::player_skin::LocalPlayerSkin::generated_default("Fixture"),
     )
-    .with_io(runtime.handle().clone(), tasks.clone());
+    .with_io(execution);
     let mut world = World::new();
     world.insert_resource(LauncherAccount(account));
     runtime.block_on(receive(signals.read_entered));

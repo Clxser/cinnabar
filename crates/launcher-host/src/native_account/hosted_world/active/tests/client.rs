@@ -48,6 +48,8 @@ impl Client {
         let (session, (packs, game)) = LoginSequence::connect_native_authenticated(
             &self.target,
             SessionLogin {
+                #[cfg(not(target_arch = "wasm32"))]
+                execution: None,
                 display_name: self.name,
                 client_random_id: self.random_id,
                 cache: None,

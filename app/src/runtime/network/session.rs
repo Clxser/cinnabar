@@ -57,8 +57,7 @@ pub struct NetworkConfig {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_network(
     config: NetworkConfig,
-    runtime: tokio::runtime::Handle,
-    tasks: tokio_util::task::TaskTracker,
+    execution: bridge::tasks::NativeExecution,
     packet_relay: Option<std::sync::Arc<dyn protocol::PacketRelay>>,
 ) -> Result<NetworkHandle<PackApplication>, std::io::Error> {
     if bridge::join_profile::JoinProfile::current().id().is_none() {
@@ -188,8 +187,7 @@ pub fn spawn_network(
     let result = match (friend, local_world) {
         (Some(companion), None) => client_session::spawn_network_with_companion(
             domain,
-            runtime,
-            tasks,
+            execution,
             prepare,
             trace,
             packet_relay,
@@ -197,21 +195,19 @@ pub fn spawn_network(
         ),
         (None, Some(companion)) => client_session::spawn_network_with_companion(
             domain,
-            runtime,
-            tasks,
+            execution,
             prepare,
             trace,
             packet_relay,
             companion,
         ),
         (None, None) => {
-            client_session::spawn_network(domain, runtime, tasks, prepare, trace, packet_relay)
+            client_session::spawn_network(domain, execution, prepare, trace, packet_relay)
         }
         (Some(_), Some(_)) => unreachable!("checked exclusive native connection owners"),
     };
     #[cfg(not(feature = "native-networking"))]
-    let result =
-        client_session::spawn_network(domain, runtime, tasks, prepare, trace, packet_relay);
+    let result = client_session::spawn_network(domain, execution, prepare, trace, packet_relay);
     result.map(NetworkHandle::native)
 }
 

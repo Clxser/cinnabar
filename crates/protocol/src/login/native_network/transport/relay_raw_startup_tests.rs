@@ -161,6 +161,8 @@ async fn native_relay_preserves_unrelated_known_raw_body_before_late_start_game(
             let connected = LoginSequence::connect_native(
                 &target,
                 SessionLogin {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    execution: None,
                     display_name: "Fixture",
                     client_random_id: crate::ClientRandomId::new(1).unwrap(),
                     cache: None,

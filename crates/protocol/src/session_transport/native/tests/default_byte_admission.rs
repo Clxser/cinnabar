@@ -21,13 +21,16 @@ async fn ordinary_desktop_admission_holds_one_oversized_generated_body() {
     let (staged, first_staged) = oneshot::channel();
     let (observation, observed) = oneshot::channel();
     let (closed, actual_close) = oneshot::channel();
-    let mut transport = SessionTransport::from_native(ObservedConnection {
-        body,
-        reads: Arc::clone(&reads),
-        first_staged: Some(first_staged),
-        observation: Some(observation),
-        closed: Some(closed),
-    });
+    let mut transport = SessionTransport::from_native(
+        ObservedConnection {
+            body,
+            reads: Arc::clone(&reads),
+            first_staged: Some(first_staged),
+            observation: Some(observation),
+            closed: Some(closed),
+        },
+        None,
+    );
 
     transport.read_ahead(body_len).await;
     let Inbound::Packet(retained) = transport.recv().await.unwrap() else {

@@ -31,10 +31,13 @@ impl PacketIo for DuplexConnection {
 fn pair() -> (SessionTransport, mpsc::Sender<Bytes>, mpsc::Receiver<Bytes>) {
     let (incoming, receive) = mpsc::channel(QUEUED_BATCHES);
     let (send, outgoing) = mpsc::channel(QUEUED_BATCHES);
-    let transport = SessionTransport::from_native(DuplexConnection {
-        incoming: receive,
-        outgoing: send,
-    });
+    let transport = SessionTransport::from_native(
+        DuplexConnection {
+            incoming: receive,
+            outgoing: send,
+        },
+        None,
+    );
     (transport, incoming, outgoing)
 }
 

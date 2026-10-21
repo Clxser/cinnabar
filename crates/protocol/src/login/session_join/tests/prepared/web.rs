@@ -34,6 +34,8 @@ fn archive_wire(data: &[u8]) -> Vec<u8> {
 /// Supplies addressed login choices without filesystem cache access.
 fn web_login(settings: &LoginSettings) -> SessionLogin<'_> {
     SessionLogin {
+        #[cfg(not(target_arch = "wasm32"))]
+        execution: None,
         display_name: "Fixture",
         client_random_id: ClientRandomId::new(-7).unwrap(),
         cache: None,

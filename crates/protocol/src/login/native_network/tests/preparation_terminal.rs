@@ -326,6 +326,8 @@ async fn held_relay_preparation(
         let client = async {
             let settings = LoginSettings::default();
             let login = SessionLogin {
+                #[cfg(not(target_arch = "wasm32"))]
+                execution: None,
                 display_name: "Fixture",
                 client_random_id: ClientRandomId::new(1).unwrap(),
                 cache: None,
@@ -345,7 +347,7 @@ async fn held_relay_preparation(
             .unwrap();
             let startup_packets =
                 crate::login::native_network::connection::take_deferred(&mut negotiated.connection);
-            let mut transport = SessionTransport::from_native(negotiated.connection);
+            let mut transport = SessionTransport::from_native(negotiated.connection, None);
             if let Some(relay) = &relay {
                 transport.set_relay(relay.clone());
             }

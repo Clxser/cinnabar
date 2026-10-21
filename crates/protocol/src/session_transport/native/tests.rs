@@ -17,12 +17,15 @@ struct ReplayConnection {
 async fn a_permit_committed_after_receive_error_cannot_strand_its_receipt() {
     use bedrock_protocol_1_26_51::packets;
     let (incoming, receive) = mpsc::channel(1);
-    let mut transport = SessionTransport::from_native(ReplayConnection {
-        incoming: receive,
-        fifth_read: None,
-        reads: 0,
-        closed: None,
-    });
+    let mut transport = SessionTransport::from_native(
+        ReplayConnection {
+            incoming: receive,
+            fifth_read: None,
+            reads: 0,
+            closed: None,
+        },
+        None,
+    );
     let PacketSender::Native(sender) = transport.sender() else {
         panic!("native fixture")
     };
@@ -51,12 +54,15 @@ async fn a_permit_committed_after_failure_is_rejected_without_waiting_for_ingres
     use bedrock_protocol_1_26_51::packets;
     let (incoming, receive) = mpsc::channel(QUEUED_BATCHES + 1);
     let (fifth_read, received_fifth) = oneshot::channel();
-    let transport = SessionTransport::from_native(ReplayConnection {
-        incoming: receive,
-        fifth_read: Some(fifth_read),
-        reads: 0,
-        closed: None,
-    });
+    let transport = SessionTransport::from_native(
+        ReplayConnection {
+            incoming: receive,
+            fifth_read: Some(fifth_read),
+            reads: 0,
+            closed: None,
+        },
+        None,
+    );
     let body =
         crate::session_transport::batch_body(&[crate::Packet::new(packets::SetTime::default())])
             .unwrap();
@@ -78,12 +84,15 @@ async fn a_permit_committed_after_failure_is_rejected_without_waiting_for_ingres
 #[tokio::test]
 async fn aborting_the_connection_task_retires_its_uncommitted_permits() {
     let (_incoming, receive) = mpsc::channel(1);
-    let mut transport = SessionTransport::from_native(ReplayConnection {
-        incoming: receive,
-        fifth_read: None,
-        reads: 0,
-        closed: None,
-    });
+    let mut transport = SessionTransport::from_native(
+        ReplayConnection {
+            incoming: receive,
+            fifth_read: None,
+            reads: 0,
+            closed: None,
+        },
+        None,
+    );
     let PacketSender::Native(sender) = transport.sender() else {
         panic!("native fixture")
     };
@@ -142,12 +151,15 @@ async fn write_failure_keeps_a_received_transfer_behind_full_ingress() {
     use bedrock_protocol_1_26_51::{packets, wire};
     let (incoming, receive) = mpsc::channel(QUEUED_BATCHES + 1);
     let (fifth_read, received_fifth) = oneshot::channel();
-    let mut transport = SessionTransport::from_native(ReplayConnection {
-        incoming: receive,
-        fifth_read: Some(fifth_read),
-        reads: 0,
-        closed: None,
-    });
+    let mut transport = SessionTransport::from_native(
+        ReplayConnection {
+            incoming: receive,
+            fifth_read: Some(fifth_read),
+            reads: 0,
+            closed: None,
+        },
+        None,
+    );
     for _ in 0..QUEUED_BATCHES {
         incoming
             .send(
@@ -245,12 +257,15 @@ async fn graceful_close_keeps_the_actual_pending_fifth_ingress_body() {
     let (incoming, receive) = mpsc::channel(QUEUED_BATCHES + 1);
     let (fifth_read, received_fifth) = oneshot::channel();
     let (closed, observed_close) = oneshot::channel();
-    let mut transport = SessionTransport::from_native(ReplayConnection {
-        incoming: receive,
-        fifth_read: Some(fifth_read),
-        reads: 0,
-        closed: Some(closed),
-    });
+    let mut transport = SessionTransport::from_native(
+        ReplayConnection {
+            incoming: receive,
+            fifth_read: Some(fifth_read),
+            reads: 0,
+            closed: Some(closed),
+        },
+        None,
+    );
     for index in 0..=QUEUED_BATCHES {
         incoming
             .send(

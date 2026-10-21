@@ -234,6 +234,8 @@ async fn check_handed_off_packs(cached: bool) {
             timers: bridge::tasks::Timers::tokio(),
         },
         SessionLogin {
+            #[cfg(not(target_arch = "wasm32"))]
+            execution: None,
             display_name: "Fixture",
             client_random_id: crate::ClientRandomId::new(-7).unwrap(),
             cache: Some(ClientBlobCache::default()),
@@ -334,6 +336,8 @@ async fn a_startup_longer_than_one_batch_still_joins() {
                 timers: bridge::tasks::Timers::tokio()
             },
             SessionLogin {
+                #[cfg(not(target_arch = "wasm32"))]
+                execution: None,
                 display_name: "Fixture",
                 client_random_id: crate::ClientRandomId::new(-7).unwrap(),
                 cache: None,
@@ -383,6 +387,8 @@ async fn pack_preparation_starts_before_player_spawn() {
             timers: bridge::tasks::Timers::tokio(),
         },
         SessionLogin {
+            #[cfg(not(target_arch = "wasm32"))]
+            execution: None,
             display_name: "Fixture",
             client_random_id: crate::ClientRandomId::new(-7).unwrap(),
             cache: None,
@@ -447,6 +453,8 @@ async fn the_session_is_read_while_packs_prepare() {
             timers: bridge::tasks::Timers::tokio(),
         },
         SessionLogin {
+            #[cfg(not(target_arch = "wasm32"))]
+            execution: None,
             display_name: "Fixture",
             client_random_id: crate::ClientRandomId::new(-7).unwrap(),
             cache: None,
@@ -499,6 +507,8 @@ async fn a_disconnect_before_the_handoff_is_a_server_disconnect() {
                 timers: bridge::tasks::Timers::tokio()
             },
             SessionLogin {
+                #[cfg(not(target_arch = "wasm32"))]
+                execution: None,
                 display_name: "Fixture",
                 client_random_id: crate::ClientRandomId::new(-7).unwrap(),
                 cache: None,
@@ -545,6 +555,8 @@ async fn a_transfer_before_the_handoff_is_a_server_transfer() {
                 timers: bridge::tasks::Timers::tokio()
             },
             SessionLogin {
+                #[cfg(not(target_arch = "wasm32"))]
+                execution: None,
                 display_name: "Fixture",
                 client_random_id: crate::ClientRandomId::new(-7).unwrap(),
                 cache: None,
@@ -598,6 +610,8 @@ async fn invalid_cached_archive_is_reported_as_a_join_error() {
             timers: bridge::tasks::Timers::tokio(),
         },
         SessionLogin {
+            #[cfg(not(target_arch = "wasm32"))]
+            execution: None,
             display_name: "Fixture",
             client_random_id: ClientRandomId::new(-7).unwrap(),
             cache: None,
@@ -665,6 +679,8 @@ async fn invalid_spawn_prerequisites_are_recorded_as_failed() {
                     timers: bridge::tasks::Timers::tokio()
                 },
                 SessionLogin {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    execution: None,
                     display_name: "Fixture",
                     client_random_id: crate::ClientRandomId::new(-7).unwrap(),
                     cache: None,
@@ -732,6 +748,8 @@ async fn a_relay_starts_with_the_session_and_adds_its_packs() {
                 timers: bridge::tasks::Timers::tokio()
             },
             SessionLogin {
+                #[cfg(not(target_arch = "wasm32"))]
+                execution: None,
                 display_name: "Fixture",
                 client_random_id: crate::ClientRandomId::new(-7).unwrap(),
                 cache: None,

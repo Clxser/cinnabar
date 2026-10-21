@@ -11,8 +11,7 @@ use protocol::LoginSequence;
 /// Starts login on the caller's retained reactor, keeping original blocking presentation workers.
 pub fn spawn_network<P: Send + 'static>(
     config: NetworkConfig,
-    runtime: tokio::runtime::Handle,
-    tasks: tokio_util::task::TaskTracker,
+    execution: bridge::tasks::NativeExecution,
     prepare_presentation: impl FnOnce(
         bedrock_packs::ResourcePackHandoff,
         &protocol::GameData,
@@ -25,8 +24,7 @@ pub fn spawn_network<P: Send + 'static>(
 ) -> Result<NetworkHandle<P>, std::io::Error> {
     spawn_network_with_companion(
         config,
-        runtime,
-        tasks,
+        execution,
         prepare_presentation,
         observation,
         packet_relay,
@@ -37,8 +35,7 @@ pub fn spawn_network<P: Send + 'static>(
 /// Retains one application service through the whole existing network worker and explicit teardown.
 pub fn spawn_network_with_companion<P: Send + 'static>(
     config: NetworkConfig,
-    runtime: tokio::runtime::Handle,
-    tasks: tokio_util::task::TaskTracker,
+    execution: bridge::tasks::NativeExecution,
     prepare_presentation: impl FnOnce(
         bedrock_packs::ResourcePackHandoff,
         &protocol::GameData,
@@ -54,8 +51,7 @@ pub fn spawn_network_with_companion<P: Send + 'static>(
     {
         let _ = (
             config,
-            runtime,
-            tasks,
+            execution,
             prepare_presentation,
             observation,
             packet_relay,
@@ -69,6 +65,8 @@ pub fn spawn_network_with_companion<P: Send + 'static>(
     #[cfg(feature = "native-networking")]
     {
         let mut companion = companion;
+        let runtime = execution.runtime().clone();
+        let tasks = execution.tasks().clone();
         let profile = bridge::join_profile::JoinProfile::current();
         let (mut handle, channels) = network_channels(config.session_generation);
         let failure = channels.control_event_tx.clone();
@@ -112,6 +110,8 @@ pub fn spawn_network_with_companion<P: Send + 'static>(
                             (game_data, packs)
                         };
                         let login = protocol::SessionLogin {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            execution: Some(&execution),
                             display_name: &config.display_name,
                             client_random_id: config.client_random_id,
                             cache: Some(config.client_blob_cache.clone()),

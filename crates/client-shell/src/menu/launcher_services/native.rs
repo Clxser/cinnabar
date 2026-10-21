@@ -39,7 +39,7 @@ impl LauncherServices {
             self.running = None;
             return;
         }
-        let (runtime, tasks) = match menu.io_execution() {
+        let execution = match menu.io_execution() {
             Ok(execution) => execution,
             Err(error) => {
                 menu.catalog_message = Some(error.to_string());
@@ -51,8 +51,8 @@ impl LauncherServices {
             menu.layout.launcher_artwork_dir(),
             account.clone(),
             &pack_runtime::pack_language::active_language_code(),
-            runtime,
-            tasks,
+            execution.runtime().clone(),
+            execution.tasks().clone(),
         );
         self.presence_lifetime = Some(services.title_presence_lifetime());
         self.running = Some(Attachment {

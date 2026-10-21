@@ -25,6 +25,10 @@ impl Original {
             Fixture::messaging(layout.auth_cache(), layout.device_profile_file(), deadline).await
         };
         let tasks = tokio_util::task::TaskTracker::new();
+        let (execution, _stop) = bridge::tasks::NativeExecution::for_process(
+            tokio::runtime::Handle::current(),
+            tasks.clone(),
+        );
         let mut menu = MenuRuntime::new_with_layout(
             true,
             Some(2),
@@ -32,7 +36,7 @@ impl Original {
             layout,
             client_shell::player_skin::LocalPlayerSkin::generated_default("Controlled visitor"),
         )
-        .with_io(tokio::runtime::Handle::current(), tasks.clone());
+        .with_io(execution);
         menu_friend::attach(&mut menu, &service).await.unwrap();
         test_time::eventually("original current friend catalogue applied", || {
             menu_friend::poll(&mut menu);

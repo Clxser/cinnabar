@@ -125,7 +125,8 @@ async fn cdn_wait(public: bool) {
         assert_eq!(preloads.len(), 1);
         assert_eq!(preloads[0].archive.as_deref().unwrap(), bytes.as_slice());
         let tap = Arc::new(RecordingTap::default());
-        let mut transport = SessionTransport::from_native(connection).with_tap(Some(tap.clone()));
+        let mut transport =
+            SessionTransport::from_native(connection, None).with_tap(Some(tap.clone()));
         for (index, expected) in packets.iter().enumerate() {
             let Inbound::Packet(packet) = transport.recv().await.unwrap() else {
                 panic!("accepted application data precedes the staged service terminal");

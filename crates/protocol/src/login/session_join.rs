@@ -38,6 +38,9 @@ pub struct SessionLogin<'a> {
     #[cfg(not(target_arch = "wasm32"))]
     pub relay: Option<Arc<dyn crate::PacketRelay>>,
     pub target: Option<bridge::ConnectTarget>,
+    /// Optional native host execution and its final process-stop observation.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub execution: Option<&'a bridge::tasks::NativeExecution>,
 }
 
 /// Schedules the two startup jobs while login continues reading the ordered play stream.

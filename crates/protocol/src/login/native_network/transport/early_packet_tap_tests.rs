@@ -175,6 +175,8 @@ async fn tapped_native_join() {
         let (mut play, ()) = LoginSequence::connect_native(
             &NativeConnectionTarget::new(address.to_string(), NativeTransport::NetherNetLan),
             SessionLogin {
+                #[cfg(not(target_arch = "wasm32"))]
+                execution: None,
                 display_name: "Fixture",
                 client_random_id: crate::ClientRandomId::new(1).unwrap(),
                 cache: None,

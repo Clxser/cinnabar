@@ -219,6 +219,8 @@ async fn default_urls() {
             LoginSequence::connect_native(
                 &target,
                 SessionLogin {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    execution: None,
                     display_name: "Fixture",
                     client_random_id: crate::ClientRandomId::new(1).unwrap(),
                     cache: None,

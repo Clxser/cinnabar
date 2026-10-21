@@ -104,6 +104,8 @@ impl Host {
                 protocol::LoginSequence::connect_web_prepared(
                     io,
                     protocol::SessionLogin {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        execution: None,
                         display_name: launcher::PRODUCT_NAME,
                         client_random_id: identity,
                         cache: None,

@@ -172,6 +172,8 @@ async fn initialized_world_peer_survives_same_key_mint_and_fresh_turn_on_origina
                 address,
                 authentication,
                 SessionLogin {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    execution: None,
                     display_name: VISITOR_NAME,
                     client_random_id: random_id,
                     cache: None,

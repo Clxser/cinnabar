@@ -136,6 +136,8 @@ async fn rejected_second_login_preserves_the_first_actual_world_connection() {
                 format!("http://{}", first_signaling.local_addr()),
                 first_authentication,
                 SessionLogin {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    execution: None,
                     display_name: VISITOR_NAME,
                     client_random_id: first_id,
                     cache: None,
@@ -174,6 +176,8 @@ async fn rejected_second_login_preserves_the_first_actual_world_connection() {
                 format!("http://{}", second_signaling.local_addr()),
                 second_authentication,
                 SessionLogin {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    execution: None,
                     display_name: SECOND_NAME,
                     client_random_id: second_id,
                     cache: None,

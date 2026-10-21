@@ -97,6 +97,8 @@ async fn exercise_live(case: LiveCase) -> (Result<Received, ProtocolError>, io::
                 let (mut play, runtime_id) = LoginSequence::connect_native(
                     &fixture.target,
                     SessionLogin {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        execution: None,
                         display_name: "Fixture",
                         client_random_id: crate::ClientRandomId::new(1).unwrap(),
                         cache: None,

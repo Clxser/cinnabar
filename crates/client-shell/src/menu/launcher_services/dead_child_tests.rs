@@ -14,6 +14,8 @@ fn native_menu_attaches_actual_services_and_world_store_without_a_core_executabl
     let layout = launcher::test_support::scratch("native-menu-without-core");
     let store = layout.local_worlds_dir();
     assert!(!store.exists());
+    let (execution, _stop) =
+        bridge::tasks::NativeExecution::for_process(runtime.handle().clone(), tasks.clone());
     let mut menu = MenuRuntime::new_with_layout(
         true,
         Some(2),
@@ -21,7 +23,7 @@ fn native_menu_attaches_actual_services_and_world_store_without_a_core_executabl
         layout,
         crate::player_skin::LocalPlayerSkin::generated_default("Fixture"),
     )
-    .with_io(runtime.handle().clone(), tasks.clone());
+    .with_io(execution);
     let mut slot = LauncherServices::default();
     let mut world = World::new();
     let mut worlds = LocalWorlds::default();

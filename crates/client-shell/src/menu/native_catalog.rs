@@ -303,10 +303,13 @@ impl MenuRuntime {
                 .next_refresh
                 .is_none_or(|next| now >= next)
         {
-            match self
-                .io_execution()
-                .and_then(|(runtime, tasks)| CatalogWorker::start(account, runtime, tasks))
-            {
+            match self.io_execution().and_then(|execution| {
+                CatalogWorker::start(
+                    account,
+                    execution.runtime().clone(),
+                    execution.tasks().clone(),
+                )
+            }) {
                 Ok(worker) => {
                     self.native_catalog.request = Some(Request {
                         epoch: self.native_catalog.epoch,

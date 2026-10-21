@@ -74,6 +74,8 @@ async fn local_player_native_session_reaches_the_actual_dragonfly_world_without_
         let (mut session, (archives, game)) = LoginSequence::connect_native(
             &target,
             SessionLogin {
+                #[cfg(not(target_arch = "wasm32"))]
+                execution: None,
                 display_name: "LocalFixture",
                 client_random_id: ClientRandomId::new(1).unwrap(),
                 cache: None,

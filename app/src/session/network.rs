@@ -127,7 +127,7 @@ fn start_network(
     registry_base: crate::runtime::network::session_registries::RegistryBase,
 ) -> Result<(), String> {
     bridge::join_profile::JoinProfile::current().mark("endpoint_ready");
-    let (runtime, tasks) = menu.io_execution().map_err(|error| error.to_string())?;
+    let execution = menu.io_execution().map_err(|error| error.to_string())?;
     let replacement = crate::runtime::network::session::spawn_network(
         NetworkConfig {
             registry_base,
@@ -153,8 +153,7 @@ fn start_network(
             log_dir: menu.layout().log_dir(),
             record_session: menu.settings_snapshot().0.record_network_session(),
         },
-        runtime,
-        tasks,
+        execution,
         packet_relay,
     )
     .map_err(|error| error.to_string())?;

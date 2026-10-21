@@ -46,6 +46,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let (mut session, packs) = LoginSequence::connect_native(
         &NativeConnectionTarget::new(address, transport),
         SessionLogin {
+            #[cfg(not(target_arch = "wasm32"))]
+            execution: None,
             display_name: "NativeExample",
             client_random_id: ClientRandomId::new(1).expect("nonzero constant"),
             cache: None,

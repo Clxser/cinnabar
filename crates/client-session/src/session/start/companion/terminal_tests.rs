@@ -57,6 +57,8 @@ async fn decoded_terminal(kind: u8, body: &[u8]) -> protocol::ProtocolError {
             timers: bridge::tasks::Timers::tokio(),
         },
         protocol::SessionLogin {
+            #[cfg(not(target_arch = "wasm32"))]
+            execution: None,
             display_name: "Terminal fixture",
             client_random_id: protocol::ClientRandomId::new(1).unwrap(),
             cache: None,

@@ -89,6 +89,7 @@ impl MenuRuntime {
             initial.feeds.account_adding = true;
         }
         Self {
+            #[cfg(not(target_arch = "wasm32"))]
             native_io: None,
             // The launcher owns the session lifecycle only when the client
             // started on the menu. `--address` keeps the historical behaviour

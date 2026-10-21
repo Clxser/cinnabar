@@ -133,6 +133,8 @@ async fn native_relay_adopts_negotiated_deferred_packet_with_original_subclient_
         let client = async {
             let settings = crate::LoginSettings::default();
             let login = SessionLogin {
+                #[cfg(not(target_arch = "wasm32"))]
+                execution: None,
                 display_name: "Fixture",
                 client_random_id: crate::ClientRandomId::new(1).unwrap(),
                 cache: None,
@@ -153,7 +155,7 @@ async fn native_relay_adopts_negotiated_deferred_packet_with_original_subclient_
             let mut connection = negotiated.connection;
             let deferred = crate::login::native_network::connection::take_deferred(&mut connection);
             let deferred_count = deferred.len();
-            let mut transport = SessionTransport::from_native(connection);
+            let mut transport = SessionTransport::from_native(connection, None);
             transport.set_relay(relay.clone());
             transport.adopt_startup(deferred);
             let received = match transport.recv().await {
@@ -232,6 +234,8 @@ async fn native_relay_start_observes_late_first_start_game_before_original_order
             let (mut play, runtime_id) = LoginSequence::connect_native(
                 &target,
                 SessionLogin {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    execution: None,
                     display_name: "Fixture",
                     client_random_id: crate::ClientRandomId::new(1).unwrap(),
                     cache: None,

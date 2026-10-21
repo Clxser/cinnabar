@@ -207,6 +207,8 @@ async fn pack_deferred_spawn(route: Route) {
             let (mut play, runtime_id) = LoginSequence::connect_native(
                 &target,
                 SessionLogin {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    execution: None,
                     display_name: "Fixture",
                     client_random_id: crate::ClientRandomId::new(1).unwrap(),
                     cache: None,

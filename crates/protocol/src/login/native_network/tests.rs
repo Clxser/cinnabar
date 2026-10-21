@@ -10,6 +10,8 @@ async fn authenticated_lan_rejects_an_empty_target_before_discovery() {
     let result = LoginSequence::connect_native_authenticated(
         &NativeConnectionTarget::new(String::new(), NativeTransport::NetherNetLan),
         SessionLogin {
+            #[cfg(not(target_arch = "wasm32"))]
+            execution: None,
             display_name: "Fixture",
             client_random_id: crate::ClientRandomId::new(1).unwrap(),
             cache: None,
@@ -45,6 +47,8 @@ async fn selected_local_lan_refuses_an_online_handoff_before_discovery() {
     let result = LoginSequence::connect_native_authenticated(
         &target,
         SessionLogin {
+            #[cfg(not(target_arch = "wasm32"))]
+            execution: None,
             display_name: "Fixture",
             client_random_id: crate::ClientRandomId::new(1).unwrap(),
             cache: None,

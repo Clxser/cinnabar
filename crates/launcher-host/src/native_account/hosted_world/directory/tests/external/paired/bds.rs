@@ -72,6 +72,8 @@ async fn signed_bds_peer_uses_the_original_http_or_lan_world_and_retires() {
                 address,
                 authentication,
                 SessionLogin {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    execution: None,
                     display_name: VISITOR_NAME,
                     client_random_id: random_id,
                     cache: None,
