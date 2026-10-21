@@ -34,45 +34,6 @@ pub(super) async fn next_packet(connection: &mut Connection) -> io::Result<Packe
     ))
 }
 
-/// Sends the application's encoded packet projection, preserving received terminal causes.
-#[cfg(test)]
-pub(super) async fn send<P>(
-    connection: &mut Connection,
-    packet: P,
-) -> Result<(), crate::ProtocolError>
-where
-    packets::Packet: From<P>,
-{
-    send_packets_until(connection, &[Packet::new(packet)], None).await
-}
-
-/// Encodes application packets once, without interposing another transport/FIFO owner.
-#[cfg(test)]
-pub(super) async fn send_packets(
-    connection: &mut Connection,
-    packets: &[Packet],
-) -> Result<(), crate::ProtocolError> {
-    send_packets_until(connection, packets, None).await
-}
-
-#[cfg(test)]
-async fn send_packets_until(
-    connection: &mut Connection,
-    packets: &[Packet],
-    deadline: Option<std::time::Instant>,
-) -> Result<(), crate::ProtocolError> {
-    let body = crate::session_transport::batch_body(packets)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "native packet could not encode"))
-        .map_err(super::failure)?;
-    match connection.send_body_until(body, deadline).await {
-        Ok(()) => Ok(()),
-        Err(error) if super::authentication::is_expired(&error) => {
-            Err(crate::ProtocolError::Authentication(error))
-        }
-        Err(error) => Err(super::preserve_negotiation_boundary(connection, error).await),
-    }
-}
-
 /// Projects only the last actual received frame into the application's terminal representation.
 pub(super) fn current_terminal(
     connection: &Connection,
