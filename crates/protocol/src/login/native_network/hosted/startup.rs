@@ -356,10 +356,12 @@ impl NativeHostedRelayClosing {
                         .get_or_insert_with(|| std::sync::Arc::new(error));
                 }
             }
-            let result =
-                tokio::time::timeout_at(self.deadline.into(), self.wire.connection.close())
-                    .await
-                    .unwrap_or_else(|_| Err(expired()));
+            let result = tokio::time::timeout_at(
+                self.deadline.into(),
+                self.wire.connection.transport_mut().finish_close(),
+            )
+            .await
+            .unwrap_or_else(|_| Err(expired()));
             if let Err(error) = result {
                 self.failure
                     .get_or_insert_with(|| std::sync::Arc::new(error));
