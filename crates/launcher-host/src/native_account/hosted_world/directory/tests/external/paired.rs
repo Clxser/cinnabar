@@ -14,6 +14,21 @@ use provider::{Provider, VISITOR_NAME};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn signed_hosted_peer_reaches_the_actual_dragonfly_world_and_retires() {
+    signed_hosted_peer(|address| format!("http://{address}")).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_hosted_hostname_login_reaches_the_original_world_and_retires() {
+    signed_hosted_peer(|address| format!("localhost:{}", address.port())).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_hosted_udp_service_login_reaches_the_original_world_and_retires() {
+    signed_hosted_peer(|_| "localhost:domain".into()).await;
+}
+
+/// Changes only signed address metadata; the actual association, world and retirement remain original.
+async fn signed_hosted_peer(address: impl FnOnce(std::net::SocketAddr) -> String) {
     let Some(world) = world::World::open() else {
         return;
     };
@@ -36,7 +51,7 @@ async fn signed_hosted_peer_reaches_the_actual_dragonfly_world_and_retires() {
             mut listener,
             signaling,
         } = signed_association(Arc::clone(&client_key)).await;
-        let address = format!("http://{}", signaling.local_addr());
+        let address = address(signaling.local_addr());
         let settings = LoginSettings {
             view_distance_chunks: 2,
             ..Default::default()
