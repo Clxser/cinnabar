@@ -21,7 +21,6 @@ pub(super) enum ClosingPeerBackend {
     Dragonfly(Box<ClosingBackendPeer>),
     Bds {
         upstream: Box<NativeHostedUpstreamClosing>,
-        closed: bool,
         ended: bool,
     },
 }
@@ -105,7 +104,6 @@ impl PeerBackend {
             }
             Self::Bds { upstream, ended } => ClosingPeerBackend::Bds {
                 upstream: Box::new((*upstream).begin_close(deadline)),
-                closed: false,
                 ended,
             },
         }
@@ -121,19 +119,13 @@ impl ClosingPeerBackend {
         }
     }
 
-    /// Completes original physical retirement before draining BDS's already accepted raw prefix.
+    /// Completes physical retirement after BDS's accepted raw prefix has been forwarded.
     pub async fn finish_close(&mut self) -> io::Result<()> {
         match self {
             Self::Dragonfly(backend) => backend.finish_close().await,
-            Self::Bds {
-                upstream,
-                closed,
-                ended,
-            } => {
-                upstream.finish_close().await?;
-                *closed = true;
+            Self::Bds { upstream, ended } => {
                 if *ended {
-                    Ok(())
+                    upstream.finish_close().await
                 } else {
                     Err(io::ErrorKind::WouldBlock.into())
                 }
@@ -145,17 +137,13 @@ impl ClosingPeerBackend {
     pub async fn recv(&mut self) -> io::Result<Option<Bytes>> {
         match self {
             Self::Dragonfly(backend) => backend.recv().await?.map(Some).ok_or_else(ended),
-            Self::Bds {
-                upstream,
-                closed,
-                ended,
-            } => {
+            Self::Bds { upstream, ended } => {
                 if *ended {
                     return Ok(None);
                 }
                 match upstream.receive().await {
                     Ok(packet) => Ok(Some(packet)),
-                    Err(error) if *closed && error.kind() == io::ErrorKind::UnexpectedEof => {
+                    Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
                         *ended = true;
                         Ok(None)
                     }
