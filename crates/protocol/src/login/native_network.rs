@@ -11,6 +11,8 @@ pub use authentication::{
 };
 mod connection;
 mod hosted;
+#[cfg(feature = "test-support")]
+pub use hosted::test_support::retain_hosted_received_pair;
 pub use hosted::{
     NativeHostedRelay, NativeHostedRelayClosing, NativeHostedRelayProgress, NativeHostedUpstream,
     NativeHostedUpstreamClosing,
