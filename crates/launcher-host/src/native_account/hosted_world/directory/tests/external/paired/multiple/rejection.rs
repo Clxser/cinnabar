@@ -229,7 +229,7 @@ async fn rejected_second_login_preserves_the_first_actual_world_connection() {
             preserved,
             "a completed rejected Login ended the original initialized host peer"
         );
-        assert_eq!((retired.0, retired.1), (1, 0));
+        assert_eq!(retired.occupied, (1, 0));
         let (runtime_id, terrain, pack) =
             first.expect("initialized first visitor lost its original world connection");
         assert!(
