@@ -305,8 +305,27 @@ impl HostDirectory {
         self.validate_session()
     }
 
-    /// Publishes one desired revision; uncertain writes are refreshed before any further conditional write.
+    /// Recovers the original binding and reconciles uncertain approval writes under one cutoff.
     pub(super) async fn publish_approvals(&mut self, deadline: Instant) -> io::Result<()> {
+        self.active()?;
+        let deadline = self.control_deadline(Some(deadline));
+        loop {
+            check_deadline(deadline)?;
+            if self.recovery.is_some() {
+                self.refresh_control(deadline).await?;
+            }
+            match self.publish_approvals_once(deadline).await {
+                Ok(()) => {
+                    self.refresh_deadline = None;
+                    return Ok(());
+                }
+                Err(error) => self.retain_interruption(error)?,
+            }
+        }
+    }
+
+    /// Publishes one desired revision; uncertain writes are refreshed before any further conditional write.
+    async fn publish_approvals_once(&mut self, deadline: Instant) -> io::Result<()> {
         self.active()?;
         check_deadline(deadline)?;
         let mut operation = self.operation(deadline).await?;
