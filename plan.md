@@ -489,6 +489,7 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
 - Browser/Android implementation and CI checks do not close their complete join, pack,
   transfer/reconnect, input/UI, audio, memory or hardware-performance acceptance matrices.
   Keep browser gesture activation and background work within the host's event-loop rules.
+  Touch-capable hosts expose persisted look sensitivity and control guidance. The sensitivity curve is provisional; native touch layouts, remapping and customization remain open.
   Settings supports touch dragging of its content columns and scrollbars; swipes cancel pending row taps. Native gesture calibration and the remaining menu/form touch routes are still open.
   Launcher text fields request platform IME input, and the People drawer filters the current friend list by gamertag. Global people lookup, gameplay text entry and full device IME acceptance remain open.
 - Local mods and server experiences still need runtime/input isolation, reload/reorder/

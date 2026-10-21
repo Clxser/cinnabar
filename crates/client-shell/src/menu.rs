@@ -99,6 +99,7 @@ pub struct MenuRuntime {
     hovered: Option<MenuAction>,
     pressed: Option<MenuAction>,
     pointer_down: bool,
+    touch_available: bool,
     server_tab: MenuServerTab,
     profile_tab: launcher::menu::ProfileTab,
     dialog: Option<MenuDialog>,
