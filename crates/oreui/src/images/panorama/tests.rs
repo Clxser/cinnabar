@@ -13,10 +13,9 @@ fn panorama_banner_choice_is_stable_for_each_account() {
         profile_key("😀"),
         VIEWS[(0xd83d + 0xde00) % PROFILE_BANNER_COUNT].key
     );
-    for index in 0..PROFILE_BANNER_COUNT {
+    for (index, view) in VIEWS.iter().take(PROFILE_BANNER_COUNT).enumerate() {
         let xuid = index.to_string();
-        assert_eq!(profile_key(&xuid), VIEWS[index].key);
-        assert_eq!(profile_key(&xuid), profile_key(&xuid));
+        assert_eq!(profile_key(&xuid), view.key);
     }
 }
 

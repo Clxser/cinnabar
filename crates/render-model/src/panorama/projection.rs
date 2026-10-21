@@ -42,11 +42,9 @@ impl PanoramaFaces {
                     dir.x * sy + dir.z * cy,
                 ));
                 for (channel, tint) in color.into_iter().zip(view.tint) {
-                    pixels.push(
-                        (channel * (1.0 - view.tint[3]) + tint * 255.0 * view.tint[3])
-                            .round()
-                            .clamp(0.0, 255.0) as u8,
-                    );
+                    pixels.push(linear_to_srgb(
+                        channel * (1.0 - view.tint[3]) + tint * view.tint[3],
+                    ));
                 }
                 pixels.push(255);
             }
@@ -56,6 +54,10 @@ impl PanoramaFaces {
 
     /// Bilinearly filters across face edges rather than clamping each face separately.
     fn sample(&self, dir: Vec3) -> [f32; 3] {
+        static LINEAR: std::sync::OnceLock<[f32; 256]> = std::sync::OnceLock::new();
+        let linear = LINEAR.get_or_init(|| {
+            std::array::from_fn(|value| crate::celestial::srgb_to_linear(value as f32 / 255.0))
+        });
         let (face, uv) = face_uv(dir);
         let [x, y] = uv.map(|v| (v * 0.5 + 0.5) * self.side() as f32 - 0.5);
         let (ix, iy) = (x.floor() as i32, y.floor() as i32);
@@ -65,7 +67,7 @@ impl PanoramaFaces {
             for (dy, wy) in [(0, 1.0 - fy), (1, fy)] {
                 let texel = self.texel(face, ix + dx, iy + dy);
                 for (channel, texel) in color.iter_mut().zip(texel) {
-                    *channel += f32::from(*texel) * wx * wy;
+                    *channel += linear[usize::from(*texel)] * wx * wy;
                 }
             }
         }
@@ -87,6 +89,17 @@ impl PanoramaFaces {
         let offset = ((face * side as usize + y as usize) * side as usize + x as usize) * 4;
         &self.layer_major()[offset..offset + 4]
     }
+}
+
+/// Encodes filtered linear light back into the artwork's sRGB texture format.
+fn linear_to_srgb(value: f32) -> u8 {
+    let value = value.clamp(0.0, 1.0);
+    let encoded = if value <= 0.003_130_8 {
+        value * 12.92
+    } else {
+        1.055 * value.powf(1.0 / 2.4) - 0.055
+    };
+    (encoded * 255.0).round() as u8
 }
 
 /// Selects pack-order faces and inside-facing coordinates, as in `panorama.wgsl`.

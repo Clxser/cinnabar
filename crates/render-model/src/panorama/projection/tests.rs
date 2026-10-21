@@ -37,7 +37,7 @@ fn projection_centers_select_all_six_pack_faces() {
     ] {
         assert_eq!(
             faces.project(view(yaw, pitch), [1, 1]).unwrap(),
-            [face * 30, 60, 60, 255]
+            [face * 30, 64, 64, 255]
         );
     }
 }
@@ -53,7 +53,7 @@ fn known_rays_select_the_correct_texels_on_every_face() {
         (4, Vec3::new(0.25, 1.0, 0.75)),
         (5, Vec3::new(0.25, -1.0, -0.75)),
     ] {
-        assert_eq!(faces.sample(dir), [face as f32 * 30.0, 80.0, 0.0]);
+        assert_eq!(faces.sample(dir).map(linear_to_srgb), [face * 30, 80, 0]);
     }
 }
 
@@ -66,13 +66,13 @@ fn perspective_spans_adjacent_faces_and_filters_the_shared_edge() {
     .unwrap();
     let pixels = faces.project(view(45.0, 0.0), [3, 1]).unwrap();
     assert_eq!(pixels[0], 0);
-    assert_eq!(pixels[4], 15);
+    assert_eq!(pixels[4], 19);
     assert_eq!(pixels[8], 30);
     for face in 0..6 {
         for uv in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
             let a = faces.sample(face_direction(face, uv.map(|v| v * 0.9999)));
             let b = faces.sample(face_direction(face, uv.map(|v| v * 1.0001)));
-            assert!((a[0] - b[0]).abs() < 0.1, "face {face}, edge {uv:?}");
+            assert!((a[0] - b[0]).abs() < 0.0001, "face {face}, edge {uv:?}");
         }
     }
 }
@@ -85,6 +85,27 @@ fn invalid_projection_has_no_image() {
     let mut invalid = view(0.0, 0.0);
     invalid.vertical_fov_radians = std::f32::consts::PI;
     assert!(faces.project(invalid, [1, 1]).is_none());
+}
+
+#[test]
+fn panorama_filtering_blends_light_before_encoding_srgb() {
+    let faces = PanoramaFaces::new(
+        2,
+        std::array::from_fn(|_| {
+            [
+                [0, 0, 0, 255],
+                [255, 255, 255, 255],
+                [0, 0, 0, 255],
+                [255, 255, 255, 255],
+            ]
+            .concat()
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        faces.project(view(0.0, 0.0), [1, 1]).unwrap(),
+        [188, 188, 188, 255]
+    );
 }
 
 #[test]
