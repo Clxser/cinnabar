@@ -305,9 +305,6 @@ impl MenuRuntime {
         if self.feeds.account_adding && self.accounts.pending_ready && profile.unavailable {
             self.feeds.account_error = Some("Xbox profile unavailable. Retrying…".into());
         }
-        if !profile.loaded || profile.xuid.is_empty() || profile.gamertag.is_empty() {
-            return;
-        }
     }
 
     /// Dispatches the original storage job after its session and publication owners retire.
