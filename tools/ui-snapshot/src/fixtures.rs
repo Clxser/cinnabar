@@ -137,11 +137,6 @@ pub fn settings(section: &str) -> MenuView {
     view
 }
 
-/// Shows an ordinary OreUI route without account, world or network services.
-fn settings_video() -> Fixture {
-    Fixture::Menu(Box::new(settings(SettingSection::Video.definition().name)))
-}
-
 /// Shows Storage as a desktop host fills it, with the folder buttons.
 fn settings_storage() -> Fixture {
     let mut view = settings(SettingSection::StorageManagement.definition().name);

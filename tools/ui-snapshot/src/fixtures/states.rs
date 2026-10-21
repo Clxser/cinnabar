@@ -631,13 +631,19 @@ pub const STATES: &[State] = &[
         name: "settings-video",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: settings_video,
+        fixture: shader_pack::settings_video,
     },
     State {
-        name: "settings-video-shader-packs",
+        name: "settings-video-shader-shortcut",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: shader_pack::video_picker,
+        fixture: shader_pack::video_shortcut,
+    },
+    State {
+        name: "settings-shaders",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::pack_picker,
     },
     State {
         name: "settings-storage",
@@ -758,10 +764,10 @@ pub const STATES: &[State] = &[
         fixture: mods::undeclared_permissions,
     },
     State {
-        name: "settings-video-shader-options-button",
+        name: "settings-shaders-options-button",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: shader_options::renderer_row,
+        fixture: shader_options::options_button,
     },
     State {
         name: "settings-shader-options",
@@ -800,15 +806,15 @@ pub const STATES: &[State] = &[
         fixture: shader_pack::failed,
     },
     State {
-        name: "settings-video-shader-pack",
+        name: "settings-shaders-selected",
         size: SHADER_PACK_ROW_SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || shader_pack::settings_video(false),
+        fixture: || shader_pack::settings_shaders(false),
     },
     State {
-        name: "settings-video-shader-pack-failed",
+        name: "settings-shaders-failed",
         size: SHADER_PACK_ROW_SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || shader_pack::settings_video(true),
+        fixture: || shader_pack::settings_shaders(true),
     },
 ];

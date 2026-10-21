@@ -251,9 +251,10 @@ performance qualification remains open.
   and matched inventory/held-item presentation. Shared cube face sheets are bounded coverage.
 
 Continuous cosmetic cloth uses shared vertices, fixed-step constraints, world-space
-inertia and player-body contacts with standard-armor clearance. Vertical follow and
-damping restrain jump and landing motion, and local cloth keeps advancing while
-first-person visibility hides the body. View changes transfer the drape between
+inertia and contacts derived from the drawn body and worn armor. Cloth pins and
+mounts retract toward the bare torso and expand to clear equipped chest geometry.
+Vertical follow and damping restrain jump and landing motion, and local cloth keeps
+advancing while first-person visibility hides the body. View changes transfer the drape between
 body pose spaces. Self-collision and world collision remain open.
 Paid cosmetic selections use session ownership from the API database and withdraw
 on disconnect or revocation; production rollout qualification remains open.
@@ -262,8 +263,12 @@ Equipped cosmetic emitters also run in visible menu and HUD paper dolls using th
 shared particle engine and attachment poses. Catalog-wide, in-world interaction
 and performance qualification for these previews remains open.
 
-Player name tags use Java's standing player height before pose offsets, independent of
-server collision-box changes. Other actors retain their published label height.
+Upright player name tags keep Java's standing height before pose offsets; swimming,
+crawling and gliding players use their live height. Other actors retain their published
+label height. Tag eligibility uses always-show metadata or the shared crosshair pick.
+Camera distance controls server render limits and score range; passenger mounts keep
+their name without a score line. Depth testing honors sneaking and the nameplate flag.
+Matched rendered-frame qualification remains open.
 
 Remaining qualification includes attachables and custom item models, action/use timing,
 projectile interpolation and shake, sleep/mount poses, name tags (including over
@@ -507,9 +512,10 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   entities and the hand, deferred, composite and final passes, compute, custom textures and
   images) plus the pack-drawn sky, particles, clouds, weather, lightning, cracks and selection.
   Block, item, entity and biome ids and Java sky and fog colours come from the pinned
-  Bedrock→Java mappings. Settings offers pack import, a reload key, load status and a Shader
-  Pack Settings screen. Incomplete: in-game acceptance across packs and platforms (Metal is
-  unverified); stage pre-flips (`flip.<stage>_pre.<buffer>`) and Iris's explicit-flip
+  Bedrock→Java mappings. The Shaders settings tab offers pack import, reload, load status
+  and a Shader Pack Settings screen. Video links to Shaders and shows its renderer switch
+  only when Enhanced is available.
+  Incomplete: in-game acceptance across packs and platforms (Metal is unverified); stage pre-flips (`flip.<stage>_pre.<buffer>`) and Iris's explicit-flip
   ordering; drawing the solid hand's glint before deferred passes; geometry-host composition
   of celestial layers, effects without depth writes and private-depth first-person scenes,
   which keep the native scene copy; actor colour masks, multitexture materials, dissolve
