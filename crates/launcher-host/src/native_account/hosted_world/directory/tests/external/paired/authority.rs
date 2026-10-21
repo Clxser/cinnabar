@@ -187,6 +187,11 @@ impl Authority {
                     .unwrap(),
             )
             .await;
+        self.finish_revoked(deadline).await;
+    }
+
+    /// Retires the same original owners after a test has already queued the real membership revocation.
+    async fn finish_revoked(mut self, deadline: Instant) {
         self.host
             .directory
             .as_mut()
@@ -217,4 +222,95 @@ impl Authority {
             "actual paired host cleanup did not observe original membership revocation"
         );
     }
+}
+
+/// Records destruction of one actually polled pending operation, without creating another task.
+struct PendingDrop<'a>(&'a std::cell::Cell<bool>);
+
+impl Drop for PendingDrop<'_> {
+    fn drop(&mut self) {
+        self.0.set(true);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hosted_login_io_keeps_first_cutoff_services_realtime_and_retires_on_cancel() {
+    use std::{cell::Cell, future::Future, task::Poll};
+
+    let Some(world) = super::world::World::open() else {
+        return;
+    };
+    tokio::time::timeout(ACQUISITION_TIMEOUT * 2, async {
+        let issuer = super::Provider::new();
+        let namespace = tempfile::tempdir().unwrap();
+        let deadline = Instant::now() + ACQUISITION_TIMEOUT;
+        let mut authority =
+            Authority::open(&world.manager, namespace.path(), &issuer.jwks, deadline).await;
+        let approval = authority
+            .host
+            .check_approval(super::provider::VISITOR_XUID, &authority.nonce)
+            .unwrap();
+        authority
+            .peer
+            .revoke_member_ready(
+                authority
+                    .host
+                    .directory
+                    .as_mut()
+                    .unwrap()
+                    .socket
+                    .as_mut()
+                    .unwrap(),
+            )
+            .await;
+        let initially_admitted = authority.host.recheck_approval(&approval).is_ok();
+        let polled = Cell::new(false);
+        let dropped = Cell::new(false);
+        let first = Instant::now() + ACQUISITION_TIMEOUT / 6;
+        let expired: io::Result<()> = authority
+            .host
+            .peer_io(Some(first), async {
+                polled.set(true);
+                let _retirement = PendingDrop(&dropped);
+                std::future::pending().await
+            })
+            .await;
+        let revoked_during_wait = authority.host.recheck_approval(&approval).is_err();
+        let started = Cell::new(false);
+        let cancelled = Cell::new(false);
+        let initially_pending = {
+            let mut operation = Box::pin(authority.host.peer_io(Some(deadline), async {
+                started.set(true);
+                let _retirement = PendingDrop(&cancelled);
+                std::future::pending::<io::Result<()>>().await
+            }));
+            let initial = std::future::poll_fn(|cx| {
+                let polled = operation.as_mut().poll(cx);
+                if started.get() || polled.is_ready() {
+                    Poll::Ready(polled)
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await;
+            drop(operation);
+            initial.is_pending()
+        };
+        let still_owned = authority
+            .host
+            .peer_io(Some(deadline), std::future::ready(Ok(17u8)))
+            .await;
+        authority.finish_revoked(deadline).await;
+        let cleanup_empty = world.manager.native_host_cleanup().unwrap().is_none();
+        let world_running = world.manager.status().state == bridge::WorldState::Running;
+
+        assert!(cleanup_empty && world_running);
+        assert!(initially_admitted && revoked_during_wait);
+        assert!(polled.get() && dropped.get());
+        assert_eq!(expired.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        assert!(initially_pending && cancelled.get());
+        assert_eq!(still_owned.unwrap(), 17);
+    })
+    .await
+    .expect("finite original hosted IO cutoff/cancellation control stalled");
 }
