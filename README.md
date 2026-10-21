@@ -13,7 +13,7 @@ and friends' worlds with vanilla behaviour, and it's built to run much faster th
 client.
 
 [![Discord](https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white)](https://discord.gg/MeEz7BEHcM)
-[![Website](https://img.shields.io/badge/Website-cinnabar.restartfu.com-B22222)](https://cinnabar.restartfu.com/)
+[![Website](https://img.shields.io/badge/Website-cinnabar.gg-B22222)](https://cinnabar.gg/)
 
 <img width="1282" height="752" alt="Cinnabar in game" src="https://github.com/user-attachments/assets/ca040799-e00e-4a6e-85f8-a0e28af6ea72" />
 
@@ -37,11 +37,6 @@ share or commit that store. `make play PROFILE=release` builds the fully optimis
 and `make help` lists every target.
 
 On Debian/Ubuntu, install `libwayland-dev` and `libudev-dev` first.
-
-Experimental Java (OptiFine/Iris) shader packs build with `cargo run -p cinnabar --features shaderpacks`.
-Put pack zips or folders in the `shaderpacks` folder of the client's data directory and pick one
-under Settings > Video > Renderer, or run a pack for one session with `--shader-pack <path>`.
-A pack that fails to load draws Vanilla.
 
 ## What's different
 
@@ -125,11 +120,8 @@ Built on these libraries:
 | [nethernet](https://github.com/cinnabar-mc/nethernet) | Sans-I/O ICE, DTLS and SCTP with explicit Tokio and Bevy adapters. |
 | [protocolgen](https://github.com/cinnabar-mc/protocolgen) | Generates the Bedrock packet codec vendored in `crates/protocol/vendor`. |
 | [Axolotl Stack](https://github.com/axolotl-stack/axolotl-stack) | Jolyne (client session library), whose raw packet entries and spawn sequence `crates/protocol` adapts. MIT; see `THIRD_PARTY_NOTICES.md`. |
-| [gophertunnel](https://github.com/Sandertv/gophertunnel) | Bedrock login, encryption, resource packs and the packet relay. |
-| [go-raknet](https://github.com/Sandertv/go-raknet) | RakNet transport to servers, plus server-list pings. |
-| [go-nethernet](https://github.com/df-mc/go-nethernet) | WebRTC transport for Realms and friend worlds. |
-| [go-xsapi](https://github.com/df-mc/go-xsapi) | Xbox Live identity, friends, presence and signaling. |
-| [go-playfab](https://github.com/df-mc/go-playfab) | PlayFab sign-in and the menu catalog (featured servers). |
+| [gophertunnel](https://github.com/Sandertv/gophertunnel) | Bedrock server sessions in the independent local-world server and Go fixture tools. |
+| [go-raknet](https://github.com/Sandertv/go-raknet) | RakNet in the independent local-world server and Go fixture tools. |
 | [dragonfly](https://github.com/df-mc/dragonfly) | The built-in local-world server in `tools/localserver`. |
 
 Crate-by-crate layout: [docs/architecture/workspace.md](docs/architecture/workspace.md).
@@ -146,6 +138,10 @@ cargo run -p devtool --locked -- verify-affected --base origin/dev
 ```
 
 Contributor rules are in [AGENTS.md](AGENTS.md) and [docs/agents/](docs/agents/).
+
+## Star history
+
+[![Star history chart](https://api.star-history.com/svg?repos=cinnabar-mc/cinnabar&type=Date)](https://star-history.com/#cinnabar-mc/cinnabar&Date)
 
 ## License
 

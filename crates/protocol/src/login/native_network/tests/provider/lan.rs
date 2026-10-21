@@ -232,6 +232,8 @@ async fn signed_lan_public_join_keeps_provider_proof_nonce_startup_and_bidirecti
                 .await
                 .unwrap();
                 assert_eq!(runtime_id, 42);
+                assert_eq!(play.identity().display_name, claims()["xname"].as_str().unwrap());
+                assert_eq!(play.identity().xuid, XUID);
                 assert!(matches!(
                     &*play.recv().await.unwrap().data,
                     packets::Packet::ChunkRadiusUpdated(_)

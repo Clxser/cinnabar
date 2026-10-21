@@ -12,7 +12,7 @@ use {
 fn installed_settings_categories_use_their_full_native_icon_cells() {
     let Some(images) = load_optional_oreui_images(&checkout_compiled_dir()) else {
         eprintln!(
-            "skipping installed_settings_categories_use_their_full_native_icon_cells: installed OreUI bundle unavailable"
+            "skipping installed_settings_categories_use_their_full_native_icon_cells: compiled OreUI artwork carrier unavailable"
         );
         return;
     };
@@ -31,7 +31,10 @@ fn mods_follow_resource_packs_in_the_same_group() {
     let position = |section: &str| TABS.iter().position(|tab| tab.section == section).unwrap();
     let packs = position("global_texture_pack_forced_index");
     let mods = position(launcher::mods::SECTION);
-    assert_eq!(mods, packs + 1);
+    assert_eq!(
+        mods,
+        packs + 1 + usize::from(launcher::menu::settings_options::SHADER_PACK_BINDINGS)
+    );
     assert!(TABS[mods].group.is_none());
     assert_ne!(section_index(launcher::mods::SECTION), 0);
 }

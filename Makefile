@@ -17,7 +17,8 @@ POWERSHELL ?= powershell
 
 NO_VSYNC ?= 0
 TRACY ?= 0
-CLIENT_FEATURES = $(if $(filter 1,$(TRACY)),--features tracy)
+SHADERPACKS ?= 0
+CLIENT_FEATURES = $(if $(filter 1,$(TRACY)),--features tracy) $(if $(filter 1,$(SHADERPACKS)),--features shaderpacks)
 # Identifies the client build in its session log and supplies runtime acceptance markers.
 # The pre-rename RUST_MCBE_BUILD_COMMIT is still honoured for one release.
 ifdef RUST_MCBE_BUILD_COMMIT
@@ -74,9 +75,10 @@ help:
 	@echo make font-assets-local - Compile a reviewed local bitmap font source via FONT_PACK_DIR
 	@echo make hud-assets-local - Compile from an explicitly selected matching pack via HUD_PACK_DIR
 	@echo make physics-assets  - Compile block movement and selection geometry
-	@echo make local-server    - Build the dragonfly local-world server and experience-runtime beside the core binary
-	@echo make play            - Refresh stale assets, build the core, and run the full game from the menu
+	@echo make local-server    - Build the Dragonfly local-world server and Rust experience runtime
+	@echo make play            - Refresh assets, build the native client, and open its launcher
 	@echo make play TRACY=1    - Run with opt-in Tracy frame attribution
+	@echo make play SHADERPACKS=1 - Run with the experimental Java shader-pack renderer
 	@echo make dist-local      - Stage an unsigned local-development-only bundle under .local/dist
 	@echo make jsonui-editor   - Build the static JSON-UI editor site into JSONUI_EDITOR_OUT
 	@echo make figma-plugin    - Build the Figma to JSON-UI plugin into tools/figma-plugin/dist

@@ -32,7 +32,7 @@ pub(super) async fn continue_join<P: Send + 'static>(
             .collect();
         let added = crate::packet_relay::start(
             std::sync::Arc::clone(relay),
-            identity,
+            identity.clone(),
             super::super::client_data::login_client_data(
                 login.display_name,
                 login.client_random_id,
@@ -68,8 +68,7 @@ pub(super) async fn continue_join<P: Send + 'static>(
     let job = prepared_job.expect("spawn requires StartGame and item registry");
     transport.finish_startup();
     let prepared = super::super::session_join::prepare_with_read_ahead(&mut transport, job).await?;
-    Ok((
-        PlaySession::new(transport, login.cache, initialization),
-        prepared,
-    ))
+    let mut session = PlaySession::new(transport, login.cache, initialization);
+    session.identity = identity;
+    Ok((session, prepared))
 }

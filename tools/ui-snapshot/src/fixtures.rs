@@ -13,6 +13,9 @@ mod mods;
 mod out_of_game;
 mod profile;
 mod roster;
+mod shader_options;
+mod shader_pack;
+mod social_settings;
 mod updates;
 
 use std::sync::Arc;
@@ -40,6 +43,17 @@ pub struct State {
 
 /// Inputs borrowed by the same screen painters the client uses.
 pub enum Fixture {
+    /// Unequal mask edges and high-resolution sprite minification.
+    MaskRegression,
+    /// Original sprite samples before and after alpha-only outline shading.
+    SpriteOutline {
+        outline: bool,
+    },
+    /// Adjacent sparse saturation masks before and after overlap-aware exclusion.
+    SaturationOverlap {
+        crop: bool,
+        source_alpha: u8,
+    },
     /// A label whose unavailable primary face selects its installed backup.
     BackupFont,
     /// An original checker repeated beyond a small sprite's former draw cutoff.
@@ -93,6 +107,11 @@ pub enum Fixture {
     CraftOverlap {
         selected: bool,
     },
+    /// A client toast as the toast screen shows it once slid in.
+    Toast {
+        title: String,
+        message: String,
+    },
 }
 
 const SIZE: [u32; 2] = [1280, 720];
@@ -102,8 +121,47 @@ const SMALL_SIZE: [u32; 2] = [360, 240];
 const TALL_SIZE: [u32; 2] = [1280, 900];
 /// Keeps the first hotbar rows visible below the keyboard options.
 const KEYBOARD_SIZE: [u32; 2] = [SIZE[0], 2000];
+/// Reaches the Video pane's Renderer row below the general options.
+const SHADER_PACK_ROW_SIZE: [u32; 2] = [SIZE[0], 1600];
 
-pub const STATES: &[State] = &[
+/// A capture at GUI scale 1 that needs no game assets.
+const fn asset_free(name: &'static str, size: [u32; 2], fixture: fn() -> Fixture) -> State {
+    State {
+        name,
+        size,
+        gui_scale: 1,
+        fixture,
+    }
+}
+
+const STATES: &[State] = &[
+    asset_free("sprite-outline-before", [800, 240], || {
+        Fixture::SpriteOutline { outline: false }
+    }),
+    asset_free("sprite-outline", [800, 240], || Fixture::SpriteOutline {
+        outline: true,
+    }),
+    asset_free("saturation-overlap-before", [640, 240], || {
+        Fixture::SaturationOverlap {
+            crop: true,
+            source_alpha: 255,
+        }
+    }),
+    asset_free("saturation-overlap", [640, 240], || {
+        Fixture::SaturationOverlap {
+            crop: false,
+            source_alpha: 255,
+        }
+    }),
+    asset_free("saturation-mask-regressions", [640, 240], || {
+        Fixture::MaskRegression
+    }),
+    asset_free("saturation-translucent-overlap", [640, 240], || {
+        Fixture::SaturationOverlap {
+            crop: false,
+            source_alpha: 64,
+        }
+    }),
     State {
         name: "mod-hud-card-fit-before",
         size: SIZE,
@@ -347,14 +405,14 @@ pub const STATES: &[State] = &[
         name: "chat-server-content-idle",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat_server_content(false),
+        fixture: || chat::server_content(false),
     },
     #[cfg(feature = "test-support")]
     State {
         name: "chat-server-content-hover",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat_server_content(true),
+        fixture: || chat::server_content(true),
     },
     State {
         name: "home-update-compact",
@@ -606,50 +664,50 @@ pub const STATES: &[State] = &[
         name: "chat-background-transparent",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat_background(0),
+        fixture: || chat::background(0),
     },
     State {
         name: "chat-background-half",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat_background(50),
+        fixture: || chat::background(50),
     },
     State {
         name: "chat-background-opaque",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat_background(100),
+        fixture: || chat::background(100),
     },
     State {
         name: "chat-history-width",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: chat_history_width,
+        fixture: chat::history_width,
     },
     State {
         name: "chat-history-width-small",
         size: SMALL_SIZE,
         gui_scale: 1,
-        fixture: chat_history_width,
+        fixture: chat::history_width,
     },
     State {
         name: "chat-command-background-transparent",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: chat_command_background,
+        fixture: chat::command_background,
     },
     State {
         name: "chat-command-completion",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat_completion("/give @", &["@a", "@e", "@p"]),
+        fixture: || chat::completion("/give @", &["@a", "@e", "@p"]),
     },
     State {
         name: "chat-command-completion-small",
         size: SMALL_SIZE,
         gui_scale: 1,
         fixture: || {
-            chat_completion(
+            chat::completion(
                 "/tell ExamplePlayer AnotherPlayerWithALongName @",
                 &["@Alex", "@ExamplePlayerWithALongName", "@Bo"],
             )
@@ -683,13 +741,13 @@ pub const STATES: &[State] = &[
         name: "chat-mentions",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: chat_mentions,
+        fixture: chat::mentions,
     },
     State {
         name: "chat-command-targets",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: chat_command_targets,
+        fixture: chat::command_targets,
     },
     State {
         name: "tab-list-badges",
@@ -729,13 +787,25 @@ pub const STATES: &[State] = &[
         name: "settings-video",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: settings_video,
+        fixture: shader_pack::settings_video,
+    },
+    State {
+        name: "settings-video-shader-shortcut",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::video_shortcut,
+    },
+    State {
+        name: "settings-shaders",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::pack_picker,
     },
     State {
         name: "settings-storage",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: settings_storage,
+        fixture: out_of_game::settings_storage,
     },
     State {
         name: "settings-keyboard",
@@ -849,6 +919,60 @@ pub const STATES: &[State] = &[
         gui_scale: GUI_SCALE,
         fixture: mods::undeclared_permissions,
     },
+    State {
+        name: "settings-shaders-options-button",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_options::options_button,
+    },
+    State {
+        name: "settings-shader-options",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_options::main_screen,
+    },
+    State {
+        name: "settings-shader-options-lighting",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_options::lighting,
+    },
+    State {
+        name: "settings-shader-options-rest",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_options::rest,
+    },
+    State {
+        name: "toast-shader-pack-loading",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::loading,
+    },
+    State {
+        name: "toast-shader-pack-loaded",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::loaded,
+    },
+    State {
+        name: "toast-shader-pack-failed",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::failed,
+    },
+    State {
+        name: "settings-shaders-selected",
+        size: SHADER_PACK_ROW_SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || shader_pack::settings_shaders(false),
+    },
+    State {
+        name: "settings-shaders-failed",
+        size: SHADER_PACK_ROW_SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || shader_pack::settings_shaders(true),
+    },
 ];
 
 /// Opens a settings category by its registered name rather than a copied index.
@@ -860,18 +984,6 @@ pub fn settings(section: &str) -> MenuView {
         .find_map(|(name, index)| (*name == section).then_some(*index))
         .expect("registered settings category");
     view
-}
-
-/// Shows an ordinary OreUI route without account, world or network services.
-fn settings_video() -> Fixture {
-    Fixture::Menu(Box::new(settings(SettingSection::Video.definition().name)))
-}
-
-/// Shows Storage as a desktop host fills it, with the folder buttons.
-fn settings_storage() -> Fixture {
-    let mut view = settings(SettingSection::StorageManagement.definition().name);
-    Arc::make_mut(&mut view.storage).opens_folders = true;
-    Fixture::Menu(Box::new(view))
 }
 
 /// Shows the keyboard options and command macro modifier without a live session.
@@ -922,4 +1034,9 @@ fn settings_keyboard_layout(observed: bool) -> Fixture {
         settings.set_key_label(0x14, "a");
     }
     Fixture::Menu(Box::new(view))
+}
+
+/// Enumerates every fixture, including the independently owned Social settings states.
+pub fn states() -> impl Iterator<Item = &'static State> {
+    STATES.iter().chain(social_settings::STATES)
 }

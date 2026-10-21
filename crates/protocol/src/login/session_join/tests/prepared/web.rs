@@ -136,6 +136,11 @@ async fn injected_web_join_verifies_packs_and_preserves_play_order_and_trace() {
         let (joined, mut core) = tokio::join!(join, core);
         let (mut session, (packs, data)) = joined.expect("verified web archives reach play");
         assert_eq!(
+            session.identity(),
+            &serde_json::from_value::<crate::session_wire::SessionIdentity>(identity("Fixture"))
+                .unwrap()
+        );
+        assert_eq!(
             jobs.get(),
             1,
             "the host prepares startup after web admission"

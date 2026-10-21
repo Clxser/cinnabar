@@ -1,12 +1,12 @@
 //! The render-world geometry resource: preparing expansion work and draw lists each frame, and
 //! recording the expansion before any camera draws.
 
-mod views;
-
 use std::collections::HashMap;
+use std::hash::{BuildHasher, Hash, Hasher};
 
 use bevy::log::{debug, warn};
 use bevy::math::{DVec3, IVec3, Vec3};
+use bevy::platform::hash::FixedHasher;
 use bevy::prelude::{Entity, FromWorld, Has, Query, Res, ResMut, Resource, World, default};
 use bevy::render::camera::ExtractedCamera;
 use bevy::render::render_phase::TrackedRenderPass;
@@ -254,14 +254,8 @@ impl ShaderpackGeometry {
             .map(|origin| (origin.as_dvec3() - camera).as_vec3())
     }
 
-    /// Eye distance within which every section the camera may see is expanded, or `None`
-    /// when nothing waits. Beyond it terrain may be missing from the pack's geometry.
-    pub fn complete_radius(&self) -> Option<f32> {
-        self.complete_radius
-    }
-
     /// Eye distance past which the vertex budget leaves terrain undrawn, `None` while every
-    /// section fits. Unlike [`Self::complete_radius`] it ignores sections merely queued for
+    /// section fits. It ignores sections merely queued for
     /// this frame's expansion, so it holds steady while terrain streams in.
     pub fn budget_horizon(&self) -> Option<f32> {
         self.budget_horizon
@@ -303,7 +297,8 @@ impl ShaderpackGeometry {
     }
 
     /// Builds (or keeps, when the sections it lists are unchanged) `view`'s shadow-pass list:
-    /// the resident sections `frustum` keeps.
+    /// the resident sections `frustum` keeps. While neither the residency nor the frustum
+    /// moved, the list stands without walking the sections.
     pub(crate) fn prepare_shadow_view(
         &mut self,
         view: Entity,
@@ -311,6 +306,24 @@ impl ShaderpackGeometry {
         device: &RenderDevice,
         queue: &RenderQueue,
     ) {
+        let source = {
+            let mut hasher = FixedHasher.build_hasher();
+            (
+                self.residency.revision(),
+                self.residency.epoch,
+                self.residency.generation,
+            )
+                .hash(&mut hasher);
+            frustum.hash_into(&mut hasher);
+            hasher.finish()
+        };
+        if self
+            .shadows
+            .get(&view)
+            .is_some_and(|draws| draws.is_from(source))
+        {
+            return;
+        }
         let inputs = DrawInputs::new(
             self.residency
                 .sections
@@ -323,6 +336,7 @@ impl ShaderpackGeometry {
         );
         let key = inputs.key();
         let draws = self.shadows.entry(view).or_default();
+        draws.set_source(source);
         if draws.is_current(key) {
             return;
         }
@@ -686,7 +700,7 @@ pub(crate) fn prepare_shaderpack_geometry(
         .as_deref()
         .map(|frame| frame.render_distance)
         .filter(|far| *far > 0.0);
-    views::build_draws(
+    camera_lists::build_draws(
         geometry,
         &inputs.device,
         &inputs.queue,
@@ -953,6 +967,9 @@ pub(crate) fn record_geometry_expansion(
     );
 }
 
+mod camera_lists;
+#[cfg(test)]
+mod fixture;
 /// Requires the atlas and packed tables to represent the selected texture source.
 fn expansion_sources_match(
     selected: &ChunkTextureAssets,

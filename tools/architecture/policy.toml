@@ -256,7 +256,7 @@ test_support_features = ["test-support"]
 name = "launcher"
 path = "crates/launcher"
 test_support_features = ["test-support"]
-allowed_dependencies = ["cosmetics", "assets", "bridge", "env-compat", "json-ui", "render-api", "resource-pack", "semantic-input", "ui", "update-manifest"]
+allowed_dependencies = ["cosmetics", "assets", "bridge", "env-compat", "json-ui", "render-api", "resource-pack", "semantic-input", "shaderpack", "ui", "update-manifest"]
 forbidden_dependencies = ["protocol", "server-experience"]
 forbidden_transitive_dependencies = ["app", "cinnabar", "client-ui", "player-state", "inventory", "client-world", "world", "sim", "render", "asset-compiler", "pack-compiler", "pack-compile-input", "pack-entity-compiler", "pack-font-compiler", "bevy", "bevy_*", "wgpu*"]
 
@@ -593,7 +593,7 @@ forbidden_dependencies = ["asset-compiler", "bevy", "wgpu"]
 [[crates]]
 name = "ui-snapshot"
 path = "tools/ui-snapshot"
-allowed_dependencies = ["client-ui", "cosmetics", "assets", "bridge", "inventory", "json-ui", "jsonui-editor", "launcher", "mod-ui", "resource-pack", "oreui", "player-state", "protocol", "render-api", "render-model", "ui", "ui-engine", "ui-screens"]
+allowed_dependencies = ["client-ui", "cosmetics", "assets", "bridge", "inventory", "json-ui", "jsonui-editor", "launcher", "mod-ui", "resource-pack", "oreui", "player-state", "protocol", "render-api", "render-model", "shaderpack", "ui", "ui-engine", "ui-screens"]
 test_support_features = ["test-support"]
 forbidden_transitive_dependencies = ["app", "cinnabar", "bevy", "bevy_*", "wgpu*"]
 
@@ -1350,6 +1350,81 @@ baselines = [
 ]
 
 [[identifier_literal_exceptions]]
+path = "crates/mod-host/src/hud/samples.rs"
+literal = "minecraft:arrow"
+reason = "Authored preview-only item fixture; native facts still own item properties and live observations never use this sample."
+
+[[identifier_literal_exceptions]]
+path = "crates/mod-host/src/hud/samples.rs"
+literal = "minecraft:clock"
+reason = "Authored preview-only item fixture; native facts still own item properties and live observations never use this sample."
+
+[[identifier_literal_exceptions]]
+path = "crates/mod-host/src/hud/samples.rs"
+literal = "minecraft:diamond_boots"
+reason = "Authored preview-only item fixture; native facts still own item properties and live observations never use this sample."
+
+[[identifier_literal_exceptions]]
+path = "crates/mod-host/src/hud/samples.rs"
+literal = "minecraft:diamond_chestplate"
+reason = "Authored preview-only item fixture; native facts still own item properties and live observations never use this sample."
+
+[[identifier_literal_exceptions]]
+path = "crates/mod-host/src/hud/samples.rs"
+literal = "minecraft:diamond_helmet"
+reason = "Authored preview-only item fixture; native facts still own item properties and live observations never use this sample."
+
+[[identifier_literal_exceptions]]
+path = "crates/mod-host/src/hud/samples.rs"
+literal = "minecraft:diamond_leggings"
+reason = "Authored preview-only item fixture; native facts still own item properties and live observations never use this sample."
+
+[[identifier_literal_exceptions]]
+path = "crates/mod-host/src/hud/samples.rs"
+literal = "minecraft:diamond_pickaxe"
+reason = "Authored preview-only item fixture; native facts still own item properties and live observations never use this sample."
+
+[[identifier_literal_exceptions]]
+path = "crates/mod-host/src/hud/samples.rs"
+literal = "minecraft:diamond_sword"
+reason = "Authored preview-only item fixture; native facts still own item properties and live observations never use this sample."
+
+[[identifier_literal_exceptions]]
+path = "crates/mod-host/src/hud/samples.rs"
+literal = "minecraft:ender_pearl"
+reason = "Authored preview-only item fixture; native facts still own item properties and live observations never use this sample."
+
+[[identifier_literal_exceptions]]
+path = "crates/mod-host/src/hud/samples.rs"
+literal = "minecraft:golden_apple"
+reason = "Authored preview-only item fixture; native facts still own item properties and live observations never use this sample."
+
+[[identifier_literal_exceptions]]
+path = "crates/mod-host/src/hud/samples.rs"
+literal = "minecraft:potion"
+reason = "Authored preview-only item fixture; native facts still own item properties and live observations never use this sample."
+
+[[identifier_literal_exceptions]]
+path = "crates/mod-host/src/hud/samples.rs"
+literal = "minecraft:shield"
+reason = "Authored preview-only item fixture; native facts still own item properties and live observations never use this sample."
+
+[[identifier_literal_exceptions]]
+path = "crates/mod-host/src/hud/samples.rs"
+literal = "minecraft:stone"
+reason = "Authored preview-only item fixture; native facts still own item properties and live observations never use this sample."
+
+[[identifier_literal_exceptions]]
+path = "crates/mod-host/src/hud/samples.rs"
+literal = "minecraft:torch"
+reason = "Authored preview-only item fixture; native facts still own item properties and live observations never use this sample."
+
+[[identifier_literal_exceptions]]
+path = "crates/mod-host/src/hud/samples.rs"
+literal = "minecraft:totem_of_undying"
+reason = "Authored preview-only item fixture; native facts still own item properties and live observations never use this sample."
+
+[[identifier_literal_exceptions]]
 path = "crates/mod-ui/src/mod_hud_editor/feedback.rs"
 literal = "height"
 reason = "Suffix of the editor's own #measurement_<axis>_height data binding, not a vanilla UI property."
@@ -1378,6 +1453,21 @@ reason = "GLSL built-in function name in the custom-uniform expression language,
 path = "crates/shaderpack/src/custom_uniforms/compile.rs"
 literal = "sign"
 reason = "GLSL built-in function name in the custom-uniform expression language, not a game identifier."
+
+[[identifier_literal_exceptions]]
+path = "app/src/shader_pack_inputs.rs"
+literal = "minecraft:seagrass"
+reason = "Java Edition's water-filled blocks (Java gives them a water fluid state; Bedrock's registry has no such fact), meshed without water faces toward them only for shader packs."
+
+[[identifier_literal_exceptions]]
+path = "app/src/shader_pack_inputs.rs"
+literal = "minecraft:kelp"
+reason = "Java Edition's water-filled blocks (Java gives them a water fluid state; Bedrock's registry has no such fact), meshed without water faces toward them only for shader packs."
+
+[[identifier_literal_exceptions]]
+path = "app/src/shader_pack_inputs.rs"
+literal = "minecraft:bubble_column"
+reason = "Java Edition's water-filled blocks (Java gives them a water fluid state; Bedrock's registry has no such fact), meshed without water faces toward them only for shader packs."
 
 [[identifier_literal_exceptions]]
 path = "tools/devtool/src/web.rs"

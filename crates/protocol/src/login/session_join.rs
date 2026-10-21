@@ -169,7 +169,8 @@ impl LoginSequence {
         )]
         drop(pack_wait);
         profile.mark("session_ready");
-        let session = PlaySession::new(transport, cache, initialization);
+        let mut session = PlaySession::new(transport, cache, initialization);
+        session.identity = handoff.identity;
         Ok((session, prepared))
     }
 }

@@ -27,7 +27,11 @@ pub(super) fn hydrate(hud: &mut Hud, day: Option<WorldDay>) {
         card.rows = vec![super::sources::row(
             source,
             "",
-            day.map_or_else(|| "-- Days".into(), |day| format!("{} Days", day.day)),
+            if card.sample {
+                "12 Days".into()
+            } else {
+                day.map_or_else(|| "-- Days".into(), |day| format!("{} Days", day.day))
+            },
         )];
         card.source = None;
     }
@@ -55,11 +59,9 @@ mod tests {
                 .is_err()
         );
         state.grants.player_state = true;
-        assert!(
-            super::super::set_content(&mut state, json.into())
-                .unwrap()
-                .is_ok()
-        );
+        super::super::set_content(&mut state, json.into())
+            .unwrap()
+            .unwrap();
         state.hud.commit();
         state.player_state.world = Some(crate::WorldObservation {
             session: 7,

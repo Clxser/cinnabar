@@ -70,6 +70,7 @@ pub struct LoginSequence;
 /// An authenticated, spawned Bedrock session.
 pub struct PlaySession<R = bridge::FramedReader> {
     transport: SessionTransport<R>,
+    identity: crate::session_wire::SessionIdentity,
     pending_initialization: Option<SpawnReady>,
     terrain_before_spawn: bool,
     decode_errors: u64,
@@ -161,6 +162,7 @@ impl<R: bridge::FrameRead> PlaySession<R> {
         }
         Self {
             transport,
+            identity: Default::default(),
             pending_initialization: Some(initialization),
             terrain_before_spawn,
             decode_errors: 0,
@@ -176,6 +178,11 @@ impl<R: bridge::FrameRead> PlaySession<R> {
             server_transfer: None,
             ingress_position: (0, 0),
         }
+    }
+
+    /// The canonical Login identity of this native connection or verified framed handoff.
+    pub fn identity(&self) -> &crate::session_wire::SessionIdentity {
+        &self.identity
     }
 
     /// Takes the most recent normalized server-initiated disconnect, if any.

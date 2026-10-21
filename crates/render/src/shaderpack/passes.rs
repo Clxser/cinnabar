@@ -4,6 +4,8 @@
 //! variants), `final` into the screen, the copy-back (or exchange of textures) of buffers
 //! that end flipped, and the screen's presentation into the view.
 
+use super::draws::DrawKind;
+use super::effects::Effect;
 use super::frame_geometry::{
     FrameGeometry, bind_geometry, record_opaque, record_shadow, record_translucent,
 };
@@ -14,7 +16,7 @@ use super::uniforms::{
     DrawUniforms, FAR_PLANE_SCALE, FrameUniforms, GL_NEAR, HostValue, pack_block,
 };
 use crate::gpu_timing::{GpuTimestamps, within_stage};
-use bevy::math::Vec3;
+use bevy::math::{Mat4, Vec3};
 use render_scene::RuntimeStage;
 use shaderpack::{CustomUniforms, ProgramGroup};
 use std::collections::BTreeSet;
@@ -28,10 +30,30 @@ pub(crate) struct DrawContext {
     pub chunk_offset: Vec3,
     /// The block atlas's texel size (terrain draws' `atlasSize`).
     pub atlas_size: [i32; 2],
+    /// The particle atlas's texel size (particle draws' `atlasSize`).
+    pub particle_atlas_size: [i32; 2],
+    /// The first-person hand's projection, its depth scaled by `MC_HAND_DEPTH`.
+    pub hand_projection: Mat4,
+    /// The destroy-stage atlas size for damaged-block draws.
+    pub crack_atlas_size: [i32; 2],
+}
+
+impl DrawContext {
+    /// Returns the texel dimensions of the atlas bound to this draw.
+    pub(super) fn atlas_size(&self, kind: DrawKind) -> [i32; 2] {
+        match kind {
+            _ if kind.category().is_some() => self.atlas_size,
+            DrawKind::Effect(
+                Effect::Particles | Effect::ParticlesTranslucent | Effect::ParticlesAdditive,
+            ) => self.particle_atlas_size,
+            DrawKind::Effect(Effect::DamagedBlock) => self.crack_atlas_size,
+            _ => [0; 2],
+        }
+    }
 }
 
 /// Conversion planes and viewport rectangle uploaded to the host scene-copy shaders.
-pub(super) type SceneDepthParameters = [f32; 12];
+pub(super) type SceneDepthParameters = [f32; 8];
 
 /// One view's resources and per-frame state for a loaded pack.
 pub(crate) struct ViewState {
@@ -41,7 +63,10 @@ pub(crate) struct ViewState {
     /// View-local scene conversion planes and source rectangle.
     pub(super) depth_parameters: wgpu::Buffer,
     scene_bindings: super::scene_bindings::SceneBindingCache,
+    pub(super) overlay_depth: std::sync::OnceLock<wgpu::BindGroup>,
     pub history: super::uniforms::UniformHistory,
+    /// Actor, block-entity and hand geometry skinned for the pack, with its draw bindings.
+    pub actors: super::actors::ViewActors,
     custom: CustomUniforms,
     scratch: Vec<u8>,
     unknown: BTreeSet<String>,
@@ -50,9 +75,11 @@ pub(crate) struct ViewState {
     audit: Option<super::uniform_audit::UniformAudit>,
     /// Programs and draws already reported as skipped.
     pub skipped: BTreeSet<String>,
-    /// The atlas generation the draw bind groups were built over (`None` inside: the
-    /// placeholder); `None` before the first frame.
-    pub atlas_generation: Option<Option<u64>>,
+    /// The atlas and effect texture generations the draw bind groups were built over
+    /// (`None` inside: placeholders); `None` before the first frame.
+    pub atlas_generation: Option<(Option<u64>, Option<u64>)>,
+    /// This frame's effect geometry.
+    pub effects: super::effects::EffectBuffers,
     /// Whether a frame has seen the player's biome: see [`Self::enter_world`].
     in_world: bool,
 }
@@ -93,9 +120,11 @@ impl ViewState {
             }),
             pack,
             scene_bindings: Default::default(),
+            overlay_depth: Default::default(),
             targets,
             bindings,
             history: Default::default(),
+            actors: Default::default(),
             custom,
             scratch: vec![],
             unknown: BTreeSet::new(),
@@ -103,6 +132,7 @@ impl ViewState {
             audit: super::uniform_audit::UniformAudit::from_env(),
             skipped: BTreeSet::new(),
             atlas_generation: None,
+            effects: Default::default(),
             in_world: false,
         })
     }
@@ -141,6 +171,20 @@ impl ViewState {
         })
     }
 
+    /// Refreshes atlas dimensions after native texture preparation and before recording draws.
+    pub(crate) fn sync_draw_atlas_sizes(&mut self, queue: &Queue, context: &DrawContext) {
+        for (draw, binding) in self.pack.draws.iter().zip(&mut self.bindings.draws) {
+            let Some(block) = &self.pack.programs[draw.program].reflection.uniforms else {
+                continue;
+            };
+            if binding.update_atlas_size(block, context.atlas_size(draw.kind))
+                && let Some(buffer) = &binding.uniforms
+            {
+                queue.write_buffer(buffer, 0, &binding.base);
+            }
+        }
+    }
+
     /// Whether both the presentation pipeline and its view bindings support this format.
     pub(crate) fn supports_presentation(&self, format: TextureFormat) -> bool {
         self.pack.host.present.iter().any(|(f, _)| *f == format)
@@ -164,7 +208,7 @@ impl ViewState {
     }
 
     /// Evaluates custom uniforms and writes every program's and geometry draw's uniform
-    /// block.
+    /// block; each draw also keeps its packed bytes, which actor draws patch per actor.
     pub(crate) fn write_uniforms(
         &mut self,
         queue: &Queue,
@@ -221,7 +265,7 @@ impl ViewState {
                 audit.block(&format!("program {}", program.name), block, &lookup);
             }
         }
-        for (draw, binding) in self.pack.draws.iter().zip(&self.bindings.draws) {
+        for (draw, binding) in self.pack.draws.iter().zip(&mut self.bindings.draws) {
             let program = &self.pack.programs[draw.program];
             let (Some(block), Some(buffer)) = (&program.reflection.uniforms, &binding.uniforms)
             else {
@@ -229,10 +273,17 @@ impl ViewState {
             };
             let (model_view, projection) = if draw.kind.shadow() {
                 (frame.shadow_model_view(), frame.shadow_projection())
+            } else if draw.kind.hand() {
+                // Hand vertices are in view space already, as Iris draws them.
+                (Mat4::IDENTITY, context.hand_projection)
             } else {
                 (frame.model_view(), frame.projection())
             };
             let terrain = draw.kind.category().is_some();
+            let effect = match draw.kind {
+                DrawKind::Effect(effect) => Some(effect),
+                _ => None,
+            };
             let values = DrawUniforms {
                 model_view,
                 projection,
@@ -243,12 +294,14 @@ impl ViewState {
                 },
                 render_stage: draw.kind.render_stage(),
                 lightmap_matrix: draw.kind.lightmap_matrix(),
-                atlas_size: if terrain { context.atlas_size } else { [0; 2] },
-                entity_id: -1,
+                atlas_size: context.atlas_size(draw.kind),
+                entity_id: effect.map_or(-1, |effect| self.pack.effects.entity_id(effect)),
             };
             let lookup = |name: &str| values.value(name).or_else(|| lookup(name));
             pack_block(block, &lookup, &mut self.scratch, &mut self.unknown);
             queue.write_buffer(buffer, 0, &self.scratch);
+            binding.base.clone_from(&self.scratch);
+            binding.atlas_size = values.atlas_size;
             if let Some(audit) = &mut self.audit {
                 audit.block(
                     &format!("draw {:?} with {}", draw.kind, program.name),
@@ -281,8 +334,6 @@ pub(crate) struct FrameIo<'a> {
     pub scene_depth: &'a TextureView,
     /// Near plane of the scene projection.
     pub scene_near: f32,
-    /// `1 /` the scene projection's x and y scales.
-    pub inverse_focal: [f32; 2],
     /// `far`: the render distance in blocks.
     pub render_distance: f32,
     /// `fogColor`, which `colortex0` clears to by default.
@@ -398,6 +449,7 @@ pub(crate) fn record_frame(
     let timestamps = io.timestamps;
     if let Some(geometry) = geometry {
         bind_geometry(device, state, geometry);
+        super::actors::prepare(device, queue, encoder, state, &geometry.actors);
         within_stage(
             timestamps,
             RuntimeStage::GpuShaderpackShadow,
@@ -459,13 +511,7 @@ pub(crate) fn record_frame(
             RuntimeStage::GpuShaderpackTranslucent,
             encoder,
             |encoder| {
-                record_translucent(
-                    device,
-                    encoder,
-                    state,
-                    geometry,
-                    (io.scene_colour, io.scene_depth),
-                );
+                record_translucent(device, encoder, state, geometry);
             },
         );
     }
@@ -555,31 +601,11 @@ fn record_composite(encoder: &mut CommandEncoder, state: &mut ViewState, io: &Fr
     }
 }
 
-/// Writes the planes and limits the host's depth conversions and the Vanilla overlay use.
+/// Writes the projection planes and viewport used by depth conversion.
 fn write_depth_parameters(queue: &Queue, buffer: &wgpu::Buffer, io: &FrameIo<'_>) {
     let far = io.render_distance.max(16.0) * FAR_PLANE_SCALE;
-    // Vanilla content beyond `far` (its far-terrain impostors) has no pack geometry behind it
-    // and never comes through; inside, only what lies within the fully expanded radius does.
-    let overlay_radius = io
-        .geometry
-        .as_ref()
-        .map_or(f32::MAX, |g| g.overlay_radius)
-        .min(io.render_distance.max(16.0));
     let [x, y, w, h] = io.viewport.map(|v| v as f32);
-    let parameters: SceneDepthParameters = [
-        io.scene_near,
-        GL_NEAR,
-        far,
-        overlay_radius,
-        io.inverse_focal[0],
-        io.inverse_focal[1],
-        0.0,
-        0.0,
-        x,
-        y,
-        w,
-        h,
-    ];
+    let parameters: SceneDepthParameters = [io.scene_near, GL_NEAR, far, 0.0, x, y, w, h];
     queue.write_buffer(buffer, 0, bytemuck::bytes_of(&parameters));
 }
 
@@ -888,5 +914,29 @@ fn run_step(
             render.set_vertex_buffer(0, pack.quad.slice(..));
             render.draw(0..4, 0..1);
         }
+    }
+}
+
+#[cfg(test)]
+mod atlas_tests {
+    use super::*;
+    #[test]
+    fn damaged_blocks_use_the_atlas_bound_to_their_draw() {
+        let context = DrawContext {
+            chunk_offset: Vec3::ZERO,
+            atlas_size: [1024; 2],
+            particle_atlas_size: [512; 2],
+            crack_atlas_size: [256, 128],
+            hand_projection: Mat4::IDENTITY,
+        };
+        assert_eq!(
+            context.atlas_size(DrawKind::Effect(Effect::DamagedBlock)),
+            [256, 128]
+        );
+        assert_eq!(context.atlas_size(DrawKind::TerrainSolid), [1024; 2]);
+        assert_eq!(
+            context.atlas_size(DrawKind::Effect(Effect::Particles)),
+            [512; 2]
+        );
     }
 }
