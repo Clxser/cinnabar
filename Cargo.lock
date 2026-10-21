@@ -847,7 +847,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "bedrock-client"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=4adbbc555063678537a5ccf2e19938e5ab3f630f#4adbbc555063678537a5ccf2e19938e5ab3f630f"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=472e84a1e02bd6020b8f49ccdbb45559dd270a9c#472e84a1e02bd6020b8f49ccdbb45559dd270a9c"
 dependencies = [
  "bedrock-net",
  "bedrock-packs",
@@ -865,7 +865,7 @@ dependencies = [
 [[package]]
 name = "bedrock-client-tokio"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=4adbbc555063678537a5ccf2e19938e5ab3f630f#4adbbc555063678537a5ccf2e19938e5ab3f630f"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=472e84a1e02bd6020b8f49ccdbb45559dd270a9c#472e84a1e02bd6020b8f49ccdbb45559dd270a9c"
 dependencies = [
  "bedrock-client",
  "bedrock-net",
@@ -886,7 +886,7 @@ dependencies = [
 [[package]]
 name = "bedrock-net"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=4adbbc555063678537a5ccf2e19938e5ab3f630f#4adbbc555063678537a5ccf2e19938e5ab3f630f"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=472e84a1e02bd6020b8f49ccdbb45559dd270a9c#472e84a1e02bd6020b8f49ccdbb45559dd270a9c"
 dependencies = [
  "aes 0.9.3",
  "base64 0.22.1",
@@ -914,7 +914,7 @@ dependencies = [
 [[package]]
 name = "bedrock-packs"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=4adbbc555063678537a5ccf2e19938e5ab3f630f#4adbbc555063678537a5ccf2e19938e5ab3f630f"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=472e84a1e02bd6020b8f49ccdbb45559dd270a9c#472e84a1e02bd6020b8f49ccdbb45559dd270a9c"
 dependencies = [
  "serde",
  "serde_json",
@@ -4632,12 +4632,12 @@ checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "flate2"
-version = "1.1.9"
+version = "1.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
+checksum = "6e634e2e0ebac1ee034020da1ca582e17ffe4e0f5e985823721e168928136dcb"
 dependencies = [
  "crc32fast",
- "miniz_oxide",
+ "miniz_oxide 0.9.1",
  "zlib-rs",
 ]
 
@@ -6636,6 +6636,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "miniz_oxide"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
+dependencies = [
+ "adler2",
+ "simd-adler32",
+]
+
+[[package]]
 name = "mio"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6865,7 +6875,7 @@ dependencies = [
 [[package]]
 name = "nethernet"
 version = "0.0.1"
-source = "git+https://github.com/cinnabar-mc/nethernet?rev=c0a1fd56ca88d62cdd0f455055ca02ea797ab704#c0a1fd56ca88d62cdd0f455055ca02ea797ab704"
+source = "git+https://github.com/cinnabar-mc/nethernet?rev=fed09fc05afb3b0fe34d0e7b18702f7ea86c3290#fed09fc05afb3b0fe34d0e7b18702f7ea86c3290"
 dependencies = [
  "aes 0.9.3",
  "base64 0.23.1",
@@ -6890,7 +6900,7 @@ dependencies = [
 [[package]]
 name = "nethernet-tokio"
 version = "0.2.0"
-source = "git+https://github.com/cinnabar-mc/nethernet?rev=c0a1fd56ca88d62cdd0f455055ca02ea797ab704#c0a1fd56ca88d62cdd0f455055ca02ea797ab704"
+source = "git+https://github.com/cinnabar-mc/nethernet?rev=fed09fc05afb3b0fe34d0e7b18702f7ea86c3290#fed09fc05afb3b0fe34d0e7b18702f7ea86c3290"
 dependencies = [
  "bytes",
  "futures",
@@ -7933,7 +7943,7 @@ dependencies = [
  "crc32fast",
  "fdeflate",
  "flate2",
- "miniz_oxide",
+ "miniz_oxide 0.8.9",
 ]
 
 [[package]]
