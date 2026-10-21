@@ -43,6 +43,7 @@ fn cancelled_later_exchange_preserves_pending_refresh_and_discards_late_ui_compl
     let (cancel, _) = oneshot::channel();
     let mut owner = NativeAuth {
         receiver,
+        _fixture_sender: None,
         cancel: Some(cancel),
         done: Arc::new(AtomicBool::new(true)),
         state: AuthState::AwaitingCode {

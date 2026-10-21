@@ -39,6 +39,9 @@ enum Message {
 /// Owns cancellation and bounded presentation delivery, without exposing SDK secrets in Debug.
 pub(super) struct NativeAuth {
     receiver: Receiver<Message>,
+    // A static presenter fixture has no worker whose exit should replace its supplied state.
+    #[cfg(any(test, feature = "test-support"))]
+    _fixture_sender: Option<Sender<Message>>,
     cancel: Option<oneshot::Sender<()>>,
     done: Arc<AtomicBool>,
     state: AuthState,
@@ -66,9 +69,10 @@ impl NativeAuth {
     /// Supplies a completed deterministic presenter fixture without threads, HTTP or credentials.
     #[cfg(any(test, feature = "test-support"))]
     pub(super) fn from_state(state: AuthState) -> Self {
-        let (_, receiver) = bounded(super::EVENT_CAPACITY);
+        let (sender, receiver) = bounded(super::EVENT_CAPACITY);
         Self {
             receiver,
+            _fixture_sender: Some(sender),
             cancel: None,
             done: Arc::new(AtomicBool::new(true)),
             state,
@@ -122,6 +126,8 @@ impl NativeAuth {
             ))?;
         Ok(Self {
             receiver,
+            #[cfg(any(test, feature = "test-support"))]
+            _fixture_sender: None,
             cancel: Some(cancel),
             done,
             state: AuthState::Checking,
