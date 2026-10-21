@@ -729,11 +729,13 @@ fn own_tag_color_and_border_width_preserve_other_tags() {
     };
     let glyph = NametagRecord {
         anchor: [1., 2., 3.],
+        runtime_id: 11,
         color: [1., 1., 1., 0.125],
         ..Default::default()
     };
     let remote = NametagRecord {
         anchor: [4., 5., 6.],
+        runtime_id: 12,
         ..glyph
     };
     let mut scene = NametagScene {
@@ -741,7 +743,7 @@ fn own_tag_color_and_border_width_preserve_other_tags() {
         ..Default::default()
     };
     let style: ui::mod_hud::NametagStyle = serde_json::from_value(serde_json::json!({"border_width":3.,"border_color":[1.,1.,1.,1.],"text_color":[0.,1.,0.,1.],"own_text_color":[1.,0.,0.,1.]})).unwrap();
-    style_scene(&mut scene, &style, Some([1., 2., 3.]));
+    style_scene(&mut scene, &style, Some(glyph.runtime_id));
     assert_eq!(scene.records[0].rect, [-5., -4., 5., -1.]);
     assert_eq!(scene.records[5].color, [1., 0., 0., 0.125]);
     assert_eq!(scene.records[6].color, [0., 1., 0., 0.125]);

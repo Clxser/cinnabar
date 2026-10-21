@@ -119,12 +119,7 @@ impl UiPresentationRuntime {
             },
         );
         if let Some(style) = style {
-            let own_anchor = self
-                .nametag_anchors
-                .iter()
-                .find(|anchor| Some(anchor.runtime_id) == self.nametag_local_actor)
-                .map(|anchor| anchor.position.to_array());
-            nametags::style_scene(&mut scene, style, own_anchor);
+            nametags::style_scene(&mut scene, style, self.nametag_local_actor);
         }
         scene
     }

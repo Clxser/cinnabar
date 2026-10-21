@@ -546,6 +546,7 @@ pub fn build_nametag_scene<'p>(
         // that extend above the published actor bounds. Sneaking names still test depth.
         let common = NametagRecord {
             anchor: anchor.position.to_array(),
+            runtime_id: anchor.runtime_id,
             line_lift: EXTRA_LINE_LIFT
                 * (placed.len() + usize::from(separate)).saturating_sub(1) as f32,
             depth_tested: u32::from(anchor.depth_tested),
@@ -659,7 +660,7 @@ pub fn build_nametag_scene<'p>(
 pub(super) fn style_scene(
     scene: &mut NametagScene,
     style: &ui::mod_hud::NametagStyle,
-    own_anchor: Option<[f32; 3]>,
+    own_actor: Option<u64>,
 ) {
     if style.hide {
         scene.records.clear();
@@ -695,7 +696,7 @@ pub(super) fn style_scene(
                 }
             }
         } else {
-            let own = own_anchor == Some(record.anchor);
+            let own = own_actor == Some(record.runtime_id);
             let text_color = if own {
                 style.own_text_color.or(style.text_color)
             } else {

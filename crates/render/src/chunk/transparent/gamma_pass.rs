@@ -30,7 +30,7 @@ pub(in crate::chunk) fn install(app: &mut App) {
 }
 
 /// Preserves graph dependencies while selecting the blend colour space per sorted range.
-pub(in crate::chunk) fn install_graph(world: &mut World) {
+pub(crate) fn install_graph(world: &mut World) {
     crate::scene_target::install_graph(world);
     if world.contains_resource::<TransparentInstalled>() {
         return;
@@ -72,6 +72,7 @@ type GammaView = (
     Option<&'static render_scene::EnhancedRendering>,
     &'static SceneTarget,
     Option<&'static bevy::anti_alias::smaa::Smaa>,
+    Option<&'static render_scene::shaderpack::ShaderPackRendering>,
 );
 
 type GammaTransparentQuery = GammaView;
@@ -83,10 +84,12 @@ pub(crate) fn gamma_transparent<const NAMETAGS_ONLY: bool>(
     mut render_context: RenderContext,
 ) -> bevy::ecs::error::Result {
     let view_entity = query.entity();
-    let (camera, view, target, depth, resolution, msaa, enhanced, scene, smaa) = query.into_inner();
+    let (camera, view, target, depth, resolution, msaa, enhanced, scene, smaa, pack) =
+        query.into_inner();
+    let overlay = crate::nametag_render::overlay::enabled(enhanced.is_some(), pack.is_some());
     let render_context = &mut render_context;
     let blur = crate::motion_blur::applies(world, view_entity);
-    if NAMETAGS_ONLY && !blur {
+    if NAMETAGS_ONLY && (!blur || overlay) {
         return Ok(());
     }
     let Some(phases) = world.get_resource::<ViewSortedRenderPhases<Transparent3d>>() else {
@@ -100,7 +103,7 @@ pub(crate) fn gamma_transparent<const NAMETAGS_ONLY: bool>(
     }
     let gamma = admitted(camera.hdr, *msaa, enhanced.is_some());
     let draws = gamma.then(|| native_draws(world));
-    let filtered = blur || smaa.is_some();
+    let filtered = blur || smaa.is_some() || overlay;
     let nametag = filtered
         .then(|| crate::nametag_render::draw_function(world))
         .flatten();
@@ -229,4 +232,16 @@ pub(crate) fn contiguous_ranges<'a, T: 'a, M: Copy + PartialEq + 'a>(
         start = end;
         Some((range, mode))
     })
+}
+
+/// Registers the native material commands needed by isolated transparency raster fixtures.
+#[cfg(all(test, feature = "shaderpacks"))]
+pub(crate) fn register_fixture_commands(app: &mut App) {
+    use bevy::render::render_phase::AddRenderCommand;
+    app.sub_app_mut(RenderApp)
+        .add_render_command::<Transparent3d, DrawTransparentLiquidCommands>()
+        .add_render_command::<Transparent3d, DrawTransparentLiquidDirectCommands>()
+        .add_render_command::<Transparent3d, DrawTransparentLiquidIndirectCommands>()
+        .add_render_command::<Transparent3d, DrawTransparentModelCommands>()
+        .add_render_command::<Transparent3d, crate::chunk::transparent::mixed::DrawMixedTerrainCommands>();
 }

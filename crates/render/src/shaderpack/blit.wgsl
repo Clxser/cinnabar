@@ -188,3 +188,13 @@ fn downsample_unfilterable(in: Fullscreen) -> @location(0) vec4<f32> {
     let bottom_right = textureLoad(source_colour, clamp(base + vec2<i32>(1), vec2<i32>(0), last), 0);
     return mix(mix(top_left, top_right, weight.x), mix(bottom_left, bottom_right, weight.x), weight.y);
 }
+
+// Restores top-down reverse-Z depth for native overlays after pack geometry replaces the scene.
+@fragment
+fn overlay_depth(in: Fullscreen) -> @builtin(frag_depth) f32 {
+    let depth = textureLoad(pack_depth, flipped_texel(in.uv, textureDimensions(pack_depth)), 0);
+    if depth >= 1.0 {
+        return 0.0;
+    }
+    return clamp(depth_parameters.scene_near / gl_distance(depth), 0.0, 1.0);
+}

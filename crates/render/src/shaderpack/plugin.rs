@@ -728,6 +728,13 @@ fn shaderpack_post(
         .get_resource::<RuntimeStageProfiler>()
         .map(|profiler| profiler.time(RuntimeStage::ShaderpackRecord));
     record_frame(&device, &queue, context.command_encoder(), state, &io);
+    if io.geometry.is_some()
+        && world
+            .get_resource::<render_scene::NametagSceneResource>()
+            .is_some_and(|scene| scene.records.iter().any(|record| record.depth_tested != 0))
+    {
+        super::overlay_depth::restore(&device, context.command_encoder(), state, &io);
+    }
     Ok(())
 }
 

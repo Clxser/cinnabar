@@ -8,7 +8,6 @@ pub(super) fn needs_native_scene(
     particles: Option<&render_scene::ParticleGpuFrame>,
     weather: Option<&render_scene::PrecipitationScene>,
     overlays: Option<&render_scene::ScreenOverlayScene>,
-    nametags: Option<&render_scene::NametagSceneResource>,
     covered: impl Fn(Effect) -> bool,
 ) -> bool {
     atmosphere.is_some_and(|frame| {
@@ -22,7 +21,6 @@ pub(super) fn needs_native_scene(
             || (!frame.add.is_empty() && !covered(Effect::ParticlesAdditive))
     }) || weather.is_some_and(|scene| !scene.layers.is_empty() && !covered(Effect::Weather))
         || overlays.is_some_and(|scene| !scene.layers.is_empty())
-        || nametags.is_some_and(|scene| !scene.records.is_empty())
 }
 
 /// Native layers whose pixels cannot yet be composed over replacement terrain.
@@ -35,7 +33,6 @@ pub(super) struct NativeSceneLayers<'w> {
     particles: Option<Res<'w, render_scene::ParticleGpuFrame>>,
     weather: Option<Res<'w, render_scene::PrecipitationScene>>,
     overlays: Option<Res<'w, render_scene::ScreenOverlayScene>>,
-    nametags: Option<Res<'w, render_scene::NametagSceneResource>>,
     viewmodel: Option<Res<'w, render_scene::ViewmodelScene>>,
 }
 
@@ -68,6 +65,17 @@ impl NativeSceneLayers<'_> {
                 .is_some_and(|scene| scene.frame.is_some())
     }
 
+    /// Native world layers that still need scene colour, excluding independent overlays.
+    pub(super) fn uncovered_layers(&self, covered: impl Fn(Effect) -> bool) -> bool {
+        needs_native_scene(
+            self.atmosphere.as_deref(),
+            self.particles.as_deref(),
+            self.weather.as_deref(),
+            self.overlays.as_deref(),
+            covered,
+        )
+    }
+
     /// Whether this frame needs the native scene colour to preserve its layers.
     pub(super) fn needed(
         &self,
@@ -76,21 +84,14 @@ impl NativeSceneLayers<'_> {
     ) -> bool {
         !self.world_ready()
             || self.first_person_native()
-            || needs_native_scene(
-                self.atmosphere.as_deref(),
-                self.particles.as_deref(),
-                self.weather.as_deref(),
-                self.overlays.as_deref(),
-                self.nametags.as_deref(),
-                |effect| {
-                    !pack.effects.draws(effect)
-                        || (pack
-                            .draws
-                            .iter()
-                            .any(|draw| draw.kind == DrawKind::Effect(effect))
-                            && textures.is_some_and(|textures| textures.views(effect).is_some()))
-                },
-            )
+            || self.uncovered_layers(|effect| {
+                !pack.effects.draws(effect)
+                    || (pack
+                        .draws
+                        .iter()
+                        .any(|draw| draw.kind == DrawKind::Effect(effect))
+                        && textures.is_some_and(|textures| textures.views(effect).is_some()))
+            })
     }
 }
 

@@ -63,6 +63,7 @@ pub(crate) struct ViewState {
     /// View-local scene conversion planes and source rectangle.
     pub(super) depth_parameters: wgpu::Buffer,
     scene_bindings: super::scene_bindings::SceneBindingCache,
+    pub(super) overlay_depth: std::sync::OnceLock<wgpu::BindGroup>,
     pub history: super::uniforms::UniformHistory,
     /// Actor, block-entity and hand geometry skinned for the pack, with its draw bindings.
     pub actors: super::actors::ViewActors,
@@ -119,6 +120,7 @@ impl ViewState {
             }),
             pack,
             scene_bindings: Default::default(),
+            overlay_depth: Default::default(),
             targets,
             bindings,
             history: Default::default(),
