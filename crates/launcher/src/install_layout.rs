@@ -678,7 +678,7 @@ mod tests {
                 assert!(matches!(
                     InstallLayout::resolve(platform, &env),
                     Err(LayoutError::InvalidUserRoot {
-                        variable: markers::USER_ROOT,
+                        variable: env_compat::markers::USER_ROOT,
                         ..
                     })
                 ));
