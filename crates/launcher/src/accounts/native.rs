@@ -23,6 +23,19 @@ pub struct NativeLease {
     checkpoint: Stored,
 }
 
+/// Protected credential bytes could not describe a usable native sign-in.
+/// Filesystem, account-selection and checkpoint errors never carry this cause.
+#[derive(Debug)]
+pub struct InvalidCredentialContents;
+
+impl std::fmt::Display for InvalidCredentialContents {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("invalid native credential contents")
+    }
+}
+
+impl std::error::Error for InvalidCredentialContents {}
+
 #[derive(Deserialize)]
 struct OAuth {
     #[serde(rename = "access_token", default, deserialize_with = "secret")]
@@ -389,8 +402,8 @@ pub(super) fn oauth_bytes(
 
 /// Validates the authoritative OAuth generation without echoing credential JSON on failure.
 fn parse_oauth(bytes: &[u8]) -> io::Result<OAuth> {
-    let oauth: OAuth =
-        serde_json::from_slice(bytes).map_err(|_| invalid("invalid native OAuth cache"))?;
+    let oauth: OAuth = serde_json::from_slice(bytes)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, InvalidCredentialContents))?;
     let generation = &oauth.cinnabar_sign_in_generation;
     if oauth.refresh_token.is_empty()
         || generation.is_empty()
@@ -399,8 +412,9 @@ fn parse_oauth(bytes: &[u8]) -> io::Result<OAuth> {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
     {
-        return Err(invalid(
-            "native account requires an existing valid sign-in generation",
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            InvalidCredentialContents,
         ));
     }
     Ok(oauth)

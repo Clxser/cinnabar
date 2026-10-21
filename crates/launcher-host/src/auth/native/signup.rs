@@ -1,6 +1,7 @@
 //! One hosted profile prompt and finite retries on the original saved or pending account.
 
 use super::*;
+use launcher::accounts::native::InvalidCredentialContents;
 use tokio::time::Instant;
 
 /// Keeps the first hosted signup window across borrowed acquisition cancellation and repeated challenges.
@@ -95,6 +96,13 @@ pub(super) async fn saved_profile(
     let generation = match generation {
         Ok(generation) => generation,
         Err(error) if selected.is_none() && error.kind() == io::ErrorKind::NotFound => {
+            return Ok(None);
+        }
+        Err(error)
+            if error
+                .get_ref()
+                .is_some_and(|cause| cause.is::<InvalidCredentialContents>()) =>
+        {
             return Ok(None);
         }
         Err(_) => {
