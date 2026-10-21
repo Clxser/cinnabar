@@ -235,7 +235,7 @@ impl AccountStore {
         result
     }
 
-    fn lease(&self) -> io::Result<File> {
+    fn lease(&self) -> io::Result<Lease> {
         private_directory(&self.directory)?;
         lease(&self.directory.join("store.lock"))
     }
@@ -420,11 +420,29 @@ fn derived_path(path: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
-fn cache_leases(path: &Path) -> io::Result<(File, File)> {
+/// One account transaction's lock, released independently of inherited descriptors.
+struct Lease(File);
+
+impl Drop for Lease {
+    /// Unlocks before closing so a duplicate cannot extend this transaction's exclusion.
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
+#[cfg(all(test, unix))]
+impl Lease {
+    /// Retains the same open-file description without extending the transaction's ownership.
+    fn try_clone(&self) -> io::Result<File> {
+        self.0.try_clone()
+    }
+}
+
+fn cache_leases(path: &Path) -> io::Result<(Lease, Lease)> {
     cache_leases_with(path, lease)
 }
 
-fn cache_try_leases(path: &Path) -> io::Result<(File, File)> {
+fn cache_try_leases(path: &Path) -> io::Result<(Lease, Lease)> {
     cache_leases_with(path, try_lease)
 }
 
@@ -436,8 +454,8 @@ fn cache_lock_path(cache: &Path) -> PathBuf {
 
 fn cache_leases_with(
     path: &Path,
-    acquire: fn(&Path) -> io::Result<File>,
-) -> io::Result<(File, File)> {
+    acquire: fn(&Path) -> io::Result<Lease>,
+) -> io::Result<(Lease, Lease)> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -446,13 +464,13 @@ fn cache_leases_with(
     Ok((derived, oauth))
 }
 
-fn lease(path: &Path) -> io::Result<File> {
+fn lease(path: &Path) -> io::Result<Lease> {
     let file = open_lock(path)?;
     file.lock()?;
-    Ok(file)
+    Ok(Lease(file))
 }
 
-fn try_lease(path: &Path) -> io::Result<File> {
+fn try_lease(path: &Path) -> io::Result<Lease> {
     let file = open_lock(path)?;
     file.try_lock().map_err(|error| match error {
         std::fs::TryLockError::WouldBlock => io::Error::new(
@@ -461,7 +479,7 @@ fn try_lease(path: &Path) -> io::Result<File> {
         ),
         std::fs::TryLockError::Error(error) => error,
     })?;
-    Ok(file)
+    Ok(Lease(file))
 }
 
 fn open_lock(path: &Path) -> io::Result<File> {

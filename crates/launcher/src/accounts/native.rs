@@ -15,8 +15,8 @@ pub(super) use checkpoint::{checkpoint_bytes, rebind_checkpoint};
 /// This owner has no Debug/Clone; callers must acquire nonblocking and bound their wait.
 pub struct NativeLease {
     store: AccountStore,
-    _store_lock: File,
-    _cache_locks: (File, File),
+    _store_lock: Lease,
+    _cache_locks: (Lease, Lease),
     oauth: OAuth,
     selected_id: Option<String>,
     oauth_binding: [u8; 32],
