@@ -108,30 +108,26 @@ impl NodeAnim {
     }
 
     /// Moves a layout rectangle through the same offset and size contributors as its draws.
-    pub(crate) fn animate_rect(
+    pub(crate) fn project_rect(
         &self,
-        animator: &mut Animator,
-        now: f64,
-        clocks: Option<&BTreeMap<String, f64>>,
         mut rect: RectOut,
+        mut written: impl FnMut(&Arc<ControlAnims>) -> Written,
     ) -> RectOut {
         for mover in self.movers.iter().rev() {
-            rect = moved(mover, &animator.sample(mover, now, clocks), rect);
+            rect = moved(mover, &written(mover), rect);
         }
         rect
     }
 
     /// Evaluates moving clip boundaries before intersection, retaining an unanimated fallback.
-    pub(crate) fn animate_clip(
+    pub(crate) fn project_clip(
         &self,
-        animator: &mut Animator,
-        now: f64,
-        clocks: Option<&BTreeMap<String, f64>>,
         fallback: RectOut,
+        mut written: impl FnMut(&Arc<ControlAnims>) -> Written,
     ) -> RectOut {
         self.clip
             .as_ref()
-            .map_or(fallback, |clip| clip.animate(animator, now, clocks).into())
+            .map_or(fallback, |clip| clip.project(&mut written).into())
     }
 }
 
@@ -161,23 +157,18 @@ impl Clip {
     }
 
     /// Move each original boundary before intersecting it with its already-painted parent.
-    fn animate(
-        &self,
-        animator: &mut Animator,
-        now: f64,
-        clocks: Option<&BTreeMap<String, f64>>,
-    ) -> Rect {
+    fn project(&self, written: &mut impl FnMut(&Arc<ControlAnims>) -> Written) -> Rect {
         let mut rect = self.rect.into();
         for mover in self.movers.iter().rev() {
-            rect = moved(mover, &animator.sample(mover, now, clocks), rect);
+            rect = moved(mover, &written(mover), rect);
         }
         let rect = Rect::new(rect.x, rect.y, rect.w, rect.h);
         let rect = self
             .transform
             .map_or(rect, |transform| transform.bounds(rect));
-        self.parent.as_ref().map_or(rect, |parent| {
-            parent.animate(animator, now, clocks).intersect(rect)
-        })
+        self.parent
+            .as_ref()
+            .map_or(rect, |parent| parent.project(written).intersect(rect))
     }
 }
 
@@ -267,8 +258,8 @@ impl DrawNode {
                 out.uv = Some(uv);
             }
         }
-        out.dest = anim.animate_rect(animator, now, clocks, out.dest);
-        out.clip = anim.animate_clip(animator, now, clocks, out.clip);
+        out.dest = anim.project_rect(out.dest, |mover| animator.sample(mover, now, clocks));
+        out.clip = anim.project_clip(out.clip, |mover| animator.sample(mover, now, clocks));
         out
     }
 }

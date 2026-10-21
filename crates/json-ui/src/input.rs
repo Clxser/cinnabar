@@ -163,18 +163,21 @@ pub struct HitRegion {
 }
 
 impl HitRegion {
-    /// Projects a raw layout region with its paint's animator, time and factory clocks.
+    /// Projects a raw layout region from its paint's already-sampled writes and clocks.
     /// The returned region keeps the affine inverse and cannot apply the animation twice.
     pub fn animate(
         &self,
-        animator: &mut crate::Animator,
+        animator: &crate::Animator,
         now: f64,
         clocks: Option<&std::collections::BTreeMap<String, f64>>,
     ) -> Self {
         let mut region = self.clone();
         if let Some(anim) = region.anim.take() {
-            region.rect = anim.animate_rect(animator, now, clocks, region.rect);
-            region.clip = anim.animate_clip(animator, now, clocks, region.clip);
+            let mut written = |mover: &std::sync::Arc<crate::anim::ControlAnims>| {
+                animator.sampled(mover, now, clocks).unwrap_or_default()
+            };
+            region.rect = anim.project_rect(region.rect, &mut written);
+            region.clip = anim.project_clip(region.clip, &mut written);
         }
         region
     }

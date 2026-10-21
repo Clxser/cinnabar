@@ -163,7 +163,7 @@ pub(super) fn render_with<R: Borrow<FormRender>>(
         render
             .hits
             .iter()
-            .map(|region| region.animate(&mut canvas.animator, frame.now, art.clocks))
+            .map(|region| region.animate(&canvas.animator, frame.now, art.clocks))
             .collect()
     } else {
         render.hits.clone()
