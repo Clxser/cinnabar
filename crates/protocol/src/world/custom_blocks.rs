@@ -1,3 +1,4 @@
+mod materials;
 mod mining;
 mod physical;
 pub use mining::{CustomBlockMining, CustomMiningItem, CustomMiningSpeed};
@@ -21,8 +22,6 @@ use physical::{
 const MAX_PERMUTATIONS: usize = 1024;
 /// Bone visibility entries one geometry component may define before extras are ignored.
 const MAX_BONE_VISIBILITY: usize = 256;
-/// Material instances one component set may define before extras are ignored.
-const MAX_MATERIAL_INSTANCES: usize = 64;
 /// Collision primitives one custom block may contribute before extras are ignored.
 const MAX_COLLISION_BOXES: usize = 256;
 /// The namespace of vanilla's own blocks.
@@ -750,53 +749,7 @@ fn visual_descriptions(
                 .collect(),
             _ => Box::default(),
         };
-    let materials = material_component
-        .and_then(|instances| match instances.field("materials") {
-            Some(Nbt::Compound(fields)) => Some(fields),
-            _ => None,
-        })
-        .map(|fields| {
-            fields
-                .iter()
-                .take(MAX_MATERIAL_INSTANCES)
-                .filter_map(|(name, material)| {
-                    let Some(Nbt::String(texture)) = material.field("texture") else {
-                        return None;
-                    };
-                    let render_method = match material.field("render_method") {
-                        Some(Nbt::String(method)) => Some(method.as_str().into()),
-                        _ => None,
-                    };
-                    let tint_method = match material.field("tint_method") {
-                        Some(Nbt::String(method)) => Some(method.as_str().into()),
-                        _ => None,
-                    };
-                    Some(CustomMaterialInstance {
-                        name: name.as_str().into(),
-                        texture: texture.as_str().into(),
-                        render_method,
-                        tint_method,
-                        ambient_occlusion: material
-                            .field("ambient_occlusion")
-                            .and_then(Nbt::number)
-                            .map(|value| value as f32)
-                            .filter(|value| value.is_finite() && *value >= 0.0),
-                        face_dimming: material
-                            .field("packed_bools")
-                            .and_then(Nbt::number)
-                            .filter(|value| value.is_finite())
-                            .map(|value| value as i64 & 1 != 0)
-                            .or_else(|| {
-                                material
-                                    .field("face_dimming")
-                                    .and_then(Nbt::number)
-                                    .filter(|value| matches!(value, 0.0 | 1.0))
-                                    .map(|value| value != 0.0)
-                            }),
-                    })
-                })
-                .collect()
-        });
+    let materials = materials::instances(material_component);
     let transformation = transformation_component(components);
     let nibble = |key: &str, field: &str| {
         components
