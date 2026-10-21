@@ -110,15 +110,18 @@ pub(super) fn drive_mod(
                 effects.as_ref(),
             );
         }
-        if let Some(delta) = effects.and_then(|effects| effects.rotation) {
-            gameplay.apply(mod_host::CameraDelta {
+        let delta = effects
+            .as_ref()
+            .and_then(|effects| effects.rotation)
+            .map(|delta| mod_host::CameraDelta {
                 yaw: delta.yaw,
                 pitch: delta.pitch,
             });
-        }
+        gameplay.apply_native_controls(effects.as_ref(), delta, &ui);
         return;
     };
     if extension.suspended {
+        gameplay.apply_native_input(None, &ui);
         if let Some(drawing) = drawing.as_deref_mut() {
             drawing.update(None, packet_render::session(&gameplay));
             if let Some(scene) = render_scene.as_deref_mut() {
@@ -267,7 +270,7 @@ pub(super) fn drive_mod(
     }
     render::publish(render_scene, &mut extension, drawing.as_deref());
     let native_effects = native_effects.and_then(|effects| effects.camera);
-    if let Some(delta) = merged.delta.or_else(|| {
+    let delta = merged.delta.or_else(|| {
         native_effects
             .as_ref()
             .and_then(|effects| effects.rotation)
@@ -275,9 +278,12 @@ pub(super) fn drive_mod(
                 yaw: delta.yaw,
                 pitch: delta.pitch,
             })
-    }) {
-        gameplay.apply(delta);
-    }
+    });
+    gameplay.apply_native_controls(
+        native_effects.as_ref().filter(|_| !regular_camera),
+        delta,
+        &ui,
+    );
     send_commands(network.as_deref(), ui.session_id(), merged.commands);
     if let Some(mut cues) = cues {
         cues.0 = merged.cues;

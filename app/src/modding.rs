@@ -39,6 +39,7 @@ mod environment_loader;
 mod hud_editor;
 mod library;
 mod native_camera;
+mod native_input;
 mod packet_highlights;
 mod packet_menu;
 mod packet_render;
@@ -416,6 +417,7 @@ fn install(app: &mut App, mut hosts: Vec<ModHost>) {
 }
 
 fn configure_systems(app: &mut App, watching: bool) {
+    app.init_resource::<native_input::NativeInput>();
     app.init_resource::<packet_render::Drawing>();
     app.init_resource::<ReservedControls>();
     app.init_resource::<client_presentation::actor_publication::ActorPresentationStyle>();
