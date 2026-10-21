@@ -51,8 +51,7 @@ impl LauncherServices {
             menu.layout.launcher_artwork_dir(),
             account.clone(),
             &pack_runtime::pack_language::active_language_code(),
-            execution.runtime().clone(),
-            execution.tasks().clone(),
+            execution,
         );
         self.presence_lifetime = Some(services.title_presence_lifetime());
         self.running = Some(Attachment {

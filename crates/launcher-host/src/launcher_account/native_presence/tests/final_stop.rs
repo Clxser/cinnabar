@@ -56,9 +56,8 @@ impl Service for PendingPresence {
             tokio::select! {
                 _ = &mut release => return Ok(None),
                 probe = probes.recv() => {
-                    if probe.is_some() {
-                        self.observations.send(Observation::StillHeld).unwrap();
-                    }
+                    let Some(()) = probe else { return Err(io::Error::other("fixture ended")); };
+                    self.observations.send(Observation::StillHeld).unwrap();
                 }
             }
         }
@@ -128,7 +127,13 @@ impl Harness {
         std::thread::spawn(crate::worker::tracked(
             move || {
                 let _requests = requests;
-                events::poll(&shared, &received, &lifetime, execution.runtime());
+                events::poll(
+                    &shared,
+                    &received,
+                    &lifetime,
+                    execution.runtime(),
+                    execution.stopped(),
+                );
                 observations.send(Observation::Returned).unwrap();
             },
             &self.tasks,

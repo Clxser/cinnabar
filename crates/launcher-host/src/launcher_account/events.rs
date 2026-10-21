@@ -1,20 +1,39 @@
 //! The existing account event runtime continuously polls the selected service owners.
 use super::*;
 
-/// Drives retained control, presence and product futures on the existing event executor.
+/// Retains service work across account retirement, cancelling only on final process stop.
 pub(super) fn poll(
     shared: &Mutex<Snapshot>,
     requests: &Receiver<()>,
     lifetime: &TitlePresenceLifetime,
     runtime: &Handle,
+    process_stop: impl std::future::Future<Output = ()>,
 ) {
     let guard = lifetime.worker_guard();
-    runtime.block_on(run(shared, requests, lifetime));
+    runtime.block_on(run(shared, requests, lifetime, process_stop));
     drop(guard);
 }
 
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+/// Finishes the original product handle when its retained socket future completes or is dropped.
+struct ProductFinish(Option<crate::product_api::Client>);
+
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+impl Drop for ProductFinish {
+    fn drop(&mut self) {
+        if let Some(api) = &self.0 {
+            api.finish();
+        }
+    }
+}
+
 /// Drives the original three retained futures; the existing poll caller owns their worker guard.
-async fn run(shared: &Mutex<Snapshot>, requests: &Receiver<()>, lifetime: &TitlePresenceLifetime) {
+async fn run(
+    shared: &Mutex<Snapshot>,
+    requests: &Receiver<()>,
+    lifetime: &TitlePresenceLifetime,
+    process_stop: impl std::future::Future<Output = ()>,
+) {
     let control = async {
         control(shared, requests, lifetime).await;
         lifetime.retire();
@@ -28,26 +47,36 @@ async fn run(shared: &Mutex<Snapshot>, requests: &Receiver<()>, lifetime: &Title
             lifetime.complete(true);
         }
     };
-    let product = async {
+    let product = {
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-        {
-            let (api, account) = {
-                let snapshot = shared.lock().unwrap_or_else(|p| p.into_inner());
-                (
-                    snapshot.native_product_api.clone(),
-                    snapshot.native_presence_account.clone(),
-                )
-            };
-            if let Some(api) = api {
-                tokio::select! { biased;
-                    _=lifetime.retiring()=>{},
-                    _=api.run(account)=>{},
+        let (api, account) = {
+            let snapshot = shared.lock().unwrap_or_else(|p| p.into_inner());
+            (
+                snapshot.native_product_api.clone(),
+                snapshot.native_presence_account.clone(),
+            )
+        };
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        // Arm before polling so even a sticky stop retires the original handle.
+        let finish = ProductFinish(api.clone());
+        async move {
+            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+            {
+                let _finish = finish;
+                if let Some(api) = api {
+                    tokio::select! { biased;
+                        _=lifetime.retiring()=>{},
+                        _=api.run(account)=>{},
+                    }
                 }
-                api.finish();
             }
         }
     };
-    tokio::join!(control, publisher, product);
+    // Drop the actual joined futures before the outer worker can publish its terminal outcome.
+    tokio::select! { biased;
+        _ = process_stop => {},
+        _ = async { tokio::join!(control, publisher, product); } => {},
+    }
 }
 
 /// Retains each control round while the publisher makes independent progress on the same executor.

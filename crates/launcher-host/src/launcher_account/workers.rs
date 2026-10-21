@@ -3,12 +3,13 @@
 use super::*;
 
 impl LauncherAccount {
-    /// Starts the existing feed workers and one event/runtime owner.
+    /// Starts existing workers, retaining final process-stop observation on the event owner.
     pub(super) fn start(
         artwork: PathBuf,
         initial: Snapshot,
         runtime: Handle,
         tasks: TaskTracker,
+        process_stop: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> Self {
         let (feed_wake, feed_changes) = bounded(1);
         let (home_wake, home_changes) = bounded(1);
@@ -55,7 +56,7 @@ impl LauncherAccount {
         let lifetime = presence_lifetime.clone();
         let executor = runtime.clone();
         thread::spawn(crate::worker::tracked(
-            move || events::poll(&shared, &requests, &lifetime, &executor),
+            move || events::poll(&shared, &requests, &lifetime, &executor, process_stop),
             &tasks,
         ));
         let (shared, until) = (Arc::clone(&snapshot), stop.clone());

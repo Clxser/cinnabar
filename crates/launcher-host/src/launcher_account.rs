@@ -276,10 +276,17 @@ impl LauncherAccount {
         artwork: PathBuf,
         account: Option<Arc<crate::native_account::NativeAccount>>,
         language: &str,
-        runtime: Handle,
-        tasks: TaskTracker,
+        execution: bridge::tasks::NativeExecution,
     ) -> Self {
-        Self::start(artwork, Snapshot::native(account, language), runtime, tasks)
+        let runtime = execution.runtime().clone();
+        let tasks = execution.tasks().clone();
+        Self::start(
+            artwork,
+            Snapshot::native(account, language),
+            runtime,
+            tasks,
+            async move { execution.stopped().await },
+        )
     }
 
     /// Retains the existing worker's retirement proof independently of the Bevy resource.
