@@ -350,6 +350,7 @@ impl WorldsMenu {
                 }) =>
             {
                 self.form_error = Some("Choose an available world generator");
+                self.screen = Screen::Create;
                 Vec::new()
             }
             Pending::SubmitCreate => match self.create.build() {

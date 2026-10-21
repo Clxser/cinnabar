@@ -872,3 +872,22 @@ fn unavailable_catalog_prevents_creating_an_unopenable_world() {
     );
     assert!(menu.update(Input::SubmitCreate).is_empty());
 }
+
+#[test]
+fn rejected_generator_after_docker_fallback_returns_to_the_create_form() {
+    let mut menu = docker_menu(UnavailableReason::DockerMissing, &[]);
+    menu.update(Input::BeginCreate);
+    menu.update(Input::SetBackend(Backend::Bds));
+    assert!(menu.update(Input::SubmitCreate).is_empty());
+    menu.apply(Event::FailedGenerators("Cannot read generators".into()));
+    assert!(
+        menu.update(Input::Prompt(PromptButton::UseDragonfly))
+            .is_empty()
+    );
+    assert_eq!(menu.screen(), Screen::Create);
+    assert_eq!(menu.prompt(), None);
+    assert_eq!(
+        menu.form_error(),
+        Some("Choose an available world generator")
+    );
+}
