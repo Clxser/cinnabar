@@ -106,6 +106,7 @@ The following notice is retained with packaged Cinnabar resources.
 
 Copyright 2024 Karpeles Lab Inc.
 Copyright 2016 The Snappy-Go Authors. All rights reserved.
+Copyright (c) 2011 The Snappy-Go Authors. All rights reserved.
 Copyright (c) 2012 The Go Authors. All rights reserved.
 Copyright (c) 2019 Klaus Post. All rights reserved.
 
