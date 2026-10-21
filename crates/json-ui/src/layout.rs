@@ -312,6 +312,14 @@ fn lay_out<'a>(
     (laid, ctx.report)
 }
 
+/// A named ancestor's geometry and the same clipping boundary its children inherit.
+struct Ancestor<'tree> {
+    name: &'tree str,
+    rect: Rect,
+    clip: Rect,
+    animation_clip: Option<std::sync::Arc<crate::anim::Clip>>,
+}
+
 struct PlaceCtx<'tree, 'e, 'x> {
     env: &'e LayoutEnv<'x>,
     state: &'e ViewState,
@@ -322,7 +330,7 @@ struct PlaceCtx<'tree, 'e, 'x> {
     /// Enclosing sliders: fraction, box and progress names, rect, and axis.
     sliders: Vec<widgets::SliderFrame>,
     /// Enclosing controls' names, rects, and child clips, for `dropdown_area`.
-    ancestors: Vec<(&'tree str, Rect, Rect)>,
+    ancestors: Vec<Ancestor<'tree>>,
     /// State controls enclosing stateful controls show or hide: target, shown, state mask.
     overrides: Vec<(usize, bool, u8)>,
     /// Enclosing disabled controls; their descendants are locked.
@@ -435,7 +443,7 @@ fn place_subtree<'a>(
     let parent_rect = ctx
         .ancestors
         .last()
-        .map_or(parent_clip, |(_, parent, _)| *parent);
+        .map_or(parent_clip, |parent| parent.rect);
     let enabled_above = ctx.disabled == 0;
     let entry = ctx.reuse.as_mut().map(|reuse| {
         let address = reuse
@@ -580,7 +588,12 @@ fn place_subtree<'a>(
     if let Some(name) = placeholder {
         ctx.hidden_names.push(name.to_owned());
     }
-    ctx.ancestors.push((&control.name, rect, child_clip));
+    ctx.ancestors.push(Ancestor {
+        name: &control.name,
+        rect,
+        clip: child_clip,
+        animation_clip: inherit.clip.clone(),
+    });
     // A culling layout leaves a hidden control's subtree unplaced: nothing in it draws.
     let placed = if ctx.cull && !own_visible && forced.is_none_or(|(_, mask)| mask == 0) {
         Vec::new()
@@ -666,19 +679,23 @@ fn place_subtree<'a>(
                 .copied()
                 .unwrap_or(false);
         let mut clip_for_child = child_clip;
+        let mut popup_inherit = None;
         // A dropdown's content drops from the dropdown, kept inside its named area.
         if let Some((drop, area, content)) = &dropdown
             && *content == child.name
-            && let Some((_, area_rect, area_clip)) = ctx
+            && let Some(named_area) = ctx
                 .ancestors
                 .iter()
                 .rev()
-                .find(|(name, _, _)| *name == area.as_str())
+                .find(|ancestor| ancestor.name == area.as_str())
             && let Some((_, drop_rect)) =
                 placed_rects.iter().find(|(name, _)| *name == drop.as_str())
         {
-            child_rect.y = widgets::dropdown_content_top(*drop_rect, *area_rect, child_rect.h);
-            clip_for_child = *area_clip;
+            child_rect.y = widgets::dropdown_content_top(*drop_rect, named_area.rect, child_rect.h);
+            clip_for_child = named_area.clip;
+            let mut escaped = inherit.clone();
+            escaped.clip = named_area.animation_clip.clone();
+            popup_inherit = Some(escaped);
         }
         let mut child_shown = child_shown;
         let mut box_fade = None;
@@ -779,7 +796,7 @@ fn place_subtree<'a>(
             child_rect,
             clip_for_child,
             (absolute_layer, child_shown, packs, allows),
-            &inherit,
+            popup_inherit.as_ref().unwrap_or(&inherit),
             ctx,
         );
         // A fading touch box dims its children, as vanilla writes their alpha.

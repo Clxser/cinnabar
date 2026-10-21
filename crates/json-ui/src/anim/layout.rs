@@ -19,7 +19,7 @@ pub(crate) struct Inherited {
     born: Option<f64>,
     clock: Option<String>,
     movers: Vec<Arc<ControlAnims>>,
-    clip: Option<Arc<Clip>>,
+    pub(crate) clip: Option<Arc<Clip>>,
     /// The paint transform and screen clip transformed ancestors hand down.
     pub(crate) space: crate::transform::PaintSpace,
     /// The filtered subtree an ancestor opened.
