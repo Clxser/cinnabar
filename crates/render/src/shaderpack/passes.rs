@@ -4,6 +4,8 @@
 //! variants), `final` into the screen, the copy-back (or exchange of textures) of buffers
 //! that end flipped, and the screen's presentation into the view.
 
+use super::draws::DrawKind;
+use super::effects::Effect;
 use super::frame_geometry::{
     FrameGeometry, bind_geometry, record_opaque, record_shadow, record_translucent,
 };
@@ -28,6 +30,24 @@ pub(crate) struct DrawContext {
     pub chunk_offset: Vec3,
     /// The block atlas's texel size (terrain draws' `atlasSize`).
     pub atlas_size: [i32; 2],
+    /// The particle atlas's texel size (particle draws' `atlasSize`).
+    pub particle_atlas_size: [i32; 2],
+    /// The destroy-stage atlas size for damaged-block draws.
+    pub crack_atlas_size: [i32; 2],
+}
+
+impl DrawContext {
+    /// Returns the texel dimensions of the atlas bound to this draw.
+    pub(super) fn atlas_size(&self, kind: DrawKind) -> [i32; 2] {
+        match kind {
+            _ if kind.category().is_some() => self.atlas_size,
+            DrawKind::Effect(
+                Effect::Particles | Effect::ParticlesTranslucent | Effect::ParticlesAdditive,
+            ) => self.particle_atlas_size,
+            DrawKind::Effect(Effect::DamagedBlock) => self.crack_atlas_size,
+            _ => [0; 2],
+        }
+    }
 }
 
 /// Conversion planes and viewport rectangle uploaded to the host scene-copy shaders.
@@ -50,9 +70,11 @@ pub(crate) struct ViewState {
     audit: Option<super::uniform_audit::UniformAudit>,
     /// Programs and draws already reported as skipped.
     pub skipped: BTreeSet<String>,
-    /// The atlas generation the draw bind groups were built over (`None` inside: the
-    /// placeholder); `None` before the first frame.
-    pub atlas_generation: Option<Option<u64>>,
+    /// The atlas and effect texture generations the draw bind groups were built over
+    /// (`None` inside: placeholders); `None` before the first frame.
+    pub atlas_generation: Option<(Option<u64>, Option<u64>)>,
+    /// This frame's effect geometry.
+    pub effects: super::effects::EffectBuffers,
     /// Whether a frame has seen the player's biome: see [`Self::enter_world`].
     in_world: bool,
 }
@@ -103,6 +125,7 @@ impl ViewState {
             audit: super::uniform_audit::UniformAudit::from_env(),
             skipped: BTreeSet::new(),
             atlas_generation: None,
+            effects: Default::default(),
             in_world: false,
         })
     }
@@ -139,6 +162,20 @@ impl ViewState {
                 extent.is_some_and(|extent| super::frame_geometry::admit_extent(&mut size, extent))
             })
         })
+    }
+
+    /// Refreshes atlas dimensions after native texture preparation and before recording draws.
+    pub(crate) fn sync_draw_atlas_sizes(&mut self, queue: &Queue, context: &DrawContext) {
+        for (draw, binding) in self.pack.draws.iter().zip(&mut self.bindings.draws) {
+            let Some(block) = &self.pack.programs[draw.program].reflection.uniforms else {
+                continue;
+            };
+            if binding.update_atlas_size(block, context.atlas_size(draw.kind))
+                && let Some(buffer) = &binding.uniforms
+            {
+                queue.write_buffer(buffer, 0, &binding.base);
+            }
+        }
     }
 
     /// Whether both the presentation pipeline and its view bindings support this format.
@@ -221,7 +258,7 @@ impl ViewState {
                 audit.block(&format!("program {}", program.name), block, &lookup);
             }
         }
-        for (draw, binding) in self.pack.draws.iter().zip(&self.bindings.draws) {
+        for (draw, binding) in self.pack.draws.iter().zip(&mut self.bindings.draws) {
             let program = &self.pack.programs[draw.program];
             let (Some(block), Some(buffer)) = (&program.reflection.uniforms, &binding.uniforms)
             else {
@@ -233,6 +270,10 @@ impl ViewState {
                 (frame.model_view(), frame.projection())
             };
             let terrain = draw.kind.category().is_some();
+            let effect = match draw.kind {
+                DrawKind::Effect(effect) => Some(effect),
+                _ => None,
+            };
             let values = DrawUniforms {
                 model_view,
                 projection,
@@ -243,12 +284,14 @@ impl ViewState {
                 },
                 render_stage: draw.kind.render_stage(),
                 lightmap_matrix: draw.kind.lightmap_matrix(),
-                atlas_size: if terrain { context.atlas_size } else { [0; 2] },
-                entity_id: -1,
+                atlas_size: context.atlas_size(draw.kind),
+                entity_id: effect.map_or(-1, |effect| self.pack.effects.entity_id(effect)),
             };
             let lookup = |name: &str| values.value(name).or_else(|| lookup(name));
             pack_block(block, &lookup, &mut self.scratch, &mut self.unknown);
             queue.write_buffer(buffer, 0, &self.scratch);
+            binding.base.clone_from(&self.scratch);
+            binding.atlas_size = values.atlas_size;
             if let Some(audit) = &mut self.audit {
                 audit.block(
                     &format!("draw {:?} with {}", draw.kind, program.name),
@@ -888,5 +931,28 @@ fn run_step(
             render.set_vertex_buffer(0, pack.quad.slice(..));
             render.draw(0..4, 0..1);
         }
+    }
+}
+
+#[cfg(test)]
+mod atlas_tests {
+    use super::*;
+    #[test]
+    fn damaged_blocks_use_the_atlas_bound_to_their_draw() {
+        let context = DrawContext {
+            chunk_offset: Vec3::ZERO,
+            atlas_size: [1024; 2],
+            particle_atlas_size: [512; 2],
+            crack_atlas_size: [256, 128],
+        };
+        assert_eq!(
+            context.atlas_size(DrawKind::Effect(Effect::DamagedBlock)),
+            [256, 128]
+        );
+        assert_eq!(context.atlas_size(DrawKind::TerrainSolid), [1024; 2]);
+        assert_eq!(
+            context.atlas_size(DrawKind::Effect(Effect::Particles)),
+            [512; 2]
+        );
     }
 }

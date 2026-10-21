@@ -125,6 +125,7 @@ fn install(app: &mut App) {
         .add_render_command::<Transparent3d, DrawOverlayCommands>()
         .add_render_command::<Transparent3d, DrawOutlineCommands>()
         .add_render_command::<Transparent3d, DrawCrackCommands>()
+        .add_render_command::<Transparent3d, DrawHighlightCommands>()
         .add_render_command::<Transparent3d, DrawAdditiveCommands>()
         .add_systems(RenderStartup, init_gpu)
         .add_systems(
@@ -148,6 +149,9 @@ fn install(app: &mut App) {
 #[path = "gpu/vertices.rs"]
 mod vertices;
 use vertices::VertexList;
+#[cfg(feature = "shaderpacks")]
+#[path = "gpu/shaderpack_source.rs"]
+mod shaderpack_source;
 
 /// The vertex lists last passed to each [`VertexList::upload`], shared rather than copied.
 #[derive(Default)]
@@ -162,11 +166,13 @@ struct UploadedLists {
 }
 
 #[derive(Resource)]
-struct BlockEntityGpu {
+pub(crate) struct BlockEntityGpu {
     solid: VertexList,
     overlay: VertexList,
     outline: VertexList,
     crack: VertexList,
+    /// Prefix of the shared crack buffer containing damage faces, before selection highlights.
+    frame_crack_count: u32,
     portal: VertexList,
     additive: VertexList,
     uploaded: UploadedLists,
@@ -193,6 +199,7 @@ fn init_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
         overlay: VertexList::new(),
         outline: VertexList::new(),
         crack: VertexList::new(),
+        frame_crack_count: 0,
         portal: VertexList::new(),
         additive: VertexList::new(),
         uploaded: UploadedLists::default(),
@@ -227,7 +234,7 @@ fn init_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
     });
 }
 
-fn prepare_resources(
+pub(crate) fn prepare_resources(
     frame: Res<render_scene::BlockEntityFrameResource>,
     selection: Res<render_scene::BlockSelectionFrameResource>,
     atmosphere: Option<Res<render_scene::AtmosphereFrame>>,
@@ -272,7 +279,7 @@ fn prepare_resources(
             dimension: TextureDimension::D2,
             format: TextureFormat::Rgba8UnormSrgb,
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-            view_formats: &[],
+            view_formats: crate::actor::gpu::ARTWORK_VIEW_FORMATS,
         });
         write_rows(
             &uploads.queue,
@@ -319,6 +326,7 @@ fn prepare_resources(
         additive,
         uploaded,
         crack_scratch,
+        frame_crack_count,
         frame_revision,
         selection_revision,
         ..
@@ -366,6 +374,7 @@ fn prepare_resources(
     if *frame_revision != frame.revision || *selection_revision != selection.revision {
         crack_scratch.clear();
         crack_scratch.extend_from_slice(&frame.crack);
+        *frame_crack_count = frame.crack.len() as u32;
         crack_scratch.extend_from_slice(&selection.highlight);
         crack.upload(
             &uploaded.crack,
@@ -575,9 +584,9 @@ fn queue_solid(
 
 fn queue_overlay(
     pipeline_cache: Res<PipelineCache>,
-    pipeline: ResMut<BlockEntityPipeline>,
+    mut pipeline: ResMut<BlockEntityPipeline>,
     gpu: Res<BlockEntityGpu>,
-    phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
+    mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     draw_functions: Res<DrawFunctions<Transparent3d>>,
     views: Query<(
         Entity,
@@ -593,17 +602,22 @@ fn queue_overlay(
         PipelineMode::Overlay,
         draw_function,
         &pipeline_cache,
-        pipeline,
-        phases,
+        &mut pipeline,
+        &mut phases,
         &views,
+        |_| false,
     );
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a queue system's render-world inputs"
+)]
 fn queue_outline(
     pipeline_cache: Res<PipelineCache>,
-    pipeline: ResMut<BlockEntityPipeline>,
+    mut pipeline: ResMut<BlockEntityPipeline>,
     gpu: Res<BlockEntityGpu>,
-    phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
+    mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     draw_functions: Res<DrawFunctions<Transparent3d>>,
     views: Query<(
         Entity,
@@ -612,6 +626,7 @@ fn queue_outline(
         &bevy::render::camera::ExtractedCamera,
         &Msaa,
     )>,
+    pack: render_scene::shaderpack::ShaderPackDrawnEffects,
 ) {
     let draw_function = draw_functions.read().id::<DrawOutlineCommands>();
     queue_blended(
@@ -619,17 +634,22 @@ fn queue_outline(
         PipelineMode::Outline,
         draw_function,
         &pipeline_cache,
-        pipeline,
-        phases,
+        &mut pipeline,
+        &mut phases,
         &views,
+        |view| pack.replaces(view, |drawn| drawn.selection),
     );
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a queue system's render-world inputs"
+)]
 fn queue_crack(
     pipeline_cache: Res<PipelineCache>,
-    pipeline: ResMut<BlockEntityPipeline>,
+    mut pipeline: ResMut<BlockEntityPipeline>,
     gpu: Res<BlockEntityGpu>,
-    phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
+    mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     draw_functions: Res<DrawFunctions<Transparent3d>>,
     views: Query<(
         Entity,
@@ -638,24 +658,42 @@ fn queue_crack(
         &bevy::render::camera::ExtractedCamera,
         &Msaa,
     )>,
+    pack: render_scene::shaderpack::ShaderPackDrawnEffects,
 ) {
-    let draw_function = draw_functions.read().id::<DrawCrackCommands>();
-    queue_blended(
-        &gpu.crack,
-        PipelineMode::Crack,
-        draw_function,
-        &pipeline_cache,
-        pipeline,
-        phases,
-        &views,
-    );
+    // Check partition ranges when drawing, after this frame's vertex upload.
+    for highlight in [false, true] {
+        let functions = draw_functions.read();
+        let draw_function = if highlight {
+            functions.id::<DrawHighlightCommands>()
+        } else {
+            functions.id::<DrawCrackCommands>()
+        };
+        queue_blended(
+            &gpu.crack,
+            PipelineMode::Crack,
+            draw_function,
+            &pipeline_cache,
+            &mut pipeline,
+            &mut phases,
+            &views,
+            |view| {
+                pack.replaces(view, |drawn| {
+                    if highlight {
+                        drawn.selection
+                    } else {
+                        drawn.cracks
+                    }
+                })
+            },
+        );
+    }
 }
 
 fn queue_additive(
     pipeline_cache: Res<PipelineCache>,
-    pipeline: ResMut<BlockEntityPipeline>,
+    mut pipeline: ResMut<BlockEntityPipeline>,
     gpu: Res<BlockEntityGpu>,
-    phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
+    mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     draw_functions: Res<DrawFunctions<Transparent3d>>,
     views: Query<(
         Entity,
@@ -671,19 +709,26 @@ fn queue_additive(
         PipelineMode::Additive,
         draw_function,
         &pipeline_cache,
-        pipeline,
-        phases,
+        &mut pipeline,
+        &mut phases,
         &views,
+        |_| false,
     );
 }
 
+/// Queues `list` on every camera `skip` does not reject (views whose pack draws the list
+/// itself).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one blended list's queue inputs and its view filter"
+)]
 fn queue_blended(
     list: &VertexList,
     mode: PipelineMode,
     draw_function: DrawFunctionId,
     pipeline_cache: &PipelineCache,
-    mut pipeline: ResMut<BlockEntityPipeline>,
-    mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
+    pipeline: &mut BlockEntityPipeline,
+    phases: &mut ViewSortedRenderPhases<Transparent3d>,
     views: &Query<(
         Entity,
         &MainEntity,
@@ -691,11 +736,15 @@ fn queue_blended(
         &bevy::render::camera::ExtractedCamera,
         &Msaa,
     )>,
+    skip: impl Fn(Entity) -> bool,
 ) {
     if list.count == 0 || list.bind_group.is_none() {
         return;
     }
     for (view_entity, main_entity, view, extracted_camera, msaa) in views {
+        if skip(view_entity) {
+            continue;
+        }
         let Some(phase) = phases.get_mut(&view.retained_view_entity) else {
             continue;
         };
@@ -741,6 +790,11 @@ type DrawCrackCommands = (
     crate::lighting::SetWorldLightmap,
     DrawList<CRACK>,
 );
+type DrawHighlightCommands = (
+    SetItemPipeline,
+    crate::lighting::SetWorldLightmap,
+    DrawList<HIGHLIGHT>,
+);
 type DrawOutlineCommands = (
     SetItemPipeline,
     crate::lighting::SetWorldLightmap,
@@ -763,6 +817,16 @@ const CRACK: u8 = 2;
 const PORTAL: u8 = 3;
 const ADDITIVE: u8 = 4;
 const OUTLINE: u8 = 5;
+const HIGHLIGHT: u8 = 6;
+
+/// Selects damage faces or selection faces from their shared upload.
+fn crack_vertices(count: u32, damage: u32, highlight: bool) -> Range<u32> {
+    if highlight {
+        damage.min(count)..count
+    } else {
+        0..damage.min(count)
+    }
+}
 
 struct DrawList<const LIST: u8>;
 
@@ -782,7 +846,7 @@ impl<P: PhaseItem, const LIST: u8> RenderCommand<P> for DrawList<LIST> {
         let list = match LIST {
             OVERLAY => &gpu.overlay,
             OUTLINE => &gpu.outline,
-            CRACK => &gpu.crack,
+            CRACK | HIGHLIGHT => &gpu.crack,
             PORTAL => &gpu.portal,
             ADDITIVE => &gpu.additive,
             _ => &gpu.solid,
@@ -808,8 +872,17 @@ impl<P: PhaseItem, const LIST: u8> RenderCommand<P> for DrawList<LIST> {
             let matrix = view.clip_from_world.unwrap_or_else(|| {
                 view.clip_from_view * view.world_from_view.to_matrix().inverse()
             });
+            let keep = match LIST {
+                CRACK => crack_vertices(count, gpu.frame_crack_count, false),
+                HIGHLIGHT => crack_vertices(count, gpu.frame_crack_count, true),
+                _ => 0..count,
+            };
             for range in render_model::block_entity::draw_ranges::visible_ranges(&list.runs, matrix)
             {
+                let range = range.start.max(keep.start)..range.end.min(keep.end);
+                if range.is_empty() {
+                    continue;
+                }
                 submitted += range.end - range.start;
                 pass.draw(range, 0..1);
             }
