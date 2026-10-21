@@ -239,6 +239,7 @@ pub struct LauncherAccount {
 
 impl Drop for LauncherAccount {
     fn drop(&mut self) {
+        tracing::info!(shutdown_phase = "account_drop_body_begin");
         profile_worker::stop(&self.profile_refresh);
         self.with(|snapshot| {
             #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
@@ -261,6 +262,7 @@ impl Drop for LauncherAccount {
                 native_host::stop(wake);
             }
         });
+        tracing::info!(shutdown_phase = "account_drop_body_done");
     }
 }
 
