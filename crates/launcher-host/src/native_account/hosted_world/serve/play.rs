@@ -5,6 +5,8 @@ pub(in crate::native_account::hosted_world) mod output;
 use output::Output;
 mod backend;
 mod step;
+#[cfg(test)]
+pub(in crate::native_account::hosted_world) mod test_support;
 use backend::{BackendProgress, ClosingPeerBackend, PeerBackend};
 use step::Phase;
 pub(in crate::native_account::hosted_world) use step::Step;
