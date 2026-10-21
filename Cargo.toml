@@ -102,12 +102,12 @@ rust-version = "1.99.0"
 bedrock-protocol-1-26-51 = { git = "https://github.com/cinnabar-mc/protocolgen", rev = "4e9626abbb51b8fa842f49b4aea0fb4d3c01a682" }
 raknet = { git = "https://github.com/cinnabar-mc/raknet", rev = "5879963a0c6290899616c01a02883c4ed4972a76" }
 bedrock-services = { git = "https://github.com/cinnabar-mc/bedrock-services", rev = "9ffede7d21f9d67077e402b8817c907590107003" }
-nethernet = { git = "https://github.com/cinnabar-mc/nethernet", rev = "c0a1fd56ca88d62cdd0f455055ca02ea797ab704" }
-nethernet-tokio = { git = "https://github.com/cinnabar-mc/nethernet", rev = "c0a1fd56ca88d62cdd0f455055ca02ea797ab704" }
-bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "4adbbc555063678537a5ccf2e19938e5ab3f630f" }
-bedrock-client = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "4adbbc555063678537a5ccf2e19938e5ab3f630f" }
-bedrock-client-tokio = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "4adbbc555063678537a5ccf2e19938e5ab3f630f" }
-bedrock-packs = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "4adbbc555063678537a5ccf2e19938e5ab3f630f" }
+nethernet = { git = "https://github.com/cinnabar-mc/nethernet", rev = "fed09fc05afb3b0fe34d0e7b18702f7ea86c3290" }
+nethernet-tokio = { git = "https://github.com/cinnabar-mc/nethernet", rev = "fed09fc05afb3b0fe34d0e7b18702f7ea86c3290" }
+bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "831e2c522cf5708f737f52034f0d5e1d303bde88" }
+bedrock-client = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "831e2c522cf5708f737f52034f0d5e1d303bde88" }
+bedrock-client-tokio = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "831e2c522cf5708f737f52034f0d5e1d303bde88" }
+bedrock-packs = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "831e2c522cf5708f737f52034f0d5e1d303bde88" }
 glam = { version = "0.33.2", default-features = false, features = ["std", "f64"] }
 # One feature set per heavy dependency: any per-crate difference rebuilds it and every dependent.
 # wayland/x11 only select winit backends on Linux; winit ignores them on other targets.
