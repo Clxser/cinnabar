@@ -7,6 +7,10 @@ pub(crate) const MAX_NAME_CHARS: usize = 64;
 pub enum WorldError {
     #[error("world not found")]
     NotFound,
+    #[error("the local server could not list its world generators")]
+    GeneratorCatalog,
+    #[error("this server does not support world generator {0:?}; select a server that provides it")]
+    MissingGenerator(String),
     #[error("invalid world settings: {0}")]
     Invalid(String),
     #[error("another world is starting, running or stopping")]

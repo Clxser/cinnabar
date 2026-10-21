@@ -419,6 +419,10 @@ Local worlds use the Go server integration. Qualify creation, offline play, relo
 import, persistence and hosting/session teardown. The accepted local-world scope does
 not establish full vanilla world-generation parity.
 
+The local server advertises registered generators to Create World. Saved generator ids
+remain stable across server changes; unavailable ids fail before opening the world.
+This does not establish terrain parity for custom generators.
+
 See [local worlds](docs/local-worlds.md).
 
 ## Phase 8 — Audio, polish and packaging

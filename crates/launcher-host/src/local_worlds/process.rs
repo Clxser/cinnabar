@@ -8,7 +8,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, TryRecvError};
@@ -68,6 +68,12 @@ pub(crate) trait Runner: Send + Sync {
     fn start(&self, spec: &StartSpec, cancel: &Cancel) -> Result<Arc<dyn Instance>, WorldError>;
     /// Readies a server ahead of a likely open, so the open skips the process's startup work.
     fn prepare(&self) {}
+    /// The server's available terrain options, when this runner advertises a catalog.
+    fn generators(
+        &self,
+    ) -> Result<Option<Vec<launcher::local_worlds::generators::GeneratorInfo>>, WorldError> {
+        Ok(None)
+    }
     /// Ends a readied server at once, as the client exits; a lock held by the exiting thread
     /// leaves it to the exit sweep.
     fn discard_standby(&self) {}
@@ -82,7 +88,7 @@ pub(crate) struct ProcessRunner {
     pub env: Vec<(OsString, OsString)>,
     pub start_timeout: Duration,
     /// A standby server the next start takes over.
-    standby: Mutex<Option<Spawn>>,
+    standby: Mutex<Option<(SystemTime, Spawn)>>,
 }
 
 impl ProcessRunner {
@@ -103,7 +109,11 @@ impl ProcessRunner {
 
     /// Hands `args` to a live standby server; `None` when there is none or it cannot take them.
     fn take_standby(&self, args: &[OsString], address: &str) -> Option<Spawn> {
-        let standby = lock(&self.standby).take()?;
+        let (modified, standby) = lock(&self.standby).take()?;
+        if self.binary.metadata().and_then(|meta| meta.modified()).ok() != Some(modified) {
+            standby.process.kill();
+            return None;
+        }
         let args: Option<Vec<&str>> = args.iter().map(|arg| arg.to_str()).collect();
         let line = serde_json::to_string(&args?).ok()?;
         if standby.process.has_exited() || standby.process.send(&format!("start {line}")).is_err() {
@@ -121,6 +131,12 @@ fn ready_line(line: &str) -> bool {
 }
 
 impl Runner for ProcessRunner {
+    fn generators(
+        &self,
+    ) -> Result<Option<Vec<launcher::local_worlds::generators::GeneratorInfo>>, WorldError> {
+        super::generators::catalog(&self.binary).map(Some)
+    }
+
     fn start(&self, spec: &StartSpec, cancel: &Cancel) -> Result<Arc<dyn Instance>, WorldError> {
         let address = loopback(free_loopback_port()?);
         let world = &spec.world;
@@ -130,7 +146,7 @@ impl Runner for ProcessRunner {
             ("-name", world.name.clone()),
             ("-game-mode", wire_name(world.game_mode)),
             ("-difficulty", wire_name(world.difficulty)),
-            ("-generator", wire_name(world.generator)),
+            ("-generator", world.generator.as_str().to_owned()),
             ("-seed", world.seed.to_string()),
         ] {
             args.extend([flag.into(), value.into()]);
@@ -155,11 +171,17 @@ impl Runner for ProcessRunner {
 
     fn prepare(&self) {
         let mut standby = lock(&self.standby);
+        let Ok(modified) = self.binary.metadata().and_then(|meta| meta.modified()) else {
+            return;
+        };
         if standby
             .as_ref()
-            .is_some_and(|standby| !standby.process.has_exited())
+            .is_some_and(|(stamp, standby)| *stamp == modified && !standby.process.has_exited())
         {
             return;
+        }
+        if let Some((_, previous)) = standby.take() {
+            previous.process.kill();
         }
         let mut command = self.command();
         command.arg("-standby");
@@ -170,7 +192,7 @@ impl Runner for ProcessRunner {
             ready_line,
             "local-server standby".to_owned(),
         ) {
-            Ok(spawned) => *standby = Some(spawned),
+            Ok(spawned) => *standby = Some((modified, spawned)),
             Err(error) => tracing::warn!("prepare a standby local server: {error}"),
         }
     }
@@ -181,7 +203,7 @@ impl Runner for ProcessRunner {
             Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner().take(),
             Err(std::sync::TryLockError::WouldBlock) => None,
         };
-        if let Some(standby) = standby {
+        if let Some((_, standby)) = standby {
             // A standby holds no world, so nothing needs saving.
             standby.process.kill();
         }

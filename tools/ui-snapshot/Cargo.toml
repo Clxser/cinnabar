@@ -19,7 +19,7 @@ inventory = { path = "../../crates/inventory" }
 json-ui = { path = "../../crates/json-ui" }
 jsonui-editor = { path = "../jsonui-editor" }
 bridge = { path = "../../crates/bridge" }
-launcher = { path = "../../crates/launcher", features = ["shader-pack-options"] }
+launcher = { path = "../../crates/launcher", features = ["shader-pack-options", "test-support"] }
 mod-ui = { path = "../../crates/mod-ui" }
 oreui = { path = "../../crates/oreui" }
 player-state = { path = "../../crates/player-state" }

@@ -598,6 +598,18 @@ pub const STATES: &[State] = &[
         fixture: out_of_game::reset_settings,
     },
     State {
+        name: "world-create-custom-generator",
+        size: [1280, 900],
+        gui_scale: 2,
+        fixture: out_of_game::world_create_custom_generator,
+    },
+    State {
+        name: "world-create-advanced",
+        size: [1280, 900],
+        gui_scale: 2,
+        fixture: out_of_game::world_create_advanced,
+    },
+    State {
         name: "play-worlds",
         size: SIZE,
         gui_scale: GUI_SCALE,

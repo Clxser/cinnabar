@@ -162,6 +162,7 @@ fn advanced_world_form_exposes_backend_and_generator_separately() {
     use launcher::local_worlds::world::UnavailableReason;
     let mut view = MenuView::new(true, "Fixture".into());
     view.local.tab = Tab::Advanced;
+    view.local.generators = launcher::local_worlds::generators::fixture_catalog();
     view.local.bds_unavailable = Some(UnavailableReason::DockerMissing);
     for backend in [Backend::Dragonfly, Backend::Bds] {
         view.local.create.backend = backend;
@@ -171,8 +172,8 @@ fn advanced_world_form_exposes_backend_and_generator_separately() {
         for action in [
             A::Backend(Backend::Dragonfly),
             A::Backend(Backend::Bds),
-            A::Flat(false),
-            A::Flat(true),
+            A::Generator(0),
+            A::Generator(1),
         ] {
             assert!(hits.iter().any(|(found, _)| *found == local(action)));
         }
@@ -197,4 +198,30 @@ fn advanced_world_form_exposes_backend_and_generator_separately() {
             backend == Backend::Bds
         );
     }
+}
+
+#[test]
+fn custom_generator_labels_and_actions_come_from_the_catalog() {
+    use launcher::local_worlds::generators::parse_catalog;
+    let mut view = MenuView::new(true, "Fixture".into());
+    view.local.tab = Tab::Advanced;
+    view.local.generators = parse_catalog(br#"[{"id":"islands","label":"Floating Islands"},{"id":"void","label":"Empty World"},{"id":"hills","label":"Rolling Hills"}]"#).unwrap();
+    let (_, hits, _) = paint(Default::default(), |canvas| {
+        draw(canvas, &view, [1280.0, 900.0], Screen::Create).unwrap();
+    });
+    for index in 0..view.local.generators.len() {
+        assert!(
+            hits.iter()
+                .any(|(action, _)| *action == local(A::Generator(index)))
+        );
+    }
+    view.local.create.backend = bridge::Backend::Bds;
+    let (_, hits, _) = paint(Default::default(), |canvas| {
+        draw(canvas, &view, [1280.0, 900.0], Screen::Create).unwrap();
+    });
+    assert!(
+        !hits
+            .iter()
+            .any(|(action, _)| matches!(action, MenuAction::LocalWorld(A::Generator(_))))
+    );
 }

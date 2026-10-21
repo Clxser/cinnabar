@@ -132,7 +132,7 @@ impl MenuRuntime {
             .iter()
             .map(|world| launcher::menu::LocalWorldCard {
                 thumbnail: worlds.thumbnail(&world.id),
-                ..world_card(world)
+                ..world_card(world, &view.generators)
             })
             .collect();
         self.set_local_worlds(cards);
@@ -295,15 +295,26 @@ impl MenuRuntime {
                     A::Difficulty(Difficulty::Normal),
                     A::Difficulty(Difficulty::Hard),
                 ]),
-                Tab::Advanced => local(&[
-                    A::Create,
-                    A::Tab(Tab::General),
-                    A::SeedField,
-                    A::Backend(bridge::Backend::Dragonfly),
-                    A::Backend(bridge::Backend::Bds),
-                    A::Flat(false),
-                    A::Flat(true),
-                ]),
+                Tab::Advanced => {
+                    let mut actions = vec![
+                        A::Create,
+                        A::Tab(Tab::General),
+                        A::SeedField,
+                        A::Backend(bridge::Backend::Dragonfly),
+                        A::Backend(bridge::Backend::Bds),
+                    ];
+                    actions.extend(
+                        view.generators
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, entry)| {
+                                view.create.backend != bridge::Backend::Bds
+                                    || entry.id.supported_by_bds()
+                            })
+                            .map(|(index, _)| A::Generator(index)),
+                    );
+                    local(&actions)
+                }
             },
             Screen::Edit => local(&[
                 A::PlayFromEdit,
@@ -529,5 +540,32 @@ mod tests {
         menu.sync_local_worlds(&mut worlds, false);
         assert_eq!(menu.view().local.screen, Screen::List);
         assert_eq!(menu.field, None, "leaving the form drops its field");
+    }
+}
+
+#[cfg(test)]
+mod generator_focus_tests {
+    use super::*;
+
+    #[test]
+    fn custom_generators_join_the_keyboard_focus_order() {
+        use launcher::local_worlds::{Tab, generators::parse_catalog};
+        let mut menu = MenuRuntime::new(true, 2, "Fixture".into());
+        menu.local_ui.view.screen = Screen::Create;
+        menu.local_ui.view.tab = Tab::Advanced;
+        menu.local_ui.view.generators =
+            parse_catalog(br#"[{"id":"islands","label":"Floating Islands"}]"#).unwrap();
+        assert!(
+            menu.local_focus_actions()
+                .unwrap()
+                .contains(&MenuAction::LocalWorld(LocalWorldAction::Generator(0)))
+        );
+        menu.local_ui.view.create.backend = Backend::Bds;
+        assert!(
+            !menu
+                .local_focus_actions()
+                .unwrap()
+                .contains(&MenuAction::LocalWorld(LocalWorldAction::Generator(0)))
+        );
     }
 }

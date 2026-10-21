@@ -1,4 +1,4 @@
-package main
+package localserver
 
 import (
 	"bytes"
@@ -118,7 +118,7 @@ func TestExperiencesRequireRuntimeFlag(t *testing.T) {
 func TestNoFlagLeavesStartupUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	var stdout bytes.Buffer
-	if err := run([]string{"-dir", dir, "-addr", "127.0.0.1:0"}, strings.NewReader("stop\n"), &stdout, io.Discard); err != nil {
+	if err := Run([]string{"-dir", dir, "-addr", "127.0.0.1:0"}, strings.NewReader("stop\n"), &stdout, io.Discard); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if stdout.String() != "ready\n" {
@@ -149,7 +149,7 @@ func TestMissingInstalledExperienceFailsStartup(t *testing.T) {
 		"-experiences", t.TempDir(), "-experience-runtime", filepath.Join(dir, "no-runtime"),
 	}
 	var stdout bytes.Buffer
-	err = run(args, strings.NewReader(""), &stdout, io.Discard)
+	err = Run(args, strings.NewReader(""), &stdout, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), `"gone"`) {
 		t.Fatalf("run: err = %v, want one naming \"gone\"", err)
 	}
@@ -190,7 +190,7 @@ func TestStandbyServerHostsTheWorldItIsGiven(t *testing.T) {
 	}
 	var stdout bytes.Buffer
 	stdin := strings.NewReader(standbyStart + string(start) + "\nstop\n")
-	if err := run([]string{standbyFlag}, stdin, &stdout, io.Discard); err != nil {
+	if err := Run([]string{standbyFlag}, stdin, &stdout, io.Discard); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if stdout.String() != "ready\n" {
@@ -204,10 +204,10 @@ func TestStandbyServerHostsTheWorldItIsGiven(t *testing.T) {
 // A standby server whose launcher goes away exits cleanly, and one given garbage refuses it.
 func TestStandbyServerWithoutAStartLine(t *testing.T) {
 	var stdout bytes.Buffer
-	if err := run([]string{standbyFlag}, strings.NewReader(""), &stdout, io.Discard); err != nil || stdout.Len() != 0 {
+	if err := Run([]string{standbyFlag}, strings.NewReader(""), &stdout, io.Discard); err != nil || stdout.Len() != 0 {
 		t.Fatalf("closed stdin: err = %v, stdout = %q", err, stdout.String())
 	}
-	err := run([]string{standbyFlag}, strings.NewReader("stop\n"), &stdout, io.Discard)
+	err := Run([]string{standbyFlag}, strings.NewReader("stop\n"), &stdout, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "standby expected") || stdout.Len() != 0 {
 		t.Fatalf("garbage line: err = %v, stdout = %q", err, stdout.String())
 	}
@@ -224,7 +224,7 @@ func TestStandbyServerRefusesExperiences(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout bytes.Buffer
-	err = run([]string{standbyFlag}, strings.NewReader(standbyStart+string(start)+"\n"), &stdout, io.Discard)
+	err = Run([]string{standbyFlag}, strings.NewReader(standbyStart+string(start)+"\n"), &stdout, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "standby") || stdout.Len() != 0 {
 		t.Fatalf("err = %v, stdout = %q", err, stdout.String())
 	}

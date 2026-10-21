@@ -6,6 +6,7 @@ mod container;
 mod core_link;
 mod docker;
 mod download;
+mod generators;
 mod import;
 mod junction;
 mod manager;
@@ -77,7 +78,8 @@ pub fn open(layout: &InstallLayout) -> Result<Manager, WorldError> {
         docker::detect_runtime(platform, docker::DOCKER, &[])
     }));
     let mut parts = manager::Parts::new(store);
-    let local_server = layout.core_executable.with_file_name(LOCAL_SERVER);
+    let local_server =
+        generators::server_binary(layout.core_executable.with_file_name(LOCAL_SERVER));
     if local_server.is_file() {
         parts.runners.dragonfly = Some(Arc::new(process::ProcessRunner::new(local_server)));
     } else {

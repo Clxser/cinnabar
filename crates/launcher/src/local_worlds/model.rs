@@ -1,6 +1,6 @@
 use super::world::{
-    Difficulty, Generator, NewWorld, Prefs, Setup, SetupState, UnavailableReason, World,
-    WorldStatus, WorldUpdate,
+    Difficulty, NewWorld, Prefs, Setup, SetupState, UnavailableReason, World, WorldStatus,
+    WorldUpdate,
 };
 use bridge::{Backend, GameMode, WorldState};
 use std::path::PathBuf;
@@ -46,7 +46,7 @@ pub enum Input {
     /// Game mode of the create or edit form, whichever is up.
     SetGameMode(GameMode),
     SetDifficulty(Difficulty),
-    SetFlat(bool),
+    SetGenerator(usize),
     SetBackend(Backend),
     SubmitCreate,
     /// Opens the settings of the world at this list index.
@@ -73,6 +73,7 @@ pub enum Input {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Effect {
     List,
+    ListGenerators,
     Create(NewWorld),
     Delete(String),
     Update {
@@ -104,6 +105,8 @@ pub enum Effect {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Event {
     Listed(Vec<World>),
+    Generators(Vec<super::generators::GeneratorInfo>),
+    FailedGenerators(String),
     Created(World),
     Deleted(String),
     Updated(World),
@@ -136,6 +139,8 @@ pub struct WorldsView {
     pub screen: Screen,
     pub tab: Tab,
     pub create: CreateForm,
+    pub generators: Vec<super::generators::GeneratorInfo>,
+    pub generator_error: Option<String>,
     pub edit: Option<EditForm>,
     /// The saved world behind the edit form (its size and last-saved date).
     pub edited: Option<World>,
@@ -165,6 +170,8 @@ pub struct WorldsMenu {
     selected: Option<usize>,
     tab: Tab,
     create: CreateForm,
+    generators: Vec<super::generators::GeneratorInfo>,
+    generator_error: Option<String>,
     edit: Option<EditForm>,
     play_after_update: bool,
     form_error: Option<&'static str>,
@@ -203,6 +210,8 @@ impl WorldsMenu {
             screen: self.screen,
             tab: self.tab,
             create: self.create.clone(),
+            generators: self.generators.clone(),
+            generator_error: self.generator_error.clone(),
             edit: self.edit.clone(),
             edited: self
                 .edit
@@ -328,9 +337,19 @@ impl WorldsMenu {
         match pending {
             Pending::Create => {
                 self.create = CreateForm::default();
+                self.ensure_generator();
                 self.tab = Tab::General;
                 self.form_error = None;
                 self.screen = Screen::Create;
+                Vec::new()
+            }
+            Pending::SubmitCreate
+                if !self.generators.iter().any(|entry| {
+                    entry.id == self.create.generator
+                        && (self.create.backend != Backend::Bds || entry.id.supported_by_bds())
+                }) =>
+            {
+                self.form_error = Some("Choose an available world generator");
                 Vec::new()
             }
             Pending::SubmitCreate => match self.create.build() {
@@ -389,6 +408,22 @@ impl WorldsMenu {
         }
     }
 
+    /// Keeps the current choice when available, otherwise takes the server's first supported entry.
+    fn ensure_generator(&mut self) {
+        let supported = |entry: &&super::generators::GeneratorInfo| {
+            self.create.backend != Backend::Bds || entry.id.supported_by_bds()
+        };
+        if !self
+            .generators
+            .iter()
+            .filter(supported)
+            .any(|entry| entry.id == self.create.generator)
+            && let Some(entry) = self.generators.iter().find(supported)
+        {
+            self.create.generator = entry.id.clone();
+        }
+    }
+
     fn select_clamped(&mut self, index: Option<usize>) {
         self.selected = index
             .filter(|_| !self.worlds.is_empty())
@@ -417,7 +452,9 @@ impl WorldsMenu {
                 Vec::new()
             }
             Input::BeginCreate if matches!(self.screen, Screen::List | Screen::Templates) => {
-                self.gate(Pending::Create)
+                let mut effects = self.gate(Pending::Create);
+                effects.push(Effect::ListGenerators);
+                effects
             }
             Input::OpenTemplates if self.screen == Screen::List => {
                 self.screen = Screen::Templates;
@@ -451,16 +488,17 @@ impl WorldsMenu {
                 }
                 Vec::new()
             }
-            Input::SetFlat(flat) => {
-                self.create.generator = if flat {
-                    Generator::Flat
-                } else {
-                    Generator::Normal
-                };
+            Input::SetGenerator(index) => {
+                if let Some(entry) = self.generators.get(index)
+                    && (self.create.backend != Backend::Bds || entry.id.supported_by_bds())
+                {
+                    self.create.generator = entry.id.clone();
+                }
                 Vec::new()
             }
             Input::SetBackend(backend) if self.screen == Screen::Create => {
                 self.create.backend = backend;
+                self.ensure_generator();
                 Vec::new()
             }
             Input::SubmitCreate if self.screen == Screen::Create => {
@@ -622,6 +660,17 @@ impl WorldsMenu {
 
     pub fn apply(&mut self, event: Event) -> Vec<Effect> {
         match event {
+            Event::Generators(entries) => {
+                self.generators = entries;
+                self.generator_error = None;
+                self.ensure_generator();
+                Vec::new()
+            }
+            Event::FailedGenerators(message) => {
+                self.generators.clear();
+                self.generator_error = Some(message);
+                Vec::new()
+            }
             Event::Listed(worlds) => {
                 let keep = self.selected().map(|w| w.id.clone());
                 self.worlds = worlds;

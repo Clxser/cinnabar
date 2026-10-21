@@ -185,7 +185,11 @@ pub(super) fn play_worlds() -> Fixture {
     view.local_worlds = vec![launcher::menu::LocalWorldCard {
         name: "My World".to_owned(),
         game_mode: "Survival".to_owned(),
-        world_type: launcher::local_worlds::NORMAL_WORLD_LABEL.to_owned(),
+        world_type: launcher::local_worlds::world_type_label(
+            &launcher::local_worlds::world::Generator::Normal,
+            &launcher::local_worlds::generators::fixture_catalog(),
+        )
+        .to_owned(),
         server: String::new(),
         date: "9/30/2026".to_owned(),
         size: "12.0 MB".to_owned(),
@@ -233,4 +237,28 @@ pub(super) fn world_edit_after_delete_back() -> Fixture {
     view.screen = MenuScreen::Play;
     view.local = worlds.view();
     Fixture::Menu(Box::new(view))
+}
+
+/// Shows the advanced Create World options at a fixed, anonymous state.
+pub(super) fn world_create_advanced() -> Fixture {
+    let mut view = MenuView::new(true, "Fixture".into());
+    view.screen = MenuScreen::Play;
+    view.local.screen = launcher::local_worlds::Screen::Create;
+    view.local.tab = launcher::local_worlds::Tab::Advanced;
+    view.local.generators = launcher::local_worlds::generators::fixture_catalog();
+    Fixture::Menu(Box::new(view))
+}
+
+/// Shows an extra generator supplied by a custom server, alongside the checked shipped catalog.
+pub(super) fn world_create_custom_generator() -> Fixture {
+    let Fixture::Menu(mut view) = world_create_advanced() else {
+        unreachable!()
+    };
+    view.local
+        .generators
+        .push(launcher::local_worlds::generators::GeneratorInfo {
+            id: launcher::local_worlds::world::Generator::Custom("islands".into()),
+            label: "Floating Islands".into(),
+        });
+    Fixture::Menu(view)
 }

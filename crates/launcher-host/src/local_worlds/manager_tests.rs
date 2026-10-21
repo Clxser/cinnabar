@@ -825,3 +825,50 @@ fn a_create_refuses_the_fallback_when_its_server_is_missing() {
     }
     assert!(fixture.manager.list().expect("list").is_empty());
 }
+
+/// Catalog validation must reject missing saved ids before starting a server or modifying saves.
+#[cfg(unix)]
+#[test]
+fn old_and_custom_saved_generators_open_only_when_the_server_provides_them() {
+    use crate::local_worlds::{process::ProcessRunner, test_support::write_script};
+    let fixture = fixture(|parts, dir| {
+        let binary = dir.path().join("server");
+        write_script(&binary, b"#!/bin/sh\nif [ \"$1\" = -list-generators ]; then echo '[{\"id\":\"normal\",\"label\":\"Normal\"},{\"id\":\"flat\",\"label\":\"Flat\"},{\"id\":\"islands\",\"label\":\"Islands\"}]'; exit; fi\necho ready\nwhile IFS= read -r line; do [ \"$line\" = stop ] && exit 0; done\n");
+        parts.runners.dragonfly = Some(Arc::new(ProcessRunner::new(binary)));
+    });
+    let manager = &fixture.manager;
+    for id in ["normal", "flat", "islands", "missing"] {
+        let world = manager
+            .inner
+            .store
+            .create(&NewWorld {
+                generator: Generator::from(id.to_owned()),
+                ..flat(id)
+            })
+            .unwrap();
+        let meta = manager
+            .inner
+            .store
+            .dir(&world.id)
+            .unwrap()
+            .join("world.json");
+        if id == "flat" {
+            let mut legacy: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&meta).unwrap()).unwrap();
+            legacy.as_object_mut().unwrap().remove("generator");
+            std::fs::write(&meta, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        }
+        let before = std::fs::read(&meta).unwrap();
+        if id == "missing" {
+            let err = manager.open(&world.id, None).unwrap_err();
+            assert!(matches!(err, WorldError::MissingGenerator(_)));
+            assert!(err.public_message().contains("missing"));
+            assert_eq!(std::fs::read(meta).unwrap(), before);
+        } else {
+            manager.open(&world.id, None).unwrap();
+            wait_for(manager, WorldState::Running);
+            manager.close();
+            wait_for(manager, WorldState::Idle);
+        }
+    }
+}
