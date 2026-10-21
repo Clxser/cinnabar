@@ -81,10 +81,7 @@ async fn signed_hosted_peer(address: impl FnOnce(std::net::SocketAddr) -> String
                 .await?;
             let (mut closing, play) = peer.run(&mut authority.host).await;
             let closed = closing.finish_close(&mut authority.host).await;
-            Ok::<_, io::Error>((
-                play.err().map(|error| (error.kind(), error.to_string())),
-                closed.err().map(|error| (error.kind(), error.to_string())),
-            ))
+            Ok::<_, io::Error>((play, closed))
         };
         let visitor = async {
             let (mut session, (archives, game)) = protocol::test_support::hosted_client(
@@ -148,10 +145,13 @@ async fn signed_hosted_peer(address: impl FnOnce(std::net::SocketAddr) -> String
         );
         let (play, closed) =
             server.expect("actual provider Login/packs/StartGame/Initialized did not complete");
+        let nether_closed = play.as_ref().err().and_then(nether_connection_closed);
+        let play = play.err().map(|error| (error.kind(), error.to_string()));
+        let closed = closed.err().map(|error| (error.kind(), error.to_string()));
         assert_eq!(
             play.as_ref().map(|(kind, _)| *kind),
             Some(io::ErrorKind::UnexpectedEof),
-            "unexpected paired play termination: {play:?}; visitor result: {:?}",
+            "unexpected paired play termination: {play:?}; typed Nether ConnectionClosed: {nether_closed:?}; visitor result: {:?}",
             visitor.as_ref().map(|_| ()).map_err(ToString::to_string)
         );
         assert_eq!(
@@ -173,4 +173,18 @@ async fn signed_hosted_peer(address: impl FnOnce(std::net::SocketAddr) -> String
     })
     .await
     .expect("finite actual paired hosted-world fixture stalled");
+}
+
+/// Inspects the original typed Nether cause through the existing cached-error wrappers.
+fn nether_connection_closed(mut error: &io::Error) -> Option<bool> {
+    loop {
+        let cause = error.get_ref()?;
+        if let Some(error) = cause.downcast_ref::<nethernet_tokio::NetherError>() {
+            return Some(matches!(
+                error,
+                nethernet_tokio::NetherError::ConnectionClosed
+            ));
+        }
+        error = cause.downcast_ref::<Arc<io::Error>>()?.as_ref();
+    }
 }
