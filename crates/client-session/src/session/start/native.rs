@@ -152,19 +152,29 @@ pub fn spawn_network_with_companion<P: Send + 'static>(
                 }
                 companion.close().await;
             };
+            tracing::info!(shutdown_phase = "session_runtime_begin");
             run_session_runtime(&runtime, profile.in_scope(session));
+            tracing::info!(shutdown_phase = "session_runtime_returned");
+            tracing::info!(shutdown_phase = "session_capture_check_begin");
             if let Some(capture) = packet_capture
                 && !capture.finish(packet_log::CAPTURE_FINISH_TIMEOUT)
             {
                 tracing::warn!("packet capture writer did not finish in time");
             }
+            tracing::info!(shutdown_phase = "session_capture_check_returned");
         };
         handle.thread = Some(
             thread::Builder::new()
                 .name("bedrock-network".to_owned())
                 .spawn(move || {
                     let _completion = completion;
+                    let worker_thread = thread::current().id();
+                    tracing::info!(shutdown_phase = "session_worker_body_begin", ?worker_thread);
                     work();
+                    tracing::info!(
+                        shutdown_phase = "session_worker_body_returned",
+                        ?worker_thread
+                    );
                 })?,
         );
         Ok(handle)

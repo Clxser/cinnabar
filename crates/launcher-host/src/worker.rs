@@ -3,12 +3,14 @@
 use tokio_util::task::{TaskTracker, task_tracker::TaskTrackerToken};
 
 /// Arms completion before spawn and retains it through the body's captures, return or unwind.
+#[track_caller]
 pub(crate) fn tracked<F: FnOnce()>(work: F, tasks: &TaskTracker) -> impl FnOnce() + use<F> {
+    let spawn_site = std::panic::Location::caller();
     let worker = Worker {
         work: Some(work),
         _completion: tasks.token(),
     };
-    move || worker.run()
+    move || worker.run(spawn_site)
 }
 
 // Field order also destroys an unstarted body before its token when thread creation fails.
@@ -19,8 +21,21 @@ struct Worker<F> {
 
 impl<F: FnOnce()> Worker<F> {
     /// Consumes the actual body before the outer completion owner can retire.
-    fn run(mut self) {
+    fn run(mut self, spawn_site: &'static std::panic::Location<'static>) {
+        let worker_thread = std::thread::current().id();
+        tracing::info!(
+            shutdown_phase = "launcher_worker_body_begin",
+            spawn_file = spawn_site.file(),
+            spawn_line = spawn_site.line(),
+            ?worker_thread
+        );
         self.work.take().expect("one worker invocation")();
+        tracing::info!(
+            shutdown_phase = "launcher_worker_body_returned",
+            spawn_file = spawn_site.file(),
+            spawn_line = spawn_site.line(),
+            ?worker_thread
+        );
     }
 }
 

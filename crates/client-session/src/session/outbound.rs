@@ -112,12 +112,28 @@ enum Flush {
     Failed(FlushFailure),
 }
 
+/// Observes a started body's guard drop, without claiming outer tracker-token retirement.
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+struct OutboundBodyObservation;
+
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+impl Drop for OutboundBodyObservation {
+    fn drop(&mut self) {
+        tracing::info!(shutdown_phase = "session_outbound_bodyguard_drop");
+    }
+}
+
 pub(super) async fn run_outbound<O, P, F, W>(runtime: OutboundRuntime<O, P, F, W>)
 where
     O: OutboundSession,
     F: FnMut(u64, &Packet) -> Option<String>,
     W: FnMut(&str),
 {
+    // Original runtime fields bind after this guard and therefore drop before it.
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    let _body_observation = OutboundBodyObservation;
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    tracing::info!(shutdown_phase = "session_outbound_body_begin");
     let OutboundRuntime {
         mut outbound,
         mut commands,

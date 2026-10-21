@@ -459,6 +459,14 @@ async fn run_network_pump_with_readiness_ingress_and_trace<S, F, W, P, E>(
         )
         .await;
     };
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    tracing::info!(shutdown_phase = "session_pump_begin");
     pump.await;
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    tracing::info!(shutdown_phase = "session_pump_returned");
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    tracing::info!(shutdown_phase = "session_close_begin");
     session.close().await;
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    tracing::info!(shutdown_phase = "session_close_returned");
 }

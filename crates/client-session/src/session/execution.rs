@@ -65,6 +65,7 @@ impl NetworkExecutor for NativeNetworkExecutor {
         &self,
         work: impl Future<Output = ()> + Send + 'static,
     ) -> Self::OutboundTask {
+        tracing::info!(shutdown_phase = "session_outbound_spawn_begin");
         NativeOutboundTask(tokio::spawn(self.tasks.track_future(work)))
     }
 
@@ -79,6 +80,10 @@ pub(super) struct NativeOutboundTask(tokio::task::JoinHandle<()>);
 #[cfg(all(not(target_arch = "wasm32"), any(feature = "native-networking", test)))]
 impl Drop for NativeOutboundTask {
     fn drop(&mut self) {
+        tracing::info!(
+            shutdown_phase = "session_outbound_abort_requested",
+            task_finished = self.0.is_finished()
+        );
         self.0.abort();
     }
 }
