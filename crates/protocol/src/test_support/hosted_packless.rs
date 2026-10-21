@@ -76,6 +76,28 @@ pub async fn run(
     peer: &mut AcceptedSession,
     startup_sent: tokio::sync::oneshot::Sender<()>,
 ) -> io::Result<()> {
+    run_with_prefix(peer, startup_sent, None).await
+}
+
+/// Extends the same initialized/live exchange with two distinct actual batches before normal EOF.
+pub async fn run_with_closing_prefix(
+    peer: &mut AcceptedSession,
+    startup_sent: tokio::sync::oneshot::Sender<()>,
+    ready: tokio::sync::oneshot::Sender<std::net::SocketAddr>,
+    start: tokio::sync::oneshot::Receiver<()>,
+) -> io::Result<()> {
+    run_with_prefix(peer, startup_sent, Some((ready, start))).await
+}
+
+/// Keeps the original scenario unchanged unless the fixed closing-prefix control is requested.
+async fn run_with_prefix(
+    peer: &mut AcceptedSession,
+    startup_sent: tokio::sync::oneshot::Sender<()>,
+    closing_prefix: Option<(
+        tokio::sync::oneshot::Sender<std::net::SocketAddr>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>,
+) -> io::Result<()> {
     let codec = BatchCodec::new(BatchHeader::NetherNet, BatchLimits::default());
     if !matches!(
         receive(peer, &codec).await?.as_slice(),
@@ -211,6 +233,23 @@ pub async fn run(
         .into()],
     )
     .await?;
+    if let Some((ready, start)) = closing_prefix {
+        let address = peer
+            .session
+            .remote_addr()
+            .await
+            .socket_addr
+            .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))?;
+        ready
+            .send(address)
+            .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
+        start
+            .await
+            .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
+        for packet in self::closing_prefix() {
+            send(peer, &codec, std::slice::from_ref(packet.data.as_ref())).await?;
+        }
+    }
     // The original visitor must close normally after its actual marker response.
     match peer.reliable.recv().await {
         Ok(None) => Ok(()),
@@ -219,6 +258,15 @@ pub async fn run(
             result.is_ok()
         ))),
     }
+}
+
+/// Fixed original packet values sent as two separate closing-prefix batches.
+pub fn closing_prefix() -> [crate::Packet; 2] {
+    [31, 32].map(|time| {
+        crate::Packet::new(packets::SetTime {
+            time: wire::ZigZag32(time),
+        })
+    })
 }
 
 /// Expected original startup siblings after the actual game/registry/spawn owner consumes its controls.

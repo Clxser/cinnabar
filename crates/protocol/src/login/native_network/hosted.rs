@@ -3,6 +3,8 @@
 use bedrock_client_tokio::connection::send::PreparedSend;
 use bedrock_net::login::client_data::RawClientData;
 mod startup;
+#[cfg(feature = "test-support")]
+pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
 pub use startup::{NativeHostedRelay, NativeHostedRelayClosing, NativeHostedRelayProgress};
