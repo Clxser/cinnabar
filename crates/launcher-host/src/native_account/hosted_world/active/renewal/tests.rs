@@ -116,7 +116,7 @@ async fn initialized_world_peer_survives_same_key_mint_and_fresh_turn_on_origina
             signaling,
         } = signed_association_with_key(Arc::clone(&client_key), Arc::clone(&original_key))
             .await;
-        let address = format!("http://{}", signaling.local_addr());
+        let address = format!("http://{}:{}", signaling.local_addr(), signaling.local_addr().port());
         let settings = LoginSettings {
             view_distance_chunks: 2,
             ..Default::default()

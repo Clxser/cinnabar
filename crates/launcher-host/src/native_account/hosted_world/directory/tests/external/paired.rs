@@ -8,12 +8,28 @@ pub(in crate::native_account::hosted_world) mod provider;
 
 use super::*;
 use crate::local_worlds::test_support::paired as world;
+use crate::native_account::hosted_world::serve::play::test_support::first_incoming_terminal;
 use authority::Authority;
 use protocol::{ClientRandomId, LoginSettings, SessionLogin, WorldEvent};
 use provider::{Provider, VISITOR_NAME};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn signed_hosted_peer_reaches_the_actual_dragonfly_world_and_retires() {
+    signed_hosted_peer(|address| format!("http://{address}:{}", address.port())).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_hosted_hostname_login_reaches_the_original_world_and_retires() {
+    signed_hosted_peer(|address| format!("localhost:{}", address.port())).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_hosted_udp_service_login_reaches_the_original_world_and_retires() {
+    signed_hosted_peer(|_| "localhost:domain".into()).await;
+}
+
+/// Changes only signed address metadata; the actual association, world and retirement remain original.
+async fn signed_hosted_peer(address: impl FnOnce(std::net::SocketAddr) -> String) {
     let Some(world) = world::World::open() else {
         return;
     };
@@ -36,7 +52,7 @@ async fn signed_hosted_peer_reaches_the_actual_dragonfly_world_and_retires() {
             mut listener,
             signaling,
         } = signed_association(Arc::clone(&client_key)).await;
-        let address = format!("http://{}", signaling.local_addr());
+        let address = address(signaling.local_addr());
         let settings = LoginSettings {
             view_distance_chunks: 2,
             ..Default::default()
@@ -65,11 +81,9 @@ async fn signed_hosted_peer_reaches_the_actual_dragonfly_world_and_retires() {
                 )
                 .await?;
             let (mut closing, play) = peer.run(&mut authority.host).await;
+            let incoming = first_incoming_terminal(&mut closing).await;
             let closed = closing.finish_close(&mut authority.host).await;
-            Ok::<_, io::Error>((
-                play.err().map(|error| (error.kind(), error.to_string())),
-                closed.err().map(|error| (error.kind(), error.to_string())),
-            ))
+            Ok::<_, io::Error>((play, closed, incoming))
         };
         let visitor = async {
             let (mut session, (archives, game)) = protocol::test_support::hosted_client(
@@ -133,12 +147,25 @@ async fn signed_hosted_peer_reaches_the_actual_dragonfly_world_and_retires() {
             process_closed && signaling_joined && cleanup_empty && world_running,
             "paired transport/process/membership cleanup did not preserve the original live world"
         );
-        let (play, closed) =
+        let (play, closed, incoming) =
             server.expect("actual provider Login/packs/StartGame/Initialized did not complete");
+        let (forwarding, incoming) =
+            incoming.expect("the original accepting wire had already been locally retired");
+        let nether_closed = play.as_ref().err().and_then(nether_connection_closed);
+        let play = play.err().map(|error| (error.kind(), error.to_string()));
+        let closed = closed.err().map(|error| (error.kind(), error.to_string()));
         assert_eq!(
-            play.as_ref().map(|(kind, _)| *kind),
-            Some(io::ErrorKind::UnexpectedEof),
-            "unexpected paired play termination: {play:?}; visitor result: {:?}",
+            incoming.kind(),
+            io::ErrorKind::UnexpectedEof,
+            "the original wire ended before local close with {incoming:?}"
+        );
+        assert!(
+            play.as_ref().map(|(kind, _)| *kind) == Some(io::ErrorKind::UnexpectedEof)
+                || (forwarding
+                    && play.as_ref().map(|(kind, _)| *kind) == Some(io::ErrorKind::Other)
+                    && nether_closed == Some(true)
+                    && visitor.is_ok()),
+            "unexpected paired play termination: {play:?}; typed Nether ConnectionClosed: {nether_closed:?}; visitor result: {:?}",
             visitor.as_ref().map(|_| ()).map_err(ToString::to_string)
         );
         assert_eq!(
@@ -160,4 +187,18 @@ async fn signed_hosted_peer_reaches_the_actual_dragonfly_world_and_retires() {
     })
     .await
     .expect("finite actual paired hosted-world fixture stalled");
+}
+
+/// Inspects the original typed Nether cause through the existing cached-error wrappers.
+fn nether_connection_closed(mut error: &io::Error) -> Option<bool> {
+    loop {
+        let cause = error.get_ref()?;
+        if let Some(error) = cause.downcast_ref::<nethernet_tokio::NetherError>() {
+            return Some(matches!(
+                error,
+                nethernet_tokio::NetherError::ConnectionClosed
+            ));
+        }
+        error = cause.downcast_ref::<Arc<io::Error>>()?.as_ref();
+    }
 }

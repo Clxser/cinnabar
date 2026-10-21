@@ -1,7 +1,7 @@
 use super::*;
 use bedrock_protocol_1_26_51::{enums::PlayStatusType, wire};
 mod preparation_terminal;
-mod provider;
+pub(super) mod provider;
 
 #[tokio::test]
 async fn authenticated_lan_rejects_an_empty_target_before_discovery() {

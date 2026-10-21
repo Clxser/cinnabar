@@ -132,7 +132,11 @@ async fn two_signed_visitors_share_the_actual_world_and_retire_independently() {
             let (mut session, (archives, game)) = protocol::test_support::hosted_client(
                 first_client,
                 first_nonce,
-                format!("http://{}", first_signaling.local_addr()),
+                format!(
+                    "http://{}:{}",
+                    first_signaling.local_addr(),
+                    first_signaling.local_addr().port()
+                ),
                 first_authentication,
                 SessionLogin {
                     #[cfg(not(target_arch = "wasm32"))]
@@ -170,7 +174,11 @@ async fn two_signed_visitors_share_the_actual_world_and_retire_independently() {
             let (mut session, (archives, game)) = protocol::test_support::hosted_client(
                 second_client,
                 second_nonce,
-                format!("http://{}", second_signaling.local_addr()),
+                format!(
+                    "http://{}:{}",
+                    second_signaling.local_addr(),
+                    second_signaling.local_addr().port()
+                ),
                 second_authentication,
                 SessionLogin {
                     #[cfg(not(target_arch = "wasm32"))]

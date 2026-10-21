@@ -4,6 +4,7 @@ use super::*;
 use bedrock_client_tokio::connection::send::PreparedSend;
 use bedrock_net::login::provider::ProviderVerifier;
 mod cdn;
+mod retirement;
 use crate::login::native_network::{
     NativeHostedRelayProgress, NativeHostedUpstream,
     accepting::send::tests::{Pair, signed_pair_with_key},
@@ -34,7 +35,7 @@ use resource_pack::test_support::archive_bytes;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
-const TIMEOUT: Duration = Duration::from_secs(20);
+pub(in crate::login::native_network) const TIMEOUT: Duration = Duration::from_secs(20);
 const PACK_ID: uuid::Uuid = uuid::Uuid::from_u128(77);
 const VERSION: &str = "1.0.0";
 const GUEST_ID: uuid::Uuid = uuid::Uuid::from_u128(1234);
@@ -71,6 +72,23 @@ async fn original_upstream_with_archive(
     archive: Vec<u8>,
     pack_type: u8,
 ) {
+    let _ = original_upstream_with_retirement(route, cdn, archive, pack_type, false).await;
+}
+
+/// Optionally observes physical retirement after the same initialized game exchange.
+async fn original_upstream_with_retirement(
+    route: Route,
+    cdn: Option<std::net::SocketAddr>,
+    archive: Vec<u8>,
+    pack_type: u8,
+    observe_retirement: bool,
+) -> Option<retirement::Observation> {
+    let (socket_send, socket_receive) = if observe_retirement {
+        let (send, receive) = tokio::sync::oneshot::channel();
+        (Some(send), Some(receive))
+    } else {
+        (None, None)
+    };
     let FixtureRoute {
         mut listener,
         address,
@@ -110,6 +128,10 @@ async fn original_upstream_with_archive(
     };
     let bds = async {
         let mut peer = listener.accept().await.unwrap();
+        if let Some(send) = socket_send {
+            let address = peer.session.remote_addr().await.socket_addr.unwrap();
+            send.send(address).unwrap();
+        }
         let codec = BatchCodec::new(BatchHeader::NetherNet, BatchLimits::default());
         assert!(matches!(
             &*receive(&mut peer, &codec).await[0].data,
@@ -314,10 +336,10 @@ async fn original_upstream_with_archive(
         claims["mid"] = json!("provider-playfab");
         claims["tid"] = json!("provider-title");
         let token = signed(claims, "synthetic");
-        let raw = RawValue::from_string(
-            r#"{"ThirdPartyName":"untrusted name","Nonce":"original-guest-nonce","opaque":1e1,"SkinId":"synthetic"}"#
-                .into(),
-        )
+        let raw = RawValue::from_string(format!(
+            r#"{{"DeviceOS":1,"GameVersion":"{}","LanguageCode":"en_US","ThirdPartyName":"untrusted name","Nonce":"original-guest-nonce","opaque":1e1,"SkinId":"synthetic"}}"#,
+            crate::GAME_VERSION,
+        ))
         .unwrap();
         let (client, login) = client.login_authenticated(&token, &raw).unwrap();
         client_send(&pair.client, &codec, vec![login.into()]).await;
@@ -494,13 +516,19 @@ async fn original_upstream_with_archive(
             !upstream.release_received().unwrap(),
             "ordinary actual output became a terminal"
         );
-        upstream.begin_close(deadline).finish_close().await.unwrap();
+        let retirement = if let Some(receive) = socket_receive {
+            Some(retirement::observe(upstream, deadline, receive.await.unwrap()).await)
+        } else {
+            upstream.begin_close(deadline).finish_close().await.unwrap();
+            None
+        };
         assert!(
             pair.finish().await,
             "original signed guest owners did not join"
         );
+        retirement
     };
-    tokio::join!(bds, relay);
+    let (_, retirement) = tokio::join!(bds, relay);
     listener.close().await.unwrap();
     drop(listener);
     if let Some(http) = http {
@@ -510,10 +538,11 @@ async fn original_upstream_with_archive(
             .shutdown()
             .await;
     }
+    retirement
 }
 
 /// Drives only the original accepting prepared-send protocol, without changing authority policy.
-async fn finish_send(mut sending: PreparedSend<'_>) {
+pub(in crate::login::native_network) async fn finish_send(mut sending: PreparedSend<'_>) {
     while let Some(capacity) = sending.next().await.unwrap() {
         capacity.commit().unwrap();
     }
@@ -521,7 +550,7 @@ async fn finish_send(mut sending: PreparedSend<'_>) {
 }
 
 /// Sends generated client entries through the actual original association and codec.
-async fn client_send<S: bedrock_net::BatchPhase>(
+pub(in crate::login::native_network) async fn client_send<S: bedrock_net::BatchPhase>(
     client: &nethernet_tokio::NetherClient,
     codec: &BatchCodec<S>,
     packets: Vec<packets::Packet>,
@@ -534,7 +563,7 @@ async fn client_send<S: bedrock_net::BatchPhase>(
 }
 
 /// Decodes only an actual client-side reliable frame with the same directional packet codec.
-async fn client_receive<S: bedrock_net::BatchPhase>(
+pub(in crate::login::native_network) async fn client_receive<S: bedrock_net::BatchPhase>(
     client: &mut nethernet_tokio::NetherClient,
     codec: &BatchCodec<S>,
 ) -> Vec<packets::Packet> {
@@ -849,9 +878,10 @@ async fn local_bds_startup_detaches_from_a_discarded_secondary_batch_sibling() {
             peer.session.closed().await;
         };
         let client = async {
-            let raw = RawValue::from_string(
-                r#"{"ThirdPartyName":"untrusted","Nonce":"original","SkinId":"synthetic"}"#.into(),
-            )
+            let raw = RawValue::from_string(format!(
+                r#"{{"DeviceOS":1,"GameVersion":"{}","LanguageCode":"en_US","ThirdPartyName":"untrusted","Nonce":"original","SkinId":"synthetic"}}"#,
+                crate::GAME_VERSION,
+            ))
             .unwrap();
             let request = encode_authenticated_request(
                 &key(),

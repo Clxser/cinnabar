@@ -3,6 +3,8 @@
 use bedrock_client_tokio::connection::send::PreparedSend;
 use bedrock_net::login::client_data::RawClientData;
 mod startup;
+#[cfg(feature = "test-support")]
+pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
 pub use startup::{NativeHostedRelay, NativeHostedRelayClosing, NativeHostedRelayProgress};
@@ -45,13 +47,13 @@ struct Guest {
 }
 
 impl Guest {
-    /// Binds the original verified guest without cloning its token, nonce or signed metadata.
+    /// Binds the verified guest and original signed bytes before any JSON text repair.
     fn new(login: &AuthenticatedLogin) -> io::Result<Self> {
         let player = login.player_identity().ok_or_else(invalid)?;
         Ok(Self {
             xuid: login.xuid().into(),
             key: *login.public_key(),
-            client_data: Sha256::digest(login.client_data().get().as_bytes()).into(),
+            client_data: Sha256::digest(login.client_data_json_bytes()).into(),
             uuid: player.uuid(),
             name: player.display_name().into(),
         })
@@ -64,8 +66,7 @@ impl Guest {
             && login.player_identity().is_some_and(|player| {
                 player.uuid() == self.uuid && player.display_name() == self.name
             })
-            && self.client_data
-                == <[u8; 32]>::from(Sha256::digest(login.client_data().get().as_bytes()))
+            && self.client_data == <[u8; 32]>::from(Sha256::digest(login.client_data_json_bytes()))
     }
 }
 
@@ -207,6 +208,7 @@ impl NativeHostedUpstream {
             upstream: self,
             deadline,
             failure: None,
+            requested: false,
             closed: false,
         }
     }
@@ -233,6 +235,7 @@ pub struct NativeHostedUpstreamClosing {
     upstream: NativeHostedUpstream,
     deadline: Instant,
     failure: Option<std::sync::Arc<io::Error>>,
+    requested: bool,
     closed: bool,
 }
 
@@ -242,10 +245,30 @@ impl NativeHostedUpstreamClosing {
         self.upstream.release_received()
     }
 
-    /// Settles only original admitted receipts, then closes the same transport even on failure.
-    /// Cancellation retains the first cutoff, receipt, input FIFO and archive source lease.
+    /// Settles original receipts and physically retires the transport once game input is done.
+    /// Drain accepted raw packets with `receive` first when they still require forwarding.
+    /// Cancellation retains the first cutoff, receipt and archive source lease.
     pub async fn finish_close(&mut self) -> io::Result<()> {
         if !self.closed {
+            let _ = self.request_close().await;
+            let result = tokio::time::timeout_at(
+                self.deadline.into(),
+                self.upstream.connection.transport_mut().finish_close(),
+            )
+            .await
+            .unwrap_or_else(|_| Err(expired()));
+            if let Err(error) = result {
+                self.failure
+                    .get_or_insert_with(|| std::sync::Arc::new(error));
+            }
+            self.closed = true;
+        }
+        self.result()
+    }
+
+    /// Requests closure while preserving every original accepted packet for the caller to drain.
+    async fn request_close(&mut self) -> io::Result<()> {
+        if !self.requested {
             let result = self.upstream.connection.settle_send().await;
             if let Err(error) = result {
                 self.failure
@@ -253,22 +276,28 @@ impl NativeHostedUpstreamClosing {
             }
             let result =
                 tokio::time::timeout_at(self.deadline.into(), self.upstream.connection.close())
-                    .await;
-            let result = result.unwrap_or_else(|_| Err(expired()));
+                    .await
+                    .unwrap_or_else(|_| Err(expired()));
             if let Err(error) = result {
                 self.failure
                     .get_or_insert_with(|| std::sync::Arc::new(error));
             }
-            self.closed = true;
+            self.requested = true;
         }
+        self.result()
+    }
+
+    /// Repeats the first settlement or retirement failure across completion retries.
+    fn result(&self) -> io::Result<()> {
         match &self.failure {
             Some(error) => Err(io::Error::new(error.kind(), std::sync::Arc::clone(error))),
             None => Ok(()),
         }
     }
 
-    /// Drains actual accepted input under the first original retirement cutoff.
+    /// Requests closure, then drains actual accepted input under the first retirement cutoff.
     pub async fn receive(&mut self) -> io::Result<Bytes> {
+        self.request_close().await?;
         tokio::time::timeout_at(self.deadline.into(), self.upstream.receive())
             .await
             .unwrap_or_else(|_| Err(expired()))
