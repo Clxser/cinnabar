@@ -29,12 +29,17 @@ def main():
         raise ValueError("the clean source checkout must match this workflow's commit")
     tree = capture("git", "rev-parse", "HEAD^{tree}")
     lock = sha256(root / "Cargo.lock")
-    target = os.environ["CARGO_BUILD_TARGET"]
+    rustc = capture("rustc", "-vV")
+    hosts = [line.removeprefix("host: ") for line in rustc.splitlines() if line.startswith("host: ")]
+    if (hosts != ["aarch64-apple-darwin"] or capture("uname", "-m") != "arm64"
+            or os.environ.get("CARGO_BUILD_TARGET")):
+        raise ValueError("the acceptance producer requires the implicit arm64 macOS host target")
+    [target] = hosts
     output = Path(os.environ["RUNNER_TEMP"]) / "native-macos-artifact"
     binaries = output / "bin"
     binaries.mkdir(parents=True)
     packages = {}
-    command = ["cargo", "build", "--locked", "--target", target]
+    command = ["cargo", "build", "--locked"]
     for relative, name in (("app/Cargo.toml", "cinnabar"),
                            ("tools/cinnabar-mcp/Cargo.toml", "cinnabar-mcp"),
                            ("crates/asset-compiler/Cargo.toml", "assetc")):
@@ -90,7 +95,7 @@ def main():
     receipt = {"schema": 1, "source_commit": head, "source_tree": tree, "lock_sha256": lock,
                "target": target, "command": command, "profile": "dev",
                "dev_debug": os.environ["CARGO_PROFILE_DEV_DEBUG"],
-               "host_architecture": capture("uname", "-m"), "rustc": capture("rustc", "-vV"),
+               "host_architecture": capture("uname", "-m"), "rustc": rustc,
                "cargo": capture("cargo", "--version"), "macos": capture("sw_vers", "-productVersion"),
                "repository": os.environ["GITHUB_REPOSITORY"], "ref": os.environ["GITHUB_REF"],
                "workflow": os.environ["GITHUB_WORKFLOW_REF"],

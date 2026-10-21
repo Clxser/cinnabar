@@ -38,12 +38,10 @@ jobs:
   native-macos-artifact:
     name: Native macOS acceptance artifact
     if: github.event_name == 'workflow_dispatch' && inputs.native_macos_artifact
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 120
     permissions:
       contents: read
-    env:
-      CARGO_BUILD_TARGET: aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v6
         with:
@@ -51,7 +49,6 @@ jobs:
       - name: Install the pinned Rust toolchain
         run: |
           rustup toolchain install
-          rustup target add "$CARGO_BUILD_TARGET"
       - name: Restore Rust build cache
         uses: ./.github/actions/build-cache
       - name: Build and record the native executables
