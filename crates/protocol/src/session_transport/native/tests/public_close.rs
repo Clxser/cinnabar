@@ -4,6 +4,8 @@ use super::*;
 use crate::session_transport::Inbound;
 use bedrock_protocol_1_26_51::{packets, wire};
 
+mod process_stop;
+
 /// Public close preserves all four queued bodies and the already accepted fifth for later reads.
 #[tokio::test(start_paused = true)]
 async fn public_close_preserves_the_pending_fifth_body_before_any_receive() {

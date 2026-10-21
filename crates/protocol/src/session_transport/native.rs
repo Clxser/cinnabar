@@ -94,6 +94,53 @@ impl Drop for NativeReader {
 }
 
 impl NativeReader {
+    /// Spawns the same prepared driver on explicit host execution when supplied.
+    fn spawn(
+        pump: PreparedPump,
+        rtt: Option<crate::RoundTripTime>,
+        execution: Option<bridge::tasks::NativeExecution>,
+    ) -> (NativeSender, Self) {
+        let PreparedPump {
+            sender,
+            incoming,
+            stop,
+            driver,
+        } = pump;
+        let (closing, requested) = oneshot::channel();
+        // The sole desktop task owns enforcement even when its caller stops awaiting close.
+        // Successful teardown keeps the original desktop close-result and pending-input policy.
+        let work = async move {
+            let mut driver = driver;
+            let deadline = tokio::select! {
+                result = &mut driver => return Ok(result.pending),
+                deadline = requested => deadline.map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?,
+            };
+            let _ = stop.send(());
+            tokio::time::timeout_at(deadline, driver)
+                .await
+                .map(|end| end.pending)
+                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "native close timed out"))
+        };
+        let task = match execution {
+            Some(execution) => execution
+                .runtime()
+                .spawn(execution.tasks().track_future(work)),
+            None => tokio::spawn(work),
+        };
+        (
+            sender,
+            Self {
+                incoming,
+                rtt,
+                task: Some(task),
+                tail: None,
+                failure: None,
+                stop: Some(closing),
+                closed: false,
+            },
+        )
+    }
+
     /// Requests finite teardown once; the original task keeps its cutoff across canceled waits.
     pub(super) async fn close(&mut self) -> io::Result<()> {
         if self.closed {
@@ -398,37 +445,11 @@ impl SessionTransport {
     /// Moves login's connection and unread packets into the same play FIFO.
     pub(crate) fn from_native(connection: impl PacketIo) -> Self {
         let rtt = connection.observe_rtt().map(crate::RoundTripTime::native);
-        let PreparedPump {
-            sender,
-            incoming,
-            stop,
-            driver,
-        } = prepare_with_byte_budget(connection, Some(bridge::contract::RELAY_QUEUED_FRAME_BYTES));
-        let (closing, requested) = oneshot::channel();
-        // The sole desktop task owns enforcement even when its caller stops awaiting close.
-        // Successful teardown keeps the original desktop close-result and pending-input policy.
-        let task = tokio::spawn(async move {
-            let mut driver = driver;
-            let deadline = tokio::select! {
-                result = &mut driver => return Ok(result.pending),
-                deadline = requested => deadline.map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?,
-            };
-            let _ = stop.send(());
-            tokio::time::timeout_at(deadline, driver)
-                .await
-                .map(|end| end.pending)
-                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "native close timed out"))
-        });
+        let pump =
+            prepare_with_byte_budget(connection, Some(bridge::contract::RELAY_QUEUED_FRAME_BYTES));
+        let (sender, reader) = NativeReader::spawn(pump, rtt, None);
         Self {
-            reader: Reader::Native(NativeReader {
-                incoming,
-                rtt,
-                task: Some(task),
-                tail: None,
-                failure: None,
-                stop: Some(closing),
-                closed: false,
-            }),
+            reader: Reader::Native(reader),
             writer: crate::packet_relay::BatchWriter::direct(PacketSender::Native(sender)),
             relay: None,
             prefer_injected: false,
