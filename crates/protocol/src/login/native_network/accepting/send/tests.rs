@@ -27,7 +27,7 @@ use p384::{
 };
 use std::{
     future::poll_fn,
-    net::Ipv4Addr,
+    net::{Ipv4Addr, SocketAddr, UdpSocket},
     pin::pin,
     sync::Arc,
     task::Poll,
@@ -296,6 +296,73 @@ async fn failed_original_receipt_is_cached_without_repolling_its_completed_futur
     .expect("finite actual failed receipt fixture stalled");
 }
 
+#[tokio::test]
+async fn accepting_finish_close_waits_for_the_original_socket_retirement() {
+    tokio::time::timeout(TIMEOUT, async {
+        let reservation = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let address = reservation.local_addr().unwrap();
+        drop(reservation);
+        let (mut pair, _) =
+            signed_pair_with_server_bind(Arc::new(SigningKey::generate()), address).await;
+        let deadline = tokio::time::Instant::now().into_std() + TIMEOUT;
+        let prefix = [raw_packet(1), raw_packet(2)];
+        for message in BatchCodec::new(BatchHeader::NetherNet, BatchLimits::default())
+            .encode(&prefix)
+            .unwrap()
+        {
+            pair.client.send(message).await.unwrap();
+        }
+        let first = pair.wire.receive_raw(deadline).await.unwrap();
+        let Pair {
+            wire,
+            sender,
+            client,
+            mut listener,
+            signaling,
+        } = pair;
+        let mut retired = wire.begin_close();
+        let second = retired.receive_raw(deadline).await.unwrap();
+        let (initially_pending, held_before_completion, finished) = {
+            let mut finish = pin!(retired.finish_close(deadline));
+            let first_poll = poll_fn(|cx| Poll::Ready(finish.as_mut().poll(cx))).await;
+            // The current-thread actor cannot retire its original socket during this synchronous probe.
+            let held = matches!(UdpSocket::bind(address), Err(error) if error.kind() == io::ErrorKind::AddrInUse);
+            let pending = first_poll.is_pending();
+            let result = match first_poll {
+                Poll::Pending => finish.await,
+                Poll::Ready(result) => result,
+            };
+            (pending, held, result)
+        };
+        let released_at_completion = UdpSocket::bind(address).is_ok();
+        let eof = retired.receive_raw(deadline).await;
+        let mut client = client.close();
+        let reliable = drain(&mut client.reliable).await;
+        let unreliable = drain(&mut client.unreliable).await;
+        drop(retired);
+        drop(client);
+        drop(sender);
+        listener.close().await.unwrap();
+        drop(listener);
+        let signaling = Arc::try_unwrap(signaling)
+            .unwrap_or_else(|_| panic!("fixture retained original HTTP signaling"));
+        signaling.shutdown().await;
+        let released_after_cleanup = UdpSocket::bind(address).is_ok();
+
+        assert!(reliable && unreliable && released_after_cleanup);
+        assert_eq!([first, second], prefix);
+        assert!(matches!(eof, Err(error) if error.kind() == io::ErrorKind::UnexpectedEof));
+        assert!(finished.is_ok(), "original retirement failed: {finished:?}");
+        assert!(held_before_completion, "the fixture lost its original live UDP socket");
+        assert!(
+            initially_pending && released_at_completion,
+            "finish_close returned before physical retirement: pending={initially_pending}, released={released_at_completion}"
+        );
+    })
+    .await
+    .expect("finite actual accepting physical retirement fixture stalled");
+}
+
 pub(in crate::login::native_network) struct Pair {
     pub(in crate::login::native_network) wire: NativeAcceptingIo,
     pub(in crate::login::native_network) sender: SessionSender,
@@ -351,6 +418,14 @@ async fn signed_pair() -> Pair {
 pub(in crate::login::native_network) async fn signed_pair_with_key(
     client_key: Arc<SigningKey>,
 ) -> (Pair, bedrock_client::server::ServerHandshake) {
+    signed_pair_with_server_bind(client_key, (Ipv4Addr::LOCALHOST, 0).into()).await
+}
+
+/// Uses the same signed association with one caller-reserved server socket address.
+async fn signed_pair_with_server_bind(
+    client_key: Arc<SigningKey>,
+    server_bind: SocketAddr,
+) -> (Pair, bedrock_client::server::ServerHandshake) {
     let now = SystemTime::now();
     let key = Arc::new(SigningKey::generate());
     let signaling = Arc::new(
@@ -378,7 +453,7 @@ pub(in crate::login::native_network) async fn signed_pair_with_key(
                 turn_streams: Vec::new(),
                 turn_tls: None,
                 ice: Default::default(),
-                bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                bind_addr: server_bind,
             }),
             attempts: 1,
             ..Default::default()
