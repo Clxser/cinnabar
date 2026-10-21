@@ -638,6 +638,15 @@ impl MenuRuntime {
             }
             MenuAction::PlayFeatured(index) => {
                 if let Some(server) = self.featured.get(index) {
+                    #[cfg(feature = "developer-control")]
+                    bevy::log::info!(
+                        featured_activation = %serde_json::json!({
+                            "index": index,
+                            "name": &server.name,
+                            "logical_target": &server.address,
+                        }),
+                        "featured selection activated"
+                    );
                     let address = server.address.clone();
                     #[cfg(feature = "native-networking")]
                     if self.request_native_gathering(&address) {
