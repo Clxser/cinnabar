@@ -84,6 +84,8 @@ async fn accepted_play_reaches_owned_bds_world() {
                     timers: bridge::tasks::Timers::tokio(),
                 },
                 SessionLogin {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    execution: None,
                     display_name: "GatewayFixture",
                     client_random_id: ClientRandomId::new(1).unwrap(),
                     cache: None,

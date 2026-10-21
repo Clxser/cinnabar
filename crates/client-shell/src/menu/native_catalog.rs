@@ -2,7 +2,7 @@
 
 use super::*;
 
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 mod fixture;
 use launcher::menu::CATALOG_REFRESH_INTERVAL;
 use launcher_host::native_account::{

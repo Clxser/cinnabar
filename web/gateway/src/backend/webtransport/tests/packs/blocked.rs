@@ -65,6 +65,8 @@ async fn canceling_play_resets_its_blocked_pack_uni_before_reusing_the_account()
                     timers: bridge::tasks::Timers::tokio(),
                 },
                 SessionLogin {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    execution: None,
                     display_name: "GatewayFixture",
                     client_random_id: ClientRandomId::new(1).unwrap(),
                     cache: None,
