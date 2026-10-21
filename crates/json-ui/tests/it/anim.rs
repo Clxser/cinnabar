@@ -161,6 +161,47 @@ fn every_property_type_animates() {
 }
 
 #[test]
+fn animated_clipped_page_enters_the_original_viewport() {
+    let nodes = draws(
+        r#""slide": { "anim_type": "offset", "from": [0, 0], "to": [0, "-100%"], "duration": 1 },
+        "screen": { "type": "panel", "size": ["100%", "100%"], "clips_children": true,
+            "controls": [{ "pages": { "type": "stack_panel", "size": ["100%", "100%"],
+                "anchor_from": "top_left", "anchor_to": "top_left", "offset": "@audit.slide",
+                "controls": [
+                    { "intro": { "type": "panel", "size": ["100%", "100%"] } },
+                    { "content": { "type": "panel", "size": ["100%", "100%"],
+                        "clips_children": true, "controls": [
+                            { "image": { "type": "image", "texture": "textures/ui/test",
+                                "anchor_from": "top_left", "anchor_to": "top_left",
+                                "offset": [10, 10], "size": [20, 20] } }
+                        ] } }
+                ] } }] }"#,
+        "screen",
+    );
+    let image = node(&nodes, "image");
+    let mut animator = Animator::new();
+    let first = image.animate(&mut animator, 0.0, None, Some(&Strip));
+    assert!(
+        first.dest.y >= 200.0,
+        "second page starts below the viewport"
+    );
+    let finished = play(&mut animator, image, 0.0, 2.0);
+    assert_eq!([finished.dest.x, finished.dest.y], [10.0, 10.0]);
+    assert!(finished.clip.x >= 0.0 && finished.clip.y >= 0.0);
+    assert!(finished.clip.x + finished.clip.w <= 200.0);
+    assert!(finished.clip.y + finished.clip.h <= 200.0);
+    assert!(
+        finished.clip.w > 0.0
+            && finished.clip.h > 0.0
+            && finished.dest.x >= finished.clip.x
+            && finished.dest.y >= finished.clip.y
+            && finished.dest.x + finished.dest.w <= finished.clip.x + finished.clip.w
+            && finished.dest.y + finished.dest.h <= finished.clip.y + finished.clip.h,
+        "the animated page must draw inside its original viewport: {finished:?}"
+    );
+}
+
+#[test]
 fn repeated_sprite_clip_animation_keeps_the_source_region_and_tile_phase() {
     let nodes = draws(
         r#""reveal": { "anim_type": "clip", "from": 0.5, "to": 0.5, "duration": 1 },
