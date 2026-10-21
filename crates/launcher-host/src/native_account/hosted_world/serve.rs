@@ -105,7 +105,8 @@ impl NativeHostedWorld {
         deadline: Instant,
     ) -> io::Result<NativeHostedPeer> {
         self.check_bridge(process, deadline).await?;
-        let policy = self.login_policy(deadline).await?;
+        let mut policy = self.login_policy(deadline).await?;
+        let max_login_bytes = options.max_login_bytes;
         let turn_control = Arc::new(accepted.session.sender());
         let (mut wire, handshake) = self
             .peer_io(
@@ -114,7 +115,9 @@ impl NativeHostedWorld {
             )
             .await?;
         let result = async {
-            let ready = self.login(&mut wire, handshake, &policy, deadline).await?;
+            let ready = self
+                .login(&mut wire, handshake, &mut policy, max_login_bytes, deadline)
+                .await?;
             self.wait_login(ready.login(), &policy, ready.grant())
                 .await?;
             let player = ready.login().player_identity().ok_or_else(rejected)?;
@@ -125,7 +128,7 @@ impl NativeHostedWorld {
                 playfab_id: player.playfab_id().into(),
                 playfab_title_id: player.playfab_title_id().into(),
             };
-            // RawValue owns the exact provider-verified object, including unused lexemes and fields.
+            // Interpretation retains valid UTF-8 lexemes; the Login separately binds original signed bytes.
             let data = ready.login().client_data().to_owned();
             let backend = self
                 .open_backend(
@@ -180,7 +183,8 @@ impl NativeHostedWorld {
         &mut self,
         wire: &mut NativeAcceptingIo,
         mut handshake: ServerHandshake,
-        policy: &NativeHostedLoginPolicy,
+        policy: &mut NativeHostedLoginPolicy,
+        max_login_bytes: usize,
         deadline: Instant,
     ) -> io::Result<ServerPacksReady<HostedLoginApproval>> {
         let mut login = loop {
@@ -225,6 +229,8 @@ impl NativeHostedWorld {
         let verified = loop {
             let packet = self.peer_io(Some(deadline), wire.receive(deadline)).await?;
             self.wait_policy(policy).await?;
+            self.preflight_login(&packet, policy, max_login_bytes)
+                .await?;
             match login
                 .receive(
                     packet,
