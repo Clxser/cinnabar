@@ -12,16 +12,11 @@ mod minecraft_import;
 mod mods;
 mod out_of_game;
 mod roster;
+mod shader_pack;
 mod updates;
 
 use std::sync::Arc;
 
-#[cfg(feature = "test-support")]
-use chat::chat_server_content;
-use chat::{
-    chat_background, chat_command_background, chat_command_targets, chat_completion,
-    chat_history_width, chat_mentions,
-};
 use launcher::menu::{
     MenuAction, MenuScreen, MenuView, settings_options::SettingId,
     settings_sections::SettingSection,
@@ -91,6 +86,11 @@ pub enum Fixture {
     CraftOverlap {
         selected: bool,
     },
+    /// A client toast as the toast screen shows it once slid in.
+    Toast {
+        title: String,
+        message: String,
+    },
 }
 
 const SIZE: [u32; 2] = [1280, 720];
@@ -100,6 +100,8 @@ const SMALL_SIZE: [u32; 2] = [360, 240];
 const TALL_SIZE: [u32; 2] = [1280, 900];
 /// Keeps the first hotbar rows visible below the keyboard options.
 const KEYBOARD_SIZE: [u32; 2] = [SIZE[0], 2000];
+/// Reaches the Video pane's Renderer row below the general options.
+const SHADER_PACK_ROW_SIZE: [u32; 2] = [SIZE[0], 1600];
 
 pub const STATES: &[State] = &[
     State {
@@ -309,14 +311,14 @@ pub const STATES: &[State] = &[
         name: "chat-server-content-idle",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat_server_content(false),
+        fixture: || chat::server_content(false),
     },
     #[cfg(feature = "test-support")]
     State {
         name: "chat-server-content-hover",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat_server_content(true),
+        fixture: || chat::server_content(true),
     },
     State {
         name: "home-update-compact",
@@ -568,50 +570,50 @@ pub const STATES: &[State] = &[
         name: "chat-background-transparent",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat_background(0),
+        fixture: || chat::background(0),
     },
     State {
         name: "chat-background-half",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat_background(50),
+        fixture: || chat::background(50),
     },
     State {
         name: "chat-background-opaque",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat_background(100),
+        fixture: || chat::background(100),
     },
     State {
         name: "chat-history-width",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: chat_history_width,
+        fixture: chat::history_width,
     },
     State {
         name: "chat-history-width-small",
         size: SMALL_SIZE,
         gui_scale: 1,
-        fixture: chat_history_width,
+        fixture: chat::history_width,
     },
     State {
         name: "chat-command-background-transparent",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: chat_command_background,
+        fixture: chat::command_background,
     },
     State {
         name: "chat-command-completion",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat_completion("/give @", &["@a", "@e", "@p"]),
+        fixture: || chat::completion("/give @", &["@a", "@e", "@p"]),
     },
     State {
         name: "chat-command-completion-small",
         size: SMALL_SIZE,
         gui_scale: 1,
         fixture: || {
-            chat_completion(
+            chat::completion(
                 "/tell ExamplePlayer AnotherPlayerWithALongName @",
                 &["@Alex", "@ExamplePlayerWithALongName", "@Bo"],
             )
@@ -645,13 +647,13 @@ pub const STATES: &[State] = &[
         name: "chat-mentions",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: chat_mentions,
+        fixture: chat::mentions,
     },
     State {
         name: "chat-command-targets",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: chat_command_targets,
+        fixture: chat::command_targets,
     },
     State {
         name: "tab-list-badges",
@@ -816,6 +818,36 @@ pub const STATES: &[State] = &[
         size: TALL_SIZE,
         gui_scale: GUI_SCALE,
         fixture: mods::undeclared_permissions,
+    },
+    State {
+        name: "toast-shader-pack-loading",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::loading,
+    },
+    State {
+        name: "toast-shader-pack-loaded",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::loaded,
+    },
+    State {
+        name: "toast-shader-pack-failed",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::failed,
+    },
+    State {
+        name: "settings-video-shader-pack",
+        size: SHADER_PACK_ROW_SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || shader_pack::settings_video(false),
+    },
+    State {
+        name: "settings-video-shader-pack-failed",
+        size: SHADER_PACK_ROW_SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || shader_pack::settings_video(true),
     },
 ];
 

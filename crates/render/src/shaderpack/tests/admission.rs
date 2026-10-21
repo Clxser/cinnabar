@@ -47,6 +47,7 @@ fn shadow_colour_feedback_is_rejected_before_recording() {
             None,
             &gpu,
             &Default::default(),
+            &Default::default(),
         );
         if output == 0 {
             let Err(error) = result else {
@@ -93,6 +94,7 @@ fn geometry_storage_attachment_aliases_fail_view_admission() {
             None,
             &gpu,
             &Default::default(),
+            &Default::default(),
         )
         .unwrap();
         assert!(
@@ -136,6 +138,7 @@ fn shadow_depth_copy_matches_unfilterable_float_targets() {
         None,
         &gpu,
         &Default::default(),
+        &Default::default(),
     )
     .unwrap();
     assert_eq!(loaded.depth_format, wgpu::TextureFormat::R32Float);
@@ -172,6 +175,7 @@ fn full_screen_packs_keep_held_item_mappings() {
         JAVA_DIMENSIONS[0],
         None,
         &gpu,
+        &Default::default(),
         &Default::default(),
     )
     .unwrap();

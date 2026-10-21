@@ -148,11 +148,29 @@ impl ShaderPack {
     /// Translates every program of the configured folder, in parallel. Failures are per
     /// program; buffer formats in each reflection come from the whole pack's directives.
     pub fn translate(&self, config: &TranslateConfig) -> PackTranslation {
+        self.translate_reporting(config, |_, _| {})
+    }
+
+    /// [`Self::translate`], calling `progress(translated, programs)` once before any program
+    /// translates and again, from the worker that finished it, after each program.
+    pub fn translate_reporting(
+        &self,
+        config: &TranslateConfig,
+        progress: impl Fn(usize, usize) + Sync,
+    ) -> PackTranslation {
         let properties = self.properties(&config.environment, &config.options);
         let programs = self.programs(&config.folder, &config.environment);
+        progress(0, programs.len());
+        let completed = std::sync::Mutex::new(0);
         let mut programs: Vec<ProgramTranslation> = programs
             .par_iter()
-            .map(|program| self.translate_one(program, config, &properties))
+            .map(|program| {
+                let translated = self.translate_one(program, config, &properties);
+                let mut done = completed.lock().unwrap_or_else(|error| error.into_inner());
+                *done += 1;
+                progress(*done, programs.len());
+                translated
+            })
             .collect();
         let mut buffers = BufferDirectives::default();
         for c in programs

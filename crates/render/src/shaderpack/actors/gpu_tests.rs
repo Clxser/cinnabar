@@ -819,6 +819,7 @@ fn actor_stream_failure_disables_native_queue_replacement() {
         None,
         &gpu,
         &Default::default(),
+        &Default::default(),
     )
     .unwrap();
     let mut state =

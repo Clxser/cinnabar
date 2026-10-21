@@ -139,6 +139,7 @@ impl MenuRuntime {
             shader_packs_revision: initial.shader_packs_revision,
             shader_pack: None,
             shader_pack_request: None,
+            shader_pack_status: Default::default(),
             shader_pack_reload: false,
             vsync_override: None,
             display_name: initial.display_name,

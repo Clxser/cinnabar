@@ -1,13 +1,9 @@
-//! Anonymous chat histories, drafts and completion lists.
+//! Anonymous chat screens for message, background and completion captures.
 
-use std::sync::Arc;
-
-use launcher::menu::settings_options::SettingId;
-
-use super::Fixture;
+use super::*;
 
 /// Exercises the native chat collection with an unfinished mention.
-pub(super) fn chat_mentions() -> Fixture {
+pub(super) fn mentions() -> Fixture {
     Fixture::Chat {
         server_hover: None,
         draft: "@",
@@ -18,7 +14,7 @@ pub(super) fn chat_mentions() -> Fixture {
 }
 
 /// Exercises the native command completion collection with target candidates.
-pub(super) fn chat_command_targets() -> Fixture {
+pub(super) fn command_targets() -> Fixture {
     Fixture::Chat {
         server_hover: None,
         draft: "/give @",
@@ -29,7 +25,7 @@ pub(super) fn chat_command_targets() -> Fixture {
 }
 
 /// Shows readable history and a draft under a selected background-opacity setting.
-pub(super) fn chat_background(percent: i32) -> Fixture {
+pub(super) fn background(percent: i32) -> Fixture {
     use launcher::menu::settings_options::{SettingId, SettingsOptions};
     let mut options = SettingsOptions::default();
     options.set(SettingId::ChatBackgroundOpacity.index(), percent);
@@ -58,13 +54,13 @@ pub(super) fn chat_background(percent: i32) -> Fixture {
 }
 
 /// Shows the command input and suggestions with chat backgrounds set to zero percent.
-pub(super) fn chat_command_background() -> Fixture {
-    chat_completion("/", &["/give", "/help", "/say"])
+pub(super) fn command_background() -> Fixture {
+    completion("/", &["/give", "/help", "/say"])
 }
 
 /// Shows equal-width history backgrounds and a message that wraps inside them.
-pub(super) fn chat_history_width() -> Fixture {
-    let mut fixture = chat_background(50);
+pub(super) fn history_width() -> Fixture {
+    let mut fixture = background(50);
     if let Fixture::Chat { messages, .. } = &mut fixture {
         messages.push_back(ui::ChatMessage {
             fifo_sequence: messages.len() as u64 + 1,
@@ -79,7 +75,7 @@ pub(super) fn chat_history_width() -> Fixture {
 }
 
 /// Shows completions after an anonymous draft with transparent message backgrounds.
-pub(super) fn chat_completion(draft: &'static str, suggestions: &[&str]) -> Fixture {
+pub(super) fn completion(draft: &'static str, suggestions: &[&str]) -> Fixture {
     use launcher::menu::settings_options::SettingsOptions;
 
     let mut options = SettingsOptions::default();
@@ -95,7 +91,7 @@ pub(super) fn chat_completion(draft: &'static str, suggestions: &[&str]) -> Fixt
 
 /// Keeps encoded message metadata out of history and reveals it through a hover renderer.
 #[cfg(feature = "test-support")]
-pub(super) fn chat_server_content(hover: bool) -> Fixture {
+pub(super) fn server_content(hover: bool) -> Fixture {
     Fixture::Chat {
         draft: "",
         suggestions: Vec::new(),

@@ -58,7 +58,16 @@ fn duplicate_active_colour_attachments_fail_view_admission() {
                 ]);
             }
             let source = shaderpack::ShaderPack::new(shaderpack::PackSource::from_files(files));
-            let pack = build(&source, "attachments", "", None, &gpu, &Default::default()).unwrap();
+            let pack = build(
+                &source,
+                "attachments",
+                "",
+                None,
+                &gpu,
+                &Default::default(),
+                &Default::default(),
+            )
+            .unwrap();
             if program != "composite" {
                 assert!(
                     pack.draws
@@ -101,6 +110,7 @@ fn shadow_colour_feedback_fails_loading() {
             "",
             None,
             &gpu,
+            &Default::default(),
             &Default::default(),
         );
         assert_eq!(
@@ -158,7 +168,16 @@ fn after_deferred_effect_storage_alias_fails_admission() {
                 (vertex_name.as_str(), vertex),
                 (fragment_name.as_str(), fragment.as_str()),
             ]));
-            let pack = build(&source, "effect alias", "", None, &gpu, &Default::default()).unwrap();
+            let pack = build(
+                &source,
+                "effect alias",
+                "",
+                None,
+                &gpu,
+                &Default::default(),
+                &Default::default(),
+            )
+            .unwrap();
             assert!(
                 pack.draws
                     .iter()

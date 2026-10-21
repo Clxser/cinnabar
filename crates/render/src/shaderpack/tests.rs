@@ -111,7 +111,12 @@ fn a_failed_required_program_fails_the_load() {
     ]);
     let translation = pack.translate(&translate_config(&pack, JAVA_DIMENSIONS[0]));
     let error = runnable_programs(&translation).expect_err("composite fails");
-    assert!(error.contains("composite"), "{error}");
+    let lines: Vec<&str> = error.lines().collect();
+    assert_eq!(lines.len(), 1, "one line per failed program: {error}");
+    assert!(
+        lines[0].starts_with("composite: composite.fsh:") && lines[0].contains("undefined_name"),
+        "names the program and its first diagnostic: {error}"
+    );
 }
 
 /// Switching packs shows Vanilla, which removes the block ids, between them; the geometry
@@ -190,6 +195,7 @@ fn render_frame_options(
             JAVA_DIMENSIONS[0],
             None,
             gpu,
+            &Default::default(),
             &Default::default(),
         )
         .expect("fixture loads"),
@@ -805,6 +811,7 @@ fn a_rejected_required_actor_pipeline_keeps_native_world_rendering() {
         None,
         &gpu,
         &Default::default(),
+        &Default::default(),
     )
     .expect("pipeline rejection retains the loaded pack and native scene");
     let entities = pack
@@ -1005,6 +1012,7 @@ fn fixed_compute_dispatches_exceeding_device_limits_fail_loading() {
         None,
         &gpu,
         &Default::default(),
+        &Default::default(),
     )
     .err()
     .expect("over-limit fixed dispatch fails loading");
@@ -1029,6 +1037,7 @@ fn relative_compute_dispatches_are_checked_for_each_view_size() {
             JAVA_DIMENSIONS[0],
             None,
             &gpu,
+            &Default::default(),
             &Default::default(),
         )
         .unwrap(),

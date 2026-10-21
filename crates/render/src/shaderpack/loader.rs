@@ -6,6 +6,10 @@
 //! dominates the load, so the cache keeps the backend pipeline cache (Vulkan) in a private
 //! directory, keyed by the pack's content hash, the translation settings and the adapter.
 
+#[path = "load_diagnostics.rs"]
+mod diagnostics;
+use diagnostics::{failure_line, log_program};
+
 use super::draws::{GeometryDraw, GeometryStage, geometry_draws, select_draws};
 use super::effects::EffectSettings;
 use super::host_pipelines::{HostPipelines, host_pipelines};
@@ -26,6 +30,7 @@ use super::resources::{
 };
 use super::shadow_maps::{ShadowMaps, shadow_maps};
 use super::uniforms::PackSettings;
+use render_scene::shaderpack::LoadProgress;
 use sha2::{Digest, Sha256};
 use shaderpack::{
     BlendMode, BufferId, CustomUniform, Environment, ProgramGroup, ProgramKind, ProgramReflection,
@@ -189,40 +194,6 @@ fn runs(group: ProgramGroup) -> bool {
     )
 }
 
-/// Groups the host draws or dispatches, whose diagnostics are warnings.
-fn drawn(group: ProgramGroup) -> bool {
-    runs(group)
-        || matches!(
-            group,
-            ProgramGroup::Gbuffers | ProgramGroup::Shadow | ProgramGroup::ShadowComposite
-        )
-}
-
-/// Logs a program's diagnostics; failures of programs this host runs are warnings.
-fn log_program(pack: &str, program: &ProgramTranslation) {
-    let required = program.enabled && drawn(program.program.group);
-    for diagnostic in program.all_diagnostics() {
-        let location = diagnostic
-            .location
-            .as_ref()
-            .map(|l| format!("{}:{}", l.file, l.line))
-            .unwrap_or_default();
-        if required {
-            bevy::log::warn!(
-                target: "cinnabar::shaderpack",
-                pack, program = %program.program.name, %location,
-                "{:?}: {}", diagnostic.phase, diagnostic.message
-            );
-        } else {
-            bevy::log::debug!(
-                target: "cinnabar::shaderpack",
-                pack, program = %program.program.name, %location,
-                "{:?}: {}", diagnostic.phase, diagnostic.message
-            );
-        }
-    }
-}
-
 /// The pack's content hash with the translation settings: the cache key.
 pub(crate) fn content_key(pack: &ShaderPack, config: &TranslateConfig) -> String {
     let mut hash = Sha256::new();
@@ -362,24 +333,25 @@ fn planned(
 }
 
 /// Opens, translates and builds `path` for `dimension` (a Java dimension id); `vanilla`
-/// answers the pack's `minecraft:` texture references.
+/// answers the pack's `minecraft:` texture references. Translation reports into `progress`.
 pub(crate) fn load(
     path: &Path,
     dimension: &str,
     cache_dir: Option<&Path>,
     gpu: &GpuContext,
     vanilla: &VanillaTextures,
+    progress: &LoadProgress,
 ) -> Result<PackGpu, String> {
     let pack = ShaderPack::open(path).map_err(|e| e.to_string())?;
     let name = path.file_name().map_or_else(
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
     );
-    build(&pack, &name, dimension, cache_dir, gpu, vanilla)
+    build(&pack, &name, dimension, cache_dir, gpu, vanilla, progress)
 }
 
-/// The enabled programs this host runs, in frame order, with their validated plans.
-/// An error names unsupported destinations or required programs that failed to translate.
+/// The enabled programs this host runs, in frame order, with validated destinations.
+/// Translation failures name each program and its first diagnostic.
 pub(crate) fn runnable_programs(
     translation: &shaderpack::PackTranslation,
 ) -> Result<(Vec<&ProgramTranslation>, Vec<PlannedProgram>), String> {
@@ -395,13 +367,13 @@ pub(crate) fn runnable_programs(
                 plans.push(planned(program, reflection, &translation.properties)?);
                 runnable.push(program);
             }
-            None => failed.push(program.program.name.clone()),
+            None => failed.push(failure_line(program)),
         }
     }
     if failed.is_empty() {
         Ok((runnable, plans))
     } else {
-        Err(format!("required programs failed: {}", failed.join(", ")))
+        Err(failed.join("\n"))
     }
 }
 
@@ -413,10 +385,13 @@ pub(crate) fn build(
     cache_dir: Option<&Path>,
     gpu: &GpuContext,
     vanilla: &VanillaTextures,
+    progress: &LoadProgress,
 ) -> Result<PackGpu, String> {
     let config = translate_config(pack, dimension);
     let started = std::time::Instant::now();
-    let translation = pack.translate(&config);
+    let translation = pack.translate_reporting(&config, |translated, programs| {
+        progress.record(translated, programs);
+    });
     for diagnostic in &translation.properties.diagnostics {
         bevy::log::debug!(
             target: "cinnabar::shaderpack",
