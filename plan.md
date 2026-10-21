@@ -356,6 +356,14 @@ OS Alt-Tab acceptance on macOS, Windows and Linux remains incomplete.
 - [ ] `P5.8-SETTINGS` — Close menu, control, video and persistence acceptance. Desktop
   wiring alone does not establish native parity; language-specific scale dialogs,
   safe-zone handling, service-controlled spacing and touch/console behavior remain open.
+  Social → Chat exposes the existing chat preferences, shared opacity, duration and
+  position controls, and one reset for all displayed Chat settings. Chat uses the bundled
+  Cinnangles Sans font without a typeface selector; font sizing applies directly and
+  obsolete saved typeface values are ignored. Emote filtering, narration and mention
+  highlighting remain unavailable and their controls say they store preferences only.
+  Offline rendered fixtures cover the panel, values, palettes and reset confirmation;
+  live input acceptance remains incomplete. Font size 5–20/default 10 and spacing
+  0–100/default 0 remain provisional host ranges, without confirmed native defaults.
 
 The inherited interaction acceptance scope also includes full item identity and use phases,
 replacement/deferred releases, mounted inventory, sign filtering/length/structured text,
