@@ -6,6 +6,8 @@ mod startup;
 #[cfg(feature = "test-support")]
 pub(crate) mod test_support;
 #[cfg(test)]
+pub(in crate::login::native_network) use startup::drain_original_relay_inputs;
+#[cfg(test)]
 mod tests;
 pub use startup::{NativeHostedRelay, NativeHostedRelayClosing, NativeHostedRelayProgress};
 
