@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       native_macos_artifact:
-        description: Build the opt-in native macOS client and MCP for local acceptance
+        description: Build the native macOS client, MCP and preparation compiler for local acceptance
         type: boolean
         default: false
 

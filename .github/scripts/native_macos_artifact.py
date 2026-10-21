@@ -22,7 +22,7 @@ def sha256(path):
 
 
 def main():
-    """Archive only the two actual compiler-selected executables and their build receipt."""
+    """Archive the native client, MCP and matching preparation compiler with their build receipt."""
     root = Path.cwd().resolve()
     head = capture("git", "rev-parse", "HEAD")
     if head != os.environ["GITHUB_SHA"] or capture("git", "status", "--porcelain"):
@@ -35,12 +35,13 @@ def main():
     binaries.mkdir(parents=True)
     packages = {}
     command = ["cargo", "build", "--locked", "--target", target]
-    for relative in ("app/Cargo.toml", "tools/cinnabar-mcp/Cargo.toml"):
+    for relative, name in (("app/Cargo.toml", "cinnabar"),
+                           ("tools/cinnabar-mcp/Cargo.toml", "cinnabar-mcp"),
+                           ("crates/asset-compiler/Cargo.toml", "assetc")):
         manifest = root / relative
         source = tomllib.loads(manifest.read_text())
-        [binary] = source["bin"]
-        packages[manifest] = (source["package"]["name"], binary["name"])
-        command += ["-p", source["package"]["name"], "--bin", binary["name"]]
+        packages[manifest] = (source["package"]["name"], name)
+        command += ["-p", source["package"]["name"], "--bin", name]
     client = tomllib.loads((root / "app/Cargo.toml").read_text())
     features = ("native-networking", "developer-control")
     required = set(features) | set(client["features"]["default"])
@@ -82,7 +83,7 @@ def main():
                              "sha256": sha256(destination), "bytes": destination.stat().st_size,
                              "mach_o_architecture": architecture, "build_version": build_version}
     if not finished or set(emitted) != {name for _, name in packages.values()}:
-        raise ValueError("the successful build must contain both original executable targets")
+        raise ValueError("the successful build must contain every selected executable target")
     if (capture("git", "rev-parse", "HEAD") != head
             or capture("git", "status", "--porcelain") or sha256(root / "Cargo.lock") != lock):
         raise ValueError("the build changed its source or locked dependency graph")
