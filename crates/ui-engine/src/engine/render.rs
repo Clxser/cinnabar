@@ -159,9 +159,18 @@ pub(super) fn render_with<R: Borrow<FormRender>>(
         }
     }
     canvas.close_filter()?;
+    let hits = if render.hits.iter().any(|region| region.anim.is_some()) {
+        render
+            .hits
+            .iter()
+            .map(|region| region.animate(&mut canvas.animator, frame.now, art.clocks))
+            .collect()
+    } else {
+        render.hits.clone()
+    };
     let origin = [frame.safe_area.left(), frame.safe_area.top()];
     Ok(Some(EngineFrame {
-        hits: render.hits.clone(),
+        hits,
         report: render.report.clone(),
         cancel_target: render.cancel_target.clone(),
         origin,

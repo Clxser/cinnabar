@@ -101,6 +101,40 @@ pub struct NodeAnim {
     pub filter: Option<std::sync::Arc<crate::filter::FilterGroup>>,
 }
 
+impl NodeAnim {
+    /// Whether a control or its clipping ancestry needs a painted geometry projection.
+    pub(crate) fn moves_geometry(&self) -> bool {
+        !self.movers.is_empty() || self.clip.as_ref().is_some_and(|clip| clip.moves())
+    }
+
+    /// Moves a layout rectangle through the same offset and size contributors as its draws.
+    pub(crate) fn animate_rect(
+        &self,
+        animator: &mut Animator,
+        now: f64,
+        clocks: Option<&BTreeMap<String, f64>>,
+        mut rect: RectOut,
+    ) -> RectOut {
+        for mover in self.movers.iter().rev() {
+            rect = moved(mover, &animator.sample(mover, now, clocks), rect);
+        }
+        rect
+    }
+
+    /// Evaluates moving clip boundaries before intersection, retaining an unanimated fallback.
+    pub(crate) fn animate_clip(
+        &self,
+        animator: &mut Animator,
+        now: f64,
+        clocks: Option<&BTreeMap<String, f64>>,
+        fallback: RectOut,
+    ) -> RectOut {
+        self.clip
+            .as_ref()
+            .map_or(fallback, |clip| clip.animate(animator, now, clocks).into())
+    }
+}
+
 /// A clipping boundary evaluated in its own moving space before ancestor intersection.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Clip {
@@ -233,13 +267,8 @@ impl DrawNode {
                 out.uv = Some(uv);
             }
         }
-        for mover in anim.movers.iter().rev() {
-            let written = animator.sample(mover, now, clocks);
-            out.dest = moved(mover, &written, out.dest);
-        }
-        if let Some(clip) = &anim.clip {
-            out.clip = clip.animate(animator, now, clocks).into();
-        }
+        out.dest = anim.animate_rect(animator, now, clocks, out.dest);
+        out.clip = anim.animate_clip(animator, now, clocks, out.clip);
         out
     }
 }
