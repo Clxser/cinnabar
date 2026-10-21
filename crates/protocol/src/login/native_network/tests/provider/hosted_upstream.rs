@@ -72,7 +72,9 @@ async fn original_upstream_with_archive(
     archive: Vec<u8>,
     pack_type: u8,
 ) {
-    let _ = original_upstream_with_retirement(route, cdn, archive, pack_type, false).await;
+    let _ =
+        original_upstream_with_retirement(route, cdn, archive, pack_type, retirement::Mode::None)
+            .await;
 }
 
 /// Optionally observes physical retirement after the same initialized game exchange.
@@ -81,8 +83,10 @@ async fn original_upstream_with_retirement(
     cdn: Option<std::net::SocketAddr>,
     archive: Vec<u8>,
     pack_type: u8,
-    observe_retirement: bool,
+    retirement: retirement::Mode,
 ) -> Option<retirement::Observation> {
+    let observe_retirement = !matches!(retirement, retirement::Mode::None);
+    let close_relay = matches!(retirement, retirement::Mode::Relay(_));
     let (socket_send, socket_receive) = if observe_retirement {
         let (send, receive) = tokio::sync::oneshot::channel();
         (Some(send), Some(receive))
@@ -272,16 +276,20 @@ async fn original_upstream_with_retirement(
         assert!(
             matches!(&*initialized[0].data, packets::Packet::SetLocalPlayerAsInitialized(value) if value.player_id.0 == 42)
         );
-        let live = receive(&mut peer, &codec).await;
-        assert!(matches!(&*live[0].data, packets::Packet::SetTime(value) if value.time.0 == 11));
-        send(
-            &peer,
-            &codec,
-            &[crate::Packet::new(packets::SetTime {
-                time: wire::ZigZag32(12),
-            })],
-        )
-        .await;
+        if !close_relay {
+            let live = receive(&mut peer, &codec).await;
+            assert!(
+                matches!(&*live[0].data, packets::Packet::SetTime(value) if value.time.0 == 11)
+            );
+            send(
+                &peer,
+                &codec,
+                &[crate::Packet::new(packets::SetTime {
+                    time: wire::ZigZag32(12),
+                })],
+            )
+            .await;
+        }
         peer.session.closed().await;
     };
     let relay = async {
@@ -489,6 +497,20 @@ async fn original_upstream_with_retirement(
                 (false, NativeHostedRelayProgress::Forwarded)
                     | (true, NativeHostedRelayProgress::Initialized)
             ));
+        }
+        if let retirement::Mode::Relay(observation) = retirement {
+            let addresses = [
+                socket_receive.unwrap().await.unwrap(),
+                pair.client.remote_addr().await.socket_addr.unwrap(),
+            ];
+            let (wire, observed) = retirement::observe_relay(relay, deadline, addresses).await;
+            pair.wire = wire;
+            assert!(
+                pair.finish().await,
+                "original signed guest owners did not join"
+            );
+            observation.send(observed).unwrap();
+            return None;
         }
         let (wire, mut upstream, accepted) = relay.finish(&provider, Instant::now(), utc).unwrap();
         assert_eq!(*accepted.grant(), 7);

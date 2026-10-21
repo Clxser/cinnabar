@@ -4,6 +4,8 @@ use bedrock_client_tokio::connection::send::PreparedSend;
 use bedrock_net::login::client_data::RawClientData;
 mod startup;
 #[cfg(test)]
+pub(in crate::login::native_network) use startup::drain_original_relay_inputs;
+#[cfg(test)]
 mod tests;
 pub use startup::{NativeHostedRelay, NativeHostedRelayClosing, NativeHostedRelayProgress};
 

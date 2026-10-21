@@ -372,3 +372,25 @@ impl NativeHostedRelayClosing {
         }
     }
 }
+
+/// Completes both original input owners after a test has observed the public finish boundary.
+#[cfg(test)]
+pub(in crate::login::native_network) async fn drain_original_relay_inputs(
+    mut closing: NativeHostedRelayClosing,
+) -> (NativeAcceptingIo, [Option<io::ErrorKind>; 2]) {
+    let (wire, upstream) = tokio::join!(
+        tokio::time::timeout_at(
+            closing.deadline.into(),
+            closing.wire.connection.transport_mut().finish_close(),
+        ),
+        closing.upstream.finish_close(),
+    );
+    let wire = wire.unwrap_or_else(|_| Err(expired()));
+    (
+        closing.wire,
+        [
+            upstream.err().map(|error| error.kind()),
+            wire.err().map(|error| error.kind()),
+        ],
+    )
+}
