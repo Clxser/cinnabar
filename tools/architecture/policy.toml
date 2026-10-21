@@ -865,22 +865,10 @@ producer = "crates/diagnostics/src/markers.rs"
 consumer = "crates/acceptance/src/movement_evidence.rs"
 
 [[markers]]
-literal = "CINNABAR_ACCEPTANCE_CORE_SHA256"
+literal = "CINNABAR_USER_ROOT"
 kind = "environment_variable"
-producer = "crates/diagnostics/src/markers.rs"
-consumer = "crates/acceptance/src/movement_evidence.rs"
-
-[[markers]]
-literal = "CINNABAR_ACCEPTANCE_CORE_PROCESS_ID"
-kind = "environment_variable"
-producer = "crates/diagnostics/src/markers.rs"
-consumer = "crates/acceptance/src/movement_evidence.rs"
-
-[[markers]]
-literal = "CINNABAR_ACCEPTANCE_BRIDGE_ENDPOINT"
-kind = "environment_variable"
-producer = "crates/diagnostics/src/markers.rs"
-consumer = "crates/acceptance/src/movement_evidence.rs"
+producer = "crates/launcher/src/install_layout.rs"
+consumer = "crates/launcher/src/install_layout.rs"
 
 [[markers]]
 literal = "CINNABAR_ERROR_COUNTERS"
@@ -1145,7 +1133,6 @@ sleep_exceptions = [
     { path = "crates/client-session/src/session/network_latency_bench.rs", reason = "paces movement packets at the simulation tick rate for a latency benchmark" },
     { path = "crates/server-experience/src/cache.rs", reason = "delays lease release and cancellation to exercise a pending cache replacement" },
     { path = "crates/launcher-host/src/lifecycle/children.rs", reason = "lets the detached reaper begin stopping a child without an observable ready signal" },
-    { path = "crates/launcher-host/src/auth.rs", reason = "a deliberately delayed reader verifies cancellation does not wait for its thread" },
     { path = "crates/launcher-host/src/launcher_account/artwork.rs", reason = "a slow image fixture verifies feeds publish before artwork downloads" },
     { path = "crates/client-audio/src/audio/inventory.rs", reason = "keeps the opt-in audio device alive for an audible playback window" },
     { path = "app/src/tests/input_publication.rs", reason = "models expensive frame work while measuring system ordering" },

@@ -76,7 +76,7 @@ async fn active_host_approval_write_recovers_the_original_backend_once() {
                 .world
                 .open_backend(
                     &original_approval,
-                    process.test_process(),
+                    &mut process.process,
                     Identity {
                         xuid: VISITOR_XUID.into(),
                         uuid: "00000000-0000-4000-8000-000000000001".into(),

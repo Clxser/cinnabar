@@ -8,6 +8,12 @@ use executables::local_server_filename;
 
 const APP_DIR: &str = crate::PRODUCT_NAME;
 
+/// Environment keys owned by the installed user-data layout.
+pub mod markers {
+    /// Redirects configuration, data and runtime paths below one absolute root.
+    pub const USER_ROOT: &str = "CINNABAR_USER_ROOT";
+}
+
 /// The pinned vanilla resource pack below a resource root, which mirrors `.local/`.
 pub fn vanilla_pack_relative() -> String {
     assets::vanilla_source().installed_pack_dir("resource_pack")
@@ -164,7 +170,7 @@ impl InstallLayout {
                         .map(PathBuf::from)
                         .as_deref(),
                 ),
-                user_root: std::env::var_os("CINNABAR_USER_ROOT").map(PathBuf::from),
+                user_root: std::env::var_os(markers::USER_ROOT).map(PathBuf::from),
                 home,
                 local_app_data: std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
                 xdg_config_home: std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
@@ -413,7 +419,7 @@ fn isolated_user_roots(
         Platform::Linux => "Linux",
         Platform::MacOs => "macOS",
     };
-    require_absolute(root, platform, "CINNABAR_USER_ROOT", name)?;
+    require_absolute(root, platform, markers::USER_ROOT, name)?;
     Ok(Some((
         root.join("config"),
         root.join("data"),
@@ -677,7 +683,7 @@ mod tests {
                 assert!(matches!(
                     InstallLayout::resolve(platform, &env),
                     Err(LayoutError::InvalidUserRoot {
-                        variable: "CINNABAR_USER_ROOT",
+                        variable: markers::USER_ROOT,
                         ..
                     })
                 ));

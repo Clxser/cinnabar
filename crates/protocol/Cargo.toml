@@ -15,6 +15,7 @@ reads = [
     "crates/protocol-ids/data/protocol-ids.json",
     "crates/protocol-ids/data/actor-data-extensions.json",
     "crates/protocol-ids/data/movement-contract.json",
+    "tools/localserver/go.mod",
     "tools/localserver/experience/testdata/protocol/limits.json",
 ]
 
