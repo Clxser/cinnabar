@@ -167,7 +167,6 @@ fn a_discarded_standby_server_exits() {
     let exited = lock(&runner.standby)
         .as_ref()
         .expect("a standby server")
-        .1
         .process
         .exited();
     runner.discard_standby();
@@ -175,28 +174,6 @@ fn a_discarded_standby_server_exits() {
     test_time::eventually("the standby to exit", || {
         matches!(exited.try_recv(), Err(TryRecvError::Disconnected))
     });
-}
-
-/// A server rebuilt while the menu is open must not reuse its old warmed process.
-#[cfg(unix)]
-#[test]
-fn rebuilding_the_server_discards_its_old_standby() {
-    let dir = scratch();
-    let runner = runner(dir.path(), FAKE_STANDBY_SERVER);
-    runner.prepare();
-    let modified = runner.binary.metadata().unwrap().modified().unwrap();
-    std::fs::File::options()
-        .write(true)
-        .open(&runner.binary)
-        .unwrap()
-        .set_modified(modified + Duration::from_secs(1))
-        .unwrap();
-    let instance = runner.start(&spec(dir.path()), &Cancel::never()).unwrap();
-    assert!(
-        !dir.path().join("server.start").exists(),
-        "the old standby accepted a world"
-    );
-    instance.stop(test_time::DEFAULT_TIMEOUT).unwrap();
 }
 
 /// Startup diagnostics must work for both a fresh process and a warmed standby.

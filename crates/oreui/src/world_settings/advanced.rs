@@ -80,11 +80,11 @@ pub(super) fn draw(
     })?;
     sections::row(canvas, area, y, |canvas, area| {
         let y = label(canvas, "World generator", area, area[1])?;
-        let options: Vec<_> = local_view
-            .generators
+        let entries =
+            launcher::local_worlds::generators::options(form.backend, &local_view.generators);
+        let options: Vec<_> = entries
             .iter()
             .enumerate()
-            .filter(|(_, entry)| form.backend != Backend::Bds || entry.id.supported_by_bds())
             .map(|(index, entry)| {
                 (
                     entry.label.as_str(),
@@ -105,13 +105,7 @@ pub(super) fn draw(
             bottom += height + space(canvas, 1);
         }
         let height = bottom - y;
-        let description = local_view.generator_error.as_deref().unwrap_or({
-            if options.is_empty() {
-                "No world generators are available for this server."
-            } else {
-                "Terrain provided by the selected server."
-            }
-        });
+        let description = "Terrain provided by the selected server.";
         caption(canvas, description, area, y + height + space(canvas, 2))
     })
 }

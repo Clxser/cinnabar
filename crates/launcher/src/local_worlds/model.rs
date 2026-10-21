@@ -73,7 +73,6 @@ pub enum Input {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Effect {
     List,
-    ListGenerators,
     Create(NewWorld),
     Delete(String),
     Update {
@@ -154,6 +153,26 @@ pub struct WorldsView {
     pub bds_unavailable: Option<UnavailableReason>,
 }
 
+impl WorldsView {
+    /// Whether the selected backend's terrain choices are ready for a create request.
+    pub fn can_create(&self) -> bool {
+        !self.busy && (self.create.backend == Backend::Bds || !self.generators.is_empty())
+    }
+
+    /// Explains why Dragonfly creation is disabled while discovery is pending or failed.
+    pub fn generator_message(&self) -> Option<&str> {
+        if self.create.backend == Backend::Bds {
+            None
+        } else if let Some(error) = &self.generator_error {
+            Some(error)
+        } else if self.generators.is_empty() {
+            Some(super::generators::LOADING_GENERATORS)
+        } else {
+            None
+        }
+    }
+}
+
 /// What a Docker modal or EULA gate resumes once cleared.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Pending {
@@ -199,6 +218,11 @@ impl WorldsMenu {
 
     pub fn selected(&self) -> Option<&World> {
         self.selected.and_then(|index| self.worlds.get(index))
+    }
+
+    /// Whether the startup catalog has yet to deliver its single result.
+    pub fn generators_pending(&self) -> bool {
+        self.generators.is_empty() && self.generator_error.is_none()
     }
 
     pub fn create_form(&self) -> &CreateForm {
@@ -344,10 +368,9 @@ impl WorldsMenu {
                 Vec::new()
             }
             Pending::SubmitCreate
-                if !self.generators.iter().any(|entry| {
-                    entry.id == self.create.generator
-                        && (self.create.backend != Backend::Bds || entry.id.supported_by_bds())
-                }) =>
+                if !super::generators::options(self.create.backend, &self.generators)
+                    .iter()
+                    .any(|entry| entry.id == self.create.generator) =>
             {
                 self.form_error = Some("Choose an available world generator");
                 self.screen = Screen::Create;
@@ -411,15 +434,11 @@ impl WorldsMenu {
 
     /// Keeps the current choice when available, otherwise takes the server's first supported entry.
     fn ensure_generator(&mut self) {
-        let supported = |entry: &&super::generators::GeneratorInfo| {
-            self.create.backend != Backend::Bds || entry.id.supported_by_bds()
-        };
-        if !self
-            .generators
+        let entries = super::generators::options(self.create.backend, &self.generators);
+        if !entries
             .iter()
-            .filter(supported)
             .any(|entry| entry.id == self.create.generator)
-            && let Some(entry) = self.generators.iter().find(supported)
+            && let Some(entry) = entries.first()
         {
             self.create.generator = entry.id.clone();
         }
@@ -453,9 +472,7 @@ impl WorldsMenu {
                 Vec::new()
             }
             Input::BeginCreate if matches!(self.screen, Screen::List | Screen::Templates) => {
-                let mut effects = self.gate(Pending::Create);
-                effects.push(Effect::ListGenerators);
-                effects
+                self.gate(Pending::Create)
             }
             Input::OpenTemplates if self.screen == Screen::List => {
                 self.screen = Screen::Templates;
@@ -490,8 +507,8 @@ impl WorldsMenu {
                 Vec::new()
             }
             Input::SetGenerator(index) => {
-                if let Some(entry) = self.generators.get(index)
-                    && (self.create.backend != Backend::Bds || entry.id.supported_by_bds())
+                if let Some(entry) =
+                    super::generators::options(self.create.backend, &self.generators).get(index)
                 {
                     self.create.generator = entry.id.clone();
                 }

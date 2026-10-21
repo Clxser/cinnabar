@@ -45,7 +45,8 @@ fn world_choices_use_green_selected_and_light_unselected_faces() {
 
 #[test]
 fn world_sidebar_and_form_have_solid_enclosing_panels() {
-    let view = MenuView::new(true, "Fixture".into());
+    let mut view = MenuView::new(true, "Fixture".into());
+    view.local.generators = launcher::local_worlds::generators::fixture_catalog();
     let (_, hits, nodes) = paint(Default::default(), |canvas| {
         draw(canvas, &view, [1280.0, 720.0], Screen::Create).unwrap();
     });
@@ -219,9 +220,56 @@ fn custom_generator_labels_and_actions_come_from_the_catalog() {
     let (_, hits, _) = paint(Default::default(), |canvas| {
         draw(canvas, &view, [1280.0, 900.0], Screen::Create).unwrap();
     });
-    assert!(
-        !hits
-            .iter()
-            .any(|(action, _)| matches!(action, MenuAction::LocalWorld(A::Generator(_))))
-    );
+    for index in 0..launcher::local_worlds::generators::BDS_GENERATORS.len() {
+        assert!(
+            hits.iter()
+                .any(|(action, _)| *action == local(A::Generator(index)))
+        );
+    }
+}
+
+/// Loading and errors disable Dragonfly's Create action on both tabs, without disabling BDS.
+#[test]
+fn generator_discovery_status_controls_create_on_every_tab() {
+    use bridge::Backend;
+    for tab in [Tab::General, Tab::Advanced] {
+        for error in [None, Some("Cannot read world generators")] {
+            for backend in [Backend::Dragonfly, Backend::Bds] {
+                let mut view = MenuView::new(true, "Fixture".into());
+                view.local.tab = tab;
+                view.local.create.backend = backend;
+                view.local.generator_error = error.map(str::to_owned);
+                let (_, hits, nodes) = paint(Default::default(), |canvas| {
+                    draw(canvas, &view, [1280.0, 900.0], Screen::Create).unwrap();
+                });
+                assert_eq!(
+                    hits.iter().any(|(action, _)| *action == local(A::Create)),
+                    backend == Backend::Bds
+                );
+                let text: String = nodes
+                    .iter()
+                    .filter_map(|node| match node.visual() {
+                        ui::UiVisual::Text { layout, .. } => Some(
+                            layout
+                                .glyphs()
+                                .iter()
+                                .map(|g| g.codepoint)
+                                .collect::<String>(),
+                        ),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("")
+                    .replace(' ', "");
+                let expected = error
+                    .unwrap_or(launcher::local_worlds::generators::LOADING_GENERATORS)
+                    .replace(' ', "");
+                assert_eq!(
+                    text.contains(&expected),
+                    backend == Backend::Dragonfly,
+                    "{tab:?} {backend:?}: {text}"
+                );
+            }
+        }
+    }
 }

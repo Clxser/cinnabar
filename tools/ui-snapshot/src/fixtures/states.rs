@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// Leaves room for the advanced world form at the standard GUI scale.
+const WORLD_CREATE_SIZE: [u32; 2] = [1280, 900];
+
 pub const STATES: &[State] = &[
     asset_free("sprite-outline-before", [800, 240], || {
         Fixture::SpriteOutline { outline: false }
@@ -475,15 +478,27 @@ pub const STATES: &[State] = &[
         fixture: out_of_game::reset_settings,
     },
     State {
+        name: "world-create-generators-loading",
+        size: WORLD_CREATE_SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: out_of_game::world_create_generators_loading,
+    },
+    State {
+        name: "world-create-generators-unavailable",
+        size: WORLD_CREATE_SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: out_of_game::world_create_generators_unavailable,
+    },
+    State {
         name: "world-create-custom-generator",
-        size: [1280, 900],
-        gui_scale: 2,
+        size: WORLD_CREATE_SIZE,
+        gui_scale: GUI_SCALE,
         fixture: out_of_game::world_create_custom_generator,
     },
     State {
         name: "world-create-advanced",
-        size: [1280, 900],
-        gui_scale: 2,
+        size: WORLD_CREATE_SIZE,
+        gui_scale: GUI_SCALE,
         fixture: out_of_game::world_create_advanced,
     },
     State {

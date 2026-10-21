@@ -372,10 +372,7 @@ fn prefs_are_polled_until_docker_detection_settles() {
         ))
         .is_empty()
     );
-    assert_eq!(
-        menu.update(Input::BeginCreate),
-        vec![Effect::ListGenerators]
-    );
+    assert!(menu.update(Input::BeginCreate).is_empty());
     assert_eq!(menu.screen(), Screen::Create);
     assert_eq!(menu.create_form().backend, Backend::Dragonfly);
 }
@@ -721,10 +718,7 @@ fn template_create_action_opens_the_create_form() {
     let mut menu = loaded(&[]);
     menu.update(Input::OpenTemplates);
     assert_eq!(menu.screen(), Screen::Templates);
-    assert_eq!(
-        menu.update(Input::BeginCreate),
-        vec![Effect::ListGenerators]
-    );
+    assert!(menu.update(Input::BeginCreate).is_empty());
     assert_eq!(menu.screen(), Screen::Create);
 }
 
@@ -854,9 +848,9 @@ fn create_options_follow_the_server_catalog_and_retain_custom_ids() {
     menu.update(Input::SetGenerator(1234));
     assert_eq!(menu.create_form().generator.as_str(), "void");
     menu.update(Input::SetBackend(Backend::Bds));
+    assert_eq!(menu.create_form().generator, Generator::Normal);
     assert!(
-        menu.update(Input::SubmitCreate).is_empty(),
-        "BDS cannot create extension terrain"
+        matches!(menu.update(Input::SubmitCreate).as_slice(), [Effect::Create(world)] if world.generator == Generator::Normal)
     );
 }
 
@@ -890,4 +884,50 @@ fn rejected_generator_after_docker_fallback_returns_to_the_create_form() {
         menu.form_error(),
         Some("Choose an available world generator")
     );
+}
+
+/// Dragonfly creation waits for the startup result, while BDS always has its own options.
+#[test]
+fn create_waits_for_the_catalog_and_bds_is_independent() {
+    let mut menu = WorldsMenu::default();
+    menu.update(Input::BeginCreate);
+    assert!(menu.generators_pending());
+    assert_eq!(
+        menu.view().generator_message(),
+        Some(crate::local_worlds::generators::LOADING_GENERATORS)
+    );
+    assert!(!menu.view().can_create());
+    assert!(menu.update(Input::SubmitCreate).is_empty());
+    menu.update(Input::SetBackend(Backend::Bds));
+    assert!(menu.view().can_create());
+    assert_eq!(menu.view().generator_message(), None);
+    assert!(
+        matches!(menu.update(Input::SubmitCreate).as_slice(), [Effect::Create(world)] if world.backend == Some(Backend::Bds))
+    );
+
+    let mut menu = WorldsMenu::default();
+    menu.update(Input::BeginCreate);
+    menu.apply(Event::FailedGenerators("Catalog unavailable".into()));
+    assert!(!menu.generators_pending());
+    assert_eq!(menu.view().generator_message(), Some("Catalog unavailable"));
+    assert!(!menu.view().can_create());
+    menu.update(Input::SetBackend(Backend::Bds));
+    assert!(menu.view().can_create());
+    assert!(matches!(
+        menu.update(Input::SubmitCreate).as_slice(),
+        [Effect::Create(_)]
+    ));
+
+    let mut menu = WorldsMenu::default();
+    menu.update(Input::BeginCreate);
+    menu.apply(Event::Generators(
+        crate::local_worlds::generators::fixture_catalog(),
+    ));
+    assert!(!menu.generators_pending());
+    assert_eq!(menu.view().generator_message(), None);
+    assert!(menu.view().can_create());
+    assert!(matches!(
+        menu.update(Input::SubmitCreate).as_slice(),
+        [Effect::Create(_)]
+    ));
 }

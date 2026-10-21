@@ -200,10 +200,6 @@ fn execute(
     cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Option<Event> {
     Some(match effect {
-        Effect::ListGenerators => manager.generators().map_or_else(
-            |error| Event::FailedGenerators(error.public_message()),
-            Event::Generators,
-        ),
         Effect::List => manager.list().map_or_else(failed, Event::Listed),
         Effect::Create(world) => manager.create(&world).map_or_else(failed, Event::Created),
         Effect::Delete(id) => match manager.delete(&id) {

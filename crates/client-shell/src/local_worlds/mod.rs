@@ -89,7 +89,7 @@ impl LocalWorlds {
         self.playing = false;
         self.menu = WorldsMenu::default();
         self.input(Input::Refresh);
-        self.dispatch(vec![Effect::LoadPrefs, Effect::ListGenerators]);
+        self.dispatch(vec![Effect::LoadPrefs]);
         Ok(())
     }
 
@@ -131,6 +131,14 @@ impl LocalWorlds {
 
     /// Applies finished world requests; call once per frame.
     pub fn pump(&mut self) {
+        if self.menu.generators_pending()
+            && let Some(result) = self.manager.as_ref().and_then(Manager::generators)
+        {
+            self.menu.apply(result.map_or_else(
+                |error| Event::FailedGenerators(error.public_message()),
+                Event::Generators,
+            ));
+        }
         let Some(client) = &self.client else { return };
         for reply in client.drain() {
             for (id, thumbnail) in reply.thumbnails {

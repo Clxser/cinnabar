@@ -1,51 +1,51 @@
-//! Discovery cached by executable identity, shared by every manager in this host.
+//! The process's fixed local server and its independently discovered generator catalog.
 
-use super::{
-    lock,
-    world::{WorldError, failed},
-};
 use launcher::local_worlds::generators::{GeneratorInfo, parse_catalog};
 use std::{
-    collections::HashMap,
     io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, OnceLock},
     thread,
-    time::{Duration, SystemTime},
+    time::Duration,
 };
 
-#[derive(Clone)]
-struct Cached {
-    modified: SystemTime,
-    catalog: Result<Vec<GeneratorInfo>, String>,
+/// A catalog resolves once; reading it never waits for discovery.
+pub(super) type Catalog = Arc<OnceLock<Result<Vec<GeneratorInfo>, String>>>;
+
+/// The executable selected at startup and the catalog shared by every manager.
+pub(super) struct LocalServer {
+    pub binary: PathBuf,
+    pub catalog: Catalog,
 }
 
-/// Reads -list-generators once per path and modification time, including failures.
-pub(super) fn catalog(binary: &Path) -> Result<Vec<GeneratorInfo>, WorldError> {
-    static CACHE: OnceLock<Mutex<HashMap<PathBuf, Cached>>> = OnceLock::new();
-    let path = binary
-        .canonicalize()
-        .map_err(|e| failed(format!("find local server: {e}")))?;
-    let modified = path
-        .metadata()
-        .and_then(|m| m.modified())
-        .map_err(|e| failed(format!("stat local server: {e}")))?;
-    let mut cache = lock(CACHE.get_or_init(Mutex::default));
-    let entry = cache.entry(path.clone()).or_insert_with(|| Cached {
-        modified,
-        catalog: discover(&path),
-    });
-    if entry.modified != modified {
-        *entry = Cached {
-            modified,
-            catalog: discover(&path),
-        };
-    }
-    entry.catalog.clone().map_err(|detail| {
-        tracing::error!("local server generator discovery failed: {detail}");
-        WorldError::GeneratorCatalog
+/// Selects the server once per process and starts discovery on its own thread.
+pub(super) fn local_server(shipped: PathBuf) -> &'static LocalServer {
+    static SERVER: OnceLock<LocalServer> = OnceLock::new();
+    SERVER.get_or_init(|| {
+        let binary = server_binary(shipped);
+        let catalog = start_discovery(binary.clone());
+        LocalServer { binary, catalog }
     })
+}
+
+/// Starts a single discovery task; callers only inspect the returned cell with `get`.
+pub(super) fn start_discovery(binary: PathBuf) -> Catalog {
+    let catalog = Catalog::default();
+    let result = Arc::clone(&catalog);
+    if let Err(error) = thread::Builder::new()
+        .name("local-world-generators".into())
+        .spawn(move || {
+            let discovered = discover(&binary);
+            if let Err(detail) = &discovered {
+                tracing::error!("local server generator discovery failed: {detail}");
+            }
+            let _ = result.set(discovered);
+        })
+    {
+        let _ = catalog.set(Err(error.to_string()));
+    }
+    catalog
 }
 
 /// Runs catalog discovery without inheriting input or mixing diagnostics into the JSON.
@@ -122,37 +122,37 @@ mod tests {
         assert_eq!(selected, std::env::current_dir().unwrap().join("custom"));
     }
 
+    /// A resolved startup catalog is shared and never refreshed after a rebuild.
     #[cfg(unix)]
     #[test]
-    fn discovery_is_cached_by_path_and_mtime() {
+    fn discovery_resolves_once_without_refreshing_the_binary() {
         use crate::local_worlds::test_support::write_script;
         let dir = tempfile::tempdir().unwrap();
         let binary = dir.path().join("server");
         write_script(&binary, b"#!/bin/sh\necho called >> \"$0.calls\"\necho '[{\"id\":\"islands\",\"label\":\"Islands\"}]'\n");
-        assert_eq!(catalog(&binary).unwrap()[0].id.as_str(), "islands");
-        catalog(&binary).unwrap();
+        let catalog = start_discovery(binary.clone());
+        let shared = Arc::clone(&catalog);
+        test_time::eventually("catalog discovery", || catalog.get().is_some());
+        assert_eq!(
+            catalog.get().unwrap().as_ref().unwrap()[0].id.as_str(),
+            "islands"
+        );
+        write_script(&binary, b"#!/bin/sh\necho called >> \"$0.calls\"\necho '[{\"id\":\"void\",\"label\":\"Void\"}]'\n");
+        assert_eq!(
+            shared.get().unwrap().as_ref().unwrap()[0].id.as_str(),
+            "islands"
+        );
         assert_eq!(
             std::fs::read_to_string(binary.with_extension("calls")).unwrap(),
             "called\n"
         );
-        let stamp = binary.metadata().unwrap().modified().unwrap();
-        write_script(&binary, b"#!/bin/sh\necho called >> \"$0.calls\"\necho '[{\"id\":\"void\",\"label\":\"Void\"}]'\n");
-        std::fs::File::options()
-            .write(true)
-            .open(&binary)
-            .unwrap()
-            .set_modified(stamp + std::time::Duration::from_secs(1))
-            .unwrap();
-        assert_eq!(catalog(&binary).unwrap()[0].id.as_str(), "void");
-        assert_eq!(
-            std::fs::read_to_string(binary.with_extension("calls")).unwrap(),
-            "called\ncalled\n"
-        );
-        let other = dir.path().join("other");
-        write_script(
-            &other,
-            b"#!/bin/sh\necho '[{\"id\":\"other\",\"label\":\"Other\"}]'\n",
-        );
-        assert_eq!(catalog(&other).unwrap()[0].id.as_str(), "other");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discovery_errors_are_resolved_once_too() {
+        let catalog = start_discovery(PathBuf::from("/missing-local-server"));
+        test_time::eventually("catalog failure", || catalog.get().is_some());
+        assert!(catalog.get().unwrap().is_err());
     }
 }

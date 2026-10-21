@@ -1,6 +1,8 @@
 //! The local server's generator catalog, as defined by its shared JSON schema.
 
+use bridge::Backend;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
 use super::world::Generator;
 
@@ -10,6 +12,33 @@ use super::world::Generator;
 pub struct GeneratorInfo {
     pub id: Generator,
     pub label: String,
+}
+
+/// Shown while the process's startup discovery is pending.
+pub const LOADING_GENERATORS: &str = "Loading generators…";
+
+/// The path-free discovery failure shown by the host and offline UI fixtures.
+pub const GENERATOR_CATALOG_ERROR: &str = "the local server could not list its world generators";
+
+/// The dedicated server's fixed terrain choices, independent of Dragonfly discovery.
+pub const BDS_GENERATORS: [(Generator, &str); 2] =
+    [(Generator::Normal, "Normal"), (Generator::Flat, "Flat")];
+
+/// Uses BDS's fixed choices or the Dragonfly server's resolved catalog.
+pub fn options(backend: Backend, catalog: &[GeneratorInfo]) -> Cow<'_, [GeneratorInfo]> {
+    if backend == Backend::Bds {
+        Cow::Owned(
+            BDS_GENERATORS
+                .iter()
+                .map(|(id, label)| GeneratorInfo {
+                    id: id.clone(),
+                    label: (*label).into(),
+                })
+                .collect(),
+        )
+    } else {
+        Cow::Borrowed(catalog)
+    }
 }
 
 /// Parses a nonempty catalog with unique, nonempty ids and labels.

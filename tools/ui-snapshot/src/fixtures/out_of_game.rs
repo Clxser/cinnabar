@@ -249,6 +249,25 @@ pub(super) fn world_create_advanced() -> Fixture {
     Fixture::Menu(Box::new(view))
 }
 
+/// Shows Create World before startup discovery resolves.
+pub(super) fn world_create_generators_loading() -> Fixture {
+    let Fixture::Menu(mut view) = world_create_advanced() else {
+        unreachable!()
+    };
+    view.local.generators.clear();
+    Fixture::Menu(view)
+}
+
+/// Shows a failed startup catalog while world settings remain editable.
+pub(super) fn world_create_generators_unavailable() -> Fixture {
+    let Fixture::Menu(mut view) = world_create_generators_loading() else {
+        unreachable!()
+    };
+    view.local.generator_error =
+        Some(launcher::local_worlds::generators::GENERATOR_CATALOG_ERROR.into());
+    Fixture::Menu(view)
+}
+
 /// Shows an extra generator supplied by a custom server, alongside the checked shipped catalog.
 pub(super) fn world_create_custom_generator() -> Fixture {
     let Fixture::Menu(mut view) = world_create_advanced() else {

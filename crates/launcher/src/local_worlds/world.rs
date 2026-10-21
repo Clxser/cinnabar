@@ -25,7 +25,9 @@ impl Generator {
 
     /// Whether the dedicated server has a matching level-type setting.
     pub fn supported_by_bds(&self) -> bool {
-        matches!(self, Self::Normal | Self::Flat)
+        super::generators::BDS_GENERATORS
+            .iter()
+            .any(|(id, _)| id == self)
     }
 }
 

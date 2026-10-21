@@ -48,6 +48,7 @@ impl Runners {
 pub(crate) struct Parts {
     pub store: Arc<Store>,
     pub runners: Runners,
+    pub generators: super::generators::Catalog,
     /// The dedicated-server installer whose status is reported and whose EULA gates BDS worlds.
     pub setup: Option<Arc<Provisioner>>,
     /// Lets a Docker re-probe change the default backend of new worlds.
@@ -64,6 +65,7 @@ impl Parts {
         Self {
             store,
             runners: Runners::default(),
+            generators: super::generators::Catalog::default(),
             setup: None,
             auto_backend: false,
             unavailable: Vec::new(),
@@ -90,6 +92,7 @@ pub struct Manager {
 struct Inner {
     store: Arc<Store>,
     runners: Runners,
+    generators: super::generators::Catalog,
     setup: Option<Arc<Provisioner>>,
     unavailable: Vec<(Backend, String)>,
     stop_timeout: Duration,
@@ -171,6 +174,7 @@ impl Manager {
                 },
                 store: parts.store,
                 runners: parts.runners,
+                generators: parts.generators,
                 setup: parts.setup,
                 unavailable: parts.unavailable,
                 stop_timeout: parts.stop_timeout,
@@ -189,17 +193,14 @@ impl Manager {
         self.inner.store.reclaim_abandoned_imports();
     }
 
-    /// Reads the selected Dragonfly server's catalog on the worlds worker.
+    /// Returns the startup catalog when resolved, without waiting or starting discovery.
     pub fn generators(
         &self,
-    ) -> Result<Vec<launcher::local_worlds::generators::GeneratorInfo>, WorldError> {
+    ) -> Option<Result<Vec<launcher::local_worlds::generators::GeneratorInfo>, WorldError>> {
         self.inner
-            .runners
-            .dragonfly
-            .as_ref()
-            .ok_or(WorldError::BackendUnavailable)?
-            .generators()
-            .map(Option::unwrap_or_default)
+            .generators
+            .get()
+            .map(|result| result.clone().map_err(|_| WorldError::GeneratorCatalog))
     }
 
     /// Saved worlds, most recently played first.
@@ -224,7 +225,15 @@ impl Manager {
         let mut world = world.clone();
         world.name = validate_name(&world.name)?;
         world.backend = Some(self.creatable_backend(world.backend)?);
-        if world.backend == Some(Backend::Bds) && !world.generator.supported_by_bds() {
+        let supported = match world.backend {
+            Some(Backend::Dragonfly) => self
+                .generators()
+                .ok_or(WorldError::GeneratorsPending)??
+                .iter()
+                .any(|entry| entry.id == world.generator),
+            _ => world.generator.supported_by_bds(),
+        };
+        if !supported {
             return Err(WorldError::MissingGenerator(
                 world.generator.as_str().into(),
             ));

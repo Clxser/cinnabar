@@ -424,7 +424,8 @@ Local worlds use the Go server integration. Qualify creation, offline play, relo
 import, persistence and hosting/session teardown. The accepted local-world scope does
 not establish full vanilla world-generation parity.
 
-The local server advertises registered generators to Create World. Saved generator ids
+The local server advertises registered generators once at startup, independently of world operations.
+Dragonfly creation waits for that catalog; BDS creation remains independent. Saved generator ids
 remain stable across server changes; unavailable ids fail through cancellable server startup.
 This does not establish terrain parity for custom generators.
 

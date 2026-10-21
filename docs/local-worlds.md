@@ -16,7 +16,7 @@ Each world records the backend that created it (`world.json`) and always reopens
 
 The create screen defaults to Dragonfly and Normal (Vanilla). Backend and generator are independent choices;
 Dragonfly offers the selected local server’s registered generators. BDS offers its supported Normal and Flat
-options when the server advertises them. Selecting unavailable BDS shows its runtime warning. Creation then offers
+options regardless of Dragonfly discovery. Selecting unavailable BDS shows its runtime warning. Creation then offers
 Get Docker / Retry or Dragonfly, preserving the chosen generator, name and seed.
 A world created without a backend takes the machine's default: BDS where it can run, else Dragonfly.
 Each Worlds-tab row tags its server (Dragonfly or BDS) after its game mode and generator.
@@ -37,16 +37,20 @@ with the same arguments and streams as the shipped command. Copy the module’s
 `replace` directives into that module: Go does not inherit dependency replacements.
 The command’s `-list-generators` prints the JSON catalog described by
 `tools/localserver/contract/generators.schema.json`, without opening a world or
-constructing a generator. The launcher caches discovery by executable path and
-modification time. Discovery runs on the Create World worker; creating a world checks
-its fetched catalog. Opening a saved world starts the server without catalog discovery.
+constructing a generator. At startup, the launcher selects one executable for the
+process and discovers its catalog once on a dedicated background thread. Create World
+shows “Loading generators…” and disables Dragonfly creation until that result arrives;
+a discovery error keeps it disabled. Both the form and world manager validate creation
+against the resolved catalog without waiting. BDS creation uses its own fixed choices.
+Opening a saved world starts the server without catalog discovery.
 An unavailable generator produces a specific startup error, and startup can be cancelled.
 `Run` signals this failure on stderr with the line in
 `tools/localserver/contract/generator-unavailable-line.txt` before returning its diagnostic.
 Older saves retain their Flat or Normal meaning without rewriting their metadata.
 
-In debug builds, `CINNABAR_LOCAL_SERVER` selects a custom local-server executable.
-Release builds ignore this variable and always use the shipped executable.
+In debug builds, `CINNABAR_LOCAL_SERVER` selects a custom local-server executable at startup.
+Release builds ignore this variable and always use the shipped executable. Restart the launcher
+after changing the override or updating the executable; catalog discovery does not refresh at runtime.
 
 ## BDS acquisition
 
