@@ -1,3 +1,4 @@
+use env_compat::markers;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -7,12 +8,6 @@ pub use android::configure_android;
 use executables::local_server_filename;
 
 const APP_DIR: &str = crate::PRODUCT_NAME;
-
-/// Environment keys owned by the installed user-data layout.
-pub mod markers {
-    /// Redirects configuration, data and runtime paths below one absolute root.
-    pub const USER_ROOT: &str = "CINNABAR_USER_ROOT";
-}
 
 /// The pinned vanilla resource pack below a resource root, which mirrors `.local/`.
 pub fn vanilla_pack_relative() -> String {

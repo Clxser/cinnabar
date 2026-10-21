@@ -17,6 +17,7 @@ reads = [
 test-support = []
 
 [dependencies]
+env-compat = { path = "../env-compat" }
 bedrock-packs.workspace = true
 cosmetics = { path = "../cosmetics" }
 bridge = { path = "../bridge" }

@@ -22,6 +22,7 @@ reads = [
 ]
 
 [dependencies]
+env-compat = { path = "../../crates/env-compat" }
 diagnostics = { path = "../../crates/diagnostics" }
 crash-report = { path = "../../crates/crash-report" }
 serde = { version = "1", features = ["derive"] }

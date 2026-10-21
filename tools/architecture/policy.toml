@@ -256,7 +256,7 @@ test_support_features = ["test-support"]
 name = "launcher"
 path = "crates/launcher"
 test_support_features = ["test-support"]
-allowed_dependencies = ["cosmetics", "assets", "bridge", "json-ui", "render-api", "resource-pack", "semantic-input", "ui", "update-manifest"]
+allowed_dependencies = ["cosmetics", "assets", "bridge", "env-compat", "json-ui", "render-api", "resource-pack", "semantic-input", "ui", "update-manifest"]
 forbidden_dependencies = ["protocol", "server-experience"]
 forbidden_transitive_dependencies = ["app", "cinnabar", "client-ui", "player-state", "inventory", "client-world", "world", "sim", "render", "asset-compiler", "pack-compiler", "pack-compile-input", "pack-entity-compiler", "pack-font-compiler", "bevy", "bevy_*", "wgpu*"]
 
@@ -562,7 +562,7 @@ forbidden_dependencies = ["bevy", "wgpu"]
 [[crates]]
 name = "devtool"
 path = "tools/devtool"
-allowed_dependencies = ["crash-report", "diagnostics", "workspace-declarations"]
+allowed_dependencies = ["crash-report", "diagnostics", "env-compat", "workspace-declarations"]
 forbidden_dependencies = ["bevy", "wgpu"]
 
 # The crate declarations the architecture gate enforces and devtool reads; std-only.
@@ -867,7 +867,7 @@ consumer = "crates/acceptance/src/movement_evidence.rs"
 [[markers]]
 literal = "CINNABAR_USER_ROOT"
 kind = "environment_variable"
-producer = "crates/launcher/src/install_layout.rs"
+producer = "crates/env-compat/src/markers.rs"
 consumer = "crates/launcher/src/install_layout.rs"
 
 [[markers]]
