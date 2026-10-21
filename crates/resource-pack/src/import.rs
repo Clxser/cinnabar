@@ -280,7 +280,7 @@ fn read_candidate(
         .into_inner();
     let (validated, _, _) = validate_archive_parts(
         metadata.id,
-        &metadata.version_text(),
+        metadata.version_text(),
         "",
         bytes.clone(),
         None,

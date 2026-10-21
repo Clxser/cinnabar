@@ -110,11 +110,11 @@ The native client source retirement still requires final integrated acceptance. 
 here closes full source-based parity or the complete networking goal. Keep dependency
 identities shared across reusable libraries and the client. The pinned target comes
 from [the target manifest](assets/bedrock-target.json).
-Native recovery from invalid token contents in a safely owned saved cache remains
-incomplete. It must preserve the cache until device sign-in succeeds, retain the
-selected-account and generation fences, and distinguish filesystem failures from
-unusable credentials with credential-free diagnostics. Live Windows recovery
-acceptance remains open.
+Native recovery from invalid token contents in a safely owned saved cache enters
+interactive sign-in without replacing saved state. Controlled tests cover canceled
+and failed recovery, selected-account and generation fences, and terminal unsafe-file
+and filesystem failures. Diagnostics contain no credential contents. Live Windows
+recovery acceptance remains open.
 
 ## Phase 2 — World rendering
 

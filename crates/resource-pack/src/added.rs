@@ -80,7 +80,7 @@ fn admit(archive: Vec<u8>, memory: u32) -> Result<Vec<ValidatedPack>, LibraryErr
             let subpack = select(&metadata.subpacks, memory);
             let (pack, _, _) = validate_archive_parts(
                 metadata.id,
-                &metadata.version_text(),
+                metadata.version_text(),
                 subpack,
                 bytes,
                 None,

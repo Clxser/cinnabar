@@ -285,7 +285,7 @@ impl GlobalPackLibrary {
         )?;
         let (pack, _, _) = validate_archive_parts(
             metadata.id,
-            &metadata.version_text(),
+            metadata.version_text(),
             "",
             bytes,
             None,
@@ -419,7 +419,7 @@ impl GlobalPackLibrary {
             };
             let (pack, _, _) = crate::parser::validate_archive_parts_cached(
                 active.id,
-                &metadata.version_text(),
+                metadata.version_text(),
                 &active.subpack,
                 bytes,
                 None,
