@@ -1,8 +1,11 @@
 //! Named, anonymous screen fixtures. Add a state here when a PR needs a new capture.
 
+mod collection_reveal;
 #[cfg(feature = "test-support")]
 mod cosmetics;
+mod hud_card_fit;
 mod hud_cards;
+mod hud_editor;
 mod local_identity;
 mod minecraft_import;
 mod mods;
@@ -63,6 +66,11 @@ pub enum Fixture {
         Option<Box<ui::mod_hud::Hud>>,
         Option<(&'static str, render_model::UiTexturePage)>,
     ),
+    /// A selected HUD card before or after retained placement and visibility edits.
+    HudEditor {
+        hud: Box<ui::mod_hud::Hud>,
+        edited: bool,
+    },
     /// Two same-ID requests arriving while the first menu is still open.
     #[cfg(feature = "test-support")]
     FormOverlap,
@@ -88,6 +96,42 @@ const TALL_SIZE: [u32; 2] = [1280, 900];
 const KEYBOARD_SIZE: [u32; 2] = [SIZE[0], 2000];
 
 pub const STATES: &[State] = &[
+    State {
+        name: "mod-hud-card-fit-before",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || hud_card_fit::fixture(false),
+    },
+    State {
+        name: "mod-hud-card-fit-after",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || hud_card_fit::fixture(true),
+    },
+    State {
+        name: "collection-reveal-before",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || collection_reveal::fixture(false),
+    },
+    State {
+        name: "collection-reveal-after",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || collection_reveal::fixture(true),
+    },
+    State {
+        name: "hud-editor-before",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || hud_editor::fixture(false),
+    },
+    State {
+        name: "hud-editor-after",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || hud_editor::fixture(true),
+    },
     State {
         name: "mod-local-player-neutral",
         size: SIZE,

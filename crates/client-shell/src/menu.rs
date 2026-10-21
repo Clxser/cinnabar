@@ -39,6 +39,7 @@ pub mod native_local_world;
 mod navigation;
 mod presence_targets;
 mod reconnect;
+mod renderer;
 pub mod screen_focus;
 #[cfg(test)]
 mod server_input_tests;
@@ -141,6 +142,11 @@ pub struct MenuRuntime {
     failed_video_settings_save: Option<launcher_host::video_settings::SavedVideoSettings>,
     render_mode: RenderMode,
     render_mode_request: Option<RenderMode>,
+    /// Discovered shader-pack names synced by the app; renderer choices index it.
+    shader_packs: std::sync::Arc<[String]>,
+    /// The applied pack name, retaining a pending menu choice until taken.
+    shader_pack: Option<String>,
+    shader_pack_request: Option<String>,
     vsync_override: Option<bool>,
     display_name: String,
     launcher: bool,
@@ -709,6 +715,7 @@ impl MenuRuntime {
                 }
             }
             MenuAction::AddBack => self.go_back(),
+            MenuAction::SelectRenderer(choice) => self.select_renderer(choice),
             MenuAction::ToggleRenderMode => {
                 if render_model::ENHANCED_RENDERING_ENABLED {
                     self.render_mode = self.render_mode.toggled();

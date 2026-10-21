@@ -353,7 +353,8 @@ OS Alt-Tab acceptance on macOS, Windows and Linux remains incomplete.
   Rounded JSON-UI chrome supports bounded analytic box shadows with cached geometry;
   full menu visual and hardware frame-work acceptance remains open.
   Client-owned panel collections support bounded four-column card grids with
-  item-scoped expressions and vector artwork; hardware frame-work acceptance remains open.
+  item-scoped expressions, vector artwork and one-time guest requests to reveal filtered
+  items without rebuilding the catalog; hardware frame-work acceptance remains open.
   stable retained resources and correct supported DPI/aspect behavior. Tiled images
   retain full coverage with bounded repeat geometry across cropped regions and sliced
   borders; large collection admission and hardware frame-work acceptance remain incomplete.
@@ -518,11 +519,16 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   camera owners; interactive movement, perspective release, teleport and hurt-view
   acceptance remain unverified in a displayed client. Panel previews now
   select owner-scoped HUD cards, including preview-only cards, and share retained
-  gameplay artwork. Focused rendering and cache regressions cover visible previews;
+  gameplay artwork. Optional measured fitting sizes and aligns their painted bounds
+  within tiles and sheet stages, retaining each visible instance's multiplier.
+  Focused rendering and cache regressions cover visible previews;
   populated-world and displayed-frame acceptance remain pending.
   Personal panels and HUD editor surfaces can bind the host local player's name
   and skin head, with neutral artwork when the identity is unavailable. Skin and
   session changes retire the previous portrait; full in-world acceptance remains pending.
+  Embedded panel fonts admit covered Latin-1 and General Punctuation glyphs within
+  the existing atlas bounds. Active native fields retain an accent focus border;
+  focused regressions cover glyph fallback and steady-frame geometry reuse.
   populated-world and displayed-frame acceptance remain pending. Panel motion
   preferences now settle feedback, wheel scrolling and surface transitions
   immediately, retain prepared routes and apply across route changes.
@@ -531,13 +537,25 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   moves, resizes and nudges, with an additive anchored-layout read and normalized
   compatibility reads. Editor drags snap to neighboring cards, stacking gaps and
   host-supplied native HUD bounds, with edge distances and Shift snap bypass.
-  Displayed-frame pacing acceptance remains pending.
+  The editor also retains bounded undo/redo history, per-card draft visibility,
+  anchor and scale actions, live owner-scoped card updates and inspector bindings.
+  Grid display and snapping have independent controls. Published cards can start
+  hidden, and optional inspector dimensions place settings beside the selected
+  card with viewport clamping and retained geometry bindings.
+  Hidden card IDs have an additive result read; toast and anchor motion use the
+  presentation clock. Displayed-frame pacing and populated-world Studio acceptance
+  remain pending.
   Backdrop and element blur now limit downsampling to referenced mip levels and
   cache the admitted maximum blur. Pixel-equivalence regressions are included;
   executed GPU checks and measured frame-budget acceptance remain pending.
   Server-day HUD rows now consume scoped native clock observations and leave missing
   or stale clocks unknown. Clock/host regressions are included; executed checks and
   populated-world acceptance remain pending.
+  acceptance remain unverified in a displayed client. Packet-extension world
+  drawing uses the retained geometry/depth owners, actor-mask compositor and
+  full-block highlight renderer. Headless camera, box/tracer and menu captures
+  exist; actor silhouettes, coloured full-block highlights and broad platform /
+  hardware-performance acceptance still require validation.
 - Enhanced rendering remains restricted until its GPU faults and freezes are resolved.
   Diagnostics or bounded fixtures do not establish safe general gameplay use. Java
   shader-pack source loading and configuration metadata are implemented in
@@ -545,7 +563,13 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   and enable rules, and its programs translate to validated naga modules with a binding
   contract. Behind the render crate's `shaderpacks` feature, the host builds the Java-style
   block atlas packs sample. Pack-specific translation fixes, the rest of the render-host
+  integration and in-game acceptance remain incomplete. Geometry replacement retains the
+  native scene-copy path when celestial layers, effects without depth writes, or first-person
+  scenes with private depth attachments still need native composition; their geometry-host
+  composition is incomplete.
   integration and in-game acceptance remain incomplete.
+  Autofocus intersects terrain model surfaces; sampling the rendered depth for cutout
+  pixels, liquid heights and entities remains incomplete.
   contract. Pack-specific translation fixes, render-host integration and in-game
   acceptance remain incomplete; parsed custom uniform expressions are not executed or
   rendered.

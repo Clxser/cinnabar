@@ -460,3 +460,88 @@ fn malformed_arguments_are_rejected() {
         Err(ArgsError::InvalidEvidenceTarget(_))
     ));
 }
+
+#[test]
+fn shader_pack_is_a_validated_session_override_of_the_shaderpack_mode() {
+    let ParseOutcome::Run(args) =
+        ClientArgs::parse_from(["client", "--render-mode", "ShaderPack"]).unwrap()
+    else {
+        panic!("expected run");
+    };
+    assert_eq!(args.render_mode, Some(ui::RenderMode::ShaderPack));
+    assert_eq!(args.shader_pack, None);
+    for arguments in [
+        &["client", "--shader-pack", "packs/Dusk.zip"][..],
+        &[
+            "client",
+            "--render-mode",
+            "shaderpack",
+            "--shader-pack",
+            "packs/Dusk.zip",
+        ][..],
+    ] {
+        let ParseOutcome::Run(args) = ClientArgs::parse_from(arguments).unwrap() else {
+            panic!("expected run");
+        };
+        assert_eq!(args.render_mode, Some(ui::RenderMode::ShaderPack));
+        assert_eq!(args.shader_pack, Some(PathBuf::from("packs/Dusk.zip")));
+    }
+    assert_eq!(
+        ClientArgs::parse_from([
+            "client",
+            "--shader-pack",
+            "Dusk",
+            "--render-mode",
+            "enhanced"
+        ]),
+        Err(ArgsError::ConflictingShaderPackRenderMode("enhanced"))
+    );
+    assert_eq!(
+        ClientArgs::parse_from(["client", "--shader-pack", ""]),
+        Err(ArgsError::EmptyShaderPack)
+    );
+    assert_eq!(
+        ClientArgs::parse_from(["client", "--shader-pack"]),
+        Err(ArgsError::MissingValue {
+            flag: "--shader-pack"
+        })
+    );
+    assert!(HELP.contains("--shader-pack <PATH>"));
+    assert!(HELP.contains("shaderpack"));
+}
+
+#[test]
+fn frame_time_counter_is_a_validated_developer_only_pin() {
+    let args = ClientArgs {
+        frame_time_counter_ms: Some(12_500),
+        ..ClientArgs::default()
+    };
+    assert_eq!(args.validate_developer_support(true), Ok(()));
+    assert_eq!(
+        args.validate_developer_support(false),
+        Err(ArgsError::DeveloperControlFeatureRequired(
+            "--frame-time-counter"
+        ))
+    );
+    let parsed = ClientArgs::parse_from(["client", "--frame-time-counter", "12.5"]);
+    if cfg!(feature = "developer-control") {
+        let Ok(ParseOutcome::Run(args)) = parsed else {
+            panic!("expected run args, got {parsed:?}");
+        };
+        assert_eq!(args.frame_time_counter_ms, Some(12_500));
+    } else {
+        assert_eq!(
+            parsed,
+            Err(ArgsError::DeveloperControlFeatureRequired(
+                "--frame-time-counter"
+            ))
+        );
+    }
+    for bad in ["-1", "3600", "NaN", "soon"] {
+        assert_eq!(
+            ClientArgs::parse_from(["client", "--frame-time-counter", bad]),
+            Err(ArgsError::InvalidFrameTimeCounter(bad.to_owned()))
+        );
+    }
+    assert!(HELP.contains("--frame-time-counter <SECONDS>"));
+}
