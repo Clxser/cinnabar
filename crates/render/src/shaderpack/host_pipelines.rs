@@ -5,6 +5,12 @@ use super::plan::MAX_COLOR_BUFFERS;
 use wgpu::TextureFormat;
 use wgpu::util::DeviceExt;
 
+// The shared depth pipelines also restore the native scene attachment.
+const _: () = assert!(matches!(
+    bevy::core_pipeline::core_3d::CORE_3D_DEPTH_FORMAT,
+    TextureFormat::Depth32Float
+));
+
 /// Whether a mip source can use the host's linear filtering sampler on this device.
 pub(super) fn downsample_filterable(device: &wgpu::Device, format: TextureFormat) -> bool {
     format.sample_type(None, Some(device.features()))
@@ -14,6 +20,8 @@ pub(super) fn downsample_filterable(device: &wgpu::Device, format: TextureFormat
 /// Host passes around the pack's programs.
 pub(crate) struct HostPipelines {
     pub scene_colour: wgpu::RenderPipeline,
+    /// Restores pack geometry depth for native overlays after the final pack pass.
+    pub overlay_depth: wgpu::RenderPipeline,
     pub scene_depth: Option<wgpu::RenderPipeline>,
     /// Writes scene depth into comparison textures and the geometry depth attachment.
     pub scene_depth_attachment: Option<wgpu::RenderPipeline>,
@@ -112,6 +120,7 @@ pub(super) fn host_pipelines(
     }
     HostPipelines {
         scene_colour: pipeline("scene_colour", &[target(colour0)], false),
+        overlay_depth: pipeline("overlay_depth", &[], true),
         scene_depth: depth_copy_targets(depth_format, float_depths)
             .map(|targets| pipeline("scene_depth", &targets, false)),
         scene_depth_attachment: depth_targets

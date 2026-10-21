@@ -595,11 +595,18 @@ fn reclaiming_a_tall_cell_releases_its_tail_without_moving_short_requested_cells
     let kept = atlas
         .line(&Arc::from("0"), &font, &mut layouts, &pages)
         .unwrap();
-    let before = build_nametag_scene(&[anchor("0")], 1.0, &font, &mut layouts, &mut atlas, &pages);
-    let old_pixels = Arc::clone(&atlas.cells[atlas.lines["0"]].rgba8);
-    let mut anchors = short_anchors();
     let mut protected = anchor("0");
     protected.runtime_id = 0;
+    let before = build_nametag_scene(
+        std::slice::from_ref(&protected),
+        1.0,
+        &font,
+        &mut layouts,
+        &mut atlas,
+        &pages,
+    );
+    let old_pixels = Arc::clone(&atlas.cells[atlas.lines["0"]].rgba8);
+    let mut anchors = short_anchors();
     anchors.insert(0, protected);
     let after = build_nametag_scene(&anchors, 1.0, &font, &mut layouts, &mut atlas, &pages);
     assert_eq!(

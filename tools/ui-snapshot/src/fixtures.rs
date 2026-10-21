@@ -1,6 +1,7 @@
 //! Named, anonymous screen fixtures. Add a state here when a PR needs a new capture.
 
 mod chat;
+mod chat_settings;
 mod collection_reveal;
 #[cfg(feature = "test-support")]
 mod cosmetics;
@@ -14,7 +15,7 @@ mod out_of_game;
 mod roster;
 mod shader_options;
 mod shader_pack;
-pub(crate) mod states;
+mod states;
 mod updates;
 
 use std::sync::Arc;
@@ -137,13 +138,6 @@ pub fn settings(section: &str) -> MenuView {
     view
 }
 
-/// Shows Storage as a desktop host fills it, with the folder buttons.
-fn settings_storage() -> Fixture {
-    let mut view = settings(SettingSection::StorageManagement.definition().name);
-    Arc::make_mut(&mut view.storage).opens_folders = true;
-    Fixture::Menu(Box::new(view))
-}
-
 /// Shows the keyboard options and command macro modifier without a live session.
 fn settings_keyboard() -> Fixture {
     Fixture::Menu(Box::new(settings("keyboard_and_mouse_forced_index")))
@@ -192,4 +186,9 @@ fn settings_keyboard_layout(observed: bool) -> Fixture {
         settings.set_key_label(0x14, "a");
     }
     Fixture::Menu(Box::new(view))
+}
+
+/// Enumerates every fixture, including the Chat section's independently owned states.
+pub fn states() -> impl Iterator<Item = &'static State> {
+    states::STATES.iter().chain(chat_settings::STATES)
 }

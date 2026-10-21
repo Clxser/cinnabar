@@ -50,6 +50,8 @@ mod lightmap;
 #[cfg(feature = "shaderpacks")]
 mod loader;
 #[cfg(feature = "shaderpacks")]
+mod overlay_depth;
+#[cfg(feature = "shaderpacks")]
 mod passes;
 #[cfg(feature = "shaderpacks")]
 mod pipeline_cache;

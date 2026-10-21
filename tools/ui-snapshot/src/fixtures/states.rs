@@ -5,7 +5,7 @@ use super::*;
 /// Leaves room for the advanced world form at the standard GUI scale.
 const WORLD_CREATE_SIZE: [u32; 2] = [1280, 900];
 
-pub const STATES: &[State] = &[
+pub(super) const STATES: &[State] = &[
     asset_free("sprite-outline-before", [800, 240], || {
         Fixture::SpriteOutline { outline: false }
     }),
@@ -664,7 +664,7 @@ pub const STATES: &[State] = &[
         name: "settings-storage",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: settings_storage,
+        fixture: out_of_game::settings_storage,
     },
     State {
         name: "settings-keyboard",

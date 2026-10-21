@@ -263,6 +263,12 @@ Equipped cosmetic emitters also run in visible menu and HUD paper dolls using th
 shared particle engine and attachment poses. Catalog-wide, in-world interaction
 and performance qualification for these previews remains open.
 
+Player name tags use Java's standing player height before pose offsets, independent of
+server collision-box changes. Other actors retain their published label height.
+Name tag colours compose after Enhanced and shader-pack world effects with the scene's
+depth, and translucent plates use over-compositing for scene alpha. Coplanar shadows
+and glyphs share the anchor depth to avoid rounding speckle. Local cosmetic
+colour selection uses actor identity. In-world visual qualification remains open.
 Upright player name tags keep Java's standing height before pose offsets; swimming,
 crawling and gliding players use their live height. Other actors retain their published
 label height. Tag eligibility uses always-show metadata or the shared crosshair pick.
@@ -356,6 +362,14 @@ OS Alt-Tab acceptance on macOS, Windows and Linux remains incomplete.
 - [ ] `P5.8-SETTINGS` — Close menu, control, video and persistence acceptance. Desktop
   wiring alone does not establish native parity; language-specific scale dialogs,
   safe-zone handling, service-controlled spacing and touch/console behavior remain open.
+  Social → Chat exposes the existing chat preferences, shared opacity, duration and
+  position controls, and one reset for all displayed Chat settings. Chat uses the bundled
+  Cinnangles Sans font without a typeface selector; font sizing applies directly and
+  obsolete saved typeface values are ignored. Emote filtering, narration and mention
+  highlighting remain unavailable and their controls say they store preferences only.
+  Offline rendered fixtures cover the panel, values, palettes and reset confirmation;
+  live input acceptance remains incomplete. Font size 5–20/default 10 and spacing
+  0–100/default 0 remain provisional host ranges, without confirmed native defaults.
 
 The inherited interaction acceptance scope also includes full item identity and use phases,
 replacement/deferred releases, mounted inventory, sign filtering/length/structured text,
@@ -505,6 +519,8 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   hardware-performance acceptance still require validation.
 - Enhanced rendering remains restricted until its GPU faults and freezes are resolved.
   Diagnostics or bounded fixtures do not establish safe general gameplay use.
+  Its MSAA nametag composite blends against resolved scene colour, so labels partly
+  occluded by world silhouettes get a dark edge fringe; per-sample composition is incomplete.
 - Java shader packs (Iris/OptiFine format) run behind the off-by-default `shaderpacks`
   feature. `shaderpack` loads packs, parses `shaders.properties`, options, Iris option
   menus, profiles and option files, evaluates custom uniforms and translates programs to

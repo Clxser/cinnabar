@@ -1,6 +1,6 @@
 //! Anonymous session-boundary and launcher popup fixtures.
 
-use super::Fixture;
+use super::{Arc, Fixture, SettingSection, settings};
 use launcher::menu::{MenuAction, MenuDialog, MenuScreen, MenuView};
 
 /// Creates a menu fixture with no account or network services.
@@ -288,4 +288,10 @@ fn generator_catalog() -> Vec<launcher::local_worlds::generators::GeneratorInfo>
         "../../../localserver/contract/catalog.example.json"
     ))
     .expect("valid server catalog example")
+}
+/// Shows Storage as a desktop host fills it, with the folder buttons.
+pub(super) fn settings_storage() -> Fixture {
+    let mut view = settings(SettingSection::StorageManagement.definition().name);
+    Arc::make_mut(&mut view.storage).opens_folders = true;
+    Fixture::Menu(Box::new(view))
 }
