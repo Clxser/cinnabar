@@ -148,11 +148,16 @@ mod tests {
             reset: false,
             placements: vec![Placement {
                 id: "equipment".into(),
+                anchor: Anchor::Center,
+                offset: [0.; 2],
                 scale: 1.,
                 position: Some([0.5, 0.5]),
             }],
         };
         assert!(saved.validate().is_ok());
+        let mut malformed_offset = saved.clone();
+        malformed_offset.placements[0].offset = [f32::NAN, 0.];
+        assert!(malformed_offset.validate().is_err());
         for scale in [f32::NAN, 0.24, 5.01] {
             let mut malformed = saved.clone();
             malformed.placements[0].scale = scale;
@@ -192,6 +197,7 @@ mod tests {
             ("button.resume_game", false),
         ] {
             hud.surface = Some(crate::mod_panel::Surface {
+                previews: Default::default(),
                 collections: Default::default(),
                 transitions: Default::default(),
                 screen: "fixture.editor".into(),
@@ -403,6 +409,8 @@ fn uniform_card_scale_supports_quarter_to_five_without_widening_text_scale() {
             reset: false,
             placements: vec![super::Placement {
                 id: "clock".into(),
+                anchor: super::Anchor::TopLeft,
+                offset: [0.; 2],
                 position: None,
                 scale,
             }],

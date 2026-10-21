@@ -8,14 +8,16 @@ publish = false
 [package.metadata.cinnabar]
 reads = [
     "crates/mod-api/wit/extension.wit",
+    "crates/mod-api/native-frame-v1.json",
     "crates/mod-host/src/packet_mod/tests/guest.wat",
     "crates/mod-host/src/tests/hud.wat",
 ]
 
 [dependencies]
 anyhow.workspace = true
-bedrock-packs.workspace = true
+arc-swap = "1.9"
 assets = { path = "../assets" }
+bedrock-packs.workspace = true
 bevy.workspace = true
 client-state = { path = "../client-state" }
 client-ui = { path = "../client-ui" }
@@ -24,6 +26,7 @@ fontdue = { version = "0.9.3", default-features = false, features = ["std"] }
 inventory = { path = "../inventory" }
 mod-api = { path = "../mod-api" }
 mod-host = { path = "../mod-host" }
+mod-ui = { path = "../mod-ui" }
 mod-render = { path = "../mod-render" }
 player-state = { path = "../player-state" }
 protocol = { path = "../protocol" }

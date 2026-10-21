@@ -6,6 +6,7 @@ use client_extensions::modding::{
     multi::{self, ModHosts},
 };
 
+use crate::semantic_controls::ReservedControls;
 use bevy::prelude::*;
 use {
     crate::{environment::VisualTimeOverride, runtime::network::resource_packs::PackApplication},
@@ -34,6 +35,8 @@ mod drawing_policy;
 mod environment_loader;
 mod hud_editor;
 mod library;
+mod native_camera;
+mod packet_menu;
 pub(crate) mod packets;
 pub(crate) mod registration;
 mod terrain;
@@ -148,6 +151,20 @@ impl ModRuntime {
     /// Maps a publishing host's runtime index to its stable panel catalog owner.
     fn panel_ui_owner(&self, host: usize) -> mod_ui::PanelUiOwner {
         self.metadata[host].owner
+    }
+
+    /// Projects each live guest's HUD and native-binding revision with its stable UI owner.
+    fn hud_sources(
+        &self,
+    ) -> impl Iterator<Item = (mod_ui::PanelUiOwner, u64, &ui::mod_hud::Hud)> + Clone {
+        (0..self.hosts.host_count()).filter_map(|index| {
+            let host = self.hosts.host(index);
+            Some((
+                self.panel_ui_owner(index),
+                host.hud_revision()?,
+                host.hud()?,
+            ))
+        })
     }
 
     /// Existing mod order chooses one active, explicitly authorized local menu brand.
@@ -394,6 +411,7 @@ fn install(app: &mut App, mut hosts: Vec<ModHost>) {
 }
 
 fn configure_systems(app: &mut App, watching: bool) {
+    app.init_resource::<ReservedControls>();
     app.init_resource::<client_presentation::actor_publication::ActorPresentationStyle>();
     app.add_systems(Update, environment_loader::poll.before(begin_mod_frame));
     ghost::configure(app);
@@ -480,6 +498,7 @@ type ModOutputs<'w> = (
 /// Native presentation facts and retained observers available to one mod frame.
 #[derive(SystemParam)]
 struct ModObservation<'w, 's> {
+    packets: Option<Res<'w, packets::PacketMods>>,
     watcher: Option<Res<'w, registration::Watcher>>,
     render_scene: Option<ResMut<'w, render_scene::ModRenderScene>>,
     cameras: Query<
@@ -517,6 +536,7 @@ fn drive_mod(
     observation: ModObservation,
 ) {
     let ModObservation {
+        packets,
         watcher,
         render_scene,
         cameras,
@@ -525,6 +545,12 @@ fn drive_mod(
         mut terrain,
         mut actor_style,
     } = observation;
+    let (network, mut camera, cues, item_use) = outputs;
+    let user_freelook = gameplay
+        .input
+        .as_ref()
+        .and_then(|input| input.snapshot())
+        .is_some_and(|input| input.phases[semantic_input::Action::Freelook as usize].held);
     let focused = windows.single().is_ok_and(|(window, _)| window.focused);
     let absorbed = client_shell::screen_policy::absorbs_input(
         &player_runtime,
@@ -549,9 +575,39 @@ fn drive_mod(
     let (Some(mut extension), Some(mut time_override), Some(mut interaction)) =
         (extension, time_override, interaction)
     else {
+        let effects = packets
+            .as_ref()
+            .filter(|packets| packets.native_frame_available())
+            .and_then(|packets| {
+                packets.native_frame(gameplay.native_frame(captured && !absorbed, &ui))
+            });
+        if let Some(camera) = camera.as_deref_mut() {
+            camera.set_preserve_teleport_rotation(false);
+            camera.set_hurt_camera_style(None);
+            native_camera::apply(
+                camera,
+                gameplay.view.as_deref_mut(),
+                user_freelook,
+                effects.as_ref(),
+            );
+        }
+        if let Some(delta) = effects.and_then(|effects| effects.rotation) {
+            gameplay.apply(mod_host::CameraDelta {
+                yaw: delta.yaw,
+                pitch: delta.pitch,
+            });
+        }
         return;
     };
     if extension.suspended {
+        if let Some(packets) = packets.as_ref() {
+            packets.native_frame(None);
+        }
+        if let Some(camera) = camera.as_deref_mut() {
+            camera.set_preserve_teleport_rotation(false);
+            camera.set_hurt_camera_style(None);
+            native_camera::apply(camera, gameplay.view.as_deref_mut(), user_freelook, None);
+        }
         return;
     }
     drawing_policy::bind(&mut extension.hosts, &gameplay);
@@ -574,7 +630,6 @@ fn drive_mod(
     );
     let pressed = keybind_allowed(focused, absorbed) && keys.just_pressed(DEMO_KEY);
     let controls = std::mem::replace(&mut extension.controls, mod_host::empty_controls());
-    let (network, camera, cues, item_use) = outputs;
     let previous_cues = cues.as_ref().map_or_else(Vec::new, |feed| feed.0.clone());
     let registrations: Vec<_> = extension
         .metadata
@@ -667,7 +722,26 @@ fn drive_mod(
     gameplay.pulse_jump(merged.jump_pulse && !merged.jump_cancel, &ui);
     interaction.attack_reach = merged.attack_reach;
     interaction.attack_pulse = merged.attack_pulse && gameplay.pulse_attack();
-    if let Some(delta) = merged.delta {
+    let regular_camera = (0..extension.hosts.host_count()).any(|index| {
+        let host = extension.hosts.host(index);
+        host.is_active() && host.has_camera_output()
+    });
+    let native_effects = packets
+        .as_ref()
+        .filter(|packets| packets.native_frame_available())
+        .and_then(|packets| {
+            packets
+                .native_frame(gameplay.native_frame(captured && !absorbed && !regular_camera, &ui))
+        });
+    if let Some(delta) = merged.delta.or_else(|| {
+        native_effects
+            .as_ref()
+            .and_then(|effects| effects.rotation)
+            .map(|delta| mod_host::CameraDelta {
+                yaw: delta.yaw,
+                pitch: delta.pitch,
+            })
+    }) {
         gameplay.apply(delta);
     }
     send_commands(network.as_deref(), ui.session_id(), merged.commands);
@@ -680,6 +754,12 @@ fn drive_mod(
         let [fov_scale, look_scale] = merged.view_scale.unwrap_or([1.0, 1.0]);
         camera.set_view_scale(fov_scale, look_scale);
         camera.set_hurt_camera_style(merged.hurt_style);
+        native_camera::apply(
+            &mut camera,
+            gameplay.view.as_deref_mut(),
+            user_freelook,
+            native_effects.as_ref().filter(|_| !regular_camera),
+        );
     }
     if let Some(mut policy) = item_use {
         policy.scope = merged.item_use_delay_fix;
@@ -690,6 +770,12 @@ fn drive_mod(
         .set_mod_label(extension.hosts.merged_label())
     {
         warn!("Cinnabar extension HUD rejected: {error}");
+    }
+    if let Err(error) = presentation
+        .mod_ui_mut()
+        .set_mod_hud_sources(extension.hud_sources())
+    {
+        warn!("Cinnabar extension HUD sources rejected: {error}");
     }
     let combined_hud = extension.hosts.merged_hud();
     let hud = combined_hud.as_deref();
@@ -722,21 +808,27 @@ fn drive_mod(
     if let Err(error) = presentation.mod_ui_mut().set_mod_crosshair(crosshair) {
         warn!("Cinnabar extension crosshair rejected: {error}");
     }
-    let owner = extension.hosts.panel_owner();
-    presentation.set_mod_menu_branding(extension.menu_branding());
-    if let Err(error) = presentation.set_mod_panel_font(extension.metadata[owner].font.clone()) {
-        warn!("Cinnabar extension panel font rejected: {error}");
+    if !packets
+        .as_ref()
+        .is_some_and(|packets| packets.menu_owns_panel())
+    {
+        let owner = extension.hosts.panel_owner();
+        presentation.set_mod_menu_branding(extension.menu_branding());
+        if let Err(error) = presentation.set_mod_panel_font(extension.metadata[owner].font.clone())
+        {
+            warn!("Cinnabar extension panel font rejected: {error}");
+        }
+        if let Err(error) = presentation.mod_ui_mut().set_mod_panel(
+            extension.panel_ui_owner(owner),
+            extension.hosts.host(owner).panel(),
+        ) {
+            warn!("Cinnabar extension panel rejected: {error}");
+            extension.hosts.host_mut(owner).set_panel_open(false);
+        }
+        presentation
+            .mod_ui_mut()
+            .set_mod_panel_open(extension.hosts.host(owner).panel_open());
     }
-    if let Err(error) = presentation.mod_ui_mut().set_mod_panel(
-        extension.panel_ui_owner(owner),
-        extension.hosts.host(owner).panel(),
-    ) {
-        warn!("Cinnabar extension panel rejected: {error}");
-        extension.hosts.host_mut(owner).set_panel_open(false);
-    }
-    presentation
-        .mod_ui_mut()
-        .set_mod_panel_open(extension.hosts.host(owner).panel_open());
     let editor_session = gameplay.hud_editor_session(&ui);
     hud_editor::publish(
         &mut extension,

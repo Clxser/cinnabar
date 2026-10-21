@@ -139,6 +139,10 @@ bevy = { version = "=0.20.0", default-features = false, features = [
 # The noop backend only runs when an instance explicitly enables it (render tests).
 # `std` keeps error scopes per thread; without it, concurrent pipeline compiles share one stack.
 wgpu = { version = "30.0.1", default-features = false, features = ["noop", "std", "wgsl"] }
+# Every crate that names naga uses this one feature set, so `-p cinnabar` and `--workspace`
+# builds agree on naga and nothing above it (wgpu, bevy_render) builds twice. `glsl-in` is the
+# Java shader-pack frontend; it adds only naga's GLSL parser and pp-rs.
+naga = { version = "30.0.1", features = ["glsl-in", "wgsl-in"] }
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tga"] }
 # Native bridge and session composition add OS I/O and the multithreaded runtime.
 tokio = { version = "1.52", features = ["io-util", "macros", "rt", "sync", "time"] }
@@ -169,19 +173,22 @@ wasi-preview1-component-adapter-provider = "=36.0.16"
 wit-component = "=0.247.0"
 
 
-# Keep Metal display-link delivery, bounded submissions and indirect validation on wgpu 30.0.1.
+# Keep Metal display-link delivery, bounded submissions and indirect validation on wgpu 30.0.1,
+# plus naga GLSL frontend fixes for Java shader packs: constant `?:` and indexing,
+# missing returns, scalar swizzles, atomics and barriers, SPIR-V `fma` NoContraction.
+# Every wgpu crate comes from the same rev so wgpu and the shaderpack crate share one naga.
 [patch.crates-io]
 tokio-websockets = { git = "https://github.com/cinnabar-mc/tokio-websockets", rev = "6f75363f1d892c42b853476dfba3d58e49e9d506" }
-naga = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
-wgpu = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
-wgpu-core = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
-wgpu-hal = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
-wgpu-types = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
+naga = { git = "https://github.com/cinnabar-mc/wgpu", rev = "241cdd04a413ce5dc8547d7f4693297e403d40f3" }
+wgpu = { git = "https://github.com/cinnabar-mc/wgpu", rev = "241cdd04a413ce5dc8547d7f4693297e403d40f3" }
+wgpu-core = { git = "https://github.com/cinnabar-mc/wgpu", rev = "241cdd04a413ce5dc8547d7f4693297e403d40f3" }
+wgpu-hal = { git = "https://github.com/cinnabar-mc/wgpu", rev = "241cdd04a413ce5dc8547d7f4693297e403d40f3" }
+wgpu-types = { git = "https://github.com/cinnabar-mc/wgpu", rev = "241cdd04a413ce5dc8547d7f4693297e403d40f3" }
 
-wgpu-naga-bridge = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
+wgpu-naga-bridge = { git = "https://github.com/cinnabar-mc/wgpu", rev = "241cdd04a413ce5dc8547d7f4693297e403d40f3" }
 
 # Iris conditions allow float option values and conditional expressions.
-pp-rs = { git = "https://github.com/cinnabar-mc/glslpp-rs", rev = "e67c2d3796526e539cf9b1678a83fbdfcfae87c1" }
+pp-rs = { git = "https://github.com/cinnabar-mc/glslpp-rs", rev = "2032a88999c95c6ca0b397758dc97930089a6608" }
 
 [profile.dev]
 opt-level = 1

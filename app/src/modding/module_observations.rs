@@ -420,6 +420,7 @@ impl ModuleObserver {
             network.round_trip_ms(world.session, authority.local_player_runtime_id())
         });
         ModuleObservations {
+            world_day: gameplay.world_day(world),
             local_totem_uses: authority.totem_activations(authority.local_player_runtime_id()),
             motion,
             vitals,
