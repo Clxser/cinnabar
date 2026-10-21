@@ -12,8 +12,7 @@ use super::{
     Fixture, GUI_SCALE, KEYBOARD_SIZE, SHADER_PACK_ROW_SIZE, SIZE, SMALL_SIZE, SettingId,
     SettingSection, State, TALL_SIZE, collection_reveal, hud_card_fit, hud_cards, hud_editor,
     local_identity, minecraft_import, mods, out_of_game, profile, roster, settings,
-    settings_general_diagnostics_on, settings_general_toggle, settings_keyboard,
-    settings_keyboard_layout, shader_options, shader_pack, updates,
+    settings_screens, shader_options, shader_pack, updates,
 };
 
 /// A capture at GUI scale 1 that needs no game assets.
@@ -351,6 +350,20 @@ pub(super) const STATES: &[State] = &[
     },
     #[cfg(feature = "test-support")]
     State {
+        name: "dressing-room-cosmetics-locked",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: cosmetics::locked_cosmetics,
+    },
+    #[cfg(feature = "test-support")]
+    State {
+        name: "dressing-room-cosmetics-locked-narrow",
+        size: [480, 1280],
+        gui_scale: GUI_SCALE,
+        fixture: cosmetics::locked_cosmetics,
+    },
+    #[cfg(feature = "test-support")]
+    State {
         name: "dressing-room-cosmetics-head",
         size: SIZE,
         gui_scale: GUI_SCALE,
@@ -417,14 +430,30 @@ pub(super) const STATES: &[State] = &[
         name: "craft-overlap-ready",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || Fixture::CraftOverlap { selected: false },
+        fixture: || Fixture::CraftOverlap {
+            selected: false,
+            block_identity: 0,
+        },
     },
     #[cfg(feature = "test-support")]
     State {
         name: "craft-overlap-selected",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || Fixture::CraftOverlap { selected: true },
+        fixture: || Fixture::CraftOverlap {
+            selected: true,
+            block_identity: 0,
+        },
+    },
+    #[cfg(feature = "test-support")]
+    State {
+        name: "craft-block-identity-selected",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || Fixture::CraftOverlap {
+            selected: true,
+            block_identity: i32::MIN + 1,
+        },
     },
     State {
         name: "edit-selection-transfer",
@@ -703,13 +732,13 @@ pub(super) const STATES: &[State] = &[
         name: "settings-keyboard",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: settings_keyboard,
+        fixture: settings_screens::settings_keyboard,
     },
     State {
         name: "settings-general",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || settings_general_toggle(SettingId::EcomodeToggle),
+        fixture: || settings_screens::settings_general_toggle(SettingId::EcomodeToggle),
     },
     State {
         name: "settings-updates",
@@ -743,25 +772,25 @@ pub(super) const STATES: &[State] = &[
         name: "settings-general-advanced",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || settings_general_toggle(SettingId::RecordNetworkSession),
+        fixture: || settings_screens::settings_general_toggle(SettingId::RecordNetworkSession),
     },
     State {
         name: "settings-general-advanced-on",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: settings_general_diagnostics_on,
+        fixture: settings_screens::settings_general_diagnostics_on,
     },
     State {
         name: "settings-keyboard-physical-label",
         size: KEYBOARD_SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || settings_keyboard_layout(false),
+        fixture: || settings_screens::settings_keyboard_layout(false),
     },
     State {
         name: "settings-keyboard-azerty",
         size: KEYBOARD_SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || settings_keyboard_layout(true),
+        fixture: || settings_screens::settings_keyboard_layout(true),
     },
     State {
         name: "settings-mods",

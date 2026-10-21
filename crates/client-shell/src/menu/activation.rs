@@ -243,7 +243,8 @@ impl MenuRuntime {
             MenuAction::AddName
             | MenuAction::AddAddress
             | MenuAction::AddPort
-            | MenuAction::EditSkinName => {}
+            | MenuAction::EditSkinName
+            | MenuAction::SearchFriends => {}
             MenuAction::AddSave => {
                 // Saving pops the form back to the tab that opened it.
                 if self.save_draft() {
