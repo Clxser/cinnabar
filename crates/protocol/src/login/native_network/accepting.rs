@@ -8,7 +8,7 @@ pub use packs::native_host_packs;
 
 pub use world::NativeHostWorld;
 
-use super::{Connection, PacketIo};
+use super::Connection;
 use bedrock_client::server::{ServerHandshake, ServerHandshakeOptions};
 use bedrock_net::encryption::{BatchDecryptor, BatchEncryptor};
 use bedrock_net::{BatchLimits, CompressionSettings};
@@ -145,7 +145,7 @@ impl NativeAcceptingRetired {
     }
     /// Completes original transport retirement without starting a replacement association.
     pub async fn finish_close(&mut self, deadline: Instant) -> io::Result<()> {
-        wait(deadline, self.connection.close()).await?
+        wait(deadline, self.connection.transport_mut().finish_close()).await?
     }
 }
 
