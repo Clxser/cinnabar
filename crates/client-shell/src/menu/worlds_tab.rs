@@ -303,16 +303,11 @@ impl MenuRuntime {
                         A::Backend(bridge::Backend::Dragonfly),
                         A::Backend(bridge::Backend::Bds),
                     ];
-                    actions.extend(
-                        view.generators
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, entry)| {
-                                view.create.backend != bridge::Backend::Bds
-                                    || entry.id.supported_by_bds()
-                            })
-                            .map(|(index, _)| A::Generator(index)),
+                    let options = launcher::local_worlds::generators::options(
+                        view.create.backend,
+                        &view.generators,
                     );
+                    actions.extend((0..options.len()).map(A::Generator));
                     local(&actions)
                 }
             },
@@ -555,11 +550,19 @@ mod tests {
                 .contains(&MenuAction::LocalWorld(LocalWorldAction::Generator(0)))
         );
         menu.local_ui.view.create.backend = Backend::Bds;
-        assert!(
-            !menu
-                .local_focus_actions()
-                .unwrap()
-                .contains(&MenuAction::LocalWorld(LocalWorldAction::Generator(0)))
-        );
+        for catalog in [menu.local_ui.view.generators.clone(), Vec::new()] {
+            menu.local_ui.view.generators = catalog;
+            let actions = menu.local_focus_actions().unwrap();
+            for index in 0..launcher::local_worlds::generators::BDS_GENERATORS.len() {
+                assert!(
+                    actions.contains(&MenuAction::LocalWorld(LocalWorldAction::Generator(index)))
+                );
+            }
+            assert!(
+                !actions.contains(&MenuAction::LocalWorld(LocalWorldAction::Generator(
+                    launcher::local_worlds::generators::BDS_GENERATORS.len()
+                )))
+            );
+        }
     }
 }
