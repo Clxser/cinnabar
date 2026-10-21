@@ -4,6 +4,7 @@ use super::*;
 use bedrock_client_tokio::connection::send::PreparedSend;
 use bedrock_net::login::provider::ProviderVerifier;
 mod cdn;
+mod retirement;
 use crate::login::native_network::{
     NativeHostedRelayProgress, NativeHostedUpstream,
     accepting::send::tests::{Pair, signed_pair_with_key},
@@ -71,6 +72,23 @@ async fn original_upstream_with_archive(
     archive: Vec<u8>,
     pack_type: u8,
 ) {
+    let _ = original_upstream_with_retirement(route, cdn, archive, pack_type, false).await;
+}
+
+/// Optionally observes physical retirement after the same initialized game exchange.
+async fn original_upstream_with_retirement(
+    route: Route,
+    cdn: Option<std::net::SocketAddr>,
+    archive: Vec<u8>,
+    pack_type: u8,
+    observe_retirement: bool,
+) -> Option<retirement::Observation> {
+    let (socket_send, socket_receive) = if observe_retirement {
+        let (send, receive) = tokio::sync::oneshot::channel();
+        (Some(send), Some(receive))
+    } else {
+        (None, None)
+    };
     let FixtureRoute {
         mut listener,
         address,
@@ -110,6 +128,10 @@ async fn original_upstream_with_archive(
     };
     let bds = async {
         let mut peer = listener.accept().await.unwrap();
+        if let Some(send) = socket_send {
+            let address = peer.session.remote_addr().await.socket_addr.unwrap();
+            send.send(address).unwrap();
+        }
         let codec = BatchCodec::new(BatchHeader::NetherNet, BatchLimits::default());
         assert!(matches!(
             &*receive(&mut peer, &codec).await[0].data,
@@ -494,13 +516,19 @@ async fn original_upstream_with_archive(
             !upstream.release_received().unwrap(),
             "ordinary actual output became a terminal"
         );
-        upstream.begin_close(deadline).finish_close().await.unwrap();
+        let retirement = if let Some(receive) = socket_receive {
+            Some(retirement::observe(upstream, deadline, receive.await.unwrap()).await)
+        } else {
+            upstream.begin_close(deadline).finish_close().await.unwrap();
+            None
+        };
         assert!(
             pair.finish().await,
             "original signed guest owners did not join"
         );
+        retirement
     };
-    tokio::join!(bds, relay);
+    let (_, retirement) = tokio::join!(bds, relay);
     listener.close().await.unwrap();
     drop(listener);
     if let Some(http) = http {
@@ -510,6 +538,7 @@ async fn original_upstream_with_archive(
             .shutdown()
             .await;
     }
+    retirement
 }
 
 /// Drives only the original accepting prepared-send protocol, without changing authority policy.
