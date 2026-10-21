@@ -40,6 +40,7 @@ impl Drop for Fixture {
 #[test]
 fn completed_account_transactions_release_duplicated_file_leases() {
     let fixture = Fixture::new();
+    private_directory(&fixture.store.directory).unwrap();
     let path = fixture.store.directory.join("store.lock");
     for nonblocking in [false, true] {
         let owner = if nonblocking {
