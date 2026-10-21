@@ -842,24 +842,39 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     startup::install_first_frame_log(&mut app);
     let terminal_cause = TerminalCause::install(&mut app);
     let exit = crate::runtime::frame_profile::run(&mut app);
+    bevy::log::info!(shutdown_phase = "frame_profile_run_returned");
     begin_bounded_shutdown(&shutdown_watchdog, &exit);
+    bevy::log::info!(shutdown_phase = "clipboard_shutdown_begin");
     PlatformClipboard::shutdown();
+    bevy::log::info!(shutdown_phase = "clipboard_shutdown_done");
+    bevy::log::info!(shutdown_phase = "discord_shutdown_begin");
     client_shell::discord_presence::shutdown(&mut app);
+    bevy::log::info!(shutdown_phase = "discord_shutdown_done");
+    bevy::log::info!(shutdown_phase = "network_resource_shutdown_begin");
     if let Some(mut network) = app
         .world_mut()
         .remove_resource::<NetworkHandle<PackApplication>>()
     {
         network.shutdown();
     }
+    bevy::log::info!(shutdown_phase = "network_resource_shutdown_done");
+    bevy::log::info!(shutdown_phase = "app_shell_drop_begin");
     drop(app);
+    bevy::log::info!(shutdown_phase = "app_shell_drop_done");
+    bevy::log::info!(shutdown_phase = "io_finish_begin");
     io.finish();
+    bevy::log::info!(shutdown_phase = "io_finish_done");
+    bevy::log::info!(shutdown_phase = "latency_trace_finish_begin");
     bridge::latency_trace::finish();
+    bevy::log::info!(shutdown_phase = "latency_trace_finish_done");
     let _ = writeln!(
         diagnostics::console::stderr(),
         "{SHUTDOWN_COMPLETED} exit_code={}",
         app_exit_code(&exit)
     );
+    bevy::log::info!(shutdown_phase = "console_exit_flush_begin");
     diagnostics::console::flush_before_exit();
+    bevy::log::info!(shutdown_phase = "console_exit_flush_done");
     shutdown_watchdog.complete();
     if exit.is_error() {
         bail!("{}", terminal_cause.exit_message());

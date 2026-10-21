@@ -45,8 +45,15 @@ impl IoOwner {
             .runtime
             .take()
             .expect("one application runtime shutdown");
+        bevy::log::info!(
+            shutdown_phase = "io_tasks_wait_begin",
+            pending_tasks = self.tasks.len()
+        );
         runtime.block_on(self.tasks.wait());
+        bevy::log::info!(shutdown_phase = "io_tasks_wait_done");
+        bevy::log::info!(shutdown_phase = "io_runtime_shutdown_begin");
         runtime.shutdown_background();
+        bevy::log::info!(shutdown_phase = "io_runtime_shutdown_done");
     }
 }
 

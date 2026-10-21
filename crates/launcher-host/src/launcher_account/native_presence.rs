@@ -95,11 +95,13 @@ async fn publish(
         // Keep this actual future pinned by the enclosing async lifetime, even when state changes.
         // Retirement waits for its original finite budget before starting the sole cleanup.
         let mut dispatched = false;
+        tracing::info!(shutdown_phase = "presence_update_begin");
         let result = bounded_until(
             tokio::time::Instant::now() + REQUEST_BUDGET,
             service.update(&scope, &state, &mut dispatched),
         )
         .await;
+        tracing::info!(shutdown_phase = "presence_update_done");
         wrote |= dispatched;
         let delay = match result {
             Ok(Ok(heartbeat)) => heartbeat
@@ -126,6 +128,9 @@ async fn publish(
         let until = now.checked_add(delay).unwrap_or(now + FALLBACK_HEARTBEAT);
         wait_latest(shared, lifetime, &state, until).await;
     }
+    if wrote {
+        tracing::info!(shutdown_phase = "presence_remove_begin");
+    }
     let removed = !wrote
         || matches!(
             bounded_until(
@@ -135,6 +140,9 @@ async fn publish(
             .await,
             Ok(Ok(()))
         );
+    if wrote {
+        tracing::info!(shutdown_phase = "presence_remove_done");
+    }
     let confirmed = removed && !uncertain_write;
     if !confirmed {
         tracing::warn!("native title presence cleanup unconfirmed; replacement remains blocked");
