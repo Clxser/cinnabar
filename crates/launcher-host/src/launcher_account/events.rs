@@ -181,4 +181,4 @@ async fn control(
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

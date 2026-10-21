@@ -1,10 +1,15 @@
-//! Final process cancellation at the original tracked account event owner.
+//! Final process cancellation at the original account event owner.
 
 use super::*;
 use bridge::tasks::{NativeExecution, StopAuthority};
-use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
-    mpsc as sync,
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc as sync,
+    },
+    task::{Context, Poll, Waker},
 };
 use tokio_util::task::TaskTracker;
 
@@ -70,7 +75,7 @@ impl Service for PendingPresence {
 }
 
 struct Harness {
-    _runtime: tokio::runtime::Runtime,
+    runtime: tokio::runtime::Runtime,
     execution: NativeExecution,
     stop: StopAuthority,
     tasks: TaskTracker,
@@ -78,11 +83,11 @@ struct Harness {
     service: Arc<PendingPresence>,
     observations: sync::Receiver<Observation>,
     probes: mpsc::Sender<()>,
-    release: Option<oneshot::Sender<()>>,
+    release: Mutex<Option<oneshot::Sender<()>>>,
 }
 
 impl Harness {
-    /// Pauses service budgets so rendezvous, rather than elapsed time, decides every outcome.
+    /// Pauses service budgets so only explicit owner polls decide every outcome.
     fn new() -> Self {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -96,7 +101,7 @@ impl Harness {
         let (probes, received) = mpsc::channel(1);
         let (release, released) = oneshot::channel();
         Self {
-            _runtime: runtime,
+            runtime,
             execution,
             stop,
             tasks,
@@ -110,12 +115,12 @@ impl Harness {
             }),
             observations,
             probes,
-            release: Some(release),
+            release: Mutex::new(Some(release)),
         }
     }
 
-    /// Starts the real event/publisher/WorkerGuard body inside the production OS-worker tracker.
-    fn start(&self) -> std::thread::JoinHandle<()> {
+    /// Owns the real joined service futures and WorkerGuard without a competing OS-thread poll.
+    fn owner(&self) -> impl Future<Output = ()> + use<> {
         let shared = Mutex::new(Snapshot {
             pending_presence_probe: Some(Arc::clone(&self.service)),
             ..Snapshot::default()
@@ -124,56 +129,62 @@ impl Harness {
         let lifetime = self.lifetime.clone();
         let execution = self.execution.clone();
         let observations = self.service.observations.clone();
-        std::thread::spawn(crate::worker::tracked(
-            move || {
-                let _requests = requests;
-                events::poll(
-                    &shared,
-                    &received,
-                    &lifetime,
-                    execution.runtime(),
-                    execution.stopped(),
-                );
-                observations.send(Observation::Returned).unwrap();
-            },
-            &self.tasks,
-        ))
+        async move {
+            let _requests = requests;
+            events::tests::run_owner(&shared, &received, &lifetime, execution.stopped()).await;
+            observations.send(Observation::Returned).unwrap();
+        }
     }
 
-    /// Bounds only failed fixture rendezvous; service clocks remain paused throughout.
+    /// Reads only observations produced by the immediately preceding synchronous owner poll.
     fn observed(&self) -> Observation {
         self.observations
-            .recv_timeout(test_time::DEFAULT_TIMEOUT)
-            .expect("account event owner did not reach its fixture rendezvous")
+            .try_recv()
+            .expect("the explicit owner poll did not produce its fixture observation")
     }
 
-    /// Releases a RED witness before asserting its outcome, without leaking the original worker.
-    fn finish(&mut self, worker: std::thread::JoinHandle<()>) {
-        self.lifetime.retire();
-        let _ = self.release.take().unwrap().send(());
-        worker.join().unwrap();
+    /// Releases an unfinished control or RED owner before checking its captured terminal oracle.
+    fn finish(&self, owner: Pin<&mut impl Future<Output = ()>>, ready: bool) {
+        if !ready {
+            self.lifetime.retire();
+            let _ = self.release.lock().unwrap().take().unwrap().send(());
+            assert_eq!(poll(owner), Poll::Ready(()));
+        }
+    }
+
+    /// Tracker readiness follows destruction of its actual retained future, never a detached token.
+    fn assert_retired(&self) {
         self.tasks.close();
         let mut wait = std::pin::pin!(self.tasks.wait());
-        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
-        assert!(std::future::Future::poll(wait.as_mut(), &mut context).is_ready());
+        assert_eq!(poll(wait.as_mut()), Poll::Ready(()));
         assert!(self.tasks.is_empty());
         assert!(self.lifetime.worker_finished());
     }
 }
 
+/// Polls the real owner once, with all process-stop transitions controlled between polls.
+fn poll(future: Pin<&mut impl Future<Output = ()>>) -> Poll<()> {
+    future.poll(&mut Context::from_waker(Waker::noop()))
+}
+
 #[test]
 fn ordinary_retirement_keeps_the_dispatched_presence_until_completion() {
-    let mut harness = Harness::new();
-    let worker = harness.start();
+    let harness = Harness::new();
+    let _runtime = harness.runtime.enter();
+    let mut owner = Box::pin(harness.tasks.track_future(harness.owner()));
+    assert_eq!(poll(owner.as_mut()), Poll::Pending);
     assert_eq!(harness.observed(), Observation::Dispatched);
     harness.lifetime.retire();
     harness.probes.try_send(()).unwrap();
+    assert_eq!(poll(owner.as_mut()), Poll::Pending);
     assert_eq!(harness.observed(), Observation::StillHeld);
     assert!(!harness.service.dropped.load(Ordering::Acquire));
     assert_eq!(harness.lifetime.retirement(), None);
     assert!(!harness.lifetime.worker_finished());
     assert!(!harness.tasks.is_empty());
-    harness.finish(worker);
+    harness.finish(owner.as_mut(), false);
+    drop(owner);
+    harness.assert_retired();
     assert_eq!(harness.service.removals.load(Ordering::Acquire), 1);
     assert_eq!(
         harness.lifetime.retirement(),
@@ -183,38 +194,55 @@ fn ordinary_retirement_keeps_the_dispatched_presence_until_completion() {
 
 #[test]
 fn final_process_stop_drops_dispatched_presence_and_retires_the_actual_worker() {
-    let mut harness = Harness::new();
-    let worker = harness.start();
+    let harness = Harness::new();
+    let _runtime = harness.runtime.enter();
+    let mut owner = Box::pin(harness.tasks.track_future(harness.owner()));
+    assert_eq!(poll(owner.as_mut()), Poll::Pending);
     assert_eq!(harness.observed(), Observation::Dispatched);
     harness.lifetime.retire();
+    harness.probes.try_send(()).unwrap();
+    assert_eq!(poll(owner.as_mut()), Poll::Pending);
+    assert_eq!(harness.observed(), Observation::StillHeld);
     harness.tasks.close();
+    let mut wait = std::pin::pin!(harness.tasks.wait());
+    assert_eq!(poll(wait.as_mut()), Poll::Pending);
     harness.stop.stop();
-    let _ = harness.probes.try_send(());
-    let after_stop = harness.observed();
+    let after_stop = poll(owner.as_mut());
     let dropped_before_release = harness.service.dropped.load(Ordering::Acquire);
-    harness.finish(worker);
-    assert_eq!(after_stop, Observation::Dropped);
+    let retirement_before_release = harness.lifetime.retirement();
+    let worker_finished_before_release = harness.lifetime.worker_finished();
+    harness.finish(owner.as_mut(), after_stop.is_ready());
+    drop(owner);
+    harness.assert_retired();
+    assert_eq!(after_stop, Poll::Ready(()));
     assert!(dropped_before_release);
+    assert!(worker_finished_before_release);
     assert_eq!(harness.service.removals.load(Ordering::Acquire), 0);
     assert_eq!(
-        harness.lifetime.retirement(),
+        retirement_before_release,
         Some(TitlePresenceRetirement::Unconfirmed)
     );
 }
 
 #[test]
 fn final_process_stop_is_sticky_before_the_account_worker_starts() {
-    let mut harness = Harness::new();
+    let harness = Harness::new();
+    let _runtime = harness.runtime.enter();
     harness.tasks.close();
     harness.stop.stop();
-    let worker = harness.start();
+    let mut owner = Box::pin(harness.tasks.track_future(harness.owner()));
+    let first_poll = poll(owner.as_mut());
     let first = harness.observed();
-    harness.finish(worker);
+    let retirement_before_release = harness.lifetime.retirement();
+    harness.finish(owner.as_mut(), first_poll.is_ready());
+    drop(owner);
+    harness.assert_retired();
+    assert_eq!(first_poll, Poll::Ready(()));
     assert_eq!(first, Observation::Returned);
     assert!(!harness.service.dropped.load(Ordering::Acquire));
     assert_eq!(harness.service.removals.load(Ordering::Acquire), 0);
     assert_eq!(
-        harness.lifetime.retirement(),
+        retirement_before_release,
         Some(TitlePresenceRetirement::Unconfirmed)
     );
 }

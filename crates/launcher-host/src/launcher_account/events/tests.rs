@@ -1,5 +1,17 @@
 use super::*;
 
+/// Runs the actual joined owner with the same enclosing guard, permitting deterministic polls.
+pub(in crate::launcher_account) async fn run_owner(
+    shared: &Mutex<Snapshot>,
+    requests: &Receiver<()>,
+    lifetime: &TitlePresenceLifetime,
+    _process_stop: impl std::future::Future<Output = ()>,
+) {
+    let guard = lifetime.worker_guard();
+    run(shared, requests, lifetime, _process_stop).await;
+    drop(guard);
+}
+
 #[tokio::test]
 async fn native_signout_retires_the_original_worker() {
     tokio::time::timeout(Duration::from_secs(5), async {
