@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds a signed arm64-v8a APK. The client, assetc, legacy Core and local server ship as
+# Builds a signed arm64-v8a APK. The client, assetc and local server ship as
 # native libraries, the only files Android lets an app execute; the prep kit ships as assets.
 # Game assets never enter the APK: first launch downloads and compiles them on the device.
 #
@@ -46,7 +46,7 @@ verifier="$out/platform-verifier"
 rm -rf "$verifier"
 cargo run --locked -p devtool -- prepare-android-verifier --out "$verifier"
 
-# One commit identifies both the client library and the core, chosen as the Makefile does.
+# The caller may supply the client build commit when the source mirror has no Git metadata.
 export CINNABAR_BUILD_COMMIT="${CINNABAR_BUILD_COMMIT:-$(git rev-parse HEAD)}"
 
 # 16 KB pages: Android 15 devices may use them, and every LOAD segment must allow it.
