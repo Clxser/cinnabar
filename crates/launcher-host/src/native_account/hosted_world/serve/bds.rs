@@ -18,7 +18,8 @@ impl NativeHostedWorld {
         deadline: Instant,
     ) -> io::Result<NativeHostedPeer> {
         self.wait_process(opening, deadline).await?;
-        let policy = self.login_policy(deadline).await?;
+        let mut policy = self.login_policy(deadline).await?;
+        let max_login_bytes = options.max_login_bytes;
         let turn_control = Arc::new(accepted.session.sender());
         let (mut wire, handshake) = self
             .peer_io(
@@ -28,7 +29,9 @@ impl NativeHostedWorld {
             .await?;
         let mut upstream = None;
         let preparation = async {
-            let ready = self.login(&mut wire, handshake, &policy, deadline).await?;
+            let ready = self
+                .login(&mut wire, handshake, &mut policy, max_login_bytes, deadline)
+                .await?;
             self.wait_login(ready.login(), &policy, ready.grant())
                 .await?;
             self.wait_process(opening, deadline).await?;

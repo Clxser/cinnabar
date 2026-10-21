@@ -1,5 +1,6 @@
 //! Provider-qualified Login bound to the original acknowledged hosted-world approval.
 
+mod resolution;
 mod wait;
 
 use super::*;
@@ -10,7 +11,7 @@ use protocol::NativeServiceClock;
 use sha2::{Digest, Sha256};
 use std::time::SystemTime;
 
-/// One host's immutable public verification snapshot and original service-clock/deadline observation.
+/// One host's public verification snapshot, original clock/cutoff and single address admission cache.
 /// This grants no world access, starts no worker and owns no authentication cache or proof key.
 pub struct NativeHostedLoginPolicy {
     verifier: ProviderVerifier,
@@ -19,6 +20,7 @@ pub struct NativeHostedLoginPolicy {
     opening: HostOpening,
     scope: Scope,
     reference: mpsd::Reference,
+    resolution: Option<(String, bool)>,
 }
 
 impl NativeHostedLoginPolicy {
@@ -38,6 +40,7 @@ impl NativeHostedLoginPolicy {
             opening,
             scope,
             reference,
+            resolution: None,
         }
     }
 
@@ -89,6 +92,15 @@ impl LoginVerifier for NativeHostedLoginPolicy {
         let identity = LoginVerifier::verify(&self.verifier, token, self.utc()?)?;
         self.utc()?;
         Ok(identity)
+    }
+
+    /// Admits only the exact normalized address acquired for this original accepting policy.
+    fn resolve_client_address(&self, address: &str) -> Result<(), LoginError> {
+        match &self.resolution {
+            Some((cached, true)) if cached == address => Ok(()),
+            Some(_) => Err(LoginError::InvalidClientData),
+            None => Err(LoginError::AddressResolutionRequired),
+        }
     }
 }
 
