@@ -2,6 +2,7 @@
 
 use render_api::DEFAULT_SKIN_GEOMETRY_ENGINE_VERSION;
 
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use bedrock_protocol_1_26_51::enums::PersonaArmSizeType;
 use bedrock_protocol_1_26_51::packets::{self, PlayerSkin};
 use bedrock_protocol_1_26_51::types::{SerializedSkinRef, SkinImage};
@@ -19,9 +20,10 @@ pub fn builtin_skin_id(name: &str) -> String {
     format!("{CLASSIC_SKIN_PACK_ID}.{name}")
 }
 
-/// Returns an imported skin's pack identity from its persisted image name.
+/// Returns a stable, bounded imported wire identity from the full persisted image name.
 pub fn custom_skin_id(image_name: &str) -> String {
-    format!("{CUSTOM_SKIN_PACK_ID}.{image_name}")
+    let digest = URL_SAFE_NO_PAD.encode(Sha256::digest(image_name.as_bytes()));
+    format!("{CUSTOM_SKIN_PACK_ID}.{digest}")
 }
 
 /// Returns the classic model's skin-pack identity, independent of login and player UUIDs.
