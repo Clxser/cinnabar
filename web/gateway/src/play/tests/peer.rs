@@ -69,8 +69,8 @@ impl Peer {
         }
     }
 
-    /// Drives the real handshake, offers no packs, and retains the session until actual retirement.
-    pub(super) async fn serve(mut self) {
+    /// Retires the real peer and returns its socket for the caller's client-close barrier.
+    pub(super) async fn serve(mut self) -> UdpSocket {
         let codec = BatchCodec::new(BatchHeader::RakNet, BatchLimits::default());
         assert!(matches!(
             self.packet(&codec).await,
@@ -116,6 +116,8 @@ impl Peer {
                 panic!("empty-upload browser submitted an unexpected application message")
             }
         }
+        assert!(self.session.take().unwrap().finish().is_ok());
+        self.socket
     }
 
     /// Decodes the original client batch using the same public codec and generated decoder.

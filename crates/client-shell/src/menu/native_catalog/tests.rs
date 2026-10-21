@@ -1,6 +1,18 @@
 use super::*;
 use launcher::menu::view::{MenuFriendCard, MenuRealmCard};
 
+impl MenuRuntime {
+    /// Observes the existing catalog generation without constructing a service selection.
+    pub(in crate::menu) fn catalog_epoch(&self) -> u64 {
+        self.native_catalog.epoch
+    }
+
+    /// Reuses the original card application owner for presentation-only fixture results.
+    pub(in crate::menu) fn apply_fixture_catalog(&mut self, cards: CatalogCards) {
+        self.apply_native_catalog(cards);
+    }
+}
+
 /// Creates an ordinary existing menu model for ownership assertions.
 fn realm(name: &str) -> MenuRealmCard {
     serde_json::from_value(serde_json::json!({"name":name,"state":"OPEN","target":format!("{}7",bridge::contract::REALM_TARGET_PREFIX)})).unwrap()

@@ -96,7 +96,9 @@ async fn empty_upload_half_eof_retires_the_actual_pump_while_output_is_blocked()
             observed_retirement.await.unwrap();
             drop(frames);
         };
-        tokio::join!(peer.serve(), serving, browser);
+        let (socket, (), ()) = tokio::join!(peer.serve(), serving, browser);
+        // The receipt ACK precedes peer retirement, but the client still owns its graceful close.
+        drop(socket);
         drop(attachment);
         registry.close();
     }).await.expect("real native/browser pump EOF fixture stalled");

@@ -292,11 +292,9 @@ fn failed_automatic_replacement(
     let mut menu = app.world_mut().resource_mut::<MenuRuntime>();
     assert!(menu.is_visible());
     assert_eq!(menu.view().screen, MenuScreen::Home);
-    assert!(
-        menu.view()
-            .disconnect_message
-            .as_deref()
-            .is_some_and(|message| message.starts_with("Could not start transfer.example.net"))
+    assert_eq!(
+        menu.view().disconnect_message.as_ref().unwrap(),
+        &crate::args::ArgsError::NativeNetworkingUnavailable.to_string()
     );
     if from_local_world {
         assert!(
