@@ -1,5 +1,7 @@
 //! State queries and the conditions `wait_for` polls each frame.
 
+mod world_work;
+
 use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
@@ -403,6 +405,7 @@ pub(super) fn snapshot(world: &World) -> Value {
         })),
     });
     // Keep added diagnostics outside the large snapshot macro's expansion budget.
+    snapshot["world_work"] = json!(world_work::snapshot(world));
     snapshot["chat"] = json!(world.get_resource::<UiRuntimeResource>().map(|ui| {
         let messages = ui.chat().messages();
         messages
