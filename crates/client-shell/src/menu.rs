@@ -130,9 +130,13 @@ pub struct MenuRuntime {
     render_mode_request: Option<RenderMode>,
     /// Discovered shader-pack names synced by the app; renderer choices index it.
     shader_packs: std::sync::Arc<[String]>,
+    /// Revision that rejects picker actions captured before the list changed.
+    shader_packs_revision: u64,
     /// The applied pack name, retaining a pending menu choice until taken.
     shader_pack: Option<String>,
     shader_pack_request: Option<String>,
+    /// Set by [`MenuRuntime::request_shader_pack_reload`] until the app takes it.
+    shader_pack_reload: bool,
     vsync_override: Option<bool>,
     display_name: String,
     launcher: bool,
