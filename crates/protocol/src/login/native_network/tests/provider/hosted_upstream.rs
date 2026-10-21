@@ -34,7 +34,7 @@ use resource_pack::test_support::archive_bytes;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
-const TIMEOUT: Duration = Duration::from_secs(20);
+pub(in crate::login::native_network) const TIMEOUT: Duration = Duration::from_secs(20);
 const PACK_ID: uuid::Uuid = uuid::Uuid::from_u128(77);
 const VERSION: &str = "1.0.0";
 const GUEST_ID: uuid::Uuid = uuid::Uuid::from_u128(1234);
@@ -513,7 +513,7 @@ async fn original_upstream_with_archive(
 }
 
 /// Drives only the original accepting prepared-send protocol, without changing authority policy.
-async fn finish_send(mut sending: PreparedSend<'_>) {
+pub(in crate::login::native_network) async fn finish_send(mut sending: PreparedSend<'_>) {
     while let Some(capacity) = sending.next().await.unwrap() {
         capacity.commit().unwrap();
     }
@@ -521,7 +521,7 @@ async fn finish_send(mut sending: PreparedSend<'_>) {
 }
 
 /// Sends generated client entries through the actual original association and codec.
-async fn client_send<S: bedrock_net::BatchPhase>(
+pub(in crate::login::native_network) async fn client_send<S: bedrock_net::BatchPhase>(
     client: &nethernet_tokio::NetherClient,
     codec: &BatchCodec<S>,
     packets: Vec<packets::Packet>,
@@ -534,7 +534,7 @@ async fn client_send<S: bedrock_net::BatchPhase>(
 }
 
 /// Decodes only an actual client-side reliable frame with the same directional packet codec.
-async fn client_receive<S: bedrock_net::BatchPhase>(
+pub(in crate::login::native_network) async fn client_receive<S: bedrock_net::BatchPhase>(
     client: &mut nethernet_tokio::NetherClient,
     codec: &BatchCodec<S>,
 ) -> Vec<packets::Packet> {

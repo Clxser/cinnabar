@@ -1,5 +1,5 @@
 use super::*;
-mod hosted_upstream;
+pub(in crate::login::native_network) mod hosted_upstream;
 use base64::{
     Engine as _,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
@@ -20,8 +20,8 @@ use std::{
 };
 
 const ISSUER: &str = "https://synthetic.example/tenant/";
-const XUID: &str = "123";
-const SERVICE_SECONDS: u64 = 1_900_000_000;
+pub(in crate::login::native_network) const XUID: &str = "123";
+pub(in crate::login::native_network) const SERVICE_SECONDS: u64 = 1_900_000_000;
 
 mod lan;
 
@@ -34,7 +34,7 @@ fn issuer() -> &'static pkcs1v15::SigningKey<Sha256> {
 }
 
 /// The connection key is independent of the issuer key.
-fn key() -> SigningKey {
+pub(in crate::login::native_network) fn key() -> SigningKey {
     SigningKey::from_slice(&[1; 48]).unwrap()
 }
 
@@ -46,20 +46,20 @@ fn published_keys() -> Value {
 }
 
 /// Builds bounded trusted public metadata from the synthetic issuer, retaining a non-retail issuer.
-fn verifier() -> ProviderVerifier {
+pub(in crate::login::native_network) fn verifier() -> ProviderVerifier {
     let keys = serde_json::to_vec(&published_keys()).unwrap();
     ProviderVerifier::new(ISSUER.into(), &["RS256".into()], &keys).unwrap()
 }
 
 /// Keeps subject distinct from Xbox identity: the configured verifier does not equate these claims.
-fn claims() -> Value {
+pub(in crate::login::native_network) fn claims() -> Value {
     json!({"iss":ISSUER,"aud":MINECRAFT_AUDIENCE,"sub":"synthetic-subject","xid":XUID,
         "xname":"Synthetic","iat":SERVICE_SECONDS,"exp":SERVICE_SECONDS+3600,
         "cpk":STANDARD.encode(key().verifying_key().to_public_key_der().unwrap().as_bytes())})
 }
 
 /// Signs original public test claims through the existing RSA primitive.
-fn signed(claims: Value, kid: &str) -> String {
+pub(in crate::login::native_network) fn signed(claims: Value, kid: &str) -> String {
     signed_header(claims, json!({"alg":"RS256","kid":kid}))
 }
 
