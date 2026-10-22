@@ -10,6 +10,18 @@ use crate::{Packet, ProtocolError, SessionError};
 use bedrock_protocol_1_26_51::packets::{self, PacketId};
 use std::future::poll_fn;
 
+/// Keeps input failures distinct from writes that permit the existing startup terminal drain.
+pub(crate) enum PreparationFailure {
+    Input(SessionError),
+    Write(ProtocolError),
+}
+
+impl From<SessionError> for PreparationFailure {
+    fn from(error: SessionError) -> Self {
+        Self::Input(error)
+    }
+}
+
 /// The next eligible control after the already inspected ordinary receive prefix.
 enum PreparationControl {
     Reply(Packet),
@@ -22,17 +34,19 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
     pub(crate) async fn read_ahead_during_preparation(
         &mut self,
         max_bytes: usize,
-    ) -> Result<Option<Terminal>, ProtocolError> {
+    ) -> Result<Option<Terminal>, PreparationFailure> {
         // An already split terminal supersedes a response retained by a canceled wait.
         if let Some(terminal) = self.preparation_terminal()? {
             return Ok(Some(terminal));
         }
-        self.drain_send().await?;
+        self.drain_send().await.map_err(PreparationFailure::Write)?;
         loop {
             match self.next_preparation_control()? {
                 PreparationControl::Reply(reply) => {
                     // The first send poll retains its owner before the next suspension.
-                    self.send(&[reply]).await?;
+                    self.send(&[reply])
+                        .await
+                        .map_err(PreparationFailure::Write)?;
                     continue;
                 }
                 PreparationControl::Terminal(terminal) => return Ok(Some(terminal)),

@@ -18,6 +18,7 @@ mod io;
 mod preparation;
 pub(crate) use io::{PacketSender, PacketWritten};
 use io::{ReadItem, Reader, ServerBatch};
+pub(crate) use preparation::PreparationFailure;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub(crate) mod native;
 

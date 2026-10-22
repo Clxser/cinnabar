@@ -14,7 +14,7 @@ use super::{LoginSequence, PlaySession};
 use crate::codec::SessionFailure;
 use crate::disconnect::{disconnect_reason, join_disconnect};
 use crate::packet_tap::{PacketOutcome, PacketTap};
-use crate::session_transport::{MAX_READ_AHEAD_BYTES, SessionTransport};
+use crate::session_transport::{MAX_READ_AHEAD_BYTES, PreparationFailure, SessionTransport};
 use crate::{
     ClientBlobCache, ClientSkin, GameData, PROTOCOL_VERSION, ProtocolError, ServerTransferEvent,
 };
@@ -185,7 +185,18 @@ pub(super) async fn prepare_with_read_ahead<R: FrameRead, P>(
     let prepared = tokio::select! {
         prepared = &mut preparation => prepared,
         result = transport.read_ahead_during_preparation(MAX_READ_AHEAD_BYTES) => {
-            if let Some(terminal) = result?
+            let terminal = match result {
+                Ok(terminal) => terminal,
+                Err(PreparationFailure::Input(error)) => return Err(error.into()),
+                Err(PreparationFailure::Write(error)) => {
+                    return Err(super::startup::startup_write_failure(
+                        transport,
+                        error,
+                        super::WRITE_FAILURE_DRAIN,
+                    ).await);
+                }
+            };
+            if let Some(terminal) = terminal
                 && let Ok(error) = super::startup::terminal_error(terminal)
             {
                 return Err(error);
