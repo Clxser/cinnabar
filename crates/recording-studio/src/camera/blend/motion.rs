@@ -1,19 +1,34 @@
-//! Terminal authored derivatives are compiled on edits; recorded subject motion stays current-time data.
+//! Terminal authored rates compile on edits; recorded subjects remain current-time inputs.
 
 use super::*;
+use crate::effect::Curve;
 
 const MAX_DERIVATIVE_STEP: MediaTime = MediaTime(1_000);
+const FIXED_ACTOR: ActorPose = ActorPose {
+    position: [0.0; 3],
+    velocity: [0.0; 3],
+    yaw: 0.0,
+    pitch: 0.0,
+    roll: 0.0,
+    eye_offset: None,
+};
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct TerminalMotion {
     linear: DVec3,
+    /// Network yaw, pitch and roll rates resolve against the actual terminal view, never a dummy frame.
     angular: DVec3,
     lens: f64,
 }
 
 impl TerminalMotion {
-    /// Reads at most three authored times and the retained distance cache, without querying an actor.
+    /// Reads three authored times and retained geometry, without requesting past or future recorded actors.
     pub(super) fn new(shot: &CameraShot, path: Option<&CompiledCameraPath>) -> Self {
+        let prepared = path
+            .is_none()
+            .then(|| CompiledCameraPath::new(shot))
+            .flatten();
+        let path = path.or(prepared.as_ref());
         let mut motion = Self::default();
         let step = derivative_step(shot);
         let end = shot.span.end;
@@ -29,12 +44,10 @@ impl TerminalMotion {
                 (last - first) / seconds
             }
         };
-        if matches!(shot.mode, CameraMode::Free { .. } | CameraMode::Path { .. })
-            && let Some((last, first, second)) = shot
-                .sample_terminal(|_| None, path)
-                .zip(shot.sample_compiled(one, |_| None, path))
-                .zip(shot.sample_compiled(two, |_| None, path))
-                .map(|((last, first), second)| (last, first, second))
+        if let Some((last, first, second)) = base_path_pose(shot, path, end)
+            .zip(base_path_pose(shot, path, one))
+            .zip(base_path_pose(shot, path, two))
+            .map(|((last, first), second)| (last, first, second))
         {
             motion.linear = DVec3::from_array(std::array::from_fn(|axis| {
                 derivative(
@@ -43,21 +56,22 @@ impl TerminalMotion {
                     second.position[axis],
                 )
             }));
-            let delta = |previous| {
-                let mut rotation = orientation(last) * orientation(previous).conjugate();
-                if rotation.w < 0.0 {
-                    rotation = -rotation;
-                }
-                rotation.to_scaled_axis()
-            };
-            motion.angular = if two < one {
-                2.0 * delta(first) / seconds - delta(second) / (2.0 * seconds)
-            } else {
-                delta(first) / seconds
-            };
+            motion.angular = DVec3::new(
+                derivative(
+                    0.0,
+                    -wrapped_delta(last.yaw, first.yaw),
+                    -wrapped_delta(last.yaw, second.yaw),
+                ),
+                derivative(last.pitch, first.pitch, second.pitch),
+                derivative(
+                    0.0,
+                    -wrapped_delta(last.roll, first.roll),
+                    -wrapped_delta(last.roll, second.roll),
+                ),
+            );
             motion.lens = derivative(last.fov, first.fov, second.fov);
             if let Some(path) = path {
-                // The left limit belongs to this shot even when a trim ends on an interior key.
+                // A trimmed endpoint on an interior key retains this shot's left-hand velocity.
                 motion.linear = DVec3::from_array(
                     path.velocity(MediaTime(end.0 - 1))
                         .unwrap_or(motion.linear.to_array()),
@@ -90,13 +104,28 @@ impl TerminalMotion {
                 0.0,
                 -radius * angle.sin() * omega,
             );
-            motion.angular = DVec3::Y * omega;
+            motion.angular.x = -turns * 360.0 / shot.span.duration().seconds();
         }
-        if let Some(last) = shot.fov_override(end) {
+        for (&channel, curve) in &shot.animation.curves {
+            let source = MediaTime(curve.offset.0.saturating_add(shot.span.duration().0));
+            let rate = curve_rate(&curve.curve, source);
+            let target = match channel {
+                CameraChannel::X => &mut motion.linear.x,
+                CameraChannel::Y => &mut motion.linear.y,
+                CameraChannel::Z => &mut motion.linear.z,
+                CameraChannel::Yaw => &mut motion.angular.x,
+                CameraChannel::Pitch => &mut motion.angular.y,
+                CameraChannel::Roll => &mut motion.angular.z,
+            };
+            *target = if curve.additive { *target + rate } else { rate };
+        }
+        // Only the fixed actor's authored lens is sampled; no native eye or subject trajectory is invented.
+        let last = authored_pose(shot, path, end);
+        if let Some(fov) = shot.fov_override(end) {
             motion.lens = derivative(
-                last,
-                shot.fov_override(one).unwrap_or(last),
-                shot.fov_override(two).unwrap_or(last),
+                fov,
+                shot.fov_override(one).unwrap_or(fov),
+                shot.fov_override(two).unwrap_or(fov),
             );
             let source = shot.fov_offset.checked_add(shot.span.duration()).ok();
             if shot
@@ -112,6 +141,20 @@ impl TerminalMotion {
             {
                 motion.lens = 0.0;
             }
+        } else if !matches!(shot.mode, CameraMode::Path { .. })
+            && let Some((last, first, second)) = last
+                .zip(authored_pose(shot, path, one))
+                .zip(authored_pose(shot, path, two))
+                .map(|((last, first), second)| (last, first, second))
+        {
+            motion.lens = derivative(last.fov, first.fov, second.fov);
+        }
+        if matches!(
+            shot.mode,
+            CameraMode::Free { .. } | CameraMode::Path { .. } | CameraMode::Orbit { .. }
+        ) && last.is_some_and(|pose| pose.pitch.abs() >= 90.0)
+        {
+            motion.angular.y = 0.0;
         }
         if !motion.linear.is_finite() {
             motion.linear = DVec3::ZERO;
@@ -125,7 +168,7 @@ impl TerminalMotion {
         motion
     }
 
-    /// Extends only authored terminal motion; no future actor/world samples or integration history exist.
+    /// Extends authored motion in the actual terminal frame, without integration history or actor prediction.
     pub(crate) fn extrapolated(self, terminal: CameraPose, elapsed: MediaTime) -> CameraPose {
         if elapsed == MediaTime::ZERO {
             return terminal;
@@ -143,17 +186,84 @@ impl TerminalMotion {
             );
         }
         if self.angular != DVec3::ZERO {
-            pose = with_orientation(
-                pose,
-                (DQuat::from_scaled_axis(self.angular * seconds) * orientation(terminal))
-                    .normalize(),
-            );
+            let yaw = (180.0 - terminal.yaw.rem_euclid(360.0)).to_radians();
+            let pitch = -terminal.pitch.to_radians();
+            // A projection pole is an intentional clamp; do not infer motion through an unavailable unclamped pitch.
+            let pitch_rate = if terminal.pitch.abs() >= 90.0 {
+                0.0
+            } else {
+                self.angular.y
+            };
+            let angular = -DVec3::Y * self.angular.x.to_radians()
+                - (DQuat::from_rotation_y(yaw) * DVec3::X) * pitch_rate.to_radians()
+                + (DQuat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0) * DVec3::Z)
+                    * self.angular.z.to_radians();
+            if angular != DVec3::ZERO {
+                pose = with_orientation(
+                    pose,
+                    (DQuat::from_scaled_axis(angular * seconds) * orientation(terminal))
+                        .normalize(),
+                );
+            }
         }
         pose
     }
 }
 
-/// Backward samples stay in the final authored interval where microsecond resolution permits it.
+/// The original geometric sampler excludes independent scalar channels, preserving exact base-rail rates.
+fn base_path_pose(
+    shot: &CameraShot,
+    path: Option<&CompiledCameraPath>,
+    at: MediaTime,
+) -> Option<CameraPose> {
+    path.and_then(|path| path.sample(at))
+        .or_else(|| shot.path_pose(at))
+}
+
+/// Fixed mathematical actor context carries no eye provenance and never reaches the replay publication.
+fn authored_pose(
+    shot: &CameraShot,
+    path: Option<&CompiledCameraPath>,
+    at: MediaTime,
+) -> Option<CameraPose> {
+    if let CameraMode::Player { fov, .. } = shot.mode {
+        let mut pose = CameraPose {
+            fov,
+            ..Default::default()
+        };
+        shot.animation
+            .apply(&mut pose, at.saturating_sub(shot.span.start));
+        if let Some(fov) = shot.fov_override(at) {
+            pose.fov = fov;
+        }
+        Some(pose)
+    } else if at == shot.span.end {
+        shot.sample_terminal(|_| Some(FIXED_ACTOR), path)
+    } else {
+        shot.sample_compiled(at, |_| Some(FIXED_ACTOR), path)
+    }
+}
+
+/// Scalar channels retain their authored winding; the arriving interval supplies a deterministic left derivative.
+fn curve_rate(curve: &Curve, source: MediaTime) -> f64 {
+    let next = curve.keys.partition_point(|key| key.at < source);
+    let Some((a, b)) = next
+        .checked_sub(1)
+        .and_then(|index| curve.keys.get(index).zip(curve.keys.get(next)))
+    else {
+        return 0.0;
+    };
+    let duration = b.at.saturating_sub(a.at).seconds();
+    let amount = source.saturating_sub(a.at).seconds() / duration;
+    (b.value - a.value) * b.easing.derivative(amount) / duration
+}
+
+/// Original rail angles use the same shortest component arcs as their authoritative sampler.
+fn wrapped_delta(last: f64, previous: f64) -> f64 {
+    (last.rem_euclid(360.0) - previous.rem_euclid(360.0) + 180.0).rem_euclid(360.0) - 180.0
+}
+
+/// Backward samples stay in the final authored interval, including each scalar channel's retained phase.
 fn derivative_step(shot: &CameraShot) -> MediaTime {
     let mut available = shot.span.duration().0;
     if let Ok(source) = shot.path_offset.checked_add(shot.span.duration()) {
@@ -165,6 +275,12 @@ fn derivative_step(shot: &CameraShot) -> MediaTime {
     {
         available =
             available.min(interval_tail(&curve.keys, source, |key| key.at).unwrap_or(available));
+    }
+    for curve in shot.animation.curves.values() {
+        if let Ok(source) = curve.offset.checked_add(shot.span.duration()) {
+            available = available
+                .min(interval_tail(&curve.curve.keys, source, |key| key.at).unwrap_or(available));
+        }
     }
     MediaTime((available / 2).clamp(1, MAX_DERIVATIVE_STEP.0))
 }
