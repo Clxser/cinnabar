@@ -43,6 +43,10 @@ pub fn describe(error: &str) -> DisconnectText {
             .trim();
         return text(DISCONNECTED, server_reason(reason));
     }
+    let local_offline = bridge::contract::DISCONNECT_KEY_LOCAL_WORLD_OFFLINE;
+    if error.trim().rsplit(": ").next() == Some(local_offline) {
+        return text(CONNECT_FAILED, DisconnectBody::Key(local_offline));
+    }
     let lower = error.to_ascii_lowercase();
     let has = |needles: &[&str]| needles.iter().any(|needle| lower.contains(needle));
     let body = if has(&["timed out", "timeout"]) {
@@ -90,6 +94,7 @@ pub const SERVER_SENT_KEYS: &[&str] = &bridge::contract::CORE_DISCONNECT_KEYS;
 pub fn body_fallback(key: &'static str) -> &'static str {
     match key {
         bridge::contract::DISCONNECT_KEY_DEVICE_CLOCK => DEVICE_CLOCK_TEXT,
+        bridge::contract::DISCONNECT_KEY_LOCAL_WORLD_OFFLINE => LOCAL_WORLD_OFFLINE_TEXT,
         _ => key,
     }
 }
@@ -97,6 +102,11 @@ pub fn body_fallback(key: &'static str) -> &'static str {
 const DEVICE_CLOCK_TEXT: &str = concat!(
     "Your device's clock is behind, so sign-in was rejected. ",
     "Turn on automatic date and time, then try again."
+);
+
+const LOCAL_WORLD_OFFLINE_TEXT: &str = concat!(
+    "Bedrock Dedicated Server worlds need a network connection, even in single-player. ",
+    "Connect to a network, then try again."
 );
 
 /// A server's disconnect text: a known `DisconnectFailReason` name reads as
@@ -210,5 +220,25 @@ mod tests {
                 assert_eq!(body_fallback(sent), sent);
             }
         }
+    }
+
+    /// The async native join preserves the shared local diagnostic through its ordinary error chain.
+    #[test]
+    fn native_local_http_offline_cause_keeps_the_shared_user_diagnostic() {
+        let key = bridge::contract::DISCONNECT_KEY_LOCAL_WORLD_OFFLINE;
+        let native = format!(
+            "network session failed: Bedrock session failed: native connection failed: {key}"
+        );
+        assert_eq!(describe(&native).body, DisconnectBody::Key(key));
+        assert_eq!(describe(&from_server(key)).body, DisconnectBody::Key(key));
+        assert_ne!(body_fallback(key), key);
+        assert_ne!(
+            describe(&format!("{native} trailing detail")).body,
+            DisconnectBody::Key(key)
+        );
+        assert_ne!(
+            describe(&format!("{key}: connection refused")).body,
+            DisconnectBody::Key(key)
+        );
     }
 }

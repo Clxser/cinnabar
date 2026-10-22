@@ -1,8 +1,18 @@
 //! Full-ICE HTTP signaling using the original native proof and accepted transport owners.
 
 use super::{Transport, identity::TransportIdentity};
+use futures::{Stream, StreamExt};
+use nethernet::{
+    identity::{TokenTrust, verify_answer},
+    protocol::{Signal, SignalType, webrtc::Description},
+};
 use nethernet_tokio::{ClientIceConfig, ConnectionConfig, signaling::http::HttpSignaling};
-use std::{io, net::SocketAddr, sync::Arc, time::Instant};
+use std::{
+    io,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Instant, SystemTime},
+};
 
 /// Uses the same actual ready association/Inbox/retirement owner as accepting connections.
 pub(in crate::login::native_network) async fn connect(
@@ -25,14 +35,19 @@ pub(in crate::login::native_network) async fn connect(
         bind.set_port(0);
         let signaling =
             HttpSignaling::with_client(rand::random::<u64>().to_string(), client(cutoff)?);
-        let client = bedrock_client_tokio::connect::http::connect(
+        let answers = signaling.signals();
+        let connecting = bedrock_client_tokio::connect::http::connect(
             signaling,
             format!("http://{address}"),
             config(&identity, Some(bind)),
             cutoff,
             identity.expires,
-        )
-        .await?;
+        );
+        tokio::pin!(connecting);
+        let client = tokio::select! { biased;
+            error = no_route(answers, &identity.trust) => return Err(error),
+            result = &mut connecting => result?,
+        };
         check_deadline(cutoff, identity.expires)?;
         Ok(Transport::from_http(client))
     })
@@ -40,6 +55,35 @@ pub(in crate::login::native_network) async fn connect(
     // Credential expiry keeps its authentication classification rather than becoming a transport timeout.
     check_deadline(cutoff, identity.expires)?;
     result.map_err(|_| timed_out())?
+}
+
+/// Observes only this dial's complete local HTTP answer, retaining the library's SDP and trust rules.
+/// Malformed descriptions/assertions and ordinary advertised candidates keep their original errors.
+async fn no_route(
+    mut answers: impl Stream<Item = Signal> + Unpin,
+    trust: &TokenTrust,
+) -> io::Error {
+    while let Some(answer) = answers.next().await {
+        if answer.signal_type != SignalType::Answer
+            || answer
+                .data
+                .lines()
+                .any(|line| line.starts_with("a=candidate:"))
+            || Description::parse(&answer.data).is_err()
+        {
+            continue;
+        }
+        if verify_answer(&answer.data, Some(trust), SystemTime::now())
+            .and_then(|claims| claims.map(|claims| claims.client_public_key()).transpose())
+            .is_ok()
+        {
+            return io::Error::new(
+                io::ErrorKind::NotConnected,
+                bridge::contract::DISCONNECT_KEY_LOCAL_WORLD_OFFLINE,
+            );
+        }
+    }
+    std::future::pending().await
 }
 
 /// Uses ordinary verified TLS roots and an explicit provider without changing global crypto state.
@@ -93,3 +137,6 @@ fn check_deadline(cutoff: tokio::time::Instant, expires: Option<Instant>) -> io:
 fn timed_out() -> io::Error {
     io::Error::new(io::ErrorKind::TimedOut, "native HTTP join timed out")
 }
+
+#[cfg(test)]
+mod tests;
