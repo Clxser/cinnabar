@@ -39,6 +39,8 @@ mod coverage;
 
 const QUAD_BYTES: u64 = 8;
 const TILE_RECORD_BYTES: u64 = 16;
+/// One RGBA8 colour layer of a tile.
+const TILE_LAYER_BYTES: u64 = (TILE_CELLS * TILE_CELLS * 4) as u64;
 const MASK_HEADER_WORDS: usize = 4;
 const UPLOAD_TILES_PER_FRAME: usize = 8;
 const UPLOAD_BYTES_PER_FRAME: u64 = 1024 * 1024;
@@ -507,12 +509,22 @@ impl FarTerrainGpu {
         if slots <= self.slots {
             return;
         }
-        let (colours, view) = colour_texture(device, slots);
-        let records = storage_buffer(
-            device,
-            "far terrain tiles",
-            u64::from(slots) * TILE_RECORD_BYTES,
-        );
+        let bytes = u64::from(slots) * (TILE_RECORD_BYTES + TILE_LAYER_BYTES);
+        // Out of memory: no slot frees, so admission evicts lower-priority tiles instead.
+        let Some(((colours, view), records)) =
+            crate::gpu_allocation::checked(device, "far terrain tile slots", bytes, || {
+                (
+                    colour_texture(device, slots),
+                    storage_buffer(
+                        device,
+                        "far terrain tiles",
+                        u64::from(slots) * TILE_RECORD_BYTES,
+                    ),
+                )
+            })
+        else {
+            return;
+        };
         let mut encoder = device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(&self.records, 0, &records, 0, self.records.size());
         encoder.copy_texture_to_texture(
@@ -539,46 +551,57 @@ impl FarTerrainGpu {
     ) -> Option<Range<u32>> {
         let max_quads = max_quads(device);
         let range = self.ranges.allocate(count);
-        if range.end > max_quads {
+        if range.end > max_quads || !self.grow_quads(device, queue, range.end) {
             self.ranges.release(range);
             return None;
         }
-        self.grow_quads(device, queue, range.end);
         Some(range)
     }
 
-    /// Copies only the quad buffer when the selected geometry outgrows its capacity.
-    fn grow_quads(&mut self, device: &RenderDevice, queue: &RenderQueue, required: u32) {
+    /// Copies only the quad buffer when the selected geometry outgrows its capacity. False,
+    /// keeping the old buffer, when the device is out of memory for the larger one.
+    fn grow_quads(&mut self, device: &RenderDevice, queue: &RenderQueue, required: u32) -> bool {
         let capacity = required
             .min(max_quads(device))
             .max(1)
             .next_power_of_two()
             .min(max_quads(device));
         if capacity <= self.quad_capacity {
-            return;
+            return true;
         }
-        let quads = storage_buffer(
+        let Some(quads) = checked_storage_buffer(
             device,
             "far terrain quads",
             u64::from(capacity) * QUAD_BYTES,
-        );
+        ) else {
+            return false;
+        };
         let mut encoder = device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(&self.quads, 0, &quads, 0, self.quads.size());
         queue.submit([encoder.finish()]);
         self.quads = quads;
         self.quad_capacity = capacity;
+        true
     }
 
-    /// Replaces the near-column mask, growing its storage only when needed.
-    fn apply_mask(&mut self, device: &RenderDevice, queue: &RenderQueue, mask: &NearMask) {
+    /// Replaces the near-column mask, growing its storage only when needed. False, leaving the
+    /// old mask, when the device is out of memory for a larger one.
+    fn apply_mask(&mut self, device: &RenderDevice, queue: &RenderQueue, mask: &NearMask) -> bool {
         let [x, z] = mask.origin();
         let mut words = vec![x as u32, z as u32, mask.side(), 0];
         words.extend_from_slice(mask.words());
         if words.len() as u64 > self.mask_words {
-            self.mask_words = (words.len() as u64).next_power_of_two();
-            self.mask = storage_buffer(device, "far terrain near columns", self.mask_words * 4);
+            let mask_words = (words.len() as u64).next_power_of_two();
+            let Some(buffer) =
+                checked_storage_buffer(device, "far terrain near columns", mask_words * 4)
+            else {
+                return false;
+            };
+            self.mask_words = mask_words;
+            self.mask = buffer;
         }
         queue.profiled_write_buffer(&self.mask, 0, bytemuck::cast_slice(&words));
+        true
     }
 }
 
@@ -628,6 +651,11 @@ fn storage_buffer(device: &RenderDevice, label: &'static str, size: u64) -> Buff
         usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     })
+}
+
+/// [`storage_buffer`], or `None` when the device is out of memory for it.
+fn checked_storage_buffer(device: &RenderDevice, label: &'static str, size: u64) -> Option<Buffer> {
+    crate::gpu_allocation::checked(device, label, size, || storage_buffer(device, label, size))
 }
 
 /// Creates cell-colour layers that support both uploads and GPU migration.
@@ -750,8 +778,8 @@ pub(super) fn prepare_far_terrain(
             .applied_mask
             .as_ref()
             .is_some_and(|applied| Arc::ptr_eq(applied, &scene.near))
+        && gpu.apply_mask(&device, &queue, &scene.near)
     {
-        gpu.apply_mask(&device, &queue, &scene.near);
         gpu.applied_mask = Some(Arc::clone(&scene.near));
     }
 }

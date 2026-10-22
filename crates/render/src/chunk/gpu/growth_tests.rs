@@ -390,3 +390,95 @@ fn migration_started_after_pending_uploads_respects_the_actual_frame_byte_ceilin
     assert!(transferred_bytes <= config.maximum_frame_bytes);
     assert!(config.maximum_frame_bytes - transferred_bytes < record_bytes);
 }
+
+fn noop_device() -> (RenderDevice, RenderQueue) {
+    let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+    (RenderDevice::from(device), RenderQueue::new(queue))
+}
+
+/// Origin growth needs a matching vertex-offset buffer; without memory for it the arena
+/// keeps its old buffers instead of drawing slots the offsets do not cover.
+#[test]
+fn origin_growth_without_memory_for_offsets_keeps_the_arena() {
+    let (device, _) = noop_device();
+    let mut arena = ChunkGpuArena::new(&device);
+    let (origins, offsets) = (arena.origin_buffer.id(), arena.vertex_offset_buffer.id());
+    let growth = ArenaGrowthPlan {
+        new_capacity: 64,
+        gpu_copy_bytes: 0,
+    };
+    {
+        let _failure =
+            crate::gpu_allocation::inject(|label, _| label == "terrain identity vertex offsets");
+        assert!(!begin_arena_migration(
+            &mut arena,
+            &device,
+            ArenaStream::Origins,
+            growth
+        ));
+    }
+    assert!(arena.migration.is_none());
+    assert_eq!(arena.origin_buffer.id(), origins);
+    assert_eq!(arena.vertex_offset_buffer.id(), offsets);
+    assert!(begin_arena_migration(
+        &mut arena,
+        &device,
+        ArenaStream::Origins,
+        growth
+    ));
+    assert_ne!(arena.vertex_offset_buffer.id(), offsets);
+}
+
+/// A backlog-sized buffer the device cannot hold falls back to the minimum growth.
+#[test]
+fn oversized_backlog_growth_falls_back_to_the_minimum() {
+    let (device, _) = noop_device();
+    let mut arena = ChunkGpuArena::new(&device);
+    let minimum = ArenaGrowthPlan {
+        new_capacity: 1024,
+        gpu_copy_bytes: PACKED_QUAD_BYTES,
+    };
+    let backlog = ArenaGrowthPlan {
+        new_capacity: 1 << 20,
+        ..minimum
+    };
+    let limit = minimum.new_capacity as u64 * PACKED_QUAD_BYTES;
+    let _failure = crate::gpu_allocation::inject(move |label, bytes| {
+        label == "packed chunk quads" && bytes > limit
+    });
+    assert!(begin_arena_migration_or_minimum(
+        &mut arena,
+        &device,
+        ArenaStream::Quads,
+        backlog,
+        minimum,
+    ));
+    let migration = arena.migration.as_ref().expect("minimum growth started");
+    assert_eq!(migration.new_capacity, minimum.new_capacity);
+}
+
+/// Indirect command growth without memory keeps the old buffer and reports the commands it
+/// holds, so draws never read past it.
+#[test]
+fn indirect_growth_without_memory_keeps_the_buffer() {
+    let (device, queue) = noop_device();
+    let mut arena = ChunkGpuArena::new(&device);
+    let buffer = arena.indirect_buffer.id();
+    let commands = vec![DrawIndexedIndirectArgs::default(); 4];
+    {
+        let _failure =
+            crate::gpu_allocation::inject(|label, _| label == "packed chunk indirect commands");
+        let written = upload_indirect_commands_if_changed(&mut arena, &device, &queue, &commands);
+        assert_eq!(
+            written,
+            arena.indirect_capacity as u64 * INDEXED_INDIRECT_BYTES
+        );
+        assert!(arena.indirect_capacity < commands.len());
+    }
+    assert_eq!(arena.indirect_buffer.id(), buffer);
+    assert_eq!(
+        upload_indirect_commands_if_changed(&mut arena, &device, &queue, &commands),
+        commands.len() as u64 * INDEXED_INDIRECT_BYTES
+    );
+    assert_ne!(arena.indirect_buffer.id(), buffer);
+}

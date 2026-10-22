@@ -97,8 +97,9 @@ pub(in crate::chunk) fn prepare_depth_liquid_indirect_batch_draws<'a>(
     (commands, drawn)
 }
 
-/// Writes the frame's indirect commands unless the buffer already holds exactly
-/// these bytes; returns the bytes written.
+/// Writes the frame's indirect commands unless the buffer already holds exactly these bytes;
+/// returns the bytes written. When the device is out of memory to grow, the old buffer is
+/// kept and only the leading commands it holds are written.
 pub(in crate::chunk) fn upload_indirect_commands_if_changed(
     arena: &mut ChunkGpuArena,
     render_device: &RenderDevice,
@@ -106,11 +107,15 @@ pub(in crate::chunk) fn upload_indirect_commands_if_changed(
     commands: &[DrawIndexedIndirectArgs],
 ) -> u64 {
     if commands.len() > arena.indirect_capacity {
-        arena.indirect_capacity = commands.len().next_power_of_two();
-        arena.indirect_buffer = create_indirect_buffer(render_device, arena.indirect_capacity);
-        arena.uploaded_indirect_bytes.clear();
-        crate::chunk::gpu::telemetry::log_arena_capacity(arena, "indirect commands grew");
+        let capacity = commands.len().next_power_of_two();
+        if let Some(buffer) = create_indirect_buffer(render_device, capacity) {
+            arena.indirect_capacity = capacity;
+            arena.indirect_buffer = buffer;
+            arena.uploaded_indirect_bytes.clear();
+            crate::chunk::gpu::telemetry::log_arena_capacity(arena, "indirect commands grew");
+        }
     }
+    let commands = &commands[..commands.len().min(arena.indirect_capacity)];
     let bytes: &[u8] = bytemuck::cast_slice(commands);
     if arena.uploaded_indirect_bytes == bytes {
         return 0;

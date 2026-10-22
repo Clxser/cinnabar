@@ -178,9 +178,13 @@ impl ChunkGpuArena {
                 contents: bytemuck::cast_slice(&STATIC_QUAD_INDICES),
                 usage: BufferUsages::INDEX,
             }),
-            vertex_offset_buffer: identity_vertex_offsets(render_device, 1),
-            indirect_buffer: create_indirect_buffer(render_device, 1),
-            transparent_indirect_buffer: create_indirect_buffer(render_device, 1),
+            vertex_offset_buffer: create_identity_vertex_offsets(
+                render_device,
+                &identity_vertex_offset_words(1),
+            ),
+            indirect_buffer: render_device.create_buffer(&indirect_buffer_descriptor(1)),
+            transparent_indirect_buffer: render_device
+                .create_buffer(&indirect_buffer_descriptor(1)),
             transparent_ref_buffer: transparent_ref_buffer(
                 render_device,
                 INITIAL_TRANSPARENT_SLOT_REFS,
@@ -223,17 +227,31 @@ impl ChunkGpuArena {
 /// Vertex buffer 0 for CPU-planned terrain draws over `origin_capacity` origin slots: entry `i`
 /// is `(i, 0)`, so fetching at a draw's base vertex yields its vertex index while the builtin
 /// instance index keeps its first instance. GPU-culled draws bind the cull's draw offsets instead.
+/// `None` when the device is out of memory for it.
 pub(in crate::chunk) fn identity_vertex_offsets(
     render_device: &RenderDevice,
     origin_capacity: usize,
-) -> Buffer {
+) -> Option<Buffer> {
+    let words = identity_vertex_offset_words(origin_capacity);
+    crate::gpu_allocation::checked(
+        render_device,
+        "terrain identity vertex offsets",
+        std::mem::size_of_val(words.as_slice()) as u64,
+        || create_identity_vertex_offsets(render_device, &words),
+    )
+}
+
+fn identity_vertex_offset_words(origin_capacity: usize) -> Vec<u32> {
     let corners = crate::chunk::gpu_cull::model::OFFSET_CORNERS;
-    let entries = (0..origin_capacity as u32 * corners)
+    (0..origin_capacity as u32 * corners)
         .flat_map(|vertex| [vertex, 0])
-        .collect::<Vec<u32>>();
+        .collect()
+}
+
+fn create_identity_vertex_offsets(render_device: &RenderDevice, words: &[u32]) -> Buffer {
     render_device.create_buffer_with_data(&BufferInitDescriptor {
         label: Some("terrain identity vertex offsets"),
-        contents: bytemuck::cast_slice(&entries),
+        contents: bytemuck::cast_slice(words),
         usage: BufferUsages::VERTEX,
     })
 }
@@ -264,16 +282,21 @@ pub(in crate::chunk) fn try_create_storage_buffer(
     crate::gpu_allocation::buffer(render_device, &storage_buffer_descriptor(label, size))
 }
 
+/// `None` when the device is out of memory for it.
 pub(in crate::chunk) fn create_indirect_buffer(
     render_device: &RenderDevice,
     command_capacity: usize,
-) -> Buffer {
-    render_device.create_buffer(&BufferDescriptor {
+) -> Option<Buffer> {
+    crate::gpu_allocation::buffer(render_device, &indirect_buffer_descriptor(command_capacity))
+}
+
+fn indirect_buffer_descriptor(command_capacity: usize) -> BufferDescriptor<'static> {
+    BufferDescriptor {
         label: Some("packed chunk indirect commands"),
         size: command_capacity as u64 * INDEXED_INDIRECT_BYTES,
         usage: BufferUsages::INDIRECT | BufferUsages::COPY_DST,
         mapped_at_creation: false,
-    })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

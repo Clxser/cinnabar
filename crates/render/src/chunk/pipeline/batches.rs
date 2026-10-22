@@ -463,8 +463,27 @@ pub(in crate::chunk) fn prepare_chunk_indirect_batches(
             &all_commands,
         );
     }
+    let held = all_commands.len().min(arena.indirect_capacity);
+    let truncated = held < all_commands.len();
+    if truncated {
+        // Out of memory to grow: draw what the old buffer holds and rebuild next frame.
+        for batch in solid_batches
+            .0
+            .values_mut()
+            .map(|batch| &mut batch.cubes)
+            .chain(batches.0.values_mut())
+            .chain(model_batches.0.values_mut())
+            .chain(depth_liquid_batches.0.values_mut())
+        {
+            let first = batch.indirect_offset / INDEXED_INDIRECT_BYTES;
+            let fits = (held as u64).saturating_sub(first);
+            batch.command_count = batch
+                .command_count
+                .min(fits.min(u64::from(u32::MAX)) as u32);
+        }
+    }
     retained.uploaded_buffer = Some(arena.indirect_buffer.id());
-    retained.layout_changed = false;
+    retained.layout_changed = truncated;
     retained.commands = all_commands;
 }
 

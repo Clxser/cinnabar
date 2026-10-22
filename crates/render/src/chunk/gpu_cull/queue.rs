@@ -12,6 +12,7 @@ pub(in crate::chunk) struct GpuCullQueue<'w, 's> {
     direct_support: Option<Res<'w, DirectOcclusionSupport>>,
     direct: Option<ResMut<'w, DirectOcclusionFrame>>,
     direct_state: Option<Res<'w, DirectOcclusion>>,
+    cull: Option<Res<'w, GpuCull>>,
     views: Query<'w, 's, (Option<&'static Frustum>, Option<&'static RenderLayers>)>,
 }
 
@@ -35,7 +36,8 @@ impl GpuCullQueue<'_, '_> {
         if let Some(frame) = self.frame.as_deref_mut() {
             frame.view = None;
         }
-        let supported = self.support.as_deref().is_some_and(|support| support.0);
+        let supported = self.support.as_deref().is_some_and(|support| support.0)
+            && self.cull.as_deref().is_none_or(GpuCull::holds_all_slots);
         if probing || !supported || !self.enabled() || draw_mode != ChunkDrawMode::MultiDrawIndirect
         {
             if let Some(feedback) = self.feedback.as_deref_mut() {

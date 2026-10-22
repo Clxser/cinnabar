@@ -156,8 +156,8 @@ use gpu::layout::{
     ArenaRequiredLengths, ArenaStream, GeometryStreamCounts, GeometryStreamLayout,
     GpuUploadReservation, SHARED_GEOMETRY_ALIGNMENT_WORDS, TerrainUploadQueue, TerrainUploads,
     account_chunk_gpu_uploads, advance_arena_migration, arena_capacities, begin_arena_migration,
-    buffer_byte_len, checked_align_up, first_arena_growth, plan_arena_growth, round_arena_capacity,
-    write_geometry_stream_words,
+    begin_arena_migration_or_minimum, buffer_byte_len, checked_align_up, first_arena_growth,
+    plan_arena_growth, round_arena_capacity, write_geometry_stream_words,
 };
 #[allow(unused_imports)]
 use gpu::types::{

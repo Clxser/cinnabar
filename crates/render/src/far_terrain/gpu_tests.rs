@@ -383,3 +383,31 @@ fn releasing_a_drawn_view_drops_its_bind_group() {
     view.release();
     assert!(view.bind_group.is_none() && view.visible.is_empty());
 }
+
+/// Quad, slot and mask growth that runs out of memory keeps the old storage and retries.
+#[test]
+fn growth_without_memory_keeps_storage_and_retries() {
+    let (device, queue) = device();
+    let mut gpu = FarTerrainGpu::new(&device);
+    let tiles = tiles(4);
+    populate(&mut gpu, &device, &queue, &tiles);
+    let (quads, records, colours) = (gpu.quads.id(), gpu.records.id(), gpu.colours.id());
+    let (quad_capacity, slots) = (gpu.quad_capacity, gpu.slots);
+    {
+        let _failure = crate::gpu_allocation::inject(|label, _| label.starts_with("far terrain"));
+        assert!(!gpu.grow_quads(&device, &queue, quad_capacity + 1));
+        gpu.grow_slots(&device, &queue, slots + 1);
+        let mask = NearMask::around([0, 0], 32, 8, []);
+        assert!(!gpu.apply_mask(&device, &queue, &mask));
+    }
+    assert_eq!(
+        (gpu.quads.id(), gpu.records.id(), gpu.colours.id()),
+        (quads, records, colours)
+    );
+    assert_eq!((gpu.quad_capacity, gpu.slots), (quad_capacity, slots));
+    assert_eq!(gpu.mask_words, MASK_HEADER_WORDS as u64);
+    assert!(gpu.grow_quads(&device, &queue, quad_capacity + 1));
+    assert!(gpu.quad_capacity > quad_capacity);
+    gpu.grow_slots(&device, &queue, slots + 1);
+    assert!(gpu.slots > slots);
+}

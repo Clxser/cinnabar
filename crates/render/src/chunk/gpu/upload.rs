@@ -215,11 +215,17 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
                 0,
             ),
         );
-        while let Ok(Some((stream, growth))) =
+        while let Ok(Some((stream, minimum))) =
             first_arena_growth(arena_capacities(&arena), initial_target, arena.limits)
         {
-            let growth = super::capacity::backlog_growth(&arena, stream, growth, initial_target);
-            if !begin_arena_migration(&mut arena, uploads.device, stream, growth) {
+            let growth = super::capacity::backlog_growth(&arena, stream, minimum, initial_target);
+            if !begin_arena_migration_or_minimum(
+                &mut arena,
+                uploads.device,
+                stream,
+                growth,
+                minimum,
+            ) {
                 growth_failed = true;
                 break;
             }
@@ -404,7 +410,7 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
             match first_arena_growth(arena_capacities(&arena), required_lengths, arena.limits) {
                 Err(_) => break false,
                 Ok(None) => break true,
-                Ok(Some((stream, growth))) => {
+                Ok(Some((stream, minimum))) => {
                     if arena.migration.is_none() {
                         if growth_failed {
                             break false;
@@ -417,10 +423,16 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
                         let growth = super::capacity::backlog_growth(
                             &arena,
                             stream,
-                            growth,
+                            minimum,
                             capacity_target,
                         );
-                        if !begin_arena_migration(&mut arena, uploads.device, stream, growth) {
+                        if !begin_arena_migration_or_minimum(
+                            &mut arena,
+                            uploads.device,
+                            stream,
+                            growth,
+                            minimum,
+                        ) {
                             growth_failed = true;
                             break false;
                         }

@@ -338,8 +338,12 @@ pub(in crate::chunk) fn begin_arena_migration(
     };
     if stream == ArenaStream::Origins {
         // Slots up to the new capacity may be drawn before the copy lands.
-        arena.vertex_offset_buffer =
-            super::arena::identity_vertex_offsets(render_device, growth.new_capacity);
+        let Some(offsets) =
+            super::arena::identity_vertex_offsets(render_device, growth.new_capacity)
+        else {
+            return false;
+        };
+        arena.vertex_offset_buffer = offsets;
     }
     arena.migration = Some(ArenaMigration {
         stream,
@@ -350,6 +354,29 @@ pub(in crate::chunk) fn begin_arena_migration(
     });
     super::telemetry::log_arena_capacity(arena, "migration started");
     true
+}
+
+/// [`begin_arena_migration`] with `growth`, then with the smaller `minimum` when the device
+/// cannot hold the larger buffer, so a small GPU keeps admitting uploads.
+#[must_use]
+pub(in crate::chunk) fn begin_arena_migration_or_minimum(
+    arena: &mut ChunkGpuArena,
+    render_device: &RenderDevice,
+    stream: ArenaStream,
+    growth: ArenaGrowthPlan,
+    minimum: ArenaGrowthPlan,
+) -> bool {
+    begin_arena_migration(arena, render_device, stream, growth)
+        || (minimum.new_capacity < growth.new_capacity
+            && begin_arena_migration(
+                arena,
+                render_device,
+                stream,
+                ArenaGrowthPlan {
+                    new_capacity: minimum.new_capacity,
+                    gpu_copy_bytes: growth.gpu_copy_bytes,
+                },
+            ))
 }
 
 /// Render device, queue and retained terrain staging, the path every arena write takes.
