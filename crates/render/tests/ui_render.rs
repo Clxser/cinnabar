@@ -1,3 +1,5 @@
+use render::{ModPassLabel, frame_capture};
+
 #[path = "../src/queue_writes.rs"]
 #[allow(
     dead_code,

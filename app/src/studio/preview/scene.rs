@@ -187,7 +187,7 @@ impl NativeScene {
             .flatten();
         let mut notices = Vec::new();
         if missing_target {
-            let missing_eye = self
+            let eye_notice = self
                 .plan
                 .shot
                 .and_then(|id| request.project.shots.iter().find(|shot| shot.id == id))
@@ -199,13 +199,13 @@ impl NativeScene {
                         .target(reference.runtime_id)
                         .filter(|target| target.matches(reference))
                 })
-                .is_some_and(|target| target.pose.eye_offset.is_none());
+                .and_then(|target| target.eye_view_notice());
             if request.camera_view.is_none() {
                 source.playback.invalidate();
                 source.epoch = None;
                 source.base = None;
-                return Err(if missing_eye {
-                    "This shot has no recorded native eye view at this time. Use Track, Follow or Orbit, or shorten the shot."
+                return Err(if let Some(notice) = eye_notice {
+                    notice
                 } else {
                     "This camera's recorded subject is unavailable at this time. Retarget or shorten the shot. The last valid image is retained."
                 }.into());
@@ -279,15 +279,12 @@ impl NativeScene {
         if frame.targets.is_none() {
             notices.push("This take has no received-actor target track; actor tracking needs a newer recording.");
         }
-        let world_labels = if frame
+        let world_labels = frame
             .visuals
             .as_ref()
-            .is_none_or(|visuals| visuals.nametags.is_none())
-        {
-            WorldLabelCoverage::Unavailable
-        } else {
-            WorldLabelCoverage::RecordedViewer
-        };
+            .map_or(WorldLabelCoverage::Unavailable, |visuals| {
+                visuals.world_label_coverage()
+            });
         if let Some(notice) = world_labels.notice(!source_view) {
             notices.push(notice);
         }

@@ -391,7 +391,10 @@ impl CameraShot {
         limit("camera name bytes", self.name.len(), 256)?;
         let valid_fov = |fov: f64| fov.is_finite() && CAMERA_FOV_RANGE.contains(&fov);
         if let Some(curve) = &self.fov_curve {
-            curve.validate(MediaTime(crate::time::MAX_MEDIA_MICROS))?;
+            curve.validate_with_key_limit(
+                MediaTime(crate::time::MAX_MEDIA_MICROS),
+                MAX_CAMERA_KEYS,
+            )?;
             self.fov_offset.checked_add(self.span.duration())?;
             if curve.keys.iter().any(|key| !valid_fov(key.value)) {
                 return Err(StudioError::Invalid(

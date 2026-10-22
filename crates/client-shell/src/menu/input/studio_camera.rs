@@ -110,6 +110,12 @@ impl Input {
         elapsed: f64,
         viewport: Option<[i32; 4]>,
     ) -> bool {
+        if menu.studio.graph_drag_active() {
+            self.panning = false;
+            self.looking = false;
+            self.look = [0.0; 2];
+            return false;
+        }
         if viewport.is_none() || !available(menu) {
             menu.studio.release_camera();
             self.panning = false;

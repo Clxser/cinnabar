@@ -67,8 +67,9 @@ fn turning_the_original_camera_cannot_erase_eligible_recording_labels() {
         glam::Quat::from_rotation_y(std::f32::consts::PI),
     ] {
         presentation.prepare_nametag_layout(&runtime);
-        let clip = glam::Mat4::perspective_rh(70_f32.to_radians(), 1.0, 0.1, 100.0)
-            * glam::Mat4::from_rotation_translation(rotation, camera).inverse();
+        let clip =
+            glam::camera::rh::proj::directx::perspective(70_f32.to_radians(), 1.0, 0.1, 100.0)
+                * glam::Mat4::from_rotation_translation(rotation, camera).inverse();
         cache.request_recording(true);
         let live = project_nametags(
             &mut cache,

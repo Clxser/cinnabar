@@ -14,6 +14,7 @@ pub use export_range::ExportRangeField;
 pub mod timeline;
 pub use clip::{ClipTimeField, MAX_CLIP_TIME_BYTES};
 mod camera;
+pub mod graph;
 pub use camera::{
     CAMERA_SUBJECT_ROWS, CameraBlendAction, CameraGuides, CameraNavigationAction, CameraPathCache,
     CameraRotationHandle, CameraSubjectResults, CameraSubjectsAction, CameraViewNameDraft,
@@ -94,6 +95,7 @@ pub mod shortcuts;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Action {
+    Graph(graph::GraphAction),
     CameraSubjects(CameraSubjectsAction),
     Creative(creative::CreativeAction),
     Monitoring(monitoring::MonitoringAction),

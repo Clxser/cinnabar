@@ -109,6 +109,7 @@ pub enum MenuField {
     StudioTitle,
     StudioDestination,
     StudioCamera(recording_studio::camera::CameraParameter),
+    StudioGraph(studio::graph::GraphField),
     StudioCameraViewName(Option<recording_studio::Id>),
     StudioSubjectSearch,
     StudioClip(studio::ClipTimeField),
@@ -243,6 +244,9 @@ impl MenuAction {
     /// The text field a press on this control focuses.
     pub fn text_field(self) -> Option<MenuField> {
         match self {
+            Self::Studio(studio::Action::Graph(studio::graph::GraphAction::Edit(field))) => {
+                Some(MenuField::StudioGraph(field))
+            }
             Self::Studio(studio::Action::CameraSubjects(studio::CameraSubjectsAction::Search)) => {
                 Some(MenuField::StudioSubjectSearch)
             }

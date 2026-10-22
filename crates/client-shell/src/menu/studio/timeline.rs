@@ -44,7 +44,7 @@ pub(super) enum Gesture {
 
 impl Studio {
     /// Navigation never exposes a time window beyond the project plus a small insertion margin.
-    fn timeline_end(&self) -> u64 {
+    pub(in crate::menu::studio) fn timeline_end(&self) -> u64 {
         let duration = self
             .view
             .project
@@ -54,7 +54,7 @@ impl Studio {
     }
 
     /// Horizontal wheel units retain trackpad precision instead of rounding to button-sized jumps.
-    pub(super) fn pan_timeline(&mut self, fraction: f64) {
+    pub(in crate::menu::studio) fn pan_timeline(&mut self, fraction: f64) {
         if !fraction.is_finite() {
             return;
         }
@@ -68,7 +68,7 @@ impl Studio {
     }
 
     /// Zoom retains the time under the pointer, even at fractional wheel steps and project edges.
-    pub(super) fn zoom_timeline(&mut self, steps: f64, anchor: f64) {
+    pub(in crate::menu::studio) fn zoom_timeline(&mut self, steps: f64, anchor: f64) {
         if !steps.is_finite() || !anchor.is_finite() {
             return;
         }
@@ -110,6 +110,23 @@ impl Studio {
             .saturating_sub(self.view.visible_duration.0 / 3)
             .min(maximum);
         Arc::make_mut(&mut self.view).visible_start = MediaTime(start);
+    }
+
+    /// Playback follows the playhead and republishes graph samples for the same visible window.
+    pub(super) fn follow_playhead(&mut self) {
+        if self.transport.playing()
+            && self.view.workspace.follow_playhead
+            && (self.transport.position() < self.view.visible_start
+                || self.transport.position().0
+                    >= self
+                        .view
+                        .visible_start
+                        .0
+                        .saturating_add(self.view.visible_duration.0 * 9 / 10))
+        {
+            self.reveal_playhead();
+        }
+        self.reconcile_graph_plot();
     }
 
     /// The caller supplies the last painted scroll viewport in window-logical pixels.

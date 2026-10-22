@@ -30,6 +30,10 @@ impl MenuRuntime {
     /// A selected vanilla edit box consumes cancel before the screen handles it.
     pub(super) fn go_back_from_input(&mut self) {
         if self.screen == launcher::menu::MenuScreen::RecordingStudio {
+            if self.studio.graph_drag_active() {
+                self.studio.cancel_pointer();
+                return;
+            }
             if self.field == Some(MenuField::StudioLibrarySearch) {
                 self.studio.cancel_library_search();
                 self.field = None;

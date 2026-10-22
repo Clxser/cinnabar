@@ -156,6 +156,7 @@ impl crate::menu::MenuRuntime {
                 .camera_interaction
                 .project
                 .as_ref()
+                .or(self.studio.graph.project.as_ref())
                 .map_or_else(|| Arc::clone(editor.project()), Arc::clone),
             source_base: self
                 .studio

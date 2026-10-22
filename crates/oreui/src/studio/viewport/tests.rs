@@ -4,6 +4,7 @@ use recording_studio::{
     camera::{ActorPose, CameraPose, CameraTarget, CameraTargetKind},
     preview::CameraPreview,
 };
+use std::sync::Arc;
 
 #[test]
 fn reset_remains_enabled_while_the_inspection_preview_is_loading() {

@@ -20,14 +20,35 @@ fn recorded_eligible_tags_behind_the_source_camera_keep_exact_world_artwork() {
     };
     let mut cache = NametagTextCache::default();
     let boards = ui::ScoreboardStore::default();
-    let tags = project_nametags(&mut cache, &boards, &stream, camera, None, 1.0, true);
+    let tags = project_nametags(
+        &mut cache,
+        &boards,
+        &stream,
+        camera,
+        None,
+        1.0,
+        true,
+        |_| true,
+    );
     assert_eq!(tags.len(), 1);
     assert!(tags[0].view_depth < 0.0);
     let scene = scene(&tags);
     assert!(!scene.records.is_empty());
     assert!(scene.records.iter().all(|record| record.anchor[2] == 0.0));
     assert!(!scene.atlas.is_empty());
-    assert!(project_nametags(&mut cache, &boards, &stream, camera, None, 1.0, false).is_empty());
+    assert!(
+        project_nametags(
+            &mut cache,
+            &boards,
+            &stream,
+            camera,
+            None,
+            1.0,
+            false,
+            |_| true
+        )
+        .is_empty()
+    );
 }
 
 #[test]

@@ -40,6 +40,7 @@ fn commands<'a>(
 struct Geometry {
     single: bool,
     navigation: f32,
+    buttons: [f32; NAVIGATION_COUNT],
     small: f32,
     rate: f32,
     loop_width: f32,
@@ -50,15 +51,23 @@ struct Geometry {
 /// Native label widths determine the actual one-row threshold, including a readable seek value.
 fn geometry(canvas: &mut Canvas<'_>, view: &MenuView, width: f32) -> Result<Geometry, PaintError> {
     let gap = canvas.r(ROW_GAP);
-    let mut button = canvas.r(3.2);
-    for (label, _, _) in commands(
+    let mut buttons = [canvas.r(3.2); NAVIGATION_COUNT];
+    for (index, (label, _, primary)) in commands(
         view,
         &format!("-{JUMP_SECONDS}s"),
         &format!("+{JUMP_SECONDS}s"),
-    ) {
-        button = button.max(canvas.measure(label, crate::theme::SECONDARY_BUTTON)? + canvas.r(1.4));
+    )
+    .into_iter()
+    .enumerate()
+    {
+        buttons[index] = buttons[index].max(
+            canvas.measure(
+                if primary { "Pause" } else { label },
+                crate::theme::SECONDARY_BUTTON,
+            )? + canvas.r(1.4),
+        );
     }
-    let navigation = button * NAVIGATION_COUNT as f32 + gap * (NAVIGATION_COUNT - 1) as f32;
+    let navigation = buttons.iter().sum::<f32>() + gap * (NAVIGATION_COUNT - 1) as f32;
     let small = canvas.r(3.0);
     let rate = canvas.measure(
         &format!("Monitor {}", view.studio.workspace.monitoring.speed.label()),
@@ -78,6 +87,7 @@ fn geometry(canvas: &mut Canvas<'_>, view: &MenuView, width: f32) -> Result<Geom
     Ok(Geometry {
         single,
         navigation,
+        buttons,
         small: small * unit,
         rate: rate * unit,
         loop_width: loop_width * unit,
@@ -129,8 +139,13 @@ pub(super) fn draw(
     let commands = commands(view, &jump_back, &jump_forward);
     let navigation_width = if single_row { layout.navigation } else { width };
     let button = (navigation_width - gap * (commands.len() - 1) as f32) / commands.len() as f32;
+    let mut x = area[0];
     for (index, (label, action, primary)) in commands.into_iter().enumerate() {
-        let x = area[0] + index as f32 * (button + gap);
+        let button = if single_row {
+            layout.buttons[index]
+        } else {
+            button
+        };
         control(
             canvas,
             view,
@@ -144,6 +159,7 @@ pub(super) fn draw(
                 Variant::Secondary
             },
         )?;
+        x += button + gap;
     }
     if !expanded {
         return Ok(());

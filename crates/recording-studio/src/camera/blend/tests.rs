@@ -324,6 +324,7 @@ fn terminal_path_pose_includes_its_last_key_and_lens_before_global_effects() {
 /// A recorded subject has an explicit spawn lifetime; all lookup poses come from the caller's current time.
 pub(super) fn moving_target() -> CameraTarget {
     CameraTarget {
+        view: Default::default(),
         runtime_id: 7,
         unique_id: 70,
         spawn_revision: 2,

@@ -60,14 +60,31 @@ pub(super) fn vertical(
     let gap = canvas.r(0.9).min(available);
     let viewer = viewer_metrics(canvas, view, viewer_width)?;
     let tracks = timeline::layout::metrics(canvas);
-    let useful = tracks.useful_height(view.studio.lanes.tracks().len());
+    let graph = view.studio.camera_workspace.graph.open;
+    let minimum = if graph {
+        canvas.r(25.0).max(180.0)
+    } else {
+        tracks.minimum()
+    };
+    let useful = if graph {
+        available * 0.6
+    } else {
+        tracks.useful_height(view.studio.lanes.tracks().len())
+    };
     let picture_floor = canvas.r(BODY.line * 7.5).max(120.0);
     let maximum = (available - gap - viewer.chrome() - picture_floor).min(useful);
-    let preferred = available * view.studio.workspace.timeline_size.fraction();
-    let height = if maximum >= tracks.minimum() {
-        preferred.clamp(tracks.minimum(), maximum)
-    } else if available >= gap + viewer.chrome() + tracks.minimum() {
-        tracks.minimum()
+    let preferred = available
+        * if graph {
+            0.45
+        } else {
+            view.studio.workspace.timeline_size.fraction()
+        };
+    let height = if maximum >= minimum {
+        preferred.clamp(minimum, maximum)
+    } else if !graph && maximum >= tracks.compact_minimum() {
+        tracks.compact_minimum()
+    } else if graph && available >= gap + viewer.chrome() + minimum {
+        minimum
     } else if available >= gap + viewer.chrome() + tracks.compact_minimum() {
         tracks.compact_minimum()
     } else {

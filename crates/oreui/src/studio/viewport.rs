@@ -1,16 +1,12 @@
 //! Recorded subjects and saved rails project into the exact fitted replay image, never its letterbox.
 
-use std::sync::Arc;
-
 use recording_studio::{
     MediaTime,
     camera::{CameraDragAxis, CameraProjection, CameraShot, PathControl},
 };
-use ui::{
-    UiBlendMode, UiMesh, UiMeshBatch, UiMeshVertex,
-    oreui_theme::{BORDER, PRIMARY_ROLE},
-};
+use ui::oreui_theme::{BORDER, PRIMARY_ROLE};
 
+use super::lines::Lines;
 use super::*;
 use launcher::menu::studio::ViewportTool;
 
@@ -526,77 +522,6 @@ fn square(bounds: Bounds, point: [f32; 2], radius: f32) -> Bounds {
         (point[0] + radius).min(bounds[2]),
         (point[1] + radius).min(bounds[3]),
     ]
-}
-
-#[derive(Default)]
-struct Lines {
-    vertices: Vec<UiMeshVertex>,
-    indices: Vec<u32>,
-}
-
-impl Lines {
-    /// Builds one anti-gap quad per projected line, clamped to the image's normalized bounds.
-    fn push(&mut self, bounds: Bounds, segment: [[f64; 2]; 2], color: [u8; 4], thickness: f32) {
-        let [a, b] = segment.map(|point| {
-            screen(
-                [0.0, 0.0, bounds[2] - bounds[0], bounds[3] - bounds[1]],
-                point,
-            )
-        });
-        let delta = [b[0] - a[0], b[1] - a[1]];
-        let length = delta[0].hypot(delta[1]);
-        if length < 0.1 {
-            return;
-        }
-        let normal = [
-            -delta[1] / length * thickness * 0.5,
-            delta[0] / length * thickness * 0.5,
-        ];
-        let base = self.vertices.len() as u32;
-        for (point, sign) in [(a, -1.0), (a, 1.0), (b, 1.0), (b, -1.0)] {
-            self.vertices.push(UiMeshVertex {
-                position: [
-                    ((point[0] + normal[0] * sign) / (bounds[2] - bounds[0])).clamp(0.0, 1.0),
-                    ((point[1] + normal[1] * sign) / (bounds[3] - bounds[1])).clamp(0.0, 1.0),
-                ],
-                clip_z: 0.0,
-                clip_w: 1.0,
-                uv: [0.0; 2],
-                color,
-                model_light: 1.0,
-                overlay_color: [0.0; 4],
-                style_flags: 0,
-                alpha_test: false,
-            });
-        }
-        self.indices
-            .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
-    }
-
-    /// One native UI mesh draws the entire bounded rail behind its interactive controls.
-    fn draw(mut self, canvas: &mut Canvas<'_>, bounds: Bounds) -> Result<(), PaintError> {
-        if self.indices.is_empty() {
-            return Ok(());
-        }
-        for vertex in &mut self.vertices {
-            vertex.color[3] = (f32::from(vertex.color[3]) * canvas.alpha).round() as u8;
-        }
-        let count = self.indices.len() as u32;
-        let mesh = UiMesh::new(
-            self.vertices.into(),
-            self.indices.into(),
-            Arc::from([UiMeshBatch {
-                texture_page: canvas.solid_page,
-                index_range: 0..count,
-                blend: UiBlendMode::Alpha,
-                depth_test: false,
-                depth_write: false,
-                alpha_cutoff: None,
-            }]),
-        )
-        .map_err(|_| PaintError::Tree(ui::UiError::DrawIndexOverflow))?;
-        canvas.mesh(bounds, Arc::new(mesh))
-    }
 }
 
 #[cfg(test)]

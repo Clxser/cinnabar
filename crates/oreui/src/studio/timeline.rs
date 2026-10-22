@@ -40,6 +40,13 @@ fn toolbar(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<f32
             false,
             false,
         ),
+        (
+            "Curves",
+            Action::Graph(launcher::menu::studio::graph::GraphAction::Toggle),
+            true,
+            false,
+            false,
+        ),
         ("Delete", Action::DeleteSelected, selected, false, false),
         (
             "Dup",

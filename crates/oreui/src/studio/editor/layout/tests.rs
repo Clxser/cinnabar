@@ -120,7 +120,7 @@ fn assert_paint(
         .expect("native image stays visible");
     assert!(
         picture.height() >= minimum_picture,
-        "picture {} at {size:?}",
+        "picture {} at {size:?}, bounds {picture:?}, scrolls {scrolls:?}",
         picture.height()
     );
     let timeline = scrolls

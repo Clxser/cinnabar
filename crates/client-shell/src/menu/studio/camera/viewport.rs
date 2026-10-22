@@ -48,7 +48,8 @@ enum Gesture {
 impl Studio {
     /// Authored translation and rotation retain their draft until the original left button releases.
     pub(in crate::menu) fn authored_camera_drag_active(&self) -> bool {
-        self.camera_interaction.rotation.is_some()
+        self.graph_drag_active()
+            || self.camera_interaction.rotation.is_some()
             || matches!(
                 self.camera_interaction.gesture,
                 Some(Gesture::Control { .. })
@@ -57,7 +58,8 @@ impl Studio {
 
     /// Authored handles and orbit capture retain exclusive pointer ownership until release.
     pub(super) fn navigation_blocked(&self) -> bool {
-        self.camera_interaction.gesture.is_some()
+        self.graph_drag_active()
+            || self.camera_interaction.gesture.is_some()
             || self.camera_interaction.pan.is_some()
             || self.camera_interaction.rotation.is_some()
     }

@@ -6,6 +6,18 @@ fn middle_button_cannot_cancel_an_authored_path_draft_or_its_original_release() 
     use recording_studio::camera::PathControl;
     for handle in [PathControl::Key, PathControl::Outgoing] {
         let mut studio = inspected_project(true);
+        let mut project = studio.project().unwrap().as_ref().clone();
+        project.shots[0] = project.shots[0]
+            .keyed(
+                project.shots[0].span.end,
+                CameraPose {
+                    position: [0.0, 64.0, 5.0],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        studio.editor = Some(Editor::new(project).unwrap());
+        studio.publish_editor();
         let original = studio.project().unwrap().shots[0].clone();
         let revision = studio.editor.as_ref().unwrap().revision();
         let action = Some(launcher::menu::MenuAction::Studio(Action::CameraControl {
@@ -124,7 +136,14 @@ fn view_only_preview_refresh_keeps_motion_but_level_discards_it_exactly() {
     Arc::make_mut(&mut studio.view).preview.ready = false;
     studio.navigate_camera([0.0; 3], [0.0; 2], 0.05, false, false);
     let coasted = studio.view.camera_workspace.view.unwrap().pose;
-    assert!(coasted.position[2] > first.position[2]);
+    let forward = first.dollied(1.0).unwrap();
+    let continued = (0..3)
+        .map(|axis| {
+            (coasted.position[axis] - first.position[axis])
+                * (forward.position[axis] - first.position[axis])
+        })
+        .sum::<f64>();
+    assert!(continued > 0.0);
     studio.camera_navigation_action(N::Level).unwrap();
     assert_eq!(studio.camera_interaction.motion, Default::default());
     studio.navigate_camera([0.0; 3], [0.0; 2], 0.1, false, false);

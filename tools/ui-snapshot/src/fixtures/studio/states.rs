@@ -4,6 +4,18 @@ use super::super::{GUI_SCALE, SIZE, State};
 
 pub(in crate::fixtures) const STATES: &[State] = &[
     State {
+        name: "studio-graph",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: super::graph,
+    },
+    State {
+        name: "studio-graph-small",
+        size: [900, 600],
+        gui_scale: GUI_SCALE,
+        fixture: super::graph,
+    },
+    State {
         name: "studio-recovery",
         size: SIZE,
         gui_scale: GUI_SCALE,

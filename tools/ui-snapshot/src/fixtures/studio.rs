@@ -1,6 +1,8 @@
 //! Anonymous editable project metadata exercises Studio without media IO or a live account.
 
+mod curves;
 mod states;
+pub(super) use curves::graph;
 
 pub(super) use states::STATES;
 
@@ -82,6 +84,7 @@ pub(super) fn camera_subjects() -> Fixture {
         .into_iter()
         .enumerate()
         .map(|(index, name)| CameraTarget {
+            view: Default::default(),
             runtime_id: index as u64 + 2,
             unique_id: index as i64 + 2,
             spawn_revision: 1,

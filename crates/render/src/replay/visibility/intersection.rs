@@ -53,6 +53,8 @@ pub(in crate::replay) struct IntersectionCache {
     source: Option<ActorRigRenderFrame>,
     parts: Vec<Part>,
     nodes: Vec<Node>,
+    indices: Vec<usize>,
+    spare_bones: Vec<Vec<[Vec3; 8]>>,
     root: Option<usize>,
     #[cfg(test)]
     pub(super) geometry_vertices: usize,
@@ -96,7 +98,9 @@ impl IntersectionCache {
 
     /// Every immutable pose input participates; source generation numbers alone cannot prove reuse.
     fn prepare(&mut self, rig: &ActorRigRenderFrame) {
-        self.parts.clear();
+        for part in self.parts.drain(..) {
+            self.spare_bones.push(part.bones);
+        }
         self.nodes.clear();
         self.root = None;
         self.source = None;
@@ -147,7 +151,9 @@ impl IntersectionCache {
                 entry.insert(bounds);
             }
             let rest = &self.geometry.bounds[&instance.geometry_id];
-            let mut bones = Vec::with_capacity(rest.bones.len() + usize::from(rest.bridges));
+            let mut bones = self.spare_bones.pop().unwrap_or_default();
+            bones.clear();
+            bones.reserve(rest.bones.len() + usize::from(rest.bridges));
             for bone in rest.bones.iter() {
                 if bone.index >= manifest.bone_count as usize {
                     continue;
@@ -196,8 +202,9 @@ impl IntersectionCache {
             }
         }
         if !self.parts.is_empty() {
-            let mut indices = (0..self.parts.len()).collect::<Vec<_>>();
-            self.root = Some(build(&self.parts, &mut indices, &mut self.nodes));
+            self.indices.clear();
+            self.indices.extend(0..self.parts.len());
+            self.root = Some(build(&self.parts, &mut self.indices, &mut self.nodes));
         }
         self.source = Some(rig.clone());
     }
@@ -281,7 +288,7 @@ fn build(parts: &[Part], indices: &mut [usize], nodes: &mut Vec<Node>) -> usize 
         let extent = bounds.max - bounds.min;
         let axis = if extent.y > extent.x { 1 } else { 0 };
         let axis = if extent.z > extent[axis] { 2 } else { axis };
-        indices.sort_unstable_by(|&a, &b| {
+        indices.select_nth_unstable_by(indices.len() / 2, |&a, &b| {
             let center =
                 |index: usize| parts[index].bounds.min[axis] + parts[index].bounds.max[axis];
             center(a).total_cmp(&center(b)).then(a.cmp(&b))

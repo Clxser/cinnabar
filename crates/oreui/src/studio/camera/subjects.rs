@@ -84,6 +84,10 @@ pub(super) fn draw(
         Variant::Secondary,
     )?;
     y += canvas.r(4.6);
+    if let Some(notice) = selected(view).and_then(|target| target.eye_view_notice()) {
+        y += canvas.text(notice, [left, y], right - left, CAPTION, TEXT_DIMMER, false)?
+            + canvas.r(1.2);
+    }
     if !workspace.subject_search.is_empty() {
         if let Some(results) = results {
             if results.is_empty() {

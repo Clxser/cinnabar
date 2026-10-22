@@ -261,6 +261,7 @@ impl UiPresentationRuntime {
                     | launcher::menu::MenuField::StudioTitle
                     | launcher::menu::MenuField::StudioDestination
                     | launcher::menu::MenuField::StudioCamera(_)
+                    | launcher::menu::MenuField::StudioGraph(_)
                     | launcher::menu::MenuField::StudioCameraViewName(_)
                     | launcher::menu::MenuField::StudioSubjectSearch
                     | launcher::menu::MenuField::StudioClip(_)

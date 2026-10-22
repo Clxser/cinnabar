@@ -23,6 +23,7 @@ pub(super) fn drive(
                         | MenuField::StudioSeek
                         | MenuField::StudioLibrarySearch
                         | MenuField::StudioCamera(_)
+                        | MenuField::StudioGraph(_)
                         | MenuField::StudioCameraViewName(_)
                         | MenuField::StudioSubjectSearch
                         | MenuField::StudioClip(_)
@@ -31,7 +32,13 @@ pub(super) fn drive(
             )
         {
             use launcher::menu::studio::Action;
-            let actions = if menu.field == Some(MenuField::StudioDestination) {
+            let actions = if matches!(menu.field, Some(MenuField::StudioGraph(_))) {
+                use launcher::menu::studio::graph::GraphAction;
+                (
+                    Action::Graph(GraphAction::Apply),
+                    Action::Graph(GraphAction::Cancel),
+                )
+            } else if menu.field == Some(MenuField::StudioDestination) {
                 (
                     Action::ApplyExportDestination,
                     Action::CancelExportDestination,
@@ -231,9 +238,44 @@ fn studio_shortcut(
                 | Action::FitTimeline
                 | Action::RevealPlayhead
                 | Action::Timeline(_)
+                | Action::Graph(_)
         ))
     );
     let timeline_keys = editing && timeline_focus && !menu.studio.view.camera_workspace.focused;
+    if timeline_keys
+        && menu.studio.view.camera_workspace.graph.open
+        && !modifiers.shortcut()
+        && !modifiers.alt()
+    {
+        use launcher::menu::studio::graph::GraphAction;
+        let selected = menu.studio.view.camera_workspace.graph.selected.is_some();
+        let step = if modifiers.shift() { 10 } else { 1 };
+        let action = match input.key_code {
+            KeyCode::Delete if selected => Some(GraphAction::DeleteKey),
+            KeyCode::ArrowLeft if selected => Some(GraphAction::Nudge {
+                time: -step,
+                value: 0,
+            }),
+            KeyCode::ArrowRight if selected => Some(GraphAction::Nudge {
+                time: step,
+                value: 0,
+            }),
+            KeyCode::ArrowUp if selected => Some(GraphAction::Nudge {
+                time: 0,
+                value: step,
+            }),
+            KeyCode::ArrowDown if selected => Some(GraphAction::Nudge {
+                time: 0,
+                value: -step,
+            }),
+            KeyCode::KeyF => Some(GraphAction::Fit),
+            _ => None,
+        };
+        if let Some(action) = action {
+            menu.studio.activate(Action::Graph(action));
+            return true;
+        }
+    }
     use launcher::menu::studio::shortcuts::{self, Context};
     if modifiers.alt() {
         return false;

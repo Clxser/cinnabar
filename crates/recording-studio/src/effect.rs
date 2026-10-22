@@ -155,7 +155,16 @@ impl Curve {
 
     /// Admits ordered relative-time keys within the owning clip's duration.
     pub fn validate(&self, duration: MediaTime) -> Result<(), StudioError> {
-        limit("effect curve keys", self.keys.len(), MAX_CURVE_KEYS)?;
+        self.validate_with_key_limit(duration, MAX_CURVE_KEYS)
+    }
+
+    /// Scalar owners may admit their established key budget while sharing framing and value checks.
+    pub(crate) fn validate_with_key_limit(
+        &self,
+        duration: MediaTime,
+        maximum: usize,
+    ) -> Result<(), StudioError> {
+        limit("curve keys", self.keys.len(), maximum)?;
         if self.keys.is_empty()
             || self.keys.iter().any(|key| {
                 !key.value.is_finite() || key.value.abs() > MAX_EFFECT_VALUE || key.at > duration

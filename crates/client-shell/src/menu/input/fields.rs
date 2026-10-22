@@ -38,6 +38,7 @@ fn max_bytes(field: MenuField) -> usize {
         MenuField::StudioTitle => recording_studio::title::MAX_TITLE_TEXT_BYTES,
         MenuField::StudioDestination => recording_studio::settings::MAX_PATH_BYTES,
         MenuField::StudioCamera(_) => recording_studio::camera::MAX_CAMERA_VALUE_BYTES,
+        MenuField::StudioGraph(_) => recording_studio::camera::MAX_CAMERA_VALUE_BYTES,
         MenuField::StudioCameraViewName(_) => recording_studio::camera::MAX_SAVED_VIEW_NAME_BYTES,
         MenuField::StudioSubjectSearch => recording_studio::camera::MAX_TARGET_NAME_BYTES,
         MenuField::StudioClip(_) => launcher::menu::studio::MAX_CLIP_TIME_BYTES,
@@ -63,6 +64,7 @@ impl crate::menu::MenuRuntime {
             MenuField::StudioTitle => &self.studio.title_text,
             MenuField::StudioDestination => &self.studio.destination_text,
             MenuField::StudioCamera(_) => &self.studio.camera_text,
+            MenuField::StudioGraph(_) => &self.studio.graph_text,
             MenuField::StudioCameraViewName(_) => &self.studio.camera_view_text,
             MenuField::StudioSubjectSearch => &self.studio.subject_text,
             MenuField::StudioClip(_) => &self.studio.clip_text,
@@ -87,6 +89,7 @@ impl crate::menu::MenuRuntime {
             MenuField::StudioTitle => &mut self.studio.title_text,
             MenuField::StudioDestination => &mut self.studio.destination_text,
             MenuField::StudioCamera(_) => &mut self.studio.camera_text,
+            MenuField::StudioGraph(_) => &mut self.studio.graph_text,
             MenuField::StudioCameraViewName(_) => &mut self.studio.camera_view_text,
             MenuField::StudioSubjectSearch => &mut self.studio.subject_text,
             MenuField::StudioClip(_) => &mut self.studio.clip_text,
@@ -119,6 +122,16 @@ impl crate::menu::MenuRuntime {
 impl crate::menu::MenuRuntime {
     /// Focus `field` with its caret after the text, as a newly selected box.
     pub(in crate::menu) fn focus_field(&mut self, field: MenuField) {
+        if !matches!(field, MenuField::StudioGraph(_)) {
+            self.studio.cancel_graph_value();
+        }
+        if let MenuField::StudioGraph(parameter) = field
+            && let Err(error) = self.studio.begin_graph_value(parameter)
+        {
+            std::sync::Arc::make_mut(&mut self.studio.view).error = Some(error);
+            self.field = None;
+            return;
+        }
         if field == MenuField::StudioSubjectSearch {
             self.studio.begin_camera_subject_search();
         }
@@ -204,6 +217,9 @@ impl crate::menu::MenuRuntime {
             return;
         }
         edit(self.editor_mut(field));
+        if matches!(field, MenuField::StudioGraph(_)) {
+            self.studio.publish_graph_value();
+        }
         if field == MenuField::StudioLibrarySearch {
             self.studio.publish_library_search();
         }

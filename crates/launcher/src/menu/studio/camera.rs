@@ -23,6 +23,7 @@ pub enum CameraBlendAction {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CameraWorkspace {
+    pub graph: super::graph::GraphWorkspace,
     pub navigation: recording_studio::camera::navigation::NavigationSettings,
     pub tools: super::CameraTools,
     pub subject_filter: CameraSubjectFilter,

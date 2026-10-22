@@ -51,10 +51,10 @@ fn native_entry_controls_remain_reachable_and_disjoint_at_inspector_widths() {
                         MenuAction::Studio(Action::CameraBlend(action)) => Some((
                             *action,
                             [
-                                bounds.min().x,
-                                bounds.min().y,
-                                bounds.max().x,
-                                bounds.max().y,
+                                bounds.min().x(),
+                                bounds.min().y(),
+                                bounds.max().x(),
+                                bounds.max().y(),
                             ],
                         )),
                         _ => None,

@@ -572,8 +572,17 @@ pub fn drive_menu_input(
                         | launcher::menu::studio::Action::TimelineOverview { .. }
                 ))
             );
+            let hovered = menu.hovered;
             let handled = studio
-                && (camera_input.wheel(&mut menu, vertical, pixels, modifiers.shortcut())
+                && (menu.studio.graph_wheel(
+                    point,
+                    hovered,
+                    horizontal,
+                    vertical,
+                    pixels,
+                    modifiers.shift(),
+                    modifiers.shortcut(),
+                ) || camera_input.wheel(&mut menu, vertical, pixels, modifiers.shortcut())
                     || menu.studio.timeline_wheel(
                         point,
                         presentation

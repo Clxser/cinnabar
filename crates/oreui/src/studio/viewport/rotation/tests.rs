@@ -4,6 +4,7 @@ use recording_studio::{
     camera::{CameraPose, CameraRigKind},
     preview::CameraPreview,
 };
+use std::sync::Arc;
 use ui::{UiNode, UiVisual};
 
 /// A selected anonymous camera has no files or account details and shares the current native viewpoint.

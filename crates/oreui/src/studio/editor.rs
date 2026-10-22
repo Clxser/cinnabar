@@ -72,7 +72,11 @@ pub(super) fn draw(
     if workspace.preview_only {
         Ok(())
     } else {
-        timeline::draw(canvas, view, layout.timeline)
+        if view.studio.camera_workspace.graph.open {
+            super::graph::draw(canvas, view, layout.timeline)
+        } else {
+            timeline::draw(canvas, view, layout.timeline)
+        }
     }
 }
 /// Preview overlays and pointer targets share the actual letterboxed image rectangle.
