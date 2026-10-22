@@ -10,10 +10,13 @@ use render_scene::{
 };
 use std::sync::Arc;
 
+mod occlusion;
+
 #[derive(Default)]
 pub(super) struct Assets {
     key: Option<([u8; 32], u64, u64)>,
     prepared: Option<Arc<AtmosphereAssets>>,
+    occlusion: occlusion::Projection,
 }
 
 /// Only texture replacement copies the legacy vector-backed camera masks or fire timeline.
@@ -99,7 +102,7 @@ pub(super) fn snapshot(world: &World, cache: &mut Assets) -> Result<AtmosphereVi
         precipitation: Arc::from(&precipitation.layers[..]),
         forward_offset: precipitation.forward_offset,
         occlusion_origin: precipitation.occlusion.origin,
-        occlusion_heights: Arc::from(&precipitation.occlusion.heights[..]),
+        occlusion_heights: cache.occlusion.project(&precipitation.occlusion),
         occlusion_generation: precipitation.occlusion_generation,
         lightning,
         overlays: overlays

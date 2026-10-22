@@ -4,12 +4,14 @@ use std::sync::Arc;
 
 use bevy::prelude::*;
 use recording_scene::actors::{
-    ActorCapture, ActorCoverage, ActorInstance, ActorSample, PreparedAppearance, PreparedGeometry,
+    ActorCapture, ActorCoverage, ActorSample, PreparedAppearance, PreparedGeometry,
 };
 use recording_studio::{MediaTime, capture::CaptureSession};
-use render_scene::actor::{ActorRenderFrame, ActorRenderInstance};
+use render_scene::actor::ActorRenderFrame;
 
 use super::Active;
+
+mod instances;
 
 pub(super) struct NativeActors {
     pub capture: ActorCapture,
@@ -17,6 +19,7 @@ pub(super) struct NativeActors {
     appearance: Arc<PreparedAppearance>,
     geometry_key: (u64, u64, usize, usize, usize),
     appearance_key: AppearanceKey,
+    instances: instances::Projection,
     last_frame: u64,
 }
 
@@ -39,9 +42,10 @@ pub(super) fn start(world: &World, session: &CaptureSession) -> Result<NativeAct
         Arc::clone(&frame.rig.geometry_spans),
     )?;
     let appearance = capture.appearance(Arc::clone(&frame.skins), Arc::clone(&frame.artwork))?;
+    let mut instances = instances::Projection::default();
     capture.sample(
         MediaTime::ZERO,
-        snapshot(frame),
+        snapshot(frame, &mut instances),
         Arc::clone(&geometry),
         Arc::clone(&appearance),
     )?;
@@ -51,6 +55,7 @@ pub(super) fn start(world: &World, session: &CaptureSession) -> Result<NativeAct
         appearance,
         geometry_key: geometry_key(frame),
         appearance_key: appearance_key(frame),
+        instances,
         last_frame: 0,
     })
 }
@@ -87,7 +92,7 @@ pub(super) fn sample(world: &World, active: &mut Active, at: MediaTime) -> Resul
     }
     actors.capture.sample(
         at,
-        snapshot(frame),
+        snapshot(frame, &mut actors.instances),
         Arc::clone(&actors.geometry),
         Arc::clone(&actors.appearance),
     )?;
@@ -96,7 +101,7 @@ pub(super) fn sample(world: &World, active: &mut Active, at: MediaTime) -> Resul
 }
 
 /// Uses the recording-only native publication, which includes received actors and the local world body.
-fn snapshot(frame: &ActorRenderFrame) -> ActorSample {
+fn snapshot(frame: &ActorRenderFrame, cache: &mut instances::Projection) -> ActorSample {
     let ActorRenderFrame {
         mask_only_runtime_ids: _,
         instances,
@@ -107,31 +112,9 @@ fn snapshot(frame: &ActorRenderFrame) -> ActorSample {
         artwork: _,
         instance_pages,
     } = frame;
-    let instances = instances
-        .iter()
-        .map(|instance| {
-            let &ActorRenderInstance {
-                runtime_id,
-                position,
-                pitch_radians,
-                yaw_radians,
-                head_yaw_radians,
-                skin_layer,
-            } = instance;
-            ActorInstance {
-                runtime_id,
-                position,
-                pitch_radians,
-                yaw_radians,
-                head_yaw_radians,
-                skin_layer,
-            }
-        })
-        .collect::<Vec<_>>()
-        .into();
     ActorSample {
         coverage: ActorCoverage::ReceivedWorld,
-        instances,
+        instances: cache.project(instances),
         instance_revision: *instance_revision,
         skin_revision: *skin_revision,
         rig: rig.clone(),
