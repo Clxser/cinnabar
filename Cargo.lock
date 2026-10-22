@@ -7584,6 +7584,7 @@ dependencies = [
  "render-model",
  "serde",
  "serde_json",
+ "tempfile",
  "world",
 ]
 

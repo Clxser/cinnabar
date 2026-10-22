@@ -149,12 +149,30 @@ pub(super) fn draw(
         canvas,
         view,
         [left, y, right, y + canvas.r(4.0)],
-        "Suggest cameras here",
-        Assist::SuggestShots,
-        native,
+        if status.shot_analyzing {
+            "Cancel camera verification"
+        } else {
+            "Suggest cameras here"
+        },
+        if status.shot_analyzing {
+            Assist::CancelShotAnalysis
+        } else {
+            Assist::SuggestShots
+        },
+        native || status.shot_analyzing,
         true,
     )?;
     y += canvas.r(5.4);
+    if let Some(message) = &status.shot_message {
+        y += canvas.text(
+            message,
+            [left, y],
+            right - left,
+            CAPTION,
+            TEXT_DIMMER,
+            false,
+        )? + canvas.r(1.4);
+    }
     for (index, shot) in status.shots.iter().enumerate() {
         canvas.text_line(&shot.name, [left, y], right - left, BODY, TEXT)?;
         y += canvas.r(3.1);

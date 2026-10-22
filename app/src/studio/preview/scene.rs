@@ -200,11 +200,16 @@ impl NativeScene {
                         .filter(|target| target.matches(reference))
                 })
                 .is_some_and(|target| target.pose.eye_offset.is_none());
-            notices.push(if missing_eye {
-                "This take has no native eye view for this subject. Use Track, Follow or Orbit; remote POV cannot be reconstructed from a body centre."
-            } else {
-                "Camera subject unavailable: showing the recorded view. Retarget or shorten the shot."
-            });
+            if request.camera_view.is_none() {
+                source.playback.invalidate();
+                source.epoch = None;
+                source.base = None;
+                return Err(if missing_eye {
+                    "This shot has no recorded native eye view at this time. Use Track, Follow or Orbit, or shorten the shot."
+                } else {
+                    "This camera's recorded subject is unavailable at this time. Retarget or shorten the shot. The last valid image is retained."
+                }.into());
+            }
         }
         if let Some(visuals) = &frame.visuals {
             if visuals.particles.received.is_none() {

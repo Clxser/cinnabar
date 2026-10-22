@@ -19,6 +19,7 @@ pub enum CreativeAction {
     CycleLookStrength,
     ToggleLookRange,
     SuggestShots,
+    CancelShotAnalysis,
     InspectShot(usize),
     ApplyShot(usize),
 }
@@ -33,6 +34,8 @@ pub struct CreativeStatus {
     pub look_strength: u16,
     pub look_selected_range: bool,
     pub shots: Arc<[CameraShot]>,
+    pub shot_analyzing: bool,
+    pub shot_message: Option<String>,
 }
 
 impl Default for CreativeStatus {
@@ -46,6 +49,8 @@ impl Default for CreativeStatus {
             look_strength: 100,
             look_selected_range: true,
             shots: Arc::default(),
+            shot_analyzing: false,
+            shot_message: None,
         }
     }
 }

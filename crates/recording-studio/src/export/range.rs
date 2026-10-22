@@ -47,14 +47,27 @@ impl FrameRange {
 
     /// True only when the half-open interval contains an actual exported presentation timestamp.
     pub fn visual_intersects(self, span: Span) -> Result<bool, StudioError> {
+        self.visual_window(span).map(|window| window.is_some())
+    }
+
+    /// Covers the first through last exported timestamps, including rounded rational frame boundaries.
+    pub fn visual_window(self, span: Span) -> Result<Option<Span>, StudioError> {
         span.validate()?;
         let start = span.start.max(self.span.start);
         let end = span.end.min(self.span.end);
         if start >= end {
-            return Ok(false);
+            return Ok(None);
         }
         let first = frame_at_or_after(self.fps, start)?.max(self.first);
-        Ok(first < self.end && self.fps.frame_time(first)? < end)
+        let end = frame_at_or_after(self.fps, end)?.min(self.end);
+        if first >= end {
+            return Ok(None);
+        }
+        Span::new(
+            self.fps.frame_time(first)?,
+            self.fps.frame_time(end - 1)?.checked_add(MediaTime(1))?,
+        )
+        .map(Some)
     }
 
     /// Returns global PCM boundaries shared by source admission and the offline mixer.
@@ -164,3 +177,5 @@ pub fn visual_coverage(
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod visual_tests;

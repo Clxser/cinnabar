@@ -11,6 +11,7 @@ use render::replay::{ReplayReadback, ReplayRenderContext};
 use super::composition::Composition;
 
 mod admission;
+mod subjects;
 
 #[derive(Resource, Default)]
 pub(super) struct NativeExport {
@@ -97,6 +98,7 @@ impl FrameSource for Frames {
     ) -> Result<(), String> {
         cancellation.check()?;
         admission::prepare(&request.project, self.context.is_some())?;
+        subjects::prepare(request, cancellation)?;
         Ok(())
     }
 

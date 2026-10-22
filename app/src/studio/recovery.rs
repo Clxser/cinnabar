@@ -9,6 +9,7 @@ use recording_studio::{edit::Editor, export::Cancellation};
 /// Installs only a function pointer; no storage worker, media read or recording starts here.
 pub(super) fn install(mut menu: ResMut<MenuRuntime>) {
     menu.set_studio_recording_recovery(recover);
+    menu.set_studio_target_coverage(recording_scene::targets::verify_coverage);
 }
 
 /// Prefer a verified native prefix; a POV fallback always explains why the native scene was unavailable.

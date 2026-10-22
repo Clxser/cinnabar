@@ -12,7 +12,9 @@ use recording_studio::{
 };
 
 mod codec;
+mod coverage;
 mod playback;
+pub use coverage::verify_coverage;
 pub use playback::TargetRecording;
 
 pub const TARGET_TRACK_SCHEMA: &str = "cinnabar.camera-targets/2";

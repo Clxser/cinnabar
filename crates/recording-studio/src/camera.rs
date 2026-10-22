@@ -13,6 +13,7 @@ pub const CAMERA_FOV_RANGE: std::ops::Range<f64> = 1.0..179.0;
 const DEFAULT_FOV: f64 = 70.0;
 
 mod continuity;
+pub mod coverage;
 mod distance;
 mod edit;
 mod fov;
@@ -333,6 +334,21 @@ impl CameraTarget {
 }
 
 impl CameraShot {
+    /// Every subject-bound rig uses the same lifetime reference for admission and frame sampling.
+    pub fn target_reference(&self) -> Option<CameraTargetRef> {
+        let actor = match &self.mode {
+            CameraMode::Player { actor, .. }
+            | CameraMode::Follow { actor, .. }
+            | CameraMode::Track { actor, .. }
+            | CameraMode::Orbit { actor, .. } => *actor,
+            CameraMode::Free { .. } | CameraMode::Path { .. } => return None,
+        };
+        Some(CameraTargetRef {
+            runtime_id: actor,
+            lifetime: self.target_lifetime,
+        })
+    }
+
     /// First-person subject visibility is independent of whether recorded HUD layers are shown.
     pub fn spectated_actor(&self) -> Option<CameraTargetRef> {
         if let CameraMode::Player { actor, .. } = &self.mode {

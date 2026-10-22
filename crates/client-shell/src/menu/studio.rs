@@ -61,6 +61,8 @@ pub(super) struct Studio {
     thumbnails_cancel: recording_studio::export::Cancellation,
     open_cancel: recording_studio::export::Cancellation,
     recording_recovery: Option<recording_studio::storage::RecordingRecovery>,
+    target_coverage: Option<recording_studio::camera::coverage::TargetCoverageReader>,
+    target_verifier: Option<recording_studio::camera::coverage::TargetVerifier>,
     pub(super) destination_text: ui::ChatEditor,
     pub(super) camera_text: ui::ChatEditor,
     camera_edit: Option<camera::CameraValueEdit>,
@@ -124,6 +126,8 @@ impl Studio {
             thumbnails_cancel: Default::default(),
             open_cancel: Default::default(),
             recording_recovery: None,
+            target_coverage: None,
+            target_verifier: None,
             destination_text: super::input::fields::field_editor(
                 launcher::menu::MenuField::StudioDestination,
             ),

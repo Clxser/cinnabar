@@ -83,6 +83,14 @@ impl Studio {
 }
 
 impl crate::menu::MenuRuntime {
+    /// Subject verification is supplied by the native scene owner and runs only on analysis workers.
+    pub fn set_studio_target_coverage(
+        &mut self,
+        reader: recording_studio::camera::coverage::TargetCoverageReader,
+    ) {
+        self.studio.target_coverage = Some(reader);
+    }
+
     /// Recovery runs through the existing storage worker after the app installs its scene owner.
     pub fn set_studio_recording_recovery(
         &mut self,

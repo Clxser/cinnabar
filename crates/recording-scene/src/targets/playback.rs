@@ -14,6 +14,8 @@ use super::{
     LEGACY_TARGET_TRACK_SCHEMA, TARGET_DIRECTORY, TARGET_TRACK_SCHEMA, TargetFrame, codec,
 };
 
+mod coverage;
+
 pub struct TargetRecording {
     cursor: RecordingCursor,
     state: BTreeMap<u64, CameraTarget>,

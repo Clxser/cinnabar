@@ -9,11 +9,14 @@ use recording_studio::{
     model::AudioClip,
 };
 
+mod shots;
+
 #[derive(Default)]
 pub(super) struct CreativeTasks {
     beat: Option<BeatJob>,
     analyzed: Option<BeatBasis>,
     shots: Option<ShotDraft>,
+    shot_analysis: Option<shots::ShotJob>,
 }
 
 struct BeatBasis {
@@ -48,6 +51,7 @@ struct ShotDraft {
     project: Arc<Project>,
     shots: Arc<[CameraShot]>,
     framing: Vec<CameraPose>,
+    verified_target: Option<recording_studio::camera::coverage::TargetCoverage>,
 }
 
 impl Studio {
@@ -124,6 +128,7 @@ impl Studio {
                 status.look_selected_range = !status.look_selected_range;
             }
             CreativeAction::SuggestShots => self.suggest_camera_shots()?,
+            CreativeAction::CancelShotAnalysis => self.cancel_shot_analysis(),
             CreativeAction::InspectShot(index) => self.inspect_suggested_shot(index)?,
             CreativeAction::ApplyShot(index) => self.apply_suggested_shot(index)?,
         }
@@ -187,6 +192,7 @@ impl Studio {
 
     /// A stale analysis cannot publish into another project or changed/retimed/relinked audio clip.
     pub(super) fn poll_creative(&mut self) {
+        self.poll_shot_coverage();
         let result = match self.creative.beat.as_ref().map(|job| job.result.try_recv()) {
             Some(Ok(result)) => result,
             Some(Err(crossbeam_channel::TryRecvError::Disconnected)) => {
@@ -275,157 +281,9 @@ impl Studio {
         Ok(())
     }
 
-    /// Suggestions are alternatives for one clear native interval and retain the inspected framing.
-    fn suggest_camera_shots(&mut self) -> Result<(), String> {
-        let preview = self.camera_preview()?;
-        if !preview.interactive {
-            return Err("Choose one unframed 3D replay view before suggesting cameras.".into());
-        }
-        let project = Arc::clone(self.project()?);
-        let at = self.transport.position();
-        let mut end = MediaTime(at.0.saturating_add(4_000_000).min(project.duration().0));
-        let mut native_end = None;
-        for clip in project
-            .clips
-            .iter()
-            .filter(|clip| clip.enabled && clip.source == preview.source)
-        {
-            let span = clip.span().map_err(|error| error.to_string())?;
-            if span.contains(at) {
-                native_end = Some(span.end);
-                break;
-            }
-        }
-        end =
-            end.min(native_end.ok_or("Move the playhead onto the visible 3D replay clip first.")?);
-        if project.shots.iter().any(|shot| shot.span.contains(at)) {
-            return Err(
-                "Move to an empty camera range first. Suggestions preserve your existing shots."
-                    .into(),
-            );
-        }
-        if let Some(next) = project
-            .shots
-            .iter()
-            .filter(|shot| shot.span.start > at)
-            .map(|shot| shot.span.start)
-            .min()
-        {
-            end = end.min(next);
-        }
-        if end.saturating_sub(at).0 < 100_000 {
-            return Err("Leave at least a tenth of a second of clear native replay for a camera suggestion.".into());
-        }
-        let target = self.view.camera_target.and_then(|reference| {
-            preview
-                .targets
-                .iter()
-                .find(|target| target.matches(reference))
-        });
-        let pose = self
-            .view
-            .camera_workspace
-            .view
-            .map_or(preview.pose, |view| view.pose);
-        let span = Span::new(at, end).map_err(|error| error.to_string())?;
-        let first = project.next_id().map_err(|error| error.to_string())?;
-        let mut shots = Vec::new();
-        let mut framing = Vec::new();
-        for preset in CameraPreset::ALL
-            .iter()
-            .copied()
-            .filter(|preset| !preset.needs_subject() || target.is_some())
-        {
-            let id = Id(first
-                .0
-                .checked_add(shots.len() as u64)
-                .ok_or("Camera identifiers are exhausted.")?);
-            if let Ok(shot) = CameraShot::cinematic_preset(id, span, preset, pose, target)
-                && let Some(pose) = shot.sample(at, |reference| {
-                    preview
-                        .targets
-                        .iter()
-                        .find(|target| target.matches(reference))
-                        .map(|target| target.pose)
-                })
-            {
-                framing.push(pose);
-                shots.push(shot);
-            }
-        }
-        if shots.is_empty() {
-            return Err(
-                "No camera suggestions fit this view. Move farther from the subject and try again."
-                    .into(),
-            );
-        }
-        let shots: Arc<[CameraShot]> = shots.into();
-        self.creative.shots = Some(ShotDraft {
-            document: self.document,
-            project,
-            shots: Arc::clone(&shots),
-            framing,
-        });
-        Arc::make_mut(&mut self.view).workflow.creative.shots = shots;
-        Ok(())
-    }
-
-    /// Changed documents invalidate alternatives rather than overwriting later authored work.
-    fn suggested_shot(&self, index: usize) -> Result<CameraShot, String> {
-        let draft = self
-            .creative
-            .shots
-            .as_ref()
-            .ok_or("Generate camera suggestions first.")?;
-        if draft.document != self.document || !Arc::ptr_eq(self.project()?, &draft.project) {
-            return Err(
-                "The timeline changed. Generate fresh suggestions for the current view.".into(),
-            );
-        }
-        draft
-            .shots
-            .get(index)
-            .cloned()
-            .ok_or_else(|| "This camera suggestion is no longer available.".into())
-    }
-
-    /// Inspecting a proposal changes only the transient view; adding it remains an explicit document edit.
-    fn inspect_suggested_shot(&mut self, index: usize) -> Result<(), String> {
-        let shot = self.suggested_shot(index)?;
-        let pose = *self
-            .creative
-            .shots
-            .as_ref()
-            .and_then(|draft| draft.framing.get(index))
-            .ok_or("The suggested camera's recorded framing is unavailable.")?;
-        self.transport.pause();
-        let duration = self.project()?.duration();
-        self.transport.seek(shot.span.start, duration);
-        self.release_camera();
-        let workspace = &mut Arc::make_mut(&mut self.view).camera_workspace;
-        let revision = workspace
-            .view
-            .map_or(1, |view| view.revision.wrapping_add(1));
-        workspace.view = Some(CameraView { pose, revision });
-        Ok(())
-    }
-
-    /// Adds one chosen alternative as a normal camera shot with normal undo, keyframes and export behavior.
-    fn apply_suggested_shot(&mut self, index: usize) -> Result<(), String> {
-        let shot = self.suggested_shot(index)?;
-        let id = shot.id;
-        self.edit("Add suggested camera", &[Command::AddShot { shot }])?;
-        self.reset_camera_view();
-        self.creative.shots = None;
-        let view = Arc::make_mut(&mut self.view);
-        view.workflow.creative.shots = Arc::default();
-        view.selected = Some(id);
-        view.workspace.inspector_hidden = false;
-        Ok(())
-    }
-
     /// A document edit retires old camera alternatives before the next presentation is published.
     pub(super) fn reconcile_creative(&mut self) {
+        self.reconcile_shot_coverage();
         if self.creative.analyzed.as_ref().is_some_and(|basis| {
             self.project()
                 .map_or(true, |project| !basis.matches(project))
@@ -452,7 +310,11 @@ impl Studio {
         let mut actions = vec![
             CreativeAction::CycleLookStrength,
             CreativeAction::ToggleLookRange,
-            CreativeAction::SuggestShots,
+            if self.creative.shot_analysis.is_some() {
+                CreativeAction::CancelShotAnalysis
+            } else {
+                CreativeAction::SuggestShots
+            },
         ];
         if self.creative.beat.is_some() {
             actions.push(CreativeAction::CancelAnalysis);
