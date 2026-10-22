@@ -16,6 +16,9 @@ pub(super) fn creation(
     view: &MenuView,
     area: Bounds,
 ) -> Result<f32, PaintError> {
+    if view.studio.camera_workspace.tools == launcher::menu::studio::CameraTools::Views {
+        return navigation::draw(canvas, view, area);
+    }
     let [left, mut y, right, _] = area;
     canvas.text_line("ADD CAMERA", [left, y], right - left, HEADER5, TEXT)?;
     y += canvas.r(3.6);
@@ -50,7 +53,11 @@ pub(super) fn creation(
             canvas,
             view,
             [x, row, x + width, row + canvas.r(4.0)],
-            kind.label(),
+            match kind {
+                CameraRigKind::Player => "Player POV",
+                CameraRigKind::Track => "Track",
+                _ => kind.label(),
+            },
             Action::CreateCamera(kind),
             enabled,
             Variant::Secondary,
@@ -67,7 +74,7 @@ pub(super) fn creation(
             y += canvas.r(3.2);
         }
     }
-    navigation::draw(canvas, view, [left, y, right, area[3]])
+    Ok(y)
 }
 
 /// Numeric edits are undoable; whole-rail pose placement requires an explicit timing switch.

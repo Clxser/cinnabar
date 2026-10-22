@@ -16,6 +16,8 @@ macro_rules! sections {
 }
 
 sections! { Toolbox { Media => "Media", Cameras => "Cameras", Effects => "Effects", Text => "Text", Audio => "Audio", Creative => "Assist" } }
+sections! { CameraTools { Shots => "Shots", Views => "Views" } }
+sections! { AssistSection { Rhythm => "Rhythm", Cameras => "Cameras" } }
 sections! { InspectorSection { Clip => "Clip", Framing => "Frame", Speed => "Speed", Cut => "Cut" } }
 sections! { ViewportTool { Navigate => "Navigate", Players => "Players", Path => "Path" } }
 sections! { SettingsPage { Recording => "Recording", Preview => "Preview", Export => "Export", Diagnostics => "Setup", Controls => "Controls" } }

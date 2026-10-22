@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CameraWorkspace {
+    pub tools: super::CameraTools,
     pub subject_filter: CameraSubjectFilter,
     pub focused: bool,
     pub looking: bool,
@@ -103,6 +104,7 @@ pub struct CameraViewNameDraft {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CameraViewsAction {
+    Section(super::CameraTools),
     New,
     Select(Id),
     Recall(Id),

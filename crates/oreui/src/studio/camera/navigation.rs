@@ -29,7 +29,7 @@ pub(super) fn draw(
         [left, y, right, area[3]],
         [
             (
-                "Frame player",
+                "Frame",
                 Action::FrameCameraSubject,
                 ready && selected_target(view).is_some(),
             ),
@@ -208,7 +208,7 @@ pub(super) fn draw(
             [left, y, right, area[3]],
             [
                 (
-                    "Bind to current take",
+                    "Rebind",
                     Action::CameraViews(V::Rebind(bookmark.id)),
                     ready && !available,
                 ),

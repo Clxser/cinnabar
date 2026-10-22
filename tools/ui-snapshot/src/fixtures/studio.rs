@@ -3,7 +3,7 @@
 use super::*;
 use recording_studio::{
     Id, MediaTime, Project, Span,
-    camera::{CameraMode, CameraPose, CameraShot},
+    camera::{CameraKey, CameraMode, CameraPose, CameraShot, SavedCameraView},
     effect::{Curve, EffectClip, EffectKind},
     model::{AudioClip, AudioRole, Clip, MediaKind, MediaSource},
 };
@@ -15,7 +15,99 @@ pub(super) fn editor() -> Fixture {
 
 /// A selected world camera exposes its real numeric controls without loading a recording.
 pub(super) fn camera() -> Fixture {
-    Fixture::Menu(Box::new(view(true)))
+    let mut view = camera_view();
+    let studio = Arc::make_mut(&mut view.studio);
+    studio.camera_workspace.tools = launcher::menu::studio::CameraTools::Views;
+    studio.workspace.panel = launcher::menu::studio::EditorPanel::Media;
+    Fixture::Menu(Box::new(view))
+}
+
+/// A selected distance rail exposes travel, orientation and lens controls in the real inspector.
+pub(super) fn path() -> Fixture {
+    let mut view = camera_view();
+    let studio = Arc::make_mut(&mut view.studio);
+    let project = Arc::make_mut(studio.project.as_mut().unwrap());
+    let shot = &mut project.shots[0];
+    shot.mode = CameraMode::Path {
+        keys: [
+            (MediaTime::ZERO, [2.0, 67.0, -6.0]),
+            (MediaTime(15_000_000), [8.0, 70.0, -2.0]),
+            (MediaTime(30_000_000), [12.0, 67.0, 3.0]),
+        ]
+        .map(|(at, position)| CameraKey {
+            at,
+            pose: CameraPose {
+                position,
+                ..Default::default()
+            },
+            easing: recording_studio::effect::Easing::Linear,
+            handles: None,
+        })
+        .into(),
+        smooth_position: true,
+    };
+    shot.path_timing = recording_studio::camera::PathTiming::GlobalDistance;
+    studio.lanes = Arc::new(recording_studio::lanes::TimelineLanes::new(project).unwrap());
+    Fixture::Menu(Box::new(view))
+}
+
+/// The Assist toolbox is opened explicitly instead of capturing the default hidden panel.
+pub(super) fn assist() -> Fixture {
+    let mut view = view(false);
+    let studio = Arc::make_mut(&mut view.studio);
+    studio.workspace.media_hidden = false;
+    studio.workspace.toolbox = launcher::menu::studio::Toolbox::Creative;
+    studio.workspace.panel = launcher::menu::studio::EditorPanel::Media;
+    Fixture::Menu(Box::new(view))
+}
+
+/// Camera suggestions remain accessible without scrolling through rhythm controls.
+pub(super) fn assist_cameras() -> Fixture {
+    let mut view = camera_view();
+    let studio = Arc::make_mut(&mut view.studio);
+    studio.workspace.toolbox = launcher::menu::studio::Toolbox::Creative;
+    studio.workspace.panel = launcher::menu::studio::EditorPanel::Media;
+    studio.workspace.inspector_hidden = true;
+    studio.workflow.creative.section = launcher::menu::studio::AssistSection::Cameras;
+    Fixture::Menu(Box::new(view))
+}
+
+/// Supplies only anonymous camera metadata; it does not claim decoded replay or runtime evidence.
+fn camera_view() -> MenuView {
+    let mut view = view(true);
+    let studio = Arc::make_mut(&mut view.studio);
+    let project = Arc::make_mut(studio.project.as_mut().unwrap());
+    project.audio.clear();
+    let source = &mut project.sources[0];
+    source.kind = MediaKind::Replay;
+    source.path = "Showcase.cinreplay".into();
+    let pose = CameraPose {
+        position: [2.0, 67.0, -6.0],
+        ..Default::default()
+    };
+    project
+        .camera_views
+        .push(SavedCameraView::new(Id(6), "Courtyard wide".into(), source, pose).unwrap());
+    project.validate().unwrap();
+    studio.camera_workspace.saved_views.selected = Some(Id(6));
+    studio.workspace.media_hidden = false;
+    studio.workspace.inspector_hidden = false;
+    studio.workspace.toolbox = launcher::menu::studio::Toolbox::Cameras;
+    studio.workspace.panel = launcher::menu::studio::EditorPanel::Inspector;
+    studio.preview.ready = true;
+    studio.preview.camera = Some(recording_studio::preview::CameraPreview {
+        world_labels: Default::default(),
+        epoch: [0; 3],
+        source: Id(1),
+        source_time: studio.position,
+        pose,
+        render_pose: pose,
+        interactive: true,
+        viewport: [0.0, 0.0, 1.0, 1.0],
+        local_actor: 1,
+        targets: Arc::default(),
+    });
+    view
 }
 
 /// Active capture and export notices retain enough editor space for navigation.
@@ -31,7 +123,10 @@ pub(super) fn recording() -> Fixture {
 /// Audio properties remain directly accessible beside the same timeline.
 pub(super) fn audio() -> Fixture {
     let mut view = view(false);
-    Arc::make_mut(&mut view.studio).selected = Some(Id(3));
+    let studio = Arc::make_mut(&mut view.studio);
+    studio.selected = Some(Id(3));
+    studio.workspace.inspector_hidden = false;
+    studio.workspace.panel = launcher::menu::studio::EditorPanel::Inspector;
     Fixture::Menu(Box::new(view))
 }
 

@@ -15,6 +15,11 @@ impl Studio {
     /// Typed actions keep source binding and stable IDs independent of pagination or display names.
     pub(in crate::menu::studio) fn camera_views_action(&mut self, action: V) -> Result<(), String> {
         match action {
+            V::Section(section) => {
+                self.cancel_camera_view_name();
+                Arc::make_mut(&mut self.view).camera_workspace.tools = section;
+                Ok(())
+            }
             V::New => self.begin_camera_view_name(None),
             V::Rename(id) => self.begin_camera_view_name(Some(id)),
             V::Save => self.save_camera_view_name(),
@@ -249,7 +254,11 @@ impl Studio {
             return Vec::new();
         };
         let saved = &self.view.camera_workspace.saved_views;
-        let mut actions = Vec::new();
+        let mut actions: Vec<_> = launcher::menu::studio::CameraTools::ALL
+            .iter()
+            .copied()
+            .map(|section| Action::CameraViews(V::Section(section)))
+            .collect();
         let preview = self
             .view
             .preview

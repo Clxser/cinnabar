@@ -716,6 +716,30 @@ const STATES: &[State] = &[
         fixture: studio::camera,
     },
     State {
+        name: "studio-path",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::path,
+    },
+    State {
+        name: "studio-camera-small",
+        size: [640, 480],
+        gui_scale: GUI_SCALE,
+        fixture: studio::camera,
+    },
+    State {
+        name: "studio-assist",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::assist,
+    },
+    State {
+        name: "studio-assist-cameras",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::assist_cameras,
+    },
+    State {
         name: "studio-recording",
         size: SIZE,
         gui_scale: GUI_SCALE,

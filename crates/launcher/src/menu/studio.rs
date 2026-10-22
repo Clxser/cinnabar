@@ -21,8 +21,8 @@ pub use camera::{
 pub mod creative;
 mod workspace;
 pub use workspace::{
-    Density, InspectorSection, SettingsPage, TimelineSize, Toolbox, ViewportTool, WorkspaceAction,
-    WorkspaceLayout,
+    AssistSection, CameraTools, Density, InspectorSection, SettingsPage, TimelineSize, Toolbox,
+    ViewportTool, WorkspaceAction, WorkspaceLayout,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

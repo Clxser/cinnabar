@@ -9,6 +9,14 @@ pub(super) fn draw(
     view: &MenuView,
     area: Bounds,
 ) -> Result<f32, PaintError> {
+    match view.studio.workflow.creative.section {
+        launcher::menu::studio::AssistSection::Rhythm => rhythm(canvas, view, area),
+        launcher::menu::studio::AssistSection::Cameras => shots(canvas, view, area),
+    }
+}
+
+/// Rhythm controls keep their own scroll position and remain independent of camera analysis.
+fn rhythm(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<f32, PaintError> {
     let [left, mut y, right, _] = area;
     let status = &view.studio.workflow.creative;
     canvas.text_line("Beat markers", [left, y], right - left, HEADER5, TEXT)?;
@@ -134,7 +142,15 @@ pub(super) fn draw(
         )? + canvas.r(1.4);
     }
     y += canvas.text("Tempo grids are estimates. Listen to the music, align the first beat, then add markers. Existing gameplay markers stay intact.", [left, y], right - left, CAPTION, TEXT_DIMMER, false)? + canvas.r(3.0);
+    Ok(y)
+}
 
+/// Camera alternatives have a directly reachable section rather than sitting below the rhythm panel.
+fn shots(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<f32, PaintError> {
+    let [left, mut y, right, _] = area;
+    let status = &view.studio.workflow.creative;
+    let half = (right - left - canvas.r(0.7)) * 0.5;
+    let gap = canvas.r(0.7);
     canvas.text_line("Shot suggestions", [left, y], right - left, HEADER5, TEXT)?;
     y += canvas.r(4.0);
     y += canvas.text("Position the 3D view and optionally select a player. Suggestions use the clear replay range at the playhead.", [left, y], right - left, CAPTION, TEXT_DIMMER, false)? + canvas.r(1.2);

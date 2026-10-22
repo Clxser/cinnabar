@@ -93,7 +93,9 @@ fn changed_sources_offer_explicit_rebinding_and_saved_view_rows_stay_bounded() {
 #[test]
 fn saved_views_remain_manageable_before_a_native_preview_is_available() {
     let mut view = menu(false);
-    Arc::make_mut(&mut view.studio).preview = Default::default();
+    let studio = Arc::make_mut(&mut view.studio);
+    studio.preview = Default::default();
+    studio.camera_workspace.tools = launcher::menu::studio::CameraTools::Views;
     let (mut nodes, mut next, mut layouts) =
         (Vec::new(), 1, ui::TextLayoutCache::new(128, 1024 * 1024));
     let font = ui_engine::test_support::fixture_font();

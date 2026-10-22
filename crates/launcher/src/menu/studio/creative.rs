@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CreativeAction {
+    Section(super::AssistSection),
     DetectBeats,
     CancelAnalysis,
     StepTempo(i8),
@@ -26,6 +27,7 @@ pub enum CreativeAction {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreativeStatus {
+    pub section: super::AssistSection,
     pub analyzing: bool,
     pub tempo_tenths: u16,
     pub offset_millis: i64,
@@ -41,6 +43,7 @@ pub struct CreativeStatus {
 impl Default for CreativeStatus {
     fn default() -> Self {
         Self {
+            section: Default::default(),
             analyzing: false,
             tempo_tenths: 120 * recording_studio::audio::beats::TEMPO_SCALE,
             offset_millis: 0,

@@ -70,6 +70,9 @@ impl Studio {
             return Err("Finish or cancel rhythm analysis before changing its tempo grid.".into());
         }
         match action {
+            CreativeAction::Section(section) => {
+                Arc::make_mut(&mut self.view).workflow.creative.section = section;
+            }
             CreativeAction::DetectBeats => self.detect_beats()?,
             CreativeAction::CancelAnalysis => {
                 self.creative.beat = None;
@@ -316,6 +319,12 @@ impl Studio {
                 CreativeAction::SuggestShots
             },
         ];
+        actions.extend(
+            launcher::menu::studio::AssistSection::ALL
+                .iter()
+                .copied()
+                .map(CreativeAction::Section),
+        );
         if self.creative.beat.is_some() {
             actions.push(CreativeAction::CancelAnalysis);
         } else if self.project().is_ok_and(|project| {
@@ -348,6 +357,22 @@ impl Studio {
 mod tests {
     use super::*;
     use recording_studio::{PlaybackRate, model::AudioRole};
+
+    #[test]
+    fn assist_sections_do_not_edit_or_seek_the_project() {
+        let mut studio = Studio::new(PathBuf::new());
+        studio.install(Editor::new(music_project()).unwrap(), None);
+        let revision = studio.editor.as_ref().unwrap().revision();
+        let epoch = studio.transport.epoch();
+        for section in launcher::menu::studio::AssistSection::ALL {
+            studio
+                .creative_action(CreativeAction::Section(*section))
+                .unwrap();
+            assert_eq!(studio.view.workflow.creative.section, *section);
+            assert_eq!(studio.editor.as_ref().unwrap().revision(), revision);
+            assert_eq!(studio.transport.epoch(), epoch);
+        }
+    }
 
     /// Metadata-only music makes worker publication testable without FFmpeg, files or a device clock.
     fn music_project() -> Project {

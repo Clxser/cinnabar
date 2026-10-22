@@ -142,3 +142,18 @@ fn selected_views_remain_stable_when_paging_and_deleted_ids_are_never_rebound_to
     assert!(studio.view.camera_workspace.saved_views.selected.is_none());
     assert!(studio.camera_views_action(V::Recall(id)).is_err());
 }
+
+#[test]
+fn camera_tool_switches_cancel_hidden_drafts_without_editing_the_document() {
+    let mut studio = inspected_project(false);
+    studio.begin_camera_view_name(None).unwrap();
+    let revision = studio.editor.as_ref().unwrap().revision();
+    let epoch = studio.transport.epoch();
+    for section in launcher::menu::studio::CameraTools::ALL {
+        studio.camera_views_action(V::Section(*section)).unwrap();
+        assert_eq!(studio.view.camera_workspace.tools, *section);
+        assert!(studio.view.camera_workspace.saved_views.draft.is_none());
+        assert_eq!(studio.editor.as_ref().unwrap().revision(), revision);
+        assert_eq!(studio.transport.epoch(), epoch);
+    }
+}
