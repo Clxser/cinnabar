@@ -74,20 +74,6 @@ pub(super) extern "system" fn report<'local>(
                 } else {
                     env.convert_byte_array(&trace)?
                 };
-                let identity = crash_report::report::Identity {
-                    session_id: String::new(),
-                    started_at_ms: timestamp as u64,
-                    release: env!("CARGO_PKG_VERSION").into(),
-                    commit: option_env!("CINNABAR_BUILD_COMMIT")
-                        .unwrap_or("unknown")
-                        .into(),
-                    build_profile: if cfg!(debug_assertions) {
-                        "debug"
-                    } else {
-                        "release"
-                    }
-                    .into(),
-                };
                 let exit = Exit {
                     timestamp_ms: timestamp as u64,
                     reason,
@@ -99,7 +85,6 @@ pub(super) extern "system" fn report<'local>(
                     &layout.crash_dir(),
                     snapshot,
                     &exit,
-                    &identity,
                     |name| name == format!("lib{}.so", env!("CARGO_CRATE_NAME")),
                 )?)
             } else {

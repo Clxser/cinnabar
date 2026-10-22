@@ -12,7 +12,7 @@ use std::{
 
 use crash_report::{
     folder,
-    report::{Identity, Kind, Report},
+    report::{Kind, Report},
     stack::{self, tombstone},
 };
 
@@ -51,12 +51,11 @@ pub struct Exit<'a> {
 
 /// Returns the crash folder of `exit`: the one the process wrote around its exit, with the
 /// tombstone's stack added, or a new one from what Android recorded. `in_app` names Cinnabar's
-/// own libraries; `identity` describes this build. `snapshot` was captured before the new game starts.
+/// own libraries. `snapshot` retains the previous build identity before the new game starts.
 pub fn record(
     crash_dir: &Path,
     snapshot: &Snapshot,
     exit: &Exit<'_>,
-    identity: &Identity,
     in_app: impl Fn(&str) -> bool,
 ) -> io::Result<PathBuf> {
     let stack = exit
@@ -96,7 +95,12 @@ pub fn record(
         _ => describe(exit),
     };
     let kind = if native { Kind::Native } else { Kind::Abort };
-    let mut report = Report::new(kind, message, identity, exit.timestamp_ms);
+    let mut report = Report::new(
+        kind,
+        message,
+        &snapshot.identity(exit.timestamp_ms),
+        exit.timestamp_ms,
+    );
     report.native = Some(serde_json::json!({ "exit_code": format!("0x{:X}", exit.status) }));
     let folder = folder::write(crash_dir, &report, &snapshot.logs, None, exit.timestamp_ms)?;
     if let Some(stack) = &stack {
@@ -178,7 +182,10 @@ fn describe(exit: &Exit<'_>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crash_report::{folder::Logs, report::Thread};
+    use crash_report::{
+        folder::Logs,
+        report::{Identity, Thread},
+    };
 
     const EXIT_MS: u64 = 1_760_443_200_000;
 
@@ -187,16 +194,9 @@ mod tests {
         crash_dir: &Path,
         log: &Path,
         exit: &Exit<'_>,
-        identity: &Identity,
         in_app: impl Fn(&str) -> bool,
     ) -> io::Result<PathBuf> {
-        super::record(
-            crash_dir,
-            &Snapshot::capture(crash_dir, log),
-            exit,
-            identity,
-            in_app,
-        )
+        super::record(crash_dir, &Snapshot::capture(crash_dir, log), exit, in_app)
     }
 
     /// Describes a synthetic Android build without any real session identity.
@@ -272,7 +272,6 @@ mod tests {
             dir.path(),
             &dir.path().join("client.log"),
             &exit(REASON_CRASH_NATIVE, Some(&bytes)),
-            &identity(),
             |name| name == "libcinnabar.so",
         )
         .unwrap();
@@ -287,7 +286,7 @@ mod tests {
     fn an_exit_without_a_folder_gets_one_from_androids_record() {
         let dir = tempfile::tempdir().unwrap();
         let log = dir.path().join("client.log");
-        std::fs::write(&log, "CLIENT_SESSION_START session=x\nlast words\n").unwrap();
+        std::fs::write(&log, "CLIENT_SESSION_START version=0.1.26 commit=abc profile=release session=x\nlast words\n").unwrap();
         // An older crash is outside the match window and stays separate.
         folder::write(
             dir.path(),
@@ -297,14 +296,7 @@ mod tests {
             EXIT_MS - 3_600_000,
         )
         .unwrap();
-        let folder = record(
-            dir.path(),
-            &log,
-            &exit(REASON_LOW_MEMORY, None),
-            &identity(),
-            |_| false,
-        )
-        .unwrap();
+        let folder = record(dir.path(), &log, &exit(REASON_LOW_MEMORY, None), |_| false).unwrap();
         let report = folder::read(&folder).unwrap();
         assert_eq!(report.kind, Kind::Abort);
         assert_eq!(
@@ -325,7 +317,6 @@ mod tests {
             dir.path(),
             &dir.path().join("client.log"),
             &exit(REASON_CRASH_NATIVE, Some(&bytes)),
-            &identity(),
             |_| true,
         )
         .unwrap();
@@ -342,7 +333,6 @@ mod tests {
             dir.path(),
             &dir.path().join("client.log"),
             &first_exit,
-            &identity(),
             |_| true,
         )
         .unwrap();
@@ -361,7 +351,6 @@ mod tests {
             dir.path(),
             &dir.path().join("client.log"),
             &second_exit,
-            &identity(),
             |_| true,
         )
         .unwrap();
@@ -374,7 +363,6 @@ mod tests {
                 dir.path(),
                 &dir.path().join("client.log"),
                 &second_exit,
-                &identity(),
                 |_| true,
             )
             .unwrap(),
@@ -401,7 +389,6 @@ mod tests {
             dir.path(),
             &dir.path().join("client.log"),
             &exit(REASON_CRASH_NATIVE, None),
-            &identity(),
             |_| true,
         )
         .unwrap();
@@ -426,12 +413,41 @@ mod tests {
             dir.path(),
             &previous,
             &exit(REASON_CRASH_NATIVE, None),
-            &identity(),
             |_| true,
         )
         .unwrap();
         assert_ne!(selected, core);
         assert_eq!(folder::read(&selected).unwrap().kind, Kind::Native);
+    }
+
+    #[test]
+    fn a_reconstructed_exit_preserves_the_previous_build_after_an_apk_update() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("client.log");
+        fs::write(&log, "CLIENT_SESSION_START version=old-release commit=old-commit profile=release session=old timestamp_ms=100\nold crash\n").unwrap();
+        let folder = record(dir.path(), &log, &exit(REASON_CRASH_NATIVE, None), |_| true).unwrap();
+        let report = folder::read(&folder).unwrap();
+        assert_eq!(report.release, "old-release");
+        assert_eq!(report.commit, "old-commit");
+        assert_eq!(report.build_profile, "release");
+        assert_eq!(report.session_id, "old");
+    }
+
+    #[test]
+    fn an_unidentified_exit_never_inherits_the_uploading_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = record(
+            dir.path(),
+            &dir.path().join("client.log"),
+            &exit(REASON_CRASH_NATIVE, None),
+            |_| true,
+        )
+        .unwrap();
+        let report = folder::read(&folder).unwrap();
+        assert_eq!(report.release, "unknown");
+        assert_eq!(report.commit, "unknown");
+        assert_eq!(report.build_profile, "unknown");
+        assert!(report.session_id.is_empty());
     }
 
     #[test]
@@ -445,7 +461,6 @@ mod tests {
             dir.path(),
             &previous,
             &exit(REASON_LOW_MEMORY, None),
-            &identity(),
             |_| true,
         )
         .unwrap();

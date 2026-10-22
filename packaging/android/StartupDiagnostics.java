@@ -51,7 +51,7 @@ final class StartupDiagnostics {
             android.content.SharedPreferences preferences = activity.getPreferences(0);
             if (exit.getTimestamp() <= preferences.getLong("reported-exit", 0)) return false;
             preferences.edit().putLong("reported-exit", exit.getTimestamp()).apply();
-            String details = "@PRODUCT_NAME@ @VERSION_NAME@\n" + Build.MANUFACTURER + " "
+            String details = "@PRODUCT_NAME@ previous process\n" + Build.MANUFACTURER + " "
                     + Build.MODEL + ", Android " + Build.VERSION.RELEASE + "\n\n"
                     + "Exit reason: " + exit.getReason() + ", status: " + exit.getStatus()
                     + "\n" + exit.getDescription() + "\n"

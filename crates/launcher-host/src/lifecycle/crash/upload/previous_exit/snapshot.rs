@@ -2,6 +2,7 @@
 
 use crash_report::{
     folder::{self, LogSources, Logs},
+    report::Identity,
     section,
     upload::state,
 };
@@ -16,6 +17,7 @@ pub struct Snapshot {
     pub(super) logs: Logs,
     pub(super) folders: Vec<PathBuf>,
     saved: Vec<PathBuf>,
+    header: Vec<u8>,
 }
 
 impl Snapshot {
@@ -66,6 +68,34 @@ impl Snapshot {
             logs,
             folders,
             saved,
+            header,
+        }
+    }
+
+    /// Recovers the stopped session's build from its header, never from the uploading APK.
+    /// Missing fields remain unknown; an absent start time uses the recorded exit time.
+    pub(super) fn identity(&self, exit_at_ms: u64) -> Identity {
+        let line = self
+            .header
+            .split(|byte| *byte == b'\n')
+            .rfind(|line| line.starts_with(section::CLIENT_SESSION_START.as_bytes()))
+            .and_then(|line| std::str::from_utf8(line).ok())
+            .unwrap_or_default();
+        let field = |name: &str| {
+            line.split_ascii_whitespace()
+                .filter_map(|field| field.split_once('='))
+                .find_map(|(key, value)| (key == name).then_some(value))
+        };
+        let build = |name: &str| field(name).unwrap_or("unknown").to_owned();
+        Identity {
+            session_id: field("session").unwrap_or_default().to_owned(),
+            started_at_ms: field("timestamp_ms")
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|at| *at <= exit_at_ms)
+                .unwrap_or(exit_at_ms),
+            release: build("version"),
+            commit: build("commit"),
+            build_profile: build("profile"),
         }
     }
 
