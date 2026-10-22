@@ -287,7 +287,7 @@ impl MenuRuntime {
         if self.accounts.operation.is_some() {
             return;
         }
-        if self.feeds.account_adding {
+        if self.feeds.account_adding && !self.auth_restart_requested {
             match self.owned_auth() {
                 Some(AuthState::Authenticated) if !self.accounts.pending_ready => {
                     self.accounts.pending_ready = true;

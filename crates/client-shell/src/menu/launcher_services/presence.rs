@@ -25,28 +25,34 @@ impl LauncherServices {
     ) -> bool {
         use launcher_host::launcher_account::TitlePresenceRetirement;
         commands.remove_resource::<LauncherAccount>();
-        #[cfg(feature = "native-networking")]
-        menu.native_catalog.pause();
+        let catalog_finished = menu.native_catalog.retirement_complete();
         menu.accounts.skip_control = true;
-        let Some(lifetime) = &self.presence_lifetime else {
-            return true;
-        };
-        lifetime.retire();
-        match lifetime.retirement() {
-            None => false,
-            Some(TitlePresenceRetirement::Complete) if lifetime.worker_finished() => {
-                self.presence_lifetime = None;
-                true
-            }
-            Some(TitlePresenceRetirement::Complete) => false,
-            Some(TitlePresenceRetirement::Unconfirmed) => {
-                self.retirement_blocked = true;
-                bevy::log::warn!(
-                    "native title presence cleanup unconfirmed; account replacement remains blocked"
-                );
-                false
+        if let Some(lifetime) = &self.presence_lifetime {
+            lifetime.retire();
+            match lifetime.retirement() {
+                None => return false,
+                Some(TitlePresenceRetirement::Complete) if lifetime.worker_finished() => {}
+                Some(TitlePresenceRetirement::Complete) => return false,
+                Some(TitlePresenceRetirement::Unconfirmed) => {
+                    self.retirement_blocked = true;
+                    bevy::log::warn!(
+                        "native title presence cleanup unconfirmed; account replacement remains blocked"
+                    );
+                    return false;
+                }
             }
         }
+        if !catalog_finished
+            || self
+                .workers
+                .as_ref()
+                .is_some_and(|workers| !workers.is_empty())
+        {
+            return false;
+        }
+        self.presence_lifetime = None;
+        self.workers = None;
+        true
     }
 
     /// Detaches readers before a replacement account service can attach.

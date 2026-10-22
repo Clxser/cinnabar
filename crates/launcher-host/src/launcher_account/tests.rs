@@ -211,6 +211,7 @@ fn account_responses_from_before_sign_out_are_discarded() {
         realm_membership: realm_membership::Requests::disconnected(),
         cinnabar_rosters: crossbeam_channel::unbounded().0,
         presence_lifetime: TitlePresenceLifetime::new(),
+        workers: TaskTracker::new(),
     };
     assert!(account.sign_out());
     publish_account(&snapshot, generation, |snapshot| {

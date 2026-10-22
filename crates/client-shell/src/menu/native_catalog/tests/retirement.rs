@@ -188,3 +188,88 @@ fn actual_catalog_retirement_coalesces_refresh_and_rejects_stale_publication() {
         runtime.block_on(tasks.wait());
     }
 }
+
+/// An unbound publisher does not let Add account overtake a canceled catalog's actual cleanup.
+#[test]
+fn add_account_waits_for_original_catalog_thread_after_cancellation() {
+    use crate::menu::launcher_services::LauncherServices;
+    use bevy::{ecs::world::CommandQueue, prelude::*};
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let tasks = TaskTracker::new();
+    let layout = launcher::test_support::scratch("add-account-catalog-retirement");
+    // No execution capability: releasing sign-in produces a visible failure without HTTP.
+    let mut menu = MenuRuntime::new_with_layout(
+        true,
+        Some(2),
+        "Fixture".into(),
+        layout,
+        crate::player_skin::LocalPlayerSkin::generated_default("Fixture"),
+    );
+    let (started, running) = mpsc::channel();
+    let (dropping, held) = mpsc::channel();
+    let (release, blocked) = mpsc::channel();
+    let worker = CatalogWorker::start_test_read(
+        Read {
+            started: Some(started),
+            dropping,
+            release: blocked,
+            complete: false,
+            result_owner: Arc::new(()),
+        },
+        runtime.handle().clone(),
+        tasks.clone(),
+    )
+    .unwrap();
+    menu.native_catalog.request = Some(Request {
+        epoch: menu.native_catalog.epoch,
+        worker,
+        completed: None,
+    });
+    observed(&running, "the original catalog read to be polled");
+    menu.activate(MenuAction::AddAccount);
+    let mut slot = LauncherServices::default();
+    let mut world = World::new();
+    let mut queue = CommandQueue::default();
+    slot.drive(
+        &mut Commands::new(&mut queue, &world),
+        &mut menu,
+        true,
+        None,
+    );
+    queue.apply(&mut world);
+    observed(&held, "the canceled catalog to enter protected cleanup");
+    let queued_during_cleanup = menu.current_auth().as_ref() == &AuthState::Checking;
+
+    drop(release);
+    test_time::eventually("the original catalog thread to finish", || {
+        menu.native_catalog
+            .retiring
+            .as_ref()
+            .is_some_and(CatalogWorker::is_finished)
+    });
+    slot.drive(
+        &mut Commands::new(&mut queue, &world),
+        &mut menu,
+        true,
+        None,
+    );
+    queue.apply(&mut world);
+    let attempted_after_retirement = matches!(menu.current_auth().as_ref(), AuthState::Failed(_));
+    drop((slot, menu, world));
+    tasks.close();
+    runtime.block_on(tasks.wait());
+
+    assert!(
+        queued_during_cleanup,
+        "Add account overtook original catalog cleanup"
+    );
+    assert!(
+        attempted_after_retirement,
+        "catalog retirement did not release sign-in"
+    );
+}

@@ -129,32 +129,34 @@ async fn control(
         if lifetime.retirement_requested() {
             return;
         }
-        let (cinnabar, generation) = {
-            let snapshot = shared.lock().unwrap_or_else(|p| p.into_inner());
-            (snapshot.cinnabar_api.clone(), snapshot.auth_generation)
-        };
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
         {
-            let announced = {
+            let (api, config, generation) = {
                 let snapshot = shared.lock().unwrap_or_else(|p| p.into_inner());
-                if snapshot.same_generation(generation)
-                    && let Some(api) = &snapshot.native_product_api
-                {
-                    if let Some(config) = &cinnabar {
-                        api.configure(config.clone());
-                    }
-                    let release = api.take_release();
-                    if new_release(&mut seen_release, release.as_ref()).is_some() {
+                (
+                    snapshot.native_product_api.clone(),
+                    snapshot.cinnabar_api.clone(),
+                    snapshot.auth_generation,
+                )
+            };
+            if let Some(api) = api {
+                if let Some(config) = config {
+                    api.configure(config);
+                }
+                let release = api.take_release();
+                let announced = {
+                    let snapshot = shared.lock().unwrap_or_else(|p| p.into_inner());
+                    if snapshot.same_generation(generation)
+                        && new_release(&mut seen_release, release.as_ref()).is_some()
+                    {
                         release
                     } else {
                         None
                     }
-                } else {
-                    None
+                };
+                if let Some(release) = announced {
+                    crate::lifecycle::update::release_published(&release);
                 }
-            };
-            if let Some(release) = announced {
-                crate::lifecycle::update::release_published(&release);
             }
         }
         let targets = shared

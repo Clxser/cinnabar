@@ -61,6 +61,12 @@ impl Controller {
         }
     }
 
+    /// Cancels the original request and waits for its actual thread and protected destructors.
+    pub(super) fn retirement_complete(&mut self) -> bool {
+        self.pause();
+        self.retiring.is_none()
+    }
+
     /// Releases only a worker whose actual thread and protected destructors have finished.
     fn reap_retiring(&mut self) {
         if self

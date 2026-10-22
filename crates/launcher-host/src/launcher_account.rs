@@ -237,6 +237,7 @@ pub struct LauncherAccount {
     /// Dropping it stops the catalog and feed workers.
     _alive: Sender<()>,
     presence_lifetime: TitlePresenceLifetime,
+    workers: TaskTracker,
 }
 
 impl Drop for LauncherAccount {
@@ -292,6 +293,11 @@ impl LauncherAccount {
     /// Retains the existing worker's retirement proof independently of the Bevy resource.
     pub fn title_presence_lifetime(&self) -> TitlePresenceLifetime {
         self.presence_lifetime.clone()
+    }
+
+    /// Retains completion of this account's workers and protected cleanup after resource removal.
+    pub fn worker_lifetime(&self) -> TaskTracker {
+        self.workers.clone()
     }
 
     /// Supplies only the actual played opening; the existing native worker owns all service IO.

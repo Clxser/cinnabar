@@ -28,10 +28,15 @@ const PENDING_LIMIT: usize = 8;
 #[derive(Clone, Default)]
 pub(crate) struct Client(Arc<Shared>);
 
+#[cfg(test)]
+type ReleaseCheckObserver = Arc<dyn Fn() + Send + Sync>;
+
 #[derive(Default)]
 struct Shared {
     state: Mutex<State>,
     changed: Notify,
+    #[cfg(test)]
+    release_check_observer: Mutex<Option<ReleaseCheckObserver>>,
 }
 
 #[derive(Default)]

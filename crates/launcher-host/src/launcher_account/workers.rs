@@ -11,6 +11,13 @@ impl LauncherAccount {
         tasks: TaskTracker,
         process_stop: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> Self {
+        let workers = TaskTracker::new();
+        // Startup stays counted until every initial worker is armed, including on unwind.
+        let startup = workers.token();
+        workers.close();
+        let completion = workers.clone();
+        let _account_completion = tasks.spawn_on(async move { completion.wait().await }, &runtime);
+        let tasks = workers.clone();
         let (feed_wake, feed_changes) = bounded(1);
         let (home_wake, home_changes) = bounded(1);
         let (home_cancel, home_changed) = tokio::sync::watch::channel(home_feed::Wake::Account);
@@ -111,6 +118,7 @@ impl LauncherAccount {
             move || profile_worker::poll(&artwork, &shared, profile_requests, &runtime),
             &tasks,
         ));
+        drop(startup);
         Self {
             snapshot,
             sign_out,
@@ -121,6 +129,7 @@ impl LauncherAccount {
             cinnabar_rosters,
             _alive: alive,
             presence_lifetime,
+            workers,
         }
     }
 }

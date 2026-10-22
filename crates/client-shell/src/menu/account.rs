@@ -289,6 +289,19 @@ impl MenuRuntime {
         {
             self.auth_process = None;
         }
+        // Add account reserves its credential binding only after the old services stop writing.
+        self.auth_restart_requested =
+            cfg!(feature = "native-networking") && self.feeds.account_adding;
+        self.control_auth = None;
+        if !self.auth_restart_requested {
+            self.spawn_sign_in();
+        }
+    }
+
+    /// Releases a queued Add account after the original services and auth worker have retired.
+    #[cfg(feature = "native-networking")]
+    pub(super) fn start_sign_in_after_retirement(&mut self) {
+        self.auth_process = None;
         self.auth_restart_requested = false;
         self.control_auth = None;
         self.spawn_sign_in();
@@ -491,8 +504,10 @@ impl MenuRuntime {
                     && matches!(process.state(), AuthState::Authenticated)));
         if process.cleanup_complete() && self.auth_restart_requested {
             self.auth_process = None;
-            self.auth_restart_requested = false;
-            self.spawn_sign_in();
+            if !self.feeds.account_adding {
+                self.auth_restart_requested = false;
+                self.spawn_sign_in();
+            }
             return;
         }
         if !was_authenticated && matches!(process.state(), AuthState::Authenticated) {

@@ -11,6 +11,7 @@ pub struct LauncherServices {
     running: Option<Attachment>,
     retirement_blocked: bool,
     presence_lifetime: Option<launcher_host::launcher_account::TitlePresenceLifetime>,
+    workers: Option<tokio_util::task::TaskTracker>,
 }
 
 struct Attachment {
@@ -31,14 +32,22 @@ impl LauncherServices {
         if !self.retirement_complete(commands, menu) {
             return;
         }
-        if idle && menu.accounts.operation.is_some() && menu.auth_cleanup_complete() {
+        let sign_in_queued = menu.feeds.account_adding && menu.auth_restart_requested;
+        if idle
+            && (menu.accounts.operation.is_some() || sign_in_queued)
+            && menu.auth_cleanup_complete()
+        {
             if !self.retire_presence(commands, menu) {
                 return;
             }
             if self.running.take().is_some() {
                 self.detach_clients(commands, menu, worlds.as_deref_mut());
             }
-            menu.start_account_operation();
+            if menu.accounts.operation.is_some() {
+                menu.start_account_operation();
+            } else {
+                menu.start_sign_in_after_retirement();
+            }
             return;
         }
         if menu.accounts.work.is_some() {
@@ -57,3 +66,6 @@ mod presence;
 mod dead_child_tests;
 #[cfg(test)]
 mod retirement_tests;
+
+#[cfg(all(test, feature = "native-networking"))]
+mod sign_in_tests;

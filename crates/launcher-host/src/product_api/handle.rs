@@ -216,6 +216,18 @@ impl Client {
     /// Delivers only the latest accepted announcement through the launcher's existing release path.
     pub(crate) fn take_release(&self) -> Option<CinnabarRelease> {
         let scope = self.with(|state| state.scope.clone())?;
+        #[cfg(test)]
+        {
+            let observer = self
+                .0
+                .release_check_observer
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone();
+            if let Some(observer) = observer {
+                observer();
+            }
+        }
         if scope.current() != Some(true) {
             return None;
         }

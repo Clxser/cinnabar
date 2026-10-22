@@ -53,7 +53,7 @@ fn assert_failed_start_prompt_survives(status: AuthState) {
         let mut menu = MenuRuntime::new(true, 2, "Offline Player".into());
         menu.feeds.account_adding = adding;
         menu.dialog = adding.then_some(MenuDialog::Accounts);
-        menu.start_sign_in();
+        start_sign_in_without_attached_services(&mut menu);
         let failure = menu.current_auth().into_owned();
         assert!(matches!(failure, AuthState::Failed(_)));
         menu.apply_control_auth(status.clone());
@@ -77,8 +77,27 @@ fn assert_failed_start_prompt_survives(status: AuthState) {
         menu.stop_sign_in();
         assert!(!menu.sign_in_requested);
         assert_eq!(menu.current_auth().as_ref(), &status);
-        menu.start_sign_in();
+        start_sign_in_without_attached_services(&mut menu);
         assert!(matches!(menu.current_auth().as_ref(), AuthState::Failed(_)));
+    }
+}
+
+/// Advances an Add account through its service owner when no original services are attached.
+fn start_sign_in_without_attached_services(menu: &mut MenuRuntime) {
+    menu.start_sign_in();
+    #[cfg(feature = "native-networking")]
+    if menu.feeds.account_adding {
+        use bevy::{ecs::world::CommandQueue, prelude::*};
+
+        let mut world = World::new();
+        let mut queue = CommandQueue::default();
+        super::super::launcher_services::LauncherServices::default().drive(
+            &mut Commands::new(&mut queue, &world),
+            menu,
+            true,
+            None,
+        );
+        queue.apply(&mut world);
     }
 }
 

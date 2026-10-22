@@ -54,6 +54,7 @@ impl LauncherServices {
             execution,
         );
         self.presence_lifetime = Some(services.title_presence_lifetime());
+        self.workers = Some(services.worker_lifetime());
         self.running = Some(Attachment {
             cache,
             identity,

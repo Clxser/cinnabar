@@ -283,3 +283,19 @@ fn ownership_null_elements_revoke_the_whole_prior_snapshot() {
         "null ownership elements left earlier paid grants active: {observed:?}"
     );
 }
+
+impl Client {
+    /// Observes the real protected release check using an already acquired account scope.
+    pub(crate) fn observe_release_check(
+        &self,
+        scope: ApiScope,
+        observer: impl Fn() + Send + Sync + 'static,
+    ) {
+        self.with(|state| state.scope = Some(scope));
+        *self
+            .0
+            .release_check_observer
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(observer));
+    }
+}

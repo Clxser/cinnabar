@@ -39,6 +39,7 @@ pub(super) struct State {
     cleanup: Mutex<Option<oneshot::Receiver<()>>>,
     lease_released: Arc<AtomicBool>,
     read_released: tokio::sync::Notify,
+    reader_cleanup: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
 }
 
 /// Starts the original worker topology with a retained Home read and acknowledged fixture publisher.
@@ -46,6 +47,26 @@ pub fn account(
     namespace: &std::path::Path,
     runtime: Handle,
     tasks: TaskTracker,
+) -> (LauncherAccount, Signals) {
+    start(namespace, runtime, tasks, None)
+}
+
+/// Holds the actual canceled Home worker after it releases its lease, independently of title cleanup.
+pub fn account_with_reader_cleanup(
+    namespace: &std::path::Path,
+    runtime: Handle,
+    tasks: TaskTracker,
+    cleanup: std::sync::mpsc::Receiver<()>,
+) -> (LauncherAccount, Signals) {
+    start(namespace, runtime, tasks, Some(cleanup))
+}
+
+/// Arms the original worker topology before any fixture boundary can be observed.
+fn start(
+    namespace: &std::path::Path,
+    runtime: Handle,
+    tasks: TaskTracker,
+    reader_cleanup: Option<std::sync::mpsc::Receiver<()>>,
 ) -> (LauncherAccount, Signals) {
     let path = namespace.join("retirement-lease.json");
     let mut options = std::fs::OpenOptions::new();
@@ -83,6 +104,7 @@ pub fn account(
         cleanup: Mutex::new(Some(cleanup)),
         lease_released: Arc::clone(&lease_released),
         read_released: tokio::sync::Notify::new(),
+        reader_cleanup: Mutex::new(reader_cleanup),
     });
     let initial = Snapshot {
         retirement_probe: Some(state),
@@ -185,6 +207,9 @@ impl Drop for HeldRead<'_> {
         self.state.read_released.notify_one();
         if let Some(observation) = self.state.observation.lock().unwrap().take() {
             let _ = observation.send(ReadObservation::Canceled);
+        }
+        if let Some(cleanup) = self.state.reader_cleanup.lock().unwrap().take() {
+            let _ = cleanup.recv();
         }
     }
 }
