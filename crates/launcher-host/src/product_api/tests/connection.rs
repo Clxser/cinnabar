@@ -140,6 +140,9 @@ async fn acquired_account_drives_product_wire_and_retires_its_pending_lookup() {
             let visible=LauncherAccount::observed_product_updates(api.clone(),granted.clone(),false);
             let stale=LauncherAccount::observed_product_updates(api.clone(),granted.clone(),true);
             let lease=store.try_native_lease().unwrap();
+            let cached_frame=LauncherAccount::observed_product_updates(api.clone(),granted.clone(),false);
+            assert_eq!(cached_frame.ownership_xuid,identity.xuid(),"a frame must read the last worker-verified ownership without reacquiring account storage");
+            assert_eq!(cached_frame.owned_cosmetics,["fixture:paid"]);
             assert!(matches!(api.sync(local.clone()),PlayerSync::Pending));
             let pending_ownership=LauncherAccount::observed_product_updates(api.clone(),granted.clone(),false);
             drop(lease);
