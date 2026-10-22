@@ -1,17 +1,15 @@
 //! Subject-bound shots are verified against native source timelines before any encoder starts.
 
 use recording_studio::{
-    Span,
-    camera::{
-        CameraMode,
-        coverage::{self, TargetCoverageRequest},
-    },
+    MediaTime, Span,
+    camera::CameraMode,
     export::{
         Cancellation, ExportRequest,
         range::{self, FrameRange},
     },
     model::MediaKind,
     playback::{CompiledTimeline, FramePlan},
+    retime::TimeMap,
 };
 
 /// The export worker checks every visible native layer, including retimed dissolve handles.
@@ -51,30 +49,46 @@ pub(super) fn prepare(request: &ExportRequest, cancellation: &Cancellation) -> R
                 request.source_base.join(&source.path)
             };
             let map = clip.time_map().map_err(|error| error.to_string())?;
-            let query = TargetCoverageRequest {
-                directory,
-                source_range: coverage::source_window(&map, timeline, source.duration)
-                    .map_err(|error| error.to_string())?,
-                target: lifetimes
-                    .get(&(shot.id, source.id))
-                    .copied()
-                    .unwrap_or_else(|| shot.target_reference().expect("subject-bound shot")),
-                require_eye: matches!(&shot.mode, CameraMode::Player { .. }),
-            };
-            let valid = recording_scene::targets::verify_coverage(&query, cancellation)?;
-            let Some(valid) = valid.filter(|valid| valid.source_range == query.source_range) else {
+            let frames = FrameRange::new(project.export.fps, project.duration(), Some(timeline))
+                .map_err(|error| error.to_string())?;
+            let target = lifetimes
+                .get(&(shot.id, source.id))
+                .copied()
+                .unwrap_or_else(|| shot.target_reference().expect("subject-bound shot"));
+            let valid = recording_scene::targets::verify_samples(
+                &directory,
+                source_samples(frames, &map, source.duration),
+                target,
+                matches!(&shot.mode, CameraMode::Player { .. }),
+                cancellation,
+            )?;
+            let Some(valid) = valid else {
                 return Err(format!(
-                    "Camera shot '{}' outlasts its recorded subject or native eye view in '{}' between {:.3}s and {:.3}s. Shorten or retarget the shot before exporting.",
+                    "Camera shot '{}' has no recorded subject or native eye view at a required output frame in '{}' between {:.3}s and {:.3}s. Shorten or retarget the shot before exporting.",
                     shot.name,
                     source.name,
                     timeline.start.seconds(),
                     timeline.end.seconds(),
                 ));
             };
-            lifetimes.insert((shot.id, source.id), valid.target);
+            lifetimes.insert((shot.id, source.id), valid);
         }
     }
     cancellation.check()
+}
+
+/// Each output timestamp maps independently through the clip's exact clock, including native dissolve handles.
+fn source_samples(
+    frames: FrameRange,
+    map: &TimeMap,
+    duration: MediaTime,
+) -> impl Iterator<Item = Result<MediaTime, String>> + '_ {
+    (0..frames.frames()).map(move |index| {
+        frames
+            .time(index)
+            .and_then(|at| map.transition_time(at, duration))
+            .map_err(|error| error.to_string())
+    })
 }
 
 /// Camera precedence and muting come from the playback owner; hidden or superseded shots do not reject exports.

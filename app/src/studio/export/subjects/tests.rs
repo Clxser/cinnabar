@@ -1,6 +1,8 @@
 use super::*;
 use recording_studio::{FrameRate, MediaTime};
 
+mod samples;
+
 /// Frame windows use the same rational grid as export rather than rounding the requested In point.
 fn interval(start: u64, end: u64) -> Span {
     Span::new(MediaTime(start), MediaTime(end)).unwrap()

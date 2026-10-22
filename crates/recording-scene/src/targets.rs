@@ -14,8 +14,10 @@ use recording_studio::{
 mod codec;
 mod coverage;
 mod playback;
+mod samples;
 pub use coverage::verify_coverage;
 pub use playback::TargetRecording;
+pub use samples::verify_samples;
 
 pub const TARGET_TRACK_SCHEMA: &str = "cinnabar.camera-targets/2";
 const LEGACY_TARGET_TRACK_SCHEMA: &str = "cinnabar.camera-targets/1";

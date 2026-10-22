@@ -7,7 +7,7 @@ use recording_studio::{
     archive::{
         ArchiveError, RecordKind, RecordingCursor, RecordingInfo, RecordingReader, ReplayRecord,
     },
-    camera::{CameraTarget, MAX_CAMERA_TARGETS},
+    camera::{ActorPose, CameraTarget, MAX_CAMERA_TARGETS},
 };
 
 use super::{
@@ -15,6 +15,7 @@ use super::{
 };
 
 mod coverage;
+mod samples;
 
 pub struct TargetRecording {
     cursor: RecordingCursor,
@@ -118,6 +119,16 @@ impl TargetRecording {
         at: MediaTime,
         cancelled: &impl Fn() -> bool,
     ) -> Result<TargetFrame, ArchiveError> {
+        self.restore_states(at, cancelled)?;
+        self.sample(at)
+    }
+
+    /// Rebuilds raw lookahead without allocating interpolated actors for target-only admission.
+    fn restore_states(
+        &mut self,
+        at: MediaTime,
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<(), ArchiveError> {
         self.state.clear();
         self.next = None;
         let mut sampled = None;
@@ -130,7 +141,7 @@ impl TargetRecording {
             "camera targets need a successful baseline",
         ))?));
         self.read_next(cancelled)?;
-        self.sample(at)
+        Ok(())
     }
 
     /// The cursor can run one timestamp ahead while the published transport position stays at `at`.
@@ -139,6 +150,16 @@ impl TargetRecording {
         at: MediaTime,
         cancelled: &impl Fn() -> bool,
     ) -> Result<TargetFrame, ArchiveError> {
+        self.advance_states(at, cancelled)?;
+        self.sample(at)
+    }
+
+    /// Promotes recorded change boundaries once, independently of output cadence or actor publication.
+    fn advance_states(
+        &mut self,
+        at: MediaTime,
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<(), ArchiveError> {
         if self.next.as_ref().is_some_and(|next| next.at <= at) {
             self.current = self.next.take();
             let mut sampled = None;
@@ -152,7 +173,7 @@ impl TargetRecording {
             }
             self.read_next(cancelled)?;
         }
-        self.sample(at)
+        Ok(())
     }
 
     /// Reads every record sharing the next timestamp, including multipart checkpoint boundaries.
@@ -206,29 +227,43 @@ impl TargetRecording {
 
 /// Lifetime checks prevent smoothing through a despawn, a teleport or a reused runtime ID.
 fn interpolate(current: &TargetFrame, next: Option<&TargetFrame>, at: MediaTime) -> TargetFrame {
-    let Some(next) = next.filter(|next| current.at < next.at && at > current.at) else {
+    let Some((next, amount)) = interpolation(current.at, next, at) else {
         return TargetFrame {
             at,
             targets: Arc::clone(&current.targets),
         };
     };
-    let amount =
-        at.saturating_sub(current.at).0 as f64 / next.at.saturating_sub(current.at).0 as f64;
     let targets = current
         .targets
         .iter()
         .map(|target| {
             let mut sampled = target.clone();
-            if let Some(future) = next.target(target.runtime_id)
-                && target.can_interpolate(future)
-            {
-                sampled.pose = target.pose.interpolated(future.pose, amount);
-            }
+            sampled.pose = target_pose(target, next, amount);
             sampled
         })
         .collect::<Vec<_>>()
         .into();
     TargetFrame { at, targets }
+}
+
+/// Both full preview arrays and one-subject export admission use the same interpolation boundary and amount.
+fn interpolation(
+    current: MediaTime,
+    next: Option<&TargetFrame>,
+    at: MediaTime,
+) -> Option<(&TargetFrame, f64)> {
+    let next = next.filter(|next| current < next.at && at > current)?;
+    let amount = at.saturating_sub(current).0 as f64 / next.at.saturating_sub(current).0 as f64;
+    Some((next, amount))
+}
+
+/// Lifetime, teleport and class changes never blend an actor into an unrelated future sample.
+fn target_pose(target: &CameraTarget, next: &TargetFrame, amount: f64) -> ActorPose {
+    next.target(target.runtime_id)
+        .filter(|future| target.can_interpolate(future))
+        .map_or(target.pose, |future| {
+            target.pose.interpolated(future.pose, amount)
+        })
 }
 
 /// A target checkpoint replaces its full set; ordinary deltas mutate only named identities.
