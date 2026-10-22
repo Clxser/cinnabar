@@ -89,6 +89,9 @@ pub struct GuiScaleDrag {
 impl MenuRuntime {
     /// Focus `field` with its caret after the text, as a newly selected box.
     pub(super) fn focus_field(&mut self, field: MenuField) {
+        if let MenuField::WorldOption(id) = field {
+            self.local_ui.begin_option_edit(id);
+        }
         self.field_activation = self.field_activation.wrapping_add(1);
         self.field = Some(field);
         self.edit_field(|editor| editor.move_end(false));
@@ -108,6 +111,7 @@ impl MenuRuntime {
             MenuField::Port => &self.port,
             MenuField::WorldName => &self.local_ui.name,
             MenuField::WorldSeed => &self.local_ui.seed,
+            MenuField::WorldOption(id) => &self.local_ui.options[&id],
             MenuField::SkinName => &self.skin_name,
             MenuField::MacroCommand(slot) => &self.macro_commands[slot],
         }
@@ -123,6 +127,11 @@ impl MenuRuntime {
             MenuField::Port => &mut self.port,
             MenuField::WorldName => &mut self.local_ui.name,
             MenuField::WorldSeed => &mut self.local_ui.seed,
+            MenuField::WorldOption(id) => self
+                .local_ui
+                .options
+                .get_mut(&id)
+                .expect("numeric world option"),
             MenuField::SkinName => &mut self.skin_name,
             MenuField::MacroCommand(slot) => &mut self.macro_commands[slot],
         }

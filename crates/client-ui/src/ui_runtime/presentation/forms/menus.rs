@@ -244,6 +244,7 @@ impl UiPresentationRuntime {
                     // Drawn by the OreUI create and edit screens, not JSON-UI.
                     launcher::menu::MenuField::WorldName
                     | launcher::menu::MenuField::WorldSeed
+                    | launcher::menu::MenuField::WorldOption(_)
                     | launcher::menu::MenuField::FriendQuery
                     | launcher::menu::MenuField::SettingsQuery
                     | launcher::menu::MenuField::SkinName

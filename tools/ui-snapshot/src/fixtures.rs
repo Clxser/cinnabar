@@ -988,6 +988,7 @@ pub fn settings(section: &str) -> MenuView {
 pub fn states() -> impl Iterator<Item = &'static State> {
     STATES
         .iter()
+        .chain(out_of_game::WORLD_FORM_STATES)
         .chain(social_settings::STATES)
         .chain(settings_screens::SEARCH_STATES)
 }
