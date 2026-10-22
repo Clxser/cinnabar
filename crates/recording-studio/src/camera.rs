@@ -12,6 +12,7 @@ pub const MAX_TARGET_NAME_BYTES: usize = 256;
 pub const CAMERA_FOV_RANGE: std::ops::Range<f64> = 1.0..179.0;
 const DEFAULT_FOV: f64 = 70.0;
 
+mod animation;
 mod continuity;
 pub mod coverage;
 mod distance;
@@ -25,6 +26,7 @@ mod rotation;
 mod saved;
 mod subjects;
 mod viewport;
+pub use animation::{CameraAnimation, CameraChannel, CameraChannelCurve};
 pub use continuity::PathContinuity;
 pub use distance::{CompiledCameraPath, PathAccuracy, PathTiming};
 pub use edit::{CameraParameter, CameraRigKind};
@@ -175,6 +177,9 @@ pub struct CameraShot {
     pub mode: CameraMode,
     pub hide_hud: bool,
     pub hide_hand: bool,
+    /// Independent graph channels override the sampled rig without rewriting its positional rail.
+    #[serde(default, skip_serializing_if = "CameraAnimation::is_empty")]
+    pub animation: CameraAnimation,
     #[serde(default)]
     pub target_lifetime: Option<TargetLifetime>,
     /// Independent lens animation overrides the rig's original FOV only when explicitly authored.
@@ -371,6 +376,7 @@ impl CameraShot {
     /// Checks rigs and every path key once at project admission or edit commit.
     pub fn validate(&self) -> Result<(), StudioError> {
         self.span.validate()?;
+        self.animation.validate(self.span.duration())?;
         limit("camera name bytes", self.name.len(), 256)?;
         let valid_fov = |fov: f64| fov.is_finite() && CAMERA_FOV_RANGE.contains(&fov);
         if let Some(curve) = &self.fov_curve {
@@ -619,6 +625,7 @@ impl CameraShot {
                 )
             }
         }?;
+        self.animation.apply(&mut pose, elapsed);
         if let Some(fov) = self.fov_override(time) {
             pose.fov = fov;
         }

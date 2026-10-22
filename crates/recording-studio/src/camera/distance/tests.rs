@@ -1,5 +1,87 @@
 use super::*;
 
+#[test]
+fn maximum_rail_orientation_edits_retain_every_integrated_geometry_allocation() {
+    let mut shot = curved();
+    shot.span.end = MediaTime((MAX_CAMERA_KEYS as u64 - 1) * 1_000);
+    shot.mode = CameraMode::Path {
+        keys: (0..MAX_CAMERA_KEYS)
+            .map(|index| CameraKey {
+                at: MediaTime(index as u64 * 1_000),
+                pose: CameraPose {
+                    position: [index as f64, (index % 7) as f64, 0.0],
+                    ..Default::default()
+                },
+                easing: Easing::Smooth,
+                handles: None,
+            })
+            .collect(),
+        smooth_position: true,
+    };
+    shot.validate().unwrap();
+    let original = CompiledCameraPath::new(&shot).unwrap();
+    let rotated = shot
+        .with_rotation(MediaTime(4_000), CameraRotationAxis::Yaw, 123.0)
+        .unwrap();
+    let rebound = CompiledCameraPath::new_reusing(&rotated, Some(&original)).unwrap();
+    assert!(
+        original
+            .segments
+            .iter()
+            .zip(&rebound.segments)
+            .all(|(a, b)| Arc::ptr_eq(&a.geometry, &b.geometry))
+    );
+    assert_eq!(rebound.sample(MediaTime(4_000)).unwrap().yaw, 123.0);
+    assert_eq!(original.sample(MediaTime(4_000)).unwrap().yaw, 0.0);
+    let retained = Arc::downgrade(&original.segments[0].geometry);
+    drop(original);
+    assert!(retained.upgrade().is_some());
+    drop(rebound);
+    assert!(retained.upgrade().is_none());
+}
+
+#[test]
+fn reused_geometry_does_not_reuse_trim_clock_travel_or_orientation_policy() {
+    let shot = curved();
+    let original = CompiledCameraPath::new(&shot).unwrap();
+    let mut edited = shot.clone();
+    edited.span = Span::new(MediaTime(5_000_000), MediaTime(5_500_000)).unwrap();
+    edited.path_offset = MediaTime(200_000);
+    edited.path_timing = PathTiming::GlobalDistance;
+    edited.path_global_easing = Easing::EaseIn;
+    if let CameraMode::Path { keys, .. } = &mut edited.mode {
+        keys[1].pose.yaw = -45.0;
+        keys[1].pose.fov = 32.0;
+        keys[1].easing = Easing::EaseOut;
+    }
+    let cached = CompiledCameraPath::new_reusing(&edited, Some(&original)).unwrap();
+    let fresh = CompiledCameraPath::new(&edited).unwrap();
+    assert!(Arc::ptr_eq(
+        &cached.segments[0].geometry,
+        &original.segments[0].geometry
+    ));
+    for at in [5_000_000, 5_100_000, 5_499_999, 5_500_000] {
+        assert_eq!(cached.sample(MediaTime(at)), fresh.sample(MediaTime(at)));
+        assert_eq!(
+            cached.velocity(MediaTime(at)),
+            fresh.velocity(MediaTime(at))
+        );
+    }
+    let moved = edited.with_path_control(MediaTime(5_000_000), PathControl::Key, [0.0; 3]);
+    assert!(
+        moved.is_err(),
+        "hidden support keys are not editable through a trimmed time"
+    );
+    let changed = shot
+        .with_path_control(shot.span.start, PathControl::Outgoing, [1.0, 4.0, 2.0])
+        .unwrap();
+    let next = CompiledCameraPath::new_reusing(&changed, Some(&original)).unwrap();
+    assert!(!Arc::ptr_eq(
+        &next.segments[0].geometry,
+        &original.segments[0].geometry
+    ));
+}
+
 /// An asymmetric cubic exposes the speed variation of uniform Bezier parameter steps.
 fn curved() -> CameraShot {
     let span = Span::new(MediaTime::ZERO, MediaTime(1_000_000)).unwrap();

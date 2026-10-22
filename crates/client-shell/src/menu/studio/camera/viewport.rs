@@ -150,13 +150,19 @@ impl Studio {
         {
             return;
         }
-        let cache = recording_studio::camera::CompiledCameraPath::new(shot).map(|path| {
-            launcher::menu::studio::CameraPathCache {
-                shot: shot.id,
-                epoch,
-                draft: draft.cloned(),
-                path: Arc::new(path),
-            }
+        let cache = recording_studio::camera::CompiledCameraPath::new_reusing(
+            shot,
+            self.view
+                .camera_workspace
+                .path_cache
+                .as_ref()
+                .map(|cache| cache.path.as_ref()),
+        )
+        .map(|path| launcher::menu::studio::CameraPathCache {
+            shot: shot.id,
+            epoch,
+            draft: draft.cloned(),
+            path: Arc::new(path),
         });
         Arc::make_mut(&mut self.view).camera_workspace.path_cache = cache;
     }

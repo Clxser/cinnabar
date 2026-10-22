@@ -63,8 +63,10 @@ impl Titles {
             .as_ref()
             .is_none_or(|timeline| !Arc::ptr_eq(timeline.project(), &request.project))
         {
-            self.timeline =
-                Some(CompiledTimeline::new(request.project.clone()).map_err(|e| e.to_string())?);
+            self.timeline = Some(
+                CompiledTimeline::new_reusing(request.project.clone(), self.timeline.as_ref())
+                    .map_err(|e| e.to_string())?,
+            );
         }
         self.timeline
             .as_ref()

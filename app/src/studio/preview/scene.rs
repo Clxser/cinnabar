@@ -98,7 +98,7 @@ impl NativeScene {
             .is_none_or(|timeline| !Arc::ptr_eq(timeline.project(), &request.project))
         {
             self.timeline = Some(
-                CompiledTimeline::new(Arc::clone(&request.project))
+                CompiledTimeline::new_reusing(Arc::clone(&request.project), self.timeline.as_ref())
                     .map_err(|error| error.to_string())?,
             );
         }

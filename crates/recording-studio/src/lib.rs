@@ -16,6 +16,7 @@ pub mod effect;
 pub mod error;
 pub mod export;
 pub mod framing;
+pub mod graph;
 pub mod lanes;
 pub mod media;
 mod media_process;

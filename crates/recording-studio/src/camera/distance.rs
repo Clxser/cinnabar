@@ -71,14 +71,31 @@ pub struct PathAccuracy {
 struct ArcSegment {
     from: CameraKey,
     to: CameraKey,
+    geometry: Arc<SegmentGeometry>,
+}
+
+struct SegmentGeometry {
     controls: [DVec3; 4],
     lengths: [f64; ARC_STEPS + 1],
     estimated_error: f64,
 }
 
+impl std::ops::Deref for ArcSegment {
+    type Target = SegmentGeometry;
+
+    fn deref(&self) -> &Self::Target {
+        &self.geometry
+    }
+}
+
 impl CompiledCameraPath {
     /// Only distance-timed rails allocate tables; the owning timeline retains this cache until edited.
     pub fn new(shot: &CameraShot) -> Option<Self> {
+        Self::new_reusing(shot, None)
+    }
+
+    /// Reuses exact positional tables while rebinding the current key, trim, lens and travel policy.
+    pub fn new_reusing(shot: &CameraShot, previous: Option<&Self>) -> Option<Self> {
         let CameraMode::Path {
             keys,
             smooth_position,
@@ -90,7 +107,15 @@ impl CompiledCameraPath {
             return None;
         }
         let segments: Vec<_> = (0..keys.len() - 1)
-            .map(|index| ArcSegment::new(keys, index, *smooth_position, shot.path_continuity))
+            .map(|index| {
+                ArcSegment::new_reusing(
+                    keys,
+                    index,
+                    *smooth_position,
+                    shot.path_continuity,
+                    previous.and_then(|path| path.segments.get(index)),
+                )
+            })
             .collect();
         let global = (shot.path_timing == PathTiming::GlobalDistance)
             .then(|| GlobalRail::new(&segments, shot.path_global_easing));
@@ -260,6 +285,17 @@ impl ArcSegment {
 
     /// Geometric subdivision uses bounded stack storage; preparing a rail is proportional to key count.
     fn new(keys: &[CameraKey], index: usize, smooth: bool, continuity: PathContinuity) -> Self {
+        Self::new_reusing(keys, index, smooth, continuity, None)
+    }
+
+    /// Only changed cubic controls incur quadrature; orientation and key clocks remain current.
+    fn new_reusing(
+        keys: &[CameraKey],
+        index: usize,
+        smooth: bool,
+        continuity: PathContinuity,
+        previous: Option<&Self>,
+    ) -> Self {
         let [first, last] = super::path::segment_controls(keys, index, smooth, continuity);
         let controls = [
             DVec3::from_array(keys[index].pose.position),
@@ -267,6 +303,13 @@ impl ArcSegment {
             DVec3::from_array(last),
             DVec3::from_array(keys[index + 1].pose.position),
         ];
+        if let Some(previous) = previous.filter(|old| old.controls == controls) {
+            return Self {
+                from: keys[index].clone(),
+                to: keys[index + 1].clone(),
+                geometry: Arc::clone(&previous.geometry),
+            };
+        }
         let mut lengths = [0.0; ARC_STEPS + 1];
         let mut estimated_error = 0.0;
         for step in 1..=ARC_STEPS {
@@ -279,9 +322,11 @@ impl ArcSegment {
         Self {
             from: keys[index].clone(),
             to: keys[index + 1].clone(),
-            controls,
-            lengths,
-            estimated_error,
+            geometry: Arc::new(SegmentGeometry {
+                controls,
+                lengths,
+                estimated_error,
+            }),
         }
     }
 
@@ -358,7 +403,7 @@ pub(super) fn geometry_parameters(
     amounts.map(|amount| segment.parameter(amount))
 }
 
-/// Admission rejects curves whose finite endpoints still overflow their derived travel geometry.
+/// The control polygon bounds cubic travel without performing quadrature during project admission.
 pub(super) fn validate(
     keys: &[CameraKey],
     smooth: bool,
@@ -366,12 +411,18 @@ pub(super) fn validate(
 ) -> Result<(), StudioError> {
     let mut total = 0.0;
     for index in 0..keys.len().saturating_sub(1) {
-        let segment = ArcSegment::new(keys, index, smooth, continuity);
-        total += segment.length();
-        if !segment.controls.iter().all(|point| point.is_finite())
-            || !segment.lengths.iter().all(|length| length.is_finite())
-            || !total.is_finite()
-        {
+        let [first, last] = super::path::segment_controls(keys, index, smooth, continuity);
+        let controls = [
+            DVec3::from_array(keys[index].pose.position),
+            DVec3::from_array(first),
+            DVec3::from_array(last),
+            DVec3::from_array(keys[index + 1].pose.position),
+        ];
+        total += controls
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).length())
+            .sum::<f64>();
+        if !controls.iter().all(|point| point.is_finite()) || !total.is_finite() {
             return Err(StudioError::Invalid(
                 "camera path cannot form finite travel distances",
             ));

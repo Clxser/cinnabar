@@ -35,6 +35,7 @@ fn rail() -> CameraShot {
         hide_hand: true,
         target_lifetime: None,
         fov_curve: None,
+        animation: Default::default(),
         fov_offset: MediaTime::ZERO,
         path_timing: PathTiming::Keyed,
         path_offset: MediaTime::ZERO,

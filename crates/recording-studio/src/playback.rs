@@ -245,10 +245,37 @@ pub struct CompiledTimeline {
 impl CompiledTimeline {
     /// Validates the snapshot before constructing indexes consumed by the render/audio adapters.
     pub fn new(project: Arc<Project>) -> Result<Self, StudioError> {
+        Self::new_reusing(project, None)
+    }
+
+    /// Rebinds metadata indexes while retaining unchanged positional rail integration from the prior document.
+    pub fn new_reusing(
+        project: Arc<Project>,
+        previous: Option<&Self>,
+    ) -> Result<Self, StudioError> {
         project.validate()?;
+        let previous_paths: BTreeMap<_, _> = previous
+            .into_iter()
+            .flat_map(|old| {
+                old.project
+                    .shots
+                    .iter()
+                    .zip(&old.camera_paths)
+                    .map(|(shot, path)| (shot.id, path.as_ref()))
+            })
+            .collect();
         Ok(Self {
             index: IntervalIndex::new(&project)?,
-            camera_paths: project.shots.iter().map(CompiledCameraPath::new).collect(),
+            camera_paths: project
+                .shots
+                .iter()
+                .map(|shot| {
+                    CompiledCameraPath::new_reusing(
+                        shot,
+                        previous_paths.get(&shot.id).copied().flatten(),
+                    )
+                })
+                .collect(),
             visual_maps: project
                 .clips
                 .iter()

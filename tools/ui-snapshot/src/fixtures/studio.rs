@@ -333,6 +333,7 @@ fn view(camera: bool) -> MenuView {
         hide_hand: true,
         target_lifetime: None,
         fov_curve: None,
+        animation: Default::default(),
         fov_offset: MediaTime::ZERO,
         path_timing: Default::default(),
         path_offset: MediaTime::ZERO,

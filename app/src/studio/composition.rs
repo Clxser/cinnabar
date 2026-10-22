@@ -90,7 +90,7 @@ impl Composition {
             .is_none_or(|timeline| !Arc::ptr_eq(timeline.project(), &request.project))
         {
             self.timeline = Some(
-                CompiledTimeline::new(request.project.clone())
+                CompiledTimeline::new_reusing(request.project.clone(), self.timeline.as_ref())
                     .map_err(|error| error.to_string())?,
             );
             self.source_indices = request

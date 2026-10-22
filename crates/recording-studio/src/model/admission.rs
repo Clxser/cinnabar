@@ -27,6 +27,12 @@ impl Project {
         let mut keys = 0usize;
         for shot in &self.shots {
             shot.validate()?;
+            keys += shot
+                .animation
+                .curves
+                .values()
+                .map(|curve| curve.curve.keys.len())
+                .sum::<usize>();
             keys += shot.fov_curve.as_ref().map_or(0, |curve| curve.keys.len());
             if let CameraMode::Path { keys: path, .. } = &shot.mode {
                 keys += path.len();

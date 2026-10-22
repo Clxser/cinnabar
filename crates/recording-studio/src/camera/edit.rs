@@ -157,6 +157,7 @@ impl CameraShot {
                 Some(reference()?.lifetime.expect("captured target lifetime"))
             },
             fov_curve: None,
+            animation: Default::default(),
             fov_offset: MediaTime::ZERO,
             path_timing: PathTiming::Keyed,
             path_offset: MediaTime::ZERO,
@@ -522,6 +523,9 @@ impl CameraShot {
         }
         if next.fov_curve.is_some() {
             next.fov_offset = next.fov_offset.checked_add(offset)?;
+        }
+        for channel in next.animation.curves.values_mut() {
+            channel.offset = channel.offset.checked_add(offset)?;
         }
         next.span = span;
         next.validate()?;

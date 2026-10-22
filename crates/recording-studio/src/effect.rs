@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+mod bezier;
 mod camera;
 
 use crate::{Id, MediaTime, Span, StudioError, error::limit};
@@ -21,6 +22,11 @@ pub enum Easing {
     EaseIn,
     EaseOut,
     Hold,
+    /// Normalized time/value handles use fixed precision so saved curves retain exact equality.
+    Bezier {
+        outgoing: [u16; 2],
+        incoming: [u16; 2],
+    },
 }
 
 impl Easing {
@@ -32,6 +38,7 @@ impl Easing {
             Self::EaseIn => "Ease in",
             Self::EaseOut => "Ease out",
             Self::Hold => "Hold",
+            Self::Bezier { .. } => "Bezier",
         }
     }
 
@@ -42,13 +49,16 @@ impl Easing {
             Self::Smooth => Self::EaseIn,
             Self::EaseIn => Self::EaseOut,
             Self::EaseOut => Self::Hold,
-            Self::Hold => Self::Linear,
+            Self::Hold | Self::Bezier { .. } => Self::Linear,
         }
     }
 
     /// Maps bounded linear progress to a deterministic transition with exact endpoints.
     pub fn sample(self, value: f64) -> f64 {
         let t = value.clamp(0.0, 1.0);
+        if let Self::Bezier { outgoing, incoming } = self {
+            return bezier::sample(outgoing, incoming, t);
+        }
         if self == Self::Hold {
             return if t >= 1.0 { 1.0 } else { 0.0 };
         }
@@ -64,6 +74,9 @@ impl Easing {
         if !(0.0..=1.0).contains(&value) {
             return 0.0;
         }
+        if let Self::Bezier { outgoing, incoming } = self {
+            return bezier::derivative(outgoing, incoming, value);
+        }
         self.polynomial()
             .into_iter()
             .enumerate()
@@ -77,6 +90,9 @@ impl Easing {
     /// Analytic curve area derives from the same polynomial as sampling, keeping speed-map integrals in sync.
     pub fn integral(self, value: f64) -> f64 {
         let t = value.clamp(0.0, 1.0);
+        if let Self::Bezier { outgoing, incoming } = self {
+            return bezier::integral(outgoing, incoming, t);
+        }
         self.polynomial()
             .into_iter()
             .enumerate()
@@ -95,6 +111,7 @@ impl Easing {
             Self::EaseIn => [0.0, 0.0, 0.0, 1.0],
             Self::EaseOut => [0.0, 3.0, -3.0, 1.0],
             Self::Hold => [0.0; 4],
+            Self::Bezier { .. } => unreachable!("weighted handles use parametric integration"),
         }
     }
 }
@@ -154,7 +171,12 @@ impl Curve {
         let t = b
             .easing
             .sample((at.0 - a.at.0) as f64 / (b.at.0 - a.at.0) as f64);
-        a.value + (b.value - a.value) * t
+        let delta = b.value - a.value;
+        if delta.is_finite() {
+            a.value + delta * t
+        } else {
+            a.value * (1.0 - t) + b.value * t
+        }
     }
 }
 
