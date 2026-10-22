@@ -837,3 +837,43 @@ fn a_wet_non_swimmer_stops_sprinting_after_a_held_jump() {
     assert_eq!(choice.mode, MovementMode::Swimming);
     assert!(choice.sprinting);
 }
+
+/// After a liquid stop, a held sprint control whose start is refused does not
+/// re-arm the stale latched request; only an actual restart does.
+#[test]
+fn a_refused_restart_keeps_the_stale_sprint_request_released() {
+    let mut tracker = ModeTracker {
+        mode: MovementMode::Swimming,
+        sprinting: true,
+        ..ModeTracker::default()
+    };
+    let dry = ModeObservation {
+        sprinting: true,
+        move_forward: 1.0,
+        liquid_contact_height: Some(sim::PLAYER_WIDTH),
+        ..airborne()
+    };
+    assert!(
+        !tracker
+            .select(ModeIntent::default(), dry, &Ceiling(None))
+            .unwrap()
+            .sprinting
+    );
+    let refused = ModeObservation {
+        sprint_down: true,
+        move_forward: 0.5,
+        ..dry
+    };
+    assert!(
+        !tracker
+            .select(ModeIntent::default(), refused, &Ceiling(None))
+            .unwrap()
+            .sprinting
+    );
+    assert!(
+        !tracker
+            .select(ModeIntent::default(), dry, &Ceiling(None))
+            .unwrap()
+            .sprinting
+    );
+}

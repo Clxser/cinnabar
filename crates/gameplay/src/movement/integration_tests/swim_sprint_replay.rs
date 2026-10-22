@@ -172,43 +172,89 @@ fn a_newer_live_sprint_write_survives_an_older_stopped_replay() {
             Some(true),
             "live first {live_first}"
         );
+        // The controls adopt that sprint as their request; the next tick keeps it
+        // without a held sprint control.
+        let adopted = MovementInput {
+            forward: 1.0,
+            sprinting: true,
+            ..MovementInput::default()
+        };
+        let frame = physics.advance(Duration::from_millis(50), adopted, &SidePool);
+        assert!(
+            frame.samples[0].processed.sprinting,
+            "live first {live_first}"
+        );
     }
 }
 
-/// The latest write applied to a tick decides it, as native applies corrections in
-/// arrival order: an on-time server stop adopted on a tick does not mask a later
-/// delayed sprint write for the same tick.
+/// A later live write applies in arrival order, even over a pending write stamped
+/// in the future.
 #[test]
-fn a_later_sprint_write_replaces_an_earlier_tick_flag() {
-    let (mut physics, mut ticker) = walked_physics(0);
-    let mut ticks = Vec::new();
-    for index in 0..4 {
-        let frame = physics.advance_with_context(
-            Duration::from_millis(50),
-            forward_physics_input(),
-            PhysicsSampleContext {
-                input: crate::movement::TickInput {
-                    server_sprinting: (index == 1).then_some(false),
-                    ..Default::default()
-                },
-                ..PhysicsSampleContext::default()
-            },
-            &VersionedFloor(1),
-        );
-        let sample = frame.samples[0].clone();
-        ticker.enqueue_completed_physics(sample.clone()).unwrap();
-        ticks.push(sample.tick);
-    }
-    assert_eq!(physics.latest_sneak_sprint(), Some((false, false)));
-    let sprint = client_world::MovementFlagUpdate {
-        sprinting: Some(true),
+fn a_later_live_sprint_stop_replaces_a_future_stamped_start() {
+    let (mut physics, _) = walked_physics(2);
+    let latest = physics.state().unwrap().tick;
+    let flag = |sprinting| client_world::MovementFlagUpdate {
+        sprinting: Some(sprinting),
         ..Default::default()
     };
-    let rewind = physics
-        .apply_server_movement_flags(ticks[0], sprint)
-        .unwrap();
-    reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &VersionedFloor(1)).unwrap();
-    assert_eq!(physics.latest_sneak_sprint(), Some((false, true)));
+    assert_eq!(
+        physics.apply_server_movement_flags(latest + 5, flag(true)),
+        None
+    );
+    assert_eq!(physics.apply_server_movement_flags(0, flag(false)), None);
+    assert_eq!(
+        physics
+            .take_server_control_flags()
+            .and_then(|flags| flags.sprinting),
+        Some(false)
+    );
+}
+
+/// The latest write applied to a tick decides it, as native applies corrections in
+/// arrival order: an on-time server flag adopted on a tick does not mask a later
+/// delayed write for the same tick, in either direction.
+#[test]
+fn a_later_sprint_write_replaces_an_earlier_tick_flag() {
+    for (on_time, delayed) in [(false, true), (true, false)] {
+        let (mut physics, mut ticker) = walked_physics(0);
+        let mut ticks = Vec::new();
+        for index in 0..4 {
+            // The controls adopt an on-time sprint as their request.
+            let input = MovementInput {
+                sprinting: on_time && index >= 1,
+                ..forward_physics_input()
+            };
+            let frame = physics.advance_with_context(
+                Duration::from_millis(50),
+                input,
+                PhysicsSampleContext {
+                    input: crate::movement::TickInput {
+                        server_sprinting: (index == 1).then_some(on_time),
+                        ..Default::default()
+                    },
+                    ..PhysicsSampleContext::default()
+                },
+                &VersionedFloor(1),
+            );
+            let sample = frame.samples[0].clone();
+            ticker.enqueue_completed_physics(sample.clone()).unwrap();
+            ticks.push(sample.tick);
+        }
+        assert_eq!(physics.latest_sneak_sprint(), Some((false, on_time)));
+        let write = client_world::MovementFlagUpdate {
+            sprinting: Some(delayed),
+            ..Default::default()
+        };
+        let rewind = physics
+            .apply_server_movement_flags(ticks[0], write)
+            .unwrap();
+        reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &VersionedFloor(1)).unwrap();
+        assert_eq!(
+            physics.latest_sneak_sprint(),
+            Some((false, delayed)),
+            "on time {on_time}"
+        );
+    }
 }
 
 /// An ordinary input-rejection stop also ends a replayed server sprint: walking

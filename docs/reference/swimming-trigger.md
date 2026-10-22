@@ -84,7 +84,10 @@ continues an active sprint, as native continuation needs no request, and never
 starts one. Stop intents, including the liquid stop, apply normally, and the
 stopped tick sends its sprint stop. A delayed write hands its sprint to the live
 controls only when no newer write already owns it, and drops that hand-off when
-its replay ends unsprinted. The immobile
+its replay ends unsprinted; live writes apply in arrival order, and a pending live
+write is applied again on top of any replayed history. A held sprint control whose
+start is refused keeps the stale request released until sprint actually starts.
+The immobile
 movement path also removes the jumping state; its order against the next intent
 is unverified, so Cinnabar does not model that removal.
 

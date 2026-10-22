@@ -331,26 +331,9 @@ impl LocalPhysicsController {
                 uniform,
             );
         }
-        if let Some(sprinting) = flags.sprinting.filter(|value| *value != anchor.sprinting) {
-            let (edited, reached) = rewrite_run(
-                self.history.retained_inputs_after_mut(tick),
-                |input| input.sprinting == anchor.sprinting && (!sprinting || input.forward > 0.0),
-                |input| {
-                    let previous = input.sprinting;
-                    input.sprinting = sprinting;
-                    crate::movement::speed_authority::preserve_effective_speed(input, previous);
-                },
-            );
-            // Native applies each write once, in arrival order, on the following
-            // frame; continuation and later stop intents then decide the rest of the run.
-            if edited
-                && let Some(frame) = self
-                    .controller_history
-                    .iter_mut()
-                    .find(|frame| frame.tick == tick + 1)
-            {
-                frame.server_sprinting = Some(sprinting);
-            }
+        if let Some(sprinting) = flags.sprinting
+            && let Some((edited, reached)) = self.rewrite_sprint(tick, anchor.sprinting, sprinting)
+        {
             changed |= edited;
             present.sprinting = reached.then_some(sprinting);
         }
@@ -396,16 +379,72 @@ impl LocalPhysicsController {
         changed.then_some(tick)
     }
 
-    /// A delayed sprint write's replay decides the live state. When replayed
+    /// Records a delayed sprint write stamped `tick`. Native applies each write
+    /// once, in arrival order, on the following frame; continuation and later stop
+    /// intents then decide the rest of the run. Without an earlier write on that
+    /// frame, the client's own value at `tick` is the base, so a later client
+    /// transition still wins. An earlier write's frame value is replaced, and its
+    /// rewritten run becomes the base. Returns whether anything changed and
+    /// whether the run reached the newest input, or `None` when nothing applies.
+    fn rewrite_sprint(&mut self, tick: u64, anchor: bool, sprinting: bool) -> Option<(bool, bool)> {
+        let event = self
+            .controller_history
+            .iter()
+            .find(|frame| frame.tick == tick + 1)
+            .and_then(|frame| frame.server_sprinting);
+        let base = match event {
+            Some(_) => self
+                .history
+                .input_at(tick + 1)
+                .map_or(anchor, |input| input.sprinting),
+            None => anchor,
+        };
+        let replaces_event = event.is_some_and(|event| event != sprinting);
+        if base == sprinting && !replaces_event {
+            return None;
+        }
+        let (edited, reached) = if base == sprinting {
+            (false, false)
+        } else {
+            rewrite_run(
+                self.history.retained_inputs_after_mut(tick),
+                |input| input.sprinting == base && (!sprinting || input.forward > 0.0),
+                |input| {
+                    let previous = input.sprinting;
+                    input.sprinting = sprinting;
+                    crate::movement::speed_authority::preserve_effective_speed(input, previous);
+                },
+            )
+        };
+        if (edited || replaces_event)
+            && let Some(frame) = self
+                .controller_history
+                .iter_mut()
+                .find(|frame| frame.tick == tick + 1)
+        {
+            frame.server_sprinting = Some(sprinting);
+        }
+        Some((edited || replaces_event, reached))
+    }
+
+    /// Reconciles pending sprint authority with a finished replay. A pending live
+    /// write is newer than the replayed history, so it applies again on top of it.
+    /// A delayed write's replay decides the live state instead: when replayed
     /// intents stopped it, its pending adoption and posture overlay are stale. The
-    /// marker stays until the controls take the flags, so later replays settle too;
-    /// a newer write has replaced it and keeps its own values.
+    /// marker stays until the controls take the flags, so later replays settle too.
     pub(super) fn settle_rewound_sprint(&mut self) {
         let Some(pending) = &mut self.server_control_flags else {
             return;
         };
-        if !pending.sprint_from_rewind || self.modes.sprinting() || pending.sprinting != Some(true)
-        {
+        let Some(sprinting) = pending.sprinting else {
+            return;
+        };
+        if !pending.sprint_from_rewind {
+            self.modes
+                .restore_controls(sprinting, self.modes.sneaking());
+            return;
+        }
+        if self.modes.sprinting() || !sprinting {
             return;
         }
         pending.sprinting = None;
@@ -419,17 +458,19 @@ impl LocalPhysicsController {
         self.server_control_flags.take()
     }
 
-    /// Adopts flags stamped `stamp` into the live latches. A sprint from a write
-    /// older than the one already pending stays with that newer write.
+    /// Adopts flags stamped `stamp` into the live latches. Live writes apply in
+    /// arrival order; a delayed write older than the pending sprint's owner leaves
+    /// that newer sprint in place.
     fn adopt_live_flags(
         &mut self,
         mut flags: client_world::MovementFlagUpdate,
         stamp: u64,
         rewound: bool,
     ) {
-        if self
-            .server_control_flags
-            .is_some_and(|pending| pending.sprinting.is_some() && pending.sprint_stamp > stamp)
+        if rewound
+            && self
+                .server_control_flags
+                .is_some_and(|pending| pending.sprinting.is_some() && pending.sprint_stamp > stamp)
         {
             flags.sprinting = None;
         }

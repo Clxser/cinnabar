@@ -377,7 +377,7 @@ impl ModeTracker {
                 MovementMode::Crawling | MovementMode::Gliding | MovementMode::Riding
             );
         self.sprint_request_released =
-            ((self.sprint_request_released && !fresh_request) || liquid_stop) && !self.sprinting;
+            (self.sprint_request_released || liquid_stop) && !self.sprinting;
         Ok(ModeChoice {
             mode,
             forced_sneak,
