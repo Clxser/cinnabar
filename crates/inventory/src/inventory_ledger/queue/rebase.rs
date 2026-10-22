@@ -84,20 +84,18 @@ impl PlayerInventoryLedger {
                 for prediction in &request.predicted {
                     cells.set(prediction.cell, prediction.before.clone());
                 }
-                for slot in request
-                    .actions
-                    .iter_mut()
-                    .flat_map(crate::inventory_ledger::helpers::action_slots_mut)
-                {
-                    if slot.stack_network_id == request.request_id {
-                        continue;
-                    }
-                    if let Some(cell) = self.request_cell(*slot) {
-                        slot.stack_network_id = cells
-                            .get(cell)
-                            .map_or(0, |held| held.stack.stack_network_id);
-                    }
-                }
+                self.rebind_actions_in_order(
+                    &mut request.actions,
+                    request.request_id,
+                    |cell| {
+                        Some(
+                            cells
+                                .get(cell)
+                                .map_or(0, |held| held.stack.stack_network_id),
+                        )
+                    },
+                    |cell| cells.get(cell).map(|held| held.stack.count),
+                );
                 let mut placements = Vec::new();
                 if !request.groups.iter_mut().all(|group| {
                     group.rebind(&cells);
