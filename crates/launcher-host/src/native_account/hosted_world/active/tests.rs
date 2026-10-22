@@ -98,53 +98,92 @@ async fn active_run_routes_two_signed_messaging_visitors_into_the_original_world
         let (waiting, second_waiting) = oneshot::channel();
         let (responded, first_responded) = oneshot::channel();
         let (second_ready, second_initialized) = oneshot::channel();
+        let first_phase = std::cell::Cell::new("not started");
+        let second_phase = std::cell::Cell::new("not started");
+        let clients_phase = std::cell::Cell::new("not started");
         let first = async {
+            first_phase.set("join");
             let (mut session, packs, game) = first.join(&settings).await?;
+            first_phase.set("finish loading");
             session.finish_loading().await.map_err(io::Error::other)?;
+            first_phase.set("occupancy one");
             peer.wait_activation_visitor_writes(1).await;
             first_ready.send(()).map_err(|_| ended())?;
+            first_phase.set("second visitor waiting");
             second_waiting.await.map_err(|_| ended())?;
             let mut terrain = session.terrain_before_spawn();
+            first_phase.set("radius three");
             radius(&mut session, 3, &mut terrain).await?;
             responded.send(()).map_err(|_| ended())?;
+            first_phase.set("second visitor initialized");
             second_initialized.await.map_err(|_| ended())?;
+            first_phase.set("close");
             session.close().await.map_err(io::Error::other)?;
+            first_phase.set("complete");
             Ok::<_, io::Error>((packs, game, terrain))
         };
         let second = async {
+            second_phase.set("first visitor initialized");
             first_initialized.await.map_err(|_| ended())?;
+            second_phase.set("join");
             let (mut session, packs, game) = second.join(&settings).await?;
             // A real pre-Initialized session retains the production host's finite setup phase.
             waiting.send(()).map_err(|_| ended())?;
+            second_phase.set("first visitor responded");
             first_responded.await.map_err(|_| ended())?;
+            second_phase.set("finish loading");
             session.finish_loading().await.map_err(io::Error::other)?;
             let mut terrain = session.terrain_before_spawn();
+            second_phase.set("radius three");
             radius(&mut session, 3, &mut terrain).await?;
             second_ready.send(()).map_err(|_| ended())?;
+            second_phase.set("occupancy three");
             peer.wait_activation_visitor_writes(3).await;
+            second_phase.set("radius four");
             radius(&mut session, 4, &mut terrain).await?;
+            second_phase.set("close");
             session.close().await.map_err(io::Error::other)?;
+            second_phase.set("complete");
             Ok::<_, io::Error>((packs, game, terrain))
         };
         let clients = async {
+            clients_phase.set("joined visitors");
             let (first, second) = tokio::join!(first, second);
             let first = first?;
             let second = second?;
+            clients_phase.set("occupancy four");
             peer.wait_activation_visitor_writes(4).await;
             // A flushed response alone is not application acknowledgment: wait for the same lease too.
+            clients_phase.set("account acknowledgment");
             let mut operation = Arc::clone(&account).acquire_verified().await?;
             operation.persist()?;
             drop(operation);
+            clients_phase.set("complete");
             Ok::<_, io::Error>((first, second))
         };
+        let completed_by = std::cell::Cell::new("not selected");
         let result = {
             let running = active.run();
             tokio::pin!(running);
             tokio::select! { biased;
-                result = &mut running => result.and(Err(io::Error::other("original active host ended during visitors"))),
-                result = clients => result,
+                result = &mut running => {
+                    completed_by.set("active run");
+                    result.and(Err(io::Error::other("original active host ended during visitors")))
+                },
+                result = clients => {
+                    completed_by.set("clients");
+                    result
+                },
             }
         };
+        if let Err(error) = &result {
+            let message = error.to_string().chars().take(512).collect::<String>();
+            eprintln!(
+                "hosted visitor failure before cleanup: completed_by={}, first={}, second={}, clients={}, phase_started={}, retiring={}, occupied={}, kind={:?}, error={message}",
+                completed_by.get(), first_phase.get(), second_phase.get(), clients_phase.get(),
+                active.phase_started, active.retiring.is_some(), active.world.peers.occupied(), error.kind(),
+            );
+        }
         let completed = result.is_ok();
         let idle = !active.phase_started && active.retiring.is_none() && active.world.peers.occupied() == 0;
         let approvals = active.world.check_approval(first_xuid, &first_nonce).is_ok()
