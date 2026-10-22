@@ -61,19 +61,32 @@ impl FarTerrainGpu {
             }))
     }
 
+    /// Whether near geometry in `column` can draw without far terrain drawing there too, under
+    /// the mask the GPU holds.
+    pub(crate) fn admits_near(&self, column: ColumnPos) -> bool {
+        self.applied_mask
+            .as_ref()
+            .is_some_and(|mask| mask.contains(column))
+            || !self.draws_far(column)
+    }
+
     /// Whether decoded evidence has a visible far drawer or an acknowledged empty selection.
     pub(crate) fn covers_column(&self, column: ColumnPos) -> bool {
-        self.empty_far.contains(&column)
-            || (0..LEVEL_COUNT).any(|level| {
-                let key = TileKey::containing(
-                    level,
-                    column.x * far_terrain::COLUMN_SIDE as i32,
-                    column.z * far_terrain::COLUMN_SIDE as i32,
-                );
-                self.resident
-                    .get(&key)
-                    .is_some_and(|resident| resident.visible && resident.mesh.covers(column))
-            })
+        self.empty_far.contains(&column) || self.draws_far(column)
+    }
+
+    /// Whether a visible far tile draws `column`.
+    fn draws_far(&self, column: ColumnPos) -> bool {
+        (0..LEVEL_COUNT).any(|level| {
+            let key = TileKey::containing(
+                level,
+                column.x * far_terrain::COLUMN_SIDE as i32,
+                column.z * far_terrain::COLUMN_SIDE as i32,
+            );
+            self.resident
+                .get(&key)
+                .is_some_and(|resident| resident.visible && resident.mesh.covers(column))
+        })
     }
 
     /// Publishes the mask chosen with near draw admission in the current render frame. False,

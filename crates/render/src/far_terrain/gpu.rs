@@ -87,7 +87,7 @@ pub(crate) struct FarTerrainGpu {
 }
 
 impl FarTerrainGpu {
-    pub(super) fn new(device: &RenderDevice) -> Self {
+    pub(crate) fn new(device: &RenderDevice) -> Self {
         let storage = |binding| BindGroupLayoutEntry {
             binding,
             visibility: ShaderStages::VERTEX,
@@ -178,7 +178,7 @@ impl FarTerrainGpu {
 
     /// Uploads one bounded batch, retaining covering draws until their replacements are admitted.
     /// Returns false when the same scene needs another frame to finish its uploads.
-    fn apply_tiles(
+    pub(crate) fn apply_tiles(
         &mut self,
         device: &RenderDevice,
         queue: &RenderQueue,

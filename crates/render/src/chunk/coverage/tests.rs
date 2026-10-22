@@ -65,3 +65,68 @@ fn cancelled_queued_withdrawal_keeps_the_existing_near_instance() {
     assert_eq!((remaining.key, remaining.generation), (key, 1));
     assert_eq!(world.resource::<ChunkRenderQueue>().retained_len(), 0);
 }
+
+/// Near sections uploaded in a frame whose far mask cannot be uploaded are admitted only where
+/// the mask still on the GPU hides far terrain, so partial near and far never draw together.
+#[test]
+fn a_failed_mask_upload_admits_against_the_mask_on_the_gpu() {
+    use bevy::ecs::system::RunSystemOnce;
+    let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+    let (device, queue) = (RenderDevice::from(device), RenderQueue::new(queue));
+    let key = SubChunkKey::new(0, 0, 0, 0);
+    let mut far = crate::far_terrain::FarTerrainGpu::new(&device);
+    let tile = Arc::new(far_terrain::TileMesh {
+        coverage: far_terrain::TileCoverage::Complete,
+        key: far_terrain::TileKey {
+            level: 0,
+            x: 0,
+            z: 0,
+        },
+        revision: 1,
+        quads: vec![[0, 64]].into_boxed_slice(),
+        colours: vec![0; far_terrain::config::TILE_CELLS * far_terrain::config::TILE_CELLS * 4]
+            .into_boxed_slice(),
+        min_y: 0,
+        max_y: 64,
+    });
+    assert!(far.apply_tiles(&device, &queue, &[tile]));
+    let mut allocation = crate::chunk::tests::retirement_test_allocation();
+    allocation.gpu.key = key;
+    allocation.gpu.generation = 3;
+    let mut app = App::new();
+    let entity = app.world_mut().spawn(allocation.gpu.clone()).id();
+    let mut arena = ChunkGpuArena::new(&device);
+    arena.allocations.insert(entity, allocation);
+    app.insert_resource(arena)
+        .insert_resource(far)
+        .insert_resource(device)
+        .insert_resource(queue)
+        .init_resource::<TerrainCoverage>()
+        .insert_resource(FarTerrainScene {
+            target: Some(Arc::new(far_terrain::TerrainTarget {
+                centre: key.chunk(),
+                horizon: 32,
+                near: Arc::new(HashMap::from([(key.chunk(), HashMap::from([(key, 3)]))])),
+                retained: Arc::new(HashSet::from([key])),
+                empty_far: Arc::new(HashSet::new()),
+            })),
+            ..Default::default()
+        });
+    {
+        let _failure = crate::gpu_allocation::inject(|label, _| label.starts_with("far terrain"));
+        app.world_mut()
+            .run_system_once(publish_terrain_coverage)
+            .unwrap();
+    }
+    assert!(
+        app.world().get::<GpuChunkAllocation>(entity).is_none(),
+        "far terrain still draws the column, so its near section stays hidden"
+    );
+    app.world_mut()
+        .run_system_once(publish_terrain_coverage)
+        .unwrap();
+    assert!(
+        app.world().get::<GpuChunkAllocation>(entity).is_some(),
+        "the retried mask hides far terrain and admits the section"
+    );
+}
