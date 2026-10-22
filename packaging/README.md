@@ -119,10 +119,10 @@ device requirements and installation.
 
 `packaging/release-assets.json` is the canonical list of downloadable release artifacts and
 their repository. `assets` lists desktop updater platforms; `manual_assets` lists downloads such
-as Android APKs that are installed separately and have no desktop update payload or symbol archive.
-Publication requires every platform installer, every desktop platform's symbol archive
-and the generated Linux install script before writing checksums for the native downloads. A new tagged Beta release
-stays draft until its downloads, update payloads and signed manifest are uploaded. Reruns keep
+as Android APKs that are installed separately and have no desktop update payload.
+Publication requires every platform installer and the generated Linux install script before writing
+checksums for the native downloads. Symbol archives and caches must reach private R2 before
+publication. A new tagged Beta release stays draft until its downloads, update payloads and signed manifest are uploaded. Reruns keep
 existing payload downloads public; the signature authenticates the update manifest.
 
 Linux users can install the latest Beta release without root:
@@ -158,9 +158,9 @@ Installers ship only the stripped binaries: packagers stage binaries by name and
 rejects any other file. Each package job zips its Rust binaries with their debug files and a
 `manifest.json` (version, commit, platform, and each binary's PE GUID+age, Mach-O UUID or ELF build
 id) into `cinnabar-symbols-<version>-<platform>-<arch>.zip`, named by `release-assets.json`, and
-the publish job stores it in private R2 alongside build-id keyed symbol caches. Symbols never enter
-public release assets or checksums. Android ELF line tables are split before APK staging and use
-the same private pipeline. Go binaries print symbolized tracebacks themselves.
+each package job uploads it directly to private R2. The publish job builds and stores caches keyed
+by build id there. Symbols never enter GitHub artifacts, public release assets or checksums. Android
+ELF line tables are split before APK staging and use the same private pipeline. Go binaries print symbolized tracebacks themselves.
 
 To symbolicate a user's crash, ask for the crash folder (`crashes/<UTC time>-<id>/` under the
 user data directory, or the `devtool diag` bundle that includes it), download the symbol
