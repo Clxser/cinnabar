@@ -10,6 +10,7 @@ use super::*;
 mod fov;
 mod navigation;
 mod saved;
+mod subjects;
 pub(super) use saved::CameraViewEdit;
 mod values;
 mod viewport;
@@ -30,33 +31,85 @@ pub(super) struct CameraValueEdit {
 impl Studio {
     /// Bounded focus fallback exposes the same camera intents as the painted inspector.
     pub(super) fn camera_focus_actions(&self) -> Vec<Action> {
+        use launcher::menu::studio::{CameraTools, CameraViewsAction, Toolbox};
         let mut actions = Vec::new();
+        let toolbox = self.toolbox_active(Toolbox::Cameras);
+        let shots = toolbox && self.view.camera_workspace.tools == CameraTools::Shots;
+        let views = toolbox && self.view.camera_workspace.tools == CameraTools::Views;
+        if toolbox {
+            actions.extend(
+                CameraTools::ALL
+                    .iter()
+                    .copied()
+                    .map(|section| Action::CameraViews(CameraViewsAction::Section(section))),
+            );
+        }
         if self.view.camera_workspace.view.is_some() {
             actions.extend([Action::ApplyCameraView, Action::ResetCameraView]);
         }
         if self.view.camera_workspace.focused {
             actions.push(Action::ReleaseCamera);
         }
-        if self.view.preview.camera.is_some() {
-            actions.extend([
-                Action::FrameCameraSubject,
-                Action::CycleCameraSnap,
-                Action::CycleCameraGuides,
-            ]);
-            actions.extend(
-                recording_studio::camera::CameraDragAxis::WORLD
-                    .into_iter()
-                    .map(Action::SetCameraDragAxis),
-            );
-            actions.push(Action::SetCameraDragAxis(
-                recording_studio::camera::CameraDragAxis::View,
-            ));
-            actions.push(Action::ToggleCameraSubjectFilter);
-            actions.extend([Action::CycleCameraTarget(-1), Action::CycleCameraTarget(1)]);
-            actions.extend(CameraRigKind::ALL.iter().copied().map(Action::CreateCamera));
+        if shots && self.view.preview.camera.is_some() {
+            actions.extend(self.camera_subject_focus_actions());
+            if self.view.preview.ready {
+                let preview = self.view.preview.camera.as_ref().expect("camera preview");
+                let target = self.view.camera_target.and_then(|reference| {
+                    preview.targets.iter().find(|target| {
+                        target.matches(reference)
+                            && self
+                                .view
+                                .camera_workspace
+                                .subject_matches(target, preview.local_actor)
+                    })
+                });
+                actions.extend(
+                    CameraRigKind::ALL
+                        .iter()
+                        .copied()
+                        .filter(|kind| match kind {
+                            CameraRigKind::Free | CameraRigKind::Path => true,
+                            CameraRigKind::Player => {
+                                target.is_some_and(|target| target.pose.eye_offset.is_some())
+                            }
+                            CameraRigKind::Track | CameraRigKind::Follow | CameraRigKind::Orbit => {
+                                target.is_some()
+                            }
+                        })
+                        .map(Action::CreateCamera),
+                );
+            }
         }
-        actions.extend(self.saved_camera_view_focus_actions());
-        if let Ok(shot) = self.camera_shot() {
+        if views {
+            actions.push(Action::CycleCameraGuides);
+            if self.view.preview.ready
+                && self
+                    .view
+                    .preview
+                    .camera
+                    .as_ref()
+                    .filter(|preview| preview.interactive)
+                    .is_some_and(|preview| {
+                        self.view.camera_target.is_some_and(|reference| {
+                            preview.targets.iter().any(|target| {
+                                target.matches(reference)
+                                    && self
+                                        .view
+                                        .camera_workspace
+                                        .subject_matches(target, preview.local_actor)
+                            })
+                        })
+                    })
+            {
+                actions.push(Action::FrameCameraSubject);
+            }
+            actions.extend(self.saved_camera_view_focus_actions());
+        }
+        if let Some(shot) = self
+            .camera_shot()
+            .ok()
+            .filter(|shot| Some(shot.id) == self.view.selected)
+        {
             actions.extend([
                 Action::ToggleCameraFine,
                 Action::TrimCameraStart,
@@ -69,6 +122,9 @@ impl Studio {
                     | CameraRigKind::Follow
                     | CameraRigKind::Orbit
             ) {
+                if !shots {
+                    actions.extend(self.camera_subject_focus_actions());
+                }
                 actions.push(Action::RetargetCamera);
             }
             actions.extend([
@@ -80,6 +136,15 @@ impl Studio {
                 Action::StepCameraFovKey(1),
             ]);
             if shot.kind() == CameraRigKind::Path {
+                actions.push(Action::CycleCameraSnap);
+                actions.extend(
+                    recording_studio::camera::CameraDragAxis::WORLD
+                        .into_iter()
+                        .map(Action::SetCameraDragAxis),
+                );
+                actions.push(Action::SetCameraDragAxis(
+                    recording_studio::camera::CameraDragAxis::View,
+                ));
                 if shot.ensure_pose_keying().is_ok() {
                     actions.push(Action::AddCameraKey);
                 }
@@ -228,8 +293,7 @@ impl Studio {
                     && self
                         .view
                         .camera_workspace
-                        .subject_filter
-                        .includes(target, preview.local_actor)
+                        .subject_matches(target, preview.local_actor)
             })
         });
         let id = project.next_id().map_err(|error| error.to_string())?;
@@ -256,8 +320,7 @@ impl Studio {
             .filter(|target| {
                 self.view
                     .camera_workspace
-                    .subject_filter
-                    .includes(target, preview.local_actor)
+                    .subject_matches(target, preview.local_actor)
             })
             .collect::<Vec<_>>();
         if targets.is_empty() {
@@ -288,7 +351,9 @@ impl Studio {
         });
         let view = Arc::make_mut(&mut self.view);
         view.camera_workspace.subject_filter = filter;
+        view.camera_workspace.subject_first = 0;
         view.camera_target = selected;
+        self.reconcile_camera_subjects();
     }
 
     /// Rebinding preserves follow/orbit parameters and records the selected actor's spawn lifetime.
@@ -306,8 +371,7 @@ impl Studio {
                     && self
                         .view
                         .camera_workspace
-                        .subject_filter
-                        .includes(target, preview.local_actor)
+                        .subject_matches(target, preview.local_actor)
             })
             .ok_or("This camera target is no longer present at the playhead.")?;
         let shot = self

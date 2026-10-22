@@ -3,15 +3,21 @@
 use recording_studio::{
     Id, MediaTime,
     camera::{
-        CameraDragAxis, CameraShot, CameraSnap, CameraSubjectFilter, CameraView, CompiledCameraPath,
+        CameraDragAxis, CameraShot, CameraSnap, CameraSubjectFilter, CameraSubjectSearch,
+        CameraTarget, CameraView, CompiledCameraPath,
     },
 };
 use std::sync::Arc;
+mod subjects;
+pub use subjects::{CAMERA_SUBJECT_ROWS, CameraSubjectResults, CameraSubjectsAction};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CameraWorkspace {
     pub tools: super::CameraTools,
     pub subject_filter: CameraSubjectFilter,
+    pub subject_search: CameraSubjectSearch,
+    pub subject_results: Option<CameraSubjectResults>,
+    pub subject_first: usize,
     pub focused: bool,
     pub looking: bool,
     pub view: Option<CameraView>,
@@ -23,6 +29,14 @@ pub struct CameraWorkspace {
     pub guides: CameraGuides,
     pub saved_views: SavedCameraViews,
     pub path_cache: Option<CameraPathCache>,
+}
+
+impl CameraWorkspace {
+    /// Browsing and direct selection share class admission and the exact same compiled search.
+    pub fn subject_matches(&self, target: &CameraTarget, local_actor: u64) -> bool {
+        self.subject_search
+            .includes(self.subject_filter, target, local_actor)
+    }
 }
 
 #[derive(Clone)]

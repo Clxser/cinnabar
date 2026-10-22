@@ -184,8 +184,7 @@ impl crate::menu::MenuRuntime {
                     .iter()
                     .filter(|target| {
                         view.camera_workspace
-                            .subject_filter
-                            .includes(target, camera.local_actor)
+                            .subject_matches(target, camera.local_actor)
                     })
                     .min_by_key(|target| {
                         (target.runtime_id != camera.local_actor, target.runtime_id)
@@ -196,6 +195,7 @@ impl crate::menu::MenuRuntime {
         if self.studio.view.preview != status {
             Arc::make_mut(&mut self.studio.view).preview = status;
         }
+        self.studio.reconcile_camera_subjects();
     }
 
     /// Allows the capture adapter to stay dormant without mutating resources during ordinary play.

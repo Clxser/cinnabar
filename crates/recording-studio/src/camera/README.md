@@ -17,6 +17,17 @@ Save As, open and recovery relocate media and captured binding paths independent
 through the document's original source base; relocation never rebinds a stale view
 to replacement media.
 
+## Recorded subject selection
+
+The recorded-subject browser starts with Players. Search narrows captured names or
+entity types using Unicode lowercase substring matching; it never infers a player
+from their name or artwork. All entities remains an explicit fallback for older
+takes. Search, paging and selecting a result are transient; retargeting an authored
+shot remains a separate undoable command. Result actions retain their source,
+preview epoch and exact spawn reference so stale frames cannot select a respawn.
+Matching indices are cached per immutable actor publication/query/filter; ordinary
+UI paints reuse a bounded page. No accent normalization or fuzzy ranking is applied.
+
 ## Rail timing
 
 Path shots keep three independent clocks: geometric travel, keyed orientation,

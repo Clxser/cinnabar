@@ -15,8 +15,9 @@ pub mod timeline;
 pub use clip::{ClipTimeField, MAX_CLIP_TIME_BYTES};
 mod camera;
 pub use camera::{
-    CameraGuides, CameraPathCache, CameraViewNameDraft, CameraViewsAction, CameraWorkspace,
-    SAVED_CAMERA_VIEWS_PER_PAGE, SavedCameraViews,
+    CAMERA_SUBJECT_ROWS, CameraGuides, CameraPathCache, CameraSubjectResults, CameraSubjectsAction,
+    CameraViewNameDraft, CameraViewsAction, CameraWorkspace, SAVED_CAMERA_VIEWS_PER_PAGE,
+    SavedCameraViews,
 };
 pub mod creative;
 mod workspace;
@@ -92,6 +93,7 @@ pub mod shortcuts;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Action {
+    CameraSubjects(CameraSubjectsAction),
     Creative(creative::CreativeAction),
     Monitoring(monitoring::MonitoringAction),
     Timeline(timeline::TimelineAction),

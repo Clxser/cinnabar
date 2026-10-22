@@ -29,7 +29,9 @@ pub use edit::{CameraParameter, CameraRigKind};
 pub use path::{CameraHandles, PathControl};
 pub use presets::CameraPreset;
 pub use saved::{CameraViewSource, MAX_SAVED_VIEW_NAME_BYTES, SavedCameraView};
-pub use subjects::{CameraSubjectFilter, CameraTargetKind, LEGACY_SUBJECT_NOTICE};
+pub use subjects::{
+    CameraSubjectFilter, CameraSubjectSearch, CameraTargetKind, LEGACY_SUBJECT_NOTICE,
+};
 pub use viewport::{CameraDragAxis, CameraProjection, CameraSnap, CameraView};
 
 #[cfg(test)]

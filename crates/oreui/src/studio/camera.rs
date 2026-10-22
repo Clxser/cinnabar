@@ -9,6 +9,7 @@ use super::*;
 mod fov;
 mod keys;
 mod navigation;
+mod subjects;
 
 /// New rigs are offered only after a native source has published an admitted camera/target snapshot.
 pub(super) fn creation(
@@ -30,7 +31,7 @@ pub(super) fn creation(
             CAPTION,
             TEXT_DIMMER,
         )?;
-        return navigation::draw(canvas, view, [left, y + canvas.r(4.4), right, area[3]]);
+        return Ok(y + canvas.r(4.4));
     }
     y = target(canvas, view, [left, y, right, area[3]])?;
     let pad = canvas.r(0.8);
@@ -308,96 +309,12 @@ fn pair(
     Ok(area[1] + canvas.r(4.8))
 }
 
-/// A compact target browser supports large recorded actor sets without painting thousands of controls.
+/// The source-owned subject browser shares query admission with selection and native focus.
 fn target(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<f32, PaintError> {
-    let [left, mut y, right, _] = area;
-    canvas.text_line(
-        "Recorded subject",
-        [left, y],
-        right - left,
-        CAPTION,
-        TEXT_DIMMER,
-    )?;
-    y += canvas.r(2.8);
-    control(
-        canvas,
-        view,
-        [left, y, right, y + canvas.r(3.6)],
-        &format!(
-            "Subjects: {}",
-            view.studio.camera_workspace.subject_filter.label()
-        ),
-        Action::ToggleCameraSubjectFilter,
-        true,
-        Variant::Secondary,
-    )?;
-    y += canvas.r(4.4);
-    let name = selected_target(view).map_or("No matching subject at this frame", |target| {
-        target.name.as_ref()
-    });
-    let button = canvas.r(3.6);
-    let targets = view.studio.preview.camera.as_ref().is_some_and(|camera| {
-        camera.targets.iter().any(|target| {
-            view.studio
-                .camera_workspace
-                .subject_filter
-                .includes(target, camera.local_actor)
-        })
-    });
-    control(
-        canvas,
-        view,
-        [left, y, left + button, y + canvas.r(3.6)],
-        "<",
-        Action::CycleCameraTarget(-1),
-        targets,
-        Variant::Secondary,
-    )?;
-    canvas.text_line(
-        name,
-        [left + button + canvas.r(0.8), y + canvas.r(0.7)],
-        (right - left - button * 2.0 - canvas.r(1.6)).max(0.0),
-        CAPTION,
-        TEXT,
-    )?;
-    control(
-        canvas,
-        view,
-        [right - button, y, right, y + canvas.r(3.6)],
-        ">",
-        Action::CycleCameraTarget(1),
-        targets,
-        Variant::Secondary,
-    )?;
-    y += canvas.r(5.2);
-    if view.studio.preview.camera.as_ref().is_some_and(|camera| {
-        camera.targets.iter().any(|target| {
-            target.kind == recording_studio::camera::CameraTargetKind::Unknown
-                && target.runtime_id != camera.local_actor
-        })
-    }) {
-        y += canvas.text(
-            recording_studio::camera::LEGACY_SUBJECT_NOTICE,
-            [left, y],
-            right - left,
-            CAPTION,
-            TEXT_DIMMER,
-            false,
-        )? + canvas.r(1.2);
-    }
-    Ok(y)
+    subjects::draw(canvas, view, area)
 }
 
-/// A stored inspector selection never silently rebinds when an actor's runtime ID is reused.
+/// A filtered selection always resolves its captured spawn reference rather than its name.
 fn selected_target(view: &MenuView) -> Option<&recording_studio::camera::CameraTarget> {
-    let reference = view.studio.camera_target?;
-    let camera = view.studio.preview.camera.as_ref()?;
-    camera.targets.iter().find(|target| {
-        target.matches(reference)
-            && view
-                .studio
-                .camera_workspace
-                .subject_filter
-                .includes(target, camera.local_actor)
-    })
+    subjects::selected(view)
 }

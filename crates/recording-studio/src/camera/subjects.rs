@@ -1,6 +1,8 @@
 //! Subject eligibility uses captured protocol facts, never labels, skins or a fabricated eye height.
 
 use super::CameraTarget;
+mod search;
+pub use search::CameraSubjectSearch;
 
 macro_rules! target_kinds {
     ($($kind:ident = $code:literal),+ $(,)?) => {
@@ -24,7 +26,7 @@ mod tests {
     use std::sync::Arc;
 
     /// Names and even player-like artwork identifiers are deliberately independent of protocol class.
-    fn target(kind: CameraTargetKind) -> CameraTarget {
+    pub(super) fn target(kind: CameraTargetKind) -> CameraTarget {
         CameraTarget {
             runtime_id: 7,
             unique_id: 8,

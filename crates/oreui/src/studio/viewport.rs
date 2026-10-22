@@ -95,10 +95,18 @@ pub(super) fn draw(
     } else {
         &[]
     };
+    let search_results = workspace.subject_results.as_ref().filter(|results| {
+        results.is_current(preview, &workspace.subject_search, workspace.subject_filter)
+    });
     let mut subjects = targets
         .iter()
-        .filter(|target| target.is_player_subject(preview.local_actor))
-        .filter_map(|target| {
+        .enumerate()
+        .filter(|(_, target)| target.is_player_subject(preview.local_actor))
+        .filter(|(index, _)| {
+            workspace.subject_search.is_empty()
+                || search_results.is_some_and(|results| results.includes_index(*index))
+        })
+        .filter_map(|(_, target)| {
             let eye = target.pose.eye_offset.unwrap_or([0.0; 3]);
             let position = std::array::from_fn(|axis| target.pose.position[axis] + eye[axis]);
             let point = projection

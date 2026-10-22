@@ -250,15 +250,16 @@ impl Studio {
 
     /// Native focus follows the same bounded saved-view page as the painted list.
     pub(super) fn saved_camera_view_focus_actions(&self) -> Vec<Action> {
+        if !self.toolbox_active(launcher::menu::studio::Toolbox::Cameras)
+            || self.view.camera_workspace.tools != launcher::menu::studio::CameraTools::Views
+        {
+            return Vec::new();
+        }
         let Ok(project) = self.project() else {
             return Vec::new();
         };
         let saved = &self.view.camera_workspace.saved_views;
-        let mut actions: Vec<_> = launcher::menu::studio::CameraTools::ALL
-            .iter()
-            .copied()
-            .map(|section| Action::CameraViews(V::Section(section)))
-            .collect();
+        let mut actions = Vec::new();
         let preview = self
             .view
             .preview

@@ -78,6 +78,7 @@ impl Studio {
         }
         self.reconcile_camera_path_cache();
         self.reconcile_saved_camera_views();
+        self.reconcile_camera_subjects();
     }
 
     /// Inspector geometry is prepared once on selection/document/draft changes, never on seek or camera movement.
@@ -492,8 +493,7 @@ impl Studio {
                     && self
                         .view
                         .camera_workspace
-                        .subject_filter
-                        .includes(target, preview.local_actor)
+                        .subject_matches(target, preview.local_actor)
             })
             .ok_or("This recorded subject is no longer present.")?;
         Arc::make_mut(&mut self.view).camera_target = Some(target.reference());

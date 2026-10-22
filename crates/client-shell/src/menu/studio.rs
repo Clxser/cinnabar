@@ -67,6 +67,7 @@ pub(super) struct Studio {
     pub(super) camera_text: ui::ChatEditor,
     camera_edit: Option<camera::CameraValueEdit>,
     pub(super) camera_view_text: ui::ChatEditor,
+    pub(super) subject_text: ui::ChatEditor,
     camera_view_edit: Option<camera::CameraViewEdit>,
     camera_interaction: camera::CameraInteraction,
     pub(super) clip_text: ui::ChatEditor,
@@ -143,6 +144,9 @@ impl Studio {
                 launcher::menu::MenuField::StudioCameraViewName(None),
             ),
             camera_view_edit: None,
+            subject_text: super::input::fields::field_editor(
+                launcher::menu::MenuField::StudioSubjectSearch,
+            ),
             camera_interaction: Default::default(),
             clip_text: super::input::fields::field_editor(launcher::menu::MenuField::StudioClip(
                 launcher::menu::studio::ClipTimeField::Position,
@@ -696,6 +700,7 @@ impl Studio {
             }
             Action::FrameCameraSubject => self.frame_camera_subject()?,
             Action::CameraViews(action) => self.camera_views_action(action)?,
+            Action::CameraSubjects(action) => self.camera_subjects_action(action)?,
             Action::CameraControl { shot, at, .. } => self.select_camera_key(shot, at)?,
             Action::CameraSubject(reference) => self.select_camera_subject(reference)?,
             Action::ReleaseCamera => self.release_camera(),
