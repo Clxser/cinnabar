@@ -43,13 +43,16 @@ impl Project {
             .map(|source| (source.id, source))
             .collect();
         let clips: BTreeMap<_, _> = self.clips.iter().map(|clip| (clip.id, clip)).collect();
+        for view in &self.camera_views {
+            view.validate(source(&sources, view.source)?)?;
+        }
         for source in &self.sources {
             if let Some(fps) = source.frame_rate {
                 fps.validate()?;
             }
             limit("source name bytes", source.name.len(), 256)?;
             if source.path.as_os_str().is_empty()
-                || source.path.as_os_str().len() > 32_768
+                || source.path.as_os_str().len() > MAX_MEDIA_PATH_UNITS
                 || source.size.iter().any(|&side| side > 32_768)
                 || source.kind != MediaKind::Audio && source.size.contains(&0)
                 || source.duration.0 > MAX_MEDIA_MICROS

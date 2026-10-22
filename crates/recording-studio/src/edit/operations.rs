@@ -92,6 +92,23 @@ pub(super) fn apply(project: &mut Project, command: &Command) -> Result<(), Stud
             }
         }
         Command::AddShot { shot } => project.shots.push(shot.clone()),
+        Command::AddCameraView { view } => project.camera_views.push(view.clone()),
+        Command::ReplaceCameraView { view } => replace(
+            &mut project.camera_views,
+            view.id,
+            |view| view.id,
+            view.clone(),
+            "saved camera view",
+        )?,
+        Command::DeleteCameraView { id } => {
+            if !project.camera_views.iter().any(|view| view.id == *id) {
+                return Err(StudioError::Missing {
+                    kind: "saved camera view",
+                    id: id.0,
+                });
+            }
+            project.camera_views.retain(|view| view.id != *id);
+        }
         Command::ReplaceShot { shot } => replace(
             &mut project.shots,
             shot.id,
@@ -247,6 +264,9 @@ fn delete(project: &mut Project, id: Id) -> Result<(), StudioError> {
         ));
     }
     project.sources.retain(|v| v.id != id);
+    project
+        .camera_views
+        .retain(|view| view.id != id && view.source != id);
     project.clips.retain(|v| v.id != id);
     project.shots.retain(|v| v.id != id);
     project.effects.retain(|v| v.id != id);

@@ -77,6 +77,7 @@ impl Studio {
             Arc::make_mut(&mut self.view).camera_workspace.key = None;
         }
         self.reconcile_camera_path_cache();
+        self.reconcile_saved_camera_views();
     }
 
     /// Inspector geometry is prepared once on selection/document/draft changes, never on seek or camera movement.

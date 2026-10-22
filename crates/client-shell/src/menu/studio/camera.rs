@@ -9,6 +9,8 @@ use super::*;
 
 mod fov;
 mod navigation;
+mod saved;
+pub(super) use saved::CameraViewEdit;
 mod values;
 mod viewport;
 pub(super) use viewport::CameraInteraction;
@@ -38,7 +40,6 @@ impl Studio {
         if self.view.preview.camera.is_some() {
             actions.extend([
                 Action::FrameCameraSubject,
-                Action::SaveCameraBookmark,
                 Action::CycleCameraSnap,
                 Action::CycleCameraGuides,
             ]);
@@ -50,13 +51,11 @@ impl Studio {
             actions.push(Action::SetCameraDragAxis(
                 recording_studio::camera::CameraDragAxis::View,
             ));
-            actions.extend(
-                (0..self.view.camera_workspace.bookmarks.len()).map(Action::RecallCameraBookmark),
-            );
             actions.push(Action::ToggleCameraSubjectFilter);
             actions.extend([Action::CycleCameraTarget(-1), Action::CycleCameraTarget(1)]);
             actions.extend(CameraRigKind::ALL.iter().copied().map(Action::CreateCamera));
         }
+        actions.extend(self.saved_camera_view_focus_actions());
         if let Ok(shot) = self.camera_shot() {
             actions.extend([
                 Action::ToggleCameraFine,

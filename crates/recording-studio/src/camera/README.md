@@ -1,5 +1,21 @@
 # Camera rail motion
 
+## Named inspection views
+
+Projects retain named camera views separately from timeline shots. Saving a name,
+renaming, deletion and explicit source rebinding are ordinary undoable edits.
+Inspection, paging and recall never dirty the project or seek its recorded state.
+Recall restores position, yaw, pitch, roll and FOV exactly.
+
+Each view binds to a replay source ID and its known content hash. Relocating hashed
+content preserves the binding; replacing it invalidates recall until an explicit
+"Bind to current take" edit. Unhashed takes use their captured path conservatively;
+metadata cannot detect replacement of an unhashed file at that same path. Normal
+source verification still applies. Deleting a source also removes its saved views
+in the same undo step. Legacy projects without saved views open with an empty list.
+
+## Rail timing
+
 Path shots keep three independent clocks: geometric travel, keyed orientation,
 and the optional FOV curve. `Keyed` retains the original keyed position easing.
 `Distance` travels evenly within each key interval. `GlobalDistance` uses the

@@ -17,6 +17,7 @@ pub const PROJECT_EXTENSION: &str = "cinstudio";
 pub const MAX_PROJECT_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_PROJECT_ITEMS: usize = 16_384;
 pub const MAX_PROJECT_KEYS: usize = 131_072;
+pub const MAX_MEDIA_PATH_UNITS: usize = 32_768;
 pub const MAX_VIDEO_TRACKS: u16 = 8;
 
 #[derive(
@@ -351,6 +352,8 @@ pub struct Project {
     pub sources: Vec<MediaSource>,
     pub clips: Vec<Clip>,
     pub shots: Vec<CameraShot>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub camera_views: Vec<crate::camera::SavedCameraView>,
     pub effects: Vec<EffectClip>,
     pub audio: Vec<AudioClip>,
     pub titles: Vec<TitleClip>,
@@ -370,6 +373,7 @@ impl Project {
             sources: Vec::new(),
             clips: Vec::new(),
             shots: Vec::new(),
+            camera_views: Vec::new(),
             effects: Vec::new(),
             audio: Vec::new(),
             titles: Vec::new(),
@@ -435,6 +439,7 @@ impl Project {
             .map(|v| v.id)
             .chain(self.clips.iter().map(|v| v.id))
             .chain(self.shots.iter().map(|v| v.id))
+            .chain(self.camera_views.iter().map(|v| v.id))
             .chain(self.effects.iter().map(|v| v.id))
             .chain(self.audio.iter().map(|v| v.id))
             .chain(self.titles.iter().map(|v| v.id))

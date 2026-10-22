@@ -1,9 +1,7 @@
-//! View framing and session bookmarks never modify recorded state or authored camera shots.
+//! View framing and timing controls keep temporary inspection separate from saved camera edits.
 
 use super::*;
 use recording_studio::camera::{CameraPose, PathContinuity};
-
-const MAX_SESSION_VIEWS: usize = 8;
 
 #[cfg(test)]
 mod tests;
@@ -38,55 +36,8 @@ impl Studio {
         self.install_inspection_view(next)
     }
 
-    /// Session bookmarks retain the last eight distinct inspected views without changing the document.
-    pub(super) fn save_camera_bookmark(&mut self) -> Result<(), String> {
-        let preview = self.camera_preview()?;
-        if !preview.interactive {
-            return Err("View bookmarks require one native replay view.".into());
-        }
-        let pose = self
-            .view
-            .camera_workspace
-            .view
-            .map_or(preview.render_pose, |view| view.pose);
-        let bookmark = launcher::menu::studio::CameraBookmark {
-            source: preview.source,
-            pose,
-        };
-        let bookmarks = &mut Arc::make_mut(&mut self.view).camera_workspace.bookmarks;
-        if bookmarks.last() == Some(&bookmark) {
-            return Ok(());
-        }
-        if bookmarks.len() == MAX_SESSION_VIEWS {
-            bookmarks.remove(0);
-        }
-        bookmarks.push(bookmark);
-        Ok(())
-    }
-
-    /// Recalling a view pauses playback and preserves its lens, roll and position exactly.
-    pub(super) fn recall_camera_bookmark(&mut self, index: usize) -> Result<(), String> {
-        let bookmark = self
-            .view
-            .camera_workspace
-            .bookmarks
-            .get(index)
-            .copied()
-            .ok_or("This session view is no longer available.")?;
-        let preview = self.camera_preview()?;
-        if !preview.interactive {
-            return Err("View bookmarks require one native replay view.".into());
-        }
-        if preview.source != bookmark.source {
-            return Err(
-                "This view belongs to another recording. Select its replay clip first.".into(),
-            );
-        }
-        self.install_inspection_view(bookmark.pose)
-    }
-
     /// Publishing inspection state changes only the view revision, not the replay seek epoch.
-    fn install_inspection_view(&mut self, pose: CameraPose) -> Result<(), String> {
+    pub(super) fn install_inspection_view(&mut self, pose: CameraPose) -> Result<(), String> {
         pose.validate().map_err(|error| error.to_string())?;
         self.transport.pause();
         self.inspect_camera_pose(pose);

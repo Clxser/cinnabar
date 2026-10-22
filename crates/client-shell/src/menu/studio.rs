@@ -66,6 +66,8 @@ pub(super) struct Studio {
     pub(super) destination_text: ui::ChatEditor,
     pub(super) camera_text: ui::ChatEditor,
     camera_edit: Option<camera::CameraValueEdit>,
+    pub(super) camera_view_text: ui::ChatEditor,
+    camera_view_edit: Option<camera::CameraViewEdit>,
     camera_interaction: camera::CameraInteraction,
     pub(super) clip_text: ui::ChatEditor,
     clip_edit: Option<clips::ClipTimeEdit>,
@@ -137,6 +139,10 @@ impl Studio {
                 ),
             ),
             camera_edit: None,
+            camera_view_text: super::input::fields::field_editor(
+                launcher::menu::MenuField::StudioCameraViewName(None),
+            ),
+            camera_view_edit: None,
             camera_interaction: Default::default(),
             clip_text: super::input::fields::field_editor(launcher::menu::MenuField::StudioClip(
                 launcher::menu::studio::ClipTimeField::Position,
@@ -689,8 +695,7 @@ impl Studio {
                 workspace.guides = workspace.guides.next();
             }
             Action::FrameCameraSubject => self.frame_camera_subject()?,
-            Action::SaveCameraBookmark => self.save_camera_bookmark()?,
-            Action::RecallCameraBookmark(index) => self.recall_camera_bookmark(index)?,
+            Action::CameraViews(action) => self.camera_views_action(action)?,
             Action::CameraControl { shot, at, .. } => self.select_camera_key(shot, at)?,
             Action::CameraSubject(reference) => self.select_camera_subject(reference)?,
             Action::ReleaseCamera => self.release_camera(),
@@ -823,6 +828,7 @@ impl Studio {
         }
         self.cancel_title_text();
         self.cancel_camera_value();
+        self.cancel_camera_view_name();
         self.cancel_clip_time();
         self.cancel_export_range();
         self.document = self.document.wrapping_add(1);

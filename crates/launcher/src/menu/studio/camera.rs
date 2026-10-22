@@ -3,8 +3,7 @@
 use recording_studio::{
     Id, MediaTime,
     camera::{
-        CameraDragAxis, CameraPose, CameraShot, CameraSnap, CameraSubjectFilter, CameraView,
-        CompiledCameraPath,
+        CameraDragAxis, CameraShot, CameraSnap, CameraSubjectFilter, CameraView, CompiledCameraPath,
     },
 };
 use std::sync::Arc;
@@ -21,8 +20,7 @@ pub struct CameraWorkspace {
     pub drag_axis: CameraDragAxis,
     pub snap: CameraSnap,
     pub guides: CameraGuides,
-    /// Session bookmarks are inspection views, distinct from authored and saved timeline shots.
-    pub bookmarks: Vec<CameraBookmark>,
+    pub saved_views: SavedCameraViews,
     pub path_cache: Option<CameraPathCache>,
 }
 
@@ -66,10 +64,54 @@ impl std::fmt::Debug for CameraPathCache {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CameraBookmark {
-    pub source: Id,
-    pub pose: CameraPose,
+pub const SAVED_CAMERA_VIEWS_PER_PAGE: usize = 4;
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SavedCameraViews {
+    pub selected: Option<Id>,
+    pub first: usize,
+    pub draft: Option<CameraViewNameDraft>,
+}
+
+impl SavedCameraViews {
+    /// Pages are bounded by the visible row policy shared by paint and keyboard focus.
+    pub fn range(&self, total: usize) -> std::ops::Range<usize> {
+        let start = self
+            .first
+            .min(total.saturating_sub(SAVED_CAMERA_VIEWS_PER_PAGE));
+        start..start.saturating_add(SAVED_CAMERA_VIEWS_PER_PAGE).min(total)
+    }
+
+    /// Moving a page never changes the saved selection or the inspected camera.
+    pub fn step(&mut self, total: usize, direction: i8) {
+        let first = self.range(total).start;
+        self.first = if direction < 0 {
+            first.saturating_sub(SAVED_CAMERA_VIEWS_PER_PAGE)
+        } else {
+            first
+                .saturating_add(SAVED_CAMERA_VIEWS_PER_PAGE)
+                .min(total.saturating_sub(SAVED_CAMERA_VIEWS_PER_PAGE))
+        };
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CameraViewNameDraft {
+    pub id: Option<Id>,
+    pub text: Arc<str>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CameraViewsAction {
+    New,
+    Select(Id),
+    Recall(Id),
+    Rename(Id),
+    Delete(Id),
+    Rebind(Id),
+    Save,
+    Cancel,
+    Page(i8),
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

@@ -27,7 +27,7 @@ pub(super) fn creation(
             CAPTION,
             TEXT_DIMMER,
         )?;
-        return Ok(y + canvas.r(4.4));
+        return navigation::draw(canvas, view, [left, y + canvas.r(4.4), right, area[3]]);
     }
     y = target(canvas, view, [left, y, right, area[3]])?;
     let pad = canvas.r(0.8);

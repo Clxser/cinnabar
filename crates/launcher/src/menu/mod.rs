@@ -109,6 +109,7 @@ pub enum MenuField {
     StudioTitle,
     StudioDestination,
     StudioCamera(recording_studio::camera::CameraParameter),
+    StudioCameraViewName(Option<recording_studio::Id>),
     StudioClip(studio::ClipTimeField),
     StudioExportRange(studio::ExportRangeField),
     StudioSeek,
@@ -247,6 +248,12 @@ impl MenuAction {
             }
             Self::Studio(studio::Action::EditCameraValue(parameter)) => {
                 Some(MenuField::StudioCamera(parameter))
+            }
+            Self::Studio(studio::Action::CameraViews(studio::CameraViewsAction::New)) => {
+                Some(MenuField::StudioCameraViewName(None))
+            }
+            Self::Studio(studio::Action::CameraViews(studio::CameraViewsAction::Rename(id))) => {
+                Some(MenuField::StudioCameraViewName(Some(id)))
             }
             Self::Studio(studio::Action::EditClipTime(field)) => Some(MenuField::StudioClip(field)),
             Self::Studio(studio::Action::EditExportRange(field)) => {

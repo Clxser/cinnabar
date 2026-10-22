@@ -9,7 +9,10 @@ use ui::ChatEditor;
 
 /// Creates an empty text editor with the byte limit for its menu field.
 pub(in crate::menu) fn field_editor(field: MenuField) -> ChatEditor {
-    if matches!(field, MenuField::StudioTitle | MenuField::StudioDestination) {
+    if matches!(
+        field,
+        MenuField::StudioTitle | MenuField::StudioDestination | MenuField::StudioCameraViewName(_)
+    ) {
         return ChatEditor::with_byte_budget(
             std::num::NonZeroUsize::new(max_bytes(field)).expect("positive title budget"),
         );
@@ -32,6 +35,7 @@ fn max_bytes(field: MenuField) -> usize {
         MenuField::StudioTitle => recording_studio::title::MAX_TITLE_TEXT_BYTES,
         MenuField::StudioDestination => recording_studio::settings::MAX_PATH_BYTES,
         MenuField::StudioCamera(_) => recording_studio::camera::MAX_CAMERA_VALUE_BYTES,
+        MenuField::StudioCameraViewName(_) => recording_studio::camera::MAX_SAVED_VIEW_NAME_BYTES,
         MenuField::StudioClip(_) => launcher::menu::studio::MAX_CLIP_TIME_BYTES,
         MenuField::StudioExportRange(_) => launcher::menu::studio::MAX_CLIP_TIME_BYTES,
         MenuField::StudioSeek => recording_studio::playback::monitoring::MAX_SEEK_BYTES,
@@ -55,6 +59,7 @@ impl crate::menu::MenuRuntime {
             MenuField::StudioTitle => &self.studio.title_text,
             MenuField::StudioDestination => &self.studio.destination_text,
             MenuField::StudioCamera(_) => &self.studio.camera_text,
+            MenuField::StudioCameraViewName(_) => &self.studio.camera_view_text,
             MenuField::StudioClip(_) => &self.studio.clip_text,
             MenuField::StudioExportRange(_) => &self.studio.range_text,
             MenuField::StudioSeek => &self.studio.seek_text,
@@ -77,6 +82,7 @@ impl crate::menu::MenuRuntime {
             MenuField::StudioTitle => &mut self.studio.title_text,
             MenuField::StudioDestination => &mut self.studio.destination_text,
             MenuField::StudioCamera(_) => &mut self.studio.camera_text,
+            MenuField::StudioCameraViewName(_) => &mut self.studio.camera_view_text,
             MenuField::StudioClip(_) => &mut self.studio.clip_text,
             MenuField::StudioExportRange(_) => &mut self.studio.range_text,
             MenuField::StudioSeek => &mut self.studio.seek_text,
@@ -107,6 +113,16 @@ impl crate::menu::MenuRuntime {
 impl crate::menu::MenuRuntime {
     /// Focus `field` with its caret after the text, as a newly selected box.
     pub(in crate::menu) fn focus_field(&mut self, field: MenuField) {
+        if !matches!(field, MenuField::StudioCameraViewName(_)) {
+            self.studio.cancel_camera_view_name();
+        }
+        if let MenuField::StudioCameraViewName(id) = field
+            && let Err(error) = self.studio.begin_camera_view_name(id)
+        {
+            std::sync::Arc::make_mut(&mut self.studio.view).error = Some(error);
+            self.field = None;
+            return;
+        }
         if field != MenuField::StudioLibrarySearch {
             self.studio.cancel_library_search();
         }
@@ -193,6 +209,9 @@ impl crate::menu::MenuRuntime {
         }
         if matches!(field, MenuField::StudioCamera(_)) {
             self.studio.publish_camera_value();
+        }
+        if matches!(field, MenuField::StudioCameraViewName(_)) {
+            self.studio.publish_camera_view_name();
         }
         if matches!(field, MenuField::StudioClip(_)) {
             self.studio.publish_clip_time();

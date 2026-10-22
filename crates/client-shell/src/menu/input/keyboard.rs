@@ -23,6 +23,7 @@ pub(super) fn drive(
                         | MenuField::StudioSeek
                         | MenuField::StudioLibrarySearch
                         | MenuField::StudioCamera(_)
+                        | MenuField::StudioCameraViewName(_)
                         | MenuField::StudioClip(_)
                         | MenuField::StudioExportRange(_)
                 )
@@ -33,6 +34,12 @@ pub(super) fn drive(
                 (
                     Action::ApplyExportDestination,
                     Action::CancelExportDestination,
+                )
+            } else if matches!(menu.field, Some(MenuField::StudioCameraViewName(_))) {
+                use launcher::menu::studio::CameraViewsAction;
+                (
+                    Action::CameraViews(CameraViewsAction::Save),
+                    Action::CameraViews(CameraViewsAction::Cancel),
                 )
             } else if menu.field == Some(MenuField::StudioLibrarySearch) {
                 use launcher::menu::studio::library::LibraryAction;

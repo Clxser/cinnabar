@@ -20,6 +20,7 @@ mod fov;
 mod keys;
 mod path;
 mod presets;
+mod saved;
 mod subjects;
 mod viewport;
 pub use continuity::PathContinuity;
@@ -27,6 +28,7 @@ pub use distance::{CompiledCameraPath, PathAccuracy, PathTiming};
 pub use edit::{CameraParameter, CameraRigKind};
 pub use path::{CameraHandles, PathControl};
 pub use presets::CameraPreset;
+pub use saved::{CameraViewSource, MAX_SAVED_VIEW_NAME_BYTES, SavedCameraView};
 pub use subjects::{CameraSubjectFilter, CameraTargetKind, LEGACY_SUBJECT_NOTICE};
 pub use viewport::{CameraDragAxis, CameraProjection, CameraSnap, CameraView};
 

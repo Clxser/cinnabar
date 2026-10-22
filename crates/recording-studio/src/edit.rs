@@ -80,6 +80,15 @@ pub enum Command {
     ReplaceShot {
         shot: CameraShot,
     },
+    AddCameraView {
+        view: crate::camera::SavedCameraView,
+    },
+    ReplaceCameraView {
+        view: crate::camera::SavedCameraView,
+    },
+    DeleteCameraView {
+        id: Id,
+    },
     AddEffect {
         effect: EffectClip,
     },

@@ -14,7 +14,10 @@ pub use export_range::ExportRangeField;
 pub mod timeline;
 pub use clip::{ClipTimeField, MAX_CLIP_TIME_BYTES};
 mod camera;
-pub use camera::{CameraBookmark, CameraGuides, CameraPathCache, CameraWorkspace};
+pub use camera::{
+    CameraGuides, CameraPathCache, CameraViewNameDraft, CameraViewsAction, CameraWorkspace,
+    SAVED_CAMERA_VIEWS_PER_PAGE, SavedCameraViews,
+};
 pub mod creative;
 mod workspace;
 pub use workspace::{
@@ -249,8 +252,7 @@ pub enum Action {
     CycleCameraSnap,
     CycleCameraGuides,
     FrameCameraSubject,
-    SaveCameraBookmark,
-    RecallCameraBookmark(usize),
+    CameraViews(CameraViewsAction),
     ReleaseCamera,
     ApplyCameraView,
     ResetCameraView,
