@@ -3,6 +3,25 @@
 use super::*;
 use crate::retime::{SpeedKey, SpeedRamp};
 
+const SPEED_GRAPH_DENOMINATOR: u32 = 65_536;
+
+/// Fixed graph precision rounds only into the legal multiplier and combined-rate rational interval.
+fn graph_rate(value: f64, base: crate::PlaybackRate) -> crate::PlaybackRate {
+    let denominator = u128::from(SPEED_GRAPH_DENOMINATOR);
+    let maximum = u128::from(crate::time::MAX_PLAYBACK_RATE);
+    let low = denominator.div_ceil(maximum).max(
+        (denominator * u128::from(base.denominator)).div_ceil(u128::from(base.numerator) * maximum),
+    );
+    let high = (denominator * maximum)
+        .min(denominator * u128::from(base.denominator) * maximum / u128::from(base.numerator));
+    let numerator =
+        ((value.exp2() * f64::from(SPEED_GRAPH_DENOMINATOR)).round() as u128).clamp(low, high);
+    crate::PlaybackRate {
+        numerator: numerator as u32,
+        denominator: SPEED_GRAPH_DENOMINATOR,
+    }
+}
+
 /// An existing displayed key resolves to its retained source timestamp, avoiding round-trip retime drift.
 fn source_key(graph: &GraphCurve, at: MediaTime) -> Result<MediaTime, StudioError> {
     let mut found = graph.points.iter().filter(|p| p.at == at);
@@ -47,6 +66,7 @@ fn command(project: &Project, graph: &GraphCurve, curve: Curve) -> Result<Comman
                 crate::camera::CameraChannelCurve {
                     curve,
                     offset: graph.offset,
+                    additive: graph.additive,
                 },
             );
             shot.validate()?;
@@ -94,13 +114,7 @@ fn command(project: &Project, graph: &GraphCurve, curve: Curve) -> Result<Comman
                                         == key.value
                                 })
                             })
-                            .map_or_else(
-                                || crate::PlaybackRate {
-                                    numerator: (key.value.exp2() * 65_536.0).round() as u32,
-                                    denominator: 65_536,
-                                },
-                                |old| old.rate,
-                            ),
+                            .map_or_else(|| graph_rate(key.value, clip.rate), |old| old.rate),
                     })
                     .collect(),
             };
@@ -124,14 +138,29 @@ pub fn set_key(
     value: f64,
     base: CameraPose,
 ) -> Result<Command, StudioError> {
+    let graph = GraphCurve::new(project, item, channel, base)?;
+    set_key_on(&graph, graph.project.as_ref(), old, at, value)
+}
+
+/// A pointer drag edits its frozen admitted graph without rebuilding positional arc tables.
+pub fn set_key_on(
+    graph: &GraphCurve,
+    project: &Project,
+    old: Option<MediaTime>,
+    at: MediaTime,
+    value: f64,
+) -> Result<Command, StudioError> {
+    graph.require_project(project)?;
+    let (item, channel) = (graph.item, graph.channel);
     if !value.is_finite() {
         return Err(StudioError::Invalid("curve value must be finite"));
     }
-    let graph = GraphCurve::new(project, item, channel, base)?;
-    let mut destination = source_at(&graph, at)?;
+    let mut destination = source_at(graph, at)?;
     let mut curve = graph.curve.clone();
     let value = match channel {
-        GraphChannel::Camera(CameraChannel::Pitch) => value.clamp(-90.0, 90.0),
+        GraphChannel::Camera(CameraChannel::Pitch) if !graph.relative_values() => {
+            value.clamp(-90.0, 90.0)
+        }
         GraphChannel::Fov => value.clamp(
             crate::camera::CAMERA_FOV_RANGE.start + 0.001,
             crate::camera::CAMERA_FOV_RANGE.end - 0.001,
@@ -146,15 +175,16 @@ pub fn set_key(
         GraphChannel::Speed => {
             let clip = project.clips.iter().find(|s| s.id == item).unwrap();
             let rate = f64::from(clip.rate.numerator) / f64::from(clip.rate.denominator);
+            let maximum = f64::from(crate::time::MAX_PLAYBACK_RATE);
             value.clamp(
-                (1.0 / 16.0 / rate).max(1.0 / 16.0).log2(),
-                (16.0 / rate).min(16.0).log2(),
+                (1.0 / maximum / rate).max(1.0 / maximum).log2(),
+                (maximum / rate).min(maximum).log2(),
             )
         }
         _ => value,
     };
     let easing = if let Some(old) = old {
-        let source = source_key(&graph, old)?;
+        let source = source_key(graph, old)?;
         let index = curve.keys.binary_search_by_key(&source, |k| k.at).unwrap();
         let low = index.checked_sub(1).map_or(0, |i| curve.keys[i].at.0 + 1);
         let high = curve
@@ -171,6 +201,14 @@ pub fn set_key(
     } else {
         Easing::Smooth
     };
+    let time = if let Some(map) = &graph.map {
+        map.timeline_boundary(destination)?
+    } else {
+        let time =
+            i128::from(graph.span.start.0) + i128::from(destination.0) - i128::from(graph.offset.0);
+        MediaTime(u64::try_from(time).map_err(|_| StudioError::TimeOverflow)?)
+    };
+    let value = graph.authored_value(time, value)?;
     match curve.keys.binary_search_by_key(&destination, |k| k.at) {
         Ok(index) => curve.keys[index].value = value,
         Err(index) => curve.keys.insert(
@@ -182,7 +220,7 @@ pub fn set_key(
             },
         ),
     }
-    command(project, &graph, curve)
+    command(project, graph, curve)
 }
 
 /// Deleting the last scalar camera key restores the underlying rig; effect and speed owners keep one key.
@@ -209,7 +247,23 @@ pub fn set_easing(
     base: CameraPose,
 ) -> Result<Command, StudioError> {
     let graph = GraphCurve::new(project, key.item, key.channel, base)?;
-    let source = source_key(&graph, key.at)?;
+    set_easing_on(&graph, graph.project.as_ref(), key, easing)
+}
+
+/// Tangent drags share a frozen source graph and reject stale document or selection identities.
+pub fn set_easing_on(
+    graph: &GraphCurve,
+    project: &Project,
+    key: GraphKey,
+    easing: Easing,
+) -> Result<Command, StudioError> {
+    graph.require_project(project)?;
+    if graph.item != key.item || graph.channel != key.channel {
+        return Err(StudioError::Invalid(
+            "curve key belongs to a different graph",
+        ));
+    }
+    let source = source_key(graph, key.at)?;
     let mut curve = graph.curve.clone();
     curve
         .keys
@@ -217,7 +271,7 @@ pub fn set_easing(
         .find(|k| k.at == source)
         .unwrap()
         .easing = easing;
-    command(project, &graph, curve)
+    command(project, graph, curve)
 }
 
 /// Reset removes a camera override or restores one neutral owner curve through the regular undo command.

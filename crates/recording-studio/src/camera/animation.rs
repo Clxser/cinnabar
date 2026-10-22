@@ -29,6 +29,18 @@ channels! {
     Roll => ("Roll", |p: CameraPose| p.roll, |p: &mut CameraPose, v| p.roll = v),
 }
 
+impl CameraChannel {
+    /// Finite offsets saturate only unrepresentable sums; pitch always stays within its view poles.
+    pub(crate) fn offset_value(self, base: f64, offset: f64) -> f64 {
+        let value = (base + offset).clamp(-f64::MAX, f64::MAX);
+        if self == Self::Pitch {
+            value.clamp(-90.0, 90.0)
+        } else {
+            value
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CameraAnimation {
@@ -53,7 +65,9 @@ impl CameraAnimation {
                 || curve.keys.iter().any(|k| {
                     !k.value.is_finite()
                         || k.at.0 > crate::time::MAX_MEDIA_MICROS
-                        || (channel == CameraChannel::Pitch && k.value.abs() > 90.0)
+                        || (!channel_curve.additive
+                            && channel == CameraChannel::Pitch
+                            && k.value.abs() > 90.0)
                 })
             {
                 return Err(StudioError::Invalid(
@@ -68,7 +82,13 @@ impl CameraAnimation {
     pub(super) fn apply(&self, pose: &mut CameraPose, elapsed: MediaTime) {
         for (&channel, channel_curve) in &self.curves {
             let at = MediaTime(channel_curve.offset.0.saturating_add(elapsed.0));
-            channel.assign(pose, channel_curve.curve.sample(at));
+            let value = channel_curve.curve.sample(at);
+            let value = if channel_curve.additive {
+                channel.offset_value(channel.value(*pose), value)
+            } else {
+                value
+            };
+            channel.assign(pose, value);
         }
     }
 }
@@ -80,4 +100,12 @@ pub struct CameraChannelCurve {
     pub curve: Curve,
     #[serde(default)]
     pub offset: MediaTime,
+    /// New graph channels add an offset to the original rig; older absolute channels retain their meaning.
+    #[serde(default, skip_serializing_if = "absolute_values")]
+    pub additive: bool,
+}
+
+/// Absolute values are the compatibility default for previously saved graph channels.
+fn absolute_values(additive: &bool) -> bool {
+    !*additive
 }

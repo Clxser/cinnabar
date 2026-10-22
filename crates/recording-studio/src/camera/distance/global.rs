@@ -236,7 +236,7 @@ pub(super) fn endpoint_direction(points: [DVec3; 4], start: bool) -> DVec3 {
     };
     candidates
         .into_iter()
-        .find_map(DVec3::try_normalize)
+        .find_map(integration::normalized)
         .unwrap_or(DVec3::ZERO)
 }
 

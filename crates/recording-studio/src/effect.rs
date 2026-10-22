@@ -10,6 +10,17 @@ use crate::{Id, MediaTime, Span, StudioError, error::limit};
 pub const MAX_CURVE_KEYS: usize = 4096;
 pub const MAX_EFFECT_VALUE: f64 = 1_000_000.0;
 
+/// A scalar blend stays between its finite endpoints even when their difference cannot be represented.
+pub(crate) fn scalar_lerp(first: f64, last: f64, amount: f64) -> f64 {
+    let delta = last - first;
+    let value = if delta.is_finite() {
+        first + delta * amount
+    } else {
+        first * (1.0 - amount) + last * amount
+    };
+    value.clamp(first.min(last), first.max(last))
+}
+
 mod edit;
 pub mod preset;
 
@@ -171,12 +182,7 @@ impl Curve {
         let t = b
             .easing
             .sample((at.0 - a.at.0) as f64 / (b.at.0 - a.at.0) as f64);
-        let delta = b.value - a.value;
-        if delta.is_finite() {
-            a.value + delta * t
-        } else {
-            a.value * (1.0 - t) + b.value * t
-        }
+        scalar_lerp(a.value, b.value, t)
     }
 }
 
@@ -355,6 +361,35 @@ impl EffectSample {
 #[cfg(test)]
 mod camera_effect_tests {
     use super::*;
+
+    #[test]
+    fn scalar_curves_keep_extreme_finite_values_between_their_endpoints() {
+        for (first, last) in [
+            (-f64::MAX, f64::MAX),
+            (f64::MAX.next_down(), f64::MAX),
+            (f64::MAX, -f64::MAX),
+        ] {
+            let curve = Curve {
+                keys: vec![
+                    CurveKey {
+                        at: MediaTime::ZERO,
+                        value: first,
+                        easing: Easing::Linear,
+                    },
+                    CurveKey {
+                        at: MediaTime(100),
+                        value: last,
+                        easing: Easing::Linear,
+                    },
+                ],
+            };
+            for at in 0..=100 {
+                let value = curve.sample(MediaTime(at));
+                assert!(value.is_finite());
+                assert!((first.min(last)..=first.max(last)).contains(&value));
+            }
+        }
+    }
 
     #[test]
     fn neutral_effects_preserve_every_admitted_high_fov() {

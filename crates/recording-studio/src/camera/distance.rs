@@ -89,6 +89,12 @@ impl std::ops::Deref for ArcSegment {
 }
 
 impl CompiledCameraPath {
+    /// Quadrature work can be compared without clocks or renderer resources.
+    #[cfg(test)]
+    pub(crate) fn integrated_cells() -> usize {
+        integration::measurements()
+    }
+
     /// Only distance-timed rails allocate tables; the owning timeline retains this cache until edited.
     pub fn new(shot: &CameraShot) -> Option<Self> {
         Self::new_reusing(shot, None)
@@ -241,6 +247,19 @@ impl CompiledCameraPath {
             return None;
         }
         let segment = self.segments.get(index)?;
+        let [low, high] = self.visible_parameters(index)?;
+        Some(std::array::from_fn(|point| {
+            cubic(
+                segment.controls,
+                low + (high - low) * point as f64 / (N - 1) as f64,
+            )
+            .to_array()
+        }))
+    }
+
+    /// Graph bounds and overlay traces share one source-time and whole-rail clipping policy.
+    fn visible_parameters(&self, index: usize) -> Option<[f64; 2]> {
+        let segment = self.segments.get(index)?;
         let source = [
             self.offset,
             self.offset
@@ -261,14 +280,20 @@ impl CompiledCameraPath {
                 (high.0 - segment.from.at.0) as f64 / duration,
             ]
         };
-        let [low, high] = amounts.map(|amount| segment.parameter(amount));
-        Some(std::array::from_fn(|point| {
-            cubic(
-                segment.controls,
-                low + (high - low) * point as f64 / (N - 1) as f64,
-            )
-            .to_array()
-        }))
+        Some(amounts.map(|amount| segment.parameter(amount)))
+    }
+
+    /// A clipped cubic control envelope contains every positional extremum without frame-step sampling.
+    pub(crate) fn coordinate_bounds(&self, axis: usize) -> Option<[f64; 2]> {
+        let mut bounds: Option<[f64; 2]> = None;
+        for (index, segment) in self.segments.iter().enumerate() {
+            let Some(parameters) = self.visible_parameters(index) else {
+                continue;
+            };
+            let range = control_bounds(segment.controls, parameters, axis);
+            bounds = Some(bounds.map_or(range, |old| [old[0].min(range[0]), old[1].max(range[1])]));
+        }
+        bounds
     }
 }
 
@@ -385,8 +410,7 @@ impl ArcSegment {
 
     /// A one-sided endpoint limit handles zero control derivatives without inventing a direction.
     fn direction(&self, parameter: f64) -> DVec3 {
-        integration::derivative(self.controls, parameter)
-            .try_normalize()
+        integration::normalized(integration::derivative(self.controls, parameter))
             .unwrap_or_else(|| global::endpoint_direction(self.controls, parameter < 0.5))
     }
 }
@@ -420,7 +444,7 @@ pub(super) fn validate(
         ];
         total += controls
             .windows(2)
-            .map(|pair| (pair[1] - pair[0]).length())
+            .map(|pair| integration::norm(pair[1] - pair[0]))
             .sum::<f64>();
         if !controls.iter().all(|point| point.is_finite()) || !total.is_finite() {
             return Err(StudioError::Invalid(
@@ -457,6 +481,49 @@ fn cubic(points: [DVec3; 4], at: f64) -> DVec3 {
 }
 
 impl CameraShot {
+    /// Positional graph ranges use the original rail's clipped control envelope, including overshoots.
+    pub(crate) fn coordinate_bounds(
+        &self,
+        path: Option<&CompiledCameraPath>,
+        axis: usize,
+    ) -> Option<[f64; 2]> {
+        if let Some(path) = path {
+            return path.coordinate_bounds(axis);
+        }
+        let CameraMode::Path {
+            keys,
+            smooth_position,
+        } = &self.mode
+        else {
+            return None;
+        };
+        let source = [
+            self.path_offset,
+            self.path_offset.checked_add(self.span.duration()).ok()?,
+        ];
+        let mut bounds: Option<[f64; 2]> = None;
+        for index in 0..keys.len().saturating_sub(1) {
+            let (a, b) = (&keys[index], &keys[index + 1]);
+            let low = a.at.max(source[0]);
+            let high = b.at.min(source[1]);
+            if high <= low {
+                continue;
+            }
+            let [first, last] =
+                super::path::segment_controls(keys, index, *smooth_position, self.path_continuity);
+            let controls = [a.pose.position, first, last, b.pose.position].map(DVec3::from_array);
+            let duration = (b.at.0 - a.at.0) as f64;
+            let amounts = [
+                (low.0 - a.at.0) as f64 / duration,
+                (high.0 - a.at.0) as f64 / duration,
+            ]
+            .map(|v| b.easing.sample(v));
+            let range = control_bounds(controls, amounts, axis);
+            bounds = Some(bounds.map_or(range, |old| [old[0].min(range[0]), old[1].max(range[1])]));
+        }
+        bounds
+    }
+
     /// Spatial distance mode preserves key times and orientation/lens easing; speeds can differ at keys.
     pub fn with_path_timing(&self, timing: PathTiming) -> Result<Self, StudioError> {
         if !matches!(self.mode, CameraMode::Path { .. }) {
@@ -495,6 +562,33 @@ impl CameraShot {
         next.validate()?;
         Ok(next)
     }
+}
+
+/// De Casteljau subdivision keeps a conservative envelope for only the retained parameter interval.
+fn control_bounds(points: [DVec3; 4], [low, high]: [f64; 2], axis: usize) -> [f64; 2] {
+    let split = |points: [DVec3; 4], at: f64| {
+        let a = points[0].lerp(points[1], at);
+        let b = points[1].lerp(points[2], at);
+        let c = points[2].lerp(points[3], at);
+        let d = a.lerp(b, at);
+        let e = b.lerp(c, at);
+        let f = d.lerp(e, at);
+        ([points[0], a, d, f], [f, e, c, points[3]])
+    };
+    let (_, after) = split(points, low);
+    let (retained, _) = split(
+        after,
+        if low < 1.0 {
+            (high - low) / (1.0 - low)
+        } else {
+            0.0
+        },
+    );
+    retained
+        .iter()
+        .fold([f64::INFINITY, f64::NEG_INFINITY], |[lo, hi], point| {
+            [lo.min(point[axis]), hi.max(point[axis])]
+        })
 }
 
 #[cfg(test)]

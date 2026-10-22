@@ -1,6 +1,40 @@
 use super::*;
 
 #[test]
+fn finite_large_control_polygons_keep_quadrature_pose_and_velocity_finite() {
+    for scale in [1e154, 1e308] {
+        let mut shot = curved();
+        let CameraMode::Path { keys, .. } = &mut shot.mode else {
+            unreachable!()
+        };
+        keys[0].pose.position = [0.0; 3];
+        keys[1].pose.position = [scale, 0.0, 0.0];
+        keys[0].handles = Some(CameraHandles {
+            outgoing: Some([0.0; 3]),
+            ..Default::default()
+        });
+        keys[1].handles = Some(CameraHandles {
+            incoming: Some([0.0; 3]),
+            ..Default::default()
+        });
+        shot.validate().unwrap();
+        let path = CompiledCameraPath::new(&shot).unwrap();
+        assert!(path.accuracy().distance.is_finite());
+        assert!(path.accuracy().estimated_length_error.is_finite());
+        assert!((path.accuracy().distance / scale - 1.0).abs() < 1e-12);
+        let pose = path.sample(MediaTime(500_000)).unwrap();
+        pose.validate().unwrap();
+        assert!((pose.position[0] / scale - 0.5).abs() < 1e-10);
+        assert!(
+            path.velocity(MediaTime(500_000))
+                .unwrap()
+                .into_iter()
+                .all(f64::is_finite)
+        );
+    }
+}
+
+#[test]
 fn maximum_rail_orientation_edits_retain_every_integrated_geometry_allocation() {
     let mut shot = curved();
     shot.span.end = MediaTime((MAX_CAMERA_KEYS as u64 - 1) * 1_000);

@@ -11,15 +11,26 @@ const RULE: [(f64, f64); 5] = [
     (0.906179845938664, 0.2369268850561891),
 ];
 
+#[cfg(test)]
+thread_local! { static MEASUREMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+/// A thread-local work witness isolates quadrature reuse assertions from parallel tests.
+#[cfg(test)]
+pub(super) fn measurements() -> usize {
+    MEASUREMENTS.with(std::cell::Cell::get)
+}
+
 /// Five-point Gauss integration is paired with a three-point estimate on the same cell.
 pub(super) fn measure(points: [DVec3; 4], low: f64, high: f64) -> (f64, f64) {
+    #[cfg(test)]
+    MEASUREMENTS.with(|count| count.set(count.get() + 1));
     let fine = length(points, low, high);
     let center = (low + high) * 0.5;
     let half = (high - low) * 0.5;
     let offset = (3.0_f64 / 5.0).sqrt() * half;
-    let coarse = half
-        * (8.0 / 9.0 * speed(points, center)
-            + 5.0 / 9.0 * (speed(points, center - offset) + speed(points, center + offset)));
+    let coarse = scaled_speed(points, center, half * (8.0 / 9.0))
+        + scaled_speed(points, center - offset, half * (5.0 / 9.0))
+        + scaled_speed(points, center + offset, half * (5.0 / 9.0));
     (fine, (fine - coarse).abs())
 }
 
@@ -27,15 +38,38 @@ pub(super) fn measure(points: [DVec3; 4], low: f64, high: f64) -> (f64, f64) {
 fn length(points: [DVec3; 4], low: f64, high: f64) -> f64 {
     let half = (high - low) * 0.5;
     let center = (low + high) * 0.5;
-    half * RULE
-        .into_iter()
-        .map(|(node, weight)| weight * speed(points, center + half * node))
+    RULE.into_iter()
+        .map(|(node, weight)| scaled_speed(points, center + half * node, half * weight))
         .sum::<f64>()
 }
 
 /// Analytic cubic speed supplies the Newton derivative and both independent integration rules.
 fn speed(points: [DVec3; 4], at: f64) -> f64 {
-    derivative(points, at).length()
+    norm(derivative(points, at))
+}
+
+/// Hypot avoids overflow from squaring otherwise representable world-space distances.
+pub(super) fn norm(vector: DVec3) -> f64 {
+    vector.x.hypot(vector.y).hypot(vector.z)
+}
+
+/// Quadrature weights are applied before derivatives so finite travel need not form an oversized speed.
+fn scaled_speed(points: [DVec3; 4], at: f64, scale: f64) -> f64 {
+    let before = 1.0 - at;
+    norm(
+        (points[1] - points[0]) * (scale * (3.0 * before * before))
+            + (points[2] - points[1]) * (scale * (6.0 * before * at))
+            + (points[3] - points[2]) * (scale * (3.0 * at * at)),
+    )
+}
+
+/// Scaling before normalization preserves directions of both extremely small and large finite vectors.
+pub(super) fn normalized(vector: DVec3) -> Option<DVec3> {
+    let scale = vector.abs().max_element();
+    (scale.is_finite() && scale > 0.0).then(|| {
+        let scaled = vector / scale;
+        scaled / norm(scaled)
+    })
 }
 
 /// Analytic spatial derivatives also expose physical camera velocity to motion inspectors.
