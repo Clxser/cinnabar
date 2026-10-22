@@ -273,13 +273,16 @@ impl WorldAuthority {
     }
 
     /// A retained rider link excludes standing POV even before its mount or rider flags arrive.
-    pub fn standing_player_view(
+    pub fn recordable_player_view(
         &self,
         runtime_id: u64,
         alpha: f32,
-    ) -> Option<([f32; 3], [f32; 2])> {
-        let actor = self.actors.get(runtime_id)?;
-        actor.standing_player_view(
+    ) -> Result<([f32; 3], [f32; 2]), crate::PlayerViewUnavailable> {
+        let actor = self
+            .actors
+            .get(runtime_id)
+            .ok_or(crate::PlayerViewUnavailable::MissingActor)?;
+        actor.recordable_player_view(
             alpha,
             self.actors.ridden_unique_id(actor.unique_id).is_some(),
         )

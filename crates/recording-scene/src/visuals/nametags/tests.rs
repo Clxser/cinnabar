@@ -138,6 +138,83 @@ fn absent_world_tags_and_an_admitted_empty_frame_are_distinct() {
         ..Default::default()
     };
     assert!(recorded.nametags.is_some());
+    assert_eq!(
+        recorded.world_label_coverage(),
+        recording_studio::preview::WorldLabelCoverage::OriginalView
+    );
+}
+
+#[test]
+fn saved_artwork_scope_distinguishes_new_unculled_labels_legacy_frames_and_missing_channels() {
+    use recording_studio::preview::WorldLabelCoverage;
+    let mut frame = crate::visuals::FrozenVisuals::default();
+    assert_eq!(
+        frame.world_label_coverage(),
+        WorldLabelCoverage::Unavailable
+    );
+    frame.nametag_coverage = Some(WorldLabelCoverage::RecordedViewer);
+    assert_eq!(
+        frame.world_label_coverage(),
+        WorldLabelCoverage::Unavailable
+    );
+    frame.nametags = Some(Arc::new(NametagScene::default()));
+    assert_eq!(
+        frame.world_label_coverage(),
+        WorldLabelCoverage::RecordedViewer
+    );
+    frame.nametag_coverage = None;
+    assert_eq!(
+        frame.world_label_coverage(),
+        WorldLabelCoverage::OriginalView
+    );
+    assert!(frame.world_label_coverage().notice(true).is_some());
+}
+
+#[test]
+fn unculled_artwork_scope_roundtrips_through_the_native_visual_archive() {
+    use recording_studio::{
+        MediaTime,
+        archive::{RECORDING_VERSION, RecordingInfo},
+        preview::WorldLabelCoverage,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let info = RecordingInfo {
+        version: RECORDING_VERSION,
+        name: "Label coverage".into(),
+        game_version: "fixture".into(),
+        protocol_version: 0,
+        scene_schema: "fixture".into(),
+        created_unix_ms: 0,
+        viewport: [16, 16],
+        local_actor: 7,
+    };
+    let mut capture = crate::visuals::VisualCapture::start(root.path(), info).unwrap();
+    let mut frame = crate::visuals::FrozenVisuals {
+        nametags: Some(Arc::new(NametagScene::default())),
+        nametag_coverage: Some(WorldLabelCoverage::RecordedViewer),
+        ..Default::default()
+    };
+    capture.sample(MediaTime::ZERO, frame.clone()).unwrap();
+    frame.nametag_coverage = None;
+    capture.sample(MediaTime(100), frame).unwrap();
+    capture.finish(MediaTime(200)).unwrap();
+    let mut recording = crate::visuals::VisualRecording::open_optional(root.path())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        recording
+            .restore(MediaTime::ZERO, &|| false)
+            .unwrap()
+            .world_label_coverage(),
+        WorldLabelCoverage::RecordedViewer
+    );
+    assert_eq!(
+        recording
+            .advance_to(MediaTime(100), &|| false)
+            .unwrap()
+            .world_label_coverage(),
+        WorldLabelCoverage::OriginalView
+    );
 }
 
 #[test]

@@ -10,7 +10,8 @@ use recording_scene::targets::TargetCapture;
 use recording_studio::{
     MediaTime,
     camera::{
-        ActorPose, CameraTarget, CameraTargetKind, MAX_CAMERA_TARGETS, MAX_TARGET_NAME_BYTES,
+        ActorPose, CameraTarget, CameraTargetKind, CameraTargetView, MAX_CAMERA_TARGETS,
+        MAX_TARGET_NAME_BYTES,
     },
     capture::CaptureSession,
 };
@@ -79,53 +80,9 @@ fn snapshot(world: &World, targets: &mut Vec<CameraTarget>) -> Result<(), String
     targets.clear();
     targets.reserve(authority.actor_count().saturating_add(1));
     for actor in authority.remote_actors() {
-        let Some(position) = actor.interpolated_position(alpha) else {
-            continue;
-        };
-        let anchor = actor
-            .bounding_box_at(position)
-            .map_or(position, |(min, max)| {
-                std::array::from_fn(|axis| (min[axis] + max[axis]) * 0.5)
-            });
-        let view = authority.standing_player_view(actor.runtime_id, alpha);
-        let [yaw, pitch] = view.map_or_else(
-            || {
-                actor
-                    .interpolated_look(alpha)
-                    .unwrap_or([actor.yaw, actor.pitch])
-            },
-            |(_, look)| look,
-        );
-        targets.push(CameraTarget {
-            runtime_id: actor.runtime_id,
-            unique_id: actor.unique_id,
-            spawn_revision: actor.spawn_revision,
-            kind: match &actor.kind {
-                protocol::ActorKind::Player { .. } => CameraTargetKind::Player,
-                protocol::ActorKind::Entity { .. } => CameraTargetKind::Entity,
-            },
-            entity_type: Some(match &actor.kind {
-                protocol::ActorKind::Player { .. } => player_type(),
-                protocol::ActorKind::Entity { identifier } => Arc::clone(identifier),
-            }),
-            name: label(
-                authority.actor_display_name(actor.unique_id),
-                actor.runtime_id,
-            ),
-            pose: ActorPose {
-                position: anchor.map(f64::from),
-                velocity: [0.0; 3],
-                yaw: f64::from(yaw),
-                pitch: f64::from(pitch),
-                roll: 0.0,
-                // The eye is derived from the named visual fact and collision feet, independent
-                // of this centre anchor's box. The subtraction only encodes its relative origin.
-                eye_offset: view.map(|(eye, _)| {
-                    std::array::from_fn(|axis| f64::from(eye[axis] - anchor[axis]))
-                }),
-            },
-            teleported: actor.teleported,
-        });
+        if let Some(target) = received_target(authority, actor, alpha, false) {
+            targets.push(target);
+        }
     }
     if let Some(local) = world
         .get_resource::<LocalPlayerFrameCarrier>()
@@ -142,6 +99,7 @@ fn snapshot(world: &World, targets: &mut Vec<CameraTarget>) -> Result<(), String
             spawn_revision: actor.map_or(0, |actor| actor.spawn_revision),
             kind: CameraTargetKind::Player,
             entity_type: Some(player_type()),
+            view: CameraTargetView::LocalPresentation,
             name: label(
                 authority.actor_display_name(authority.local_player_unique_id()),
                 runtime_id,
@@ -156,12 +114,99 @@ fn snapshot(world: &World, targets: &mut Vec<CameraTarget>) -> Result<(), String
             },
             teleported: actor.is_some_and(|actor| actor.teleported),
         });
+    } else if let Some(actor) = authority.actor(stream.local_player_runtime_id())
+        && let Some(target) = received_target(authority, actor, alpha, true)
+    {
+        targets.push(target);
     }
     if targets.len() > MAX_CAMERA_TARGETS {
         return Err("The world exceeds the camera target recording budget.".into());
     }
     Ok(())
 }
+
+/// Missing local eye publication cannot erase a received subject usable by centre-based cameras.
+fn received_target(
+    authority: &client_world::WorldAuthority,
+    actor: &client_world::ActorSnapshot,
+    alpha: f32,
+    local: bool,
+) -> Option<CameraTarget> {
+    let position = actor.interpolated_position(alpha)?;
+    let anchor = if local {
+        position
+    } else {
+        actor
+            .bounding_box_at(position)
+            .map_or(position, |(min, max)| {
+                std::array::from_fn(|axis| (min[axis] + max[axis]) * 0.5)
+            })
+    };
+    let native_view = authority.recordable_player_view(actor.runtime_id, alpha);
+    let view = if local {
+        CameraTargetView::MissingLocalPresentation
+    } else {
+        native_view.map_or_else(view_unavailable, |_| CameraTargetView::StandingPlayer)
+    };
+    let eye = (!local).then_some(native_view.ok()).flatten();
+    let [yaw, pitch] = eye.map_or_else(
+        || {
+            actor
+                .interpolated_look(alpha)
+                .unwrap_or([actor.yaw, actor.pitch])
+        },
+        |(_, look)| look,
+    );
+    Some(CameraTarget {
+        runtime_id: actor.runtime_id,
+        unique_id: actor.unique_id,
+        spawn_revision: actor.spawn_revision,
+        kind: match &actor.kind {
+            protocol::ActorKind::Player { .. } => CameraTargetKind::Player,
+            protocol::ActorKind::Entity { .. } => CameraTargetKind::Entity,
+        },
+        entity_type: Some(match &actor.kind {
+            protocol::ActorKind::Player { .. } => player_type(),
+            protocol::ActorKind::Entity { identifier } => Arc::clone(identifier),
+        }),
+        view,
+        name: label(
+            authority.actor_display_name(actor.unique_id),
+            actor.runtime_id,
+        ),
+        pose: ActorPose {
+            position: anchor.map(f64::from),
+            velocity: [0.0; 3],
+            yaw: f64::from(yaw),
+            pitch: f64::from(pitch),
+            roll: 0.0,
+            eye_offset: eye
+                .map(|(eye, _)| std::array::from_fn(|axis| f64::from(eye[axis] - anchor[axis]))),
+        },
+        teleported: actor.teleported,
+    })
+}
+
+/// Every unsupported source fact remains explicit in the portable target track.
+fn view_unavailable(reason: client_world::PlayerViewUnavailable) -> CameraTargetView {
+    use client_world::PlayerViewUnavailable as Missing;
+    match reason {
+        Missing::MissingActor | Missing::InvalidPose => CameraTargetView::InvalidPose,
+        Missing::NotPlayer => CameraTargetView::NotPlayer,
+        Missing::Dead => CameraTargetView::Dead,
+        Missing::Riding => CameraTargetView::Riding,
+        Missing::Sleeping => CameraTargetView::Sleeping,
+        Missing::Crouching => CameraTargetView::Crouching,
+        Missing::Swimming => CameraTargetView::Swimming,
+        Missing::Crawling => CameraTargetView::Crawling,
+        Missing::Gliding => CameraTargetView::Gliding,
+        Missing::Spinning => CameraTargetView::Spinning,
+        Missing::Scaled => CameraTargetView::Scaled,
+    }
+}
+
+#[cfg(test)]
+mod tests;
 
 /// One immutable canonical player type avoids allocating an identical label per actor and capture frame.
 fn player_type() -> Arc<str> {

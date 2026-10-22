@@ -2,7 +2,9 @@
 
 use super::CameraTarget;
 mod search;
+mod view;
 pub use search::CameraSubjectSearch;
+pub use view::CameraTargetView;
 
 macro_rules! target_kinds {
     ($($kind:ident = $code:literal),+ $(,)?) => {
@@ -34,6 +36,7 @@ mod tests {
             name: Arc::from("Player"),
             kind,
             entity_type: Some(Arc::from("minecraft:player")),
+            view: Default::default(),
             pose: ActorPose {
                 position: [0.0; 3],
                 velocity: [0.0; 3],

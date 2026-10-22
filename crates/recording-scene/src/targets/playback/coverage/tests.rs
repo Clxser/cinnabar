@@ -1,4 +1,35 @@
 use super::*;
+
+#[test]
+fn interpolated_eye_gap_retains_the_future_failure_reason_and_seek_restores_provenance() {
+    use recording_studio::camera::CameraTargetView;
+    let mut standing = target(1);
+    standing.view = CameraTargetView::StandingPlayer;
+    let mut swimming = standing.clone();
+    swimming.view = CameraTargetView::Swimming;
+    swimming.pose.eye_offset = None;
+    let (_root, mut track) = recording(&[(0, vec![standing]), (100, vec![swimming])], 200);
+    let first = track.seek(MediaTime::ZERO, &|| false).unwrap();
+    assert_eq!(
+        first.target(7).unwrap().view,
+        CameraTargetView::StandingPlayer
+    );
+    let interpolated = track.advance_to(MediaTime(50), &|| false).unwrap();
+    let subject = interpolated.target(7).unwrap();
+    assert!(subject.pose.eye_offset.is_none());
+    assert_eq!(subject.view, CameraTargetView::Swimming);
+    assert_eq!(
+        subject.eye_view_notice(),
+        Some(CameraTargetView::Swimming.notice())
+    );
+    assert!(subject.validate().is_ok());
+    let first = track.seek(MediaTime::ZERO, &|| false).unwrap();
+    assert_eq!(
+        first.target(7).unwrap().view,
+        CameraTargetView::StandingPlayer
+    );
+    assert!(first.target(7).unwrap().pose.eye_offset.is_some());
+}
 use crate::targets::TargetCapture;
 use recording_studio::{
     archive::{RECORDING_VERSION, RecordingInfo},
@@ -14,6 +45,7 @@ fn target(revision: u64) -> CameraTarget {
         name: "Subject".into(),
         kind: CameraTargetKind::Player,
         entity_type: Some("minecraft:player".into()),
+        view: Default::default(),
         pose: ActorPose {
             position: [0.0; 3],
             velocity: [0.0; 3],

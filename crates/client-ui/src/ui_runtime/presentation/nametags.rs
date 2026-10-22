@@ -21,6 +21,7 @@ use ui_screens::text::bounded_text;
 use super::nametag_atlas::{GlyphPage, NametagAtlas};
 pub(super) mod bounds;
 mod counter;
+pub mod recording;
 pub(super) mod style;
 
 #[cfg(test)]
@@ -94,6 +95,7 @@ pub struct NametagTextCache {
     entries: HashMap<(u64, i64), CachedNametagText>,
     scratch: ProjectionScratch,
     anchors: Vec<NametagAnchor>,
+    recording: recording::Projection,
     #[cfg(test)]
     retention_checks: usize,
 }
@@ -493,7 +495,9 @@ pub fn project_nametags(
         ) else {
             continue;
         };
-        if !admit(&mut anchor) {
+        let visible = admit(&mut anchor);
+        cache.recording.retain(&anchor);
+        if !visible {
             continue;
         }
         anchors.push(anchor);

@@ -437,6 +437,7 @@ pub(crate) fn prepare_ui_runtime(
         .set_show_badges(settings.value(SettingId::CinnabarBadges) != 0);
     let show_names = settings.value(SettingId::IngamePlayerNames) != 0;
     presentation.prepare_nametag_layout(&runtime);
+    nametag_cache.request_recording(presentation.nametag_recording_requested());
     let tag_style_owned = presentation
         .mod_ui()
         .mod_actor_style()
@@ -508,11 +509,13 @@ pub(crate) fn prepare_ui_runtime(
             );
             if tag_style.is_some_and(|style| style.hide_passengers) {
                 let authority = stream.authority();
-                tags.retain(|tag| {
+                let include = |tag: &nametags::NametagAnchor| {
                     authority
                         .actor(tag.runtime_id())
                         .is_some_and(|actor| authority.ridden_unique_id(actor.unique_id).is_none())
-                });
+                };
+                tags.retain(include);
+                nametag_cache.filter_recorded(include);
             }
             if show_self_tag && show_names {
                 let authority = stream.authority();
@@ -538,7 +541,11 @@ pub(crate) fn prepare_ui_runtime(
                         .then_some(runtime.scoreboards()),
                         visibility.feet(),
                     )
-                    && admit(&mut tag)
+                    && {
+                        let visible = admit(&mut tag);
+                        nametag_cache.record_own_tag(&tag);
+                        visible
+                    }
                 {
                     tags.push(tag);
                 }
@@ -554,6 +561,7 @@ pub(crate) fn prepare_ui_runtime(
             .map(|stream| stream.authority().local_player_runtime_id()),
     );
     nametag_cache.recycle_anchors(presentation.set_nametag_anchors(nametags));
+    nametag_cache.publish_recording(&mut presentation, now_millis);
     presentation.set_chat_settings_snapshot(settings_snapshot);
     #[cfg(not(target_arch = "wasm32"))]
     let menu_view = menu_visible.then(|| {

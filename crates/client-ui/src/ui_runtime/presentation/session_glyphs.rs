@@ -144,6 +144,7 @@ pub(super) fn observe(
     };
     runtime.font = font(runtime);
     runtime.nametag_atlas.reset();
+    runtime.nametag_recording.reset_artwork();
     dynamic_textures::rebuild(runtime);
 }
 

@@ -23,6 +23,11 @@ pub(super) fn request(world: &mut World) {
     let mut cadence = world.resource_mut::<Cadence>();
     let due = key.is_some() && cadence.0 != key;
     cadence.0 = key;
+    if let Some(mut presentation) =
+        world.get_resource_mut::<client_shell::ui_resources::UiPresentationResource>()
+    {
+        presentation.request_nametag_recording(enabled, due);
+    }
     let mut actors =
         world.resource_mut::<client_presentation::actor_publication::recording::ReplayActors>();
     actors.set_enabled(enabled);

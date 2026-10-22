@@ -32,7 +32,7 @@ fn actor() -> ActorSnapshot {
 }
 
 /// Spawns nearby players in reverse distance order, optionally sharing synced score text.
-fn actor_stream(
+pub(in crate::ui_runtime::presentation::nametags) fn actor_stream(
     count: usize,
     score: Option<Arc<str>>,
     local_runtime_id: u64,

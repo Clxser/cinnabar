@@ -9,6 +9,7 @@ fn subject() -> CameraTarget {
         name: "Subject".into(),
         kind: CameraTargetKind::Player,
         entity_type: None,
+        view: Default::default(),
         teleported: false,
         pose: ActorPose {
             position: [0.0, 64.0, 8.0],

@@ -35,7 +35,8 @@ pub use presets::CameraPreset;
 pub use rotation::{CameraRotationAxis, CameraRotationDrag};
 pub use saved::{CameraViewSource, MAX_SAVED_VIEW_NAME_BYTES, SavedCameraView};
 pub use subjects::{
-    CameraSubjectFilter, CameraSubjectSearch, CameraTargetKind, LEGACY_SUBJECT_NOTICE,
+    CameraSubjectFilter, CameraSubjectSearch, CameraTargetKind, CameraTargetView,
+    LEGACY_SUBJECT_NOTICE,
 };
 pub use viewport::{CameraDragAxis, CameraProjection, CameraSnap, CameraView};
 
@@ -292,6 +293,7 @@ pub struct CameraTarget {
     pub name: Arc<str>,
     pub kind: CameraTargetKind,
     pub entity_type: Option<Arc<str>>,
+    pub view: CameraTargetView,
     pub pose: ActorPose,
     pub teleported: bool,
 }
@@ -316,6 +318,7 @@ impl CameraTarget {
                 ));
             }
         }
+        self.validate_view()?;
         self.pose.validate()
     }
 

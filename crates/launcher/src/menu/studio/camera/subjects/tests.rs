@@ -24,6 +24,7 @@ fn preview() -> CameraPreview {
                 name: Arc::from(format!("Player {id}")),
                 kind: CameraTargetKind::Player,
                 entity_type: None,
+                view: Default::default(),
                 pose: ActorPose {
                     position: [0.0; 3],
                     velocity: [0.0; 3],

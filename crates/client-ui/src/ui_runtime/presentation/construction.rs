@@ -90,6 +90,7 @@ impl UiPresentationRuntime {
             nametag_anchors: Vec::new(),
             nametag_local_actor: None,
             nametag_atlas: nametag_atlas::NametagAtlas::default(),
+            nametag_recording: Default::default(),
             nametag_bounds: Default::default(),
             primitive_text: primitive_shapes::PrimitiveTextRasterizer::default(),
             paper_doll: Default::default(),

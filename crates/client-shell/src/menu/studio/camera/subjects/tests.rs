@@ -14,6 +14,7 @@ fn target(id: u64, kind: CameraTargetKind) -> CameraTarget {
         name: Arc::from("Alpha"),
         kind,
         entity_type: None,
+        view: Default::default(),
         pose: ActorPose {
             position: [0.0, 64.0, 4.0],
             velocity: [0.0; 3],

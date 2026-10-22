@@ -14,6 +14,7 @@ fn subject(revision: u64) -> CameraTarget {
         name: "Subject".into(),
         kind: CameraTargetKind::Player,
         entity_type: Some("minecraft:player".into()),
+        view: Default::default(),
         teleported: false,
         pose: ActorPose {
             position: [0.0; 3],

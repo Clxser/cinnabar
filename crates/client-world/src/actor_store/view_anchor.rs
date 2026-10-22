@@ -2,14 +2,31 @@
 
 use super::*;
 
-const UNSUPPORTED_POSES: &[ActorFlag] = &[
-    ActorFlag::Sneaking,
-    ActorFlag::Swimming,
-    ActorFlag::Crawling,
-    ActorFlag::Gliding,
-    ActorFlag::DamageNearbyMobs,
-    ActorFlag::Sleeping,
-    ActorFlag::Riding,
+/// Received pose facts identify why a remote view cannot be reconstructed without guessing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlayerViewUnavailable {
+    MissingActor,
+    NotPlayer,
+    InvalidPose,
+    Dead,
+    Riding,
+    Sleeping,
+    Crouching,
+    Swimming,
+    Crawling,
+    Gliding,
+    Spinning,
+    Scaled,
+}
+
+const UNSUPPORTED_POSES: &[(ActorFlag, PlayerViewUnavailable)] = &[
+    (ActorFlag::Sneaking, PlayerViewUnavailable::Crouching),
+    (ActorFlag::Swimming, PlayerViewUnavailable::Swimming),
+    (ActorFlag::Crawling, PlayerViewUnavailable::Crawling),
+    (ActorFlag::Gliding, PlayerViewUnavailable::Gliding),
+    (ActorFlag::DamageNearbyMobs, PlayerViewUnavailable::Spinning),
+    (ActorFlag::Sleeping, PlayerViewUnavailable::Sleeping),
+    (ActorFlag::Riding, PlayerViewUnavailable::Riding),
 ];
 
 impl ActorSnapshot {
@@ -34,31 +51,48 @@ impl ActorSnapshot {
 
     /// Only upright, unscaled and unmounted players have this visual anchor contract.
     /// Pose-transition eye offsets and generic entity eye locations require another native carrier.
-    pub(crate) fn standing_player_view(
+    pub(crate) fn recordable_player_view(
         &self,
         alpha: f32,
         riding: bool,
-    ) -> Option<([f32; 3], [f32; 2])> {
-        if !alpha.is_finite()
-            || !matches!(self.kind, ActorKind::Player { .. })
-            || riding
-            || self.is_sleeping()
-            || self.status.dead
-            || UNSUPPORTED_POSES
-                .iter()
-                .any(|flag| self.flag(flag.wire_value()))
-            || !matches!(
-                self.metadata.get(&ActorDataKey::Scale.wire_value()),
-                None | Some(ActorMetadataValue::Float(1.0))
-            )
-        {
-            return None;
+    ) -> Result<([f32; 3], [f32; 2]), PlayerViewUnavailable> {
+        use PlayerViewUnavailable as Missing;
+        if !matches!(self.kind, ActorKind::Player { .. }) {
+            return Err(Missing::NotPlayer);
+        }
+        if !alpha.is_finite() {
+            return Err(Missing::InvalidPose);
+        }
+        if riding {
+            return Err(Missing::Riding);
+        }
+        if self.is_sleeping() {
+            return Err(Missing::Sleeping);
+        }
+        if self.status.dead {
+            return Err(Missing::Dead);
+        }
+        for &(flag, reason) in UNSUPPORTED_POSES {
+            if self.flag(flag.wire_value()) {
+                return Err(reason);
+            }
+        }
+        if !matches!(
+            self.metadata.get(&ActorDataKey::Scale.wire_value()),
+            None | Some(ActorMetadataValue::Float(1.0))
+        ) {
+            return Err(Missing::Scaled);
         }
         let alpha = alpha.clamp(0.0, 1.0);
-        let mut eye = self.interpolated_position(alpha)?;
+        let mut eye = self
+            .interpolated_position(alpha)
+            .ok_or(Missing::InvalidPose)?;
         eye[1] += protocol::STANDING_PLAYER_EYE_HEIGHT;
-        let look = self.interpolated_look(alpha)?;
-        eye.into_iter().all(f32::is_finite).then_some((eye, look))
+        let look = self.interpolated_look(alpha).ok_or(Missing::InvalidPose)?;
+        eye.into_iter()
+            .all(f32::is_finite)
+            .then_some((eye, look))
+            .ok_or(Missing::InvalidPose)
     }
 }
 
@@ -84,7 +118,7 @@ mod tests {
             ActorDataKey::Height.wire_value(),
             ActorMetadataValue::Float(40.0),
         );
-        let (eye, look) = actor.standing_player_view(0.5, false).unwrap();
+        let (eye, look) = actor.recordable_player_view(0.5, false).unwrap();
         let feet = actor.interpolated_position(0.5).unwrap();
         assert_eq!(
             eye,
@@ -100,7 +134,7 @@ mod tests {
     #[test]
     fn unsupported_poses_scale_rider_links_and_nonplayers_never_receive_a_standing_eye() {
         let actor = player();
-        for &flag in UNSUPPORTED_POSES {
+        for &(flag, reason) in UNSUPPORTED_POSES {
             let mut posed = actor.clone();
             let bit = flag.wire_value();
             let key = if bit < 64 {
@@ -112,30 +146,45 @@ mod tests {
                 key.wire_value(),
                 ActorMetadataValue::Flags(1_u64 << (bit % 64)),
             );
-            assert!(posed.standing_player_view(0.5, false).is_none());
+            assert_eq!(posed.recordable_player_view(0.5, false), Err(reason));
         }
-        assert!(actor.standing_player_view(0.5, true).is_none());
+        assert_eq!(
+            actor.recordable_player_view(0.5, true),
+            Err(PlayerViewUnavailable::Riding)
+        );
         let mut dead = actor.clone();
         dead.status.dead = true;
-        assert!(dead.standing_player_view(0.5, false).is_none());
+        assert_eq!(
+            dead.recordable_player_view(0.5, false),
+            Err(PlayerViewUnavailable::Dead)
+        );
         let mut sleeping = actor.clone();
         sleeping.metadata.insert(
             ActorDataKey::PlayerFlags.wire_value(),
             ActorMetadataValue::Byte(PlayerFlag::Sleeping.wire_value() as i8),
         );
-        assert!(sleeping.standing_player_view(0.5, false).is_none());
+        assert_eq!(
+            sleeping.recordable_player_view(0.5, false),
+            Err(PlayerViewUnavailable::Sleeping)
+        );
         for scale in [0.0, 0.5, 2.0, f32::NAN] {
             let mut scaled = actor.clone();
             scaled.metadata.insert(
                 ActorDataKey::Scale.wire_value(),
                 ActorMetadataValue::Float(scale),
             );
-            assert!(scaled.standing_player_view(0.5, false).is_none());
+            assert_eq!(
+                scaled.recordable_player_view(0.5, false),
+                Err(PlayerViewUnavailable::Scaled)
+            );
         }
         let mut entity = actor;
         entity.kind = ActorKind::Entity {
             identifier: "minecraft:player".into(),
         };
-        assert!(entity.standing_player_view(0.5, false).is_none());
+        assert_eq!(
+            entity.recordable_player_view(0.5, false),
+            Err(PlayerViewUnavailable::NotPlayer)
+        );
     }
 }

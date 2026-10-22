@@ -35,13 +35,15 @@ mod nametags;
 mod retention;
 pub use items::{ItemCoverage, PreparedItems};
 
-pub const VISUAL_TRACK_SCHEMA: &str = "cinnabar.prepared-visuals/5";
+pub const VISUAL_TRACK_SCHEMA: &str = "cinnabar.prepared-visuals/6";
+const NAMETAG_TRACK_SCHEMA: &str = "cinnabar.prepared-visuals/5";
 const ITEM_TRACK_SCHEMA: &str = "cinnabar.prepared-visuals/4";
 const PARTICLE_TRACK_SCHEMA: &str = "cinnabar.prepared-visuals/3";
 const HUD_TRACK_SCHEMA: &str = "cinnabar.prepared-visuals/2";
 const LEGACY_TRACK_SCHEMA: &str = "cinnabar.prepared-visuals/1";
 pub const VISUAL_DIRECTORY: &str = "visuals.cinreplay";
-const MAGIC: [u8; 8] = *b"CINVFR05";
+const MAGIC: [u8; 8] = *b"CINVFR06";
+const NAMETAG_MAGIC: [u8; 8] = *b"CINVFR05";
 const ITEM_MAGIC: [u8; 8] = *b"CINVFR04";
 const PARTICLE_MAGIC: [u8; 8] = *b"CINVFR03";
 const HUD_MAGIC: [u8; 8] = *b"CINVFR02";
@@ -77,6 +79,8 @@ pub struct PreparedParticles {
 pub struct FrozenVisuals {
     /// None identifies an unavailable legacy channel; Some(empty) is an admitted frame with no tags.
     pub nametags: Option<Arc<render_model::NametagScene>>,
+    /// Absent in older envelopes, whose label artwork was clipped to the source camera.
+    pub nametag_coverage: Option<recording_studio::preview::WorldLabelCoverage>,
     pub particles: PreparedParticles,
     pub blocks: BlockEntityFrame,
     pub block_coverage: Option<BlockCoverage>,
@@ -103,6 +107,17 @@ pub struct BlockCoverage {
 }
 
 impl FrozenVisuals {
+    /// Missing artwork is unavailable even when a producer supplied a preparation scope.
+    pub fn world_label_coverage(&self) -> recording_studio::preview::WorldLabelCoverage {
+        use recording_studio::preview::WorldLabelCoverage;
+        if self.nametags.is_none() {
+            WorldLabelCoverage::Unavailable
+        } else {
+            self.nametag_coverage
+                .unwrap_or(WorldLabelCoverage::OriginalView)
+        }
+    }
+
     /// Total referenced payload for one sample; capture retention deduplicates shared queued allocations.
     pub fn retained_bytes(&self) -> usize {
         let p = &self.particles;
@@ -146,6 +161,8 @@ impl FrozenVisuals {
 struct Metadata {
     #[serde(default)]
     nametags: Option<nametags::Metadata>,
+    #[serde(default)]
+    nametag_coverage: Option<recording_studio::preview::WorldLabelCoverage>,
     particle_base: Option<AssetId>,
     particle_side: u32,
     patch_seq: u64,
@@ -246,6 +263,7 @@ fn store_frame(
     };
     let metadata = Metadata {
         nametags,
+        nametag_coverage: frame.nametag_coverage,
         particle_base: p
             .base
             .as_ref()
@@ -360,6 +378,7 @@ impl VisualRecording {
         let reader = RecordingReader::open(&root)?;
         if ![
             VISUAL_TRACK_SCHEMA,
+            NAMETAG_TRACK_SCHEMA,
             ITEM_TRACK_SCHEMA,
             PARTICLE_TRACK_SCHEMA,
             HUD_TRACK_SCHEMA,
@@ -473,6 +492,7 @@ impl VisualRecording {
         );
         let magic = r.bytes::<8>()?;
         if magic != MAGIC
+            && magic != NAMETAG_MAGIC
             && magic != ITEM_MAGIC
             && magic != PARTICLE_MAGIC
             && magic != HUD_MAGIC
@@ -521,6 +541,7 @@ impl VisualRecording {
             return Err(ArchiveError::Invalid("inconsistent recorded hand coverage"));
         }
         let hud_bytes = if magic == MAGIC
+            || magic == NAMETAG_MAGIC
             || magic == ITEM_MAGIC
             || magic == PARTICLE_MAGIC
             || magic == HUD_MAGIC
@@ -532,22 +553,25 @@ impl VisualRecording {
         if m.hud.is_some() != !hud_bytes.is_empty() || (m.hud.is_some() && !m.hud_enabled) {
             return Err(ArchiveError::Invalid("inconsistent recorded HUD coverage"));
         }
-        let received: Option<Arc<[PreparedParticle]>> =
-            if magic == MAGIC || magic == ITEM_MAGIC || magic == PARTICLE_MAGIC {
-                let samples = r.packed_limit(
-                    MAX_LIVE_PARTICLES,
-                    |words: [u32; PREPARED_PARTICLE_WORDS]| PreparedParticle::from_words(words),
-                )?;
-                if !m.received_particles && !samples.is_empty() {
-                    return Err(ArchiveError::Invalid(
-                        "unexpected received particle samples",
-                    ));
-                }
-                m.received_particles.then(|| Arc::from(samples))
-            } else {
-                None
-            };
-        let item_bytes = if magic == MAGIC || magic == ITEM_MAGIC {
+        let received: Option<Arc<[PreparedParticle]>> = if magic == MAGIC
+            || magic == NAMETAG_MAGIC
+            || magic == ITEM_MAGIC
+            || magic == PARTICLE_MAGIC
+        {
+            let samples = r.packed_limit(
+                MAX_LIVE_PARTICLES,
+                |words: [u32; PREPARED_PARTICLE_WORDS]| PreparedParticle::from_words(words),
+            )?;
+            if !m.received_particles && !samples.is_empty() {
+                return Err(ArchiveError::Invalid(
+                    "unexpected received particle samples",
+                ));
+            }
+            m.received_particles.then(|| Arc::from(samples))
+        } else {
+            None
+        };
+        let item_bytes = if magic == MAGIC || magic == NAMETAG_MAGIC || magic == ITEM_MAGIC {
             r.blob(recording_studio::archive::MAX_RECORD_BYTES)?
         } else {
             Vec::new()
@@ -555,7 +579,7 @@ impl VisualRecording {
         if m.items.is_some() != !item_bytes.is_empty() {
             return Err(ArchiveError::Invalid("inconsistent recorded item coverage"));
         }
-        let nametag_bytes = if magic == MAGIC {
+        let nametag_bytes = if magic == MAGIC || magic == NAMETAG_MAGIC {
             r.blob(nametags::MAX_DRAW_BYTES)?
         } else {
             Vec::new()
@@ -752,6 +776,7 @@ impl VisualRecording {
         }
         Ok(FrozenVisuals {
             nametags,
+            nametag_coverage: m.nametag_coverage,
             items,
             block_coverage: m.block_coverage,
             particles: PreparedParticles {

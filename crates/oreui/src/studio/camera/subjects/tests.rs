@@ -34,6 +34,7 @@ fn menu() -> MenuView {
                     CameraTargetKind::Entity
                 },
                 entity_type: None,
+                view: Default::default(),
                 pose: ActorPose {
                     position: [0.0, 64.0, 4.0],
                     velocity: [0.0; 3],

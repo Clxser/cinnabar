@@ -30,6 +30,38 @@ fn old_target_envelopes_remain_unclassified_without_name_guesses() {
     assert_eq!(target.entity_type, None);
     assert!(!target.is_player_subject(9));
     assert!(target.is_player_subject(7));
+    assert_eq!(target.view, CameraTargetView::Unspecified);
+}
+
+#[test]
+fn classified_older_tracks_preserve_type_without_inventing_eye_provenance() {
+    let mut bytes = legacy_prefix();
+    bytes[..CLASSIFIED_MAGIC.len()].copy_from_slice(&CLASSIFIED_MAGIC);
+    binary::u32(&mut bytes, CameraTargetKind::Player.code()).unwrap();
+    binary::blob(&mut bytes, b"minecraft:player").unwrap();
+    binary::u32(&mut bytes, 0).unwrap();
+    let target = read(&mut &bytes[..]).unwrap().upserts.remove(0);
+    assert_eq!(target.kind, CameraTargetKind::Player);
+    assert_eq!(target.view, CameraTargetView::Unspecified);
+    assert!(target.pose.eye_offset.is_none());
+}
+
+#[test]
+fn precise_eye_failure_survives_roundtrip_and_contradictory_provenance_is_rejected() {
+    let mut bytes = legacy_prefix();
+    binary::u32(&mut bytes, 0).unwrap();
+    let mut delta = read(&mut &bytes[..]).unwrap();
+    delta.upserts[0].view = CameraTargetView::Swimming;
+    bytes.clear();
+    write(&mut bytes, &delta).unwrap();
+    let decoded = read(&mut &bytes[..]).unwrap();
+    assert_eq!(decoded.upserts[0].view, CameraTargetView::Swimming);
+    assert_eq!(
+        decoded.upserts[0].eye_view_notice(),
+        Some(CameraTargetView::Swimming.notice())
+    );
+    delta.upserts[0].view = CameraTargetView::LocalPresentation;
+    assert!(write(&mut Vec::new(), &delta).is_err());
 }
 
 #[test]

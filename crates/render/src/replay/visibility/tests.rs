@@ -106,6 +106,7 @@ fn target() -> CameraTarget {
         spawn_revision: 3,
         name: Arc::from("Fixture"),
         kind: CameraTargetKind::Player,
+        view: Default::default(),
         entity_type: Some(Arc::from("minecraft:player")),
         teleported: false,
         pose: ActorPose {

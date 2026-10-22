@@ -85,8 +85,9 @@ fn snapshot(
         .ok_or("Prepared block models are unavailable for recording.")?;
     Ok(FrozenVisuals {
         nametags: world
-            .get_resource::<render_scene::NametagSceneResource>()
-            .map(|scene| Arc::new(scene.0.clone())),
+            .get_resource::<client_shell::ui_resources::UiPresentationResource>()
+            .and_then(|presentation| presentation.recorded_nametags().cloned()),
+        nametag_coverage: Some(recording_studio::preview::WorldLabelCoverage::RecordedViewer),
         particles: PreparedParticles {
             base: base.clone(),
             atlas_side: *atlas_side,

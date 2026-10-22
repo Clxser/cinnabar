@@ -11,7 +11,8 @@ use recording_studio::{
 };
 
 use super::{
-    LEGACY_TARGET_TRACK_SCHEMA, TARGET_DIRECTORY, TARGET_TRACK_SCHEMA, TargetFrame, codec,
+    CLASSIFIED_TARGET_TRACK_SCHEMA, LEGACY_TARGET_TRACK_SCHEMA, TARGET_DIRECTORY,
+    TARGET_TRACK_SCHEMA, TargetFrame, codec,
 };
 
 mod coverage;
@@ -43,7 +44,7 @@ impl TargetRecording {
         let reader = RecordingReader::open(&root)?;
         if !matches!(
             reader.info().scene_schema.as_str(),
-            TARGET_TRACK_SCHEMA | LEGACY_TARGET_TRACK_SCHEMA
+            TARGET_TRACK_SCHEMA | CLASSIFIED_TARGET_TRACK_SCHEMA | LEGACY_TARGET_TRACK_SCHEMA
         ) {
             return Err(ArchiveError::Invalid(
                 "unsupported camera target track schema",
@@ -239,6 +240,14 @@ fn interpolate(current: &TargetFrame, next: Option<&TargetFrame>, at: MediaTime)
         .map(|target| {
             let mut sampled = target.clone();
             sampled.pose = target_pose(target, next, amount);
+            if sampled.pose.eye_offset.is_none()
+                && target.pose.eye_offset.is_some()
+                && let Some(future) = next
+                    .target(target.runtime_id)
+                    .filter(|future| target.can_interpolate(future))
+            {
+                sampled.view = future.view;
+            }
             sampled
         })
         .collect::<Vec<_>>()
