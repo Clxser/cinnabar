@@ -1283,7 +1283,7 @@ path = "crates/launcher-host"
 # The optional product API owns its verified WebSocket and borrows the selected NativeAccount mint.
 # Its socket future joins the existing event worker; domain policy and bridge records remain Bevy-free.
 # Native accepting Login performs UDP host/service admission through optional dns-lookup on this OS edge.
-allowed_dependencies = ["cosmetics", "bridge", "crash-report", "launcher", "protocol", "resource-pack", "server-experience", "test-time", "update-manifest", "update-installer"]
+allowed_dependencies = ["cosmetics", "bridge", "crash-report", "launcher", "protocol", "render-api", "resource-pack", "server-experience", "test-time", "update-manifest", "update-installer"]
 forbidden_transitive_dependencies = ["app", "cinnabar", "client-ui", "render", "bevy", "bevy_*", "wgpu*"]
 test_support_features = ["test-support"]
 
