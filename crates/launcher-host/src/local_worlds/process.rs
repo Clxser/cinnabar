@@ -40,6 +40,7 @@ pub(crate) struct StartSpec {
 /// One running local server.
 pub(crate) trait Instance: Send + Sync {
     /// The loopback game address.
+    #[cfg(any(test, all(feature = "native-networking", not(target_arch = "wasm32"))))]
     fn address(&self) -> &str;
     fn set_paused(&self, paused: bool) -> io::Result<()>;
     /// Asks the server to save and stop without waiting.
@@ -58,6 +59,7 @@ pub(crate) trait Instance: Send + Sync {
         None
     }
     /// The loopback LAN discovery endpoint, when the server advertises there.
+    #[cfg(any(test, all(feature = "native-networking", not(target_arch = "wasm32"))))]
     fn lan_address(&self) -> Option<&str> {
         None
     }
@@ -388,6 +390,7 @@ impl Process {
 }
 
 impl Instance for Process {
+    #[cfg(any(test, all(feature = "native-networking", not(target_arch = "wasm32"))))]
     fn address(&self) -> &str {
         self.address.get().map_or("", String::as_str)
     }

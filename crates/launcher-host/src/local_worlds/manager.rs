@@ -4,7 +4,9 @@ use std::{
     time::Duration,
 };
 
-use bridge::{Backend, LocalTarget, Transport, WorldState};
+use bridge::{Backend, WorldState};
+#[cfg(any(test, all(feature = "native-networking", not(target_arch = "wasm32"))))]
+use bridge::{LocalTarget, Transport};
 #[cfg(test)]
 use bridge::{LocalWorld, LocalWorldInfo};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError};
@@ -723,6 +725,7 @@ impl Manager {
 
 /// Where the core dials the running world: RakNet for Dragonfly, NetherNet for BDS, through its
 /// LAN advertisement when the server publishes one.
+#[cfg(any(test, all(feature = "native-networking", not(target_arch = "wasm32"))))]
 fn target_for(world: &World, instance: &dyn Instance) -> LocalTarget {
     let address = instance.address().to_owned();
     match (world.backend, instance.lan_address()) {

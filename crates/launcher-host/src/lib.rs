@@ -24,6 +24,7 @@ pub mod session_cleanup;
 pub mod settings_storage;
 pub mod sign_in_browser;
 pub mod video_settings;
+#[cfg(any(test, all(feature = "native-networking", not(target_arch = "wasm32"))))]
 mod worker;
 
 pub mod memory;
