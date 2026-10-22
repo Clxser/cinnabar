@@ -1,17 +1,25 @@
 //! Names used by the pinned JSON-UI pack, separated by their role.
 
-use std::{collections::BTreeSet, error::Error, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fs,
+    path::Path,
+};
 
 use serde_json::Value;
 
 use crate::vocabulary::{json_files, read};
 
 type Names = BTreeSet<(&'static str, String)>;
+type Bindings = BTreeMap<String, BTreeSet<String>>;
 
 /// Generates sorted, names-only rows from UI definitions and English text keys.
 pub fn generate(samples: &Path) -> Result<Vec<u8>, Box<dyn Error>> {
     let pack = samples.join("resource_pack");
     let mut names = Names::new();
+    let mut bindings = Bindings::new();
+    let mut collections = BTreeSet::new();
     for path in json_files(&pack.join("ui"))? {
         let document = read(&path)?;
         if let Some(namespace) = document.get("namespace").and_then(Value::as_str)
@@ -25,8 +33,9 @@ pub fn generate(samples: &Path) -> Result<Vec<u8>, Box<dyn Error>> {
                 }
             }
         }
-        collect(&document, &mut names);
+        collect(&document, &mut names, &mut bindings, &mut collections);
     }
+    resolve_collections(&bindings, collections, &mut names);
     for line in fs::read_to_string(pack.join("texts/en_US.lang"))?.lines() {
         if !line.trim_start().starts_with('#')
             && let Some((key, _)) = line.split_once('=')
@@ -43,17 +52,31 @@ pub fn generate(samples: &Path) -> Result<Vec<u8>, Box<dyn Error>> {
 }
 
 /// Collects declarations and expression symbols without treating comments as names.
-fn collect(value: &Value, names: &mut Names) {
+fn collect(
+    value: &Value,
+    names: &mut Names,
+    bindings: &mut Bindings,
+    collections: &mut BTreeSet<String>,
+) {
     match value {
         Value::String(text) => symbols(text, names),
         Value::Array(items) => {
             for item in items {
-                collect(item, names);
+                collect(item, names, bindings, collections);
             }
         }
         Value::Object(properties) => {
             for (key, value) in properties {
                 symbols(key, names);
+                if let Value::String(name) = value
+                    && key.starts_with('$')
+                {
+                    let variable = key.split_once('|').map_or(key.as_str(), |(name, _)| name);
+                    bindings
+                        .entry(variable.to_owned())
+                        .or_default()
+                        .insert(name.clone());
+                }
                 match (key.as_str(), value) {
                     ("renderer", Value::String(name)) => insert("renderer", name, names),
                     (
@@ -61,7 +84,12 @@ fn collect(value: &Value, names: &mut Names) {
                         | "binding_collection_name"
                         | "toggle_grid_collection_name",
                         Value::String(name),
-                    ) => insert("collection", name, names),
+                    ) => {
+                        insert("collection", name, names);
+                        if name.starts_with('$') {
+                            collections.insert(name.clone());
+                        }
+                    }
                     ("controls", Value::Array(controls)) => {
                         for control in controls {
                             if let Some(entries) = control.as_object() {
@@ -78,10 +106,28 @@ fn collect(value: &Value, names: &mut Names) {
                     }
                     _ => {}
                 }
-                collect(value, names);
+                collect(value, names, bindings, collections);
             }
         }
         _ => {}
+    }
+}
+
+/// Follows collection-referenced variables, including defaults and aliases across files.
+/// A visited set ends alias cycles without admitting unrelated variable strings.
+fn resolve_collections(bindings: &Bindings, mut pending: BTreeSet<String>, names: &mut Names) {
+    let mut visited = BTreeSet::new();
+    while let Some(variable) = pending.pop_first() {
+        if !visited.insert(variable.clone()) {
+            continue;
+        }
+        for name in bindings.get(&variable).into_iter().flatten() {
+            if name.starts_with('$') {
+                pending.insert(name.clone());
+            } else {
+                insert("collection", name, names);
+            }
+        }
     }
 }
 
