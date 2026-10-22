@@ -357,3 +357,30 @@ fn automatic_consent_is_recorded_only_when_the_producer_completes_the_report() {
     assert!(matches!(results[0].1, Ok(Upload::Sent { .. })));
     assert_eq!(server.payloads().len(), 1);
 }
+
+#[test]
+fn a_stale_scheduled_worker_respects_a_new_retry_deadline() {
+    let root = tempfile::tempdir().unwrap();
+    let layout = layout(root.path());
+    let folder = crash(&layout, "boom");
+    let server = Server::start(201);
+    consent(&folder, Consent::User, now_ms()).unwrap();
+    assert_eq!(
+        state::due(&layout.crash_dir(), now_ms()),
+        vec![folder.clone()]
+    );
+    // Another worker persisted a server-requested delay after this worker collected its queue.
+    let delayed = state::record(
+        &folder,
+        &Outcome::Retry {
+            after_ms: Some(3_600_000),
+        },
+        now_ms(),
+    )
+    .unwrap();
+    assert_eq!(
+        send_inner(&layout, &folder, &policy(&server, false), true).unwrap(),
+        delayed
+    );
+    assert!(server.payloads().is_empty());
+}

@@ -563,8 +563,6 @@ jobs:
       CINNABAR_ANDROID_PROFILE: release
       # Split the native ELF files after linking, before staging the APK.
       CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: "off"
-      CARGO_PROFILE_RELEASE_STRIP: "none"
-      CINNABAR_ANDROID_SYMBOLS: "1"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -602,6 +600,18 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends librsvg2-bin
+      - name: Select Android symbol support for the source checkout
+        id: android_symbols
+        run: |
+          enabled="$(python3 "$GITHUB_WORKSPACE/release-tools/packaging/release-symbols.py" android-supported)"
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+          if [[ "$enabled" == true ]]; then
+            echo "CARGO_PROFILE_RELEASE_STRIP=none" >> "$GITHUB_ENV"
+            echo "CINNABAR_ANDROID_SYMBOLS=1" >> "$GITHUB_ENV"
+          else
+            echo "CARGO_PROFILE_RELEASE_STRIP=debuginfo" >> "$GITHUB_ENV"
+            echo "::warning::Selected source predates Android symbol splitting; keeping its stripped APK packaging path"
+          fi
       - name: Build and sign the release APK
         env:
           CINNABAR_ANDROID_KEYSTORE_BASE64: ${{ secrets.CINNABAR_ANDROID_KEYSTORE_BASE64 }}
@@ -622,11 +632,13 @@ jobs:
           bash packaging/android/build-apk.sh
           mv target/android/*-arm64-v8a.apk "$RUNNER_TEMP/$RELEASE_ASSET"
       - name: Collect Android symbols
+        if: steps.android_symbols.outputs.enabled == 'true'
         run: |
           python3 "$GITHUB_WORKSPACE/release-tools/packaging/release-symbols.py" collect android arm64 \
             --version "${{ needs.prepare.outputs.version }}" --commit "${{ needs.prepare.outputs.commit }}" \
             --binaries target/android/symbols --out "$RUNNER_TEMP/android-symbols.zip"
       - uses: ./release-tools/.github/actions/private-symbols
+        if: steps.android_symbols.outputs.enabled == 'true'
         with:
           operation: upload-file
           path: ${{ runner.temp }}/android-symbols.zip

@@ -160,7 +160,9 @@ rejects any other file. Each package job zips its Rust binaries with their debug
 id) into `cinnabar-symbols-<version>-<platform>-<arch>.zip`, named by `release-assets.json`, and
 each package job uploads it directly to private R2. The publish job builds and stores caches keyed
 by build id there. Symbols never enter GitHub artifacts, public release assets or checksums. Android
-ELF line tables are split before APK staging and use the same private pipeline. Go binaries print symbolized tracebacks themselves.
+ELF line tables are split before APK staging and use the same private pipeline. Older source checkouts without the Android splitter keep their stripped
+APK path and produce a warning instead of an Android symbol archive. Go binaries print symbolized
+tracebacks themselves.
 
 To symbolicate a user's crash, ask for the crash folder (`crashes/<UTC time>-<id>/` under the
 user data directory, or the `devtool diag` bundle that includes it), download the symbol

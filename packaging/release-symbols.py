@@ -49,6 +49,11 @@ def has_symbols(source):
             and profile.get("debug", False) not in (False, 0, "none"))
 
 
+def supports_android_symbols(source):
+    """Whether this source checkout can split native symbols before staging its APK."""
+    return (source / "packaging/android/split-symbols.sh").is_file()
+
+
 def runtime_binaries(source):
     """(name, built by Cargo) for each runtime binary; Go rows have no Cargo package."""
     rows = []
@@ -259,10 +264,13 @@ def main():
     collecting.add_argument("--binaries", type=Path, required=True)
     collecting.add_argument("--out", type=Path, required=True)
     commands.add_parser("has-symbols", help="print true when the source release build splits debug info")
+    commands.add_parser("android-supported", help="print true when the selected Android source can split native symbols")
     args = parser.parse_args()
     source = source_root()
     if args.command == "split":
         split(source, args.binaries, args.out)
+    elif args.command == "android-supported":
+        print("true" if supports_android_symbols(source) else "false")
     elif args.command == "has-symbols":
         print("true" if has_symbols(source) else "false")
     else:

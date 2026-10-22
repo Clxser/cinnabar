@@ -105,7 +105,7 @@ pub fn send_due(layout: &InstallLayout, policy: &Policy) -> Vec<(PathBuf, io::Re
     state::due(&crash_dir, now_ms())
         .into_iter()
         .map(|folder| {
-            let result = send(layout, &folder, policy);
+            let result = send_inner(layout, &folder, policy, true);
             (folder, result)
         })
         .collect()
@@ -146,6 +146,16 @@ pub fn log_result(folder: &Path, result: &io::Result<Upload>) {
 /// Sends one consented folder now, whatever its schedule; a sent or unconsented folder keeps
 /// its state.
 pub fn send(layout: &InstallLayout, folder: &Path, policy: &Policy) -> io::Result<Upload> {
+    send_inner(layout, folder, policy, false)
+}
+
+/// Claims one report and sends it, checking its persisted schedule for background workers.
+fn send_inner(
+    layout: &InstallLayout,
+    folder: &Path,
+    policy: &Policy,
+    only_due: bool,
+) -> io::Result<Upload> {
     if disabled() {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -159,18 +169,25 @@ pub fn send(layout: &InstallLayout, folder: &Path, policy: &Policy) -> io::Resul
         ));
     };
     // Read after taking the lock: a sender that just finished may have marked it sent.
-    let Some(Upload::Pending {
-        report_id, consent, ..
-    }) = state::read(folder)
+    let pending = state::read(folder).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "no consent to send this crash report",
+        )
+    })?;
+    let Upload::Pending {
+        report_id,
+        consent,
+        next_at_ms,
+        ..
+    } = &pending
     else {
-        return state::read(folder).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "no consent to send this crash report",
-            )
-        });
+        return Ok(pending);
     };
-    if consent == Consent::Auto && !policy.automatic {
+    if only_due && *next_at_ms > now_ms() {
+        return Ok(pending);
+    }
+    if *consent == Consent::Auto && !policy.automatic {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "automatic crash uploads are off",
@@ -181,7 +198,7 @@ pub fn send(layout: &InstallLayout, folder: &Path, policy: &Policy) -> io::Resul
         folder,
         Ids {
             install: &install,
-            report: &report_id,
+            report: report_id,
         },
         home().as_deref(),
     )

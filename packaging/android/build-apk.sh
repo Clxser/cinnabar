@@ -61,12 +61,8 @@ install -m 0644 "$toolchain/sysroot/usr/lib/$triple/libc++_shared.so" "$libs/lib
 
 # Keep line tables outside the APK, keyed by each ELF build id in the release symbol manifest.
 if [[ "${CINNABAR_ANDROID_SYMBOLS:-0}" == 1 ]]; then
-    mkdir -p "$out/symbols"
-    for name in "lib$client_library.so" "$(pin compiler_library)"; do
-        "$toolchain/bin/llvm-objcopy" --only-keep-debug "$libs/$name" "$out/symbols/$name.debug"
-        "$toolchain/bin/llvm-strip" --strip-debug "$libs/$name"
-        cp "$libs/$name" "$out/symbols/$name"
-    done
+    bash "$here/split-symbols.sh" "$libs" "$out/symbols" "$toolchain/bin" \
+        "lib$client_library.so" "$(pin compiler_library)"
 fi
 
 # Pion's Android interface lookup (anet) needs Go's private net linknames.

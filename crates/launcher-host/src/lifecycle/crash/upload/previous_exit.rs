@@ -66,15 +66,16 @@ pub fn record(
         reason: exit.reason,
         status: exit.status,
     };
-    let written = folder::list(crash_dir).into_iter().rev().find(|folder| {
-        match fs::read(folder.join(EXIT_FILE)) {
-            Ok(bytes) => serde_json::from_slice::<ExitId>(&bytes).is_ok_and(|saved| saved == id),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                folder::created_at_ms(folder).is_some_and(|at| (earliest..=latest).contains(&at))
-            }
-            Err(_) => false,
-        }
-    });
+    let folders = folder::list(crash_dir);
+    // A known exit takes precedence over any later, still-unassociated report.
+    let written = folders.iter().rev().find(|folder| {
+        fs::read(folder.join(EXIT_FILE)).ok()
+            .and_then(|bytes| serde_json::from_slice::<ExitId>(&bytes).ok())
+            .is_some_and(|saved| saved == id)
+    }).or_else(|| folders.iter().rev().find(|folder| {
+        matches!(fs::metadata(folder.join(EXIT_FILE)), Err(error) if error.kind() == io::ErrorKind::NotFound)
+            && written_at_ms(folder).is_some_and(|at| (earliest..=latest).contains(&at))
+    })).cloned();
     if let Some(folder) = written {
         if let Some(stack) = &stack
             && stack::read(&folder).is_none()
@@ -104,6 +105,16 @@ pub fn record(
     }
     mark_exit(&folder, &id)?;
     Ok(folder)
+}
+
+/// The report file's actual write time; prepared signal folders may have much older names.
+fn written_at_ms(folder: &Path) -> Option<u64> {
+    fs::metadata(folder.join(folder::REPORT_FILE))
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|duration| duration.as_millis().try_into().ok())
+        .or_else(|| folder::created_at_ms(folder))
 }
 
 /// Atomically associates a completed folder with its Android exit before it can be queued.
@@ -190,6 +201,19 @@ mod tests {
         }
     }
 
+    /// Sets synthetic filesystem time without reading the clock or waiting.
+    fn set_written_at(folder: &Path, at: u64) {
+        fs::File::options()
+            .write(true)
+            .open(folder.join(folder::REPORT_FILE))
+            .unwrap()
+            .set_times(
+                fs::FileTimes::new()
+                    .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_millis(at)),
+            )
+            .unwrap();
+    }
+
     #[test]
     fn a_tombstone_completes_the_folder_the_dying_process_wrote() {
         let dir = tempfile::tempdir().unwrap();
@@ -197,6 +221,7 @@ mod tests {
         report.thread = Thread::default();
         let written =
             folder::write(dir.path(), &report, &Logs::default(), None, EXIT_MS - 1_000).unwrap();
+        set_written_at(&written, EXIT_MS);
         let bytes = tombstone();
         let folder = record(
             dir.path(),
@@ -312,5 +337,31 @@ mod tests {
             "the same exit remains idempotent"
         );
         assert_eq!(folder::list(dir.path()).len(), 2);
+    }
+    #[test]
+    fn a_prepared_folder_uses_its_fault_time_when_the_session_has_been_quiet() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut report = Report::new(Kind::Native, "SIGSEGV".into(), &identity(), EXIT_MS);
+        report.renderer = Some(serde_json::json!({ "backend": "vulkan" }));
+        let written = folder::write(
+            dir.path(),
+            &report,
+            &Logs::default(),
+            None,
+            EXIT_MS - 3_600_000,
+        )
+        .unwrap();
+        set_written_at(&written, EXIT_MS);
+        let selected = record(
+            dir.path(),
+            &dir.path().join("client.log"),
+            &exit(REASON_CRASH_NATIVE, None),
+            &identity(),
+            |_| true,
+        )
+        .unwrap();
+        assert_eq!(selected, written);
+        assert_eq!(folder::read(&selected).unwrap().renderer, report.renderer);
+        assert_eq!(folder::list(dir.path()).len(), 1);
     }
 }
