@@ -114,7 +114,7 @@ fn collect(
 }
 
 /// Follows collection-referenced variables, including defaults and aliases across files.
-/// A visited set ends alias cycles without admitting unrelated variable strings.
+/// A visited set ends cycles; only identifier literals become resolved collection names.
 fn resolve_collections(bindings: &Bindings, mut pending: BTreeSet<String>, names: &mut Names) {
     let mut visited = BTreeSet::new();
     while let Some(variable) = pending.pop_first() {
@@ -124,11 +124,20 @@ fn resolve_collections(bindings: &Bindings, mut pending: BTreeSet<String>, names
         for name in bindings.get(&variable).into_iter().flatten() {
             if name.starts_with('$') {
                 pending.insert(name.clone());
-            } else {
+            } else if collection_literal(name) {
                 insert("collection", name, names);
             }
         }
     }
+}
+
+/// Accepts static collection identifiers, excluding bindings and unevaluated expressions.
+fn collection_literal(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    bytes
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == b'_')
+        && bytes.all(identifier_byte)
 }
 
 /// Records a control's local name and, for a factory, its instance name.
