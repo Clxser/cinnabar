@@ -942,3 +942,58 @@ JetBrains annotations 13.0 are Copyright 2000–2012 JetBrains s.r.o., under Apa
 the source license header is retained in
 `packaging/android/licenses/annotations-13.0-source-license-header.txt`.
 These notices are also included as APK assets. No JVM binaries are committed here.
+
+## Native RakNet transport
+
+Cinnabar RakNet modifications
+Copyright 2026 Cinnabar contributors
+
+The client MTU negotiation state machine follows public Lunar go-raknet behavior
+at commit 6124f52657d4d5f006ea2af2d525260998dd3173. It adapts its probe scheduling,
+protected challenge, cookie refresh and final-grant handling to caller-driven
+Rust protocol state and explicit socket-write completion inputs. Client system
+addresses, mapped IPv4 normalization and IPv6 wire fields also follow this
+reference. System-address codecs retain short-list support and reject excess
+entries with bounded input allocation. UDP error classification follows the
+reference's Unix and Winsock handshake read policies.
+
+Receive-window advancement and recent-loss selection also follow this reference.
+ACK/NACK emission remains caller-driven, with bounded pending loss records.
+
+That reference is MIT-licensed, copyright 2019 Sander ten Veldhuis.
+See LICENSE-MIT-go-raknet for the retained notice and license.
+The original RakNet project's Apache-2.0 license and notices remain in effect.
+
+Early application-packet retention and connected liveness controls follow the
+same public behavior reference, with explicit Rust-owned handshake bounds and
+ordered transfer of pending packets and terminal notifications.
+
+Default client GUID generation uses fresh OS entropy for each ping/connection,
+with the reference's little-endian payload mapping and client type bits. Identity
+is supplied explicitly to the Rust engine and retained in attempt metadata.
+
+Wire timestamps use endpoint-relative monotonic uptime, following the same
+reference's timestamp and remote SystemUptime behavior. Portable Rust snapshots
+rebase their timer offsets using caller-supplied transfer elapsed time.
+
+MIT License
+
+Copyright (c) 2019 Sander ten Veldhuis
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
