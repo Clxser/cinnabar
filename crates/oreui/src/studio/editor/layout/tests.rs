@@ -180,6 +180,25 @@ fn comfortable_large_timeline_keeps_a_meaningful_900_pixel_picture() {
 }
 
 #[test]
+fn camera_graph_respects_requested_panel_size_with_a_usable_picture() {
+    let mut view = fixture(1);
+    Arc::make_mut(&mut view.studio).camera_workspace.graph.open = true;
+    let mut heights = Vec::new();
+    crate::review_tests::paint(HashMap::new(), |canvas| {
+        for size in [TimelineSize::Small, TimelineSize::Large] {
+            Arc::make_mut(&mut view.studio).workspace.timeline_size = size;
+            let layout = vertical(canvas, &view, [0.0, 0.0, 1280.0, 800.0], 1280.0).unwrap();
+            let picture = viewer_metrics(canvas, &view, 1280.0)
+                .unwrap()
+                .picture_height(layout.stage[3] - layout.stage[1]);
+            assert!(picture >= 120.0);
+            heights.push(layout.timeline[3] - layout.timeline[1]);
+        }
+    });
+    assert!(heights[1] > heights[0]);
+}
+
+#[test]
 fn native_small_windows_keep_media_and_a_complete_lane_for_every_preference() {
     for density in [Density::Compact, Density::Comfortable] {
         for size in [

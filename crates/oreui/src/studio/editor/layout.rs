@@ -73,12 +73,7 @@ pub(super) fn vertical(
     };
     let picture_floor = canvas.r(BODY.line * 7.5).max(120.0);
     let maximum = (available - gap - viewer.chrome() - picture_floor).min(useful);
-    let preferred = available
-        * if graph {
-            0.45
-        } else {
-            view.studio.workspace.timeline_size.fraction()
-        };
+    let preferred = available * view.studio.workspace.timeline_size.fraction();
     let height = if maximum >= minimum {
         preferred.clamp(minimum, maximum)
     } else if !graph && maximum >= tracks.compact_minimum() {

@@ -162,6 +162,23 @@ timeline and export workflows.
   easing and arbitrary mob POV are incomplete.
 - Independent FOV keys animate a shot's lens with every rig. Keys support timeline
   dragging, easing, selection, deletion and undo. Trims retain their curve phase.
+- Choose **Curves** to edit X/Y/Z, yaw/pitch/roll, FOV, effect strength or clip
+  speed. Drag keys and the selected segment's weighted Bezier handles, or type a
+  key's timeline seconds and value. Arrow keys nudge the selected key; Shift uses
+  ten steps. Delete removes the key. Wheel zooms values, Shift-wheel pans time,
+  and Ctrl-wheel zooms time around the pointer. Fit restores the curve bounds.
+  Subject-driven camera graphs show offsets from the recorded rig; free/path
+  graphs show composed world values. Handles shape scalar offsets over the
+  original rail, preserving its geometry and travel clock. Value handles stay
+  within their segment's endpoint envelope. A drag commits one undo entry;
+  Escape cancels it. Unchanged plots and distance geometry are retained.
+- A camera shot's **Entry** controls select Cut or an explicit timed blend.
+  Compatible adjacent rigs blend position, lens and shortest quaternion rotation
+  before global camera effects. Smooth easing carries outgoing authored motion
+  through the entry. Blends require a continuous, unambiguous native replay clip;
+  gaps, source cuts, missing subjects and reused spawn identities retain a cut.
+  Hold keys, authored corners and pitch clamps can still be discontinuous. Camera
+  blends do not provide terrain collision avoidance.
 - Viewer controls provide frame steps, five-second jumps, start/end, typed seconds
   or `hh:mm:ss.ffffff`, whole-project looping and temporary monitoring speed from
   0.1x to 8x. Monitoring does not retime clips or change export. Audio uses
@@ -235,10 +252,13 @@ Orbit, follow and other external native cameras use a separately captured world
 body, including your skin, even when you recorded in first person. The recorded
 POV still hides that body. Takes recorded with hidden first-person body bones need
 to be recorded again; switching cameras cannot restore their omitted body pose.
-An edited camera close to the recorded local eye suppresses that body's layers to
-avoid looking through its face. Moving away restores the body. This uses an editor
-eye-distance guard; it does not test intersection with arbitrary animated skin
-geometry. Older takes without a recorded eye keep their existing visibility.
+Edited cameras test their near-plane volume against captured animated body and
+equipment bounds, using recorded bones, scale and world placement. Intersecting
+layers are hidden independently and restore on separation; the camera pose stays
+authored. Source and spectated first-person body rules remain separate. Cached
+per-bone bounds are conservative: transparent texels, disjoint shapes and triangles
+joining different bones can hide a layer earlier than its exact visible surface.
+This is not triangle clipping or arbitrary-skin visual parity.
 
 Older takes remain readable but cannot regain omitted visual channels. Use a new
 take to capture the expanded coverage, including prepared world nametag artwork

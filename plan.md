@@ -995,16 +995,36 @@ Current implementation; runtime acceptance remains incomplete:
   transaction. Domain tests preserve curved whole-rail geometry across rotations,
   and offline renders cover wide and small views. Asynchronous preview and
   live-input acceptance remain open.
-  Full graph editing and smooth rig blends remain open.
+  Scalar graph editing now covers camera axes/angles, lens, effects and speed,
+  with draggable weighted handles, precise numeric keys, nudge/delete, framing,
+  transactional cancellation and undo. Original rails remain authoritative under
+  additive channels; subject-driven graphs expose offsets without inventing actor
+  history. Geometry and bounded plot samples are reused. Weighted value handles
+  remain within the endpoint envelope; unrestricted overshoot tangents are open.
+  Explicit adjacent-rig blends share source-safe preview/export evaluation and
+  extend outgoing authored motion into smooth entries. Hold keys, microscopic
+  intervals, Euler poles and geometry corners retain documented limits. Integrated
+  in-world acceptance and camera-edit hardware costs remain unqualified. Owning
+  graph, rig, codec, shell, UI, label and visibility regressions pass; anonymous
+  graph/entry states are rendered at wide and small window sizes.
   Transient inspection includes adjustable flight speed, optional analytical
   translation damping, view-plane pan, wheel dolly/lens controls and roll leveling.
   Authored path drags keep exclusive pointer ownership; recovery overlays suspend
-  navigation. A local recorded-eye distance guard prevents edited cameras from
-  revealing their own face without moving the authored pose. Exact arbitrary-skin
+  navigation. Captured animated per-bone body bounds now guard edited near planes,
+  independently for each spawn and draw layer, without moving authored cameras.
+  Posed bounds and their hierarchy are retained for camera-only changes. Bounds
+  are conservative for alpha/disjoint/cross-bone geometry; exact arbitrary-skin
   intersection remains an incomplete editor approximation, not a parity gate.
+  New label capture precedes the live frustum filter and uses an independent
+  recording atlas. Saved coverage distinguishes eligible received labels from
+  legacy source-view labels. Eye tracks preserve provenance and unavailable-pose
+  reasons; missing exact local eyes retain the received subject/lifetime. Exact
+  remote pose-transition eyes, never-received data and multi-dimension recording
+  remain incomplete.
   Subject suggestions require continuous recorded lifetime coverage; export
   admission instead validates exact required rational output timestamps, including
-  retimed transition handles. New regression execution remains required.
+  retimed transition handles. Long-recording, interactive seek and export
+  acceptance across these camera changes remains required.
 - Monitoring exposes runtime-only 0.1xâ€“8x speed, typed seeking, seconds jumps and
   whole-project looping with rational audio cursor conversion and bounded tempo
   processing. Fast preview respects its wall-time presentation budget. Slow

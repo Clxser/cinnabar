@@ -247,7 +247,8 @@ pub(super) fn draw(
         canvas.text_line(
             &format!("{:.2}s", (start + duration * fraction) / 1_000_000.0),
             [
-                plot[0] + (plot[2] - plot[0]) * fraction as f32 - canvas.r(2.0),
+                (plot[0] + (plot[2] - plot[0]) * fraction as f32 - canvas.r(2.0))
+                    .clamp(plot[0], (plot[2] - canvas.r(8.0)).max(plot[0])),
                 plot[3] + canvas.r(0.5),
             ],
             canvas.r(8.0),

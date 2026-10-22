@@ -731,6 +731,16 @@ These additions have formatting and source review only. Regression source is
 unrun; no compilation, rendered UI, runtime synchronization, sustained performance
 or export acceptance was performed. Unsupported/legacy POV, remote pose-transition
 eye behavior and gapless looping remain incomplete. No completion entry advances.
+
+Camera editing additionally retains positional integration across metadata edits
+and immutable graph plots across ordinary frames. Scalar graphs and source-safe
+entry blends share saved metadata with export. Near-plane/body handling uses
+captured animated conservative bounds per spawn/layer. New nametag recording
+precedes live frustum rejection; eye-track provenance describes unavailable native
+views. Focused app checks and owning domain, shell, UI, codec, label and visibility
+regressions pass. Anonymous graph and blend controls are rendered at wide and
+small sizes. These results do not establish complete replay parity, unrestricted scalar
+overshoot tangents, exact alpha/triangle clipping or hardware performance budgets.
 Retained mod drawing has authority and lifetime contracts. Geometry admission validates
 vertices once and caches extent and quota facts for every shared instance and callback
 group. Extent checks use conservative box and sphere bounds without revisiting vertices.
