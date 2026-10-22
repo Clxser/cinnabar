@@ -72,8 +72,8 @@ and resource qualification; they do not imply these systems need to be written.
 
 - [ ] Close the opaque texture slice with matched native views, full-view remesh
   qualification, and fresh combined memory and steady-CPU measurements.
-  Furnace face slots follow cardinal direction and lit state; native visual comparison
-  and runtime replacement-pack acceptance remain open.
+  Furnace, blast furnace and smoker face slots follow cardinal direction and lit state;
+  native visual comparison and runtime replacement-pack acceptance remain open.
 - [ ] Close cutout-cube and leaf visual acceptance. Preserve independent geometry,
   occlusion and cave-connectivity semantics, packed quads and coverage-preserving mips.
 - [ ] `P2.5-NATIVE-BIOME` — Qualify existing biome palettes and grass/foliage/water tinting
@@ -109,6 +109,10 @@ and resource qualification; they do not imply these systems need to be written.
   remains incomplete.
 - [ ] Close barrel/trapdoor visual acceptance, including facing/open states, grain,
   carried items, edge UVs, replacement materials and different texture resolutions.
+- [ ] Close directional cube face mapping. Furnace-family cubes and the loom select pack
+  faces (and the loom's top/bottom flips) from their facing; other mapped-face cubes such as
+  carved pumpkins, observers, dispensers and droppers, and the stonecutter's east/west saw
+  axis, still need checking against their native tessellation, plus native-server captures.
 - [ ] Close chiseled-bookshelf native-gallery acceptance with two consecutive exact
   GPU-completed model-stream witnesses.
 - [ ] Close resin-clump native-gallery acceptance with two consecutive exact
