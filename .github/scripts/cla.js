@@ -39,11 +39,11 @@ module.exports = async ({ github, context, core }) => {
   const signed = new Set(records.map((r) => r.user_id));
   const unsigned = [...people].filter(([id]) => !signed.has(id)).map(([, login]) => login);
   const ok = !unsigned.length && !problems.length;
-  await report(github, owner, repo, number, comments, ok ? null : statusBody(cla, unsigned, problems), cla);
+  const stale = ok && context.eventName === 'issue_comment' && !(await rerun(github, owner, repo, pr));
+  const body = ok ? doneBody(cla, stale) : statusBody(cla, unsigned, problems);
+  await report(github, owner, repo, number, comments, body, !ok || stale);
 
-  if (context.eventName === 'issue_comment') {
-    await rerun(github, owner, repo, pr);
-  } else if (!ok) {
+  if (context.eventName === 'pull_request_target' && !ok) {
     core.setFailed(`CLA not signed by: ${[...unsigned, ...problems].join('; ')}`);
   }
 };
@@ -227,25 +227,34 @@ function statusBody(cla, unsigned, problems) {
   return lines.join('\n');
 }
 
-// Posts or updates the single status comment; when everything is signed, only updates an existing one.
-async function report(github, owner, repo, number, comments, body, cla) {
+const doneBody = (cla, stale) => `${MARKER}\nAll contributors have agreed to the [Cinnabar CLA](${cla.url}), version ${cla.version}.${
+  stale ? '\n\nThe CLA check could not be rerun. Close and reopen this pull request to refresh it.' : ''}`;
+
+// Updates the single status comment, creating it only when `create` is set.
+async function report(github, owner, repo, number, comments, body, create) {
   const mine = comments.find((c) => c.user?.id === BOT_ID && c.body?.startsWith(MARKER));
-  const text = body ?? `${MARKER}\nAll contributors have agreed to the [Cinnabar CLA](${cla.url}), version ${cla.version}.`;
-  if (mine && mine.body !== text) {
-    await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body: text });
-  } else if (!mine && body) {
-    await github.rest.issues.createComment({ owner, repo, issue_number: number, body: text });
+  if (mine && mine.body !== body) {
+    await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+  } else if (!mine && create) {
+    await github.rest.issues.createComment({ owner, repo, issue_number: number, body });
   }
 }
 
-// Reruns the latest finished, unsuccessful PR check for the head commit so the required check updates.
+// Reruns the latest unsuccessful PR check for the head commit; false when none can be rerun,
+// such as after GitHub's 30-day rerun window.
 async function rerun(github, owner, repo, pr) {
   const workflow_id = process.env.GITHUB_WORKFLOW_REF.split('@')[0].split('/').pop();
   const { data } = await github.rest.actions.listWorkflowRuns({
     owner, repo, workflow_id, event: 'pull_request_target', head_sha: pr.head.sha, per_page: 1,
   });
   const run = data.workflow_runs[0];
-  if (run?.status === 'completed' && run.conclusion !== 'success') {
+  if (!run) return false;
+  if (run.status !== 'completed' || run.conclusion === 'success') return true;
+  try {
     await github.rest.actions.reRunWorkflow({ owner, repo, run_id: run.id });
+    return true;
+  } catch (e) {
+    if (e.status !== 403 && e.status !== 422) throw e;
+    return false;
   }
 }

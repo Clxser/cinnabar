@@ -3,16 +3,17 @@ name: CLA
 # Requires every pull request contributor to agree to CLA.md and records signatures on the
 # `cla-signatures` branch. Pull request code is never checked out or run.
 on:
+  # `edited` catches a base-branch change. Every edit runs in full: a skipped run would pass the required check.
   pull_request_target:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
   issue_comment:
     types: [created]
 
 permissions:
   actions: write # rerun the pull request check after a signing comment
   contents: write # signature branch
-  issues: write
-  pull-requests: write
+  issues: write # status comment
+  pull-requests: read
 
 jobs:
   cla:
