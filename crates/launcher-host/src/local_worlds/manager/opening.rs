@@ -37,6 +37,9 @@ impl HostOpening {
                 name: world.name.clone(),
                 game_mode: world.game_mode,
                 backend: world.backend,
+                multiplayer_disabled: !world
+                    .options
+                    .enabled(launcher::local_worlds::options::WorldOption::Multiplayer),
             },
             target: target_for(world, instance.as_ref()),
             max_players: instance
@@ -280,3 +283,6 @@ impl Manager {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

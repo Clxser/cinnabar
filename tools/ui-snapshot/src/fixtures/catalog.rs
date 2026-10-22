@@ -145,6 +145,13 @@ pub(super) const STATES: &[State] = &[
     },
     #[cfg(feature = "test-support")]
     State {
+        name: "add-server-keyboard",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || Fixture::MenuKeyboard,
+    },
+    #[cfg(feature = "test-support")]
+    State {
         name: "settings-draft-return",
         size: SIZE,
         gui_scale: GUI_SCALE,
@@ -304,42 +311,6 @@ pub(super) const STATES: &[State] = &[
         size: SIZE,
         gui_scale: GUI_SCALE,
         fixture: || chat_server_content(true),
-    },
-    State {
-        name: "home-update-compact",
-        size: [480, 640],
-        gui_scale: 3,
-        fixture: || updates::home(true, false),
-    },
-    State {
-        name: "home-signed-in-update",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: updates::signed_in,
-    },
-    State {
-        name: "home-update-ready",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: || updates::home(true, false),
-    },
-    State {
-        name: "home-update-required",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: || updates::home(true, true),
-    },
-    State {
-        name: "home-update-download",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: || updates::home(false, false),
-    },
-    State {
-        name: "home-update-small",
-        size: SMALL_SIZE,
-        gui_scale: 1,
-        fixture: || updates::home(true, false),
     },
     #[cfg(feature = "test-support")]
     State {
@@ -723,6 +694,24 @@ pub(super) const STATES: &[State] = &[
         fixture: shader_pack::pack_picker,
     },
     State {
+        name: "settings-shaders-remove",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::removal_dialog,
+    },
+    State {
+        name: "settings-shaders-empty",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::empty_library,
+    },
+    State {
+        name: "settings-shaders-narrow-library",
+        size: [800, 720],
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::long_library,
+    },
+    State {
         name: "settings-storage",
         size: SIZE,
         gui_scale: GUI_SCALE,
@@ -759,11 +748,11 @@ pub(super) const STATES: &[State] = &[
         fixture: || updates::settings(launcher::menu::updates::Status::Failed),
     },
     State {
-        name: "settings-general-mod-updates-passive",
+        name: "settings-updates-mod-updates-passive",
         size: [1280, 1200],
         gui_scale: GUI_SCALE,
         fixture: || {
-            let mut view = settings(SettingSection::General.definition().name);
+            let mut view = settings(SettingSection::Updates.definition().name);
             view.updates.active = false;
             Fixture::Menu(Box::new(view))
         },

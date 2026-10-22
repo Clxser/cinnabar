@@ -428,6 +428,7 @@ impl GlobalPackLibrary {
                     purpose: Purpose::Rendering,
                 },
                 Arc::clone(&reads),
+                crate::manifest::IdentityPolicy::Manifest,
             )?;
             let next = ValidatedPackStack {
                 packs: vec![pack].into_boxed_slice(),

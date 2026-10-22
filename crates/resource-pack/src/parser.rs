@@ -16,7 +16,7 @@ use zip::{CompressionMethod, ZipArchive};
 use crate::{
     AdmissionError, MAX_DECLARED_BYTES_PER_PACK, MAX_ENTRIES_PER_PACK,
     crypto::{ContentKey, contents_file_keys},
-    manifest::{Purpose, read_manifest},
+    manifest::{IdentityPolicy, Purpose, read_manifest_with_policy},
     pack::{ArchiveBytes, EntryIndex, ValidatedPack, read_entry},
     read_cache::ReadCache,
 };
@@ -158,13 +158,14 @@ fn admit_stack_entry<T>(
             purpose: Purpose::Rendering,
         },
         reads,
+        IdentityPolicy::ServerAdvertisement,
     )?;
     let bounds = stack_bounds(&pack, declared)?;
     seen.insert(pack.pack_id);
     Ok((pack, bounds))
 }
 
-/// Admits one archive with its own bounded read cache.
+/// Admits one local selection with its own bounded read cache and exact manifest identity.
 pub(crate) fn validate_archive_parts(
     pack_id: Uuid,
     version: impl AsRef<[u8]>,
@@ -182,10 +183,13 @@ pub(crate) fn validate_archive_parts(
         key,
         AdmissionOptions { memory, purpose },
         Arc::default(),
+        IdentityPolicy::Manifest,
     )
 }
 
-/// Admits a pack whose plaintext storage shares the caller's byte budget.
+/// Admits a pack whose plaintext storage shares the caller's byte budget; `identity`
+/// decides whether the manifest must name the selected UUID and version.
+#[allow(clippy::too_many_arguments)] // Selection, content key and budgets stay explicit.
 pub(crate) fn validate_archive_parts_cached(
     pack_id: Uuid,
     version: impl AsRef<[u8]>,
@@ -194,6 +198,7 @@ pub(crate) fn validate_archive_parts_cached(
     key: Option<ContentKey>,
     options: AdmissionOptions,
     reads: Arc<ReadCache>,
+    identity: IdentityPolicy,
 ) -> Result<(ValidatedPack, u64, ArchiveKind), AdmissionError> {
     let version = version.as_ref();
     let sub_pack_name = sub_pack_name.as_ref();
@@ -281,7 +286,8 @@ pub(crate) fn validate_archive_parts_cached(
     let manifest_bytes = pack
         .read_file(manifest_path)?
         .ok_or(AdmissionError::MissingManifest)?;
-    let manifest = read_manifest(&manifest_bytes, pack_id, version, options.purpose)?;
+    let manifest =
+        read_manifest_with_policy(&manifest_bytes, pack_id, version, options.purpose, identity)?;
     let kind = if has_world_template {
         ArchiveKind::WorldTemplate
     } else if manifest.has_resources && manifest.has_behaviors {

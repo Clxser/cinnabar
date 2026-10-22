@@ -60,8 +60,8 @@ const CONNECTED: u8 = 2;
 /// A crash was written in-process, so the monitor must never hear of this client as one that
 /// can still crash.
 const IN_PROCESS: u8 = 3;
-/// How long a crash waits for a connection that is being introduced, in 1 ms steps.
-const INTRODUCTION_WAIT_STEPS: u32 = 2_000;
+/// Bounds connection introduction and dump receipts using elapsed monotonic time.
+const INTRODUCTION_WAIT_MS: u64 = 2_000;
 /// Messages at most this long are framed on the stack, as signal handlers need.
 const STACK_MESSAGE_BYTES: usize = 64;
 
@@ -271,16 +271,16 @@ pub(super) fn route() -> Option<slot::Guard<'static, minidumper::Client>> {
         Ok(_) | Err(IN_PROCESS) => return None,
         Err(_) => {}
     }
-    for _ in 0..INTRODUCTION_WAIT_STEPS {
-        if let Some(client) = connection() {
-            return Some(client);
-        }
-        if ROUTE.load(Ordering::Acquire) == IN_PROCESS {
-            return None;
-        }
-        introduction_pause();
-    }
-    None
+    let mut client = None;
+    wait_bounded(
+        || {
+            client = connection();
+            client.is_some() || ROUTE.load(Ordering::Acquire) == IN_PROCESS
+        },
+        introduction_pause,
+        signal_safe_monotonic,
+    );
+    client
 }
 
 /// Pauses a bounded introduction wait without entering Rust's thread runtime on Unix.
@@ -313,7 +313,7 @@ pub(super) fn announce_dump(client: &minidumper::Client) -> bool {
 }
 
 /// Reads elapsed time without Rust runtime initialization, allocation or locks.
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 fn signal_safe_monotonic() -> Option<Duration> {
     let mut now = libc::timespec {
         tv_sec: 0,
@@ -330,20 +330,36 @@ fn signal_safe_monotonic() -> Option<Duration> {
     Some(Duration::new(seconds, nanos))
 }
 
+/// Reads the Windows boot clock without Rust runtime initialization or allocation.
+#[cfg(not(unix))]
+fn signal_safe_monotonic() -> Option<Duration> {
+    // SAFETY: GetTickCount64 has no preconditions and cannot fail.
+    Some(Duration::from_millis(unsafe {
+        windows_sys::Win32::System::SystemInformation::GetTickCount64()
+    }))
+}
+
 /// Waits without locks or socket reads; an unresponsive monitor consumes only the wait budget.
 #[cfg(any(target_os = "macos", test))]
 fn wait_for_dump_receipt(
     region: &heartbeat::Region,
     request: u64,
+    pause: impl FnMut(),
+    now: impl FnMut() -> Option<Duration>,
+) -> bool {
+    wait_bounded(|| region.dump_acknowledged(request), pause, now)
+}
+
+/// Polls readiness within one elapsed budget; invalid or regressing clocks end the wait.
+fn wait_bounded(
+    mut ready: impl FnMut() -> bool,
     mut pause: impl FnMut(),
     mut now: impl FnMut() -> Option<Duration>,
 ) -> bool {
     let Some(started) = now() else {
         return false;
     };
-    let Some(deadline) =
-        started.checked_add(Duration::from_millis(u64::from(INTRODUCTION_WAIT_STEPS)))
-    else {
+    let Some(deadline) = started.checked_add(Duration::from_millis(INTRODUCTION_WAIT_MS)) else {
         return false;
     };
     loop {
@@ -353,7 +369,7 @@ fn wait_for_dump_receipt(
         if observed < started || observed >= deadline {
             return false;
         }
-        if region.dump_acknowledged(request) {
+        if ready() {
             return true;
         }
         pause();
@@ -531,7 +547,7 @@ mod tests {
             },
             || Some(elapsed.get()),
         ));
-        assert_eq!(pauses.get(), INTRODUCTION_WAIT_STEPS);
+        assert_eq!(pauses.get(), INTRODUCTION_WAIT_MS);
     }
 
     /// A delayed wake must consume elapsed budget instead of starting another nominal pause.
@@ -541,7 +557,7 @@ mod tests {
         let heartbeat = heartbeat::Heartbeat::create(&directory.path().join("heartbeat")).unwrap();
         let elapsed = std::cell::Cell::new(Duration::ZERO);
         let pauses = std::cell::Cell::new(0);
-        let delayed = Duration::from_millis(u64::from(INTRODUCTION_WAIT_STEPS) + 1);
+        let delayed = Duration::from_millis(INTRODUCTION_WAIT_MS + 1);
         assert!(!wait_for_dump_receipt(
             heartbeat.region(),
             1,
@@ -570,7 +586,7 @@ mod tests {
             client.region(),
             1,
             || {
-                elapsed.set(Duration::from_millis(u64::from(INTRODUCTION_WAIT_STEPS)));
+                elapsed.set(Duration::from_millis(INTRODUCTION_WAIT_MS));
                 monitor.region().acknowledge_dump(1);
             },
             || Some(elapsed.get()),

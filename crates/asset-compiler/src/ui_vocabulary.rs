@@ -14,6 +14,13 @@ use crate::vocabulary::{json_files, read};
 type Names = BTreeSet<(&'static str, String)>;
 type Bindings = BTreeMap<String, BTreeSet<String>>;
 
+/// Properties whose string value names a data collection.
+const COLLECTION_KEYS: [&str; 3] = [
+    "collection_name",
+    "binding_collection_name",
+    "toggle_grid_collection_name",
+];
+
 /// Generates sorted, names-only rows from UI definitions and English text keys.
 pub fn generate(samples: &Path) -> Result<Vec<u8>, Box<dyn Error>> {
     let pack = samples.join("resource_pack");
@@ -71,7 +78,7 @@ fn collect(
                 if let Value::String(name) = value
                     && key.starts_with('$')
                 {
-                    let variable = key.split_once('|').map_or(key.as_str(), |(name, _)| name);
+                    let variable = variable(key);
                     bindings
                         .entry(variable.to_owned())
                         .or_default()
@@ -79,15 +86,10 @@ fn collect(
                 }
                 match (key.as_str(), value) {
                     ("renderer", Value::String(name)) => insert("renderer", name, names),
-                    (
-                        "collection_name"
-                        | "binding_collection_name"
-                        | "toggle_grid_collection_name",
-                        Value::String(name),
-                    ) => {
+                    (key, Value::String(name)) if COLLECTION_KEYS.contains(&key) => {
                         insert("collection", name, names);
                         if name.starts_with('$') {
-                            collections.insert(name.clone());
+                            collections.insert(variable(name).to_owned());
                         }
                     }
                     ("controls", Value::Array(controls)) => {
@@ -117,13 +119,13 @@ fn collect(
 /// A visited set ends cycles; only identifier literals become resolved collection names.
 fn resolve_collections(bindings: &Bindings, mut pending: BTreeSet<String>, names: &mut Names) {
     let mut visited = BTreeSet::new();
-    while let Some(variable) = pending.pop_first() {
-        if !visited.insert(variable.clone()) {
+    while let Some(reference) = pending.pop_first() {
+        if !visited.insert(reference.clone()) {
             continue;
         }
-        for name in bindings.get(&variable).into_iter().flatten() {
+        for name in bindings.get(&reference).into_iter().flatten() {
             if name.starts_with('$') {
-                pending.insert(name.clone());
+                pending.insert(variable(name).to_owned());
             } else if collection_literal(name) {
                 insert("collection", name, names);
             }
@@ -138,6 +140,11 @@ fn collection_literal(name: &str) -> bool {
         .next()
         .is_some_and(|first| first.is_ascii_alphabetic() || first == b'_')
         && bytes.all(identifier_byte)
+}
+
+/// Removes a variable's `|default` suffix.
+fn variable(text: &str) -> &str {
+    text.split_once('|').map_or(text, |(name, _)| name)
 }
 
 /// Records a control's local name and, for a factory, its instance name.
@@ -243,6 +250,25 @@ mod tests {
         assert_eq!(
             generate(&isolated.cache).unwrap(),
             fs::read(root.join("crates/json-ui/data/vanilla-ui-vocabulary-1.26.50.txt")).unwrap()
+        );
+    }
+
+    #[test]
+    fn collection_names_assigned_through_variables_are_collections() {
+        let document = serde_json::json!({
+            "grid": { "collection_name": "$grid_name", "$grid_name|default": "$item_name" },
+            "cell": { "$item_name": "trade_tiers" },
+            "label": { "$text_name": "not_a_collection" },
+        });
+        let mut names = Names::new();
+        let mut bindings = Bindings::new();
+        let mut collections = BTreeSet::new();
+        collect(&document, &mut names, &mut bindings, &mut collections);
+        names.retain(|(kind, _)| *kind == "collection");
+        resolve_collections(&bindings, collections, &mut names);
+        assert_eq!(
+            names,
+            BTreeSet::from([("collection", "trade_tiers".to_owned())])
         );
     }
 

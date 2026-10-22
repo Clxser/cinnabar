@@ -37,6 +37,125 @@ pub(super) async fn acceptor(
             break candidate;
         }
     };
+    let bound = bind(&identity, &request, network_id, deadline, visitor_limit).await;
+    let Bound {
+        server, expires, ..
+    } = check_issuance(world, &request, deadline, bound).await?;
+    Ok(Acquired {
+        server,
+        identity,
+        messaging_id,
+        expires,
+    })
+}
+
+/// A new listener may reuse the still-current original proof key and provider credential.
+pub(super) struct Replacement {
+    pub(super) server: MessagingServer,
+    pub(super) identity: Option<protocol::NativeHostingIdentity>,
+    pub(super) messaging_id: uuid::Uuid,
+    pub(super) expires: Instant,
+    pub(super) ice: ServerIceConfig,
+}
+
+struct Bound {
+    server: MessagingServer,
+    expires: Instant,
+    ice: ServerIceConfig,
+}
+
+/// Reacquires the protected socket while the same original directory stages its peer continuations.
+pub(super) async fn replacement(
+    world: &mut NativeHostedWorld,
+    original: &protocol::NativeHostingIdentity,
+    network_id: u64,
+    deadline: Instant,
+    visitor_limit: usize,
+) -> io::Result<Replacement> {
+    let identity = if Instant::now() >= original.expires_at() {
+        let NativeHostedWorld {
+            directory, peers, ..
+        } = world;
+        let mint = directory
+            .as_mut()
+            .ok_or_else(unavailable)?
+            .renew_hosting_identity(original, deadline);
+        tokio::pin!(mint);
+        Some(loop {
+            tokio::select! { biased;
+                result = &mut mint => break result?,
+                _ = peers.next() => {},
+            }
+        })
+    } else {
+        None
+    };
+    let request = {
+        let NativeHostedWorld {
+            directory, peers, ..
+        } = world;
+        let request = directory
+            .as_mut()
+            .ok_or_else(unavailable)?
+            .messaging_request(deadline);
+        tokio::pin!(request);
+        loop {
+            tokio::select! { biased;
+                result = &mut request => break result?,
+                _ = peers.next() => {},
+            }
+        }
+    };
+    let selected = identity.as_ref().unwrap_or(original);
+    let deadline = deadline.min(selected.expires_at());
+    let messaging_id = request.player_messaging_id();
+    let bound = world
+        .peer_io(
+            Some(deadline),
+            bind(selected, &request, network_id, deadline, visitor_limit),
+        )
+        .await;
+    let Bound {
+        server,
+        expires,
+        ice,
+    } = check_issuance(world, &request, deadline, bound).await?;
+    Ok(Replacement {
+        server,
+        identity,
+        messaging_id,
+        expires,
+        ice,
+    })
+}
+
+/// Evicts only the actual rejected protected upgrade issuance, without replaying the upgrade.
+async fn check_issuance(
+    world: &mut NativeHostedWorld,
+    request: &bedrock_services::signaling::ConnectionRequest,
+    deadline: Instant,
+    result: io::Result<Bound>,
+) -> io::Result<Bound> {
+    if result
+        .as_ref()
+        .is_err_and(|error| error.kind() == io::ErrorKind::PermissionDenied)
+    {
+        world
+            .directory_mut()?
+            .reject_messaging(request, deadline)
+            .await?;
+    }
+    result
+}
+
+/// Retains one socket, its correlated TURN result and DNS work under the caller's first cutoff.
+async fn bind(
+    identity: &protocol::NativeHostingIdentity,
+    request: &bedrock_services::signaling::ConnectionRequest,
+    network_id: u64,
+    deadline: Instant,
+    visitor_limit: usize,
+) -> io::Result<Bound> {
     let started = Instant::now();
     let options = Options::default();
     let cutoff = deadline.min(started + options.connect_timeout);
@@ -46,17 +165,17 @@ pub(super) async fn acceptor(
     };
     let mut socket = match bounded(
         cutoff,
-        MessagingSocket::connect(&request, network_id, options),
+        MessagingSocket::connect(request, network_id, options),
     )
     .await?
     {
         Ok(socket) => socket,
         Err(error) => {
             if error == SocketError::UpgradeStatus(401) {
-                world
-                    .directory_mut()?
-                    .reject_messaging(&request, deadline)
-                    .await?;
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "native host messaging issuance was rejected",
+                ));
             }
             return Err(unavailable());
         }
@@ -103,7 +222,7 @@ pub(super) async fn acceptor(
         identity: Some(identity.sdp_identity()),
         token_trust: Some(identity.offer_trust()),
         allow_anonymous_offers: true,
-        server_ice: Some(server_ice),
+        server_ice: Some(server_ice.clone()),
         max_sessions: visitor_limit,
         max_pending: visitor_limit,
         max_pending_per_network_id: visitor_limit,
@@ -119,11 +238,10 @@ pub(super) async fn acceptor(
         .bind(config, signaling, deadline)
         .await
         .map_err(|_| unavailable())?;
-    Ok(Acquired {
+    Ok(Bound {
         server,
-        identity,
-        messaging_id,
         expires,
+        ice: server_ice,
     })
 }
 

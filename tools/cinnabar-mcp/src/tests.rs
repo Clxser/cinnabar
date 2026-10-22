@@ -41,6 +41,7 @@ fn tools_list_names_every_tool() {
             "disconnect",
             "input",
             "import_skin",
+            "import_cape",
             "chat",
             "camera_path",
             "test_cape",
@@ -382,6 +383,20 @@ fn default_binaries_carry_the_platform_executable_suffix() {
     assert_eq!(
         crate::tools::executable(repo, "target/debug/cinnabar", ""),
         repo.join("target/debug/cinnabar")
+    );
+}
+
+#[test]
+fn cape_import_resolves_paths() {
+    let repo = Path::new("/fixture/repo");
+    let control = repo.join(".local/control");
+    let (command, _) =
+        commands::command("import_cape", &json!({"path":"cape.png"}), repo, &control).unwrap();
+    assert_eq!(
+        command,
+        Command::ImportCape {
+            path: repo.join("cape.png")
+        }
     );
 }
 

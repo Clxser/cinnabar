@@ -140,6 +140,57 @@ impl HostDirectory {
         Ok(())
     }
 
+    /// Replaces only this original member's actual route; approvals retain their membership epoch.
+    pub(in crate::native_account::hosted_world) fn replace_acceptor(
+        &mut self,
+        server: &MessagingServer,
+        messaging_id: Uuid,
+    ) -> io::Result<()> {
+        self.current()?;
+        if messaging_id.is_nil() || server.local_network_id() == 0 {
+            return Err(invalid("native replacement accepting route is invalid"));
+        }
+        let route = self
+            .advertisement
+            .as_mut()
+            .ok_or_else(|| invalid("native accepting route is unavailable"))?;
+        if route.network_id != server.local_network_id() || route.messaging_id != messaging_id {
+            route.network_id = server.local_network_id();
+            route.messaging_id = messaging_id;
+            self.approvals
+                .as_mut()
+                .ok_or_else(|| invalid("host approval owner is unavailable"))?
+                .invalidate();
+        }
+        Ok(())
+    }
+
+    /// Obtains a new protected upgrade on the original account and live directory proof.
+    pub(in crate::native_account::hosted_world) async fn messaging_request(
+        &mut self,
+        deadline: Instant,
+    ) -> io::Result<ConnectionRequest> {
+        self.service_barrier(Some(deadline)).await?;
+        let mut operation = self.operation(deadline).await?;
+        let request = service(
+            self.socket
+                .as_mut()
+                .ok_or_else(|| invalid("host RTA is unavailable"))?,
+            self.subscription
+                .ok_or_else(|| invalid("host subscription is unavailable"))?,
+            &self.reference,
+            &mut self.changed,
+            deadline,
+            operation.minecraft()?.messaging_connection(),
+        )
+        .await?
+        .map_err(|_| invalid("native host messaging acquisition failed"))?;
+        operation.persist()?;
+        drop(operation);
+        self.service_barrier(Some(deadline)).await?;
+        Ok(request)
+    }
+
     /// Keeps nonce and advertised membership limits on the same actual configured capacity.
     pub(super) fn effective_max_players(&self) -> u32 {
         self.advertisement

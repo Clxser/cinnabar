@@ -66,15 +66,7 @@ func (c *localConn) Close() error {
 
 // WritePacketImmediate keeps the actual local transport's original immediate-disconnect behavior.
 func (c *localConn) WritePacketImmediate(packets ...packet.Packet) error {
-	if immediate, ok := c.Conn.(interface{ WritePacketImmediate(...packet.Packet) error }); ok {
-		return immediate.WritePacketImmediate(packets...)
-	}
-	for _, pk := range packets {
-		if err := c.Conn.WritePacket(pk); err != nil {
-			return err
-		}
-	}
-	return c.Conn.Flush()
+	return c.Conn.WritePacketImmediate(packets...)
 }
 
 // disconnect uses actual generated terminal output and the same finite ordered flush.

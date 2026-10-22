@@ -122,6 +122,8 @@ pub struct MenuRuntime {
     field: Option<MenuField>,
     /// Bumped by every field edit and caret move, restarting the caret blink.
     caret_revision: u64,
+    /// Explicit editor activations request the keyboard again after platform dismissal.
+    field_activation: u64,
     /// Screens opened on the way here; back returns to the one below.
     history: json_ui::ScreenNav<MenuScreen>,
     navigation_focus: navigation::NavigationFocus,
@@ -134,6 +136,7 @@ pub struct MenuRuntime {
     port: ui::ChatEditor,
     skin_name: ui::ChatEditor,
     friend_query: ui::ChatEditor,
+    settings_query: ui::ChatEditor,
     /// Command macro command boxes; edits write through to persisted settings.
     macro_commands: [ui::ChatEditor; launcher::menu::settings_options::COMMAND_MACRO_COUNT],
     message: Option<String>,
@@ -158,6 +161,8 @@ pub struct MenuRuntime {
     shader_pack_status: shader_pack_status::ShaderPackStatusUi,
     /// Set by [`MenuRuntime::request_shader_pack_reload`] until the app takes it.
     shader_pack_reload: bool,
+    shader_pack_removing: Option<std::sync::Arc<str>>,
+    shader_pack_remove_request: Option<String>,
     vsync_override: Option<bool>,
     display_name: String,
     launcher: bool,
@@ -192,6 +197,7 @@ pub struct MenuRuntime {
     disconnect_message: Option<String>,
     /// Death screen shown for the current death; cleared once alive again.
     death_shown: bool,
+    death_lifecycle: Option<(u64, u64)>,
     death_loading: bool,
     death_presentation: launcher::menu::death::DeathPresentation,
     death_retry_remaining: Option<std::time::Duration>,
@@ -344,18 +350,6 @@ impl MenuRuntime {
     /// A local world the player chose to open, for the local-worlds module.
     pub fn take_local_world_request(&mut self) -> Option<usize> {
         self.local_world_requested.take()
-    }
-
-    pub fn open_pause(&mut self) {
-        if self.visible || self.is_connecting() {
-            return;
-        }
-        self.navigation_focus = navigation::NavigationFocus::default();
-        self.history.reset(MenuScreen::Pause);
-        self.screen = MenuScreen::Pause;
-        self.focused = 0;
-        self.message = None;
-        self.visible = true;
     }
 
     /// A cancelled join drops any queued join and returns to the play screen.

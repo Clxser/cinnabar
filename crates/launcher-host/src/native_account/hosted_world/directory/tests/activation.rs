@@ -228,3 +228,42 @@ pub(in crate::native_account::hosted_world) fn same_host_member(
                 .is_ok_and(|binding| session.is_bound(binding))
         })
 }
+
+/// A different actual route cannot reuse the old document acknowledgment or alter membership.
+pub(in crate::native_account::hosted_world) fn assert_replacement_route_requires_acknowledgment(
+    host: &mut NativeHostedWorld,
+    original: &bedrock_net::messaging::server::MessagingServer,
+    replacement: &bedrock_net::messaging::server::MessagingServer,
+    original_messaging: Uuid,
+    replacement_messaging: Uuid,
+    visitor: &str,
+) {
+    let nonce = activation_nonce(host, visitor);
+    let approval = host.check_approval(visitor, &nonce).unwrap();
+    let reference = host.directory_ref().unwrap().reference.clone();
+    let directory = host.directory_mut().unwrap();
+    directory
+        .replace_acceptor(replacement, replacement_messaging)
+        .unwrap();
+    assert!(
+        directory.confirm_retained().is_err(),
+        "the old document acknowledged a different actual listener route"
+    );
+    assert!(host.check_approval(visitor, &nonce).is_err());
+    assert!(host.recheck_approval(&approval).is_err());
+    let directory = host.directory_mut().unwrap();
+    assert!(directory.reference.same(&reference));
+    assert_eq!(
+        directory.properties().unwrap()["SupportedConnections"][0]["NetherNetId"],
+        replacement.local_network_id()
+    );
+    assert_eq!(
+        directory.properties().unwrap()["SupportedConnections"][0]["PmsgId"],
+        json!(replacement_messaging)
+    );
+    directory
+        .replace_acceptor(original, original_messaging)
+        .unwrap();
+    directory.confirm_retained().unwrap();
+    host.recheck_approval(&approval).unwrap();
+}

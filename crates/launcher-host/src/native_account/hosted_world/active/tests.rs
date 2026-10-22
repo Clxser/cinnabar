@@ -28,6 +28,17 @@ const SECOND_NAME: &str = "SecondVisitor";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn active_run_routes_two_signed_messaging_visitors_into_the_original_world() {
+    visitor_flow(false).await;
+}
+
+/// Losing the accepting service must preserve the original initialized peer and later admission.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn active_run_keeps_initialized_visitors_and_reopens_messaging_after_signaling_loss() {
+    visitor_flow(true).await;
+}
+
+/// Both paths retain the same original service, world, resource and finite cleanup assertions.
+async fn visitor_flow(interrupt: bool) {
     let Some(world) = World::open() else {
         return;
     };
@@ -61,6 +72,34 @@ async fn active_run_routes_two_signed_messaging_visitors_into_the_original_world
         let account = install_activation_account(namespace.path(), services, &identity, &issuer.jwks).await;
         let mut active = world.manager.native_hosted_world(Arc::clone(&account), deadline).unwrap()
             .activate(deadline).await.expect("actual original host activation");
+        let recovery_invitation = active.invitation();
+        let interruption = if interrupt {
+            use bedrock_net::messaging::server::PreparedMessagingServer;
+            let replacement_network_id = active.server.local_network_id().checked_add(1).filter(|id| *id != 0).unwrap_or(1);
+            let (socket, peer) = bedrock_services::signaling::websocket::test_support::pair(replacement_network_id).await;
+            let failed = PreparedMessagingServer::new(socket, replacement_network_id).bind(
+                nethernet_tokio::ConnectionConfig {
+                    identity: Some(active.identity.sdp_identity()),
+                    token_trust: Some(active.identity.offer_trust()),
+                    allow_anonymous_offers: true,
+                    max_sessions: cap.get() as usize - 1,
+                    ..Default::default()
+                },
+                Default::default(), deadline,
+            ).await.unwrap();
+            super::super::directory::tests::activation::assert_replacement_route_requires_acknowledgment(
+                &mut active.world, &active.server, &failed, host_messaging_id, uuid::Uuid::new_v4(), VISITOR_XUID,
+            );
+            drop(peer);
+            let (interrupt, interrupted) = oneshot::channel();
+            let (returned, original) = oneshot::channel();
+            let (resume, replacement) = oneshot::channel();
+            let (started, reconnecting) = oneshot::channel();
+            active.interruption = Some(interrupted);
+            active.replacement = Some(replacement);
+            active.reconnect_started = Some(started);
+            Some((interrupt, failed, returned, original, resume, reconnecting))
+        } else { None };
         let invitation = active.invitation();
         let invited = {
             let running = active.run();
@@ -108,6 +147,20 @@ async fn active_run_routes_two_signed_messaging_visitors_into_the_original_world
             session.finish_loading().await.map_err(io::Error::other)?;
             first_phase.set("occupancy one");
             peer.wait_activation_visitor_writes(1).await;
+            if let Some((interrupt, failed, returned, original, resume, reconnecting)) = interruption {
+                first_phase.set("signaling loss");
+                interrupt.send((failed, returned)).map_err(|_| ended())?;
+                let original = original.await.map_err(|_| ended())?;
+                reconnecting.await.map_err(|_| ended())?;
+                first_phase.set("invite denied during reconnect");
+                let rejected = recovery_invitation.send(first_xuid, deadline).await;
+                assert_eq!(rejected.unwrap_err().kind(), io::ErrorKind::WouldBlock);
+                let mut terrain = session.terrain_before_spawn();
+                first_phase.set("original peer response during reconnect");
+                radius(&mut session, 4, &mut terrain).await?;
+                resume.send(original).map_err(|_| ended())?;
+            }
+            drop(recovery_invitation);
             first_ready.send(()).map_err(|_| ended())?;
             first_phase.set("second visitor waiting");
             second_waiting.await.map_err(|_| ended())?;

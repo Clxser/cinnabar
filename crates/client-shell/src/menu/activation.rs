@@ -259,6 +259,12 @@ impl MenuRuntime {
             MenuAction::AddBack => self.go_back(),
             MenuAction::SelectRenderer(choice) => self.select_renderer(choice),
             MenuAction::ReloadShaders => self.activate_shader_reload(),
+            MenuAction::RemoveShaderPackDialog(index, revision) => {
+                self.remove_shader_pack_dialog(index, revision)
+            }
+            MenuAction::ConfirmRemoveShaderPack(index, revision) => {
+                self.confirm_remove_shader_pack(index, revision)
+            }
             MenuAction::SettingsShaders => self.activate_shaders_tab(),
             MenuAction::ToggleRenderMode => {
                 if render_model::ENHANCED_RENDERING_ENABLED {
@@ -294,7 +300,13 @@ impl MenuRuntime {
             MenuAction::SettingsStorage(action) => self.activate_storage(action),
             MenuAction::SettingsSupport(action) => self.activate_support(action),
             MenuAction::SettingsSection(section) => self.activate_settings_section(section),
+            MenuAction::SettingsSearchSection(section) => {
+                self.focus_pointer(MenuAction::SettingsSection(section));
+                self.activate_settings_section(section);
+            }
             action @ (MenuAction::SettingsScale(_)
+            | MenuAction::SearchSettings
+            | MenuAction::ClearSettingsSearch
             | MenuAction::SettingsScalePicker
             | MenuAction::SettingsFullscreen(_)
             | MenuAction::SettingsOption(..)

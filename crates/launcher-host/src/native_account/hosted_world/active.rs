@@ -39,6 +39,12 @@ pub struct ActiveHostedWorld {
     invitations: mpsc::Receiver<Invite>,
     invitation: HostedInvitation,
     #[cfg(test)]
+    interruption: Option<oneshot::Receiver<(MessagingServer, oneshot::Sender<MessagingServer>)>>,
+    #[cfg(test)]
+    replacement: Option<oneshot::Receiver<MessagingServer>>,
+    #[cfg(test)]
+    reconnect_started: Option<oneshot::Sender<()>>,
+    #[cfg(test)]
     renewal_committed: Option<oneshot::Sender<()>>,
 }
 
@@ -93,6 +99,12 @@ impl NativeHostedWorld {
             invitations,
             invitation: HostedInvitation(send),
             #[cfg(test)]
+            interruption: None,
+            #[cfg(test)]
+            replacement: None,
+            #[cfg(test)]
+            reconnect_started: None,
+            #[cfg(test)]
             renewal_committed: None,
         })
     }
@@ -141,6 +153,25 @@ impl ActiveHostedWorld {
                 Invite(Option<Invite>),
             }
             let event = tokio::select! { biased;
+                interrupted = async {
+                    #[cfg(test)]
+                    if let Some(interruption) = &mut self.interruption {
+                        return interruption.await.ok();
+                    }
+                    std::future::pending::<Option<(MessagingServer, oneshot::Sender<MessagingServer>)>>().await
+                }, if cfg!(test) => {
+                    #[cfg(test)]
+                    {
+                        self.interruption = None;
+                        if let Some((failed, returned)) = interrupted {
+                            let original = std::mem::replace(&mut self.server, failed);
+                            let _ = returned.send(original);
+                        }
+                    }
+                    #[cfg(not(test))]
+                    drop(interrupted);
+                    continue;
+                },
                 _ = tokio::time::sleep_until(self.expires.into()), if current => Event::Lease,
                 result = self.world.drive_active() => { result?; Event::Service },
                 invite = self.invitations.recv() => Event::Invite(invite),

@@ -94,6 +94,9 @@ pub enum Fixture {
     /// An edited settings draft after switching away from and back to its tab.
     #[cfg(feature = "test-support")]
     SettingsDraft,
+    /// Retained Add Server focus after a simulated keyboard reduces the visible height.
+    #[cfg(feature = "test-support")]
+    MenuKeyboard,
     /// A damaged stack picked up from the survival inventory.
     #[cfg(feature = "test-support")]
     CursorDurability,
@@ -131,7 +134,12 @@ pub fn settings(section: &str) -> MenuView {
     view
 }
 
-/// Enumerates every fixture, including the independently owned Social settings states.
+/// Enumerates every fixture, including the independently owned settings states.
 pub fn states() -> impl Iterator<Item = &'static State> {
-    catalog::STATES.iter().chain(social_settings::STATES)
+    catalog::STATES
+        .iter()
+        .chain(out_of_game::WORLD_FORM_STATES)
+        .chain(updates::STATES)
+        .chain(social_settings::STATES)
+        .chain(settings_screens::SEARCH_STATES)
 }

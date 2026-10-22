@@ -92,7 +92,7 @@ pub(in crate::native_account::hosted_world::active) async fn renew(
 
 /// Refreshes only each original actor's selected stream under this same finite renewal cutoff.
 /// The actor matches the whole fresh set; an absent selected target is never silently skipped.
-async fn renew_streams(
+pub(in crate::native_account::hosted_world::active) async fn renew_streams(
     world: &mut NativeHostedWorld,
     server: &mut MessagingServer,
     ice: &ServerIceConfig,
