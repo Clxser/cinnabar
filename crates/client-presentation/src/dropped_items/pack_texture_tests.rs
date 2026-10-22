@@ -115,6 +115,59 @@ fn install(icons: &mut UiPresentationRuntime, color: Option<u8>, cube: bool, met
 }
 
 #[test]
+fn live_and_received_preparation_share_session_block_models_and_reuse_frame_storage() {
+    let (mut icons, stream) = fixture(0);
+    install(&mut icons, Some(123), true, 0);
+    for received in [false, true] {
+        let mut scene = DroppedItemScene::default();
+        let mut cache = ModelCache::default();
+        let mut scratch = PublishScratch::default();
+        let mut previous = None;
+        for _ in 0..3 {
+            let admission = DroppedItemPublisher::prepare_scene(
+                &mut scene,
+                &mut cache,
+                &mut scratch,
+                None,
+                &[],
+                None,
+                &icons,
+                &stream,
+                None,
+                None,
+                None,
+                0.0,
+                (None, Default::default()),
+                received,
+            );
+            assert_eq!(admission.model_failures, 0);
+            assert_eq!(scene.instances.len(), 1);
+            let DroppedItemModel::Cube(cube) = &scene.models[scene.instances[0].model as usize]
+            else {
+                panic!("session block artwork must precede ordinary sprite fallback");
+            };
+            for (face, pixels) in cube.faces.iter().enumerate() {
+                assert!(
+                    pixels
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .all(|pixel| *pixel == [123, face as u8, 80, 255])
+                );
+            }
+            if let Some((allocation, revision)) = previous {
+                assert_eq!(scratch.instances.as_ptr(), allocation);
+                assert_eq!(scene.models_revision, revision);
+            }
+            previous = Some((scratch.instances.as_ptr(), scene.models_revision));
+            assert!(scratch.dropped.is_empty());
+            assert!(scratch.candidates.is_empty());
+            assert!(scratch.ropes.is_empty());
+        }
+    }
+}
+
+#[test]
 fn dropped_pack_cubes_replace_all_faces_and_restore_base_after_removal() {
     let (mut icons, stream) = fixture(0);
     let mut world = World::new();

@@ -14,6 +14,7 @@ pub(crate) struct ReplayBlockEntities {
     runtime: BlockEntityRuntime,
     scene: BlockEntityScene,
     previous_seconds: Option<f64>,
+    placements: Vec<StaticItemPlacement>,
     pub(crate) frame: Option<render_model::BlockEntityFrame>,
     pub(crate) coverage: Option<BlockCoverage>,
 }
@@ -26,6 +27,7 @@ impl Default for ReplayBlockEntities {
             runtime: BlockEntityRuntime::new(),
             scene: BlockEntityScene::default(),
             previous_seconds: None,
+            placements: Vec::new(),
             frame: None,
             coverage: None,
         }
@@ -91,7 +93,7 @@ pub(super) fn update(
             .map_or(0.0, |previous| (now - previous).max(0.0) as f32)
     };
     let mut frame = render_model::BlockEntityFrame::default();
-    let mut placements = Vec::new();
+    let mut placements = std::mem::take(&mut replay.placements);
     let coverage = frame::prepare(
         client_world.stream.as_ref(),
         actor_partial_tick.0,
@@ -119,6 +121,8 @@ pub(super) fn update(
         now,
         &placements,
     );
+    placements.clear();
+    replay.placements = placements;
     replay.frame = Some(frame);
     replay.coverage = Some(coverage);
 }

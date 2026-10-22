@@ -8,6 +8,7 @@ impl DroppedItemPublisher<'_, '_> {
     pub(super) fn prepare_scene(
         scene: &mut DroppedItemScene,
         cache: &mut ModelCache,
+        scratch: &mut PublishScratch,
         textures: Option<&ChunkTextureAssets>,
         placements: &[render_model::StaticItemPlacement],
         device: Option<&bevy::render::renderer::RenderDevice>,
@@ -30,21 +31,40 @@ impl DroppedItemPublisher<'_, '_> {
             icons.session_icon_generation(),
         );
         let assets = textures.map(|textures| textures.assets());
-        let mut instances = Vec::new();
-        let mut terrain_instances = Vec::new();
+        let PublishScratch {
+            instances,
+            terrain_instances,
+            lines,
+            placement_icons,
+            transitions,
+            dropped,
+            candidates,
+            ropes,
+        } = scratch;
+        instances.clear();
+        terrain_instances.clear();
+        placement_icons.clear();
 
         let item_limit = if received {
             render_model::MAX_DROPPED_ITEM_INSTANCES
         } else {
             usize::MAX
         };
-        let mut dropped = stream.authority().dropped_items(partial_tick);
+        stream.authority().dropped_items_into(partial_tick, dropped);
         admission.instance_limit = dropped.len() > item_limit;
         dropped.truncate(item_limit);
         let mut dial_models = dials::DialModels::default();
         cache.begin_frame();
         // Protect all current consumers before admitting new models, regardless of iteration order.
-        for view in &dropped {
+        for view in dropped.iter() {
+            if let Some(sheet) = view
+                .item
+                .identifier
+                .as_deref()
+                .and_then(|id| icons.session_block_sheet(id, view.item.identity.metadata))
+            {
+                cache.request(&ModelKey::session_block(sheet));
+            }
             if let Some((mode, id)) = item_block_id(stream, view.item.visual) {
                 let hashed = mode == NetworkIdMode::Hashed;
                 cache.request(&ModelKey::CarriedBlock { hashed, id });
@@ -66,17 +86,22 @@ impl DroppedItemPublisher<'_, '_> {
             }) {
                 if let Some(id) = placement.potted_block {
                     cache.request(&ModelKey::PottedBlock { id });
+                    placement_icons.push(None);
                     continue;
                 }
-                if let Some(icon) = icons.item_icon(&placement.identifier, placement.metadata) {
+                let icon = icons.item_icon(&placement.identifier, placement.metadata);
+                if let Some(icon) = icon {
                     cache.request(&ModelKey::icon(icon, false));
                 }
+                placement_icons.push(icon);
             }
         }
-        let mut candidates = stream.authority().block_entity_candidates(partial_tick);
+        stream
+            .authority()
+            .block_entity_candidates_into(partial_tick, candidates);
         admission.instance_limit |= candidates.len() > item_limit;
         candidates.truncate(item_limit);
-        for candidate in &candidates {
+        for candidate in candidates.iter() {
             if let Some((mode, id, _)) = entity_block_id(stream, &candidate.view.kind) {
                 cache.request(&ModelKey::Block {
                     hashed: mode == NetworkIdMode::Hashed,
@@ -85,14 +110,14 @@ impl DroppedItemPublisher<'_, '_> {
             }
         }
         cache.finish_demand();
-        preparation::retain_lifetimes(cache, &dropped);
-        for view in dropped.into_iter().take(item_limit) {
+        preparation::retain_lifetimes(cache, dropped);
+        for view in dropped.iter() {
             let Some(identifier) = view.item.identifier.as_ref() else {
                 continue;
             };
             let block_id = item_block_id(stream, view.item.visual);
             let preparation = DropPreparation {
-                view: &view,
+                view,
                 native_origin: stream.authority().actor(view.runtime_id).map_or(
                     view.position,
                     |actor| {
@@ -104,23 +129,52 @@ impl DroppedItemPublisher<'_, '_> {
                 camera,
                 frustum: frustum.as_ref(),
             };
-            let cube = block_id.zip(assets).and_then(|((mode, id), assets)| {
-                let hashed = mode == NetworkIdMode::Hashed;
-                preparation
-                    .model(
+            let session_block = icons
+                .session_block_sheet(identifier, view.item.identity.metadata)
+                .and_then(|sheet| {
+                    preparation.model(
                         cache,
-                        &ModelKey::CarriedBlock { hashed, id },
+                        &ModelKey::session_block(sheet),
                         DroppedItemShape::Cube,
-                        |cache| Self::carried_block_model(cache, icons, assets, mode, id),
+                        |cache| {
+                            cache.model(
+                                ModelKey::session_block(sheet),
+                                || {
+                                    icons.session_block_texture_layers(
+                                        identifier,
+                                        view.item.identity.metadata,
+                                    )
+                                },
+                                || {
+                                    icons.session_block_model(
+                                        identifier,
+                                        view.item.identity.metadata,
+                                        sheet,
+                                    )
+                                },
+                            )
+                        },
                     )
-                    .or_else(|| {
-                        preparation.model(
+                });
+            let cube = session_block.or_else(|| {
+                block_id.zip(assets).and_then(|((mode, id), assets)| {
+                    let hashed = mode == NetworkIdMode::Hashed;
+                    preparation
+                        .model(
                             cache,
-                            &ModelKey::Block { hashed, id },
+                            &ModelKey::CarriedBlock { hashed, id },
                             DroppedItemShape::Cube,
-                            |cache| Self::block_model(cache, assets, mode, id),
+                            |cache| Self::carried_block_model(cache, icons, assets, mode, id),
                         )
-                    })
+                        .or_else(|| {
+                            preparation.model(
+                                cache,
+                                &ModelKey::Block { hashed, id },
+                                DroppedItemShape::Cube,
+                                |cache| Self::block_model(cache, assets, mode, id),
+                            )
+                        })
+                })
             });
             let prepared = cube.or_else(|| {
                 let (icon_identifier, variant) = dropped_icon_key(icons, identifier, &view.item);
@@ -130,9 +184,7 @@ impl DroppedItemPublisher<'_, '_> {
                 })
             });
             if let Some(prepared) = prepared {
-                prepared.append(&view, &mut instances, |position| {
-                    stream.light_level_at(position)
-                });
+                prepared.append(view, instances, |position| stream.light_level_at(position));
             } else {
                 admission.model_failures += 1;
             }
@@ -140,21 +192,24 @@ impl DroppedItemPublisher<'_, '_> {
 
         // Items held by block entities (item frames, campfires) use the same sprite path.
         if !placements.is_empty() {
-            for placement in placements.iter().take(if received {
-                render_model::MAX_DROPPED_ITEM_INSTANCES
-            } else {
-                usize::MAX
-            }) {
+            for (placement, &icon) in
+                placements
+                    .iter()
+                    .zip(placement_icons.iter())
+                    .take(if received {
+                        render_model::MAX_DROPPED_ITEM_INSTANCES
+                    } else {
+                        usize::MAX
+                    })
+            {
                 let model = if let Some(id) = placement.potted_block {
                     assets.and_then(|assets| Self::potted_model(cache, assets, id))
                 } else {
-                    Self::icon_model(
-                        cache,
-                        icons,
-                        &placement.identifier,
-                        placement.metadata,
-                        false,
-                    )
+                    icon.and_then(|icon| {
+                        Self::resolved_icon_model(cache, icon, false, || {
+                            icon_sprite(icons, &placement.identifier, placement.metadata, false)
+                        })
+                    })
                 };
                 let Some(model) = model else {
                     admission.model_failures += 1;
@@ -176,7 +231,7 @@ impl DroppedItemPublisher<'_, '_> {
         }
 
         if let Some(assets) = assets {
-            let mut transitions: HashMap<i64, Vec<TerrainItemTransition>> = HashMap::new();
+            transitions.clear();
             for fence in stream.actor_block_sync_fences() {
                 transitions
                     .entry(fence.sync.actor_unique_id)
@@ -188,8 +243,8 @@ impl DroppedItemPublisher<'_, '_> {
                     });
             }
             admission.instance_limit |= received && candidates.len() > item_limit;
-            for candidate in candidates.into_iter().take(item_limit) {
-                let view = candidate.view;
+            for candidate in candidates.iter() {
+                let view = &candidate.view;
                 let Some((id_mode, id, base_scale)) = entity_block_id(stream, &view.kind) else {
                     continue;
                 };
@@ -234,10 +289,11 @@ impl DroppedItemPublisher<'_, '_> {
             }
         }
 
-        let mut lines: Vec<ItemMeshVertex> = Vec::new();
+        lines.clear();
         if let Some((camera, _)) = camera {
-            for rope in stream.authority().ropes(partial_tick) {
-                let rope = recording::prepare_rope(rope);
+            stream.authority().ropes_into(partial_tick, ropes);
+            for rope in ropes.iter() {
+                let rope = recording::prepare_rope(*rope);
                 if received && lines.len() >= render_model::MAX_DYNAMIC_ITEM_VERTICES {
                     admission.rope_limit = true;
                     break;
@@ -250,7 +306,7 @@ impl DroppedItemPublisher<'_, '_> {
                     rope.sag,
                     rope.half_width,
                     rope.color,
-                    &mut lines,
+                    lines,
                 );
             }
         }
@@ -276,17 +332,20 @@ impl DroppedItemPublisher<'_, '_> {
         scene.publish(
             cache.revision,
             Arc::clone(&cache.shared),
-            &instances,
-            &lines,
+            instances,
+            lines,
             DAYLIGHT,
         );
         scene.set_glint(glint.0, glint.1.scroll());
-        scene.publish_terrain_instances(stream.authority().actor_session_id(), &terrain_instances);
+        scene.publish_terrain_instances(stream.authority().actor_session_id(), terrain_instances);
         admission.instance_limit |= placements.len() > render_model::MAX_DROPPED_ITEM_INSTANCES
             || instances.len().saturating_add(terrain_instances.len())
                 > render_model::MAX_DROPPED_ITEM_INSTANCES
             || instances.len() > render_model::MAX_DROPPED_ITEM_INSTANCES
             || terrain_instances.len() > render_model::MAX_DROPPED_ITEM_INSTANCES;
+        dropped.clear();
+        candidates.clear();
+        ropes.clear();
         admission
     }
 }

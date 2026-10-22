@@ -149,12 +149,14 @@ pub(super) fn prepare(
 
     runtime.books.begin(clock.ticks);
     let readers = book_readers(stream, eye);
-    let mut submissions: Vec<BlockEntitySubmission> = Vec::new();
+    let mut submissions = std::mem::take(&mut runtime.submissions);
+    submissions.clear();
     runtime.frame = runtime.frame.wrapping_add(1);
     let frame_stamp = runtime.frame;
     // Moved out so `resolve` can borrow a template while mutating the rest of the runtime.
     let mut scans = std::mem::take(&mut runtime.columns);
-    let mut held: Vec<StaticItemPlacement> = Vec::new();
+    let mut held = std::mem::take(placements);
+    held.clear();
     runtime.lids.begin();
     let mut rescans_left = columns::MAX_COLUMN_RESCANS_PER_FRAME;
     let eye_column = [eye.x, eye.z].map(|axis| (axis / SUB_CHUNK_SIDE as f32).floor() as i32);
@@ -416,5 +418,7 @@ pub(super) fn prepare(
         .saturating_sub(coverage.current_columns);
     coverage.submission_limit |= submissions.len() >= MAX_SUBMISSIONS;
     coverage.vertex_limit = scene.rejected_quads() != 0;
+    submissions.clear();
+    runtime.submissions = submissions;
     coverage
 }

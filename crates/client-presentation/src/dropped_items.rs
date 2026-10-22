@@ -403,6 +403,7 @@ impl DroppedItemPublisher<'_, '_> {
         Self::prepare_scene(
             scene,
             &mut self.cache,
+            &mut self.scratch,
             self.textures.as_deref(),
             self.placements
                 .as_ref()

@@ -176,6 +176,55 @@ fn fixture(beacon_count: usize, eye: Vec3, fill_portals: bool) -> World {
 }
 
 #[test]
+fn block_preparation_reuses_empty_buffers_without_retaining_previous_submissions() {
+    let mut world = fixture(0, Vec3::new(8.0, 20.0, 8.0), false);
+    {
+        let mut runtime = world.resource_mut::<BlockEntityRuntime>();
+        runtime.submissions.reserve(32);
+        runtime.submissions.push(BlockEntitySubmission {
+            block: [0; 3],
+            light: BlockEntityLight::Scalar(1.0),
+            kind: BlockEntityKind::EndPortal,
+        });
+    }
+    world
+        .resource_mut::<render_scene::StaticItemPlacementsResource>()
+        .0
+        .0
+        .reserve(32);
+    let submissions = world.resource::<BlockEntityRuntime>().submissions.as_ptr();
+    let placements = world
+        .resource::<render_scene::StaticItemPlacementsResource>()
+        .0
+        .0
+        .as_ptr();
+    for _ in 0..3 {
+        world.run_system_once(update).unwrap();
+        let runtime = world.resource::<BlockEntityRuntime>();
+        assert!(runtime.submissions.is_empty());
+        assert_eq!(runtime.submissions.as_ptr(), submissions);
+        let items = world.resource::<render_scene::StaticItemPlacementsResource>();
+        assert!(items.0.0.is_empty());
+        assert_eq!(items.0.0.as_ptr(), placements);
+    }
+    world.resource_mut::<ClientWorld>().stream = None;
+    world.run_system_once(update).unwrap();
+    assert!(
+        world
+            .resource::<BlockEntityRuntime>()
+            .submissions
+            .is_empty()
+    );
+    assert!(
+        world
+            .resource::<render_scene::StaticItemPlacementsResource>()
+            .0
+            .0
+            .is_empty()
+    );
+}
+
+#[test]
 fn beacon_cache_waits_for_distance_admission_even_after_column_edits() {
     let mut world = fixture(
         SUB_CHUNK_SIDE * SUB_CHUNK_SIDE,

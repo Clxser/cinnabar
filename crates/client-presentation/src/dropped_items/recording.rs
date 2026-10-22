@@ -16,6 +16,7 @@ pub struct ReplayItems {
     enabled: bool,
     requested: bool,
     cache: ModelCache,
+    scratch: PublishScratch,
     source_poses: HashMap<(u64, u64), DroppedItemSpawnPose>,
     pub scene: Option<DroppedItemScene>,
     pub ropes: Arc<[PreparedItemRope]>,
@@ -48,9 +49,12 @@ impl ReplayItems {
             return;
         }
         self.source_poses.clear();
-        for view in stream
+        stream
             .authority()
-            .dropped_items(partial_tick)
+            .dropped_items_into(partial_tick, &mut self.scratch.dropped);
+        for view in self
+            .scratch
+            .dropped
             .iter()
             .take(render_model::MAX_DROPPED_ITEM_INSTANCES)
         {
@@ -59,6 +63,7 @@ impl ReplayItems {
                 self.source_poses.insert(key, *pose);
             }
         }
+        self.scratch.dropped.clear();
     }
 
     /// Prepares actual received item actors and independent block contents with no source frustum.
@@ -91,6 +96,7 @@ impl ReplayItems {
         self.admission = DroppedItemPublisher::prepare_scene(
             &mut scene,
             &mut self.cache,
+            &mut self.scratch,
             textures,
             placements,
             device,
