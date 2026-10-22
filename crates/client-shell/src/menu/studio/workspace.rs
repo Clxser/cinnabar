@@ -7,6 +7,12 @@ use launcher::menu::studio::{
 };
 
 impl Studio {
+    /// Restricts fallback tool actions to the selected open toolbox; painted targets own layout visibility.
+    pub(super) fn toolbox_active(&self, toolbox: Toolbox) -> bool {
+        let workspace = &self.view.workspace;
+        !workspace.preview_only && !workspace.media_hidden && workspace.toolbox == toolbox
+    }
+
     /// New selections reveal their properties once; hiding the panel stays respected until selection changes.
     pub(super) fn reconcile_inspector_selection(&mut self) {
         let selected = self.view.selected;

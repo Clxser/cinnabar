@@ -310,21 +310,38 @@ impl Studio {
 
     /// Keyboard fallback enumerates the same assist controls as painted hit targets.
     pub(super) fn creative_focus_actions(&self) -> Vec<Action> {
-        let mut actions = vec![
-            CreativeAction::CycleLookStrength,
-            CreativeAction::ToggleLookRange,
-            if self.creative.shot_analysis.is_some() {
+        use launcher::menu::studio::{AssistSection, Toolbox};
+        if self.toolbox_active(Toolbox::Effects) {
+            return [
+                CreativeAction::CycleLookStrength,
+                CreativeAction::ToggleLookRange,
+            ]
+            .into_iter()
+            .map(Action::Creative)
+            .collect();
+        }
+        if !self.toolbox_active(Toolbox::Creative) {
+            return Vec::new();
+        }
+        let mut actions: Vec<_> = AssistSection::ALL
+            .iter()
+            .copied()
+            .map(CreativeAction::Section)
+            .collect();
+        if self.view.workflow.creative.section == AssistSection::Cameras {
+            actions.push(if self.creative.shot_analysis.is_some() {
                 CreativeAction::CancelShotAnalysis
             } else {
                 CreativeAction::SuggestShots
-            },
-        ];
-        actions.extend(
-            launcher::menu::studio::AssistSection::ALL
-                .iter()
-                .copied()
-                .map(CreativeAction::Section),
-        );
+            });
+            for index in 0..self.view.workflow.creative.shots.len() {
+                actions.extend([
+                    CreativeAction::InspectShot(index),
+                    CreativeAction::ApplyShot(index),
+                ]);
+            }
+            return actions.into_iter().map(Action::Creative).collect();
+        }
         if self.creative.beat.is_some() {
             actions.push(CreativeAction::CancelAnalysis);
         } else if self.project().is_ok_and(|project| {
@@ -343,12 +360,6 @@ impl Studio {
                 CreativeAction::ClearBeatGrid,
             ]);
         }
-        for index in 0..self.view.workflow.creative.shots.len() {
-            actions.extend([
-                CreativeAction::InspectShot(index),
-                CreativeAction::ApplyShot(index),
-            ]);
-        }
         actions.into_iter().map(Action::Creative).collect()
     }
 }
@@ -357,6 +368,50 @@ impl Studio {
 mod tests {
     use super::*;
     use recording_studio::{PlaybackRate, model::AudioRole};
+
+    #[test]
+    fn assist_focus_exposes_only_the_active_section_and_keeps_looks_in_effects() {
+        use launcher::menu::studio::{AssistSection, Toolbox};
+        let mut studio = Studio::new(PathBuf::new());
+        studio.install(Editor::new(music_project()).unwrap(), None);
+        {
+            let view = Arc::make_mut(&mut studio.view);
+            view.workspace.media_hidden = false;
+            view.workspace.toolbox = Toolbox::Creative;
+        }
+        for section in AssistSection::ALL {
+            Arc::make_mut(&mut studio.view).workflow.creative.section = *section;
+            let actions = studio.creative_focus_actions();
+            assert_eq!(
+                actions.contains(&Action::Creative(CreativeAction::DetectBeats)),
+                *section == AssistSection::Rhythm
+            );
+            assert_eq!(
+                actions.contains(&Action::Creative(CreativeAction::SuggestShots)),
+                *section == AssistSection::Cameras
+            );
+            assert!(!actions.contains(&Action::Creative(CreativeAction::CycleLookStrength)));
+            for target in AssistSection::ALL {
+                assert!(actions.contains(&Action::Creative(CreativeAction::Section(*target))));
+            }
+        }
+        Arc::make_mut(&mut studio.view).workspace.toolbox = Toolbox::Effects;
+        assert_eq!(
+            studio.creative_focus_actions(),
+            [
+                Action::Creative(CreativeAction::CycleLookStrength),
+                Action::Creative(CreativeAction::ToggleLookRange)
+            ]
+        );
+        Arc::make_mut(&mut studio.view).workspace.media_hidden = true;
+        assert!(studio.creative_focus_actions().is_empty());
+        {
+            let view = Arc::make_mut(&mut studio.view);
+            view.workspace.media_hidden = false;
+            view.workspace.preview_only = true;
+        }
+        assert!(studio.creative_focus_actions().is_empty());
+    }
 
     #[test]
     fn assist_sections_do_not_edit_or_seek_the_project() {

@@ -61,17 +61,16 @@ impl Studio {
 
     /// Focus fallback follows the currently selected effect instead of indexing every curve key.
     pub(super) fn effect_focus_actions(&self) -> Vec<Action> {
-        let mut actions = EffectKind::ALL
-            .iter()
-            .copied()
-            .map(Action::AddEffect)
-            .collect::<Vec<_>>();
-        actions.extend(
-            recording_studio::effect::preset::Look::ALL
-                .iter()
-                .copied()
-                .map(Action::AddLook),
-        );
+        let mut actions = Vec::new();
+        if self.toolbox_active(launcher::menu::studio::Toolbox::Effects) {
+            actions.extend(EffectKind::ALL.iter().copied().map(Action::AddEffect));
+            actions.extend(
+                recording_studio::effect::preset::Look::ALL
+                    .iter()
+                    .copied()
+                    .map(Action::AddLook),
+            );
+        }
         if self.selected_effect().is_ok() {
             actions.extend([
                 Action::ToggleEffect,
