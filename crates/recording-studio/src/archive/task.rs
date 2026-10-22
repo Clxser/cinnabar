@@ -334,7 +334,7 @@ impl Recording {
         Ok(self.task.clone())
     }
 
-    /// Publishes a producer failure once, then releases the queue endpoint so the worker can recover.
+    /// Closes admission after a rejected record; storage still drains every previously accepted record.
     fn fail(&mut self, error: &ArchiveError) {
         self.task.0.fail(error.to_string());
         self.sender.take();
@@ -422,7 +422,7 @@ impl Shared {
         self.changed.notify_all();
     }
 
-    /// Retains the original failure; secondary cleanup errors must not hide its actionable cause.
+    /// Closes admission and retains the first diagnostic without cancelling accepted storage work.
     fn fail(&self, message: String) {
         self.accepting.store(false, Ordering::Release);
         self.failed.store(true, Ordering::Release);
@@ -469,6 +469,8 @@ fn run(
             progress.state = RecordingState::Recording;
         }
     });
+    // Producer rejection closes the sender, not the accepted prefix. Only storage failures below
+    // terminate processing; a Failed UI state does not authorize discarding an admitted checkpoint.
     while let Ok(queued) = receiver.recv() {
         let QueuedRecord {
             sequence,
@@ -478,9 +480,6 @@ fn run(
             charge,
         } = queued;
         drop(charge);
-        if shared.failed.load(Ordering::Acquire) {
-            break;
-        }
         let payload = match payload.materialize() {
             Ok(payload) => payload,
             Err(error) => {
@@ -497,7 +496,7 @@ fn run(
         let (bytes, completion) = writer.progress();
         shared.committed(bytes, completion);
     }
-    // No producer remains after recv closes. A failed producer may still have queued records to drop.
+    // The producer is closed and every accepted record was processed before finalization.
     drop(receiver);
     let normal_stop =
         shared.finish.load(Ordering::Acquire) && !shared.failed.load(Ordering::Acquire);
