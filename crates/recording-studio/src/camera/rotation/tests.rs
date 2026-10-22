@@ -77,6 +77,15 @@ fn free_and_exact_global_path_rotations_preserve_geometry_lens_handles_and_easin
             .unwrap();
         if kind == CameraRigKind::Path {
             shot = shot
+                .keyed(
+                    span.end,
+                    CameraPose {
+                        position: [4.0, 64.0, 0.0],
+                        yaw: 90.0,
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
                 .with_path_control(span.start, PathControl::Outgoing, [2.0, 65.0, 3.0])
                 .unwrap()
                 .with_key_easing(span.start, Easing::Smooth)
