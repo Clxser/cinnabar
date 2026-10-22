@@ -291,6 +291,11 @@ those definitions while preserving authored item conditions. Expression roots re
 the worn slot through owner placement; worn equipment counts exclude hands.
 Multi-pass body equipment and matched native visual qualification remain incomplete.
 
+Server-pack attachables can supply worn and held models, with an optional item-icon
+fallback for held models. Script-based helmet inference is provisional and recognizes
+specific head/hand branch names. General slot inference and complete texture-budget
+and rendered qualification remain incomplete.
+
 - [ ] `P4.3-RIGS` — Close bounded asset admission, Molang/controllers, protocol-driven
   poses, skeletal rendering and distinct tick/frame interpolation with native evidence.
   Skin cubes retain signed extents after negative inflation. Rendered qualification of
