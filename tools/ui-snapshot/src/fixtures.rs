@@ -650,144 +650,6 @@ const STATES: &[State] = &[
         fixture: out_of_game::world_edit_after_delete_back,
     },
     State {
-        name: "studio-recovery",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: studio::recovery,
-    },
-    State {
-        name: "studio-recovery-narrow",
-        size: [900, 600],
-        gui_scale: GUI_SCALE,
-        fixture: studio::recovery,
-    },
-    State {
-        name: "studio-preview-settings",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: studio::preview_settings,
-    },
-    State {
-        name: "studio-controls",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: studio::controls,
-    },
-    State {
-        name: "studio-setup",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: studio::setup,
-    },
-    State {
-        name: "studio-editor",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: studio::editor,
-    },
-    State {
-        name: "studio-editor-short",
-        size: [1280, 600],
-        gui_scale: GUI_SCALE,
-        fixture: studio::editor,
-    },
-    State {
-        name: "studio-editor-narrow",
-        size: [900, 600],
-        gui_scale: GUI_SCALE,
-        fixture: studio::editor,
-    },
-    State {
-        name: "studio-editor-small",
-        size: [640, 480],
-        gui_scale: GUI_SCALE,
-        fixture: studio::editor,
-    },
-    State {
-        name: "studio-editor-large-gui",
-        size: [900, 600],
-        gui_scale: 4,
-        fixture: studio::editor,
-    },
-    State {
-        name: "studio-transport-comfortable",
-        size: [900, 600],
-        gui_scale: GUI_SCALE,
-        fixture: studio::transport_comfortable,
-    },
-    State {
-        name: "studio-transport-comfortable-small",
-        size: [640, 480],
-        gui_scale: GUI_SCALE,
-        fixture: studio::transport_comfortable,
-    },
-    State {
-        name: "studio-camera",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: studio::camera,
-    },
-    State {
-        name: "studio-camera-subjects",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: studio::camera_subjects,
-    },
-    State {
-        name: "studio-camera-subjects-small",
-        size: [640, 480],
-        gui_scale: GUI_SCALE,
-        fixture: studio::camera_subjects,
-    },
-    State {
-        name: "studio-path",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: studio::path,
-    },
-    State {
-        name: "studio-camera-small",
-        size: [640, 480],
-        gui_scale: GUI_SCALE,
-        fixture: studio::camera,
-    },
-    State {
-        name: "studio-assist",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: studio::assist,
-    },
-    State {
-        name: "studio-assist-cameras",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: studio::assist_cameras,
-    },
-    State {
-        name: "studio-recording",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: studio::recording,
-    },
-    State {
-        name: "studio-audio",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: studio::audio,
-    },
-    State {
-        name: "studio-settings",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: studio::settings,
-    },
-    State {
-        name: "studio-settings-narrow",
-        size: [900, 600],
-        gui_scale: GUI_SCALE,
-        fixture: studio::settings,
-    },
-    State {
         name: "chat-background-transparent",
         size: SIZE,
         gui_scale: GUI_SCALE,
@@ -1113,7 +975,10 @@ pub fn settings(section: &str) -> MenuView {
     view
 }
 
-/// Enumerates every fixture, including the independently owned Social settings states.
+/// Enumerates each independently owned screen fixture registry.
 pub fn states() -> impl Iterator<Item = &'static State> {
-    STATES.iter().chain(social_settings::STATES)
+    STATES
+        .iter()
+        .chain(social_settings::STATES)
+        .chain(studio::STATES)
 }

@@ -9,6 +9,7 @@ use super::*;
 
 mod fov;
 mod navigation;
+mod rotation;
 mod saved;
 mod subjects;
 pub(super) use saved::CameraViewEdit;

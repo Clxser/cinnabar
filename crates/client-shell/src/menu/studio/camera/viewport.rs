@@ -6,13 +6,14 @@ use recording_studio::camera::{
     CameraTargetRef, CameraView, PathControl,
 };
 
-const DRAG_THRESHOLD: f32 = 4.0;
+pub(super) const DRAG_THRESHOLD: f32 = 4.0;
 
 #[derive(Default)]
 pub(in crate::menu::studio) struct CameraInteraction {
     pub(super) motion: recording_studio::camera::navigation::NavigationMotion,
     pub(super) navigation_context: Option<([u64; 3], Id)>,
     pub(super) pan: Option<super::navigation::Pan>,
+    pub(super) rotation: Option<super::rotation::RotationGesture>,
     pub(in crate::menu::studio) project: Option<Arc<Project>>,
     gesture: Option<Gesture>,
     revision: u64,
@@ -45,17 +46,20 @@ enum Gesture {
 }
 
 impl Studio {
-    /// An authored path drag owns its frozen draft until the original left button releases.
+    /// Authored translation and rotation retain their draft until the original left button releases.
     pub(in crate::menu) fn authored_camera_drag_active(&self) -> bool {
-        matches!(
-            self.camera_interaction.gesture,
-            Some(Gesture::Control { .. })
-        )
+        self.camera_interaction.rotation.is_some()
+            || matches!(
+                self.camera_interaction.gesture,
+                Some(Gesture::Control { .. })
+            )
     }
 
     /// Authored handles and orbit capture retain exclusive pointer ownership until release.
     pub(super) fn navigation_blocked(&self) -> bool {
-        self.camera_interaction.gesture.is_some() || self.camera_interaction.pan.is_some()
+        self.camera_interaction.gesture.is_some()
+            || self.camera_interaction.pan.is_some()
+            || self.camera_interaction.rotation.is_some()
     }
     /// An inspected pose publishes a unique view revision without seeking or editing the document.
     pub(in crate::menu::studio) fn inspect_camera_pose(&mut self, pose: CameraPose) {
@@ -76,6 +80,9 @@ impl Studio {
 
     /// A document edit invalidates a captured source shot; deleted or deselected keys lose their handles.
     pub(in crate::menu::studio) fn reconcile_camera_workspace(&mut self) {
+        if !self.rotation_source_current() {
+            self.release_camera();
+        }
         let changed = match self.camera_interaction.gesture.as_ref() {
             Some(Gesture::Control { project, .. }) => self
                 .project()
@@ -156,6 +163,9 @@ impl Studio {
 
     /// Keyboard focus uses the displayed replay pose and pauses the transport before moving it.
     pub(in crate::menu) fn focus_camera(&mut self) -> Result<(), String> {
+        if self.authored_camera_drag_active() {
+            return Ok(());
+        }
         if self.view.camera_workspace.focused && self.view.camera_workspace.view.is_some() {
             self.transport.pause();
             return Ok(());
@@ -178,6 +188,11 @@ impl Studio {
     }
     /// Focus loss, hidden panels and Escape abandon the uncommitted gesture while retaining the view.
     pub(in crate::menu) fn release_camera(&mut self) {
+        let rotation_inspection = self
+            .camera_interaction
+            .rotation
+            .take()
+            .map(|gesture| gesture.inspection);
         self.camera_interaction.motion.reset();
         self.camera_interaction.navigation_context = None;
         self.camera_interaction.pan = None;
@@ -187,6 +202,10 @@ impl Studio {
         workspace.focused = false;
         workspace.looking = false;
         workspace.draft = None;
+        workspace.rotation = None;
+        if let Some(inspection) = rotation_inspection {
+            workspace.view = inspection;
+        }
     }
 
     /// Reset returns to the evaluated timeline camera without changing saved camera metadata.
@@ -201,8 +220,22 @@ impl Studio {
         hovered: Option<launcher::menu::MenuAction>,
         point: Option<[f32; 2]>,
         held: bool,
-        pressed: bool,
+        mut pressed: bool,
     ) -> bool {
+        if self.authored_camera_drag_active() {
+            pressed = false;
+        }
+        if self.camera_interaction.rotation.is_some()
+            || (pressed
+                && matches!(
+                    hovered,
+                    Some(launcher::menu::MenuAction::Studio(
+                        Action::CameraRotationControl { .. }
+                    ))
+                ))
+        {
+            return self.rotation_pointer(hovered, point, held, pressed);
+        }
         if pressed {
             let action = match hovered {
                 Some(launcher::menu::MenuAction::Studio(action)) => action,
@@ -481,6 +514,7 @@ impl Studio {
         looking: bool,
     ) {
         if !self.view.camera_workspace.focused
+            || self.camera_interaction.rotation.is_some()
             || self.camera_interaction.pan.is_some()
             || self
                 .camera_interaction

@@ -1,5 +1,9 @@
 //! Anonymous editable project metadata exercises Studio without media IO or a live account.
 
+mod states;
+
+pub(super) use states::STATES;
+
 use super::*;
 use recording_studio::{
     Id, MediaTime, Project, Span,
@@ -100,6 +104,34 @@ pub(super) fn path() -> Fixture {
     shot.path_timing = recording_studio::camera::PathTiming::GlobalDistance;
     studio.lanes = Arc::new(recording_studio::lanes::TimelineLanes::new(project).unwrap());
     Fixture::Menu(Box::new(view))
+}
+
+/// An exact authored key exposes rotation rings over original generated preview artwork.
+pub(super) fn rotation(path_camera: bool) -> Fixture {
+    let Fixture::Menu(mut view) = (if path_camera {
+        path()
+    } else {
+        Fixture::Menu(Box::new(camera_view()))
+    }) else {
+        unreachable!()
+    };
+    let studio = Arc::make_mut(&mut view.studio);
+    studio.workspace.viewport_tool = launcher::menu::studio::ViewportTool::Rotate;
+    studio.workspace.media_hidden = true;
+    studio.workspace.inspector_hidden = true;
+    studio.camera_workspace.focused = true;
+    if path_camera {
+        studio.position = MediaTime(15_000_000);
+        studio.camera_workspace.key = Some((Id(4), studio.position));
+        let pose = studio.project.as_ref().unwrap().shots[0]
+            .rotation_pose(studio.position)
+            .unwrap();
+        let preview = studio.preview.camera.as_mut().unwrap();
+        preview.source_time = studio.position;
+        preview.pose = pose;
+        preview.render_pose = pose;
+    }
+    Fixture::Menu(view)
 }
 
 /// The Assist toolbox is opened explicitly instead of capturing the default hidden panel.

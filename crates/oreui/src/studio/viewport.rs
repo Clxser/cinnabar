@@ -17,6 +17,7 @@ use launcher::menu::studio::ViewportTool;
 const MAX_VISIBLE_KEYS: usize = 128;
 const MAX_VISIBLE_SUBJECTS: usize = 24;
 const SEGMENT_POINTS: usize = 9;
+mod rotation;
 
 /// The caller supplies the actual aspect-fitted image rectangle after painting its media.
 pub(super) fn draw(
@@ -171,10 +172,17 @@ pub(super) fn draw(
         controls(canvas, view, bounds, geometry, &projection, shot)?;
         axes(canvas, view, bounds, geometry, &projection, shot)?;
     }
+    if workspace_tool(view) == ViewportTool::Rotate {
+        rotation::draw(canvas, view, bounds, shot)?;
+    }
     if workspace.focused {
         canvas.frame(bounds, 0.25, PRIMARY_ROLE.specular_hovered[0])?;
         if !workspace.looking && height >= canvas.r(12.0) {
-            let gesture = launcher::menu::studio::NavigationGesture::Pan;
+            let gesture = if workspace_tool(view) == ViewportTool::Rotate {
+                launcher::menu::studio::NavigationGesture::Rotate
+            } else {
+                launcher::menu::studio::NavigationGesture::Pan
+            };
             let line = canvas.r(CAPTION.line + 0.4);
             let strip = [hit[0], hit[3] - line, hit[2], hit[3]];
             if strip[3] - strip[1] > 0.0 && strip[1] >= hit[1] {

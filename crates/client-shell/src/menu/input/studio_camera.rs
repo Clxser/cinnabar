@@ -219,6 +219,7 @@ fn image_hit(action: Option<MenuAction>) -> bool {
             Action::CameraViewport { .. }
                 | Action::CameraControl { .. }
                 | Action::CameraAxisControl { .. }
+                | Action::CameraRotationControl { .. }
                 | Action::CameraSubject(_)
         ))
     )
@@ -268,7 +269,7 @@ mod tests {
     use super::*;
     use recording_studio::{
         Id, MediaTime,
-        camera::{CameraDragAxis, PathControl},
+        camera::{CameraDragAxis, CameraRotationAxis, PathControl},
     };
 
     #[test]
@@ -281,6 +282,14 @@ mod tests {
             bounds: [0, 0, 100, 100],
         });
         assert!(image_hit(Some(axis)));
+        assert!(image_hit(Some(MenuAction::Studio(
+            Action::CameraRotationControl {
+                shot: Id(1),
+                at: MediaTime::ZERO,
+                axis: CameraRotationAxis::Yaw,
+                bounds: [0, 0, 100, 100],
+            }
+        ))));
         assert!(image_hit(Some(MenuAction::Studio(
             Action::CameraViewport {
                 bounds: [0, 0, 100, 100]

@@ -17,6 +17,7 @@ mod saturation_overlap;
 #[cfg(feature = "test-support")]
 mod settings_draft;
 mod sprite_outline;
+mod studio_preview;
 mod tiled_image;
 
 use std::{
@@ -306,7 +307,7 @@ fn png_fixture(
             edit_selection::paint(&mut engine, &mut frame)?;
             add_server_pages(&mut engine, &mut carriers.pages);
         }
-        Fixture::Menu(view) => {
+        Fixture::Menu(mut view) => {
             carriers::validate_oreui(dir)?;
             let images = oreui::images::load_optional_oreui_images(dir)
                 .ok_or_else(|| Error::Invalid("OreUI artwork is unusable; make assets".into()))?;
@@ -347,6 +348,7 @@ fn png_fixture(
             });
             cosmetic_icons(&mut artwork, &mut carriers.pages, seconds);
             mod_icons(&view, &mut artwork, &mut carriers.pages)?;
+            studio_preview::install(&mut view, &mut carriers.pages);
             let character_page = (view.screen == launcher::menu::MenuScreen::Home)
                 .then(|| character::texture(dir, &mut carriers.pages))
                 .transpose()?;

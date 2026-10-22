@@ -27,11 +27,21 @@ pub struct CameraWorkspace {
     pub key: Option<(Id, MediaTime)>,
     /// Pointer drags publish a replacement for overlay/preview only until one gesture commits.
     pub draft: Option<Arc<CameraShot>>,
+    pub rotation: Option<CameraRotationHandle>,
     pub drag_axis: CameraDragAxis,
     pub snap: CameraSnap,
     pub guides: CameraGuides,
     pub saved_views: SavedCameraViews,
     pub path_cache: Option<CameraPathCache>,
+}
+
+/// The active authored ring keeps its frozen geometry and visible identity until release or cancel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CameraRotationHandle {
+    pub shot: Id,
+    pub at: MediaTime,
+    pub axis: recording_studio::camera::CameraRotationAxis,
+    pub bounds: [i32; 4],
 }
 
 impl CameraWorkspace {

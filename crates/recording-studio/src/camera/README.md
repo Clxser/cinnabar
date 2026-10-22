@@ -116,3 +116,21 @@ endpoints and centers its bounded segment window on actual traveled position.
 Editable key/handle markers retain their separate timestamp window. Very long
 visible rails show a bounded neighborhood rather than dropping the current spatial
 segment because its key timestamp is far from the playhead.
+
+## Authored rotation
+
+Select a Free camera or seek to an existing Path key, then choose **Rotate** in
+the viewer. The image-space rings edit the renderer's Euler components: yaw uses
+world Y, pitch uses yaw-local X, and roll uses the viewing direction. Clicking an
+angle opens the existing precise numeric control. These controls retain position,
+FOV, rail timing, easing and Bezier handles, including global distance rails.
+
+The ring captures its screen geometry until the original button releases. A drag
+previews the authored camera and commits one undo step. Escape, focus loss, a
+different take, seek or document change cancel it and restore the prior inspection
+view. A successful edit remains on the authored timeline camera. The rings need
+an image at least 180 by 116 logical pixels; smaller images retain numeric controls.
+Pitch stops at ±90 degrees. Yaw and roll unwrap continuously across ring crossings;
+successive pointer samples must differ by less than 180 degrees to identify turn
+direction. This is constrained Euler authoring, not an arbitrary quaternion or
+world-position rotation manipulator.

@@ -19,7 +19,7 @@ sections! { Toolbox { Media => "Media", Cameras => "Cameras", Effects => "Effect
 sections! { CameraTools { Shots => "Shots", Views => "Views" } }
 sections! { AssistSection { Rhythm => "Rhythm", Cameras => "Cameras" } }
 sections! { InspectorSection { Clip => "Clip", Framing => "Frame", Speed => "Speed", Cut => "Cut" } }
-sections! { ViewportTool { Navigate => "Navigate", Players => "Players", Path => "Path" } }
+sections! { ViewportTool { Navigate => "Navigate", Players => "Players", Path => "Path", Rotate => "Rotate" } }
 sections! { SettingsPage { Recording => "Recording", Preview => "Preview", Export => "Export", Diagnostics => "Setup", Controls => "Controls" } }
 
 /// Workspace controls change only presentation; they never dirty a project.

@@ -21,6 +21,7 @@ mod keys;
 pub mod navigation;
 mod path;
 mod presets;
+mod rotation;
 mod saved;
 mod subjects;
 mod viewport;
@@ -29,6 +30,7 @@ pub use distance::{CompiledCameraPath, PathAccuracy, PathTiming};
 pub use edit::{CameraParameter, CameraRigKind};
 pub use path::{CameraHandles, PathControl};
 pub use presets::CameraPreset;
+pub use rotation::{CameraRotationAxis, CameraRotationDrag};
 pub use saved::{CameraViewSource, MAX_SAVED_VIEW_NAME_BYTES, SavedCameraView};
 pub use subjects::{
     CameraSubjectFilter, CameraSubjectSearch, CameraTargetKind, LEGACY_SUBJECT_NOTICE,

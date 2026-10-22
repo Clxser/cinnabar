@@ -686,7 +686,7 @@ impl Studio {
             Action::MoveEffect(frames) => self.move_effect(frames)?,
             Action::UseNativeReplay => self.use_native_replay()?,
             Action::CameraViewport { .. } => self.focus_camera()?,
-            Action::CameraAxisControl { .. } => {}
+            Action::CameraAxisControl { .. } | Action::CameraRotationControl { .. } => {}
             Action::SetCameraDragAxis(axis) => {
                 Arc::make_mut(&mut self.view).camera_workspace.drag_axis = axis;
             }

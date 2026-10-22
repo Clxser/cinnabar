@@ -1,0 +1,180 @@
+//! Studio capture states share anonymous metadata and production editor layout.
+
+use super::super::{GUI_SCALE, SIZE, State};
+
+pub(in crate::fixtures) const STATES: &[State] = &[
+    State {
+        name: "studio-recovery",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: super::recovery,
+    },
+    State {
+        name: "studio-recovery-narrow",
+        size: [900, 600],
+        gui_scale: GUI_SCALE,
+        fixture: super::recovery,
+    },
+    State {
+        name: "studio-preview-settings",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: super::preview_settings,
+    },
+    State {
+        name: "studio-controls",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: super::controls,
+    },
+    State {
+        name: "studio-setup",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: super::setup,
+    },
+    State {
+        name: "studio-editor",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: super::editor,
+    },
+    State {
+        name: "studio-editor-short",
+        size: [1280, 600],
+        gui_scale: GUI_SCALE,
+        fixture: super::editor,
+    },
+    State {
+        name: "studio-editor-narrow",
+        size: [900, 600],
+        gui_scale: GUI_SCALE,
+        fixture: super::editor,
+    },
+    State {
+        name: "studio-editor-small",
+        size: [640, 480],
+        gui_scale: GUI_SCALE,
+        fixture: super::editor,
+    },
+    State {
+        name: "studio-editor-large-gui",
+        size: [900, 600],
+        gui_scale: 4,
+        fixture: super::editor,
+    },
+    State {
+        name: "studio-transport-comfortable",
+        size: [900, 600],
+        gui_scale: GUI_SCALE,
+        fixture: super::transport_comfortable,
+    },
+    State {
+        name: "studio-transport-comfortable-small",
+        size: [640, 480],
+        gui_scale: GUI_SCALE,
+        fixture: super::transport_comfortable,
+    },
+    State {
+        name: "studio-camera",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: super::camera,
+    },
+    State {
+        name: "studio-camera-subjects",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: super::camera_subjects,
+    },
+    State {
+        name: "studio-camera-subjects-small",
+        size: [640, 480],
+        gui_scale: GUI_SCALE,
+        fixture: super::camera_subjects,
+    },
+    State {
+        name: "studio-path",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: super::path,
+    },
+    State {
+        name: "studio-camera-small",
+        size: [640, 480],
+        gui_scale: GUI_SCALE,
+        fixture: super::camera,
+    },
+    State {
+        name: "studio-assist",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: super::assist,
+    },
+    State {
+        name: "studio-assist-cameras",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: super::assist_cameras,
+    },
+    State {
+        name: "studio-recording",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: super::recording,
+    },
+    State {
+        name: "studio-audio",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: super::audio,
+    },
+    State {
+        name: "studio-settings",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: super::settings,
+    },
+    State {
+        name: "studio-settings-narrow",
+        size: [900, 600],
+        gui_scale: GUI_SCALE,
+        fixture: super::settings,
+    },
+    State {
+        name: "studio-rotate-free",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || super::rotation(false),
+    },
+    State {
+        name: "studio-rotate-free-narrow",
+        size: [900, 600],
+        gui_scale: GUI_SCALE,
+        fixture: || super::rotation(false),
+    },
+    State {
+        name: "studio-rotate-free-small",
+        size: [640, 480],
+        gui_scale: GUI_SCALE,
+        fixture: || super::rotation(false),
+    },
+    State {
+        name: "studio-rotate-path",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || super::rotation(true),
+    },
+    State {
+        name: "studio-rotate-path-narrow",
+        size: [900, 600],
+        gui_scale: GUI_SCALE,
+        fixture: || super::rotation(true),
+    },
+    State {
+        name: "studio-rotate-path-small",
+        size: [640, 480],
+        gui_scale: GUI_SCALE,
+        fixture: || super::rotation(true),
+    },
+];

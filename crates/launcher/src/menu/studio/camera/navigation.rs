@@ -25,6 +25,7 @@ macro_rules! gestures {
 
 gestures! {
     Orbit => "Left drag", "Orbit around the selected player or forward pivot";
+    Rotate => "Rotate tool + ring drag", "Author yaw, pitch or roll; release to save, Escape to cancel";
     Look => "Right drag", "Look around without moving the camera";
     Pan => "Middle drag", "Pan relative to the view, including camera roll";
     Move => "WASD / Q E", "Fly horizontally / move down and up";

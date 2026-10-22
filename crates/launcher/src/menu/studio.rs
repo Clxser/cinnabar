@@ -16,8 +16,9 @@ pub use clip::{ClipTimeField, MAX_CLIP_TIME_BYTES};
 mod camera;
 pub use camera::{
     CAMERA_SUBJECT_ROWS, CameraGuides, CameraNavigationAction, CameraPathCache,
-    CameraSubjectResults, CameraSubjectsAction, CameraViewNameDraft, CameraViewsAction,
-    CameraWorkspace, NavigationGesture, SAVED_CAMERA_VIEWS_PER_PAGE, SavedCameraViews,
+    CameraRotationHandle, CameraSubjectResults, CameraSubjectsAction, CameraViewNameDraft,
+    CameraViewsAction, CameraWorkspace, NavigationGesture, SAVED_CAMERA_VIEWS_PER_PAGE,
+    SavedCameraViews,
 };
 pub mod creative;
 mod workspace;
@@ -243,6 +244,12 @@ pub enum Action {
         bounds: [i32; 4],
     },
     CameraSubject(CameraTargetRef),
+    CameraRotationControl {
+        shot: Id,
+        at: MediaTime,
+        axis: recording_studio::camera::CameraRotationAxis,
+        bounds: [i32; 4],
+    },
     CameraAxisControl {
         shot: Id,
         at: MediaTime,
