@@ -1,4 +1,4 @@
-//! The community catalog preview uses native Settings controls and session-only saves.
+//! The community marketplace uses native Settings controls for browsing and saved mods.
 
 use super::super::{
     Content,
@@ -17,11 +17,7 @@ use ui_engine::engine::screen::PaintError;
 #[cfg(test)]
 mod tests;
 
-const PROTOTYPE_NOTICE: &str =
-    "Synthetic prototype catalog. Saves last for this session; no mods are downloaded.";
-const SYNC_NOTICE: &str = "Microsoft-linked library sync requires the marketplace service.";
-
-/// Wraps local preview navigation for the existing Mods input router.
+/// Wraps marketplace navigation for the existing Mods input router.
 fn command(action: Action) -> MenuAction {
     MenuAction::Mods(launcher::mods::Action::Marketplace(action))
 }
@@ -46,7 +42,7 @@ fn navigation(content: &mut Content<'_, '_>, state: &State) -> Result<(), PaintE
         .iter()
         .filter(|id| catalog().published(**id).is_some())
         .count();
-    let library = format!("Demo library ({saved})");
+    let library = format!("My library ({saved})");
     controls(
         content,
         &[
@@ -131,7 +127,6 @@ fn filters(content: &mut Content<'_, '_>, state: &State) -> Result<(), PaintErro
 fn browse(content: &mut Content<'_, '_>, state: &State) -> Result<(), PaintError> {
     content.heading("Marketplace", "Explore free community mods.")?;
     navigation(content, state)?;
-    caption(content, PROTOTYPE_NOTICE)?;
     filters(content, state)?;
     let items = state.listings();
     section(
@@ -139,7 +134,7 @@ fn browse(content: &mut Content<'_, '_>, state: &State) -> Result<(), PaintError
         &format!(
             "{} ({})",
             if state.library_only {
-                "Saved previews"
+                "Saved mods"
             } else {
                 "Free community mods"
             },
@@ -167,8 +162,8 @@ fn empty_library(content: &mut Content<'_, '_>, state: &State) -> Result<(), Pai
     paragraph(
         content,
         match (state.library_only, filtered) {
-            (true, true) => "No saved previews in this category.",
-            (true, false) => "Your demo library is empty.",
+            (true, true) => "No saved mods in this category.",
+            (true, false) => "Your library is empty.",
             (false, true) => "No community mods in this category.",
             (false, false) => "No community mods are available yet.",
         },
@@ -178,9 +173,9 @@ fn empty_library(content: &mut Content<'_, '_>, state: &State) -> Result<(), Pai
     caption(
         content,
         if state.library_only {
-            "Open a mod's details and choose Save preview to try the library. Nothing is installed."
+            "Find a mod you like and add it to your library."
         } else {
-            "The prototype shows only published listings. Check another category or return to installed mods."
+            "Try another category or return to your installed mods."
         },
     )?;
     actions(
@@ -286,7 +281,7 @@ fn listing_row(
     Ok(())
 }
 
-/// Shows the complete description and declared access before a local preview save.
+/// Shows the complete description and declared access before adding a mod to the library.
 fn details(content: &mut Content<'_, '_>, state: &State, item: &Listing) -> Result<(), PaintError> {
     content.heading(
         &item.title,
@@ -297,7 +292,7 @@ fn details(content: &mut Content<'_, '_>, state: &State, item: &Listing) -> Resu
         &[
             (
                 if state.library_only {
-                    "Back to demo library"
+                    "Back to library"
                 } else {
                     "Back to catalog"
                 },
@@ -312,7 +307,6 @@ fn details(content: &mut Content<'_, '_>, state: &State, item: &Listing) -> Resu
         ],
     )?;
     content.y += content.canvas.r(1.2);
-    caption(content, PROTOTYPE_NOTICE)?;
     paragraph(
         content,
         &format!(
@@ -326,7 +320,7 @@ fn details(content: &mut Content<'_, '_>, state: &State, item: &Listing) -> Resu
     section(content, "Permissions")?;
     caption(
         content,
-        "Declared by this demonstration listing. Saving a preview grants no access.",
+        "Saving to your library doesn't install or enable mods or grant requested permissions.",
     )?;
     if item.permissions.is_empty() {
         paragraph(content, "No permissions declared.", BODY, TEXT)?;
@@ -341,9 +335,9 @@ fn details(content: &mut Content<'_, '_>, state: &State, item: &Listing) -> Resu
         content,
         &[(
             if saved {
-                "Remove saved preview"
+                "Remove from library"
             } else {
-                "Save preview"
+                "Add to library"
             },
             if saved {
                 Variant::Secondary
@@ -353,15 +347,10 @@ fn details(content: &mut Content<'_, '_>, state: &State, item: &Listing) -> Resu
             Some(command(Action::Save(item.id))),
         )],
     )?;
-    content.y += content.canvas.r(0.8);
-    caption(
-        content,
-        if saved {
-            "Saved in your demo library for this session. This mod is not installed."
-        } else {
-            "Save this listing to your demo library. This does not install or enable the mod."
-        },
-    )?;
+    if saved {
+        content.y += content.canvas.r(0.8);
+        caption(content, "In your library.")?;
+    }
     content.y += content.canvas.r(1.6);
     account(content)?;
     content.y += content.canvas.r(2.4);
@@ -371,8 +360,8 @@ fn details(content: &mut Content<'_, '_>, state: &State, item: &Listing) -> Resu
 /// Keeps invalid or no-longer-published identities out of the detail view.
 fn unavailable(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
     content.heading(
-        "Preview unavailable",
-        "This listing is not in the public catalog.",
+        "Mod unavailable",
+        "This mod is no longer available in the marketplace.",
     )?;
     actions(
         content,
@@ -414,22 +403,15 @@ fn paragraph(
 fn account(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
     let status = match &content.view.auth_state {
         AuthState::Authenticated => format!(
-            "Microsoft account: {}. Demo saves last for this session.",
+            "Signed in as {}",
             launcher::menu::profile::current_name(content.view)
         ),
-        AuthState::SignedOut => {
-            "Browsing without a linked account. Demo saves last for this session.".to_owned()
-        }
-        AuthState::Checking => {
-            "Checking Microsoft account. Demo saves last for this session.".to_owned()
-        }
+        AuthState::SignedOut => "Browsing as a guest".to_owned(),
+        AuthState::Checking => "Checking sign-in…".to_owned(),
         AuthState::AwaitingCode { .. } | AuthState::AwaitingXboxSignup { .. } => {
-            "Microsoft sign-in is in progress. Demo saves last for this session.".to_owned()
+            "Microsoft sign-in is in progress…".to_owned()
         }
-        AuthState::Failed(_) => {
-            "Microsoft sign-in is unavailable. Demo saves last for this session.".to_owned()
-        }
+        AuthState::Failed(_) => "Sign-in is unavailable. You can still browse.".to_owned(),
     };
-    caption(content, &status)?;
-    caption(content, SYNC_NOTICE)
+    caption(content, &status)
 }

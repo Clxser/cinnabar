@@ -7,6 +7,7 @@ struct Painted {
     hits: Vec<(MenuAction, ui::UiRect)>,
     focus: Vec<MenuAction>,
     text: String,
+    text_runs: Vec<(String, ui::UiRect)>,
 }
 
 /// Normalizes wrapped glyph text without depending on how text nodes are split.
@@ -56,23 +57,27 @@ fn render(view: &MenuView, width: f32) -> Painted {
                 .collect(),
         )
     };
-    let text = nodes
+    let text_runs: Vec<_> = nodes
         .iter()
         .filter_map(|node| match node.visual() {
-            ui::UiVisual::Text { layout, .. } => Some(
-                layout
-                    .glyphs()
-                    .iter()
-                    .map(|glyph| glyph.codepoint)
-                    .collect::<String>(),
-            ),
+            ui::UiVisual::Text { layout, .. } => Some((
+                words(
+                    &layout
+                        .glyphs()
+                        .iter()
+                        .map(|glyph| glyph.codepoint)
+                        .collect::<String>(),
+                ),
+                node.bounds(),
+            )),
             _ => None,
         })
-        .collect::<String>();
+        .collect();
     Painted {
         hits,
         focus,
-        text: words(&text),
+        text: text_runs.iter().map(|(text, _)| text.as_str()).collect(),
+        text_runs,
     }
 }
 
@@ -117,8 +122,6 @@ fn installed_mods_offer_the_marketplace_and_opening_it_replaces_install_controls
             .iter()
             .all(|(action, _)| matches!(action, MenuAction::Mods(mods::Action::Marketplace(_))))
     );
-    assert!(browser.text.contains(&words(PROTOTYPE_NOTICE)));
-    assert!(!browser.text.contains(&words("Import mod")));
 }
 
 #[test]
@@ -146,7 +149,6 @@ fn unpublished_and_unknown_identities_never_become_public_rows_or_details() {
     for id in hidden.iter().map(|item| item.id).chain([unknown]) {
         state.details = Some(id);
         let unavailable = render(&view(state.clone()), 800.0);
-        assert!(unavailable.text.contains(&words("Preview unavailable")));
         assert!(
             unavailable
                 .hits
@@ -160,7 +162,12 @@ fn unpublished_and_unknown_identities_never_become_public_rows_or_details() {
     state.apply(Action::Library);
     let library = render(&view(state), 800.0);
     assert!(detail_ids(&library).is_empty());
-    assert!(library.text.contains(&words("Demo library (0)")));
+    assert!(
+        library
+            .hits
+            .iter()
+            .any(|(action, _)| *action == command(Action::Browse))
+    );
 }
 
 #[test]
@@ -190,7 +197,7 @@ fn category_filters_keep_listing_identity_in_every_selection_action() {
 }
 
 #[test]
-fn details_show_the_complete_description_permissions_and_only_a_preview_save() {
+fn details_show_description_and_permissions_before_the_library_action() {
     for item in browsing().listings() {
         let mut state = browsing();
         state.apply(Action::Details(item.id));
@@ -199,29 +206,30 @@ fn details_show_the_complete_description_permissions_and_only_a_preview_save() {
                 state.apply(Action::Save(item.id));
             }
             let painted = render(&view(state.clone()), 800.0);
+            let (_, save) = painted
+                .hits
+                .iter()
+                .find(|(action, _)| *action == command(Action::Save(item.id)))
+                .expect("library action for the selected listing");
+            let before_save: String = painted
+                .text_runs
+                .iter()
+                .filter(|(_, bounds)| bounds.max().y() <= save.min().y())
+                .map(|(text, _)| text.as_str())
+                .collect();
             for text in [&item.description, &item.version, &item.license] {
-                assert!(painted.text.contains(&words(text)));
+                assert!(before_save.contains(&words(text)));
             }
             for permission in &item.permissions {
-                assert!(painted.text.contains(&words(permission)));
+                assert!(before_save.contains(&words(permission)));
             }
-            assert!(
-                painted
-                    .text
-                    .contains(&words("Saving a preview grants no access."))
-            );
-            assert!(painted.text.contains(&words(SYNC_NOTICE)));
-            assert!(painted.text.contains(&words(if saved {
-                "Remove saved preview"
-            } else {
-                "Save preview"
-            })));
-            assert!(
-                painted
-                    .hits
-                    .iter()
-                    .any(|(action, _)| *action == command(Action::Save(item.id)))
-            );
+            for consequence in [
+                "doesn't install",
+                "or enable",
+                "or grant requested permissions",
+            ] {
+                assert!(before_save.contains(&words(consequence)));
+            }
             assert!(painted.hits.iter().all(|(action, _)| matches!(
                 action,
                 MenuAction::Mods(mods::Action::Marketplace(_))
@@ -231,7 +239,7 @@ fn details_show_the_complete_description_permissions_and_only_a_preview_save() {
 }
 
 #[test]
-fn saved_preview_can_be_opened_from_the_library_and_removed_back_to_empty() {
+fn saved_mod_can_be_opened_from_the_library_and_removed_back_to_empty() {
     let mut state = browsing();
     let first = detail_ids(&render(&view(state.clone()), 800.0))[0];
     state.apply(Action::Details(first));
@@ -240,14 +248,21 @@ fn saved_preview_can_be_opened_from_the_library_and_removed_back_to_empty() {
     assert_eq!(detail_ids(&render(&view(state.clone()), 800.0)), [first]);
     state.apply(Action::Details(first));
     let detail = render(&view(state.clone()), 800.0);
-    assert!(detail.text.contains(&words("Back to demo library")));
-    assert!(detail.text.contains(&words("Remove saved preview")));
+    for action in [Action::Back, Action::Save(first)] {
+        assert!(
+            detail
+                .hits
+                .iter()
+                .any(|(target, _)| *target == command(action))
+        );
+    }
     state.apply(Action::Save(first));
     state.apply(Action::Back);
+    assert!(state.library_only);
+    assert!(state.details.is_none());
+    assert!(state.saved.is_empty());
     let empty = render(&view(state), 800.0);
     assert!(detail_ids(&empty).is_empty());
-    assert!(empty.text.contains(&words("Your demo library is empty.")));
-    assert!(empty.text.contains(&words("Nothing is installed.")));
     assert!(
         empty
             .hits
@@ -282,15 +297,10 @@ fn native_controls_remain_focusable_and_inside_the_content_on_compact_windows() 
 }
 
 #[test]
-fn account_copy_uses_real_auth_state_and_never_claims_service_sync() {
+fn account_copy_displays_a_profile_only_when_authenticated() {
     let mut view = view(browsing());
     view.feeds.profile.gamertag = "Example signed-in player".into();
     let anonymous = render(&view, 800.0);
-    assert!(
-        anonymous
-            .text
-            .contains(&words("Browsing without a linked account."))
-    );
     assert!(
         !anonymous
             .text
@@ -301,18 +311,27 @@ fn account_copy_uses_real_auth_state_and_never_claims_service_sync() {
     assert!(
         authenticated
             .text
-            .contains(&words("Microsoft account: Example signed-in player."))
+            .contains(&words(&view.feeds.profile.gamertag))
     );
-    assert!(authenticated.text.contains(&words(SYNC_NOTICE)));
+    assert_ne!(authenticated.text, anonymous.text);
     for auth in [
         AuthState::SignedOut,
         AuthState::Checking,
+        AuthState::AwaitingCode {
+            uri: "https://example.invalid/sign-in".into(),
+            code: "PRIVATE-TEST-CODE".into(),
+        },
+        AuthState::AwaitingXboxSignup {
+            uri: "https://example.invalid/sign-up".into(),
+        },
         AuthState::Failed("Synthetic diagnostic".into()),
     ] {
         view.auth_state = auth;
         let painted = render(&view, 800.0);
         assert!(!painted.text.contains(&words(&view.feeds.profile.gamertag)));
         assert!(!painted.text.contains(&words("Synthetic diagnostic")));
+        assert!(!painted.text.contains(&words("example.invalid")));
+        assert!(!painted.text.contains(&words("PRIVATE-TEST-CODE")));
         assert!(
             !painted
                 .hits
