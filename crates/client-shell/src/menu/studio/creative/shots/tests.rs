@@ -91,6 +91,7 @@ fn pending(
             verified_target: None,
         },
         epoch: studio.transport.epoch(),
+        position: studio.transport.position(),
         camera_view: None,
         selected_target: Some(subject.reference()),
         map: project.clips[0].time_map().unwrap(),
@@ -178,7 +179,7 @@ fn missing_or_different_lifetimes_cannot_publish_subject_alternatives() {
 
 #[test]
 fn seek_retime_and_source_relink_cancel_proof_before_any_late_result_is_published() {
-    for mutation in 0..5 {
+    for mutation in 0..6 {
         let (mut studio, sender, cancellation) = pending(PlaybackRate::default());
         sender.send(Ok(Some(proof(4_000_000)))).unwrap();
         match mutation {
@@ -204,11 +205,17 @@ fn seek_retime_and_source_relink_cancel_proof_before_any_late_result_is_publishe
             3 => {
                 Arc::make_mut(&mut studio.view).camera_target = None;
             }
-            _ => {
+            4 => {
                 Arc::make_mut(&mut studio.view).camera_workspace.view = Some(CameraView {
                     pose: CameraPose::default(),
                     revision: 1,
                 });
+            }
+            _ => {
+                studio.transport.play(MediaTime(8_000_000));
+                studio
+                    .transport
+                    .advance(MediaTime(100_000), MediaTime(8_000_000));
             }
         }
         studio.poll_shot_coverage();

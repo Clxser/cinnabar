@@ -9,6 +9,7 @@ const MIN_SUGGESTED_SHOT: MediaTime = MediaTime(100_000);
 pub(super) struct ShotJob {
     draft: ShotDraft,
     epoch: u64,
+    position: MediaTime,
     camera_view: Option<CameraView>,
     selected_target: Option<recording_studio::camera::CameraTargetRef>,
     map: TimeMap,
@@ -159,6 +160,7 @@ impl ShotJob {
                 .project()
                 .is_ok_and(|project| Arc::ptr_eq(project, &self.draft.project))
             && self.epoch == studio.transport.epoch()
+            && self.position == studio.transport.position()
             && self.camera_view == studio.view.camera_workspace.view
             && self.selected_target == studio.view.camera_target
     }
@@ -184,9 +186,7 @@ impl Studio {
                     .contains(&recording_studio::tracks::Track::Video(clip.track))
         }) {
             let span = clip.span().map_err(|error| error.to_string())?;
-            if span.contains(at)
-                && clip.source_time(at).map_err(|error| error.to_string())? == preview.source_time
-            {
+            if span.contains(at) {
                 if native_clip.is_some() {
                     return Err(
                         "Choose one unambiguous native clip before suggesting subject cameras."
@@ -313,6 +313,7 @@ impl Studio {
         self.creative.shot_analysis = Some(ShotJob {
             draft,
             epoch: self.transport.epoch(),
+            position: self.transport.position(),
             camera_view: self.view.camera_workspace.view,
             selected_target: self.view.camera_target,
             map,
