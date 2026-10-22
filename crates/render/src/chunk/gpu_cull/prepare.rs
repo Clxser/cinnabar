@@ -102,13 +102,28 @@ impl GpuCull {
         }
     }
 
+    /// Replaces storage and rewrites every record into it.
+    fn install_storage(&mut self, storage: CullStorage) {
+        self.args = Some(Buffer::from(storage.args.clone()));
+        self.draw_counts = Some(Buffer::from(storage.draw_counts.clone()));
+        self.draw_offsets = Some(Buffer::from(storage.draw_offsets.clone()));
+        self.storage = Some(storage);
+        self.bind_groups = None;
+        self.table.mark_all_dirty();
+    }
+
     /// Whether storage held every live slot when last prepared.
     pub(super) fn holds_all_slots(&self) -> bool {
         !self.short_of_slots
     }
 
+    /// Slots the storage holds records for: while it is short, slots admitted after this
+    /// frame's queue are left out until it grows.
     pub(super) fn slot_count(&self) -> u32 {
-        self.table.slot_count()
+        let slots = self.table.slot_count();
+        self.storage
+            .as_ref()
+            .map_or(slots, |storage| slots.min(storage.capacity))
     }
 
     /// Prepared indirect buffers and their live-slot/capacity bounds for `view`.
@@ -218,9 +233,9 @@ pub(super) fn prepare_gpu_cull(
         cull.table.refresh_entity(entity, &hidden.hidden);
     }
     cull.table.trim();
-    if !upload_records(cull, &device, &queue) {
-        return;
-    }
+    // Short storage keeps culling the slots it holds: this frame's queue already chose this
+    // path, so returning here would drop every culled draw. Later frames queue the CPU path.
+    upload_records(cull, &device, &queue);
 
     let Some(view) = frame.view else {
         return;
@@ -229,8 +244,11 @@ pub(super) fn prepare_gpu_cull(
         return;
     };
     let depth = sampleable_depth(depth, resolution_override);
+    if cull.storage.is_none() {
+        return;
+    }
     prepare_pyramid(&mut cull.pyramid, &cull.kernels, &device, depth, *msaa);
-    let storage = cull.storage.as_ref().expect("records were uploaded");
+    let storage = cull.storage.as_ref().expect("checked above");
     let hiz_mips = cull
         .pyramid
         .as_ref()
@@ -263,28 +281,24 @@ pub(super) fn prepare_gpu_cull(
 }
 
 /// Grows storage when the slot watermark passes it, then writes dirty records and bits.
-/// False, writing nothing, while storage cannot grow to every live slot.
-fn upload_records(cull: &mut GpuCull, device: &RenderDevice, queue: &RenderQueue) -> bool {
-    let slots = cull.slot_count();
+/// When storage cannot grow to every live slot, keeps it and writes only the slots it holds.
+fn upload_records(cull: &mut GpuCull, device: &RenderDevice, queue: &RenderQueue) {
+    let slots = cull.table.slot_count();
+    cull.short_of_slots = false;
     if cull
         .storage
         .as_ref()
         .is_none_or(|storage| storage.capacity < slots)
     {
-        let Some(storage) = grow_storage(device, slots) else {
-            cull.short_of_slots = true;
-            return false;
-        };
-        cull.args = Some(Buffer::from(storage.args.clone()));
-        cull.draw_counts = Some(Buffer::from(storage.draw_counts.clone()));
-        cull.draw_offsets = Some(Buffer::from(storage.draw_offsets.clone()));
-        cull.storage = Some(storage);
-        cull.bind_groups = None;
-        cull.table.mark_all_dirty();
+        match grow_storage(device, slots) {
+            Some(storage) => cull.install_storage(storage),
+            None => cull.short_of_slots = true,
+        }
     }
-    cull.short_of_slots = false;
-    let storage = cull.storage.as_ref().expect("storage was just ensured");
-    write_dirty_records(&mut cull.table, queue, &storage.records);
+    let Some(storage) = cull.storage.as_ref() else {
+        return;
+    };
+    write_dirty_records(&mut cull.table, queue, &storage.records, storage.capacity);
     if cull.table.take_enabled_dirty() {
         let enabled = cull.table.enabled();
         let words = enabled.len().min((storage.capacity as usize).div_ceil(32));
@@ -302,7 +316,6 @@ fn upload_records(cull: &mut GpuCull, device: &RenderDevice, queue: &RenderQueue
             );
         }
     }
-    true
 }
 
 /// Storage for `slots`, a power of two where one storage binding allows; `None` when no
@@ -358,14 +371,17 @@ pub(super) fn sampleable_depth<'a>(
     })
 }
 
-/// Writes the table's dirty records into `records` in contiguous runs.
+/// Writes the table's dirty records below `capacity` into `records` in contiguous runs; slots
+/// past it are rewritten once storage grows.
 pub(super) fn write_dirty_records(
     table: &mut CullSlots,
     queue: &RenderQueue,
     records: &wgpu::Buffer,
+    capacity: u32,
 ) {
     let record_bytes = std::mem::size_of::<CullRecord>() as u64;
-    let dirty = table.take_dirty();
+    let mut dirty = table.take_dirty();
+    dirty.retain(|&slot| slot < capacity);
     let source = table.records();
     for run in dirty.chunk_by(|left, right| left + 1 == *right) {
         let (first, last) = (run[0] as usize, run[run.len() - 1] as usize);
@@ -472,12 +488,42 @@ mod storage_tests {
         {
             let _failure =
                 crate::gpu_allocation::inject(|label, _| label == "terrain cull storage");
-            assert!(!upload_records(&mut cull, &device, &queue));
+            upload_records(&mut cull, &device, &queue);
         }
         assert!(cull.storage.is_none());
         assert!(!cull.holds_all_slots());
-        assert!(upload_records(&mut cull, &device, &queue));
+        upload_records(&mut cull, &device, &queue);
         assert!(cull.holds_all_slots());
         assert!(cull.storage.is_some());
+    }
+
+    /// Storage that cannot grow keeps culling the slots it holds, so the view this frame's
+    /// queue already routed to GPU culling still draws; newer slots wait for growth.
+    #[test]
+    fn short_storage_keeps_culling_the_slots_it_holds() {
+        let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+        let (device, queue) = (RenderDevice::from(device), RenderQueue::new(queue));
+        let mut cull = GpuCull::new(&device, GpuCullSubmission::Fixed);
+        upload_records(&mut cull, &device, &queue);
+        let capacity = cull.storage.as_ref().expect("initial storage").capacity;
+        cull.table.update(
+            Entity::PLACEHOLDER,
+            capacity + 10,
+            ChunkBiomeTintIdentity::default(),
+            CullRecord::default(),
+            &HashSet::new(),
+        );
+        {
+            let _failure =
+                crate::gpu_allocation::inject(|label, _| label == "terrain cull storage");
+            upload_records(&mut cull, &device, &queue);
+        }
+        let held = cull.storage.as_ref().map(|storage| storage.capacity);
+        assert_eq!(held, Some(capacity));
+        assert_eq!(cull.slot_count(), capacity);
+        assert!(!cull.holds_all_slots());
+        upload_records(&mut cull, &device, &queue);
+        assert!(cull.holds_all_slots());
+        assert_eq!(cull.slot_count(), capacity + 11);
     }
 }

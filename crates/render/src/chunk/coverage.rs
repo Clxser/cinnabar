@@ -162,7 +162,12 @@ pub(super) fn publish_terrain_coverage(
             );
             if coverage.mask.as_deref() != Some(&mask) {
                 let mask = Arc::new(mask);
-                gpu.publish_mask(&device, &queue, Arc::clone(&mask));
+                if !gpu.publish_mask(&device, &queue, Arc::clone(&mask)) {
+                    // Admission stays with the mask far terrain still draws; retry next frame.
+                    coverage.mask = None;
+                    coverage.dirty = true;
+                    return;
+                }
                 coverage.mask = Some(mask);
             }
             scene.residency.publish_near(

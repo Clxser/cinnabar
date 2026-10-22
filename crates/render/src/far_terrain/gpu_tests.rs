@@ -411,3 +411,69 @@ fn growth_without_memory_keeps_storage_and_retries() {
     gpu.grow_slots(&device, &queue, slots + 1);
     assert!(gpu.slots > slots);
 }
+
+fn tile_with_quads(x: i32, quads: usize) -> Arc<TileMesh> {
+    Arc::new(TileMesh {
+        coverage: far_terrain::TileCoverage::Complete,
+        key: TileKey { level: 0, x, z: 0 },
+        revision: 1,
+        quads: vec![[0, 64]; quads].into_boxed_slice(),
+        colours: vec![0; TILE_CELLS * TILE_CELLS * 4].into_boxed_slice(),
+        min_y: 0,
+        max_y: 64,
+    })
+}
+
+/// Making room for a finer tile must not retire residents or hand out a range the quad
+/// buffer cannot hold when it cannot grow; uploading past it would be a validation error.
+#[test]
+fn eviction_without_memory_to_grow_keeps_every_resident() {
+    let (device, queue) = device();
+    let mut gpu = FarTerrainGpu::new(&device);
+    let old = tiles(4);
+    populate(&mut gpu, &device, &queue, &old);
+    let quad_capacity = gpu.quad_capacity;
+    let mut scene = vec![tile_with_quads(-1, quad_capacity as usize * 2)];
+    scene.extend(old.iter().cloned());
+    {
+        let _failure = crate::gpu_allocation::inject(|label, _| label.starts_with("far terrain"));
+        assert!(!gpu.apply_tiles(&device, &queue, &scene));
+    }
+    assert_eq!(gpu.quad_capacity, quad_capacity);
+    assert!(old.iter().all(|mesh| gpu.resident.contains_key(&mesh.key)));
+    assert!(!gpu.resident.contains_key(&scene[0].key));
+    for _ in 0..=scene.len() {
+        gpu.apply_tiles(&device, &queue, &scene);
+    }
+    assert!(gpu.resident.contains_key(&scene[0].key));
+}
+
+/// A fresh scene whose first tile cannot grow storage stays pending, so the tile retries.
+#[test]
+fn a_tile_that_cannot_grow_keeps_its_scene_pending() {
+    let (device, queue) = device();
+    let mut gpu = FarTerrainGpu::new(&device);
+    let scene = [tile_with_quads(0, 4)];
+    {
+        let _failure = crate::gpu_allocation::inject(|label, _| label.starts_with("far terrain"));
+        assert!(!gpu.apply_tiles(&device, &queue, &scene));
+    }
+    assert!(gpu.resident.is_empty());
+    assert!(gpu.apply_tiles(&device, &queue, &scene));
+    assert!(gpu.resident.contains_key(&scene[0].key));
+}
+
+/// A mask the device has no memory for is not acknowledged, so publication retries it.
+#[test]
+fn a_mask_without_memory_is_not_acknowledged() {
+    let (device, queue) = device();
+    let mut gpu = FarTerrainGpu::new(&device);
+    let mask = Arc::new(NearMask::around([0, 0], 32, 8, []));
+    {
+        let _failure = crate::gpu_allocation::inject(|label, _| label.starts_with("far terrain"));
+        assert!(!gpu.publish_mask(&device, &queue, Arc::clone(&mask)));
+    }
+    assert!(gpu.applied_mask.is_none());
+    assert!(gpu.publish_mask(&device, &queue, Arc::clone(&mask)));
+    assert!(gpu.applied_mask.is_some());
+}

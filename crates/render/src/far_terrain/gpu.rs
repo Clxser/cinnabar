@@ -79,6 +79,8 @@ pub(crate) struct FarTerrainGpu {
     protected: HashSet<ColumnPos>,
     empty_far: HashSet<ColumnPos>,
     publication_revision: u64,
+    /// Set when storage growth ran out of memory, so an unplaced tile keeps its scene pending.
+    growth_failed: bool,
     pub(super) draws: Vec<FarDraw>,
     layout: BindGroupLayoutDescriptor,
     pipelines: Vec<((TextureFormat, u32), CachedRenderPipelineId)>,
@@ -150,6 +152,7 @@ impl FarTerrainGpu {
             protected: HashSet::new(),
             empty_far: HashSet::new(),
             publication_revision: 0,
+            growth_failed: false,
             draws: Vec::new(),
             layout,
             pipelines: Vec::new(),
@@ -259,10 +262,13 @@ impl FarTerrainGpu {
                 complete = false;
                 break;
             }
+            self.growth_failed = false;
             let Some((slot, quads)) =
                 self.allocate_tile(device, queue, mesh, tiles, &priority, rank)
             else {
                 allocation_failed = true;
+                // Out of memory is transient; the scene stays pending so the tile retries.
+                complete &= !self.growth_failed;
                 // A later coarser replacement may free space without uncovering a fallback.
                 complete &= !self
                     .resident
@@ -352,7 +358,8 @@ impl FarTerrainGpu {
         for (index, key) in candidates.iter().enumerate() {
             ranges.release(self.resident[key].quads.clone());
             let quads = ranges.allocate(count);
-            if quads.end > max_quads(device) {
+            // Grow before retiring anything, so a failed growth leaves every resident drawn.
+            if quads.end > max_quads(device) || !self.grow_quads(device, queue, quads.end) {
                 ranges.release(quads);
                 continue;
             }
@@ -361,7 +368,6 @@ impl FarTerrainGpu {
                 self.free_slots.push(old.slot);
             }
             self.ranges = ranges;
-            self.grow_quads(device, queue, quads.end);
             return Some((self.free_slots.pop().expect("retired slot"), quads));
         }
         None
@@ -523,6 +529,7 @@ impl FarTerrainGpu {
                 )
             })
         else {
+            self.growth_failed = true;
             return;
         };
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -574,6 +581,7 @@ impl FarTerrainGpu {
             "far terrain quads",
             u64::from(capacity) * QUAD_BYTES,
         ) else {
+            self.growth_failed = true;
             return false;
         };
         let mut encoder = device.create_command_encoder(&Default::default());

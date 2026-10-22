@@ -76,15 +76,20 @@ impl FarTerrainGpu {
             })
     }
 
-    /// Publishes the mask chosen with near draw admission in the current render frame.
+    /// Publishes the mask chosen with near draw admission in the current render frame. False,
+    /// keeping the previous mask, when the device is out of memory for its storage.
+    #[must_use]
     pub(crate) fn publish_mask(
         &mut self,
         device: &RenderDevice,
         queue: &RenderQueue,
         mask: Arc<NearMask>,
-    ) {
-        self.apply_mask(device, queue, &mask);
-        self.applied_mask = Some(mask);
+    ) -> bool {
+        let published = self.apply_mask(device, queue, &mask);
+        if published {
+            self.applied_mask = Some(mask);
+        }
+        published
     }
 
     /// Changes whenever bounded far preparation can change drawable coverage.

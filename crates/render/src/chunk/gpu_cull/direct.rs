@@ -393,7 +393,7 @@ impl DirectOcclusion {
             self.table.mark_all_dirty();
         }
         let storage = self.storage.as_ref().expect("storage was just ensured");
-        write_dirty_records(&mut self.table, queue, &storage.records);
+        write_dirty_records(&mut self.table, queue, &storage.records, storage.capacity);
     }
 
     /// Consumes settled readbacks for legacy history and optional current-frame work diagnostics.
