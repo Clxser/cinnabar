@@ -457,8 +457,8 @@ fn oversized_backlog_growth_falls_back_to_the_minimum() {
     assert_eq!(migration.new_capacity, minimum.new_capacity);
 }
 
-/// Indirect command growth without memory keeps the old buffer and reports the commands it
-/// holds, so draws never read past it.
+/// Indirect command growth without memory keeps the old buffer and writes nothing into it,
+/// so the previous publication keeps drawing exactly what it witnessed.
 #[test]
 fn indirect_growth_without_memory_keeps_the_buffer() {
     let (device, queue) = noop_device();
@@ -468,14 +468,18 @@ fn indirect_growth_without_memory_keeps_the_buffer() {
     {
         let _failure =
             crate::gpu_allocation::inject(|label, _| label == "packed chunk indirect commands");
-        let written = upload_indirect_commands_if_changed(&mut arena, &device, &queue, &commands);
+        assert!(!reserve_indirect_commands(
+            &mut arena,
+            &device,
+            commands.len()
+        ));
         assert_eq!(
-            written,
-            arena.indirect_capacity as u64 * INDEXED_INDIRECT_BYTES
+            upload_indirect_commands_if_changed(&mut arena, &device, &queue, &commands),
+            0
         );
-        assert!(arena.indirect_capacity < commands.len());
     }
     assert_eq!(arena.indirect_buffer.id(), buffer);
+    assert!(arena.uploaded_indirect_bytes.is_empty());
     assert_eq!(
         upload_indirect_commands_if_changed(&mut arena, &device, &queue, &commands),
         commands.len() as u64 * INDEXED_INDIRECT_BYTES

@@ -80,7 +80,9 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
     let _timer = profiler
         .as_deref()
         .map(|profiler| profiler.time(RuntimeStage::GpuPreparation));
-    release_completed_transparent_retirements(&mut arena, retirement_fence.completed_epoch());
+    if !arena.indirect_publication_stale {
+        release_completed_transparent_retirements(&mut arena, retirement_fence.completed_epoch());
+    }
     let active_tint_identity = biome_tints.table_identity();
     let tint_identity_changed = fairness.last_tint_identity != Some(active_tint_identity);
     let candidates = if tint_identity_changed || fairness.recover_untracked {

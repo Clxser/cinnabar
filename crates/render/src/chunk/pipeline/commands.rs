@@ -97,25 +97,38 @@ pub(in crate::chunk) fn prepare_depth_liquid_indirect_batch_draws<'a>(
     (commands, drawn)
 }
 
+/// Grows the indirect buffer to hold `commands`; false, keeping the old buffer and what it
+/// holds, when the device is out of memory for a larger one.
+pub(in crate::chunk) fn reserve_indirect_commands(
+    arena: &mut ChunkGpuArena,
+    render_device: &RenderDevice,
+    commands: usize,
+) -> bool {
+    if commands <= arena.indirect_capacity {
+        return true;
+    }
+    let capacity = commands.next_power_of_two();
+    let Some(buffer) = create_indirect_buffer(render_device, capacity) else {
+        return false;
+    };
+    arena.indirect_capacity = capacity;
+    arena.indirect_buffer = buffer;
+    arena.uploaded_indirect_bytes.clear();
+    crate::chunk::gpu::telemetry::log_arena_capacity(arena, "indirect commands grew");
+    true
+}
+
 /// Writes the frame's indirect commands unless the buffer already holds exactly these bytes;
-/// returns the bytes written. When the device is out of memory to grow, the old buffer is
-/// kept and only the leading commands it holds are written.
+/// returns the bytes written, none when the buffer cannot grow to hold them all.
 pub(in crate::chunk) fn upload_indirect_commands_if_changed(
     arena: &mut ChunkGpuArena,
     render_device: &RenderDevice,
     render_queue: &RenderQueue,
     commands: &[DrawIndexedIndirectArgs],
 ) -> u64 {
-    if commands.len() > arena.indirect_capacity {
-        let capacity = commands.len().next_power_of_two();
-        if let Some(buffer) = create_indirect_buffer(render_device, capacity) {
-            arena.indirect_capacity = capacity;
-            arena.indirect_buffer = buffer;
-            arena.uploaded_indirect_bytes.clear();
-            crate::chunk::gpu::telemetry::log_arena_capacity(arena, "indirect commands grew");
-        }
+    if !reserve_indirect_commands(arena, render_device, commands.len()) {
+        return 0;
     }
-    let commands = &commands[..commands.len().min(arena.indirect_capacity)];
     let bytes: &[u8] = bytemuck::cast_slice(commands);
     if arena.uploaded_indirect_bytes == bytes {
         return 0;

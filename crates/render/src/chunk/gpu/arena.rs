@@ -114,6 +114,9 @@ pub(in crate::chunk) struct ChunkGpuArena {
     pub(in crate::chunk) indirect_capacity: usize,
     /// What `indirect_buffer` currently holds, so an unchanged frame skips its write.
     pub(in crate::chunk) uploaded_indirect_bytes: Vec<u8>,
+    /// The indirect buffer could not grow, so the previous publication still draws; retired
+    /// ranges it may reference are not recycled until a publication succeeds.
+    pub(in crate::chunk) indirect_publication_stale: bool,
     pub(in crate::chunk) quad_len: usize,
     pub(in crate::chunk) geometry_stream_len: usize,
     pub(in crate::chunk) origin_len: usize,
@@ -199,6 +202,7 @@ impl ChunkGpuArena {
             biome_capacity: FALLBACK_BIOME_WORDS,
             indirect_capacity: 1,
             uploaded_indirect_bytes: Vec::new(),
+            indirect_publication_stale: false,
             quad_len: 0,
             geometry_stream_len: 0,
             origin_len: 0,

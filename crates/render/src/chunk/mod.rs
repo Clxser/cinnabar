@@ -196,7 +196,7 @@ use pipeline::commands::{
     drawable_allocation_identity, front_to_back_cube_entities, indirect_batch_draw_args,
     prepare_depth_liquid_indirect_batch_draws, prepare_indirect_batch_draws,
     prepare_model_indirect_batch_draws, record_visibility_direct_submission,
-    record_visibility_mdi_submissions, sorted_visible_entities,
+    record_visibility_mdi_submissions, reserve_indirect_commands, sorted_visible_entities,
     upload_indirect_commands_if_changed,
 };
 #[allow(unused_imports)]

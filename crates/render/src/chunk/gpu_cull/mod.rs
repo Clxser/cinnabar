@@ -20,6 +20,8 @@ pub(in crate::chunk) mod occlusion;
 mod prepare;
 mod queue;
 pub(in crate::chunk) use queue::GpuCullQueue;
+#[cfg(test)]
+mod recovery_tests;
 mod slots;
 #[cfg(test)]
 mod tests;
