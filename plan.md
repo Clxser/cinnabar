@@ -88,6 +88,8 @@ and resource qualification; they do not imply these systems need to be written.
 
 - [ ] Qualify static/non-cube models, blend/water and flipbooks, including native
   presentation and animation. Identify unsupported states before adding implementation.
+  Held end-rod models and narrow rod selection bounds are implemented; matched final-frame
+  outlines and third-person held-item qualification remain incomplete.
   Entity-drawn blocks retain pack face materials for destruction and mining particles;
   matched chest-particle presentation and custom destruction overrides remain incomplete.
 - [ ] Close straw-bed native-gallery and replacement-pack acceptance. Both halves
