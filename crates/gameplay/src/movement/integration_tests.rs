@@ -26,6 +26,7 @@ mod crouch_camera;
 mod input_lock_sources;
 mod riptide;
 mod sneak_sync;
+mod swim_sprint_replay;
 
 pub(super) fn evidence_context() -> PhysicsTickEvidenceContext {
     PhysicsTickEvidenceContext {

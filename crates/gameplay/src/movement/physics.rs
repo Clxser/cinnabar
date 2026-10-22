@@ -554,7 +554,7 @@ impl LocalPhysicsController {
             .min(MAX_LOCAL_PHYSICS_TICKS_PER_FRAME as u64) as usize;
 
         let physical_jump_held = input.jumping;
-        let sprint_request = input.sprinting;
+        let mut sprint_request = input.sprinting;
         let requested_movement_speed = input.movement_speed;
         let sneak_request = input.sneaking;
         input.pitch_degrees = f64::from(context.pitch);
@@ -593,7 +593,8 @@ impl LocalPhysicsController {
             input.jump_pressed = self.jump_edge_pending || self.jump_pulse_pending || jump_repeated;
             input.effects = effects.snapshot();
             self.boosts.apply(state.tick + 1, &mut input.effects);
-            input.sprinting = sprint_request;
+            let tick_sprint_request = sprint_request;
+            input.sprinting = tick_sprint_request;
             input.movement_speed = requested_movement_speed;
             input.liquid_contact_height = Some(
                 self.modes
@@ -609,7 +610,7 @@ impl LocalPhysicsController {
                 feet: state.position,
                 on_ground: state.on_ground,
                 in_water: self.last_environment.in_water,
-                sprinting: sprint_request,
+                sprinting: tick_sprint_request,
                 sprint_blinded: input.effects.blindness,
                 sprint_down: context.input.sprint_down,
                 input_mode: context.input_mode,
@@ -634,6 +635,11 @@ impl LocalPhysicsController {
             state.position = observed.feet;
             match self.modes.select(context.mode_intent, observed, world) {
                 Ok(choice) => {
+                    // Like adopting the tick's flag, a liquid stop leaves later catch-up
+                    // ticks only a held, toggled or automatic sprint control to restart.
+                    if choice.liquid_sprint_stop {
+                        sprint_request &= context.input.sprint_down;
+                    }
                     input.mode = choice.mode;
                     input.sprinting = choice.sprinting;
                     input.sneaking = sneak_request || choice.forced_sneak;
@@ -737,7 +743,7 @@ impl LocalPhysicsController {
                         jump_edge: self.jump_edge_pending,
                         jump_down: observed.jump_down,
                         requested_sneak: sneak_request,
-                        requested_sprint: sprint_request,
+                        requested_sprint: tick_sprint_request,
                         sprint_down: context.input.sprint_down,
                         server_sprinting: tick_input.server_sprinting,
                         input_mode: context.input_mode,

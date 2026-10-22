@@ -914,6 +914,44 @@ fn a_swim_that_leaves_the_water_stops_and_then_restarts_the_sprint() {
     ));
 }
 
+/// Within one frame, a surfacing tick's sprint stop also ends the latched request,
+/// so a later catch-up tick restarts only from a held sprint control.
+#[test]
+fn a_surfacing_sprint_stop_holds_across_catch_up_ticks_without_a_sprint_control() {
+    for sprint_down in [false, true] {
+        let world = PoolFloor(std::cell::Cell::new(true));
+        let mut physics = grounded_controller();
+        let swim = MovementInput {
+            forward: 1.0,
+            sprinting: true,
+            ..MovementInput::default()
+        };
+        for _ in 0..12 {
+            step(&mut physics, swim, ModeIntent::default(), &world);
+        }
+        world.0.set(false);
+        let frame = physics.advance_with_context(
+            TICK * 2,
+            swim,
+            PhysicsSampleContext {
+                input: super::TickInput {
+                    sprint_down,
+                    ..Default::default()
+                },
+                ..PhysicsSampleContext::default()
+            },
+            &world,
+        );
+        assert!(frame.blocked.is_none(), "blocked: {:?}", frame.blocked);
+        let sprinting: Vec<bool> = frame
+            .samples
+            .iter()
+            .map(|sample| sample.processed.sprinting)
+            .collect();
+        assert_eq!(sprinting, [false, sprint_down], "sprint_down {sprint_down}");
+    }
+}
+
 #[test]
 fn in_session_snap_preserves_swimming_blend_and_mode_edges() {
     let world = PoolFloor(std::cell::Cell::new(true));

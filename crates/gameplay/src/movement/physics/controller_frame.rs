@@ -91,8 +91,9 @@ impl ControllerFrame {
         input.liquid_contact_height =
             Some(modes.liquid_contact_height(state.spin_attack_ticks.is_some()));
         input.liquid_flow_enabled = Some(modes.mode() != sim::MovementMode::Flying);
-        input.sprinting = self.sprint_override.unwrap_or(self.requested_sprint);
-        if let Some(sprinting) = self.sprint_override {
+        let sprint_override = modes.replay_sprint_override(self.sprint_override);
+        input.sprinting = sprint_override.unwrap_or(self.requested_sprint);
+        if let Some(sprinting) = sprint_override {
             modes.restore_controls(sprinting, modes.sneaking());
         }
         let previous_modes = *modes;
@@ -130,12 +131,13 @@ impl ControllerFrame {
                     forced_sneak: self.forced_sneak,
                     sprinting: input.sprinting,
                     flight_request: None,
+                    liquid_sprint_stop: false,
                 }
             }
             Err(error) => return Err(error.into()),
         };
         input.mode = self.mode_override.unwrap_or(choice.mode);
-        input.sprinting = self.sprint_override.unwrap_or(choice.sprinting);
+        input.sprinting = modes.replayed_sprint(sprint_override, choice);
         modes.restore_mode(input.mode);
         self.forced_sneak = choice.forced_sneak;
         self.flight_request = choice.flight_request;
@@ -150,7 +152,7 @@ impl ControllerFrame {
             input.sneaking = false;
         }
         modes.restore_controls(input.sprinting, input.sneaking);
-        if self.sprint_override.is_some() || self.mode_override.is_some() {
+        if sprint_override.is_some() || self.mode_override.is_some() {
             crate::movement::speed_authority::preserve_effective_speed(input, previous_sprinting);
         }
         self.ride_delta = None;

@@ -127,6 +127,8 @@ pub(super) struct ModeChoice {
     pub sprinting: bool,
     /// The double-tap requested starting (true) or stopping (false) flight this tick.
     pub flight_request: Option<bool>,
+    /// Native sprint intent requested its liquid stop this tick.
+    pub liquid_sprint_stop: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -145,6 +147,8 @@ pub(super) struct ModeTracker {
     fly_countdown: i32,
     /// Consecutive gliding ticks, including the one that started the glide.
     fall_fly_ticks: u32,
+    /// A liquid stop ended the authoritative sprint run that correction replay rewrites.
+    replay_sprint_stopped: bool,
 }
 
 impl ModeTracker {
@@ -193,6 +197,30 @@ impl ModeTracker {
             .record_controls(input.processed_controls().move_vector[1] as f32, sneak_down);
     }
 
+    /// Returns a replayed authoritative sprint unless a liquid stop already ended its
+    /// run. Native applies the server flag once and later intents may stop it, so the
+    /// run's later ticks select their own sprint; the first tick without an
+    /// authoritative sprint ends the run.
+    pub(super) fn replay_sprint_override(&mut self, sprint_override: Option<bool>) -> Option<bool> {
+        if sprint_override != Some(true) {
+            self.replay_sprint_stopped = false;
+        }
+        sprint_override.filter(|_| !self.replay_sprint_stopped)
+    }
+
+    /// The replayed tick's sprint: a liquid stop applies after any authoritative flag.
+    pub(super) fn replayed_sprint(
+        &mut self,
+        sprint_override: Option<bool>,
+        choice: ModeChoice,
+    ) -> bool {
+        if choice.liquid_sprint_stop {
+            self.replay_sprint_stopped |= sprint_override == Some(true);
+            return false;
+        }
+        sprint_override.unwrap_or(choice.sprinting)
+    }
+
     /// Restores a retained authoritative mode override during correction replay.
     pub(super) fn restore_mode(&mut self, mode: MovementMode) {
         if mode != MovementMode::Gliding {
@@ -232,6 +260,7 @@ impl ModeTracker {
                 forced_sneak: false,
                 sprinting: self.sprinting,
                 flight_request: None,
+                liquid_sprint_stop: false,
             });
         }
         // Every ability update overwrites local flight, even when it repeats the previous value.
@@ -257,6 +286,7 @@ impl ModeTracker {
                 forced_sneak: false,
                 sprinting: false,
                 flight_request,
+                liquid_sprint_stop: false,
             });
         }
         // Flight survives ground contact; server flight does not require MayFly.
@@ -357,6 +387,7 @@ impl ModeTracker {
             forced_sneak,
             sprinting: self.sprinting,
             flight_request,
+            liquid_sprint_stop: liquid_stop,
         })
     }
 
