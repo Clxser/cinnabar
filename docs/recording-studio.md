@@ -88,8 +88,9 @@ easing. Curved path trims retain their original motion phase.
 - Compact/Comfortable changes Studio density independently of the game HUD.
   Timeline S/M/L reserves more track space; Focus view hides side panels and the
   timeline for a larger picture. Smaller
-  windows show one side panel or Preview/Tools/Properties tabs, with a persistent
-  timeline outside Focus view and separate full-height panel scrolling.
+  windows keep one side panel beside the picture, with a persistent timeline
+  outside Focus view and separate panel scrolling. Timeline height is also bounded
+  by actual track content so empty space does not displace the picture.
 - Fit view preserves the whole native picture, excluding composition letterboxes.
   Fill view covers the viewer without stretching and can crop its edges. These
   viewer preferences do not change export framing. Frame properties separately
@@ -105,6 +106,10 @@ easing. Curved path trims retain their original motion phase.
   camera when none is selected. Use WASD and Q/E to fly, hold right mouse to look,
   and hold Shift for faster movement. Escape releases focus. Apply saves the
   inspected pose to a Free/Path shot; Reset (or R) returns to the saved camera.
+- Middle-drag pans in the frozen camera plane. Wheel dollies; Ctrl/Cmd+wheel
+  changes the lens. Right-mouse+wheel changes flight speed. Views provides speed,
+  optional smooth translation and Level horizon controls. These inspection
+  preferences do not change the project until a view is applied.
 - Navigate keeps the picture clear. Players enables small player-selection
   crosshairs, with labels only on hover; entity types come from recorded protocol
   metadata, not their display names. Older takes cannot classify remote subjects;
@@ -113,6 +118,11 @@ easing. Curved path trims retain their original motion phase.
   handles; drag a key or handle in the view plane and release to commit one undoable
   change. Auto handles restores the original smooth path. Direct spatial editing
   requires one native replay layer with default framing.
+- Rotate exposes labelled yaw, pitch and roll rings for a selected Free shot or
+  an exact Path orientation key. Drag a ring, then release for one undoable edit;
+  Escape cancels. Angle labels open the same precise numeric controls as Properties.
+  Rotation preserves the positional rail, lens and easing, including Whole rail
+  timing. Small pictures retain numeric controls when the rings do not fit.
 - F1 opens Controls, generated from the same command registry as keyboard input.
   Ctrl/Cmd+S saves and Ctrl/Cmd+E exports. Timeline-focused arrows step one frame,
   Shift+arrows step ten, S splits and F fits. Timeline shortcuts yield to focused
@@ -204,6 +214,13 @@ and a durability warning.
 
 ## Native replay and recovery limits
 
+Recording journals, immutable assets, audio, video and temporary publication files
+share one take-wide disk allowance. Temporary audio mux output counts alongside
+the original video until replacement succeeds. Exhaustion stops the affected
+capture with an explicit error and retains committed prefixes and original media.
+The allowance counts file extents; filesystem allocation overhead and other
+applications' disk use remain outside it.
+
 New takes retain received actors and prepared visual channels independently of
 the original camera. Custom cameras cannot reveal world data never received from
 the server. Recording admits actor animation outside the live camera's animation
@@ -218,6 +235,10 @@ Orbit, follow and other external native cameras use a separately captured world
 body, including your skin, even when you recorded in first person. The recorded
 POV still hides that body. Takes recorded with hidden first-person body bones need
 to be recorded again; switching cameras cannot restore their omitted body pose.
+An edited camera close to the recorded local eye suppresses that body's layers to
+avoid looking through its face. Moving away restores the body. This uses an editor
+eye-distance guard; it does not test intersection with arbitrary animated skin
+geometry. Older takes without a recorded eye keep their existing visibility.
 
 Older takes remain readable but cannot regain omitted visual channels. Use a new
 take to capture the expanded coverage, including prepared world nametag artwork
@@ -228,7 +249,12 @@ edited cameras cannot reconstruct omitted labels. Saved label groups use the
 edited camera's depth order and billboard orientation.
 Interrupted native takes can recover their common committed scene interval into
 an unsaved project, after verifying its captured frame grid. Recovery leaves the
-original journals unchanged; unfinished audio, uncommitted tails and event
-markers are not restored. If native recovery fails, a decodable POV video can be
+original journals unchanged. Recoverable RF64 audio is copied into a separate
+finalized file using only complete physical sample frames inside the verified
+scene interval. Short audio keeps its real duration and remains unlinked. Durable
+bookmarks and unambiguous event observations are restored with source provenance;
+legacy combat correlations are not reconstructed. Lost RAM data and uncommitted
+tails cannot be restored. Companion failures are reported independently. If
+native recovery fails, a decodable POV video can be
 recovered separately with an explicit notice. Video decoding and export require
 FFmpeg; final export verification also requires FFprobe.

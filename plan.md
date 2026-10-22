@@ -929,6 +929,20 @@ Current implementation; runtime acceptance remains incomplete:
   recompressing scene envelopes, retires recording-owned pose caches and limits
   live software encoder threads. Capture
   health reports CPU admission/actor time, readback/encoder queues and stalls.
+  Received block preparation now follows store-owned membership/change cursors,
+  retains unchanged empty scans and revisits dirty or drawable columns. Visual
+  retention reuses bounded immutable catalog descriptors/group leases instead of
+  walking unchanged model/atlas trees each sample; queue-empty reactivation and
+  oversized catalogs still perform flat or uncached admission work. PCM writes
+  batch float conversion in fixed stack storage. Unchanged actor and roof-grid
+  publications retain their typed recording projections. Native body conversions
+  share the sampled frame's lifetime across live and recording views. Paused replay
+  camera changes retain unchanged actor buffers and GPU generations, while source,
+  visibility and temporal resets republish them. A failed actor upload remains
+  retryable without another source generation. Geometry, skin, artwork and glint
+  allocations distinguish immutable rejection from transient failure and retry
+  unchanged sources with bounded preparation-call backoff. These work reductions still need
+  matched release measurements, including cold resets and retention-index pruning.
   The reported 160-to-50 FPS recording regression has not been remeasured; no
   minimal-overhead or sustained-capture gate is closed.
 - Preview has independent Fast/Balanced/Full resolution and playback budgets,
@@ -957,7 +971,15 @@ Current implementation; runtime acceptance remains incomplete:
   Background finalization retains failed track owners, drains accepted records
   after producer rejection and waits for physical storage completion before
   verifying a common recoverable prefix. Encoding or storage failures terminate
-  their dependent stream. Failure injection and long-take runtime acceptance
+  their dependent stream. Native recovery separately publishes finalized complete
+  RF64 PCM prefixes and source-anchored durable bookmarks/unambiguous observations;
+  short audio remains unlinked and original media stays unchanged. Validation-only
+  finalization does not publish recovered companions. Lost RAM and legacy gap-based
+  combat correlations remain unavailable. One take-wide disk admission owner now
+  accounts native/primary journals, assets, audio, optional encoder output and
+  temporary publication overlap. Completion metadata publishes atomically so a
+  quota error cannot hide a valid indexed prefix behind an empty completion file.
+  Failure injection, encoder/mux runtime qualification and long-take acceptance
   remain open.
 
 - Replay-reference controls include stationary entity tracking, independent shot
@@ -968,7 +990,18 @@ Current implementation; runtime acceptance remains incomplete:
   Path cameras support per-key and whole-rail distance timing, independent lens
   and orientation clocks, exact trim phase and bounded cached arc integration.
   Exact XYZ edits or new pose keys require switching whole-rail travel to Key
-  easing. Full graph editing, rotation handles and smooth rig blends remain open.
+  easing. Authored Euler rotation rings now edit Free poses and exact Path
+  orientation keys, preserve rail/lens/easing and own one cancellable pointer
+  transaction. Domain tests preserve curved whole-rail geometry across rotations,
+  and offline renders cover wide and small views. Asynchronous preview and
+  live-input acceptance remain open.
+  Full graph editing and smooth rig blends remain open.
+  Transient inspection includes adjustable flight speed, optional analytical
+  translation damping, view-plane pan, wheel dolly/lens controls and roll leveling.
+  Authored path drags keep exclusive pointer ownership; recovery overlays suspend
+  navigation. A local recorded-eye distance guard prevents edited cameras from
+  revealing their own face without moving the authored pose. Exact arbitrary-skin
+  intersection remains an incomplete editor approximation, not a parity gate.
   Subject suggestions require continuous recorded lifetime coverage; export
   admission instead validates exact required rational output timestamps, including
   retimed transition handles. New regression execution remains required.
