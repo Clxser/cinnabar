@@ -324,6 +324,13 @@ and exact native and platform comparison remain open.
 
 ## P4.3-RIGS
 
+Body-slot equipment retention, authored model selection and removal have original
+fixture coverage, alongside startup binding completion and raw worn-slot counting.
+Resource-only session overrides reuse completed bindings without replacing authored
+item conditions; expression-root placement retains the worn slot.
+Local counts use the armor container; replicated counts retain unresolved equipment.
+Multi-pass body equipment and matched native visual qualification remain open.
+
 | Field | Evidence |
 |---|---|
 | Owning plan/task | `plan.md`: local custom models; static imports reuse actor preparation. |
