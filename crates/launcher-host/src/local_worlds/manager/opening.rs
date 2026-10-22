@@ -1,6 +1,7 @@
 //! An opaque identity for the actual running server opening, without owning or stopping it.
 
 use super::*;
+use bridge::LocalWorldInfo;
 use std::{io, net::SocketAddr, sync::Weak, time::Instant};
 
 /// Holds weak ownership so retained remote cleanup cannot keep its local server manager alive.

@@ -46,13 +46,6 @@ macro_rules! menu_screens {
         impl MenuScreen {
             /// All declared routes, including routes added in future changes.
             pub const ALL: &[Self] = &[$(Self::$name),+];
-            /// Screens entered only from an active play session.
-            pub fn requires_session(self) -> bool {
-                match self {
-                    Self::Pause | Self::Death | Self::Invite => true,
-                    Self::Home | Self::Play | Self::Social | Self::Servers | Self::Profile | Self::DressingRoom | Self::Settings | Self::AddServer | Self::Inbox | Self::Friends => false,
-                }
-            }
         }
     };
 }
