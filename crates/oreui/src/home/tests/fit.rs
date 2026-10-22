@@ -88,7 +88,12 @@ fn assert_fits(
     );
     assert_eq!(
         hits.len(),
-        9 + usize::from(event) + usize::from(update_ready)
+        targets.len(),
+        "every drawn action remains visible"
+    );
+    assert!(
+        hits.iter()
+            .any(|(action, _)| *action == MenuAction::Navigate(MenuScreen::RecordingStudio))
     );
     if update_ready {
         assert!(

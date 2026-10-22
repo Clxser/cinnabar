@@ -129,9 +129,10 @@ fn preview(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<(),
     }
     widgets::panel(canvas, area)?;
     let pad = canvas.r(0.8);
+    // Playback controls retain their measured rows; a short viewer yields picture height first.
     let transport_height = (transport::required_height(canvas, area[2] - area[0] - pad * 2.0)
         + pad)
-        .min((area[3] - area[1]) * 0.36);
+        .min(area[3] - area[1]);
     let transport_top = area[3] - transport_height;
     let mut image_top = viewer::toolbar(canvas, view, [area[0], area[1], area[2], transport_top])?;
     if let Some(notice) = &view.studio.preview.notice {

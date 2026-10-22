@@ -113,6 +113,7 @@ fn compact_and_short_home_keep_all_actions_reachable() {
             MenuAction::Navigate(MenuScreen::Play),
             MenuAction::Navigate(MenuScreen::Servers),
             MenuAction::Navigate(MenuScreen::Settings),
+            MenuAction::Navigate(MenuScreen::RecordingStudio),
             MenuAction::Navigate(MenuScreen::Social),
             MenuAction::Navigate(MenuScreen::DressingRoom),
             MenuAction::OpenAccounts,
