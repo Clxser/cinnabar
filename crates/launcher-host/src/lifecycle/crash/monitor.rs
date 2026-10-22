@@ -336,15 +336,28 @@ fn wait_for_dump_receipt(
     region: &heartbeat::Region,
     request: u64,
     mut pause: impl FnMut(),
-    _now: impl FnMut() -> Option<Duration>,
+    mut now: impl FnMut() -> Option<Duration>,
 ) -> bool {
-    for _ in 0..INTRODUCTION_WAIT_STEPS {
+    let Some(started) = now() else {
+        return false;
+    };
+    let Some(deadline) =
+        started.checked_add(Duration::from_millis(u64::from(INTRODUCTION_WAIT_STEPS)))
+    else {
+        return false;
+    };
+    loop {
+        let Some(observed) = now() else {
+            return false;
+        };
+        if observed < started || observed >= deadline {
+            return false;
+        }
         if region.dump_acknowledged(request) {
             return true;
         }
         pause();
     }
-    region.dump_acknowledged(request)
 }
 
 /// Sends one message; false when there is no connection or the send failed.
@@ -543,6 +556,25 @@ mod tests {
             1,
             "an elapsed deadline admitted another pause"
         );
+    }
+
+    /// A receipt arriving after the budget must not begin another blocking dump operation.
+    #[test]
+    fn dump_receipt_after_the_elapsed_deadline_is_rejected() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("heartbeat");
+        let client = heartbeat::Heartbeat::create(&path).unwrap();
+        let monitor = heartbeat::Heartbeat::open(&path).unwrap();
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        assert!(!wait_for_dump_receipt(
+            client.region(),
+            1,
+            || {
+                elapsed.set(Duration::from_millis(u64::from(INTRODUCTION_WAIT_STEPS)));
+                monitor.region().acknowledge_dump(1);
+            },
+            || Some(elapsed.get()),
+        ));
     }
 
     /// A late receipt for an older dump cannot release a new request's ordering barrier.
