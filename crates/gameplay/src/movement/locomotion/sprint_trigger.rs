@@ -29,6 +29,23 @@ impl SprintTrigger {
         self.automatic_sprint = false;
     }
 
+    /// Whether native sprint intent would request a stop for an active sprint: the
+    /// stop setting, a blocked sprint, a touch release or rejected direction or stall.
+    pub(super) fn stop_requested(
+        &self,
+        previous_feet: Option<Vec3>,
+        intent: ModeIntent,
+        observed: ModeObservation,
+    ) -> bool {
+        let touch_release = observed.input_mode == protocol::PlayerInputMode::Touch
+            && self.started_by_button
+            && !observed.sprint_down;
+        intent.stop_sprinting
+            || intent.sprint_blocked
+            || touch_release
+            || !can_sprint(true, previous_feet, observed)
+    }
+
     /// Updates the seven-tick forward latch and applies start/continuation conditions.
     pub(super) fn select(
         &mut self,

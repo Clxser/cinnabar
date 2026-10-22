@@ -376,6 +376,19 @@ impl LocalPhysicsController {
         changed.then_some(tick)
     }
 
+    /// A replayed stop request ended an authoritative sprint and the player ends
+    /// unsprinted, so its pending live adoption and posture overlay are stale.
+    pub(super) fn drop_ended_server_sprint(&mut self) {
+        if self.live_posture.sprinting == Some(true) {
+            self.live_posture.sprinting = None;
+        }
+        if let Some(pending) = &mut self.server_control_flags
+            && pending.sprinting == Some(true)
+        {
+            pending.sprinting = None;
+        }
+    }
+
     /// Takes the sprint/sneak states the control latches must adopt.
     pub fn take_server_control_flags(&mut self) -> Option<ServerControlFlags> {
         self.server_control_flags.take()

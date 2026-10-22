@@ -881,7 +881,8 @@ fn leaving_water_defers_held_ground_jump_until_native_swim_blend_finishes() {
 }
 
 /// The tick whose dry swimming body ends the swim also ends the sprint, so the
-/// wire carries both stops; the held sprint request starts it again next tick.
+/// wire carries both stops. A latched request alone cannot restart it; a held
+/// sprint control does.
 #[test]
 fn a_swim_that_leaves_the_water_stops_and_then_restarts_the_sprint() {
     let world = PoolFloor(std::cell::Cell::new(true));
@@ -905,11 +906,25 @@ fn a_swim_that_leaves_the_water_stops_and_then_restarts_the_sprint() {
     assert!(!surfaced.processed.sprinting);
     assert!(has(flags, PlayerInputFlags::STOP_SWIMMING));
     assert!(has(flags, PlayerInputFlags::STOP_SPRINTING));
-    previous = HeldInput::from(&surfaced);
-    let next = step(&mut physics, swim, ModeIntent::default(), &world);
+    let latched = step(&mut physics, swim, ModeIntent::default(), &world);
+    assert!(!latched.processed.sprinting);
+    previous = HeldInput::from(&latched);
+    let held = physics.advance_with_context(
+        TICK,
+        swim,
+        PhysicsSampleContext {
+            input: super::TickInput {
+                sprint_down: true,
+                ..Default::default()
+            },
+            ..PhysicsSampleContext::default()
+        },
+        &world,
+    );
+    let next = &held.samples[0];
     assert!(next.processed.sprinting);
     assert!(has(
-        input_flags(&next, previous),
+        input_flags(next, previous),
         PlayerInputFlags::START_SPRINTING
     ));
 }

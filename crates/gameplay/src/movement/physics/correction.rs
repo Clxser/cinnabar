@@ -218,6 +218,7 @@ impl LocalPhysicsController {
             .copied()
             .ok_or(PhysicsCorrectionError::NotRetained { tick })?;
         let mut modes = anchor_controller.modes;
+        modes.begin_replay();
         let mut anchor_state = anchor_controller.anchor_state;
         let mut eye = anchor_controller.eye_offset;
         let deferred_corrections = self.deferred_corrections.clone();
@@ -384,6 +385,9 @@ impl LocalPhysicsController {
         }
         self.processed_jump_arc_active = jump_fold.arc_active();
         self.modes = modes;
+        if modes.replay_ended_server_sprint() && !modes.sprinting() {
+            self.drop_ended_server_sprint();
+        }
         eye.preserve_interpolation_hold(self.eye_offset);
         self.eye_offset = eye;
         self.last_environment = controller_frames

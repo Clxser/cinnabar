@@ -68,12 +68,18 @@ written later in the input stage from held jump, and cleared by flight, so the
 intent reads the previous tick's value. The stop applies after any sprint start
 on the same tick and does not clear the swim trigger's sprint intent, so a held
 jump can start a swim on a tick that ends the sprint; the next wet swimming tick
-skips the stop and the held control starts the sprint again. A server sprint
-flag is applied once, and later intents may stop it. During correction replay a
-liquid stop therefore outranks a rewritten authoritative sprint, and the rest of
-that rewritten run selects its own sprint. Within one render frame, a liquid stop
-also ends the frame's latched sprint request, so a later catch-up tick restarts
-only from a held, toggled or automatic sprint control. The immobile
+skips the stop and the held control starts the sprint again.
+
+After a liquid stop, a latched sprint request no longer restarts the sprint;
+only a held, toggled or automatic sprint control does, until sprint starts again.
+This holds for catch-up ticks within one render frame and for correction replay,
+whose later frames still carry the request recorded before the stop.
+
+A server sprint flag is applied once, and later intents may stop it. During
+correction replay, a stop request (the liquid stop, or outside wet swimming an
+input, blocked or setting stop) outranks a rewritten authoritative sprint. The
+rest of that rewritten run then selects its own sprint, keeps unsprinted speed,
+and no longer hands the stopped sprint to the live controls. The immobile
 movement path also removes the jumping state; its order against the next intent
 is unverified, so Cinnabar does not model that removal.
 
