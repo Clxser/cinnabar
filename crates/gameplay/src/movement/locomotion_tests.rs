@@ -880,6 +880,40 @@ fn leaving_water_defers_held_ground_jump_until_native_swim_blend_finishes() {
     assert_eq!((stop_edges, takeoffs), (1, 1));
 }
 
+/// The tick whose dry swimming body ends the swim also ends the sprint, so the
+/// wire carries both stops; the held sprint request starts it again next tick.
+#[test]
+fn a_swim_that_leaves_the_water_stops_and_then_restarts_the_sprint() {
+    let world = PoolFloor(std::cell::Cell::new(true));
+    let mut physics = grounded_controller();
+    let swim = MovementInput {
+        forward: 1.0,
+        sprinting: true,
+        ..MovementInput::default()
+    };
+    let mut previous = HeldInput::default();
+    for _ in 0..12 {
+        let sample = step(&mut physics, swim, ModeIntent::default(), &world);
+        assert_eq!(sample.processed.mode, MovementMode::Swimming);
+        assert!(sample.processed.sprinting);
+        previous = HeldInput::from(&sample);
+    }
+    world.0.set(false);
+    let surfaced = step(&mut physics, swim, ModeIntent::default(), &world);
+    let flags = input_flags(&surfaced, previous);
+    assert_eq!(surfaced.processed.mode, MovementMode::Walking);
+    assert!(!surfaced.processed.sprinting);
+    assert!(has(flags, PlayerInputFlags::STOP_SWIMMING));
+    assert!(has(flags, PlayerInputFlags::STOP_SPRINTING));
+    previous = HeldInput::from(&surfaced);
+    let next = step(&mut physics, swim, ModeIntent::default(), &world);
+    assert!(next.processed.sprinting);
+    assert!(has(
+        input_flags(&next, previous),
+        PlayerInputFlags::START_SPRINTING
+    ));
+}
+
 #[test]
 fn in_session_snap_preserves_swimming_blend_and_mode_edges() {
     let world = PoolFloor(std::cell::Cell::new(true));

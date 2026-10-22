@@ -57,8 +57,20 @@ starts remain possible. Because sprint intent precedes the swimming trigger,
 even the first stop-swimming tick retains sprint while the old box is wet.
 Cinnabar retains the actual flag with its controller frames, applies the same
 selection during correction replay, and shares that flag across water drag,
-wire flags and the runtime sprint attribute edge. A dry old box resumes the
-ordinary sprint-stop conditions.
+wire flags and the runtime sprint attribute edge.
+
+When the preceding swimming flag is set but the old box is dry, the same intent
+always requests a sprint stop. This is the usual stop-swimming tick at the
+surface: swimming and sprint end together, so that tick's air travel uses the
+unsprinted `0.02` acceleration rather than `0.026`. Without the swimming flag,
+a wet body also requests a stop while the jumping state is set. That state is
+written later in the input stage from held jump, and cleared by flight, so the
+intent reads the previous tick's value. The stop applies after any sprint start
+on the same tick and does not clear the swim trigger's sprint intent, so a held
+jump can start a swim on a tick that ends the sprint; the next wet swimming tick
+skips the stop and the held control starts the sprint again. The immobile
+movement path also removes the jumping state; its order against the next intent
+is unverified, so Cinnabar does not model that removal.
 
 ## Head sensing and standing fit
 

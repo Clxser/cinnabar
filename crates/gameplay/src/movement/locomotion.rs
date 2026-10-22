@@ -134,7 +134,8 @@ pub(super) struct ModeTracker {
     mode: MovementMode,
     last_flight: FlightAuthority,
     last_ability_sequence: Option<u64>,
-    /// `Jumping` sent on the previous tick; a flight press needs it clear.
+    /// `Jumping` sent on the previous tick; a flight press needs it clear, and
+    /// a wet non-swimmer's sprint stops on it.
     previous_jumping: bool,
     sprinting: bool,
     sneaking: bool,
@@ -277,14 +278,20 @@ impl ModeTracker {
             ..observed
         };
         // The sprint trigger runs before the swim trigger and keeps the previous actor
-        // sprint flag while its previous swimming pose still contacts water.
+        // sprint flag while its previous swimming pose still contacts water; once that
+        // pose leaves the water, the same intent stops the sprint.
         let sprint_candidate =
             self.sprint_trigger
                 .select(self.sprinting, self.previous_feet, intent, observed);
         let sprinting =
             (self.mode == MovementMode::Swimming && observed.in_water && self.sprinting)
                 || sprint_candidate;
+        let liquid_stop = self.liquid_sprint_stop(observed.in_water);
+        if liquid_stop {
+            self.sprint_trigger.clear_latch();
+        }
         self.previous_feet = Some(observed.feet);
+        // The swim trigger reads the sprint intent before the stop request applies.
         let observed = ModeObservation {
             sprinting,
             ..observed
@@ -340,6 +347,7 @@ impl ModeTracker {
         self.mode = mode;
         self.sneaking = observed.sneaking || forced_sneak;
         self.sprinting = sprinting
+            && !liquid_stop
             && !matches!(
                 mode,
                 MovementMode::Crawling | MovementMode::Gliding | MovementMode::Riding
@@ -350,6 +358,19 @@ impl ModeTracker {
             sprinting: self.sprinting,
             flight_request,
         })
+    }
+
+    /// Native sprint intent's liquid stop request, applied after any start on the
+    /// same tick. It reads the preceding swimming flag and jump state with this
+    /// tick's body-water contact: a swimmer whose body left the water stops, and so
+    /// does a wet non-swimmer whose jump was held on the previous tick. Flight
+    /// clears the jumping state, so a flyer never takes the second stop.
+    fn liquid_sprint_stop(&self, in_water: bool) -> bool {
+        if self.mode == MovementMode::Swimming {
+            !in_water
+        } else {
+            in_water && self.previous_jumping && self.mode != MovementMode::Flying
+        }
     }
 
     /// Vanilla's flight double-tap: every tick shortens the window, a press opens it,
