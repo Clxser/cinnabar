@@ -141,6 +141,15 @@ fn capture(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<f32
         canvas,
         view,
         [left, y, right, bottom],
+        &format!("Capture: {}", capture.mode.label()),
+        Action::CycleCaptureMode,
+        !view.studio.capture.phase.busy(),
+    )?;
+    y += canvas.r(5.0);
+    row(
+        canvas,
+        view,
+        [left, y, right, bottom],
         &format!("Recording FPS: {}", capture.fps),
         Action::CycleCaptureFps,
         !view.studio.capture.phase.busy(),
@@ -181,7 +190,7 @@ fn capture(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<f32
         !view.studio.capture.phase.busy(),
     )?;
     y += canvas.r(5.0);
-    y += canvas.text("Changes apply to the next take. HUD/chat Off keeps video clean and preserves world labels. Higher FPS needs more GPU and encoder capacity; repeated capture slots are reported.", [left, y], right - left, CAPTION, TEXT_DIMMER, false)? + canvas.r(3.0);
+    y += canvas.text("3D replay keeps editable cameras and game audio without encoding video during play. Add video when you also want the recorded camera as a movie. Changes apply to the next take; higher capture FPS records more motion samples.", [left, y], right - left, CAPTION, TEXT_DIMMER, false)? + canvas.r(3.0);
     Ok(y)
 }
 

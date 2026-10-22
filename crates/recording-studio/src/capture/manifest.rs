@@ -89,8 +89,16 @@ impl CaptureManifest {
         project.sources.push(MediaSource {
             id: source,
             name: name.into(),
-            path: directory.join(VIDEO_FILE),
-            kind: MediaKind::Video,
+            path: if self.settings.mode.records_video() {
+                directory.join(VIDEO_FILE)
+            } else {
+                directory.to_path_buf()
+            },
+            kind: if self.settings.mode.records_video() {
+                MediaKind::Video
+            } else {
+                MediaKind::Replay
+            },
             duration: self.duration,
             size: self.size,
             frame_rate: Some(self.settings.fps),
@@ -196,10 +204,16 @@ impl CaptureManifest {
         let manifest: Self = serde_json::from_reader(reader.take(MAX_MANIFEST_BYTES + 1))
             .map_err(|error| error.to_string())?;
         manifest.validate()?;
-        let video = std::fs::symlink_metadata(directory.join(VIDEO_FILE))
-            .map_err(|error| error.to_string())?;
-        if !video.is_file() || video.len() == 0 {
-            return Err("The captured video is missing or empty.".into());
+        if manifest.settings.mode.records_video() {
+            let video = std::fs::symlink_metadata(directory.join(VIDEO_FILE))
+                .map_err(|error| error.to_string())?;
+            if !video.is_file() || video.len() == 0 {
+                return Err("The captured video is missing or empty.".into());
+            }
+        } else if manifest.scene_tracks.is_empty()
+            || manifest.scene_tracks.iter().any(|track| !track.complete)
+        {
+            return Err("This native replay has incomplete scene tracks. Recover its committed prefix from the library.".into());
         }
         if manifest.game_audio
             && !std::fs::symlink_metadata(directory.join(AUDIO_FILE))
@@ -213,6 +227,12 @@ impl CaptureManifest {
     /// Checks recorded metadata independently of the capture process before project admission.
     pub fn validate(&self) -> Result<(), String> {
         self.settings.validate()?;
+        if !self.settings.mode.records_video()
+            && (self.scene_tracks.is_empty()
+                || self.scene_tracks.iter().any(|track| !track.complete))
+        {
+            return Err("The native replay did not finish all scene tracks; its committed prefix remains recoverable.".into());
+        }
         if self.scene_tracks.len() > MAX_CAPTURE_TRACKS {
             return Err("Too many captured scene tracks.".into());
         }
@@ -231,12 +251,13 @@ impl CaptureManifest {
             || self.duration.0 > MAX_MEDIA_MICROS
             || self.size.iter().any(|&side| side == 0 || side > 32_768)
             || self.highlights.len() > MAX_CAPTURE_HIGHLIGHTS
-            || self
-                .settings
-                .fps
-                .frame_time(self.frames)
-                .map_err(|error| error.to_string())?
-                != self.duration
+            || self.settings.mode.records_video()
+                && self
+                    .settings
+                    .fps
+                    .frame_time(self.frames)
+                    .map_err(|error| error.to_string())?
+                    != self.duration
             || self
                 .highlights
                 .iter()

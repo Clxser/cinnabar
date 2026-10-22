@@ -7,6 +7,16 @@ use recording_studio::{
 };
 
 impl Studio {
+    /// Scene-only recording avoids live encoding while retaining later camera editing and audio.
+    pub(super) fn cycle_capture_mode(&mut self) -> Result<(), String> {
+        if self.view.capture.phase.busy() {
+            return Err("Stop recording before changing capture mode.".into());
+        }
+        let mut settings = self.view.workflow.capture_settings;
+        settings.mode = settings.mode.next();
+        self.store_capture_settings(settings)
+    }
+
     /// The FPS preference affects the next take only; an active capture keeps its admitted clock.
     pub(super) fn cycle_capture_fps(&mut self) -> Result<(), String> {
         if self.view.capture.phase.busy() {
@@ -176,6 +186,7 @@ impl Studio {
         );
         match self.view.workspace.settings_page {
             SettingsPage::Recording if !self.view.capture.phase.busy() => actions.extend([
+                Action::CycleCaptureMode,
                 Action::CycleCaptureFps,
                 Action::CycleCaptureSize,
                 Action::ToggleCaptureHand,

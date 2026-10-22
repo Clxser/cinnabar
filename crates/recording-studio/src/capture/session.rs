@@ -33,7 +33,7 @@ pub struct CaptureSession {
 
 pub struct CaptureSummary {
     pub directory: PathBuf,
-    pub video: Summary,
+    pub video: Option<Summary>,
     pub manifest: CaptureManifest,
 }
 
@@ -48,7 +48,9 @@ impl CaptureSession {
         settings.validate()?;
         settings.size.fit(info.viewport)?;
         info.scene_schema = POV_SCENE_SCHEMA.into();
-        crate::video::find_ffmpeg()?;
+        if settings.mode.records_video() {
+            crate::video::find_ffmpeg()?;
+        }
         std::fs::create_dir_all(root).map_err(|error| error.to_string())?;
         let mut opened = None;
         for ordinal in 0..1024 {
@@ -95,23 +97,27 @@ impl CaptureSession {
                 })
                 .map_err(|error| error.to_string())?;
         }
-        let video = Recorder::start_prepared(
-            VideoSettings {
-                path: directory.join(VIDEO_FILE),
-                fps: settings.fps,
-                codec: settings.codec,
-            },
-            EncodeOptions {
-                encoder: settings.encoder,
-                quality: Some(settings.quality),
-                speed: EncodingSpeed::Live,
-            },
-        )?;
+        let video = if settings.mode.records_video() {
+            Some(Recorder::start_prepared(
+                VideoSettings {
+                    path: directory.join(VIDEO_FILE),
+                    fps: settings.fps,
+                    codec: settings.codec,
+                },
+                EncodeOptions {
+                    encoder: settings.encoder,
+                    quality: Some(settings.quality),
+                    speed: EncodingSpeed::Live,
+                },
+            )?)
+        } else {
+            None
+        };
         Ok(Self {
             directory,
             settings,
             journal: Some(journal),
-            video: Some(video),
+            video,
             detector: CombatDetector::new(info.local_actor),
             next_event: 1,
             highlights: Vec::new(),
@@ -154,8 +160,8 @@ impl CaptureSession {
         self.scene_tracks.push(track);
         Ok(())
     }
-    pub fn sink(&self) -> FrameSink {
-        self.video.as_ref().expect("active video").sink()
+    pub fn sink(&self) -> Option<FrameSink> {
+        self.video.as_ref().map(Recorder::sink)
     }
 
     /// Records actual camera metadata; the POV package deliberately does not claim 3D reconstruction.
@@ -275,20 +281,25 @@ impl CaptureSession {
         missed_video_frames: u64,
         dropped_audio_samples: u64,
     ) -> Result<CaptureSummary, String> {
-        let recorder = self.video.take().ok_or("Video capture already finished.")?;
-        recorder.set_final_frame_count(
-            self.settings
-                .fps
-                .frames_covering(duration)
-                .map_err(|error| error.to_string())?,
-        );
+        let expected_frames = self
+            .settings
+            .fps
+            .frames_covering(duration)
+            .map_err(|error| error.to_string())?;
+        if let Some(recorder) = &self.video {
+            recorder.set_final_frame_count(expected_frames);
+        }
         let task = self
             .journal
             .take()
             .ok_or("Capture journal already finished.")?
             .finish(duration)
             .map_err(|error| error.to_string())?;
-        let video = recorder.finish(audio)?;
+        let video = self
+            .video
+            .take()
+            .map(|recorder| recorder.finish(audio))
+            .transpose()?;
         let progress = task.wait();
         if progress.state != RecordingState::Complete {
             return Err(progress
@@ -298,15 +309,21 @@ impl CaptureSession {
         let manifest = CaptureManifest {
             version: MANIFEST_VERSION,
             settings: self.settings,
-            frames: video.frames,
-            size: video
-                .size
-                .ok_or("No rendered video frames were captured.")?,
-            duration: self
-                .settings
-                .fps
-                .frame_time(video.frames)
-                .map_err(|error| error.to_string())?,
+            frames: video.as_ref().map_or(expected_frames, |video| video.frames),
+            size: match &video {
+                Some(video) => video
+                    .size
+                    .ok_or("No rendered video frames were captured.")?,
+                None => self.video_size(),
+            },
+            duration: match &video {
+                Some(video) => self
+                    .settings
+                    .fps
+                    .frame_time(video.frames)
+                    .map_err(|error| error.to_string())?,
+                None => duration,
+            },
             game_audio: audio.is_some(),
             highlights: self.highlights,
             omitted_highlights: self.omitted,

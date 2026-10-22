@@ -169,7 +169,9 @@ impl Drop for Slot {
 
 /// Transfers ready callbacks in request order; out-of-order GPU completion cannot corrupt video time.
 pub(super) fn drain(active: &mut Active) -> Result<(), String> {
-    let sink = active.session.sink();
+    let Some(sink) = active.session.sink() else {
+        return Ok(());
+    };
     active.video_readbacks.drain(|frame| {
         sink.try_push(frame).inspect(|()| {
             active.captured.fetch_add(1, Ordering::Relaxed);
@@ -196,13 +198,14 @@ pub(super) fn capture(world: &mut World, active: &mut Active, at: MediaTime) -> 
     if active.last_frame.is_some_and(|last| index <= last) {
         return Ok(());
     }
+    let Some(sink) = active.session.sink() else {
+        active.last_frame = Some(index);
+        active.captured.fetch_add(1, Ordering::Relaxed);
+        return Ok(());
+    };
     let first_attempt = active.video_readbacks.last_attempt != Some(index);
     active.video_readbacks.last_attempt = Some(index);
-    if !active
-        .session
-        .sink()
-        .has_capacity_for(active.session.video_size())
-    {
+    if !sink.has_capacity_for(active.session.video_size()) {
         if first_attempt {
             active.video_readbacks.encoder_stalls =
                 active.video_readbacks.encoder_stalls.saturating_add(1);
@@ -234,7 +237,8 @@ pub(super) fn health(
     sample_micros: u64,
 ) -> recording_studio::capture::CaptureHealth {
     let readbacks = &active.video_readbacks;
-    let (encoder_frames, encoder_bytes) = active.session.sink().queued();
+    let (encoder_frames, encoder_bytes) =
+        active.session.sink().map_or((0, 0), |sink| sink.queued());
     recording_studio::capture::CaptureHealth {
         actor_prepare_micros,
         sample_micros,

@@ -700,6 +700,10 @@ status; the remaining renderer and live acceptance gates stay open in `plan.md`.
 
 ## Recording Studio hardening
 
+Studio native replay capture can omit the video encoder and GPU pixel readbacks.
+Visual retention charges immutable shared assets once under the existing budget.
+These paths have regression source; runtime and performance qualification remain open.
+
 Studio now separates interactive preview budgets from exact export settings,
 reuses bounded capture resources and same-clock actor samples, and records queue
 health. Versioned autosaves restore an unsaved copy; durable discard revisions,

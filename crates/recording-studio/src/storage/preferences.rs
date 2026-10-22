@@ -29,8 +29,14 @@ pub(super) fn load(root: &Path) -> Result<CaptureSettings, StorageError> {
             std::io::Error::other("Capture preferences exceed their byte limit."),
         ));
     }
-    let settings: CaptureSettings =
+    let value: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|error| io(&path, std::io::Error::other(error)))?;
+    let legacy_preferences = value.get("mode").is_none();
+    let mut settings: CaptureSettings =
+        serde_json::from_value(value).map_err(|error| io(&path, std::io::Error::other(error)))?;
+    if legacy_preferences {
+        settings.mode = crate::capture::CaptureMode::ReplayOnly;
+    }
     settings
         .validate()
         .map_err(|error| io(&path, std::io::Error::other(error)))?;
@@ -55,4 +61,23 @@ pub(super) fn save(root: &Path, settings: CaptureSettings) -> Result<(), Storage
         .persist(&path)
         .map_err(|error| io(&path, error.error))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::capture::CaptureMode;
+
+    #[test]
+    fn preferences_migrate_to_replay_capture_without_reinterpreting_legacy_takes() {
+        let root = tempfile::tempdir().unwrap();
+        let mut value = serde_json::to_value(CaptureSettings::default()).unwrap();
+        value.as_object_mut().unwrap().remove("mode");
+        std::fs::write(root.path().join(FILE), serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(load(root.path()).unwrap().mode, CaptureMode::ReplayOnly);
+        let legacy_take: CaptureSettings = serde_json::from_value(value).unwrap();
+        assert_eq!(legacy_take.mode, CaptureMode::ReplayAndVideo);
+        save(root.path(), legacy_take).unwrap();
+        assert_eq!(load(root.path()).unwrap().mode, CaptureMode::ReplayAndVideo);
+    }
 }

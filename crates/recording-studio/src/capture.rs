@@ -119,6 +119,8 @@ pub enum CaptureRequest {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CaptureSettings {
+    #[serde(default)]
+    pub mode: CaptureMode,
     pub fps: FrameRate,
     /// Missing fields retain native-sized legacy captures; new preferences use 1080p.
     #[serde(default)]
@@ -138,6 +140,7 @@ pub struct CaptureSettings {
 impl Default for CaptureSettings {
     fn default() -> Self {
         Self {
+            mode: CaptureMode::ReplayOnly,
             fps: FrameRate::default(),
             size: CaptureSize::P1080,
             codec: ExportCodec::H264,
@@ -147,6 +150,39 @@ impl Default for CaptureSettings {
             hand: false,
             hud: false,
         }
+    }
+}
+
+/// Native scene capture can omit the live video encoder and its GPU pixel transfers.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureMode {
+    ReplayOnly,
+    /// Missing metadata fields describe legacy takes that always encoded a POV video.
+    #[default]
+    ReplayAndVideo,
+}
+
+impl CaptureMode {
+    /// User-facing names distinguish editable 3D data from the optional recorded camera video.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ReplayOnly => "3D replay",
+            Self::ReplayAndVideo => "3D replay + video",
+        }
+    }
+
+    /// Both choices retain the same scene and audio data.
+    pub const fn next(self) -> Self {
+        match self {
+            Self::ReplayOnly => Self::ReplayAndVideo,
+            Self::ReplayAndVideo => Self::ReplayOnly,
+        }
+    }
+
+    /// Whether this take needs FFmpeg and GPU readback during gameplay.
+    pub const fn records_video(self) -> bool {
+        matches!(self, Self::ReplayAndVideo)
     }
 }
 
@@ -160,3 +196,6 @@ impl CaptureSettings {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

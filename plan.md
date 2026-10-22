@@ -919,6 +919,11 @@ Current implementation; runtime acceptance remains incomplete:
   Focused changed-crate checks compile. Regression and runtime acceptance is being
   exercised separately; no recording-FPS gain or complete replay parity is claimed.
 
+- New recordings default to native replay capture without a live video encoder or
+  GPU pixel readbacks; a recorded-camera video remains an explicit option. Legacy
+  takes retain their video contract. Visual queue admission charges shared immutable
+  allocations once while enforcing the existing retained-memory limit. These paths
+  have regression source but no current build or sustained hardware acceptance.
 - Production hardening now isolates recording actor preparation from live artwork,
   reuses same-clock animation samples and bounded GPU readback buffers, avoids
   recompressing scene envelopes, and limits live software encoder threads. Capture

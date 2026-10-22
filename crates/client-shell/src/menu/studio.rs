@@ -440,6 +440,7 @@ impl Studio {
                 let workflow = &mut Arc::make_mut(&mut self.view).workflow;
                 workflow.show_settings = !workflow.show_settings;
             }
+            Action::CycleCaptureMode => self.cycle_capture_mode()?,
             Action::CycleCaptureFps => self.cycle_capture_fps()?,
             Action::CycleCaptureSize => self.cycle_capture_size()?,
             Action::ToggleCaptureHand => self.toggle_capture_hand()?,

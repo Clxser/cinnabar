@@ -698,7 +698,8 @@ fn poll_finish(state: &mut NativeCapture) {
     match result {
         Ok(summary) => {
             bevy::log::info!(
-                frames = summary.video.frames,
+                frames = summary.manifest.frames,
+                video = summary.video.is_some(),
                 missed_frames = summary.manifest.missed_video_frames,
                 duration_us = summary.manifest.duration.0,
                 "Studio recording saved"

@@ -73,6 +73,7 @@ pub enum Action {
     RetryAutosave,
     CheckDependencies,
     UseCpuEncoder,
+    CycleCaptureMode,
     CycleCaptureFps,
     CycleCaptureSize,
     ToggleCaptureHand,
