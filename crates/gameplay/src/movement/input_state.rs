@@ -10,6 +10,8 @@ pub struct TickInput {
     pub sneak: ActionPhase,
     /// Sprint control after the hold/toggle setting, before sprint admission.
     pub sprint_down: bool,
+    /// The sprint control was pressed, accumulated until a tick completes.
+    pub sprint_pressed: bool,
     /// Sneak control after the hold/toggle setting, before forced-pose admission.
     pub sneak_down: bool,
     /// Server sprint state applied before this tick admits local sprint input.
@@ -23,6 +25,7 @@ pub struct TickInput {
 pub(super) struct PendingInputEdges {
     jump: ActionPhase,
     sneak: ActionPhase,
+    sprint_pressed: bool,
     server_sprinting: Option<bool>,
     server_sneaking: Option<bool>,
 }
@@ -44,6 +47,7 @@ impl PendingInputEdges {
         self.jump.released |= input.jump.released;
         self.sneak.pressed |= input.sneak.pressed;
         self.sneak.released |= input.sneak.released;
+        self.sprint_pressed |= input.sprint_pressed;
         self.server_sprinting = input.server_sprinting.or(self.server_sprinting);
         self.server_sneaking = input.server_sneaking.or(self.server_sneaking);
     }
@@ -54,6 +58,7 @@ impl PendingInputEdges {
         input.jump.released = self.jump.released;
         input.sneak.pressed = self.sneak.pressed;
         input.sneak.released = self.sneak.released;
+        input.sprint_pressed = self.sprint_pressed;
         input.server_sprinting = self.server_sprinting;
         input.server_sneaking = self.server_sneaking;
         input

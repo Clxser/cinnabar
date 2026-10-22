@@ -100,6 +100,7 @@ fn airborne() -> ModeObservation {
         liquid_contact_height: None,
         jump_edge: false,
         jump_down: false,
+        sprint_pressed: false,
     }
 }
 
@@ -836,4 +837,35 @@ fn a_wet_non_swimmer_stops_sprinting_after_a_held_jump() {
         .unwrap();
     assert_eq!(choice.mode, MovementMode::Swimming);
     assert!(choice.sprinting);
+}
+
+/// After a liquid stop releases the latched request, a sprint press since the
+/// previous tick still starts the sprint; the stale latch alone does not.
+#[test]
+fn a_fresh_sprint_press_restarts_after_a_liquid_stop() {
+    for pressed in [false, true] {
+        let mut tracker = ModeTracker {
+            mode: MovementMode::Swimming,
+            sprinting: true,
+            ..ModeTracker::default()
+        };
+        let dry = ModeObservation {
+            sprinting: true,
+            move_forward: 1.0,
+            liquid_contact_height: Some(sim::PLAYER_WIDTH),
+            ..airborne()
+        };
+        let choice = tracker
+            .select(ModeIntent::default(), dry, &Ceiling(None))
+            .unwrap();
+        assert!(!choice.sprinting);
+        let next = ModeObservation {
+            sprint_pressed: pressed,
+            ..dry
+        };
+        let choice = tracker
+            .select(ModeIntent::default(), next, &Ceiling(None))
+            .unwrap();
+        assert_eq!(choice.sprinting, pressed);
+    }
 }

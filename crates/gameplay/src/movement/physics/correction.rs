@@ -218,7 +218,6 @@ impl LocalPhysicsController {
             .copied()
             .ok_or(PhysicsCorrectionError::NotRetained { tick })?;
         let mut modes = anchor_controller.modes;
-        modes.begin_replay();
         let mut anchor_state = anchor_controller.anchor_state;
         let mut eye = anchor_controller.eye_offset;
         let deferred_corrections = self.deferred_corrections.clone();
@@ -375,6 +374,7 @@ impl LocalPhysicsController {
                 retained.processed.forced_sneak = frame.forced_sneak;
                 retained.processed.flight_request = frame.flight_request;
                 retained.processed.ride = frame.intent.ride;
+                retained.input.server_sprinting = frame.server_sprinting;
                 if let Some(delta) = frame.ride_delta {
                     retained.movement = delta;
                 }
@@ -385,9 +385,7 @@ impl LocalPhysicsController {
         }
         self.processed_jump_arc_active = jump_fold.arc_active();
         self.modes = modes;
-        if modes.replay_ended_server_sprint() && !modes.sprinting() {
-            self.drop_ended_server_sprint();
-        }
+        self.settle_rewound_sprint();
         eye.preserve_interpolation_hold(self.eye_offset);
         self.eye_offset = eye;
         self.last_environment = controller_frames

@@ -119,11 +119,59 @@ fn a_replayed_server_sprint_ends_at_a_liquid_stop() {
     reconcile_timeline_rewind(&mut ticker, &mut delayed, rewind, &SidePool).unwrap();
     assert_eq!(delayed.state(), on_time.state());
     assert_eq!(delayed.latest_sneak_sprint(), Some((false, false)));
+    assert_eq!(delayed.prediction_sync_posture(), Some((false, false)));
     assert_eq!(
         delayed
             .take_server_control_flags()
             .and_then(|flags| flags.sprinting),
         None
+    );
+    // The write stays retained: replaying the same history again reproduces it.
+    let anchor = delayed.state().unwrap().tick - 6;
+    let position = ticker
+        .pending_samples()
+        .iter()
+        .find(|sample| sample.snapshot.tick == anchor)
+        .unwrap()
+        .snapshot
+        .position;
+    reconcile_candidate_physics_correction(
+        &mut ticker,
+        &mut delayed,
+        position,
+        anchor,
+        false,
+        PhysicsCorrectionMode::ReplayIfRetained,
+        &SidePool,
+    )
+    .unwrap();
+    // The network anchor round-trips the feet through f32, so compare motion.
+    let (replayed, expected) = (delayed.state().unwrap(), on_time.state().unwrap());
+    assert_eq!(replayed.position, expected.position);
+    assert_eq!(replayed.velocity, expected.velocity);
+    assert_eq!(delayed.latest_sneak_sprint(), Some((false, false)));
+}
+
+/// A newer live sprint write survives the replay of an older delayed write that
+/// a liquid stop ended.
+#[test]
+fn a_newer_live_sprint_write_survives_an_older_stopped_replay() {
+    let sprint = client_world::MovementFlagUpdate {
+        sprinting: Some(true),
+        ..Default::default()
+    };
+    let mut physics = LocalPhysicsController::default();
+    let mut ticker = MovementTicker::default();
+    let start = swim_out_of_the_side(&mut physics, &mut ticker, None);
+    let rewind = physics.apply_server_movement_flags(start, sprint).unwrap();
+    let latest = physics.state().unwrap().tick;
+    assert_eq!(physics.apply_server_movement_flags(latest, sprint), None);
+    reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &SidePool).unwrap();
+    assert_eq!(
+        physics
+            .take_server_control_flags()
+            .and_then(|flags| flags.sprinting),
+        Some(true)
     );
 }
 
@@ -212,6 +260,16 @@ fn a_replayed_server_sprint_ends_at_an_input_stop() {
         .unwrap();
     reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &VersionedFloor(1)).unwrap();
     assert_eq!(physics.latest_sneak_sprint(), Some((false, false)));
+    // The server set the flag before the stopped tick, so that tick sends the stop.
+    let stopped = ticker
+        .pending_samples()
+        .into_iter()
+        .find(|sample| sample.snapshot.tick == ticks[1])
+        .unwrap();
+    assert_ne!(
+        stopped.snapshot.flags.bits() & PlayerInputFlags::STOP_SPRINTING.bits(),
+        0
+    );
     assert_eq!(
         physics
             .take_server_control_flags()

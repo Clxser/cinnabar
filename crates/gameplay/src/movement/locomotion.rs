@@ -103,6 +103,8 @@ pub(super) struct ModeObservation {
     pub jump_edge: bool,
     /// Jump state sent as `JumpDown` this tick, which the flight double-tap reads.
     pub jump_down: bool,
+    /// The sprint control was pressed since the previous tick.
+    pub sprint_pressed: bool,
 }
 
 impl ModeObservation {
@@ -127,10 +129,6 @@ pub(super) struct ModeChoice {
     pub sprinting: bool,
     /// The double-tap requested starting (true) or stopping (false) flight this tick.
     pub flight_request: Option<bool>,
-    /// Native sprint intent requested a stop this tick: the liquid stop, or an
-    /// input, blocked or setting stop outside wet swimming. It applies after any
-    /// start and after an authoritative sprint flag.
-    pub sprint_stop: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -150,21 +148,9 @@ pub(super) struct ModeTracker {
     /// Consecutive gliding ticks, including the one that started the glide.
     fall_fly_ticks: u32,
     /// A liquid stop released the latched sprint request. Until sprint restarts,
-    /// only a held, toggled or automatic sprint control requests it.
+    /// only a held, toggled or automatic sprint control, or a fresh sprint press,
+    /// requests it.
     sprint_request_released: bool,
-    /// Correction replay state for authoritative sprint runs ended by a stop request.
-    replay_sprint: ReplaySprint,
-}
-
-/// Tracks, within one correction replay, authoritative sprint rewrites that a
-/// stop request ended. Native applies a server sprint flag once, and later
-/// intents may stop it.
-#[derive(Debug, Clone, Copy, Default)]
-struct ReplaySprint {
-    /// The current run of authoritative sprint frames has been stopped.
-    run_ended: bool,
-    /// Any authoritative sprint was stopped during this replay.
-    ended_any: bool,
 }
 
 impl ModeTracker {
@@ -214,42 +200,19 @@ impl ModeTracker {
             .record_controls(input.processed_controls().move_vector[1] as f32, sneak_down);
     }
 
-    /// Starts a correction replay without any authoritative sprint ended yet.
-    pub(super) fn begin_replay(&mut self) {
-        self.replay_sprint = ReplaySprint::default();
-    }
-
-    /// Whether a stop request in this replay ended an authoritative sprint. When the
-    /// replay also ends unsprinted, a pending live adoption of that sprint is stale.
-    pub(super) const fn replay_ended_server_sprint(&self) -> bool {
-        self.replay_sprint.ended_any
-    }
-
-    /// Returns a replayed authoritative sprint unless a stop request already ended
-    /// its run; those later ticks select their own sprint. A tick without an
-    /// authoritative sprint ends the run.
-    pub(super) fn replay_sprint_override(&mut self, sprint_override: Option<bool>) -> Option<bool> {
-        if sprint_override != Some(true) {
-            self.replay_sprint.run_ended = false;
-        }
-        sprint_override.filter(|_| !self.replay_sprint.run_ended)
-    }
-
-    /// The replayed tick's sprint: a stop request applies after an authoritative
-    /// sprint and ends its run.
-    pub(super) fn replayed_sprint(
-        &mut self,
+    /// Sprint request for a replayed tick. A retained authoritative sprint keeps an
+    /// active sprint going like native continuation, which needs no request, but
+    /// never starts one: native applies the server flag once, so after any stop
+    /// only the player's own request restarts it. An authoritative stop holds.
+    pub(super) const fn replay_sprint_request(
+        &self,
         sprint_override: Option<bool>,
-        choice: ModeChoice,
+        requested: bool,
     ) -> bool {
         match sprint_override {
-            Some(true) if choice.sprint_stop => {
-                self.replay_sprint.run_ended = true;
-                self.replay_sprint.ended_any = true;
-                false
-            }
-            Some(sprinting) => sprinting,
-            None => choice.sprinting,
+            Some(true) => requested || self.sprinting,
+            Some(false) => false,
+            None => requested,
         }
     }
 
@@ -292,7 +255,6 @@ impl ModeTracker {
                 forced_sneak: false,
                 sprinting: self.sprinting,
                 flight_request: None,
-                sprint_stop: false,
             });
         }
         // Every ability update overwrites local flight, even when it repeats the previous value.
@@ -318,7 +280,6 @@ impl ModeTracker {
                 forced_sneak: false,
                 sprinting: false,
                 flight_request,
-                sprint_stop: false,
             });
         }
         // Flight survives ground contact; server flight does not require MayFly.
@@ -336,25 +297,21 @@ impl ModeTracker {
             world,
         )?;
         // After a liquid stop, a stale latched request cannot restart the sprint.
+        let fresh_request = observed.sprint_down || observed.sprint_pressed;
         let observed = ModeObservation {
             in_water: sampled.value.in_water,
-            sprinting: observed.sprinting
-                && (observed.sprint_down || !self.sprint_request_released),
+            sprinting: observed.sprinting && (fresh_request || !self.sprint_request_released),
             ..observed
         };
         // The sprint trigger runs before the swim trigger and keeps the previous actor
         // sprint flag while its previous swimming pose still contacts water; once that
         // pose leaves the water, the same intent stops the sprint.
-        let ordinary_stop =
-            self.sprint_trigger
-                .stop_requested(self.previous_feet, intent, observed);
         let sprint_candidate =
             self.sprint_trigger
                 .select(self.sprinting, self.previous_feet, intent, observed);
         let swim_retains = self.mode == MovementMode::Swimming && observed.in_water;
         let sprinting = (swim_retains && self.sprinting) || sprint_candidate;
         let liquid_stop = self.liquid_sprint_stop(observed.in_water);
-        let sprint_stop = liquid_stop || (!swim_retains && ordinary_stop);
         if liquid_stop {
             self.sprint_trigger.clear_latch();
         }
@@ -421,13 +378,12 @@ impl ModeTracker {
                 MovementMode::Crawling | MovementMode::Gliding | MovementMode::Riding
             );
         self.sprint_request_released =
-            (self.sprint_request_released || liquid_stop) && !self.sprinting;
+            ((self.sprint_request_released && !fresh_request) || liquid_stop) && !self.sprinting;
         Ok(ModeChoice {
             mode,
             forced_sneak,
             sprinting: self.sprinting,
             flight_request,
-            sprint_stop,
         })
     }
 

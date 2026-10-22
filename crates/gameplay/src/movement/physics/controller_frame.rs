@@ -26,6 +26,8 @@ pub(super) struct ControllerFrame {
     pub requested_sneak: bool,
     pub requested_sprint: bool,
     pub sprint_down: bool,
+    pub sprint_pressed: bool,
+    /// Server sprint flag applied before this tick, live or from a delayed write.
     pub server_sprinting: Option<bool>,
     pub input_mode: PlayerInputMode,
     pub mode_override: Option<sim::MovementMode>,
@@ -91,11 +93,9 @@ impl ControllerFrame {
         input.liquid_contact_height =
             Some(modes.liquid_contact_height(state.spin_attack_ticks.is_some()));
         input.liquid_flow_enabled = Some(modes.mode() != sim::MovementMode::Flying);
-        let retained_sprint_override = self.sprint_override;
-        let sprint_override = modes.replay_sprint_override(retained_sprint_override);
-        input.sprinting = sprint_override.unwrap_or(self.requested_sprint);
-        if let Some(sprinting) = sprint_override {
-            modes.restore_controls(sprinting, modes.sneaking());
+        input.sprinting = modes.replay_sprint_request(self.sprint_override, self.requested_sprint);
+        if self.sprint_override == Some(false) {
+            modes.restore_controls(false, modes.sneaking());
         }
         let previous_modes = *modes;
         let [move_sideways, move_forward] = ModeObservation::input_vector(*input);
@@ -119,6 +119,7 @@ impl ControllerFrame {
             liquid_contact_height: input.liquid_contact_height,
             jump_edge: self.jump_edge,
             jump_down: self.jump_down,
+            sprint_pressed: self.sprint_pressed,
         };
         anchor_state.prepare_tick(world, *modes, self.intent, &mut observed, *input);
         state.position = observed.feet;
@@ -132,19 +133,15 @@ impl ControllerFrame {
                     forced_sneak: self.forced_sneak,
                     sprinting: input.sprinting,
                     flight_request: None,
-                    sprint_stop: false,
                 }
             }
             Err(error) => return Err(error.into()),
         };
         input.mode = self.mode_override.unwrap_or(choice.mode);
-        input.sprinting = modes.replayed_sprint(sprint_override, choice);
-        // An authoritative sprint ended by a stop request stays ended in later replays.
-        if retained_sprint_override == Some(true)
-            && (sprint_override.is_none() || choice.sprint_stop)
-        {
-            self.sprint_override = None;
-        }
+        input.sprinting = self
+            .sprint_override
+            .filter(|sprinting| !sprinting)
+            .unwrap_or(choice.sprinting);
         modes.restore_mode(input.mode);
         self.forced_sneak = choice.forced_sneak;
         self.flight_request = choice.flight_request;
@@ -159,7 +156,7 @@ impl ControllerFrame {
             input.sneaking = false;
         }
         modes.restore_controls(input.sprinting, input.sneaking);
-        if retained_sprint_override.is_some() || self.mode_override.is_some() {
+        if self.sprint_override.is_some() || self.mode_override.is_some() {
             crate::movement::speed_authority::preserve_effective_speed(input, previous_sprinting);
         }
         self.ride_delta = None;

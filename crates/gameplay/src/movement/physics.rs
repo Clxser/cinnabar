@@ -623,6 +623,7 @@ impl LocalPhysicsController {
                 liquid_contact_height: input.liquid_contact_height,
                 jump_edge: self.jump_edge_pending,
                 jump_down: context.input.jump.held || self.jump_pulse_pending,
+                sprint_pressed: tick_input.sprint_pressed,
             };
             self.anchor_state.prepare_tick(
                 world,
@@ -739,6 +740,7 @@ impl LocalPhysicsController {
                         requested_sneak: sneak_request,
                         requested_sprint: sprint_request,
                         sprint_down: context.input.sprint_down,
+                        sprint_pressed: tick_input.sprint_pressed,
                         server_sprinting: tick_input.server_sprinting,
                         input_mode: context.input_mode,
                         mode_override: None,

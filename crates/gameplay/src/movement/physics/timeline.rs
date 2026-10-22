@@ -275,6 +275,8 @@ impl LocalPhysicsController {
 pub struct ServerControlFlags {
     pub sprinting: Option<bool>,
     pub sneaking: Option<bool>,
+    /// The sprint came from a delayed write whose replay may still stop it.
+    pub(super) sprint_from_rewind: bool,
 }
 
 impl LocalPhysicsController {
@@ -335,6 +337,17 @@ impl LocalPhysicsController {
                     crate::movement::speed_authority::preserve_effective_speed(input, previous);
                 },
             );
+            // Native applies the write once, on the following frame; continuation
+            // and later stop intents then decide the rest of the run.
+            if edited
+                && sprinting
+                && let Some(frame) = self
+                    .controller_history
+                    .iter_mut()
+                    .find(|frame| frame.tick == tick + 1)
+            {
+                frame.server_sprinting.get_or_insert(true);
+            }
             changed |= edited;
             present.sprinting = reached.then_some(sprinting);
         }
@@ -373,19 +386,30 @@ impl LocalPhysicsController {
             crawling: None,
             ..present
         });
+        if present.sprinting.is_some()
+            && let Some(pending) = &mut self.server_control_flags
+        {
+            pending.sprint_from_rewind = true;
+        }
         changed.then_some(tick)
     }
 
-    /// A replayed stop request ended an authoritative sprint and the player ends
-    /// unsprinted, so its pending live adoption and posture overlay are stale.
-    pub(super) fn drop_ended_server_sprint(&mut self) {
+    /// A delayed sprint write's replay decides the live state. When replayed
+    /// intents stopped it, its pending adoption and posture overlay are stale; a
+    /// newer live write has already cleared the marker and keeps its own values.
+    pub(super) fn settle_rewound_sprint(&mut self) {
+        let Some(pending) = &mut self.server_control_flags else {
+            return;
+        };
+        if !std::mem::take(&mut pending.sprint_from_rewind)
+            || self.modes.sprinting()
+            || pending.sprinting != Some(true)
+        {
+            return;
+        }
+        pending.sprinting = None;
         if self.live_posture.sprinting == Some(true) {
             self.live_posture.sprinting = None;
-        }
-        if let Some(pending) = &mut self.server_control_flags
-            && pending.sprinting == Some(true)
-        {
-            pending.sprinting = None;
         }
     }
 
@@ -417,6 +441,7 @@ impl LocalPhysicsController {
         self.live_posture.sprinting = flags.sprinting.or(self.live_posture.sprinting);
         self.live_posture.sneaking = flags.sneaking.or(self.live_posture.sneaking);
         let pending = self.server_control_flags.get_or_insert_default();
+        pending.sprint_from_rewind &= flags.sprinting.is_none();
         pending.sprinting = flags.sprinting.or(pending.sprinting);
         pending.sneaking = flags.sneaking.or(pending.sneaking);
     }
