@@ -164,11 +164,7 @@ impl Store {
                 if active.saved_revision.is_none_or(|saved| revision > saved) {
                     let mut project = (*project).clone();
                     let base = super::files::absolute(&source_base)?;
-                    for source in &mut project.sources {
-                        if source.path.is_relative() {
-                            source.path = base.join(&source.path);
-                        }
-                    }
+                    super::paths::relocate(&mut project, &base, None);
                     project.to_json()?;
                     let original_file = original_file
                         .as_deref()

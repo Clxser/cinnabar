@@ -16,6 +16,7 @@ use crate::{
 
 mod files;
 mod library;
+mod paths;
 mod preferences;
 mod recovery;
 pub use recovery::{AUTOSAVE_INTERVAL_MICROS, RecoveryEntry, RecoveryRequest, RecoveryValue};
@@ -212,11 +213,7 @@ fn execute(request: StorageRequest) -> Result<StorageValue, StorageError> {
             let path = files::absolute(&path)?;
             let mut project = files::load(&path)?;
             let parent = path.parent().ok_or(StorageError::InvalidPath)?;
-            for source in &mut project.sources {
-                if source.path.is_relative() {
-                    source.path = parent.join(&source.path);
-                }
-            }
+            paths::relocate(&mut project, parent, None);
             project.validate()?;
             let editor = Editor::new(project)?;
             Ok(StorageValue::LoadedProject { path, editor })

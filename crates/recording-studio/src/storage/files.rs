@@ -113,16 +113,7 @@ fn portable_bytes(
     source_base: &Path,
 ) -> Result<Vec<u8>, StorageError> {
     let mut portable = project.clone();
-    for source in &mut portable.sources {
-        let absolute = if source.path.is_absolute() {
-            source.path.clone()
-        } else {
-            source_base.join(&source.path)
-        };
-        source.path = absolute
-            .strip_prefix(parent)
-            .map_or_else(|_| absolute.clone(), Path::to_path_buf);
-    }
+    super::paths::relocate(&mut portable, source_base, Some(parent));
     Ok(portable.to_json()?)
 }
 

@@ -13,6 +13,9 @@ content preserves the binding; replacing it invalidates recall until an explicit
 metadata cannot detect replacement of an unhashed file at that same path. Normal
 source verification still applies. Deleting a source also removes its saved views
 in the same undo step. Legacy projects without saved views open with an empty list.
+Save As, open and recovery relocate media and captured binding paths independently
+through the document's original source base; relocation never rebinds a stale view
+to replacement media.
 
 ## Rail timing
 
