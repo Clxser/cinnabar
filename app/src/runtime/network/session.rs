@@ -59,6 +59,7 @@ pub fn spawn_network(
     config: NetworkConfig,
     execution: bridge::tasks::NativeExecution,
     packet_relay: Option<std::sync::Arc<dyn protocol::PacketRelay>>,
+    #[cfg(feature = "native-networking")] retirement: tokio_util::task::TaskTracker,
 ) -> Result<NetworkHandle<PackApplication>, std::io::Error> {
     if bridge::join_profile::JoinProfile::current().id().is_none() {
         bridge::join_profile::JoinProfile::begin();
@@ -171,6 +172,8 @@ pub fn spawn_network(
         &config.log_dir,
         unix_time_ms(),
     );
+    #[cfg(feature = "native-networking")]
+    let domain = domain.with_retirement_tracker(retirement);
     #[cfg(feature = "native-networking")]
     let domain = domain.with_native_preparation(native_preparation);
     let prepare =

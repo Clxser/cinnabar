@@ -35,7 +35,8 @@ impl MenuRuntime {
         self.sign_out_requested || self.accounts.operation.is_some() || self.accounts.work.is_some()
     }
 
-    pub(super) fn account_change_pending(&self) -> bool {
+    /// Includes an Add account reservation, so every replacement retires the original session first.
+    pub fn account_change_pending(&self) -> bool {
         self.feeds.account_adding
             || self.sign_out_requested
             || self.accounts.operation.is_some()

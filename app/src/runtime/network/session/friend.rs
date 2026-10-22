@@ -7,6 +7,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+use tokio_util::task::{TaskTracker, task_tracker::TaskTrackerToken};
 
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -17,12 +18,19 @@ pub(crate) struct FriendCleanupOwner(Arc<Mutex<CleanupState>>);
 #[derive(Default)]
 struct CleanupState {
     reserved: bool,
-    pending: Option<FriendJoin>,
+    pending: Option<PendingCleanup>,
+}
+
+/// Uncertain original membership keeps its completion obligation after the worker returns.
+struct PendingCleanup {
+    friend: FriendJoin,
+    retirement: TaskTrackerToken,
 }
 
 struct CleanupLease {
     owner: FriendCleanupOwner,
     friend: Option<FriendJoin>,
+    retirement: Option<TaskTrackerToken>,
 }
 
 impl FriendCleanupOwner {
@@ -37,7 +45,7 @@ impl FriendCleanupOwner {
     }
 
     /// Reserves the sole cleanup slot before any new remote membership is created.
-    fn reserve(&self) -> io::Result<CleanupLease> {
+    fn reserve(&self, retirement: &TaskTracker) -> io::Result<CleanupLease> {
         let mut state = self
             .0
             .lock()
@@ -49,9 +57,14 @@ impl FriendCleanupOwner {
             ));
         }
         state.reserved = true;
+        let (friend, retirement) = match state.pending.take() {
+            Some(pending) => (Some(pending.friend), pending.retirement),
+            None => (None, retirement.token()),
+        };
         Ok(CleanupLease {
             owner: self.clone(),
-            friend: state.pending.take(),
+            friend,
+            retirement: Some(retirement),
         })
     }
 
@@ -59,10 +72,11 @@ impl FriendCleanupOwner {
     pub(crate) fn request(
         &self,
         selection: NativeFriendSelection,
+        retirement: &TaskTracker,
     ) -> io::Result<FriendConnectionRequest> {
         Ok(FriendConnectionRequest {
             selection,
-            lease: self.reserve()?,
+            lease: self.reserve(retirement)?,
         })
     }
 }
@@ -78,7 +92,13 @@ impl Drop for CleanupLease {
             .0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.pending = self.friend.take();
+        state.pending = self.friend.take().map(|friend| PendingCleanup {
+            friend,
+            retirement: self
+                .retirement
+                .take()
+                .expect("original cleanup reservation"),
+        });
         state.reserved = false;
     }
 }
@@ -193,8 +213,9 @@ mod tests {
     #[cfg(feature = "developer-control")]
     fn cleanup_observation_follows_the_original_reserved_lifetime() {
         let owner = FriendCleanupOwner::default();
+        let retirement = TaskTracker::new();
         assert_eq!(owner.observation(), (false, false));
-        let lease = owner.reserve().unwrap();
+        let lease = owner.reserve(&retirement).unwrap();
         assert_eq!(owner.observation(), (true, false));
         drop(lease);
         assert_eq!(owner.observation(), (false, false));
@@ -203,12 +224,13 @@ mod tests {
     #[test]
     fn cleanup_capacity_backpressures_another_join_until_the_reserved_owner_returns() {
         let owner = FriendCleanupOwner::default();
-        let first = owner.reserve().unwrap();
+        let retirement = TaskTracker::new();
+        let first = owner.reserve(&retirement).unwrap();
         assert_eq!(
-            owner.reserve().err().unwrap().kind(),
+            owner.reserve(&retirement).err().unwrap().kind(),
             io::ErrorKind::WouldBlock
         );
         drop(first);
-        assert!(owner.reserve().is_ok());
+        assert!(owner.reserve(&retirement).is_ok());
     }
 }

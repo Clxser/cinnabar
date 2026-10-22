@@ -20,6 +20,8 @@ impl NetworkConfig {
             session_generation,
             endpoint,
             #[cfg(feature = "native-networking")]
+            retirement: None,
+            #[cfg(feature = "native-networking")]
             native_preparation: None,
             display_name,
             client_random_id,
@@ -28,6 +30,15 @@ impl NetworkConfig {
             login_settings,
             packet_capture: None,
         }
+    }
+
+    /// Counts the original worker until its cleanup and owned captures have finished.
+    /// This observes completion without granting cancellation or owning the runtime.
+    #[must_use]
+    #[cfg(feature = "native-networking")]
+    pub fn with_retirement_tracker(mut self, retirement: tokio_util::task::TaskTracker) -> Self {
+        self.retirement = Some(retirement);
+        self
     }
 
     /// Moves the original account acquisition into the same session worker's cancellation lifetime.

@@ -73,6 +73,7 @@ pub fn spawn_network_with_companion<P: Send + 'static>(
         let shutdown = handle.shutdown.clone();
         let terminal = Arc::clone(&channels.terminal);
         let completion = tasks.token();
+        let retirement = config.retirement.as_ref().map(|tasks| tasks.token());
         let work = move || {
             let (packet_tap, packet_capture) =
                 packet_log::session_tap(config.packet_capture.as_ref());
@@ -163,22 +164,34 @@ pub fn spawn_network_with_companion<P: Send + 'static>(
             }
             tracing::info!(shutdown_phase = "session_capture_check_returned");
         };
+        // Destroy an unstarted worker's captures before either completion token on spawn failure.
+        let worker = (work, completion, retirement);
         handle.thread = Some(
             thread::Builder::new()
                 .name("bedrock-network".to_owned())
-                .spawn(move || {
-                    let _completion = completion;
-                    let worker_thread = thread::current().id();
-                    tracing::info!(shutdown_phase = "session_worker_body_begin", ?worker_thread);
-                    work();
-                    tracing::info!(
-                        shutdown_phase = "session_worker_body_returned",
-                        ?worker_thread
-                    );
-                })?,
+                .spawn(move || run_worker(worker))?,
         );
         Ok(handle)
     }
+}
+
+/// Captures the whole ordered owner, retaining completion through the actual body and its drops.
+#[cfg(feature = "native-networking")]
+fn run_worker(
+    worker: (
+        impl FnOnce(),
+        tokio_util::task::task_tracker::TaskTrackerToken,
+        Option<tokio_util::task::task_tracker::TaskTrackerToken>,
+    ),
+) {
+    let (work, _completion, _retirement) = worker;
+    let worker_thread = thread::current().id();
+    tracing::info!(shutdown_phase = "session_worker_body_begin", ?worker_thread);
+    work();
+    tracing::info!(
+        shutdown_phase = "session_worker_body_returned",
+        ?worker_thread
+    );
 }
 
 /// Runs only this session; its caller keeps the shared reactor alive for unrelated owners.

@@ -4,6 +4,11 @@ use super::MenuRuntime;
 #[cfg(feature = "native-networking")]
 pub mod friend;
 
+/// Observes admission of the real account-store worker, without starting or completing it.
+pub fn account_storage_started(menu: &MenuRuntime) -> bool {
+    menu.accounts.work.is_some()
+}
+
 /// Publishes a controlled external join stage for teardown fixtures.
 pub fn set_join_stage(menu: &mut MenuRuntime, stage: launcher::menu::view::JoinStage) {
     menu.feeds.join =

@@ -34,6 +34,9 @@ const NETWORK_PUMP_TERMINAL_MARKER: &str = "CINNABAR_NETWORK_PUMP_TERMINAL";
 pub struct NetworkConfig {
     pub session_generation: SessionGeneration,
     pub endpoint: protocol::SessionEndpoint,
+    /// The caller's completion group, retained through original worker capture destruction.
+    #[cfg(feature = "native-networking")]
+    retirement: Option<tokio_util::task::TaskTracker>,
     /// One application-owned acquisition future, polled on this session's runtime and cancelled with it.
     #[cfg(feature = "native-networking")]
     native_preparation: Option<NativeConnectionPreparation>,

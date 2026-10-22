@@ -56,7 +56,11 @@ pub(super) fn poll_join(
     let native_friend = match controller
         .native_friend
         .take()
-        .map(|selection| controller.friend_cleanup.request(selection))
+        .map(|selection| {
+            controller
+                .friend_cleanup
+                .request(selection, &controller.network_workers)
+        })
         .transpose()
     {
         Ok(request) => request,
@@ -70,6 +74,8 @@ pub(super) fn poll_join(
         menu,
         controller.generation,
         cache,
+        #[cfg(feature = "native-networking")]
+        controller.network_workers.clone(),
         endpoint,
         #[cfg(feature = "native-networking")]
         native_account,
@@ -106,6 +112,7 @@ fn start_network(
     menu: &MenuRuntime,
     session_generation: u64,
     cache: &BlobCache,
+    #[cfg(feature = "native-networking")] retirement: tokio_util::task::TaskTracker,
     endpoint: protocol::SessionEndpoint,
     #[cfg(feature = "native-networking")] native_account: Option<
         std::sync::Arc<launcher_host::native_account::NativeAccount>,
@@ -155,6 +162,8 @@ fn start_network(
         },
         execution,
         packet_relay,
+        #[cfg(feature = "native-networking")]
+        retirement,
     )
     .map_err(|error| error.to_string())?;
     commands.insert_resource(

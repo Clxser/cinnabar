@@ -12,6 +12,8 @@ pub struct LauncherServices {
     retirement_blocked: bool,
     presence_lifetime: Option<launcher_host::launcher_account::TitlePresenceLifetime>,
     workers: Option<tokio_util::task::TaskTracker>,
+    /// Covers session cleanup independently of this account service's worker group.
+    session_workers: Option<tokio_util::task::TaskTracker>,
 }
 
 struct Attachment {
@@ -21,6 +23,11 @@ struct Attachment {
 }
 
 impl LauncherServices {
+    /// Retains the application's original session completion group before account admission.
+    pub fn set_session_workers(&mut self, workers: tokio_util::task::TaskTracker) {
+        self.session_workers = Some(workers);
+    }
+
     /// Retires original readers and publication before admitting account storage or replacement.
     pub(super) fn drive(
         &mut self,
@@ -38,6 +45,13 @@ impl LauncherServices {
             && menu.auth_cleanup_complete()
         {
             if !self.retire_presence(commands, menu) {
+                return;
+            }
+            if self
+                .session_workers
+                .as_ref()
+                .is_some_and(|workers| !workers.is_empty())
+            {
                 return;
             }
             if self.running.take().is_some() {

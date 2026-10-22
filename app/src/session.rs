@@ -66,7 +66,11 @@ pub(crate) struct SessionController {
     /// Automatic transfer-follow hops remaining in the current chain.
     transfer_hops_remaining: u32,
     connecting: bool,
+    /// Cancels SessionWorld only once; worker completion is observed separately.
     account_retirement_started: bool,
+    /// Original workers and retained member cleanup that must precede credential replacement.
+    #[cfg(feature = "native-networking")]
+    network_workers: tokio_util::task::TaskTracker,
     parallel_resource_pack_urls: bool,
     #[cfg(feature = "native-networking")]
     native_transport: Option<protocol::NativeTransport>,
@@ -130,6 +134,8 @@ impl SessionController {
             transfer_hops_remaining: MAX_TRANSFER_CHAIN_HOPS,
             connecting: false,
             account_retirement_started: false,
+            #[cfg(feature = "native-networking")]
+            network_workers: tokio_util::task::TaskTracker::new(),
             parallel_resource_pack_urls: false,
             #[cfg(feature = "native-networking")]
             native_transport: None,
