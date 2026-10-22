@@ -21,15 +21,9 @@ pub(super) struct Layout {
     pub compact_footer: bool,
 }
 
-/// The action group's height in rem, including the wardrobe and update notice when shown.
-pub(super) fn action_group_height(compact: bool, update_ready: bool) -> f32 {
-    let actions = if compact { 35.6 } else { 29.6 };
-    actions
-        + if update_ready {
-            UPDATE_NOTICE_HEIGHT
-        } else {
-            0.0
-        }
+/// The action group's height in rem, including wardrobe controls on compact layouts.
+pub(super) fn action_group_height(compact: bool) -> f32 {
+    if compact { 35.6 } else { 29.6 }
 }
 
 /// The panel inset in logical pixels, limited by its width.

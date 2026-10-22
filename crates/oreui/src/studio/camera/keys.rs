@@ -1,6 +1,7 @@
 //! A bounded window of stored path keys remains usable even for large camera rails.
 
 use super::*;
+use recording_studio::MediaTime;
 
 const VISIBLE_KEYS: usize = 5;
 

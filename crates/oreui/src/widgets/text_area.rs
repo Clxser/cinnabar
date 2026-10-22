@@ -1,6 +1,7 @@
 //! A bounded visible slice of an explicit multiline field, with byte-accurate pointer placement.
 
 use super::*;
+use ui_engine::caret::caret_byte;
 
 /// Follows the caret's explicit line and horizontally scrolls its ink inside one native field face.
 #[allow(clippy::too_many_arguments)]
@@ -97,6 +98,7 @@ pub(in super::super) fn text_area(
             let factor = request.scale.get() / metrics.scale.get();
             let letter_spacing_64 = request.wrap.letter_spacing_64;
             canvas.spots.push(TextSpot {
+                layout: None,
                 field,
                 byte_range: Some([start, end]),
                 bounds,
