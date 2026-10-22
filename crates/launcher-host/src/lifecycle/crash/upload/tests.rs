@@ -139,6 +139,10 @@ fn nothing_is_sent_without_consent() {
     let server = Server::start(201);
     let folder = crash(&layout, "panicked at a.rs:1:1:\nboom");
     assert!(send_due(&layout, &policy(&server, false)).is_empty());
+    assert!(
+        send_due(&layout, &policy(&server, true)).is_empty(),
+        "producers must complete a report before granting automatic consent"
+    );
     assert!(send(&layout, &folder, &policy(&server, false)).is_err());
     assert!(server.payloads().is_empty());
     assert!(state::read(&folder).is_none());
@@ -150,6 +154,7 @@ fn automatic_consent_sends_each_report_once() {
     let layout = layout(root.path());
     let server = Server::start(201);
     let first = crash(&layout, "panicked at a.rs:1:1:\nboom");
+    consent(&first, Consent::Auto, now_ms()).unwrap();
     let results = send_due(&layout, &policy(&server, true));
     assert_eq!(results.len(), 1);
     assert!(matches!(results[0].1, Ok(Upload::Sent { .. })));
@@ -205,6 +210,7 @@ fn failed_sends_stay_pending_and_refusals_are_abandoned() {
         automatic: true,
     };
     let other = crash(&layout, "offline");
+    consent(&other, Consent::Auto, now_ms()).unwrap();
     let results = send_due(&layout, &unreachable);
     assert_eq!(results.len(), 1);
     assert!(matches!(results[0].1, Ok(Upload::Pending { .. })));
@@ -324,4 +330,30 @@ fn the_kill_switch_overrides_explicit_and_automatic_consent() {
         .unwrap();
     assert!(status.success());
     assert!(server.payloads().is_empty());
+}
+
+#[test]
+fn automatic_consent_is_recorded_only_when_the_producer_completes_the_report() {
+    use launcher::menu::settings_options::SettingId;
+    let root = tempfile::tempdir().unwrap();
+    let layout = layout(root.path());
+    let server = Server::start(201);
+    let folder = crash(&layout, "boom");
+    let mut settings = SettingsOptions::default();
+    settings.set(SettingId::SendCrashReports.index(), 1);
+    settings
+        .save(&layout.user_config_root.join(SETTINGS_FILE))
+        .unwrap();
+    assert!(send_due(&layout, &policy(&server, true)).is_empty());
+    completed(&layout, &folder);
+    assert!(matches!(
+        state::read(&folder),
+        Some(Upload::Pending {
+            consent: Consent::Auto,
+            ..
+        })
+    ));
+    let results = send_due(&layout, &policy(&server, true));
+    assert!(matches!(results[0].1, Ok(Upload::Sent { .. })));
+    assert_eq!(server.payloads().len(), 1);
 }

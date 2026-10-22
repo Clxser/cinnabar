@@ -76,6 +76,7 @@ pub(super) extern "system" fn report<'local>(
                         upload::now_ms(),
                     )?;
                 }
+                upload::completed(&layout, &folder);
                 for (folder, result) in upload::send_due(&layout, &policy) {
                     upload::log_result(&folder, &result);
                 }

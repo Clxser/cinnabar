@@ -199,14 +199,6 @@ pub fn next_due(crash_dir: &Path) -> Option<u64> {
         .min()
 }
 
-/// Retained folders without any upload state: never consented to, never sent.
-pub fn unmarked(crash_dir: &Path) -> Vec<PathBuf> {
-    folder::list(crash_dir)
-        .into_iter()
-        .filter(|folder| !folder.join(UPLOAD_FILE).exists())
-        .collect()
-}
-
 /// An OS lock on a stable file; the OS releases it even if the sender dies.
 #[derive(Debug)]
 pub struct Claim {

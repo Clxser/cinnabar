@@ -84,6 +84,7 @@ fn every_headline_fits_collapsed_and_expanded_at_every_size() {
                     thumb_hovered: false,
                     thumb_dragged: false,
                 };
+                let drawn_rem = layout(&canvas, &mut text, &summary, &screen, &style).rem;
                 let frame = draw(
                     &mut canvas,
                     &mut text,
@@ -100,8 +101,19 @@ fn every_headline_fits_collapsed_and_expanded_at_every_size() {
                     save_snapshot(&canvas);
                 }
                 assert_eq!(frame.hits.len(), super::super::ACTIONS.len());
-                for (_, rect) in &frame.hits {
+                for (action, rect) in &frame.hits {
                     assert!(rect.w > 0.0 && rect.h > 0.0);
+                    if ROW.contains(action) {
+                        let label = text.width(
+                            screen.label(*action),
+                            theme::SECONDARY_BUTTON.size * drawn_rem,
+                        );
+                        assert!(
+                            label + theme::SPACE[2] * drawn_rem <= rect.w,
+                            "{} needs room inside its button",
+                            screen.label(*action)
+                        );
+                    }
                     assert!(rect.x >= 0.0 && rect.x + rect.w <= size[0] as f32);
                     assert!(rect.y >= 0.0 && rect.y + rect.h <= size[1] as f32);
                 }

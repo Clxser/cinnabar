@@ -47,6 +47,8 @@ final class StartupDiagnostics {
                     .setOnCancelListener(which -> activity.finish())
                     .create();
             dialog.setOnShowListener(which -> {
+                android.widget.TextView message = dialog.findViewById(android.R.id.message);
+                if (message != null) message.setTextIsSelectable(true);
                 dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(view ->
                         send(activity, dialog, exit, true));
                 dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(view ->

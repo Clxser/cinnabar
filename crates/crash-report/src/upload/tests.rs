@@ -129,7 +129,7 @@ fn payloads_leak_no_account_server_or_home_identifiers() {
 #[test]
 fn the_log_keeps_the_newest_lines() {
     let log: String = (0..500).map(|line| format!("INFO line {line}\n")).collect();
-    let payload = payload(&report(Kind::Abort, "killed"), &log, "", None, IDS, None);
+    let payload = payload(&report(Kind::Abort, "killed"), &log, "", None, IDS, None).unwrap();
     assert_eq!(payload.log.len(), MAX_LOG_LINES);
     assert_eq!(payload.log[0], "INFO line 300");
     assert_eq!(payload.log[MAX_LOG_LINES - 1], "INFO line 499");
@@ -154,7 +154,7 @@ fn encoded_payloads_fit_the_upload_limit_by_dropping_old_log_lines() {
         .collect();
     let mut report = report(Kind::Panic, "panicked at crates/a/src/lib.rs:1:1:\nboom");
     report.backtrace = "frame\n".repeat(2_000);
-    let full = payload(&report, &log, "", None, IDS, None);
+    let full = payload(&report, &log, "", None, IDS, None).unwrap();
     let body = encode(full.clone()).unwrap();
     assert!(body.len() <= MAX_COMPRESSED_BYTES, "{} bytes", body.len());
     let sent = inflate(&body);
@@ -193,7 +193,8 @@ fn unused_modules_go_before_the_payload_is_refused() {
         Some(stack),
         IDS,
         None,
-    );
+    )
+    .unwrap();
     // Random names defeat compression, so all of them cannot fit.
     let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
     for (index, module) in payload
@@ -248,13 +249,8 @@ fn folders_without_consent_are_never_due() {
     let dir = tempfile::tempdir().unwrap();
     let folder = crash_folder(dir.path(), &report(Kind::Abort, "killed"), "");
     assert!(state::due(dir.path(), u64::MAX).is_empty());
-    assert_eq!(
-        state::unmarked(dir.path()).as_slice(),
-        std::slice::from_ref(&folder)
-    );
     state::consent(&folder, Consent::Auto, REPORT, NOW_MS).unwrap();
     assert_eq!(state::due(dir.path(), NOW_MS), [folder]);
-    assert!(state::unmarked(dir.path()).is_empty());
 }
 
 #[test]
@@ -344,7 +340,7 @@ fn one_sender_holds_a_folder_until_its_claim_is_dropped() {
 #[test]
 fn names_are_redacted_before_a_long_log_line_is_cut() {
     let log = format!("gamertag=SomeGamertag\n{}SomeGamertag\n", " ".repeat(995));
-    let payload = payload(&report(Kind::Panic, "boom"), &log, "", None, IDS, None);
+    let payload = payload(&report(Kind::Panic, "boom"), &log, "", None, IDS, None).unwrap();
     assert!(!serde_json::to_string(&payload).unwrap().contains("SomeG"));
 }
 
@@ -377,7 +373,8 @@ fn native_names_and_metadata_use_the_same_learned_redaction() {
         Some(stack),
         IDS,
         Some("/Users/alice"),
-    );
+    )
+    .unwrap();
     let text = serde_json::to_string(&payload).unwrap();
     for private in PRIVATE {
         assert!(!text.contains(private), "private native metadata leaked");
@@ -396,4 +393,19 @@ fn explicit_consent_upgrades_a_pending_automatic_retry_without_changing_its_id()
         attempts: 1, next_at_ms } if report_id == REPORT && next_at_ms == NOW_MS + 1)
     );
     assert_eq!(state::due(dir.path(), NOW_MS + 1), [folder]);
+}
+
+#[test]
+fn a_log_that_cannot_be_fully_learned_blocks_the_whole_upload() {
+    let dir = tempfile::tempdir().unwrap();
+    let report = report(Kind::Panic, "SomeGamertag failed");
+    let mut log = "gamertag=SomeGamertag".to_owned();
+    for _ in 0..crate::redact::MAX_ESCAPE_DEPTH + 3 {
+        log = serde_json::to_string(&log).unwrap();
+    }
+    let folder = crash_folder(dir.path(), &report, &log);
+    assert_eq!(
+        build(&folder, IDS, None).unwrap_err().kind(),
+        std::io::ErrorKind::InvalidData
+    );
 }

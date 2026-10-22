@@ -140,11 +140,11 @@ pub fn run(args: &Args, layout: Option<&InstallLayout>) -> Result<Option<PathBuf
     let watchdog = launch
         .hang
         .as_ref()
-        .and_then(|hang| watch_hangs(args, hang, &observed));
+        .and_then(|hang| watch_hangs(args, hang, &observed, layout));
     let mut panicked = false;
     for event in &received {
         match event {
-            Event::PanicDumped => write_panics(args, &observed, &mut panicked),
+            Event::PanicDumped => write_panics(args, layout, &observed, &mut panicked),
             Event::ClientGone => break,
         }
     }
@@ -159,7 +159,7 @@ pub fn run(args: &Args, layout: Option<&InstallLayout>) -> Result<Option<PathBuf
         shutdown.store(true, Ordering::Relaxed);
     }
     let _ = serving.join();
-    write_panics(args, &observed, &mut panicked);
+    write_panics(args, layout, &observed, &mut panicked);
     let observed = observed
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -176,6 +176,9 @@ pub fn run(args: &Args, layout: Option<&InstallLayout>) -> Result<Option<PathBuf
         _ => report(args, &observed, &ending),
     };
     drop(staging);
+    if let (Some(layout), Some(written)) = (layout, &shown) {
+        launcher_host::lifecycle::crash::upload::completed(layout, &written.folder);
+    }
     let current_uploads = layout
         .cloned()
         .and_then(launcher_host::lifecycle::crash::upload::spawn_send_due);
@@ -221,7 +224,12 @@ fn start_log(layout: &InstallLayout, args: &Args) {
 }
 
 /// Writes the folders of panics dumped since the last call, while the client may live on.
-fn write_panics(args: &Args, observed: &Mutex<Observed>, panicked: &mut bool) {
+fn write_panics(
+    args: &Args,
+    layout: Option<&InstallLayout>,
+    observed: &Mutex<Observed>,
+    panicked: &mut bool,
+) {
     let (hello, dumped) = {
         let mut observed = observed.lock().unwrap_or_else(PoisonError::into_inner);
         (
@@ -239,6 +247,9 @@ fn write_panics(args: &Args, observed: &Mutex<Observed>, panicked: &mut bool) {
         match outcome::write(&args.crash_dir, &hello, &report, dump, now_ms) {
             Ok((folder, _)) => {
                 tracing::info!("panic report saved to {}", folder.display());
+                if let Some(layout) = layout {
+                    launcher_host::lifecycle::crash::upload::completed(layout, &folder);
+                }
                 *panicked = true;
             }
             Err(error) => tracing::error!("panic report could not be written: {error}"),
@@ -277,17 +288,25 @@ fn watch_hangs(
     args: &Args,
     hang: &HangWatch,
     observed: &Arc<Mutex<Observed>>,
+    layout: Option<&InstallLayout>,
 ) -> Option<Watchdog<Written>> {
     let heartbeat = Heartbeat::open(&hang.heartbeat)
         .map_err(|error| tracing::warn!("hang detection unavailable: {error}"))
         .ok()?;
     let args = args.clone();
     let observed = Arc::clone(observed);
+    let layout = layout.cloned();
     hang::spawn(
         heartbeat,
         hang.stall_after_ms,
         now_ms,
-        move |region, stall| write_hang(&args, &observed, region, stall),
+        move |region, stall| {
+            let written = write_hang(&args, &observed, region, stall)?;
+            if let Some(layout) = &layout {
+                launcher_host::lifecycle::crash::upload::completed(layout, &written.folder);
+            }
+            Some(written)
+        },
     )
     .map_err(|error| tracing::warn!("hang watchdog did not start: {error}"))
     .ok()
@@ -474,7 +493,7 @@ mod tests {
                     },
                     state: State::default(),
                 });
-            write_panics(&args, &observed, &mut panicked);
+            write_panics(&args, None, &observed, &mut panicked);
         }
         assert!(panicked);
         let shown = saved_panic(&args.crash_dir, "0123456789abcdef").unwrap();

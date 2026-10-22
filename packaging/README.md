@@ -226,7 +226,8 @@ session's folders after redaction. Copy report replaces the home directory with 
 Reports stay local unless the player chooses **Send report** in the crash window or Android's
 next-launch dialog, or enables **Settings → General → Advanced → Send crash reports automatically**.
 Automatic sending defaults to off. `CINNABAR_CRASH_UPLOAD=0` disables both forms of sending.
-Desktop uploads run in the healthy crash monitor; Android sends on a later launch.
+Desktop uploads run in the healthy crash monitor; Android sends on a later launch. The producer
+queues automatic sending only after the report, log sections and native metadata are complete.
 
 The gzip payload is at most 64 KiB (512 KiB before compression). It contains a redacted copy of
 `report.json`, a grouping signature, up to the last 200 client log lines, and native module build

@@ -201,7 +201,8 @@ mod tests {
                 report: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             },
             None,
-        );
+        )
+        .unwrap();
         let found = resolve(&payload, &symbols).unwrap();
         assert_eq!(
             found["frames"][0]["symbols"][0]["function"],

@@ -104,10 +104,11 @@ pub fn build(folder: &Path, ids: Ids<'_>, home: Option<&str>) -> io::Result<Payl
     let log = read_bounded(&folder.join(CLIENT_LOG_FILE));
     let core_crash = read_bounded(&folder.join(CORE_CRASH_FILE));
     let stack = stack::read(folder);
-    Ok(payload(&report, &log, &core_crash, stack, ids, home))
+    payload(&report, &log, &core_crash, stack, ids, home)
 }
 
-/// [`build`] from already-read folder members.
+/// [`build`] from already-read folder members. A log that cannot be fully learned returns
+/// `InvalidData`, so unidentified private values cannot leak through another field.
 pub fn payload(
     report: &Report,
     log: &str,
@@ -115,7 +116,7 @@ pub fn payload(
     stack: Option<Stack>,
     ids: Ids<'_>,
     home: Option<&str>,
-) -> Payload {
+) -> io::Result<Payload> {
     let mut value = serde_json::to_value(report).unwrap_or_default();
     if let Some(fields) = value.as_object_mut() {
         for private in ["session_id", "user_comment", "native"] {
@@ -133,7 +134,12 @@ pub fn payload(
     if !report.session_id.is_empty() {
         learned.value(report.session_id.as_str());
     }
-    let log_learned = learned.text(log).is_ok();
+    learned.text(log).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "crash log cannot be safely redacted",
+        )
+    })?;
     for text in [
         report.message.as_str(),
         report.backtrace.as_str(),
@@ -149,11 +155,7 @@ pub fn payload(
     }
     bound_strings(&mut value);
     let text = |text: Option<&str>| text.and_then(|text| redactor.text(text).ok());
-    let log = if log_learned {
-        log_tail(&redactor, log)
-    } else {
-        Vec::new()
-    };
+    let log = log_tail(&redactor, log);
     let native = report
         .native
         .as_ref()
@@ -178,7 +180,7 @@ pub fn payload(
         }
         stack.sanitized()
     });
-    Payload {
+    Ok(Payload {
         schema: SCHEMA,
         report_id: ids.report.to_owned(),
         install_id: ids.install.to_owned(),
@@ -218,7 +220,7 @@ pub fn payload(
         native,
         stack,
         log,
-    }
+    })
 }
 
 /// `payload` as gzip JSON of at most [`MAX_COMPRESSED_BYTES`], dropping the oldest log lines,

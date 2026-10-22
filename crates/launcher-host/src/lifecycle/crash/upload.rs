@@ -2,8 +2,8 @@
 //!
 //! Nothing is sent without consent: the player's Send report on one crash, or the "Send crash
 //! reports automatically" setting. [`DISABLE_ENV`] `0` turns both off. Desktop crash monitors
-//! and Android's next launch send; the crashing process never does. Each folder is sent at most
-//! once (see [`crash_report::upload::state`]).
+//! and Android's next launch send; the crashing process never does. Each report is stored at most
+//! once by the API; retries keep its random report id (see [`crash_report::upload::state`]).
 
 use std::{
     io,
@@ -75,20 +75,23 @@ pub fn consent(folder: &Path, consent: Consent, now_ms: u64) -> io::Result<Uploa
     state::consent(folder, consent, &random_id()?, now_ms)
 }
 
-/// Gives automatic consent to unmarked folders when the policy allows it, then sends every
-/// due folder once, newest first. Returns each attempted folder's new state.
+/// Records automatic consent after the producer has finished every member of `folder`.
+/// Unmarked folders are never picked up by a sender while another process may be writing them.
+pub fn completed(layout: &InstallLayout, folder: &Path) {
+    if Policy::load(layout).is_some_and(|policy| policy.automatic)
+        && let Err(error) = consent(folder, Consent::Auto, now_ms())
+    {
+        tracing::warn!("crash report consent not recorded: {error}");
+    }
+}
+
+/// Sends already-consented due folders once, newest first. The report's producer records
+/// automatic consent only after its logs and native metadata are complete.
 pub fn send_due(layout: &InstallLayout, policy: &Policy) -> Vec<(PathBuf, io::Result<Upload>)> {
     if disabled() {
         return Vec::new();
     }
     let crash_dir = layout.crash_dir();
-    if policy.automatic {
-        for folder in state::unmarked(&crash_dir) {
-            if let Err(error) = consent(&folder, Consent::Auto, now_ms()) {
-                tracing::warn!("crash report consent not recorded: {error}");
-            }
-        }
-    }
     state::due(&crash_dir, now_ms())
         .into_iter()
         .map(|folder| {
