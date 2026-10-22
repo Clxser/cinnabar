@@ -2,7 +2,9 @@ use std::borrow::Cow;
 
 use super::*;
 
+mod body;
 pub(crate) mod cache;
+pub use body::ActorBodySample;
 pub(super) mod camera;
 mod clips;
 mod composition;
@@ -28,6 +30,7 @@ pub struct ActorRenderLayers<'a> {
 
 struct CachedLayers<'a> {
     layers: Option<ActorRenderLayers<'a>>,
+    body: body::Cache,
     /// An exhausted evaluation can contain completed-tick fallbacks instead of this frame's pose.
     exhausted: bool,
 }
@@ -185,6 +188,7 @@ impl<'a> ActorRenderFrame<'a> {
                 );
                 CachedLayers {
                     layers,
+                    body: body::Cache::default(),
                     exhausted: self.remaining_ops == 0,
                 }
             })
@@ -254,6 +258,21 @@ impl<'a> ActorRenderFrame<'a> {
     /// Samples the native body and its persona skeletons once under the same frame budget.
     pub fn layers_with_skin(&mut self, runtime_id: u64) -> Option<ActorRenderLayers<'a>> {
         self.cached_layers(runtime_id).cloned()
+    }
+
+    /// Shares converted native body endpoints and sampled skin across this frame's independent views.
+    /// The consuming skeleton must match both sampled endpoints; completed tick layers stay borrowed.
+    pub fn body_with_skin(
+        &mut self,
+        runtime_id: u64,
+        previous_bones: usize,
+        current_bones: usize,
+    ) -> Option<ActorBodySample> {
+        self.cached_layers(runtime_id)?;
+        let cached = self.sampled_layers.get_mut(&runtime_id)?;
+        cached
+            .body
+            .sample(cached.layers.as_ref()?, [previous_bones, current_bones])
     }
 }
 

@@ -64,6 +64,7 @@ fn worker_samples_reuse_named_channel_bindings_and_clip_masks() {
                     sample.id,
                     CachedLayers {
                         layers: sample.layers,
+                        body: body::Cache::default(),
                         exhausted: sample.exhausted,
                     },
                 );

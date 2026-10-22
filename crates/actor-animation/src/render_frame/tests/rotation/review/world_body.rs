@@ -82,11 +82,27 @@ fn local_world_body_uses_authoritative_rotation_without_changing_the_hand() {
         let expected = [66.25 * alpha, 40.0 * alpha, 33.75 * alpha];
         assert_angles(body.render[0].pose[0].translation_scale, expected);
         assert_angles(body.render[0].previous_pose[0].translation_scale, expected);
+        let converted = frame
+            .body_with_skin(1, rig.previous.len(), rig.current.len())
+            .unwrap();
+        assert_eq!(
+            converted.bones[1][0],
+            render_model::RenderBoneTransform::from_model_space_scaled(
+                body.render[0].pose[0].rotation,
+                body.render[0].pose[0].translation_scale,
+                body.render[0].pose[0].axis_scale,
+            )
+            .unwrap()
+        );
         frame.set_remaining_ops(0);
         // Re-entering the same world view retains its actual interpolated local pose.
         frame = frame.with_world_body(1);
         assert_eq!(frame.layers(1).unwrap(), body.render);
         assert_eq!(frame.layers_with_skin(1).unwrap().render, body.render);
+        let retained = frame
+            .body_with_skin(1, rig.previous.len(), rig.current.len())
+            .unwrap();
+        assert!(Arc::ptr_eq(&converted.bones[1], &retained.bones[1]));
         assert_eq!(frame.remaining_ops(), 0);
         assert_eq!(authored_state(&store), authored);
         assert_eq!(sample(&store, &actors[&1], 0.5), hand);
@@ -110,6 +126,11 @@ fn additional_view_reuses_remote_samples_and_keeps_its_own_bounded_budget() {
     let authored = authored_state(&store);
     let mut live = ActorRenderFrame::new(&store, &actors, [0.0; 2], [0.0; 3], 0.5);
     let remote = live.layers_with_skin(1).unwrap();
+    let rig = store.get(1).unwrap();
+    let converted = live
+        .body_with_skin(1, rig.previous.len(), rig.current.len())
+        .unwrap();
+    let weak = Arc::downgrade(&converted.bones[1]);
     live.set_remaining_ops(0);
     let mut recording = live.into_additional_view().with_world_body(999);
     assert_eq!(recording.remaining_ops(), MAX_MOLANG_OPS_PER_RENDER_FRAME);
@@ -117,8 +138,21 @@ fn additional_view_reuses_remote_samples_and_keeps_its_own_bounded_budget() {
     let reused = recording.layers_with_skin(1).unwrap();
     assert_eq!(reused.render, remote.render);
     assert!(Arc::ptr_eq(&reused.render[0].pose, &remote.render[0].pose));
+    let (_, allocations) = test_alloc::measure(|| {
+        let reused = recording
+            .body_with_skin(1, rig.previous.len(), rig.current.len())
+            .unwrap();
+        assert!(Arc::ptr_eq(&converted.bones[0], &reused.bones[0]));
+        assert!(Arc::ptr_eq(&converted.bones[1], &reused.bones[1]));
+    });
+    assert_eq!(allocations.calls, 0);
     assert_eq!(recording.remaining_ops(), 0);
     assert_eq!(authored_state(&store), authored);
+    drop((converted, recording));
+    assert!(
+        weak.upgrade().is_none(),
+        "converted endpoints belong only to this frame's consumers"
+    );
 }
 
 #[test]

@@ -40,6 +40,7 @@ impl<'a> ActorRenderFrame<'a> {
             {
                 entry.insert(CachedLayers {
                     layers: None,
+                    body: body::Cache::default(),
                     exhausted: false,
                 });
                 samples.push(Sample {
@@ -87,6 +88,7 @@ impl<'a> ActorRenderFrame<'a> {
                 sample.id,
                 CachedLayers {
                     layers: sample.layers,
+                    body: body::Cache::default(),
                     exhausted: sample.exhausted,
                 },
             );

@@ -75,7 +75,7 @@ pub use particles::{ActorParticleController, ActorParticleQueries};
 mod query;
 mod render;
 mod render_frame;
-pub use render_frame::{ActorRenderFrame, ActorRenderLayers};
+pub use render_frame::{ActorBodySample, ActorRenderFrame, ActorRenderLayers};
 mod replay;
 mod server_animation;
 pub use server_animation::ServerAnimationCompiler;

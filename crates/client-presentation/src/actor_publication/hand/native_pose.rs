@@ -130,10 +130,14 @@ impl NativePoseCache {
         presentation: &mut ActorRigPresentation,
     ) -> Option<Arc<[actor_animation::SkinRenderLayer]>> {
         let runtime_id = presentation.submission.input.identity.runtime_id;
-        let NativeBodyPose {
+        let actor_animation::ActorBodySample {
             bones: [previous, current],
             skin,
-        } = body_pose(presentation, frame.layers_with_skin(runtime_id)?)?;
+        } = frame.body_with_skin(
+            runtime_id,
+            presentation.submission.input.previous_bones.len(),
+            presentation.submission.input.current_bones.len(),
+        )?;
         presentation.submission.input.previous_bones = previous;
         presentation.submission.input.current_bones = current;
         skin
