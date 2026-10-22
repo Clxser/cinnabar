@@ -10,6 +10,16 @@ const HEADER_BYTES: u32 = 44;
 const FLOAT_FORMAT: u16 = 3;
 const RF64_HEADER_BYTES: u64 = 80;
 
+pub(crate) mod recovery;
+
+/// The writer and its interrupted-prefix reader admit the same bounded PCM format.
+fn validate_rf64_format(channels: u16, rate: u32) -> io::Result<()> {
+    if channels == 0 || channels > 32 || rate == 0 || rate > 768_000 {
+        return Err(io::Error::other("invalid recording audio format"));
+    }
+    Ok(())
+}
+
 pub struct WavWriter {
     out: BufWriter<File>,
     path: PathBuf,
@@ -62,10 +72,14 @@ impl WavWriter {
 
     /// RF64 keeps long native recordings valid beyond the classic WAV four-gigabyte limit.
     pub fn create_rf64(path: &Path, channels: u16, rate: u32) -> io::Result<Self> {
-        if channels == 0 || channels > 32 || rate == 0 || rate > 768_000 {
-            return Err(io::Error::other("invalid recording audio format"));
-        }
-        let mut out = BufWriter::new(File::create(path)?);
+        validate_rf64_format(channels, rate)?;
+        Self::rf64_file(File::create(path)?, path, channels, rate)
+    }
+
+    /// A recovery staging file stays exclusively owned rather than reopening an existing destination.
+    fn rf64_file(file: File, path: &Path, channels: u16, rate: u32) -> io::Result<Self> {
+        validate_rf64_format(channels, rate)?;
+        let mut out = BufWriter::new(file);
         let block = channels * 4;
         out.write_all(b"RF64")?;
         out.write_all(&u32::MAX.to_le_bytes())?;

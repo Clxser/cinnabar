@@ -11,8 +11,10 @@ use crate::{
     model::{Encoder, ExportCodec},
 };
 
+pub mod companions;
 mod manifest;
 mod playback;
+mod project;
 mod recovery;
 mod session;
 mod size;

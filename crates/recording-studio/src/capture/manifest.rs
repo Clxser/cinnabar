@@ -76,7 +76,7 @@ impl CaptureManifest {
         use crate::{
             Id, PlaybackRate, Project, Span,
             edit::Editor,
-            model::{AudioClip, AudioRole, Clip, Framing, MediaKind, MediaSource},
+            model::{Clip, Framing, MediaKind, MediaSource},
         };
         let mut project = Project::new(name);
         project.export.fps = self.settings.fps;
@@ -116,30 +116,12 @@ impl CaptureManifest {
             enabled: true,
         });
         if self.game_audio {
-            project.sources.push(MediaSource {
-                id: Id(3),
-                name: "Game audio".into(),
-                path: directory.join(AUDIO_FILE),
-                kind: MediaKind::Audio,
-                duration: self.duration,
-                size: [0, 0],
-                frame_rate: None,
-                sha256: None,
-            });
-            project.audio.push(AudioClip {
-                id: Id(4),
-                source: Id(3),
-                linked_clip: Some(Id(2)),
-                source_range: range,
-                at: MediaTime::ZERO,
-                rate: PlaybackRate::default(),
-                speed_ramp: None,
-                role: AudioRole::Game,
-                gain: 1.0,
-                fade_in: MediaTime::ZERO,
-                fade_out: MediaTime::ZERO,
-                muted: false,
-            });
+            super::project::game_audio(
+                &mut project,
+                Id(2),
+                directory.join(AUDIO_FILE),
+                self.duration,
+            )?;
         }
         let mut editor = Editor::new(project)?;
         let proposal = crate::automation::suggest(

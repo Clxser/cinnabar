@@ -9,10 +9,10 @@ use crate::{
     Id, MediaTime, Project, Span, StudioError,
     edit::{Command, MAX_EDIT_COMMANDS},
     effect::{AutomationOrigin, Curve, CurveKey, Easing, EffectClip, EffectKind},
-    model::{Confidence, Marker, MarkerKind},
+    model::{Confidence, MarkerKind},
 };
 
-const TEMPLATE_REVISION: u32 = 2;
+pub(super) const TEMPLATE_REVISION: u32 = 2;
 const MAX_HIGHLIGHTS: usize = 100_000;
 const MAX_EVENT_EFFECTS: usize = 3;
 
@@ -121,14 +121,7 @@ pub fn suggest(
                 clip_id: Some(clip.id),
                 source_time: Some(event.at),
             };
-            let marker = Marker {
-                id: take_id(&mut next_id)?,
-                at,
-                kind: event.kind,
-                label: event.label.clone(),
-                confidence: event.confidence,
-                origin: Some(origin),
-            };
+            let marker = super::source_marker(take_id(&mut next_id)?, source, clip.id, at, event);
             proposal.commands.push(Command::AddMarker { marker });
             proposal.highlights += 1;
             proposal.correlated += usize::from(event.confidence == Confidence::Correlated);

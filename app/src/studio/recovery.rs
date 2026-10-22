@@ -16,12 +16,13 @@ pub(super) fn install(mut menu: ResMut<MenuRuntime>) {
 fn recover(path: &Path, cancellation: &Cancellation) -> Result<(Editor, Option<String>), String> {
     cancellation.check()?;
     match recording_scene::recovery::recover_project(path, cancellation) {
-        Ok(editor) => {
-            let duration = editor.project().duration().seconds();
+        Ok(recovered) => {
+            let duration = recovered.editor.duration().seconds();
             Ok((
-                editor,
+                recovered.editor,
                 Some(format!(
-                    "Recovered {duration:.3}s of verified native replay into an unsaved project. Only the common committed scene interval is included. Uncommitted tail data, unfinished audio and event markers were not restored. Save this project to retain the edit; the original take is unchanged."
+                    "Recovered {duration:.3}s of verified native replay into an unsaved project. Only the common committed scene interval is included. {} Save this project to retain the edit; the original take is unchanged.",
+                    recovered.notice
                 )),
             ))
         }

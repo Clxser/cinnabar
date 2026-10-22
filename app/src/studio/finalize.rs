@@ -72,11 +72,10 @@ pub(super) fn start(state: &mut NativeCapture, mut active: Active, duration: Med
                         .or_else(|| result.err())
                         .unwrap_or_else(|| "Native recording was interrupted.".into());
                     Err(native_failure_report(&error, || {
-                        recording_scene::recovery::recover_project(
+                        recording_scene::recovery::verify_prefix(
                             &directory,
                             &Cancellation::default(),
                         )
-                        .map(|editor| editor.project().duration())
                     }))
                 }
                 (Ok(_), Some(error)) => {

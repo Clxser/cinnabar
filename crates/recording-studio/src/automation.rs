@@ -12,6 +12,30 @@ use crate::{
 mod draft;
 pub use draft::{AutoEditOptions, AutoEditProposal, EditStyle, suggest};
 
+/// One provenance constructor ties generated or recovered markers to their actual durable source event.
+pub(crate) fn source_marker(
+    id: crate::Id,
+    source: crate::Id,
+    clip: crate::Id,
+    at: MediaTime,
+    event: &Highlight,
+) -> crate::model::Marker {
+    crate::model::Marker {
+        id,
+        at,
+        kind: event.kind,
+        label: event.label.clone(),
+        confidence: event.confidence,
+        origin: Some(crate::effect::AutomationOrigin {
+            source,
+            event_sequence: event.sequence,
+            template_revision: draft::TEMPLATE_REVISION,
+            clip_id: Some(clip),
+            source_time: Some(event.at),
+        }),
+    }
+}
+
 const MAX_PENDING_ATTACKS: usize = 64;
 const HIT_CORRELATION_MICROS: u64 = 450_000;
 const COMBO_GAP_MICROS: u64 = 1_250_000;
@@ -95,6 +119,17 @@ impl CombatDetector {
             pending: VecDeque::with_capacity(MAX_PENDING_ATTACKS),
             chain: None,
         }
+    }
+
+    /// Legacy journals omit observation-gap resets, so recovery retains only each event's own evidence.
+    pub(crate) fn observe_isolated(
+        &mut self,
+        event: &GameplayEvent,
+        out: &mut Vec<Highlight>,
+    ) -> Result<(), StudioError> {
+        self.pending.clear();
+        self.chain = None;
+        self.observe(event, out)
     }
 
     /// Appends at most two observations per event into a caller-retained output vector.

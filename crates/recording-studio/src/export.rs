@@ -60,7 +60,7 @@ impl Cancellation {
     }
 
     /// The final publication is indivisible from cancellation's point of view.
-    fn begin_publication(&self) -> Result<(), String> {
+    pub(crate) fn begin_publication(&self) -> Result<(), String> {
         self.0
             .compare_exchange(RUNNING, PUBLISHING, Ordering::AcqRel, Ordering::Acquire)
             .map(|_| ())

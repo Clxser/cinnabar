@@ -1,6 +1,6 @@
 //! Interrupted native takes remain immutable; recovery admits their common committed scene prefix.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use recording_studio::{
     Id, MediaTime, PlaybackRate, Project, Span,
@@ -11,9 +11,30 @@ use recording_studio::{
     model::{Clip, Framing, MediaKind, MediaSource},
 };
 
-/// Validates every captured frame on a cancellable worker and returns a separate unsaved project.
-/// No manifest, journal, completion marker, object or original video is rewritten.
-pub fn recover_project(parent: &Path, cancellation: &Cancellation) -> Result<Editor, String> {
+/// Restores verified native frames and independently recoverable companions into a separate unsaved project.
+pub fn recover_project(
+    parent: &Path,
+    cancellation: &Cancellation,
+) -> Result<recording_studio::capture::companions::RecoveredCapture, String> {
+    let (editor, settings, parent) = verified_project(parent, cancellation)?;
+    recording_studio::capture::companions::recover(
+        editor.project().as_ref().clone(),
+        &parent,
+        settings.game_audio,
+        cancellation,
+    )
+}
+
+/// Finalizers verify scene coverage without publishing companion media or changing any original file.
+pub fn verify_prefix(parent: &Path, cancellation: &Cancellation) -> Result<MediaTime, String> {
+    verified_project(parent, cancellation).map(|(editor, _, _)| editor.duration())
+}
+
+/// A single scene admission owns source-grid verification for both validation and actual recovery.
+fn verified_project(
+    parent: &Path,
+    cancellation: &Cancellation,
+) -> Result<(Editor, CaptureSettings, PathBuf), String> {
     cancellation.check()?;
     let parent = std::fs::canonicalize(parent).map_err(|error| error.to_string())?;
     let camera = CameraRecording::open(&parent).map_err(|error| error.to_string())?;
@@ -26,7 +47,7 @@ pub fn recover_project(parent: &Path, cancellation: &Cancellation) -> Result<Edi
         crate::playback::ScenePlayback::open(&parent, crate::scene::DEFAULT_RESIDENT_BYTES)
             .map_err(|error| format!("Native tracks cannot be recovered: {error}"))?;
     let duration = playback.duration();
-    admitted_project(&parent, &info, settings, duration, |at| {
+    let editor = admitted_project(&parent, &info, settings, duration, |at| {
         cancellation.check()?;
         let result = if playback.position().is_none() {
             playback.seek(at, || cancellation.cancelled())
@@ -39,7 +60,8 @@ pub fn recover_project(parent: &Path, cancellation: &Cancellation) -> Result<Edi
                 at.seconds()
             )
         })
-    })
+    })?;
+    Ok((editor, settings, parent))
 }
 
 /// Admission covers the recorded source grid, including transient artwork absent at either endpoint.
