@@ -37,6 +37,7 @@ pub use readback::ReplayReadback;
 mod compositor;
 mod scene;
 mod targets;
+mod visibility;
 pub use compositor::{CompositeInput, CompositeLayer, FrameCompositor};
 mod titles;
 pub use titles::{FrameTitles, TitleLayer};
@@ -220,7 +221,7 @@ impl ReplayRenderer {
             self.app.world_mut().despawn(self.camera);
             self.camera = camera(self.app.world_mut());
         }
-        self.apply_scene(frame, source_view, !hide_hand, spectated)?;
+        self.apply_scene(frame, pose, source_view, !hide_hand, spectated)?;
         self.apply_labels(frame, transform, source_view);
         self.apply_items(frame, transform, source_view)?;
         self.reproject_particles(frame, transform, pose.fov, source_view);
