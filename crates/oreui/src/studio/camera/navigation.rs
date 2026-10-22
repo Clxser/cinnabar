@@ -2,6 +2,7 @@
 
 use super::*;
 use launcher::menu::studio::CameraViewsAction as V;
+mod controls;
 
 #[cfg(test)]
 mod tests;
@@ -46,6 +47,7 @@ pub(super) fn draw(
         Variant::Secondary,
     )?;
     y += canvas.r(5.2);
+    y = controls::draw(canvas, view, [left, y, right, area[3]])?;
     let saved = &view.studio.camera_workspace.saved_views;
     if let Some(draft) = &saved.draft {
         canvas.text_line(

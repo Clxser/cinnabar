@@ -18,6 +18,7 @@ mod distance;
 mod edit;
 mod fov;
 mod keys;
+pub mod navigation;
 mod path;
 mod presets;
 mod saved;

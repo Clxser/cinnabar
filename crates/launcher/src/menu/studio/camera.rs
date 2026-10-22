@@ -8,11 +8,14 @@ use recording_studio::{
     },
 };
 use std::sync::Arc;
+mod navigation;
 mod subjects;
+pub use navigation::{CameraNavigationAction, NavigationGesture};
 pub use subjects::{CAMERA_SUBJECT_ROWS, CameraSubjectResults, CameraSubjectsAction};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CameraWorkspace {
+    pub navigation: recording_studio::camera::navigation::NavigationSettings,
     pub tools: super::CameraTools,
     pub subject_filter: CameraSubjectFilter,
     pub subject_search: CameraSubjectSearch,

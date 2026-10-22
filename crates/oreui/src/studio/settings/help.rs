@@ -12,7 +12,29 @@ pub(super) fn draw(
     let [left, mut y, right, _] = area;
     canvas.text_line("Camera navigation", [left, y], right - left, HEADER5, TEXT)?;
     y += canvas.r(4.2);
-    y += canvas.text("Click the 3D replay picture to focus it. Drag left mouse to orbit, hold right mouse to look, and use WASD / Q E to move. Hold Shift to move faster; Escape releases focus. Apply saves the inspected view to your camera shot. Players and Path enable their editing handles; Navigate keeps the picture clear.", [left,y], right-left, BODY, TEXT_DIMMER, false)? + canvas.r(3.0);
+    y += canvas.text("Click the 3D replay picture to focus it. Apply saves the inspected pose to your camera shot; navigation itself is temporary. Cameras / Views contains flight speed, optional smooth translation and Level horizon. Players and Path enable editing handles; Navigate keeps the picture clear.", [left,y], right-left, BODY, TEXT_DIMMER, false)? + canvas.r(2.0);
+    for &gesture in launcher::menu::studio::NavigationGesture::ALL {
+        let chord_width = canvas.r(26.0).min((right - left) * 0.4);
+        let height = canvas
+            .text(
+                gesture.description(),
+                [left + chord_width, y],
+                right - left - chord_width,
+                CAPTION,
+                TEXT,
+                false,
+            )?
+            .max(canvas.r(2.7));
+        canvas.text_line(
+            gesture.chord(),
+            [left, y],
+            chord_width - canvas.r(1.0),
+            CAPTION,
+            TEXT_DIMMER,
+        )?;
+        y += height + canvas.r(1.0);
+    }
+    y += canvas.r(2.0);
     canvas.text_line("Editing shortcuts", [left, y], right - left, HEADER5, TEXT)?;
     y += canvas.r(4.2);
     y += canvas.text("Timeline shortcuts work when the timeline has focus. Text fields keep normal typing and use Enter to apply or Escape to cancel.", [left,y], right-left, CAPTION, TEXT_DIMMER, false)? + canvas.r(2.0);

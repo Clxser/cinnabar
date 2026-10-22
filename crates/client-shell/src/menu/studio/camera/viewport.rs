@@ -10,6 +10,9 @@ const DRAG_THRESHOLD: f32 = 4.0;
 
 #[derive(Default)]
 pub(in crate::menu::studio) struct CameraInteraction {
+    pub(super) motion: recording_studio::camera::navigation::NavigationMotion,
+    pub(super) navigation_context: Option<([u64; 3], Id)>,
+    pub(super) pan: Option<super::navigation::Pan>,
     pub(in crate::menu::studio) project: Option<Arc<Project>>,
     gesture: Option<Gesture>,
     revision: u64,
@@ -42,9 +45,18 @@ enum Gesture {
 }
 
 impl Studio {
+    /// Authored handles and orbit capture retain exclusive pointer ownership until release.
+    pub(super) fn navigation_blocked(&self) -> bool {
+        self.camera_interaction.gesture.is_some() || self.camera_interaction.pan.is_some()
+    }
     /// An inspected pose publishes a unique view revision without seeking or editing the document.
     pub(in crate::menu::studio) fn inspect_camera_pose(&mut self, pose: CameraPose) {
         self.release_camera();
+        self.publish_inspection_pose(pose);
+    }
+
+    /// Publishes only a transient view revision, retaining navigation's active input state.
+    pub(super) fn publish_inspection_pose(&mut self, pose: CameraPose) {
         self.camera_interaction.revision = self.camera_interaction.revision.wrapping_add(1);
         let workspace = &mut Arc::make_mut(&mut self.view).camera_workspace;
         workspace.focused = true;
@@ -158,6 +170,9 @@ impl Studio {
     }
     /// Focus loss, hidden panels and Escape abandon the uncommitted gesture while retaining the view.
     pub(in crate::menu) fn release_camera(&mut self) {
+        self.camera_interaction.motion.reset();
+        self.camera_interaction.navigation_context = None;
+        self.camera_interaction.pan = None;
         self.camera_interaction.gesture = None;
         self.camera_interaction.project = None;
         let workspace = &mut Arc::make_mut(&mut self.view).camera_workspace;
@@ -295,8 +310,10 @@ impl Studio {
             && (last.is_some() || distance_squared(point, *down) >= DRAG_THRESHOLD * DRAG_THRESHOLD)
         {
             let look = [
-                f64::from(point[0] - down[0]) * 0.22,
-                f64::from(point[1] - down[1]) * 0.22,
+                f64::from(point[0] - down[0])
+                    * recording_studio::camera::navigation::ORBIT_DEGREES_PER_PIXEL,
+                f64::from(point[1] - down[1])
+                    * recording_studio::camera::navigation::ORBIT_DEGREES_PER_PIXEL,
             ];
             if let Some(next) = pose.orbited(*pivot, look) {
                 self.camera_interaction.revision = self.camera_interaction.revision.wrapping_add(1);
@@ -322,6 +339,9 @@ impl Studio {
             return Err("Direct camera editing requires one unframed native replay view.".into());
         }
         let down = point.ok_or("The pointer is outside the Studio viewport.")?;
+        self.camera_interaction.motion.reset();
+        self.camera_interaction.navigation_context = None;
+        self.camera_interaction.pan = None;
         let action = if let Action::CameraAxisControl {
             shot,
             at,
@@ -424,7 +444,11 @@ impl Studio {
                                 + target.pose.eye_offset.unwrap_or([0.0; 3])[axis] * 0.5
                         })
                     })
-                    .or_else(|| pose.orbit_anchor(8.0))
+                    .or_else(|| {
+                        pose.orbit_anchor(
+                            recording_studio::camera::navigation::DEFAULT_ORBIT_DISTANCE,
+                        )
+                    })
                     .ok_or("The inspected camera has no valid orbit pivot.")?;
                 Gesture::Orbit {
                     down,
@@ -449,6 +473,7 @@ impl Studio {
         looking: bool,
     ) {
         if !self.view.camera_workspace.focused
+            || self.camera_interaction.pan.is_some()
             || self
                 .camera_interaction
                 .gesture
@@ -462,21 +487,26 @@ impl Studio {
         let Some(current) = self.view.camera_workspace.view else {
             return;
         };
-        Arc::make_mut(&mut self.view).camera_workspace.looking = looking;
-        let Some(pose) = current
-            .pose
-            .flown(movement, look, elapsed, if fast { 32.0 } else { 8.0 })
-        else {
+        if !self.admit_navigation_context() {
+            return;
+        }
+        if self.view.camera_workspace.looking != looking {
+            Arc::make_mut(&mut self.view).camera_workspace.looking = looking;
+        }
+        let Some(pose) = self.camera_interaction.motion.step(
+            current.pose,
+            movement,
+            look,
+            elapsed,
+            self.view.camera_workspace.navigation,
+            fast,
+        ) else {
             return;
         };
         if pose == current.pose {
             return;
         }
-        self.camera_interaction.revision = self.camera_interaction.revision.wrapping_add(1);
-        Arc::make_mut(&mut self.view).camera_workspace.view = Some(CameraView {
-            pose,
-            revision: self.camera_interaction.revision,
-        });
+        self.publish_inspection_pose(pose);
     }
 
     /// Clicked subjects must still belong to the recorded frame and the exact saved spawn lifetime.

@@ -81,6 +81,20 @@ impl Studio {
             }
         }
         if views {
+            use launcher::menu::studio::CameraNavigationAction as N;
+            actions.extend(
+                [N::Speed(-1), N::ResetSpeed, N::Speed(1), N::ToggleSmooth]
+                    .map(Action::CameraNavigation),
+            );
+            if self
+                .view
+                .preview
+                .camera
+                .as_ref()
+                .is_some_and(|preview| preview.interactive)
+            {
+                actions.push(Action::CameraNavigation(N::Level));
+            }
             actions.push(Action::CycleCameraGuides);
             if self.view.preview.ready
                 && self

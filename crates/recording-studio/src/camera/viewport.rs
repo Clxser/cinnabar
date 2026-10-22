@@ -96,6 +96,13 @@ pub struct CameraProjection {
 }
 
 impl CameraProjection {
+    /// Normalized fly motion follows the rolled view horizontally and the world vertically.
+    pub(super) fn movement(&self, movement: [f64; 3]) -> DVec3 {
+        let movement = DVec3::from_array(movement);
+        let movement = movement / movement.length().max(1.0);
+        let delta = self.right * movement.x + DVec3::Y * movement.y + self.forward * movement.z;
+        delta / delta.length().max(1.0)
+    }
     /// Uses the renderer's Bedrock YXZ yaw/pitch/roll convention and a vertical field of view.
     pub fn new(pose: CameraPose, aspect: f64) -> Option<Self> {
         pose.validate().ok()?;
@@ -335,10 +342,7 @@ impl CameraPose {
             next.pitch = (next.pitch + look[1]).clamp(-89.9, 89.9);
         }
         let basis = CameraProjection::new(next, 1.0)?;
-        let movement = DVec3::from_array(movement);
-        let movement = movement / movement.length().max(1.0);
-        let delta = basis.right * movement.x + DVec3::Y * movement.y + basis.forward * movement.z;
-        let delta = delta / delta.length().max(1.0);
+        let delta = basis.movement(movement);
         next.position =
             (DVec3::from_array(self.position) + delta * elapsed.min(0.1) * speed).to_array();
         next.validate().ok()?;

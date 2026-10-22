@@ -487,7 +487,7 @@ pub fn drive_menu_input(
         pointer_pressed,
         pointer_just_pressed,
         elapsed,
-        studio_camera::viewport_visible(&presentation.0),
+        studio_camera::viewport_bounds(&presentation.0),
     );
     let studio_owns_pointer = camera_owns_pointer
         || if menu.screen() == launcher::menu::MenuScreen::RecordingStudio {
@@ -573,16 +573,18 @@ pub fn drive_menu_input(
                 ))
             );
             let handled = studio
-                && menu.studio.timeline_wheel(
-                    point,
-                    presentation.menu_scroll_viewport(launcher::menu::studio::TIMELINE_SCROLL_ID),
-                    ruler,
-                    horizontal,
-                    vertical,
-                    pixels,
-                    modifiers.shift(),
-                    modifiers.shortcut(),
-                );
+                && (camera_input.wheel(&mut menu, vertical, pixels, modifiers.shortcut())
+                    || menu.studio.timeline_wheel(
+                        point,
+                        presentation
+                            .menu_scroll_viewport(launcher::menu::studio::TIMELINE_SCROLL_ID),
+                        ruler,
+                        horizontal,
+                        vertical,
+                        pixels,
+                        modifiers.shift(),
+                        modifiers.shortcut(),
+                    ));
             if !handled {
                 presentation.scroll_menu(point, vertical, pixels);
             }

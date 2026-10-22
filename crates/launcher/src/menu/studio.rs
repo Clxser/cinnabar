@@ -15,9 +15,9 @@ pub mod timeline;
 pub use clip::{ClipTimeField, MAX_CLIP_TIME_BYTES};
 mod camera;
 pub use camera::{
-    CAMERA_SUBJECT_ROWS, CameraGuides, CameraPathCache, CameraSubjectResults, CameraSubjectsAction,
-    CameraViewNameDraft, CameraViewsAction, CameraWorkspace, SAVED_CAMERA_VIEWS_PER_PAGE,
-    SavedCameraViews,
+    CAMERA_SUBJECT_ROWS, CameraGuides, CameraNavigationAction, CameraPathCache,
+    CameraSubjectResults, CameraSubjectsAction, CameraViewNameDraft, CameraViewsAction,
+    CameraWorkspace, NavigationGesture, SAVED_CAMERA_VIEWS_PER_PAGE, SavedCameraViews,
 };
 pub mod creative;
 mod workspace;
@@ -255,6 +255,7 @@ pub enum Action {
     CycleCameraGuides,
     FrameCameraSubject,
     CameraViews(CameraViewsAction),
+    CameraNavigation(CameraNavigationAction),
     ReleaseCamera,
     ApplyCameraView,
     ResetCameraView,

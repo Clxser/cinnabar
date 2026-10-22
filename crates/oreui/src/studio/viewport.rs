@@ -173,6 +173,21 @@ pub(super) fn draw(
     }
     if workspace.focused {
         canvas.frame(bounds, 0.25, PRIMARY_ROLE.specular_hovered[0])?;
+        if !workspace.looking && height >= canvas.r(12.0) {
+            let gesture = launcher::menu::studio::NavigationGesture::Pan;
+            let line = canvas.r(CAPTION.line + 0.4);
+            let strip = [hit[0], hit[3] - line, hit[2], hit[3]];
+            if strip[3] - strip[1] > 0.0 && strip[1] >= hit[1] {
+                canvas.fill(strip, [16, 20, 24, 200])?;
+                canvas.text_line(
+                    gesture.hint(),
+                    [strip[0] + canvas.r(0.5), strip[1]],
+                    (strip[2] - strip[0] - canvas.r(1.0)).max(0.0),
+                    CAPTION,
+                    TEXT_DIMMER,
+                )?;
+            }
+        }
     }
     Ok(())
 }

@@ -1,5 +1,27 @@
 # Camera rail motion
 
+## Inspection navigation
+
+Inspection retains the original 8 blocks/second flight and fourfold Shift speed.
+Cameras / Views adjusts speed, restores its default, enables optional smooth
+translation and levels roll without changing the other pose fields. Left drag
+orbits, right drag looks, middle drag pans on a frozen view plane, wheel dollies,
+Ctrl/Cmd+wheel changes optical zoom, and right-held wheel adjusts flight speed.
+Help and the focused-view hint read the same portable gesture registry as input.
+
+These preferences and motion are session state, not project metadata. Navigation
+never seeks or creates undo entries. Apply and named-view saving remain explicit.
+Focus loss, text input, hidden viewports and document/seek/source changes discard
+momentum and captured pan state. View-only rendering refreshes retain it.
+
+Smooth translation analytically integrates a constant world velocity target per
+input interval, with an 80 ms half-life and the existing 100 ms interval cap.
+Constant targets have partition-invariant position and velocity within floating
+point precision. Rotating input changes the target between intervals; this does
+not promise invariance under differently partitioned mouse events. Look remains
+immediate. Below 0.00001 blocks/second, remaining travel below 0.000002 blocks
+is discarded to stop idle view publications. Pan and wheel changes are immediate.
+
 ## Named inspection views
 
 Projects retain named camera views separately from timeline shots. Saving a name,
