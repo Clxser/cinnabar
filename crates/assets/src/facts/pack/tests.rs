@@ -394,6 +394,7 @@ fn pack_rules_preserve_typed_texture_and_block_requests() {
         (PackBlock::CobblestoneWall, "minecraft:cobblestone_wall"),
         (PackBlock::Air, "minecraft:air"),
         (PackBlock::Stone, "minecraft:stone"),
+        (PackBlock::HeavyCore, "minecraft:heavy_core"),
     ] {
         assert_eq!(slot.identifier(), old);
     }

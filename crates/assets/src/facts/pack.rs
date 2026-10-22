@@ -64,6 +64,7 @@ domain!(PackBlock {
     CobblestoneWall,
     Air,
     Stone,
+    HeavyCore,
     StrawBed
 });
 domain!(TextureSelector {
