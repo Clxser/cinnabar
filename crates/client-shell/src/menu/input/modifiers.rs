@@ -42,11 +42,18 @@ impl MenuModifiers {
     }
 
     pub(super) fn shortcut(&self) -> bool {
-        self.0 & 0b0000_1111 != 0 && self.0 & 0b0011_0000 == 0
+        self.0 & (Self::CONTROL_LEFT | Self::CONTROL_RIGHT | Self::SUPER_LEFT | Self::SUPER_RIGHT)
+            != 0
+            && !self.alt()
+    }
+
+    /// Alt suppresses editing shortcuts and temporarily bypasses timeline snapping.
+    pub(super) fn alt(&self) -> bool {
+        self.0 & (Self::ALT_LEFT | Self::ALT_RIGHT) != 0
     }
 
     pub(super) fn shift(&self) -> bool {
-        self.0 & 0b1100_0000 != 0
+        self.0 & (Self::SHIFT_LEFT | Self::SHIFT_RIGHT) != 0
     }
 
     const fn mask(key: KeyCode) -> u8 {
@@ -60,6 +67,26 @@ impl MenuModifiers {
             KeyCode::ShiftLeft => Self::SHIFT_LEFT,
             KeyCode::ShiftRight => Self::SHIFT_RIGHT,
             _ => 0,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn either_alt_side_bypasses_editing_shortcuts_without_losing_shift() {
+        for alt in [KeyCode::AltLeft, KeyCode::AltRight] {
+            let mut keys = ButtonInput::default();
+            keys.press(KeyCode::ControlLeft);
+            keys.press(KeyCode::ShiftRight);
+            let mut modifiers = MenuModifiers::default();
+            modifiers.capture_pressed(&keys);
+            assert!(modifiers.shortcut() && modifiers.shift() && !modifiers.alt());
+            keys.press(alt);
+            modifiers.capture_pressed(&keys);
+            assert!(!modifiers.shortcut() && modifiers.shift() && modifiers.alt());
         }
     }
 }

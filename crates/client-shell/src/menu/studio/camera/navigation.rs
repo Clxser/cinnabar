@@ -8,7 +8,7 @@ mod tests;
 
 impl Studio {
     /// Frames the selected recorded subject using the current lens and viewing direction.
-    pub(super) fn frame_camera_subject(&mut self) -> Result<(), String> {
+    pub(in crate::menu::studio) fn frame_camera_subject(&mut self) -> Result<(), String> {
         let preview = self.camera_preview()?;
         if !preview.interactive {
             return Err("Subject framing requires one native replay view.".into());
@@ -45,7 +45,7 @@ impl Studio {
     }
 
     /// Travel timing is a saved undoable shot edit; changing it cannot alter the authored key times.
-    pub(super) fn toggle_camera_distance_timing(&mut self) -> Result<(), String> {
+    pub(in crate::menu::studio) fn toggle_camera_distance_timing(&mut self) -> Result<(), String> {
         let shot = self.camera_shot()?;
         let timing = shot.path_timing.next();
         let shot = shot
@@ -59,7 +59,7 @@ impl Studio {
     }
 
     /// The global travel profile is ordinary saved metadata with the same easing choices as lens keys.
-    pub(super) fn cycle_camera_global_easing(&mut self) -> Result<(), String> {
+    pub(in crate::menu::studio) fn cycle_camera_global_easing(&mut self) -> Result<(), String> {
         let shot = self.camera_shot()?;
         let shot = shot
             .with_path_global_easing(shot.path_global_easing.next())
@@ -72,7 +72,7 @@ impl Studio {
     }
 
     /// Aligned handles are an explicit undoable geometry choice, independent of travel and lens timing.
-    pub(super) fn toggle_camera_continuity(&mut self) -> Result<(), String> {
+    pub(in crate::menu::studio) fn toggle_camera_continuity(&mut self) -> Result<(), String> {
         let shot = self.camera_shot()?;
         let continuity = match shot.path_continuity {
             PathContinuity::Authored => PathContinuity::Smooth,

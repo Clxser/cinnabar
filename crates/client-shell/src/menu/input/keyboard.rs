@@ -228,7 +228,7 @@ fn studio_shortcut(
     );
     let timeline_keys = editing && timeline_focus && !menu.studio.view.camera_workspace.focused;
     use launcher::menu::studio::shortcuts::{self, Context};
-    if modifiers.0 & (MenuModifiers::ALT_LEFT | MenuModifiers::ALT_RIGHT) != 0 {
+    if modifiers.alt() {
         return false;
     }
     let Some(key) = shortcuts::Key::ALL

@@ -1,4 +1,5 @@
 use super::*;
+use recording_studio::camera::coverage::TargetCoverage;
 use recording_studio::camera::{ActorPose, CameraTarget, CameraTargetKind};
 
 /// Subject fixtures carry a real spawn identity while source media remains metadata-only.

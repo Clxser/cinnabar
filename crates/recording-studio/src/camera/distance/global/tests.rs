@@ -163,7 +163,12 @@ fn reversals_stop_instead_of_flipping_a_nonzero_velocity() {
     .with_path_continuity(PathContinuity::Smooth)
     .unwrap();
     let cache = CompiledCameraPath::new(&shot).unwrap();
-    near(cache.velocity(MediaTime(1_000_000)).unwrap(), [0.0; 3], 0.0);
+    // Arc integration can place the normalized corner one floating-point step from its source time.
+    near(
+        cache.velocity(MediaTime(1_000_000)).unwrap(),
+        [0.0; 3],
+        f64::EPSILON,
+    );
     let left = cache.velocity(MediaTime(999_900)).unwrap();
     let right = cache.velocity(MediaTime(1_000_100)).unwrap();
     assert!(left[0] >= 0.0 && right[0] <= 0.0);

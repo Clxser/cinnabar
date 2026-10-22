@@ -110,7 +110,7 @@ impl ReplayItems {
             true,
         );
         scene.set_glint(source.glint.clone(), source.glint_scroll);
-        let (ropes, limited) = ropes(stream, partial_tick);
+        let (ropes, limited) = ropes(stream, partial_tick, &mut self.scratch.ropes);
         self.ropes = ropes;
         self.admission.rope_limit |= limited;
         self.source_seconds = source_seconds;
@@ -119,11 +119,16 @@ impl ReplayItems {
 }
 
 /// Resolves the owner's authored native tessellation inputs, bounding the retained prefix by vertex capacity.
-pub(super) fn ropes(stream: &WorldStream, partial_tick: f32) -> (Arc<[PreparedItemRope]>, bool) {
+fn ropes(
+    stream: &WorldStream,
+    partial_tick: f32,
+    scratch: &mut Vec<client_world::RopeView>,
+) -> (Arc<[PreparedItemRope]>, bool) {
     let mut result = Vec::new();
     let mut vertices = 0usize;
     let mut limited = false;
-    for rope in stream.authority().ropes(partial_tick) {
+    stream.authority().ropes_into(partial_tick, scratch);
+    for rope in scratch.iter().copied() {
         if vertices >= render_model::MAX_DYNAMIC_ITEM_VERTICES {
             limited = true;
             break;

@@ -51,7 +51,7 @@ fn saved_views_are_reachable_in_their_section_without_scrolling_past_shot_creati
         });
         assert_eq!(selected.is_some(), *section == CameraTools::Views);
         if let Some((_, bounds)) = selected {
-            assert!(bounds[1] >= 0.0 && bounds[3] <= 400.0);
+            assert!(bounds.min().y() >= 0.0 && bounds.max().y() <= 400.0);
         }
     }
 }

@@ -199,7 +199,7 @@ fn block_preparation_reuses_empty_buffers_without_retaining_previous_submissions
         .0
         .as_ptr();
     for _ in 0..3 {
-        world.run_system_once(update).unwrap();
+        world.run_system_once(update_block_entity_scene).unwrap();
         let runtime = world.resource::<BlockEntityRuntime>();
         assert!(runtime.submissions.is_empty());
         assert_eq!(runtime.submissions.as_ptr(), submissions);
@@ -208,7 +208,7 @@ fn block_preparation_reuses_empty_buffers_without_retaining_previous_submissions
         assert_eq!(items.0.0.as_ptr(), placements);
     }
     world.resource_mut::<ClientWorld>().stream = None;
-    world.run_system_once(update).unwrap();
+    world.run_system_once(update_block_entity_scene).unwrap();
     assert!(
         world
             .resource::<BlockEntityRuntime>()

@@ -69,6 +69,7 @@ fn fixture() -> (Metadata, Vec<u8>) {
 
 #[test]
 fn recorded_hud_preserves_filter_ownership_without_changing_legacy_draw_framing() {
+    let mut remaining = usize::MAX;
     let (metadata, bytes) = fixture();
     let metadata = serde_json::from_slice(&serde_json::to_vec(&metadata).unwrap()).unwrap();
     let restored = load(
@@ -79,7 +80,7 @@ fn recorded_hud_preserves_filter_ownership_without_changing_legacy_draw_framing(
             assert_eq!(expected, 4);
             Ok(Arc::from([255; 4]))
         },
-        &mut usize::MAX,
+        &mut remaining,
         &|| false,
     )
     .unwrap();
@@ -95,6 +96,7 @@ fn recorded_hud_preserves_filter_ownership_without_changing_legacy_draw_framing(
 
 #[test]
 fn legacy_hud_defaults_to_unfiltered_batches_and_mismatched_groups_fail_before_artwork() {
+    let mut remaining = usize::MAX;
     let (metadata, bytes) = fixture();
     let mut encoded = serde_json::to_value(&metadata).unwrap();
     encoded.as_object_mut().unwrap().remove("filter_groups");
@@ -103,7 +105,7 @@ fn legacy_hud_defaults_to_unfiltered_batches_and_mismatched_groups_fail_before_a
         serde_json::from_value(encoded).unwrap(),
         &bytes,
         |_, _| Ok(Arc::from([255; 4])),
-        &mut usize::MAX,
+        &mut remaining,
         &|| false,
     )
     .unwrap();
@@ -122,7 +124,7 @@ fn legacy_hud_defaults_to_unfiltered_batches_and_mismatched_groups_fail_before_a
         metadata,
         &bytes,
         |_, _| panic!("malformed draw ownership cannot load pixels"),
-        &mut usize::MAX,
+        &mut remaining,
         &|| false,
     );
     assert!(matches!(rejected, Err(ArchiveError::Invalid(_))));

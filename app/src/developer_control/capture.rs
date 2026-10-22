@@ -17,7 +17,7 @@ use developer_control::{
     server::Reply,
 };
 use recording_studio::{
-    video::{Frame, FrameSink, PixelLayout, Recorder, VideoSettings},
+    video::{Frame, FrameSink, PixelLayout, Recorder, Summary, VideoSettings},
     wav::{WavWriter, samples_for_frame},
 };
 use serde_json::{Value, json};

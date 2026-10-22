@@ -1,7 +1,7 @@
 //! Subject-bound alternatives are offered only after asynchronous source coverage verification.
 
 use super::*;
-use recording_studio::camera::coverage::{self, TargetCoverage, TargetCoverageRequest};
+use recording_studio::camera::coverage::{self, TargetCoverageRequest};
 use recording_studio::retime::TimeMap;
 
 const MIN_SUGGESTED_SHOT: MediaTime = MediaTime(100_000);

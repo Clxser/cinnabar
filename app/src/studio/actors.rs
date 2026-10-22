@@ -98,6 +98,7 @@ pub(super) fn sample(world: &World, active: &mut Active, at: MediaTime) -> Resul
 /// Uses the recording-only native publication, which includes received actors and the local world body.
 fn snapshot(frame: &ActorRenderFrame) -> ActorSample {
     let ActorRenderFrame {
+        mask_only_runtime_ids: _,
         instances,
         skins: _,
         instance_revision,

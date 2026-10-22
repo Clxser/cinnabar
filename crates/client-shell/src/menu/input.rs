@@ -36,8 +36,7 @@ use bevy::{
 use ui::{ChatEditor, ToastPress, UiPoint};
 
 use crate::ui_resources::{UiPresentationResource, UiRuntimeResource};
-use client_ui::ui_runtime::{PlatformClipboard, presentation::UiPresentationRuntime};
-use launcher::menu::view::MenuCaret;
+use client_ui::ui_runtime::presentation::UiPresentationRuntime;
 use {super::MenuRuntime, launcher::menu::MenuField};
 
 /// Vanilla's fixed desktop option hotkeys.
@@ -498,11 +497,7 @@ pub fn drive_menu_input(
                 cursor_position.map(|position| [position.x, position.y]),
                 pointer_pressed,
                 pointer_just_pressed,
-                [
-                    modifiers.shift(),
-                    modifiers.shortcut(),
-                    modifiers.0 & (MenuModifiers::ALT_LEFT | MenuModifiers::ALT_RIGHT) != 0,
-                ],
+                [modifiers.shift(), modifiers.shortcut(), modifiers.alt()],
             )
         } else {
             false
