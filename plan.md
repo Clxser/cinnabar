@@ -94,7 +94,9 @@ and resource qualification; they do not imply these systems need to be written.
 - [ ] Qualify compact templates for slabs/stairs, thin attached faces, paired doors,
   trapdoors, connected panes/fences/gates and static chest/sign models. Check existing
   coverage before implementing a missing case. Keep conservative culling and connectivity
-  until exact face-coverage behavior is verified separately.
+  until exact face-coverage behavior is verified separately. Inventory fences draw the
+  native two-post shape; bamboo fence slats and wall inventory shapes are unverified, and
+  world fence rails still omit the outer end faces native tessellation draws.
 - [ ] Close paired-door presentation and interaction acceptance, including lower/upper
   state resolution, cross-subchunk neighbours, missing pairs, highlights, cracks,
   directional replacement-pack artwork and native-server toggle/picking input.
