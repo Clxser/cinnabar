@@ -538,3 +538,45 @@ fn gpu_fault_matrix_buffers_skip_partial_publications_and_recover_draws() {
         }
     }
 }
+
+#[test]
+fn unchanged_actor_publication_recovers_after_a_transient_upload_failure() {
+    let mut app = fixture();
+    let control = publication(1, &[20], 1);
+    assert_eq!(draw_frame(&mut app, &control).len(), 1);
+    let next = publication(2, &[60], 1);
+    let (fault, calls) = fail_at("actor instance and bone upload", 1);
+    assert!(draw_frame(&mut app, &next).is_empty());
+    assert!(
+        calls
+            .borrow()
+            .iter()
+            .any(|owner| owner == "actor instance and bone upload")
+    );
+    assert_ne!(
+        app.sub_app(RenderApp)
+            .world()
+            .resource::<ActorGpu>()
+            .frame_generation,
+        next.rig.frame_generation,
+        "failed storage admission cannot acknowledge the source generation"
+    );
+    drop(fault);
+    assert_eq!(draw_frame(&mut app, &next).len(), 1);
+    assert_eq!(
+        app.sub_app(RenderApp)
+            .world()
+            .resource::<ActorGpu>()
+            .frame_generation,
+        next.rig.frame_generation
+    );
+    let (_observe, calls) = fail_at("actor instance and bone upload", usize::MAX);
+    assert_eq!(draw_frame(&mut app, &next).len(), 1);
+    assert!(
+        !calls
+            .borrow()
+            .iter()
+            .any(|owner| owner == "actor instance and bone upload")
+    );
+    assert_eq!(app.sub_app(RenderApp).world().resource::<Frames>().0, 4);
+}

@@ -510,7 +510,8 @@ fn prepare_actor_resources(
             if uploaded.is_none() {
                 gpu.bones.clear();
                 gpu.instance_count = 0;
-                gpu.frame_generation = rig.frame_generation;
+                // Zero is never a drawable generation; unchanged paused sources must retry admission.
+                gpu.frame_generation = 0;
                 gate.clear();
                 tracker.clear();
                 return;
