@@ -83,6 +83,14 @@ impl Studio {
 }
 
 impl crate::menu::MenuRuntime {
+    /// Recovery runs through the existing storage worker after the app installs its scene owner.
+    pub fn set_studio_recording_recovery(
+        &mut self,
+        recover: recording_studio::storage::RecordingRecovery,
+    ) {
+        self.studio.recording_recovery = Some(recover);
+    }
+
     /// Only running transport admits speculative visual preparation; paused camera edits stay exact.
     pub fn studio_preview_playing(&self) -> bool {
         self.studio.transport.playing()

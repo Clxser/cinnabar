@@ -55,6 +55,25 @@ impl CameraRecording {
         self.cursor.reader().duration()
     }
 
+    /// Reads the immutable initial capture settings without changing the playback cursor.
+    pub fn capture_settings(
+        &self,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<CaptureSettings, ArchiveError> {
+        let mut settings = None;
+        self.cursor
+            .reader()
+            .visit_to(MediaTime::ZERO, cancelled, |record| {
+                if record.kind == RecordKind::CheckpointPart {
+                    settings = Some(read_checkpoint(record.payload)?.settings);
+                }
+                Ok(())
+            })?;
+        settings.ok_or(ArchiveError::Invalid(
+            "recording has no initial capture settings",
+        ))
+    }
+
     /// Uses the nearest camera checkpoint, including legacy initial settings-only checkpoints.
     pub fn restore(
         &mut self,
@@ -183,6 +202,29 @@ enum Checkpoint {
     Initial(CaptureSettings),
 }
 
+/// Legacy settings and current checkpoints share one version and settings admission contract.
+fn read_checkpoint(payload: &[u8]) -> Result<PovCheckpoint, ArchiveError> {
+    bounded(payload)?;
+    let checkpoint = match serde_json::from_slice::<Checkpoint>(payload)? {
+        Checkpoint::Current(checkpoint) => checkpoint,
+        Checkpoint::Initial(settings) => PovCheckpoint {
+            version: POV_CHECKPOINT_VERSION,
+            settings,
+            camera: None,
+        },
+    };
+    if checkpoint.version != POV_CHECKPOINT_VERSION {
+        return Err(ArchiveError::Invalid(
+            "unsupported POV camera checkpoint version",
+        ));
+    }
+    checkpoint
+        .settings
+        .validate()
+        .map_err(|_| ArchiveError::Invalid("invalid captured camera settings"))?;
+    Ok(checkpoint)
+}
+
 /// Only camera payloads affect view state; committed combat evidence remains owned by edit analysis.
 fn observe(
     record: ReplayRecord<'_>,
@@ -192,25 +234,8 @@ fn observe(
         RecordKind::CheckpointStart => {}
         RecordKind::CheckpointEnd | RecordKind::Gameplay => {}
         RecordKind::CheckpointPart => {
-            bounded(record.payload)?;
-            match serde_json::from_slice::<Checkpoint>(record.payload)? {
-                Checkpoint::Current(checkpoint) => {
-                    if checkpoint.version != POV_CHECKPOINT_VERSION {
-                        return Err(ArchiveError::Invalid(
-                            "unsupported POV camera checkpoint version",
-                        ));
-                    }
-                    checkpoint
-                        .settings
-                        .validate()
-                        .map_err(|_| ArchiveError::Invalid("invalid captured camera settings"))?;
-                    if let Some(pose) = checkpoint.camera {
-                        admit_pose(pose, record.at, current)?;
-                    }
-                }
-                Checkpoint::Initial(settings) => settings
-                    .validate()
-                    .map_err(|_| ArchiveError::Invalid("invalid legacy camera checkpoint"))?,
+            if let Some(pose) = read_checkpoint(record.payload)?.camera {
+                admit_pose(pose, record.at, current)?;
             }
         }
         RecordKind::Camera => {
@@ -251,6 +276,98 @@ fn admit_pose(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovering_capture_settings_preserves_the_playback_cursor_and_legacy_settings() {
+        use crate::archive::{
+            RECORDING_VERSION, RecordInput, Recording, RecordingConfig, RecordingState,
+        };
+        use std::sync::Arc;
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("synthetic.cinreplay");
+        let settings = CaptureSettings {
+            fps: crate::FrameRate {
+                numerator: 120,
+                denominator: 1,
+            },
+            hand: true,
+            ..Default::default()
+        };
+        let info = RecordingInfo {
+            version: RECORDING_VERSION,
+            name: "Synthetic camera".into(),
+            game_version: "fixture".into(),
+            protocol_version: 0,
+            scene_schema: POV_SCENE_SCHEMA.into(),
+            created_unix_ms: 0,
+            viewport: [16, 16],
+            local_actor: 1,
+        };
+        for payload in [
+            serde_json::to_vec(&settings).unwrap(),
+            serde_json::to_vec(&PovCheckpoint {
+                version: POV_CHECKPOINT_VERSION,
+                settings,
+                camera: None,
+            })
+            .unwrap(),
+        ] {
+            let path = path.with_extension(format!("{}.cinreplay", payload.len()));
+            let mut recording =
+                Recording::start_ready(path.clone(), info.clone(), RecordingConfig::default())
+                    .unwrap();
+            for (kind, payload) in [
+                (RecordKind::CheckpointStart, Vec::new()),
+                (RecordKind::CheckpointPart, payload),
+                (RecordKind::CheckpointEnd, Vec::new()),
+                (
+                    RecordKind::Camera,
+                    serde_json::to_vec(&CameraPose {
+                        yaw: 10.0,
+                        ..Default::default()
+                    })
+                    .unwrap(),
+                ),
+            ] {
+                recording
+                    .push(RecordInput {
+                        at: MediaTime::ZERO,
+                        kind,
+                        payload: Arc::from(payload),
+                    })
+                    .unwrap();
+            }
+            recording
+                .push(RecordInput {
+                    at: MediaTime(1_000_000),
+                    kind: RecordKind::Camera,
+                    payload: Arc::from(
+                        serde_json::to_vec(&CameraPose {
+                            yaw: 30.0,
+                            ..Default::default()
+                        })
+                        .unwrap(),
+                    ),
+                })
+                .unwrap();
+            assert_eq!(
+                recording.finish(MediaTime(1_000_000)).unwrap().wait().state,
+                RecordingState::Complete
+            );
+            let mut camera = CameraRecording::open(&path).unwrap();
+            camera.restore(MediaTime(500_000), || false).unwrap();
+            let before = camera.position;
+            assert_eq!(camera.capture_settings(|| false).unwrap(), settings);
+            assert_eq!(camera.position, before);
+            let after = camera.advance_to(MediaTime(600_000), || false).unwrap();
+            assert!((after.pose.yaw - 22.0).abs() < 1e-6);
+            assert!(matches!(
+                camera.capture_settings(|| true),
+                Err(ArchiveError::Cancelled)
+            ));
+            assert_eq!(camera.position, Some(MediaTime(600_000)));
+        }
+    }
 
     #[test]
     fn settings_only_checkpoints_preserve_the_previous_camera_pose() {

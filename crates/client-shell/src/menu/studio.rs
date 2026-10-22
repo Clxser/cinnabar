@@ -58,6 +58,7 @@ pub(super) struct Studio {
     thumbnails_job: Option<u64>,
     thumbnails_cancel: recording_studio::export::Cancellation,
     open_cancel: recording_studio::export::Cancellation,
+    recording_recovery: Option<recording_studio::storage::RecordingRecovery>,
     pub(super) destination_text: ui::ChatEditor,
     pub(super) camera_text: ui::ChatEditor,
     camera_edit: Option<camera::CameraValueEdit>,
@@ -119,6 +120,7 @@ impl Studio {
             thumbnails_job: None,
             thumbnails_cancel: Default::default(),
             open_cancel: Default::default(),
+            recording_recovery: None,
             destination_text: super::input::fields::field_editor(
                 launcher::menu::MenuField::StudioDestination,
             ),

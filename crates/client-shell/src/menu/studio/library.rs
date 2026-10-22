@@ -118,6 +118,7 @@ impl Studio {
             LibraryKind::Recording if interrupted => StorageRequest::RecoverRecording {
                 path,
                 cancellation: self.open_cancel.clone(),
+                recover: self.recording_recovery,
             },
             LibraryKind::Recording => StorageRequest::OpenRecording { path },
         };

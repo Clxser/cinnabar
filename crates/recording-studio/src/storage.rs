@@ -26,6 +26,10 @@ pub use library::{
 
 const STORAGE_QUEUE_CAPACITY: usize = 4;
 
+/// The app supplies the native scene owner without introducing an upward storage dependency.
+pub type RecordingRecovery =
+    fn(&Path, &crate::export::Cancellation) -> Result<(Editor, Option<String>), String>;
+
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
     #[error("project storage is busy; retry when the current operation finishes")]
@@ -86,6 +90,7 @@ pub enum StorageRequest {
     RecoverRecording {
         path: PathBuf,
         cancellation: crate::export::Cancellation,
+        recover: Option<RecordingRecovery>,
     },
     LoadCaptureSettings {
         root: PathBuf,
@@ -253,8 +258,17 @@ fn execute(request: StorageRequest) -> Result<StorageValue, StorageError> {
             preferences::save(&root, settings)?;
             Ok(StorageValue::CaptureSettings(settings))
         }
-        StorageRequest::RecoverRecording { path, cancellation } => {
+        StorageRequest::RecoverRecording {
+            path,
+            cancellation,
+            recover,
+        } => {
             let path = files::absolute(&path)?;
+            if let Some(recover) = recover {
+                let (editor, notice) = recover(&path, &cancellation)
+                    .map_err(|error| io(&path, std::io::Error::other(error)))?;
+                return Ok(StorageValue::CapturedVideo { editor, notice });
+            }
             let info = crate::archive::RecordingInfo::read(&path)?;
             if info.scene_schema != crate::capture::POV_SCENE_SCHEMA {
                 return Err(io(

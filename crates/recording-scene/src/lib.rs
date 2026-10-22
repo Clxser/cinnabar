@@ -10,6 +10,7 @@ pub mod environment;
 pub mod journal;
 pub mod palette;
 pub mod playback;
+pub mod recovery;
 pub mod scene;
 pub mod targets;
 pub mod terrain;
