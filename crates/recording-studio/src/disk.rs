@@ -86,6 +86,7 @@ impl Drop for Reservation {
 }
 
 /// This handle's extent belongs to exactly one physical file, including after it is closed or renamed.
+#[derive(Debug)]
 pub struct Metered<W> {
     inner: W,
     budget: DiskBudget,
