@@ -132,6 +132,55 @@ fn policy(server: &Server, automatic: bool) -> Policy {
     }
 }
 
+/// Persists the player's automatic-upload preference independently of a cached worker policy.
+fn set_automatic(layout: &InstallLayout, enabled: bool) {
+    use launcher::menu::settings_options::SettingId;
+    let mut settings = SettingsOptions::default();
+    settings.set(SettingId::SendCrashReports.index(), i32::from(enabled));
+    settings
+        .save(&layout.user_config_root.join(SETTINGS_FILE))
+        .unwrap();
+}
+
+#[test]
+fn android_saved_reports_send_on_a_healthy_launch_without_exit_info() {
+    let root = tempfile::tempdir().unwrap();
+    let layout = layout(root.path());
+    let folder = crash(&layout, "panicked at a.rs:1:1:\nlegacy API crash");
+    let log = layout.log_dir().join("client.log");
+    std::fs::create_dir_all(layout.log_dir()).unwrap();
+    std::fs::write(
+        &log,
+        "CLIENT_SESSION_START session=0123456789abcdef\nprevious-session-log\n",
+    )
+    .unwrap();
+    let snapshot = previous_exit::Snapshot::capture(&layout.crash_dir(), &log);
+    assert_eq!(snapshot.latest_saved(), Some(folder.as_path()));
+    std::fs::write(&log, "CLIENT_SESSION_START session=new\nnew-session-log\n").unwrap();
+    set_automatic(&layout, true);
+    for saved in snapshot.complete_saved().unwrap() {
+        completed(&layout, &saved);
+    }
+    let server = Server::start(201);
+    assert_eq!(send_due(&layout, &policy(&server, true)).len(), 1);
+    let payloads = server.payloads();
+    assert_eq!(payloads.len(), 1);
+    assert!(
+        payloads[0]
+            .log
+            .iter()
+            .any(|line| line.contains("previous-session-log"))
+    );
+    assert!(
+        !payloads[0]
+            .log
+            .iter()
+            .any(|line| line.contains("new-session-log"))
+    );
+    assert!(matches!(state::read(&folder), Some(Upload::Sent { .. })));
+    assert!(send_due(&layout, &policy(&server, true)).is_empty());
+}
+
 #[test]
 fn nothing_is_sent_without_consent() {
     let root = tempfile::tempdir().unwrap();
@@ -152,6 +201,7 @@ fn nothing_is_sent_without_consent() {
 fn automatic_consent_sends_each_report_once() {
     let root = tempfile::tempdir().unwrap();
     let layout = layout(root.path());
+    set_automatic(&layout, true);
     let server = Server::start(201);
     let first = crash(&layout, "panicked at a.rs:1:1:\nboom");
     consent(&first, Consent::Auto, now_ms()).unwrap();
@@ -210,6 +260,7 @@ fn failed_sends_stay_pending_and_refusals_are_abandoned() {
         automatic: true,
     };
     let other = crash(&layout, "offline");
+    set_automatic(&layout, true);
     consent(&other, Consent::Auto, now_ms()).unwrap();
     let results = send_due(&layout, &unreachable);
     assert_eq!(results.len(), 1);
@@ -383,4 +434,22 @@ fn a_stale_scheduled_worker_respects_a_new_retry_deadline() {
         delayed
     );
     assert!(server.payloads().is_empty());
+}
+
+#[test]
+fn a_cached_policy_cannot_send_after_automatic_consent_is_withdrawn() {
+    let root = tempfile::tempdir().unwrap();
+    let layout = layout(root.path());
+    let server = Server::start(201);
+    let folder = crash(&layout, "boom");
+    set_automatic(&layout, true);
+    consent(&folder, Consent::Auto, now_ms()).unwrap();
+    let cached = policy(&server, true);
+    set_automatic(&layout, false);
+    assert!(send(&layout, &folder, &cached).is_err());
+    assert!(server.payloads().is_empty());
+    assert!(matches!(
+        state::read(&folder),
+        Some(Upload::Pending { attempts: 0, .. })
+    ));
 }

@@ -444,6 +444,20 @@ mod tests {
         assert_eq!(native["signal"], libc::SIGSEGV);
         assert_eq!(native["signal_code"], -6);
         assert_eq!(native["fault_address"], 24);
+        let payload = crate::upload::build(
+            &folders[0],
+            crate::upload::Ids {
+                install: "0123456789abcdef0123456789abcdef",
+                report: "fedcba9876543210fedcba9876543210",
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(payload.native.as_ref().unwrap()["address"], "0x18");
+        assert_eq!(
+            payload.signature,
+            format!("native: signal {} / code -6", libc::SIGSEGV)
+        );
         assert!(written.thread.id.parse::<u64>().is_ok());
         assert_eq!(
             fs::read_to_string(folders[0].join(folder::CLIENT_LOG_FILE)).unwrap(),

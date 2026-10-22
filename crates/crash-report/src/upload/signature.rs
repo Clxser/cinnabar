@@ -55,7 +55,7 @@ fn panic(message: &str) -> String {
 
 /// `native: <reason> in <faulting module> via <top in-app frame>`.
 fn native(message: &str, stack: Option<&Stack>) -> String {
-    let Some(stack) = stack.filter(|stack| !stack.frames.is_empty()) else {
+    let Some(stack) = stack else {
         return format!("native: {}", normalize(message));
     };
     let reason = if stack.reason.is_empty() {
@@ -63,6 +63,9 @@ fn native(message: &str, stack: Option<&Stack>) -> String {
     } else {
         stack.reason.clone()
     };
+    if stack.frames.is_empty() {
+        return format!("native: {reason}");
+    }
     let faulting = &stack.frames[0];
     let in_app = stack.top_in_app();
     let mut out = format!("native: {reason}");

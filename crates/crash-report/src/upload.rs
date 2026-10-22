@@ -170,7 +170,7 @@ pub fn payload(
         let mut stack = stack.sanitized();
         stack.reason = redactor.text(&stack.reason).unwrap_or_default();
         for module in &mut stack.modules {
-            module.name = redactor.text(&module.name).unwrap_or_default();
+            module.name = redactor.file_name(&module.name).unwrap_or_default();
         }
         for frame in &mut stack.frames {
             frame.function = frame
@@ -179,6 +179,16 @@ pub fn payload(
                 .and_then(|name| redactor.text(name).ok());
         }
         stack.sanitized()
+    });
+    let stack = stack.or_else(|| {
+        native
+            .as_ref()
+            .and_then(|native| native.get("reason"))
+            .and_then(serde_json::Value::as_str)
+            .map(|reason| Stack {
+                reason: reason.to_owned(),
+                ..Stack::default()
+            })
     });
     Ok(Payload {
         schema: SCHEMA,
@@ -318,6 +328,24 @@ fn native_fields(native: &serde_json::Value, redactor: &Redactor) -> serde_json:
     {
         out.insert("reason".into(), bounded_line(&reason).into());
     }
+    if !out.contains_key("reason")
+        && let Some(signal) = native.get("signal").and_then(serde_json::Value::as_i64)
+    {
+        let code = native
+            .get("signal_code")
+            .and_then(serde_json::Value::as_i64);
+        let reason = code.map_or_else(
+            || format!("signal {signal}"),
+            |code| format!("signal {signal} / code {code}"),
+        );
+        out.insert("reason".into(), reason.into());
+    }
+    if let Some(address) = native
+        .get("fault_address")
+        .and_then(serde_json::Value::as_u64)
+    {
+        out.insert("address".into(), format!("0x{address:X}").into());
+    }
     for key in ["address", "exit_code"] {
         if let Some(value) = hex(native.get(key)) {
             out.insert(key.into(), value.into());
@@ -335,7 +363,7 @@ fn native_fields(native: &serde_json::Value, redactor: &Redactor) -> serde_json:
                 "module".into(),
                 bounded_line(
                     &redactor
-                        .text(crate::native::module_name(module))
+                        .file_name(crate::native::module_name(module))
                         .unwrap_or_default(),
                 )
                 .into(),

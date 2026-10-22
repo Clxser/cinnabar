@@ -409,3 +409,20 @@ fn a_log_that_cannot_be_fully_learned_blocks_the_whole_upload() {
         std::io::ErrorKind::InvalidData
     );
 }
+
+#[test]
+fn native_signal_facts_without_a_tombstone_keep_distinct_signatures() {
+    let mut first = report(Kind::Native, "Fatal signal");
+    first.native =
+        Some(serde_json::json!({ "signal": 11, "signal_code": -6, "fault_address": 24 }));
+    let first = payload(&first, "", "", None, IDS, None).unwrap();
+    assert_eq!(
+        first.native.as_ref().unwrap()["reason"],
+        "signal 11 / code -6"
+    );
+    assert_eq!(first.native.as_ref().unwrap()["address"], "0x18");
+    let mut second = report(Kind::Native, "Fatal signal");
+    second.native = Some(serde_json::json!({ "signal": 6, "signal_code": 1, "fault_address": 24 }));
+    let second = payload(&second, "", "", None, IDS, None).unwrap();
+    assert_ne!(first.signature, second.signature);
+}

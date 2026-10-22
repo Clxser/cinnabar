@@ -2,13 +2,16 @@
 //! tombstone's frames to the crash folder the dying process wrote, or writes the folder itself
 //! when the process died before it could.
 
+mod snapshot;
+pub use snapshot::Snapshot;
+
 use std::{
     fs, io,
     path::{Path, PathBuf},
 };
 
 use crash_report::{
-    folder::{self, LogSources, Logs},
+    folder,
     report::{Identity, Kind, Report},
     stack::{self, tombstone},
 };
@@ -48,10 +51,10 @@ pub struct Exit<'a> {
 
 /// Returns the crash folder of `exit`: the one the process wrote around its exit, with the
 /// tombstone's stack added, or a new one from what Android recorded. `in_app` names Cinnabar's
-/// own libraries; `identity` describes this build.
+/// own libraries; `identity` describes this build. `snapshot` was captured before the new game starts.
 pub fn record(
     crash_dir: &Path,
-    client_log: &Path,
+    snapshot: &Snapshot,
     exit: &Exit<'_>,
     identity: &Identity,
     in_app: impl Fn(&str) -> bool,
@@ -69,11 +72,13 @@ pub fn record(
     let folders = folder::list(crash_dir);
     // A known exit takes precedence over any later, still-unassociated report.
     let written = folders.iter().rev().find(|folder| {
-        fs::read(folder.join(EXIT_FILE)).ok()
+        compatible(folder, exit.reason) && fs::read(folder.join(EXIT_FILE)).ok()
             .and_then(|bytes| serde_json::from_slice::<ExitId>(&bytes).ok())
             .is_some_and(|saved| saved == id)
-    }).or_else(|| folders.iter().rev().find(|folder| {
-        matches!(fs::metadata(folder.join(EXIT_FILE)), Err(error) if error.kind() == io::ErrorKind::NotFound)
+    }).or_else(|| snapshot.folders.iter().rev().find(|folder| {
+        compatible(folder, exit.reason)
+            && !matches!(crash_report::upload::state::read(folder), Some(crash_report::upload::state::Upload::Sent { .. }))
+            && matches!(fs::metadata(folder.join(EXIT_FILE)), Err(error) if error.kind() == io::ErrorKind::NotFound)
             && written_at_ms(folder).is_some_and(|at| (earliest..=latest).contains(&at))
     })).cloned();
     if let Some(folder) = written {
@@ -93,18 +98,41 @@ pub fn record(
     let kind = if native { Kind::Native } else { Kind::Abort };
     let mut report = Report::new(kind, message, identity, exit.timestamp_ms);
     report.native = Some(serde_json::json!({ "exit_code": format!("0x{:X}", exit.status) }));
-    let logs = Logs::read(&LogSources {
-        session_id: None,
-        client: client_log,
-        core: &crash_dir.join("no-core-log"),
-        started_at_ms: 0,
-    });
-    let folder = folder::write(crash_dir, &report, &logs, None, exit.timestamp_ms)?;
+    let folder = folder::write(crash_dir, &report, &snapshot.logs, None, exit.timestamp_ms)?;
     if let Some(stack) = &stack {
         stack::write(&folder, stack)?;
     }
     mark_exit(&folder, &id)?;
     Ok(folder)
+}
+
+/// Whether a report belongs to the Android main process rather than a Go subprocess.
+fn main_report(kind: Kind) -> bool {
+    match kind {
+        Kind::Core => false,
+        Kind::Panic | Kind::Native | Kind::Abort | Kind::Hang | Kind::Startup | Kind::Runtime => {
+            true
+        }
+    }
+}
+
+/// Whether an existing main-process report can describe the kind of exit Android recorded.
+fn compatible(folder: &Path, reason: i32) -> bool {
+    let Ok(report) = folder::read(folder) else {
+        return false;
+    };
+    match reason {
+        REASON_CRASH_NATIVE | REASON_SIGNALED => {
+            matches!(report.kind, Kind::Native | Kind::Panic | Kind::Abort)
+        }
+        REASON_CRASH => matches!(
+            report.kind,
+            Kind::Panic | Kind::Abort | Kind::Startup | Kind::Runtime
+        ),
+        REASON_ANR => report.kind == Kind::Hang,
+        REASON_LOW_MEMORY => report.kind == Kind::Abort,
+        _ => matches!(report.kind, Kind::Abort | Kind::Startup | Kind::Runtime),
+    }
 }
 
 /// The report file's actual write time; prepared signal folders may have much older names.
@@ -150,9 +178,26 @@ fn describe(exit: &Exit<'_>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crash_report::report::Thread;
+    use crash_report::{folder::Logs, report::Thread};
 
     const EXIT_MS: u64 = 1_760_443_200_000;
+
+    /// Captures a fixture's previous session before recording its synthetic Android exit.
+    fn record(
+        crash_dir: &Path,
+        log: &Path,
+        exit: &Exit<'_>,
+        identity: &Identity,
+        in_app: impl Fn(&str) -> bool,
+    ) -> io::Result<PathBuf> {
+        super::record(
+            crash_dir,
+            &Snapshot::capture(crash_dir, log),
+            exit,
+            identity,
+            in_app,
+        )
+    }
 
     /// Describes a synthetic Android build without any real session identity.
     fn identity() -> Identity {
@@ -363,5 +408,76 @@ mod tests {
         assert_eq!(selected, written);
         assert_eq!(folder::read(&selected).unwrap().renderer, report.renderer);
         assert_eq!(folder::list(dir.path()).len(), 1);
+    }
+    #[test]
+    fn android_snapshot_rejects_unrelated_core_reports() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = folder::write(
+            dir.path(),
+            &Report::new(Kind::Core, "core panic".into(), &identity(), EXIT_MS),
+            &Logs::default(),
+            None,
+            EXIT_MS,
+        )
+        .unwrap();
+        set_written_at(&core, EXIT_MS);
+        let previous = Snapshot::capture(dir.path(), &dir.path().join("client.log"));
+        let selected = super::record(
+            dir.path(),
+            &previous,
+            &exit(REASON_CRASH_NATIVE, None),
+            &identity(),
+            |_| true,
+        )
+        .unwrap();
+        assert_ne!(selected, core);
+        assert_eq!(folder::read(&selected).unwrap().kind, Kind::Native);
+    }
+
+    #[test]
+    fn android_snapshot_keeps_the_previous_log_after_retry_rotates_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("client.log");
+        fs::write(&log, "CLIENT_SESSION_START session=old\nold words\n").unwrap();
+        let previous = Snapshot::capture(dir.path(), &log);
+        fs::write(&log, "CLIENT_SESSION_START session=new\nnew words\n").unwrap();
+        let selected = super::record(
+            dir.path(),
+            &previous,
+            &exit(REASON_LOW_MEMORY, None),
+            &identity(),
+            |_| true,
+        )
+        .unwrap();
+        let kept = fs::read_to_string(selected.join(folder::CLIENT_LOG_FILE)).unwrap();
+        assert!(kept.contains("old words"));
+        assert!(!kept.contains("new words"));
+    }
+
+    #[test]
+    fn android_snapshot_completes_saved_reports_without_exit_info() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("client.log");
+        fs::write(
+            &log,
+            "CLIENT_SESSION_START session=android-exit\nold words\n",
+        )
+        .unwrap();
+        let saved = folder::write(
+            dir.path(),
+            &Report::new(Kind::Panic, "panic".into(), &identity(), EXIT_MS),
+            &Logs::default(),
+            None,
+            EXIT_MS,
+        )
+        .unwrap();
+        let previous = Snapshot::capture(dir.path(), &log);
+        assert_eq!(previous.latest_saved(), Some(saved.as_path()));
+        assert_eq!(previous.complete_saved().unwrap(), vec![saved.clone()]);
+        assert!(
+            fs::read_to_string(saved.join(folder::CLIENT_LOG_FILE))
+                .unwrap()
+                .contains("old words")
+        );
     }
 }

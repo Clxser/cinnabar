@@ -226,15 +226,18 @@ fn show_with_text(
     } else {
         Choice::Close
     });
-    finish_choice(choice, app.take_upload(), selected)
+    let upload = app.take_upload();
+    finish_choice(app, choice, upload, selected)
 }
 
-/// Applies the selected action and keeps a consented upload alive until it finishes.
-fn finish_choice(
+/// Destroys the window owner before applying the selected action and waiting for its upload.
+fn finish_choice<T>(
+    window_owner: T,
     choice: Choice,
     upload: Option<std::thread::JoinHandle<()>>,
     selected: impl FnOnce(Choice),
 ) -> Choice {
+    drop(window_owner);
     selected(choice);
     if let Some(worker) = upload {
         let _ = worker.join();
@@ -252,7 +255,7 @@ mod tests {
         let worker = std::thread::spawn(move || waiting.recv().unwrap());
         let (selected, selection) = std::sync::mpsc::channel();
         let closing = std::thread::spawn(move || {
-            finish_choice(Choice::Restart, Some(worker), |choice| {
+            finish_choice((), Choice::Restart, Some(worker), |choice| {
                 selected.send(choice).unwrap()
             })
         });
@@ -267,6 +270,26 @@ mod tests {
             observed,
             "restart selection waited for the pending network request"
         );
+    }
+
+    #[test]
+    fn a_closed_window_is_destroyed_before_the_selected_action_runs() {
+        use std::{cell::Cell, rc::Rc};
+        struct WindowOwner(Rc<Cell<bool>>);
+        impl Drop for WindowOwner {
+            fn drop(&mut self) {
+                self.0.set(true);
+            }
+        }
+        let destroyed = Rc::new(Cell::new(false));
+        let observed = Cell::new(false);
+        finish_choice(
+            WindowOwner(Rc::clone(&destroyed)),
+            Choice::Close,
+            None,
+            |_| observed.set(destroyed.get()),
+        );
+        assert!(observed.get(), "the window survived until the upload wait");
     }
 
     #[test]

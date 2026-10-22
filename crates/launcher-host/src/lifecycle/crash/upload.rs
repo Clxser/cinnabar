@@ -187,12 +187,7 @@ fn send_inner(
     if only_due && *next_at_ms > now_ms() {
         return Ok(pending);
     }
-    if *consent == Consent::Auto && !policy.automatic {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "automatic crash uploads are off",
-        ));
-    }
+    authorize(layout, policy, *consent)?;
     let install = install_id(&layout.user_data_root)?;
     let body = upload::build(
         folder,
@@ -204,10 +199,29 @@ fn send_inner(
     )
     .and_then(upload::encode);
     let outcome = match body {
-        Ok(body) => post(&policy.endpoint, body),
+        Ok(body) => {
+            authorize(layout, policy, *consent)?;
+            post(&policy.endpoint, body)
+        }
         Err(error) => Outcome::Rejected(format!("unreadable crash report: {error}")),
     };
     state::record(folder, &outcome, now_ms())
+}
+
+/// Rechecks the live setting so a cached worker cannot keep automatic consent after opt-out.
+fn authorize(layout: &InstallLayout, policy: &Policy, consent: Consent) -> io::Result<()> {
+    if disabled()
+        || (consent == Consent::Auto
+            && (!policy.automatic
+                || !SettingsOptions::load(&layout.user_config_root.join(SETTINGS_FILE))
+                    .send_crash_reports()))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "crash upload consent is disabled",
+        ));
+    }
+    Ok(())
 }
 
 /// `base` joined with [`PATH`]; HTTPS, or HTTP to a loopback host only.

@@ -32,7 +32,10 @@ public final class BootstrapActivity extends Activity {
     private native String prepare(String filesDir, String nativeLibraryDir, long attempt);
     private native void cancel(long attempt);
 
-    /** Runs only on a worker of the healthy relaunch; timestamp zero retries due reports. */
+    /** Freezes the previous session before Retry or game startup can rotate its logs. */
+    private native String captureCrashReports(String files, String libraries);
+
+    /** Runs only on a healthy worker; timestamp zero also completes prior saved reports. */
     native String crashReport(String files, String libraries, long timestamp, int reason,
             int status, String description, byte[] tombstone, boolean send);
 
@@ -43,9 +46,14 @@ public final class BootstrapActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         setContentView(new StartupScreen(this));
-        new Thread(() -> crashReport(getFilesDir().getAbsolutePath(),
-                getApplicationInfo().nativeLibraryDir, 0, 0, 0, "", null, false), "crash-retry").start();
-        if (!StartupDiagnostics.showPreviousFailure(this, this::start)) start();
+        new Thread(() -> {
+            String saved = captureCrashReports(getFilesDir().getAbsolutePath(),
+                    getApplicationInfo().nativeLibraryDir);
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (!StartupDiagnostics.showPreviousFailure(this, this::start, saved)) start();
+            });
+        }, "crash-capture").start();
     }
 
     private void start() {

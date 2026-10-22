@@ -16,10 +16,30 @@ import java.util.List;
 final class StartupDiagnostics {
     private static final Object SEND_LOCK = new Object();
     private static final int LOG_TAIL_BYTES = 32768;
+    private static final String REPORTED_SAVED = "reported-saved-report";
+    private static final String SHARE_NOTICE = "Send report shares a redacted error and recent log lines with the @PRODUCT_NAME@ team. Reports stay on this device unless you consent.";
 
-    /** Offers retry and copyable diagnostics once for each unexpected main-process exit. */
-    static boolean showPreviousFailure(BootstrapActivity activity, Runnable retry) {
-        if (Build.VERSION.SDK_INT < 30) return false;
+    /** Offers one relaunch dialog and starts healthy retries after the prior log was captured. */
+    static boolean showPreviousFailure(BootstrapActivity activity, Runnable retry, String saved) {
+        if (Build.VERSION.SDK_INT >= 30 && showHistoricalFailure(activity, retry)) return true;
+        sendSaved(activity, null, false);
+        if (saved == null || saved.equals(activity.getPreferences(0).getString(REPORTED_SAVED, null))) return false;
+        activity.getPreferences(0).edit().putString(REPORTED_SAVED, saved).apply();
+        AlertDialog dialog = new AlertDialog.Builder(activity)
+                .setTitle("@PRODUCT_NAME@ stopped unexpectedly")
+                .setMessage("A previous launch saved a crash report on this device.\n\n" + SHARE_NOTICE)
+                .setPositiveButton("Retry", (which, button) -> retry.run())
+                .setNegativeButton("Close", (which, button) -> activity.finish())
+                .setNeutralButton("Send report", null)
+                .setOnCancelListener(which -> activity.finish()).create();
+        dialog.setOnShowListener(which -> dialog.getButton(AlertDialog.BUTTON_NEUTRAL)
+                .setOnClickListener(view -> sendSaved(activity, dialog, true)));
+        dialog.show();
+        return true;
+    }
+
+    /** Offers OS exit details on API 30+, with the frozen prior log retained for its worker. */
+    private static boolean showHistoricalFailure(BootstrapActivity activity, Runnable retry) {
         try {
             ActivityManager manager = activity.getSystemService(ActivityManager.class);
             List<ApplicationExitInfo> exits = manager.getHistoricalProcessExitReasons(
@@ -40,7 +60,7 @@ final class StartupDiagnostics {
                     + logTail(new File(activity.getFilesDir(), "data/logs/client.log"));
             AlertDialog dialog = new AlertDialog.Builder(activity)
                     .setTitle("@PRODUCT_NAME@ stopped unexpectedly")
-                    .setMessage("Send report shares a redacted error and recent log lines with the Cinnabar team. Reports stay on this device unless you consent.\n\n" + details)
+                    .setMessage(SHARE_NOTICE + "\n\n" + details)
                     .setPositiveButton("Retry", (which, button) -> retry.run())
                     .setNegativeButton("Save report", null)
                     .setNeutralButton("Send report", null)
@@ -92,6 +112,21 @@ final class StartupDiagnostics {
                     Toast.makeText(activity, result, Toast.LENGTH_LONG).show();
             });
         }, "crash-upload").start();
+    }
+
+    /** Completes saved main-process reports on API 26+ without waiting for network work in the UI. */
+    private static void sendSaved(BootstrapActivity activity, AlertDialog dialog, boolean user) {
+        new Thread(() -> {
+            String result;
+            synchronized (SEND_LOCK) {
+                result = activity.crashReport(activity.getFilesDir().getAbsolutePath(),
+                        activity.getApplicationInfo().nativeLibraryDir, 0, 0, 0, "", null, user);
+            }
+            if (user) activity.runOnUiThread(() -> {
+                if (!activity.isFinishing() && dialog != null && dialog.isShowing())
+                    Toast.makeText(activity, result, Toast.LENGTH_LONG).show();
+            });
+        }, "crash-retry").start();
     }
 
     /** Intentional activity teardown sends SIGKILL; it must not produce a crash dialog. */
