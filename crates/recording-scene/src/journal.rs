@@ -50,6 +50,11 @@ pub struct TerrainJournal {
 }
 
 impl TerrainJournal {
+    /// Retains the underlying storage lifecycle when the terrain producer exits with an error.
+    pub(crate) fn task(&self) -> RecordingTask {
+        self.recording.task()
+    }
+
     /// Polls asynchronous compression and disk failures without waiting for another scene change.
     pub fn error(&self) -> Option<String> {
         self.recording.task().progress()?.error
@@ -66,7 +71,15 @@ impl TerrainJournal {
         info.scene_schema = TERRAIN_TRACK_SCHEMA.into();
         let root = parent.join(TERRAIN_DIRECTORY);
         let recording = Recording::start_ready(root.clone(), info, config)?;
-        let objects = AssetWriter::open(&root, object_quota)?;
+        let objects = match AssetWriter::open(&root, object_quota) {
+            Ok(objects) => objects,
+            Err(error) => {
+                let task = recording.task();
+                drop(recording);
+                task.wait();
+                return Err(error);
+            }
+        };
         Ok(Self {
             recording,
             objects,

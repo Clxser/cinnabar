@@ -195,13 +195,15 @@ impl EnvironmentCapture {
 
     /// Closes admission, drains accepted samples and waits only on the capture finalization worker.
     pub fn finish(mut self, at: MediaTime) -> Result<(), String> {
-        let progress = self
+        let recording = self
             .recording
             .take()
-            .ok_or("Environment recording was already closed.")?
-            .finish(at)
-            .map_err(|error| error.to_string())?
-            .wait();
+            .ok_or("Environment recording was already closed.")?;
+        let task = recording.task();
+        let progress = match recording.finish(at) {
+            Ok(task) => task.wait(),
+            Err(error) => return Err(task.wait().error.unwrap_or_else(|| error.to_string())),
+        };
         if progress.state != RecordingState::Complete {
             return Err(progress
                 .error

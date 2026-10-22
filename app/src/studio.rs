@@ -14,10 +14,7 @@ use crossbeam_channel::{Receiver, bounded};
 use recording_studio::{
     MediaTime,
     archive::{RECORDING_VERSION, RecordingInfo},
-    capture::{
-        CapturePhase, CaptureRequest, CaptureSession, CaptureSettings, CaptureStatus,
-        CaptureSummary,
-    },
+    capture::{CapturePhase, CaptureRequest, CaptureSession, CaptureSettings, CaptureStatus},
 };
 
 use crate::{hud_tools::FrameCaptureSet, runtime::world::ClientWorld};
@@ -28,6 +25,8 @@ mod audio;
 mod composition;
 mod environment;
 mod export;
+mod failures;
+mod finalize;
 mod frames;
 mod observations;
 mod playback;
@@ -43,7 +42,7 @@ mod visuals;
 struct NativeCapture {
     active: Option<Active>,
     startup: Option<Starting>,
-    finishing: Option<Receiver<Result<CaptureSummary, String>>>,
+    finishing: Option<Receiver<finalize::FinishResult>>,
     status: CaptureStatus,
     armed: bool,
     settings: CaptureSettings,
@@ -59,7 +58,7 @@ struct Active {
     session: CaptureSession,
     audio: Option<audio::AudioWorker>,
     terrain: Option<terrain::NativeTerrain>,
-    terrain_failure: Option<String>,
+    native_failures: failures::NativeFailures,
     environment: Option<environment::NativeEnvironment>,
     actors: Option<actors::NativeActors>,
     targets: Option<targets::NativeTargets>,
@@ -168,69 +167,22 @@ fn update(world: &mut World) {
     if let Some(mut active) = state.active.take() {
         let elapsed = MediaTime::from_seconds((now - active.started).max(0.0));
         if let Err(error) = frames::drain(&mut active) {
-            active.failure.get_or_insert(error);
-            stop(&mut active, now);
+            failures::fatal(&mut active, error, now);
         }
-        if active.terrain_failure.is_none()
-            && let Some(error) = active
-                .terrain
-                .as_mut()
-                .and_then(|terrain| terrain.capture.error())
-        {
-            terrain::interrupt(&mut active, error);
-        }
-        if state.status.message.is_none()
-            && let Some(error) = &active.terrain_failure
-        {
-            state.status.message = Some(format!(
-                "Video recording continues; native terrain replay is incomplete: {error}"
-            ));
-        }
-        if let Some(error) = active
-            .environment
-            .as_ref()
-            .and_then(|environment| environment.capture.error())
-        {
-            active.failure.get_or_insert(error);
-            stop(&mut active, now);
-        }
+        failures::poll(&mut active, now);
         if let Some(error) = active.session.error() {
-            active.failure.get_or_insert(error);
-            stop(&mut active, now);
-        }
-        if let Some(error) = active
-            .actors
-            .as_ref()
-            .and_then(|actors| actors.capture.error())
-        {
-            active.failure.get_or_insert(error);
-            stop(&mut active, now);
-        }
-        if let Some(error) = active
-            .targets
-            .as_ref()
-            .and_then(|targets| targets.capture.error())
-        {
-            active.failure.get_or_insert(error);
-            stop(&mut active, now);
-        }
-        if let Some(error) = active
-            .visuals
-            .as_ref()
-            .and_then(|visuals| visuals.capture.error())
-        {
-            active.failure.get_or_insert(error);
-            stop(&mut active, now);
+            failures::fatal(&mut active, error, now);
         }
         if active
             .audio
             .as_ref()
             .is_some_and(audio::AudioWorker::failed)
         {
-            active.failure.get_or_insert_with(|| {
-                "The game-audio recording worker stopped unexpectedly.".into()
-            });
-            stop(&mut active, now);
+            failures::fatal(
+                &mut active,
+                "The game-audio recording worker stopped unexpectedly.".into(),
+                now,
+            );
         }
         if identity != Some(active.identity) || elapsed.is_err() {
             stop(&mut active, now);
@@ -245,15 +197,15 @@ fn update(world: &mut World) {
                 .ok()
                 .is_some_and(|frame| active.last_camera_frame != Some(frame));
             let sample_started = std::time::Instant::now();
-            if let Err(error) = observations::capture(world, &mut active, elapsed)
-                .and_then(|()| environment::sample(world, &mut active, elapsed))
-                .and_then(|()| actors::sample(world, &mut active, elapsed))
-                .and_then(|()| targets::sample(world, &mut active, elapsed))
-                .and_then(|()| visuals::sample(world, &mut active, elapsed))
-                .and_then(|()| frames::capture(world, &mut active, elapsed))
-            {
-                active.failure.get_or_insert(error);
-                stop(&mut active, now);
+            if let Err(error) = observations::capture(world, &mut active, elapsed) {
+                failures::fatal(&mut active, error, now);
+            } else {
+                failures::sample(world, &mut active, elapsed, now);
+                if active.stopping.is_none()
+                    && let Err(error) = frames::capture(world, &mut active, elapsed)
+                {
+                    failures::fatal(&mut active, error, now);
+                }
             }
             let sample_micros = if sample_due {
                 sample_started
@@ -283,6 +235,14 @@ fn update(world: &mut World) {
                 .saturating_sub(state.status.captured_frames)
                 .saturating_sub(active.video_readbacks.pending() as u64);
         }
+        if let Some(message) = active
+            .failure
+            .as_deref()
+            .or_else(|| active.native_failures.message())
+            && state.status.message.as_deref() != Some(message)
+        {
+            state.status.message = Some(message.to_owned());
+        }
         if let Some((since, duration)) = active.stopping {
             state.status.phase = CapturePhase::Finishing;
             state.status.elapsed = duration;
@@ -290,7 +250,7 @@ fn update(world: &mut World) {
                 if active.video_readbacks.pending() != 0 {
                     active.failure.get_or_insert_with(|| "Video readback timed out while saving; the captured prefix was retained.".into());
                 }
-                finalize(&mut state, active, duration);
+                finalize::start(&mut state, active, duration);
             } else {
                 state.active = Some(active);
             }
@@ -351,8 +311,7 @@ fn handle_request(world: &mut World, state: &mut NativeCapture, request: Capture
                         label: "Bookmark".into(),
                     },
                 ) {
-                    active.failure.get_or_insert(error);
-                    stop(active, now);
+                    failures::fatal(active, error, now);
                 }
             }
         }
@@ -517,7 +476,7 @@ fn poll_start(
                 session,
                 audio,
                 terrain: Some(terrain),
-                terrain_failure: None,
+                native_failures: Default::default(),
                 environment: Some(environment),
                 actors: Some(actors),
                 targets: Some(targets),
@@ -555,135 +514,21 @@ fn stop(active: &mut Active, now: f64) {
         .unwrap_or(1)
         .max(active.last_frame.map_or(1, |frame| frame + 1));
     let duration = fps.frame_time(frames).unwrap_or(elapsed);
+    stop_at(active, now, duration);
+}
+
+/// A failed native sample is an exclusive boundary; never extend it to a future video frame.
+fn stop_at(active: &mut Active, now: f64, duration: MediaTime) {
+    let (since, duration) = active
+        .stopping
+        .map_or((now, duration), |(since, previous)| {
+            (since, duration.min(previous))
+        });
     if let Some(audio) = &active.audio {
         audio.stop(duration);
     }
-    active.stopping = Some((now, duration));
+    active.stopping = Some((since, duration));
     bevy::log::info!(duration_us = duration.0, error = ?active.failure, "Studio recording stopping");
-}
-
-/// Moves every blocking finish operation away from gameplay, retaining a visible finishing state.
-fn finalize(state: &mut NativeCapture, mut active: Active, duration: MediaTime) {
-    let (completed, finishing) = bounded(1);
-    let result = std::thread::Builder::new()
-        .name("studio-capture-finish".into())
-        .spawn(move || {
-            let visuals_error = if let Some(visuals) = active.visuals {
-                let error = visuals.capture.finish(duration).err();
-                let metadata = recording_studio::capture::CaptureTrack {
-                    schema: recording_scene::visuals::VISUAL_TRACK_SCHEMA.into(),
-                    directory: recording_scene::visuals::VISUAL_DIRECTORY.into(),
-                    complete: error.is_none(),
-                    error: error
-                        .as_ref()
-                        .map(|error| error.chars().take(512).collect()),
-                };
-                active.session.scene_track(metadata).err().or(error)
-            } else {
-                None
-            };
-            let targets_error = if let Some(targets) = active.targets {
-                let error = targets.capture.finish(duration).err();
-                let metadata = recording_studio::capture::CaptureTrack {
-                    schema: recording_scene::targets::TARGET_TRACK_SCHEMA.into(),
-                    directory: recording_scene::targets::TARGET_DIRECTORY.into(),
-                    complete: error.is_none(),
-                    error: error
-                        .as_ref()
-                        .map(|error| error.chars().take(512).collect()),
-                };
-                active.session.scene_track(metadata).err().or(error)
-            } else {
-                None
-            };
-            let actors_error = if let Some(actors) = active.actors {
-                let error = actors.capture.finish(duration).err();
-                let metadata = recording_studio::capture::CaptureTrack {
-                    schema: recording_scene::actors::ACTOR_TRACK_SCHEMA.into(),
-                    directory: recording_scene::actors::ACTOR_DIRECTORY.into(),
-                    complete: error.is_none(),
-                    error: error
-                        .as_ref()
-                        .map(|error| error.chars().take(512).collect()),
-                };
-                active.session.scene_track(metadata).err().or(error)
-            } else {
-                None
-            };
-            let environment_error = if let Some(environment) = active.environment {
-                let error = environment.capture.finish(duration).err();
-                let metadata = recording_studio::capture::CaptureTrack {
-                    schema: recording_scene::environment::ENVIRONMENT_TRACK_SCHEMA.into(),
-                    directory: recording_scene::environment::ENVIRONMENT_DIRECTORY.into(),
-                    complete: error.is_none(),
-                    error: error
-                        .as_ref()
-                        .map(|error| error.chars().take(512).collect()),
-                };
-                active.session.scene_track(metadata).err().or(error)
-            } else {
-                None
-            };
-            let terrain_error = active.terrain_failure.or_else(|| {
-                active
-                    .terrain
-                    .and_then(|terrain| terrain.capture.finish(duration).err())
-            });
-            let terrain_metadata = recording_studio::capture::CaptureTrack {
-                schema: recording_scene::TERRAIN_TRACK_SCHEMA.into(),
-                directory: recording_scene::journal::TERRAIN_DIRECTORY.into(),
-                complete: terrain_error.is_none(),
-                error: terrain_error
-                    .as_ref()
-                    .map(|error| error.chars().take(512).collect()),
-            };
-            let terrain_metadata_error = active.session.scene_track(terrain_metadata).err();
-            let audio_result = active.audio.map(audio::AudioWorker::finish).transpose();
-            let (audio, audio_error) = match audio_result {
-                Ok(audio) => (audio, None),
-                Err(error) => (None, Some(error)),
-            };
-            let result = {
-                let expected = active
-                    .session
-                    .settings()
-                    .fps
-                    .frames_covering(duration)
-                    .unwrap_or(0);
-                let missed = expected.saturating_sub(active.captured.load(Ordering::Acquire));
-                let summary = active.session.finish(
-                    duration,
-                    audio.as_ref().map(|(path, _)| path.as_path()),
-                    missed,
-                    audio.as_ref().map_or(0, |(_, dropped)| *dropped),
-                );
-                match (
-                    summary,
-                    active
-                        .failure
-                        .or(audio_error)
-                        .or(terrain_metadata_error)
-                        .or(environment_error)
-                        .or(actors_error)
-                        .or(targets_error)
-                        .or(visuals_error),
-                ) {
-                    (Ok(summary), None) => Ok(summary),
-                    (Ok(_), Some(error)) => {
-                        Err(format!("Recording saved with an interruption: {error}"))
-                    }
-                    (Err(error), Some(capture_error)) => Err(format!(
-                        "Recording stopped: {capture_error}. Saving also failed: {error}"
-                    )),
-                    (Err(error), None) => Err(error),
-                }
-            };
-            let _ = completed.send(result);
-        });
-    match result {
-        Ok(_) => state.finishing = Some(finishing),
-        Err(error) => fail(state, error.to_string()),
-    }
 }
 
 /// Final results are polled without filesystem reads or worker joins.
@@ -695,7 +540,9 @@ fn poll_finish(state: &mut NativeCapture) {
             Ok(result) => Some(result),
             Err(crossbeam_channel::TryRecvError::Empty) => None,
             Err(crossbeam_channel::TryRecvError::Disconnected) => {
-                Some(Err("The recording finalizer stopped unexpectedly.".into()))
+                Some(Err("The recording finalizer stopped unexpectedly."
+                    .to_owned()
+                    .into()))
             }
         })
     else {
@@ -735,7 +582,12 @@ fn poll_finish(state: &mut NativeCapture) {
                     )
                 });
         }
-        Err(error) => fail(state, error),
+        Err(error) => {
+            if let Some(prefix) = error.verified_prefix {
+                state.status.elapsed = prefix;
+            }
+            fail(state, error.message);
+        }
     }
 }
 

@@ -269,7 +269,7 @@ fn run(
     shared: &Shared,
 ) -> Result<(), String> {
     let defaults = RecordingConfig::default();
-    let mut journal = TerrainJournal::start(
+    let journal = TerrainJournal::start(
         &parent,
         info,
         RecordingConfig {
@@ -279,6 +279,28 @@ fn run(
         defaults.disk_quota.saturating_sub(JOURNAL_DISK_BYTES),
     )
     .map_err(|error| error.to_string())?;
+    let task = journal.task();
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        write_journal(journal, jobs, shared)
+    }));
+    // The inner producer is closed or unwound before recovery may inspect the archive.
+    let progress = task.wait();
+    match outcome {
+        Ok(Ok(())) if progress.state == RecordingState::Complete => Ok(()),
+        Ok(Ok(())) => Err(progress
+            .error
+            .unwrap_or_else(|| "Recorded scene storage did not complete.".into())),
+        Ok(Err(error)) => Err(error),
+        Err(_) => Err("The recorded-scene worker stopped unexpectedly.".into()),
+    }
+}
+
+/// Consumes the terrain producer so every return closes journal admission before its owner waits.
+fn write_journal(
+    mut journal: TerrainJournal,
+    jobs: Receiver<Batch>,
+    shared: &Shared,
+) -> Result<(), String> {
     let mut baseline = false;
     let mut palette: Option<(Arc<PreparedPalette>, JournalPalette)> = None;
     let mut checkpoint = MediaTime::ZERO;
@@ -355,14 +377,8 @@ fn run(
     if shared.cancelled.load(Ordering::Acquire) || !baseline {
         return Err("Scene recording ended before its baseline completed.".into());
     }
-    let progress = journal
+    journal
         .finish(MediaTime(shared.stop.load(Ordering::Acquire)))
-        .map_err(|error| error.to_string())?
-        .wait();
-    if progress.state != RecordingState::Complete {
-        return Err(progress
-            .error
-            .unwrap_or_else(|| "Recorded scene storage did not complete.".into()));
-    }
-    Ok(())
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }

@@ -45,6 +45,7 @@ struct Shared {
     accepting: AtomicBool,
     failed: AtomicBool,
     finish: AtomicBool,
+    worker_finished: AtomicBool,
     stop_at: AtomicU64,
 }
 
@@ -55,6 +56,11 @@ pub struct RecordingTask(Arc<Shared>);
 impl RecordingTask {
     pub fn path(&self) -> &Path {
         &self.0.path
+    }
+
+    /// A producer failure can be visible before storage closes; only the worker publishes physical completion.
+    pub fn is_finished(&self) -> bool {
+        self.0.worker_finished.load(Ordering::Acquire)
     }
 
     /// Returns None only during a concurrent progress publication; the UI retains its last snapshot.
@@ -76,10 +82,7 @@ impl RecordingTask {
             .progress
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        while matches!(
-            progress.state,
-            RecordingState::Starting | RecordingState::Recording | RecordingState::Finishing
-        ) {
+        while !self.is_finished() {
             progress = self
                 .0
                 .changed
@@ -147,6 +150,7 @@ impl Recording {
             accepting: AtomicBool::new(true),
             failed: AtomicBool::new(false),
             finish: AtomicBool::new(false),
+            worker_finished: AtomicBool::new(false),
             stop_at: AtomicU64::new(0),
         });
         let (sender, receiver) = mpsc::sync_channel(config.queued_records);
@@ -160,6 +164,7 @@ impl Recording {
                 if result.is_err() {
                     worker.fail("recording storage worker stopped unexpectedly".into());
                 }
+                worker.publish(|_| worker.worker_finished.store(true, Ordering::Release));
             })
             .map_err(|error| io(&path, error))?;
         Ok(Self {
@@ -519,3 +524,6 @@ fn run(
         Err(error) => shared.fail(error.to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests;

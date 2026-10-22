@@ -289,23 +289,27 @@ impl CaptureSession {
         if let Some(recorder) = &self.video {
             recorder.set_final_frame_count(expected_frames);
         }
-        let task = self
+        let journal = self
             .journal
             .take()
-            .ok_or("Capture journal already finished.")?
-            .finish(duration)
-            .map_err(|error| error.to_string())?;
+            .ok_or("Capture journal already finished.")?;
+        let task = journal.task();
+        let finishing = journal.finish(duration);
         let video = self
             .video
             .take()
             .map(|recorder| recorder.finish(audio))
-            .transpose()?;
-        let progress = task.wait();
+            .transpose();
+        let progress = match finishing {
+            Ok(task) => task.wait(),
+            Err(error) => return Err(task.wait().error.unwrap_or_else(|| error.to_string())),
+        };
         if progress.state != RecordingState::Complete {
             return Err(progress
                 .error
                 .unwrap_or_else(|| "Capture metadata did not finish writing.".into()));
         }
+        let video = video?;
         let manifest = CaptureManifest {
             version: MANIFEST_VERSION,
             settings: self.settings,
