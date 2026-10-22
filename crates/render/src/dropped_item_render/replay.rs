@@ -27,11 +27,20 @@ pub(crate) fn ready(world: &World) -> Result<bool, String> {
     {
         return Ok(false);
     }
-    let current = current_models(scene);
-    if current
+    if scene
+        .instances
         .iter()
-        .enumerate()
-        .any(|(slot, current)| *current && gpu.ranges[slot].capacity_rejected)
+        .chain(
+            scene
+                .terrain_instances
+                .iter()
+                .map(|candidate| &candidate.instance),
+        )
+        .any(|instance| {
+            gpu.ranges
+                .get(instance.model as usize)
+                .is_some_and(|range| range.capacity_rejected)
+        })
     {
         return Err("Recorded item models exceed the native replay GPU geometry budget.".into());
     }

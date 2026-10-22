@@ -1,6 +1,7 @@
 //! Measures and paints formatted glyph ink before atlas placement.
 
 use super::*;
+use ui::TextLayout;
 
 pub(super) struct LineLayout {
     pub(super) layout: Arc<TextLayout>,

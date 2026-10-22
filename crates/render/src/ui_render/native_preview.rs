@@ -74,7 +74,12 @@ pub(super) fn copy(
     let Some(location) = gpu.textures.locations.get(source.page as usize) else {
         return;
     };
-    let Some(bucket) = gpu.textures.buckets.get(location.bucket) else {
+    let Some(bucket) = gpu
+        .textures
+        .buckets
+        .get(location.bucket)
+        .and_then(Option::as_ref)
+    else {
         return;
     };
     let destination = (bucket.texture.id(), location.layer);

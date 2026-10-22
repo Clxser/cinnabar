@@ -20,7 +20,7 @@ pub(crate) fn ready(world: &mut World) -> bool {
     if textures
         .prepared
         .as_ref()
-        .is_none_or(|prepared| prepared.identity != active_textures.identity())
+        .is_none_or(|prepared| prepared.identity != active_textures.binding_identity())
         || arena.migration.is_some()
     {
         return false;

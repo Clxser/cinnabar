@@ -1,6 +1,7 @@
 //! Recording-only actor preparation uses received rigs before the gameplay camera selects draws.
 
 use super::*;
+use crate::presentation::actors::select_actor_presentations_for_view;
 use bevy::prelude::Resource;
 use render_scene::ActorRenderFrame;
 

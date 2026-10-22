@@ -216,6 +216,7 @@ impl ReplayRenderer {
             .ok_or("Replay actor generation overflowed.")?;
         rig.frame_generation = self.generation;
         world.insert_resource(ActorRenderFrame {
+            mask_only_runtime_ids: Arc::from([]),
             instances,
             skins: Arc::clone(&actors.skins),
             instance_revision: actors.sample.instance_revision,

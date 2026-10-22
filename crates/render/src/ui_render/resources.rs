@@ -82,7 +82,6 @@ type UiPreparationOptions<'w> = (
     Option<Res<'w, UiHandCoverage>>,
     Option<Res<'w, UiGlintSettings>>,
     Option<Res<'w, profile::UiProfile>>,
-    Option<Res<'w, crate::upload_staging::BufferUploadStaging>>,
     Option<Res<'w, render_scene::ui::UiHudCaptureScope>>,
     Option<Res<'w, render_scene::ui::RecordedUiTime>>,
     Option<Res<'w, render_scene::ui::UiPreparedHud>>,
@@ -96,7 +95,7 @@ pub(crate) fn prepare_ui_resources(
     mut gpu: ResMut<UiGpu>,
     stats: Res<UiRenderStatsResource>,
     tick: SystemChangeTick,
-    (coverage, glint, profile, staging, scope, recorded_time, hud, glint_texture): UiPreparationOptions<'_>,
+    (coverage, glint, profile, scope, recorded_time, hud, glint_texture): UiPreparationOptions<'_>,
 ) {
     let same_device = &gpu.device == uploads.device.wgpu_device();
     let device_valid =
