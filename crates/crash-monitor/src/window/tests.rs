@@ -3,6 +3,37 @@
 use super::*;
 
 #[test]
+fn manual_sending_restarts_after_a_finished_worker_and_keeps_active_workers() {
+    let (release, waiting) = std::sync::mpsc::channel();
+    let mut worker = Some(std::thread::spawn(move || waiting.recv().unwrap()));
+    let started = std::cell::Cell::new(0);
+    app::queue_upload(&mut worker, || {
+        started.set(started.get() + 1);
+        Some(std::thread::spawn(|| {}))
+    });
+    assert_eq!(
+        started.get(),
+        0,
+        "an active send must not get another worker"
+    );
+    release.send(()).unwrap();
+    assert!(test_time::wait_until(test_time::DEFAULT_TIMEOUT, || worker
+        .as_ref()
+        .unwrap()
+        .is_finished()));
+    app::queue_upload(&mut worker, || {
+        started.set(started.get() + 1);
+        Some(std::thread::spawn(|| {}))
+    });
+    worker.take().unwrap().join().unwrap();
+    assert_eq!(
+        started.get(),
+        1,
+        "a new manual send did not start after the first finished"
+    );
+}
+
+#[test]
 fn a_restart_is_selected_before_a_pending_upload_finishes() {
     let (release, waiting) = std::sync::mpsc::channel();
     let worker = std::thread::spawn(move || waiting.recv().unwrap());

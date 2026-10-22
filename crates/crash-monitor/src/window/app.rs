@@ -133,9 +133,7 @@ impl CrashApp {
                     .is_ok()
                 {
                     self.screen.queued = true;
-                    if self.upload.is_none() {
-                        self.upload = upload::spawn_send_due(layout.clone());
-                    }
+                    queue_upload(&mut self.upload, || upload::spawn_send_due(layout.clone()));
                 }
             }
             CrashAction::CopyReport => {
@@ -289,6 +287,23 @@ impl CrashApp {
         self.drag_to(y, grab);
         self.overlay_dirty = true;
         true
+    }
+}
+
+/// Reaps finished sends and starts a requested worker, keeping any active send in place.
+pub(super) fn queue_upload(
+    worker: &mut Option<std::thread::JoinHandle<()>>,
+    spawn: impl FnOnce() -> Option<std::thread::JoinHandle<()>>,
+) {
+    if worker
+        .as_ref()
+        .is_some_and(std::thread::JoinHandle::is_finished)
+        && let Some(finished) = worker.take()
+    {
+        let _ = finished.join();
+    }
+    if worker.is_none() {
+        *worker = spawn();
     }
 }
 
