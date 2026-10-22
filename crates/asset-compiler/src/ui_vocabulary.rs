@@ -265,21 +265,37 @@ mod tests {
         fs::write(pack.join("texts/en_US.lang"), "").unwrap();
         fs::write(
             pack.join("ui/definitions.json"),
-            r#"{
+            r##"{
                 "$rows|default": "outer_rows",
                 "$alias": "$rows",
                 "$unused": "unrelated_text",
                 "$cycle_a": "$cycle_b",
-                "$cycle_b": "$cycle_a"
-            }"#,
+                "$cycle_b": "$cycle_a",
+                "$dynamic_alias": "$dynamic",
+                "$dynamic": "#dynamic_rows",
+                "$expression_alias": "$expression",
+                "$expression": "($prefix + '_rows')",
+                "$numeric_start": "123_rows",
+                "$punctuated": "row.names"
+            }"##,
         )
         .unwrap();
         fs::write(
             pack.join("ui/screen.json"),
-            r#"{
+            r##"{
                 "collection_name": "$alias",
-                "binding_collection_name": "$cycle_a"
-            }"#,
+                "binding_collection_name": "$cycle_a",
+                "controls": [
+                    {"dynamic": {"collection_name": "$dynamic_alias"}},
+                    {"expression": {"collection_name": "$expression_alias"}},
+                    {"numeric_start": {"collection_name": "$numeric_start"}},
+                    {"punctuated": {"collection_name": "$punctuated"}},
+                    {"direct": {"collection_name": "#direct_rows"}},
+                    {"direct_expression": {
+                        "collection_name": "($prefix + '_direct_rows')"
+                    }}
+                ]
+            }"##,
         )
         .unwrap();
         let output = String::from_utf8(generate(scratch.path()).unwrap()).unwrap();
@@ -288,7 +304,11 @@ mod tests {
                 .lines()
                 .filter(|line| line.starts_with("collection\t"))
                 .collect::<Vec<_>>(),
-            ["collection\touter_rows"]
+            [
+                "collection\t#direct_rows",
+                "collection\t($prefix + '_direct_rows')",
+                "collection\touter_rows",
+            ]
         );
     }
 }
