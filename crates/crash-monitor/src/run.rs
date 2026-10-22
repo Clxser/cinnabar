@@ -77,6 +77,10 @@ pub fn run(args: &Args, layout: Option<&InstallLayout>) -> Result<Option<PathBuf
         start_log(layout, args);
     }
     let launch = read_launch()?;
+    // The healthy monitor owns all desktop network work, including retries from earlier runs.
+    let previous_uploads = layout
+        .cloned()
+        .and_then(launcher_host::lifecycle::crash::upload::spawn_send_due);
     // Retain before READY: any introduced client has a monitor protecting its attachments.
     let staging = launch
         .staging
@@ -172,10 +176,18 @@ pub fn run(args: &Args, layout: Option<&InstallLayout>) -> Result<Option<PathBuf
         _ => report(args, &observed, &ending),
     };
     drop(staging);
-    Ok(shown.map(|written| {
+    let current_uploads = layout
+        .cloned()
+        .and_then(launcher_host::lifecycle::crash::upload::spawn_send_due);
+    // Network retries must not delay opening the crash window or launching a requested restart.
+    let shown = shown.map(|written| {
         show(layout, &launch.restart, &written);
         written.folder
-    }))
+    });
+    for worker in [previous_uploads, current_uploads].into_iter().flatten() {
+        let _ = worker.join();
+    }
+    Ok(shown)
 }
 
 /// Reads the client's [`Launch`] line from stdin.

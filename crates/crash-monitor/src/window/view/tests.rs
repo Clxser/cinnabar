@@ -58,7 +58,17 @@ fn every_headline_fits_collapsed_and_expanded_at_every_size() {
         for size in [[560, 420], [960, 640], [2048, 1280]] {
             for expanded in [false, true] {
                 let mut canvas = Canvas::new(size[0], size[1]);
+                canvas.fill(
+                    Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: size[0] as f32,
+                        h: size[1] as f32,
+                    },
+                    [16, 20, 24, 255],
+                );
                 let screen = CrashScreen {
+                    queued: false,
                     expanded,
                     copied: None,
                 };
@@ -83,6 +93,12 @@ fn every_headline_fits_collapsed_and_expanded_at_every_size() {
                     &screen,
                     &style,
                 );
+                if size == [960, 640]
+                    && !expanded
+                    && matches!(summary.headline, Headline::Crashed { .. })
+                {
+                    save_snapshot(&canvas);
+                }
                 assert_eq!(frame.hits.len(), super::super::ACTIONS.len());
                 for (_, rect) in &frame.hits {
                     assert!(rect.w > 0.0 && rect.h > 0.0);
@@ -98,4 +114,23 @@ fn every_headline_fits_collapsed_and_expanded_at_every_size() {
             }
         }
     }
+}
+
+/// Optionally exports this synthetic state for window-free visual review.
+fn save_snapshot(canvas: &Canvas) {
+    let Some(path) = std::env::var_os("CINNABAR_CRASH_SNAPSHOT") else {
+        return;
+    };
+    let mut encoder = png::Encoder::new(
+        std::fs::File::create(path).unwrap(),
+        canvas.width,
+        canvas.height,
+    );
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder
+        .write_header()
+        .unwrap()
+        .write_image_data(&canvas.pixels)
+        .unwrap();
 }

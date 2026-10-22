@@ -250,6 +250,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: symbols-macos-${{ matrix.arch }}
+          retention-days: 1
           path: ${{ runner.temp }}/${{ env.SYMBOLS_ASSET }}
           if-no-files-found: error
 
@@ -397,6 +398,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: symbols-windows-x64
+          retention-days: 1
           path: ${{ runner.temp }}/${{ env.SYMBOLS_ASSET }}
           if-no-files-found: error
 
@@ -530,6 +532,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: symbols-linux-x86_64
+          retention-days: 1
           path: ${{ runner.temp }}/${{ env.SYMBOLS_ASSET }}
           if-no-files-found: error
 
@@ -549,8 +552,10 @@ jobs:
     timeout-minutes: 180
     env:
       CINNABAR_ANDROID_PROFILE: release
-      # Android APKs do not use the desktop symbol archive pipeline.
+      # Split the native ELF files after linking, before staging the APK.
       CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: "off"
+      CARGO_PROFILE_RELEASE_STRIP: "none"
+      CINNABAR_ANDROID_SYMBOLS: "1"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -607,6 +612,17 @@ jobs:
           export CINNABAR_ANDROID_KEYSTORE="$keystore"
           bash packaging/android/build-apk.sh
           mv target/android/*-arm64-v8a.apk "$RUNNER_TEMP/$RELEASE_ASSET"
+      - name: Collect Android symbols
+        run: |
+          python3 "$GITHUB_WORKSPACE/release-tools/packaging/release-symbols.py" collect android arm64 \
+            --version "${{ needs.prepare.outputs.version }}" --commit "${{ needs.prepare.outputs.commit }}" \
+            --binaries target/android/symbols --out "$RUNNER_TEMP/android-symbols.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: symbols-android-arm64
+          path: ${{ runner.temp }}/android-symbols.zip
+          retention-days: 1
+          if-no-files-found: error
       - uses: actions/upload-artifact@v7
         with:
           name: android-arm64
@@ -647,17 +663,40 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           path: source/dist
-          # Timing reports are CI diagnostics, never release downloads; symbol archives are.
-          pattern: "{macos-*,windows-x64,linux-x86_64,android-arm64,symbols-*}"
+          # Symbols are downloaded separately and never enter the public dist directory.
+          pattern: "{macos-*,windows-x64,linux-x86_64,android-arm64}"
+          merge-multiple: true
+      - uses: actions/download-artifact@v7
+        with:
+          path: ${{ runner.temp }}/private-symbols
+          pattern: symbols-*
           merge-multiple: true
       - name: Resolve release metadata names
         run: python3 "$GITHUB_WORKSPACE/release-tools/packaging/release-downloads.py" env --channel "$RELEASE_CHANNEL" --tag "$RELEASE_TAG" >> "$GITHUB_ENV"
       - name: Add the standalone Linux installer
         run: python3 "$GITHUB_WORKSPACE/release-tools/packaging/release-downloads.py" install-script --output "dist/$INSTALL_SCRIPT"
       - name: Install the release tooling Rust toolchain
-        if: env.UPDATE_SIGNED == 'true'
         working-directory: release-tools
         run: rustup toolchain install
+      - name: Publish symbols to private R2 by build ID
+        working-directory: release-tools
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CINNABAR_SYMBOLS_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CINNABAR_SYMBOLS_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          SYMBOLS_ACCOUNT: ${{ vars.CINNABAR_SYMBOLS_R2_ACCOUNT_ID }}
+          SYMBOLS_BUCKET: ${{ vars.CINNABAR_SYMBOLS_R2_BUCKET }}
+        run: |
+          : "${AWS_ACCESS_KEY_ID:?Configure private symbol upload credentials}"
+          : "${AWS_SECRET_ACCESS_KEY:?Configure private symbol upload credentials}"
+          : "${SYMBOLS_ACCOUNT:?Configure the private R2 account}"
+          : "${SYMBOLS_BUCKET:?Configure the private R2 bucket}"
+          for archive in "$RUNNER_TEMP/private-symbols/"*.zip; do
+            cargo run --quiet --locked -p devtool -- crash-symbols index "$archive" "$RUNNER_TEMP/symbol-cache"
+          done
+          endpoint="https://$SYMBOLS_ACCOUNT.r2.cloudflarestorage.com"
+          aws s3 sync "$RUNNER_TEMP/symbol-cache" "s3://$SYMBOLS_BUCKET/builds" --endpoint-url "$endpoint" --only-show-errors
+          aws s3 sync "$RUNNER_TEMP/private-symbols" "s3://$SYMBOLS_BUCKET/releases/$RELEASE_VERSION/$RELEASE_COMMIT" --endpoint-url "$endpoint" --only-show-errors
       - name: Sign the update manifest
         env:
           CINNABAR_UPDATE_SIGNING_KEY: ${{ secrets.CINNABAR_UPDATE_SIGNING_KEY }}
@@ -681,13 +720,9 @@ jobs:
             > "$RUNNER_TEMP/$UPDATE_MANIFEST.partial"
           mv "$RUNNER_TEMP/$UPDATE_MANIFEST.partial" "$RUNNER_TEMP/$UPDATE_MANIFEST"
       - name: Verify all downloads and checksum the release
-        # Use the same effective debug-generation setting as the native packaging jobs.
         run: |
-          symbols=()
-          [[ "$(python3 "$GITHUB_WORKSPACE/release-tools/packaging/release-symbols.py" has-symbols)" == true ]] ||
-            symbols=(--without-symbols)
           python3 "$GITHUB_WORKSPACE/release-tools/packaging/release-downloads.py" checksums dist \
-            --version "$RELEASE_VERSION" "${symbols[@]}"
+            --version "$RELEASE_VERSION"
       - name: Prepare the tagged release
         id: prepare_publish
         if: needs.prepare.outputs.track == 'tagged'

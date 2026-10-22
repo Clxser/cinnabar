@@ -189,7 +189,18 @@ def linux_entry(binaries, name):
     return [(name, binary), (debug.name, debug)], record
 
 
-ENTRIES = {"windows": windows_entry, "macos": macos_entry, "linux": linux_entry}
+ENTRIES = {"windows": windows_entry, "macos": macos_entry, "linux": linux_entry, "android": linux_entry}
+
+
+def symbol_names(source, platform):
+    """The Rust native files shipped on this platform, derived from its package manifests."""
+    if platform != "android":
+        return rust_binaries(source)
+    with (source / "packaging/android/client/Cargo.toml").open("rb") as file:
+        name = tomllib.load(file)["package"]["name"].replace("-", "_")
+    runtime = json.loads((source / "packaging/android/runtime.json").read_text())
+    return [f"lib{name}.so", runtime["compiler_library"]]
+
 
 
 def collect(source, platform, arch, version, commit, binaries, out):
@@ -200,7 +211,7 @@ def collect(source, platform, arch, version, commit, binaries, out):
               f"publishing {platform}-{arch} without a symbol archive")
         return False
     files, records = [], []
-    for name in rust_binaries(source):
+    for name in symbol_names(source, platform):
         entry_files, record = ENTRIES[platform](binaries, name)
         files.extend(entry_files)
         records.append(record)

@@ -59,6 +59,8 @@ pub(super) struct CrashApp {
     overlay_at: Option<Instant>,
     epoch: Instant,
     choice: Option<Choice>,
+    layout: Option<launcher::install_layout::InstallLayout>,
+    upload: Option<std::thread::JoinHandle<()>>,
 }
 
 impl CrashApp {
@@ -68,9 +70,11 @@ impl CrashApp {
         faces: render_model::PanoramaFaces,
         logo: Option<Image>,
         preferences: Preferences,
+        layout: Option<launcher::install_layout::InstallLayout>,
     ) -> Self {
         let screen = CrashScreen {
             expanded: false,
+            queued: false,
             copied: None,
         };
         let mut input = Input::default();
@@ -101,6 +105,8 @@ impl CrashApp {
             overlay_at: None,
             epoch: Instant::now(),
             choice: None,
+            layout,
+            upload: None,
         }
     }
 
@@ -115,6 +121,23 @@ impl CrashApp {
             CrashAction::Close => self.finish(Choice::Close, event_loop),
             CrashAction::OpenFolder => desktop::open_folder(&self.summary.folder),
             CrashAction::Discord => launcher_host::desktop::open_url(launcher::DISCORD_INVITE_URL),
+            CrashAction::SendReport => {
+                use launcher_host::lifecycle::crash::upload;
+                if let Some(layout) = &self.layout
+                    && upload::Policy::load(layout).is_some()
+                    && upload::consent(
+                        &self.summary.folder,
+                        crash_report::upload::state::Consent::User,
+                        upload::now_ms(),
+                    )
+                    .is_ok()
+                {
+                    self.screen.queued = true;
+                    if self.upload.is_none() {
+                        self.upload = upload::spawn_send_due(layout.clone());
+                    }
+                }
+            }
             CrashAction::CopyReport => {
                 let outcome = match super::copy_report(&self.summary) {
                     Ok(()) => Copied::Done,
@@ -132,6 +155,13 @@ impl CrashApp {
             }
         }
         self.overlay_dirty = true;
+    }
+
+    /// Keeps a consented send alive when the player closes or restarts immediately.
+    pub(super) fn finish_upload(&mut self) {
+        if let Some(worker) = self.upload.take() {
+            let _ = worker.join();
+        }
     }
 
     fn finish(&mut self, choice: Choice, event_loop: &ActiveEventLoop) {

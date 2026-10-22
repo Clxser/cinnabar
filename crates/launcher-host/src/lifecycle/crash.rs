@@ -1,4 +1,4 @@
-//! Crash capture for the client; nothing is uploaded.
+//! Crash capture for the client. Reports stay local unless the player consents to [`upload`].
 //!
 //! The client starts an out-of-process monitor (`<client> --crash-monitor`) first. Faults and
 //! panics only ask it for a minidump; it writes a panic's folder at once and a fault's once this
@@ -14,6 +14,7 @@ pub mod heartbeat;
 pub mod monitor;
 pub mod protocol;
 pub mod state;
+pub mod upload;
 
 use std::{
     backtrace::Backtrace,

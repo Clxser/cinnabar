@@ -32,6 +32,10 @@ public final class BootstrapActivity extends Activity {
     private native String prepare(String filesDir, String nativeLibraryDir, long attempt);
     private native void cancel(long attempt);
 
+    /** Runs only on a worker of the healthy relaunch; timestamp zero retries due reports. */
+    native String crashReport(String files, String libraries, long timestamp, int reason,
+            int status, String description, byte[] tombstone, boolean send);
+
     private volatile long attempt;
     private ProgressDialog progress;
     private volatile CountDownLatch consentAnswer;
@@ -39,6 +43,8 @@ public final class BootstrapActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         setContentView(new StartupScreen(this));
+        new Thread(() -> crashReport(getFilesDir().getAbsolutePath(),
+                getApplicationInfo().nativeLibraryDir, 0, 0, 0, "", null, false), "crash-retry").start();
         if (!StartupDiagnostics.showPreviousFailure(this, this::start)) start();
     }
 
