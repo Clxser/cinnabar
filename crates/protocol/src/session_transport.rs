@@ -60,7 +60,8 @@ pub(crate) struct SessionTransport<R = FramedReader> {
     ahead: VecDeque<ReadAhead>,     // original reader items and their immutable admission metadata
     ahead_bytes: usize,             // conservative admission bytes charged to `ahead`
     preparation_bytes: usize,       // original reader bodies moved to `received` during preparation
-    preparation_scanned: usize,     // inspected ordinary prefix of the same receive FIFO
+    preparation_scanned: usize,     // receive prefix inspected for requested replies
+    preparation_terminals_scanned: usize, // receive prefix inspected for usable terminals
     ended: bool,                    // a terminal message was delivered
     sending: VecDeque<InFlightSend>,
     tap: Option<Arc<dyn PacketTap>>,
@@ -163,6 +164,7 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
             ahead_bytes: 0,
             preparation_bytes: 0,
             preparation_scanned: 0,
+            preparation_terminals_scanned: 0,
             ended: false,
             sending: VecDeque::new(),
             tap: None,
@@ -234,6 +236,8 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
         loop {
             if let Some(packet) = self.received.pop_front() {
                 self.preparation_scanned = self.preparation_scanned.saturating_sub(1);
+                self.preparation_terminals_scanned =
+                    self.preparation_terminals_scanned.saturating_sub(1);
                 self.delivered = packet.trace_position;
                 self.observe(&packet);
                 return Ok(Inbound::Packet(packet));
@@ -538,6 +542,7 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
         restored.append(&mut self.received);
         self.received = restored;
         self.preparation_scanned = 0;
+        self.preparation_terminals_scanned = 0;
     }
 
     /// Releases the observed body once decoding and validation have succeeded.

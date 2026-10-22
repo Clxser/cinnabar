@@ -23,7 +23,10 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
         &mut self,
         max_bytes: usize,
     ) -> Result<Option<Terminal>, ProtocolError> {
-        // An earlier canceled wait may already own an admitted response.
+        // An already split terminal supersedes a response retained by a canceled wait.
+        if let Some(terminal) = self.preparation_terminal()? {
+            return Ok(Some(terminal));
+        }
         self.drain_send().await?;
         loop {
             match self.next_preparation_control()? {
@@ -93,6 +96,7 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
     pub(crate) fn complete_preparation(&mut self) {
         self.preparation_bytes = 0;
         self.preparation_scanned = 0;
+        self.preparation_terminals_scanned = 0;
     }
 
     /// Splits one eligible original front through the normal relay and tap owners.
@@ -137,12 +141,23 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
         Ok(true)
     }
 
-    /// Inspects each new packet once; malformed and unrequested probes retain ordinary handling.
-    fn next_preparation_control(&mut self) -> Result<PreparationControl, SessionError> {
-        while let Some(raw) = self.received.get(self.preparation_scanned) {
+    /// Inspects only the new tail before any response can suspend terminal handling.
+    fn preparation_terminal(&mut self) -> Result<Option<Terminal>, SessionError> {
+        for raw in self.received.range(self.preparation_terminals_scanned..) {
             if let Some(terminal) = packet_terminal(raw)? {
-                return Ok(PreparationControl::Terminal(terminal));
+                return Ok(Some(terminal));
             }
+        }
+        self.preparation_terminals_scanned = self.received.len();
+        Ok(None)
+    }
+
+    /// Classifies new terminals before writing; ordinary probes retain their existing handling.
+    fn next_preparation_control(&mut self) -> Result<PreparationControl, SessionError> {
+        if let Some(terminal) = self.preparation_terminal()? {
+            return Ok(PreparationControl::Terminal(terminal));
+        }
+        while let Some(raw) = self.received.get(self.preparation_scanned) {
             if raw.id == PacketId::NetworkStackLatency
                 && let Ok(packet) = raw.clone().decode()
                 && let packets::Packet::NetworkStackLatency(probe) = &*packet.data
@@ -150,6 +165,7 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
             {
                 let timestamp = probe.creation_time.0;
                 self.received.remove(self.preparation_scanned);
+                self.preparation_terminals_scanned -= 1;
                 return Ok(PreparationControl::Reply(
                     crate::network_stack_latency_reply(timestamp),
                 ));
