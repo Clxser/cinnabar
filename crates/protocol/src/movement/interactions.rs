@@ -216,38 +216,33 @@ pub enum InteractionEncodeError {
 pub(super) fn packed_block_interaction(
     interaction: BlockItemInteraction,
 ) -> Result<PackedItemUseLegacyInventoryTransaction, InteractionEncodeError> {
-    let (transaction, change) = match interaction {
-        BlockItemInteraction::Use(request) => (
-            item_use_transaction(request, ItemUseInventoryTransactionActionType::Place)
-                .map_err(InteractionEncodeError::InvalidBlockUse)?,
-            None,
-        ),
+    match interaction {
+        BlockItemInteraction::Use(request) => Ok(PackedItemUseLegacyInventoryTransaction {
+            legacy_request_id: ItemStackLegacyRequestID(0),
+            legacy_set_item_slots: None,
+            item_use_transaction: item_use_transaction(
+                request,
+                ItemUseInventoryTransactionActionType::Place,
+            )
+            .map_err(InteractionEncodeError::InvalidBlockUse)?,
+        }),
+        // A tool the break wore travels as the transaction's slot change.
         BlockItemInteraction::Destroy(request, change) => {
-            let (hand, slot) = (request.hand, request.selected_slot);
-            let transaction =
-                item_use_transaction(request, ItemUseInventoryTransactionActionType::Destroy)?;
-            (transaction, Some((hand, slot, change)))
-        }
-    };
-    let mut item_use_transaction = transaction;
-    let (legacy_request_id, legacy_set_item_slots) = match change {
-        // The tool the break wore travels as the transaction's slot change.
-        Some((hand, slot, change)) => {
             let SlotChangeParts {
                 legacy_request_id,
                 legacy_set_item_slots,
                 actions,
-            } = slot_change_parts(hand, slot, change)?;
-            item_use_transaction.actions.actions = actions;
-            (legacy_request_id, legacy_set_item_slots)
+            } = slot_change_parts(request.hand, request.selected_slot, change)?;
+            let mut transaction =
+                item_use_transaction(request, ItemUseInventoryTransactionActionType::Destroy)?;
+            transaction.actions.actions = actions;
+            Ok(PackedItemUseLegacyInventoryTransaction {
+                legacy_request_id: ItemStackLegacyRequestID(legacy_request_id),
+                legacy_set_item_slots,
+                item_use_transaction: transaction,
+            })
         }
-        None => (0, None),
-    };
-    Ok(PackedItemUseLegacyInventoryTransaction {
-        legacy_request_id: ItemStackLegacyRequestID(legacy_request_id),
-        legacy_set_item_slots,
-        item_use_transaction,
-    })
+    }
 }
 
 #[cfg(test)]

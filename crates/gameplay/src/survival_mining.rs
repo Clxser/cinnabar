@@ -75,6 +75,8 @@ pub struct DestroyTarget {
 pub struct ToolWear {
     pub current_damage: i32,
     pub break_damage: i32,
+    /// The tool breaks once its damage exceeds this; `None` when unknown.
+    pub maximum: Option<i32>,
 }
 
 /// The standalone `PlayerAction` emitted for an instant creative destroy.
@@ -110,6 +112,8 @@ pub struct SurvivalTickPayload {
     pub swing: bool,
     /// `(slot, predicted damage, stack network id)` of a worn held tool.
     pub wear: Option<(u8, i32, i32)>,
+    /// The held tool's damage after a client-authoritative destroy that wore it.
+    pub destroy_wear: Option<i32>,
     /// The request carrying `wear`, once a request id is allocated.
     pub mine_block: Option<protocol::MineBlockRequest>,
     /// The block this tick's completion removes locally once the tick carries it.
@@ -133,17 +137,34 @@ impl SurvivalTickPayload {
         PlayerAuthInputInteractions,
         Option<protocol::MineBlockRequest>,
     ) {
+        let destroy_wear = self.destroy_wear;
         let block_interaction = self.destroy.map(|target| {
-            BlockItemInteraction::Destroy(BlockUseRequest {
-                hand: protocol::ItemUseHand::Mainhand,
-                block_position: target.position,
-                face: target.face,
-                selected_slot: target.selection.slot,
-                selected_item: target.selection.item,
-                player_position,
-                relative_hit: target.relative_hit,
-                block_runtime_id: u64::from(target.wire_runtime_id),
-            })
+            // The worn tool is recorded as the transaction's slot change, as vanilla's
+            // legacy request does.
+            let change = destroy_wear.zip(target.wear).and_then(|(damage, wear)| {
+                let legacy_request_id = protocol::next_legacy_request_id()?;
+                Some(protocol::PredictedSlotChange {
+                    legacy_request_id,
+                    to: target
+                        .selection
+                        .item
+                        .worn(damage, wear.maximum, legacy_request_id)?,
+                    from: target.selection.item.clone(),
+                })
+            });
+            BlockItemInteraction::Destroy(
+                BlockUseRequest {
+                    hand: protocol::ItemUseHand::Mainhand,
+                    block_position: target.position,
+                    face: target.face,
+                    selected_slot: target.selection.slot,
+                    selected_item: target.selection.item,
+                    player_position,
+                    relative_hit: target.relative_hit,
+                    block_runtime_id: u64::from(target.wire_runtime_id),
+                },
+                change,
+            )
         });
         let interactions = PlayerAuthInputInteractions {
             block_actions: self.actions,
@@ -378,8 +399,8 @@ impl DestroyMachine {
     }
 
     /// The destroy stays active on the broken block, so the next target continues it.
-    /// A server-authoritative destroy of a block with hardness requests the tool's new
-    /// durability, only when the destroy actually damages it.
+    /// A destroy that damages the held tool reports its new damage: a mining request under
+    /// server authority, the transaction's slot change under client authority.
     fn complete(
         &mut self,
         payload: &mut SurvivalTickPayload,
@@ -389,17 +410,13 @@ impl DestroyMachine {
     ) {
         match authority {
             BlockBreakingAuthority::Server => {
-                let worn = target.block.is_some_and(|block| block.hardness > 0.0);
-                payload.wear = target
-                    .wear
-                    .filter(|wear| worn && wear.break_damage > 0)
-                    .map(|wear| {
-                        (
-                            target.selection.slot,
-                            wear.current_damage.saturating_add(wear.break_damage),
-                            target.selection.item.stack_network_id(),
-                        )
-                    });
+                payload.wear = worn_damage(target).map(|damage| {
+                    (
+                        target.selection.slot,
+                        damage,
+                        target.selection.item.stack_network_id(),
+                    )
+                });
                 if continued {
                     payload.push(
                         BlockActionKind::ContinueDestroy,
@@ -416,6 +433,7 @@ impl DestroyMachine {
             BlockBreakingAuthority::Client => {
                 payload.push(BlockActionKind::StopDestroy, [0; 3], 0);
                 payload.destroy = Some(target.clone());
+                payload.destroy_wear = worn_damage(target);
             }
         }
         if target.instant {
@@ -433,6 +451,16 @@ impl DestroyMachine {
         });
         payload.broken = Some(target.position);
     }
+}
+
+/// The held tool's damage after destroying `target`, when the destroy damages it: only blocks
+/// with hardness wear tools, and a spared Unbreaking roll leaves the stack unchanged.
+fn worn_damage(target: &DestroyTarget) -> Option<i32> {
+    let hard = target.block.is_some_and(|block| block.hardness > 0.0);
+    target
+        .wear
+        .filter(|wear| hard && wear.break_damage > 0)
+        .map(|wear| wear.current_damage.saturating_add(wear.break_damage))
 }
 
 /// Wall-clock spacing between block-diagnostic lines while an attack is held.
