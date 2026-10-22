@@ -117,7 +117,9 @@ impl Input {
         }
         let hovered = menu.hovered;
         let over_view = image_hit(hovered);
-        if self.panning || (self.middle_pressed && over_view && menu.field.is_none()) {
+        if !menu.studio.authored_camera_drag_active()
+            && (self.panning || (self.middle_pressed && over_view && menu.field.is_none()))
+        {
             let pressed = self.middle_pressed && !self.panning;
             self.panning = menu
                 .studio
@@ -226,10 +228,7 @@ fn image_hit(action: Option<MenuAction>) -> bool {
 fn available(menu: &MenuRuntime) -> bool {
     menu.screen() == MenuScreen::RecordingStudio
         && menu.dialog.is_none()
-        && !menu.studio.view.show_library
-        && !menu.studio.view.workflow.show_settings
-        && menu.studio.view.discard.is_none()
-        && !menu.studio.view.loading
+        && menu.studio.camera_navigation_available()
         && !menu.join_request_prompted()
 }
 
@@ -337,5 +336,35 @@ mod tests {
             .workflow
             .show_settings = true;
         assert!(!input.wheel(&mut menu, 1.0, false, false));
+    }
+
+    #[test]
+    fn visible_or_busy_recovery_rejects_pointer_and_wheel_navigation() {
+        for (visible, busy) in [(true, false), (false, true)] {
+            let mut menu = MenuRuntime::new(true, 2, "Fixture".into());
+            menu.screen = MenuScreen::RecordingStudio;
+            let view = std::sync::Arc::make_mut(&mut menu.studio.view);
+            view.show_library = false;
+            view.workflow.recovery.visible = visible;
+            view.workflow.recovery.busy = busy;
+            menu.hovered = Some(MenuAction::Studio(Action::CameraViewport {
+                bounds: [0, 0, 100, 100],
+            }));
+            let mut input = Input {
+                middle: true,
+                middle_pressed: true,
+                ..Default::default()
+            };
+            assert!(!input.wheel(&mut menu, 1.0, false, false));
+            assert!(!input.drive(
+                &mut menu,
+                Some([50.0; 2]),
+                false,
+                false,
+                0.05,
+                Some([0, 0, 100, 100])
+            ));
+            assert!(!menu.studio.view.camera_workspace.focused);
+        }
     }
 }

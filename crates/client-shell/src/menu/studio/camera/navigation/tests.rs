@@ -2,6 +2,46 @@ use super::*;
 use crate::menu::studio::camera::authoring_tests::inspected_project;
 
 #[test]
+fn middle_button_cannot_cancel_an_authored_path_draft_or_its_original_release() {
+    use recording_studio::camera::PathControl;
+    for handle in [PathControl::Key, PathControl::Outgoing] {
+        let mut studio = inspected_project(true);
+        let original = studio.project().unwrap().shots[0].clone();
+        let revision = studio.editor.as_ref().unwrap().revision();
+        let action = Some(launcher::menu::MenuAction::Studio(Action::CameraControl {
+            shot: Id(3),
+            at: MediaTime::ZERO,
+            handle,
+            bounds: [0, 0, 800, 450],
+        }));
+        assert!(studio.camera_pointer(action, Some([400.0, 225.0]), true, true));
+        assert!(studio.camera_pointer(None, Some([440.0, 225.0]), true, false));
+        let draft = Arc::clone(studio.view.camera_workspace.draft.as_ref().unwrap());
+        assert!(studio.authored_camera_drag_active());
+        assert!(!studio.pan_camera(Some([440.0, 225.0]), true, true, Some([0, 0, 800, 450])));
+        assert!(Arc::ptr_eq(
+            studio.view.camera_workspace.draft.as_ref().unwrap(),
+            &draft
+        ));
+        assert!(studio.authored_camera_drag_active());
+        assert!(studio.camera_pointer(None, Some([460.0, 225.0]), true, false));
+        let expected = studio
+            .view
+            .camera_workspace
+            .draft
+            .as_ref()
+            .unwrap()
+            .as_ref()
+            .clone();
+        assert!(studio.camera_pointer(None, Some([460.0, 225.0]), false, false));
+        assert_eq!(studio.editor.as_ref().unwrap().revision(), revision + 1);
+        assert_eq!(studio.project().unwrap().shots[0], expected);
+        studio.editor.as_mut().unwrap().undo().unwrap();
+        assert_eq!(studio.project().unwrap().shots[0], original);
+    }
+}
+
+#[test]
 fn navigation_preferences_and_gestures_never_edit_or_seek_the_document() {
     let mut studio = inspected_project(true);
     let project = Arc::clone(studio.project().unwrap());

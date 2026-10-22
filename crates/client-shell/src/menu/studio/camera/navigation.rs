@@ -16,11 +16,24 @@ pub(super) struct Pan {
 mod tests;
 
 impl Studio {
+    /// Recovery and document overlays suspend every physical inspection gesture at the same boundary.
+    pub(in crate::menu) fn camera_navigation_available(&self) -> bool {
+        !self.view.show_library
+            && !self.view.workflow.show_settings
+            && self.view.discard.is_none()
+            && !self.view.loading
+            && !self.view.workflow.recovery.visible
+            && !self.view.workflow.recovery.busy
+    }
+
     /// Settings are runtime inspection preferences; they never enter project history or replay clocks.
     pub(in crate::menu::studio) fn camera_navigation_action(
         &mut self,
         action: N,
     ) -> Result<(), String> {
+        if !self.camera_navigation_available() {
+            return Err("Close the current Studio overlay before navigating.".into());
+        }
         if action == N::Level {
             let pose = self
                 .view
@@ -54,6 +67,10 @@ impl Studio {
 
     /// A view refresh keeps momentum; a changed document, take or seek invalidates its entire gesture.
     pub(super) fn admit_navigation_context(&mut self) -> bool {
+        if !self.camera_navigation_available() {
+            self.release_camera();
+            return false;
+        }
         let context = self.editor.as_ref().and_then(|editor| {
             let epoch = [self.document, editor.revision(), self.transport.epoch()];
             self.view
@@ -86,6 +103,9 @@ impl Studio {
         pixels: bool,
         gesture: NavigationGesture,
     ) -> bool {
+        if !self.camera_navigation_available() {
+            return false;
+        }
         if !vertical.is_finite() || vertical == 0.0 {
             return false;
         }
@@ -134,6 +154,9 @@ impl Studio {
         pressed: bool,
         bounds: Option<[i32; 4]>,
     ) -> bool {
+        if self.authored_camera_drag_active() || !self.camera_navigation_available() {
+            return false;
+        }
         if pressed {
             let Some((point, bounds)) = point.zip(bounds).filter(|(point, bounds)| {
                 point.iter().all(|v| v.is_finite())

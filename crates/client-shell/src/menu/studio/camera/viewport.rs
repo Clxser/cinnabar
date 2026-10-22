@@ -45,6 +45,14 @@ enum Gesture {
 }
 
 impl Studio {
+    /// An authored path drag owns its frozen draft until the original left button releases.
+    pub(in crate::menu) fn authored_camera_drag_active(&self) -> bool {
+        matches!(
+            self.camera_interaction.gesture,
+            Some(Gesture::Control { .. })
+        )
+    }
+
     /// Authored handles and orbit capture retain exclusive pointer ownership until release.
     pub(super) fn navigation_blocked(&self) -> bool {
         self.camera_interaction.gesture.is_some() || self.camera_interaction.pan.is_some()
