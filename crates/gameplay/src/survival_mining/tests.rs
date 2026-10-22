@@ -367,7 +367,7 @@ fn client_authority_cracks_each_tick_and_completes_with_stop_and_destroy_transac
     let (interactions, _) = done.into_interactions([0.5, 64.0, 0.5]);
     assert!(matches!(
         interactions.block_interaction,
-        Some(protocol::BlockItemInteraction::Destroy(ref request))
+        Some(protocol::BlockItemInteraction::Destroy(ref request, None))
             if request.block_position == [4, 5, 6] && request.selected_slot == 2
                 && request.block_runtime_id == 7 && dirt.runtime_id == 9
     ));
@@ -982,7 +982,7 @@ fn instant_plants_publish_the_carried_destroy_effect_once() {
                     );
                     assert!(matches!(
                         interactions.block_interaction,
-                        Some(protocol::BlockItemInteraction::Destroy(_))
+                        Some(protocol::BlockItemInteraction::Destroy(_, None))
                     ));
                 }
             }

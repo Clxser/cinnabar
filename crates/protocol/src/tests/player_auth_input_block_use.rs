@@ -108,7 +108,7 @@ fn embedded_destroy_clears_placement_fields_and_preserves_selection_and_pose() {
         movement(),
         &PlayerAuthInputInteractions {
             block_actions: protocol::BlockActions::new(),
-            block_interaction: Some(BlockItemInteraction::Destroy(request())),
+            block_interaction: Some(BlockItemInteraction::Destroy(request(), None)),
         },
     )
     .unwrap();
@@ -160,7 +160,7 @@ fn embedded_destroy_clears_placement_fields_and_preserves_selection_and_pose() {
 #[test]
 fn destroy_and_use_are_one_mutually_exclusive_payload_slot() {
     let use_interaction = BlockItemInteraction::Use(request());
-    let destroy_interaction = BlockItemInteraction::Destroy(request());
+    let destroy_interaction = BlockItemInteraction::Destroy(request(), None);
     assert_ne!(use_interaction, destroy_interaction);
 }
 
