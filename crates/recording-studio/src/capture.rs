@@ -92,7 +92,7 @@ pub struct CaptureStatus {
 }
 
 /// Live pipeline observations; latency is elapsed request time, separate from producer CPU work.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct CaptureHealth {
     /// Last admitted received-actor preparation, before the capture admission update.
     pub actor_prepare_micros: u64,

@@ -27,6 +27,7 @@ pub(super) fn snapshot(studio: &Snapshot) -> Value {
             "audio": studio.capture.audio,
             "path": studio.capture.path,
             "message": studio.capture.message,
+            "health": studio.capture.health,
         },
         "preview": {
             "ready": studio.preview.ready,
@@ -62,4 +63,46 @@ pub(super) fn snapshot(studio: &Snapshot) -> Value {
             "path": studio.export.path,
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use recording_studio::capture::CaptureHealth;
+
+    #[test]
+    fn capture_diagnostics_keep_cpu_latency_bytes_and_stalls_distinct() {
+        let health = CaptureHealth {
+            actor_prepare_micros: 101,
+            sample_micros: 203,
+            readback_micros: 307,
+            pending_readbacks: 2,
+            readback_bytes: 4096,
+            encoder_frames: 3,
+            encoder_bytes: 8192,
+            encoder_stalls: 5,
+            readback_stalls: 7,
+        };
+        let studio = Snapshot {
+            capture: recording_studio::capture::CaptureStatus {
+                health,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            snapshot(&studio)["capture"]["health"],
+            json!({
+                "actor_prepare_micros": health.actor_prepare_micros,
+                "sample_micros": health.sample_micros,
+                "readback_micros": health.readback_micros,
+                "pending_readbacks": health.pending_readbacks,
+                "readback_bytes": health.readback_bytes,
+                "encoder_frames": health.encoder_frames,
+                "encoder_bytes": health.encoder_bytes,
+                "encoder_stalls": health.encoder_stalls,
+                "readback_stalls": health.readback_stalls,
+            })
+        );
+    }
 }
