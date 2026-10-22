@@ -95,7 +95,9 @@ and resource qualification; they do not imply these systems need to be written.
   trapdoors, connected panes/fences/gates and static chest/sign models. Check existing
   coverage before implementing a missing case. Keep conservative culling and connectivity
   until exact face-coverage behavior is verified separately. Inventory fences draw the
-  native two-post shape; bamboo fence slats and wall inventory shapes are unverified, and
+  native two-post shape. Walls now use the custom carried two-post shape, and vanilla
+  gate item meshes turn into the custom carried axis. Native wall/gate inventory parity
+  and fresh integrated-frame acceptance remain unverified; bamboo fence slats are also open, and
   world fence rails still omit the outer end faces native tessellation draws.
 - [ ] Close paired-door presentation and interaction acceptance, including lower/upper
   state resolution, cross-subchunk neighbours, missing pairs, highlights, cracks,
