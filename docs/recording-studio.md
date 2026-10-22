@@ -5,18 +5,26 @@ long-session validation; requested FPS is not a guarantee of sustained capture.
 
 ## Record a take
 
-Open Recording Studio and its settings before recording. Choose Recording FPS
+Open Recording Studio and its settings before recording. Capture defaults to
+**3D replay**, which records editable scene data and game audio without a live
+video encoder or GPU video readbacks. **3D replay + video** also saves the original
+camera as an MP4 and requires FFmpeg during recording. Choose Recording FPS
 (24, 30, 60, 120 or 240) and Recording size. New preferences use a 1080p limit;
 Native keeps the window size. Size limits preserve aspect, never upscale, and use
-GPU scaling before readback. Keep the window size fixed during a take.
+GPU scaling before video readback. Keep the window size fixed during a take.
 
 Hand geometry and HUD/chat capture are separate opt-in native replay channels.
 With Record HUD and chat off, new POV video also excludes screen overlays while
 leaving the live HUD visible. World labels remain part of the recorded world.
 Stop recording and wait for finalization before opening its completed take. Missed capture slots repeat a
 frame and are reported; use a smaller output or lower cadence if misses accumulate.
-Recording at 120/240 FPS gives slow-motion edits more source frames when the
-renderer and encoder can sustain that cadence.
+If a required native scene track fails, 3D replay recording stops and verifies its
+common saved prefix in the background. In 3D replay + video, the original-camera
+video can continue with an explicit incomplete-replay notice. Wait for saving to
+finish before recovering the interrupted native take from the library.
+Recording at 120/240 FPS gives slow-motion edits more source motion samples when
+the scene preparation and storage workers sustain that cadence. The video option
+also needs sufficient GPU readback and encoder capacity.
 
 During capture, the status row reports sample and actor preparation CPU time,
 pending GPU readbacks, encoder queue depth and stalls. These are capture health
@@ -48,6 +56,26 @@ the saved output resolution and rational frame rate. Opening Settings or Recover
 pauses playback and releases hidden preview work.
 
 ## Edit
+
+Edit, Review and Audio layouts change panel visibility together. The viewer starts
+large, while selecting an item exposes its properties. The Assist tab contains
+separate Rhythm and Cameras sections for tempo grids and camera alternatives.
+Reusable cinematic looks are in Effects. Rhythm estimates are approximate: listen, adjust tempo/offset,
+then add the grid as one undoable edit. Camera alternatives become ordinary shots
+only when added.
+
+The camera viewport offers world-axis handles, grid snapping, composition guides,
+frame-player and named saved views. Cameras separates Shots from Views so saved
+framing does not sit below shot creation controls. Saved views retain exact
+position, yaw, pitch, roll and lens with the project. Save, rename, delete and
+explicit rebind are undoable; recalling a view changes only inspection. Relinked
+recordings require explicit rebind when their captured identity no longer matches.
+
+Key easing preserves authored pose timestamps. Distance timing keeps even travel
+within each key interval; Whole rail travels over the complete geometric path
+with separate travel easing. Orientation and FOV retain their own clocks. Exact
+XYZ changes and inserting a pose key require switching Whole rail back to Key
+easing. Curved path trims retain their original motion phase.
 
 - Scroll over timeline tracks to move vertically. Shift+wheel, horizontal wheel,
   or wheel over the ruler pans through time. Ctrl+wheel zooms around the pointer.
@@ -165,9 +193,11 @@ into a fresh recovery slot.
 
 Export validates used source paths and recorded hashes where available before
 rendering. Older unhashed media remains readable without an identity guarantee.
-The job preserves existing destinations, validates the completed MP4's top-level
-structure, and publishes without overwriting another file. This is not a full
-packet decode check. Cancellation and process failure retain actionable errors;
+The job preserves existing destinations, checks the completed MP4 structure and
+stream metadata, then decodes its video and audio before publishing. Verification
+checks the requested resolution, rational cadence, frame count and stream timing;
+it runs on a cancellable worker and needs FFprobe beside FFmpeg. Publication never
+overwrites another file. Cancellation and process failure retain actionable errors;
 process watchdogs distinguish stalled work from progressing finalization. A
 folder-sync failure after successful publication reports the retained output path
 and a durability warning.
@@ -193,6 +223,9 @@ including labels behind the recording camera. The recorded viewer's distance,
 server hide rules, settings and native preparation budgets still limit that set;
 edited cameras cannot reconstruct omitted labels. Saved label groups use the
 edited camera's depth order and billboard orientation.
-Interrupted POV video can be recovered to
-a separate file when decodable media remains; this does not recover incomplete
-native scene journals. Recording and export require FFmpeg.
+Interrupted native takes can recover their common committed scene interval into
+an unsaved project, after verifying its captured frame grid. Recovery leaves the
+original journals unchanged; unfinished audio, uncommitted tails and event
+markers are not restored. If native recovery fails, a decodable POV video can be
+recovered separately with an explicit notice. Video decoding and export require
+FFmpeg; final export verification also requires FFprobe.

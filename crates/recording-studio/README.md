@@ -68,7 +68,8 @@ POV captures periodically checkpoint their settings and actual camera pose using
 the same interval as native scene tracks. `CameraRecording` restores the recorded
 view without borrowing the live camera or inventing one for a missing sample.
 Initial settings-only checkpoints from earlier captures remain readable. Camera
-interpolation between samples and cut/teleport handling still need implementation.
+interpolation uses recorded timestamps; discontinuity and cut/teleport acceptance
+still need qualification.
 
 `object_store` owns bounded, SHA-256-addressed immutable assets. Object publication
 uses exclusive staging; readers verify the whole digest and reject trailing bytes
@@ -86,26 +87,28 @@ payloads.
 
 The native studio route now presents a library, metadata editor and timeline.
 Main-screen recording can arm the next world; pause and studio controls start,
-stop and bookmark a take. Capture uses one GPU readback at a time, bounded live
+stop and bookmark a take. Native-only capture skips video encoding and pixel
+readbacks. Optional video capture uses a bounded readback pool, bounded live
 frame admission, a passive mixed-audio tap and background storage/encoding.
 Hardware encoding is probed on a startup worker, with software fallback in Auto.
 Missing video slots repeat the preceding frame within a bounded gap; missing
 audio blocks become silence at their recorded offsets. Both tracks share a final
 video-frame boundary. Capture failures remain separate from the live game session.
 
-The current live adapter writes a POV video package, explicitly identified by
-`POV_SCENE_SCHEMA`. It includes camera metadata and committed combat observations,
-with a separate native terrain journal alongside it. Terrain capture shares prepared
+The live adapter retains a camera journal identified by `POV_SCENE_SCHEMA`,
+committed combat observations and independent native tracks. Video capture adds a
+POV MP4. Terrain capture shares prepared
 geometry, records changes and unloads, and freezes exact local runtime render assets
 on a bounded worker. A separate environment track retains prepared sky/weather,
 lighting and texture-animation inputs plus frozen sky assets. A prepared actor
-track retains rig poses, skins and artwork with explicit original-view coverage.
+track retains rig poses, skins and artwork with explicit captured actor coverage.
 An independent received-actor target track records anchors, angles, names and spawn
 identities, including the local subject's published eye position. Its changed-only
 records and periodic checkpoints share the take clock; target tracking does not
 expand the actor draw track's coverage.
 Track completion and failure are saved independently of POV completion.
-Opening a package makes ordinary video/audio clips and editable highlights. A
+Opening a native-only package creates an editable 3D replay clip. A video package
+makes ordinary video/audio clips and editable highlights. A
 captured clip can switch to its independent scene through **Use 3D replay**. A
 raster video alone remains a POV recording.
 
@@ -126,15 +129,15 @@ dedicated native UI slot preserves aspect ratio and ordinary menu/modal ordering
 it is outside server and mod texture ranges. The page remains allocated while a
 seek is loading, avoiding repeated texture-plan changes during a drag.
 
-This is an unverified source implementation. Crop filtering, source frame accuracy,
-content-identity validation, audio and titles still need completion and acceptance.
+Source frame accuracy, crop filtering, source identity, audio synchronization and
+title composition still need integrated hardware acceptance.
 The render edge now applies timeline effects through the shared GPU path below.
 Missing 3D camera composition is disclosed for ordinary video. A selected captured
 clip can switch reversibly to a native
 scene source through **Use 3D replay**. The render edge owns its isolated GPU scene
 and leased image publication; this domain owner retains no device or live world.
-That provisional path currently supports a single unframed replay layer and
-discloses its original-view actor coverage and missing composition features.
+Direct spatial authoring requires a single unframed replay layer. Preview reports
+the recorded actor and artwork coverage instead of inferring missing scene data.
 
 ## Replay cameras
 
@@ -142,31 +145,36 @@ The native inspector creates player, free, path, follow and orbit shots from the
 displayed replay frame. Shot metadata uses normal undo/redo and project storage.
 Free/path controls edit position, angles and field of view; follow controls edit
 offset and velocity look-ahead; orbit controls edit radius, height, phase and turns.
-Fine adjustment uses smaller steps. Path adjustments insert or replace a key at
-the exact playhead, preserving an existing key's easing. Start/end trims retain
-boundary poses and interior keys or the orbit's phase; trimming a path can change
-its interior interpolation.
+Fine adjustment uses smaller steps. Keyed path adjustments insert or replace a
+key at the exact playhead, preserving an existing key's easing. Whole-rail travel
+requires an explicit switch to Key easing before exact XYZ edits or pose-key
+insertion. Start/end trims retain the path's original motion clock and support
+geometry, independent FOV phase and the orbit's phase.
 
 Target browsing and retargeting are separate operations. Newly authored actor
 shots bind a recorded spawn lifetime, preventing runtime-ID reuse from selecting
 a different subject. Player mode requires a recorded native eye offset; received
-remote actors currently provide centre/root tracking only. Missing subjects show
-an explicit notice and the original view, with retargeting still available.
+remote eye views are available only for the captured native poses described in
+the user guide. Missing authored subjects produce an explicit preview error while
+retaining the last admitted image, with retargeting still available. Suggestions
+require a continuous recorded subject interval; export verifies actual required
+output samples and keeps one canonical spawn identity across the shot.
 Older takes without the optional target track can still use free/path shots.
 
 Both preview paths evaluate the same output-frame grid. Camera-only metadata edits
 retain admitted source cursors and terrain; explicit seeks reset temporal history.
-Target motion interpolation, camera smoothing, unculled actor draws (including the
-local first-person body), visible key markers/easing controls and inspector access
-in narrow layouts remain incomplete. These controls have not been run or visually
-accepted.
+Whole-rail motion, numerical approximations, trim phase and timing-mode contracts
+are documented in [camera/README.md](src/camera/README.md). Named source-bound
+camera views are stored with ordinary undoable project metadata; recall remains
+transient. Save As, open and recovery relocate bindings with source paths without
+rebinding changed media. Camera smoothing, remote POV poses and rendered/input
+acceptance across narrow layouts remain open.
 
-The full scene schema, complete native replay rendering/preview composition, media
-import/recovery, complete camera/effect inspectors, recording options, complete
-export composition and linked automatic-effect retiming are still being
-implemented. The feature has not been
-built or exercised. Media preview and a limited native replay viewport are connected
-in source. These pieces do not complete the feature.
+The editor is experimental. Source implementations and owning regression tests do
+not establish sustained capture performance, complete scene coverage or an
+accepted playback/export workflow. The public plan keeps those acceptance gates
+open until recordings, navigation, audio, exports and recovery are exercised on
+the target hardware.
 
 ## Timeline effects
 
@@ -177,7 +185,8 @@ cycle incoming easing, navigate keys (including clip-end keys), or move the effe
 one output frame. Fine adjustment uses smaller amount steps. A bounded graph
 samples the actual curve; dense timeline key markers share visible columns, while
 key navigation retains access to every key. Gameplay provenance survives edits.
-Automatic effects still do not follow subsequent visual clip retiming.
+Generated effects with source anchors follow their retained visual clip's clock;
+legacy provenance without anchors stays unchanged.
 
 Overlapping cameras, effects, audio and titles now receive separate selectable
 presentation lanes. Packing and source-name lookup are cached per project
@@ -198,10 +207,9 @@ drawing invalidates source admission before a retry.
 Replay zoom/shake moves the actual recorded world camera. Ordinary video instead
 uses a deterministic affine crop/translation calibrated by a shared virtual FOV;
 it cannot reveal unrecorded pixels or reproduce 3D parallax. This image motion and
-the SDR bloom/look remain provisional. Full composition, graph dragging/numeric
-entry, native crossfades/crops/layering, narrow layouts, rendered appearance,
-preview/export equality and cost acceptance remain incomplete. No shader or
-runtime validation was performed under the current no-build/no-test instruction.
+the SDR bloom/look remain provisional. Composition, keyframe editing, native
+crossfades/crops/layering, narrow layouts, rendered appearance, preview/export
+equality and cost still need integrated hardware acceptance.
 
 ## Video export
 
@@ -231,12 +239,12 @@ directories are local, ignored artifacts and normally removed on cancellation or
 failure. A supervised owned child keeps cancellation effective during blocked
 encoder/decoder pipe IO. No UI thread joins these workers.
 
-This path is provisional and unrun. Export currently rejects titles, native replay
-layering/crops/crossfades, and camera shots without native replay coverage.
-Timeline effects now use the same GPU composition path as preview. The complete
-edit is checked before encoding;
-unavailable camera subjects can still fail later payload admission. Native shading
+This path remains provisional. Titles, native/raster layering, crops, crossfades
+and effects share the preview compositor. Camera shots require native replay
+coverage. The complete edit is checked before encoding; requested stream metadata
+and a full payload decode are verified before final publication.
+Unavailable camera subjects can still fail later payload admission. Native shading
 and recorded actor-coverage limitations are displayed in the status. Export settings
 controls, destination selection, completed-file actions, interrupted-job recovery,
-full visual composition and synchronized audio preview remain incomplete. A
+full visual composition and synchronized audio preview need integrated acceptance. A
 finished-file path in source code does not establish an accepted export workflow.

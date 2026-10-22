@@ -926,7 +926,8 @@ Current implementation; runtime acceptance remains incomplete:
   have regression source but no current build or sustained hardware acceptance.
 - Production hardening now isolates recording actor preparation from live artwork,
   reuses same-clock animation samples and bounded GPU readback buffers, avoids
-  recompressing scene envelopes, and limits live software encoder threads. Capture
+  recompressing scene envelopes, retires recording-owned pose caches and limits
+  live software encoder threads. Capture
   health reports CPU admission/actor time, readback/encoder queues and stalls.
   The reported 160-to-50 FPS recording regression has not been remeasured; no
   minimal-overhead or sustained-capture gate is closed.
@@ -940,14 +941,32 @@ Current implementation; runtime acceptance remains incomplete:
   checkpoints, durable discard revisions and explicit restore into an unsaved copy.
   Setup checks actual encoder operation; tabs and a shared keyboard/help registry
   simplify workspace controls. Recovery and dependency screens have anonymous
-  snapshot fixtures. New owning regressions are written but unrun. This hardening
-  pass has no builds, tests, rendered captures or runtime acceptance.
+  snapshot fixtures. Named camera views retain source bindings through save/open,
+  Save As and recovery; stale relinks require explicit rebinding. Camera Views and
+  assisted shot tools have dedicated sections with rendered anonymous fixtures.
+  Owning regressions and integrated renderer checks are being qualified; sustained
+  recording, live input, audio and recovery acceptance remain open.
+
+- Native-only capture closes admission after a required scene-track failure;
+  optional POV video may continue with explicit incomplete native coverage.
+  Background finalization retains failed track owners, drains accepted records
+  after producer rejection and waits for physical storage completion before
+  verifying a common recoverable prefix. Encoding or storage failures terminate
+  their dependent stream. Failure injection and long-take runtime acceptance
+  remain open.
 
 - Replay-reference controls include stationary entity tracking, independent shot
   FOV curves, limited new-player POV anchors and lifetime-bound body hiding.
   Follow/Orbit creation retains inspected framing. Remote POV admits only upright,
   unit-scale, unmounted living standing players; other poses, mobs, missing legacy
   anchors and transition eye easing remain incomplete.
+  Path cameras support per-key and whole-rail distance timing, independent lens
+  and orientation clocks, exact trim phase and bounded cached arc integration.
+  Exact XYZ edits or new pose keys require switching whole-rail travel to Key
+  easing. Full graph editing, rotation handles and smooth rig blends remain open.
+  Subject suggestions require continuous recorded lifetime coverage; export
+  admission instead validates exact required rational output timestamps, including
+  retimed transition handles. New regression execution remains required.
 - Monitoring exposes runtime-only 0.1xâ€“8x speed, typed seeking, seconds jumps and
   whole-project looping with rational audio cursor conversion and bounded tempo
   processing. Fast preview respects its wall-time presentation budget. Slow
@@ -994,8 +1013,10 @@ Required work remains open:
 - Owning-crate regressions and rendered/runtime acceptance are still required.
   Performance, sustained capture cadence and resource bounds need measurement.
   Earlier Default and Enhanced production checks predate the latest hardening.
-  The latest hardening is source-reviewed and formatted only; compilation, new
-  regressions, rendered acceptance and game launches remain unrun.
+  Focused app and owning-crate checks now compile with developer control; recording
+  domain and scene regressions pass. Anonymous camera, Assist and transport renders
+  have been inspected. Remaining actor/editor regressions, live input, real replay
+  output, long-session recovery/export and game-frame budgets remain unqualified.
 
 This feature is incomplete. Domain APIs and storage code alone do not establish a
 working Recording Studio, replay visual parity or a performance acceptance result.
