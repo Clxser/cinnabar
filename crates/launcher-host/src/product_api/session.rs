@@ -22,6 +22,7 @@ impl Client {
                 .max(message.loadout_revision.min(policy::MAX_BUILD));
             state.live = Some(Live {
                 visible: config.visible,
+                ownership_verified: false,
                 next_id: 0,
                 players: Players::welcomed(
                     message.xuid,

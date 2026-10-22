@@ -153,7 +153,7 @@ impl Client {
         .map_err(|_| unavailable())?
     }
 
-    /// Coalesces the newest local player intent and reads aged, watched remote state without socket I/O.
+    /// Validates account storage on the exchange worker before publishing its newest player state.
     pub(crate) fn sync(&self, local: CinnabarPlayerState) -> PlayerSync {
         let Some((epoch, scope)) = self.with(|state| {
             if state.stopped || state.live.is_none() {
@@ -163,10 +163,20 @@ impl Client {
         }) else {
             return PlayerSync::Unavailable;
         };
-        match scope.current() {
-            None => return PlayerSync::Pending,
-            Some(false) => return PlayerSync::Unavailable,
-            Some(true) => {}
+        let current = scope.current();
+        if current != Some(true) {
+            self.with(|state| {
+                if state.epoch == epoch
+                    && let Some(live) = &mut state.live
+                {
+                    live.ownership_verified = false;
+                }
+            });
+            return if current.is_none() {
+                PlayerSync::Pending
+            } else {
+                PlayerSync::Unavailable
+            };
         }
         let now = Instant::now();
         let unix_ms = SystemTime::now()
@@ -179,27 +189,28 @@ impl Client {
                 return None;
             }
             let State { live, revision, .. } = state;
-            live.as_mut()
-                .map(|live| live.players.sync(local, now, unix_ms, revision))
+            live.as_mut().map(|live| {
+                live.ownership_verified = true;
+                live.players.sync(local, now, unix_ms, revision)
+            })
         });
         self.0.changed.notify_waiters();
         result.map_or(PlayerSync::Unavailable, PlayerSync::Current)
     }
 
-    /// Allows retained ownership only for this live socket's verified account and unchanged epoch.
+    /// Reads the exchange worker's verified ownership without acquiring credential files on a frame.
     pub(crate) fn ownership_current(&self, xuid: &str) -> bool {
-        let Some((epoch, scope)) = self.with(|state| {
-            if state.stopped || state.live.is_none() {
-                return None;
-            }
-            Some((state.epoch, state.scope.clone()?))
-        }) else {
-            return false;
-        };
-        if scope.xuid() != xuid || scope.current() != Some(true) {
-            return false;
-        }
-        self.with(|state| !state.stopped && state.epoch == epoch && state.live.is_some())
+        self.with(|state| {
+            !state.stopped
+                && state
+                    .scope
+                    .as_ref()
+                    .is_some_and(|scope| scope.xuid() == xuid)
+                && state
+                    .live
+                    .as_ref()
+                    .is_some_and(|live| live.ownership_verified)
+        })
     }
 
     /// Delivers only the latest accepted announcement through the launcher's existing release path.

@@ -112,7 +112,7 @@ pub(super) fn start(
                 ) {
                     return;
                 }
-                let (generation, session, local) = {
+                let (generation, session, local, api) = {
                     let snapshot = shared.lock().unwrap_or_else(|poison| poison.into_inner());
                     (
                         snapshot.auth_generation,
@@ -128,27 +128,15 @@ pub(super) fn start(
                             }
                             local
                         }),
+                        snapshot.native_product_api.clone(),
                     )
                 };
                 let Some(local) = local else { continue };
-                let result = {
-                    let snapshot = shared.lock().unwrap_or_else(|p| p.into_inner());
-                    if !snapshot.same_generation(generation)
-                        || snapshot.shared_players.session != session
-                    {
-                        None
-                    } else {
-                        match snapshot
-                            .native_product_api
-                            .as_ref()
-                            .map(|api| api.sync(local))
-                        {
-                            Some(crate::product_api::PlayerSync::Current(remote)) => Some(remote),
-                            Some(crate::product_api::PlayerSync::Pending) => None,
-                            Some(crate::product_api::PlayerSync::Unavailable) | None => {
-                                Some(CinnabarPlayerUpdates::default())
-                            }
-                        }
+                let result = match api.as_ref().map(|api| api.sync(local)) {
+                    Some(crate::product_api::PlayerSync::Current(remote)) => Some(remote),
+                    Some(crate::product_api::PlayerSync::Pending) => None,
+                    Some(crate::product_api::PlayerSync::Unavailable) | None => {
+                        Some(CinnabarPlayerUpdates::default())
                     }
                 };
                 if let Some(remote) = result {

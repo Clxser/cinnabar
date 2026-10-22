@@ -57,6 +57,7 @@ pub(crate) enum PlayerSync {
 
 struct Live {
     visible: bool,
+    ownership_verified: bool,
     next_id: u32,
     players: Players,
     pending: BTreeMap<u32, Pending>,
