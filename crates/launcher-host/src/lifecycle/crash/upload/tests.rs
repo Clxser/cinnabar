@@ -143,6 +143,37 @@ fn set_automatic(layout: &InstallLayout, enabled: bool) {
 }
 
 #[test]
+fn completed_fallback_reports_are_recovered_without_enrolling_in_progress_reports() {
+    let root = tempfile::tempdir().unwrap();
+    let layout = layout(root.path());
+    let identity = Identity {
+        session_id: "fallback".into(),
+        started_at_ms: 0,
+        release: "fixture".into(),
+        commit: "fixture".into(),
+        build_profile: "test".into(),
+    };
+    let context = super::super::context(&layout, identity);
+    let ready = super::super::fallback::write_panic(
+        &context,
+        "fallback panic".into(),
+        Default::default(),
+        String::new(),
+        now_ms(),
+    )
+    .unwrap();
+    let unfinished = crash(&layout, "another producer has not finished its attachments");
+    set_automatic(&layout, true);
+    let server = Server::start(201);
+    let results = send_due(&layout, &policy(&server, true));
+    assert_eq!(results.len(), 1);
+    assert!(matches!(state::read(&ready), Some(Upload::Sent { .. })));
+    assert!(state::read(&unfinished).is_none());
+    assert_eq!(server.payloads().len(), 1);
+    assert!(send_due(&layout, &policy(&server, true)).is_empty());
+}
+
+#[test]
 fn android_saved_reports_send_on_a_healthy_launch_without_exit_info() {
     let root = tempfile::tempdir().unwrap();
     let layout = layout(root.path());

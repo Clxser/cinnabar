@@ -411,6 +411,45 @@ fn a_log_that_cannot_be_fully_learned_blocks_the_whole_upload() {
 }
 
 #[test]
+fn failed_learning_in_any_report_member_blocks_cross_field_leaks() {
+    let mut escaped = "gamertag=Alice".to_owned();
+    for _ in 0..crate::redact::MAX_ESCAPE_DEPTH + 3 {
+        escaped = serde_json::to_string(&escaped).unwrap();
+    }
+    for field in [
+        "message",
+        "backtrace",
+        "span",
+        "core",
+        "renderer",
+        "native",
+        "stack",
+    ] {
+        let mut report = report(Kind::Panic, "boom");
+        let mut core = "";
+        let mut stack = None;
+        match field {
+            "message" => report.message = escaped.clone(),
+            "backtrace" => report.backtrace = escaped.clone(),
+            "span" => report.span_trace = Some(escaped.clone()),
+            "core" => core = &escaped,
+            "renderer" => report.renderer = Some(serde_json::json!({ "opaque": escaped })),
+            "native" => report.native = Some(serde_json::json!({ "reason": escaped })),
+            "stack" => {
+                stack = Some(crate::stack::Stack {
+                    reason: escaped.clone(),
+                    ..Default::default()
+                })
+            }
+            _ => unreachable!(),
+        }
+        let error =
+            payload(&report, "Alice disconnected", core, stack, IDS, None).expect_err(field);
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "{field}");
+    }
+}
+
+#[test]
 fn native_signal_facts_without_a_tombstone_keep_distinct_signatures() {
     let mut first = report(Kind::Native, "Fatal signal");
     first.native =

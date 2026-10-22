@@ -107,7 +107,7 @@ pub fn build(folder: &Path, ids: Ids<'_>, home: Option<&str>) -> io::Result<Payl
     payload(&report, &log, &core_crash, stack, ids, home)
 }
 
-/// [`build`] from already-read folder members. A log that cannot be fully learned returns
+/// [`build`] from already-read folder members. Any member that cannot be fully learned returns
 /// `InvalidData`, so unidentified private values cannot leak through another field.
 pub fn payload(
     report: &Report,
@@ -118,11 +118,6 @@ pub fn payload(
     home: Option<&str>,
 ) -> io::Result<Payload> {
     let mut value = serde_json::to_value(report).unwrap_or_default();
-    if let Some(fields) = value.as_object_mut() {
-        for private in ["session_id", "user_comment", "native"] {
-            fields.remove(private);
-        }
-    }
     let mut learned = Learned::default();
     if let Some(home) = home.map(|home| home.trim_end_matches(['/', '\\']))
         && !home.is_empty()
@@ -130,24 +125,23 @@ pub fn payload(
         learned.value(home);
     }
     learned.json(&value);
+    learn_value(&mut learned, &value)?;
     // The process session id is random, but it ties a report to the player's local logs.
     if !report.session_id.is_empty() {
         learned.value(report.session_id.as_str());
     }
-    learned.text(log).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "crash log cannot be safely redacted",
-        )
-    })?;
-    for text in [
-        report.message.as_str(),
-        report.backtrace.as_str(),
-        report.span_trace.as_deref().unwrap_or_default(),
-        core_crash,
-    ] {
-        // Text too deeply escaped to learn from is dropped below by the same redactor error.
-        let _ = learned.text(text);
+    for text in [log, core_crash] {
+        learn_text(&mut learned, text)?;
+    }
+    if let Some(stack) = &stack {
+        let value = serde_json::to_value(stack)?;
+        learned.json(&value);
+        learn_value(&mut learned, &value)?;
+    }
+    if let Some(fields) = value.as_object_mut() {
+        for private in ["session_id", "user_comment", "native"] {
+            fields.remove(private);
+        }
     }
     let redactor = learned.redactor();
     if redactor.json(&mut value).is_err() {
@@ -310,6 +304,36 @@ fn log_tail(redactor: &Redactor, log: &str) -> Vec<String> {
                 .unwrap_or_else(|_| UNREDACTABLE_LINE.to_owned())
         })
         .collect()
+}
+
+/// Learns every JSON string before any member is dropped, so private values cannot cross fields.
+fn learn_value(learned: &mut Learned, value: &serde_json::Value) -> io::Result<()> {
+    match value {
+        serde_json::Value::String(text) => learn_text(learned, text)?,
+        serde_json::Value::Array(values) => {
+            for value in values {
+                learn_value(learned, value)?;
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            for (key, value) in fields {
+                learn_text(learned, key)?;
+                learn_value(learned, value)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Rejects a payload if any member cannot contribute its private values to the shared redactor.
+fn learn_text(learned: &mut Learned, text: &str) -> io::Result<()> {
+    learned.text(text).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "crash data cannot be safely redacted",
+        )
+    })
 }
 
 /// The native fields a server may index: the reason as redacted text, addresses as hex and

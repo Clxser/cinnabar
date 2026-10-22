@@ -15,6 +15,8 @@ use crate::{
 pub const MAX_REPORTS: usize = 8;
 /// The report inside each folder.
 pub const REPORT_FILE: &str = "report.json";
+/// An in-process fallback has finished every member and a healthy sender may recover it.
+pub const FALLBACK_READY_FILE: &str = ".fallback-ready";
 /// The crashing session's section of `client.log`.
 pub const CLIENT_LOG_FILE: &str = "client.log";
 /// The crashing session's section of `core.log`.
@@ -188,6 +190,12 @@ pub fn write_with(
     Ok(folder)
 }
 
+/// Marks an in-process fallback only after every report member is finished.
+/// This grants no consent; a healthy sender still checks the player's current settings.
+pub fn mark_fallback_ready(folder: &Path) -> io::Result<()> {
+    write_new(&folder.join(FALLBACK_READY_FILE), b"")
+}
+
 /// Accepts relative paths of normal components whose first component is not a fixed member.
 fn check_attachment(name: &str) -> io::Result<()> {
     let mut components = Path::new(name).components();
@@ -198,9 +206,15 @@ fn check_attachment(name: &str) -> io::Result<()> {
             .chain(components)
             .all(|component| matches!(component, std::path::Component::Normal(_)));
     let fixed = first.is_some_and(|first| {
-        [REPORT_FILE, CLIENT_LOG_FILE, CORE_LOG_FILE, DUMP_FILE]
-            .iter()
-            .any(|member| first.as_os_str() == *member)
+        [
+            REPORT_FILE,
+            CLIENT_LOG_FILE,
+            CORE_LOG_FILE,
+            DUMP_FILE,
+            FALLBACK_READY_FILE,
+        ]
+        .iter()
+        .any(|member| first.as_os_str() == *member)
     });
     if normal && !fixed {
         Ok(())
@@ -413,6 +427,7 @@ mod tests {
             absolute,
             REPORT_FILE,
             CORE_LOG_FILE,
+            FALLBACK_READY_FILE,
             "crash.dmp/inner.txt",
         ] {
             let error = write_with(

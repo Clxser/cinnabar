@@ -35,6 +35,7 @@ pub struct SignalFault {
 pub struct Prepared {
     folder: CString,
     report: CString,
+    ready: CString,
     /// `report.json` without its deferred fields or closing brace.
     prefix: Vec<u8>,
     started_at_ms: u64,
@@ -68,6 +69,7 @@ impl Prepared {
         Some(Self {
             folder: c_path(&crash)?,
             report: c_path(&crash.join(folder::REPORT_FILE))?,
+            ready: c_path(&crash.join(folder::FALLBACK_READY_FILE))?,
             prefix,
             started_at_ms: logs.started_at_ms,
             session_id: logs.session_id.map(str::to_owned),
@@ -94,6 +96,7 @@ impl Prepared {
 
     /// Writes the folder for a fault at `now_ms` (Unix milliseconds): `report.json` first, so a
     /// fault while copying logs still leaves the report, then the client and core log sections.
+    /// A final marker lets a healthy sender recover the completed fallback on a later launch.
     ///
     /// # Safety
     ///
@@ -120,7 +123,8 @@ impl Prepared {
                 libc::close(fd);
             }
         }
-        // SAFETY: The copies use the prebuilt paths and the caller's exclusive scratch buffer.
+        // SAFETY: The copies and marker use prebuilt paths and async-signal-safe IO only.
+        // The caller owns the scratch buffer exclusively.
         unsafe {
             copy_section(
                 &self.client_log,
@@ -136,6 +140,16 @@ impl Prepared {
                 self.session_id.as_deref(),
                 scratch,
             );
+            if fd >= 0 {
+                let ready = libc::open(
+                    self.ready.as_ptr(),
+                    libc::O_CREAT | libc::O_EXCL | libc::O_WRONLY,
+                    0o600,
+                );
+                if ready >= 0 {
+                    libc::close(ready);
+                }
+            }
         }
     }
 }
@@ -432,6 +446,7 @@ mod tests {
         }
         let folders = folder::list(&crash_dir);
         assert_eq!(folders.len(), 1);
+        assert!(folders[0].join(folder::FALLBACK_READY_FILE).is_file());
         assert!(
             folders[0]
                 .to_str()

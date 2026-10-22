@@ -102,6 +102,9 @@ pub fn send_due(layout: &InstallLayout, policy: &Policy) -> Vec<(PathBuf, io::Re
         return Vec::new();
     }
     let crash_dir = layout.crash_dir();
+    if policy.automatic {
+        recover_completed(layout, &crash_dir);
+    }
     state::due(&crash_dir, now_ms())
         .into_iter()
         .map(|folder| {
@@ -109,6 +112,20 @@ pub fn send_due(layout: &InstallLayout, policy: &Policy) -> Vec<(PathBuf, io::Re
             (folder, result)
         })
         .collect()
+}
+
+/// Recovers finished in-process fallbacks; unmarked folders may still be under construction.
+/// Producers create the marker last, and current settings remain the authority for consent.
+fn recover_completed(layout: &InstallLayout, crash_dir: &Path) {
+    for folder in crash_report::folder::list(crash_dir) {
+        if state::read(&folder).is_none()
+            && folder
+                .join(crash_report::folder::FALLBACK_READY_FILE)
+                .is_file()
+        {
+            completed(layout, &folder);
+        }
+    }
 }
 
 /// Runs [`send_due`] on its own thread, so a monitor or launch never waits on the network;
