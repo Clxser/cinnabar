@@ -9,7 +9,7 @@ use render_model::{ActorArtworkPages, ActorRigFrameBuilder, ActorRigRoute};
 use std::sync::Arc;
 
 /// Original narrow and wide models share one frame-conditional controller.
-fn catalog(
+pub(super) fn catalog(
     layer_condition: Option<&str>,
     wide_bounds: bool,
     choice: &str,
@@ -421,7 +421,10 @@ fn offscreen_replacement_players_leave_model_cache_for_the_visible_player() {
 }
 
 /// One compiled entity enters the same production admission path as roster-backed bodies.
-fn entity_world(assets: &Arc<assets::RuntimeEntityAssets>, feet: [f32; 3]) -> WorldStream {
+pub(super) fn entity_world(
+    assets: &Arc<assets::RuntimeEntityAssets>,
+    feet: [f32; 3],
+) -> WorldStream {
     let mut stream = new_stream(assets, 2);
     stream
         .submit(

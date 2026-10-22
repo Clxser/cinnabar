@@ -62,6 +62,12 @@ type HiddenPose = (RenderPose, Arc<[u32]>, RenderPose, u64);
 const LAYER_POSE_RETENTION_FRAMES: u64 = 4;
 
 impl LayerPoseCache {
+    /// Counts retained source conversions for recording lifetime regressions.
+    #[cfg(test)]
+    pub(crate) fn retained_pose_count(&self) -> usize {
+        self.converted.len()
+    }
+
     pub fn begin_frame(&mut self) {
         self.frame += 1;
         let oldest = self.frame.saturating_sub(LAYER_POSE_RETENTION_FRAMES);

@@ -84,6 +84,9 @@ pub(super) fn prepare<'a>(
         replay.source_artwork = Some(artwork.clone());
     }
     let scratch = &mut replay.scratch;
+    scratch.poses.begin_frame();
+    scratch.java_poses.begin_frame();
+    scratch.layer_poses.begin_frame();
     let mut equipment = equipment;
     let mut geometries = Vec::new();
     let mut bodies = bodies::sample(
