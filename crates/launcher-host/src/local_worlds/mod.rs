@@ -21,7 +21,7 @@ mod world;
 pub use import::{WORLD_ARCHIVE_EXTENSION, is_world_archive};
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub(crate) use manager::HostOpening;
-pub use manager::Manager;
+pub use manager::{Host, Manager};
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub use manager::NativeHostIntent;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
