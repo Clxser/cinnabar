@@ -95,3 +95,30 @@ pub(crate) fn assert_empty_render(world: &mut World) {
             .is_empty()
     );
 }
+
+/// Reads a buffer range after submitted uploads finish, including on the validating NOOP device.
+pub(crate) fn read_buffer(
+    device: &RenderDevice,
+    queue: &bevy::render::renderer::RenderQueue,
+    buffer: &wgpu::Buffer,
+    offset: u64,
+    bytes: u64,
+) -> Vec<u8> {
+    if bytes == 0 {
+        return Vec::new();
+    }
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("terrain publication readback"),
+        size: bytes,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.copy_buffer_to_buffer(buffer, offset, &readback, 0, bytes);
+    encoder.map_buffer_on_submit(&readback, wgpu::MapMode::Read, .., |result| {
+        result.expect("terrain publication readback maps");
+    });
+    queue.submit([encoder.finish()]);
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    readback.slice(..).get_mapped_range().unwrap().to_vec()
+}

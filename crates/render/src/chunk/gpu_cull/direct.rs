@@ -217,6 +217,25 @@ pub(in crate::chunk) struct DirectOcclusion {
 }
 
 impl DirectOcclusion {
+    /// Forgets derived records and verdicts while retaining allocated GPU storage.
+    pub(super) fn invalidate_publication(&mut self) {
+        self.table = default();
+        self.generations.clear();
+        self.tint = None;
+        self.history.invalidate_world();
+        self.verdicts.reset();
+        self.bind_group = None;
+        self.last_view = None;
+        self.skip_view = None;
+        self.skipped.clear();
+        self.plan = None;
+    }
+
+    /// Stops the incomplete frame from testing or drawing terrain.
+    pub(super) fn suppress_publication(&mut self) {
+        self.plan = None;
+    }
+
     /// Whether this run uses a current-frame depth prepass and GPU-written unit masks.
     pub(in crate::chunk) fn same_frame(&self) -> bool {
         self.same_frame
@@ -379,15 +398,11 @@ impl DirectOcclusion {
                     || occlusion_buffers(device.wgpu_device(), capacity),
                 )
             });
-            self.verdicts.reset();
-            self.bind_group = None;
             let Some((storage, readbacks)) = grown else {
-                // Without storage nothing is tested, and stale verdicts must not skip terrain.
-                self.storage = None;
-                self.readbacks = Vec::new();
-                self.history.invalidate_world();
                 return;
             };
+            self.verdicts.reset();
+            self.bind_group = None;
             self.storage = Some(storage);
             self.readbacks = readbacks;
             self.table.mark_all_dirty();

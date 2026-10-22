@@ -36,6 +36,7 @@ pub(in crate::chunk) struct ChunkUploadPublication<'w> {
     terrain_generations:
         Option<ResMut<'w, crate::dropped_item_render::terrain_items::TerrainItemMeshGenerations>>,
     coverage: Option<ResMut<'w, crate::chunk::TerrainCoverage>>,
+    recovery: Option<ResMut<'w, super::super::recovery::TerrainGpuRecovery>>,
 }
 /// Sub-chunk uploads admitted per frame while a shader pack draws the terrain. The pack
 /// expands at most `FRAME_EXPANSION_FACES` a frame from these sections, so admitting
@@ -76,13 +77,12 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
         gpu_removals,
         mut terrain_generations,
         mut coverage,
+        mut recovery,
     } = publication;
     let _timer = profiler
         .as_deref()
         .map(|profiler| profiler.time(RuntimeStage::GpuPreparation));
-    if !arena.indirect_publication_stale {
-        release_completed_transparent_retirements(&mut arena, retirement_fence.completed_epoch());
-    }
+    release_completed_transparent_retirements(&mut arena, retirement_fence.completed_epoch());
     let active_tint_identity = biome_tints.table_identity();
     let tint_identity_changed = fairness.last_tint_identity != Some(active_tint_identity);
     let candidates = if tint_identity_changed || fairness.recover_untracked {
@@ -250,6 +250,11 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
             continue;
         };
         candidates_examined += 1;
+        let replaying = recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.published.get(&entity) == Some(&instance.generation));
+        let publication_permit = instance.publication_permit.as_ref().filter(|_| !replaying);
+        let token = instance.token.filter(|_| !replaying);
         // Deferred removals already occupy resident GPU ranges. Do not admit
         // more fresh chunks while completion cannot make retirement room.
         // Replacements still use their ordinary bounded COW admission below.
@@ -257,7 +262,7 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
             continue;
         }
         let instance_bytes = chunk_instance_upload_byte_len(instance);
-        if let Some(slot) = &instance.publication_permit
+        if let Some(slot) = publication_permit
             && (slot.stage() != Some(PublicationPermitStage::RenderEntity)
                 || slot.is_zero_byte()
                 || slot.bytes() != Some(instance_bytes))
@@ -268,7 +273,7 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
         // This lower bound needs no stream walk, biome copy, or allocation plan.
         // Exact admission below also charges writes mirrored by arena migration.
         let mut preliminary = upload_reservation;
-        let can_prepare = if instance.publication_permit.is_some() {
+        let can_prepare = if publication_permit.is_some() {
             preliminary.try_reserve_permitted(instance_bytes)
         } else {
             preliminary.try_reserve(*budget, instance_bytes)
@@ -392,7 +397,7 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
                 .retirement_budget
                 .can_reserve(1, retirement.owned_bytes())
         {
-            if let Some(token) = instance.token {
+            if let Some(token) = token {
                 acknowledgements.cancel(instance.key, token);
             }
             continue;
@@ -473,12 +478,12 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
         ));
         let mut next_upload_reservation = upload_reservation;
         let mut prepared_publication_permit = None;
-        let reserved = if let Some(slot) = &instance.publication_permit {
+        let reserved = if let Some(slot) = publication_permit {
             if !next_upload_reservation.try_reserve_permitted(charged_bytes) {
                 false
             } else {
                 let Some(permit) = slot.take() else {
-                    if let Some(token) = instance.token {
+                    if let Some(token) = token {
                         acknowledgements.cancel(instance.key, token);
                     }
                     continue;
@@ -501,7 +506,7 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
             next_upload_reservation.try_reserve(*budget, charged_bytes)
         };
         if !reserved {
-            if let Some(token) = instance.token {
+            if let Some(token) = token {
                 acknowledgements.cancel(instance.key, token);
             }
             continue;
@@ -650,7 +655,7 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
                 gpu,
             },
         );
-        if let Some(token) = instance.token {
+        if let Some(token) = token {
             applied_tokens.push((instance.key, token, instance_bytes));
         }
         upload_reservation = next_upload_reservation;
@@ -658,6 +663,9 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
             applied_publication_permits.push(permit);
         }
         successful_updates.push(entity);
+        if let Some(recovery) = recovery.as_deref_mut() {
+            recovery.published.remove(&entity);
+        }
     }
     fairness.finish_frame(&selected, &successful_updates, &urgent_updates);
 

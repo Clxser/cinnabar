@@ -80,8 +80,6 @@ pub(in crate::chunk) struct GpuCull {
     pub(super) bind_groups: Option<[wgpu::BindGroup; 2]>,
     bound_pyramid: Option<TextureViewId>,
     pub(super) prepared_view: Option<Entity>,
-    /// Storage could not grow to every live slot, so views draw on the CPU path until it does.
-    short_of_slots: bool,
 }
 
 impl GpuCull {
@@ -98,7 +96,6 @@ impl GpuCull {
             bind_groups: None,
             bound_pyramid: None,
             prepared_view: None,
-            short_of_slots: false,
         }
     }
 
@@ -112,18 +109,9 @@ impl GpuCull {
         self.table.mark_all_dirty();
     }
 
-    /// Whether storage held every live slot when last prepared.
-    pub(super) fn holds_all_slots(&self) -> bool {
-        !self.short_of_slots
-    }
-
-    /// Slots the storage holds records for: while it is short, slots admitted after this
-    /// frame's queue are left out until it grows.
+    /// Live CPU record slots, published together after storage growth succeeds.
     pub(super) fn slot_count(&self) -> u32 {
-        let slots = self.table.slot_count();
-        self.storage
-            .as_ref()
-            .map_or(slots, |storage| slots.min(storage.capacity))
+        self.table.slot_count()
     }
 
     /// Prepared indirect buffers and their live-slot/capacity bounds for `view`.
@@ -233,9 +221,9 @@ pub(super) fn prepare_gpu_cull(
         cull.table.refresh_entity(entity, &hidden.hidden);
     }
     cull.table.trim();
-    // Short storage keeps culling the slots it holds: this frame's queue already chose this
-    // path, so returning here would drop every culled draw. Later frames queue the CPU path.
-    upload_records(cull, &device, &queue);
+    if !upload_records(cull, &device, &queue) {
+        return;
+    }
 
     let Some(view) = frame.view else {
         return;
@@ -281,10 +269,9 @@ pub(super) fn prepare_gpu_cull(
 }
 
 /// Grows storage when the slot watermark passes it, then writes dirty records and bits.
-/// When storage cannot grow to every live slot, keeps it and writes only the slots it holds.
-fn upload_records(cull: &mut GpuCull, device: &RenderDevice, queue: &RenderQueue) {
+/// Failed growth leaves storage untouched for the shared recovery path.
+fn upload_records(cull: &mut GpuCull, device: &RenderDevice, queue: &RenderQueue) -> bool {
     let slots = cull.table.slot_count();
-    cull.short_of_slots = false;
     if cull
         .storage
         .as_ref()
@@ -292,11 +279,11 @@ fn upload_records(cull: &mut GpuCull, device: &RenderDevice, queue: &RenderQueue
     {
         match grow_storage(device, slots) {
             Some(storage) => cull.install_storage(storage),
-            None => cull.short_of_slots = true,
+            None => return false,
         }
     }
     let Some(storage) = cull.storage.as_ref() else {
-        return;
+        return false;
     };
     write_dirty_records(&mut cull.table, queue, &storage.records, storage.capacity);
     if cull.table.take_enabled_dirty() {
@@ -316,6 +303,7 @@ fn upload_records(cull: &mut GpuCull, device: &RenderDevice, queue: &RenderQueue
             );
         }
     }
+    true
 }
 
 /// Storage for `slots`, a power of two where one storage binding allows; `None` when no
@@ -479,28 +467,25 @@ mod storage_tests {
         assert_eq!(binding_capacity(&limits(9_990), 1000, bytes), None);
     }
 
-    /// Storage that cannot grow writes nothing and sends views down the CPU path; it retries.
+    /// Storage that cannot grow writes nothing and retries.
     #[test]
-    fn storage_without_memory_sends_views_to_the_cpu_path_until_it_grows() {
+    fn storage_without_memory_waits_until_it_grows() {
         let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
         let (device, queue) = (RenderDevice::from(device), RenderQueue::new(queue));
         let mut cull = GpuCull::new(&device, GpuCullSubmission::Fixed);
         {
             let _failure =
                 crate::gpu_allocation::inject(|label, _| label == "terrain cull storage");
-            upload_records(&mut cull, &device, &queue);
+            assert!(!upload_records(&mut cull, &device, &queue));
         }
         assert!(cull.storage.is_none());
-        assert!(!cull.holds_all_slots());
-        upload_records(&mut cull, &device, &queue);
-        assert!(cull.holds_all_slots());
+        assert!(upload_records(&mut cull, &device, &queue));
         assert!(cull.storage.is_some());
     }
 
-    /// Storage that cannot grow keeps culling the slots it holds, so the view this frame's
-    /// queue already routed to GPU culling still draws; newer slots wait for growth.
+    /// Failed growth keeps old storage without publishing a prefix of the CPU table.
     #[test]
-    fn short_storage_keeps_culling_the_slots_it_holds() {
+    fn failed_growth_keeps_storage_without_publishing_partial_records() {
         let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
         let (device, queue) = (RenderDevice::from(device), RenderQueue::new(queue));
         let mut cull = GpuCull::new(&device, GpuCullSubmission::Fixed);
@@ -520,10 +505,8 @@ mod storage_tests {
         }
         let held = cull.storage.as_ref().map(|storage| storage.capacity);
         assert_eq!(held, Some(capacity));
-        assert_eq!(cull.slot_count(), capacity);
-        assert!(!cull.holds_all_slots());
-        upload_records(&mut cull, &device, &queue);
-        assert!(cull.holds_all_slots());
+        assert_eq!(cull.slot_count(), capacity + 11);
+        assert!(upload_records(&mut cull, &device, &queue));
         assert_eq!(cull.slot_count(), capacity + 11);
     }
 }

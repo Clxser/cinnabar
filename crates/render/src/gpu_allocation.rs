@@ -6,6 +6,54 @@ use bevy::render::{
     render_resource::{Buffer, BufferDescriptor, BufferUsages},
     renderer::{RenderDevice, RenderQueue},
 };
+use std::sync::{
+    Arc, Mutex, OnceLock, Weak,
+    atomic::{AtomicBool, Ordering},
+};
+
+type FailureObservers = std::collections::HashMap<wgpu::Device, Weak<AtomicBool>>;
+
+/// Returns the device-scoped observers without keeping a renderer alive.
+fn observers() -> &'static Mutex<FailureObservers> {
+    static OBSERVERS: OnceLock<Mutex<FailureObservers>> = OnceLock::new();
+    OBSERVERS.get_or_init(Default::default)
+}
+
+/// Remembers allocation failures across worker threads until the next terrain publication.
+pub(crate) struct FailureFlag {
+    device: wgpu::Device,
+    failed: Arc<AtomicBool>,
+}
+
+impl FailureFlag {
+    /// Watches allocations on this renderer's device independently of other renderers.
+    pub(crate) fn new(device: &RenderDevice) -> Self {
+        let failed = Arc::new(AtomicBool::new(false));
+        let device = device.wgpu_device().clone();
+        observers()
+            .lock()
+            .unwrap()
+            .insert(device.clone(), Arc::downgrade(&failed));
+        Self { device, failed }
+    }
+
+    /// Whether any checked allocation failed since the last recovery began.
+    pub(crate) fn failed(&self) -> bool {
+        self.failed.load(Ordering::Acquire)
+    }
+
+    /// Starts a new publication while retaining failures raised during its work.
+    pub(crate) fn take(&self) -> bool {
+        self.failed.swap(false, Ordering::AcqRel)
+    }
+}
+
+impl Drop for FailureFlag {
+    /// Removes the observer when its renderer goes away.
+    fn drop(&mut self) {
+        observers().lock().unwrap().remove(&self.device);
+    }
+}
 
 /// Returns no resource when allocation or staging ran out of memory on this thread.
 /// WebGPU reports errors asynchronously through Bevy's device error handler instead.
@@ -32,6 +80,14 @@ pub(crate) fn checked<T>(
     let failed = failed
         || FAILURE.with_borrow_mut(|hook| hook.as_mut().is_some_and(|hook| hook(label, bytes)));
     if failed {
+        if let Some(observer) = observers()
+            .lock()
+            .unwrap()
+            .get(device.wgpu_device())
+            .and_then(Weak::upgrade)
+        {
+            observer.store(true, Ordering::Release);
+        }
         warn_once(label, bytes);
         None
     } else {

@@ -137,9 +137,6 @@ pub(super) fn publish_terrain_coverage(
     if !coverage.dirty && same_target && coverage.far_revision == far_revision {
         return;
     }
-    // Columns admitted while the new mask could not be uploaded: only those the mask far
-    // terrain still draws with keeps clear of near geometry.
-    let mut stale_admission: Option<HashSet<_>> = None;
     if let (Some(scene), Some(target), Some(mut gpu)) = (scene.as_ref(), target, gpu) {
         let live = arena
             .allocations
@@ -153,8 +150,7 @@ pub(super) fn publish_terrain_coverage(
         let view_changed = coverage.applied_target.as_ref().is_none_or(|applied| {
             applied.centre != target.centre || applied.horizon != target.horizon
         });
-        let republish = changed || view_changed || coverage.mask.is_none();
-        if republish {
+        if changed || view_changed || coverage.mask.is_none() {
             let mask = NearMask::from_columns(
                 [target.centre.x, target.centre.z],
                 target.horizon,
@@ -166,24 +162,9 @@ pub(super) fn publish_terrain_coverage(
             );
             if coverage.mask.as_deref() != Some(&mask) {
                 let mask = Arc::new(mask);
-                if gpu.publish_mask(&device, &queue, Arc::clone(&mask)) {
-                    coverage.mask = Some(mask);
-                } else {
-                    stale_admission = Some(
-                        arena
-                            .allocations
-                            .values()
-                            .map(|allocation| allocation.gpu.key.chunk())
-                            .filter(|column| {
-                                column.dimension != target.centre.dimension
-                                    || gpu.admits_near(ColumnPos::new(column.x, column.z))
-                            })
-                            .collect(),
-                    );
-                }
+                let _ = gpu.publish_mask(&device, &queue, Arc::clone(&mask));
+                coverage.mask = Some(mask);
             }
-        }
-        if republish && stale_admission.is_none() {
             scene.residency.publish_near(
                 coverage
                     .state
@@ -202,11 +183,8 @@ pub(super) fn publish_terrain_coverage(
             if arena.pending_removals.contains(&entity) {
                 continue;
             }
-            let column = allocation.gpu.key.chunk();
-            let admitted = match &stale_admission {
-                Some(admitted) => admitted.contains(&column),
-                None => target.is_none() || coverage.state.draws_near(column),
-            };
+            let admitted =
+                target.is_none() || coverage.state.draws_near(allocation.gpu.key.chunk());
             if admitted != allocations.contains(entity)
                 && let Ok(mut entity) = commands.get_entity(entity)
             {
@@ -219,11 +197,7 @@ pub(super) fn publish_terrain_coverage(
         }
     }
     coverage.hiding = target.is_some();
-    // A mask that failed to upload is rebuilt and retried next frame.
-    if stale_admission.is_some() {
-        coverage.mask = None;
-    }
-    coverage.dirty = stale_admission.is_some();
+    coverage.dirty = false;
     coverage.far_revision = far_revision;
     coverage.applied_target = scene.as_ref().and_then(|scene| scene.target.clone());
 }

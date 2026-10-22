@@ -79,8 +79,6 @@ pub(crate) struct FarTerrainGpu {
     protected: HashSet<ColumnPos>,
     empty_far: HashSet<ColumnPos>,
     publication_revision: u64,
-    /// Set when storage growth ran out of memory, so an unplaced tile keeps its scene pending.
-    growth_failed: bool,
     pub(super) draws: Vec<FarDraw>,
     layout: BindGroupLayoutDescriptor,
     pipelines: Vec<((TextureFormat, u32), CachedRenderPipelineId)>,
@@ -152,7 +150,6 @@ impl FarTerrainGpu {
             protected: HashSet::new(),
             empty_far: HashSet::new(),
             publication_revision: 0,
-            growth_failed: false,
             draws: Vec::new(),
             layout,
             pipelines: Vec::new(),
@@ -160,6 +157,38 @@ impl FarTerrainGpu {
     }
 
     /// Reuses pipelines until the attachment format or sample count changes.
+    /// Reads each resident tile's GPU ranges and the uploaded mask in a stable key order.
+    #[cfg(test)]
+    pub(crate) fn publication_snapshot(
+        &self,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+    ) -> Vec<Vec<u8>> {
+        let read = crate::render_test_support::read_buffer;
+        let mut residents = self.resident.iter().collect::<Vec<_>>();
+        residents.sort_unstable_by_key(|(key, _)| **key);
+        let mut bytes = Vec::new();
+        for (_, resident) in residents {
+            bytes.push(read(
+                device,
+                queue,
+                &self.quads,
+                u64::from(resident.quads.start) * QUAD_BYTES,
+                resident.quads.len() as u64 * QUAD_BYTES,
+            ));
+            bytes.push(read(
+                device,
+                queue,
+                &self.records,
+                u64::from(resident.slot) * TILE_RECORD_BYTES,
+                TILE_RECORD_BYTES,
+            ));
+            bytes.push(resident.mesh.colours.to_vec());
+        }
+        bytes.push(read(device, queue, &self.mask, 0, self.mask_words * 4));
+        bytes
+    }
+
     fn pipeline(
         &mut self,
         cache: &PipelineCache,
@@ -262,13 +291,10 @@ impl FarTerrainGpu {
                 complete = false;
                 break;
             }
-            self.growth_failed = false;
             let Some((slot, quads)) =
                 self.allocate_tile(device, queue, mesh, tiles, &priority, rank)
             else {
                 allocation_failed = true;
-                // Out of memory is transient; the scene stays pending so the tile retries.
-                complete &= !self.growth_failed;
                 // A later coarser replacement may free space without uncovering a fallback.
                 complete &= !self
                     .resident
@@ -430,7 +456,7 @@ impl FarTerrainGpu {
     }
 
     /// Discards the old world's coverage and acknowledgements before preparing another world.
-    fn clear_tiles(&mut self) {
+    pub(crate) fn invalidate_publication(&mut self) {
         self.resident.clear();
         self.ranges = Default::default();
         self.free_slots = (0..self.slots).rev().collect();
@@ -529,7 +555,6 @@ impl FarTerrainGpu {
                 )
             })
         else {
-            self.growth_failed = true;
             return;
         };
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -581,7 +606,6 @@ impl FarTerrainGpu {
             "far terrain quads",
             u64::from(capacity) * QUAD_BYTES,
         ) else {
-            self.growth_failed = true;
             return false;
         };
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -754,7 +778,7 @@ pub(super) fn prepare_far_terrain(
         .as_ref()
         .is_some_and(|world| world.same_world(&scene.residency))
     {
-        gpu.clear_tiles();
+        gpu.invalidate_publication();
         gpu.applied_world = Some(scene.residency.clone());
     }
     gpu.set_empty_coverage(

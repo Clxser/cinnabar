@@ -9,7 +9,7 @@ use bevy::{
 };
 
 use super::app_tests::{
-    KEYS, camera_transform, chunk_app, frame, insert_meshes, noop_render_plugin,
+    KEYS, camera_transform, chunk_app_with, frame, mesh, noop_render_plugin, render_plugin,
 };
 use super::*;
 
@@ -22,6 +22,9 @@ struct Published {
     batches: Vec<(u32, Vec<(SubChunkKey, u64)>)>,
     gpu_culled: bool,
     culled_slots: u32,
+    geometry: Vec<Vec<u8>>,
+    indirect: Vec<u8>,
+    far: Vec<Vec<u8>>,
 }
 
 /// The view the last frame culled on the GPU; its CPU batches are retained but not submitted.
@@ -73,12 +76,37 @@ fn published(app: &mut App) -> Published {
         );
     }
     batches.sort_unstable();
+    let device = world.resource::<RenderDevice>();
+    let queue = world.resource::<RenderQueue>();
+    let arena = world.resource::<ChunkGpuArena>();
+    let geometry = [
+        (&arena.quad_buffer, arena.quad_len, PACKED_QUAD_BYTES),
+        (
+            &arena.geometry_stream_buffer,
+            arena.geometry_stream_len,
+            GEOMETRY_STREAM_WORD_BYTES,
+        ),
+        (&arena.origin_buffer, arena.origin_len, CHUNK_ORIGIN_BYTES),
+        (&arena.biome_buffer, arena.biome_len, BIOME_WORD_BYTES),
+    ]
+    .into_iter()
+    .map(|(buffer, len, stride)| {
+        crate::render_test_support::read_buffer(device, queue, buffer, 0, len as u64 * stride)
+    })
+    .collect();
     Published {
+        geometry,
+        indirect: arena.uploaded_indirect_bytes.clone(),
+        far: world
+            .resource::<crate::far_terrain::FarTerrainGpu>()
+            .publication_snapshot(device, queue),
         allocations,
         admitted,
         batches,
         gpu_culled: culled.is_some(),
-        culled_slots: world.resource::<GpuCull>().slot_count(),
+        culled_slots: world
+            .get_resource::<GpuCull>()
+            .map_or(0, GpuCull::slot_count),
     }
 }
 
@@ -96,12 +124,21 @@ fn single_threaded(app: &mut App) {
     }
 }
 
-fn terrain_app(culling: bool) -> App {
-    let (mut app, _) = chunk_app(
-        noop_render_plugin(WgpuFeatures::INDIRECT_FIRST_INSTANCE),
-        Msaa::Off,
-        camera_transform(),
-    );
+/// Builds a real terrain publication with non-fallback biomes, far tiles, and either draw path.
+fn terrain_app(culling: bool, direct: bool, hardware: bool) -> Option<App> {
+    let features = if direct {
+        WgpuFeatures::empty()
+    } else {
+        WgpuFeatures::INDIRECT_FIRST_INSTANCE
+    };
+    let render = if hardware {
+        render_plugin(wgpu::Backends::PRIMARY, features)?
+    } else {
+        noop_render_plugin(features)
+    };
+    let (mut app, _) = chunk_app_with(render, Msaa::Off, camera_transform(), |app| {
+        app.add_plugins(crate::far_terrain::FarTerrainRenderPlugin);
+    });
     single_threaded(&mut app);
     app.sub_app_mut(RenderApp)
         .init_resource::<CulledView>()
@@ -115,29 +152,98 @@ fn terrain_app(culling: bool) -> App {
     app.world_mut()
         .resource_mut::<render_scene::ChunkOcclusionCulling>()
         .0 = culling;
-    insert_meshes(&mut app, &KEYS);
-    app
+    let biomes = world::DecodedBiomeColumn::decode(
+        -4,
+        1,
+        &[1, 84],
+        &world::RawBiomeIds { default_biome: 0 },
+    );
+    let biome = meshing::PackedBiomeRecord::from_storage(&biomes.storage(-4).unwrap(), |id| id + 1);
+    for key in KEYS {
+        let mut mesh = mesh();
+        mesh.biome = biome.clone();
+        app.world_mut()
+            .resource_mut::<render_scene::ChunkRenderQueue>()
+            .try_insert(key, mesh, render_scene::ChunkUploadPriority::urgent())
+            .unwrap();
+    }
+    let mut scene = app
+        .world_mut()
+        .resource_mut::<render_scene::FarTerrainScene>();
+    scene.near = Arc::new(far_terrain::NearMask::from_columns([0, 0], 32, []));
+    scene.tiles = (0..2)
+        .map(|index| {
+            Arc::new(far_terrain::TileMesh {
+                coverage: far_terrain::TileCoverage::Complete,
+                key: far_terrain::TileKey {
+                    level: 0,
+                    x: index + 4,
+                    z: 0,
+                },
+                revision: index as u64 + 1,
+                quads: vec![[index as u32, 64]; 2].into_boxed_slice(),
+                colours: vec![
+                    index as u8;
+                    far_terrain::config::TILE_CELLS * far_terrain::config::TILE_CELLS * 4
+                ]
+                .into_boxed_slice(),
+                min_y: 0,
+                max_y: 64,
+            })
+        })
+        .collect::<Vec<_>>()
+        .into();
+    Some(app)
 }
 
-/// Injects out-of-memory at one growth site for the first frames, then lets every frame
-/// succeed; the result must equal a publication that never failed.
+/// Every checked terrain growth site retries a complete publication on the very next frame.
 #[test]
 fn every_growth_site_recovers_to_the_fresh_publication() {
-    const FAILING_FRAMES: usize = 2;
-    const SETTLE_FRAMES: usize = 6;
-    for (site, culling) in [
-        ("packed chunk quads", false),
-        ("packed chunk geometry streams", false),
-        ("packed chunk origins", false),
-        ("terrain identity vertex offsets", false),
-        ("packed chunk indirect commands", false),
-        ("terrain cull storage", true),
+    recovery_table(false);
+}
+
+/// Hardware readback checks geometry bytes as well as the validating NOOP schedule checks.
+#[test]
+fn terrain_recovery_matches_fresh_gpu_bytes() {
+    recovery_table(true);
+}
+
+/// Exercises the same error-scope boundary as production, including late staging growth.
+fn recovery_table(hardware: bool) {
+    for (site, culling, direct) in [
+        ("packed chunk quads", false, false),
+        ("packed chunk geometry streams", false, false),
+        ("packed chunk origins", false, false),
+        ("packed chunk biome records", false, false),
+        ("terrain identity vertex offsets", false, false),
+        ("packed chunk indirect commands", false, false),
+        ("terrain cull storage", true, false),
+        ("terrain occlusion storage", true, true),
+        ("far terrain quads", false, false),
+        ("far terrain tile slots", false, false),
+        ("far terrain near columns", false, false),
+        ("retained terrain upload staging", false, false),
     ] {
-        let mut fresh = terrain_app(culling);
-        for _ in 0..SETTLE_FRAMES {
+        let Some(mut fresh) = terrain_app(culling, direct, hardware) else {
+            eprintln!("missing-fixture: terrain recovery GPU adapter");
+            return;
+        };
+        let mut recovering = terrain_app(culling, direct, hardware).unwrap();
+        for _ in 0..4 {
             frame(&mut fresh);
         }
-        let mut recovering = terrain_app(culling);
+        // Metal deliberately uses direct submission, so indirect/cull storage has no growth.
+        if hardware
+            && !direct
+            && fresh
+                .sub_app(RenderApp)
+                .world()
+                .get_resource::<GpuCull>()
+                .is_none()
+            && (site == "terrain cull storage" || site == "packed chunk indirect commands")
+        {
+            continue;
+        }
         let failures = Rc::new(Cell::new(0));
         {
             let failures = Rc::clone(&failures);
@@ -146,30 +252,43 @@ fn every_growth_site_recovers_to_the_fresh_publication() {
                 failures.set(failures.get() + usize::from(fail));
                 fail
             });
-            for _ in 0..FAILING_FRAMES {
+            for _ in 0..4 {
                 frame(&mut recovering);
+                if site == "retained terrain upload staging" {
+                    recovering
+                        .sub_app(RenderApp)
+                        .world()
+                        .resource::<crate::upload_staging::TerrainUploadStaging>()
+                        .request_test_growth();
+                }
             }
+            assert!(failures.get() > 0, "{site} was never allocated");
         }
-        assert!(failures.get() > 0, "{site} was never allocated");
-        // Witnesses describe only submitted commands, even while publication is failing.
-        let failing = published(&mut recovering);
-        assert!(
-            failing
-                .batches
-                .iter()
-                .all(|(commands, drawn)| (*commands == 0) == drawn.is_empty()),
-            "{site}: {failing:?}"
-        );
-        for _ in 0..SETTLE_FRAMES {
-            frame(&mut recovering);
-        }
+        frame(&mut recovering);
         assert_eq!(published(&mut recovering), published(&mut fresh), "{site}");
-        assert!(
-            !recovering
+        assert_eq!(
+            recovering
                 .sub_app(RenderApp)
                 .world()
-                .resource::<ChunkGpuArena>()
-                .indirect_publication_stale,
+                .resource::<ChunkGpuUploadStats>()
+                .chunk_updates,
+            KEYS.len(),
+            "{site} did not republish CPU geometry"
+        );
+        // Once rebuilt, another frame retains the exact publication without replaying it.
+        frame(&mut recovering);
+        assert_eq!(
+            published(&mut recovering),
+            published(&mut fresh),
+            "{site} was not idempotent"
+        );
+        assert_eq!(
+            recovering
+                .sub_app(RenderApp)
+                .world()
+                .resource::<ChunkGpuUploadStats>()
+                .chunk_updates,
+            0,
             "{site}"
         );
     }

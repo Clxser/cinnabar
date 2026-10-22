@@ -402,86 +402,44 @@ pub(in crate::chunk) fn prepare_chunk_indirect_batches(
 
     let frame_probe = frame_probe.scope();
     let tint_identity = biome_tints.table_identity();
-    // Every stale batch is rebuilt before anything is stored, so a buffer that cannot grow
-    // leaves the whole previous publication drawing, with its witnesses, until a retry.
-    let solid = solid_batches
-        .0
-        .values()
-        .filter(|batch| batch.cubes.stale)
-        .map(|batch| {
-            super::solid::prepare_solid_indirect_batch_draws(
+    for batch in solid_batches.0.values_mut() {
+        if batch.cubes.stale {
+            let draws = super::solid::prepare_solid_indirect_batch_draws(
                 resident(&batch.cubes.visible_entities, &allocations),
                 batch.camera,
                 &frame_probe,
                 tint_identity,
-            )
-        })
-        .collect::<Vec<_>>();
-    let cutout = stale_lists(&batches.0)
-        .into_iter()
-        .map(|entities| {
-            prepare_indirect_batch_draws(
-                resident(entities, &allocations),
-                &frame_probe,
-                tint_identity,
-            )
-        })
-        .collect::<Vec<_>>();
-    let models = stale_lists(&model_batches.0)
-        .into_iter()
-        .map(|entities| {
-            prepare_model_indirect_batch_draws(
-                resident(entities, &allocations),
-                &frame_probe,
-                tint_identity,
-            )
-        })
-        .collect::<Vec<_>>();
-    let liquids = stale_lists(&depth_liquid_batches.0)
-        .into_iter()
-        .map(|entities| {
-            prepare_depth_liquid_indirect_batch_draws(
-                resident(entities, &allocations),
-                &frame_probe,
-                tint_identity,
-            )
-        })
-        .collect::<Vec<_>>();
-    let kept = solid_batches
-        .0
-        .values()
-        .map(|batch| &batch.cubes)
-        .chain(batches.0.values())
-        .chain(model_batches.0.values())
-        .chain(depth_liquid_batches.0.values())
-        .filter(|batch| !batch.stale)
-        .map(|batch| batch.commands.len());
-    let rebuilt = [&solid, &cutout, &models, &liquids]
-        .into_iter()
-        .flatten()
-        .map(|(commands, _)| commands.len());
-    if !reserve_indirect_commands(&mut arena, &render_device, kept.chain(rebuilt).sum()) {
-        arena.indirect_publication_stale = true;
-        retained.layout_changed = true;
-        return;
+            );
+            store(&mut batch.cubes, draws, probing);
+        }
     }
-    arena.indirect_publication_stale = false;
-    let stale_cubes = solid_batches
-        .0
-        .values_mut()
-        .map(|batch| &mut batch.cubes)
-        .filter(|batch| batch.stale);
-    for (batch, draws) in stale_cubes.zip(solid) {
+    for batch in batches.0.values_mut().filter(|batch| batch.stale) {
+        let draws = prepare_indirect_batch_draws(
+            resident(&batch.visible_entities, &allocations),
+            &frame_probe,
+            tint_identity,
+        );
         store(batch, draws, probing);
     }
-    for (batches, draws) in [
-        (&mut batches.0, cutout),
-        (&mut model_batches.0, models),
-        (&mut depth_liquid_batches.0, liquids),
-    ] {
-        for (batch, draws) in batches.values_mut().filter(|batch| batch.stale).zip(draws) {
-            store(batch, draws, probing);
-        }
+    for batch in model_batches.0.values_mut().filter(|batch| batch.stale) {
+        let draws = prepare_model_indirect_batch_draws(
+            resident(&batch.visible_entities, &allocations),
+            &frame_probe,
+            tint_identity,
+        );
+        store(batch, draws, probing);
+    }
+    for batch in depth_liquid_batches
+        .0
+        .values_mut()
+        .filter(|batch| batch.stale)
+    {
+        let draws = prepare_depth_liquid_indirect_batch_draws(
+            resident(&batch.visible_entities, &allocations),
+            &frame_probe,
+            tint_identity,
+        );
+        store(batch, draws, probing);
     }
 
     // Solid runs go first so the alpha-tested cutout draws meet a filled depth buffer.
@@ -510,21 +468,6 @@ pub(in crate::chunk) fn prepare_chunk_indirect_batches(
     retained.commands = all_commands;
 }
 
-/// The visible lists of the batches whose commands must be rebuilt, in map order.
-fn stale_lists(batches: &HashMap<Entity, ChunkIndirectBatch>) -> Vec<&[Entity]> {
-    batches
-        .values()
-        .filter(|batch| batch.stale)
-        .map(|batch| batch.visible_entities.as_slice())
-        .collect()
-}
-
-/// Indirect commands and the allocations they draw, one batch's build.
-type Draws = (
-    Vec<DrawIndexedIndirectArgs>,
-    Vec<(Entity, FrameAllocationIdentity)>,
-);
-
 fn resident<'a>(
     entities: &'a [Entity],
     allocations: &'a Query<&GpuChunkAllocation>,
@@ -535,7 +478,14 @@ fn resident<'a>(
 }
 
 /// Keeps freshly built commands; a probe's stay stale so the next frame builds them again.
-fn store(batch: &mut ChunkIndirectBatch, (commands, drawn): Draws, probing: bool) {
+fn store(
+    batch: &mut ChunkIndirectBatch,
+    (commands, drawn): (
+        Vec<DrawIndexedIndirectArgs>,
+        Vec<(Entity, FrameAllocationIdentity)>,
+    ),
+    probing: bool,
+) {
     batch.commands = commands;
     batch.drawn_allocations = drawn;
     batch.stale = probing;

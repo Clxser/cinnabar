@@ -61,15 +61,6 @@ impl FarTerrainGpu {
             }))
     }
 
-    /// Whether near geometry in `column` can draw without far terrain drawing there too, under
-    /// the mask the GPU holds.
-    pub(crate) fn admits_near(&self, column: ColumnPos) -> bool {
-        self.applied_mask
-            .as_ref()
-            .is_some_and(|mask| mask.contains(column))
-            || !self.draws_far(column)
-    }
-
     /// Whether decoded evidence has a visible far drawer or an acknowledged empty selection.
     pub(crate) fn covers_column(&self, column: ColumnPos) -> bool {
         self.empty_far.contains(&column) || self.draws_far(column)

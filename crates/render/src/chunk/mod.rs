@@ -112,6 +112,7 @@ mod presentation;
 #[cfg(feature = "publication-test-support")]
 mod publication_test_support;
 mod queue;
+mod recovery;
 #[cfg(feature = "shaderpacks")]
 pub(crate) mod shaderpack_sources;
 pub(crate) use coverage::TerrainCoverage;

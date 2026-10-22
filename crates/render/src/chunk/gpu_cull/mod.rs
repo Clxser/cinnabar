@@ -216,3 +216,32 @@ pub(in crate::chunk) fn gpu_cull_view_eligible(
 ) -> bool {
     frustum.is_some() && layers.is_none_or(|layers| layers.intersects(&RenderLayers::default()))
 }
+
+/// Forgets every culling decision so republished allocations rebuild their records.
+pub(in crate::chunk) fn invalidate_publication(world: &mut World) {
+    if let Some(mut cull) = world.get_resource_mut::<GpuCull>() {
+        cull.table = default();
+        cull.bind_groups = None;
+        cull.prepared_view = None;
+    }
+    if let Some(mut direct) = world.get_resource_mut::<DirectOcclusion>() {
+        direct.invalidate_publication();
+    }
+    suppress_publication(world);
+}
+
+/// Removes draw routing for a terrain frame whose publication failed.
+pub(in crate::chunk) fn suppress_publication(world: &mut World) {
+    if let Some(mut cull) = world.get_resource_mut::<GpuCull>() {
+        cull.prepared_view = None;
+    }
+    if let Some(mut frame) = world.get_resource_mut::<GpuCullFrame>() {
+        frame.view = None;
+    }
+    if let Some(mut direct) = world.get_resource_mut::<DirectOcclusion>() {
+        direct.suppress_publication();
+    }
+    if let Some(mut frame) = world.get_resource_mut::<DirectOcclusionFrame>() {
+        frame.clear();
+    }
+}
