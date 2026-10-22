@@ -150,33 +150,7 @@ fn assert_parallel_matches_serial(
 }
 
 fn installed_entity_assets() -> Option<Arc<RuntimeEntityAssets>> {
-    let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/assets/compiled");
-    let Ok(entries) = std::fs::read_dir(&root) else {
-        eprintln!(
-            "skipping vanilla crowd schedule test: missing entity fixture directory {}",
-            root.display()
-        );
-        return None;
-    };
-    let mut paths: Vec<_> = entries
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "mcbeent")
-        })
-        .collect();
-    paths.sort();
-    let Some(path) = paths.first() else {
-        eprintln!(
-            "skipping vanilla crowd schedule test: missing entity fixture {}/*.mcbeent",
-            root.display()
-        );
-        return None;
-    };
-    Some(Arc::new(
-        RuntimeEntityAssets::decode(&std::fs::read(path).unwrap()).unwrap(),
-    ))
+    crate::test_support::installed_entity_assets("vanilla crowd schedule")
 }
 
 /// Random vanilla rigs evaluate in parallel to the exact serial state, with and without the

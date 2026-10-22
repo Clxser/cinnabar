@@ -356,41 +356,25 @@ pub fn initialized_pose_compiled() -> assets::CompiledEntityAssets {
     reason = "explains on stderr why a test skips when the installed entity carrier fixture is absent"
 )]
 pub fn installed_entity_assets(fixture: &str) -> Option<Arc<RuntimeEntityAssets>> {
-    let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/assets/compiled");
-    let entries = match std::fs::read_dir(&root) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+    let configured = std::env::var_os("CINNABAR_ENTITY_ASSETS");
+    let required = configured.is_some();
+    let path = configured.map(std::path::PathBuf::from).unwrap_or_else(|| {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(assets::carriers::COMPILED_DIR)
+            .join(assets::carriers::ENTITY.output)
+    });
+    match std::fs::read(&path) {
+        Ok(bytes) => Some(Arc::new(RuntimeEntityAssets::decode(&bytes).unwrap())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !required => {
             eprintln!(
                 "skipping installed {fixture} fixture: {} is absent",
-                root.display()
+                path.display()
             );
-            return None;
+            None
         }
-        Err(error) => panic!("read {}: {error}", root.display()),
-    };
-    let paths = entries
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "mcbeent")
-        })
-        .collect::<Vec<_>>();
-    if paths.is_empty() {
-        eprintln!(
-            "skipping installed {fixture} fixture: no entity carrier in {}",
-            root.display()
-        );
-        return None;
+        Err(error) => panic!("read {}: {error}", path.display()),
     }
-    assert_eq!(
-        paths.len(),
-        1,
-        "ambiguous installed entity carriers: {paths:?}"
-    );
-    Some(Arc::new(
-        RuntimeEntityAssets::decode(&std::fs::read(&paths[0]).unwrap()).unwrap(),
-    ))
 }
 
 /// The bone's per-axis scale with its uniform scale applied.

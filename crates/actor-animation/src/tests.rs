@@ -1043,44 +1043,9 @@ fn arrow_target_yaw_uses_interpolated_absolute_rotation_not_the_latest_packet() 
 
 #[test]
 fn hud_pose_advances_crawling_animation_independently_of_first_person() {
-    let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/assets/compiled");
-    let entries = match std::fs::read_dir(&root) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!(
-                "skipping HUD pose test: missing entity fixture directory {}",
-                root.display()
-            );
-            return;
-        }
-        Err(error) => panic!("read entity fixture directory {}: {error}", root.display()),
-    };
-    let Some(path) = entries
-        .map(|entry| entry.expect("read entity fixture entry").path())
-        .find(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "mcbeent")
-        })
-    else {
-        eprintln!(
-            "skipping HUD pose test: missing entity fixture {}/*.mcbeent",
-            root.display()
-        );
+    let Some(assets) = crate::test_support::installed_entity_assets("HUD pose") else {
         return;
     };
-    let bytes = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!(
-                "skipping HUD pose test: missing entity fixture {}",
-                path.display()
-            );
-            return;
-        }
-        Err(error) => panic!("read entity fixture {}: {error}", path.display()),
-    };
-    let assets = Arc::new(RuntimeEntityAssets::decode(&bytes).unwrap());
     let mut actor = actor_with_metadata(HashMap::from([(
         ActorDataKey::FlagsTwo.wire_value(),
         ActorMetadataValue::FlagsExtended(1 << (ActorFlag::Crawling.wire_value() - u64::BITS)),

@@ -94,25 +94,7 @@ fn interrupted_and_completed_crossbow_use_has_no_remaining_duration() {
 
 /// Loads the installed authored player rig without redistributing its carrier.
 fn installed_assets() -> Option<Arc<RuntimeEntityAssets>> {
-    let configured = std::env::var_os("CINNABAR_ENTITY_ASSETS");
-    let required = configured.is_some();
-    let path = configured.map(std::path::PathBuf::from).unwrap_or_else(|| {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join(assets::carriers::COMPILED_DIR)
-            .join(assets::carriers::ENTITY.output)
-    });
-    match std::fs::read(&path) {
-        Ok(bytes) => Some(Arc::new(RuntimeEntityAssets::decode(&bytes).unwrap())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !required => {
-            eprintln!(
-                "skipping crossbow parent pose: missing fixture {}",
-                path.display()
-            );
-            None
-        }
-        Err(error) => panic!("read {}: {error}", path.display()),
-    }
+    crate::test_support::installed_entity_assets("crossbow parent pose")
 }
 
 /// Samples the real player parent with a caller-owned use clock and fixed actor age.
