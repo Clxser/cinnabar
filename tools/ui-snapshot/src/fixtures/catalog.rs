@@ -8,6 +8,8 @@ use super::chat::{
 };
 #[cfg(feature = "test-support")]
 use super::cosmetics;
+use launcher::local_worlds::world::UnavailableReason;
+
 use super::{
     Fixture, GUI_SCALE, KEYBOARD_SIZE, SHADER_PACK_ROW_SIZE, SIZE, SMALL_SIZE, SettingId,
     SettingSection, State, TALL_SIZE, collection_reveal, hud_card_fit, hud_cards, hud_editor,
@@ -551,6 +553,18 @@ pub(super) const STATES: &[State] = &[
         size: SIZE,
         gui_scale: GUI_SCALE,
         fixture: out_of_game::play_worlds_importing,
+    },
+    State {
+        name: "local-docker-missing",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || out_of_game::docker_prompt(UnavailableReason::DockerMissing),
+    },
+    State {
+        name: "local-docker-not-running",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || out_of_game::docker_prompt(UnavailableReason::DockerNotRunning),
     },
     State {
         name: "world-edit-after-delete-back",
