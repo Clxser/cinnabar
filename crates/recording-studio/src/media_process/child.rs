@@ -107,6 +107,10 @@ impl Drop for OwnedChild {
 }
 
 impl MediaChild {
+    /// Metered binary output supplies progress without mixing FFmpeg text into its media pipe.
+    pub(crate) fn activity_counter(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.activity)
+    }
     /// Called only on an IO worker. No shell interprets argv and no background console is opened.
     pub fn start(command: Command, cancellation: Cancellation) -> Result<Self, String> {
         Self::start_inner(command, cancellation, None, None)

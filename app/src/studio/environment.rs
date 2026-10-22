@@ -26,7 +26,11 @@ pub(super) struct NativeEnvironment {
 
 /// Starts an independent track with the exact state visible when this take's capture clock begins.
 pub(super) fn start(world: &World, session: &CaptureSession) -> Result<NativeEnvironment, String> {
-    let mut capture = EnvironmentCapture::start(session.directory(), session.info().clone())?;
+    let mut capture = EnvironmentCapture::start_with_disk(
+        session.directory(),
+        session.info().clone(),
+        session.disk_budget().clone(),
+    )?;
     let textures = world
         .get_resource::<AtmosphereTextureAssets>()
         .ok_or("Atmosphere textures are unavailable for recording.")?;

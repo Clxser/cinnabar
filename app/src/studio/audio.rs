@@ -33,7 +33,11 @@ impl AudioWorker {
     }
 
     /// Moves the mixed stream to its own worker before any WAV file is opened.
-    pub fn start(tap: LiveAudioTap, path: PathBuf) -> Result<Self, String> {
+    pub fn start(
+        tap: LiveAudioTap,
+        path: PathBuf,
+        disk: recording_studio::disk::DiskBudget,
+    ) -> Result<Self, String> {
         let rate = tap.sample_rate();
         let control = Arc::new(Control {
             stop: AtomicBool::new(false),
@@ -44,7 +48,7 @@ impl AudioWorker {
         let thread = thread::Builder::new()
             .name("studio-live-audio".into())
             .spawn(move || {
-                let result = run(tap, path, &worker);
+                let result = run(tap, path, &worker, disk);
                 let _ = done.send(result);
             })
             .map_err(|error| error.to_string())?;
@@ -85,9 +89,15 @@ impl Drop for AudioWorker {
 }
 
 /// Uses block offsets to keep a full disk queue from shifting subsequent audio out of sync.
-fn run(tap: LiveAudioTap, path: PathBuf, control: &Control) -> Result<(PathBuf, u64), String> {
-    let mut wav = WavWriter::create_rf64(&path, CAPTURE_CHANNELS, tap.sample_rate())
-        .map_err(|error| error.to_string())?;
+fn run(
+    tap: LiveAudioTap,
+    path: PathBuf,
+    control: &Control,
+    disk: recording_studio::disk::DiskBudget,
+) -> Result<(PathBuf, u64), String> {
+    let mut wav =
+        WavWriter::create_rf64_with_disk(&path, CAPTURE_CHANNELS, tap.sample_rate(), disk)
+            .map_err(|error| error.to_string())?;
     let mut written = 0_u64;
     let mut stopping = None;
     loop {

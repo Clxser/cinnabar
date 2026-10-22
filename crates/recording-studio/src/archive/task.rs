@@ -110,7 +110,22 @@ impl Recording {
         info: RecordingInfo,
         config: RecordingConfig,
     ) -> Result<Self, ArchiveError> {
-        Self::spawn(path, info, config, None)
+        Self::start_with_disk(
+            path,
+            info,
+            config,
+            crate::disk::DiskBudget::new(config.disk_quota),
+        )
+    }
+
+    /// A native take shares this admission owner across every journal and companion writer.
+    pub fn start_with_disk(
+        path: PathBuf,
+        info: RecordingInfo,
+        config: RecordingConfig,
+        disk: crate::disk::DiskBudget,
+    ) -> Result<Self, ArchiveError> {
+        Self::spawn(path, info, config, None, disk)
     }
 
     /// Opens storage on the caller's IO worker before related video/audio files are created.
@@ -120,8 +135,23 @@ impl Recording {
         info: RecordingInfo,
         config: RecordingConfig,
     ) -> Result<Self, ArchiveError> {
-        let writer = Writer::create(path.clone(), &info, config)?;
-        Self::spawn(path, info, config, Some(writer))
+        Self::start_ready_with_disk(
+            path,
+            info,
+            config,
+            crate::disk::DiskBudget::new(config.disk_quota),
+        )
+    }
+
+    /// The startup IO worker creates storage before publishing a nonblocking producer to gameplay.
+    pub fn start_ready_with_disk(
+        path: PathBuf,
+        info: RecordingInfo,
+        config: RecordingConfig,
+        disk: crate::disk::DiskBudget,
+    ) -> Result<Self, ArchiveError> {
+        let writer = Writer::create_with_disk(path.clone(), &info, config, disk.clone())?;
+        Self::spawn(path, info, config, Some(writer), disk)
     }
 
     /// Shares admission and lifecycle between asynchronous and already-open storage.
@@ -130,6 +160,7 @@ impl Recording {
         info: RecordingInfo,
         config: RecordingConfig,
         ready: Option<Writer>,
+        disk: crate::disk::DiskBudget,
     ) -> Result<Self, ArchiveError> {
         info.validate()?;
         config.validate()?;
@@ -159,7 +190,7 @@ impl Recording {
             .name("recording-storage".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    run(&worker, info, config, receiver, ready)
+                    run(&worker, info, config, receiver, ready, disk)
                 }));
                 if result.is_err() {
                     worker.fail("recording storage worker stopped unexpectedly".into());
@@ -452,15 +483,18 @@ fn run(
     config: RecordingConfig,
     receiver: mpsc::Receiver<QueuedRecord>,
     ready: Option<Writer>,
+    disk: crate::disk::DiskBudget,
 ) {
-    let mut writer =
-        match ready.map_or_else(|| Writer::create(shared.path.clone(), &info, config), Ok) {
-            Ok(writer) => writer,
-            Err(error) => {
-                shared.fail(error.to_string());
-                return;
-            }
-        };
+    let mut writer = match ready.map_or_else(
+        || Writer::create_with_disk(shared.path.clone(), &info, config, disk),
+        Ok,
+    ) {
+        Ok(writer) => writer,
+        Err(error) => {
+            shared.fail(error.to_string());
+            return;
+        }
+    };
     shared.publish(|progress| {
         if !matches!(
             progress.state,

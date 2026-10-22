@@ -16,6 +16,7 @@ use std::{
 use super::{FrozenVisuals, VISUAL_DIRECTORY, VISUAL_TRACK_SCHEMA, retention, store_frame};
 
 pub struct VisualCapture {
+    disk: recording_studio::disk::DiskBudget,
     recording: Option<Recording>,
     root: PathBuf,
     store: Arc<Mutex<Option<Worker>>>,
@@ -53,21 +54,36 @@ struct Worker {
 
 impl VisualCapture {
     /// Startup and all raster hashing happen on archive workers; capture admission never waits on disk.
-    pub fn start(parent: &Path, mut info: RecordingInfo) -> Result<Self, String> {
+    pub fn start(parent: &Path, info: RecordingInfo) -> Result<Self, String> {
+        Self::start_with_disk(
+            parent,
+            info,
+            recording_studio::disk::DiskBudget::new(RecordingConfig::default().disk_quota),
+        )
+    }
+
+    /// Native visual journals and object staging share every other stream's take-wide allowance.
+    pub fn start_with_disk(
+        parent: &Path,
+        mut info: RecordingInfo,
+        disk: recording_studio::disk::DiskBudget,
+    ) -> Result<Self, String> {
         info.scene_schema = VISUAL_TRACK_SCHEMA.into();
         let root = parent.join(VISUAL_DIRECTORY);
-        let recording = Recording::start(
+        let recording = Recording::start_with_disk(
             root.clone(),
             info,
             RecordingConfig {
-                disk_quota: journal_quota(),
+                disk_quota: disk.maximum(),
                 queued_bytes: retention::MAX_QUEUED_BYTES,
                 compression_level: 0,
                 ..Default::default()
             },
+            disk.clone(),
         )
         .map_err(|e| e.to_string())?;
         Ok(Self {
+            disk,
             recording: Some(recording),
             root,
             store: Arc::new(Mutex::new(None)),
@@ -97,6 +113,7 @@ impl VisualCapture {
             boundary(recording, at, RecordKind::CheckpointStart)?;
         }
         let root = self.root.clone();
+        let disk = self.disk.clone();
         let store = Arc::clone(&self.store);
         recording
             .push_prepared(
@@ -113,9 +130,10 @@ impl VisualCapture {
                     })?;
                     if store.is_none() {
                         *store = Some(Worker {
-                            store: AssetWriter::open(
+                            store: AssetWriter::open_with_disk(
                                 &root,
-                                RecordingConfig::default().disk_quota - journal_quota(),
+                                disk.maximum(),
+                                disk.clone(),
                             )?,
                             hand: super::hand::GeometryCache::default(),
                             atmosphere: super::atmosphere::AssetCache::default(),
@@ -163,11 +181,6 @@ impl VisualCapture {
         }
         Ok(())
     }
-}
-
-/// Pixel objects and journal segments share the track's declared disk allowance.
-fn journal_quota() -> u64 {
-    RecordingConfig::default().disk_quota / 2
 }
 
 /// Checkpoint framing shares the same timestamp and archive admission as its visual sample.

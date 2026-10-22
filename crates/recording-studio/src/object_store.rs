@@ -116,11 +116,21 @@ pub struct AssetWriter {
     stored: u64,
     objects: usize,
     shared_pixels: BTreeMap<usize, (Weak<[u8]>, AssetId)>,
+    disk: crate::disk::DiskBudget,
 }
 
 impl AssetWriter {
     /// Admits an existing bounded store without following symlinks or charging unfinished staging files.
     pub fn open(recording: &Path, maximum: u64) -> Result<Self, ArchiveError> {
+        Self::open_with_disk(recording, maximum, crate::disk::DiskBudget::new(maximum))
+    }
+
+    /// Each store has one worker owner; existing bytes are adopted once into the shared take allowance.
+    pub fn open_with_disk(
+        recording: &Path,
+        maximum: u64,
+        disk: crate::disk::DiskBudget,
+    ) -> Result<Self, ArchiveError> {
         if maximum == 0 {
             return Err(ArchiveError::Invalid("recording asset quota is zero"));
         }
@@ -180,12 +190,15 @@ impl AssetWriter {
                 return Err(ArchiveError::Quota);
             }
         }
+        disk.adopt(stored)
+            .map_err(|error| file_error(&reader.directory, error))?;
         Ok(Self {
             reader,
             maximum,
             stored,
             objects,
             shared_pixels: BTreeMap::new(),
+            disk,
         })
     }
 
@@ -231,14 +244,20 @@ impl AssetWriter {
         let limit = maximum
             .min(MAX_ASSET_BYTES)
             .min(self.maximum.saturating_sub(self.stored));
-        let mut staged = tempfile::Builder::new()
-            .prefix(".object-")
-            .suffix(".part")
-            .tempfile_in(&self.reader.directory)
-            .map_err(|error| file_error(&self.reader.directory, error))?;
+        let mut staged = crate::disk::StagedFile::new(
+            &self.reader.directory,
+            ".object-",
+            ".part",
+            self.disk.clone(),
+        )
+        .map_err(|error| file_error(&self.reader.directory, error))?;
         let (hash, bytes) = {
             let mut writer = HashWriter {
-                output: BufWriter::new(staged.as_file_mut()),
+                output: BufWriter::new(
+                    staged
+                        .writer()
+                        .map_err(|error| file_error(&self.reader.directory, error))?,
+                ),
                 hash: Sha256::new(),
                 bytes: 0,
                 maximum: limit,
@@ -262,7 +281,6 @@ impl AssetWriter {
             (hash, bytes)
         };
         staged
-            .as_file()
             .sync_all()
             .map_err(|error| file_error(&self.reader.directory, error))?;
         let id = AssetId(hash.finalize().into());

@@ -61,17 +61,38 @@ impl TerrainJournal {
     }
 
     /// Creates an optional terrain track beside POV media. Call only from a capture IO worker.
-    /// Object and journal quotas are independent, explicit budgets supplied by the session owner.
+    /// Standalone callers supply journal and object allowances whose sum bounds physical growth.
     pub fn start(
+        parent: &Path,
+        info: RecordingInfo,
+        config: RecordingConfig,
+        object_quota: u64,
+    ) -> Result<Self, ArchiveError> {
+        let maximum = config
+            .disk_quota
+            .checked_add(object_quota)
+            .ok_or(ArchiveError::Quota)?;
+        Self::start_with_disk(
+            parent,
+            info,
+            config,
+            object_quota,
+            recording_studio::disk::DiskBudget::new(maximum),
+        )
+    }
+
+    /// Terrain object and journal workers share the same take owner as every native companion track.
+    pub fn start_with_disk(
         parent: &Path,
         mut info: RecordingInfo,
         config: RecordingConfig,
         object_quota: u64,
+        disk: recording_studio::disk::DiskBudget,
     ) -> Result<Self, ArchiveError> {
         info.scene_schema = TERRAIN_TRACK_SCHEMA.into();
         let root = parent.join(TERRAIN_DIRECTORY);
-        let recording = Recording::start_ready(root.clone(), info, config)?;
-        let objects = match AssetWriter::open(&root, object_quota) {
+        let recording = Recording::start_ready_with_disk(root.clone(), info, config, disk.clone())?;
+        let objects = match AssetWriter::open_with_disk(&root, object_quota, disk) {
             Ok(objects) => objects,
             Err(error) => {
                 let task = recording.task();

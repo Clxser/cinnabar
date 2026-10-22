@@ -40,6 +40,7 @@ struct Worker {
 }
 
 pub struct ActorCapture {
+    disk: recording_studio::disk::DiskBudget,
     recording: Option<Recording>,
     root: PathBuf,
     worker: Arc<Mutex<Option<Worker>>>,
@@ -49,21 +50,36 @@ pub struct ActorCapture {
 
 impl ActorCapture {
     /// Starts the prepared actor track asynchronously, leaving gameplay independent of disk startup.
-    pub fn start(parent: &Path, mut info: RecordingInfo) -> Result<Self, String> {
+    pub fn start(parent: &Path, info: RecordingInfo) -> Result<Self, String> {
+        Self::start_with_disk(
+            parent,
+            info,
+            recording_studio::disk::DiskBudget::new(RecordingConfig::default().disk_quota),
+        )
+    }
+
+    /// All actor data and its immutable assets enter the same native take disk allowance.
+    pub fn start_with_disk(
+        parent: &Path,
+        mut info: RecordingInfo,
+        disk: recording_studio::disk::DiskBudget,
+    ) -> Result<Self, String> {
         info.scene_schema = ACTOR_TRACK_SCHEMA.into();
         let root = parent.join(ACTOR_DIRECTORY);
-        let recording = Recording::start(
+        let recording = Recording::start_with_disk(
             root.clone(),
             info,
             RecordingConfig {
-                disk_quota: journal_quota(),
+                disk_quota: disk.maximum(),
                 // Pose payloads already carry bounded zlib streams; avoid compressing them twice.
                 compression_level: 0,
                 ..Default::default()
             },
+            disk.clone(),
         )
         .map_err(|error| error.to_string())?;
         Ok(Self {
+            disk,
             recording: Some(recording),
             root,
             worker: Arc::new(Mutex::new(None)),
@@ -151,6 +167,7 @@ impl ActorCapture {
             boundary(recording, at, RecordKind::CheckpointStart)?;
         }
         let root = self.root.clone();
+        let disk = self.disk.clone();
         let worker = Arc::clone(&self.worker);
         recording
             .push_prepared(
@@ -168,9 +185,10 @@ impl ActorCapture {
                         .map_err(|_| ArchiveError::Invalid("recorded actor worker was poisoned"))?;
                     if context.is_none() {
                         *context = Some(Worker {
-                            store: AssetWriter::open(
+                            store: AssetWriter::open_with_disk(
                                 &root,
-                                RecordingConfig::default().disk_quota - journal_quota(),
+                                disk.maximum(),
+                                disk.clone(),
                             )?,
                             geometry: None,
                             appearance: None,
@@ -244,11 +262,6 @@ fn cached<T>(entry: &Option<(Weak<T>, AssetId)>, current: &Arc<T>) -> Option<Ass
             .filter(|old| Arc::ptr_eq(old, current))
             .map(|_| *id)
     })
-}
-
-/// Journal and immutable-object budgets share one track's declared disk allowance.
-fn journal_quota() -> u64 {
-    RecordingConfig::default().disk_quota / 2
 }
 
 /// All parts of a checkpoint retain one media timestamp and the archive's existing validation.

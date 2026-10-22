@@ -27,7 +27,6 @@ use crate::{
 
 const QUEUED_BATCHES: usize = 256;
 const MAX_PINNED_BYTES: usize = MAX_ASSET_BYTES as usize + 512 * 1024 * 1024;
-const JOURNAL_DISK_BYTES: u64 = 64 * 1024 * 1024;
 
 struct Shared {
     pinned: AtomicUsize,
@@ -85,6 +84,19 @@ pub struct TerrainCapture {
 impl TerrainCapture {
     /// Starts an IO worker immediately; directory creation and large asset encoding never run here.
     pub fn start(parent: PathBuf, info: RecordingInfo) -> Result<Self, String> {
+        Self::start_with_disk(
+            parent,
+            info,
+            recording_studio::disk::DiskBudget::new(RecordingConfig::default().disk_quota),
+        )
+    }
+
+    /// Terrain capture clones one session-owned quota without performing producer filesystem work.
+    pub fn start_with_disk(
+        parent: PathBuf,
+        info: RecordingInfo,
+        disk: recording_studio::disk::DiskBudget,
+    ) -> Result<Self, String> {
         let shared = Arc::new(Shared {
             pinned: AtomicUsize::new(0),
             cancelled: AtomicBool::new(false),
@@ -96,7 +108,7 @@ impl TerrainCapture {
         std::thread::Builder::new()
             .name("studio-scene".into())
             .spawn(move || {
-                let outcome = run(parent, info, jobs, &worker_shared);
+                let outcome = run(parent, info, jobs, &worker_shared, disk);
                 let _ = completed.send(outcome);
             })
             .map_err(|error| error.to_string())?;
@@ -267,16 +279,18 @@ fn run(
     info: RecordingInfo,
     jobs: Receiver<Batch>,
     shared: &Shared,
+    disk: recording_studio::disk::DiskBudget,
 ) -> Result<(), String> {
     let defaults = RecordingConfig::default();
-    let journal = TerrainJournal::start(
+    let journal = TerrainJournal::start_with_disk(
         &parent,
         info,
         RecordingConfig {
-            disk_quota: JOURNAL_DISK_BYTES,
+            disk_quota: disk.maximum(),
             ..defaults
         },
-        defaults.disk_quota.saturating_sub(JOURNAL_DISK_BYTES),
+        disk.maximum(),
+        disk,
     )
     .map_err(|error| error.to_string())?;
     let task = journal.task();

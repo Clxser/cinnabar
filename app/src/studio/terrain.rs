@@ -39,7 +39,11 @@ pub(super) fn start(world: &mut World, session: &CaptureSession) -> Result<Nativ
         .get_resource::<ChunkBiomeTints>()
         .ok_or("World biome colours are unavailable for recording.")?
         .clone();
-    let capture = TerrainCapture::start(session.directory().to_path_buf(), session.info().clone())?;
+    let capture = TerrainCapture::start_with_disk(
+        session.directory().to_path_buf(),
+        session.info().clone(),
+        session.disk_budget().clone(),
+    )?;
     let palette = prepare_palette(&capture, &textures, &tints)?;
     let mut terrain = NativeTerrain {
         capture,

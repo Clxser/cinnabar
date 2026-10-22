@@ -12,6 +12,8 @@ use crate::{MediaTime, time::MAX_MEDIA_MICROS};
 
 #[cfg(test)]
 mod compression_tests;
+#[cfg(test)]
+mod disk_tests;
 mod format;
 mod reader;
 mod task;
@@ -150,7 +152,7 @@ impl Default for RecordingConfig {
             queued_bytes: 64 * 1024 * 1024,
             segment_bytes: 4 * 1024 * 1024,
             segment_duration: MediaTime(1_000_000),
-            disk_quota: 25 * 1024 * 1024 * 1024,
+            disk_quota: crate::disk::DEFAULT_TAKE_BYTES,
             compression_level: 1,
         }
     }

@@ -25,7 +25,11 @@ pub(super) struct NativeTargets {
 
 /// The zero-time target set includes the local subject even when its first-person body is hidden.
 pub(super) fn start(world: &World, session: &CaptureSession) -> Result<NativeTargets, String> {
-    let mut capture = TargetCapture::start(session.directory(), session.info().clone())?;
+    let mut capture = TargetCapture::start_with_disk(
+        session.directory(),
+        session.info().clone(),
+        session.disk_budget().clone(),
+    )?;
     let mut baseline = Vec::new();
     snapshot(world, &mut baseline)?;
     let scratch = capture.sample(MediaTime::ZERO, baseline)?;

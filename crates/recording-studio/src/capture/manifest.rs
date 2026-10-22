@@ -251,7 +251,11 @@ impl CaptureManifest {
     }
 
     /// Publishes a synced manifest last; incomplete encodes remain distinguishable from finished media.
-    pub(super) fn write(&self, directory: &Path) -> Result<(), String> {
+    pub(super) fn write(
+        &self,
+        directory: &Path,
+        disk: crate::disk::DiskBudget,
+    ) -> Result<(), String> {
         self.validate()?;
         let staged = directory.join("capture.saving");
         let file = File::options()
@@ -259,7 +263,9 @@ impl CaptureManifest {
             .create_new(true)
             .open(&staged)
             .map_err(|error| error.to_string())?;
-        let mut writer = BufWriter::new(file);
+        let mut writer = BufWriter::new(
+            crate::disk::Metered::file(file, disk).map_err(|error| error.to_string())?,
+        );
         serde_json::to_writer(&mut writer, self).map_err(|error| error.to_string())?;
         writer
             .flush()
@@ -275,6 +281,8 @@ impl CaptureManifest {
             return Err("Captured highlight metadata exceeds its storage limit.".into());
         }
         drop(writer);
-        std::fs::rename(staged, directory.join(MANIFEST_FILE)).map_err(|error| error.to_string())
+        std::fs::rename(staged, directory.join(MANIFEST_FILE))
+            .and_then(|()| crate::disk::sync_directory(directory))
+            .map_err(|error| error.to_string())
     }
 }

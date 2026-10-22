@@ -20,6 +20,7 @@ pub struct CaptureSession {
     directory: PathBuf,
     info: RecordingInfo,
     settings: CaptureSettings,
+    disk: crate::disk::DiskBudget,
     journal: Option<Recording>,
     video: Option<Recorder>,
     detector: CombatDetector,
@@ -52,6 +53,7 @@ impl CaptureSession {
             crate::video::find_ffmpeg()?;
         }
         std::fs::create_dir_all(root).map_err(|error| error.to_string())?;
+        let disk = crate::disk::DiskBudget::new(crate::disk::DEFAULT_TAKE_BYTES);
         let mut opened = None;
         for ordinal in 0..1024 {
             let directory = root.join(format!(
@@ -59,10 +61,11 @@ impl CaptureSession {
                 info.created_unix_ms,
                 crate::archive::RECORDING_EXTENSION
             ));
-            match Recording::start_ready(
+            match Recording::start_ready_with_disk(
                 directory.clone(),
                 info.clone(),
                 RecordingConfig::default(),
+                disk.clone(),
             ) {
                 Ok(journal) => {
                     opened = Some((directory, journal));
@@ -98,7 +101,7 @@ impl CaptureSession {
                 .map_err(|error| error.to_string())?;
         }
         let video = if settings.mode.records_video() {
-            Some(Recorder::start_prepared(
+            Some(Recorder::start_prepared_with_disk(
                 VideoSettings {
                     path: directory.join(VIDEO_FILE),
                     fps: settings.fps,
@@ -109,12 +112,14 @@ impl CaptureSession {
                     quality: Some(settings.quality),
                     speed: EncodingSpeed::Live,
                 },
+                disk.clone(),
             )?)
         } else {
             None
         };
         Ok(Self {
             directory,
+            disk,
             settings,
             journal: Some(journal),
             video,
@@ -138,6 +143,11 @@ impl CaptureSession {
     }
     pub fn settings(&self) -> CaptureSettings {
         self.settings
+    }
+
+    /// Workers for this take clone the same admission owner without touching the filesystem.
+    pub fn disk_budget(&self) -> &crate::disk::DiskBudget {
+        &self.disk
     }
     /// Video can be smaller than the viewport retained by native scene and HUD tracks.
     pub fn video_size(&self) -> [u32; 2] {
@@ -335,7 +345,7 @@ impl CaptureSession {
             dropped_audio_samples,
             scene_tracks: self.scene_tracks,
         };
-        manifest.write(&self.directory)?;
+        manifest.write(&self.directory, self.disk.clone())?;
         Ok(CaptureSummary {
             directory: self.directory,
             video,

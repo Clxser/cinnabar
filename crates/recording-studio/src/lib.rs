@@ -10,6 +10,7 @@ pub mod camera;
 pub mod capture;
 pub mod decode;
 pub mod dependencies;
+pub mod disk;
 pub mod edit;
 pub mod effect;
 pub mod error;

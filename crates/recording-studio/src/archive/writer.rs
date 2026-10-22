@@ -20,7 +20,8 @@ use crate::MediaTime;
 /// Only complete compressed segments enter the index. A process interruption leaves a valid prefix.
 pub(super) struct Writer {
     root: PathBuf,
-    index: File,
+    index: crate::disk::Metered<File>,
+    disk: crate::disk::DiskBudget,
     config: RecordingConfig,
     open: Option<OpenSegment>,
     committed_bytes: u64,
@@ -32,20 +33,39 @@ pub(super) struct Writer {
 
 impl Writer {
     /// Creates a fresh recording directory; an existing recording is never appended or overwritten.
+    #[cfg(test)]
     pub(super) fn create(
         root: PathBuf,
         info: &RecordingInfo,
         config: RecordingConfig,
     ) -> Result<Self, ArchiveError> {
+        Self::create_with_disk(
+            root,
+            info,
+            config,
+            crate::disk::DiskBudget::new(config.disk_quota),
+        )
+    }
+
+    /// All physical journal writes, including staging and metadata, share the native take's allowance.
+    pub(super) fn create_with_disk(
+        root: PathBuf,
+        info: &RecordingInfo,
+        config: RecordingConfig,
+        disk: crate::disk::DiskBudget,
+    ) -> Result<Self, ArchiveError> {
         info.validate()?;
         config.validate()?;
         fs::create_dir(&root).map_err(|error| io(&root, error))?;
-        let metadata_bytes = format::write_metadata(&root.join(METADATA_FILE), info)?;
+        let metadata_bytes =
+            format::write_metadata_with_disk(&root.join(METADATA_FILE), info, disk.clone())?;
         let index_path = root.join(INDEX_FILE);
-        let mut index = File::options()
+        let index = File::options()
             .write(true)
             .create_new(true)
             .open(&index_path)
+            .map_err(|error| io(&index_path, error))?;
+        let mut index = crate::disk::Metered::file(index, disk.clone())
             .map_err(|error| io(&index_path, error))?;
         index
             .write_all(INDEX_MAGIC)
@@ -55,6 +75,7 @@ impl Writer {
         Ok(Self {
             root,
             index,
+            disk,
             config,
             open: None,
             committed_bytes: metadata_bytes + INDEX_MAGIC.len() as u64,
@@ -150,8 +171,11 @@ impl Writer {
         }
         self.commit_open()?;
         self.committed.duration = at;
-        self.committed_bytes +=
-            format::write_metadata(&self.root.join(COMPLETE_FILE), &self.committed)?;
+        self.committed_bytes += format::write_metadata_with_disk(
+            &self.root.join(COMPLETE_FILE),
+            &self.committed,
+            self.disk.clone(),
+        )?;
         Ok((self.committed_bytes, self.committed))
     }
 
@@ -194,8 +218,11 @@ impl Writer {
             checkpoint,
             at,
             sequence,
-            remaining.min(MAX_CHECKPOINT_BYTES * 2),
-            self.config.compression_level,
+            SegmentStorage {
+                maximum: remaining.min(MAX_CHECKPOINT_BYTES * 2),
+                compression_level: self.config.compression_level,
+                disk: self.disk.clone(),
+            },
         )?);
         Ok(())
     }
@@ -232,6 +259,12 @@ struct OpenSegment {
     compressed: ZlibEncoder<HashWriter>,
 }
 
+struct SegmentStorage {
+    maximum: u64,
+    compression_level: u32,
+    disk: crate::disk::DiskBudget,
+}
+
 impl OpenSegment {
     /// Compression is streaming, including multipart world snapshots that exceed one queue message.
     fn create(
@@ -240,8 +273,7 @@ impl OpenSegment {
         checkpoint: bool,
         at: MediaTime,
         sequence: u64,
-        maximum: u64,
-        compression_level: u32,
+        storage: SegmentStorage,
     ) -> Result<Self, ArchiveError> {
         let path = format::segment_path(root, index, true);
         let file = File::options()
@@ -249,6 +281,8 @@ impl OpenSegment {
             .write(true)
             .open(&path)
             .map_err(|error| io(&path, error))?;
+        let file =
+            crate::disk::Metered::file(file, storage.disk).map_err(|error| io(&path, error))?;
         Ok(Self {
             index,
             checkpoint,
@@ -264,9 +298,9 @@ impl OpenSegment {
                     file,
                     digest: Sha256::new(),
                     bytes: 0,
-                    maximum,
+                    maximum: storage.maximum,
                 },
-                Compression::new(compression_level),
+                Compression::new(storage.compression_level),
             ),
         })
     }
@@ -327,7 +361,7 @@ impl OpenSegment {
 }
 
 struct HashWriter {
-    file: File,
+    file: crate::disk::Metered<File>,
     digest: Sha256,
     bytes: u64,
     maximum: u64,

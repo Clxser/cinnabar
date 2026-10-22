@@ -22,7 +22,7 @@ fn validate_rf64_format(channels: u16, rate: u32) -> io::Result<()> {
 }
 
 pub struct WavWriter {
-    out: BufWriter<File>,
+    out: BufWriter<crate::disk::Metered<File>>,
     path: PathBuf,
     data_bytes: u64,
     rf64_channels: Option<u16>,
@@ -43,13 +43,16 @@ impl WavWriter {
         } else {
             u64::from(HEADER_BYTES)
         };
-        self.out.get_ref().set_len(header + bytes)?;
+        self.out.get_mut().set_len(header + bytes)?;
         self.out.seek(SeekFrom::End(0))?;
         self.data_bytes = bytes;
         Ok(())
     }
     pub fn create(path: &Path, channels: u16, rate: u32) -> io::Result<Self> {
-        let mut out = BufWriter::new(File::create(path)?);
+        let mut out = BufWriter::new(crate::disk::Metered::file(
+            File::create(path)?,
+            crate::disk::DiskBudget::new(u64::MAX),
+        )?);
         let block = channels * 4;
         out.write_all(b"RIFF")?;
         out.write_all(&(HEADER_BYTES - 8).to_le_bytes())?;
@@ -79,8 +82,42 @@ impl WavWriter {
 
     /// A recovery staging file stays exclusively owned rather than reopening an existing destination.
     fn rf64_file(file: File, path: &Path, channels: u16, rate: u32) -> io::Result<Self> {
+        Self::rf64_metered(
+            file,
+            path,
+            channels,
+            rate,
+            crate::disk::DiskBudget::new(u64::MAX),
+        )
+    }
+
+    /// Live audio shares admission with every journal, asset and optional video in its native take.
+    pub fn create_rf64_with_disk(
+        path: &Path,
+        channels: u16,
+        rate: u32,
+        disk: crate::disk::DiskBudget,
+    ) -> io::Result<Self> {
         validate_rf64_format(channels, rate)?;
-        let mut out = BufWriter::new(file);
+        Self::rf64_metered(
+            File::options().write(true).create_new(true).open(path)?,
+            path,
+            channels,
+            rate,
+            disk,
+        )
+    }
+
+    /// Exclusive file ownership keeps header rewrites and truncation on the same extent counter.
+    fn rf64_metered(
+        file: File,
+        path: &Path,
+        channels: u16,
+        rate: u32,
+        disk: crate::disk::DiskBudget,
+    ) -> io::Result<Self> {
+        validate_rf64_format(channels, rate)?;
+        let mut out = BufWriter::new(crate::disk::Metered::file(file, disk)?);
         let block = channels * 4;
         out.write_all(b"RF64")?;
         out.write_all(&u32::MAX.to_le_bytes())?;
@@ -175,5 +212,23 @@ mod tests {
             .sum();
         assert_eq!(total, 44_100 * 2);
         assert_eq!(samples_for_frame(48_000, 2, 60, 0), 1_600);
+    }
+
+    #[test]
+    fn rf64_trimming_and_header_finalization_keep_exact_shared_extent_accounting() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("game.wav");
+        let budget = crate::disk::DiskBudget::new(RF64_HEADER_BYTES + 16);
+        let mut audio = WavWriter::create_rf64_with_disk(&path, 2, 48_000, budget.clone()).unwrap();
+        audio.write([0.5; 4]).unwrap();
+        audio.out.flush().unwrap();
+        assert_eq!(budget.used(), RF64_HEADER_BYTES + 16);
+        audio.trim_samples(2).unwrap();
+        assert_eq!(budget.used(), RF64_HEADER_BYTES + 8);
+        audio.finish().unwrap();
+        let bytes = std::fs::read(path).unwrap();
+        assert_eq!(budget.used(), bytes.len() as u64);
+        assert_eq!(u64::from_le_bytes(bytes[28..36].try_into().unwrap()), 8);
+        assert_eq!(u64::from_le_bytes(bytes[36..44].try_into().unwrap()), 1);
     }
 }

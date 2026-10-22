@@ -53,14 +53,28 @@ pub struct TargetCapture {
 
 impl TargetCapture {
     /// Starts its archive worker without touching the filesystem on the capture producer.
-    pub fn start(parent: &Path, mut info: RecordingInfo) -> Result<Self, String> {
+    pub fn start(parent: &Path, info: RecordingInfo) -> Result<Self, String> {
+        Self::start_with_disk(
+            parent,
+            info,
+            recording_studio::disk::DiskBudget::new(RecordingConfig::default().disk_quota),
+        )
+    }
+
+    /// Compact target records draw from the same native take quota as terrain, actors and media.
+    pub fn start_with_disk(
+        parent: &Path,
+        mut info: RecordingInfo,
+        disk: recording_studio::disk::DiskBudget,
+    ) -> Result<Self, String> {
         info.scene_schema = TARGET_TRACK_SCHEMA.into();
         Ok(Self {
             recording: Some(
-                Recording::start(
+                Recording::start_with_disk(
                     parent.join(TARGET_DIRECTORY),
                     info,
                     RecordingConfig::default(),
+                    disk,
                 )
                 .map_err(|error| error.to_string())?,
             ),

@@ -2,6 +2,13 @@
 
 use super::*;
 use crate::media_process::MediaChild;
+mod budgeted;
+
+pub(super) struct Encoding {
+    pub options: EncodeOptions,
+    pub encoder: Encoder,
+    pub disk: Option<crate::disk::DiskBudget>,
+}
 
 /// Each actual pipe operation gets a deadline; waiting for the next capture frame does not.
 struct GuardedInput<'a, W, F> {
@@ -10,7 +17,7 @@ struct GuardedInput<'a, W, F> {
     deadline: F,
 }
 
-impl<W: Write, F: FnMut() -> G, G> GuardedInput<'_, W, F> {
+impl<W, F: FnMut() -> G, G> GuardedInput<'_, W, F> {
     /// An owned-process supervisor can close a blocked pipe even while this worker cannot run.
     fn operation<T>(&mut self, operation: impl FnOnce(&mut W) -> io::Result<T>) -> io::Result<T> {
         self.cancellation.check().map_err(io::Error::other)?;
@@ -36,11 +43,15 @@ pub(super) fn encode(
     ffmpeg: &Path,
     settings: &VideoSettings,
     frames: &Receiver<QueuedFrame>,
-    options: EncodeOptions,
-    encoder: Encoder,
+    encoding: Encoding,
     expected: &AtomicU64,
     cancellation: &Cancellation,
 ) -> Result<Summary, String> {
+    let Encoding {
+        options,
+        encoder,
+        disk,
+    } = encoding;
     let mut frames = frames.iter().map(QueuedFrame::into_frame).peekable();
     let Some(first) = frames.peek() else {
         return Ok(Summary {
@@ -54,24 +65,41 @@ pub(super) fn encode(
     frame_byte_len(size)?;
     let result = (|| {
         let mut command = Command::new(ffmpeg);
+        let output = if disk.is_some() {
+            Path::new(budgeted::PIPE)
+        } else {
+            &settings.path
+        };
+        let mut arguments = options::arguments(settings, size, layout, output, options, encoder);
+        if disk.is_some() {
+            arguments = budgeted::arguments(arguments)?;
+        }
         command
-            .args(options::arguments(
-                settings,
-                size,
-                layout,
-                &settings.path,
-                options,
-                encoder,
-            ))
+            .args(arguments)
             .stdin(Stdio::piped())
             .stderr(Stdio::inherit());
-        let mut process =
-            MediaChild::start_output(command, cancellation.clone(), &settings.path, 0)?;
+        let mut process = if disk.is_some() {
+            command.stdout(Stdio::piped());
+            MediaChild::start(command, cancellation.clone())?
+        } else {
+            MediaChild::start_output(command, cancellation.clone(), &settings.path, 0)?
+        };
+        let stdin = process
+            .stdin
+            .take()
+            .ok_or("Recording encoder input is unavailable.")?;
+        let storage = disk
+            .as_ref()
+            .map(|disk| {
+                budgeted::drain(
+                    &mut process,
+                    settings.path.clone(),
+                    disk.clone(),
+                    cancellation.clone(),
+                )
+            })
+            .transpose()?;
         let written = {
-            let stdin = process
-                .stdin
-                .take()
-                .ok_or("Recording encoder input is unavailable.")?;
             let mut input = GuardedInput {
                 inner: stdin,
                 cancellation,
@@ -85,6 +113,9 @@ pub(super) fn encode(
         };
         // Input is closed before flushing. Preserve watchdog failures alongside any pipe error.
         let finished = process.finish();
+        if let Some(storage) = storage {
+            storage.finish()?;
+        }
         finish_result(written, finished)
     })();
     let written = result.map_err(|error| {
@@ -111,10 +142,19 @@ fn finish_result(written: io::Result<u64>, finished: Result<(), String>) -> Resu
 }
 
 /// Audio is muxed to a separate file; cancellation or a failed process leaves the silent take intact.
-pub(super) fn mux(video: &Path, audio: &Path, cancellation: &Cancellation) -> Result<(), String> {
-    mux_inner(video, audio, cancellation).map_err(|error| {
+pub(super) fn mux(
+    video: &Path,
+    audio: &Path,
+    cancellation: &Cancellation,
+    disk: Option<crate::disk::DiskBudget>,
+) -> Result<(), String> {
+    disk.map_or_else(
+        || mux_inner(video, audio, cancellation),
+        |disk| budgeted::mux(video, audio, cancellation, disk),
+    )
+    .map_err(|error| {
         format!(
-            "Audio muxing failed: {error} The silent video remains at {} and audio at {}.",
+            "Audio muxing failed: {error} The captured video remains at {} and audio at {}.",
             video.display(),
             audio.display()
         )

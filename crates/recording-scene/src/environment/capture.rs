@@ -24,7 +24,6 @@ use super::{
 };
 
 const MAX_PINNED_BYTES: usize = 256 * 1024 * 1024;
-const JOURNAL_BYTES: u64 = 32 * 1024 * 1024;
 
 struct Charge {
     budget: Arc<AtomicUsize>,
@@ -48,6 +47,7 @@ struct WorkerAssets {
 }
 
 pub struct EnvironmentCapture {
+    disk: recording_studio::disk::DiskBudget,
     recording: Option<Recording>,
     root: PathBuf,
     worker: Arc<Mutex<Option<WorkerAssets>>>,
@@ -57,19 +57,34 @@ pub struct EnvironmentCapture {
 
 impl EnvironmentCapture {
     /// Starts storage asynchronously; callers supply prepared values and their existing recording clock.
-    pub fn start(parent: &Path, mut info: RecordingInfo) -> Result<Self, String> {
+    pub fn start(parent: &Path, info: RecordingInfo) -> Result<Self, String> {
+        Self::start_with_disk(
+            parent,
+            info,
+            recording_studio::disk::DiskBudget::new(RecordingConfig::default().disk_quota),
+        )
+    }
+
+    /// Environment journals and sky assets share the caller's native take allowance.
+    pub fn start_with_disk(
+        parent: &Path,
+        mut info: RecordingInfo,
+        disk: recording_studio::disk::DiskBudget,
+    ) -> Result<Self, String> {
         info.scene_schema = ENVIRONMENT_TRACK_SCHEMA.into();
         let root = parent.join(ENVIRONMENT_DIRECTORY);
-        let recording = Recording::start(
+        let recording = Recording::start_with_disk(
             root.clone(),
             info,
             RecordingConfig {
-                disk_quota: JOURNAL_BYTES,
+                disk_quota: disk.maximum(),
                 ..Default::default()
             },
+            disk.clone(),
         )
         .map_err(|error| error.to_string())?;
         Ok(Self {
+            disk,
             recording: Some(recording),
             root,
             worker: Arc::new(Mutex::new(None)),
@@ -134,6 +149,7 @@ impl EnvironmentCapture {
             boundary(recording, at, RecordKind::CheckpointStart)?;
         }
         let root = self.root.clone();
+        let disk = self.disk.clone();
         let worker = Arc::clone(&self.worker);
         let kind = if checkpoint {
             RecordKind::CheckpointPart
@@ -151,11 +167,9 @@ impl EnvironmentCapture {
                         ArchiveError::Invalid("recorded environment worker state was poisoned")
                     })?;
                     if context.is_none() {
-                        let quota = RecordingConfig::default()
-                            .disk_quota
-                            .saturating_sub(JOURNAL_BYTES);
+                        let quota = disk.maximum();
                         *context = Some(WorkerAssets {
-                            store: AssetWriter::open(&root, quota)?,
+                            store: AssetWriter::open_with_disk(&root, quota, disk.clone())?,
                             previous: None,
                         });
                     }

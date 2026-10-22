@@ -450,6 +450,7 @@ fn poll_start(
                             session
                                 .directory()
                                 .join(recording_studio::capture::AUDIO_FILE),
+                            session.disk_budget().clone(),
                         ) {
                             Ok(audio) => Some(audio),
                             Err(error) => {

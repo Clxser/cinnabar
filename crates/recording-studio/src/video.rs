@@ -269,6 +269,7 @@ impl FrameSink {
 
 /// A running encode; ffmpeg starts with the first frame, whose size and layout it fixes.
 pub struct Recorder {
+    disk: Option<crate::disk::DiskBudget>,
     sink: FrameSink,
     writer: Option<JoinHandle<Result<Summary, String>>>,
     settings: VideoSettings,
@@ -298,8 +299,11 @@ impl Recorder {
                 &ffmpeg,
                 settings,
                 frames,
-                options,
-                encoder,
+                recording::Encoding {
+                    options,
+                    encoder,
+                    disk: None,
+                },
                 expected,
                 cancellation,
             )
@@ -308,6 +312,24 @@ impl Recorder {
 
     /// Resolves hardware capabilities before capture starts. Run only on the startup IO worker.
     pub fn start_prepared(settings: VideoSettings, options: EncodeOptions) -> Result<Self, String> {
+        Self::prepared(settings, options, None)
+    }
+
+    /// Native video shares physical output and mux-staging admission with its complete take.
+    pub fn start_prepared_with_disk(
+        settings: VideoSettings,
+        options: EncodeOptions,
+        disk: crate::disk::DiskBudget,
+    ) -> Result<Self, String> {
+        Self::prepared(settings, options, Some(disk))
+    }
+
+    /// Capability probes complete before the one admission owner is moved into encoder workers.
+    fn prepared(
+        settings: VideoSettings,
+        options: EncodeOptions,
+        disk: Option<crate::disk::DiskBudget>,
+    ) -> Result<Self, String> {
         settings.fps.validate().map_err(|error| error.to_string())?;
         options.validate()?;
         let ffmpeg = find_ffmpeg()?;
@@ -315,17 +337,24 @@ impl Recorder {
         if let Some(parent) = settings.path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
-        Self::spawn(settings, move |settings, frames, expected, cancellation| {
-            recording::encode(
-                &ffmpeg,
-                settings,
-                frames,
-                options,
-                encoder,
-                expected,
-                cancellation,
-            )
-        })
+        let output_disk = disk.clone();
+        let mut recorder =
+            Self::spawn(settings, move |settings, frames, expected, cancellation| {
+                recording::encode(
+                    &ffmpeg,
+                    settings,
+                    frames,
+                    recording::Encoding {
+                        options,
+                        encoder,
+                        disk: output_disk,
+                    },
+                    expected,
+                    cancellation,
+                )
+            })?;
+        recorder.disk = disk;
+        Ok(recorder)
     }
 
     /// Runs `encoder` on the writer thread over every pushed frame.
@@ -351,6 +380,7 @@ impl Recorder {
             .spawn(move || encoder(&thread_settings, &receiver, &expected, &worker_cancellation))
             .map_err(|error| error.to_string())?;
         Ok(Self {
+            disk: None,
             sink: FrameSink {
                 sender: Arc::new(Mutex::new(Some(sender))),
                 queued_bytes: Arc::default(),
@@ -392,7 +422,7 @@ impl Recorder {
         let Some(audio) = audio.filter(|_| summary.frames > 0) else {
             return Ok(summary);
         };
-        recording::mux(&summary.path, audio, &self.cancellation)?;
+        recording::mux(&summary.path, audio, &self.cancellation, self.disk.clone())?;
         Ok(summary)
     }
 }

@@ -17,7 +17,11 @@ pub(super) struct NativeVisuals {
 
 /// Records a baseline from immutable native publications, including their explicit admission scope.
 pub(super) fn start(world: &World, session: &CaptureSession) -> Result<NativeVisuals, String> {
-    let mut capture = VisualCapture::start(session.directory(), session.info().clone())?;
+    let mut capture = VisualCapture::start_with_disk(
+        session.directory(),
+        session.info().clone(),
+        session.disk_budget().clone(),
+    )?;
     let hand = session.settings().hand;
     let hud = session.settings().hud;
     let mut atmosphere = super::atmosphere::Assets::default();

@@ -108,10 +108,11 @@ pub(super) fn read_bounded(path: &Path, maximum: usize) -> Result<Vec<u8>, Archi
     Ok(bytes)
 }
 
-/// Creates one small metadata file exclusively, keeping accidental path reuse from overwriting media.
-pub(super) fn write_metadata<T: serde::Serialize>(
+/// Metadata and data streams enter the same take-wide admission boundary before filesystem growth.
+pub(super) fn write_metadata_with_disk<T: serde::Serialize>(
     path: &Path,
     value: &T,
+    disk: crate::disk::DiskBudget,
 ) -> Result<u64, ArchiveError> {
     let bytes = serde_json::to_vec_pretty(value)?;
     if bytes.len() > MAX_METADATA_BYTES {
@@ -119,18 +120,21 @@ pub(super) fn write_metadata<T: serde::Serialize>(
             "recording metadata exceeds its byte limit",
         ));
     }
-    let mut file = File::options()
-        .write(true)
-        .create_new(true)
-        .open(path)
+    let parent = path
+        .parent()
+        .ok_or(ArchiveError::Invalid("metadata has no parent directory"))?;
+    let mut staged = crate::disk::StagedFile::new(parent, ".metadata-", ".saving", disk)
         .map_err(|error| io(path, error))?;
-    file.write_all(&bytes)
-        .and_then(|()| file.sync_all())
+    staged
+        .writer()
+        .and_then(|mut file| file.write_all(&bytes))
+        .and_then(|()| staged.sync_all())
         .map_err(|error| io(path, error))?;
-    sync_directory(
-        path.parent()
-            .ok_or(ArchiveError::Invalid("metadata has no parent directory"))?,
-    )?;
+    // A rejected completion must not leave an empty complete.json that hides a valid indexed prefix.
+    staged
+        .persist_noclobber(path)
+        .map_err(|error| io(path, error.error))?;
+    sync_directory(parent)?;
     Ok(bytes.len() as u64)
 }
 

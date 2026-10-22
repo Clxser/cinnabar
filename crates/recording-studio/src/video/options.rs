@@ -1,6 +1,7 @@
 //! Encoder policy and an actual runtime hardware capability probe, confined to the encoding worker.
 
 use super::*;
+pub(super) const STREAMING_MP4_FLAGS: &str = "+frag_keyframe+empty_moov+default_base_moof";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum EncodingSpeed {
@@ -215,7 +216,7 @@ pub(super) fn arguments(
             "yuv420p",
             "-movflags",
             if options.speed == EncodingSpeed::Live {
-                "+frag_keyframe+empty_moov+default_base_moof"
+                STREAMING_MP4_FLAGS
             } else {
                 "+faststart"
             },
