@@ -24,7 +24,7 @@ impl Publication {
         generation: &mut u64,
     ) -> Result<Option<ActorRenderFrame>, String> {
         if !reset
-            && self.visibility == Some(visibility)
+            && self.visibility.as_ref() == Some(&visibility)
             && self
                 .source
                 .as_ref()
@@ -35,7 +35,7 @@ impl Publication {
         let next = generation
             .checked_add(1)
             .ok_or("Replay actor generation overflowed.")?;
-        let frame = project(source, visibility, next);
+        let frame = project(source, &visibility, next);
         self.source = Some(source.clone());
         self.visibility = Some(visibility);
         *generation = next;
@@ -73,7 +73,7 @@ fn same_source(a: &FrozenActors, b: &FrozenActors) -> bool {
 }
 
 /// Captured generations alone cannot identify independently interpolated pose buffers.
-fn same_rig(a: &ActorRigRenderFrame, b: &ActorRigRenderFrame) -> bool {
+pub(super) fn same_rig(a: &ActorRigRenderFrame, b: &ActorRigRenderFrame) -> bool {
     let ActorRigRenderFrame {
         frame_generation,
         geometry_revision,
@@ -104,15 +104,12 @@ fn same_rig(a: &ActorRigRenderFrame, b: &ActorRigRenderFrame) -> bool {
 /// Unmasked rig arrays remain shared; masked draws retain source bone bases and acquire packed indices.
 fn project(
     source: &FrozenActors,
-    visibility: ActorVisibility,
+    visibility: &ActorVisibility,
     generation: u64,
 ) -> ActorRenderFrame {
     let sample = &source.sample;
     let mut rig = sample.rig.clone();
-    let keep = |index: usize| {
-        let identity = rig.manifest[index].identity;
-        visibility.visible(identity.runtime_id, identity.spawn_revision)
-    };
+    let keep = |index: usize| visibility.visible(&rig.manifest[index].identity);
     let masked = (0..rig.instances.len()).any(|index| !keep(index));
     let (instances, instance_pages) = if masked {
         let selected = (0..rig.instances.len())

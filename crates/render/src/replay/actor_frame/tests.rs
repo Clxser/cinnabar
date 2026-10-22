@@ -1,5 +1,5 @@
 use super::*;
-use recording_studio::{camera::CameraPose, object_store::AssetId};
+use recording_studio::object_store::AssetId;
 use render_model::{
     ActorDrawManifestEntry, ActorGpuInstance, ActorRenderIdentity, ActorRigRoute, EntityRigId,
 };
@@ -78,7 +78,7 @@ fn source() -> FrozenActors {
 
 /// Recorded source body policy changes the effective mask without altering HUD or camera state.
 fn visibility(hidden: bool) -> ActorVisibility {
-    ActorVisibility::new(7, Some(!hidden), None, CameraPose::default(), true, None)
+    ActorVisibility::new(7, Some(!hidden), None, true, None)
 }
 
 #[test]
@@ -102,20 +102,8 @@ fn paused_view_updates_keep_actor_generation_and_share_unmasked_rig_buffers() {
         &frame.instance_pages,
         &source.sample.instance_pages
     ));
-    for yaw in [0.0, 90.0, 270.0] {
-        let view = ActorVisibility::new(
-            7,
-            None,
-            None,
-            CameraPose {
-                position: [20.0, 30.0, 40.0],
-                yaw,
-                fov: 110.0,
-                ..Default::default()
-            },
-            false,
-            None,
-        );
+    for _ in 0..3 {
+        let view = ActorVisibility::new(7, None, None, false, None);
         assert!(
             publication
                 .prepare(&source, view, false, &mut generation)

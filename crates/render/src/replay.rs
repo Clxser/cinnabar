@@ -123,6 +123,7 @@ pub struct ReplayRenderer {
     hud_palette: Option<[u8; 32]>,
     atmosphere_visual_assets: Option<Arc<recording_scene::visuals::atmosphere::AtmosphereAssets>>,
     actor_publication: actor_frame::Publication,
+    actor_intersection: visibility::IntersectionCache,
     terrain_dirty: bool,
     generation: u64,
     size: [u32; 2],
@@ -191,6 +192,7 @@ impl ReplayRenderer {
             hud_palette: None,
             atmosphere_visual_assets: None,
             actor_publication: actor_frame::Publication::default(),
+            actor_intersection: visibility::IntersectionCache::default(),
             terrain_dirty: true,
             generation: 0,
             size,
@@ -254,11 +256,7 @@ impl ReplayRenderer {
         }
         camera.insert((
             transform,
-            Projection::Perspective(PerspectiveProjection {
-                fov: pose.fov.to_radians() as f32,
-                aspect_ratio: self.size[0] as f32 / self.size[1] as f32,
-                ..default()
-            }),
+            Projection::Perspective(scene::camera_projection(pose, self.size)),
         ));
         Ok(())
     }
