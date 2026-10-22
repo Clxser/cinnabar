@@ -217,6 +217,7 @@ fn persistent_buffer_pressure_backs_off_and_recovers_the_same_generation() {
         "actor rig transfer",
         "shared actor rig geometry spans",
         "actor instance and bone upload",
+        "actor bindings",
     ] {
         let mut app = fixture();
         let next = publication(1, &[20], 1);
@@ -234,6 +235,74 @@ fn persistent_buffer_pressure_backs_off_and_recovers_the_same_generation() {
         drop(guard);
         assert_eq!(draw_frame(&mut app, &next).len(), 1, "{label}");
     }
+}
+
+#[test]
+fn binding_retries_reuse_uploaded_poses_and_skip_work_during_backoff() {
+    let mut app = fixture();
+    let source = publication(1, &[20], 1);
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let observed = Rc::clone(&calls);
+    let failure = crate::gpu_allocation::inject(move |owner, _| {
+        observed.borrow_mut().push(owner.to_owned());
+        owner == "actor bindings"
+    });
+    assert!(draw_frame(&mut app, &source).is_empty());
+    assert!(draw_frame(&mut app, &source).is_empty());
+    let attempts = calls.borrow().len();
+    assert!(draw_frame(&mut app, &source).is_empty());
+    assert_eq!(calls.borrow().len(), attempts);
+    assert_eq!(
+        calls
+            .borrow()
+            .iter()
+            .filter(|owner| owner.as_str() == "actor instance and bone upload")
+            .count(),
+        1,
+        "binding pressure must not reupload unchanged actor storage"
+    );
+    drop(failure);
+    let recovery = Rc::new(RefCell::new(Vec::new()));
+    let observed = Rc::clone(&recovery);
+    let _success = crate::gpu_allocation::inject(move |owner, _| {
+        observed.borrow_mut().push(owner.to_owned());
+        false
+    });
+    assert_eq!(draw_frame(&mut app, &source).len(), 1);
+    assert!(
+        !recovery
+            .borrow()
+            .iter()
+            .any(|owner| owner == "actor instance and bone upload")
+    );
+    assert!(
+        recovery
+            .borrow()
+            .iter()
+            .any(|owner| owner == "actor bindings")
+    );
+}
+
+#[test]
+fn animated_poses_do_not_restart_a_failed_binding_cooldown() {
+    let mut app = fixture();
+    let mut source = publication(1, &[20], 1);
+    let (failure, hits) = fault("actor bindings");
+    for generation in 1..=3 {
+        source.rig.frame_generation = generation;
+        let entry = &mut Arc::make_mut(&mut source.rig.manifest)[0];
+        entry.identity.pose_generation = PoseGeneration::new(generation);
+        entry.completed_tick = generation;
+        Arc::make_mut(&mut source.rig.current_bones)[0][0][3] = generation as f32 * 0.01;
+        assert!(draw_frame(&mut app, &source).is_empty());
+        assert_eq!(hits.get(), generation.min(2) as usize);
+    }
+    drop(failure);
+    source.rig.frame_generation += 1;
+    let entry = &mut Arc::make_mut(&mut source.rig.manifest)[0];
+    entry.identity.pose_generation = PoseGeneration::new(source.rig.frame_generation);
+    entry.completed_tick = source.rig.frame_generation;
+    assert_eq!(draw_frame(&mut app, &source).len(), 1);
 }
 
 #[test]

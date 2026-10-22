@@ -709,4 +709,26 @@ fn coverage_only_suffix_keeps_exact_receipts_for_only_the_visible_main_pass() {
     );
     assert_eq!(gpu.manifest.len(), 3);
     assert!(!gpu.mask_spans.is_empty());
+    let view = world
+        .query_filtered::<Entity, With<ExtractedView>>()
+        .single(world)
+        .unwrap()
+        .to_bits();
+    let mut gpu = world.resource_mut::<ActorGpu>();
+    let receipt = gpu.draw_batch(view).unwrap();
+    assert_eq!(
+        receipt.frame(view).unwrap().manifest.as_ref(),
+        gpu.main_manifest.as_ref(),
+        "mask-only entries stay outside the main-pass receipt"
+    );
+    let full = Arc::clone(&gpu.manifest);
+    gpu.manifest = gpu.manifest.to_vec().into();
+    assert!(gpu.draw_batch(view).is_none());
+    gpu.manifest = full;
+    assert!(gpu.draw_batch(view).is_some());
+    let visible = Arc::clone(&gpu.main_manifest);
+    gpu.main_manifest = gpu.main_manifest.to_vec().into();
+    assert!(gpu.draw_batch(view).is_none());
+    gpu.main_manifest = visible;
+    assert!(gpu.draw_batch(view).is_some());
 }

@@ -1,6 +1,12 @@
 use super::*;
 use render_scene::{ActorDrawFrame, ActorRuntimeWitness};
 
+/// A main-pass receipt retains both its visible prefix and the complete prepared publication.
+pub(super) struct QueuedActorDraw {
+    batch: ActorDrawBatch,
+    prepared_manifest: std::sync::Arc<[render_model::ActorDrawManifestEntry]>,
+}
+
 /// Camera identity and settings used to select actor render phases.
 type ActorQueueView = (
     Entity,
@@ -143,7 +149,7 @@ pub(super) fn queue_actors(
             return;
         };
         *next_draw_generation = draw_generation;
-        params.gpu.queued_draw = params.draw_tracker.begin(
+        let batch = params.draw_tracker.begin(
             ActorDrawFrame {
                 artwork_identity: params.gpu.artwork_identity,
                 skin_revision: params.gpu.skin_revision,
@@ -155,6 +161,10 @@ pub(super) fn queue_actors(
             intended_view.expect("queued view exists"),
             &params.gpu.spans,
         );
+        params.gpu.queued_draw = batch.map(|batch| QueuedActorDraw {
+            batch,
+            prepared_manifest: std::sync::Arc::clone(&params.gpu.manifest),
+        });
     }
     params.witness.observe_queue(ActorQueueWitness {
         prepared_instances: params.gpu.instance_count,
@@ -217,12 +227,14 @@ impl ActorGpu {
     /// Captures a queued receipt identity only while every prepared revision and manifest match.
     /// A mismatch disables acknowledgement; commands must still encode their ordinary draws.
     pub(super) fn draw_batch(&self, view: u64) -> Option<ActorDrawBatch> {
-        let batch = self.queued_draw.as_ref()?;
+        let queued = self.queued_draw.as_ref()?;
+        let batch = &queued.batch;
         let draw = batch.frame(view)?;
         (draw.artwork_identity == self.artwork_identity
             && draw.skin_revision == self.skin_revision
             && draw.geometry_revision == self.geometry_revision
             && draw.frame_generation == self.frame_generation
+            && std::sync::Arc::ptr_eq(&queued.prepared_manifest, &self.manifest)
             && std::sync::Arc::ptr_eq(&draw.manifest, &self.main_manifest))
         .then(|| batch.clone())
     }

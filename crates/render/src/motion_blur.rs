@@ -55,7 +55,7 @@ impl Plugin for CameraMotionBlurPlugin {
                     graph::sync_graph.in_set(RenderSystems::Prepare),
                     prepare::prepare_views
                         .in_set(RenderSystems::PrepareBindGroups)
-                        .after(crate::actor_render::prepare_actor_bind_group),
+                        .after(crate::actor_render::bindings::prepare_actor_bind_group),
                 ),
             );
     }
