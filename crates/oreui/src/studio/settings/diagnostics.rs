@@ -12,7 +12,7 @@ pub(super) fn draw(
     let diagnostics = &view.studio.workflow.diagnostics;
     canvas.text_line("Recording setup", [left, y], right - left, HEADER5, TEXT)?;
     y += canvas.r(4.4);
-    y += canvas.text("Check FFmpeg and test an encoded frame before recording or exporting. An encoder being listed by FFmpeg does not prove its hardware is available.",[left,y],right-left,CAPTION,TEXT_DIMMER,false)?+canvas.r(2.0);
+    y += canvas.text("Replay-only recording needs no video encoder. Video imports and exports use FFmpeg and FFprobe. This check encodes a frame to verify actual CPU and NVIDIA support.",[left,y],right-left,CAPTION,TEXT_DIMMER,false)?+canvas.r(2.0);
     control(
         canvas,
         view,
@@ -53,9 +53,9 @@ pub(super) fn draw(
         )? + canvas.r(2.0);
         canvas.text_line(
             if report.ffprobe.is_ok() {
-                "Media inspection: Ready"
+                "FFprobe inspection: Ready"
             } else {
-                "Media inspection: Unavailable"
+                "FFprobe inspection: Unavailable"
             },
             [left, y],
             right - left,
@@ -66,6 +66,7 @@ pub(super) fn draw(
         if let Err(error) = &report.ffprobe {
             y += canvas.text(error, [left, y], right - left, CAPTION, TEXT_DIMMER, false)?
                 + canvas.r(2.0);
+            y += canvas.text("Export verification needs FFprobe. Install it beside FFmpeg or add it to PATH, then check dependencies again.", [left, y], right - left, CAPTION, TEXT_DIMMER, false)? + canvas.r(2.0);
         }
         canvas.text_line(
             &format!("Checked format: {}", codec_label(report.codec)),
@@ -100,7 +101,7 @@ pub(super) fn draw(
             }
         }
         if report.cpu_fallback {
-            y+=canvas.text("NVIDIA encoding is unavailable; CPU encoding is available as a fallback. CPU recording may reduce game FPS.",[left,y],right-left,CAPTION,TEXT_DIMMER,false)?+canvas.r(2.0);
+            y+=canvas.text("NVIDIA encoding is unavailable; CPU encoding is available as a fallback. Live video encoding may reduce game FPS. Use replay-only recording for lighter capture.",[left,y],right-left,CAPTION,TEXT_DIMMER,false)?+canvas.r(2.0);
         }
         control(
             canvas,

@@ -15,6 +15,31 @@ pub(super) fn creation(
     let [left, mut y, right, _] = area;
     canvas.text_line("LOOKS", [left, y], right - left, HEADER5, TEXT)?;
     y += canvas.r(3.8);
+    let creative = &view.studio.workflow.creative;
+    control(
+        canvas,
+        view,
+        [left, y, right, y + canvas.r(3.6)],
+        &format!("Strength: {}%", creative.look_strength),
+        Action::Creative(launcher::menu::studio::creative::CreativeAction::CycleLookStrength),
+        true,
+        Variant::Secondary,
+    )?;
+    y += canvas.r(4.4);
+    control(
+        canvas,
+        view,
+        [left, y, right, y + canvas.r(3.6)],
+        if creative.look_selected_range {
+            "Range: selected clip"
+        } else {
+            "Range: at playhead"
+        },
+        Action::Creative(launcher::menu::studio::creative::CreativeAction::ToggleLookRange),
+        true,
+        Variant::Secondary,
+    )?;
+    y += canvas.r(4.6);
     let enabled = view
         .studio
         .project

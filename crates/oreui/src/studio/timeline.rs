@@ -172,7 +172,11 @@ pub(super) fn draw(
                 (x + 1.0).min(right),
                 ruler_bottom,
             ],
-            [245, 193, 87, 255],
+            if marker.kind == recording_studio::model::MarkerKind::Beat {
+                [104, 177, 215, 255]
+            } else {
+                [245, 193, 87, 255]
+            },
         )?;
         canvas.hit(
             MenuAction::Studio(Action::Seek(marker.at)),

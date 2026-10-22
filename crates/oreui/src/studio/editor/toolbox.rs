@@ -28,6 +28,7 @@ pub(super) fn draw(
     let bottom = match tool {
         Toolbox::Cameras => super::super::camera::creation(canvas, view, content)?,
         Toolbox::Effects => super::super::effects::creation(canvas, view, content)?,
+        Toolbox::Creative => super::super::creative::draw(canvas, view, content)?,
         Toolbox::Text => {
             canvas.text_line("Text", [inner[0], top], inner[2] - inner[0], HEADER5, TEXT)?;
             let y = top + canvas.r(4.2);

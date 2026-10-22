@@ -16,6 +16,7 @@ mod audio;
 mod bridge;
 mod camera;
 mod clips;
+mod creative;
 mod diagnostics;
 mod effects;
 mod export_range;
@@ -53,6 +54,7 @@ pub(super) struct Studio {
     pub(super) title_text: ui::ChatEditor,
     title_edit: Option<(u64, Id, String)>,
     media_job: Option<media::MediaJob>,
+    creative: creative::CreativeTasks,
     preferences_job: Option<u64>,
     preferences_changed: bool,
     thumbnails_job: Option<u64>,
@@ -115,6 +117,7 @@ impl Studio {
             title_text: super::input::fields::field_editor(launcher::menu::MenuField::StudioTitle),
             title_edit: None,
             media_job: None,
+            creative: Default::default(),
             preferences_job: None,
             preferences_changed: false,
             thumbnails_job: None,
@@ -225,6 +228,7 @@ impl Studio {
     /// Services at most the storage queue's bounded completions and advances a caller-owned clock.
     pub fn tick(&mut self, elapsed: f64, visible: bool) {
         self.poll_media();
+        self.poll_creative();
         if visible {
             self.prime_recovery_scan();
         }
@@ -370,6 +374,7 @@ impl Studio {
             actions.extend(self.clip_focus_actions());
             actions.extend(self.speed_focus_actions());
             actions.extend(self.effect_focus_actions());
+            actions.extend(self.creative_focus_actions());
             actions.extend(self.title_focus_actions());
         }
         if self.view.discard.is_none()
@@ -412,6 +417,7 @@ impl Studio {
             Arc::make_mut(&mut self.view).speed_key = None;
         }
         match action {
+            Action::Creative(action) => self.creative_action(action)?,
             Action::Monitoring(action) => self.monitoring_action(action)?,
             Action::Workspace(action) => self.workspace_action(action),
             Action::ScanRecovery => self.scan_recovery(),
@@ -564,6 +570,7 @@ impl Studio {
                 {
                     Arc::make_mut(&mut self.view).workspace.panel =
                         launcher::menu::studio::EditorPanel::Inspector;
+                    Arc::make_mut(&mut self.view).workspace.inspector_hidden = false;
                 }
             }
             Action::Split => {
@@ -802,6 +809,7 @@ impl Studio {
 
     /// Replaces the active document only after the selected input has been fully admitted.
     fn install(&mut self, editor: Editor, path: Option<PathBuf>) {
+        self.creative = Default::default();
         self.reset_camera_view();
         Arc::make_mut(&mut self.view).camera_workspace = Default::default();
         if let Some(job) = &self.media_job {
@@ -822,6 +830,10 @@ impl Studio {
         view.show_library = false;
         view.selected = None;
         view.workspace.timeline = Default::default();
+        view.workspace.media_hidden = true;
+        view.workspace.inspector_hidden = true;
+        view.workspace.property_selection = None;
+        view.workflow.creative = Default::default();
         view.camera_target = None;
         view.speed_key = None;
         view.preview = Default::default();
@@ -833,8 +845,10 @@ impl Studio {
 
     /// Keeps per-frame presentation cheap: projects and library arrays remain shared publications.
     fn publish_editor(&mut self) {
+        self.reconcile_creative();
         self.publish_monitoring();
         self.reconcile_timeline_selection();
+        self.reconcile_inspector_selection();
         self.reconcile_clip_time();
         self.reconcile_export_range();
         self.reconcile_camera_workspace();

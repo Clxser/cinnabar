@@ -12,6 +12,7 @@ use super::{
 mod audio;
 mod camera;
 mod clips;
+mod creative;
 mod editor;
 mod effects;
 mod export;

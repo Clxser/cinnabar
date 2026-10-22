@@ -101,6 +101,11 @@ pub enum Command {
     AddMarker {
         marker: Marker,
     },
+    /// Replaces a tempo grid atomically while preserving other marker kinds and out-of-range beats.
+    SetBeatMarkers {
+        span: Span,
+        markers: Vec<Marker>,
+    },
     ReplaceMarker {
         marker: Marker,
     },

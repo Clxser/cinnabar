@@ -17,16 +17,37 @@ impl Studio {
         let end = MediaTime(
             start
                 .0
-                .saturating_add(if look == recording_studio::effect::preset::Look::Impact {
-                    600_000
-                } else {
-                    3_000_000
-                })
+                .saturating_add(look.duration().0)
                 .min(project.duration().0),
         );
-        let span = Span::new(start, end).map_err(|error| error.to_string())?;
+        let selected_span = self
+            .view
+            .workflow
+            .creative
+            .look_selected_range
+            .then(|| {
+                project
+                    .clips
+                    .iter()
+                    .find(|clip| Some(clip.id) == self.view.selected)
+                    .and_then(|clip| clip.span().ok())
+                    .or_else(|| {
+                        project
+                            .shots
+                            .iter()
+                            .find(|shot| Some(shot.id) == self.view.selected)
+                            .map(|shot| shot.span)
+                    })
+            })
+            .flatten();
+        let span = if !look.pulse() { selected_span } else { None }
+            .unwrap_or(Span::new(start, end).map_err(|error| error.to_string())?);
         let clips = look
-            .clips(project.next_id().map_err(|error| error.to_string())?, span)
+            .clips_scaled(
+                project.next_id().map_err(|error| error.to_string())?,
+                span,
+                f64::from(self.view.workflow.creative.look_strength) / 100.0,
+            )
             .map_err(|error| error.to_string())?;
         let selected = clips.first().map(|clip| clip.id);
         let commands = clips

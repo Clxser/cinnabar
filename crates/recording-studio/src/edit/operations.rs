@@ -124,6 +124,25 @@ pub(super) fn apply(project: &mut Project, command: &Command) -> Result<(), Stud
             "title",
         )?,
         Command::AddMarker { marker } => project.markers.push(marker.clone()),
+        Command::SetBeatMarkers { span, markers } => {
+            span.validate()?;
+            crate::error::limit(
+                "tempo markers",
+                markers.len(),
+                crate::model::MAX_PROJECT_ITEMS,
+            )?;
+            if markers.iter().any(|marker| {
+                marker.kind != crate::model::MarkerKind::Beat || !span.contains(marker.at)
+            }) {
+                return Err(StudioError::Invalid(
+                    "tempo markers must be beats inside their retained interval",
+                ));
+            }
+            project.markers.retain(|marker| {
+                marker.kind != crate::model::MarkerKind::Beat || !span.contains(marker.at)
+            });
+            project.markers.extend(markers.iter().cloned());
+        }
         Command::ReplaceMarker { marker } => replace(
             &mut project.markers,
             marker.id,

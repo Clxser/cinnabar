@@ -3,6 +3,7 @@
 use crate::{MediaTime, time::MICROS_PER_SECOND};
 use std::path::PathBuf;
 
+pub mod beats;
 mod decode;
 mod mixer;
 mod monitoring;
@@ -65,7 +66,7 @@ pub fn sample_time(frame: u64, rate: u32) -> Result<MediaTime, String> {
 }
 
 /// Media paths stay local; native replay audio is its recorded sidecar rather than the replay directory.
-pub(crate) fn source_path(source: &crate::model::MediaSource, base: &std::path::Path) -> PathBuf {
+pub fn source_path(source: &crate::model::MediaSource, base: &std::path::Path) -> PathBuf {
     let path = if source.path.is_absolute() {
         source.path.clone()
     } else {

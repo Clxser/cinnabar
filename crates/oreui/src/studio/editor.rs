@@ -83,12 +83,12 @@ pub(super) fn draw(
                     || workspace.panel == EditorPanel::Inspector
                     || (workspace.panel == EditorPanel::Preview && view.studio.selected.is_some()));
             let tool_width = if show_tools {
-                canvas.r(26.0).min(width * 0.25)
+                canvas.r(25.0).min(width * 0.22)
             } else {
                 0.0
             };
             let property_width = if show_properties && (!show_tools || wide) {
-                canvas.r(31.0).min(width * 0.32)
+                canvas.r(29.0).min(width * 0.27)
             } else {
                 0.0
             };
@@ -129,7 +129,7 @@ fn preview(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<(),
     }
     widgets::panel(canvas, area)?;
     let pad = canvas.r(0.8);
-    let transport_height = canvas.r(8.4).min((area[3] - area[1]) * 0.45);
+    let transport_height = canvas.r(7.2).min((area[3] - area[1]) * 0.36);
     let transport_top = area[3] - transport_height;
     let mut image_top = viewer::toolbar(canvas, view, [area[0], area[1], area[2], transport_top])?;
     if let Some(notice) = &view.studio.preview.notice {

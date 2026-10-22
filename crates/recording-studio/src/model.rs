@@ -239,6 +239,7 @@ pub struct TitleClip {
 #[serde(rename_all = "snake_case")]
 pub enum MarkerKind {
     Manual,
+    Beat,
     Hit,
     Combo,
     Death,

@@ -15,7 +15,7 @@ macro_rules! sections {
     };
 }
 
-sections! { Toolbox { Media => "Media", Cameras => "Cameras", Effects => "Effects", Text => "Text", Audio => "Audio" } }
+sections! { Toolbox { Media => "Media", Cameras => "Cameras", Effects => "Effects", Text => "Text", Audio => "Audio", Creative => "Assist" } }
 sections! { InspectorSection { Clip => "Clip", Framing => "Frame", Speed => "Speed", Cut => "Cut" } }
 sections! { ViewportTool { Navigate => "Navigate", Players => "Players", Path => "Path" } }
 sections! { SettingsPage { Recording => "Recording", Preview => "Preview", Export => "Export", Diagnostics => "Setup", Controls => "Controls" } }
@@ -29,11 +29,40 @@ pub enum WorkspaceAction {
     PreviewOnly,
     Density,
     TimelineSize,
+    CycleLayout,
     ViewportTool(ViewportTool),
     TogglePreviewFill,
     CyclePreviewQuality,
     SettingsPage(SettingsPage),
     DismissStatus,
+}
+
+/// Workspace presets trade panel space for the current editing task; they never alter project media.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum WorkspaceLayout {
+    #[default]
+    Edit,
+    Review,
+    Audio,
+}
+
+impl WorkspaceLayout {
+    /// Labels the current arrangement without introducing another editor mode.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Edit => "Edit layout",
+            Self::Review => "Review layout",
+            Self::Audio => "Audio layout",
+        }
+    }
+    /// Cycles the complete supported workspace arrangements.
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Edit => Self::Review,
+            Self::Review => Self::Audio,
+            Self::Audio => Self::Edit,
+        }
+    }
 }
 
 /// Studio scales its controls independently while keeping text and hit geometry in agreement.

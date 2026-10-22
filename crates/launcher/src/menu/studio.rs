@@ -15,9 +15,11 @@ pub mod timeline;
 pub use clip::{ClipTimeField, MAX_CLIP_TIME_BYTES};
 mod camera;
 pub use camera::{CameraBookmark, CameraGuides, CameraWorkspace};
+pub mod creative;
 mod workspace;
 pub use workspace::{
     Density, InspectorSection, SettingsPage, TimelineSize, Toolbox, ViewportTool, WorkspaceAction,
+    WorkspaceLayout,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -28,7 +30,7 @@ pub enum EditorPanel {
     Inspector,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Workspace {
     pub library: library::LibraryWorkspace,
     pub monitoring: monitoring::MonitoringWorkspace,
@@ -38,8 +40,10 @@ pub struct Workspace {
     pub inspector: InspectorSection,
     pub density: Density,
     pub timeline_size: TimelineSize,
+    pub layout: WorkspaceLayout,
     pub media_hidden: bool,
     pub inspector_hidden: bool,
+    pub property_selection: Option<Id>,
     pub preview_only: bool,
     pub viewport_tool: ViewportTool,
     pub preview_fill: bool,
@@ -49,6 +53,34 @@ pub struct Workspace {
     pub follow_playhead: bool,
     pub drag: Option<(Id, recording_studio::Span)>,
 }
+
+impl Default for Workspace {
+    /// Opens on a spacious viewer and timeline; tools and properties appear when explicitly requested.
+    fn default() -> Self {
+        Self {
+            library: Default::default(),
+            monitoring: Default::default(),
+            timeline: Default::default(),
+            panel: Default::default(),
+            toolbox: Default::default(),
+            inspector: Default::default(),
+            density: Default::default(),
+            timeline_size: Default::default(),
+            layout: Default::default(),
+            media_hidden: true,
+            inspector_hidden: true,
+            property_selection: None,
+            preview_only: false,
+            viewport_tool: Default::default(),
+            preview_fill: false,
+            preview_quality: Default::default(),
+            settings_page: Default::default(),
+            ripple: false,
+            follow_playhead: false,
+            drag: None,
+        }
+    }
+}
 mod workflow;
 pub use workflow::Workflow;
 pub mod library;
@@ -57,6 +89,7 @@ pub mod shortcuts;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Action {
+    Creative(creative::CreativeAction),
     Monitoring(monitoring::MonitoringAction),
     Timeline(timeline::TimelineAction),
     Workspace(WorkspaceAction),

@@ -1,4 +1,4 @@
-//! Tools, panel visibility and workspace density stay directly reachable above the viewer.
+//! A compact tool strip keeps the viewer dominant and leaves occasional settings in Preview settings.
 
 use super::*;
 use launcher::menu::studio::{Toolbox, WorkspaceAction};
@@ -11,8 +11,8 @@ pub(super) fn draw(
 ) -> Result<f32, PaintError> {
     let gap = canvas.r(0.5);
     let height = canvas.r(3.6);
-    let tools_width =
-        Toolbox::ALL.len() as f32 * canvas.r(8.2) + (Toolbox::ALL.len() - 1) as f32 * gap;
+    let tab_width = canvas.r(8.2);
+    let tools_width = Toolbox::ALL.len() as f32 * tab_width + (Toolbox::ALL.len() - 1) as f32 * gap;
     let controls = [
         (
             "Properties",
@@ -21,9 +21,9 @@ pub(super) fn draw(
             !view.studio.workspace.inspector_hidden && !view.studio.workspace.preview_only,
         ),
         (
-            view.studio.workspace.timeline_size.label(),
+            view.studio.workspace.layout.label(),
             13.0,
-            WorkspaceAction::TimelineSize,
+            WorkspaceAction::CycleLayout,
             false,
         ),
         (
@@ -36,12 +36,6 @@ pub(super) fn draw(
             WorkspaceAction::PreviewOnly,
             view.studio.workspace.preview_only,
         ),
-        (
-            view.studio.workspace.density.label(),
-            14.5,
-            WorkspaceAction::Density,
-            false,
-        ),
     ];
     let controls_width = controls
         .iter()
@@ -50,11 +44,21 @@ pub(super) fn draw(
         + gap * (controls.len() - 1) as f32;
     let wrap = area[2] - area[0] < tools_width + controls_width + gap * 2.0;
     let mut x = area[0];
+    let mut tools_top = area[1];
     for tool in Toolbox::ALL.iter().copied() {
+        if x > area[0] && x + tab_width > area[2] {
+            x = area[0];
+            tools_top += height + gap;
+        }
         control(
             canvas,
             view,
-            [x, area[1], x + canvas.r(8.2), area[1] + height],
+            [
+                x,
+                tools_top,
+                (x + tab_width).min(area[2]),
+                tools_top + height,
+            ],
             tool.label(),
             Action::Workspace(WorkspaceAction::Toolbox(tool)),
             true,
@@ -67,9 +71,13 @@ pub(super) fn draw(
                 Variant::Neutral
             },
         )?;
-        x += canvas.r(8.2) + gap;
+        x += tab_width + gap;
     }
-    let top = area[1] + if wrap { height + gap } else { 0.0 };
+    let mut top = if wrap {
+        tools_top + height + gap
+    } else {
+        area[1]
+    };
     let mut x = if wrap {
         area[0]
     } else {
@@ -77,8 +85,9 @@ pub(super) fn draw(
     };
     for (label, width, action, active) in controls {
         let width = canvas.r(width);
-        if x + width > area[2] + 0.1 {
-            break;
+        if x > area[0] && x + width > area[2] + 0.1 {
+            x = area[0];
+            top += height + gap;
         }
         control(
             canvas,

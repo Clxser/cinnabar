@@ -4,6 +4,7 @@ use std::{path::PathBuf, sync::Arc};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Workflow {
+    pub creative: super::creative::CreativeStatus,
     pub recovery: Recovery,
     pub diagnostics: Diagnostics,
     pub show_settings: bool,

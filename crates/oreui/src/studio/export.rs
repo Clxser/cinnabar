@@ -30,6 +30,7 @@ pub(super) fn draw(
         ExportPhase::FinishingVideo => "Finishing video encoding...",
         ExportPhase::MixingAudio => "Mixing audio...",
         ExportPhase::Muxing => "Adding audio...",
+        ExportPhase::Verifying => "Verifying video and audio...",
         ExportPhase::Publishing => "Publishing video...",
         ExportPhase::Complete => "Export complete",
         ExportPhase::Cancelled => "Export cancelled",
