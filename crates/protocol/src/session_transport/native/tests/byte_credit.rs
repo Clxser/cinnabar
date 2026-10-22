@@ -158,6 +158,7 @@ async fn fixture(
             ahead: Default::default(),
             ahead_bytes: 0,
             preparation_bytes: 0,
+            preparation_scanned: 0,
             ended: false,
             sending: Default::default(),
             tap: Some(tap),

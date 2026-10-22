@@ -376,8 +376,9 @@ async fn held_relay_preparation(
                 match outcome {
                     Poll::Ready(result) => Poll::Ready(Some(result)),
                     Poll::Pending
-                        if transport.has_retained_native_batch()
-                            || transport.has_retained_native_terminal() =>
+                        if transport.has_retained_packet(
+                            expected.last().expect("fixture retains accepted input"),
+                        ) =>
                     {
                         Poll::Ready(None)
                     }

@@ -185,8 +185,7 @@ pub(super) async fn prepare_with_read_ahead<R: FrameRead, P>(
     let prepared = tokio::select! {
         prepared = &mut preparation => prepared,
         result = transport.read_ahead_during_preparation(MAX_READ_AHEAD_BYTES) => {
-            result?;
-            if let Some(terminal) = transport.buffered_startup_terminal()?
+            if let Some(terminal) = result?
                 && let Ok(error) = super::startup::terminal_error(terminal)
             {
                 return Err(error);
