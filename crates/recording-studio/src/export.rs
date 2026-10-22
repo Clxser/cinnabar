@@ -103,6 +103,7 @@ pub enum ExportPhase {
     FinishingVideo,
     MixingAudio,
     Muxing,
+    Verifying,
     Publishing,
     Complete,
     Cancelled,
@@ -119,6 +120,7 @@ impl ExportPhase {
                 | Self::FinishingVideo
                 | Self::MixingAudio
                 | Self::Muxing
+                | Self::Verifying
                 | Self::Publishing
         )
     }
@@ -349,6 +351,15 @@ fn run<S: FrameSource>(
         files::validation::validate(&muxed, VIDEO_BYTE_LIMIT, cancellation)?;
         staged = muxed;
     }
+    update(status, |status| status.phase = ExportPhase::Verifying);
+    files::validation::verify_media(
+        &staged,
+        project.export.size,
+        project.export.fps,
+        total,
+        with_audio,
+        cancellation,
+    )?;
     crate::media_process::sync_output(&staged)?;
     cancellation.begin_publication()?;
     update(status, |status| status.phase = ExportPhase::Publishing);

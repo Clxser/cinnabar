@@ -4,6 +4,8 @@ use super::*;
 use std::io::{Read, Seek, SeekFrom};
 
 const MAX_BOXES: usize = 4096;
+mod decoded;
+pub(in crate::export) use decoded::verify_media;
 
 /// Checks top-level framing without allocating or scanning movie payloads; cancellation remains live.
 pub(in crate::export) fn validate(
