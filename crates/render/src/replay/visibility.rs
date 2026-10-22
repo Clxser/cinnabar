@@ -6,6 +6,7 @@ use recording_studio::camera::{CameraPose, CameraTarget, CameraTargetRef};
 /// An editor near-eye guard, not a reconstructed intersection with arbitrary animated skin geometry.
 const LOCAL_EYE_GUARD_BLOCKS: f64 = 0.4;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct ActorVisibility {
     local: u64,
     recorded_hide_local: bool,

@@ -34,6 +34,7 @@ mod particles;
 pub use effects::FrameEffects;
 mod readback;
 pub use readback::ReplayReadback;
+mod actor_frame;
 mod compositor;
 mod scene;
 mod targets;
@@ -121,6 +122,7 @@ pub struct ReplayRenderer {
     environment: Option<recording_studio::object_store::AssetId>,
     hud_palette: Option<[u8; 32]>,
     atmosphere_visual_assets: Option<Arc<recording_scene::visuals::atmosphere::AtmosphereAssets>>,
+    actor_publication: actor_frame::Publication,
     terrain_dirty: bool,
     generation: u64,
     size: [u32; 2],
@@ -188,6 +190,7 @@ impl ReplayRenderer {
             environment: None,
             hud_palette: None,
             atmosphere_visual_assets: None,
+            actor_publication: actor_frame::Publication::default(),
             terrain_dirty: true,
             generation: 0,
             size,

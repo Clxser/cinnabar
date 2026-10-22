@@ -7,9 +7,8 @@ use meshing::ChunkBiomeTintIdentity;
 use recording_scene::{palette::FrozenTint, playback::SceneFrame};
 use recording_studio::camera::{CameraPose, CameraTargetRef};
 use render_scene::{
-    ActorRenderFrame, ActorRenderInstance, AtmosphereFrame, AtmosphereTextureAssets, BiomeTint,
-    ChunkAnimationClock, ChunkBiomeTints, ChunkRenderInstance, ChunkTextureAssets,
-    ChunkUploadPriority, WorldFullbright, WorldLighting,
+    AtmosphereFrame, AtmosphereTextureAssets, BiomeTint, ChunkAnimationClock, ChunkBiomeTints,
+    ChunkRenderInstance, ChunkTextureAssets, ChunkUploadPriority, WorldFullbright, WorldLighting,
 };
 
 use super::{RecordedClock, ReplayRenderer};
@@ -150,7 +149,6 @@ impl ReplayRenderer {
             environment.state.animation_tick,
             environment.state.animation_partial,
         );
-        let actors = &frame.actors;
         let visibility = super::visibility::ActorVisibility::new(
             frame.local_actor,
             frame
@@ -163,65 +161,14 @@ impl ReplayRenderer {
             recorded_view,
             spectated,
         );
-        let mut rig = actors.sample.rig.clone();
-        let keep = |index: usize| {
-            let identity = rig.manifest[index].identity;
-            visibility.visible(identity.runtime_id, identity.spawn_revision)
-        };
-        let selected = (0..rig.instances.len())
-            .filter(|&index| keep(index))
-            .collect::<Vec<_>>();
-        let instances = actors
-            .sample
-            .instances
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| selected.binary_search(index).is_ok())
-            .map(|(_, instance)| ActorRenderInstance {
-                runtime_id: instance.runtime_id,
-                position: instance.position,
-                pitch_radians: instance.pitch_radians,
-                yaw_radians: instance.yaw_radians,
-                head_yaw_radians: instance.head_yaw_radians,
-                skin_layer: instance.skin_layer,
-            })
-            .collect::<Vec<_>>()
-            .into();
-        let instance_pages = selected
-            .iter()
-            .map(|&index| actors.sample.instance_pages[index])
-            .collect::<Vec<_>>()
-            .into();
-        rig.instances = selected
-            .iter()
-            .map(|&index| rig.instances[index])
-            .collect::<Vec<_>>()
-            .into();
-        rig.manifest = selected
-            .iter()
-            .enumerate()
-            .map(|(next, &index)| {
-                let mut entry = rig.manifest[index].clone();
-                entry.instance_index = next as u32;
-                entry
-            })
-            .collect::<Vec<_>>()
-            .into();
-        self.generation = self
-            .generation
-            .checked_add(1)
-            .ok_or("Replay actor generation overflowed.")?;
-        rig.frame_generation = self.generation;
-        world.insert_resource(ActorRenderFrame {
-            mask_only_runtime_ids: Arc::from([]),
-            instances,
-            skins: Arc::clone(&actors.skins),
-            instance_revision: actors.sample.instance_revision,
-            skin_revision: actors.sample.skin_revision,
-            rig,
-            artwork: Arc::clone(&actors.artwork),
-            instance_pages,
-        });
+        if let Some(actors) = self.actor_publication.prepare(
+            &frame.actors,
+            visibility,
+            frame.temporal_reset,
+            &mut self.generation,
+        )? {
+            world.insert_resource(actors);
+        }
         let visuals = frame.visuals.clone().unwrap_or_default();
         let hand = visuals
             .hand
