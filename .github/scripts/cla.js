@@ -18,7 +18,7 @@ module.exports = async ({ github, context, core }) => {
   const path = `signatures/cla-v${cla.version}.json`;
   const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: number, per_page: 100 });
 
-  let { records } = await readStore(github, owner, repo, path, cla.sha256);
+  let { records, sha: stored } = await readStore(github, owner, repo, path, cla.sha256);
   const seen = new Set(records.map(key));
   const fresh = [];
   for (const c of comments) {
@@ -31,7 +31,8 @@ module.exports = async ({ github, context, core }) => {
       pull_request: number, comment_id: c.id, comment_url: c.html_url, statement: c.body.trim(), cla_sha256: cla.sha256,
     });
   }
-  if (fresh.length) {
+  // Creating the store pins this version's digest before any signing prompt links to the text.
+  if (fresh.length || !stored) {
     records = await record(github, owner, repo, path, cla.sha256, fresh, context.payload.repository.default_branch);
   }
 
@@ -101,13 +102,13 @@ async function record(github, owner, repo, path, digest, fresh, defaultBranch) {
     const store = await readStore(github, owner, repo, path, digest);
     const have = new Set(store.records.map(key));
     const add = fresh.filter((r) => !have.has(key(r)));
-    if (!add.length) return store.records;
+    if (!add.length && store.sha) return store.records;
     const records = [...store.records, ...add];
     try {
       if (!store.sha) await ensureBranch(github, owner, repo, defaultBranch);
       await github.rest.repos.createOrUpdateFileContents({
         owner, repo, path, branch: BRANCH, sha: store.sha,
-        message: `Record CLA signatures: ${add.map((r) => r.login).join(', ')}`,
+        message: add.length ? `Record CLA signatures: ${add.map((r) => r.login).join(', ')}` : `Start ${path}`,
         content: Buffer.from(`${JSON.stringify({ cla_sha256: digest, signatures: records }, null, 2)}\n`).toString('base64'),
       });
       return records;
