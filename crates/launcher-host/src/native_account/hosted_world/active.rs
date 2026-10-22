@@ -2,11 +2,13 @@
 
 mod acquire;
 pub(super) mod peers;
+mod reconnect;
 mod renewal;
 pub(super) mod setup;
 
 use super::{ClosingHostedPeer, NativeHostedWorld, serve::HostedBackend};
 use bedrock_net::messaging::server::{ClosingMessagingServer, MessagingServer};
+use futures::FutureExt;
 use std::{future::Future, io, sync::Arc, time::Instant};
 use tokio::sync::{mpsc, oneshot};
 
@@ -29,6 +31,7 @@ struct Invite {
 pub struct ActiveHostedWorld {
     world: NativeHostedWorld,
     server: MessagingServer,
+    messaging_id: uuid::Uuid,
     process: HostedBackend,
     identity: protocol::NativeHostingIdentity,
     expires: Instant,
@@ -89,6 +92,7 @@ impl NativeHostedWorld {
         Ok(ActiveHostedWorld {
             world: self,
             server,
+            messaging_id,
             process,
             identity,
             expires,
@@ -137,6 +141,11 @@ impl ActiveHostedWorld {
             return Err(unavailable());
         }
         loop {
+            // A failed accepting service is independent of the initialized peer lifetimes.
+            if self.server.maintain().now_or_never().is_some() {
+                self.reconnect().await?;
+                continue;
+            }
             let current = Instant::now() < self.expires && self.renewal_failure.is_none();
             if !current && self.renewal_failure.is_none() {
                 self.renew_admission().await;
@@ -151,6 +160,7 @@ impl ActiveHostedWorld {
                 Service,
                 Peer(Box<nethernet_tokio::AcceptedSession>),
                 Invite(Option<Invite>),
+                Signaling,
             }
             let event = tokio::select! { biased;
                 interrupted = async {
@@ -181,23 +191,26 @@ impl ActiveHostedWorld {
                     } else {
                         self.server.maintain().await.map(|()| None)
                     }
-                } => match accepted.map_err(|_| unavailable())? {
-                    Some(accepted) => Event::Peer(Box::new(accepted)),
-                    None => return Err(unavailable()),
+                } => match accepted {
+                    Ok(Some(accepted)) => Event::Peer(Box::new(accepted)),
+                    Ok(None) | Err(_) => Event::Signaling,
                 },
             };
             match event {
                 Event::Lease => continue,
+                Event::Signaling => {
+                    self.reconnect().await?;
+                }
                 Event::Service => {
                     self.retire_ready().await?;
                     let deadline = operation_deadline();
                     let occupied = self.world.peers.occupied();
-                    driving(
+                    playing(
                         &mut self.server,
                         self.world.directory_mut()?.visitor(occupied, deadline),
                     )
                     .await?;
-                    driving(&mut self.server, self.world.publish_approvals(deadline)).await?;
+                    playing(&mut self.server, self.world.publish_approvals(deadline)).await?;
                 }
                 Event::Invite(Some(invite)) => {
                     if invite.result.is_closed() {
@@ -207,7 +220,7 @@ impl ActiveHostedWorld {
                     {
                         Err(self.admission_error())
                     } else {
-                        driving(
+                        playing(
                             &mut self.server,
                             self.world
                                 .directory_mut()?
@@ -258,7 +271,7 @@ impl ActiveHostedWorld {
             let Some(closing) = &mut self.retiring else {
                 return Ok(());
             };
-            let closed = driving(&mut self.server, async {
+            let closed = playing(&mut self.server, async {
                 Ok(closing.finish_close(&mut self.world).await)
             })
             .await?;
@@ -303,8 +316,8 @@ async fn serve(
     accepted: nethernet_tokio::AcceptedSession,
 ) -> io::Result<()> {
     let deadline = operation_deadline();
-    driving(server, world.publish_approvals(deadline)).await?;
-    let peer = driving(server, async {
+    playing(server, world.publish_approvals(deadline)).await?;
+    let peer = playing(server, async {
         Ok(world
             .accept_backend_peer(
                 process,
@@ -322,8 +335,8 @@ async fn serve(
     };
     world.peers.admit(peer)?;
     let occupied = world.peers.occupied();
-    driving(server, world.directory_mut()?.visitor(occupied, deadline)).await?;
-    driving(server, world.publish_approvals(deadline)).await
+    playing(server, world.directory_mut()?.visitor(occupied, deadline)).await?;
+    playing(server, world.publish_approvals(deadline)).await
 }
 
 impl ClosingHostedWorld {
@@ -368,6 +381,19 @@ async fn driving<T>(
     tokio::pin!(future);
     tokio::select! { biased;
         result = server.maintain() => { result.map_err(|_| unavailable())?; Err(unavailable()) },
+        result = &mut future => result,
+    }
+}
+
+/// Finishes an original bounded peer/service operation after its accepting socket ends.
+/// The next run iteration replaces signaling; no accepted operation or HTTP dispatch is replayed.
+async fn playing<T>(
+    server: &mut MessagingServer,
+    future: impl Future<Output = io::Result<T>>,
+) -> io::Result<T> {
+    tokio::pin!(future);
+    tokio::select! { biased;
+        _ = server.maintain() => future.await,
         result = &mut future => result,
     }
 }

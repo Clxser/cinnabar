@@ -59,6 +59,28 @@ impl HostOpening {
         Ok(())
     }
 
+    /// Checks the live sharing choice without revoking the original local player's route.
+    pub(crate) fn validate_hosting(&self) -> io::Result<()> {
+        let manager = self.manager.upgrade().ok_or_else(unavailable)?;
+        let life = lock(&manager.life);
+        if !self.current(&manager, &life) {
+            return Err(unavailable());
+        }
+        if self.world.multiplayer_disabled
+            || life.world.as_ref().is_none_or(|world| {
+                !world
+                    .options
+                    .enabled(launcher::local_worlds::options::WorldOption::Multiplayer)
+            })
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "native hosting is disabled for this single-player world",
+            ));
+        }
+        Ok(())
+    }
+
     /// Shares the same exact original-instance predicate with lock-held local retirement.
     fn current(&self, manager: &Arc<Inner>, life: &Life) -> bool {
         let Some(instance) = life
@@ -242,13 +264,13 @@ impl NativeHostIntent {
         account: Arc<crate::native_account::NativeAccount>,
         deadline: Instant,
     ) -> io::Result<crate::native_account::NativeHostedWorld> {
-        self.opening.validate()?;
+        self.opening.validate_hosting()?;
         tokio::time::timeout_at(deadline.into(), Arc::clone(&account).validate())
             .await
             .map_err(|_| {
                 io::Error::new(io::ErrorKind::TimedOut, "native hosting account timed out")
             })??;
-        self.opening.validate()?;
+        self.opening.validate_hosting()?;
         self.manager
             .inner
             .native_host
@@ -268,6 +290,7 @@ impl Manager {
     /// Captures a supported original backend for the sole selected native hosting owner.
     pub fn native_host_intent(&self) -> io::Result<NativeHostIntent> {
         let opening = HostOpening::capture(self)?;
+        opening.validate_hosting()?;
         if opening.max_players() < 2 {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,

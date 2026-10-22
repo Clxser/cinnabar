@@ -56,7 +56,7 @@ impl NativeHostedWorld {
         if !self.directory_ref()?.opening()?.same(opening) {
             return Err(rejected());
         }
-        opening.validate()
+        opening.validate_hosting()
     }
 
     /// Rechecks the concrete prepared bridge before any peer is routed into its selected world.

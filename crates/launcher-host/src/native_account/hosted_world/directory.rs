@@ -148,7 +148,7 @@ impl HostDirectory {
         deadline: Instant,
     ) -> io::Result<Self> {
         check_deadline(deadline)?;
-        opening.validate()?;
+        opening.validate_hosting()?;
         let scope = Scope::selected(&account)?;
         let reference = mpsd::Reference::new(
             bedrock_services::minecraft::SERVICE_CONFIG_ID,
@@ -229,7 +229,7 @@ impl HostDirectory {
         }
         self.validate_session()?;
         self.observe()?;
-        self.opening.validate()?;
+        self.opening.validate_hosting()?;
         Ok(())
     }
 
@@ -565,7 +565,7 @@ impl HostDirectory {
     /// Fences every new service operation by the actual opening, generation, XUID and original RTA proof.
     async fn operation(&mut self, deadline: Instant) -> io::Result<Operation> {
         if !self.closing {
-            self.opening.validate()?;
+            self.opening.validate_hosting()?;
         }
         let generation = self.scope.as_ref().map(|scope| scope.generation.clone());
         let acquire = Arc::clone(&self.account).acquire_verified_for(generation.as_deref());
@@ -602,7 +602,7 @@ impl HostDirectory {
             ));
         }
         if !self.closing {
-            self.opening.validate()?;
+            self.opening.validate_hosting()?;
         }
         Ok(operation)
     }
@@ -674,7 +674,7 @@ impl HostDirectory {
                 &mut self.changed,
             )?;
         }
-        self.opening.validate()?;
+        self.opening.validate_hosting()?;
         Ok(())
     }
 
@@ -884,7 +884,7 @@ impl HostDirectory {
         if self.closing || self.closed {
             return Err(super::closed());
         }
-        self.opening.validate()
+        self.opening.validate_hosting()
     }
 }
 
