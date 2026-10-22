@@ -124,6 +124,7 @@ pub fn advance_actor_frame(
         mut equipment,
         profiler,
         mut partial_tick,
+        replay,
         ..
     } = params;
     let ActorFrameState {
@@ -313,12 +314,13 @@ pub fn advance_actor_frame(
         if let Ok((transform, _)) = camera.single() {
             stream.set_actor_camera_position(transform.translation.to_array());
         }
-        stream.set_actor_animation_view(
-            camera
-                .single()
-                .ok()
-                .and_then(|(transform, projection)| views::animation_view(transform, projection)),
-        );
+        let live_animation_view = camera
+            .single()
+            .ok()
+            .and_then(|(transform, projection)| views::animation_view(transform, projection));
+        stream.set_actor_animation_view(replay.as_deref().map_or(live_animation_view, |replay| {
+            replay.animation_view(live_animation_view)
+        }));
         let _animation = profiler
             .as_deref()
             .map(|profiler| profiler.time(render_scene::RuntimeStage::ActorAnimation));

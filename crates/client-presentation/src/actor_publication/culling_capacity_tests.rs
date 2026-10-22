@@ -19,7 +19,12 @@ pub(super) fn catalog(
 
 /// Changes a bone on every interpolation sample to exercise retained native pose owners.
 pub(super) fn animated_catalog() -> (Arc<assets::RuntimeEntityAssets>, ActorArtworkPages) {
-    catalog_with_pose(None, true, "Geometry.default", true)
+    catalog_with_pose(
+        None,
+        true,
+        "query.frame_alpha > 0.0 ? Geometry.wide : Geometry.default",
+        true,
+    )
 }
 
 /// Compiles shared original actor artwork with an optional frame-driven bone channel.
@@ -73,6 +78,12 @@ fn catalog_with_pose(
             .unwrap(),
         ),
     ];
+    if animated {
+        let mut controller: serde_json::Value = serde_json::from_slice(&files[1].1).unwrap();
+        controller["render_controllers"]["controller.render.fixture"]["light_color_multiplier"] =
+            serde_json::json!("variable.fixture_shift = query.frame_alpha * 16; return 1.0;");
+        files[1].1 = serde_json::to_vec(&controller).unwrap();
+    }
     let controllers = match layer_condition {
         Some(condition) => serde_json::json!([{"controller.render.fixture": condition}]),
         None => serde_json::json!(["controller.render.fixture"]),
@@ -83,7 +94,7 @@ fn catalog_with_pose(
             serde_json::to_vec(&serde_json::json!({
                 "format_version": "1.8.0", "animations": {"animation.fixture.pose": {
                     "loop": true,
-                    "bones": {"body": {"position": [0, "query.frame_alpha * 16", 0]}}
+                    "bones": {"body": {"position": [0, "variable.fixture_shift", 0]}}
                 }}
             }))
             .unwrap(),
@@ -766,6 +777,7 @@ fn replay_publications_keep_offscreen_players_without_replacing_the_live_frame()
     let (assets, artwork) = catalog(None, true, "Geometry.default");
     let stream = player_world(&assets, 2, |id| skin(id, false), [0.0, 0.0, 5.0]);
     let mut scene = ActorRenderScene::with_runtime_entity_assets(&assets).unwrap();
+    scene.replace_pack_entities(Some(&assets)).unwrap();
     scene.update(0.5, None, []);
     let live = scene.frame().clone();
     let mut replay = recording::ReplayActors::default();
@@ -806,7 +818,12 @@ fn replay_publications_keep_offscreen_players_without_replacing_the_live_frame()
             .filter(|draw| draw.identity.layer == render_model::ACTOR_LAYER_BODY)
             .map(|draw| draw.identity.runtime_id)
             .collect();
-        assert_eq!(ids, [1, 2, 3].into());
+        assert_eq!(
+            ids,
+            [1, 2, 3].into(),
+            "received draw rejection: {:?}",
+            frame.rig.rejects
+        );
         assert!(Arc::ptr_eq(
             &scene.frame().rig.instances,
             &live.rig.instances

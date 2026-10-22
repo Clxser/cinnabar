@@ -19,6 +19,14 @@ pub struct ReplayActors {
 }
 
 impl ReplayActors {
+    /// Recording prepares received actors outside the live camera; draw visibility stays independent.
+    pub(super) fn animation_view(
+        &self,
+        live: Option<actor_animation::ActorAnimationView>,
+    ) -> Option<actor_animation::ActorAnimationView> {
+        if self.enabled { None } else { live }
+    }
+
     /// Releases prepared recordings and controller caches when capture admission ends.
     pub fn set_enabled(&mut self, enabled: bool) {
         if self.enabled && !enabled {

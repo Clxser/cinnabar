@@ -923,7 +923,7 @@ Current implementation; runtime acceptance remains incomplete:
   GPU pixel readbacks; a recorded-camera video remains an explicit option. Legacy
   takes retain their video contract. Visual queue admission charges shared immutable
   allocations once while enforcing the existing retained-memory limit. These paths
-  have regression source but no current build or sustained hardware acceptance.
+  have passing owning regressions; sustained hardware acceptance remains open.
 - Production hardening now isolates recording actor preparation from live artwork,
   reuses same-clock animation samples and bounded GPU readback buffers, avoids
   recompressing scene envelopes, retires recording-owned pose caches and limits
@@ -946,6 +946,11 @@ Current implementation; runtime acceptance remains incomplete:
   assisted shot tools have dedicated sections with rendered anonymous fixtures.
   Owning regressions and integrated renderer checks are being qualified; sustained
   recording, live input, audio and recovery acceptance remain open.
+  Recorded-subject search uses captured names/types with the player-class filter,
+  cached bounded result pages and source/frame/spawn validation. It never retargets
+  authored camera shots implicitly. Keyboard fallback follows active tool sections.
+  Recording's animation view admits received actors behind the live camera while
+  ordinary draw culling stays independent; the resulting CPU cost remains unmeasured.
 
 - Native-only capture closes admission after a required scene-track failure;
   optional POV video may continue with explicit incomplete native coverage.
@@ -975,9 +980,9 @@ Current implementation; runtime acceptance remains incomplete:
   search/sort runs on the storage worker before visible truncation; painted row
   generations and captured paths guard refreshes and dirty-open confirmation.
   The reference's unspecified Module item uses existing keyframed Effects.
-  New regression sources are unrun. These additions have source review and
-  formatting only; compilation, rendered acceptance, synchronization and export
-  qualification remain incomplete. No parity or performance gate is closed.
+  Owning domain, Studio shell and Studio UI regressions pass. Integrated rendered
+  acceptance, synchronization and export qualification remain incomplete. No
+  parity or performance gate is closed.
 
 Required work remains open:
 
@@ -1013,10 +1018,13 @@ Required work remains open:
 - Owning-crate regressions and rendered/runtime acceptance are still required.
   Performance, sustained capture cadence and resource bounds need measurement.
   Earlier Default and Enhanced production checks predate the latest hardening.
-  Focused app and owning-crate checks now compile with developer control; recording
-  domain and scene regressions pass. Anonymous camera, Assist and transport renders
-  have been inspected. Remaining actor/editor regressions, live input, real replay
-  output, long-session recovery/export and game-frame budgets remain unqualified.
+  Focused app and owning-crate checks compile with developer control; recording
+  domain, scene and Studio shell/UI regressions pass. Recording actor regressions
+  exercise real visibility-policy transitions and changing native layer poses.
+  World block-entity tests cover maintained payload accounting. Anonymous camera,
+  Assist and transport renders have been inspected. Remaining broader fixture
+  failures, live input, real replay output, long-session recovery/export and
+  game-frame budgets remain unqualified.
 
 This feature is incomplete. Domain APIs and storage code alone do not establish a
 working Recording Studio, replay visual parity or a performance acceptance result.

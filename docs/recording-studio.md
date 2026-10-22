@@ -170,8 +170,8 @@ timeline and export workflows.
 - The trailer does not specify its unopened Module controls. Studio uses existing
   keyframed Effects for that workflow. Undocumented module parity remains open.
 
-These additions are source-reviewed and formatted only. Regression source is
-included but unrun. Camera transitions, rendered controls, audio synchronization,
+Owning domain and Studio shell/UI regressions pass. Isolated UI snapshots exercise
+camera and transport controls. Integrated camera transitions, audio synchronization,
 range exports and sustained recording performance still need acceptance testing.
 
 ## Autosave and project recovery
@@ -206,7 +206,10 @@ and a durability warning.
 
 New takes retain received actors and prepared visual channels independently of
 the original camera. Custom cameras cannot reveal world data never received from
-the server. Block preparation warms incrementally, and native capacity limits or
+the server. Recording admits actor animation outside the live camera's animation
+frustum; gameplay draw visibility stays independent. Additional animation work
+still shares the native evaluation budgets and needs hardware cost measurement.
+Block preparation warms incrementally, and native capacity limits or
 missing artwork are reported. Weather uses the recorded climate/roof grid.
 Prepared HUD and item terrain-visibility publications can lag one rendered frame;
 particle, item and block geometry are sampled at the requested capture cadence.

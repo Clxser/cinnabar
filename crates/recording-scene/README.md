@@ -47,11 +47,10 @@ terrain checkpoints do not clear the current scene; seeks return a replacement
 patch. Failed or cancelled drafts are invalidated before another frame can use them.
 The renderer must retain its last published state until it admits the next patch.
 
-Full received-world actor coverage,
-block entities, particles, camera controls and complete preview/export composition
-still need implementation. Terrain
-capture alone is not a complete world replay. No build or runtime acceptance has
-been performed under the current source-edits-only instruction.
+Terrain capture alone is not a complete world replay. Actor, environment, target
+and prepared-visual tracks have separate owners and completion state. Received
+coverage, camera composition and sustained playback still need integrated runtime
+acceptance; a complete terrain journal cannot establish those results.
 
 ## Environment track
 
@@ -105,14 +104,19 @@ successful seek explicitly marks temporal histories for reset.
 The native editor can select a captured POV clip and use its 3D replay through a
 reversible edit. `render::replay` owns a separate headless scene on the shared GPU
 device. It publishes recorded terrain, prepared actors and environment without
-replacing live-world resources. Free/path shot values can supply a camera pose;
-target tracking is still missing and disclosed. Seeks replace camera view history.
+replacing live-world resources. Free/path and subject-bound shots supply camera
+poses through the Studio adapter. Subject binding validates recorded spawn
+lifetimes; older takes without the target track cannot restore those subjects.
+Seeks replace camera view history.
 A four-target lease pool and GPU-only UI copies avoid frame readback and prevent
 reuse before display/copy completion. Device errors remain visible to the primary
 application even after the editor closes.
 
-This provisional viewport supports one unframed replay layer. Native/raster layer
-composition, replay transitions/crops, full camera controls, audio, titles, global
-effects, environment/pose interpolation, shader-mode restoration, exact recorded
-projection planes, HUD/hand and full received-world actor coverage remain
-incomplete. No build, test, rendered parity or performance acceptance has been run.
+Direct spatial authoring requires one unframed replay layer. The app compositor
+connects native/raster layers, framing, transitions, titles and effects; audio has
+its own source clock and export mix. Prepared visuals optionally retain HUD/hand
+and eligible world-label artwork. Older takes cannot regain omitted channels.
+Complete visual coverage, moved-camera environment behavior, shader-mode
+restoration, projection fidelity, synchronized playback and sustained performance
+remain open acceptance work. See [Recording Studio](../../docs/recording-studio.md)
+for current authoring controls, export safety and recovery limits.
