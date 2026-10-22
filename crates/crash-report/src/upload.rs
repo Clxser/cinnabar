@@ -144,7 +144,7 @@ pub fn payload(
         }
     }
     let redactor = learned.redactor();
-    if redactor.json(&mut value).is_err() {
+    if redact_report(&mut value, &redactor).is_err() {
         value = serde_json::json!({ "message": "[report removed: escaped too deeply to redact]" });
     }
     bound_strings(&mut value);
@@ -212,6 +212,7 @@ pub fn payload(
             .as_ref()
             .and_then(|renderer| renderer.get("backend"))
             .and_then(serde_json::Value::as_str)
+            .and_then(|backend| redactor.text(backend).ok())
             .map(|backend| {
                 backend
                     .chars()
@@ -336,13 +337,46 @@ fn learn_text(learned: &mut Learned, text: &str) -> io::Result<()> {
     })
 }
 
+/// Preserves the typed report's field names and kind while scrubbing their free-text values.
+/// Renderer and game-state maps keep full key redaction because their keys can contain user data.
+fn redact_report(
+    value: &mut serde_json::Value,
+    redactor: &Redactor,
+) -> Result<(), crate::redact::Error> {
+    if let Some(fields) = value.as_object_mut() {
+        for (key, value) in fields {
+            if key == "kind" {
+                continue;
+            }
+            if key == "thread"
+                && let Some(thread) = value.as_object_mut()
+            {
+                for value in thread.values_mut() {
+                    redactor.json(value)?;
+                    if let serde_json::Value::String(text) = value {
+                        *text = bounded_line(text);
+                    }
+                }
+            } else {
+                redactor.json(value)?;
+                if !matches!(key.as_str(), "message" | "backtrace" | "span_trace")
+                    && let serde_json::Value::String(text) = value
+                {
+                    *text = bounded_line(text);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The native fields a server may index: the reason as redacted text, addresses as hex and
 /// the faulting module's file name.
 fn native_fields(native: &serde_json::Value, redactor: &Redactor) -> serde_json::Value {
     let hex = |value: Option<&serde_json::Value>| {
         value
             .and_then(serde_json::Value::as_str)
-            .filter(|text| text.starts_with("0x") && text.len() <= 18)
+            .filter(|text| text.starts_with("0x") && (3..=18).contains(&text.len()))
             .filter(|text| text[2..].bytes().all(|byte| byte.is_ascii_hexdigit()))
             .map(str::to_owned)
     };
@@ -351,6 +385,11 @@ fn native_fields(native: &serde_json::Value, redactor: &Redactor) -> serde_json:
         && let Ok(reason) = redactor.text(reason)
     {
         out.insert("reason".into(), bounded_line(&reason).into());
+    }
+    if !out.contains_key("reason")
+        && let Some(code) = hex(native.get("exception_code"))
+    {
+        out.insert("reason".into(), format!("Windows exception {code}").into());
     }
     if !out.contains_key("reason")
         && let Some(signal) = native.get("signal").and_then(serde_json::Value::as_i64)

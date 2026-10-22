@@ -465,3 +465,78 @@ fn native_signal_facts_without_a_tombstone_keep_distinct_signatures() {
     let second = payload(&second, "", "", None, IDS, None).unwrap();
     assert_ne!(first.signature, second.signature);
 }
+
+#[test]
+fn learned_names_cannot_change_fixed_report_fields_or_enum_values() {
+    for user in ["me", "i", "vul"] {
+        let mut report = report(Kind::Runtime, &format!("failure for {user}"));
+        report.thread.name = Some(format!("worker for {user}"));
+        report.renderer = Some(serde_json::json!({ "backend": user }));
+        let payload = payload(
+            &report,
+            &format!("cache at /home/{user}/client"),
+            "",
+            None,
+            IDS,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            payload.report["kind"],
+            serde_json::to_value(report.kind).unwrap()
+        );
+        let message = payload.report["message"]
+            .as_str()
+            .expect("fixed message key changed");
+        assert!(message.contains(crate::redact::PLACEHOLDER));
+        assert!(!message.contains(user));
+        let name = payload.report["thread"]["name"]
+            .as_str()
+            .expect("fixed thread name key changed");
+        assert!(!name.contains(user));
+        assert!(!payload.backend.as_ref().unwrap().contains(user));
+    }
+}
+
+#[test]
+fn redaction_expansion_keeps_nested_metadata_within_the_same_wire_bounds() {
+    let mut report = report(Kind::Panic, &"m".repeat(500));
+    let metadata = "i".repeat(40);
+    report.gpu = Some(metadata.clone());
+    report.driver = Some(metadata.clone());
+    report.release = metadata.clone();
+    report.thread.name = Some(metadata);
+    let payload = payload(&report, "cache at /home/i/client", "", None, IDS, None).unwrap();
+    let wire = serde_json::to_value(&payload).unwrap();
+    for field in ["gpu", "driver", "release"] {
+        assert_eq!(
+            payload.report[field], wire[field],
+            "nested {field} escaped its wire bound"
+        );
+    }
+    assert_eq!(payload.report["thread"]["name"], wire["gpu"]);
+    assert!(
+        payload.report["message"].as_str().unwrap().len() > wire["gpu"].as_str().unwrap().len()
+    );
+}
+
+#[test]
+fn windows_fallback_exception_codes_survive_without_a_minidump() {
+    use windows_sys::Win32::Foundation::{STATUS_ACCESS_VIOLATION, STATUS_STACK_OVERFLOW};
+    let access = format!("0x{:08X}", STATUS_ACCESS_VIOLATION as u32);
+    let overflow = format!("0x{:08X}", STATUS_STACK_OVERFLOW as u32);
+    let mut first = report(Kind::Native, "Unhandled Windows exception");
+    first.native = Some(serde_json::json!({ "exception_code": access,
+        "fault": { "module": "client.exe", "offset": "0x20", "address": "0x1020" } }));
+    let first = payload(&first, "", "", None, IDS, None).unwrap();
+    assert_eq!(
+        first.native.as_ref().unwrap()["reason"],
+        format!("Windows exception {access}")
+    );
+    assert_eq!(first.native.as_ref().unwrap()["fault"]["offset"], "0x20");
+    assert!(first.signature.contains(&access));
+    let mut second = report(Kind::Native, "Unhandled Windows exception");
+    second.native = Some(serde_json::json!({ "exception_code": overflow }));
+    let second = payload(&second, "", "", None, IDS, None).unwrap();
+    assert_ne!(first.signature, second.signature);
+}
