@@ -543,7 +543,8 @@ hardcore, flat presets, Education Edition, operator status for a signed-out host
 acceptance of every option on supported platforms remain incomplete.
 hardcore, flat presets, Education Edition and live acceptance of every option on supported
 platforms remain incomplete.
-Offline play of BDS worlds is a confirmed gap: without a non-loopback network interface BDS
+Local HTTP and LAN joins include client loopback ICE candidates. Full offline play of native
+BDS worlds is still a confirmed gap: without a non-loopback network interface BDS
 offers no NetherNet route, so the join fails with an explanation instead of connecting.
 
 See [local worlds](docs/local-worlds.md).
@@ -583,6 +584,9 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   Android restores immersive system bars on resume, window focus and keyboard dismissal,
   while preserving keyboard control. Device-window regression coverage does not close
   physical-phone navigation, cutout or gameplay acceptance.
+  Android pack, mod, skin and cape imports open the system document picker and copy the
+  chosen documents into app cache storage before importing them; device acceptance and skin
+  imports that need a sibling geometry file remain open.
   Keep browser gesture activation and background work within the host's event-loop rules.
   Touch-capable hosts expose persisted look sensitivity and control guidance. Emotes, chat and pause share a centered utility row; inventory access follows the HUD hotbar. The sensitivity curve, movement/action layouts, alternate touch profiles, remapping, customization, cutout handling and device layout acceptance remain open.
   Menu scroll regions and chat history accept captured finger drags; swipes cancel pending taps, and form slider gestures retain their own control. Native gesture calibration and full route/device acceptance remain open.
