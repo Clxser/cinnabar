@@ -22,6 +22,48 @@ pub(super) fn camera() -> Fixture {
     Fixture::Menu(Box::new(view))
 }
 
+/// Anonymous matching players expose the real search field, bounded result page and paging controls.
+pub(super) fn camera_subjects() -> Fixture {
+    use launcher::menu::studio::{CameraSubjectResults, EditorPanel};
+    use recording_studio::camera::{
+        ActorPose, CameraSubjectSearch, CameraTarget, CameraTargetKind,
+    };
+    let mut view = camera_view();
+    let studio = Arc::make_mut(&mut view.studio);
+    studio.workspace.panel = EditorPanel::Media;
+    let preview = studio.preview.camera.as_mut().unwrap();
+    preview.targets = ["Amber", "Birch", "Cedar", "Flint", "Hazel", "Willow"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| CameraTarget {
+            runtime_id: index as u64 + 2,
+            unique_id: index as i64 + 2,
+            spawn_revision: 1,
+            name: Arc::from(format!("Scout {name}")),
+            kind: CameraTargetKind::Player,
+            entity_type: Some(Arc::from("minecraft:player")),
+            pose: ActorPose {
+                position: [index as f64, 64.0, 8.0],
+                velocity: [0.0; 3],
+                yaw: 0.0,
+                pitch: 0.0,
+                roll: 0.0,
+                eye_offset: Some([0.0, 1.6, 0.0]),
+            },
+            teleported: false,
+        })
+        .collect();
+    studio.camera_target = Some(preview.targets[0].reference());
+    let workspace = &mut studio.camera_workspace;
+    workspace.subject_search = CameraSubjectSearch::new("Scout").unwrap();
+    workspace.subject_results = Some(CameraSubjectResults::new(
+        preview,
+        &workspace.subject_search,
+        workspace.subject_filter,
+    ));
+    Fixture::Menu(Box::new(view))
+}
+
 /// A selected distance rail exposes travel, orientation and lens controls in the real inspector.
 pub(super) fn path() -> Fixture {
     let mut view = camera_view();
