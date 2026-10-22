@@ -32,6 +32,13 @@ global easing, corner stops, control geometry, orientation and lens phases do no
 restart after a trim or move. Hidden support keys count toward the existing key
 budget but are not exposed as editable keys outside the visible trim.
 
+Whole-rail position does not arrive at a geometric key at its orientation timestamp.
+Exact XYZ value edits, Add/Update pose key and Apply view therefore explicitly
+require switching Travel to Key easing; no pose is silently inserted at the wrong
+arrival time. Shape handles still edit geometry. Existing orientation keys remain
+editable without moving their spatial points; FOV edits use the independent lens
+curve. Inserting a new orientation/pose key requires the same explicit timing switch.
+
 ## Numerical and caching contract
 
 Each immutable distance rail compiles 64 arc cells per cubic segment using
@@ -51,3 +58,9 @@ new tables. Cached sampling and analytic velocity depend only on source time,
 not previous evaluation order. Standalone shot convenience sampling may prepare
 a temporary global rail and is intended for metadata edits and isolated callers;
 frame adapters and inspectors use their retained compiled rails.
+
+Global overlay geometry searches compiled traveled-distance prefixes for the trim
+endpoints and centers its bounded segment window on actual traveled position.
+Editable key/handle markers retain their separate timestamp window. Very long
+visible rails show a bounded neighborhood rather than dropping the current spatial
+segment because its key timestamp is far from the playhead.

@@ -70,7 +70,7 @@ pub(super) fn creation(
     navigation::draw(canvas, view, [left, y, right, area[3]])
 }
 
-/// Every numeric adjustment is undoable; path adjustments key the exact playhead instead of a neighbour.
+/// Numeric edits are undoable; whole-rail pose placement requires an explicit timing switch.
 pub(super) fn inspector(
     canvas: &mut Canvas<'_>,
     view: &MenuView,
@@ -201,7 +201,9 @@ fn numeric(
 ) -> Result<f32, PaintError> {
     let [left, mut y, right, _] = area;
     let at = view.studio.position;
-    let enabled = at >= shot.span.start && at <= shot.span.end;
+    let enabled = at >= shot.span.start
+        && at <= shot.span.end
+        && shot.ensure_parameter_edit(at, parameter).is_ok();
     let label = if shot.kind() == CameraRigKind::Follow
         && matches!(
             parameter,

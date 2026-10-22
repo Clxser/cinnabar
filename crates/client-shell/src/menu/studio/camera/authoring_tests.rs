@@ -139,6 +139,38 @@ fn adding_a_path_key_authors_the_inspection_pose_beneath_effects() {
 }
 
 #[test]
+fn whole_rail_add_key_and_apply_view_explicitly_reject_without_mutating_the_document() {
+    let mut studio = inspected_project(true);
+    let shot = studio.camera_shot().unwrap();
+    let shot = shot
+        .keyed(
+            shot.span.end,
+            CameraPose {
+                position: [10.0, 64.0, 0.0],
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .with_path_timing(recording_studio::camera::PathTiming::GlobalDistance)
+        .unwrap();
+    studio
+        .edit("Prepare global rail", &[Command::ReplaceShot { shot }])
+        .unwrap();
+    let before = Arc::clone(studio.project().unwrap());
+    let revision = studio.editor.as_ref().unwrap().revision();
+    let inspected = studio.view.camera_workspace.view;
+    for error in [
+        studio.add_camera_key().unwrap_err(),
+        studio.apply_camera_view().unwrap_err(),
+    ] {
+        assert!(error.contains("Switch Travel to Key easing"), "{error}");
+        assert!(Arc::ptr_eq(&before, studio.project().unwrap()));
+        assert_eq!(studio.editor.as_ref().unwrap().revision(), revision);
+        assert_eq!(studio.view.camera_workspace.view, inspected);
+    }
+}
+
+#[test]
 fn ordinary_creation_keeps_the_admitted_unmodified_camera_pose() {
     let mut studio = inspected_project(false);
     Arc::make_mut(&mut studio.view).camera_workspace.view = None;

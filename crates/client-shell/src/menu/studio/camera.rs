@@ -81,8 +81,10 @@ impl Studio {
                 Action::StepCameraFovKey(1),
             ]);
             if shot.kind() == CameraRigKind::Path {
+                if shot.ensure_pose_keying().is_ok() {
+                    actions.push(Action::AddCameraKey);
+                }
                 actions.extend([
-                    Action::AddCameraKey,
                     Action::DeleteCameraKey,
                     Action::CycleCameraEasing,
                     Action::ToggleCameraSmoothing,
@@ -107,6 +109,12 @@ impl Studio {
                 actions.extend([Action::ApplyCameraValue, Action::CancelCameraValue]);
             }
             for &parameter in shot.parameters() {
+                if shot
+                    .ensure_parameter_edit(self.transport.position(), parameter)
+                    .is_err()
+                {
+                    continue;
+                }
                 actions.push(Action::EditCameraValue(parameter));
                 actions.extend([-1, 1].map(|direction| Action::AdjustCamera {
                     parameter,
@@ -328,10 +336,12 @@ impl Studio {
 
     /// The key captures inspection navigation when present, leaving transient effects separate.
     pub(super) fn add_camera_key(&mut self) -> Result<(), String> {
+        let shot = self.camera_shot()?;
+        shot.ensure_pose_keying()
+            .map_err(|error| error.to_string())?;
         let preview = self.camera_preview()?;
         let pose = self.camera_authoring_pose(self.view.preview.at, preview.pose)?;
-        let shot = self
-            .camera_shot()?
+        let shot = shot
             .keyed(self.view.preview.at, pose)
             .map_err(|error| error.to_string())?;
         self.transport.pause();

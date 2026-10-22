@@ -324,6 +324,25 @@ fn key_window(view: &MenuView, shot: &CameraShot) -> std::ops::Range<usize> {
     start..(start + MAX_VISIBLE_KEYS).min(keys.len())
 }
 
+/// Rail geometry follows traveled distance; edit markers retain their separate orientation-key clock.
+fn geometry_window(view: &MenuView, shot: &CameraShot) -> std::ops::Range<usize> {
+    if shot.path_timing == recording_studio::camera::PathTiming::GlobalDistance {
+        return view
+            .studio
+            .camera_workspace
+            .path_cache
+            .as_ref()
+            .filter(|cache| cache.shot == shot.id)
+            .map_or(0..0, |cache| {
+                cache
+                    .path
+                    .geometry_window(view.studio.position, MAX_VISIBLE_KEYS)
+            });
+    }
+    let range = key_window(view, shot);
+    range.start..range.end.min(shot.path_keys().len().saturating_sub(1))
+}
+
 /// Samples the saved evaluator rather than drawing a straight decorative approximation of a curve.
 fn path(
     canvas: &mut Canvas<'_>,
@@ -335,7 +354,7 @@ fn path(
 ) -> Result<(), PaintError> {
     let keys = shot.path_keys();
     let window = key_window(view, shot);
-    for index in window.clone().filter(|&index| index + 1 < keys.len()) {
+    for index in geometry_window(view, shot) {
         let points = if shot.path_timing != recording_studio::camera::PathTiming::Keyed {
             view.studio
                 .camera_workspace

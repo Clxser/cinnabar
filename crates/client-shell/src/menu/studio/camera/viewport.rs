@@ -513,6 +513,10 @@ impl Studio {
                 CameraRigKind::Free | CameraRigKind::Path | CameraRigKind::Track
             )
         });
+        if let Some(shot) = &shot {
+            shot.ensure_pose_keying()
+                .map_err(|error| error.to_string())?;
+        }
         let at = shot
             .as_ref()
             .and_then(|shot| {

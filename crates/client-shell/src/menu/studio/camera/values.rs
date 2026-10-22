@@ -13,6 +13,8 @@ impl Studio {
         if at < shot.span.start || at > shot.span.end {
             return Err("Move the playhead inside this camera shot before editing a value.".into());
         }
+        shot.ensure_parameter_edit(at, parameter)
+            .map_err(|error| error.to_string())?;
         let revision = self
             .editor
             .as_ref()

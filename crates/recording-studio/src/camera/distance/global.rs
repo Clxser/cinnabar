@@ -94,6 +94,35 @@ impl GlobalRail {
         progress * self.cumulative.last().copied().unwrap_or(0.0)
     }
 
+    /// The half-open segment range intersects traveled distance, independently of orientation timestamps.
+    pub(super) fn segment_range(&self, source: [MediaTime; 2]) -> std::ops::Range<usize> {
+        let low = self.distance_at(source[0]);
+        let high = self.distance_at(source[1]);
+        if high <= low {
+            return 0..0;
+        }
+        let count = self.cumulative.len().saturating_sub(1);
+        let start = self.segment_at_distance(low);
+        let end = self
+            .cumulative
+            .partition_point(|prefix| *prefix < high)
+            .min(count);
+        start..end
+    }
+
+    /// An exact boundary selects the outgoing segment, skipping stationary distance plateaus.
+    pub(super) fn segment_at(&self, source: MediaTime) -> usize {
+        self.segment_at_distance(self.distance_at(source))
+    }
+
+    /// Prefix search is shared by playback and overlay admission so they cannot choose different rails.
+    fn segment_at_distance(&self, distance: f64) -> usize {
+        self.cumulative
+            .partition_point(|prefix| *prefix <= distance)
+            .saturating_sub(1)
+            .min(self.cumulative.len().saturating_sub(2))
+    }
+
     /// Empty-distance intervals are skipped without losing independent orientation keys or producing NaNs.
     pub(super) fn position(&self, segments: &[ArcSegment], source: MediaTime) -> [f64; 3] {
         let distance = self.distance_at(source);
@@ -108,11 +137,7 @@ impl GlobalRail {
                 .last()
                 .map_or([0.0; 3], |segment| segment.to.pose.position);
         }
-        let index = self
-            .cumulative
-            .partition_point(|prefix| *prefix <= distance)
-            .saturating_sub(1)
-            .min(segments.len() - 1);
+        let index = self.segment_at_distance(distance);
         let segment = &segments[index];
         let length = segment.length();
         let fraction = if length > 0.0 {
@@ -148,11 +173,7 @@ impl GlobalRail {
             return DVec3::ZERO;
         }
         let distance = self.distance_at(source);
-        let index = self
-            .cumulative
-            .partition_point(|prefix| *prefix <= distance)
-            .saturating_sub(1)
-            .min(segments.len() - 1);
+        let index = self.segment_at_distance(distance);
         let segment = &segments[index];
         let fraction = if segment.length() > 0.0 {
             (distance - self.cumulative[index]) / segment.length()

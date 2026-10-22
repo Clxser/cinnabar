@@ -113,7 +113,9 @@ pub(super) fn draw(
                     "Add key"
                 },
                 Action::AddCameraKey,
-                view.studio.preview.ready && shot.span.contains(at),
+                view.studio.preview.ready
+                    && shot.span.contains(at)
+                    && shot.ensure_pose_keying().is_ok(),
             ),
             (
                 "Delete key",
@@ -172,6 +174,10 @@ pub(super) fn draw(
             CAPTION,
             TEXT_DIMMER,
             false,
+        )? + canvas.r(1.6);
+        y += canvas.text(
+            "Use the Travel button to switch to Key easing for exact XYZ, Add key or Apply view. Shape handles and existing orientation keys remain editable.",
+            [left, y], right - left, CAPTION, TEXT_DIMMER, false,
         )? + canvas.r(1.6);
     }
     control(

@@ -94,6 +94,7 @@ fn global_rail_cache_survives_seeks_and_view_moves_but_invalidates_on_metadata_e
     studio
         .edit("Prepare global rail", &[Command::ReplaceShot { shot }])
         .unwrap();
+    studio.publish_editor();
     let first = Arc::clone(
         &studio
             .view
@@ -140,6 +141,7 @@ fn global_rail_cache_survives_seeks_and_view_moves_but_invalidates_on_metadata_e
     studio
         .edit("Align rail tangents", &[Command::ReplaceShot { shot }])
         .unwrap();
+    studio.publish_editor();
     assert!(!Arc::ptr_eq(
         &first,
         &studio

@@ -31,6 +31,40 @@ parameters! {
 }
 
 impl CameraShot {
+    /// Whole-rail travel cannot promise arrival at a new pose key's authored timestamp.
+    pub fn ensure_pose_keying(&self) -> Result<(), StudioError> {
+        if self.path_timing == PathTiming::GlobalDistance {
+            return Err(StudioError::Invalid(
+                "Whole rail distance ignores position-key times. Switch Travel to Key easing before adding/updating a pose key or applying a view.",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Independent lens edits and existing orientation keys never need to change whole-rail geometry.
+    pub fn ensure_parameter_edit(
+        &self,
+        at: MediaTime,
+        parameter: CameraParameter,
+    ) -> Result<(), StudioError> {
+        if self.path_timing != PathTiming::GlobalDistance {
+            return Ok(());
+        }
+        match parameter {
+            CameraParameter::X | CameraParameter::Y | CameraParameter::Z => {
+                self.ensure_pose_keying()
+            }
+            CameraParameter::Yaw | CameraParameter::Pitch | CameraParameter::Roll
+                if self.key_at(at).is_none() =>
+            {
+                Err(StudioError::Invalid(
+                    "Select an existing orientation key, or switch Travel to Key easing before adding a pose key. Whole rail distance keeps position and orientation clocks separate.",
+                ))
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// Creates an editable rig from the displayed source's actual pose and admitted target identity.
     pub fn from_preview(
         id: Id,
@@ -298,11 +332,14 @@ impl CameraShot {
                 "camera value is outside its shot or is not finite",
             ));
         }
+        self.ensure_parameter_edit(at, parameter)?;
         self.parameter(parameter, at).ok_or(StudioError::Invalid(
             "this rig does not own that camera parameter",
         ))?;
         use CameraParameter as P;
-        if parameter == P::Fov && self.fov_curve.is_some() {
+        if parameter == P::Fov
+            && (self.fov_curve.is_some() || self.path_timing == PathTiming::GlobalDistance)
+        {
             return self.with_fov_key(at, value);
         }
         let mut next = self.clone();
@@ -317,9 +354,12 @@ impl CameraShot {
                 let offset = next
                     .path_offset
                     .checked_add(at.saturating_sub(next.span.start))?;
-                let mut pose = self
-                    .path_pose(at)
-                    .ok_or(StudioError::Invalid("camera path has no pose"))?;
+                let mut pose = if self.path_timing == PathTiming::GlobalDistance {
+                    self.key_at(at).map(|key| key.pose)
+                } else {
+                    self.path_pose(at)
+                }
+                .ok_or(StudioError::Invalid("camera path has no pose"))?;
                 set_pose(&mut pose, parameter, value)?;
                 set_key(
                     keys,
@@ -371,6 +411,7 @@ impl CameraShot {
 
     /// Records the current preview pose as a path key; an existing key keeps its easing choice.
     pub fn keyed(&self, at: MediaTime, pose: CameraPose) -> Result<Self, StudioError> {
+        self.ensure_pose_keying()?;
         if at < self.span.start || at > self.span.end {
             return Err(StudioError::Invalid("camera key is outside its shot"));
         }

@@ -165,6 +165,51 @@ impl CompiledCameraPath {
         self.accuracy
     }
 
+    /// Bounded overlay work follows the actual traveled segment and never crosses the retained trim.
+    pub fn geometry_window(&self, at: MediaTime, maximum: usize) -> std::ops::Range<usize> {
+        let Some(end) = self
+            .offset
+            .checked_add(self.end.saturating_sub(self.start))
+            .ok()
+        else {
+            return 0..0;
+        };
+        if maximum == 0 {
+            return 0..0;
+        }
+        let source = self
+            .offset
+            .0
+            .saturating_add(at.clamp(self.start, self.end).0 - self.start.0);
+        let source = MediaTime(source);
+        let (visible, center) = if let Some(global) = &self.global {
+            (
+                global.segment_range([self.offset, end]),
+                global.segment_at(source),
+            )
+        } else {
+            let first = self
+                .segments
+                .partition_point(|segment| segment.to.at <= self.offset);
+            let last = self
+                .segments
+                .partition_point(|segment| segment.from.at < end);
+            (
+                first..last,
+                self.segments
+                    .partition_point(|segment| segment.to.at <= source),
+            )
+        };
+        if visible.is_empty() {
+            return visible;
+        }
+        let start = center
+            .saturating_sub(maximum / 2)
+            .max(visible.start)
+            .min(visible.end.saturating_sub(maximum).max(visible.start));
+        start..start.saturating_add(maximum).min(visible.end)
+    }
+
     /// A cached overlay trace clips in traveled distance for global rails and source time otherwise.
     pub fn geometry_samples<const N: usize>(&self, index: usize) -> Option<[[f64; 3]; N]> {
         if N < 2 {

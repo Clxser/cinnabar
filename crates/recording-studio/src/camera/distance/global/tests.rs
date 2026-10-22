@@ -327,3 +327,119 @@ fn legacy_documents_keep_original_geometry_and_keyed_easing_exactly() {
         );
     }
 }
+
+#[test]
+fn overlay_windows_follow_distance_after_a_long_short_distance_prefix_and_trim_both_endpoints() {
+    let points: Vec<_> = (0..=300)
+        .map(|index| {
+            [
+                if index < 300 {
+                    index as f64 * 0.001
+                } else {
+                    1000.0
+                },
+                0.0,
+                0.0,
+            ]
+        })
+        .collect();
+    let times: Vec<_> = (0..=300).map(|index| index * 1_000_000).collect();
+    let shot = rail(&points, &times)
+        .trimmed(Span::new(MediaTime(20_000_000), MediaTime(40_000_000)).unwrap())
+        .unwrap();
+    let cache = CompiledCameraPath::new(&shot).unwrap();
+    for at in [shot.span.start, MediaTime(30_000_000), shot.span.end] {
+        assert_eq!(cache.geometry_window(at, 128), 299..300);
+    }
+    let samples = cache.geometry_samples::<9>(299).unwrap();
+    near(
+        samples[0],
+        cache.sample(shot.span.start).unwrap().position,
+        1e-9,
+    );
+    near(
+        samples[8],
+        cache.sample(shot.span.end).unwrap().position,
+        1e-9,
+    );
+    assert!(cache.geometry_samples::<9>(20).is_none());
+    assert!(cache.geometry_window(MediaTime(30_000_000), 0).is_empty());
+}
+
+#[test]
+fn large_overlay_windows_stay_bounded_inside_the_trim_and_include_the_current_spatial_segment() {
+    let points: Vec<_> = (0..=300).map(|index| [index as f64, 0.0, 0.0]).collect();
+    let times: Vec<_> = (0..=300).map(|index| index * 1_000_000).collect();
+    let shot = rail(&points, &times)
+        .trimmed(Span::new(MediaTime(25_250_000), MediaTime(274_750_000)).unwrap())
+        .unwrap();
+    let cache = CompiledCameraPath::new(&shot).unwrap();
+    for at in [25_250_000, 100_250_000, 200_250_000, 274_750_000] {
+        let window = cache.geometry_window(MediaTime(at), 128);
+        assert_eq!(window.len(), 128);
+        assert!(window.start >= 25 && window.end <= 275);
+        assert!(window.contains(&(at as usize / 1_000_000)));
+    }
+    assert_eq!(cache.geometry_window(shot.span.start, 128).start, 25);
+    assert_eq!(cache.geometry_window(shot.span.end, 128).end, 275);
+}
+
+#[test]
+fn whole_rail_pose_authoring_explicitly_requires_a_switch_to_key_timing() {
+    let shot = rail(&[[0.0; 3], [10.0, 0.0, 0.0]], &[0, 2_000_000]);
+    let at = MediaTime(1_000_000);
+    let requested = CameraPose {
+        position: [6.0, 2.0, 3.0],
+        ..Default::default()
+    };
+    for parameter in [CameraParameter::X, CameraParameter::Y, CameraParameter::Z] {
+        let error = shot
+            .with_parameter(at, parameter, 6.0)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Switch Travel to Key easing"));
+    }
+    assert!(
+        shot.keyed(at, requested)
+            .unwrap_err()
+            .to_string()
+            .contains("Switch Travel to Key easing")
+    );
+    assert!(shot.with_pose(at, requested).is_err());
+    near(shot.path_pose(at).unwrap().position, [5.0, 0.0, 0.0], 1e-10);
+    let keyed = shot.with_path_timing(PathTiming::Keyed).unwrap();
+    assert_eq!(
+        keyed.keyed(at, requested).unwrap().path_pose(at),
+        Some(requested)
+    );
+    assert_eq!(
+        keyed
+            .with_parameter(at, CameraParameter::X, 6.0)
+            .unwrap()
+            .path_pose(at)
+            .unwrap()
+            .position[0],
+        6.0
+    );
+}
+
+#[test]
+fn whole_rail_lens_and_existing_orientation_edits_preserve_all_spatial_geometry() {
+    let shot = rail(&[[0.0; 3], [10.0, 0.0, 0.0]], &[0, 2_000_000]);
+    let at = MediaTime(1_000_000);
+    assert!(shot.with_parameter(at, CameraParameter::Yaw, 90.0).is_err());
+    let edited = shot
+        .with_parameter(shot.span.end, CameraParameter::Yaw, 123.0)
+        .unwrap()
+        .with_parameter(at, CameraParameter::Fov, 42.0)
+        .unwrap();
+    assert_eq!(edited.path_keys().len(), shot.path_keys().len());
+    assert_eq!(edited.path_pose(shot.span.end).unwrap().yaw, 123.0);
+    assert_eq!(edited.sample(at, |_| None).unwrap().fov, 42.0);
+    for at in [0, 500_000, 1_000_000, 1_500_000, 2_000_000] {
+        assert_eq!(
+            edited.path_pose(MediaTime(at)).unwrap().position,
+            shot.path_pose(MediaTime(at)).unwrap().position
+        );
+    }
+}

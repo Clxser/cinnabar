@@ -20,6 +20,80 @@ fn reset_remains_enabled_while_the_inspection_preview_is_loading() {
     );
 }
 
+#[test]
+fn global_geometry_window_is_independent_from_timestamp_edit_markers_and_clips_trim_endpoints() {
+    use recording_studio::{
+        Span,
+        camera::{CameraKey, CameraMode, CameraRigKind, CompiledCameraPath, PathTiming},
+        effect::Easing,
+    };
+    let span = Span::new(MediaTime::ZERO, MediaTime(300_000_000)).unwrap();
+    let mut shot = CameraShot::from_preview(
+        Id(1),
+        span,
+        CameraRigKind::Path,
+        CameraPose::default(),
+        None,
+    )
+    .unwrap();
+    shot.mode = CameraMode::Path {
+        keys: (0..=300)
+            .map(|index| CameraKey {
+                at: MediaTime(index * 1_000_000),
+                pose: CameraPose {
+                    position: [
+                        if index < 300 {
+                            index as f64 * 0.001
+                        } else {
+                            1000.0
+                        },
+                        0.0,
+                        0.0,
+                    ],
+                    ..Default::default()
+                },
+                easing: Easing::Linear,
+                handles: None,
+            })
+            .collect(),
+        smooth_position: false,
+    };
+    let shot = shot
+        .with_path_timing(PathTiming::GlobalDistance)
+        .unwrap()
+        .trimmed(Span::new(MediaTime(20_000_000), MediaTime(40_000_000)).unwrap())
+        .unwrap();
+    let cache = Arc::new(CompiledCameraPath::new(&shot).unwrap());
+    let mut view = MenuView::new(true, "Player".into());
+    let studio = Arc::make_mut(&mut view.studio);
+    studio.position = MediaTime(30_000_000);
+    studio.camera_workspace.path_cache = Some(launcher::menu::studio::CameraPathCache {
+        shot: shot.id,
+        epoch: [1, 0],
+        draft: None,
+        path: Arc::clone(&cache),
+    });
+    assert!(!key_window(&view, &shot).contains(&299));
+    let window = geometry_window(&view, &shot);
+    assert_eq!(window, 299..300);
+    assert!(window.len() <= MAX_VISIBLE_KEYS);
+    let points = cache
+        .geometry_samples::<SEGMENT_POINTS>(window.start)
+        .unwrap();
+    for (point, at) in [
+        (points[0], shot.span.start),
+        (points[SEGMENT_POINTS - 1], shot.span.end),
+    ] {
+        let expected = cache.sample(at).unwrap().position;
+        assert!(
+            point
+                .into_iter()
+                .zip(expected)
+                .all(|(actual, expected)| (actual - expected).abs() < 1e-9)
+        );
+    }
+}
+
 /// Identical display names cannot turn a floating-text entity into a player selection marker.
 fn target(id: u64, kind: CameraTargetKind) -> CameraTarget {
     CameraTarget {
