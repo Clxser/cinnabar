@@ -276,7 +276,6 @@ impl LocomotionState {
                         jump,
                         sneak: processed_sneak,
                         sprint_down: controlled.sprint_down,
-                        sprint_pressed: sprint.pressed && sprint_allowed,
                         sneak_down: input.sneaking,
                         server_sprinting: server.and_then(|flags| flags.sprinting),
                         server_sneaking: server.and_then(|flags| flags.sneaking),

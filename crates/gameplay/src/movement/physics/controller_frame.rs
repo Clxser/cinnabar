@@ -26,7 +26,6 @@ pub(super) struct ControllerFrame {
     pub requested_sneak: bool,
     pub requested_sprint: bool,
     pub sprint_down: bool,
-    pub sprint_pressed: bool,
     /// Server sprint flag applied before this tick, live or from a delayed write.
     pub server_sprinting: Option<bool>,
     pub input_mode: PlayerInputMode,
@@ -119,7 +118,6 @@ impl ControllerFrame {
             liquid_contact_height: input.liquid_contact_height,
             jump_edge: self.jump_edge,
             jump_down: self.jump_down,
-            sprint_pressed: self.sprint_pressed,
         };
         anchor_state.prepare_tick(world, *modes, self.intent, &mut observed, *input);
         state.position = observed.feet;

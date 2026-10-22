@@ -275,8 +275,11 @@ impl LocalPhysicsController {
 pub struct ServerControlFlags {
     pub sprinting: Option<bool>,
     pub sneaking: Option<bool>,
+    /// Stamp of the write that owns `sprinting`; an older delayed write never
+    /// replaces a newer one.
+    sprint_stamp: u64,
     /// The sprint came from a delayed write whose replay may still stop it.
-    pub(super) sprint_from_rewind: bool,
+    sprint_from_rewind: bool,
 }
 
 impl LocalPhysicsController {
@@ -299,7 +302,8 @@ impl LocalPhysicsController {
             TimelineSlot::Stale => self.history.oldest_tick(),
         };
         let Some(tick) = rewind else {
-            self.adopt_live_flags(flags);
+            let latest = self.state.as_ref()?.tick;
+            self.adopt_live_flags(flags, latest.max(tick), false);
             return None;
         };
         let anchor = *self.history.input_at(tick)?;
@@ -337,16 +341,15 @@ impl LocalPhysicsController {
                     crate::movement::speed_authority::preserve_effective_speed(input, previous);
                 },
             );
-            // Native applies the write once, on the following frame; continuation
-            // and later stop intents then decide the rest of the run.
+            // Native applies each write once, in arrival order, on the following
+            // frame; continuation and later stop intents then decide the rest of the run.
             if edited
-                && sprinting
                 && let Some(frame) = self
                     .controller_history
                     .iter_mut()
                     .find(|frame| frame.tick == tick + 1)
             {
-                frame.server_sprinting.get_or_insert(true);
+                frame.server_sprinting = Some(sprinting);
             }
             changed |= edited;
             present.sprinting = reached.then_some(sprinting);
@@ -380,30 +383,28 @@ impl LocalPhysicsController {
                 self.modes.end(mode);
             }
         }
-        self.adopt_live_flags(client_world::MovementFlagUpdate {
-            gliding: None,
-            swimming: None,
-            crawling: None,
-            ..present
-        });
-        if present.sprinting.is_some()
-            && let Some(pending) = &mut self.server_control_flags
-        {
-            pending.sprint_from_rewind = true;
-        }
+        self.adopt_live_flags(
+            client_world::MovementFlagUpdate {
+                gliding: None,
+                swimming: None,
+                crawling: None,
+                ..present
+            },
+            tick,
+            true,
+        );
         changed.then_some(tick)
     }
 
     /// A delayed sprint write's replay decides the live state. When replayed
-    /// intents stopped it, its pending adoption and posture overlay are stale; a
-    /// newer live write has already cleared the marker and keeps its own values.
+    /// intents stopped it, its pending adoption and posture overlay are stale. The
+    /// marker stays until the controls take the flags, so later replays settle too;
+    /// a newer write has replaced it and keeps its own values.
     pub(super) fn settle_rewound_sprint(&mut self) {
         let Some(pending) = &mut self.server_control_flags else {
             return;
         };
-        if !std::mem::take(&mut pending.sprint_from_rewind)
-            || self.modes.sprinting()
-            || pending.sprinting != Some(true)
+        if !pending.sprint_from_rewind || self.modes.sprinting() || pending.sprinting != Some(true)
         {
             return;
         }
@@ -418,7 +419,20 @@ impl LocalPhysicsController {
         self.server_control_flags.take()
     }
 
-    fn adopt_live_flags(&mut self, mut flags: client_world::MovementFlagUpdate) {
+    /// Adopts flags stamped `stamp` into the live latches. A sprint from a write
+    /// older than the one already pending stays with that newer write.
+    fn adopt_live_flags(
+        &mut self,
+        mut flags: client_world::MovementFlagUpdate,
+        stamp: u64,
+        rewound: bool,
+    ) {
+        if self
+            .server_control_flags
+            .is_some_and(|pending| pending.sprinting.is_some() && pending.sprint_stamp > stamp)
+        {
+            flags.sprinting = None;
+        }
         for (flag, mode) in [
             (flags.gliding, sim::MovementMode::Gliding),
             (flags.swimming, sim::MovementMode::Swimming),
@@ -441,7 +455,10 @@ impl LocalPhysicsController {
         self.live_posture.sprinting = flags.sprinting.or(self.live_posture.sprinting);
         self.live_posture.sneaking = flags.sneaking.or(self.live_posture.sneaking);
         let pending = self.server_control_flags.get_or_insert_default();
-        pending.sprint_from_rewind &= flags.sprinting.is_none();
+        if flags.sprinting.is_some() {
+            pending.sprint_stamp = stamp;
+            pending.sprint_from_rewind = rewound;
+        }
         pending.sprinting = flags.sprinting.or(pending.sprinting);
         pending.sneaking = flags.sneaking.or(pending.sneaking);
     }

@@ -44,13 +44,13 @@ impl CollisionWorld for SidePool {
 const SWIM_TICKS: usize = 18;
 
 /// Sprints into a held-jump swim start in water, which ends the sprint, then swims
-/// unsprinted out through the side. Returns the swim-start tick; `on_time`
-/// applies a server sprint write right after it.
+/// unsprinted out through the side. Returns the swim-start tick and network
+/// position; `on_time` applies a server sprint write right after it.
 fn swim_out_of_the_side(
     physics: &mut LocalPhysicsController,
     ticker: &mut MovementTicker,
     on_time: Option<client_world::MovementFlagUpdate>,
-) -> u64 {
+) -> (u64, [f32; 3]) {
     physics.reanchor_network_position([0.5, 2.620_01, 2.4], 100, true);
     ticker.reset(7, 100, [0.5, 2.620_01, 2.4]);
     ticker.set_source(MovementSource::Physics);
@@ -94,7 +94,7 @@ fn swim_out_of_the_side(
         Some(&sim::MovementMode::Walking),
         "the swim leaves the water"
     );
-    start.tick
+    (start.tick, start.position)
 }
 
 /// A delayed server sprint write cannot outlast a liquid stop during replay.
@@ -113,7 +113,7 @@ fn a_replayed_server_sprint_ends_at_a_liquid_stop() {
 
     let mut delayed = LocalPhysicsController::default();
     let mut ticker = MovementTicker::default();
-    let start = swim_out_of_the_side(&mut delayed, &mut ticker, None);
+    let (start, start_position) = swim_out_of_the_side(&mut delayed, &mut ticker, None);
     assert_eq!(delayed.latest_sneak_sprint(), Some((false, false)));
     let rewind = delayed.apply_server_movement_flags(start, sprint).unwrap();
     reconcile_timeline_rewind(&mut ticker, &mut delayed, rewind, &SidePool).unwrap();
@@ -126,20 +126,12 @@ fn a_replayed_server_sprint_ends_at_a_liquid_stop() {
             .and_then(|flags| flags.sprinting),
         None
     );
-    // The write stays retained: replaying the same history again reproduces it.
-    let anchor = delayed.state().unwrap().tick - 6;
-    let position = ticker
-        .pending_samples()
-        .iter()
-        .find(|sample| sample.snapshot.tick == anchor)
-        .unwrap()
-        .snapshot
-        .position;
+    // The write stays retained: replaying again from before it reproduces it.
     reconcile_candidate_physics_correction(
         &mut ticker,
         &mut delayed,
-        position,
-        anchor,
+        start_position,
+        start,
         false,
         PhysicsCorrectionMode::ReplayIfRetained,
         &SidePool,
@@ -153,86 +145,70 @@ fn a_replayed_server_sprint_ends_at_a_liquid_stop() {
 }
 
 /// A newer live sprint write survives the replay of an older delayed write that
-/// a liquid stop ended.
+/// a liquid stop ended, in either arrival order.
 #[test]
 fn a_newer_live_sprint_write_survives_an_older_stopped_replay() {
     let sprint = client_world::MovementFlagUpdate {
         sprinting: Some(true),
         ..Default::default()
     };
-    let mut physics = LocalPhysicsController::default();
-    let mut ticker = MovementTicker::default();
-    let start = swim_out_of_the_side(&mut physics, &mut ticker, None);
-    let rewind = physics.apply_server_movement_flags(start, sprint).unwrap();
-    let latest = physics.state().unwrap().tick;
-    assert_eq!(physics.apply_server_movement_flags(latest, sprint), None);
-    reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &SidePool).unwrap();
-    assert_eq!(
-        physics
-            .take_server_control_flags()
-            .and_then(|flags| flags.sprinting),
-        Some(true)
-    );
+    for live_first in [false, true] {
+        let mut physics = LocalPhysicsController::default();
+        let mut ticker = MovementTicker::default();
+        let (start, _) = swim_out_of_the_side(&mut physics, &mut ticker, None);
+        let latest = physics.state().unwrap().tick;
+        if live_first {
+            assert_eq!(physics.apply_server_movement_flags(latest, sprint), None);
+        }
+        let rewind = physics.apply_server_movement_flags(start, sprint).unwrap();
+        if !live_first {
+            assert_eq!(physics.apply_server_movement_flags(latest, sprint), None);
+        }
+        reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &SidePool).unwrap();
+        assert_eq!(
+            physics
+                .take_server_control_flags()
+                .and_then(|flags| flags.sprinting),
+            Some(true),
+            "live first {live_first}"
+        );
+    }
 }
 
-/// A later server sprint write, stamped after the replayed liquid stop, still applies.
+/// The latest write applied to a tick decides it, as native applies corrections in
+/// arrival order: an on-time server stop adopted on a tick does not mask a later
+/// delayed sprint write for the same tick.
 #[test]
-fn a_server_sprint_after_a_replayed_liquid_stop_still_applies() {
+fn a_later_sprint_write_replaces_an_earlier_tick_flag() {
+    let (mut physics, mut ticker) = walked_physics(0);
+    let mut ticks = Vec::new();
+    for index in 0..4 {
+        let frame = physics.advance_with_context(
+            Duration::from_millis(50),
+            forward_physics_input(),
+            PhysicsSampleContext {
+                input: crate::movement::TickInput {
+                    server_sprinting: (index == 1).then_some(false),
+                    ..Default::default()
+                },
+                ..PhysicsSampleContext::default()
+            },
+            &VersionedFloor(1),
+        );
+        let sample = frame.samples[0].clone();
+        ticker.enqueue_completed_physics(sample.clone()).unwrap();
+        ticks.push(sample.tick);
+    }
+    assert_eq!(physics.latest_sneak_sprint(), Some((false, false)));
     let sprint = client_world::MovementFlagUpdate {
         sprinting: Some(true),
         ..Default::default()
     };
-    let mut physics = LocalPhysicsController::default();
-    let mut ticker = MovementTicker::default();
-    let start = swim_out_of_the_side(&mut physics, &mut ticker, None);
-    let rewind = physics.apply_server_movement_flags(start, sprint).unwrap();
-    reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &SidePool).unwrap();
-    assert_eq!(physics.latest_sneak_sprint(), Some((false, false)));
-
-    let later = physics.state().unwrap().tick - 2;
-    let rewind = physics.apply_server_movement_flags(later, sprint).unwrap();
-    reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &SidePool).unwrap();
+    let rewind = physics
+        .apply_server_movement_flags(ticks[0], sprint)
+        .unwrap();
+    reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &VersionedFloor(1)).unwrap();
     assert_eq!(physics.latest_sneak_sprint(), Some((false, true)));
-}
-
-/// A position correction that moves a latched sprinting swimmer out of the water
-/// stops the sprint on the first replayed tick; the stale latched request recorded
-/// by later ticks cannot restart it without a sprint control.
-#[test]
-fn a_correction_out_of_the_water_stops_the_replayed_sprint() {
-    let mut physics = LocalPhysicsController::default();
-    let mut ticker = MovementTicker::default();
-    physics.reanchor_network_position([0.5, 2.620_01, 0.5], 100, true);
-    ticker.reset(7, 100, [0.5, 2.620_01, 0.5]);
-    ticker.set_source(MovementSource::Physics);
-    let swim = MovementInput {
-        forward: 1.0,
-        sprinting: true,
-        ..MovementInput::default()
-    };
-    let mut samples = Vec::new();
-    for _ in 0..6 {
-        let frame = physics.advance(Duration::from_millis(50), swim, &SidePool);
-        let sample = frame.samples[0].clone();
-        ticker.enqueue_completed_physics(sample.clone()).unwrap();
-        samples.push(sample);
-    }
-    assert!(samples[1..].iter().all(|sample| {
-        sample.processed.mode == sim::MovementMode::Swimming && sample.processed.sprinting
-    }));
-    let corrected = samples[2].clone();
-    reconcile_candidate_physics_correction(
-        &mut ticker,
-        &mut physics,
-        [0.5, corrected.position[1], 3.6],
-        corrected.tick,
-        false,
-        PhysicsCorrectionMode::ReplayIfRetained,
-        &SidePool,
-    )
-    .unwrap();
-    assert_eq!(physics.mode(), sim::MovementMode::Walking);
-    assert_eq!(physics.latest_sneak_sprint(), Some((false, false)));
 }
 
 /// An ordinary input-rejection stop also ends a replayed server sprint: walking

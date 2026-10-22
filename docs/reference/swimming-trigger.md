@@ -71,18 +71,20 @@ jump can start a swim on a tick that ends the sprint; the next wet swimming tick
 skips the stop and the held control starts the sprint again.
 
 After a liquid stop, a latched sprint request no longer restarts the sprint.
-Only a held, toggled or automatic sprint control, or a sprint press since the
-previous tick, does, until sprint starts again. This holds for catch-up ticks
-within one render frame and for correction replay, whose later frames still carry
-the request recorded before the stop.
+Only a held, toggled or automatic sprint control does, until sprint starts again;
+native samples the sprint button each tick, so presses between ticks do not
+count. This holds for catch-up ticks within one render frame and for correction
+replay, whose later frames still carry the request recorded before the stop.
 
 A server sprint flag is applied once, on the frame after its stamp, and later
-intents may stop it. A delayed sprint write is therefore retained as that frame's
-server flag. The rest of its rewritten run only continues an active sprint, as
-native continuation needs no request, and never starts one. Stop intents,
-including the liquid stop, apply normally. The stopped tick sends its sprint stop.
-If the replay ends unsprinted, the write's pending live adoption is dropped
-unless a newer live write replaced it. The immobile
+intents may stop it; several writes for one frame apply in arrival order. A
+delayed sprint write is therefore retained as that frame's server flag, and the
+latest write replaces an earlier one. The rest of a rewritten sprint run only
+continues an active sprint, as native continuation needs no request, and never
+starts one. Stop intents, including the liquid stop, apply normally, and the
+stopped tick sends its sprint stop. A delayed write hands its sprint to the live
+controls only when no newer write already owns it, and drops that hand-off when
+its replay ends unsprinted. The immobile
 movement path also removes the jumping state; its order against the next intent
 is unverified, so Cinnabar does not model that removal.
 

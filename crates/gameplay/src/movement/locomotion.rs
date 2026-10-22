@@ -103,8 +103,6 @@ pub(super) struct ModeObservation {
     pub jump_edge: bool,
     /// Jump state sent as `JumpDown` this tick, which the flight double-tap reads.
     pub jump_down: bool,
-    /// The sprint control was pressed since the previous tick.
-    pub sprint_pressed: bool,
 }
 
 impl ModeObservation {
@@ -148,8 +146,7 @@ pub(super) struct ModeTracker {
     /// Consecutive gliding ticks, including the one that started the glide.
     fall_fly_ticks: u32,
     /// A liquid stop released the latched sprint request. Until sprint restarts,
-    /// only a held, toggled or automatic sprint control, or a fresh sprint press,
-    /// requests it.
+    /// only a held, toggled or automatic sprint control requests it.
     sprint_request_released: bool,
 }
 
@@ -297,7 +294,9 @@ impl ModeTracker {
             world,
         )?;
         // After a liquid stop, a stale latched request cannot restart the sprint.
-        let fresh_request = observed.sprint_down || observed.sprint_pressed;
+        // Native samples the sprint button state each tick; presses between ticks
+        // do not accumulate.
+        let fresh_request = observed.sprint_down;
         let observed = ModeObservation {
             in_water: sampled.value.in_water,
             sprinting: observed.sprinting && (fresh_request || !self.sprint_request_released),

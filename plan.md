@@ -229,6 +229,11 @@ Historical movement acceptance scope includes sprint/double-tap/toggle timing, f
 sneak/crawl, mode entry/exit, flight, swimming/gliding, liquid correction and scaffolding
 descent. Reconcile each case with current code and evidence before calling it a missing
 implementation.
+Incomplete: a sprint the simulator starts or stops against the frame's request, including
+the liquid sprint stop, does not apply the native sprint speed-modifier edge per tick or in
+replay. A server movement current without the sprint modifier therefore predicts one stopped
+tick at current divided by the sprint multiplier. Live strict-server acceptance of the
+surface-exit and wet-jump sprint stops is also pending.
 Keep raw, analogue and processed input semantics distinct. Mounted controls need
 attributable vehicle mapping, constants, state and actual prediction before claiming
 client-predicted vehicle behavior. Riding alone does not establish that capability.
