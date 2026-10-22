@@ -5,6 +5,8 @@ The proof of concept pairs a website storefront with an OreUI browser under
 `crates/launcher/data/marketplace-demo.json`. All entries are synthetic. Saving
 an entry changes a local preview library; it does not download a component,
 enable a mod, grant permissions, or sync between devices.
+Client preview saves last only for the current client session. Website demo
+state remains in that browser until it is reset or browser storage is cleared.
 
 The [website repository](https://github.com/cinnabar-mc/website) owns the web
 storefront, creator submissions, review queue and staff screens. Its pinned

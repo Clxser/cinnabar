@@ -540,7 +540,7 @@ qualification. Payments and moderation remain incomplete; rollout must respect A
 compatibility. Existing catalog content is owned by the API repository.
 
 The free community-mod marketplace has a shared synthetic catalog and review
-policy, a local OreUI browse/detail/library preview and a website POC. See
+policy, a session-only OreUI browse/detail/library preview and a website POC. See
 [community mod marketplace](docs/marketplace.md). Production Microsoft/Xbox
 linking, API-enforced staff roles and revision review, durable library sync,
 verified downloads and live input acceptance remain incomplete. Preview saves
