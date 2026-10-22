@@ -129,6 +129,98 @@ async fn ordinary_backlog_still_waits_for_preparation_and_keeps_fifo_order() {
 }
 
 #[tokio::test]
+async fn requested_latency_during_held_preparation_replies_before_release_and_survives_cancellation()
+ {
+    let requested = Packet::new(packets::NetworkStackLatency {
+        creation_time: wire::U64LE(777),
+        is_from_server: true,
+    });
+    let unrequested = Packet::new(packets::NetworkStackLatency {
+        creation_time: wire::U64LE(888),
+        is_from_server: false,
+    });
+    let (client, peer) = tokio::io::duplex(8192);
+    let (read, write) = tokio::io::split(client);
+    let (_, queue, writer) =
+        bridge::tasks::prepare_bounded_connection(read, write, bridge::MAX_FRAME_LEN, 8192);
+    let mut transport = SessionTransport::with_timers(
+        ReadyFrames(
+            vec![
+                time(1),
+                batch_frame(&[requested, unrequested.clone()]),
+                time(2),
+            ]
+            .into(),
+        ),
+        queue,
+        &[],
+        bridge::tasks::Timers::tokio(),
+    );
+    let mut peer = FakeCore { stream: peer };
+    let mut writer = Box::pin(writer);
+    let (release, held) = tokio::sync::oneshot::channel();
+    let mut preparation = Box::pin(async { held.await.unwrap() });
+    let mut waiting = Box::pin(prepare_with_read_ahead(
+        &mut transport,
+        preparation.as_mut(),
+    ));
+    assert!(waiting.as_mut().now_or_never().is_none());
+    assert!(writer.as_mut().now_or_never().is_none());
+    assert!(waiting.as_mut().now_or_never().is_none());
+    let before_release = peer.receive_packets().now_or_never();
+    let preparation_still_held = !release.is_closed();
+    drop(waiting);
+
+    let mut resumed = Box::pin(prepare_with_read_ahead(
+        &mut transport,
+        preparation.as_mut(),
+    ));
+    assert!(resumed.as_mut().now_or_never().is_none());
+    assert!(writer.as_mut().now_or_never().is_none());
+    assert!(resumed.as_mut().now_or_never().is_none());
+    let duplicate_after_resume = peer.receive_packets().now_or_never();
+    release.send(7).unwrap();
+    let completed = resumed.as_mut().now_or_never();
+    drop(resumed);
+    let mut deferred = Vec::new();
+    for _ in 0..3 {
+        let incoming = transport.recv().now_or_never();
+        deferred.push(incoming.map(|result| match result.unwrap() {
+            crate::session_transport::Inbound::Packet(raw) => raw.decode().unwrap(),
+            _ => panic!("only the original ordinary packets are retained"),
+        }));
+    }
+    drop(transport);
+    drop(peer);
+    assert!(writer.as_mut().now_or_never().is_some());
+
+    assert!(preparation_still_held);
+    assert_eq!(
+        before_release,
+        Some(vec![crate::network_stack_latency_reply(777)]),
+        "the requested probe must be answered while presentation remains held"
+    );
+    assert!(
+        duplicate_after_resume.is_none(),
+        "a canceled wait must not repeat a reply"
+    );
+    assert_eq!(completed.unwrap().unwrap(), 7);
+    assert_eq!(
+        deferred,
+        vec![
+            Some(Packet::new(SetTime {
+                time: wire::ZigZag32(1)
+            })),
+            Some(unrequested),
+            Some(Packet::new(SetTime {
+                time: wire::ZigZag32(2)
+            })),
+        ],
+        "the requested probe is consumed once and unrelated siblings retain their order"
+    );
+}
+
+#[tokio::test]
 async fn unusable_buffered_transfer_does_not_bypass_preparation() {
     let mut transport = transport(vec![terminal(
         bridge::contract::KIND_TRANSFER,
