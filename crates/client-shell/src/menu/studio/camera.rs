@@ -8,6 +8,7 @@ use recording_studio::{
 use super::*;
 
 mod fov;
+mod navigation;
 mod values;
 mod viewport;
 pub(super) use viewport::CameraInteraction;
@@ -35,6 +36,23 @@ impl Studio {
             actions.push(Action::ReleaseCamera);
         }
         if self.view.preview.camera.is_some() {
+            actions.extend([
+                Action::FrameCameraSubject,
+                Action::SaveCameraBookmark,
+                Action::CycleCameraSnap,
+                Action::CycleCameraGuides,
+            ]);
+            actions.extend(
+                recording_studio::camera::CameraDragAxis::WORLD
+                    .into_iter()
+                    .map(Action::SetCameraDragAxis),
+            );
+            actions.push(Action::SetCameraDragAxis(
+                recording_studio::camera::CameraDragAxis::View,
+            ));
+            actions.extend(
+                (0..self.view.camera_workspace.bookmarks.len()).map(Action::RecallCameraBookmark),
+            );
             actions.push(Action::ToggleCameraSubjectFilter);
             actions.extend([Action::CycleCameraTarget(-1), Action::CycleCameraTarget(1)]);
             actions.extend(CameraRigKind::ALL.iter().copied().map(Action::CreateCamera));
@@ -68,6 +86,7 @@ impl Studio {
                     Action::DeleteCameraKey,
                     Action::CycleCameraEasing,
                     Action::ToggleCameraSmoothing,
+                    Action::ToggleCameraDistanceTiming,
                     Action::StepCameraKey(-1),
                     Action::StepCameraKey(1),
                     Action::MoveCameraKey(-1),
@@ -95,7 +114,7 @@ impl Studio {
     }
 
     /// Rejects a stale displayed pose after document/seek/edit changes instead of keying the wrong frame.
-    fn camera_preview(&self) -> Result<CameraPreview, String> {
+    pub(super) fn camera_preview(&self) -> Result<CameraPreview, String> {
         let preview = self.displayed_camera_preview()?;
         if self.view.preview.ready {
             Ok(preview)

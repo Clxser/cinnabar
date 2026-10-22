@@ -124,6 +124,7 @@ impl CameraShot {
             },
             fov_curve: None,
             fov_offset: MediaTime::ZERO,
+            path_timing: PathTiming::Keyed,
         };
         shot.validate()?;
         Ok(shot)

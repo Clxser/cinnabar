@@ -1,0 +1,112 @@
+//! View framing and session bookmarks never modify recorded state or authored camera shots.
+
+use super::*;
+use recording_studio::camera::{CameraPose, PathTiming};
+
+const MAX_SESSION_VIEWS: usize = 8;
+
+#[cfg(test)]
+mod tests;
+
+impl Studio {
+    /// Frames the selected recorded subject using the current lens and viewing direction.
+    pub(super) fn frame_camera_subject(&mut self) -> Result<(), String> {
+        let preview = self.camera_preview()?;
+        if !preview.interactive {
+            return Err("Subject framing requires one native replay view.".into());
+        }
+        let reference = self
+            .view
+            .camera_target
+            .ok_or("Choose a recorded player first.")?;
+        let target = preview
+            .targets
+            .iter()
+            .find(|target| target.matches(reference))
+            .ok_or("The selected player is not present at this frame.")?;
+        let pose = self
+            .view
+            .camera_workspace
+            .view
+            .map_or(preview.render_pose, |view| view.pose);
+        let center: [f64; 3] = std::array::from_fn(|axis| {
+            target.pose.position[axis] + target.pose.eye_offset.unwrap_or([0.0; 3])[axis] * 0.5
+        });
+        let next = pose
+            .framed(center, 1.35)
+            .ok_or("The camera view cannot frame this player.")?;
+        self.install_inspection_view(next)
+    }
+
+    /// Session bookmarks retain the last eight distinct inspected views without changing the document.
+    pub(super) fn save_camera_bookmark(&mut self) -> Result<(), String> {
+        let preview = self.camera_preview()?;
+        if !preview.interactive {
+            return Err("View bookmarks require one native replay view.".into());
+        }
+        let pose = self
+            .view
+            .camera_workspace
+            .view
+            .map_or(preview.render_pose, |view| view.pose);
+        let bookmark = launcher::menu::studio::CameraBookmark {
+            source: preview.source,
+            pose,
+        };
+        let bookmarks = &mut Arc::make_mut(&mut self.view).camera_workspace.bookmarks;
+        if bookmarks.last() == Some(&bookmark) {
+            return Ok(());
+        }
+        if bookmarks.len() == MAX_SESSION_VIEWS {
+            bookmarks.remove(0);
+        }
+        bookmarks.push(bookmark);
+        Ok(())
+    }
+
+    /// Recalling a view pauses playback and preserves its lens, roll and position exactly.
+    pub(super) fn recall_camera_bookmark(&mut self, index: usize) -> Result<(), String> {
+        let bookmark = self
+            .view
+            .camera_workspace
+            .bookmarks
+            .get(index)
+            .copied()
+            .ok_or("This session view is no longer available.")?;
+        let preview = self.camera_preview()?;
+        if !preview.interactive {
+            return Err("View bookmarks require one native replay view.".into());
+        }
+        if preview.source != bookmark.source {
+            return Err(
+                "This view belongs to another recording. Select its replay clip first.".into(),
+            );
+        }
+        self.install_inspection_view(bookmark.pose)
+    }
+
+    /// Publishing inspection state changes only the view revision, not the replay seek epoch.
+    fn install_inspection_view(&mut self, pose: CameraPose) -> Result<(), String> {
+        pose.validate().map_err(|error| error.to_string())?;
+        self.transport.pause();
+        self.inspect_camera_pose(pose);
+        Ok(())
+    }
+
+    /// Travel timing is a saved undoable shot edit; changing it cannot alter the authored key times.
+    pub(super) fn toggle_camera_distance_timing(&mut self) -> Result<(), String> {
+        let shot = self.camera_shot()?;
+        let timing = match shot.path_timing {
+            PathTiming::Keyed => PathTiming::Distance,
+            PathTiming::Distance => PathTiming::Keyed,
+        };
+        let shot = shot
+            .with_path_timing(timing)
+            .map_err(|error| error.to_string())?;
+        self.transport.pause();
+        self.edit(
+            "Change camera travel timing",
+            &[Command::ReplaceShot { shot }],
+        )
+    }
+}

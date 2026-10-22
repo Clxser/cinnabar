@@ -39,6 +39,29 @@ pub enum PathControl {
 }
 
 impl CameraShot {
+    /// A geometric rail point avoids arc-table preparation when painting a path overlay.
+    pub fn path_geometry_position(&self, segment: usize, amount: f64) -> Option<[f64; 3]> {
+        if !amount.is_finite() {
+            return None;
+        }
+        let CameraMode::Path {
+            keys,
+            smooth_position,
+        } = &self.mode
+        else {
+            return None;
+        };
+        if segment.checked_add(1)? >= keys.len() {
+            return None;
+        }
+        Some(bezier_position(
+            keys,
+            segment,
+            amount.clamp(0.0, 1.0),
+            *smooth_position,
+        ))
+    }
+
     /// Samples a rail at an inclusive shot boundary without querying an actor or live world.
     pub fn path_pose(&self, at: MediaTime) -> Option<CameraPose> {
         if at < self.span.start || at > self.span.end {
@@ -51,7 +74,12 @@ impl CameraShot {
         else {
             return None;
         };
-        sample_path(keys, at.saturating_sub(self.span.start), *smooth_position)
+        let elapsed = at.saturating_sub(self.span.start);
+        if self.path_timing == PathTiming::Distance {
+            super::distance::sample(keys, elapsed, *smooth_position)
+        } else {
+            sample_path(keys, elapsed, *smooth_position)
+        }
     }
 
     /// Returns the actual control point, including automatic tangents for untouched handles.
@@ -154,7 +182,7 @@ impl CameraShot {
 }
 
 /// Missing handles use the same time-weighted tangents as a legacy smooth rail, or linear thirds.
-fn segment_controls(keys: &[CameraKey], index: usize, smooth: bool) -> [[f64; 3]; 2] {
+pub(super) fn segment_controls(keys: &[CameraKey], index: usize, smooth: bool) -> [[f64; 3]; 2] {
     let (a, b) = (&keys[index], &keys[index + 1]);
     let duration = b.at.saturating_sub(a.at).seconds();
     let automatic = std::array::from_fn::<_, 3, _>(|axis| {

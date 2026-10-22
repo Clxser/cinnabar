@@ -14,7 +14,7 @@ pub use export_range::ExportRangeField;
 pub mod timeline;
 pub use clip::{ClipTimeField, MAX_CLIP_TIME_BYTES};
 mod camera;
-pub use camera::CameraWorkspace;
+pub use camera::{CameraBookmark, CameraGuides, CameraWorkspace};
 mod workspace;
 pub use workspace::{
     Density, InspectorSection, SettingsPage, TimelineSize, Toolbox, ViewportTool, WorkspaceAction,
@@ -205,6 +205,19 @@ pub enum Action {
         bounds: [i32; 4],
     },
     CameraSubject(CameraTargetRef),
+    CameraAxisControl {
+        shot: Id,
+        at: MediaTime,
+        handle: recording_studio::camera::PathControl,
+        axis: recording_studio::camera::CameraDragAxis,
+        bounds: [i32; 4],
+    },
+    SetCameraDragAxis(recording_studio::camera::CameraDragAxis),
+    CycleCameraSnap,
+    CycleCameraGuides,
+    FrameCameraSubject,
+    SaveCameraBookmark,
+    RecallCameraBookmark(usize),
     ReleaseCamera,
     ApplyCameraView,
     ResetCameraView,
@@ -230,6 +243,7 @@ pub enum Action {
     },
     CycleCameraEasing,
     ToggleCameraSmoothing,
+    ToggleCameraDistanceTiming,
     StepCameraKey(i8),
     SelectCameraKey {
         shot: Id,

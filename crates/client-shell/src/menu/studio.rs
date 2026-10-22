@@ -665,6 +665,21 @@ impl Studio {
             Action::MoveEffect(frames) => self.move_effect(frames)?,
             Action::UseNativeReplay => self.use_native_replay()?,
             Action::CameraViewport { .. } => self.focus_camera()?,
+            Action::CameraAxisControl { .. } => {}
+            Action::SetCameraDragAxis(axis) => {
+                Arc::make_mut(&mut self.view).camera_workspace.drag_axis = axis;
+            }
+            Action::CycleCameraSnap => {
+                let workspace = &mut Arc::make_mut(&mut self.view).camera_workspace;
+                workspace.snap = workspace.snap.next();
+            }
+            Action::CycleCameraGuides => {
+                let workspace = &mut Arc::make_mut(&mut self.view).camera_workspace;
+                workspace.guides = workspace.guides.next();
+            }
+            Action::FrameCameraSubject => self.frame_camera_subject()?,
+            Action::SaveCameraBookmark => self.save_camera_bookmark()?,
+            Action::RecallCameraBookmark(index) => self.recall_camera_bookmark(index)?,
             Action::CameraControl { shot, at, .. } => self.select_camera_key(shot, at)?,
             Action::CameraSubject(reference) => self.select_camera_subject(reference)?,
             Action::ReleaseCamera => self.release_camera(),
@@ -689,6 +704,7 @@ impl Studio {
             Action::SelectCameraFovKey { shot, at } => self.select_camera_fov_key(shot, at)?,
             Action::CycleCameraEasing => self.cycle_camera_easing()?,
             Action::ToggleCameraSmoothing => self.toggle_camera_smoothing()?,
+            Action::ToggleCameraDistanceTiming => self.toggle_camera_distance_timing()?,
             Action::StepCameraKey(direction) => self.step_camera_key(direction)?,
             Action::SelectCameraKey { shot, at } => self.select_camera_key(shot, at)?,
             Action::MoveCameraKey(direction) => self.move_camera_key(direction)?,

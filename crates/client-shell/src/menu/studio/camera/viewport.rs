@@ -2,8 +2,8 @@
 
 use super::super::*;
 use recording_studio::camera::{
-    CameraPose, CameraProjection, CameraRigKind, CameraShot, CameraTargetRef, CameraView,
-    PathControl,
+    CameraDragAxis, CameraPose, CameraProjection, CameraRigKind, CameraShot, CameraSnap,
+    CameraTargetRef, CameraView, PathControl,
 };
 
 const DRAG_THRESHOLD: f32 = 4.0;
@@ -31,6 +31,8 @@ enum Gesture {
         bounds: [i32; 4],
         projection: CameraProjection,
         origin: [f64; 3],
+        axis: CameraDragAxis,
+        snap: CameraSnap,
         pending: Option<CameraShot>,
     },
     Press {
@@ -40,6 +42,18 @@ enum Gesture {
 }
 
 impl Studio {
+    /// An inspected pose publishes a unique view revision without seeking or editing the document.
+    pub(in crate::menu::studio) fn inspect_camera_pose(&mut self, pose: CameraPose) {
+        self.release_camera();
+        self.camera_interaction.revision = self.camera_interaction.revision.wrapping_add(1);
+        let workspace = &mut Arc::make_mut(&mut self.view).camera_workspace;
+        workspace.focused = true;
+        workspace.view = Some(CameraView {
+            pose,
+            revision: self.camera_interaction.revision,
+        });
+    }
+
     /// A document edit invalidates a captured source shot; deleted or deselected keys lose their handles.
     pub(in crate::menu::studio) fn reconcile_camera_workspace(&mut self) {
         let changed = match self.camera_interaction.gesture.as_ref() {
@@ -122,6 +136,7 @@ impl Studio {
                 action,
                 Action::CameraViewport { .. }
                     | Action::CameraControl { .. }
+                    | Action::CameraAxisControl { .. }
                     | Action::CameraSubject(_)
             ) {
                 self.release_camera();
@@ -182,6 +197,8 @@ impl Studio {
             bounds,
             projection,
             origin,
+            axis,
+            snap,
             pending,
         } = &mut gesture
             && let Some(point) = point.filter(|point| point.iter().all(|axis| axis.is_finite()))
@@ -192,7 +209,7 @@ impl Studio {
                 f64::from(point[0] - down[0]) / f64::from((bounds[2] - bounds[0]).max(1)),
                 f64::from(point[1] - down[1]) / f64::from((bounds[3] - bounds[1]).max(1)),
             ];
-            if let Some(position) = projection.dragged(*origin, delta) {
+            if let Some(position) = projection.dragged_constrained(*origin, delta, *axis, *snap) {
                 match shot.with_path_control(*at, *control, position) {
                     Ok(next) if pending.as_ref() != Some(&next) => {
                         let mut draft = (**project).clone();
@@ -249,6 +266,24 @@ impl Studio {
             return Err("Direct camera editing requires one unframed native replay view.".into());
         }
         let down = point.ok_or("The pointer is outside the Studio viewport.")?;
+        let action = if let Action::CameraAxisControl {
+            shot,
+            at,
+            handle,
+            axis,
+            bounds,
+        } = action
+        {
+            Arc::make_mut(&mut self.view).camera_workspace.drag_axis = axis;
+            Action::CameraControl {
+                shot,
+                at,
+                handle,
+                bounds,
+            }
+        } else {
+            action
+        };
         self.transport.pause();
         self.cancel_camera_value();
         self.cancel_clip_time();
@@ -303,6 +338,8 @@ impl Studio {
                     bounds,
                     projection,
                     origin,
+                    axis: workspace.drag_axis,
+                    snap: workspace.snap,
                     pending: None,
                 }
             }

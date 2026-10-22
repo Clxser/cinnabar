@@ -4,6 +4,80 @@ use super::*;
 
 const NEAR: f64 = 0.01;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CameraDragAxis {
+    #[default]
+    View,
+    X,
+    Y,
+    Z,
+}
+
+impl CameraDragAxis {
+    pub const WORLD: [Self; 3] = [Self::X, Self::Y, Self::Z];
+
+    /// The view-plane tool has no world axis; constrained tools map to one coordinate only.
+    pub const fn index(self) -> Option<usize> {
+        match self {
+            Self::View => None,
+            Self::X => Some(0),
+            Self::Y => Some(1),
+            Self::Z => Some(2),
+        }
+    }
+
+    /// Compact labels identify a world axis or the original view-plane drag tool.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::View => "View",
+            Self::X => "X",
+            Self::Y => "Y",
+            Self::Z => "Z",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CameraSnap {
+    #[default]
+    Off,
+    Tenth,
+    Half,
+    Block,
+}
+
+impl CameraSnap {
+    /// Grid resolution is transient authoring state and does not quantize saved camera playback.
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Tenth,
+            Self::Tenth => Self::Half,
+            Self::Half => Self::Block,
+            Self::Block => Self::Off,
+        }
+    }
+
+    /// World-space grid increments are shared by drag math and the displayed selector.
+    pub const fn step(self) -> Option<f64> {
+        match self {
+            Self::Off => None,
+            Self::Tenth => Some(0.1),
+            Self::Half => Some(0.5),
+            Self::Block => Some(1.0),
+        }
+    }
+
+    /// UI labels describe the same increment used by coordinate quantization.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Tenth => "0.1",
+            Self::Half => "0.5",
+            Self::Block => "1 block",
+        }
+    }
+}
+
 /// An unsaved inspection view, identified separately from document and replay-seek revisions.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CameraView {
@@ -118,9 +192,80 @@ impl CameraProjection {
             - self.up * (delta[1] * 2.0 * depth * self.half_height);
         next.is_finite().then(|| next.to_array())
     }
+
+    /// Closest ray/axis dragging preserves the other world coordinates; near-parallel axes stay still.
+    pub fn dragged_constrained(
+        &self,
+        point: [f64; 3],
+        delta: [f64; 2],
+        axis: CameraDragAxis,
+        snap: CameraSnap,
+    ) -> Option<[f64; 3]> {
+        if !delta.iter().all(|value| value.is_finite()) {
+            return None;
+        }
+        let projected = self.project(point)?;
+        if delta == [0.0; 2] {
+            return Some(point);
+        }
+        let mut next = if let Some(index) = axis.index() {
+            let cursor = [projected[0] + delta[0], projected[1] + delta[1]];
+            let ray = (self.forward
+                + self.right * ((cursor[0] * 2.0 - 1.0) * self.half_width)
+                + self.up * ((1.0 - cursor[1] * 2.0) * self.half_height))
+                .normalize();
+            let direction = match index {
+                0 => DVec3::X,
+                1 => DVec3::Y,
+                _ => DVec3::Z,
+            };
+            let cosine = direction.dot(ray);
+            let denominator = 1.0 - cosine * cosine;
+            if denominator < 1e-8 {
+                return None;
+            }
+            let offset = DVec3::from_array(point) - self.position;
+            let distance = (cosine * ray.dot(offset) - direction.dot(offset)) / denominator;
+            let mut next = point;
+            next[index] += distance;
+            next
+        } else {
+            self.dragged(point, delta)?
+        };
+        if let Some(step) = snap.step() {
+            if let Some(index) = axis.index() {
+                next[index] = (next[index] / step).round() * step;
+            } else {
+                next = next.map(|value| (value / step).round() * step);
+            }
+        }
+        next.iter().all(|value| value.is_finite()).then_some(next)
+    }
 }
 
 impl CameraPose {
+    /// Frames a recorded point with explicit half-height while retaining viewing direction, roll and lens.
+    pub fn framed(self, center: [f64; 3], half_height: f64) -> Option<Self> {
+        self.validate().ok()?;
+        if !center.into_iter().chain([half_height]).all(f64::is_finite) || half_height <= 0.0 {
+            return None;
+        }
+        let center = DVec3::from_array(center);
+        let mut direction = DVec3::from_array(self.position) - center;
+        if direction.length_squared() < 1e-8 {
+            direction =
+                DVec3::from_array(self.position) - DVec3::from_array(self.orbit_anchor(1.0)?);
+        }
+        let distance = (half_height / (self.fov.to_radians() * 0.5).tan()).clamp(2.0, 24.0);
+        Some(
+            Self {
+                position: (center + direction.normalize() * distance).to_array(),
+                ..self
+            }
+            .looking_at(center.to_array()),
+        )
+    }
+
     /// Chooses a view-relative orbit pivot when no recorded subject is selected.
     pub fn orbit_anchor(self, distance: f64) -> Option<[f64; 3]> {
         if !distance.is_finite() || distance <= 0.0 {

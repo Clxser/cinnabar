@@ -36,6 +36,7 @@ fn rail() -> CameraShot {
         target_lifetime: None,
         fov_curve: None,
         fov_offset: MediaTime::ZERO,
+        path_timing: PathTiming::Keyed,
     }
 }
 
@@ -63,6 +64,71 @@ fn dragged_controls_follow_the_projected_pointer_delta_at_the_original_depth() {
             .segment([0.0, 64.0, -1.0], [0.0, 64.0, 10.0])
             .is_some()
     );
+}
+
+#[test]
+fn world_axis_drags_and_grid_snaps_preserve_every_unselected_coordinate() {
+    let pose = CameraPose {
+        position: [-5.0, 66.0, -5.0],
+        yaw: -35.0,
+        pitch: 10.0,
+        ..Default::default()
+    };
+    let projection = CameraProjection::new(pose, 1.6).unwrap();
+    let point = [1.03, 64.07, 8.09];
+    for axis in CameraDragAxis::WORLD {
+        let next = projection
+            .dragged_constrained(point, [0.12, -0.08], axis, CameraSnap::Half)
+            .unwrap();
+        let selected = axis.index().unwrap();
+        for coordinate in 0..3 {
+            if coordinate != selected {
+                assert_eq!(next[coordinate], point[coordinate]);
+            }
+        }
+        assert!((next[selected] * 2.0 - (next[selected] * 2.0).round()).abs() < 1e-10);
+        assert_eq!(
+            projection.dragged_constrained(point, [0.0; 2], axis, CameraSnap::Block),
+            Some(point)
+        );
+    }
+}
+
+#[test]
+fn edge_on_axis_drags_fail_without_large_or_nonfinite_coordinate_jumps() {
+    let projection = CameraProjection::new(
+        CameraPose {
+            position: [0.0; 3],
+            ..Default::default()
+        },
+        1.0,
+    )
+    .unwrap();
+    assert!(
+        projection
+            .dragged_constrained(
+                [0.0, 0.0, 8.0],
+                [0.0, 0.0],
+                CameraDragAxis::Z,
+                CameraSnap::Off
+            )
+            .is_some()
+    );
+    assert!(
+        projection
+            .dragged_constrained(
+                [0.0, 0.0, 8.0],
+                [f64::NAN, 0.0],
+                CameraDragAxis::Z,
+                CameraSnap::Off
+            )
+            .is_none()
+    );
+    let framed = CameraPose::default()
+        .framed([0.0, 65.0, 0.0], 1.35)
+        .unwrap();
+    framed.validate().unwrap();
+    assert_eq!(framed.roll, CameraPose::default().roll);
 }
 
 #[test]

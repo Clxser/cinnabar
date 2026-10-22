@@ -12,16 +12,20 @@ pub const MAX_TARGET_NAME_BYTES: usize = 256;
 pub const CAMERA_FOV_RANGE: std::ops::Range<f64> = 1.0..179.0;
 const DEFAULT_FOV: f64 = 70.0;
 
+mod distance;
 mod edit;
 mod fov;
 mod keys;
 mod path;
+mod presets;
 mod subjects;
 mod viewport;
+pub use distance::{CompiledCameraPath, PathTiming};
 pub use edit::{CameraParameter, CameraRigKind};
 pub use path::{CameraHandles, PathControl};
+pub use presets::CameraPreset;
 pub use subjects::{CameraSubjectFilter, CameraTargetKind, LEGACY_SUBJECT_NOTICE};
-pub use viewport::{CameraProjection, CameraView};
+pub use viewport::{CameraDragAxis, CameraProjection, CameraSnap, CameraView};
 
 #[cfg(test)]
 mod viewport_tests;
@@ -169,6 +173,9 @@ pub struct CameraShot {
     /// A trim retains the original easing phase without resampling or changing interior lens motion.
     #[serde(default)]
     pub fov_offset: MediaTime,
+    /// Distance timing keeps spatial speed uniform between authored keys; lens/orientation keep their easing.
+    #[serde(default, skip_serializing_if = "PathTiming::is_keyed")]
+    pub path_timing: PathTiming,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -343,6 +350,12 @@ impl CameraShot {
                 "a camera FOV phase requires a lens curve",
             ));
         }
+        if self.path_timing == PathTiming::Distance && !matches!(self.mode, CameraMode::Path { .. })
+        {
+            return Err(StudioError::Invalid(
+                "distance travel timing requires a camera path",
+            ));
+        }
         match &self.mode {
             CameraMode::Player { fov, actor: _ } => {
                 if !valid_fov(*fov) {
@@ -352,7 +365,10 @@ impl CameraShot {
                 }
             }
             CameraMode::Free { pose } | CameraMode::Track { pose, .. } => pose.validate()?,
-            CameraMode::Path { keys, .. } => {
+            CameraMode::Path {
+                keys,
+                smooth_position,
+            } => {
                 limit("camera keys", keys.len(), MAX_CAMERA_KEYS)?;
                 if keys.is_empty()
                     || keys.windows(2).any(|pair| pair[0].at >= pair[1].at)
@@ -367,6 +383,9 @@ impl CameraShot {
                     if let Some(handles) = &key.handles {
                         handles.validate(key.pose.position)?;
                     }
+                }
+                if self.path_timing == PathTiming::Distance {
+                    distance::validate(keys, *smooth_position)?;
                 }
             }
             CameraMode::Follow {
@@ -422,6 +441,16 @@ impl CameraShot {
         time: MediaTime,
         actor: impl Fn(CameraTargetRef) -> Option<ActorPose>,
     ) -> Option<CameraPose> {
+        self.sample_compiled(time, actor, None)
+    }
+
+    /// Frame evaluation reuses the immutable rail's arc cache; standalone callers retain identical output.
+    pub(crate) fn sample_compiled(
+        &self,
+        time: MediaTime,
+        actor: impl Fn(CameraTargetRef) -> Option<ActorPose>,
+        path: Option<&CompiledCameraPath>,
+    ) -> Option<CameraPose> {
         if !self.span.contains(time) {
             return None;
         }
@@ -441,7 +470,14 @@ impl CameraShot {
             CameraMode::Path {
                 keys,
                 smooth_position,
-            } => sample_path(keys, elapsed, *smooth_position),
+            } => {
+                if self.path_timing == PathTiming::Distance {
+                    path.map(|path| path.sample(time))
+                        .unwrap_or_else(|| distance::sample(keys, elapsed, *smooth_position))
+                } else {
+                    sample_path(keys, elapsed, *smooth_position)
+                }
+            }
             CameraMode::Player { actor: target, fov } => {
                 let actor = actor(CameraTargetRef {
                     runtime_id: *target,

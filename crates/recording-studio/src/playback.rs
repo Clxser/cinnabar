@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
     FrameRate, Id, MediaTime, PlaybackRate, Project, Span, StudioError,
-    camera::{ActorPose, CameraPose, CameraTargetRef},
+    camera::{ActorPose, CameraPose, CameraTargetRef, CompiledCameraPath},
     effect::EffectSample,
     model::{Framing, TransitionKind},
     retime::TimeMap,
@@ -239,6 +239,7 @@ pub struct CompiledTimeline {
     visual_maps: Vec<TimeMap>,
     audio_maps: Vec<TimeMap>,
     clip_indices: BTreeMap<Id, usize>,
+    camera_paths: Vec<Option<CompiledCameraPath>>,
 }
 
 impl CompiledTimeline {
@@ -247,6 +248,7 @@ impl CompiledTimeline {
         project.validate()?;
         Ok(Self {
             index: IntervalIndex::new(&project)?,
+            camera_paths: project.shots.iter().map(CompiledCameraPath::new).collect(),
             visual_maps: project
                 .clips
                 .iter()
@@ -393,9 +395,11 @@ impl CompiledTimeline {
             let shot = &self.project.shots[index];
             out.shot = Some(shot.id);
             let selected = out.visuals.last();
-            out.camera = shot.sample(time, |id| {
-                selected.and_then(|source| actor(source.source, id, source.time))
-            });
+            out.camera = shot.sample_compiled(
+                time,
+                |id| selected.and_then(|source| actor(source.source, id, source.time)),
+                self.camera_paths[index].as_ref(),
+            );
             out.spectated = shot.spectated_actor().filter(|_| out.camera.is_some());
             out.hide_hud |= shot.hide_hud;
             out.hide_hand = shot.hide_hand;

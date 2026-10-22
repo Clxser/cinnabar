@@ -8,6 +8,7 @@ use super::*;
 
 mod fov;
 mod keys;
+mod navigation;
 
 /// New rigs are offered only after a native source has published an admitted camera/target snapshot.
 pub(super) fn creation(
@@ -66,7 +67,7 @@ pub(super) fn creation(
             y += canvas.r(3.2);
         }
     }
-    Ok(y)
+    navigation::draw(canvas, view, [left, y, right, area[3]])
 }
 
 /// Every numeric adjustment is undoable; path adjustments key the exact playhead instead of a neighbour.

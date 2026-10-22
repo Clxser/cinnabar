@@ -135,6 +135,57 @@ pub(super) fn draw(
         canvas,
         view,
         [left, y, right, y + canvas.r(3.8)],
+        if shot.path_timing == recording_studio::camera::PathTiming::Distance {
+            "Travel: Even speed between keys"
+        } else {
+            "Travel: Key easing"
+        },
+        Action::ToggleCameraDistanceTiming,
+        keys.len() > 1,
+        Variant::Secondary,
+    )?;
+    y += canvas.r(4.8);
+    let gap = canvas.r(0.5);
+    let width = (right - left - gap * 3.0) * 0.25;
+    for (index, axis) in [
+        recording_studio::camera::CameraDragAxis::View,
+        recording_studio::camera::CameraDragAxis::X,
+        recording_studio::camera::CameraDragAxis::Y,
+        recording_studio::camera::CameraDragAxis::Z,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let x = left + index as f32 * (width + gap);
+        control(
+            canvas,
+            view,
+            [x, y, x + width, y + canvas.r(3.8)],
+            axis.label(),
+            Action::SetCameraDragAxis(axis),
+            true,
+            if view.studio.camera_workspace.drag_axis == axis {
+                Variant::Primary
+            } else {
+                Variant::Secondary
+            },
+        )?;
+    }
+    y += canvas.r(4.8);
+    control(
+        canvas,
+        view,
+        [left, y, right, y + canvas.r(3.8)],
+        &format!("Path grid: {}", view.studio.camera_workspace.snap.label()),
+        Action::CycleCameraSnap,
+        true,
+        Variant::Secondary,
+    )?;
+    y += canvas.r(4.8);
+    control(
+        canvas,
+        view,
+        [left, y, right, y + canvas.r(3.8)],
         if *smooth_position {
             "Position: Smooth rail"
         } else {

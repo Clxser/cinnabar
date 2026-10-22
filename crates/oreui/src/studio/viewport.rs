@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use recording_studio::{
     MediaTime,
-    camera::{CameraProjection, CameraShot, PathControl},
+    camera::{CameraDragAxis, CameraProjection, CameraShot, PathControl},
 };
 use ui::{
     UiBlendMode, UiMesh, UiMeshBatch, UiMeshVertex,
@@ -68,6 +68,7 @@ pub(super) fn draw(
         hit,
     )?;
     let workspace = &view.studio.camera_workspace;
+    guides(canvas, bounds, workspace.guides)?;
     let shot = workspace.draft.as_deref().or_else(|| {
         let project = view.studio.project.as_ref()?;
         project
@@ -160,6 +161,7 @@ pub(super) fn draw(
         .filter(|shot| workspace_tool(view) == ViewportTool::Path && !shot.path_keys().is_empty())
     {
         controls(canvas, view, bounds, geometry, &projection, shot)?;
+        axes(canvas, view, bounds, geometry, &projection, shot)?;
     }
     if workspace.focused {
         canvas.frame(bounds, 0.25, PRIMARY_ROLE.specular_hovered[0])?;
@@ -170,6 +172,128 @@ pub(super) fn draw(
 /// Creation tools never implicitly enable crowded scene-selection overlays.
 fn workspace_tool(view: &MenuView) -> ViewportTool {
     view.studio.workspace.viewport_tool
+}
+
+/// Guides are editor overlays within the fitted media image and never become recorded pixels.
+fn guides(
+    canvas: &mut Canvas<'_>,
+    bounds: Bounds,
+    guides: launcher::menu::studio::CameraGuides,
+) -> Result<(), PaintError> {
+    use launcher::menu::studio::CameraGuides;
+    let [left, top, right, bottom] = bounds;
+    let color = [230, 235, 240, 75];
+    match guides {
+        CameraGuides::Off => {}
+        CameraGuides::Thirds => {
+            for fraction in [1.0 / 3.0, 2.0 / 3.0] {
+                let x = left + (right - left) * fraction;
+                let y = top + (bottom - top) * fraction;
+                canvas.fill([x - 0.5, top, x + 0.5, bottom], color)?;
+                canvas.fill([left, y - 0.5, right, y + 0.5], color)?;
+            }
+        }
+        CameraGuides::Safe => {
+            for inset in [0.05, 0.1] {
+                canvas.frame(
+                    [
+                        left + (right - left) * inset,
+                        top + (bottom - top) * inset,
+                        right - (right - left) * inset,
+                        bottom - (bottom - top) * inset,
+                    ],
+                    0.15,
+                    color,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One selected path key exposes world-axis handles; edge-on axes are hidden instead of unstable hits.
+fn axes(
+    canvas: &mut Canvas<'_>,
+    view: &MenuView,
+    bounds: Bounds,
+    geometry: [i32; 4],
+    projection: &CameraProjection,
+    shot: &CameraShot,
+) -> Result<(), PaintError> {
+    let Some((_, at)) = view
+        .studio
+        .camera_workspace
+        .key
+        .filter(|(id, _)| *id == shot.id)
+    else {
+        return Ok(());
+    };
+    let Some(key) = shot.key_at(at) else {
+        return Ok(());
+    };
+    let Some(origin) = projection.project(key.pose.position) else {
+        return Ok(());
+    };
+    let camera = view
+        .studio
+        .preview
+        .camera
+        .as_ref()
+        .expect("native projection admitted");
+    let distance = key
+        .pose
+        .position
+        .into_iter()
+        .zip(camera.render_pose.position)
+        .map(|(a, b)| (a - b).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    let length = (distance * 0.14).clamp(0.25, 16.0);
+    let mut lines = Lines::default();
+    for axis in CameraDragAxis::WORLD {
+        let index = axis.index().expect("world axis");
+        let mut end = key.pose.position;
+        end[index] += length;
+        let Some(point) = projection
+            .project(end)
+            .filter(|point| point.iter().all(|v| (0.0..=1.0).contains(v)))
+        else {
+            continue;
+        };
+        let start_pixel = screen(bounds, origin);
+        let end_pixel = screen(bounds, point);
+        if (start_pixel[0] - end_pixel[0]).hypot(start_pixel[1] - end_pixel[1]) < 10.0 {
+            continue;
+        }
+        let color = match axis {
+            CameraDragAxis::X => [245, 100, 100, 230],
+            CameraDragAxis::Y => [110, 220, 140, 230],
+            CameraDragAxis::Z => [110, 165, 250, 230],
+            CameraDragAxis::View => unreachable!(),
+        };
+        if let Some(segment) = projection.segment(key.pose.position, end) {
+            lines.push(bounds, segment, color, 2.0);
+        }
+        canvas.fill(square(bounds, end_pixel, 3.0), color)?;
+        canvas.text_line(
+            axis.label(),
+            [end_pixel[0] + 4.0, end_pixel[1] - 4.0],
+            (bounds[2] - end_pixel[0] - 4.0).max(0.0),
+            CAPTION,
+            color,
+        )?;
+        canvas.hit(
+            MenuAction::Studio(Action::CameraAxisControl {
+                shot: shot.id,
+                at,
+                handle: PathControl::Key,
+                axis,
+                bounds: geometry,
+            }),
+            square(bounds, end_pixel, 9.0),
+        )?;
+    }
+    lines.draw(canvas, bounds)
 }
 
 /// Reset only changes transient state and remains usable while a replacement image is preparing.
@@ -211,22 +335,17 @@ fn path(
     let keys = shot.path_keys();
     let window = key_window(view, shot);
     for index in window.clone().filter(|&index| index + 1 < keys.len()) {
-        let start = shot.span.start.0 + keys[index].at.0;
-        let duration = keys[index + 1].at.0 - keys[index].at.0;
         let mut previous = keys[index].pose.position;
         for sample in 1..=SEGMENT_SAMPLES {
-            let at = MediaTime(
-                start
-                    + (u128::from(duration) * u128::from(sample) / u128::from(SEGMENT_SAMPLES))
-                        as u64,
-            );
-            let Some(pose) = shot.path_pose(at) else {
+            let Some(position) =
+                shot.path_geometry_position(index, sample as f64 / SEGMENT_SAMPLES as f64)
+            else {
                 continue;
             };
-            if let Some(segment) = projection.segment(previous, pose.position) {
+            if let Some(segment) = projection.segment(previous, position) {
                 lines.push(bounds, segment, TEXT_DIMMER, 1.2);
             }
-            previous = pose.position;
+            previous = position;
         }
     }
     if keys.len() > MAX_VISIBLE_KEYS {
