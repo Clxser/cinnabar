@@ -235,6 +235,7 @@ fn inline_level_chunk_replaces_the_entity_map_even_when_its_tail_is_malformed() 
     );
     assert_eq!(store.biome_id(sub_chunk, 0, 0, 0), Some(5));
     assert!(store.block_entity(old_key).is_none());
+    assert_column_bytes(&store, chunk, 0);
 
     let mut valid = uniform_sub_chunk(-4, 9);
     valid.extend(uniform_biome(6));
@@ -245,6 +246,7 @@ fn inline_level_chunk_replaces_the_entity_map_even_when_its_tail_is_malformed() 
     store.commit_level_chunk(chunk, decoded).unwrap();
     assert_eq!(store.biome_id(sub_chunk, 0, 0, 0), Some(6));
     assert_eq!(store.block_entity(new_key).unwrap().id(), Some("New"));
+    assert_column_bytes(&store, chunk, block_entity("New", new_key.position()).len());
 }
 
 #[test]
@@ -436,4 +438,93 @@ fn scoped_tails_bound_retained_nbt_and_continue_after_budget_rejections() {
     let mut store = ChunkStore::new();
     store.commit_decoded_sub_chunk(key, decoded).unwrap();
     assert!(store.block_entity(last).is_some());
+}
+
+/// Checks the maintained total against the sparse map and the expected fixture bytes.
+fn assert_column_bytes(store: &ChunkStore, key: ChunkKey, expected: usize) {
+    let Some(chunk) = store.chunk(key) else {
+        assert_eq!(expected, 0);
+        return;
+    };
+    assert_eq!(chunk.block_entity_bytes(), expected);
+    assert_eq!(
+        chunk.block_entity_bytes(),
+        chunk
+            .block_entities()
+            .map(|(_, nbt)| nbt.bytes().len())
+            .sum::<usize>()
+    );
+}
+
+#[test]
+fn maintained_nbt_totals_follow_updates_replacements_air_and_eviction() {
+    let first = BlockEntityKey::new(0, 1, 65, 1);
+    let second = BlockEntityKey::new(0, 2, 81, 1);
+    let elsewhere = BlockEntityKey::new(1, 1, 65, 1);
+    let mut store = ChunkStore::new();
+    let first_wire = block_entity("Sign", first.position());
+    let second_wire = block_entity("Chest", second.position());
+    let elsewhere_wire = block_entity("Note", elsewhere.position());
+    for (key, wire) in [
+        (first, &first_wire),
+        (second, &second_wire),
+        (elsewhere, &elsewhere_wire),
+    ] {
+        store
+            .commit_block_entity_update(key, DecodedBlockEntities::decode_live(key, wire).unwrap())
+            .unwrap();
+    }
+    assert_column_bytes(&store, first.chunk(), first_wire.len() + second_wire.len());
+    assert_column_bytes(&store, elsewhere.chunk(), elsewhere_wire.len());
+    let old = store.chunk(first.chunk()).unwrap().shared_block_entities();
+    assert!(
+        !store
+            .commit_block_entity_update(
+                first,
+                DecodedBlockEntities::decode_live(first, &first_wire).unwrap()
+            )
+            .unwrap()
+    );
+    assert!(Arc::ptr_eq(
+        &old,
+        &store.chunk(first.chunk()).unwrap().shared_block_entities()
+    ));
+    let changed = block_entity("Different sized retained NBT", first.position());
+    store
+        .commit_block_entity_update(
+            first,
+            DecodedBlockEntities::decode_live(first, &changed).unwrap(),
+        )
+        .unwrap();
+    assert_column_bytes(&store, first.chunk(), changed.len() + second_wire.len());
+    assert_eq!(old[&first].bytes().len(), first_wire.len());
+
+    let replacement = [&[0][..], &second_wire].concat();
+    let decoded =
+        DecodedBlockEntities::decode_level_chunk_tail(first.chunk(), OVERWORLD_Y, &replacement);
+    store
+        .commit_chunk_block_entities(first.chunk(), decoded)
+        .unwrap();
+    assert_column_bytes(&store, first.chunk(), second_wire.len());
+    let mut sub_chunk = uniform_sub_chunk(first.sub_chunk().y as i8, 7);
+    sub_chunk.extend_from_slice(&first_wire);
+    store
+        .commit_decoded_sub_chunk(
+            first.sub_chunk(),
+            DecodedSubChunk::decode(first.sub_chunk(), &sub_chunk, &IDS),
+        )
+        .unwrap();
+    assert_column_bytes(&store, first.chunk(), first_wire.len() + second_wire.len());
+    store.apply_all_air(first.sub_chunk()).unwrap();
+    assert_column_bytes(&store, first.chunk(), second_wire.len());
+
+    let empty = DecodedBlockEntities::decode_level_chunk_tail(first.chunk(), OVERWORLD_Y, &[0]);
+    store
+        .commit_chunk_block_entities(first.chunk(), empty)
+        .unwrap();
+    assert!(store.chunk(first.chunk()).is_none());
+    assert_column_bytes(&store, first.chunk(), 0);
+    assert_column_bytes(&store, elsewhere.chunk(), elsewhere_wire.len());
+    store.evict_chunk(elsewhere.chunk());
+    assert_column_bytes(&store, elsewhere.chunk(), 0);
 }

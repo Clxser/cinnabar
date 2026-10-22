@@ -398,3 +398,47 @@ fn beacon_sections_share_unchanged_columns_and_refresh_after_block_or_nbt_edits(
     .unwrap();
     assert!(!Arc::ptr_eq(&replacement, &scan.beacons[&beacon].sections));
 }
+
+#[test]
+fn authoritative_nbt_accounting_updates_even_when_template_rescans_are_deferred() {
+    let sign = key(1);
+    let mut store = store_with(&[(sign, "Sign", "first")]);
+    let calls = Cell::new(0);
+    let chunk = store.chunk(sign.chunk()).unwrap();
+    let scan = ColumnScan::new(
+        chunk,
+        Vec::new(),
+        routed_entities(chunk, None, counting(&calls)),
+    );
+    let previous_bytes = chunk.block_entity_bytes();
+    let next = entity_nbt(
+        "Sign",
+        sign.position(),
+        "a longer updated sign that is not rescanned yet",
+    );
+    let next_bytes = next.bytes().len();
+    store.commit_block_entity_update(sign, next).unwrap();
+    let chunk = store.chunk(sign.chunk()).unwrap();
+    assert_ne!(chunk.block_entity_bytes(), previous_bytes);
+    assert_eq!(chunk.block_entity_bytes(), next_bytes);
+    calls.set(0);
+    let deferred = frame_scan(
+        Some(scan),
+        chunk,
+        false,
+        &mut 0,
+        ColumnScan::is_current,
+        |previous| {
+            ColumnScan::new(
+                chunk,
+                Vec::new(),
+                routed_entities(chunk, previous, counting(&calls)),
+            )
+        },
+    )
+    .unwrap();
+    assert!(!deferred.is_current(chunk));
+    assert_eq!(calls.get(), 0);
+    assert_eq!(chunk.block_entity_bytes(), next_bytes);
+    assert_eq!(chunk.block_entities().len(), 1);
+}

@@ -127,6 +127,8 @@ pub(crate) struct BlockEntityRuntime {
     beacon_tints: assets::BeaconTintCatalog,
     /// Scan results per loaded column, rebuilt when the column changes.
     columns: HashMap<ChunkKey, columns::ColumnScan>,
+    /// Sorted frame selection reuses its allocation independently of cached column contents.
+    column_keys: Vec<ChunkKey>,
     rescans: columns::RescanOrder,
     frame: u64,
     blocks: HashMap<u32, Option<Arc<BlockInfo>>>,
@@ -152,6 +154,7 @@ impl BlockEntityRuntime {
             lids: ContainerLids::default(),
             beacon_tints: assets::BeaconTintCatalog::pinned(),
             columns: HashMap::new(),
+            column_keys: Vec::new(),
             rescans: columns::RescanOrder::default(),
             frame: 0,
             blocks: HashMap::new(),
@@ -197,6 +200,7 @@ impl BlockEntityRuntime {
         self.lids = ContainerLids::default();
         self.missing_maps.clear();
         self.columns.clear();
+        self.column_keys.clear();
         self.rescans = columns::RescanOrder::default();
         self.blocks.clear();
         self.shapes.clear();

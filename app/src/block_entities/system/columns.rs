@@ -6,9 +6,39 @@ use std::{
 };
 
 use assets::BlockEntityRouteKind;
-use world::{BlockEntityKey, BlockEntityNbt, Chunk, SubChunk};
+use world::{
+    BlockEntityKey, BlockEntityNbt, Chunk, ChunkKey, ChunkStore, SUB_CHUNK_SIDE, SubChunk,
+};
 
 use super::{super::describe::Template, portals::PortalCell};
+
+/// Reuses frame selection storage while keeping received coverage independent of the source camera.
+pub(super) fn collect_frame_keys(
+    keys: &mut Vec<ChunkKey>,
+    store: &ChunkStore,
+    dimension: i32,
+    eye: [f32; 2],
+    received: bool,
+) {
+    keys.clear();
+    if received {
+        keys.extend(
+            store
+                .received_columns()
+                .filter(|key| key.dimension == dimension),
+        );
+    } else {
+        let chunk_range = |center: f32| {
+            ((center - super::SCAN_RADIUS_BLOCKS) / SUB_CHUNK_SIDE as f32).floor() as i32
+                ..=((center + super::SCAN_RADIUS_BLOCKS) / SUB_CHUNK_SIDE as f32).floor() as i32
+        };
+        keys.extend(
+            chunk_range(eye[0])
+                .flat_map(|x| chunk_range(eye[1]).map(move |z| ChunkKey::new(dimension, x, z))),
+        );
+    }
+    keys.sort_unstable();
+}
 
 /// A column's portal cells and drawable block entities, valid while its maps are unchanged.
 pub(super) struct ColumnScan {
@@ -187,3 +217,6 @@ pub(super) fn routed_entities(
 #[cfg(test)]
 #[path = "columns_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod work_tests;

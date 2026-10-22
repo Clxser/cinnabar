@@ -92,6 +92,7 @@ fn session_change_drops_runtime_id_keyed_caches() {
     let mut runtime = BlockEntityRuntime::new();
     runtime.bind_session(Some((1, 0)));
     runtime.blocks.insert(7, None);
+    runtime.column_keys.push(ChunkKey::new(0, 1, 2));
     runtime.shapes.shape(
         &Arc::new(assets::RuntimeAssets::diagnostic()),
         assets::NetworkIdMode::Sequential,
@@ -102,7 +103,48 @@ fn session_change_drops_runtime_id_keyed_caches() {
     runtime.bell_rings.insert([0, 0, 0], (1, 0.0));
     runtime.bind_session(Some((1, 0)));
     assert_eq!(runtime.blocks.len(), 1);
+    assert_eq!(runtime.column_keys, [ChunkKey::new(0, 1, 2)]);
     runtime.bind_session(Some((2, 0)));
     assert!(runtime.blocks.is_empty() && runtime.shapes.is_empty());
     assert!(runtime.bell_rings.is_empty());
+    assert!(runtime.column_keys.is_empty());
+}
+
+#[test]
+fn dimension_change_clears_column_selection_and_cached_rules_in_the_same_session() {
+    let mut runtime = BlockEntityRuntime::new();
+    runtime.bind_session(Some((1, 0)));
+    let key = ChunkKey::new(0, 0, 0);
+    let chunk = world::Chunk::default();
+    runtime.columns.insert(
+        key,
+        columns::ColumnScan::new(&chunk, Vec::new(), Vec::new()),
+    );
+    runtime.column_keys.push(key);
+    runtime.blocks.insert(7, None);
+    runtime.bind_session(Some((1, 1)));
+    assert!(runtime.columns.is_empty());
+    assert!(runtime.column_keys.is_empty());
+    assert!(runtime.blocks.is_empty());
+}
+
+#[test]
+fn replacing_runtime_assets_still_invalidates_column_rules_while_selection_is_rebuilt() {
+    let mut runtime = BlockEntityRuntime::new();
+    runtime.bind_session(Some((1, 0)));
+    let assets = Arc::new(assets::RuntimeAssets::diagnostic());
+    runtime.bind_beam_source(&assets, None);
+    let key = ChunkKey::new(0, 0, 0);
+    let chunk = world::Chunk::default();
+    runtime.columns.insert(
+        key,
+        columns::ColumnScan::new(&chunk, Vec::new(), Vec::new()),
+    );
+    runtime.blocks.insert(7, None);
+    runtime.bind_beam_source(&assets, None);
+    assert_eq!(runtime.columns.len(), 1);
+    assert_eq!(runtime.blocks.len(), 1);
+    runtime.bind_beam_source(&Arc::new(assets::RuntimeAssets::diagnostic()), None);
+    assert!(runtime.columns.is_empty());
+    assert!(runtime.blocks.is_empty());
 }

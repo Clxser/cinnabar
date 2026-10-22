@@ -160,21 +160,8 @@ pub(super) fn prepare(
     runtime.lids.begin();
     let mut rescans_left = columns::MAX_COLUMN_RESCANS_PER_FRAME;
     let eye_column = [eye.x, eye.z].map(|axis| (axis / SUB_CHUNK_SIDE as f32).floor() as i32);
-    let chunk_range = |center: f32| {
-        ((center - SCAN_RADIUS_BLOCKS) / SUB_CHUNK_SIDE as f32).floor() as i32
-            ..=((center + SCAN_RADIUS_BLOCKS) / SUB_CHUNK_SIDE as f32).floor() as i32
-    };
-    let mut keys: Vec<_> = if received {
-        store
-            .received_columns()
-            .filter(|key| key.dimension == dimension)
-            .collect()
-    } else {
-        chunk_range(eye.x)
-            .flat_map(|x| chunk_range(eye.z).map(move |z| ChunkKey::new(dimension, x, z)))
-            .collect()
-    };
-    keys.sort_unstable();
+    let mut keys = std::mem::take(&mut runtime.column_keys);
+    columns::collect_frame_keys(&mut keys, store, dimension, [eye.x, eye.z], received);
     coverage.received_columns = keys
         .iter()
         .filter(|key| store.chunk(**key).is_some())
@@ -190,17 +177,13 @@ pub(super) fn prepare(
     let mut cached_entities = 0usize;
     let mut cached_portals = 0usize;
     let prepare_zone = bevy::log::info_span!("block_entity.prepare").entered();
-    'columns: for chunk_key in keys {
+    'columns: for chunk_key in keys.iter().copied() {
         let Some(chunk) = store.chunk(chunk_key) else {
             continue;
         };
         if received {
-            let bytes = chunk
-                .shared_block_entities()
-                .values()
-                .map(|nbt| nbt.bytes().len())
-                .sum::<usize>();
-            let entities = chunk.shared_block_entities().len();
+            let bytes = chunk.block_entity_bytes();
+            let entities = chunk.block_entities().len();
             if cached_columns >= recording::MAX_CACHED_COLUMNS
                 || cached_nbt + bytes > world::MAX_BLOCK_ENTITY_BYTES_PER_CHUNK
                 || cached_entities + entities > MAX_SUBMISSIONS * 4
@@ -374,6 +357,8 @@ pub(super) fn prepare(
     runtime.books.finish();
     scans.retain(|_, scan| scan.seen_frame == frame_stamp);
     runtime.columns = scans;
+    keys.clear();
+    runtime.column_keys = keys;
     prune_bell_rings(&mut runtime.bell_rings, now_seconds, |position| {
         stream
             .block_event_cue(*position)

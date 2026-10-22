@@ -175,6 +175,12 @@ impl Chunk {
             .map(|(&key, value)| (key, Arc::clone(value)))
     }
 
+    /// Exact retained NBT bytes maintained by committed mutations, without walking or cloning the map.
+    #[must_use]
+    pub const fn block_entity_bytes(&self) -> usize {
+        self.block_entity_bytes
+    }
+
     /// Retains the immutable block entity index; any edit replaces it or detaches its weak
     /// references, so a held `Weak` shows whether the column's block entities changed.
     pub fn shared_block_entities(&self) -> Arc<BTreeMap<BlockEntityKey, Arc<BlockEntityNbt>>> {
