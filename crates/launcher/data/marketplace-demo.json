@@ -1,6 +1,33 @@
 {
   "schema_version": 1,
   "demo": true,
+  "accounts": {
+    "player-demo": {
+      "name": "Riverstone",
+      "gamertag": "Riverstone",
+      "role": "player"
+    },
+    "creator-demo": {
+      "name": "Emberworks",
+      "gamertag": "Emberworks",
+      "role": "creator"
+    },
+    "moderator-demo": {
+      "name": "Brook",
+      "gamertag": "Brook",
+      "role": "moderator"
+    },
+    "admin-demo": {
+      "name": "Aster",
+      "gamertag": "Aster",
+      "role": "admin"
+    },
+    "workshop-demo": {
+      "name": "Mosslight",
+      "gamertag": "Mosslight",
+      "role": "creator"
+    }
+  },
   "roles": {
     "player": [
       "library.add"
@@ -70,7 +97,7 @@
       "id": 101,
       "slug": "zoom-plus",
       "title": "Zoom Plus",
-      "creator": "Demo Studio",
+      "creator": "Emberworks",
       "owner": "creator-demo",
       "category": "Camera",
       "summary": "A closer look, at the press of a key.",
@@ -88,7 +115,7 @@
       "id": 102,
       "slug": "quiet-hud",
       "title": "Quiet HUD",
-      "creator": "Demo Workshop",
+      "creator": "Mosslight",
       "owner": "workshop-demo",
       "category": "Interface",
       "summary": "Keep your view clear. Keep what matters.",
@@ -106,7 +133,7 @@
       "id": 103,
       "slug": "golden-hour",
       "title": "Golden Hour",
-      "creator": "Demo Studio",
+      "creator": "Emberworks",
       "owner": "creator-demo",
       "category": "Environment",
       "summary": "Your favourite light, a little longer.",
@@ -124,7 +151,7 @@
       "id": 104,
       "slug": "wayfinder",
       "title": "Wayfinder",
-      "creator": "Demo Workshop",
+      "creator": "Mosslight",
       "owner": "workshop-demo",
       "category": "Interface",
       "summary": "Find your bearings without the clutter.",

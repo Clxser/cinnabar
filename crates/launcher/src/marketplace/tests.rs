@@ -5,12 +5,21 @@ fn shared_fixture_has_unique_public_identities_and_valid_policy() {
     let catalog = catalog();
     assert_eq!(catalog.schema_version, 1);
     assert!(catalog.demo);
+    for role in catalog.roles.keys() {
+        let account = &catalog.accounts[&format!("{role}-demo")];
+        assert_eq!(&account.role, role);
+        assert!(!account.name.trim().is_empty());
+        assert!(!account.gamertag.trim().is_empty());
+    }
     let mut ids = BTreeSet::new();
     let mut slugs = BTreeSet::new();
     for item in &catalog.listings {
         assert!(ids.insert(item.id));
         assert!(slugs.insert(&item.slug));
         assert!(!item.permissions.is_empty());
+        let account = &catalog.accounts[&item.owner];
+        assert_eq!(item.creator, account.name);
+        assert!(catalog.roles.contains_key(&account.role));
     }
     for rule in &catalog.review_transitions {
         assert!(

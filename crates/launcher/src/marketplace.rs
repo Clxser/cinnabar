@@ -12,9 +12,18 @@ use serde::Deserialize;
 pub struct Catalog {
     pub schema_version: u32,
     pub demo: bool,
+    pub accounts: BTreeMap<String, Account>,
     pub roles: BTreeMap<String, Vec<String>>,
     pub review_transitions: Vec<ReviewTransition>,
     pub listings: Vec<Listing>,
+}
+
+/// A fictional presentation profile; this record is not authenticated account proof.
+#[derive(Debug, Deserialize)]
+pub struct Account {
+    pub name: String,
+    pub gamertag: String,
+    pub role: String,
 }
 
 /// One permitted publication transition, evaluated against the acting account.

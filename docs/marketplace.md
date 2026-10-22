@@ -7,6 +7,12 @@ an entry changes a local preview library; it does not download a component,
 enable a mod, grant permissions, or sync between devices.
 Client preview saves last only for the current client session. Website demo
 state remains in that browser until it is reset or browser storage is cleared.
+The interface presents a signed-in account scenario with fictional profiles and
+normal library, submission and staff language. The website account switcher
+selects presentation scenarios; it does not authenticate anyone. Offline client
+captures use the same fictional profile. The running client reflects its real
+launcher account state. No credentials or verified identity are supplied by the
+catalog's account records.
 
 The [website repository](https://github.com/cinnabar-mc/website) owns the web
 storefront, creator submissions, review queue and staff screens. Its pinned
