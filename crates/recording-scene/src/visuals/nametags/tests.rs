@@ -4,6 +4,7 @@ use super::*;
 fn metadata() -> Metadata {
     Metadata {
         revision: 7,
+        labels: Vec::new(),
         cells: vec![Cell {
             cell: [2, 3, 2, 2],
             pixels: AssetId([1; 32]),
@@ -22,7 +23,7 @@ fn record() -> NametagRecord {
         color: [0.3, 0.6, 0.9, 0.5],
         line_lift: 0.25,
         depth_tested: 1,
-        padding: [0; 2],
+        runtime_id: 17,
     }
 }
 
@@ -69,6 +70,47 @@ fn exact_world_tag_artwork_and_quads_survive_replay_independently_of_hud() {
     )
     .unwrap();
     assert!(Arc::ptr_eq(&frame.atlas, &next.atlas));
+    assert_eq!(frame.labels[0].records, 0..1);
+    assert_eq!(frame.records[0].runtime_id, 17);
+}
+
+#[test]
+fn authored_label_groups_and_depths_survive_and_invalid_ranges_fail_before_assets_load() {
+    let mut metadata = metadata();
+    metadata.labels = vec![Label {
+        records: [0, 2],
+        view_depth: 7.5,
+    }];
+    let mut budget = MAX_ATLAS_BYTES;
+    let restored = load(
+        &mut Loader::default(),
+        metadata,
+        &bytes(&[record(), record()]),
+        |_, _| Ok(Arc::from([127; 16])),
+        &mut budget,
+        &|| false,
+    )
+    .unwrap();
+    assert_eq!(restored.labels[0].records, 0..2);
+    assert_eq!(restored.labels[0].view_depth, 7.5);
+    for range in [[2, 1], [0, 3]] {
+        let mut bad = super::tests::metadata();
+        bad.labels = vec![Label {
+            records: range,
+            view_depth: 1.0,
+        }];
+        assert!(
+            load(
+                &mut Loader::default(),
+                bad,
+                &bytes(&[record(), record()]),
+                |_, _| panic!("invalid labels cannot load artwork"),
+                &mut budget,
+                &|| false
+            )
+            .is_err()
+        );
+    }
 }
 
 #[test]
@@ -80,6 +122,7 @@ fn absent_world_tags_and_an_admitted_empty_frame_are_distinct() {
         Metadata {
             revision: 0,
             cells: Vec::new(),
+            labels: Vec::new(),
         },
         &bytes(&[]),
         |_, _| panic!("empty tag frame has no pixels"),

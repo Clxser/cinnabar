@@ -46,9 +46,14 @@ pub struct PreparedItems {
 }
 
 impl PreparedItems {
+    /// Static model templates and rasters share one immutable catalog allocation across samples.
+    pub(super) fn model_retained_bytes(&self) -> usize {
+        models::retained_bytes(&self.models)
+    }
+
     /// Charges all shared model epochs and transition arrays before the capture queue retains them.
     pub fn retained_bytes(&self) -> usize {
-        models::retained_bytes(&self.models)
+        self.model_retained_bytes()
             + std::mem::size_of_val(&*self.instances)
             + std::mem::size_of_val(&*self.terrain_instances)
             + self

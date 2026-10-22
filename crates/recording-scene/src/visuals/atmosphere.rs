@@ -475,7 +475,7 @@ fn image_bytes(width: u32, height: u32, layers: u32) -> Result<usize, ArchiveErr
 }
 
 /// Charges only owned raster storage, not playback cursor or source-world state.
-fn assets_bytes(assets: &AtmosphereAssets) -> usize {
+pub(super) fn assets_bytes(assets: &AtmosphereAssets) -> usize {
     assets
         .weather
         .as_ref()

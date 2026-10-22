@@ -32,6 +32,7 @@ pub mod atmosphere;
 mod hud;
 mod items;
 mod nametags;
+mod retention;
 pub use items::{ItemCoverage, PreparedItems};
 
 pub const VISUAL_TRACK_SCHEMA: &str = "cinnabar.prepared-visuals/5";
@@ -102,7 +103,7 @@ pub struct BlockCoverage {
 }
 
 impl FrozenVisuals {
-    /// Conservative queue charging includes shared atlases, so stalled storage cannot pin unbounded epochs.
+    /// Total referenced payload for one sample; capture retention deduplicates shared queued allocations.
     pub fn retained_bytes(&self) -> usize {
         let p = &self.particles;
         let b = &self.blocks;

@@ -13,13 +13,34 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use super::{FrozenVisuals, VISUAL_DIRECTORY, VISUAL_TRACK_SCHEMA, store_frame};
+use super::{FrozenVisuals, VISUAL_DIRECTORY, VISUAL_TRACK_SCHEMA, retention, store_frame};
 
 pub struct VisualCapture {
     recording: Option<Recording>,
     root: PathBuf,
     store: Arc<Mutex<Option<Worker>>>,
+    retained: retention::Budget,
     last_checkpoint: Option<MediaTime>,
+}
+
+struct QueuedVisuals {
+    _lease: retention::Lease,
+    frame: FrozenVisuals,
+}
+
+impl QueuedVisuals {
+    /// Borrowing the complete owner keeps its retained-byte lease live throughout serialization.
+    fn write(&self, out: &mut dyn std::io::Write, worker: &mut Worker) -> Result<(), ArchiveError> {
+        store_frame(
+            out,
+            &mut worker.store,
+            &mut worker.hand,
+            &mut worker.atmosphere,
+            &mut worker.items,
+            &mut worker.nametags,
+            &self.frame,
+        )
+    }
 }
 
 struct Worker {
@@ -40,7 +61,7 @@ impl VisualCapture {
             info,
             RecordingConfig {
                 disk_quota: journal_quota(),
-                queued_bytes: 256 * 1024 * 1024,
+                queued_bytes: retention::MAX_QUEUED_BYTES,
                 compression_level: 0,
                 ..Default::default()
             },
@@ -50,6 +71,7 @@ impl VisualCapture {
             recording: Some(recording),
             root,
             store: Arc::new(Mutex::new(None)),
+            retained: retention::Budget::default(),
             last_checkpoint: None,
         })
     }
@@ -59,11 +81,11 @@ impl VisualCapture {
         if self.last_checkpoint.is_none() && at != MediaTime::ZERO {
             return Err("The prepared visual baseline must begin at time zero.".into());
         }
-        let bytes = frame
-            .retained_bytes()
-            .checked_add(512)
-            .filter(|&bytes| bytes <= 192 * 1024 * 1024)
-            .ok_or("The prepared visual frame exceeds its memory budget.")?;
+        let (lease, bytes) = self.retained.retain(&frame)?;
+        let queued = QueuedVisuals {
+            _lease: lease,
+            frame,
+        };
         let checkpoint = self
             .last_checkpoint
             .is_none_or(|old| at.0.saturating_sub(old.0) >= SCENE_CHECKPOINT_INTERVAL.0);
@@ -102,18 +124,10 @@ impl VisualCapture {
                         });
                     }
                     let worker = store.as_mut().expect("prepared visual storage");
-                    store_frame(
-                        out,
-                        &mut worker.store,
-                        &mut worker.hand,
-                        &mut worker.atmosphere,
-                        &mut worker.items,
-                        &mut worker.nametags,
-                        &frame,
-                    )
+                    queued.write(out, worker)
                 },
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|error| format!("Prepared visual recording: {error}"))?;
         if checkpoint {
             boundary(recording, at, RecordKind::CheckpointEnd)?;
             self.last_checkpoint = Some(at);
@@ -123,18 +137,25 @@ impl VisualCapture {
 
     /// Storage errors remain visible even if gameplay stops publishing changes.
     pub fn error(&self) -> Option<String> {
-        self.recording.as_ref()?.task().progress()?.error
+        self.recording
+            .as_ref()?
+            .task()
+            .progress()?
+            .error
+            .map(|error| format!("Prepared visual recording: {error}"))
     }
 
     /// Only the capture finalizer drains accepted draws and waits for storage completion.
     pub fn finish(mut self, at: MediaTime) -> Result<(), String> {
-        let progress = self
+        let recording = self
             .recording
             .take()
-            .ok_or("Prepared visual recording is already closed.")?
-            .finish(at)
-            .map_err(|e| e.to_string())?
-            .wait();
+            .ok_or("Prepared visual recording is already closed.")?;
+        let task = recording.task();
+        let progress = match recording.finish(at) {
+            Ok(task) => task.wait(),
+            Err(error) => return Err(task.wait().error.unwrap_or_else(|| error.to_string())),
+        };
         if progress.state != RecordingState::Complete {
             return Err(progress
                 .error
@@ -158,5 +179,5 @@ fn boundary(recording: &mut Recording, at: MediaTime, kind: RecordKind) -> Resul
             payload: Arc::from([]),
         })
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|error| format!("Prepared visual recording: {error}"))
 }

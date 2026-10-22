@@ -7,7 +7,7 @@ use recording_studio::{
 };
 use render_model::{
     MAX_NAMETAG_ATLAS_CELLS, MAX_NAMETAG_RECORDS, NAMETAG_ATLAS_SIDE, NametagAtlasRect,
-    NametagRecord, NametagScene,
+    NametagLabel, NametagRecord, NametagScene,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
@@ -22,6 +22,15 @@ pub(super) const MAX_DRAW_BYTES: usize = 4 + MAX_NAMETAG_RECORDS * RECORD_WORDS 
 pub(super) struct Metadata {
     revision: u64,
     cells: Vec<Cell>,
+    #[serde(default)]
+    labels: Vec<Label>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Label {
+    records: [usize; 2],
+    view_depth: f32,
 }
 
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -48,6 +57,7 @@ pub(super) struct Loader {
 pub(super) fn retained_bytes(scene: &NametagScene) -> usize {
     std::mem::size_of::<NametagScene>()
         + std::mem::size_of_val(&*scene.records)
+        + std::mem::size_of_val(&*scene.labels)
         + std::mem::size_of_val(&*scene.atlas)
         + scene
             .atlas
@@ -62,7 +72,15 @@ pub(super) fn store(
     cache: &mut Cache,
     scene: &NametagScene,
 ) -> Result<(Metadata, Vec<u8>), ArchiveError> {
-    if scene.records.len() > MAX_NAMETAG_RECORDS || !scene.records.iter().all(valid_record) {
+    if scene.records.len() > MAX_NAMETAG_RECORDS
+        || !scene.records.iter().all(valid_record)
+        || scene.labels.len() > MAX_NAMETAG_RECORDS
+        || scene.labels.iter().any(|label| {
+            label.records.is_empty()
+                || label.records.end > scene.records.len()
+                || !label.view_depth.is_finite()
+        })
+    {
         return Err(invalid());
     }
     let cached = cache
@@ -120,6 +138,14 @@ pub(super) fn store(
         Metadata {
             revision: scene.atlas_revision,
             cells: cache.cells.clone(),
+            labels: scene
+                .labels
+                .iter()
+                .map(|label| Label {
+                    records: [label.records.start, label.records.end],
+                    view_depth: label.view_depth,
+                })
+                .collect(),
         },
         bytes,
     ))
@@ -142,6 +168,31 @@ pub(super) fn load(
     })?;
     drop(reader);
     binary::finish(&mut input)?;
+    if metadata.labels.len() > MAX_NAMETAG_RECORDS
+        || metadata.labels.iter().any(|label| {
+            label.records[0] >= label.records[1]
+                || label.records[1] > records.len()
+                || !label.view_depth.is_finite()
+        })
+    {
+        return Err(invalid());
+    }
+    // Legacy takes retain their original quad order as one label, without inventing actor groups.
+    let labels = if metadata.labels.is_empty() && !records.is_empty() {
+        vec![NametagLabel {
+            records: 0..records.len(),
+            view_depth: 0.0,
+        }]
+    } else {
+        metadata
+            .labels
+            .into_iter()
+            .map(|label| NametagLabel {
+                records: label.records[0]..label.records[1],
+                view_depth: label.view_depth,
+            })
+            .collect()
+    };
     let cached = loader
         .cached
         .as_ref()
@@ -184,6 +235,7 @@ pub(super) fn load(
     };
     Ok(Arc::new(NametagScene {
         records,
+        labels,
         atlas,
         atlas_revision: metadata.revision,
     }))
@@ -199,7 +251,7 @@ fn valid_record(record: &NametagRecord) -> bool {
         color,
         line_lift,
         depth_tested,
-        padding,
+        runtime_id: _,
     } = record;
     anchor
         .iter()
@@ -210,7 +262,6 @@ fn valid_record(record: &NametagRecord) -> bool {
         .all(|v| v.is_finite())
         && *text <= 1
         && *depth_tested <= 1
-        && *padding == [0; 2]
         && rect[0] <= rect[2]
         && rect[1] <= rect[3]
         && color.iter().all(|v| (0.0..=1.0).contains(v))
