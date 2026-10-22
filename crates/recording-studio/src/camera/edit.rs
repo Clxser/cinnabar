@@ -125,6 +125,7 @@ impl CameraShot {
             fov_curve: None,
             fov_offset: MediaTime::ZERO,
             path_timing: PathTiming::Keyed,
+            path_offset: MediaTime::ZERO,
         };
         shot.validate()?;
         Ok(shot)
@@ -197,13 +198,7 @@ impl CameraShot {
                     pose_value(*pose, parameter)
                 }
             }
-            CameraMode::Path {
-                keys,
-                smooth_position,
-            } => pose_value(
-                sample_path(keys, at.saturating_sub(self.span.start), *smooth_position)?,
-                parameter,
-            ),
+            CameraMode::Path { .. } => pose_value(self.path_pose(at)?, parameter),
             CameraMode::Player { actor: _, fov } => (parameter == P::Fov).then_some(*fov),
             CameraMode::Follow {
                 actor: _,
@@ -294,10 +289,13 @@ impl CameraShot {
             }
             CameraMode::Path {
                 keys,
-                smooth_position,
+                smooth_position: _,
             } => {
-                let offset = at.saturating_sub(next.span.start);
-                let mut pose = sample_path(keys, offset, *smooth_position)
+                let offset = next
+                    .path_offset
+                    .checked_add(at.saturating_sub(next.span.start))?;
+                let mut pose = self
+                    .path_pose(at)
                     .ok_or(StudioError::Invalid("camera path has no pose"))?;
                 set_pose(&mut pose, parameter, value)?;
                 set_key(
@@ -366,7 +364,9 @@ impl CameraShot {
         set_key(
             keys,
             CameraKey {
-                at: at.saturating_sub(self.span.start),
+                at: self
+                    .path_offset
+                    .checked_add(at.saturating_sub(self.span.start))?,
                 pose,
                 easing: Easing::Smooth,
                 handles: None,
@@ -416,7 +416,7 @@ impl CameraShot {
         Ok(next)
     }
 
-    /// Trimming retains path boundary poses and interior keys, and preserves the orbit's phase.
+    /// Trimming preserves original rail keys/easing and orbit phase without resampling motion.
     pub fn trimmed(&self, span: Span) -> Result<Self, StudioError> {
         span.validate()?;
         if span.start < self.span.start || span.end > self.span.end {
@@ -430,47 +430,8 @@ impl CameraShot {
         let mut next = self.clone();
         let offset = span.start.saturating_sub(self.span.start);
         match &mut next.mode {
-            CameraMode::Path {
-                keys,
-                smooth_position,
-            } => {
-                let first = sample_path(keys, offset, *smooth_position)
-                    .ok_or(StudioError::Invalid("camera path has no first pose"))?;
-                let last = sample_path(
-                    keys,
-                    span.end.saturating_sub(self.span.start),
-                    *smooth_position,
-                )
-                .ok_or(StudioError::Invalid("camera path has no last pose"))?;
-                let first_key = keys.iter().find(|key| key.at == offset).cloned();
-                let last_key = keys
-                    .iter()
-                    .find(|key| key.at == span.end.saturating_sub(self.span.start))
-                    .cloned();
-                keys.retain(|key| {
-                    key.at > offset && key.at < span.end.saturating_sub(self.span.start)
-                });
-                for key in keys.iter_mut() {
-                    key.at = key.at.saturating_sub(offset);
-                }
-                set_key(
-                    keys,
-                    CameraKey {
-                        at: MediaTime::ZERO,
-                        pose: first,
-                        easing: first_key.as_ref().map_or(Easing::Smooth, |key| key.easing),
-                        handles: first_key.and_then(|key| key.handles),
-                    },
-                )?;
-                set_key(
-                    keys,
-                    CameraKey {
-                        at: span.duration(),
-                        pose: last,
-                        easing: last_key.as_ref().map_or(Easing::Smooth, |key| key.easing),
-                        handles: last_key.and_then(|key| key.handles),
-                    },
-                )?;
+            CameraMode::Path { .. } => {
+                next.path_offset = next.path_offset.checked_add(offset)?;
             }
             CameraMode::Orbit {
                 actor: _,

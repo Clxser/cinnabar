@@ -3,7 +3,7 @@
 use super::*;
 
 impl CameraShot {
-    /// Key times are offsets within the shot; non-path rigs expose an empty slice.
+    /// Source-clock keys include hidden trim support; editor controls use path_key_times for visible keys.
     pub fn path_keys(&self) -> &[CameraKey] {
         match &self.mode {
             CameraMode::Path { keys, .. } => keys,
@@ -11,12 +11,23 @@ impl CameraShot {
         }
     }
 
+    /// Maps only editable keys inside the visible shot to absolute timeline times.
+    pub fn path_key_times(&self) -> impl Iterator<Item = (MediaTime, &CameraKey)> {
+        self.path_keys().iter().filter_map(|key| {
+            let offset = key.at.0.checked_sub(self.path_offset.0)?;
+            (offset <= self.span.duration().0).then(|| (MediaTime(self.span.start.0 + offset), key))
+        })
+    }
+
     /// An exact key includes the legal final boundary even though shot rendering is half-open.
     pub fn key_at(&self, at: MediaTime) -> Option<&CameraKey> {
         if at < self.span.start || at > self.span.end {
             return None;
         }
-        let offset = at.saturating_sub(self.span.start);
+        let offset = self
+            .path_offset
+            .checked_add(at.saturating_sub(self.span.start))
+            .ok()?;
         let keys = self.path_keys();
         keys.binary_search_by_key(&offset, |key| key.at)
             .ok()
@@ -81,7 +92,9 @@ impl CameraShot {
         if destination < self.span.start || destination > self.span.end {
             return Err(StudioError::Invalid("camera key time is outside its shot"));
         }
-        let destination = destination.saturating_sub(self.span.start);
+        let destination = self
+            .path_offset
+            .checked_add(destination.saturating_sub(self.span.start))?;
         let mut next = self.clone();
         let CameraMode::Path { keys, .. } = &mut next.mode else {
             unreachable!()

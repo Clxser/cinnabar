@@ -68,10 +68,7 @@ pub(super) fn camera(
     height: f32,
 ) -> Result<(), PaintError> {
     let mut previous = window.left - 16.0;
-    for key in shot.path_keys() {
-        let Ok(at) = shot.span.start.checked_add(key.at) else {
-            continue;
-        };
+    for (at, _) in shot.path_key_times() {
         let x = window.x(at);
         if x - previous < 10.0 {
             continue;
@@ -84,7 +81,7 @@ pub(super) fn camera(
             TimelineKey {
                 item: shot.id,
                 kind: KeyKind::Camera,
-                at: key.at,
+                at: at.saturating_sub(shot.span.start),
             },
             at,
             y + height * if shot.fov_curve.is_some() { 0.22 } else { 0.5 },

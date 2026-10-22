@@ -37,6 +37,7 @@ fn rail() -> CameraShot {
         fov_curve: None,
         fov_offset: MediaTime::ZERO,
         path_timing: PathTiming::Keyed,
+        path_offset: MediaTime::ZERO,
     }
 }
 

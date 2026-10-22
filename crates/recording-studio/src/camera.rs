@@ -108,7 +108,7 @@ impl CameraPose {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CameraKey {
-    /// Offset within the shot, independent of where the shot sits on the timeline.
+    /// Original path time; the shot's path offset preserves this source clock across trims.
     pub at: MediaTime,
     pub pose: CameraPose,
     pub easing: Easing,
@@ -176,6 +176,9 @@ pub struct CameraShot {
     /// Distance timing keeps spatial speed uniform between authored keys; lens/orientation keep their easing.
     #[serde(default, skip_serializing_if = "PathTiming::is_keyed")]
     pub path_timing: PathTiming,
+    /// Source-time phase retains original support keys and exact easing when a path is trimmed.
+    #[serde(default)]
+    pub path_offset: MediaTime,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -356,6 +359,13 @@ impl CameraShot {
                 "distance travel timing requires a camera path",
             ));
         }
+        if matches!(self.mode, CameraMode::Path { .. }) {
+            self.path_offset.checked_add(self.span.duration())?;
+        } else if self.path_offset != MediaTime::ZERO {
+            return Err(StudioError::Invalid(
+                "a path source phase requires a camera rail",
+            ));
+        }
         match &self.mode {
             CameraMode::Player { fov, actor: _ } => {
                 if !valid_fov(*fov) {
@@ -372,10 +382,12 @@ impl CameraShot {
                 limit("camera keys", keys.len(), MAX_CAMERA_KEYS)?;
                 if keys.is_empty()
                     || keys.windows(2).any(|pair| pair[0].at >= pair[1].at)
-                    || keys.last().is_some_and(|key| key.at > self.span.duration())
+                    || keys
+                        .last()
+                        .is_some_and(|key| key.at.0 > crate::time::MAX_MEDIA_MICROS)
                 {
                     return Err(StudioError::Invalid(
-                        "camera keys must be ordered within their shot",
+                        "camera keys must be ordered within their bounded source clock",
                     ));
                 }
                 for key in keys {
@@ -471,6 +483,7 @@ impl CameraShot {
                 keys,
                 smooth_position,
             } => {
+                let elapsed = self.path_offset.checked_add(elapsed).ok()?;
                 if self.path_timing == PathTiming::Distance {
                     path.map(|path| path.sample(time))
                         .unwrap_or_else(|| distance::sample(keys, elapsed, *smooth_position))

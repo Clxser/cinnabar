@@ -20,7 +20,10 @@ pub(super) fn draw(
         return Ok(y);
     };
     let at = view.studio.position;
-    let offset = at.saturating_sub(shot.span.start);
+    let offset = MediaTime(shot.path_offset.0 + at.saturating_sub(shot.span.start).0);
+    let visible_start = keys.partition_point(|key| key.at < shot.path_offset);
+    let visible_end =
+        keys.partition_point(|key| key.at.0 <= shot.path_offset.0 + shot.span.duration().0);
     let selected = keys
         .binary_search_by_key(&offset, |key| key.at)
         .ok()
@@ -30,10 +33,20 @@ pub(super) fn draw(
         .saturating_sub(1);
     let first = nearby
         .saturating_sub(VISIBLE_KEYS / 2)
-        .min(keys.len().saturating_sub(VISIBLE_KEYS));
-    let last = (first + VISIBLE_KEYS).min(keys.len());
+        .max(visible_start)
+        .min(visible_end.saturating_sub(VISIBLE_KEYS).max(visible_start));
+    let last = (first + VISIBLE_KEYS).min(visible_end);
     canvas.text_line(
-        &format!("PATH KEYS  {}-{} / {}", first + 1, last, keys.len()),
+        &if first == last {
+            "NO KEYS IN TRIM".into()
+        } else {
+            format!(
+                "PATH KEYS  {}-{} / {}",
+                first - visible_start + 1,
+                last - visible_start,
+                visible_end - visible_start
+            )
+        },
         [left, y],
         right - left,
         HEADER5,
@@ -42,11 +55,7 @@ pub(super) fn draw(
     y += canvas.r(3.6);
     for (index, key) in keys[first..last].iter().enumerate() {
         let index = first + index;
-        let time = shot
-            .span
-            .start
-            .checked_add(key.at)
-            .expect("validated camera key");
+        let time = MediaTime(shot.span.start.0 + key.at.0 - shot.path_offset.0);
         let label = format!(
             "{}  {}",
             time_label(time),
@@ -82,14 +91,12 @@ pub(super) fn draw(
             (
                 "Prev key",
                 Action::StepCameraKey(-1),
-                keys.first()
-                    .is_some_and(|key| shot.span.start.0 + key.at.0 < at.0),
+                shot.path_key_times().any(|(time, _)| time < at),
             ),
             (
                 "Next key",
                 Action::StepCameraKey(1),
-                keys.last()
-                    .is_some_and(|key| shot.span.start.0 + key.at.0 > at.0),
+                shot.path_key_times().any(|(time, _)| time > at),
             ),
         ],
     )?;

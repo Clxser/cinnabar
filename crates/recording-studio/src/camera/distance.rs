@@ -22,6 +22,7 @@ impl PathTiming {
 pub struct CompiledCameraPath {
     start: MediaTime,
     end: MediaTime,
+    offset: MediaTime,
     segments: Vec<ArcSegment>,
 }
 
@@ -48,6 +49,7 @@ impl CompiledCameraPath {
         Some(Self {
             start: shot.span.start,
             end: shot.span.end,
+            offset: shot.path_offset,
             segments: (0..keys.len() - 1)
                 .map(|index| ArcSegment::new(keys, index, *smooth_position))
                 .collect(),
@@ -59,7 +61,10 @@ impl CompiledCameraPath {
         if at < self.start || at > self.end {
             return None;
         }
-        let elapsed = at.saturating_sub(self.start);
+        let elapsed = self
+            .offset
+            .checked_add(at.saturating_sub(self.start))
+            .ok()?;
         let index = self
             .segments
             .partition_point(|segment| segment.to.at <= elapsed);
@@ -107,24 +112,44 @@ impl ArcSegment {
         } else if amount == 1.0 {
             pose.position = self.to.pose.position;
         } else {
-            let total = self.lengths[ARC_STEPS];
-            let distance = amount * total;
-            let upper = self
-                .lengths
-                .partition_point(|length| *length < distance)
-                .clamp(1, ARC_STEPS);
-            let before = self.lengths[upper - 1];
-            let length = self.lengths[upper] - before;
-            let fraction = if length > f64::EPSILON {
-                (distance - before) / length
-            } else {
-                0.0
-            };
-            let parameter = ((upper - 1) as f64 + fraction) / ARC_STEPS as f64;
-            pose.position = cubic(self.controls, parameter).to_array();
+            pose.position = cubic(self.controls, self.parameter(amount)).to_array();
         }
         pose
     }
+
+    /// A monotone lookup inverts traveled distance without integrating forward from previous frames.
+    fn parameter(&self, amount: f64) -> f64 {
+        if amount <= 0.0 {
+            return 0.0;
+        }
+        if amount >= 1.0 {
+            return 1.0;
+        }
+        let distance = amount * self.lengths[ARC_STEPS];
+        let upper = self
+            .lengths
+            .partition_point(|length| *length < distance)
+            .clamp(1, ARC_STEPS);
+        let before = self.lengths[upper - 1];
+        let length = self.lengths[upper] - before;
+        let fraction = if length > f64::EPSILON {
+            (distance - before) / length
+        } else {
+            0.0
+        };
+        ((upper - 1) as f64 + fraction) / ARC_STEPS as f64
+    }
+}
+
+/// Overlay clipping prepares one active segment table and maps both trim boundaries together.
+pub(super) fn geometry_parameters(
+    keys: &[CameraKey],
+    index: usize,
+    smooth: bool,
+    amounts: [f64; 2],
+) -> [f64; 2] {
+    let segment = ArcSegment::new(keys, index, smooth);
+    amounts.map(|amount| segment.parameter(amount))
 }
 
 /// Admission rejects curves whose finite endpoints still overflow their derived travel geometry.

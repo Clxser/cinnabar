@@ -56,9 +56,8 @@ pub fn move_key(
                     id: key.item.0,
                 })?;
             let times = original
-                .path_keys()
-                .iter()
-                .map(|key| key.at)
+                .path_key_times()
+                .map(|(at, _)| at.saturating_sub(span.start))
                 .collect::<Vec<_>>();
             let offset = clamp_key(
                 &times,

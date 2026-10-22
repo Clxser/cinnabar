@@ -112,3 +112,84 @@ fn legacy_json_keeps_keyed_motion_and_distance_metadata_round_trips() {
     let decoded: CameraShot = serde_json::from_slice(&serde_json::to_vec(&shot).unwrap()).unwrap();
     assert_eq!(decoded, shot);
 }
+
+#[test]
+fn nested_curved_trims_preserve_every_sample_and_orientation_easing_without_resampling() {
+    for timing in [PathTiming::Keyed, PathTiming::Distance] {
+        let original = curved()
+            .with_path_timing(timing)
+            .unwrap()
+            .with_key_easing(MediaTime(1_000_000), Easing::EaseIn)
+            .unwrap();
+        let first = original
+            .trimmed(Span::new(MediaTime(200_000), MediaTime(900_000)).unwrap())
+            .unwrap();
+        let nested = first
+            .trimmed(Span::new(MediaTime(300_000), MediaTime(800_000)).unwrap())
+            .unwrap();
+        let compiled = CompiledCameraPath::new(&nested);
+        for value in [300_000, 310_000, 420_000, 500_000, 610_000, 799_999] {
+            let at = MediaTime(value);
+            assert_eq!(nested.sample(at, |_| None), original.sample(at, |_| None));
+            assert_eq!(
+                nested.sample_compiled(at, |_| None, compiled.as_ref()),
+                original.sample(at, |_| None)
+            );
+        }
+        assert!(nested.path_key_times().next().is_none());
+        assert!(nested.key_at(MediaTime::ZERO).is_none());
+        let points = nested.path_geometry_samples::<9>(0).unwrap();
+        for (point, at) in [(points[0], nested.span.start), (points[8], nested.span.end)] {
+            let expected = nested.path_pose(at).unwrap().position;
+            assert!(DVec3::from_array(point).distance(DVec3::from_array(expected)) < 1e-10);
+        }
+        let encoded = serde_json::to_vec(&nested).unwrap();
+        let decoded: CameraShot = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded, nested);
+    }
+}
+
+#[test]
+fn moving_a_trimmed_shot_and_editing_visible_keys_use_the_original_path_clock() {
+    let original = curved();
+    let mut moved = original
+        .trimmed(Span::new(MediaTime(300_000), MediaTime(800_000)).unwrap())
+        .unwrap();
+    moved.span = Span::new(MediaTime(3_000_000), MediaTime(3_500_000)).unwrap();
+    moved.validate().unwrap();
+    assert_eq!(
+        moved.sample(MediaTime(3_100_000), |_| None),
+        original.sample(MediaTime(400_000), |_| None)
+    );
+    let pose = CameraPose {
+        position: [3.0, 4.0, 5.0],
+        ..Default::default()
+    };
+    let edited = moved.keyed(MediaTime(3_100_000), pose).unwrap();
+    assert_eq!(
+        edited
+            .path_key_times()
+            .map(|(at, _)| at)
+            .collect::<Vec<_>>(),
+        vec![MediaTime(3_100_000)]
+    );
+    assert_eq!(
+        edited.key_at(MediaTime(3_100_000)).unwrap().at,
+        MediaTime(400_000)
+    );
+    assert_eq!(
+        edited.parameter(CameraParameter::X, MediaTime(3_100_000)),
+        Some(3.0)
+    );
+    let retimed = edited
+        .with_key_time(MediaTime(3_100_000), MediaTime(3_200_000))
+        .unwrap();
+    assert_eq!(
+        retimed
+            .path_key_times()
+            .map(|(at, _)| at)
+            .collect::<Vec<_>>(),
+        vec![MediaTime(3_200_000)]
+    );
+    assert_eq!(retimed.key_at(MediaTime(3_200_000)).unwrap().pose, pose);
+}

@@ -157,6 +157,7 @@ fn view(camera: bool) -> MenuView {
         fov_curve: None,
         fov_offset: MediaTime::ZERO,
         path_timing: Default::default(),
+        path_offset: MediaTime::ZERO,
     });
     project.effects.push(EffectClip {
         id: Id(5),

@@ -16,7 +16,7 @@ use launcher::menu::studio::ViewportTool;
 
 const MAX_VISIBLE_KEYS: usize = 128;
 const MAX_VISIBLE_SUBJECTS: usize = 24;
-const SEGMENT_SAMPLES: u64 = 8;
+const SEGMENT_POINTS: usize = 9;
 
 /// The caller supplies the actual aspect-fitted image rectangle after painting its media.
 pub(super) fn draw(
@@ -314,6 +314,7 @@ fn key_window(view: &MenuView, shot: &CameraShot) -> std::ops::Range<usize> {
         .filter(|(id, _)| *id == shot.id)
         .map_or(view.studio.position, |(_, at)| at)
         .saturating_sub(shot.span.start);
+    let selected = MediaTime(shot.path_offset.0 + selected.0);
     let center = keys
         .partition_point(|key| key.at <= selected)
         .saturating_sub(1);
@@ -335,17 +336,13 @@ fn path(
     let keys = shot.path_keys();
     let window = key_window(view, shot);
     for index in window.clone().filter(|&index| index + 1 < keys.len()) {
-        let mut previous = keys[index].pose.position;
-        for sample in 1..=SEGMENT_SAMPLES {
-            let Some(position) =
-                shot.path_geometry_position(index, sample as f64 / SEGMENT_SAMPLES as f64)
-            else {
-                continue;
-            };
-            if let Some(segment) = projection.segment(previous, position) {
+        let Some(points) = shot.path_geometry_samples::<SEGMENT_POINTS>(index) else {
+            continue;
+        };
+        for pair in points.windows(2) {
+            if let Some(segment) = projection.segment(pair[0], pair[1]) {
                 lines.push(bounds, segment, TEXT_DIMMER, 1.2);
             }
-            previous = position;
         }
     }
     if keys.len() > MAX_VISIBLE_KEYS {
@@ -387,7 +384,15 @@ fn controls(
 ) -> Result<(), PaintError> {
     for index in key_window(view, shot) {
         let key = &shot.path_keys()[index];
-        let at = MediaTime(shot.span.start.0 + key.at.0);
+        let Some(offset) = key
+            .at
+            .0
+            .checked_sub(shot.path_offset.0)
+            .filter(|offset| *offset <= shot.span.duration().0)
+        else {
+            continue;
+        };
+        let at = MediaTime(shot.span.start.0 + offset);
         let selected = view.studio.camera_workspace.key == Some((shot.id, at));
         for handle in [
             PathControl::Incoming,

@@ -39,6 +39,47 @@ pub enum PathControl {
 }
 
 impl CameraShot {
+    /// A bounded geometric trace clips support segments to the visible source-time range.
+    pub fn path_geometry_samples<const N: usize>(&self, segment: usize) -> Option<[[f64; 3]; N]> {
+        if N < 2 {
+            return None;
+        }
+        let CameraMode::Path {
+            keys,
+            smooth_position,
+        } = &self.mode
+        else {
+            return None;
+        };
+        let start = keys.get(segment)?;
+        let end = keys.get(segment.checked_add(1)?)?;
+        let low = start.at.max(self.path_offset);
+        let high = end
+            .at
+            .min(self.path_offset.checked_add(self.span.duration()).ok()?);
+        if high <= low {
+            return None;
+        }
+        let duration = (end.at.0 - start.at.0) as f64;
+        let amounts = [
+            (low.0 - start.at.0) as f64 / duration,
+            (high.0 - start.at.0) as f64 / duration,
+        ];
+        let [low, high] = if self.path_timing == PathTiming::Distance {
+            super::distance::geometry_parameters(keys, segment, *smooth_position, amounts)
+        } else {
+            amounts.map(|amount| end.easing.sample(amount))
+        };
+        Some(std::array::from_fn(|index| {
+            bezier_position(
+                keys,
+                segment,
+                low + (high - low) * index as f64 / (N - 1) as f64,
+                *smooth_position,
+            )
+        }))
+    }
+
     /// A geometric rail point avoids arc-table preparation when painting a path overlay.
     pub fn path_geometry_position(&self, segment: usize, amount: f64) -> Option<[f64; 3]> {
         if !amount.is_finite() {
@@ -74,7 +115,10 @@ impl CameraShot {
         else {
             return None;
         };
-        let elapsed = at.saturating_sub(self.span.start);
+        let elapsed = self
+            .path_offset
+            .checked_add(at.saturating_sub(self.span.start))
+            .ok()?;
         if self.path_timing == PathTiming::Distance {
             super::distance::sample(keys, elapsed, *smooth_position)
         } else {
@@ -114,7 +158,7 @@ impl CameraShot {
     ) -> Result<Self, StudioError> {
         self.path_control(at, control)
             .ok_or(StudioError::Invalid("select a visible camera path control"))?;
-        let offset = at.saturating_sub(self.span.start);
+        let offset = self.key_at(at).expect("admitted path key").at;
         let mut next = self.clone();
         let CameraMode::Path { keys, .. } = &mut next.mode else {
             unreachable!()

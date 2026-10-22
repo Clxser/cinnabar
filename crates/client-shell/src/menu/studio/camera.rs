@@ -378,16 +378,7 @@ impl Studio {
     pub(super) fn step_camera_key(&mut self, direction: i8) -> Result<(), String> {
         let shot = self.camera_shot()?;
         let at = self.transport.position();
-        let times = shot
-            .path_keys()
-            .iter()
-            .map(|key| {
-                shot.span
-                    .start
-                    .checked_add(key.at)
-                    .map_err(|error| error.to_string())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let times = shot.path_key_times().map(|(at, _)| at).collect::<Vec<_>>();
         let destination = if direction < 0 {
             times.into_iter().rev().find(|time| *time < at)
         } else {
