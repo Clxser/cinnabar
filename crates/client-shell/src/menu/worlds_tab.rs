@@ -457,6 +457,7 @@ impl MenuRuntime {
 mod tests {
     use {
         super::*,
+        bridge::Backend,
         launcher::local_worlds::model::Screen,
         launcher::local_worlds::progress::Progress,
         launcher::menu::worlds_tab::LocalWorldAction,

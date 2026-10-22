@@ -17,7 +17,7 @@ fn server_handoff_keeps_wire_identity_when_manifest_identity_differs() {
     let handoff = handoff(vec![ResourcePackArchive::unencrypted(
         wire_id,
         "9.8.7".into(),
-        String::new(),
+        Vec::new(),
         bytes,
     )])
     .with_required(true);
@@ -25,7 +25,7 @@ fn server_handoff_keeps_wire_identity_when_manifest_identity_differs() {
     assert!(stack.rejections().is_empty(), "{:?}", stack.rejections());
     assert_eq!(stack.packs().len(), 1);
     assert_eq!(stack.packs()[0].pack_id(), wire_id);
-    assert_eq!(stack.packs()[0].version(), "9.8.7");
+    assert_eq!(stack.packs()[0].version(), b"9.8.7");
     let view = LayeredPackView::new(stack);
     assert_eq!(
         view.read("texts/en_US.lang").unwrap().as_ref(),

@@ -179,7 +179,6 @@ mod tests {
     const ID: Uuid = Uuid::from_u128(1);
 
     #[test]
-    #[cfg(feature = "handoff")]
     fn server_identity_policy_still_validates_manifest_and_selected_metadata() {
         let valid = manifest("2", "[1, 2, 3]", r#"{"type":"resources"}"#);
         let check = |text: &str, version: &str| {
