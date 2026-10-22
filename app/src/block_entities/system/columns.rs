@@ -6,37 +6,23 @@ use std::{
 };
 
 use assets::BlockEntityRouteKind;
-use world::{
-    BlockEntityKey, BlockEntityNbt, Chunk, ChunkKey, ChunkStore, SUB_CHUNK_SIDE, SubChunk,
-};
+use world::{BlockEntityKey, BlockEntityNbt, Chunk, ChunkKey, SUB_CHUNK_SIDE, SubChunk};
 
 use super::{super::describe::Template, portals::PortalCell};
 
-/// Reuses frame selection storage while keeping received coverage independent of the source camera.
-pub(super) fn collect_frame_keys(
-    keys: &mut Vec<ChunkKey>,
-    store: &ChunkStore,
-    dimension: i32,
-    eye: [f32; 2],
-    received: bool,
-) {
+pub(in crate::block_entities) mod received;
+
+/// Reuses the live camera's nearby selection storage; received admission has its own change index.
+pub(super) fn collect_frame_keys(keys: &mut Vec<ChunkKey>, dimension: i32, eye: [f32; 2]) {
     keys.clear();
-    if received {
-        keys.extend(
-            store
-                .received_columns()
-                .filter(|key| key.dimension == dimension),
-        );
-    } else {
-        let chunk_range = |center: f32| {
-            ((center - super::SCAN_RADIUS_BLOCKS) / SUB_CHUNK_SIDE as f32).floor() as i32
-                ..=((center + super::SCAN_RADIUS_BLOCKS) / SUB_CHUNK_SIDE as f32).floor() as i32
-        };
-        keys.extend(
-            chunk_range(eye[0])
-                .flat_map(|x| chunk_range(eye[1]).map(move |z| ChunkKey::new(dimension, x, z))),
-        );
-    }
+    let chunk_range = |center: f32| {
+        ((center - super::SCAN_RADIUS_BLOCKS) / SUB_CHUNK_SIDE as f32).floor() as i32
+            ..=((center + super::SCAN_RADIUS_BLOCKS) / SUB_CHUNK_SIDE as f32).floor() as i32
+    };
+    keys.extend(
+        chunk_range(eye[0])
+            .flat_map(|x| chunk_range(eye[1]).map(move |z| ChunkKey::new(dimension, x, z))),
+    );
     keys.sort_unstable();
 }
 
@@ -95,6 +81,28 @@ pub(in crate::block_entities) struct RescanOrder {
 }
 
 impl RescanOrder {
+    /// Bounded suffix plus wrap from the dirty index, with the same stable sorted cursor.
+    fn select_set(
+        &mut self,
+        dirty: &std::collections::BTreeSet<ChunkKey>,
+    ) -> [Option<ChunkKey>; MAX_COLUMN_RESCANS_PER_FRAME] {
+        use std::ops::Bound::{Excluded, Unbounded};
+        let after = self.cursor.map_or(Unbounded, Excluded);
+        let selected = dirty.range((after, Unbounded)).chain(
+            self.cursor
+                .into_iter()
+                .flat_map(|cursor| dirty.range(..=cursor)),
+        );
+        let mut result = [None; MAX_COLUMN_RESCANS_PER_FRAME];
+        for (slot, key) in result.iter_mut().zip(selected) {
+            *slot = Some(*key);
+        }
+        if let Some(key) = result.iter().rev().flatten().next() {
+            self.cursor = Some(*key);
+        }
+        result
+    }
+
     /// Selects at most the frame limit from sorted dirty keys, wrapping after the last admission.
     pub(in crate::block_entities) fn select(
         &mut self,

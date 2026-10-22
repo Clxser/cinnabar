@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeSet,
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, Mutex, OnceLock, Weak},
 };
 
 // Every terrain lookup hashes a column key; seeded foldhash avoids SipHash's cost.
@@ -17,10 +17,12 @@ use crate::{
 mod collision_snapshot;
 mod helpers;
 mod level_chunk;
+mod received;
 use self::helpers::*;
 pub use self::level_chunk::{
     DecodedLevelChunk, DimensionSlots, InlineDecodeWork, decode_column_tail,
 };
+pub use received::{ReceivedColumnChange, ReceivedColumnCursor, ReceivedColumnWork};
 
 /// Monotonic identity for the collision-relevant contents of one loaded column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -96,6 +98,7 @@ impl PreparedSubChunkMutation {
 #[derive(Debug)]
 pub struct ChunkStore {
     chunks: HashMap<ChunkKey, Chunk>,
+    received: OnceLock<received::ReceivedColumns>,
     loaded_chunks: BTreeSet<ChunkKey>,
     authoritative_sub_chunks: HashMap<ChunkKey, BTreeSet<i32>>,
     collision_revisions: HashMap<ChunkKey, ChunkCollisionRevision>,
@@ -107,6 +110,7 @@ impl Default for ChunkStore {
     fn default() -> Self {
         Self {
             chunks: HashMap::new(),
+            received: received::ReceivedColumns::default().into(),
             loaded_chunks: BTreeSet::new(),
             authoritative_sub_chunks: HashMap::new(),
             collision_revisions: HashMap::new(),
@@ -283,6 +287,7 @@ impl ChunkStore {
         Arc::make_mut(&mut self.chunks.entry(key.chunk()).or_default().sub_chunks)
             .insert(key.y, Arc::new(decoded));
         self.apply_reserved_revision(key.chunk(), revision);
+        self.publish_received_column(key.chunk());
         Ok(Some(key))
     }
 
@@ -349,6 +354,7 @@ impl ChunkStore {
         Arc::make_mut(&mut chunk.block_entities).insert(key, Arc::new(nbt));
         chunk.block_entity_bytes = replacement_bytes;
         self.apply_reserved_revision(key.chunk(), actor_revision);
+        self.publish_received_column(key.chunk());
         Ok(true)
     }
 
@@ -386,6 +392,7 @@ impl ChunkStore {
             self.chunks.remove(&key);
         }
         self.apply_reserved_revision(key, actor_revision);
+        self.publish_received_column(key);
         Ok(())
     }
 
@@ -526,6 +533,7 @@ impl ChunkStore {
                             .sub_chunks,
                     )
                     .insert(mutation.key.y, Arc::new(replacement));
+                    self.publish_received_column(mutation.key.chunk());
                 }
                 None => {
                     self.remove_sub_chunk_without_revision(mutation.key);
@@ -567,6 +575,7 @@ impl ChunkStore {
                         .map(|&y| SubChunkKey::from_chunk(key, y)),
                 );
                 retired.push(chunk);
+                self.publish_received_column(key);
             }
         }
         (removed, retired)
@@ -600,6 +609,7 @@ impl ChunkStore {
         {
             self.chunks.remove(&chunk_key);
         }
+        self.publish_received_column(chunk_key);
         removed.then_some(key)
     }
 
@@ -671,6 +681,7 @@ impl ChunkStore {
         {
             self.chunks.remove(&key.chunk());
         }
+        self.publish_received_column(key.chunk());
     }
 
     fn validate_sub_chunk_block_entity_replacement(
@@ -729,6 +740,7 @@ impl ChunkStore {
         {
             self.chunks.remove(&key.chunk());
         }
+        self.publish_received_column(key.chunk());
     }
 
     /// Decodes an inline LevelChunk's block sub-chunks and swaps the column.
@@ -761,6 +773,7 @@ impl ChunkStore {
             .map(|y| SubChunkKey::from_chunk(key, y))
             .collect();
         self.chunks.entry(key).or_default().biomes = Some(replacement);
+        self.publish_received_column(key);
         expand_biome_mesh_dependents(changed)
     }
 
@@ -897,6 +910,7 @@ impl ChunkStore {
             self.authoritative_sub_chunks.remove(&key);
         }
         self.apply_reserved_revision(key, revision);
+        self.publish_received_column(key);
         Ok(ApplyLevelChunk {
             changed,
             dirty,

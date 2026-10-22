@@ -129,6 +129,7 @@ pub(crate) struct BlockEntityRuntime {
     columns: HashMap<ChunkKey, columns::ColumnScan>,
     /// Sorted frame selection reuses its allocation independently of cached column contents.
     column_keys: Vec<ChunkKey>,
+    received_columns: columns::received::ReceivedColumns,
     rescans: columns::RescanOrder,
     frame: u64,
     blocks: HashMap<u32, Option<Arc<BlockInfo>>>,
@@ -155,6 +156,7 @@ impl BlockEntityRuntime {
             beacon_tints: assets::BeaconTintCatalog::pinned(),
             columns: HashMap::new(),
             column_keys: Vec::new(),
+            received_columns: columns::received::ReceivedColumns::default(),
             rescans: columns::RescanOrder::default(),
             frame: 0,
             blocks: HashMap::new(),
@@ -185,6 +187,7 @@ impl BlockEntityRuntime {
         {
             self.beam_source = Some((Arc::clone(assets), range));
             self.columns.clear();
+            self.received_columns = columns::received::ReceivedColumns::default();
             self.blocks.clear();
         }
     }
@@ -201,6 +204,7 @@ impl BlockEntityRuntime {
         self.missing_maps.clear();
         self.columns.clear();
         self.column_keys.clear();
+        self.received_columns = columns::received::ReceivedColumns::default();
         self.rescans = columns::RescanOrder::default();
         self.blocks.clear();
         self.shapes.clear();

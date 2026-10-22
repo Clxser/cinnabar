@@ -11,6 +11,7 @@ impl ChunkStore {
             return snapshot;
         }
         let snapshot = Arc::new(Self {
+            received: Default::default(),
             chunks: self
                 .chunks
                 .iter()

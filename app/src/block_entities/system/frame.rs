@@ -3,6 +3,33 @@
 use super::*;
 use recording_scene::visuals::BlockCoverage;
 
+/// Resolves only changed native column content, shared by live and received admission.
+fn build_scan(
+    runtime: &mut BlockEntityRuntime,
+    collisions: &PhysicsCollisionRegistries,
+    mode: assets::NetworkIdMode,
+    key: ChunkKey,
+    chunk: &world::Chunk,
+    previous: Option<columns::ColumnScan>,
+    received: bool,
+) -> columns::ColumnScan {
+    let portals = if received {
+        portals::column_cells_limited(key, chunk, MAX_SUBMISSIONS, |id| {
+            portal_kind(collisions, mode, id)
+        })
+    } else {
+        portals::column_cells(key, chunk, |id| portal_kind(collisions, mode, id))
+    };
+    let entities = columns::routed_entities(chunk, previous, |id, runtime_id, nbt, position| {
+        block_info(runtime, collisions, mode, runtime_id)
+            .zip(nbt.parse())
+            .and_then(|(info, root)| {
+                describe(id, info.backing?, &info.name, &info.state, &root, position)
+            })
+    });
+    columns::ColumnScan::new(chunk, portals, entities)
+}
+
 /// Runs native geometry, animation and canvas owners without sharing mutable replay caches.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn prepare(
@@ -33,9 +60,7 @@ pub(super) fn prepare(
         coverage.received_columns = stream.map_or(0, |stream| {
             stream
                 .collision_store()
-                .received_columns()
-                .filter(|key| key.dimension == stream.current_dimension())
-                .count() as u32
+                .received_column_count(stream.current_dimension()) as u32
         });
         coverage.pending_columns = coverage.received_columns;
         dragon_death::update_without_atlas(
@@ -161,40 +186,57 @@ pub(super) fn prepare(
     let mut rescans_left = columns::MAX_COLUMN_RESCANS_PER_FRAME;
     let eye_column = [eye.x, eye.z].map(|axis| (axis / SUB_CHUNK_SIDE as f32).floor() as i32);
     let mut keys = std::mem::take(&mut runtime.column_keys);
-    columns::collect_frame_keys(&mut keys, store, dimension, [eye.x, eye.z], received);
-    coverage.received_columns = keys
-        .iter()
-        .filter(|key| store.chunk(**key).is_some())
-        .count() as u32;
-    let selected = runtime.rescans.select(keys.iter().copied().filter(|key| {
-        (received || !columns::is_near_column(eye_column, key.x, key.z))
-            && store
-                .chunk(*key)
-                .is_some_and(|chunk| scans.get(key).is_none_or(|scan| !scan.is_current(chunk)))
-    }));
-    let mut cached_columns = 0usize;
-    let mut cached_nbt = 0usize;
-    let mut cached_entities = 0usize;
-    let mut cached_portals = 0usize;
     let prepare_zone = bevy::log::info_span!("block_entity.prepare").entered();
+    let selected = if received {
+        runtime
+            .received_columns
+            .synchronize(store, dimension, &mut scans);
+        for key in runtime
+            .received_columns
+            .select(&mut runtime.rescans)
+            .into_iter()
+            .flatten()
+        {
+            let chunk = store
+                .chunk(key)
+                .expect("admitted received column is resident");
+            let scan = build_scan(
+                runtime,
+                collisions,
+                mode,
+                key,
+                chunk,
+                scans.remove(&key),
+                true,
+            );
+            runtime.received_columns.scanned(key, &scan);
+            scans.insert(key, scan);
+        }
+        keys.clear();
+        keys.extend(runtime.received_columns.active());
+        coverage.received_columns = store.received_column_count(dimension) as u32;
+        coverage.current_columns = runtime.received_columns.current();
+        coverage.cache_limit = runtime.received_columns.limited();
+        [None; columns::MAX_COLUMN_RESCANS_PER_FRAME]
+    } else {
+        columns::collect_frame_keys(&mut keys, dimension, [eye.x, eye.z]);
+        coverage.received_columns = keys
+            .iter()
+            .filter(|key| store.chunk(**key).is_some())
+            .count() as u32;
+        runtime.rescans.select(keys.iter().copied().filter(|key| {
+            !columns::is_near_column(eye_column, key.x, key.z)
+                && store
+                    .chunk(*key)
+                    .is_some_and(|chunk| scans.get(key).is_none_or(|scan| !scan.is_current(chunk)))
+        }))
+    };
+    let mut cached_portals = 0usize;
+    let mut portal_limit = false;
     'columns: for chunk_key in keys.iter().copied() {
         let Some(chunk) = store.chunk(chunk_key) else {
             continue;
         };
-        if received {
-            let bytes = chunk.block_entity_bytes();
-            let entities = chunk.block_entities().len();
-            if cached_columns >= recording::MAX_CACHED_COLUMNS
-                || cached_nbt + bytes > world::MAX_BLOCK_ENTITY_BYTES_PER_CHUNK
-                || cached_entities + entities > MAX_SUBMISSIONS * 4
-            {
-                coverage.cache_limit = true;
-                continue;
-            }
-            cached_nbt += bytes;
-            cached_entities += entities;
-            cached_columns += 1;
-        }
         let previous = scans.remove(&chunk_key);
         let near = !received && columns::is_near_column(eye_column, chunk_key.x, chunk_key.z);
         let mut deferred = 0;
@@ -210,43 +252,27 @@ pub(super) fn prepare(
             budget,
             columns::ColumnScan::is_current,
             |previous| {
-                let portals = if received {
-                    portals::column_cells_limited(chunk_key, chunk, MAX_SUBMISSIONS, |id| {
-                        portal_kind(collisions, mode, id)
-                    })
-                } else {
-                    portals::column_cells(chunk_key, chunk, |id| portal_kind(collisions, mode, id))
-                };
-                let entities =
-                    columns::routed_entities(chunk, previous, |id, runtime_id, nbt, position| {
-                        block_info(runtime, collisions, mode, runtime_id)
-                            .zip(nbt.parse())
-                            .and_then(|(info, root)| {
-                                describe(
-                                    id,
-                                    info.backing?,
-                                    &info.name,
-                                    &info.state,
-                                    &root,
-                                    position,
-                                )
-                            })
-                    });
-                columns::ColumnScan::new(chunk, portals, entities)
+                build_scan(
+                    runtime, collisions, mode, chunk_key, chunk, previous, received,
+                )
             },
         ) else {
             continue;
         };
         if received && (cached_portals + scan.portals.len() > MAX_SUBMISSIONS * 4) {
             coverage.cache_limit = true;
+            portal_limit = true;
+            runtime.received_columns.defer(chunk_key);
+            coverage.current_columns = runtime.received_columns.current();
             continue;
         }
-        if scan.is_current(chunk) {
+        if !received && scan.is_current(chunk) {
             coverage.current_columns += 1;
         }
         cached_portals += scan.portals.len();
         if received && scan.portals.len() >= MAX_SUBMISSIONS {
             coverage.cache_limit = true;
+            portal_limit = true;
         }
         scan.seen_frame = frame_stamp;
         let before_portals = submissions.len();
@@ -349,13 +375,23 @@ pub(super) fn prepare(
         scans.insert(chunk_key, scan);
         if full {
             coverage.submission_limit = true;
+            if received {
+                runtime
+                    .received_columns
+                    .discard_after(chunk_key, &mut scans);
+                coverage.current_columns = runtime.received_columns.current();
+                coverage.cache_limit =
+                    portal_limit || runtime.received_columns.limited_through(chunk_key);
+            }
             break 'columns;
         }
     }
     drop(prepare_zone);
     runtime.lids.finish();
     runtime.books.finish();
-    scans.retain(|_, scan| scan.seen_frame == frame_stamp);
+    if !received {
+        scans.retain(|_, scan| scan.seen_frame == frame_stamp);
+    }
     runtime.columns = scans;
     keys.clear();
     runtime.column_keys = keys;
