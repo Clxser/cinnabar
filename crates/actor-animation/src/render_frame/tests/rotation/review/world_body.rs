@@ -1,6 +1,51 @@
 use super::*;
 
 #[test]
+fn external_body_preserves_sampled_held_scale_without_committing_the_live_hand() {
+    let mut compiled = compiled_fixture(180.0);
+    let query = compiled
+        .molang_symbols
+        .iter()
+        .position(|symbol| {
+            symbol.kind == MolangSymbolKind::Query
+                && symbol.identifier.as_ref() == "query.frame_alpha"
+        })
+        .unwrap() as u32;
+    compiled.rig_bindings[0].held_item_scale = Some(expression(
+        &mut compiled,
+        &[
+            MolangOp::Push(crate::test_support::scalar(1.0)),
+            MolangOp::LoadQuery(query),
+            MolangOp::Add,
+        ],
+        2,
+    ));
+    let context = ActorTickContext {
+        is_local: true,
+        is_local_player: true,
+        is_local_first_person: true,
+        ..Default::default()
+    };
+    let (store, actors) = fixture_with(compiled, 0.0, context);
+    let authored = authored_state(&store);
+    let tick_scale = store.get(1).unwrap().held_item_scale;
+    for alpha in [0.25, 0.75] {
+        let mut frame =
+            ActorRenderFrame::new(&store, &actors, [0.0; 2], [0.0; 3], alpha).with_world_body(1);
+        let body = frame.layers_with_skin(1).unwrap();
+        assert_eq!(body.held_item_scale, Some(1.0 + alpha));
+        let remaining = frame.remaining_ops();
+        assert_eq!(
+            frame.layers_with_skin(1).unwrap().held_item_scale,
+            body.held_item_scale
+        );
+        assert_eq!(frame.remaining_ops(), remaining);
+        assert_eq!(store.get(1).unwrap().held_item_scale, tick_scale);
+        assert_eq!(authored_state(&store), authored);
+    }
+}
+
+#[test]
 fn local_world_body_uses_authoritative_rotation_without_changing_the_hand() {
     let context = ActorTickContext {
         is_local: true,

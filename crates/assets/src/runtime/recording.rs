@@ -60,6 +60,7 @@ impl RuntimeAssets {
             overlay_page_layer_counts,
             biomes,
             provenance,
+            carrier_identity: _,
             missing: _,
         } = self;
         let metadata = Metadata {

@@ -128,6 +128,7 @@ pub(super) fn sample<'a>(
     let FrameSamplingCache {
         previous: previous_scratch,
         current: current_scratch,
+        compositions,
         ..
     } = &mut *scratch;
     let mut previous = previous_motion
@@ -156,43 +157,54 @@ pub(super) fn sample<'a>(
             current_scratch,
         )
         .ok()?;
-    let previous_local = pose::sample_clips(
+    let previous_local = pose::sample_clips_reused(
         &previous.evaluator,
         &mut previous.variables,
         &state.bones,
-        &state.bone_names,
+        pose::ChannelBones::bound(&state.bone_names, &state.channel_bindings),
         &previous.clips,
         &mut budget,
     )
     .ok()?;
-    let local = pose::sample_clips(
+    let local = pose::sample_clips_reused(
         &current.evaluator,
         &mut current.variables,
         &state.bones,
-        &state.bone_names,
+        pose::ChannelBones::bound(&state.bone_names, &state.channel_bindings),
         &current.clips,
         &mut budget,
     )
     .ok()?;
     let body = (
-        Arc::<[BoneTransform]>::from(state.compose(&previous_local)?),
-        Arc::<[BoneTransform]>::from(state.compose(&local)?),
+        compose_body(state, &previous_local, true, compositions)?,
+        compose_body(state, &local, false, compositions)?,
     );
+    let render_rig = render::RenderRig {
+        binding: state.rig_binding,
+        geometry: assets
+            .rig_geometries()
+            .get(state.geometry_binding)?
+            .geometry,
+        bone_names: state.posed_bone_names(),
+        skeletons: &state.layer_skeletons,
+    };
     let mut render = render::evaluate_render(
         &current.evaluator,
         &mut current.variables,
-        render::RenderRig {
-            binding: state.rig_binding,
-            geometry: assets
-                .rig_geometries()
-                .get(state.geometry_binding)?
-                .geometry,
-            bone_names: state.posed_bone_names(),
-            skeletons: &state.layer_skeletons,
-        },
+        render_rig,
         &mut budget,
     )
-    .ok()?;
+    .ok()??;
+    if render.iter().any(|layer| layer.geometry.is_some()) {
+        // Selected geometry reads each endpoint's own render-controller assignments.
+        render::evaluate_render(
+            &previous.evaluator,
+            &mut previous.variables,
+            render_rig,
+            &mut budget,
+        )
+        .ok()??;
+    }
     let mut geometries = BTreeMap::new();
     for layer in &mut render {
         let (previous_pose, pose) = match layer.geometry {
@@ -202,8 +214,22 @@ pub(super) fn sample<'a>(
                     geometries.entry(geometry)
                 {
                     entry.insert((
-                        layer_pose(state, &previous, geometry, &mut budget)?,
-                        layer_pose(state, &current, geometry, &mut budget)?,
+                        layer_pose(
+                            state,
+                            &mut previous,
+                            geometry,
+                            true,
+                            compositions,
+                            &mut budget,
+                        )?,
+                        layer_pose(
+                            state,
+                            &mut current,
+                            geometry,
+                            false,
+                            compositions,
+                            &mut budget,
+                        )?,
                     ));
                 }
                 geometries.get(&geometry)?
@@ -227,30 +253,53 @@ pub(super) fn sample<'a>(
         Vec::new()
     };
     Some(ActorRenderLayers {
-        held_item_scale: state.held_item_scale,
+        held_item_scale: current.held_item_scale,
         render: Cow::Owned(render),
         skin: Cow::Owned(skin),
+    })
+}
+
+/// Reuses a body endpoint's matrices when its sampled local channels have not changed.
+fn compose_body(
+    state: &ActorRigState,
+    local: &[pose::LocalDelta],
+    previous: bool,
+    compositions: &mut composition::Compositions,
+) -> Option<Arc<[BoneTransform]>> {
+    let count = state.posed_bones().len();
+    compositions.compose(None, previous, count, local, || {
+        let mut model = vec![BoneTransform::default(); count];
+        state.compose_into(local, &mut model)?;
+        Some(model)
     })
 }
 
 /// Composes a controller-selected model on its own skeleton using the world-body clips.
 fn layer_pose(
     state: &ActorRigState,
-    endpoint: &MotionEndpoint<'_>,
+    endpoint: &mut MotionEndpoint<'_>,
     geometry: u32,
+    previous: bool,
+    compositions: &mut composition::Compositions,
     budget: &mut EvalBudget<'_>,
 ) -> Option<Arc<[BoneTransform]>> {
     let skeleton = state.layer_skeletons.get(&geometry)?.as_ref()?;
     let local = render::sample_layer_local(
         &endpoint.evaluator,
-        &endpoint.variables,
+        &mut endpoint.variables,
         &state.layer_skeletons,
         &endpoint.clips,
         geometry,
         budget,
     )
     .ok()?;
-    pose::compose_pose(&skeleton.bones, &local).map(Arc::from)
+    compositions.compose(
+        Some(geometry),
+        previous,
+        skeleton.bones.len(),
+        &local,
+        || pose::compose_pose(&skeleton.bones, &local),
+    )
 }
 
 /// Replaces only perspective and camera inputs; equipment and native animation clocks survive.

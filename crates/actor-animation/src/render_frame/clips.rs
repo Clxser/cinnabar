@@ -30,20 +30,23 @@ pub(super) fn sample(
         reselect,
     } = history;
     let mut journal = journal.clone();
-    let mut clips = tick::selection::replay(
-        evaluator,
-        variables,
-        controllers,
-        tick::selection::Input {
-            clocks,
-            geometry: state.geometry_binding,
-            blink: super::super::skin_layers::blink_controller(evaluator.assets, state),
-            journal: &mut journal,
-            replay: !reselect,
-            record: false,
-        },
-        budget,
-    )?;
+    let input = tick::selection::Input {
+        clocks,
+        geometry: state.geometry_binding,
+        blink: super::super::skin_layers::blink_controller(evaluator.assets, state),
+        journal: &mut journal,
+        replay: !reselect,
+        record: false,
+    };
+    let mut clips = if reselect {
+        let mut controllers = controllers.to_vec();
+        for controller in &mut controllers {
+            controller.blend_from = None;
+        }
+        tick::selection::select(evaluator, variables, &mut controllers, input, budget)?
+    } else {
+        tick::selection::replay(evaluator, variables, controllers, input, budget)?
+    };
     server_effects.apply(variables)?;
     clips.extend(
         previous

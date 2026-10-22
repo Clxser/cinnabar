@@ -33,6 +33,7 @@ mod observations;
 mod playback;
 mod preparation;
 mod preview;
+mod recovery;
 mod targets;
 mod terrain;
 mod titles;
@@ -77,6 +78,12 @@ struct Active {
 
 /// Installs a normal feature, independent of developer-control and its fixed-clock recording mode.
 pub(crate) fn configure(app: &mut App) {
+    app.add_systems(
+        Update,
+        recovery::install
+            .in_set(client_state::ClientFrameSet::UiPreparation)
+            .before(preview::update),
+    );
     app.init_resource::<client_presentation::actor_publication::recording::ReplayActors>();
     app.init_resource::<client_presentation::dropped_items::recording::ReplayItems>();
     app.add_plugins(render::replay::ReplayPreviewPlugin);

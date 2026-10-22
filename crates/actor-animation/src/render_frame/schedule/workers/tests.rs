@@ -11,6 +11,7 @@ fn samples<'a>(count: usize) -> Vec<Sample<'a>> {
             id: id as u64,
             layers: None,
             used: 0,
+            exhausted: false,
         })
         .collect()
 }
@@ -59,7 +60,13 @@ fn worker_samples_reuse_named_channel_bindings_and_clip_masks() {
             });
             for sample in slots {
                 actual.remaining_ops -= sample.used;
-                actual.sampled_layers.insert(sample.id, sample.layers);
+                actual.sampled_layers.insert(
+                    sample.id,
+                    CachedLayers {
+                        layers: sample.layers,
+                        exhausted: sample.exhausted,
+                    },
+                );
             }
             assert_eq!(output(&mut actual, &ids), expected_bytes);
             assert_eq!(actual.remaining_ops(), expected.remaining_ops());

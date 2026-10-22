@@ -23,6 +23,7 @@ pub(super) struct MotionEndpoint<'a> {
     pub variables: evaluation::variables::frame::FrameVariableLease<'a>,
     pub clips: Cow<'a, [tick::WeightedClip]>,
     pub scale: Option<[f32; 4]>,
+    pub held_item_scale: Option<f32>,
 }
 
 impl MotionEndpointState {
@@ -69,7 +70,7 @@ impl MotionEndpointState {
             variables.set(evaluator.layout.engine.attack_time, swing);
         }
         // Replay held-expression effects before this endpoint's downstream scripts.
-        tick::scale::evaluate_held_item(
+        let held_item_scale = tick::scale::evaluate_held_item(
             &evaluator,
             &evaluator.assets.rig_bindings()[state.rig_binding],
             &mut variables,
@@ -134,6 +135,7 @@ impl MotionEndpointState {
             variables,
             clips,
             scale,
+            held_item_scale,
         })
     }
 }

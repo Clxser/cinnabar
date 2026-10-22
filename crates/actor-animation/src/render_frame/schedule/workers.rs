@@ -166,8 +166,10 @@ fn sample_one<'a>(sample: &mut Sample<'a>, frame: &ActorRenderFrame<'a>) {
         sample.id,
         &mut left,
         true,
+        frame.world_body == Some(sample.id),
     );
     sample.used = MAX_MOLANG_OPS_PER_ACTOR_FRAME - left;
+    sample.exhausted = left == 0;
 }
 
 /// Lets the caller finish all unclaimed work even when every shared worker is occupied.

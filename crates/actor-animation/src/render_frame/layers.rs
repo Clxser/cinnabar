@@ -268,6 +268,7 @@ impl ActorAnimationStore {
                     controllers: &state.controllers,
                     journal: &frame.motion.journal,
                     server_effects: &frame.motion.server_effects,
+                    reselect: false,
                 },
                 state.motion_sampling.as_deref().filter(|_| motion_changed),
                 !motion_changed,

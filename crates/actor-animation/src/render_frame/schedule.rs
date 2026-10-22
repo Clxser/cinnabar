@@ -10,6 +10,7 @@ struct Sample<'a> {
     id: u64,
     layers: Option<ActorRenderLayers<'a>>,
     used: usize,
+    exhausted: bool,
 }
 
 impl<'a> ActorRenderFrame<'a> {
@@ -37,11 +38,15 @@ impl<'a> ActorRenderFrame<'a> {
         for &id in runtime_ids {
             if let std::collections::hash_map::Entry::Vacant(entry) = self.sampled_layers.entry(id)
             {
-                entry.insert(None);
+                entry.insert(CachedLayers {
+                    layers: None,
+                    exhausted: false,
+                });
                 samples.push(Sample {
                     id,
                     layers: None,
                     used: 0,
+                    exhausted: false,
                 });
             }
         }
@@ -70,13 +75,21 @@ impl<'a> ActorRenderFrame<'a> {
                         sample.id,
                         &mut self.remaining_ops,
                         true,
+                        self.world_body == Some(sample.id),
                     );
+                    sample.exhausted = self.remaining_ops == 0;
                 }
                 next = end;
             }
         }
         for sample in samples {
-            self.sampled_layers.insert(sample.id, sample.layers);
+            self.sampled_layers.insert(
+                sample.id,
+                CachedLayers {
+                    layers: sample.layers,
+                    exhausted: sample.exhausted,
+                },
+            );
         }
     }
 

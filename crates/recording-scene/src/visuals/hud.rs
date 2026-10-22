@@ -13,6 +13,9 @@ use render_model::{
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, io::Write, sync::Arc};
 
+#[cfg(test)]
+mod tests;
+
 const VERTEX_WORDS: usize = std::mem::size_of::<UiRenderVertex>() / 4;
 const BATCH_WORDS: usize = 13;
 
@@ -26,6 +29,8 @@ pub(super) struct Metadata {
     glint_strength: f32,
     pages: Vec<Page>,
     glint: Option<Page>,
+    #[serde(default)]
+    filter_groups: Vec<Option<u32>>,
 }
 
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -102,6 +107,7 @@ pub(super) fn store(
             .as_ref()
             .map(|page| store_page(store, page))
             .transpose()?,
+        filter_groups: batches.iter().map(|batch| batch.filter_group).collect(),
     };
     let mut bytes = Vec::new();
     write_draws(&mut bytes, input, &batches)?;
@@ -138,6 +144,7 @@ fn write_draws(
             depth_write,
             world_projection,
             isolated_depth_scope,
+            filter_group: _,
         } = *batch;
         [
             texture_page,
@@ -195,7 +202,7 @@ pub(super) fn load(
         Some(bytemuck::cast::<_, UiRenderVertex>(w))
     })?;
     let indices = reader.packed_limit(MAX_UI_INDICES, |w: [u32; 1]| Some(w[0]))?;
-    let batches = reader.packed_limit(MAX_UI_BATCHES, |w: [u32; BATCH_WORDS]| {
+    let mut batches = reader.packed_limit(MAX_UI_BATCHES, |w: [u32; BATCH_WORDS]| {
         let isolated_depth_scope = match w[11] {
             0 if w[12] == 0 => None,
             1 => Some(w[12]),
@@ -211,10 +218,21 @@ pub(super) fn load(
             depth_write: w[9],
             world_projection: w[10],
             isolated_depth_scope,
+            filter_group: None,
         })
     })?;
     drop(reader);
     binary::finish(&mut source)?;
+    if !m.filter_groups.is_empty() {
+        if m.filter_groups.len() != batches.len() {
+            return Err(ArchiveError::Invalid(
+                "recorded HUD filter groups do not match its batches",
+            ));
+        }
+        for (batch, group) in batches.iter_mut().zip(m.filter_groups) {
+            batch.filter_group = group;
+        }
+    }
     let textures = if cache.pages == m.pages {
         cache
             .textures

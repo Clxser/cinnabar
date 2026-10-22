@@ -1,5 +1,44 @@
 use super::*;
 
+#[test]
+fn recorded_world_body_samples_render_assignments_for_both_selected_geometry_endpoints() {
+    for chained in [false, true] {
+        let context = ActorTickContext {
+            is_local: true,
+            is_local_player: true,
+            is_local_first_person: true,
+            camera_rotation: [7.0, 0.0],
+            combat_visuals: render_api::CombatVisuals::Modern,
+            ..Default::default()
+        };
+        let (mut store, actors) =
+            fixture_with(camera_write_geometry(false, chained), 0.0, context.clone());
+        for _ in 0..2 {
+            store.advance_tick(&actors, None, Some(1), true, true, |_| context.clone());
+        }
+        let authored = authored_state(&store);
+        let rig = store.get(1).unwrap();
+        let completed = (rig.previous.to_vec(), rig.current.to_vec());
+        for camera_pitch in [35.0, -20.0, 7.0] {
+            for alpha in [0.25, 0.75, 0.25] {
+                let mut frame =
+                    ActorRenderFrame::new(&store, &actors, [camera_pitch, 0.0], [0.0; 3], alpha)
+                        .with_world_body(1);
+                let body = frame.layers_with_skin(1).unwrap();
+                let layer = &body.render[0];
+                assert_eq!(layer.geometry, Some(1));
+                for bones in [&layer.previous_pose, &layer.pose] {
+                    assert_angles(bones[0].translation_scale, [0.0, camera_pitch, 0.0]);
+                }
+                assert_eq!(authored_state(&store), authored);
+                let live = store.get(1).unwrap();
+                assert_eq!(live.previous, completed.0);
+                assert_eq!(live.current, completed.1);
+            }
+        }
+    }
+}
+
 /// Poses a selected player geometry from camera values assigned by its render controller.
 fn camera_write_geometry(body_reads_camera: bool, chained: bool) -> CompiledEntityAssets {
     let mut compiled = swelling_geometry(true);
