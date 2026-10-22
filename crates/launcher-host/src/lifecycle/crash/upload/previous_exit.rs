@@ -71,7 +71,7 @@ pub fn record(
     let folders = folder::list(crash_dir);
     // A known exit takes precedence over any later, still-unassociated report.
     let written = folders.iter().rev().find(|folder| {
-        compatible(folder, exit.reason) && fs::read(folder.join(EXIT_FILE)).ok()
+        fs::read(folder.join(EXIT_FILE)).ok()
             .and_then(|bytes| serde_json::from_slice::<ExitId>(&bytes).ok())
             .is_some_and(|saved| saved == id)
     }).or_else(|| snapshot.folders.iter().rev().find(|folder| {
@@ -94,7 +94,11 @@ pub fn record(
         Some(stack) if native && !stack.reason.is_empty() => stack.reason.clone(),
         _ => describe(exit),
     };
-    let kind = if native { Kind::Native } else { Kind::Abort };
+    let kind = match exit.reason {
+        REASON_CRASH_NATIVE => Kind::Native,
+        REASON_ANR => Kind::Hang,
+        _ => Kind::Abort,
+    };
     let mut report = Report::new(
         kind,
         message,
@@ -324,6 +328,27 @@ mod tests {
         assert_eq!(report.kind, Kind::Native);
         assert_eq!(report.message, "SIGSEGV");
         assert!(stack::read(&folder).is_some());
+    }
+
+    #[test]
+    fn reconstructed_android_hangs_keep_the_same_report_across_launches() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("client.log");
+        let anr = exit(REASON_ANR, None);
+        let first = record(dir.path(), &log, &anr, |_| true).unwrap();
+        let repeated = record(dir.path(), &log, &anr, |_| true).unwrap();
+        assert_eq!(first, repeated, "the same ANR created another report");
+        assert_eq!(folder::read(&first).unwrap().kind, Kind::Hang);
+        // Preserve the recorded identity if an earlier build classified the exit differently.
+        let mut legacy = folder::read(&first).unwrap();
+        legacy.kind = Kind::Abort;
+        fs::write(
+            first.join(folder::REPORT_FILE),
+            serde_json::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(record(dir.path(), &log, &anr, |_| true).unwrap(), first);
+        assert_eq!(folder::list(dir.path()).len(), 1);
     }
     #[test]
     fn distinct_nearby_android_exits_keep_separate_reports() {

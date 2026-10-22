@@ -51,7 +51,7 @@ pub struct Module {
 pub enum Trust {
     /// The faulting instruction.
     Context,
-    /// Unwound by the platform, as Android's debuggerd does.
+    /// Unwound by the platform; the address already identifies the calling instruction.
     Unwound,
     /// A stack word that points into a module's code.
     Scan,

@@ -110,11 +110,12 @@ fn resolve(payload: &Payload, symbols: &Path) -> Result<serde_json::Value, Devto
                 }
                 let offset = u64::from_str_radix(frame.offset.trim_start_matches("0x"), 16)
                     .map_err(error)?;
-                // Non-context frames carry return addresses; resolve the preceding instruction.
-                let address = if frame.trust == Trust::Context {
-                    offset
-                } else {
+                // Scanned words are raw return addresses. Platform-unwound PCs already name
+                // the calling instruction and must not be adjusted again.
+                let address = if frame.trust == Trust::Scan {
                     offset.saturating_sub(1)
+                } else {
+                    offset
                 };
                 let locations: Vec<_> = cache.lookup(address).map(|location| serde_json::json!({
                     "function": location.function().name(),
@@ -162,7 +163,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("fixture.sym");
         let id = "0123456789ABCDEF0123456789ABCDEF0";
-        fs::write(&source, format!("MODULE Linux x86_64 {id} fixture\nFILE 0 fixture.rs\nFUNC 100 20 0 fixture_crash\n100 20 42 0\n")).unwrap();
+        fs::write(&source, format!("MODULE Linux x86_64 {id} fixture\nFILE 0 fixture.rs\nFUNC 100 20 0 fixture_crash\n100 10 41 0\n110 10 42 0\n")).unwrap();
         let symbols = dir.path().join("cache");
         assert_eq!(index(&source, &symbols).unwrap(), 1);
         let report = crash_report::report::Report::new(
@@ -209,6 +210,14 @@ mod tests {
             "fixture_crash"
         );
         assert_eq!(found["frames"][0]["symbols"][0]["line"], 42);
+        for (trust, line) in [(Trust::Unwound, 42), (Trust::Scan, 41)] {
+            payload.stack.as_mut().unwrap().frames[0].trust = trust;
+            assert_eq!(
+                resolve(&payload, &symbols).unwrap()["frames"][0]["symbols"][0]["line"],
+                line,
+                "{trust:?} selected the wrong instruction at a line boundary"
+            );
+        }
         payload.stack.as_mut().unwrap().modules[0].debug_id =
             Some("ffffffffffffffffffffffffffffffff0".into());
         assert_eq!(
