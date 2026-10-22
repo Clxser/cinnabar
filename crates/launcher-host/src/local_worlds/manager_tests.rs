@@ -973,14 +973,14 @@ fn world_options_report_multiplayer_denial_to_the_core() {
         life.world = Some(world);
         life.state = WorldState::Starting;
     }
-    assert!(manager.core_report().world.unwrap().multiplayer_disabled);
+    assert!(manager.world_report().world.unwrap().multiplayer_disabled);
     lock(&manager.inner.life)
         .world
         .as_mut()
         .unwrap()
         .options
         .set(O::Multiplayer, 1);
-    assert!(!manager.core_report().world.unwrap().multiplayer_disabled);
+    assert!(!manager.world_report().world.unwrap().multiplayer_disabled);
 }
 
 #[test]
