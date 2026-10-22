@@ -323,6 +323,19 @@ fn details(content: &mut Content<'_, '_>, state: &State, item: &Listing) -> Resu
         TEXT,
     )?;
     paragraph(content, &item.description, BODY, TEXT)?;
+    section(content, "Permissions")?;
+    caption(
+        content,
+        "Declared by this demonstration listing. Saving a preview grants no access.",
+    )?;
+    if item.permissions.is_empty() {
+        paragraph(content, "No permissions declared.", BODY, TEXT)?;
+    } else {
+        for permission in &item.permissions {
+            content.label(permission, "")?;
+        }
+    }
+    content.y += content.canvas.r(0.8);
     let saved = state.saved.contains(&item.id);
     actions(
         content,
@@ -349,18 +362,6 @@ fn details(content: &mut Content<'_, '_>, state: &State, item: &Listing) -> Resu
             "Save this listing to your demo library. This does not install or enable the mod."
         },
     )?;
-    section(content, "Permissions")?;
-    caption(
-        content,
-        "Declared by this demonstration listing. Saving a preview grants no access.",
-    )?;
-    if item.permissions.is_empty() {
-        paragraph(content, "No permissions declared.", BODY, TEXT)?;
-    } else {
-        for permission in &item.permissions {
-            content.label(permission, "")?;
-        }
-    }
     content.y += content.canvas.r(1.6);
     account(content)?;
     content.y += content.canvas.r(2.4);
