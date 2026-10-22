@@ -10,6 +10,7 @@ const HEADER_BYTES: u32 = 44;
 const FLOAT_FORMAT: u16 = 3;
 const RF64_HEADER_BYTES: u64 = 80;
 
+mod pcm;
 pub(crate) mod recovery;
 
 /// The writer and its interrupted-prefix reader admit the same bounded PCM format.
@@ -109,22 +110,14 @@ impl WavWriter {
         &self.path
     }
 
-    /// Appends interleaved samples.
+    /// Appends interleaved samples in fixed-size batches without allocating a PCM staging buffer.
     pub fn write(&mut self, samples: impl IntoIterator<Item = f32>) -> io::Result<()> {
-        for sample in samples {
-            let next = self
-                .data_bytes
-                .checked_add(4)
-                .ok_or_else(|| io::Error::other("recorded audio size overflow"))?;
-            if self.rf64_channels.is_none() && next > u64::from(u32::MAX - (HEADER_BYTES - 8)) {
-                return Err(io::Error::other(
-                    "classic WAV size limit reached; use RF64 for long recordings",
-                ));
-            }
-            self.out.write_all(&sample.to_le_bytes())?;
-            self.data_bytes = next;
-        }
-        Ok(())
+        let maximum = if self.rf64_channels.is_some() {
+            u64::MAX
+        } else {
+            u64::from(u32::MAX - (HEADER_BYTES - 8))
+        };
+        pcm::append(&mut self.out, &mut self.data_bytes, maximum, samples)
     }
 
     /// Patches the chunk sizes and flushes.
