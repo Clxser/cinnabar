@@ -20,6 +20,10 @@ jobs:
       github.event_name == 'pull_request_target' ||
       (github.event.issue.pull_request && github.event.comment.user.type == 'User' &&
        (contains(github.event.comment.body, 'Cinnabar CLA') || contains(github.event.comment.body, 'recheck')))
+    # One run per PR at a time; every run rescans all comments, so a replaced pending run loses nothing.
+    concurrency:
+      group: cla-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

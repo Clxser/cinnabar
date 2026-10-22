@@ -8,7 +8,7 @@ const BOT_ID = 41898282; // github-actions[bot], author of the status comment
 const WEB_FLOW_ID = 19864447; // GitHub's committer for web edits and merges
 const DEPENDABOT_ID = 49699333;
 const AI_COAUTHOR_ID = 81847; // `claude`, from AI co-author trailers; the human author and submitter still sign
-const OWNER_LOGIN = 'hashimthearab';
+const OWNER_ID = 13991048; // HashimTheArab
 
 module.exports = async ({ github, context, core }) => {
   const { owner, repo } = context.repo;
@@ -16,32 +16,23 @@ module.exports = async ({ github, context, core }) => {
   const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
   const cla = await readCla(github, owner, repo, pr.base.ref);
   const path = `signatures/cla-v${cla.version}.json`;
-  const comments = await github.paginate(github.rest.issues.listComments, {
-    owner, repo, issue_number: number, per_page: 100,
-  });
+  const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: number, per_page: 100 });
 
-  let { records } = await readStore(github, owner, repo, path);
-  const seen = new Set(records.map((r) => r.user_id));
+  let { records } = await readStore(github, owner, repo, path, cla.sha256);
+  const seen = new Set(records.map(key));
   const fresh = [];
   for (const c of comments) {
-    if (c.user?.type !== 'User' || seen.has(c.user.id)) continue;
+    if (c.user?.type !== 'User') continue;
     const entity = parseSigning(c.body ?? '', cla.version);
-    if (entity === false) continue;
-    seen.add(c.user.id);
+    if (entity === false || seen.has(key({ user_id: c.user.id, entity }))) continue;
+    seen.add(key({ user_id: c.user.id, entity }));
     fresh.push({
-      user_id: c.user.id,
-      login: c.user.login,
-      ...(entity && { entity }),
-      signed_at: c.updated_at,
-      pull_request: number,
-      comment_id: c.id,
-      comment_url: c.html_url,
-      statement: c.body.trim(),
-      cla_sha256: cla.sha256,
+      user_id: c.user.id, login: c.user.login, ...(entity && { entity }), signed_at: c.updated_at,
+      pull_request: number, comment_id: c.id, comment_url: c.html_url, statement: c.body.trim(), cla_sha256: cla.sha256,
     });
   }
   if (fresh.length) {
-    records = await record(github, owner, repo, path, fresh, context.payload.repository.default_branch);
+    records = await record(github, owner, repo, path, cla.sha256, fresh, context.payload.repository.default_branch);
   }
 
   const { people, problems } = await contributors(github, owner, repo, pr, cla.baseSha);
@@ -57,6 +48,8 @@ module.exports = async ({ github, context, core }) => {
   }
 };
 
+// One acceptance per user and entity, so a later signature for an employer is kept.
+const key = (r) => `${r.user_id}/${r.entity ?? ''}`;
 const agreement = (version) => `I have read the Cinnabar CLA version ${version} and I agree to it`;
 const ON_BEHALF = ' on behalf of ';
 const statement = (version, entity) => `${agreement(version)}${entity ? ON_BEHALF + entity : ''}.`;
@@ -87,23 +80,27 @@ async function readCla(github, owner, repo, ref) {
   };
 }
 
-async function readStore(github, owner, repo, path) {
+// Fails when CLA.md changed without a version bump, so no signature covers text its signer never saw.
+async function readStore(github, owner, repo, path, digest) {
+  let data;
   try {
-    const { data } = await github.rest.repos.getContent({ owner, repo, path, ref: BRANCH });
-    if (data.encoding !== 'base64') throw new Error(`${path} is too large for the contents API`);
-    return { records: JSON.parse(Buffer.from(data.content, 'base64').toString('utf8')), sha: data.sha };
+    ({ data } = await github.rest.repos.getContent({ owner, repo, path, ref: BRANCH }));
   } catch (e) {
     if (e.status === 404) return { records: [], sha: undefined };
     throw e;
   }
+  if (data.encoding !== 'base64') throw new Error(`${path} is too large for the contents API`);
+  const store = JSON.parse(Buffer.from(data.content, 'base64').toString('utf8'));
+  if (store.cla_sha256 !== digest) throw new Error(`CLA.md text differs from the text signed in ${path}; bump its version`);
+  return { records: store.signatures, sha: data.sha };
 }
 
 // Appends signatures not already stored, re-reading and retrying when another run wrote first.
-async function record(github, owner, repo, path, fresh, defaultBranch) {
+async function record(github, owner, repo, path, digest, fresh, defaultBranch) {
   for (let attempt = 0; attempt < 5; attempt++) {
-    const store = await readStore(github, owner, repo, path);
-    const have = new Set(store.records.map((r) => r.user_id));
-    const add = fresh.filter((r) => !have.has(r.user_id));
+    const store = await readStore(github, owner, repo, path, digest);
+    const have = new Set(store.records.map(key));
+    const add = fresh.filter((r) => !have.has(key(r)));
     if (!add.length) return store.records;
     const records = [...store.records, ...add];
     try {
@@ -111,7 +108,7 @@ async function record(github, owner, repo, path, fresh, defaultBranch) {
       await github.rest.repos.createOrUpdateFileContents({
         owner, repo, path, branch: BRANCH, sha: store.sha,
         message: `Record CLA signatures: ${add.map((r) => r.login).join(', ')}`,
-        content: Buffer.from(`${JSON.stringify(records, null, 2)}\n`).toString('base64'),
+        content: Buffer.from(`${JSON.stringify({ cla_sha256: digest, signatures: records }, null, 2)}\n`).toString('base64'),
       });
       return records;
     } catch (e) {
@@ -142,7 +139,7 @@ async function contributors(github, owner, repo, pr, baseSha) {
   const problems = [];
   const add = (user, what) => {
     if (!user) return problems.push(what);
-    if (user.id === DEPENDABOT_ID || user.login.toLowerCase() === OWNER_LOGIN) return;
+    if (user.id === DEPENDABOT_ID || user.id === OWNER_ID) return;
     people.set(user.id, user.login);
   };
   const quote = (s) => `\`${s.replace(/[`\r\n]/g, "'")}\``;
@@ -187,21 +184,26 @@ async function listCommits(github, owner, repo, baseSha, headSha) {
 
 // Maps each commit to its authors' resolved accounts by lower-cased email, co-authors included.
 async function coAuthors(github, owner, repo, shas) {
+  const authors = (sha, after) => `object(oid: "${sha}") { ... on Commit { authors(first: 100${after ? `, after: ${JSON.stringify(after)}` : ''}) {
+    pageInfo { hasNextPage endCursor } nodes { email user { databaseId login } } } } }`;
+  const query = (fields) => github.graphql(
+    `query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { ${fields} } }`, { owner, repo });
   const out = new Map();
   for (let i = 0; i < shas.length; i += 50) {
     const batch = shas.slice(i, i + 50);
-    const fields = batch.map((sha, j) =>
-      `c${j}: object(oid: "${sha}") { ... on Commit { authors(first: 100) { nodes { email user { databaseId login } } } } }`);
-    const data = await github.graphql(
-      `query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { ${fields.join('\n')} } }`,
-      { owner, repo });
-    batch.forEach((sha, j) => {
+    const data = await query(batch.map((sha, j) => `c${j}: ${authors(sha)}`).join('\n'));
+    for (const [j, sha] of batch.entries()) {
       const map = new Map();
-      for (const n of data.repository[`c${j}`]?.authors.nodes ?? []) {
-        if (n.user && n.email) map.set(n.email.toLowerCase(), { id: n.user.databaseId, login: n.user.login });
+      let page = data.repository[`c${j}`]?.authors;
+      while (page) {
+        for (const n of page.nodes) {
+          if (n.user && n.email) map.set(n.email.toLowerCase(), { id: n.user.databaseId, login: n.user.login });
+        }
+        page = page.pageInfo.hasNextPage
+          ? (await query(`c: ${authors(sha, page.pageInfo.endCursor)}`)).repository.c?.authors : null;
       }
       out.set(sha, map);
-    });
+    }
   }
   return out;
 }
