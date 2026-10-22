@@ -209,4 +209,40 @@ mod tests {
             ])
         );
     }
+
+    #[test]
+    fn collection_variables_resolve_across_files_without_admitting_unrelated_strings() {
+        let scratch = tempfile::tempdir().unwrap();
+        let pack = scratch.path().join("resource_pack");
+        fs::create_dir_all(pack.join("ui")).unwrap();
+        fs::create_dir_all(pack.join("texts")).unwrap();
+        fs::write(pack.join("texts/en_US.lang"), "").unwrap();
+        fs::write(
+            pack.join("ui/definitions.json"),
+            r#"{
+                "$rows|default": "outer_rows",
+                "$alias": "$rows",
+                "$unused": "unrelated_text",
+                "$cycle_a": "$cycle_b",
+                "$cycle_b": "$cycle_a"
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            pack.join("ui/screen.json"),
+            r#"{
+                "collection_name": "$alias",
+                "binding_collection_name": "$cycle_a"
+            }"#,
+        )
+        .unwrap();
+        let output = String::from_utf8(generate(scratch.path()).unwrap()).unwrap();
+        assert_eq!(
+            output
+                .lines()
+                .filter(|line| line.starts_with("collection\t"))
+                .collect::<Vec<_>>(),
+            ["collection\touter_rows"]
+        );
+    }
 }
