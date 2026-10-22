@@ -238,12 +238,13 @@ pub(super) fn upload_geometry(
     {
         return true;
     }
-    if !gpu.vertices.sync(
+    if gpu.vertices.sync(
         device,
         queue,
         "first-person rig vertices",
         &frame.rig.geometry_vertices,
-    ) {
+    ) != crate::actor::gpu::GeometrySync::Ready
+    {
         return false;
     }
     let Some(spans) = crate::gpu_allocation::buffer_with_data(

@@ -36,6 +36,9 @@ mod draw_span_tests;
 #[path = "allocation_fault_tests.rs"]
 pub(crate) mod allocation_fault_tests;
 
+#[path = "allocation_recovery_tests.rs"]
+mod allocation_recovery_tests;
+
 /// A residency holding one standard-raster skin in class 0, layer 0.
 fn one_resident_skin() -> Arc<render_model::ActorSkinResidency> {
     let skin = render_api::SkinRgba8::from(vec![255; render_model::STANDARD_SKIN_BYTES]);
@@ -516,9 +519,8 @@ fn skin_array_allocation_failure_keeps_old_view_and_does_not_publish_residency()
     assert!(!gpu.is_synced(&next));
     assert_eq!(gpu.view(0).id(), previous);
     assert_eq!(gpu.uploaded_bytes, uploaded);
-    let retry = Arc::new((*next).clone());
-    gpu.sync(&retry, &device, &queue);
-    assert!(gpu.is_synced(&retry));
+    gpu.sync(&next, &device, &queue);
+    assert!(gpu.is_synced(&next));
 }
 
 #[test]
@@ -760,7 +762,7 @@ fn skin_array_burst_uses_existing_geometric_headroom() {
 }
 
 #[test]
-fn failed_actor_buffer_publications_skip_draws_and_later_publications_recover() {
+fn failed_actor_buffer_publications_skip_draws_and_the_same_publication_recovers() {
     use bevy::ecs::system::RunSystemOnce;
     for label in [
         "shared actor rig vertices",
@@ -797,8 +799,8 @@ fn failed_actor_buffer_publications_skip_draws_and_later_publications_recover() 
             .unwrap();
         assert_eq!(
             world.resource::<ActorGpu>().instance_count,
-            0,
-            "failed publication stays suppressed: {label}"
+            1,
+            "the exact same publication recovers after transient failure: {label}"
         );
         {
             let mut frame = world.resource_mut::<render_scene::ActorRenderFrame>();

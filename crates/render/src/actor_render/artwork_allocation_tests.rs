@@ -225,14 +225,14 @@ struct Vertex { @builtin(position) position: vec4f, @location(0) uv: vec2f }
 }
 
 #[test]
-fn exhausting_all_page_sizes_skips_generic_artwork_without_repeating_allocations() {
+fn exhausting_all_page_sizes_retries_with_bounded_work_and_recovers_the_same_source() {
     let (device, queue) = device();
     let mut gpu = GpuArtwork::default();
     assert!(gpu.prepare(&ActorArtworkPages::default(), &device, &queue));
     let uploads = work_tests::upload_count();
     let attempts = Rc::new(Cell::new(0));
     let observed = Rc::clone(&attempts);
-    let _failure = gpu_allocation::inject(move |label, _| {
+    let failure = gpu_allocation::inject(move |label, _| {
         if label != "immutable actor page" {
             return false;
         }
@@ -241,12 +241,27 @@ fn exhausting_all_page_sizes_skips_generic_artwork_without_repeating_allocations
     });
     let pages = publication(1, 2);
     assert!(!gpu.prepare(&pages, &device, &queue));
-    assert!(gpu.pages.is_empty());
+    assert_eq!(gpu.pages.len(), 1);
+    assert!(gpu.page(0).is_none());
     assert!(gpu.glint.texture.is_some());
     assert_eq!(attempts.get(), 5);
     assert!(!gpu.prepare(&pages, &device, &queue));
-    assert_eq!(attempts.get(), 5);
+    assert_eq!(attempts.get(), 10);
+    assert!(!gpu.prepare(&pages, &device, &queue));
+    assert_eq!(
+        attempts.get(),
+        10,
+        "persistent failure skips an allocation opportunity"
+    );
     assert_eq!(work_tests::upload_count(), uploads);
+    drop(failure);
+    assert!(gpu.prepare(&pages, &device, &queue));
+    assert!(
+        gpu.page(0)
+            .unwrap()
+            .source
+            .shares_pixels_with(&pages.pages[0])
+    );
 }
 
 #[test]
@@ -327,6 +342,7 @@ struct Vertex { @builtin(position) position: vec4f, @location(0) uv: vec2f }
         assert!(gpu.prepare(&pages(1, [255, 0, 0, 255]), &device, &queue));
         let before = raster(&gpu);
         assert_eq!(&before[..4], &[255, 0, 0, 255], "visible artwork control");
+        let next = pages(2, [0, 255, 0, 255]);
         let hits = Rc::new(Cell::new(0));
         {
             let observed = Rc::clone(&hits);
@@ -337,7 +353,7 @@ struct Vertex { @builtin(position) position: vec4f, @location(0) uv: vec2f }
                 observed.set(observed.get() + 1);
                 true
             });
-            assert!(gpu.prepare(&pages(2, [0, 255, 0, 255]), &device, &queue));
+            assert!(gpu.prepare(&next, &device, &queue));
         }
         assert!(hits.get() > 0);
         assert_eq!(
@@ -345,12 +361,12 @@ struct Vertex { @builtin(position) position: vec4f, @location(0) uv: vec2f }
             before,
             "{label}: compatible artwork stays visible"
         );
-        assert!(gpu.prepare(&pages(3, [0, 0, 255, 255]), &device, &queue));
+        assert!(gpu.prepare(&next, &device, &queue));
         let recovered = raster(&gpu);
-        assert_eq!(&recovered[..4], &[0, 0, 255, 255]);
+        assert_eq!(&recovered[..4], &[0, 255, 0, 255]);
         assert_ne!(
             recovered, before,
-            "{label}: next valid publication reaches pixels"
+            "{label}: the exact same source reaches pixels after recovery"
         );
     }
 }

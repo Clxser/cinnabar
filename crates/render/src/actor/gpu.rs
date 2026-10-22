@@ -10,8 +10,12 @@ use render_model::ActorArtworkPageId;
 
 #[path = "gpu/geometry.rs"]
 mod geometry;
-pub(crate) use geometry::SegmentedVertexBuffer;
 pub use geometry::storage_binding_bytes;
+pub(crate) use geometry::{GeometrySync, SegmentedVertexBuffer};
+
+#[path = "gpu/retry.rs"]
+mod retry;
+pub(crate) use retry::AllocationRetry;
 
 /// The non-sRGB view sRGB actor, item and block-entity artwork also allows when shader packs
 /// are compiled in: packs read texels as the raw gamma bytes Java's textures hold. Without

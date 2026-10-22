@@ -39,6 +39,25 @@ pub(super) struct GpuGlint {
     pub texture: Option<(Texture, TextureView)>,
     source: Option<TextureKey>,
     bytes: usize,
+    pending: Option<TextureAttempt>,
+}
+
+/// One retained immutable source and its bounded allocation retry state.
+struct TextureAttempt {
+    source: TextureKey,
+    retry: crate::actor::gpu::AllocationRetry,
+    rejected: bool,
+}
+
+impl TextureAttempt {
+    /// A source change starts a fresh admission without retaining obsolete payloads.
+    fn new(source: TextureKey) -> Self {
+        Self {
+            source,
+            retry: default(),
+            rejected: false,
+        }
+    }
 }
 
 impl GpuGlint {
@@ -54,7 +73,7 @@ impl GpuGlint {
         let fallback = render_model::EquipmentRaster {
             width: 1,
             height: 1,
-            rgba8: Arc::from([0u8; 4]),
+            rgba8: transparent_glint(),
         };
         let source = raster.unwrap_or(&fallback);
         let page = render_model::ActorTexturePage {
@@ -69,26 +88,57 @@ impl GpuGlint {
             .source
             .as_ref()
             .filter(|key| key.shares_pixels_with(&page))
+            .or_else(|| {
+                self.pending
+                    .as_ref()
+                    .map(|attempt| &attempt.source)
+                    .filter(|key| key.shares_pixels_with(&page))
+            })
             .cloned()
             .unwrap_or_else(|| TextureKey::new(&page, hasher));
         let changed = self.source.as_ref() != Some(&key);
         if !changed {
+            self.pending = None;
+            return false;
+        }
+        if self
+            .pending
+            .as_ref()
+            .is_none_or(|attempt| attempt.source != key)
+        {
+            self.pending = Some(TextureAttempt::new(key.clone()));
+        }
+        let attempt = self.pending.as_mut().unwrap();
+        if attempt.rejected || !attempt.retry.ready() {
+            return false;
+        }
+        if !supported_page(&page, device) {
+            attempt.rejected = true;
             return false;
         }
         let Some(texture) = upload_or_reduce(device, queue, &page, label, self.texture.is_none())
         else {
+            attempt.retry.failed();
             return false;
         };
         let Some(view) = gpu_allocation::checked(device, "actor glint view", 0, || {
             texture.create_view(&TextureViewDescriptor::default())
         }) else {
+            attempt.retry.failed();
             return false;
         };
         self.bytes = (texture.width() as usize) * (texture.height() as usize) * 4;
         self.texture = Some((texture, view));
         self.source = Some(key);
+        self.pending = None;
         changed
     }
+}
+
+/// Shares the immutable missing-glint texel across retries without allocating or hashing it again.
+fn transparent_glint() -> Arc<[u8]> {
+    static PIXELS: std::sync::OnceLock<Arc<[u8]>> = std::sync::OnceLock::new();
+    Arc::clone(PIXELS.get_or_init(|| Arc::from([0_u8; 4])))
 }
 
 #[derive(Default)]
@@ -101,6 +151,9 @@ pub(super) struct GpuArtwork {
     pub item_glint: GpuGlint,
     source_hasher: RandomState,
     rejected: bool,
+    attempts: Vec<Option<TextureAttempt>>,
+    /// A replaced glint invalidates player bindings even when there are no generic pages.
+    pub glints_changed: bool,
 }
 
 impl GpuArtwork {
@@ -141,9 +194,19 @@ impl GpuArtwork {
     ) -> bool {
         let identity = (pages.identity, pages.entity_identity);
         let changed = self.identity != Some(identity);
-        if changed {
-            self.identity = Some(identity);
-            self.rejected = false;
+        self.glints_changed = false;
+        if changed
+            || self
+                .glint
+                .pending
+                .as_ref()
+                .is_some_and(|attempt| !attempt.rejected)
+            || self
+                .item_glint
+                .pending
+                .as_ref()
+                .is_some_and(|attempt| !attempt.rejected)
+        {
             let actor_changed = self.glint.prepare(
                 pages.actor_glint.as_ref(),
                 &self.source_hasher,
@@ -159,28 +222,37 @@ impl GpuArtwork {
                 "immutable item glint",
             );
             if actor_changed || item_changed {
+                self.glints_changed = true;
                 self.invalidate_bindings();
             }
+        }
+        if changed {
+            self.identity = Some(identity);
+            self.rejected = false;
+        }
+        if changed || self.glints_changed {
             let bytes = pages.pages.iter().try_fold(
                 render_model::PLAYER_SKIN_BUDGET_BYTES + self.glint.bytes + self.item_glint.bytes,
                 |total, page| total.checked_add(page.rgba8.len()),
             );
             if pages.pages.len() + 1 > MAX_ACTOR_TEXTURE_PAGES
                 || bytes.is_none_or(|bytes| bytes > MAX_ACTOR_GPU_PIXEL_BYTES)
-                || pages
-                    .pages
-                    .iter()
-                    .any(|page| page.layers > device.limits().max_texture_array_layers)
+                || pages.pages.iter().any(|page| !supported_page(page, device))
             {
                 self.pages.clear();
+                self.attempts.clear();
                 self.rejected = true;
                 bevy::log::warn!(
                     "neutral actor artwork exceeds device limits; generic artwork unavailable"
                 );
                 return false;
             }
+        }
+        if changed {
             self.pages.truncate(pages.pages.len());
             self.pages.resize_with(pages.pages.len(), || None);
+            self.attempts.truncate(pages.pages.len());
+            self.attempts.resize_with(pages.pages.len(), || None);
             self.prewarm_cursor = 0;
             for (index, page) in pages.pages.iter().enumerate() {
                 if let Some(gpu) = &mut self.pages[index]
@@ -214,6 +286,9 @@ impl GpuArtwork {
             let current = self.pages[index]
                 .as_ref()
                 .is_some_and(|gpu| gpu.source.shares_pixels_with(page));
+            if current {
+                self.attempts[index] = None;
+            }
             if background {
                 if current || attempted.contains(&index) {
                     self.prewarm_cursor = index + 1;
@@ -234,7 +309,28 @@ impl GpuArtwork {
             if !attempted.insert(index) {
                 continue;
             }
-            let source = TextureKey::new(page, &self.source_hasher);
+            let source = self.attempts[index]
+                .as_ref()
+                .map(|attempt| &attempt.source)
+                .filter(|key| key.shares_pixels_with(page))
+                .cloned()
+                .unwrap_or_else(|| TextureKey::new(page, &self.source_hasher));
+            if self.attempts[index]
+                .as_ref()
+                .is_none_or(|attempt| attempt.source != source)
+            {
+                self.attempts[index] = Some(TextureAttempt::new(source.clone()));
+            }
+            if !self.attempts[index].as_mut().unwrap().retry.ready() {
+                if !background
+                    && !self.pages[index]
+                        .as_ref()
+                        .is_some_and(|gpu| gpu.source.contains_layers(page.layers))
+                {
+                    return false;
+                }
+                continue;
+            }
             let previous = self.pages[index].take();
             let has_fallback = previous
                 .as_ref()
@@ -244,17 +340,23 @@ impl GpuArtwork {
                     gpu.source = source;
                     Some(gpu)
                 }
-                previous => allocate_page(device, queue, page, source, !has_fallback)
-                    .or_else(|| previous.filter(|gpu| gpu.source.contains_layers(page.layers))),
+                previous => match allocate_page(device, queue, page, source, !has_fallback) {
+                    Some(gpu) => Some(gpu),
+                    None => {
+                        self.attempts[index].as_mut().unwrap().retry.failed();
+                        previous.filter(|gpu| gpu.source.contains_layers(page.layers))
+                    }
+                },
             };
             let Some(gpu) = gpu else {
                 if background {
                     continue;
                 }
-                self.pages.clear();
-                self.rejected = true;
                 return false;
             };
+            if gpu.source.shares_pixels_with(page) {
+                self.attempts[index] = None;
+            }
             self.pages[index] = Some(gpu);
         }
         true
@@ -282,6 +384,19 @@ impl GpuArtwork {
             page.bind_group = None;
         }
     }
+}
+
+/// Rejects malformed framing and unsupported array depth before any allocation or downsampling.
+fn supported_page(page: &render_model::ActorTexturePage, device: &RenderDevice) -> bool {
+    page.width != 0
+        && page.height != 0
+        && page.layers != 0
+        && page.layers <= device.limits().max_texture_array_layers
+        && usize::from(page.width)
+            .checked_mul(usize::from(page.height))
+            .and_then(|pixels| pixels.checked_mul(page.layers as usize))
+            .and_then(|pixels| pixels.checked_mul(4))
+            == Some(page.rgba8.len())
 }
 
 /// Publishes a page only after both its pixels and array view are usable.
@@ -779,3 +894,7 @@ mod allocation_tests;
 #[cfg(test)]
 #[path = "artwork_ownership_tests.rs"]
 mod ownership_tests;
+
+#[cfg(test)]
+#[path = "artwork_recovery_tests.rs"]
+mod recovery_tests;

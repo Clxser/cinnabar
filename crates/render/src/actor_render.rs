@@ -206,8 +206,12 @@ pub(crate) struct ActorGpu {
     glint_sampler: Sampler,
     bind_group: Option<BindGroup>,
     frame_generation: u64,
+    frame_attempt: Option<u64>,
+    frame_retry: crate::actor::gpu::AllocationRetry,
     geometry_revision: u64,
     geometry_ready: bool,
+    geometry_attempt: Option<u64>,
+    geometry_retry: crate::actor::gpu::AllocationRetry,
     skin_revision: u64,
     view_buffer_id: Option<BufferId>,
     manifest: std::sync::Arc<[render_model::ActorDrawManifestEntry]>,
@@ -357,7 +361,11 @@ fn create_actor_gpu(render_device: &RenderDevice, render_queue: &RenderQueue) ->
         sampler,
         bind_group: None,
         frame_generation: u64::MAX,
+        frame_attempt: None,
+        frame_retry: default(),
         geometry_revision: u64::MAX,
+        geometry_attempt: None,
+        geometry_retry: default(),
         geometry_ready: false,
         skin_revision: u64::MAX,
         view_buffer_id: None,
@@ -376,11 +384,29 @@ fn prepare_actor_resources(
 ) {
     // Preparation can replace any part of the queued identity, even before queue runs.
     gpu.queued_draw = None;
-    if gpu.skins.failed(&frame.skins) {
+    if gpu.skins.rejected(&frame.skins) {
         gpu.instance_count = 0;
         gate.clear();
         tracker.clear();
         return;
+    }
+    let skins_resident = player_skins_resident(&frame);
+    if skins_resident && !gpu.skins.is_synced(&frame.skins) {
+        let views_changed = gpu
+            .skins
+            .sync(&frame.skins, &uploads.device, &uploads.queue);
+        if views_changed {
+            gpu.bind_group = None;
+        }
+        if !gpu.skins.is_synced(&frame.skins) {
+            gpu.bones.clear();
+            gpu.bind_group = None;
+            gpu.instance_count = 0;
+            gpu.frame_generation = 0;
+            gate.clear();
+            tracker.clear();
+            return;
+        }
     }
     let rig = &frame.rig;
     let artwork_valid = gpu.artwork.prepare_demanded(
@@ -390,6 +416,9 @@ fn prepare_actor_resources(
         &uploads.queue,
     );
     gpu.artwork_current = artwork_valid;
+    if gpu.artwork.glints_changed {
+        gpu.bind_group = None;
+    }
     if gpu.artwork_identity != frame.artwork.identity() {
         gate.clear();
         tracker.clear();
@@ -398,7 +427,6 @@ fn prepare_actor_resources(
         gpu.bones.clear();
         gpu.bind_group = None;
     }
-    let skins_resident = player_skins_resident(&frame);
     let mut structurally_valid = !rig.instances.is_empty()
         && rig.instances.len() <= render_model::MAX_ACTOR_RENDER_INSTANCES
         && rig.previous_bones.len() == rig.current_bones.len()
@@ -412,34 +440,73 @@ fn prepare_actor_resources(
         tracker.clear();
         gpu.frame_generation = u64::MAX;
         gpu.bones.clear();
-        // A new skin model or item mesh uploads only its own vertices.
-        gpu.geometry_ready = gpu.geometry_vertices.sync(
-            &uploads.device,
-            &uploads.queue,
-            "shared actor rig vertices",
-            &rig.geometry_vertices,
-        );
-        if !rig.geometry_spans.is_empty() && gpu.geometry_ready {
-            if let Some(buffer) = gpu_allocation::buffer_with_data(
-                &uploads.device,
-                &uploads.queue,
-                "shared actor rig geometry spans",
-                bytemuck::cast_slice::<ActorRigGeometrySpan, u8>(&rig.geometry_spans),
-                BufferUsages::STORAGE,
-            ) {
-                gpu.geometry_span_buffer = Some(buffer);
-            } else {
-                gpu.geometry_ready = false;
-            }
-        } else {
-            gpu.geometry_ready = false;
+        if gpu.geometry_attempt != Some(rig.geometry_revision) {
+            gpu.geometry_attempt = Some(rig.geometry_revision);
+            gpu.geometry_retry = default();
         }
-        gpu.geometry_revision = rig.geometry_revision;
+        gpu.geometry_ready = false;
+        if gpu.geometry_retry.ready() {
+            use crate::actor::gpu::GeometrySync;
+            let binding = crate::actor::gpu::storage_binding_bytes(&uploads.device);
+            let supported = !rig.geometry_spans.is_empty()
+                && !rig.geometry_vertices.is_empty()
+                && rig
+                    .geometry_spans
+                    .len()
+                    .checked_mul(std::mem::size_of::<ActorRigGeometrySpan>())
+                    .is_some_and(|bytes| bytes as u64 <= binding)
+                && rig.geometry_spans.iter().all(|span| {
+                    span.first_vertex
+                        .checked_add(span.vertex_count)
+                        .is_some_and(|end| end as usize <= rig.geometry_vertices.len())
+                });
+            // A new skin model or item mesh uploads only its own vertices.
+            let mut result = if supported {
+                gpu.geometry_vertices.sync(
+                    &uploads.device,
+                    &uploads.queue,
+                    "shared actor rig vertices",
+                    &rig.geometry_vertices,
+                )
+            } else {
+                GeometrySync::Rejected
+            };
+            if result == GeometrySync::Ready {
+                if let Some(buffer) = gpu_allocation::buffer_with_data(
+                    &uploads.device,
+                    &uploads.queue,
+                    "shared actor rig geometry spans",
+                    bytemuck::cast_slice::<ActorRigGeometrySpan, u8>(&rig.geometry_spans),
+                    BufferUsages::STORAGE,
+                ) {
+                    gpu.geometry_span_buffer = Some(buffer);
+                } else {
+                    result = GeometrySync::Retry;
+                }
+            }
+            if result == GeometrySync::Retry {
+                gpu.geometry_retry.failed();
+            } else {
+                gpu.geometry_revision = rig.geometry_revision;
+                gpu.geometry_retry = default();
+            }
+            gpu.geometry_ready = result == GeometrySync::Ready;
+        }
         gpu.bind_group = None;
         gpu.artwork.invalidate_bindings();
     }
     structurally_valid &= gpu.geometry_ready;
     if gpu.frame_generation != rig.frame_generation {
+        if gpu.frame_attempt != Some(rig.frame_generation) {
+            gpu.frame_attempt = Some(rig.frame_generation);
+            gpu.frame_retry = default();
+        }
+        if !gpu.frame_retry.ready() {
+            gpu.instance_count = 0;
+            gate.clear();
+            tracker.clear();
+            return;
+        }
         let lifetime_changed = gpu.manifest.len() != rig.manifest.len()
             || gpu
                 .manifest
@@ -508,6 +575,7 @@ fn prepare_actor_resources(
                 },
             );
             if uploaded.is_none() {
+                gpu.frame_retry.failed();
                 gpu.bones.clear();
                 gpu.instance_count = 0;
                 // Zero is never a drawable generation; unchanged paused sources must retry admission.
@@ -567,6 +635,7 @@ fn prepare_actor_resources(
             tracker.clear();
         }
         gpu.frame_generation = rig.frame_generation;
+        gpu.frame_retry = default();
     }
     if gpu.skin_revision != frame.skin_revision || !gpu.skins.is_synced(&frame.skins) {
         gate.clear();
@@ -585,18 +654,6 @@ fn prepare_actor_resources(
                 maximum_vertices: gpu.maximum_vertex_count,
             });
             return;
-        }
-        let views_changed = gpu
-            .skins
-            .sync(&frame.skins, &uploads.device, &uploads.queue);
-        if !gpu.skins.is_synced(&frame.skins) {
-            gpu.bind_group = None;
-            gpu.instance_count = 0;
-            gpu.frame_generation = u64::MAX;
-            return;
-        }
-        if views_changed {
-            gpu.bind_group = None;
         }
         gpu.skin_revision = frame.skin_revision;
     }

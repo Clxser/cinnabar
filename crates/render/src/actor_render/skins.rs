@@ -18,7 +18,9 @@ pub(super) struct GpuSkinArrays {
     /// Bound wherever a class has no layers, and by artwork pages, which never sample them.
     pub placeholder: TextureView,
     synced: Option<Arc<ActorSkinResidency>>,
-    failed: Option<Arc<ActorSkinResidency>>,
+    source: Option<Arc<ActorSkinResidency>>,
+    rejected: bool,
+    retry: crate::actor::gpu::AllocationRetry,
     pub uploaded_bytes: u64,
 }
 
@@ -73,7 +75,9 @@ impl GpuSkinArrays {
             }),
             placeholder,
             synced: None,
-            failed: None,
+            source: None,
+            rejected: false,
+            retry: default(),
             uploaded_bytes: 0,
         })
     }
@@ -94,11 +98,13 @@ impl GpuSkinArrays {
             .is_some_and(|synced| Arc::ptr_eq(synced, residency))
     }
 
-    /// Avoids retrying a failed immutable publication every rendered frame.
-    pub fn failed(&self, residency: &Arc<ActorSkinResidency>) -> bool {
-        self.failed
-            .as_ref()
-            .is_some_and(|failed| Arc::ptr_eq(failed, residency))
+    /// Immutable malformed or unsupported source data stays rejected until its identity changes.
+    pub fn rejected(&self, residency: &Arc<ActorSkinResidency>) -> bool {
+        self.rejected
+            && self
+                .source
+                .as_ref()
+                .is_some_and(|source| Arc::ptr_eq(source, residency))
     }
 
     /// Matches every array to `residency`, copying kept layers on resize and writing only layers
@@ -109,7 +115,20 @@ impl GpuSkinArrays {
         device: &RenderDevice,
         queue: &RenderQueue,
     ) -> bool {
-        if self.failed(residency) {
+        if self.is_synced(residency) {
+            return false;
+        }
+        if !self
+            .source
+            .as_ref()
+            .is_some_and(|source| Arc::ptr_eq(source, residency))
+        {
+            self.source = Some(Arc::clone(residency));
+            self.synced = None;
+            self.rejected = !supported(residency, device);
+            self.retry = default();
+        }
+        if self.rejected || !self.retry.ready() {
             return false;
         }
         let previous = self.classes.clone();
@@ -119,7 +138,7 @@ impl GpuSkinArrays {
         .flatten();
         match result {
             Some(changed) => {
-                self.failed = None;
+                self.retry = default();
                 changed
             }
             None => {
@@ -128,7 +147,7 @@ impl GpuSkinArrays {
                     class.admissions.fill(0);
                 }
                 self.synced = None;
-                self.failed = Some(Arc::clone(residency));
+                self.retry.failed();
                 false
             }
         }
@@ -194,9 +213,14 @@ impl GpuSkinArrays {
                         *admission = kept;
                     }
                 }
-                gpu.view = texture
-                    .as_ref()
-                    .map_or_else(|| self.placeholder.clone(), array_view);
+                gpu.view = match texture.as_ref() {
+                    Some(texture) => {
+                        gpu_allocation::checked(device, "actor skin array view", 0, || {
+                            array_view(texture)
+                        })?
+                    }
+                    None => self.placeholder.clone(),
+                };
                 gpu.texture = texture;
                 gpu.admissions = admissions;
                 views_changed = true;
@@ -262,4 +286,20 @@ impl GpuSkinArrays {
         self.synced = Some(Arc::clone(residency));
         Some(views_changed)
     }
+}
+
+/// Validates fixed native texel framing and device capacity before creating GPU resources.
+fn supported(residency: &ActorSkinResidency, device: &RenderDevice) -> bool {
+    let limits = device.limits();
+    residency
+        .classes
+        .iter()
+        .zip(SKIN_CLASS_SIDES)
+        .all(|(layers, side)| {
+            layers.len() <= limits.max_texture_array_layers as usize
+                && (layers.is_empty() || side <= limits.max_texture_dimension_2d as usize)
+                && layers.iter().flatten().all(|resident| {
+                    resident.admission != 0 && resident.texels.len() == side * side * 4
+                })
+        })
 }

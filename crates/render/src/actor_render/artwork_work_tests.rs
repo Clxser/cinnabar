@@ -18,6 +18,11 @@ pub(super) fn upload_count() -> usize {
     WORK.with(|work| work.get().uploads)
 }
 
+/// Observes fingerprint work across failed attempts without resetting unrelated counters.
+pub(super) fn hashed_bytes() -> usize {
+    WORK.with(|work| work.get().hashed_bytes)
+}
+
 /// Counts the bytes fingerprinted for a newly encountered immutable source.
 pub(super) fn record_hash(bytes: usize) {
     WORK.with(|work| {
@@ -300,10 +305,9 @@ fn failed_artwork_replacement_keeps_its_source_until_upload_recovers() {
     assert_eq!(
         take_work(),
         Work {
-            hashes: 1,
-            hashed_bytes: replacement.pages[0].rgba8.len(),
             uploads: 1,
             uploaded_bytes: replacement.pages[0].rgba8.len(),
+            ..Default::default()
         }
     );
 }

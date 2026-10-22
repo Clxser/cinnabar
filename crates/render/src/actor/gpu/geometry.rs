@@ -16,6 +16,14 @@ pub(crate) struct SegmentedVertexBuffer {
     vertices: ActorRigVertexSegments,
 }
 
+/// Immutable input rejection is distinct from an allocation that can succeed later.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GeometrySync {
+    Ready,
+    Rejected,
+    Retry,
+}
+
 #[derive(Debug, Default)]
 struct PageTransfer {
     replace: bool,
@@ -87,19 +95,34 @@ impl PageTransfer {
 }
 
 impl SegmentedVertexBuffer {
-    /// Synchronizes the snapshot; false retains storage but forbids drawing this publication.
+    /// Synchronizes the snapshot; a failure retains storage but forbids drawing this publication.
     pub(crate) fn sync(
         &mut self,
         device: &RenderDevice,
         queue: &RenderQueue,
         label: &'static str,
         vertices: &ActorRigVertexSegments,
-    ) -> bool {
+    ) -> GeometrySync {
         if vertices.is_empty() {
             *self = Self::default();
-            return true;
+            return GeometrySync::Ready;
         }
         let stride = std::mem::size_of::<ActorRigVertex>();
+        let binding = usize::try_from(storage_binding_bytes(device)).unwrap_or(usize::MAX);
+        if vertices.len() > binding / stride
+            || vertices.segments.len() != vertices.offsets.len()
+            || vertices
+                .segments
+                .iter()
+                .zip(vertices.offsets.iter())
+                .any(|(page, &offset)| {
+                    offset
+                        .checked_add(page.len())
+                        .is_none_or(|end| end > vertices.len())
+                })
+        {
+            return GeometrySync::Rejected;
+        }
         let capacity = self
             .buffer
             .as_ref()
@@ -116,10 +139,6 @@ impl SegmentedVertexBuffer {
         )
         .entered();
         let replacement = if plan.replace {
-            let binding = usize::try_from(storage_binding_bytes(device)).unwrap_or(usize::MAX);
-            if vertices.len() > binding / stride {
-                return false;
-            }
             let capacity = vertex_buffer_capacity(vertices.len(), binding / stride);
             let Some(buffer) = crate::gpu_allocation::buffer(
                 device,
@@ -130,7 +149,7 @@ impl SegmentedVertexBuffer {
                     mapped_at_creation: false,
                 },
             ) else {
-                return false;
+                return GeometrySync::Retry;
             };
             Some(buffer)
         } else {
@@ -182,13 +201,13 @@ impl SegmentedVertexBuffer {
         );
         if uploaded.is_none() {
             self.vertices = ActorRigVertexSegments::default();
-            return false;
+            return GeometrySync::Retry;
         }
         if let Some(buffer) = replacement {
             self.buffer = Some(buffer);
         }
         self.vertices = vertices.clone();
-        true
+        GeometrySync::Ready
     }
 
     /// Returns the storage buffer bound by the actor and hand passes.
@@ -228,12 +247,15 @@ mod tests {
         mirror.sync(&device, &queue, "test actor rig", &old);
         let previous = mirror.buffer().unwrap().id();
         let _failure = crate::gpu_allocation::inject(|label, _| label == "test actor rig");
-        assert!(!mirror.sync(
-            &device,
-            &queue,
-            "test actor rig",
-            &ActorRigVertexSegments::from_vertices(page(64, 2.0)),
-        ));
+        assert_eq!(
+            mirror.sync(
+                &device,
+                &queue,
+                "test actor rig",
+                &ActorRigVertexSegments::from_vertices(page(64, 2.0)),
+            ),
+            GeometrySync::Retry
+        );
         assert_eq!(mirror.buffer().unwrap().id(), previous);
         assert_eq!(mirror.vertices.len(), old.len());
     }

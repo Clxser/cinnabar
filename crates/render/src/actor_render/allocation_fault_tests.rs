@@ -378,21 +378,19 @@ fn gpu_fault_matrix_pages_retain_compatible_artwork_and_recover_draws() {
             }
             let attempts = calls.borrow().len();
             let _ = draw_frame(&mut app, &next);
-            if !first && layers == 1 {
-                assert!(
-                    calls.borrow().len() > attempts,
-                    "compatible fallbacks remain retryable while demanded"
-                );
-            } else {
-                assert_eq!(
-                    calls.borrow().len(),
-                    attempts,
-                    "exhausted publication must not spin"
-                );
-            }
+            assert!(
+                calls.borrow().len() > attempts,
+                "a one-shot failure retries immediately"
+            );
+            let attempts = calls.borrow().len();
+            let _ = draw_frame(&mut app, &next);
+            assert_eq!(
+                calls.borrow().len(),
+                attempts,
+                "persistent allocation pressure backs off"
+            );
             drop(fault);
-            let recovered = publication(3, &[100, 120], layers);
-            let drawn = draw_frame(&mut app, &recovered);
+            let drawn = draw_frame(&mut app, &next);
             assert_eq!(
                 drawn
                     .iter()
@@ -411,7 +409,7 @@ fn gpu_fault_matrix_pages_retain_compatible_artwork_and_recover_draws() {
                 layers
             );
             assert_ne!(gpu.artwork.page(0).unwrap().view.id(), previous[0]);
-            assert_eq!(app.sub_app(RenderApp).world().resource::<Frames>().0, 4);
+            assert_eq!(app.sub_app(RenderApp).world().resource::<Frames>().0, 5);
         }
     }
 }
@@ -532,8 +530,11 @@ fn gpu_fault_matrix_buffers_skip_partial_publications_and_recover_draws() {
                 );
             }
             drop(fault);
-            let recovered = publication(3, &[100], 1);
-            assert_eq!(draw_frame(&mut app, &recovered).len(), 1, "{label}");
+            assert_eq!(
+                draw_frame(&mut app, &next).len(),
+                1,
+                "{label}: exact same publication recovers"
+            );
             assert_eq!(app.sub_app(RenderApp).world().resource::<Frames>().0, 3);
         }
     }
