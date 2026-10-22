@@ -113,6 +113,57 @@ func TestActorBurstReplacementClearsOnlyItsPreviousCrowd(t *testing.T) {
 	}
 }
 
+// Both negotiated movement formats place the crowd at the real eye and advance its animation.
+func TestActorBurstMovementFormatsKeepTheCrowdOnTheReceivedPlayerOrigin(t *testing.T) {
+	for _, mode := range []string{"authoritative", "legacy"} {
+		t.Run(mode, func(t *testing.T) {
+			origin, next := mgl32.Vec3{4, -58.38, 8}, mgl32.Vec3{5, -58.38, 9}
+			movement := func(position mgl32.Vec3) packet.Packet {
+				if mode == "legacy" {
+					return &packet.MovePlayer{Position: position}
+				}
+				return &packet.PlayerAuthInput{Position: position}
+			}
+			first, second := movement(origin), movement(next)
+			rotation := &packet.MovePlayer{Mode: packet.MoveModeRotation, Position: mgl32.Vec3{999, 999, 999}}
+			inner := &cameraFixtureConn{read: []packet.Packet{
+				first,
+				&packet.CommandRequest{CommandLine: "/actorburst 2 strafe"},
+				second,
+				rotation,
+			}}
+			conn := &actorBurstConn{Conn: inner}
+			if got, err := conn.ReadPacket(); err != nil || got != first {
+				t.Fatal("first movement was swallowed", err)
+			}
+			if got, err := conn.ReadPacket(); err != nil || got != second {
+				t.Fatal("second movement was swallowed", err)
+			}
+			if got, err := conn.ReadPacket(); err != nil || got != rotation {
+				t.Fatal("rotation was swallowed", err)
+			}
+			if conn.position != next || conn.origin != origin || conn.ticks != 2 {
+				t.Fatal("fixture did not follow the negotiated movement input")
+			}
+			if got := inner.written[1].(*packet.AddPlayer).Position; got != actorBurstSwingPosition(0, origin) {
+				t.Fatalf("crowd origin %v differs from received eye %v", got, origin)
+			}
+			var moving, swinging int
+			for _, written := range inner.written {
+				switch written.(type) {
+				case *packet.MoveActorAbsolute:
+					moving++
+				case *packet.Animate:
+					swinging++
+				}
+			}
+			if moving != 4 || swinging != 2 {
+				t.Fatalf("fixture stayed static: %d movements, %d swings", moving, swinging)
+			}
+		})
+	}
+}
+
 func TestActorBurstComplexGeometryAddsBoundedOriginalDetails(t *testing.T) {
 	var base, complex struct {
 		Geometry []struct {

@@ -66,8 +66,19 @@ func (c *actorBurstConn) ReadPacket() (packet.Packet, error) {
 		if err != nil {
 			return pk, err
 		}
-		if movement, ok := pk.(*packet.PlayerAuthInput); ok {
-			c.position = movement.Position
+		var position mgl32.Vec3
+		var moved bool
+		switch movement := pk.(type) {
+		case *packet.PlayerAuthInput:
+			position, moved = movement.Position, true
+		case *packet.MovePlayer:
+			position, moved = c.position, true
+			if movement.Mode != packet.MoveModeRotation {
+				position = movement.Position
+			}
+		}
+		if moved {
+			c.position = position
 			if actorBurstSwingMode(c.mode) {
 				for _, fixture := range actorBurstSwingTick(c.mode, c.count, c.ticks, c.origin) {
 					if err := c.Conn.WritePacket(fixture); err != nil {
