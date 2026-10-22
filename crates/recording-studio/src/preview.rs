@@ -222,7 +222,6 @@ impl RasterPreview {
             .iter()
             .map(|visual| visual.clip)
             .collect::<BTreeSet<_>>();
-        self.decoders.retain(|id, _| active.contains(id));
         self.failures.retain(|id, _| active.contains(id));
         let size = fit_size(project.export.size, maximum)?;
         let mut frame_bytes = 0_usize;
@@ -237,7 +236,23 @@ impl RasterPreview {
                 .checked_add(bytes)
                 .filter(|bytes| *bytes <= MAX_VISUAL_FRAME_BYTES)
                 .ok_or("Visual layers exceed their combined frame byte budget.")?;
+            if matches!(source.kind, MediaKind::Video | MediaKind::Image) {
+                let path = if source.path.is_absolute() {
+                    source.path.clone()
+                } else {
+                    self.source_base.join(&source.path)
+                };
+                decoders::reuse_cut(
+                    &mut self.decoders,
+                    &active,
+                    visual.clip,
+                    &path,
+                    fit_size(source.size, size)?,
+                    source.frame_rate.unwrap_or(project.export.fps),
+                );
+            }
         }
+        self.decoders.retain(|id, _| active.contains(id));
         let mut pending = Vec::new();
         if self.plan.shot.is_some() {
             pending.push("3D camera changes (use a replay clip)");
