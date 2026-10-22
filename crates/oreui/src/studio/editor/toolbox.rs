@@ -72,24 +72,30 @@ pub(super) fn draw(
     let key = format!("studio_tools_{}_{}", tool.label(), section);
     let scroll = canvas.begin_scroll(&key, inner)?;
     let top = inner[1] - scroll.offset;
-    let content = [inner[0], top, inner[2], inner[3]];
+    let content = canvas.scroll_content_bounds([inner[0], top, inner[2], inner[3]]);
     let bottom = match tool {
         Toolbox::Cameras => super::super::camera::creation(canvas, view, content)?,
         Toolbox::Effects => super::super::effects::creation(canvas, view, content)?,
         Toolbox::Creative => super::super::creative::draw(canvas, view, content)?,
         Toolbox::Text => {
-            canvas.text_line("Text", [inner[0], top], inner[2] - inner[0], HEADER5, TEXT)?;
+            canvas.text_line(
+                "Text",
+                [content[0], top],
+                content[2] - content[0],
+                HEADER5,
+                TEXT,
+            )?;
             let y = top + canvas.r(4.2);
             control(
                 canvas,
                 view,
-                [inner[0], y, inner[2], y + canvas.r(4.0)],
+                [content[0], y, content[2], y + canvas.r(4.0)],
                 "Add title",
                 Action::AddTitle,
                 true,
                 Variant::Primary,
             )?;
-            y + canvas.r(5.6) + canvas.text("Add a title at the playhead, then select it to edit its text, position and fades.", [inner[0], y + canvas.r(5.6)], inner[2] - inner[0], CAPTION, TEXT_DIMMER, false)?
+            y + canvas.r(5.6) + canvas.text("Add a title at the playhead, then select it to edit its text, position and fades.", [content[0], y + canvas.r(5.6)], content[2] - content[0], CAPTION, TEXT_DIMMER, false)?
         }
         Toolbox::Media | Toolbox::Audio => unreachable!(),
     };

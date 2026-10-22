@@ -117,3 +117,37 @@ fn shots_without_a_preview_never_expose_hidden_saved_view_controls() {
             .any(|(action, _)| matches!(action, MenuAction::Studio(Action::CameraViews(_))))
     );
 }
+
+#[test]
+fn subject_search_clear_label_fits_its_control_at_small_and_large_gui_scales() {
+    let view = menu();
+    let font = ui_engine::test_support::fixture_font();
+    for size in [[640, 480], [900, 600], [1280, 720]] {
+        for gui_scale in [1, 2, 3] {
+            let (mut nodes, mut next, mut layouts) =
+                (Vec::new(), 1, ui::TextLayoutCache::new(128, 1024 * 1024));
+            let metrics = ui_engine::text_metrics::TextMetrics::for_viewport(
+                size,
+                ui::DpiScale::new(1.0).unwrap(),
+                Some(gui_scale),
+            );
+            let mut canvas =
+                Canvas::new(&mut nodes, &mut next, &mut layouts, &font, metrics, 0, None);
+            let width = canvas.r(26.0);
+            draw(&mut canvas, &view, [0.0, 0.0, width, 1200.0]).unwrap();
+            let clear = canvas
+                .hits
+                .iter()
+                .find_map(|(action, bounds)| {
+                    (*action == MenuAction::Studio(Action::CameraSubjects(S::Clear)))
+                        .then_some(*bounds)
+                })
+                .unwrap();
+            let label_width = canvas
+                .measure("Clear", crate::theme::SECONDARY_BUTTON)
+                .unwrap();
+            assert!(clear.width() >= label_width + canvas.r(1.0));
+            assert!(clear.max().x() <= width);
+        }
+    }
+}

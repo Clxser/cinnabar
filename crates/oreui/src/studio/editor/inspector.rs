@@ -65,7 +65,7 @@ pub(super) fn draw(
     );
     let scroll = canvas.begin_scroll(&key, [left, top, right, area[3] - pad])?;
     let y = top - scroll.offset;
-    let content = [left, y, right, area[3] - pad];
+    let content = canvas.scroll_content_bounds([left, y, right, area[3] - pad]);
     let bottom = if let Some(shot) = project.shots.iter().find(|item| Some(item.id) == selected) {
         super::super::camera::inspector(canvas, view, content, shot)?
     } else if let Some(effect) = project
@@ -85,11 +85,16 @@ pub(super) fn draw(
             InspectorSection::Cut => super::super::clips::cut(canvas, view, content, clip)?,
             InspectorSection::Speed => {
                 let y = super::super::speed::rates(canvas, view, content, false, true)?;
-                super::super::speed::draw(canvas, view, [left, y, right, content[3]], clip)?
+                super::super::speed::draw(
+                    canvas,
+                    view,
+                    [content[0], y, content[2], content[3]],
+                    clip,
+                )?
             }
         }
     } else {
-        y + canvas.text("Select a clip, camera, effect, title or audio item on the timeline to edit its properties.", [left, y], right - left, BODY, TEXT_DIMMER, false)?
+        y + canvas.text("Select a clip, camera, effect, title or audio item on the timeline to edit its properties.", [content[0], y], content[2] - content[0], BODY, TEXT_DIMMER, false)?
     };
     let result = canvas.end_scroll(scroll, (bottom - y).max(0.0));
     canvas.settings_scrollbars = previous;

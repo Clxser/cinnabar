@@ -13,6 +13,15 @@ pub(super) fn editor() -> Fixture {
     Fixture::Menu(Box::new(view(false)))
 }
 
+/// Comfortable controls and the largest timeline stress transport reachability in short windows.
+pub(super) fn transport_comfortable() -> Fixture {
+    let mut view = view(false);
+    let workspace = &mut Arc::make_mut(&mut view.studio).workspace;
+    workspace.density = launcher::menu::studio::Density::Comfortable;
+    workspace.timeline_size = launcher::menu::studio::TimelineSize::Large;
+    Fixture::Menu(Box::new(view))
+}
+
 /// A selected world camera exposes its real numeric controls without loading a recording.
 pub(super) fn camera() -> Fixture {
     let mut view = camera_view();

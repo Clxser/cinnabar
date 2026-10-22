@@ -55,3 +55,31 @@ fn saved_views_are_reachable_in_their_section_without_scrolling_past_shot_creati
         }
     }
 }
+
+#[test]
+fn tool_buttons_leave_the_scrollbar_gutter_clear_in_narrow_panels() {
+    let mut view = MenuView::new(true, "Player".into());
+    let studio = Arc::make_mut(&mut view.studio);
+    studio.workspace.toolbox = Toolbox::Effects;
+    for width in [110.0, 220.0] {
+        let (mut nodes, mut next, mut layouts) =
+            (Vec::new(), 1, ui::TextLayoutCache::new(128, 1024 * 1024));
+        let font = ui_engine::test_support::fixture_font();
+        let metrics = ui_engine::text_metrics::TextMetrics::for_viewport(
+            [1280, 720],
+            ui::DpiScale::new(1.0).unwrap(),
+            Some(2),
+        );
+        let mut canvas = Canvas::new(&mut nodes, &mut next, &mut layouts, &font, metrics, 0, None);
+        draw(&mut canvas, &view, [0.0, 0.0, width, 160.0]).unwrap();
+        let track = canvas
+            .scrolls
+            .iter()
+            .find_map(|scroll| scroll.track)
+            .unwrap();
+        assert!(!canvas.hits.is_empty());
+        for (_, bounds) in &canvas.hits {
+            assert!(bounds.max().x() < track.min().x());
+        }
+    }
+}

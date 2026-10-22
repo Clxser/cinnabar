@@ -761,6 +761,17 @@ impl<'a> Canvas<'a> {
         })
     }
 
+    /// Reserves a stable gutter so scrolling never paints a thumb over content or hit targets.
+    pub(super) fn scroll_content_bounds(&self, mut viewport: Bounds) -> Bounds {
+        viewport[2] = (viewport[2] - self.scrollbar_width() - self.r(0.4)).max(viewport[0]);
+        viewport
+    }
+
+    /// Content reservation and the painted scrollbar share one width policy.
+    fn scrollbar_width(&self) -> f32 {
+        self.r(if self.settings_scrollbars { 1.2 } else { 0.6 })
+    }
+
     /// Ends a viewport using the lowest directly attached content node as its extent.
     pub(super) fn end_scroll_to_fit(&mut self, scroll: Scroll) -> Result<(), PaintError> {
         let content = self.nodes[scroll.first_node..]
@@ -781,7 +792,7 @@ impl<'a> Canvas<'a> {
         let offset = scroll.offset.min(max);
         let (mut track, mut thumb) = (None, None);
         if max > 0.0 {
-            let width = self.r(if self.settings_scrollbars { 1.2 } else { 0.6 });
+            let width = self.scrollbar_width();
             let side = (height * height / content).max(self.r(2.0));
             let top = v[1] + offset / max * (height - side);
             let bar = [v[2] - width, top, v[2], top + side];

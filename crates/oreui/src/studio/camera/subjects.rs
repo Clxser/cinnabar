@@ -29,7 +29,7 @@ pub(super) fn draw(
         Variant::Secondary,
     )?;
     y += canvas.r(4.4);
-    let clear = canvas.r(5.2);
+    let clear = canvas.measure("Clear", crate::theme::SECONDARY_BUTTON)? + canvas.r(1.6);
     widgets::text_field(
         canvas,
         view,

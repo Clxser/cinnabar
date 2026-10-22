@@ -710,6 +710,18 @@ const STATES: &[State] = &[
         fixture: studio::editor,
     },
     State {
+        name: "studio-transport-comfortable",
+        size: [900, 600],
+        gui_scale: GUI_SCALE,
+        fixture: studio::transport_comfortable,
+    },
+    State {
+        name: "studio-transport-comfortable-small",
+        size: [640, 480],
+        gui_scale: GUI_SCALE,
+        fixture: studio::transport_comfortable,
+    },
+    State {
         name: "studio-camera",
         size: SIZE,
         gui_scale: GUI_SCALE,
