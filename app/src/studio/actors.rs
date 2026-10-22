@@ -36,7 +36,11 @@ struct AppearanceKey {
 /// Retains the current prepared frame as the take's zero-time baseline.
 pub(super) fn start(world: &World, session: &CaptureSession) -> Result<NativeActors, String> {
     let frame = recording_frame(world)?;
-    let mut capture = ActorCapture::start(session.directory(), session.info().clone())?;
+    let mut capture = ActorCapture::start_with_disk(
+        session.directory(),
+        session.info().clone(),
+        session.disk_budget().clone(),
+    )?;
     let geometry = capture.geometry(
         &frame.rig.geometry_vertices,
         Arc::clone(&frame.rig.geometry_spans),
