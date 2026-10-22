@@ -374,7 +374,7 @@ fn prefs_are_polled_until_docker_detection_settles() {
     );
     assert!(menu.update(Input::BeginCreate).is_empty());
     assert_eq!(menu.screen(), Screen::Create);
-    assert_eq!(menu.create_form().backend, Backend::Dragonfly);
+    assert_eq!(menu.create_form().backend, Backend::Bds);
 }
 
 #[test]
@@ -544,7 +544,7 @@ fn accept_eula_outside_the_eula_screen_does_nothing() {
 }
 
 #[test]
-fn create_defaults_to_dragonfly_and_normal_independent_of_bds_availability() {
+fn create_defaults_to_bds_and_normal_independent_of_bds_availability() {
     for state in [SetupState::Ready, SetupState::Unsupported] {
         let mut menu = loaded(&[]);
         let mut idle = status(WorldState::Idle, "");
@@ -552,7 +552,7 @@ fn create_defaults_to_dragonfly_and_normal_independent_of_bds_availability() {
         menu.apply(Event::Prefs(Prefs::default(), idle));
         menu.update(Input::BeginCreate);
         assert_eq!(menu.create_form().generator, Generator::Normal);
-        assert_eq!(menu.create_form().backend, Backend::Dragonfly);
+        assert_eq!(menu.create_form().backend, Backend::Bds);
     }
 }
 
@@ -721,10 +721,24 @@ fn template_create_action_opens_the_create_form() {
 }
 
 #[test]
-fn new_world_backend_defaults_to_dragonfly_without_a_docker_gate() {
+fn new_world_bds_default_requires_docker_on_submission() {
     let mut menu = docker_menu(UnavailableReason::DockerMissing, &[]);
     menu.update(Input::BeginCreate);
     assert_eq!(menu.screen(), Screen::Create);
+    assert_eq!(menu.create_form().backend, Backend::Bds);
+    assert!(menu.update(Input::SubmitCreate).is_empty());
+    assert_eq!(
+        menu.prompt(),
+        prompt(PromptKind::DockerMissing, PromptFor::CreateBds)
+    );
+}
+
+#[test]
+fn explicit_dragonfly_creation_does_not_require_docker() {
+    let mut menu = docker_menu(UnavailableReason::DockerMissing, &[]);
+    menu.update(Input::BeginCreate);
+    assert_eq!(menu.screen(), Screen::Create);
+    menu.update(Input::SetBackend(Backend::Dragonfly));
     let effects = menu.update(Input::SubmitCreate);
     let [Effect::Create(spec)] = effects.as_slice() else {
         panic!("Dragonfly creation must not be blocked by Docker");

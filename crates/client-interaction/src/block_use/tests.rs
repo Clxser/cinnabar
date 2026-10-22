@@ -175,6 +175,13 @@ fn world_backing_use_ignores_recovery_on_inactive_screen_inputs() {
         stack: network_item(5, 0),
         storage_item: None,
     }));
+    ledger
+        .begin_target_gesture(
+            inventory::inventory_ledger::InventoryTarget::Craft(28),
+            inventory::inventory_ledger::CellGesture::Click,
+        )
+        .unwrap();
+    assert!(ledger.mark_transport_enqueued(0));
     assert!(ledger.poll_timeout(inventory::inventory_ledger::INVENTORY_REQUEST_TIMEOUT_MILLIS));
     assert!(
         ledger.resync_required(),
