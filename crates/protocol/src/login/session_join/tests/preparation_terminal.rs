@@ -221,6 +221,85 @@ async fn requested_latency_during_held_preparation_replies_before_release_and_su
 }
 
 #[tokio::test]
+async fn buffered_transfer_supersedes_a_probe_when_the_writer_is_backpressured() {
+    let budget = 64;
+    let (client, peer) = tokio::io::duplex(budget);
+    let (read, write) = tokio::io::split(client);
+    let (_, queue, writer) =
+        bridge::tasks::prepare_bounded_connection(read, write, bridge::MAX_FRAME_LEN, budget);
+    let mut occupied = Box::pin(
+        queue
+            .accept(Bytes::from(vec![0; budget]))
+            .now_or_never()
+            .expect("the original bounded queue admits its first frame")
+            .unwrap(),
+    );
+    assert!(occupied.as_mut().now_or_never().is_none());
+    assert!(
+        queue
+            .accept(Bytes::from_static(&[1]))
+            .now_or_never()
+            .is_none(),
+        "the undrained original frame occupies the whole writer budget"
+    );
+    let accepted = vec![
+        Packet::new(SetTime {
+            time: wire::ZigZag32(1),
+        }),
+        Packet::new(packets::NetworkStackLatency {
+            creation_time: wire::U64LE(777),
+            is_from_server: true,
+        }),
+        Packet::new(packets::Transfer {
+            server_address: "next.example.test".into(),
+            server_port: wire::U16LE(19133),
+            reload_world: true,
+            ..Default::default()
+        }),
+        Packet::new(SetTime {
+            time: wire::ZigZag32(2),
+        }),
+    ];
+    let mut transport = SessionTransport::with_timers(
+        ReadyFrames(vec![batch_frame(&accepted)].into()),
+        queue,
+        &[],
+        bridge::tasks::Timers::tokio(),
+    );
+    let (release, held) = tokio::sync::oneshot::channel::<()>();
+    let mut waiting = Box::pin(prepare_with_read_ahead(&mut transport, async {
+        held.await.unwrap();
+    }));
+    let early = waiting.as_mut().now_or_never();
+    let preparation_abandoned = release.is_closed();
+    assert!(occupied.as_mut().now_or_never().is_none());
+    drop(waiting);
+    let mut retained = Vec::new();
+    for _ in &accepted {
+        retained.push(transport.recv().now_or_never().map(|result| {
+            let crate::session_transport::Inbound::Packet(raw) = result.unwrap() else {
+                panic!("the original terminal packet must retain its FIFO position")
+            };
+            raw.decode().unwrap()
+        }));
+    }
+    drop(transport);
+    drop(writer);
+    drop(peer);
+    assert!(occupied.as_mut().now_or_never().unwrap().is_err());
+
+    let error = early
+        .expect("the buffered terminal must finish without draining the blocked writer")
+        .expect_err("the original transfer must end startup");
+    let target = error.server_transfer().expect("the validated transfer");
+    assert_eq!(target.host, "next.example.test");
+    assert_eq!(target.port, 19133);
+    assert!(target.reload_world);
+    assert!(preparation_abandoned, "obsolete preparation is abandoned");
+    assert_eq!(retained, accepted.into_iter().map(Some).collect::<Vec<_>>());
+}
+
+#[tokio::test]
 async fn unusable_buffered_transfer_does_not_bypass_preparation() {
     let mut transport = transport(vec![terminal(
         bridge::contract::KIND_TRANSFER,
