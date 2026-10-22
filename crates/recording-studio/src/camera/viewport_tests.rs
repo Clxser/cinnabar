@@ -33,6 +33,7 @@ fn rail() -> CameraShot {
         },
         hide_hud: true,
         hide_hand: true,
+        blend_in: None,
         target_lifetime: None,
         fov_curve: None,
         animation: Default::default(),

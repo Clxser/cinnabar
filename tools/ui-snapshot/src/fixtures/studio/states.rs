@@ -82,6 +82,18 @@ pub(in crate::fixtures) const STATES: &[State] = &[
         fixture: super::camera,
     },
     State {
+        name: "studio-camera-blend",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: super::camera_blend,
+    },
+    State {
+        name: "studio-camera-blend-small",
+        size: [900, 600],
+        gui_scale: GUI_SCALE,
+        fixture: super::camera_blend,
+    },
+    State {
         name: "studio-camera-subjects",
         size: SIZE,
         gui_scale: GUI_SCALE,

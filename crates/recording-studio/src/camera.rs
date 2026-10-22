@@ -13,6 +13,7 @@ pub const CAMERA_FOV_RANGE: std::ops::Range<f64> = 1.0..179.0;
 const DEFAULT_FOV: f64 = 70.0;
 
 mod animation;
+pub(crate) mod blend;
 mod continuity;
 pub mod coverage;
 mod distance;
@@ -27,6 +28,7 @@ mod saved;
 mod subjects;
 mod viewport;
 pub use animation::{CameraAnimation, CameraChannel, CameraChannelCurve};
+pub use blend::CameraBlend;
 pub use continuity::PathContinuity;
 pub use distance::{CompiledCameraPath, PathAccuracy, PathTiming};
 pub use edit::{CameraParameter, CameraRigKind};
@@ -181,6 +183,9 @@ pub struct CameraShot {
     /// Independent graph channels override the sampled rig without rewriting its positional rail.
     #[serde(default, skip_serializing_if = "CameraAnimation::is_empty")]
     pub animation: CameraAnimation,
+    /// An explicit entry blend preserves legacy exact cuts when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blend_in: Option<CameraBlend>,
     #[serde(default)]
     pub target_lifetime: Option<TargetLifetime>,
     /// Independent lens animation overrides the rig's original FOV only when explicitly authored.
@@ -380,6 +385,9 @@ impl CameraShot {
     pub fn validate(&self) -> Result<(), StudioError> {
         self.span.validate()?;
         self.animation.validate(self.span.duration())?;
+        if let Some(blend) = self.blend_in {
+            blend.validate(self.span.duration())?;
+        }
         limit("camera name bytes", self.name.len(), 256)?;
         let valid_fov = |fov: f64| fov.is_finite() && CAMERA_FOV_RANGE.contains(&fov);
         if let Some(curve) = &self.fov_curve {
@@ -513,6 +521,25 @@ impl CameraShot {
         if !self.span.contains(time) {
             return None;
         }
+        self.sample_rig(time, actor, path)
+    }
+
+    /// Entry blends start from the exact terminal authored pose, resolving its target at current replay time.
+    pub(crate) fn sample_terminal(
+        &self,
+        actor: impl Fn(CameraTargetRef) -> Option<ActorPose>,
+        path: Option<&CompiledCameraPath>,
+    ) -> Option<CameraPose> {
+        self.sample_rig(self.span.end, actor, path)
+    }
+
+    /// All rig/lens channels are evaluated before timeline blends and global camera effects.
+    fn sample_rig(
+        &self,
+        time: MediaTime,
+        actor: impl Fn(CameraTargetRef) -> Option<ActorPose>,
+        path: Option<&CompiledCameraPath>,
+    ) -> Option<CameraPose> {
         let elapsed = time.saturating_sub(self.span.start);
         let mut pose = match &self.mode {
             CameraMode::Free { pose } => Some(*pose),

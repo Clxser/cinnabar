@@ -1,5 +1,44 @@
 # Camera rail motion
 
+## Adjacent rig transitions
+
+The selected shot's **Entry: Cut** control enables an optional saved entry blend.
+Duration and easing are ordinary undoable edits; fine duration steps use one
+output frame. Absence preserves existing exact cuts. The incoming shot owns its
+first blend interval, so overlapping shots and gaps remain cuts. Moving shots
+retains the setting and recomputes adjacency. Trimming the start clears it;
+trimming only the end clamps its duration. Splitting by trims keeps it on the
+left part and clears it on the right part.
+
+Preview and export evaluate the same world-position and FOV interpolation, with
+shortest-arc quaternion orientation in the renderer's YXZ convention. Both rigs'
+independent lens curves are evaluated before the blend; global camera effects
+apply afterward. The default Smooth easing has zero blend-weight derivative at
+both ends. Linear and Hold retain their explicitly chosen behavior.
+
+The outgoing rig starts at its exact terminal authored pose and extrapolates its
+terminal position, angular and lens velocity during the blend. Distance rails
+reuse their compiled analytic velocity at the last representable microsecond;
+orbit position and rotation rates are analytic. Keyed pose and lens derivatives
+use a deterministic backward stencil of at most three samples, no more than one
+millisecond apart, restricted to the final authored interval where microsecond
+resolution permits. These derivative estimates are numerical approximations,
+not a rigorous bound for arbitrary curves or keys one microsecond apart. Smooth
+weighting preserves endpoint velocities to that precision when the authored
+curves are continuous. Hold jumps and geometric corners remain intentional
+discontinuities; lens extrapolation respects the valid projection range.
+
+The outgoing recorded subject still resolves at the current retimed source time,
+including its bound spawn identity. Extrapolation adds only authored camera
+motion; it never samples future recorded actors or world data. Entry blends
+require one continuous, unambiguous replay clip across the entire interval.
+Picture transitions, source cuts, gaps and legacy subject rigs without spawn
+identity retain exact cuts.
+Missing outgoing subjects keep the incoming shot unchanged; missing incoming
+subjects retain its normal unavailable-camera fallback. A moving camera between
+different viewpoints hides hands and retains a spectated body only when both
+rigs are the same recorded Player POV. Blends do not perform collision avoidance.
+
 ## Inspection navigation
 
 Inspection retains the original 8 blocks/second flight and fourfold Shift speed.

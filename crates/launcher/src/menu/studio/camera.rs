@@ -13,6 +13,14 @@ mod subjects;
 pub use navigation::{CameraNavigationAction, NavigationGesture};
 pub use subjects::{CAMERA_SUBJECT_ROWS, CameraSubjectResults, CameraSubjectsAction};
 
+/// Saved entry-transition edits remain separate from transient camera navigation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CameraBlendAction {
+    Toggle,
+    Duration(i8),
+    CycleEasing,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CameraWorkspace {
     pub navigation: recording_studio::camera::navigation::NavigationSettings,

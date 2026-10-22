@@ -7,6 +7,7 @@ use recording_studio::{
 
 use super::*;
 
+mod blend;
 mod fov;
 mod navigation;
 mod rotation;
@@ -129,7 +130,14 @@ impl Studio {
                 Action::ToggleCameraFine,
                 Action::TrimCameraStart,
                 Action::TrimCameraEnd,
+                Action::CameraBlend(launcher::menu::studio::CameraBlendAction::Toggle),
             ]);
+            if shot.blend_in.is_some() {
+                use launcher::menu::studio::CameraBlendAction as B;
+                actions.extend(
+                    [B::Duration(-1), B::Duration(1), B::CycleEasing].map(Action::CameraBlend),
+                );
+            }
             if matches!(
                 shot.kind(),
                 CameraRigKind::Player

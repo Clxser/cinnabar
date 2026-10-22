@@ -151,6 +151,7 @@ impl CameraShot {
             mode,
             hide_hud: true,
             hide_hand: true,
+            blend_in: None,
             target_lifetime: if matches!(kind, K::Free | K::Path) {
                 None
             } else {
@@ -527,6 +528,14 @@ impl CameraShot {
         for channel in next.animation.curves.values_mut() {
             channel.offset = channel.offset.checked_add(offset)?;
         }
+        // A new entry boundary is a new cut; retaining its old phase would invent an outgoing shot.
+        next.blend_in = next
+            .blend_in
+            .filter(|_| offset == MediaTime::ZERO)
+            .map(|mut blend| {
+                blend.duration = blend.duration.min(span.duration());
+                blend
+            });
         next.span = span;
         next.validate()?;
         Ok(next)

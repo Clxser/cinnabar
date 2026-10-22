@@ -35,6 +35,39 @@ pub(super) fn camera() -> Fixture {
     Fixture::Menu(Box::new(view))
 }
 
+/// Two adjacent anonymous rigs expose saved entry controls without claiming decoded replay evidence.
+pub(super) fn camera_blend() -> Fixture {
+    use recording_studio::camera::{CameraBlend, CameraRigKind};
+    let mut view = camera_view();
+    let studio = Arc::make_mut(&mut view.studio);
+    let project = Arc::make_mut(studio.project.as_mut().unwrap());
+    let cut = MediaTime(7_500_000);
+    project.shots[0].span.start = cut;
+    project.shots[0].blend_in = Some(CameraBlend {
+        duration: MediaTime(1_000_000),
+        easing: recording_studio::effect::Easing::Smooth,
+    });
+    project.shots.push(
+        CameraShot::from_preview(
+            Id(7),
+            Span::new(MediaTime::ZERO, cut).unwrap(),
+            CameraRigKind::Free,
+            CameraPose {
+                position: [-4.0, 68.0, -10.0],
+                yaw: 35.0,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap(),
+    );
+    project.validate().unwrap();
+    studio.lanes = Arc::new(recording_studio::lanes::TimelineLanes::new(project).unwrap());
+    studio.workspace.panel = launcher::menu::studio::EditorPanel::Inspector;
+    studio.workspace.media_hidden = true;
+    Fixture::Menu(Box::new(view))
+}
+
 /// Anonymous matching players expose the real search field, bounded result page and paging controls.
 pub(super) fn camera_subjects() -> Fixture {
     use launcher::menu::studio::{CameraSubjectResults, EditorPanel};
@@ -331,6 +364,7 @@ fn view(camera: bool) -> MenuView {
         },
         hide_hud: true,
         hide_hand: true,
+        blend_in: None,
         target_lifetime: None,
         fov_curve: None,
         animation: Default::default(),

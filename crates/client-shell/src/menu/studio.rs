@@ -701,6 +701,7 @@ impl Studio {
             Action::FrameCameraSubject => self.frame_camera_subject()?,
             Action::CameraViews(action) => self.camera_views_action(action)?,
             Action::CameraNavigation(action) => self.camera_navigation_action(action)?,
+            Action::CameraBlend(action) => self.camera_blend_action(action)?,
             Action::CameraSubjects(action) => self.camera_subjects_action(action)?,
             Action::CameraControl { shot, at, .. } => self.select_camera_key(shot, at)?,
             Action::CameraSubject(reference) => self.select_camera_subject(reference)?,

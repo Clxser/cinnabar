@@ -10,6 +10,7 @@ use crate::{
     retime::TimeMap,
 };
 
+mod camera_blend;
 #[cfg(test)]
 mod hud_tests;
 mod index;
@@ -240,6 +241,7 @@ pub struct CompiledTimeline {
     audio_maps: Vec<TimeMap>,
     clip_indices: BTreeMap<Id, usize>,
     camera_paths: Vec<Option<CompiledCameraPath>>,
+    camera_blends: crate::camera::blend::CompiledCameraBlends,
 }
 
 impl CompiledTimeline {
@@ -264,9 +266,7 @@ impl CompiledTimeline {
                     .map(|(shot, path)| (shot.id, path.as_ref()))
             })
             .collect();
-        Ok(Self {
-            index: IntervalIndex::new(&project)?,
-            camera_paths: project
+        let camera_paths = project
                 .shots
                 .iter()
                 .map(|shot| {
@@ -275,12 +275,19 @@ impl CompiledTimeline {
                         previous_paths.get(&shot.id).copied().flatten(),
                     )
                 })
-                .collect(),
-            visual_maps: project
-                .clips
-                .iter()
-                .map(|clip| clip.time_map())
-                .collect::<Result<_, _>>()?,
+                .collect::<Vec<_>>();
+        let visual_maps = project
+            .clips
+            .iter()
+            .map(|clip| clip.time_map())
+            .collect::<Result<Vec<_>, _>>()?;
+        let camera_blends =
+            crate::camera::blend::CompiledCameraBlends::new(&project, &visual_maps, &camera_paths)?;
+        Ok(Self {
+            index: IntervalIndex::new(&project)?,
+            camera_paths,
+            visual_maps,
+            camera_blends,
             audio_maps: project
                 .audio
                 .iter()
@@ -430,6 +437,7 @@ impl CompiledTimeline {
             out.spectated = shot.spectated_actor().filter(|_| out.camera.is_some());
             out.hide_hud |= shot.hide_hud;
             out.hide_hand = shot.hide_hand;
+            self.blend_camera(index, time, out, &actor);
         }
         out.base_camera = out.camera;
         out.camera = out.camera.map(|pose| out.effects.camera_pose(pose, time));

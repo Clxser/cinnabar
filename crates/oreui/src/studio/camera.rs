@@ -6,6 +6,7 @@ use recording_studio::camera::{
 
 use super::*;
 
+mod blend;
 mod fov;
 mod keys;
 mod navigation;
@@ -100,6 +101,7 @@ pub(super) fn inspector(
         TEXT_DIMMER,
     )?;
     y += canvas.r(3.2);
+    y = blend::draw(canvas, view, [left, y, right, area[3]], shot)?;
     let targeted = matches!(
         shot.mode,
         CameraMode::Player { .. }
