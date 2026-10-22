@@ -11,7 +11,8 @@ impl ActorRigSurface {
     pub const SINGLE_FACE: Self = Self(0);
     pub const OPPOSING_FACES: Self = Self(1);
 
-    pub(super) const fn is_valid(self) -> bool {
+    /// Validates stored surface flags before geometry from a recording reaches the renderer.
+    pub const fn is_valid(self) -> bool {
         self.0 <= Self::OPPOSING_FACES.0
     }
 }

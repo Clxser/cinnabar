@@ -47,6 +47,7 @@ mod settings_values;
 mod shader_pack_status;
 #[cfg(feature = "developer-control")]
 mod sign_in_fixture;
+mod studio;
 pub mod video_settings;
 mod view;
 mod worlds_tab;
@@ -168,6 +169,7 @@ pub struct MenuRuntime {
     player_skin: crate::player_skin::LocalPlayerSkin,
     dressing_room: std::sync::Arc<launcher::dressing_room::DressingRoomView>,
     dressing_room_worker: Option<dressing_room::Worker>,
+    studio: studio::Studio,
     skin_update_pending: bool,
     skin_outbound: Option<(u64, protocol::Packet)>,
     skin_packet_pending: Option<protocol::Packet>,
@@ -282,7 +284,10 @@ impl MenuRuntime {
     pub fn uses_panorama(&self) -> bool {
         self.visible
             && match self.screen {
-                MenuScreen::Pause | MenuScreen::Death | MenuScreen::Invite => false,
+                MenuScreen::Pause
+                | MenuScreen::Death
+                | MenuScreen::Invite
+                | MenuScreen::RecordingStudio => false,
                 MenuScreen::Settings | MenuScreen::DressingRoom => !self.over_world(),
                 _ => true,
             }
@@ -521,6 +526,9 @@ impl MenuRuntime {
             MenuAction::Navigate(screen) => {
                 if screen == MenuScreen::DressingRoom {
                     self.ensure_dressing_room();
+                }
+                if screen == MenuScreen::RecordingStudio {
+                    self.studio.open();
                 }
                 self.enter(screen);
             }
@@ -782,6 +790,7 @@ impl MenuRuntime {
                 }
             }
             MenuAction::DressingRoom(action) => self.activate_dressing_room(action),
+            MenuAction::Studio(action) => self.studio.activate(action),
             MenuAction::PlayLocalWorld(index) => {
                 if index < self.local_worlds.len() {
                     self.local_world_requested = Some(index);

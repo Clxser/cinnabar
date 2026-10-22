@@ -1,4 +1,6 @@
-use crate::{BedrockColor, GlyphQuad, TEXT_BOLD_OFFSET_64, UiLimits, UiPoint, UiRect};
+use crate::{
+    BedrockColor, GlyphQuad, TEXT_BOLD_OFFSET_64, TEXT_ITALIC_SHEAR_PX, UiLimits, UiPoint, UiRect,
+};
 
 use super::{
     TextEffects, TextShadow, UI_STYLE_BILINEAR, UiBlendMode, UiDrawBatch, UiError, UiVertex,

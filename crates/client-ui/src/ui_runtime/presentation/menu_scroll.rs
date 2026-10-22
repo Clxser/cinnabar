@@ -3,6 +3,10 @@
 use ui::UiPoint;
 
 impl super::UiPresentationRuntime {
+    /// Named editor gestures use actual painted geometry and remain correct across GUI scale changes.
+    pub fn menu_scroll_viewport(&self, key: &str) -> Option<ui::UiRect> {
+        self.menu_scrolls.viewport(key)
+    }
     /// Starts a finger gesture in the menu scroll view under its initial press.
     pub fn begin_menu_touch_scroll(&mut self, point: UiPoint) -> bool {
         self.menu_scrolls.begin_touch(point)

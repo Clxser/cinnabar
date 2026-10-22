@@ -8,6 +8,7 @@ mod bounds;
 mod culling;
 mod mesh;
 mod native;
+mod prepared;
 mod rope;
 pub use atlas::atlas_layer_limit;
 pub use block::block_mesh;
@@ -18,6 +19,9 @@ pub use mesh::{
     native_dropped_sprite_mesh,
 };
 pub use native::{DroppedItemShape, DroppedItemSpawnPose, native_dropped_item_transform};
+pub use prepared::{
+    ItemTerrainSnapshot, MAX_ITEM_TERRAIN_PUBLICATIONS, PREPARED_ITEM_ROPE_WORDS, PreparedItemRope,
+};
 pub use rope::{rope_color, rope_point, rope_ribbon};
 
 /// Maximum source extent shared by item preparation and texture upload.

@@ -7,12 +7,14 @@ pub mod cape;
 mod chunk_metrics;
 pub mod dropped_item;
 mod entity_shadow;
+pub mod environment_snapshot;
 pub mod equipment;
 mod font_atlas;
 pub mod font_shading;
 mod frame_latency;
 mod frame_pacing;
 pub mod hats;
+pub mod text_bitmap;
 pub use font_atlas::{
     FONT_ATLAS_GUTTER, FONT_ATLAS_SIDE, FontAtlas, FontAtlasFrame, FontAtlasVertex, FontRect,
 };
@@ -66,10 +68,10 @@ pub use frame_pacing::{
 };
 pub use item_geometry::{extruded_sprite_vertices, held_sprite_vertices, textured_cube_vertices};
 pub use nametag::{
-    MAX_NAMETAG_RECORDS, NAMETAG_ALPHA_CUTOFF, NAMETAG_ATLAS_SIDE, NAMETAG_BLOCKS_PER_FONT_PIXEL,
-    NAMETAG_DIM_TEXT_ALPHA, NAMETAG_LINE_PITCH_PX, NAMETAG_TEXT_REVERSE_Z_BIAS, NametagAtlasRect,
-    NametagLabel, NametagRecord, NametagScene, java_nametag_line_backgrounds,
-    nametag_line_backgrounds, nametag_line_left,
+    MAX_NAMETAG_ATLAS_CELLS, MAX_NAMETAG_RECORDS, NAMETAG_ALPHA_CUTOFF, NAMETAG_ATLAS_SIDE,
+    NAMETAG_BLOCKS_PER_FONT_PIXEL, NAMETAG_DIM_TEXT_ALPHA, NAMETAG_LINE_PITCH_PX,
+    NAMETAG_TEXT_REVERSE_Z_BIAS, NametagAtlasRect, NametagLabel, NametagRecord, NametagScene,
+    java_nametag_line_backgrounds, nametag_line_backgrounds, nametag_line_left,
 };
 pub use panorama::{MAX_PANORAMA_FACE_SIDE, PanoramaFaces, PanoramaView};
 pub use presentation::{
@@ -80,8 +82,8 @@ pub use presentation::{
 pub use ui::{
     MAX_UI_BATCHES, MAX_UI_DRAW_BYTES, MAX_UI_FIXED_TEXTURE_BYTES, MAX_UI_INDICES,
     MAX_UI_TEXTURE_BYTES, MAX_UI_TEXTURE_LAYERS, MAX_UI_TEXTURE_SIDE, MAX_UI_VERTICES,
-    UI_BLEND_ALPHA, UI_BLEND_BACKDROP, UI_BLEND_FILTER, UI_BLEND_INVERT, UI_STYLE_ADDITIVE,
-    UI_STYLE_ALPHA_TEST, UI_STYLE_COLOR_MASK, UI_STYLE_GLINT, UI_STYLE_PARTICLE,
+    PreparedUiFrame, UI_BLEND_ALPHA, UI_BLEND_BACKDROP, UI_BLEND_FILTER, UI_BLEND_INVERT,
+    UI_STYLE_ADDITIVE, UI_STYLE_ALPHA_TEST, UI_STYLE_COLOR_MASK, UI_STYLE_GLINT, UI_STYLE_PARTICLE,
     UI_STYLE_RADIAL_GRADIENT, UiRenderBatch, UiRenderInput, UiRenderReject, UiRenderRejectReason,
     UiRenderScene, UiRenderStats, UiRenderStatsSnapshot, UiRenderTextureArray, UiRenderVertex,
     UiScissor, ui_particle_uv,
@@ -93,7 +95,8 @@ pub use ui_textures::{
     UI_LOCAL_FONT_PAGE_SIDE, UI_LOCAL_ICON_FONT_PAGE_SIDE, UI_MODEL_ATLAS_PAGE_OFFSET,
     UI_MODEL_ATLAS_SIDE, UI_NATIVE_SHEET_PAGE_OFFSET, UI_PARTICLE_PAGE_OFFSET,
     UI_PLAYER_SKIN_PAGE_OFFSET, UI_SESSION_GLYPH_PAGE_OFFSET, UI_SESSION_GLYPH_PAGE_SIDE,
-    UI_SESSION_GLYPH_PAGES, UI_SESSION_ICON_PAGE_OFFSET, UiTextureBucket, UiTextureCatalog,
+    UI_SESSION_GLYPH_PAGES, UI_SESSION_ICON_PAGE_OFFSET, UI_STUDIO_LIBRARY_PAGE_OFFSET,
+    UI_STUDIO_PREVIEW_MAX_SIZE, UI_STUDIO_PREVIEW_PAGE_OFFSET, UiTextureBucket, UiTextureCatalog,
     UiTextureFormat, UiTextureLocation, UiTexturePage, UiTexturePlan,
 };
 pub use visibility::{
@@ -164,11 +167,11 @@ pub use actor::ActorRigVertexSegments;
 pub use actor::{
     ACTOR_BONE_MATRIX_BYTES, ACTOR_GPU_INSTANCE_WORDS, ACTOR_LAYER_BODY, ACTOR_LAYER_FLAME,
     ACTOR_LAYER_SKIN_BASE, ActorDrawManifestEntry, ActorGpuInstance, ActorMaterial,
-    ActorRenderIdentity, ActorRigFrameBuilder, ActorRigGeometrySpan, ActorRigRejects,
-    ActorRigRenderFrame, ActorRigRenderInput, ActorRigRoute, ActorRigSubmission, IDENTITY_UV_ANIM,
-    MAX_ACTOR_BONE_ARENA_BYTES, MAX_ACTOR_RENDER_INSTANCES, actor_bounds_are_visible,
-    actor_rig_submission_is_visible, pack_actor_light, pack_actor_light_without_lightmap,
-    pack_overlay_rgba8,
+    ActorRenderIdentity, ActorRigCatalogIdentity, ActorRigFrameBuilder, ActorRigGeometrySpan,
+    ActorRigRejects, ActorRigRenderFrame, ActorRigRenderInput, ActorRigRoute, ActorRigSubmission,
+    IDENTITY_UV_ANIM, MAX_ACTOR_BONE_ARENA_BYTES, MAX_ACTOR_RENDER_INSTANCES,
+    actor_bounds_are_visible, actor_rig_submission_is_visible, pack_actor_light,
+    pack_actor_light_without_lightmap, pack_overlay_rgba8,
 };
 pub use actor::{ACTOR_CANDIDATE_RADIUS_BLOCKS, ActorCullView, MAX_ACTOR_RENDER_DISTANCE_BLOCKS};
 pub use actor::{

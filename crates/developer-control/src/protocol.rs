@@ -5,7 +5,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{camera::CameraPath, recorder::Codec};
+use crate::camera::CameraPath;
+use recording_studio::model::ExportCodec;
 
 /// Bedrock view angles in degrees: yaw 0 faces +Z (south), pitch 90 looks straight down.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -162,7 +163,7 @@ pub struct RecordSettings {
     #[serde(default = "default_fps")]
     pub fps: u32,
     #[serde(default)]
-    pub codec: Codec,
+    pub codec: ExportCodec,
     /// Advance simulation exactly 1/fps per rendered frame instead of following the wall clock.
     #[serde(default = "default_true")]
     pub fixed_clock: bool,

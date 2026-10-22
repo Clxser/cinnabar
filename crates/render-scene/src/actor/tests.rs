@@ -271,3 +271,37 @@ fn review_render_teleport_samples_the_destination_for_local_and_remote_actors() 
         assert_eq!(frame.instances[0].position[0], 100.0);
     }
 }
+
+#[test]
+fn independent_publication_shares_catalog_without_replacing_the_live_draw() {
+    let mut live = ActorRenderScene::default();
+    let before = live.update(0.5, None, [source(7, 2.0, 0.0)]).clone();
+    let mut additional = ActorRenderScene::default();
+    additional.copy_catalog_from(&live);
+    let recorded = additional.update(0.5, None, [source(9, 12.0, 0.0)]);
+    assert_eq!(recorded.instances[0].runtime_id, 9);
+    assert_eq!(live.frame().instances[0].runtime_id, 7);
+    assert!(Arc::ptr_eq(
+        &before.rig.instances,
+        &live.frame().rig.instances
+    ));
+    assert!(Arc::ptr_eq(&before.artwork, &live.frame().artwork));
+    assert!(Arc::ptr_eq(
+        &before.rig.geometry_vertices.segments,
+        &recorded.rig.geometry_vertices.segments
+    ));
+    let identity = live.catalog_identity();
+    live.insert_geometry(
+        super::ActorRigGeometry::synthetic_cuboid(
+            render_model::skin_rig_id(99),
+            [0.0; 3],
+            [1.0; 3],
+            1,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_ne!(identity, live.catalog_identity());
+    additional.copy_catalog_from(&live);
+    assert!(additional.contains_geometry(render_model::skin_rig_id(99)));
+}

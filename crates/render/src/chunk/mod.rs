@@ -16,7 +16,7 @@ use std::{
 };
 use web_time::Instant;
 
-use assets::{Material, ModelTemplate, RuntimeAssets, TextureArray, TextureRef};
+use assets::{ModelTemplate, RuntimeAssets, TextureArray, TextureRef};
 #[cfg(test)]
 use bevy::prelude::{
     Assets, Camera, Image, Mat3, MinimalPlugins, Mut, Quat, Shader, TransformPlugin, UVec4, Vec3A,
@@ -92,7 +92,7 @@ use {
     },
 };
 
-mod bounds;
+pub(crate) mod bounds;
 mod constants;
 mod draw;
 #[cfg(feature = "enhanced")]
@@ -112,6 +112,7 @@ mod presentation;
 #[cfg(feature = "publication-test-support")]
 mod publication_test_support;
 mod queue;
+pub(crate) mod replay;
 #[cfg(feature = "shaderpacks")]
 pub(crate) mod shaderpack_sources;
 pub(crate) use coverage::TerrainCoverage;
@@ -175,8 +176,6 @@ use gpu::types::{
     summarize_model_workload, transparent_liquid_direct_draw_command,
     transparent_model_direct_draw_command,
 };
-#[allow(unused_imports)]
-use gpu::upload::model_validation::validate_partitioned_model_streams;
 #[allow(unused_imports)]
 use gpu::upload::{
     absolutize_model_lighting_bases, absolutize_partitioned_model_draw_refs,

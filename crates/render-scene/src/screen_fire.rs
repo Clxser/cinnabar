@@ -15,6 +15,39 @@ pub struct ScreenFireTexture {
 }
 
 impl ScreenFireTexture {
+    /// Shares the authored timeline policy with an independent recording without inferring animation frames.
+    pub fn recording_animation(&self) -> (&[u32], u32, bool) {
+        (&self.timeline, self.ticks_per_frame, self.blend)
+    }
+
+    /// Restores a hash-checked recording only after all raster and timeline addresses are admitted.
+    pub fn from_recording(
+        side: u32,
+        pixels: Vec<u8>,
+        frames: u32,
+        timeline: Vec<u32>,
+        ticks_per_frame: u32,
+        blend: bool,
+    ) -> Option<Self> {
+        let bytes = (side as usize)
+            .checked_mul(side as usize)?
+            .checked_mul(frames as usize)?
+            .checked_mul(4)?;
+        (side != 0
+            && frames != 0
+            && pixels.len() == bytes
+            && !timeline.is_empty()
+            && ticks_per_frame != 0
+            && timeline.iter().all(|&frame| frame < frames))
+        .then_some(Self {
+            side,
+            pixels,
+            frames,
+            timeline,
+            ticks_per_frame,
+            blend,
+        })
+    }
     /// Copies the admitted carrier's animation timeline, including server pack overrides.
     pub fn from_assets(assets: &RuntimeAssets, fire_state: u32) -> Option<Self> {
         if assets.is_diagnostic() {

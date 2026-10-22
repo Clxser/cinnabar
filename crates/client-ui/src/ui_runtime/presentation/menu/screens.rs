@@ -1,6 +1,7 @@
 mod secondary;
 mod servers;
 mod status;
+mod studio;
 
 use status::{status_extent, status_paragraphs};
 
@@ -54,6 +55,9 @@ pub(super) fn append(
             view, nodes, hits, next_id, layouts, font, metrics, solid_page, content,
         ),
         MenuScreen::Death => secondary::death(
+            view, nodes, hits, next_id, layouts, font, metrics, solid_page, content,
+        ),
+        MenuScreen::RecordingStudio => studio::fallback(
             view, nodes, hits, next_id, layouts, font, metrics, solid_page, content,
         ),
     }

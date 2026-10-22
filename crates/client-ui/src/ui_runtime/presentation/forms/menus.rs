@@ -70,6 +70,15 @@ impl UiPresentationRuntime {
             return Ok(Vec::new());
         };
         self.begin_menu_caret(Arc::make_mut(&mut view));
+        if view.screen == launcher::menu::MenuScreen::RecordingStudio {
+            let studio = Arc::make_mut(&mut Arc::make_mut(&mut view).studio);
+            studio.preview_icon = studio
+                .preview
+                .ready
+                .then(|| self.studio_preview_icon())
+                .flatten();
+            self.prepare_studio_library(&mut studio.workflow);
+        }
         if view.screen == launcher::menu::MenuScreen::Death {
             Arc::make_mut(&mut view).death_reason = runtime.death_reason().to_owned();
         }
@@ -160,7 +169,9 @@ impl UiPresentationRuntime {
             && self.engine.is_none()
             && !matches!(
                 view.screen,
-                launcher::menu::MenuScreen::DressingRoom | launcher::menu::MenuScreen::Death
+                launcher::menu::MenuScreen::DressingRoom
+                    | launcher::menu::MenuScreen::Death
+                    | launcher::menu::MenuScreen::RecordingStudio
             )
         {
             return Ok(None);
@@ -247,6 +258,13 @@ impl UiPresentationRuntime {
                     | launcher::menu::MenuField::FriendQuery
                     | launcher::menu::MenuField::SkinName
                     | launcher::menu::MenuField::RealmCode
+                    | launcher::menu::MenuField::StudioTitle
+                    | launcher::menu::MenuField::StudioDestination
+                    | launcher::menu::MenuField::StudioCamera(_)
+                    | launcher::menu::MenuField::StudioClip(_)
+                    | launcher::menu::MenuField::StudioExportRange(_)
+                    | launcher::menu::MenuField::StudioSeek
+                    | launcher::menu::MenuField::StudioLibrarySearch
                     | launcher::menu::MenuField::MacroCommand(_) => {
                         return None;
                     }
@@ -627,6 +645,7 @@ fn text_spot(
     Some(TextSpot {
         layout: None,
         field,
+        byte_range: None,
         bounds,
         left: text.left,
         factor: text.scale,

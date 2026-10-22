@@ -161,6 +161,24 @@ impl MenuRuntime {
 
     /// Returns to the screen below; an in-game root closes the menu.
     pub(super) fn go_back(&mut self) {
+        if self.screen == MenuScreen::RecordingStudio
+            && (self.studio.view.workflow.recovery.visible
+                || self.studio.view.workflow.recovery.busy)
+        {
+            if self.studio.view.workflow.recovery.busy {
+                if self.studio.view.loading {
+                    self.studio
+                        .activate(launcher::menu::studio::Action::CancelOpen);
+                }
+            } else if self.studio.view.discard.is_some() {
+                self.studio
+                    .activate(launcher::menu::studio::Action::CancelDiscard);
+            } else {
+                self.studio
+                    .activate(launcher::menu::studio::Action::HideRecovery);
+            }
+            return;
+        }
         if self.dialog == Some(launcher::menu::MenuDialog::MinecraftImport) {
             let action =
                 if self.minecraft_import.phase == launcher::minecraft_import::Phase::Offered {

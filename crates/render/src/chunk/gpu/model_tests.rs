@@ -1,7 +1,6 @@
 use super::*;
-use crate::chunk::gpu::upload::{
-    absolutize_model_draw_refs, model_validation::validate_local_model_streams,
-};
+use crate::chunk::gpu::upload::absolutize_model_draw_refs;
+use meshing::model_validation::validate_local_model_streams;
 use render_scene::{ChunkRenderInstance, ChunkUploadPriority};
 
 fn owned_model_stream_fixture() -> (

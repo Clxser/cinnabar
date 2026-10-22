@@ -1,7 +1,7 @@
 use super::*;
-use crate::chunk::gpu::upload::model_validation::validate_local_model_streams;
 use crate::chunk::transparent::liquid::transparent_liquid_phase_distance;
 use bevy::render::render_resource::FilterMode;
+use meshing::model_validation::{validate_local_model_streams, validate_partitioned_model_streams};
 use render_scene::ChunkRenderInstance;
 
 #[test]

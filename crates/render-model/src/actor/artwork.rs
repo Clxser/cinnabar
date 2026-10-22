@@ -24,6 +24,8 @@ mod pixel_cache;
 mod raster_page_tests;
 #[path = "artwork/raster_pages.rs"]
 mod raster_pages;
+#[path = "artwork/recording.rs"]
+mod recording;
 #[cfg(test)]
 #[path = "artwork/retained_equipment_tests.rs"]
 mod retained_equipment_tests;

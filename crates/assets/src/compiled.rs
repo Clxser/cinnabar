@@ -281,3 +281,50 @@ pub struct CompiledAssets {
     /// incomplete identity, so serialized output always names its inputs.
     pub provenance: BlobProvenance,
 }
+
+/// Borrowed serialization inputs let runtime snapshots preserve large texture pages without copying.
+pub(crate) struct CompiledAssetsRef<'a> {
+    pub visuals: &'a [BlockVisual],
+    pub light_properties: &'a [LightProperties],
+    pub hashed: &'a [(u32, u32)],
+    pub materials: &'a [Material],
+    pub model_templates: &'a [ModelTemplate],
+    pub model_quads: &'a [ModelQuad],
+    pub animations: &'a [Animation],
+    pub animation_frames: &'a [TextureRef],
+    pub texture_pages: &'a [TexturePage],
+    pub biomes: &'a CompiledBiomeAssets,
+    pub provenance: &'a BlobProvenance,
+}
+
+impl<'a> From<&'a CompiledAssets> for CompiledAssetsRef<'a> {
+    /// Exhaustive destructuring makes new compiler-owned fields require an explicit encoding choice.
+    fn from(compiled: &'a CompiledAssets) -> Self {
+        let CompiledAssets {
+            visuals,
+            light_properties,
+            hashed,
+            materials,
+            model_templates,
+            model_quads,
+            animations,
+            animation_frames,
+            texture_pages,
+            biomes,
+            provenance,
+        } = compiled;
+        Self {
+            visuals,
+            light_properties,
+            hashed,
+            materials,
+            model_templates,
+            model_quads,
+            animations,
+            animation_frames,
+            texture_pages,
+            biomes,
+            provenance,
+        }
+    }
+}

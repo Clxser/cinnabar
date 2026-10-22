@@ -21,6 +21,7 @@ pub mod settings_storage;
 pub mod settings_support;
 pub mod shader_pack_status;
 pub mod sign_in;
+pub mod studio;
 pub mod updates;
 pub mod view;
 pub mod worlds_tab;
@@ -50,14 +51,14 @@ macro_rules! menu_screens {
             pub fn requires_session(self) -> bool {
                 match self {
                     Self::Pause | Self::Death | Self::Invite => true,
-                    Self::Home | Self::Play | Self::Social | Self::Servers | Self::Profile | Self::DressingRoom | Self::Settings | Self::AddServer | Self::Inbox | Self::Friends => false,
+                    Self::Home | Self::Play | Self::Social | Self::Servers | Self::Profile | Self::DressingRoom | Self::Settings | Self::RecordingStudio | Self::AddServer | Self::Inbox | Self::Friends => false,
                 }
             }
         }
     };
 }
 menu_screens! {
-    Home, Play, Social, Servers, Profile, DressingRoom, Settings, AddServer,
+    Home, Play, Social, Servers, Profile, DressingRoom, Settings, RecordingStudio, AddServer,
     Pause, Death,
     /// OreUI-only screen.
     Inbox,
@@ -105,6 +106,13 @@ pub enum MenuField {
     RealmCode,
     /// One command macro slot's command box.
     MacroCommand(usize),
+    StudioTitle,
+    StudioDestination,
+    StudioCamera(recording_studio::camera::CameraParameter),
+    StudioClip(studio::ClipTimeField),
+    StudioExportRange(studio::ExportRangeField),
+    StudioSeek,
+    StudioLibrarySearch,
 }
 
 /// One renderer or shader-pack choice. Shader packs carry their list revision so an old
@@ -218,6 +226,7 @@ pub enum MenuAction {
     /// A press on the Settings Mods tab.
     Mods(crate::mods::Action),
     DressingRoom(crate::dressing_room::Action),
+    Studio(studio::Action),
     /// Answers the join's server trust prompt: "Trust and Join" (true) or "Don't Trust".
     ServerTrust(bool),
     /// A press on the pause screen's invite button or the invite screen.
@@ -232,6 +241,23 @@ impl MenuAction {
     /// The text field a press on this control focuses.
     pub fn text_field(self) -> Option<MenuField> {
         match self {
+            Self::Studio(studio::Action::EditTitleText) => Some(MenuField::StudioTitle),
+            Self::Studio(studio::Action::EditExportDestination) => {
+                Some(MenuField::StudioDestination)
+            }
+            Self::Studio(studio::Action::EditCameraValue(parameter)) => {
+                Some(MenuField::StudioCamera(parameter))
+            }
+            Self::Studio(studio::Action::EditClipTime(field)) => Some(MenuField::StudioClip(field)),
+            Self::Studio(studio::Action::EditExportRange(field)) => {
+                Some(MenuField::StudioExportRange(field))
+            }
+            Self::Studio(studio::Action::Monitoring(
+                studio::monitoring::MonitoringAction::EditSeek,
+            )) => Some(MenuField::StudioSeek),
+            Self::Studio(studio::Action::LibraryTools(studio::library::LibraryAction::Search)) => {
+                Some(MenuField::StudioLibrarySearch)
+            }
             Self::SettingsMacroCommand(slot) => Some(MenuField::MacroCommand(slot)),
             Self::RealmMembership(realm_membership::Action::EditCode) => Some(MenuField::RealmCode),
             Self::AddName => Some(MenuField::Name),
@@ -263,6 +289,7 @@ pub fn menu_reference(screen: MenuScreen) -> Option<&'static str> {
         MenuScreen::Settings => Reference::SettingsScreenControlsAndSettings.as_str(),
         MenuScreen::Invite => Reference::InviteInviteScreen.as_str(),
         MenuScreen::Profile
+        | MenuScreen::RecordingStudio
         | MenuScreen::DressingRoom
         | MenuScreen::Inbox
         | MenuScreen::Friends => return None,

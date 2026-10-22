@@ -20,8 +20,8 @@ use crate::{
     equipment_rig_id, geometry_from_geometry_index, geometry_from_runtime_assets,
     is_pack_equipment_rig_id, is_pack_rig_id, layer_geometries,
 };
-pub use catalog::ActorRigVertexSegments;
 use catalog::GeometryCatalog;
+pub use catalog::{ActorRigCatalogIdentity, ActorRigVertexSegments};
 
 use super::{ActorArtworkLocation, ActorArtworkPageId, ActorCullView};
 
@@ -329,6 +329,18 @@ struct DrawKey {
 }
 
 impl ActorRigFrameBuilder {
+    /// Identifies the immutable catalog publication, including session replacement and admission.
+    pub fn catalog_identity(&self) -> ActorRigCatalogIdentity {
+        self.catalog.identity()
+    }
+
+    /// Shares immutable geometry with an independent view, retaining no source pose or draw caches.
+    pub fn copy_catalog_from(&mut self, source: &Self) {
+        self.catalog = source.catalog.clone();
+        self.staged = source.staged.independent();
+        self.matrices = PoseMatrixCache::default();
+    }
+
     pub fn from_runtime_assets(
         assets: &RuntimeEntityAssets,
     ) -> Result<Self, ActorRigGeometryError> {

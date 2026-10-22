@@ -167,6 +167,15 @@ impl<F: PartialEq> MenuScrolls<F> {
         &self.offsets
     }
 
+    /// Returns the last painted viewport for named scroll input, including nonoverflowing views.
+    pub fn viewport(&self, key: &str) -> Option<UiRect> {
+        self.areas
+            .iter()
+            .rev()
+            .find(|area| area.key == key)
+            .map(|area| area.viewport)
+    }
+
     /// Records focus outside scroll views so returning to a view can reveal its control.
     pub fn observe_focus(&mut self, action: Option<F>) {
         if self.focused != action {

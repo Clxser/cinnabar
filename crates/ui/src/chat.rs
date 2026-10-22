@@ -1,5 +1,7 @@
 use std::{collections::VecDeque, sync::Arc};
 
+mod document;
+
 pub const MAX_CHAT_MESSAGES: usize = 512;
 pub const MAX_CHAT_RETAINED_BYTES: usize = 1_048_576;
 pub const MAX_CHAT_INPUT_BYTES: usize = 512;
@@ -42,12 +44,21 @@ impl ChatEditor {
         if maximum_bytes == 0 || maximum_bytes > MAX_CHAT_INPUT_BYTES {
             return Err(ChatEditorError::InvalidMaximum);
         }
-        Ok(Self {
+        Ok(Self::with_byte_budget(
+            std::num::NonZeroUsize::new(maximum_bytes).expect("positive chat budget"),
+        ))
+    }
+
+    /// Creates a general text field with a caller-owned byte budget. Chat callers use `new`
+    /// to retain the chat protocol limit; document editors choose and validate their own limit.
+    pub fn with_byte_budget(maximum_bytes: std::num::NonZeroUsize) -> Self {
+        let maximum_bytes = maximum_bytes.get();
+        Self {
             text: String::with_capacity(maximum_bytes),
             cursor: 0,
             selection_anchor: None,
             maximum_bytes,
-        })
+        }
     }
 
     pub fn as_str(&self) -> &str {

@@ -22,6 +22,7 @@ bridge = { path = "../../crates/bridge" }
 launcher = { path = "../../crates/launcher", features = ["shader-pack-options"] }
 mod-ui = { path = "../../crates/mod-ui" }
 oreui = { path = "../../crates/oreui" }
+recording-studio = { path = "../../crates/recording-studio" }
 player-state = { path = "../../crates/player-state" }
 protocol = { path = "../../crates/protocol" }
 render-api = { path = "../../crates/render-api" }

@@ -23,6 +23,14 @@ pub(super) struct StagedPack {
 }
 
 impl StagedPack {
+    /// Retains geometry admission sources while giving another view independent recency counters.
+    pub(super) fn independent(&self) -> Self {
+        Self {
+            geometries: self.geometries.clone(),
+            ..Default::default()
+        }
+    }
+
     pub(super) fn is_empty(&self) -> bool {
         self.geometries.is_empty()
     }

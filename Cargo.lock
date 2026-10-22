@@ -2348,6 +2348,8 @@ dependencies = [
  "protocol-ids",
  "raw-window-handle",
  "rayon",
+ "recording-scene",
+ "recording-studio",
  "render",
  "render-api",
  "render-model",
@@ -2718,6 +2720,7 @@ dependencies = [
  "pack-runtime",
  "player-state",
  "protocol",
+ "recording-studio",
  "render-api",
  "render-model",
  "render-scene",
@@ -3563,6 +3566,7 @@ name = "developer-control"
 version = "0.1.25"
 dependencies = [
  "crossbeam-channel",
+ "recording-studio",
  "mio",
  "serde",
  "serde_json",
@@ -5231,6 +5235,7 @@ dependencies = [
  "bridge",
  "cosmetics",
  "json-ui",
+ "recording-studio",
  "render-api",
  "resource-pack",
  "semantic-input",
@@ -6696,6 +6701,7 @@ dependencies = [
  "image",
  "launcher",
  "protocol",
+ "recording-studio",
  "render-api",
  "render-model",
  "resource-pack",
@@ -7563,6 +7569,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "recording-scene"
+version = "0.1.20"
+dependencies = [
+ "assets",
+ "bytemuck",
+ "crossbeam-channel",
+ "flate2",
+ "glam",
+ "meshing",
+ "particles",
+ "recording-studio",
+ "render-api",
+ "render-model",
+ "serde",
+ "serde_json",
+ "world",
+]
+
+[[package]]
+name = "recording-studio"
+version = "0.1.20"
+dependencies = [
+ "crossbeam-channel",
+ "flate2",
+ "glam",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "rectangle-pack"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7714,6 +7754,8 @@ dependencies = [
  "particles",
  "png",
  "rayon",
+ "recording-scene",
+ "recording-studio",
  "render-api",
  "render-model",
  "render-scene",
@@ -9299,6 +9341,7 @@ dependencies = [
  "launcher",
  "mod-ui",
  "oreui",
+ "recording-studio",
  "player-state",
  "protocol",
  "render-api",

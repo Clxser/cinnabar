@@ -42,6 +42,8 @@ client-state = { path = "../client-state" }
 json-ui = { path = "../json-ui" }
 launcher-host = { path = "../launcher-host" }
 pack-runtime = { path = "../pack-runtime" }
+protocol = { path = "../protocol" }
+recording-studio = { path = "../recording-studio" }
 render-scene = { path = "../render-scene" }
 resource-pack = { path = "../resource-pack" }
 rich-presence = { path = "../rich-presence" }

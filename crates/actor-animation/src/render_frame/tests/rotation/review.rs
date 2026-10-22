@@ -3,6 +3,7 @@ use protocol_ids::ActorFlag;
 
 mod cache;
 mod selected_geometry;
+mod world_body;
 use assets::{
     CompiledEntityAssets, EntityAssetKind, EntityAssetSymbol, MolangSymbol, MolangSymbolKind,
 };

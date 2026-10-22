@@ -54,6 +54,11 @@ impl WeatherTextureAssets {
             .or_else(|| self.textures.as_ref().map(|textures| &textures.end_sky))
     }
 
+    /// Shares only the runtime End sky override; the immutable base carrier already owns its fallback.
+    pub fn shared_end_sky_override(&self) -> Option<Arc<assets::weather_textures::WeatherImage>> {
+        self.end_sky.clone()
+    }
+
     #[must_use]
     pub const fn identity(&self) -> [u8; 32] {
         self.identity

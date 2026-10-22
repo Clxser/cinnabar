@@ -119,19 +119,23 @@ pub struct Collision {
     pub events: Vec<CollisionEvent>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Facing {
-    RotateXyz,
-    RotateY,
-    LookatXyz,
-    LookatY,
-    LookatDirection,
-    DirectionX,
-    DirectionY,
-    DirectionZ,
-    EmitterTransformXy,
-    EmitterTransformXz,
-    EmitterTransformYz,
+macro_rules! facing_modes {
+    ($($name:ident = $code:literal),+ $(,)?) => {
+        #[repr(u32)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum Facing { $($name = $code),+ }
+        impl Facing {
+            /// Versioned prepared-particle records derive admission from this same facing inventory.
+            pub(crate) fn from_recording(code: u32) -> Option<Self> {
+                match code { $($code => Some(Self::$name),)+ _ => None }
+            }
+        }
+    };
+}
+facing_modes! {
+    RotateXyz = 0, RotateY = 1, LookatXyz = 2, LookatY = 3, LookatDirection = 4,
+    DirectionX = 5, DirectionY = 6, DirectionZ = 7,
+    EmitterTransformXy = 8, EmitterTransformXz = 9, EmitterTransformYz = 10,
 }
 
 pub struct Flipbook {

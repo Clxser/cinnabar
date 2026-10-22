@@ -14,8 +14,10 @@ use bevy::{prelude::*, render::render_resource::TextureFormat, time::TimeUpdateS
 use developer_control::{
     clock::{FixedStepClock, RealTimePacer},
     protocol::RecordSettings,
-    recorder::{Frame, FrameSink, PixelLayout, Recorder, Summary, VideoSettings},
     server::Reply,
+};
+use recording_studio::{
+    video::{Frame, FrameSink, PixelLayout, Recorder, VideoSettings},
     wav::{WavWriter, samples_for_frame},
 };
 use serde_json::{Value, json};
@@ -115,7 +117,10 @@ pub(super) fn start(world: &mut World, settings: &RecordSettings) -> Result<Valu
     };
     let recorder = Recorder::start(VideoSettings {
         path: settings.path.clone(),
-        fps: settings.fps,
+        fps: recording_studio::FrameRate {
+            numerator: settings.fps,
+            denominator: 1,
+        },
         codec: settings.codec,
     })?;
     let audio = if settings.audio {

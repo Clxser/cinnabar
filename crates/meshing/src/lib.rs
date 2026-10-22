@@ -5,6 +5,7 @@ pub mod biome_lattice;
 mod chunk;
 mod classifier;
 mod model_ray;
+pub mod model_validation;
 pub mod occlusion;
 mod output_memory;
 pub use model_ray::model_ray_distance;

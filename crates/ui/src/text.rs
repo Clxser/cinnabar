@@ -49,6 +49,8 @@ pub const TEXT_BASELINE_64: u32 = FONT_ASCENT_TEXELS * 64;
 pub const TEXT_SHADOW_OFFSET_64: u32 = FONT_DESIGN_PIXEL_TEXELS * 64;
 /// One design pixel for bold measurement and the compiled open-font duplicate.
 pub const TEXT_BOLD_OFFSET_64: u32 = FONT_DESIGN_PIXEL_TEXELS * 64;
+/// Design-pixel lean shared by ordinary text and cached title ink; native confirmation is pending.
+pub const TEXT_ITALIC_SHEAR_PX: f32 = 1.0;
 
 const FIXED_POINT_DENOMINATOR: i64 = 64;
 const REPLACEMENT_CODEPOINT: char = '\u{fffd}';

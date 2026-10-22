@@ -227,6 +227,25 @@ fn player_skins_resident(frame: &ActorRenderFrame) -> bool {
             })
 }
 
+/// A replay frame waits for complete pose, artwork and geometry admission before publishing its image.
+pub(crate) fn replay_ready(world: &World) -> bool {
+    let Some(frame) = world.get_resource::<ActorRenderFrame>() else {
+        return false;
+    };
+    if frame.rig.instances.is_empty() {
+        return true;
+    }
+    let Some(gpu) = world.get_resource::<ActorGpu>() else {
+        return false;
+    };
+    gpu.frame_generation == frame.rig.frame_generation
+        && gpu.geometry_revision == frame.rig.geometry_revision
+        && gpu.skin_revision == frame.skin_revision
+        && gpu.instance_count as usize == frame.rig.instances.len()
+        && gpu.bind_group.is_some()
+        && gpu.artwork_current
+}
+
 /// Leaves actor rendering disabled if its initial resources cannot be allocated.
 fn init_actor_gpu(
     mut commands: Commands,

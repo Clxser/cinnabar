@@ -7,9 +7,7 @@ pub mod clock;
 pub mod endpoint;
 pub mod input;
 pub mod protocol;
-pub mod recorder;
 pub mod server;
-pub mod wav;
 
 /// Names the endpoint file a client should publish; unset leaves the control server off.
 pub const ENDPOINT_ENV: &str = "CINNABAR_DEVELOPER_CONTROL";

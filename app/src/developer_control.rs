@@ -11,6 +11,7 @@ mod input;
 mod macos;
 mod scoreboards;
 mod state;
+mod studio;
 mod surface;
 
 use std::path::PathBuf;

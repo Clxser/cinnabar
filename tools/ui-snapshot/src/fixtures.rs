@@ -16,6 +16,7 @@ mod settings_screens;
 mod shader_options;
 mod shader_pack;
 mod social_settings;
+mod studio;
 mod updates;
 
 use std::sync::Arc;
@@ -647,6 +648,96 @@ const STATES: &[State] = &[
         size: SIZE,
         gui_scale: GUI_SCALE,
         fixture: out_of_game::world_edit_after_delete_back,
+    },
+    State {
+        name: "studio-recovery",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::recovery,
+    },
+    State {
+        name: "studio-recovery-narrow",
+        size: [900, 600],
+        gui_scale: GUI_SCALE,
+        fixture: studio::recovery,
+    },
+    State {
+        name: "studio-preview-settings",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::preview_settings,
+    },
+    State {
+        name: "studio-controls",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::controls,
+    },
+    State {
+        name: "studio-setup",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::setup,
+    },
+    State {
+        name: "studio-editor",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::editor,
+    },
+    State {
+        name: "studio-editor-short",
+        size: [1280, 600],
+        gui_scale: GUI_SCALE,
+        fixture: studio::editor,
+    },
+    State {
+        name: "studio-editor-narrow",
+        size: [900, 600],
+        gui_scale: GUI_SCALE,
+        fixture: studio::editor,
+    },
+    State {
+        name: "studio-editor-small",
+        size: [640, 480],
+        gui_scale: GUI_SCALE,
+        fixture: studio::editor,
+    },
+    State {
+        name: "studio-editor-large-gui",
+        size: [900, 600],
+        gui_scale: 4,
+        fixture: studio::editor,
+    },
+    State {
+        name: "studio-camera",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::camera,
+    },
+    State {
+        name: "studio-recording",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::recording,
+    },
+    State {
+        name: "studio-audio",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::audio,
+    },
+    State {
+        name: "studio-settings",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: studio::settings,
+    },
+    State {
+        name: "studio-settings-narrow",
+        size: [900, 600],
+        gui_scale: GUI_SCALE,
+        fixture: studio::settings,
     },
     State {
         name: "chat-background-transparent",

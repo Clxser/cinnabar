@@ -4,6 +4,57 @@ use super::{Bounds, Canvas, PaintError, Rgba, UiVisual};
 use crate::images::OreUiSprite;
 
 impl Canvas<'_> {
+    /// Fits an admitted native media page without stretching its aspect ratio or sampling outside its frame.
+    pub(in super::super) fn fitted_media(
+        &mut self,
+        icon: ui::IconRef,
+        bounds: Bounds,
+    ) -> Result<(), PaintError> {
+        let Some(fitted) = Self::fitted_media_bounds(icon, bounds) else {
+            return Ok(());
+        };
+        self.media_in_bounds(icon, fitted)
+    }
+
+    /// Uses caller-computed image geometry; the caller may clip a zoomed image without stretching it.
+    pub(in super::super) fn media_in_bounds(
+        &mut self,
+        icon: ui::IconRef,
+        bounds: Bounds,
+    ) -> Result<(), PaintError> {
+        self.push(
+            bounds,
+            UiVisual::StyledSprite {
+                texture_page: icon.page,
+                uv: icon.uv.map(f32::from),
+                color: [255; 4],
+                style: ui::UI_STYLE_BILINEAR,
+            },
+        )?;
+        Ok(())
+    }
+
+    /// Returns the displayed image rectangle so viewport input and overlays share its letterboxing.
+    pub(in super::super) fn fitted_media_bounds(
+        icon: ui::IconRef,
+        bounds: Bounds,
+    ) -> Option<Bounds> {
+        let width = f32::from(icon.uv[2].saturating_sub(icon.uv[0]));
+        let height = f32::from(icon.uv[3].saturating_sub(icon.uv[1]));
+        if width == 0.0
+            || height == 0.0
+            || bounds[2] <= bounds[0]
+            || bounds[3] <= bounds[1]
+            || !bounds.iter().all(|v| v.is_finite())
+        {
+            return None;
+        }
+        let scale = ((bounds[2] - bounds[0]) / width).min((bounds[3] - bounds[1]) / height);
+        let x = (bounds[0] + bounds[2] - width * scale) * 0.5;
+        let y = (bounds[1] + bounds[3] - height * scale) * 0.5;
+        Some([x, y, x + width * scale, y + height * scale])
+    }
+
     fn native_sprite(&self, key: &str) -> Option<(u16, OreUiSprite)> {
         let originals = self.originals?;
         let key = originals

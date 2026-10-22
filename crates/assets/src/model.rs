@@ -336,6 +336,13 @@ pub struct ModelQuad {
 
 const _: () = assert!(std::mem::size_of::<ModelQuad>() == 48);
 
+impl ModelQuad {
+    /// Validates authored flag selectors and the material reference against its owning table.
+    pub const fn is_well_formed(&self, material_count: usize) -> bool {
+        model_quad_flags_are_valid(self.flags) && (self.material as usize) < material_count
+    }
+}
+
 /// Optional face and cull-face use `0 = none`, `1..=6 =
 /// down/up/west/east/north/south` in their respective three-bit fields.
 pub const MODEL_QUAD_FLAG_FACE_MASK: u32 = 0x07;

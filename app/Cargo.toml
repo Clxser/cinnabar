@@ -113,6 +113,8 @@ oreui = { path = "../crates/oreui" }
 mod-ui = { path = "../crates/mod-ui" }
 particles = { path = "../crates/particles" }
 resource-pack = { path = "../crates/resource-pack" }
+recording-studio = { path = "../crates/recording-studio" }
+recording-scene = { path = "../crates/recording-scene" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 sim = { path = "../crates/sim" }
 serde = { version = "1", features = ["derive"] }

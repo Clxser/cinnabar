@@ -128,6 +128,11 @@ impl ChunkStore {
         self.chunks.get(&key)
     }
 
+    /// Enumerates received sparse columns without synthesizing unloaded terrain.
+    pub fn received_columns(&self) -> impl ExactSizeIterator<Item = ChunkKey> + '_ {
+        self.chunks.keys().copied()
+    }
+
     /// Includes authoritative all-air columns that allocate no sparse storage.
     #[must_use]
     pub fn contains_column(&self, key: ChunkKey) -> bool {

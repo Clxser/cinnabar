@@ -5,6 +5,7 @@ mod geometry_tests;
 mod hashed_ids;
 mod id_remap;
 mod overlay;
+mod recording;
 mod server_defined_blocks;
 
 pub use id_remap::SequentialIdRemap;

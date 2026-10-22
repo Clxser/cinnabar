@@ -129,6 +129,13 @@ pub(crate) fn install_overlay_graph(world: &mut World) {
     }
     let installed = world
         .try_schedule_scope(Core3d, |_, schedule| {
+            schedule.configure_sets(
+                crate::frame_capture::WorldFrameCapture
+                    .after(Core3dSystems::PostProcess)
+                    .after(world_overlay)
+                    .before(UiOverlayLabel)
+                    .before(UiOverlayPostLabel),
+            );
             schedule.add_systems((
                 crate::gpu_timing::profiled(
                     world::ui_world::<false>,
@@ -139,6 +146,11 @@ pub(crate) fn install_overlay_graph(world: &mut World) {
                 .after(crate::scene_target::ScenePass::Transparent)
                 .before(crate::scene_target::ScenePass::Finish)
                 .in_set(Core3dSystems::MainPass),
+                world_overlay
+                    .after(Core3dSystems::PostProcess)
+                    .after(crate::ModPassLabel)
+                    .before(UiOverlayLabel)
+                    .before(UiOverlayPostLabel),
                 crate::gpu_timing::profiled(
                     ui_overlay,
                     Some(render_scene::RuntimeStage::GpuUi),
@@ -413,6 +425,28 @@ type UiOverlayQuery = (
     Option<&'static super::composite::UiLayerTexture>,
 );
 
+/// Keeps camera effects in clean recordings while screen-space HUD batches stay separate.
+fn world_overlay(
+    world: &World,
+    query: bevy::render::renderer::ViewQuery<(
+        &ViewTarget,
+        &ExtractedCamera,
+        Option<&MainPassResolutionOverride>,
+    )>,
+    mut context: RenderContext,
+) {
+    let entity = query.entity();
+    let (target, camera, resolution_override) = query.into_inner();
+    crate::screen_overlay_render::draw_before_hud(
+        entity,
+        target,
+        camera,
+        resolution_override,
+        &mut context,
+        world,
+    );
+}
+
 /// Draws the retained HUD after world post-processing.
 pub(crate) fn ui_overlay(
     world: &World,
@@ -422,14 +456,6 @@ pub(crate) fn ui_overlay(
     let view_entity = query.entity();
     let (target, main, camera, resolution_override, layer) = query.into_inner();
     let context = &mut context;
-    crate::screen_overlay_render::draw_before_hud(
-        view_entity,
-        target,
-        camera,
-        resolution_override,
-        context,
-        world,
-    );
     let (Some(gpu), Some(pipeline_cache), Some(composite)) = (
         world.get_resource::<UiGpu>(),
         world.get_resource::<PipelineCache>(),
@@ -556,7 +582,12 @@ pub(crate) fn ui_overlay(
         let held = content.as_ref().and_then(|content| raster.holds(content));
         let animation = layered
             .iter()
-            .fold(UiDamage::Unchanged, |damage, (index, _, _)| {
+            .fold(UiDamage::Unchanged, |damage, (index, batch, _)| {
+                let damage = damage.union(
+                    world
+                        .get_resource::<super::native_preview::PreviewCopy>()
+                        .map_or(UiDamage::Unchanged, |preview| preview.damage(batch)),
+                );
                 damage.union(
                     gpu.animation_damage
                         .get(*index)

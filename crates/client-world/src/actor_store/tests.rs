@@ -33,7 +33,7 @@ pub(super) fn spawn(runtime_id: u64, unique_id: i64) -> ActorEvent {
     })
 }
 
-fn player_spawn(runtime_id: u64, unique_id: i64, x: f32) -> ActorEvent {
+pub(super) fn player_spawn(runtime_id: u64, unique_id: i64, x: f32) -> ActorEvent {
     let ActorEvent::Spawn(mut spawn) = spawn(runtime_id, unique_id) else {
         unreachable!();
     };

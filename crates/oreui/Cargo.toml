@@ -16,6 +16,7 @@ bridge = { path = "../bridge" }
 image.workspace = true
 launcher = { path = "../launcher" }
 protocol = { path = "../protocol" }
+recording-studio = { path = "../recording-studio" }
 render-api = { path = "../render-api" }
 render-model = { path = "../render-model" }
 resource-pack = { path = "../resource-pack", default-features = false }

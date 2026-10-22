@@ -13,6 +13,7 @@ mod retained;
 mod rotation;
 pub(super) mod sampling;
 mod schedule;
+mod world_body;
 
 use motion_endpoint::{MotionEndpoint, MotionEndpointState};
 
@@ -25,6 +26,12 @@ pub struct ActorRenderLayers<'a> {
     pub held_item_scale: Option<f32>,
 }
 
+struct CachedLayers<'a> {
+    layers: Option<ActorRenderLayers<'a>>,
+    /// An exhausted evaluation can contain completed-tick fallbacks instead of this frame's pose.
+    exhausted: bool,
+}
+
 /// A bounded render-layer evaluation frame, borrowing tick-owned actor and rig state.
 pub struct ActorRenderFrame<'a> {
     store: &'a ActorAnimationStore,
@@ -33,7 +40,8 @@ pub struct ActorRenderFrame<'a> {
     camera_position: [f32; 3],
     alpha: f32,
     remaining_ops: usize,
-    sampled_layers: HashMap<u64, Option<ActorRenderLayers<'a>>>,
+    world_body: Option<u64>,
+    sampled_layers: HashMap<u64, CachedLayers<'a>>,
 }
 
 impl<'a> ActorRenderFrame<'a> {
@@ -56,8 +64,26 @@ impl<'a> ActorRenderFrame<'a> {
                 0.0
             },
             remaining_ops: MAX_MOLANG_OPS_PER_RENDER_FRAME,
+            world_body: None,
             sampled_layers: HashMap::new(),
         }
+    }
+
+    /// Gives an external view its own local body without changing the live hand or tick state.
+    pub fn with_world_body(mut self, runtime_id: u64) -> Self {
+        if self.world_body != Some(runtime_id) {
+            self.sampled_layers.remove(&runtime_id);
+        }
+        self.world_body = Some(runtime_id);
+        self
+    }
+
+    /// Transfers same-clock cached samples to an additional view with its own bounded work budget.
+    /// Camera and interpolation inputs stay exact; `with_world_body` replaces only the local sample.
+    pub fn into_additional_view(mut self) -> Self {
+        self.sampled_layers.retain(|_, sample| !sample.exhausted);
+        self.remaining_ops = MAX_MOLANG_OPS_PER_RENDER_FRAME;
+        self
     }
 
     fn samples_rig_scale(&self, runtime_id: u64) -> bool {
@@ -122,7 +148,17 @@ impl<'a> ActorRenderFrame<'a> {
         runtime_id: u64,
         remaining_ops: &mut usize,
         sample_skin: bool,
+        world_body: bool,
     ) -> Option<ActorRenderLayers<'a>> {
+        if world_body {
+            return world_body::sample(
+                store,
+                actors.animated_actor(runtime_id)?,
+                (camera_rotation, camera_position, alpha),
+                remaining_ops,
+                sample_skin,
+            );
+        }
         store.render_layers(
             actors.animated_actor(runtime_id)?,
             alpha,
@@ -138,15 +174,21 @@ impl<'a> ActorRenderFrame<'a> {
         self.sampled_layers
             .entry(runtime_id)
             .or_insert_with(|| {
-                Self::sample(
+                let layers = Self::sample(
                     self.store,
                     self.actors,
                     (self.camera_rotation, self.camera_position, self.alpha),
                     runtime_id,
                     &mut self.remaining_ops,
                     true,
-                )
+                    self.world_body == Some(runtime_id),
+                );
+                CachedLayers {
+                    layers,
+                    exhausted: self.remaining_ops == 0,
+                }
             })
+            .layers
             .as_ref()
     }
 
@@ -154,7 +196,7 @@ impl<'a> ActorRenderFrame<'a> {
     /// Ordinary rigs retain their tick scale without evaluating layer expressions.
     pub fn sample_rig_scale(&mut self, mut rig: ActorRigSnapshot<'a>) -> ActorRigSnapshot<'a> {
         let id = rig.actor.runtime_id;
-        if self.samples_rig_scale(id)
+        if (self.world_body == Some(id) || self.samples_rig_scale(id))
             && let Some(scale) = self
                 .cached_layers(id)
                 .and_then(|layers| layers.render.iter().find_map(|layer| layer.sampled_scale))

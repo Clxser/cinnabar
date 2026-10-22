@@ -82,6 +82,11 @@ type UiPreparationOptions<'w> = (
     Option<Res<'w, UiHandCoverage>>,
     Option<Res<'w, UiGlintSettings>>,
     Option<Res<'w, profile::UiProfile>>,
+    Option<Res<'w, crate::upload_staging::BufferUploadStaging>>,
+    Option<Res<'w, render_scene::ui::UiHudCaptureScope>>,
+    Option<Res<'w, render_scene::ui::RecordedUiTime>>,
+    Option<Res<'w, render_scene::ui::UiPreparedHud>>,
+    Option<Res<'w, render_scene::UiItemGlintTexture>>,
 );
 
 /// Admits a publication and updates its shared GPU storage without waiting for readback.
@@ -91,7 +96,7 @@ pub(crate) fn prepare_ui_resources(
     mut gpu: ResMut<UiGpu>,
     stats: Res<UiRenderStatsResource>,
     tick: SystemChangeTick,
-    (coverage, glint, profile): UiPreparationOptions<'_>,
+    (coverage, glint, profile, staging, scope, recorded_time, hud, glint_texture): UiPreparationOptions<'_>,
 ) {
     let same_device = &gpu.device == uploads.device.wgpu_device();
     let device_valid =
@@ -99,6 +104,12 @@ pub(crate) fn prepare_ui_resources(
             .observe(uploads.device.last_changed(), tick.this_run(), same_device);
     if let Some(coverage) = coverage {
         coverage.clear();
+    }
+    let capture = scope
+        .as_deref()
+        .is_some_and(|scope| scope.enabled && scope.allowed);
+    if !capture && let Some(hud) = &hud {
+        hud.publish(None);
     }
     let Some(input) = scene.input.as_ref() else {
         gpu.accepted_revision = None;
@@ -139,7 +150,12 @@ pub(crate) fn prepare_ui_resources(
         input.viewport_size,
         glint.as_deref().copied().unwrap_or_default(),
         animated,
-        || started.elapsed().as_secs_f32(),
+        || {
+            recorded_time
+                .as_deref()
+                .and_then(|time| time.0)
+                .unwrap_or_else(|| started.elapsed().as_secs_f32())
+        },
         |uniform| {
             #[cfg(feature = "tracy")]
             let _span =
@@ -194,6 +210,16 @@ pub(crate) fn prepare_ui_resources(
         if gpu.textures.resident(&input.textures) {
             return;
         }
+        if gpu.accepted_revision == Some(input.revision) {
+            capture_hud(
+                capture,
+                hud.as_deref(),
+                input,
+                &gpu.viewport_uploads,
+                glint_texture.as_deref(),
+            );
+        }
+        return;
     }
     if let Err(reason) = input.validate() {
         gpu.accepted_revision = None;
@@ -270,6 +296,34 @@ pub(crate) fn prepare_ui_resources(
         stats.rejected_revision = None;
         stats.rejected_reason = None;
     });
+    capture_hud(
+        capture,
+        hud.as_deref(),
+        input,
+        &gpu.viewport_uploads,
+        glint_texture.as_deref(),
+    );
+}
+
+/// Only a fully admitted native UI frame can replace the source used by opted-in HUD recording.
+fn capture_hud(
+    enabled: bool,
+    output: Option<&render_scene::ui::UiPreparedHud>,
+    input: &Arc<UiRenderInput>,
+    viewport: &super::viewport::ViewportUploads,
+    glint: Option<&render_scene::UiItemGlintTexture>,
+) {
+    if enabled
+        && let (Some(output), Some((time_seconds, glint_strength))) =
+            (output, viewport.recorded_phase())
+    {
+        output.publish(Some(render_model::PreparedUiFrame {
+            input: Arc::clone(input),
+            glint: glint.and_then(|glint| glint.0.clone()),
+            time_seconds,
+            glint_strength,
+        }));
+    }
 }
 
 /// Checks arena growth and staging before committing the publication's resident geometry.

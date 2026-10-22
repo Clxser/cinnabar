@@ -7,7 +7,9 @@ use std::{
 };
 
 use assets::RuntimeFontCatalog;
-use render_model::{NAMETAG_ATLAS_SIDE, NametagAtlasRect};
+use render_model::{
+    MAX_NAMETAG_ATLAS_CELLS as MAX_ATLAS_LINES, NAMETAG_ATLAS_SIDE, NametagAtlasRect,
+};
 use ui::{
     FONT_DESIGN_PIXEL_TEXELS, TEXT_BASELINE_64, TEXT_BOLD_OFFSET_64, TEXT_LINE_HEIGHT_64,
     TextLayout, TextLayoutCache, TextLayoutRequest, TextStyle, TextWrap, UiScale,
@@ -351,6 +353,13 @@ impl NametagAtlas {
             self.revision,
         )
     }
+}
+
+struct LineLayout {
+    layout: Arc<TextLayout>,
+    size: [u32; 2],
+    top: i32,
+    advance: u32,
 }
 
 /// Pads bounded inner dimensions; full-span edges use the atlas sampler's existing clamp.

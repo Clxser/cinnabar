@@ -11,6 +11,12 @@ pub(super) struct ViewportUploads {
 }
 
 impl ViewportUploads {
+    /// Prepared recording samples use the exact phase and strength sent to this frame's shader.
+    pub(super) fn recorded_phase(&self) -> Option<(f32, f32)> {
+        self.last
+            .as_ref()
+            .map(|uniform| (uniform.time_seconds, uniform.glint_strength))
+    }
     /// Samples an active glint clock and dispatches changed viewport bytes without allocating.
     pub(super) fn upload(
         &mut self,

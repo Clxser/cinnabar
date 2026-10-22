@@ -19,6 +19,8 @@ use std::{
     time::Duration,
 };
 mod priority;
+mod tap;
+pub use tap::{LiveAudioBlock, LiveAudioTap, TAP_BLOCK_SAMPLES};
 
 pub(super) const VOICE_LIMIT: usize = 16;
 /// Captured audio is interleaved stereo.
@@ -163,7 +165,8 @@ const MIXER_RATE: u32 = 48_000;
 /// Keeps the default output alive on the platform that owns its callbacks.
 #[cfg(not(target_arch = "wasm32"))]
 struct Output {
-    handle: OutputStreamHandle,
+    mixer: Arc<rodio::dynamic_mixer::DynamicMixerController<f32>>,
+    tap: Arc<tap::SharedTap>,
     _release: Sender<()>,
 }
 
@@ -174,7 +177,8 @@ impl Output {
         &self,
         source: impl Source<Item = f32> + Send + 'static,
     ) -> Result<(), rodio::PlayError> {
-        self.handle.play_raw(source)
+        self.mixer.add(source);
+        Ok(())
     }
 }
 
@@ -184,6 +188,7 @@ type Opening<H = (OutputStreamHandle, u32)> = Receiver<Option<(H, Sender<()>)>>;
 
 /// Main-thread owner. No automatic reopen, alternate device enumeration or Sink.
 pub struct AudioDevice {
+    preview: crate::preview::PreviewOutput,
     /// The default output while its owner thread is still opening it.
     #[cfg(not(target_arch = "wasm32"))]
     opening: Option<Opening>,
@@ -193,10 +198,13 @@ pub struct AudioDevice {
     capture: Option<Arc<rodio::dynamic_mixer::DynamicMixerController<f32>>>,
     #[cfg(any(test, feature = "test-support"))]
     test_output: Option<Arc<rodio::dynamic_mixer::DynamicMixerController<f32>>>,
+    #[cfg(any(test, feature = "test-support"))]
+    test_preview: bool,
 }
 impl AudioDevice {
     pub fn disabled() -> Self {
         Self {
+            preview: crate::preview::PreviewOutput::new(MIXER_RATE),
             #[cfg(not(target_arch = "wasm32"))]
             opening: None,
             output: None,
@@ -204,6 +212,8 @@ impl AudioDevice {
             capture: None,
             #[cfg(any(test, feature = "test-support"))]
             test_output: None,
+            #[cfg(any(test, feature = "test-support"))]
+            test_preview: false,
         }
     }
     /// Starts opening the default output on its own thread; later uses poll without waiting.
@@ -249,8 +259,27 @@ impl AudioDevice {
             match opening.try_recv() {
                 Ok(Some(((handle, sample_rate), release))) => {
                     self.sample_rate = sample_rate;
+                    self.preview.set_sample_rate(sample_rate);
+                    let (mixer, source) =
+                        rodio::dynamic_mixer::mixer::<f32>(CAPTURE_CHANNELS, sample_rate);
+                    // Keep the common hardware source alive between finite game voices.
+                    mixer.add(rodio::source::Zero::<f32>::new(
+                        CAPTURE_CHANNELS,
+                        sample_rate,
+                    ));
+                    let tap = tap::SharedTap::new(sample_rate);
+                    if let Err(error) =
+                        handle.play_raw(priority::CallbackSource::new(crate::preview::Routed::new(
+                            tap::Tapped::new(source, Arc::clone(&tap)),
+                            self.preview.clone(),
+                        )))
+                    {
+                        eprintln!("named audio disabled: output mixer submission failed: {error}");
+                        return;
+                    }
                     self.output = Some(Output {
-                        handle,
+                        mixer,
+                        tap,
                         _release: release,
                     });
                 }
@@ -297,6 +326,28 @@ impl AudioDevice {
         self.resolve();
         self.sample_rate
     }
+    /// Returns the dedicated device lane; gameplay capture never receives this lane's samples.
+    pub fn preview_output(&mut self) -> crate::preview::PreviewOutput {
+        self.resolve();
+        self.preview.clone()
+    }
+    /// An offline capture mixer is not a hardware preview output.
+    pub fn preview_available(&mut self) -> bool {
+        self.resolve();
+        #[cfg(any(test, feature = "test-support"))]
+        if self.test_output.is_some() && self.test_preview {
+            return true;
+        }
+        self.output.is_some()
+    }
+    /// Device opening is reported independently from offline capture ownership.
+    pub fn preview_opening(&mut self) -> bool {
+        self.resolve();
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.opening.is_some();
+        #[cfg(target_arch = "wasm32")]
+        false
+    }
     pub fn available(&mut self) -> bool {
         if self.capture.is_some() {
             return true;
@@ -311,7 +362,7 @@ impl AudioDevice {
     /// Only replaces hardware transport; admission and source ownership are real.
     #[cfg(any(test, feature = "test-support"))]
     pub fn memory_mixer() -> (Self, rodio::dynamic_mixer::DynamicMixer<f32>) {
-        let (controller, mixer) = rodio::dynamic_mixer::mixer::<f32>(2, MIXER_RATE);
+        let (controller, mixer) = rodio::dynamic_mixer::mixer::<f32>(CAPTURE_CHANNELS, MIXER_RATE);
         (
             Self {
                 test_output: Some(controller),
@@ -319,6 +370,19 @@ impl AudioDevice {
             },
             mixer,
         )
+    }
+    /// Exercises the actual exclusive route and hardware sample clock without opening a physical device.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn memory_preview_mixer() -> (Self, rodio::dynamic_mixer::DynamicMixer<f32>) {
+        let (controller, game) = rodio::dynamic_mixer::mixer::<f32>(CAPTURE_CHANNELS, MIXER_RATE);
+        let device = Self {
+            test_output: Some(controller),
+            test_preview: true,
+            ..Self::disabled()
+        };
+        let (output, mixer) = rodio::dynamic_mixer::mixer::<f32>(CAPTURE_CHANNELS, MIXER_RATE);
+        output.add(crate::preview::Routed::new(game, device.preview.clone()));
+        (device, mixer)
     }
     /// Diverts every later source into the returned stereo mixer at
     /// [`crate::audio::OUTPUT_RATE`], which the caller pulls at its own pace, until
@@ -331,6 +395,19 @@ impl AudioDevice {
     }
     pub fn stop_capture(&mut self) {
         self.capture = None;
+    }
+
+    /// Copies the actual hardware mix without redirecting or replaying audible game sources.
+    /// None means hardware is unavailable, a fixed-clock capture owns audio, or a tap is draining.
+    pub fn start_live_capture(&mut self) -> Option<LiveAudioTap> {
+        if self.capture.is_some() {
+            return None;
+        }
+        self.resolve();
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.output.as_ref()?.tap.begin();
+        #[cfg(target_arch = "wasm32")]
+        None
     }
     /// Plays an already-stereo f32 source; false when the device is unavailable or rejects it.
     pub fn play_source(&mut self, source: impl Source<Item = f32> + Send + 'static) -> bool {
@@ -430,5 +507,7 @@ fn open_on_owner_thread<S: 'static, H: Send + 'static>(
     Ok((opening, owner))
 }
 
+#[cfg(test)]
+mod preview_tests;
 #[cfg(test)]
 mod tests;

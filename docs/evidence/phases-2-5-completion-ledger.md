@@ -409,6 +409,17 @@ vocabulary. Screen routing and core form/context consumers use those names;
 remaining controller migrations and stale-name corrections are incomplete.
 This adds no live visual evidence and leaves the UI acceptance gate open.
 
+Recording Studio now has isolated compact panels, timeline selection/snap/track
+controls, projected replay-camera editing and bounded device-paced audio preview.
+Anonymous production-painter fixtures cover wide, narrow and short editor, audio
+and settings states. Focused checks compile; end-to-end replay, long-session,
+audio-device and measured recording-overhead qualification remain incomplete.
+These creator features do not close native UI or replay parity gates.
+
+The subsequent viewer refresh, opt-in player/path markers, orbit gestures,
+rotated Fit/Fill composition, world-label channel and clean HUD-free capture
+changes are formatted source only. Added regressions and capture/playback
+acceptance remain unrun; the earlier focused check result does not cover them.
 Cube inventory thumbnails and alpha-tested GUI meshes share the canonical outward
 faces. Regressions cover projected surface orientation, transparent front holes and
 retained alpha/depth/UV behavior. Broader custom-model sidedness remains open.
@@ -687,6 +698,35 @@ block-entity admission, spawner displays, portal scans and visual diagnostics.
 Unsupported and provisional routes remain explicit. This changes no completion
 status; the remaining renderer and live acceptance gates stay open in `plan.md`.
 
+## Recording Studio hardening
+
+Studio now separates interactive preview budgets from exact export settings,
+reuses bounded capture resources and same-clock actor samples, and records queue
+health. Versioned autosaves restore an unsaved copy; durable discard revisions,
+source admission, process supervision and no-clobber publication protect project
+and export files. Settings use focused pages with shared keyboard/help commands
+and actual dependency/encoder probes.
+
+This pass is source-reviewed and formatted only. New regression source has not
+been executed, and no compilation, rendered UI, long-session, crash-recovery or
+hardware recording/export acceptance was performed. The reported recording FPS
+drop is not remeasured. Older captures cannot regain omitted data. No parity,
+performance or production-readiness completion entry advances; remaining work is
+tracked in `plan.md` and `docs/recording-studio.md`.
+
+## Recording Studio replay reference
+
+Source exposes stationary entity tracking, independent camera FOV curves,
+limited new-player POV anchors, temporary monitoring speed/loop/seek controls,
+project-clock export In/Out with separate frame/PCM admission, and bounded library
+search/sort. Existing editing and effect workflows remain available. The reference
+trailer does not specify its unopened Module controls; existing Effects are the
+explicit interpretation. Undocumented module parity remains open.
+
+These additions have formatting and source review only. Regression source is
+unrun; no compilation, rendered UI, runtime synchronization, sustained performance
+or export acceptance was performed. Unsupported/legacy POV, remote pose-transition
+eye behavior and gapless looping remain incomplete. No completion entry advances.
 Retained mod drawing has authority and lifetime contracts. Geometry admission validates
 vertices once and caches extent and quota facts for every shared instance and callback
 group. Extent checks use conservative box and sphere bounds without revisiting vertices.

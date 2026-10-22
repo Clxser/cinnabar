@@ -178,6 +178,16 @@ impl Default for ActorRenderScene {
 }
 
 impl ActorRenderScene {
+    /// Identifies the source geometry epoch without building a throwaway rig frame.
+    pub fn catalog_identity(&self) -> render_model::ActorRigCatalogIdentity {
+        self.rig_builder.catalog_identity()
+    }
+
+    /// Shares native catalog pages with a separate publication; live frames and skin slots stay owned.
+    pub fn copy_catalog_from(&mut self, source: &Self) {
+        self.rig_builder.copy_catalog_from(&source.rig_builder);
+    }
+
     pub fn configure_artwork(&mut self, artwork: ActorArtworkPages) {
         self.reset();
         self.frame.artwork = Arc::new(artwork);

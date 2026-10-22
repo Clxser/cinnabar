@@ -8,12 +8,14 @@ mod modifiers;
 use modifiers::MenuModifiers;
 pub(super) mod fields;
 mod ime;
+mod keyboard;
 pub use ime::drive_menu_ime;
 mod preview;
 mod remapping;
 mod scroll;
 mod server_list;
 mod settings_pointer;
+mod studio_camera;
 
 use clipboard::MenuClipboard;
 use context::MenuInputContext;
@@ -34,7 +36,7 @@ use bevy::{
 use ui::{ChatEditor, ToastPress, UiPoint};
 
 use crate::ui_resources::{UiPresentationResource, UiRuntimeResource};
-use client_ui::ui_runtime::presentation::UiPresentationRuntime;
+use client_ui::ui_runtime::{PlatformClipboard, presentation::UiPresentationRuntime};
 use launcher::menu::view::MenuCaret;
 use {super::MenuRuntime, launcher::menu::MenuField};
 
@@ -85,88 +87,6 @@ pub struct GuiScaleDrag {
 }
 
 impl MenuRuntime {
-    /// Focus `field` with its caret after the text, as a newly selected box.
-    pub(super) fn focus_field(&mut self, field: MenuField) {
-        self.field = Some(field);
-        self.edit_field(|editor| editor.move_end(false));
-    }
-
-    fn has_focused_field(&self) -> bool {
-        self.field.is_some()
-    }
-
-    fn editor(&self, field: MenuField) -> &ChatEditor {
-        match field {
-            MenuField::FriendQuery => &self.friend_query,
-            MenuField::RealmCode => &self.realm_membership.code,
-            MenuField::Name => &self.name,
-            MenuField::Address => &self.address,
-            MenuField::Port => &self.port,
-            MenuField::WorldName => &self.local_ui.name,
-            MenuField::WorldSeed => &self.local_ui.seed,
-            MenuField::SkinName => &self.skin_name,
-            MenuField::MacroCommand(slot) => &self.macro_commands[slot],
-        }
-    }
-
-    fn editor_mut(&mut self, field: MenuField) -> &mut ChatEditor {
-        match field {
-            MenuField::FriendQuery => &mut self.friend_query,
-            MenuField::RealmCode => &mut self.realm_membership.code,
-            MenuField::Name => &mut self.name,
-            MenuField::Address => &mut self.address,
-            MenuField::Port => &mut self.port,
-            MenuField::WorldName => &mut self.local_ui.name,
-            MenuField::WorldSeed => &mut self.local_ui.seed,
-            MenuField::SkinName => &mut self.skin_name,
-            MenuField::MacroCommand(slot) => &mut self.macro_commands[slot],
-        }
-    }
-
-    /// `field`'s current text.
-    pub fn field_text(&self, field: MenuField) -> &str {
-        self.editor(field).as_str()
-    }
-
-    pub(super) fn caret(&self) -> MenuCaret {
-        MenuCaret {
-            byte: self
-                .field
-                .map_or(0, |field| self.editor(field).cursor_byte()),
-            selection: self
-                .field
-                .and_then(|field| self.editor(field).selection())
-                .map(|range| [range.start, range.end]),
-            revision: self.caret_revision,
-            shown: true,
-        }
-    }
-
-    /// Apply `edit` to the focused field; every edit or caret move restarts the blink,
-    /// as vanilla's text edit box shows its caret again after typing.
-    fn edit_field(&mut self, edit: impl FnOnce(&mut ChatEditor)) {
-        let Some(field) = self.field else {
-            return;
-        };
-        if field == MenuField::SkinName && self.dressing_room.busy {
-            return;
-        }
-        edit(self.editor_mut(field));
-        if let MenuField::MacroCommand(slot) = field {
-            self.sync_macro_command(slot);
-        }
-        if field == MenuField::RealmCode
-            && let Some(state) = &mut self.realm_membership.state
-        {
-            state.code = self.realm_membership.code.as_str().to_owned();
-            state.error = None;
-        }
-        self.caret_revision = self.caret_revision.wrapping_add(1);
-        if field == MenuField::SkinName {
-            self.sync_skin_name_draft();
-        }
-    }
-
     /// A press inside the focused field puts its caret at `byte`.
     pub fn place_caret(&mut self, byte: usize) {
         self.edit_field(|editor| editor.place_cursor(byte));
@@ -201,7 +121,9 @@ impl MenuRuntime {
             let mut insertion = String::new();
             for character in text
                 .chars()
-                .filter(|character| !character.is_control())
+                .filter(|character| {
+                    !character.is_control() || field == MenuField::StudioTitle && *character == '\n'
+                })
                 .filter(accepts)
             {
                 if insertion.len() + character.len_utf8() > capacity {
@@ -278,7 +200,18 @@ pub fn drive_menu_input(
         mut keyboard_messages,
         mut focus,
         driven,
+        keyboard_events,
+        motion_events,
+        mut camera_input,
     } = context;
+    let elapsed = time.as_ref().map_or(0.0, |time| time.delta_secs_f64());
+    camera_input.observe(
+        keyboard_events.as_deref(),
+        mouse_messages.as_deref(),
+        motion_events.as_deref(),
+        menu.studio.view.camera_workspace.focused,
+        window.1.focused,
+    );
     if driven.is_none()
         && (!window.1.focused || focus.as_ref().is_some_and(|focus| !focus.available()))
         || !menu.is_visible()
@@ -296,9 +229,13 @@ pub fn drive_menu_input(
     }
     if let Some(time) = time {
         menu.advance_death_controls(time.delta_secs_f64());
+        let studio_visible =
+            menu.is_visible() && menu.screen() == launcher::menu::MenuScreen::RecordingStudio;
+        menu.studio.tick(time.delta_secs_f64(), studio_visible);
     }
     menu.settings.slider_hovered = None;
     if consent.is_some_and(|consent| consent.0) {
+        menu.studio.cancel_pointer();
         presentation.cancel_menu_player_preview_input();
         presentation.cancel_menu_server_list_input();
         gui_scale_drag.preview_touch = None;
@@ -337,12 +274,12 @@ pub fn drive_menu_input(
             }
         }
     }
-    let wheel: Vec<(f32, bool)> = wheel_messages
+    let wheel: Vec<([f32; 2], bool)> = wheel_messages
         .as_deref()
         .map(|messages| {
             wheel_cursor
                 .read(messages)
-                .map(|wheel| (wheel.y, wheel.unit == MouseScrollUnit::Pixel))
+                .map(|wheel| ([wheel.x, wheel.y], wheel.unit == MouseScrollUnit::Pixel))
                 .collect()
         })
         .unwrap_or_default();
@@ -363,6 +300,7 @@ pub fn drive_menu_input(
             || runtime.server_forms().owns_input()
                 && (!menu.is_visible() || runtime.server_forms().settings_form_active())
     }) {
+        menu.studio.release_camera();
         presentation.cancel_menu_player_preview_input();
         presentation.cancel_menu_server_list_input();
         gui_scale_drag.preview_touch = None;
@@ -381,6 +319,7 @@ pub fn drive_menu_input(
     if driven.is_none()
         && (!window.focused || focus.as_ref().is_some_and(|focus| !focus.available()))
     {
+        menu.studio.cancel_pointer();
         presentation.cancel_menu_player_preview_input();
         presentation.cancel_menu_server_list_input();
         gui_scale_drag.preview_touch = None;
@@ -427,6 +366,7 @@ pub fn drive_menu_input(
         }
     }
     if !menu.is_visible() {
+        menu.studio.cancel_pointer();
         presentation.cancel_menu_player_preview_input();
         presentation.cancel_menu_server_list_input();
         gui_scale_drag.preview_touch = None;
@@ -542,15 +482,44 @@ pub fn drive_menu_input(
     let pointer_pressed = mouse_buttons.pressed(MouseButton::Left) || gui_scale_drag.left_held;
     let pointer_just_pressed =
         mouse_buttons.just_pressed(MouseButton::Left) || (pointer_pressed && !menu.pointer_down);
-    let server_list_owns_pointer = server_list::drive(
-        &mut presentation,
+    let camera_owns_pointer = camera_input.drive(
         &mut menu,
-        pointer,
+        cursor_position.map(|point| point.to_array()),
         pointer_pressed,
         pointer_just_pressed,
-        &touches,
-        &mut gui_scale_drag.server_list_touch,
+        elapsed,
+        studio_camera::viewport_visible(&presentation.0),
     );
+    let studio_owns_pointer = camera_owns_pointer
+        || if menu.screen() == launcher::menu::MenuScreen::RecordingStudio {
+            let hovered = menu.hovered;
+            menu.studio.pointer(
+                hovered,
+                cursor_position.map(|position| [position.x, position.y]),
+                pointer_pressed,
+                pointer_just_pressed,
+                [
+                    modifiers.shift(),
+                    modifiers.shortcut(),
+                    modifiers.0 & (MenuModifiers::ALT_LEFT | MenuModifiers::ALT_RIGHT) != 0,
+                ],
+            )
+        } else {
+            false
+        };
+    if studio_owns_pointer {
+        menu.field = None;
+    }
+    let server_list_owns_pointer = studio_owns_pointer
+        || server_list::drive(
+            &mut presentation,
+            &mut menu,
+            pointer,
+            pointer_pressed,
+            pointer_just_pressed,
+            &touches,
+            &mut gui_scale_drag.server_list_touch,
+        );
     let preview_owns_pointer =
         if menu.dialog.is_some() || (menu.is_connecting() && menu.feeds.server_trust.is_some()) {
             gui_scale_drag.preview_touch = None;
@@ -599,8 +568,29 @@ pub fn drive_menu_input(
         gui_scale_drag.captured = false;
     }
     if let Some(point) = pointer {
-        for (notches, pixels) in wheel {
-            presentation.scroll_menu(point, notches, pixels);
+        for ([horizontal, vertical], pixels) in wheel {
+            let studio = menu.screen() == launcher::menu::MenuScreen::RecordingStudio;
+            let ruler = matches!(
+                menu.hovered,
+                Some(launcher::menu::MenuAction::Studio(
+                    launcher::menu::studio::Action::Scrub { .. }
+                        | launcher::menu::studio::Action::TimelineOverview { .. }
+                ))
+            );
+            let handled = studio
+                && menu.studio.timeline_wheel(
+                    point,
+                    presentation.menu_scroll_viewport(launcher::menu::studio::TIMELINE_SCROLL_ID),
+                    ruler,
+                    horizontal,
+                    vertical,
+                    pixels,
+                    modifiers.shift(),
+                    modifiers.shortcut(),
+                );
+            if !handled {
+                presentation.scroll_menu(point, vertical, pixels);
+            }
         }
     }
     // A scrollbar press or drag scrolls instead of pressing what lies beneath.
@@ -857,84 +847,13 @@ pub fn drive_menu_input(
             menu.go_back_from_input();
         }
     }
-    for input in keyboard_messages.read() {
-        modifiers.observe(input);
-        if input.state != ButtonState::Pressed {
-            continue;
-        }
-        if matches!(
-            input.key_code,
-            KeyCode::ArrowLeft
-                | KeyCode::ArrowRight
-                | KeyCode::ArrowUp
-                | KeyCode::ArrowDown
-                | KeyCode::Tab
-        ) {
-            menu.input_mode = MenuInputMode::Keyboard;
-        }
-        // Caret and deletion keys come first: Backspace and Delete carry control
-        // text that the shortcut guard below would otherwise swallow.
-        if menu.edit_key(input.key_code, modifiers.shift(), modifiers.shortcut()) {
-            continue;
-        }
-        if modifiers.shortcut() && menu.has_focused_field() {
-            match input.key_code {
-                KeyCode::KeyA => {
-                    menu.select_all_text();
-                    continue;
-                }
-                KeyCode::KeyC => {
-                    if let Some(text) = menu.selected_text() {
-                        clipboard.write_text(text.to_owned());
-                    }
-                    continue;
-                }
-                KeyCode::KeyV => {
-                    let maximum = menu.remaining_text_capacity();
-                    if let Some(text) = clipboard.read_text_bounded(maximum) {
-                        menu.edit_text(&text);
-                    }
-                    continue;
-                }
-                _ => {}
-            }
-            if input.text.is_some() {
-                continue;
-            }
-        }
-        match input.key_code {
-            // A held key's repeats keep moving focus and typing but never go back or activate.
-            KeyCode::Escape | KeyCode::Backspace | KeyCode::Enter | KeyCode::NumpadEnter
-                if input.repeat => {}
-            KeyCode::Space if input.repeat && !menu.has_focused_field() => {}
-            KeyCode::Escape => menu.go_back_from_input(),
-            KeyCode::Backspace if native_settings => menu.go_back_from_input(),
-            KeyCode::ArrowUp => {
-                menu.move_directional_focus(launcher::menu::view::SettingsFocusAxis::Vertical, -1)
-            }
-            KeyCode::ArrowLeft => menu.move_horizontal_focus(-1),
-            KeyCode::ArrowDown => {
-                menu.move_directional_focus(launcher::menu::view::SettingsFocusAxis::Vertical, 1)
-            }
-            KeyCode::ArrowRight => menu.move_horizontal_focus(1),
-            KeyCode::Tab => menu.move_focus(if modifiers.shift() { -1 } else { 1 }),
-            KeyCode::Enter | KeyCode::NumpadEnter if menu.field == Some(MenuField::SkinName) => {
-                menu.activate(launcher::menu::MenuAction::DressingRoom(
-                    launcher::dressing_room::Action::SaveRename,
-                ));
-            }
-            KeyCode::Enter | KeyCode::NumpadEnter => menu.activate_focused(),
-            KeyCode::Space if native_settings && !menu.has_focused_field() => {
-                menu.activate_focused()
-            }
-            _ if menu.has_focused_field() && !modifiers.shortcut() => {
-                if let Some(text) = input.text.as_deref() {
-                    menu.edit_text(text);
-                }
-            }
-            _ => {}
-        }
-    }
+    keyboard::drive(
+        &mut menu,
+        &mut keyboard_messages,
+        &mut modifiers,
+        &mut clipboard,
+        native_settings,
+    );
     if (!menu.is_visible()
         || (!gameplay_pending && menu.gameplay_return_pending())
         || (!respawn_pending && menu.death_loading)

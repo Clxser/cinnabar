@@ -257,6 +257,15 @@ fn action_panel(
         Some(MenuAction::Navigate(MenuScreen::Settings)),
     )?;
     y += canvas.r(5.6);
+    widgets::button(
+        canvas,
+        view,
+        [x, y, right, y + canvas.r(4.8)],
+        Variant::Secondary,
+        launcher::menu::studio::TITLE,
+        Some(MenuAction::Navigate(MenuScreen::RecordingStudio)),
+    )?;
+    y += canvas.r(5.6);
     link(
         canvas,
         view,

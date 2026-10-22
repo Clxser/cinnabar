@@ -30,7 +30,7 @@ pub(super) fn cue_is_open(event_type: i32, event_value: i32) -> bool {
     event_type == CONTAINER_EVENT_TYPE && event_value > 0
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct ContainerLids {
     /// Openness and the frame that last advanced it.
     openness: HashMap<[i32; 3], (f32, u64)>,

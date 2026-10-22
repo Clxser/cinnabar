@@ -124,6 +124,14 @@ pub(crate) struct ParticleGpu {
     bound: (Option<BufferId>, Option<BufferId>, u64),
 }
 
+/// Historical atlas patches must replay from their baseline after a backward seek.
+pub(crate) fn reset_replay(world: &mut World) {
+    if let Some(mut gpu) = world.get_resource_mut::<ParticleGpu>() {
+        gpu.base = None;
+        gpu.uploaded_seq = 0;
+    }
+}
+
 #[cfg(feature = "shaderpacks")]
 impl ParticleGpu {
     /// The uploaded particle atlas with its dynamic tiles, which shader-pack particle draws

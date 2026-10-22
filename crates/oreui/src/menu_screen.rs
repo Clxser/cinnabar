@@ -40,6 +40,7 @@ pub fn draws_menu(view: &MenuView) -> bool {
                 MenuScreen::Home
                     | MenuScreen::DressingRoom
                     | MenuScreen::Settings
+                    | MenuScreen::RecordingStudio
                     | MenuScreen::Profile
                     | MenuScreen::Inbox
                     | MenuScreen::Friends
@@ -275,6 +276,11 @@ impl Screen for OreUiScreen {
             focus = Some(focus_actions(&canvas));
         } else {
             match screen {
+                MenuScreen::RecordingStudio => {
+                    canvas.capture_focus = true;
+                    super::studio::draw(&mut canvas, view, size)?;
+                    focus = Some(focus_actions(&canvas));
+                }
                 MenuScreen::Death => {
                     canvas.capture_focus = true;
                     death::draw(&mut canvas, view, size, translate)?;

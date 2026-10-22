@@ -39,13 +39,15 @@ impl MotionEndpointState {
         budget: &mut EvalBudget<'_>,
         scratch: &'a mut evaluation::variables::frame::FrameVariables,
     ) -> Result<MotionEndpoint<'a>, EvalError> {
+        let context = camera.unwrap_or(&self.context);
+        let view_changed = context.is_local_first_person != self.context.is_local_first_person;
         let evaluator = evaluation::Evaluator {
-            context: camera.unwrap_or(&self.context),
+            context,
             anim_tick: self.anim_tick,
             life_tick: self.life_tick,
             swell_amount: Some(amount),
             presentation_alpha: Some(base.context.frame_alpha),
-            query_history: Some(&self.queries),
+            query_history: (!view_changed).then_some(self.queries.as_slice()),
             actor: match self.actor.as_deref() {
                 Some(actor) => actor,
                 None => base.actor,
@@ -53,6 +55,16 @@ impl MotionEndpointState {
             ..base
         };
         let mut variables = scratch.lease(&self.variables);
+        if view_changed {
+            tick::apply_engine_variables(
+                &evaluator.layout.engine,
+                &mut variables,
+                evaluator.actor,
+                context,
+                evaluator.input,
+                &state.motion,
+            );
+        }
         if let Some(swing) = swing {
             variables.set(evaluator.layout.engine.attack_time, swing);
         }
@@ -93,10 +105,19 @@ impl MotionEndpointState {
                 state,
                 clips::ClipHistory {
                     clips: &self.clips,
-                    clocks: &self.clocks,
-                    controllers: &self.controllers,
+                    clocks: if view_changed && self.clocks.is_empty() {
+                        &state.clip_clocks
+                    } else {
+                        &self.clocks
+                    },
+                    controllers: if view_changed || self.controllers.is_empty() {
+                        &state.controllers
+                    } else {
+                        &self.controllers
+                    },
                     journal: &self.journal,
                     server_effects: &self.server_effects,
+                    reselect: view_changed,
                 },
                 self.sampling.as_deref(),
                 false,

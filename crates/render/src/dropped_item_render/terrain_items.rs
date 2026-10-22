@@ -21,6 +21,19 @@ pub(crate) struct TerrainItemMeshGenerations {
 }
 
 impl TerrainItemMeshGenerations {
+    /// Publishes the generations that the native item pass actually used for visibility decisions.
+    pub(super) fn publish_recording(
+        &self,
+        target: &render_scene::dropped_item::recording::ItemReplayVisibility,
+    ) {
+        target.publish(
+            self.session_id,
+            self.generations
+                .iter()
+                .map(|(key, generation)| (*key, *generation)),
+        );
+    }
+
     pub(crate) fn record(&mut self, key: SubChunkKey, generation: u64) {
         if self.required.contains(&key) {
             self.generations

@@ -272,6 +272,19 @@ impl WorldAuthority {
         self.actors.get(runtime_id)
     }
 
+    /// A retained rider link excludes standing POV even before its mount or rider flags arrive.
+    pub fn standing_player_view(
+        &self,
+        runtime_id: u64,
+        alpha: f32,
+    ) -> Option<([f32; 3], [f32; 2])> {
+        let actor = self.actors.get(runtime_id)?;
+        actor.standing_player_view(
+            alpha,
+            self.actors.ridden_unique_id(actor.unique_id).is_some(),
+        )
+    }
+
     /// Returns the session, dimension and spawn identity that owns the current actor.
     pub fn actor_lifetime(&self, runtime_id: u64) -> Option<actor_animation::ActorLifetimeId> {
         self.actors.lifetime(runtime_id)

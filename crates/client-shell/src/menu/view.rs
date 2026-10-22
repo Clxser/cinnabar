@@ -85,6 +85,7 @@ impl MenuRuntime {
             auth_state,
             connecting: self.is_connecting(),
             dressing_room: self.dressing_room.clone(),
+            studio: self.studio.view.clone(),
             player_skin: Some(self.player_skin.standard_skin()),
             player_skin_model: self.player_skin.model(),
             disconnect_message: self.disconnect_message.clone(),

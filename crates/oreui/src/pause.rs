@@ -23,7 +23,7 @@ const CAPTION_HEIGHT: f32 = CAPTION.line + 1.6;
 
 /// The compact card includes the wardrobe among its actions.
 fn action_count(compact: bool) -> f32 {
-    if compact { 4.0 } else { 3.0 }
+    if compact { 6.0 } else { 5.0 }
 }
 
 /// The space needed for the heading, full-height actions and optional title art, in rem.
@@ -130,7 +130,9 @@ fn draw_layout(
     canvas.text_line("GAME MENU", [x, y], right - x, HEADER5, TEXT)?;
     y += heading_height;
     canvas.text_line(
-        if view.updates.ready.is_some() {
+        if let Some(message) = view.studio.capture.message.as_deref() {
+            message
+        } else if view.updates.ready.is_some() {
             "Update ready"
         } else {
             "Pick up where you left off."
@@ -146,6 +148,20 @@ fn draw_layout(
     for (label, variant, action) in [
         ("Resume game", Variant::Hero, MenuAction::PauseResume),
         ("Settings", Variant::Secondary, MenuAction::PauseSettings),
+        (
+            "Recording Studio",
+            Variant::Secondary,
+            MenuAction::Navigate(MenuScreen::RecordingStudio),
+        ),
+        (
+            if view.studio.capture.phase.busy() {
+                "Stop recording"
+            } else {
+                "Start recording"
+            },
+            Variant::Neutral,
+            MenuAction::Studio(launcher::menu::studio::Action::ToggleRecording),
+        ),
     ] {
         widgets::button(
             canvas,

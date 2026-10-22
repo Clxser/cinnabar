@@ -25,25 +25,75 @@ use crossbeam_channel::{Receiver, Sender};
 use client_shell::ui_resources::UiRuntimeResource;
 
 mod offscreen;
+mod scale;
 
 type SaveResult = Result<String, String>;
 type CaptureConsumer = Box<dyn FnOnce(&Image) + Send + Sync>;
+type OwnedCaptureConsumer = Box<dyn FnOnce(Image) + Send + Sync>;
+type SizedCaptureConsumer = Box<dyn FnOnce(Result<Image, String>) + Send + Sync>;
 
 /// Everything that wants this frame's pixels. Bevy silently drops a second capture of one
 /// window in a frame, so a single readback serves every consumer.
 #[derive(Resource, Default)]
-pub(crate) struct FrameCapture(Vec<CaptureConsumer>);
+pub(crate) struct FrameCapture {
+    shared: Vec<CaptureConsumer>,
+    owned: Vec<OwnedCaptureConsumer>,
+    sized: Option<SizedCapture>,
+}
+
+struct SizedCapture {
+    size: [u32; 2],
+    source: [u32; 2],
+    hud: bool,
+    consumers: Vec<SizedCaptureConsumer>,
+}
 
 impl FrameCapture {
     /// Queues a consumer of this frame's shared readback.
+    #[cfg(any(feature = "developer-control", test))]
     pub(crate) fn request(&mut self, consumer: impl FnOnce(&Image) + Send + Sync + 'static) {
-        self.0.push(Box::new(consumer));
+        self.shared.push(Box::new(consumer));
+    }
+
+    /// The last owned consumer receives the readback allocation without another full-image copy.
+    pub(crate) fn request_owned(&mut self, consumer: impl FnOnce(Image) + Send + Sync + 'static) {
+        self.owned.push(Box::new(consumer));
+    }
+
+    /// Samples world or final GPU output before readback; native screenshots take frame priority.
+    pub(crate) fn request_sized(
+        &mut self,
+        size: [u32; 2],
+        source: [u32; 2],
+        hud: bool,
+        consumer: impl FnOnce(Result<Image, String>) + Send + Sync + 'static,
+    ) -> Result<(), String> {
+        recording_studio::video::frame_byte_len(size)?;
+        if size
+            .iter()
+            .zip(source)
+            .any(|(&side, original)| side < 2 || side > original)
+        {
+            return Err("The recording output must fit inside the original viewport.".into());
+        }
+        let request = self.sized.get_or_insert_with(|| SizedCapture {
+            size,
+            source,
+            hud,
+            consumers: Vec::new(),
+        });
+        if request.size != size || request.source != source || request.hud != hud {
+            return Err(
+                "Only one recording size and HUD policy can be captured in a frame.".into(),
+            );
+        }
+        request.consumers.push(Box::new(consumer));
+        Ok(())
     }
 
     /// Runs image conversion and encoding on the existing I/O task pool after readback.
     pub(crate) fn request_encoded(&mut self, consumer: impl FnOnce(Image) + Send + Sync + 'static) {
-        self.request(move |image| {
-            let image = image.clone();
+        self.request_owned(move |image| {
             bevy::tasks::IoTaskPool::get()
                 .spawn(async move { consumer(image) })
                 .detach();
@@ -60,6 +110,7 @@ pub(crate) fn configure_frame_capture(app: &mut App) {
         .init_resource::<offscreen::FrameTarget>()
         .add_systems(bevy::prelude::PreUpdate, offscreen::prepare)
         .add_systems(Last, spawn_frame_capture.in_set(FrameCaptureSet));
+    scale::configure(app);
 }
 
 fn spawn_frame_capture(
@@ -67,10 +118,14 @@ fn spawn_frame_capture(
     target: Res<offscreen::FrameTarget>,
     mut commands: Commands,
 ) {
-    if capture.0.is_empty() {
+    if capture.shared.is_empty() && capture.owned.is_empty() {
         return;
     }
-    let mut consumers = std::mem::take(&mut capture.0);
+    // Two screenshot owners cannot redirect the same camera output in Bevy's preparation phase.
+    // Dropping the recording callback releases its slot as missed; the user's native shot wins.
+    capture.sized = None;
+    let mut consumers = std::mem::take(&mut capture.shared);
+    let mut owned = std::mem::take(&mut capture.owned);
     let screenshot = target
         .0
         .as_ref()
@@ -79,9 +134,15 @@ fn spawn_frame_capture(
         });
     commands
         .spawn(screenshot)
-        .observe(move |captured: On<ScreenshotCaptured>| {
+        .observe(move |mut captured: On<ScreenshotCaptured>| {
             for consumer in consumers.drain(..) {
                 consumer(&captured.image);
+            }
+            if let Some(last) = owned.pop() {
+                for consumer in owned.drain(..) {
+                    consumer(captured.image.clone());
+                }
+                last(std::mem::take(&mut captured.event_mut().image));
             }
         });
 }
@@ -282,6 +343,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn recording_requests_keep_native_size_and_hud_policy_explicit() {
+        for hud in [false, true] {
+            let mut capture = FrameCapture::default();
+            capture
+                .request_sized([64, 32], [64, 32], hud, |_| {})
+                .unwrap();
+            let request = capture.sized.as_ref().unwrap();
+            assert_eq!(request.hud, hud);
+            assert_eq!(request.size, request.source);
+            assert!(
+                capture
+                    .request_sized([64, 32], [64, 32], !hud, |_| {})
+                    .is_err()
+            );
+            assert_eq!(capture.sized.as_ref().unwrap().hud, hud);
+            assert!(capture.shared.is_empty() && capture.owned.is_empty());
+            capture
+                .request_sized([64, 32], [64, 32], hud, |_| {})
+                .unwrap();
+            assert_eq!(capture.sized.as_ref().unwrap().consumers.len(), 2);
+        }
+    }
+
+    #[test]
     fn encoding_consumers_run_outside_the_readback_observer() {
         bevy::tasks::IoTaskPool::get_or_init(bevy::tasks::TaskPool::new);
         let observer_thread = std::thread::current().id();
@@ -298,7 +383,7 @@ mod tests {
             true,
             Default::default(),
         );
-        capture.0.pop().unwrap()(&frame);
+        capture.owned.pop().unwrap()(frame);
         let mut result = None;
         test_time::eventually("off-thread image encoding", || {
             result = receiver.try_recv().ok();

@@ -39,6 +39,7 @@ mod entity_shadow_render;
 pub use enhanced::EnhancedRenderPlugin;
 pub use entity_shadow_render::EntityShadowRenderPlugin;
 mod far_terrain;
+pub mod frame_capture;
 pub use far_terrain::FarTerrainRenderPlugin;
 mod gpu_allocation;
 mod gpu_timing;
@@ -77,13 +78,14 @@ mod pack_skybox;
 mod panorama_render;
 mod particle_render;
 
-mod pipeline_warmup;
+pub mod pipeline_warmup;
 #[cfg(test)]
 #[path = "pipeline_warmup/app_tests.rs"]
 mod pipeline_warmup_app_tests;
 
 mod present_mode;
 mod primitive_shapes;
+pub mod replay;
 pub use primitive_shapes::PrimitiveShapesRenderPlugin;
 mod render_bounds;
 

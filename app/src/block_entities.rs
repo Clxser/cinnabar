@@ -10,7 +10,7 @@ mod cracks;
 mod describe;
 mod sign_text;
 mod state;
-mod system;
+pub(crate) mod system;
 
 pub(crate) use system::{
     BlockEntityFont, BlockEntityRuntime, block_entity_scene, configure, load_block_entity_carrier,

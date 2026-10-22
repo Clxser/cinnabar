@@ -195,10 +195,7 @@ fn registered_pipelines_ready(cache: &PipelineCache, registry: &mut WarmupRegist
     for &id in ids.iter() {
         ready &= match cache.get_render_pipeline_state(id) {
             CachedPipelineState::Ok(_) => true,
-            CachedPipelineState::Err(
-                ShaderCacheError::ShaderNotLoaded(_)
-                | ShaderCacheError::ShaderImportNotYetAvailable,
-            ) => false,
+            CachedPipelineState::Err(error) if shader_pending(error) => false,
             CachedPipelineState::Err(error) => {
                 if failed.insert(id) {
                     error!("pipeline prewarm {id:?}: {error}");
@@ -209,6 +206,14 @@ fn registered_pipelines_ready(cache: &PipelineCache, registry: &mut WarmupRegist
         };
     }
     ready
+}
+
+/// Bevy retries missing shader assets and imports when their asynchronous loads complete.
+pub fn shader_pending(error: &ShaderCacheError) -> bool {
+    matches!(
+        error,
+        ShaderCacheError::ShaderNotLoaded(_) | ShaderCacheError::ShaderImportNotYetAvailable
+    )
 }
 
 #[cfg(test)]

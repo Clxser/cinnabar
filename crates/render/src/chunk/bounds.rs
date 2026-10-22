@@ -9,7 +9,8 @@ const MODEL_PADDING: i32 = (1.0 + block_transform::random_offset::MAX_AXIS_OFFSE
 pub(in crate::chunk) const MODEL_BOUNDS: [[i32; 3]; 2] =
     [[-MODEL_PADDING; 3], [SIDE + MODEL_PADDING; 3]];
 
-pub(in crate::chunk) fn aabb(models: bool) -> Aabb {
+/// Shares conservative prepared-terrain extents with live publication and isolated replay scenes.
+pub(crate) fn aabb(models: bool) -> Aabb {
     let [low, high] = if models { MODEL_BOUNDS } else { FULL_BOUNDS };
     let low = Vec3A::from_array(low.map(|value| value as f32));
     let high = Vec3A::from_array(high.map(|value| value as f32));

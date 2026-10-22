@@ -342,6 +342,7 @@ pub(super) fn snapshot(world: &World) -> Value {
             .and_then(|ui| super::scoreboards::snapshot(ui.scoreboards())),
         "screens": screens(world),
         "menu": menu_snapshot,
+        "studio": menu.map(|menu| super::studio::snapshot(&menu.view().studio)),
         "dressing_room": menu.map(|menu| {
             let view = menu.view();
             let room = &view.dressing_room;

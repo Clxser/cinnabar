@@ -11,6 +11,7 @@ mod event_budget;
 mod library;
 mod molang;
 mod particle;
+pub mod replay;
 mod system;
 mod triggers;
 mod world;

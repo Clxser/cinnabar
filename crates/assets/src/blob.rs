@@ -30,6 +30,29 @@ use crate::{
 // texture references carry three page bits so a session palette can shard across several
 // device-limited arrays; reject earlier carriers.
 pub const BLOB_VERSION: u32 = 19;
+
+/// Recording bodies retain runtime mip sizes; startup carriers keep their canonical fixed layout.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WorldBlobMode {
+    Carrier,
+    Recording,
+}
+
+impl WorldBlobMode {
+    /// A recording-only sentinel is rejected by the ordinary carrier decoder.
+    pub const fn texture_header(self) -> [u32; 2] {
+        match self {
+            Self::Carrier => [TILE_SIZE, MIP_COUNT],
+            Self::Recording => [0, 0],
+        }
+    }
+    pub const fn maximum_pages(self) -> usize {
+        match self {
+            Self::Carrier => MAX_CARRIER_TEXTURE_PAGES,
+            Self::Recording => crate::MAX_TEXTURE_PAGES,
+        }
+    }
+}
 pub const BLOB_MAGIC: [u8; 8] = {
     let mut magic = *b"MCBEAS00";
     magic[6] += (BLOB_VERSION / 10) as u8;
@@ -63,8 +86,21 @@ pub(crate) const MAX_VISUALS: usize = 65_536;
 /// Serializes canonical, bounded world-carrier compiler output with embedded
 /// source provenance and a trailing SHA-256.
 pub fn encode_blob(compiled: &CompiledAssets) -> Result<Box<[u8]>, AssetError> {
-    validate_compiled(compiled)?;
-    crate::material_variations::validate(&compiled.materials)?;
+    encode_borrowed(
+        &crate::compiled::CompiledAssetsRef::from(compiled),
+        WorldBlobMode::Carrier,
+        usize::MAX,
+    )
+}
+
+/// Serializes borrowed runtime tables with an explicit envelope page and byte budget.
+pub(crate) fn encode_borrowed(
+    compiled: &crate::compiled::CompiledAssetsRef<'_>,
+    mode: WorldBlobMode,
+    maximum_bytes: usize,
+) -> Result<Box<[u8]>, AssetError> {
+    validate_compiled(compiled, mode)?;
+    crate::material_variations::validate(compiled.materials)?;
     let sizes = [
         size(compiled.visuals.len(), VISUAL_BYTES, "visual")?,
         size(compiled.hashed.len(), HASH_ENTRY_BYTES, "hash")?,
@@ -116,12 +152,17 @@ pub fn encode_blob(compiled: &CompiledAssets) -> Result<Box<[u8]>, AssetError> {
     }
     let payload_length = offsets[12];
     let total_length = add(payload_length, HASH_BYTES, "blob hash")?;
+    if total_length > maximum_bytes {
+        return Err(invalid(
+            "frozen runtime assets exceed their recording byte budget",
+        ));
+    }
     let mut bytes = Vec::with_capacity(total_length);
     bytes.extend_from_slice(&BLOB_MAGIC);
     for value in [
         BLOB_VERSION,
-        TILE_SIZE,
-        MIP_COUNT,
+        mode.texture_header()[0],
+        mode.texture_header()[1],
         count(compiled.visuals.len(), "visual count")?,
         count(compiled.hashed.len(), "hash count")?,
         count(compiled.materials.len(), "material count")?,
@@ -150,7 +191,7 @@ pub fn encode_blob(compiled: &CompiledAssets) -> Result<Box<[u8]>, AssetError> {
     ));
     debug_assert_eq!(bytes.len(), HEADER_BYTES);
 
-    for (visual, light) in compiled.visuals.iter().zip(&compiled.light_properties) {
+    for (visual, light) in compiled.visuals.iter().zip(compiled.light_properties) {
         for material in visual.faces {
             push_u32(&mut bytes, material);
         }
@@ -166,11 +207,11 @@ pub fn encode_blob(compiled: &CompiledAssets) -> Result<Box<[u8]>, AssetError> {
         push_u32(&mut bytes, visual.variant);
         visual.destroy.write(&mut bytes);
     }
-    for &(hash, visual) in &compiled.hashed {
+    for &(hash, visual) in compiled.hashed {
         push_u32(&mut bytes, hash);
         push_u32(&mut bytes, visual);
     }
-    for material in &compiled.materials {
+    for material in compiled.materials {
         push_u32(&mut bytes, material.texture.raw());
         push_u32(&mut bytes, material.flags);
         push_u32(&mut bytes, material.animation);
@@ -178,12 +219,12 @@ pub fn encode_blob(compiled: &CompiledAssets) -> Result<Box<[u8]>, AssetError> {
         push_u32(&mut bytes, material.variation_count);
         push_u32(&mut bytes, material.variation_weight);
     }
-    for template in &compiled.model_templates {
+    for template in compiled.model_templates {
         push_u32(&mut bytes, template.quad_start);
         push_u32(&mut bytes, template.quad_count);
         push_u32(&mut bytes, template.flags);
     }
-    for quad in &compiled.model_quads {
+    for quad in compiled.model_quads {
         for position in quad.positions {
             for coordinate in position {
                 bytes.extend_from_slice(&coordinate.to_le_bytes());
@@ -197,7 +238,7 @@ pub fn encode_blob(compiled: &CompiledAssets) -> Result<Box<[u8]>, AssetError> {
         push_u32(&mut bytes, quad.material);
         push_u32(&mut bytes, quad.flags);
     }
-    for animation in &compiled.animations {
+    for animation in compiled.animations {
         push_u32(&mut bytes, animation.frame_start);
         push_u32(&mut bytes, animation.frame_count);
         push_u32(&mut bytes, animation.ticks_per_frame);
@@ -206,7 +247,7 @@ pub fn encode_blob(compiled: &CompiledAssets) -> Result<Box<[u8]>, AssetError> {
         push_u32(&mut bytes, animation.replicate);
         push_u32(&mut bytes, animation.flags);
     }
-    for frame in &compiled.animation_frames {
+    for frame in compiled.animation_frames {
         push_u32(&mut bytes, frame.raw());
     }
 
@@ -216,15 +257,22 @@ pub fn encode_blob(compiled: &CompiledAssets) -> Result<Box<[u8]>, AssetError> {
         let digest = texture_digest(&page.texture);
         push_u32(&mut bytes, index as u32);
         push_u32(&mut bytes, page.texture.layers);
-        push_u32(&mut bytes, MIP_COUNT);
-        push_u32(&mut bytes, 0);
+        push_u32(&mut bytes, page.texture.mips.len() as u32);
+        push_u32(
+            &mut bytes,
+            if mode == WorldBlobMode::Recording {
+                page.texture.mips[0].size
+            } else {
+                0
+            },
+        );
         push_offset(&mut bytes, texture_offset, "page payload offset")?;
         push_offset(&mut bytes, length, "page payload length")?;
         bytes.extend_from_slice(&digest);
         texture_offset = add(texture_offset, length, "page payload")?;
     }
     debug_assert_eq!(bytes.len(), offsets[8]);
-    for page in &compiled.texture_pages {
+    for page in compiled.texture_pages {
         for mip in &page.texture.mips {
             bytes.extend_from_slice(&mip.rgba8);
         }
@@ -258,7 +306,11 @@ pub fn encode_blob(compiled: &CompiledAssets) -> Result<Box<[u8]>, AssetError> {
     Ok(bytes.into_boxed_slice())
 }
 
-fn validate_compiled(compiled: &CompiledAssets) -> Result<(), AssetError> {
+fn validate_compiled(
+    compiled: &crate::compiled::CompiledAssetsRef<'_>,
+    mode: WorldBlobMode,
+) -> Result<(), AssetError> {
+    let maximum_pages = mode.maximum_pages();
     if !compiled.provenance.is_complete() {
         return Err(invalid("compiled asset provenance is incomplete"));
     }
@@ -288,10 +340,9 @@ fn validate_compiled(compiled: &CompiledAssets) -> Result<(), AssetError> {
         compiled.animation_frames.len(),
         MAX_ANIMATION_FRAMES,
     )?;
-    if compiled.texture_pages.is_empty() || compiled.texture_pages.len() > MAX_CARRIER_TEXTURE_PAGES
-    {
+    if compiled.texture_pages.is_empty() || compiled.texture_pages.len() > maximum_pages {
         return Err(invalid(format!(
-            "texture page count must be between one and {MAX_CARRIER_TEXTURE_PAGES}"
+            "texture page count must be between one and {maximum_pages}"
         )));
     }
     for (page_index, page) in compiled.texture_pages.iter().enumerate() {
@@ -303,7 +354,11 @@ fn validate_compiled(compiled: &CompiledAssets) -> Result<(), AssetError> {
                 path: None,
             });
         }
-        validate_texture(page_index, &page.texture)?;
+        if mode == WorldBlobMode::Carrier {
+            validate_texture(page_index, &page.texture)?;
+        } else {
+            crate::texture::validate_texture_array(&page.texture)?;
+        }
     }
     let diagnostic = compiled
         .materials
@@ -500,7 +555,7 @@ fn validate_compiled(compiled: &CompiledAssets) -> Result<(), AssetError> {
         return Err(invalid("connected template group is unreferenced"));
     }
     let mut previous = None;
-    for &(hash, visual) in &compiled.hashed {
+    for &(hash, visual) in compiled.hashed {
         if previous.is_some_and(|value| value >= hash) || visual as usize >= compiled.visuals.len()
         {
             return Err(invalid("hash table is not canonical"));
@@ -544,7 +599,7 @@ fn validate_compiled(compiled: &CompiledAssets) -> Result<(), AssetError> {
     if expected_quad != compiled.model_quads.len() {
         return Err(invalid("model templates do not cover all quads"));
     }
-    for template in &compiled.model_templates {
+    for template in compiled.model_templates {
         if template.flags & MODEL_TEMPLATE_FLAG_KELP == 0 {
             continue;
         }
@@ -560,14 +615,14 @@ fn validate_compiled(compiled: &CompiledAssets) -> Result<(), AssetError> {
             return Err(invalid("kelp template has noncanonical sidedness"));
         }
     }
-    for quad in &compiled.model_quads {
+    for quad in compiled.model_quads {
         if quad.material as usize >= compiled.materials.len()
             || !model_quad_flags_are_valid(quad.flags)
         {
             return Err(invalid("model quad has invalid material or flags"));
         }
     }
-    for template in &compiled.model_templates {
+    for template in compiled.model_templates {
         if template.flags != MODEL_TEMPLATE_FLAG_TRANSPARENT_CUBE {
             continue;
         }
@@ -598,7 +653,7 @@ fn validate_compiled(compiled: &CompiledAssets) -> Result<(), AssetError> {
         }
     }
     let mut expected_frame = 0usize;
-    for animation in &compiled.animations {
+    for animation in compiled.animations {
         if animation.frame_start as usize != expected_frame
             || animation.frame_count == 0
             || animation.ticks_per_frame == 0
@@ -616,7 +671,7 @@ fn validate_compiled(compiled: &CompiledAssets) -> Result<(), AssetError> {
     if expected_frame != compiled.animation_frames.len() {
         return Err(invalid("animations do not cover all frames"));
     }
-    for &frame in &compiled.animation_frames {
+    for &frame in compiled.animation_frames {
         validate_texture_ref(frame, &compiled.texture_pages, "animation frame")?;
     }
     Ok(())

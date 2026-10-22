@@ -8,14 +8,35 @@ use std::{
 
 const HEADER_BYTES: u32 = 44;
 const FLOAT_FORMAT: u16 = 3;
+const RF64_HEADER_BYTES: u64 = 80;
 
 pub struct WavWriter {
     out: BufWriter<File>,
     path: PathBuf,
-    data_bytes: u32,
+    data_bytes: u64,
+    rf64_channels: Option<u16>,
 }
 
 impl WavWriter {
+    /// Trims hardware prebuffer beyond a stopped video's exact interleaved sample duration.
+    pub fn trim_samples(&mut self, maximum: u64) -> io::Result<()> {
+        let bytes = maximum
+            .checked_mul(4)
+            .ok_or_else(|| io::Error::other("audio sample count overflow"))?;
+        if bytes >= self.data_bytes {
+            return Ok(());
+        }
+        self.out.flush()?;
+        let header = if self.rf64_channels.is_some() {
+            RF64_HEADER_BYTES
+        } else {
+            u64::from(HEADER_BYTES)
+        };
+        self.out.get_ref().set_len(header + bytes)?;
+        self.out.seek(SeekFrom::End(0))?;
+        self.data_bytes = bytes;
+        Ok(())
+    }
     pub fn create(path: &Path, channels: u16, rate: u32) -> io::Result<Self> {
         let mut out = BufWriter::new(File::create(path)?);
         let block = channels * 4;
@@ -35,6 +56,38 @@ impl WavWriter {
             out,
             path: path.to_owned(),
             data_bytes: 0,
+            rf64_channels: None,
+        })
+    }
+
+    /// RF64 keeps long native recordings valid beyond the classic WAV four-gigabyte limit.
+    pub fn create_rf64(path: &Path, channels: u16, rate: u32) -> io::Result<Self> {
+        if channels == 0 || channels > 32 || rate == 0 || rate > 768_000 {
+            return Err(io::Error::other("invalid recording audio format"));
+        }
+        let mut out = BufWriter::new(File::create(path)?);
+        let block = channels * 4;
+        out.write_all(b"RF64")?;
+        out.write_all(&u32::MAX.to_le_bytes())?;
+        out.write_all(b"WAVEds64")?;
+        out.write_all(&28_u32.to_le_bytes())?;
+        out.write_all(&[0; 24])?;
+        out.write_all(&0_u32.to_le_bytes())?;
+        out.write_all(b"fmt ")?;
+        out.write_all(&16_u32.to_le_bytes())?;
+        out.write_all(&FLOAT_FORMAT.to_le_bytes())?;
+        out.write_all(&channels.to_le_bytes())?;
+        out.write_all(&rate.to_le_bytes())?;
+        out.write_all(&(rate * u32::from(block)).to_le_bytes())?;
+        out.write_all(&block.to_le_bytes())?;
+        out.write_all(&32_u16.to_le_bytes())?;
+        out.write_all(b"data")?;
+        out.write_all(&u32::MAX.to_le_bytes())?;
+        Ok(Self {
+            out,
+            path: path.to_owned(),
+            data_bytes: 0,
+            rf64_channels: Some(channels),
         })
     }
 
@@ -45,8 +98,17 @@ impl WavWriter {
     /// Appends interleaved samples.
     pub fn write(&mut self, samples: impl IntoIterator<Item = f32>) -> io::Result<()> {
         for sample in samples {
+            let next = self
+                .data_bytes
+                .checked_add(4)
+                .ok_or_else(|| io::Error::other("recorded audio size overflow"))?;
+            if self.rf64_channels.is_none() && next > u64::from(u32::MAX - (HEADER_BYTES - 8)) {
+                return Err(io::Error::other(
+                    "classic WAV size limit reached; use RF64 for long recordings",
+                ));
+            }
             self.out.write_all(&sample.to_le_bytes())?;
-            self.data_bytes = self.data_bytes.saturating_add(4);
+            self.data_bytes = next;
         }
         Ok(())
     }
@@ -55,10 +117,17 @@ impl WavWriter {
     pub fn finish(mut self) -> io::Result<PathBuf> {
         self.out.flush()?;
         let mut file = self.out.into_inner().map_err(io::Error::other)?;
-        file.seek(SeekFrom::Start(4))?;
-        file.write_all(&(HEADER_BYTES - 8 + self.data_bytes).to_le_bytes())?;
-        file.seek(SeekFrom::Start(40))?;
-        file.write_all(&self.data_bytes.to_le_bytes())?;
+        if let Some(channels) = self.rf64_channels {
+            file.seek(SeekFrom::Start(20))?;
+            file.write_all(&(RF64_HEADER_BYTES - 8 + self.data_bytes).to_le_bytes())?;
+            file.write_all(&self.data_bytes.to_le_bytes())?;
+            file.write_all(&(self.data_bytes / (u64::from(channels) * 4)).to_le_bytes())?;
+        } else {
+            file.seek(SeekFrom::Start(4))?;
+            file.write_all(&(HEADER_BYTES - 8 + self.data_bytes as u32).to_le_bytes())?;
+            file.seek(SeekFrom::Start(40))?;
+            file.write_all(&(self.data_bytes as u32).to_le_bytes())?;
+        }
         file.sync_all()?;
         Ok(self.path)
     }

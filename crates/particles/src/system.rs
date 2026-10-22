@@ -62,6 +62,9 @@ impl Default for Instance {
 
 #[derive(Default)]
 pub struct ParticleSystem {
+    replay_enabled: bool,
+    replay_requested: bool,
+    replay_frame: Option<Arc<[crate::replay::PreparedParticle]>>,
     /// Winning client-entity aliases and authored controller-state effects.
     pub actor_bindings: super::actor::ActorEffectBindings,
     /// Emitters retained for the currently observed actor/controller state entries.
@@ -85,6 +88,40 @@ pub struct ParticleSystem {
 }
 
 impl ParticleSystem {
+    /// Recording admission keeps hidden per-render evaluation independent of simulation state.
+    pub fn set_recording(&mut self, enabled: bool) {
+        self.replay_enabled = enabled;
+        if !enabled {
+            self.replay_frame = None;
+            self.replay_requested = false;
+        }
+    }
+
+    /// Requests one pre-cull publication; ordinary frames only build the live camera's draws.
+    pub fn request_recording_frame(&mut self) {
+        self.replay_requested = self.replay_enabled;
+    }
+
+    /// The last complete received-particle publication shares immutable allocations with capture.
+    pub fn recording_frame(&self) -> Option<&Arc<[crate::replay::PreparedParticle]>> {
+        self.replay_frame.as_ref()
+    }
+
+    /// Draw preparation alone publishes the sampled frame, after light and billboard input admission.
+    pub(crate) fn publish_recording_frame(
+        &mut self,
+        frame: Option<Arc<[crate::replay::PreparedParticle]>>,
+    ) {
+        if let Some(frame) = frame {
+            self.replay_frame = Some(frame);
+            self.replay_requested = false;
+        }
+    }
+
+    /// Live draws pay for additional received candidates only while a recording is armed.
+    pub(crate) fn recording_enabled(&self) -> bool {
+        self.replay_enabled && self.replay_requested
+    }
     /// Builds the system from the compiled carrier; effects parse eagerly.
     #[must_use]
     pub fn from_assets(assets: &RuntimeParticleAssets) -> Self {
@@ -136,6 +173,7 @@ impl ParticleSystem {
 
     /// Removes every emitter and particle (dimension change, disconnect).
     pub fn clear(&mut self) {
+        self.replay_frame = None;
         self.emitters.clear();
         self.bookkeeping.clear(&mut self.atlas);
         self.sounds.clear();

@@ -39,7 +39,7 @@ treating an inherited entry as new work. Missing acceptance evidence means a fea
 is not fully qualified; it does not mean the feature is unimplemented. This cleanup
 closes no gate and provides no new runtime or performance evidence.
 
-## Phase 0 — End-to-end acceptance
+## Phase 0 â€” End-to-end acceptance
 
 - [ ] Complete a sustained streamed-world acceptance run: join, move at speed, and
   break/place blocks to exercise live remeshing. Resolve outstanding command/protocol
@@ -49,7 +49,7 @@ closes no gate and provides no new runtime or performance evidence.
   Dimension definitions use an exclusive maximum Y and retain complete sub-chunks;
   live custom-dimension transfer acceptance remains open.
 
-## Phase 1 — Core service
+## Phase 1 â€” Core service
 
 The Go core and local stream boundary are implemented. Keep authentication,
 encryption and upstream transports with the core, and client behavior with Rust.
@@ -59,7 +59,7 @@ Invalid saved-token contents recover through device sign-in, preserving the cach
 until authentication succeeds. Filesystem failures retain credential-free operation
 and numeric OS diagnostics. Live Windows recovery acceptance remains open.
 
-## Phase 2 — World rendering
+## Phase 2 â€” World rendering
 
 Implemented: [terrain meshing](crates/meshing/src/lib.rs),
 [packed biome storage](crates/world/src/biome.rs),
@@ -76,7 +76,7 @@ and resource qualification; they do not imply these systems need to be written.
   and runtime replacement-pack acceptance remain open.
 - [ ] Close cutout-cube and leaf visual acceptance. Preserve independent geometry,
   occlusion and cave-connectivity semantics, packed quads and coverage-preserving mips.
-- [ ] `P2.5-NATIVE-BIOME` — Qualify existing biome palettes and grass/foliage/water tinting
+- [ ] `P2.5-NATIVE-BIOME` â€” Qualify existing biome palettes and grass/foliage/water tinting
   against native output while preserving packed storage and the shared quad contract.
 - [ ] Confirm or replace provisional biome blending using version-matched radius and
   kernel evidence. Cover abrupt boundaries, special foliage, custom-biome fallback,
@@ -152,14 +152,14 @@ and resource qualification; they do not imply these systems need to be written.
 
 ### Lighting, atmosphere and publication
 
-- [ ] `P2.7-ATMOSPHERE` — Complete lighting, day/night, sky, fog, weather and cloud
+- [ ] `P2.7-ATMOSPHERE` â€” Complete lighting, day/night, sky, fog, weather and cloud
   acceptance, together with the remaining terrain publication and remesh qualification.
 - [ ] Classify and remove moving bands/static under camera motion using coherent
   resident, frustum, submitted and GPU-completed identities. Change culling only when
   evidence proves a missing draw.
 - [ ] Run identical-scene release FIFO/Immediate presentation comparisons and fix the
   demonstrated source of the artifact.
-- [ ] `P2-CHUNK-PUBLICATION` — Qualify initial publication, steady streaming and full-view
+- [ ] `P2-CHUNK-PUBLICATION` â€” Qualify initial publication, steady streaming and full-view
   remesh against current frame/join/streaming budgets. Attribute decode, light readiness,
   queue wait, worker time, upload, submission and present latency independently.
   Ordinary meshing now rechecks higher-priority deferred revisions within a bounded
@@ -197,16 +197,16 @@ regenerate target inventories from the current manifest before qualifying them.
 See the [rendering reference](docs/reference/rendering.md) and
 [chunk-pipeline architecture](docs/architecture/chunk-pipeline.md) for detailed contracts.
 
-## Phase 3 — Movement and the local player
+## Phase 3 â€” Movement and the local player
 
 Implemented: [movement, collision and prediction](crates/sim/src/lib.rs),
 [semantic input](crates/input/src/lib.rs) and the
 [client interaction adapters](crates/client-interaction/src/lib.rs). Open acceptance
 is a broader claim than the presence of these features.
 
-- [ ] `P3-MOVEMENT` — Close movement, collision, prediction/correction and live-server
+- [ ] `P3-MOVEMENT` â€” Close movement, collision, prediction/correction and live-server
   acceptance for the pinned target. A server-compatible run is not full native parity.
-- [ ] `P3.4-INPUT-CAMERA` — Close semantic input, camera and device-specific behavior.
+- [ ] `P3.4-INPUT-CAMERA` â€” Close semantic input, camera and device-specific behavior.
   Touch remains open even when an owner-deprioritized touch witness does not gate a
   narrower scenario verdict.
 
@@ -236,7 +236,7 @@ See [gameplay/session ownership](docs/architecture/gameplay-session.md),
 [effective movement speed](docs/reference/effective-movement-speed.md) and
 [camera behavior](docs/reference/camera.md).
 
-## Phase 4 — Entities and equipment
+## Phase 4 â€” Entities and equipment
 
 Implemented: [actor rigs, Molang, controllers, attachables and pose evaluation](crates/actor-animation/src/lib.rs),
 with [client presentation](crates/client-presentation/src/lib.rs) and
@@ -264,14 +264,14 @@ those definitions while preserving authored item conditions. Expression roots re
 the worn slot through owner placement; worn equipment counts exclude hands.
 Multi-pass body equipment and matched native visual qualification remain incomplete.
 
-- [ ] `P4.3-RIGS` — Close bounded asset admission, Molang/controllers, protocol-driven
+- [ ] `P4.3-RIGS` â€” Close bounded asset admission, Molang/controllers, protocol-driven
   poses, skeletal rendering and distinct tick/frame interpolation with native evidence.
-- [ ] `P4.4-LIVE-ACTOR` — Close spawn, movement, rotation and teleport ground-contact
+- [ ] `P4.4-LIVE-ACTOR` â€” Close spawn, movement, rotation and teleport ground-contact
   acceptance, including correct player-origin conversion and frame interpolation.
   Keep visual eye height and the protocol movement offset as separate owned facts.
   Player deaths hide after their brief sequence while retaining the actor; later
   server flags control visibility through revival. Original Zeqa acceptance remains open.
-- [ ] `P4.5-ITEM-ACTIONS` — Close held items, actions, dropped items and viewmodel behavior,
+- [ ] `P4.5-ITEM-ACTIONS` â€” Close held items, actions, dropped items and viewmodel behavior,
   including remote/local playback and session lifecycle.
   Held heads reuse the placed-head meshes and textures; their native hand pose, scale,
   inventory preview and resource-pack geometry acceptance remain incomplete.
@@ -322,7 +322,7 @@ See [actor animation clocks](docs/reference/actor-animation-clocks.md),
 [projectile rendering](docs/projectile-rendering.md) and
 [presentation ownership](docs/architecture/client-presentation.md).
 
-## Phase 5 — Interaction, inventory and UI
+## Phase 5 â€” Interaction, inventory and UI
 
 Implemented: [chat, HUD and scoreboard state](crates/ui/src/lib.rs),
 [UI runtime and server forms](crates/client-ui/src/ui_runtime.rs),
@@ -335,7 +335,7 @@ Gameplay mouse capture resumes after focus or occlusion returns when it was acti
 before switching away. Screen ownership and focus-loss input clearing remain in effect;
 OS Alt-Tab acceptance on macOS, Windows and Linux remains incomplete.
 
-- [ ] `P5.1-UI` — Close pack-driven UI, bounded text/draw work, formatting, scaling,
+- [ ] `P5.1-UI` â€” Close pack-driven UI, bounded text/draw work, formatting, scaling,
   safe areas, focus/navigation and keyboard/mouse/controller/touch acceptance. Prove
   stable retained resources and correct supported DPI/aspect behavior. Labels share primary/backup
   face selection across measurement and painting; broader text acceptance remains open.
@@ -361,14 +361,14 @@ OS Alt-Tab acceptance on macOS, Windows and Linux remains incomplete.
   Tiled images retain full coverage with bounded repeat geometry across cropped
   regions and sliced borders; large collection admission and hardware frame-work
   acceptance remain incomplete.
-- [ ] `P5.2-HUD` — Close received text, titles, actionbar, toasts, survival/status HUD
+- [ ] `P5.2-HUD` â€” Close received text, titles, actionbar, toasts, survival/status HUD
   and lifecycle behavior without leaking UI-owned input into movement.
-- [ ] `P5.3-CHAT` — Close history/autocomplete, formatting, bounded UTF-8 editing,
+- [ ] `P5.3-CHAT` â€” Close history/autocomplete, formatting, bounded UTF-8 editing,
   clipboard, submission prefixes, command editing, rate limits and session/FIFO routing.
   Verify third-party receive/send and disconnect behavior.
-- [ ] `P5.4-SCOREBOARD` — Close objective/score and boss-bar create/update/remove,
+- [ ] `P5.4-SCOREBOARD` â€” Close objective/score and boss-bar create/update/remove,
   ordering, display positions, styles and stacking alongside titles/actionbar.
-- [ ] `P5.5-INTERACTION-COMBAT-INVENTORY` — Close targeting, mining/cracks, placement/use,
+- [ ] `P5.5-INTERACTION-COMBAT-INVENTORY` â€” Close targeting, mining/cracks, placement/use,
   combat, hotbar selection, stack/network-ID reconciliation and container/crafting
   prediction, acknowledgements, rollback and stale-session behavior.
   Native block requirements now cover every catalog identifier, including no-tool
@@ -390,7 +390,7 @@ OS Alt-Tab acceptance on macOS, Windows and Linux remains incomplete.
   explicit server fuel declarations keep priority. Named station responses retain
   accepted stacks at their window indices. Broader custom-fuel and matched server
   acceptance remain incomplete.
-- [ ] `P5.6-FORMS` — Close modal/menu/custom form navigation, validation, cancellation
+- [ ] `P5.6-FORMS` â€” Close modal/menu/custom form navigation, validation, cancellation
   and responses, including server-pack definitions, structured text, custom controls,
   scaling and image/layout behavior against matched native views. Overlapping requests
   keep the active form and answer busy, including reused IDs.
@@ -405,20 +405,20 @@ OS Alt-Tab acceptance on macOS, Windows and Linux remains incomplete.
   lists and touch/console behavior remain incomplete.
   URL images use the UI texture-file allowance; aggregate encoded-image cache bounds
   and remaining image admission and download-deadline parity remain incomplete.
-- [ ] `P5.7-PARITY-PERF` — Qualify combined chat, scoreboard, boss bars, inventory and
+- [ ] `P5.7-PARITY-PERF` â€” Qualify combined chat, scoreboard, boss bars, inventory and
   forms at supported scales/aspects and devices, with bounded memory and stable frame work.
-- [ ] `P5.8-SETTINGS` — Close menu, control, video and persistence acceptance. Desktop
+- [ ] `P5.8-SETTINGS` â€” Close menu, control, video and persistence acceptance. Desktop
   wiring alone does not establish native parity; language-specific scale dialogs,
   safe-zone handling, service-controlled spacing and touch/console behavior remain open.
-  Social → Chat exposes the existing chat preferences, shared opacity, duration and
+  Social â†’ Chat exposes the existing chat preferences, shared opacity, duration and
   position controls, and one reset for all displayed Chat settings. Chat uses the bundled
   Cinnangles Sans font without a typeface selector; font sizing applies directly and
   obsolete saved typeface values are ignored. Emote filtering, narration and mention
   highlighting remain unavailable and their controls say they store preferences only.
   Offline rendered fixtures cover the panel, values, palettes and reset confirmation;
-  live input acceptance remains incomplete. Font size 5–20/default 10 and spacing
-  0–100/default 0 remain provisional host ranges, without confirmed native defaults.
-  Social → Discord now exposes the Rich Presence master switch plus persisted privacy,
+  live input acceptance remains incomplete. Font size 5â€“20/default 10 and spacing
+  0â€“100/default 0 remain provisional host ranges, without confirmed native defaults.
+  Social â†’ Discord now exposes the Rich Presence master switch plus persisted privacy,
   party-size, elapsed-time and join-request controls; each is applied to the Discord
   activity payload and the panel has its own reset. Live Discord desktop acceptance and
   native settings parity remain incomplete.
@@ -452,7 +452,7 @@ See [inventory ownership](docs/architecture/inventory.md),
 [launcher/UI ownership](docs/architecture/launcher-ui.md),
 [OreUI](docs/oreui.md) and [desktop settings evidence](docs/evidence/desktop-video-settings.md).
 
-## Phase 6 — Online product surface
+## Phase 6 â€” Online product surface
 
 Online services are implemented. Startup requires login facts and PlayerSpawn;
 radius replies remain ordered play updates without holding startup. Complete
@@ -494,7 +494,7 @@ coverage, supported slot/ownership enforcement, player-preview acceptance and ha
 qualification. Payments and moderation remain incomplete; rollout must respect API/client
 compatibility. Existing catalog content is owned by the API repository.
 
-## Phase 7 — Local worlds
+## Phase 7 â€” Local worlds
 
 Local worlds use the Go server integration. Qualify creation, offline play, reload,
 import, persistence and hosting/session teardown. The accepted local-world scope does
@@ -502,7 +502,7 @@ not establish full vanilla world-generation parity.
 
 See [local worlds](docs/local-worlds.md).
 
-## Phase 8 — Audio, polish and packaging
+## Phase 8 â€” Audio, polish and packaging
 
 Qualify audio admission, spatial playback, music and lifecycle behavior on supported
 platforms. Missing source music/ambience requires lawful local input or the documented
@@ -592,7 +592,7 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   entities and the hand, deferred, composite and final passes, compute, custom textures and
   images) plus the pack-drawn sky, particles, clouds, weather, lightning, cracks and selection.
   Block, item, entity and biome ids and Java sky and fog colours come from the pinned
-  Bedrock→Java mappings. Settings offers pack import, a reload key, load status and a Shader
+  Bedrockâ†’Java mappings. Settings offers pack import, a reload key, load status and a Shader
   Pack Settings screen. Incomplete: in-game acceptance across packs and platforms (Metal is
   unverified); stage pre-flips (`flip.<stage>_pre.<buffer>`) and Iris's explicit-flip
   ordering; drawing the solid hand's glint before deferred passes; pack replacements
@@ -600,7 +600,7 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   materials, dissolve pairs, beacon beams and additive rays (these retain native
   composition over the pack); native layers behind pack-rendered glass or water, whose
   final depth can hide those layers; autofocus on cutout
-  Bedrock→Java mappings. The Shaders settings tab offers pack import, reload, load status
+  Bedrockâ†’Java mappings. The Shaders settings tab offers pack import, reload, load status
   and a Shader Pack Settings screen. Video links to Shaders and shows its renderer switch
   only when Enhanced is available.
   Incomplete: in-game acceptance across packs and platforms (Metal is unverified); stage pre-flips (`flip.<stage>_pre.<buffer>`) and Iris's explicit-flip
@@ -651,3 +651,346 @@ chat/forms, resource packs, and an offline local world followed by reload. Requi
 platform, parity and performance evidence must be complete for the claimed release scope.
 Keep the completion ledger consistent with this checklist; no historical green test
 or isolated fix silently completes the surrounding gate.
+
+## Native Recording Studio (in progress)
+
+Scope: an integrated main-screen studio for recording and editing gameplay,
+PvP highlights and cinematics. The editor needs replay camera modes and custom
+follows, an editable multi-track timeline, event-driven automatic effects, media
+and audio import, titles, transitions, project persistence and finished video
+export. Agent/MCP editing is a later stage and does not replace these native flows.
+
+Current implementation; runtime acceptance remains incomplete:
+
+- A Bevy-free project owner admits bounded metadata and cross-references. Rational
+  frame rates and integer media time drive preview and export plans. Transactional
+  edit commands, bounded undo/redo, camera rigs, effect curves, audio fades, titles,
+  markers and transitions retain immutable source media.
+- Combat analysis retains evidence confidence. Correlation between an attack
+  attempt and a server hurt/death observation is labelled estimated, rather than
+  reported as confirmed attacker attribution. Automatic effects remain ordinary
+  editable commands; draft limits report omitted events.
+- Recording storage uses a bounded worker queue, streaming compression, multipart
+  checkpoints, append-only segment commits, integrity checks, a disk quota and
+  observable completion/errors. Seek readers restore a staging scene from the
+  nearest committed checkpoint and support cancellation. This is the container;
+  native prepared-scene adapters and a shared periodic checkpoint policy are now
+  present in source. Full received-world coverage and native playback rendering
+  remain incomplete.
+- Asynchronous project storage uses exclusive staging and atomic publication,
+  revision-tagged completions, portable media references and bounded library
+  enumeration. The main-screen Recording Studio entry and native library/editor
+  connect these services to project create/open/save, undo/redo, split/delete,
+  speed changes, titles, frame stepping and pointer scrubbing. The preview viewport
+  now connects raster media and a provisional native replay source in code;
+  this UI remains unverified.
+- Native capture controls now arm recording from the launcher and start/stop or
+  bookmark from pause/studio. Startup and finalization use workers; the live path
+  bounds GPU readbacks, queued video bytes and mixed-audio storage independently.
+  A passive audio tap preserves speaker playback. NVIDIA encoding is probed before
+  the capture clock starts, with an Auto software fallback; long WAV tracks use
+  RF64 and live MP4 output uses recoverable fragments. These paths are unrun.
+- The live POV-video schema retains actual camera metadata and admitted
+  attack/server hurt/death observations. Completed takes open as video, linked game
+  audio and reversible automatic highlight markers/effects, with estimates and
+  omitted observations reported. Linked audio follows visual edits; generated
+  effects do not yet follow subsequent clip retiming.
+- A separate native terrain track now captures a prepared-mesh baseline, changed
+  publications and unloads alongside POV media. Its worker freezes exact runtime
+  material/model/texture tables, per-layer UV metadata, mip chains and biome tints
+  into hash-addressed local objects. Periodic checkpoints reuse object references;
+  seek restoration validates a staging scene with explicit memory limits. Live
+  admission shares immutable geometry, bounds pinned bytes, and stops on worker
+  failure instead of silently dropping world changes. Cancellation reaches large
+  asset reads; capture manifests retain per-track completion and failure details.
+  Terrain schema v2 explicitly selects the active texture/tint palette, even in
+  empty scenes or geometry-free pack changes; checkpoints retain the selection
+  and share its resident allocation charges with chunk references. Experimental
+  v1 terrain tracks lack that state and remain unsupported for native playback.
+  This source is unverified.
+  Terrain alone does not establish complete 3D replay; the provisional viewport
+  below still lacks complete actor coverage and full preview composition.
+- A prepared environment track now records atmosphere channels, classic lightmap
+  inputs, fullbright state and the texture animation clock at the take's frame
+  rate. Immutable sky textures, fog/biome profiles and optional dimension skyboxes
+  freeze independently of the install with bounded pinning and object validation.
+  Reference-only state checkpoints bound seek history. Native startup, sampling,
+  stop/error reporting and per-track manifest completion are connected in source.
+  This does not implement biome-aware lighting for a moved replay camera, live
+  replay composition or shader-mode restoration; these paths remain unverified.
+- A prepared actor track now retains GPU instances, previous/current bone poses,
+  exact draw identities, geometry spans, skin residency and artwork/glint rasters.
+  Native start/sample/stop and manifest status are connected in source. Immutable
+  epochs share bounded leases and hash-addressed objects; dynamic poses remain
+  journal records. Restore validates geometry, pose and raster cross-references.
+  This provisional source covers the original camera's culled draws and lacks its
+  hidden first-person body. Unculled received-world coverage, pose interpolation
+  and renderer publication remain incomplete; this does not close a replay gate.
+- Incremental source cursors now retain verified segments and advance only newly
+  crossed records. Large checkpoints spill into bounded delete-on-close scratch
+  storage instead of growing the playback heap. Whole-segment checksum/framing
+  admission precedes callbacks; failed/cancelled operations require a fresh seek.
+  Terrain playback emits changed bindings and avoids rebuilding redundant later
+  checkpoints. Actor seeks decode only the last crossed pose; immutable asset
+  caches remain shared. A coordinator admits terrain, environment, actor and
+  original-view camera tracks together, rejects mixed take metadata and limits
+  interrupted playback to their common duration. Camera capture now checkpoints
+  its actual pose at the shared scene interval. The provisional native viewport
+  below consumes these unverified paths; synchronized audio playback is missing.
+- Raster media preview now connects saved timeline sampling to the native editor's
+  image surface. A bounded worker owns local FFmpeg decoding, pixel composition
+  and hashing; forward requests coalesce without cancelling every frame, while
+  new seeks/documents cancel obsolete work. Native UI pages reuse a dedicated
+  bounded slot outside server/mod texture ranges. Crops, opacity, ordered tracks,
+  black gaps and grouped crossfades have source implementations; ordinary opaque
+  single-source frames share decoded storage. This provisional raster path uses
+  point crop sampling and lacks source-identity/frame-accuracy acceptance. Titles,
+  camera/scene effects and native replay scenes use the app adapters below;
+  synchronized audio preview remains missing. No automated tests or rendered
+  acceptance were performed; this does not close the Studio gate.
+- A provisional native replay viewport now consumes the coordinated scene frame
+  in an independent headless app on the main device. Prepared terrain, actors,
+  environment and animation clock stay separate from live authorities. The native
+  inspector can switch a captured POV clip to a replay reference through undoable
+  metadata commands. Source changes rebuild the context; seeks replace camera
+  view history. Native allocation/pipeline readiness precedes image publication.
+  A bounded four-target pool, GPU-only UI copies, retained-layer damage and queue
+  completion leases avoid frame readbacks and target overwrite. Shared device
+  faults retain the primary app's fatal-error path when the worker is idle/closed.
+  This remains unverified at runtime. It supports one unframed replay layer and
+  the camera authoring described below; unculled
+  actor coverage, HUD/hand/particles/block entities, exact projection planes,
+  shader modes, interpolation, audio and complete visual composition
+  remain incomplete. This does not establish replay parity or measured efficiency.
+- A separate bounded camera-target journal now captures received actor anchors,
+  names, angles and spawn identities, with the local subject's published eye offset.
+  Changed-only records, recycled capture buffers, worker serialization and periodic
+  checkpoints avoid full idle snapshots. Verified coordinated playback accepts
+  this optional track only from the same take; old takes remain readable without it.
+  This does not expand the original-view actor draw coverage.
+- Native camera controls now author player/free/path/follow/orbit shots, target
+  browsing with explicit retargeting, fine parameter adjustments, exact-playhead
+  path keys and boundary trims through ordinary undoable project edits. New actor
+  shots pin spawn identity; unavailable subjects disclose their recorded-view
+  fallback. Remote first-person eyes are not inferred. Both preview paths sample
+  the output frame grid, while camera metadata edits reuse admitted scene state.
+  Target interpolation, smooth camera motion, full actor coverage, visible key and
+  easing controls, narrow-layout inspector access, and runtime/render acceptance
+  remain incomplete. Camera behavior has not been exercised at runtime.
+- Native Export now snapshots the current edit, evaluates each output frame on the
+  shared rational grid and supervises exact-order hardware/software encoding on a
+  worker. It connects raster composition and one isolated native replay layer,
+  reuses bounded GPU readback/CPU storage, and mixes audio in bounded blocks through
+  disk-backed stereo float scratch before AAC muxing. Trims, rate, gain, mute,
+  fades and silence derive from saved audio metadata. Progress/cancellation persist
+  across library/editor views. Successful encoder/mux completion and file sync
+  precede no-clobber publication; temporary export material is ignored.
+  This source has not had runtime acceptance. Preflight rejects
+  native layering/crops/crossfades and camera shots outside replay
+  coverage; missing subject payloads can still fail at a later frame. Full export
+  composition, settings/destination controls, audio preview, source accuracy,
+  interrupted recovery, playback/export acceptance and measured cost remain open.
+- Shared GPU frame effects now connect raster/native preview and export for
+  exposure, saturation, vignette, bounded separable bloom, flash, letterbox and
+  fades/dip-to-black. Replay camera effects stay in the world camera; ordinary
+  video uses provisional affine image motion. Neutral frames skip composition;
+  targets/scratch/upload storage are reused, backpressure precedes pixel uploads,
+  and native effect preview retains GPU-only image publication. Shader uniforms
+  generate their WGSL fields from the Rust definition. No shader/runtime validation
+  or measured performance acceptance has been performed.
+  Paused color edits reuse the admitted base image when source time/camera match;
+  seeks bypass that cache and failed scene application/drawing requires fresh
+  source admission.
+- Native effect authoring now adds/enables/disables effects, edits exact amount
+  keys and incoming easing, navigates/deletes keys and shifts effects through
+  ordinary undoable commands, preserving gameplay origin. A bounded curve graph
+  and decimated key markers expose authored data. Cached interval packing separates
+  overlapping camera/effect/audio/title items without changing render precedence;
+  visible-row culling and source-name lookup avoid repeated offscreen text work.
+  Title runtime acceptance, synchronized audio preview, automatic-effect retiming,
+  full native visual composition, numeric/drag controls, narrow-layout interaction,
+  capture/seek/export acceptance and measured resource/frame costs remain open.
+
+- Editorial title overlays now share worker-owned layout, installed font snapshots,
+  bounded immutable ink caches and GPU composition between preview and export.
+  Titles remain screen anchored after scene camera/color effects, with independent
+  opacity envelopes. Native multiline text drafts apply as one undoable edit;
+  font role, color, placement, size, shadow, fades, frame moves and trims use saved
+  metadata. Explicit-line caret navigation and pointer placement share the native
+  text editor. This is provisional source: font rendering, composition, editing,
+  cancellation and resource budgets still require runtime acceptance.
+
+- Windows media finalization now opens completed encoder output with write access
+  before flushing, avoiding read-only handle failures during recording and export.
+  FFmpeg discovery also reads updated Windows installation paths without changing
+  the process environment, with portable and explicit executable-path options.
+  Native terrain-track failure retains POV video capture and reports incomplete
+  3D replay coverage; it does not establish successful terrain capture. Capture and
+  storage failures now retain diagnostics, and unfinished takes explain their
+  missing manifest. Runtime acceptance of these recovery paths remains open.
+
+- Frozen runtime animation spans now repack shared or reordered frame ranges
+  without changing animation indices, texture order or timing. Carrier validation
+  remains strict. Live video capture uses three ordered readback slots within a
+  byte budget, transfers the final screenshot consumer's allocation directly and
+  publishes progress on its quantized clock. Immutable actor pixels reuse bounded
+  weak publication leases. Recording/export muxing retains encoded video packets
+  instead of trimming them to audio packet timing. Playback and performance
+  acceptance for these changes remain open.
+
+- Interactive video preview now uses bounded hardware-decoded read-ahead on
+  Windows, with a software fallback and a bilinear preview scaler. Export keeps
+  its existing quality path. The transport advances only within two admitted
+  output frames, discarding catch-up debt while decoding or rendering is late.
+  Video and native previews share retained GPU publication; per-frame raster
+  hashing no longer rebuilds the UI texture catalog when a GPU is available.
+  Preview source, decoder selection and preparation latency are logged separately
+  from capture misses. Existing-media decoding was inspected, but in-app playback
+  smoothness, fallback behavior and long-session budgets remain unverified.
+
+- Native replay coverage now publishes received actors before camera culling,
+  interpolates actor/target poses across continuous samples, restores dimension and
+  renderer settings, and records optional hand/HUD plus prepared particles,
+  weather, overlays and independent received-column block models. Explicit legacy,
+  warmup, capacity and unreceived-world limits remain visible; new tracks cannot
+  restore inputs omitted from older takes. Runtime visual parity remains open.
+
+- Cinematic paths now support time-aware smoothing, shortest-angle rotation,
+  editable keys/easing and typed camera values. Shared source-time speed ramps
+  drive visual sampling, linked game audio, transitions and source-anchored
+  generated effects/markers. Ramp audio now uses shared pitch-preserving tempo
+  processing; perceptual qualification remains open. Native/raster
+  layers share a linear premultiplied preview/export compositor with crop,
+  opacity and crossfades. These implementations still need rendered acceptance.
+
+- The editor now has horizontal wheel panning, pointer-centered zoom, a project
+  overview, track scrollbars, drag moves/trims, optional playhead following and
+  compact Preview/Media/Inspector panels. Repeated unchanged pointer seeks no
+  longer invalidate preview preparation. Looks and additional color/detail
+  effects remain editable curves; generated hit edits use bounded, varied recipes.
+  Import/relink, bounded source thumbnails, capture/output settings and destination
+  editing run through the existing worker and undo owners. Interrupted POV video
+  can be remuxed to a separate recovered file; incomplete native journals are not
+  reported recovered. Interaction and long-session acceptance remain open.
+
+- Requested capture/output cadence includes 120/240 FPS. Capture preparation is
+  admitted at the selected cadence rather than every uncapped client frame. New
+  capture sizing preserves native scene coordinates and scales final GPU output
+  before readback; sustained cadence still depends on render/encode throughput,
+  with missed slots reported explicitly. No measured high-FPS claim is made.
+
+- Actor recording now reuses unchanged raster snapshots even when the live
+  renderer replaces their outer artwork wrapper. Queued geometry and appearance
+  epochs charge shared immutable allocations once, retain the existing total
+  cap, and report retained/requested/limit bytes on real exhaustion. This addresses
+  immediate actor-budget interruptions; this follow-up is formatted only, with
+  compilation and live recording validation pending.
+
+- External recording cameras now request a separate local world-body sample.
+  Native controller selection, bone visibility, skin layers and motion endpoints
+  use the world perspective without changing the live first-person hand state.
+  Previously hidden body poses cannot be recovered from existing takes. This
+  follow-up is formatted only; compilation, regression and rendered acceptance
+  for native/Java animation, skins and external cameras remain incomplete.
+
+- Studio playback now retains ordered GPU readbacks during encoder backpressure,
+  records native camera samples independently of video admission, reuses the local
+  world-body frame, and updates crossfade budgets without rebuilding replay contexts.
+  Interactive view drafts coalesce without continually cancelling in-flight renders.
+  Transient shader loading remains pending rather than becoming a permanent failure.
+- Device-paced Studio audio now shares bounded decode/mix and pitch-preserving
+  retiming with export. Epoch cancellation, callback-confirmed pause reconciliation,
+  unique worker jobs, mute/gain/fades and video ceilings coordinate its clocks.
+  Preview currently admits at most 32 simultaneous audio streams; hardware sync and
+  perceptual time-stretch qualification remain incomplete.
+- The native camera viewport now supports focused WASD/QE flight, right-mouse look,
+  recorded-subject markers, projected paths, draggable keys and evaluated Bezier
+  handles. Inspection views remain transient until applied. Spatial authoring is
+  limited to one native layer with default framing; subjects and path keys use
+  visible bounded windows. Legacy captures cannot recover omitted local-body poses.
+- Timeline selection, linked duplication/group moves, magnetic snapping, track
+  mute/lock and direct key/curve drags use ordinary admitted edit transactions.
+  Track mute persists; editor locks and panel preferences remain local view state.
+  The existing transaction-size limit remains explicit.
+- Studio panels now separate creation tools from selected properties, retain the
+  viewer/transport/timeline, and expose density, panel visibility and timeline sizes.
+  Anonymous production-painter snapshots render at wide, short and narrow sizes,
+  including audio and settings; the former short-window inverted rectangle is fixed.
+  Focused changed-crate checks compile. Regression and runtime acceptance is being
+  exercised separately; no recording-FPS gain or complete replay parity is claimed.
+
+- Production hardening now isolates recording actor preparation from live artwork,
+  reuses same-clock animation samples and bounded GPU readback buffers, avoids
+  recompressing scene envelopes, and limits live software encoder threads. Capture
+  health reports CPU admission/actor time, readback/encoder queues and stalls.
+  The reported 160-to-50 FPS recording regression has not been remeasured; no
+  minimal-overhead or sustained-capture gate is closed.
+- Preview has independent Fast/Balanced/Full resolution and playback budgets,
+  exact paused frame stepping, bounded decoded-frame reuse and adjacent-cut
+  context reuse. Audio credit follows preview cadence rather than export FPS.
+  Export retains exact output settings, checks used sources, validates MP4 framing
+  and publishes without overwriting an existing destination. These mechanisms
+  still need long playback, seek, slow-disk, cancellation and hardware qualification.
+- Project recovery uses caller-clock autosaves, bounded versioned copies, ordered
+  checkpoints, durable discard revisions and explicit restore into an unsaved copy.
+  Setup checks actual encoder operation; tabs and a shared keyboard/help registry
+  simplify workspace controls. Recovery and dependency screens have anonymous
+  snapshot fixtures. New owning regressions are written but unrun. This hardening
+  pass has no builds, tests, rendered captures or runtime acceptance.
+
+- Replay-reference controls include stationary entity tracking, independent shot
+  FOV curves, limited new-player POV anchors and lifetime-bound body hiding.
+  Follow/Orbit creation retains inspected framing. Remote POV admits only upright,
+  unit-scale, unmounted living standing players; other poses, mobs, missing legacy
+  anchors and transition eye easing remain incomplete.
+- Monitoring exposes runtime-only 0.1xâ€“8x speed, typed seeking, seconds jumps and
+  whole-project looping with rational audio cursor conversion and bounded tempo
+  processing. Fast preview respects its wall-time presentation budget. Slow
+  monitoring retains the existing frame grid; gapless looping remains incomplete.
+- Saved export In/Out uses distinct visual-frame and PCM admission. Library
+  search/sort runs on the storage worker before visible truncation; painted row
+  generations and captured paths guard refreshes and dirty-open confirmation.
+  The reference's unspecified Module item uses existing keyframed Effects.
+  New regression sources are unrun. These additions have source review and
+  formatting only; compilation, rendered acceptance, synchronization and export
+  qualification remain incomplete. No parity or performance gate is closed.
+
+Required work remains open:
+
+- Preview refreshes now retain admitted same-epoch camera images and font owners,
+  with bounded one-frame preparation ahead of playback. The viewer defaults to
+  uncluttered navigation; player and path markers require explicit tools. Left
+  drags orbit transiently, while saved image rotation and Fit/Fill use one CPU/GPU
+  transform. Focus view and native content fitting enlarge the usable picture.
+- Player selection uses versioned captured actor classification. Native HUD/chat
+  is hidden by default independently of project titles and prepared world tags.
+  New visual captures retain exact nametag quads and content-addressed atlas cells;
+  older takes cannot recover missing classifications or tag artwork. New clean
+  POV capture omits screen overlays without hiding the live HUD. These follow-up
+  changes are source-reviewed and formatted only: their owning regressions,
+  compilation, capture ordering, seek/audio smoothness and rendered acceptance
+  remain incomplete. No performance or visual parity gate is closed.
+
+- Render and exercise recording options, library/editor, focus, scrolling,
+  numeric/drag timeline edits, loading/error/recovery states and dirty-edit
+  confirmation on wide, narrow and short windows.
+- Validate received terrain/actors/appearance, native visuals, lighting, time,
+  camera and gameplay evidence across session/dimension boundaries. Independent
+  playback must preserve identities and explain omitted, stale or limited data.
+- Exercise continuous playback, seeks, cancellation and temporal resets with
+  player/free/path/follow/orbit cameras and mixed native/raster compositions.
+  New visual tracks cannot reconstruct data omitted from older takes.
+- Validate linked edits, imports/relinks, speed ramps, generated event anchors,
+  thumbnails/waveforms, audio export and interactive audio preview/mixing.
+  Hardware synchronization and additional assisted editing workflows remain open.
+- Validate hardware/software export, progress/cancellation, destination safety,
+  completed-file publication and interrupted POV recovery. Native journal repair,
+  long-session disk quotas, resize and shutdown acceptance remain open.
+- Owning-crate regressions and rendered/runtime acceptance are still required.
+  Performance, sustained capture cadence and resource bounds need measurement.
+  Earlier Default and Enhanced production checks predate the latest hardening.
+  The latest hardening is source-reviewed and formatted only; compilation, new
+  regressions, rendered acceptance and game launches remain unrun.
+
+This feature is incomplete. Domain APIs and storage code alone do not establish a
+working Recording Studio, replay visual parity or a performance acceptance result.

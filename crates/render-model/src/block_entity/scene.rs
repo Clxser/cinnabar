@@ -221,6 +221,24 @@ impl BlockEntityScene {
         self.prepared.clone()
     }
 
+    /// Synchronizes immutable artwork and entity models while retaining independent canvases and animation.
+    pub fn sync_prepared_sources(&mut self, source: &Self) {
+        let identity = |scene: &Self| scene.prepared.as_ref().map(|art| art.atlas.identity());
+        if identity(self) != identity(source) {
+            if let Some(prepared) = &source.prepared {
+                self.install_prepared_assets(prepared);
+            } else {
+                *self = Self::default();
+            }
+        }
+        if self.heads != source.heads || self.bed != source.bed {
+            self.heads = source.heads.clone();
+            self.bed = source.bed.clone();
+            self.reusable = None;
+            self.cached_submissions.clear();
+        }
+    }
+
     /// Borrows the static held models prepared with the accepted artwork, without frame copies.
     pub fn held_models(&self) -> Option<&super::held::PreparedHeldBlockModels> {
         self.prepared
