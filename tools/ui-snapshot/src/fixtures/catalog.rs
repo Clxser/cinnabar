@@ -11,10 +11,10 @@ use super::cosmetics;
 use launcher::local_worlds::world::UnavailableReason;
 
 use super::{
-    Fixture, GUI_SCALE, KEYBOARD_SIZE, SHADER_PACK_ROW_SIZE, SIZE, SMALL_SIZE, SettingId,
-    SettingSection, State, TALL_SIZE, collection_reveal, hud_card_fit, hud_cards, hud_editor,
-    local_identity, minecraft_import, mods, out_of_game, profile, roster, settings,
-    settings_screens, shader_options, shader_pack, updates,
+    Fixture, GUI_SCALE, KEYBOARD_SIZE, SIZE, SMALL_SIZE, SettingId, SettingSection, State,
+    TALL_SIZE, collection_reveal, hud_card_fit, hud_cards, hud_editor, local_identity,
+    minecraft_import, mods, out_of_game, profile, roster, settings, settings_screens,
+    shader_options, shader_pack, updates,
 };
 
 /// A capture at GUI scale 1 that needs no game assets.
@@ -872,35 +872,5 @@ pub(super) const STATES: &[State] = &[
         size: SIZE,
         gui_scale: GUI_SCALE,
         fixture: shader_options::rest,
-    },
-    State {
-        name: "toast-shader-pack-loading",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: shader_pack::loading,
-    },
-    State {
-        name: "toast-shader-pack-loaded",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: shader_pack::loaded,
-    },
-    State {
-        name: "toast-shader-pack-failed",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: shader_pack::failed,
-    },
-    State {
-        name: "settings-shaders-selected",
-        size: SHADER_PACK_ROW_SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: || shader_pack::settings_shaders(false),
-    },
-    State {
-        name: "settings-shaders-failed",
-        size: SHADER_PACK_ROW_SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: || shader_pack::settings_shaders(true),
     },
 ];
