@@ -5,6 +5,7 @@ use launcher::menu::studio::timeline::TimelineAction;
 use recording_studio::tracks::Track;
 use recording_studio::{Id, MediaTime, Span};
 mod keys;
+pub(super) mod layout;
 
 const VIDEO: [u8; 4] = [60, 104, 62, 255];
 const CAMERA: [u8; 4] = [55, 86, 122, 255];
@@ -15,9 +16,10 @@ const PLAYHEAD: [u8; 4] = [160, 224, 129, 255];
 
 /// One responsive toolbar reserves the track viewport instead of wrapping above it.
 fn toolbar(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<f32, PaintError> {
-    let pad = canvas.r(0.6);
-    let height = canvas.r(3.8);
-    if area[3] - area[1] < canvas.r(11.0) {
+    let metrics = layout::metrics(canvas);
+    let pad = metrics.toolbar_pad;
+    let height = metrics.toolbar_button;
+    if area[3] - area[1] < metrics.minimum() {
         return Ok(area[1] + pad);
     }
     let mut x = area[0] + pad;
@@ -125,8 +127,9 @@ pub(super) fn draw(
     let right = area[2] - pad - canvas.r(1.4);
     let start = view.studio.visible_start;
     let duration = view.studio.visible_duration.0.max(1);
-    let ruler_bottom = (ruler_top + canvas.r(2.8)).min(area[3] - pad);
-    let body_bottom = area[3] - canvas.r(3.6);
+    let metrics = layout::metrics(canvas);
+    let ruler_bottom = (ruler_top + metrics.ruler).min(area[3] - pad);
+    let body_bottom = area[3] - metrics.footer;
     if right <= left || ruler_bottom >= body_bottom {
         return Ok(());
     }
@@ -200,7 +203,7 @@ pub(super) fn draw(
     let audio_row = lanes.track_start(Track::Audio);
     let titles_row = lanes.track_start(Track::Titles);
     let rows = lanes.tracks().len();
-    let row_height = canvas.r(4.2);
+    let row_height = metrics.row;
     let body = [
         area[0] + pad,
         ruler_bottom,
@@ -384,7 +387,7 @@ pub(super) fn draw(
     overview(
         canvas,
         view,
-        [left, area[3] - canvas.r(2.8), right, area[3] - pad],
+        [left, area[3] - (metrics.footer - pad), right, area[3] - pad],
     )?;
     Ok(())
 }

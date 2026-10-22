@@ -3,90 +3,104 @@
 use super::*;
 use launcher::menu::studio::{ViewportTool, WorkspaceAction};
 
+/// Measures the exact controls which the viewer will paint, including wrapping Apply and Reset.
+pub(super) fn required_height(
+    canvas: &mut Canvas<'_>,
+    view: &MenuView,
+    width: f32,
+) -> Result<f32, PaintError> {
+    walk(canvas, view, [0.0, 0.0, width, 0.0], false)
+}
+
 /// Navigation tools are explicit; normal playback never paints subject or path editing markers.
 pub(super) fn toolbar(
     canvas: &mut Canvas<'_>,
     view: &MenuView,
     area: Bounds,
 ) -> Result<f32, PaintError> {
+    walk(canvas, view, area, true)
+}
+
+/// Measurement and painting use one bounded control iterator and identical row packing.
+fn walk(
+    canvas: &mut Canvas<'_>,
+    view: &MenuView,
+    area: Bounds,
+    paint: bool,
+) -> Result<f32, PaintError> {
     let pad = canvas.r(0.6);
     let height = canvas.r(3.4);
-    if area[3] - area[1] < height + canvas.r(6.0) {
+    let left = area[0] + pad;
+    let right = area[2] - pad;
+    if right <= left {
         return Ok(area[1]);
     }
-    let top = area[1] + pad;
-    let mut x = area[0] + pad;
-    let right = area[2] - pad;
-    let fit_width = canvas.r(8.2).min((right - x).max(0.0));
-    let tools_right = right - fit_width - pad;
-    if view
+    let workspace = &view.studio.workspace;
+    let interactive = view
         .studio
         .preview
         .camera
         .as_ref()
-        .is_some_and(|camera| camera.interactive)
-    {
-        for tool in ViewportTool::ALL.iter().copied() {
-            let width = canvas.r(7.6);
-            if x + width > tools_right {
-                break;
-            }
-            control(
-                canvas,
-                view,
-                [x, top, x + width, top + height],
+        .is_some_and(|camera| camera.interactive);
+    let inspected = view.studio.camera_workspace.view.is_some();
+    let controls = ViewportTool::ALL
+        .iter()
+        .copied()
+        .filter(|_| interactive)
+        .map(|tool| {
+            (
                 tool.label(),
                 Action::Workspace(WorkspaceAction::ViewportTool(tool)),
                 true,
-                if view.studio.workspace.viewport_tool == tool {
+                if workspace.viewport_tool == tool {
                     Variant::Primary
                 } else {
                     Variant::Neutral
                 },
-            )?;
-            x += width + pad;
-        }
-    }
-    control(
-        canvas,
-        view,
-        [right - fit_width, top, right, top + height],
-        if view.studio.workspace.preview_fill {
-            "Fill view"
-        } else {
-            "Fit view"
-        },
-        Action::Workspace(WorkspaceAction::TogglePreviewFill),
-        true,
-        Variant::Secondary,
-    )?;
-    let quality_width = canvas.r(10.4);
-    if x + quality_width <= tools_right {
-        control(
-            canvas,
-            view,
-            [x, top, x + quality_width, top + height],
-            view.studio.workspace.preview_quality.label(),
+            )
+        })
+        .chain(std::iter::once((
+            if workspace.preview_fill {
+                "Fill view"
+            } else {
+                "Fit view"
+            },
+            Action::Workspace(WorkspaceAction::TogglePreviewFill),
+            true,
+            Variant::Secondary,
+        )))
+        .chain(std::iter::once((
+            workspace.preview_quality.label(),
             Action::Workspace(WorkspaceAction::CyclePreviewQuality),
             true,
             Variant::Neutral,
-        )?;
-        x += quality_width + pad;
-    }
-    let mut end = top + height;
-    if view.studio.camera_workspace.view.is_some() {
-        let width = canvas.r(7.6);
-        let mut y = top;
-        if x + (width + pad) * 2.0 > tools_right {
-            x = area[0] + pad;
+        )))
+        .chain(
+            super::super::viewport::view_actions(view.studio.preview.ready)
+                .into_iter()
+                .filter(|_| inspected)
+                .map(|(label, action, enabled)| (label, action, enabled, Variant::Secondary)),
+        )
+        .chain(
+            std::iter::once((
+                "Auto handles",
+                Action::ResetCameraHandles,
+                view.studio.camera_workspace.key.is_some(),
+                Variant::Neutral,
+            ))
+            .filter(|_| inspected && workspace.viewport_tool == ViewportTool::Path),
+        );
+    let mut x = left;
+    let mut y = area[1] + pad;
+    for (label, action, enabled, variant) in controls {
+        let width = (canvas.measure(label, crate::theme::SECONDARY_BUTTON)? + canvas.r(1.6))
+            .max(canvas.r(3.0))
+            .min(right - left);
+        if x > left && x + width > right + 0.1 {
+            x = left;
             y += height + pad;
         }
-        for (label, action, enabled) in
-            super::super::viewport::view_actions(view.studio.preview.ready)
-        {
-            if x + width > right {
-                break;
-            }
+        if paint && y + height <= area[3] + 0.1 {
             control(
                 canvas,
                 view,
@@ -94,28 +108,13 @@ pub(super) fn toolbar(
                 label,
                 action,
                 enabled,
-                Variant::Secondary,
-            )?;
-            x += width + pad;
-        }
-        end = y + height;
-        if view.studio.workspace.viewport_tool == ViewportTool::Path
-            && x + canvas.r(11.0) <= tools_right
-        {
-            control(
-                canvas,
-                view,
-                [x, y, x + canvas.r(11.0), y + height],
-                "Auto handles",
-                Action::ResetCameraHandles,
-                view.studio.camera_workspace.key.is_some(),
-                Variant::Neutral,
+                variant,
             )?;
         }
+        x += width + pad;
     }
-    Ok(end + pad)
+    Ok(y + height + pad)
 }
-
 /// Fits the meaningful native image, excluding composition bars, then maps the entire texture consistently.
 pub(super) fn image_bounds(
     icon: ui::IconRef,

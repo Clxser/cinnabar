@@ -6,15 +6,97 @@ use recording_studio::playback::monitoring::{JUMP_SECONDS, seek_text};
 
 const ROW_HEIGHT: f32 = 3.5;
 const ROW_GAP: f32 = 0.35;
-const SINGLE_ROW_WIDTH: f32 = 90.0;
+const NAVIGATION_COUNT: usize = 7;
+
+/// Both measurement and paint read the same complete navigation command row.
+fn commands<'a>(
+    view: &MenuView,
+    back: &'a str,
+    forward: &'a str,
+) -> [(&'a str, Action, bool); NAVIGATION_COUNT] {
+    [
+        ("|<", Action::Monitoring(Monitor::Start), false),
+        (
+            back,
+            Action::Monitoring(Monitor::Jump(-JUMP_SECONDS)),
+            false,
+        ),
+        ("<", Action::Step(-1), false),
+        (
+            if view.studio.playing { "Pause" } else { "Play" },
+            Action::TogglePlayback,
+            true,
+        ),
+        (">", Action::Step(1), false),
+        (
+            forward,
+            Action::Monitoring(Monitor::Jump(JUMP_SECONDS)),
+            false,
+        ),
+        (">|", Action::Monitoring(Monitor::End), false),
+    ]
+}
+
+struct Geometry {
+    single: bool,
+    navigation: f32,
+    small: f32,
+    rate: f32,
+    loop_width: f32,
+    go: f32,
+    height: f32,
+}
+
+/// Native label widths determine the actual one-row threshold, including a readable seek value.
+fn geometry(canvas: &mut Canvas<'_>, view: &MenuView, width: f32) -> Result<Geometry, PaintError> {
+    let gap = canvas.r(ROW_GAP);
+    let mut button = canvas.r(3.2);
+    for (label, _, _) in commands(
+        view,
+        &format!("-{JUMP_SECONDS}s"),
+        &format!("+{JUMP_SECONDS}s"),
+    ) {
+        button = button.max(canvas.measure(label, crate::theme::SECONDARY_BUTTON)? + canvas.r(1.4));
+    }
+    let navigation = button * NAVIGATION_COUNT as f32 + gap * (NAVIGATION_COUNT - 1) as f32;
+    let small = canvas.r(3.0);
+    let rate = canvas.measure(
+        &format!("Monitor {}", view.studio.workspace.monitoring.speed.label()),
+        crate::theme::SECONDARY_BUTTON,
+    )? + canvas.r(1.4);
+    let loop_width = canvas.measure("Loop", crate::theme::SECONDARY_BUTTON)? + canvas.r(1.4);
+    let go = canvas.measure("Go", crate::theme::SECONDARY_BUTTON)? + canvas.r(1.4);
+    let seek = canvas.measure(&seek_text(view.studio.position), BODY)? + canvas.r(2.0);
+    let minimum =
+        navigation + canvas.r(1.2) + small * 2.0 + rate + loop_width + go + seek + gap * 5.0;
+    let single = width + 0.1 >= minimum;
+    let unit = if single {
+        1.0
+    } else {
+        (width / canvas.r(55.0)).min(1.0)
+    };
+    Ok(Geometry {
+        single,
+        navigation,
+        small: small * unit,
+        rate: rate * unit,
+        loop_width: loop_width * unit,
+        go: go * unit,
+        height: canvas.r(if single {
+            ROW_HEIGHT
+        } else {
+            ROW_HEIGHT * 2.0 + ROW_GAP
+        }),
+    })
+}
 
 /// The parent reserves the actual control rows, including its own outer padding separately.
-pub(super) fn required_height(canvas: &Canvas<'_>, width: f32) -> f32 {
-    canvas.r(if width >= canvas.r(SINGLE_ROW_WIDTH) {
-        ROW_HEIGHT
-    } else {
-        ROW_HEIGHT * 2.0 + ROW_GAP
-    })
+pub(super) fn required_height(
+    canvas: &mut Canvas<'_>,
+    view: &MenuView,
+    width: f32,
+) -> Result<f32, PaintError> {
+    Ok(geometry(canvas, view, width)?.height)
 }
 
 /// Validated rows keep their hit targets inside the viewer even when the editor is short or narrow.
@@ -28,9 +110,10 @@ pub(super) fn draw(
     if width <= canvas.r(12.0) || height < canvas.r(3.0) {
         return Ok(());
     }
-    let single_row = width >= canvas.r(SINGLE_ROW_WIDTH);
+    let layout = geometry(canvas, view, width)?;
+    let single_row = layout.single;
     let gap = canvas.r(ROW_GAP);
-    let expanded = single_row || height + 0.1 >= required_height(canvas, width);
+    let expanded = single_row || height + 0.1 >= layout.height;
     let row_height = if expanded && !single_row {
         (height - gap) * 0.5
     } else {
@@ -43,28 +126,8 @@ pub(super) fn draw(
         .is_some_and(|p| p.duration() > MediaTime::ZERO);
     let jump_back = format!("-{JUMP_SECONDS}s");
     let jump_forward = format!("+{JUMP_SECONDS}s");
-    let commands = [
-        ("|<", Action::Monitoring(Monitor::Start), false),
-        (
-            jump_back.as_str(),
-            Action::Monitoring(Monitor::Jump(-JUMP_SECONDS)),
-            false,
-        ),
-        ("<", Action::Step(-1), false),
-        (
-            if view.studio.playing { "Pause" } else { "Play" },
-            Action::TogglePlayback,
-            true,
-        ),
-        (">", Action::Step(1), false),
-        (
-            jump_forward.as_str(),
-            Action::Monitoring(Monitor::Jump(JUMP_SECONDS)),
-            false,
-        ),
-        (">|", Action::Monitoring(Monitor::End), false),
-    ];
-    let navigation_width = if single_row { canvas.r(36.0) } else { width };
+    let commands = commands(view, &jump_back, &jump_forward);
+    let navigation_width = if single_row { layout.navigation } else { width };
     let button = (navigation_width - gap * (commands.len() - 1) as f32) / commands.len() as f32;
     for (index, (label, action, primary)) in commands.into_iter().enumerate() {
         let x = area[0] + index as f32 * (button + gap);
@@ -90,10 +153,9 @@ pub(super) fn draw(
     } else {
         area[1] + row_height + gap
     };
-    let unit = (width / canvas.r(55.0)).min(1.0);
-    let small = canvas.r(3.0) * unit;
-    let rate = canvas.r(13.0) * unit;
-    let loop_width = canvas.r(6.5) * unit;
+    let small = layout.small;
+    let rate = layout.rate;
+    let loop_width = layout.loop_width;
     let mut x = area[0]
         + if single_row {
             navigation_width + canvas.r(1.2)
@@ -132,7 +194,7 @@ pub(super) fn draw(
         )?;
         x += w + gap;
     }
-    let go_width = canvas.r(3.8) * unit;
+    let go_width = layout.go;
     let field_right = area[2] - go_width - gap;
     if field_right <= x + canvas.r(5.0) {
         return Ok(());

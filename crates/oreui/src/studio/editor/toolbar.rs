@@ -11,18 +11,18 @@ pub(super) fn draw(
 ) -> Result<f32, PaintError> {
     let gap = canvas.r(0.5);
     let height = canvas.r(3.6);
-    let tab_width = canvas.r(8.2);
-    let tools_width = Toolbox::ALL.len() as f32 * tab_width + (Toolbox::ALL.len() - 1) as f32 * gap;
+    let mut tools_width = (Toolbox::ALL.len() - 1) as f32 * gap;
+    for tool in Toolbox::ALL {
+        tools_width += button_width(canvas, tool.label())?;
+    }
     let controls = [
         (
             "Properties",
-            11.5,
             WorkspaceAction::ToggleInspector,
             !view.studio.workspace.inspector_hidden && !view.studio.workspace.preview_only,
         ),
         (
             view.studio.workspace.layout.label(),
-            13.0,
             WorkspaceAction::CycleLayout,
             false,
         ),
@@ -32,20 +32,19 @@ pub(super) fn draw(
             } else {
                 "Focus view"
             },
-            12.0,
             WorkspaceAction::PreviewOnly,
             view.studio.workspace.preview_only,
         ),
     ];
-    let controls_width = controls
-        .iter()
-        .map(|(_, width, _, _)| canvas.r(*width))
-        .sum::<f32>()
-        + gap * (controls.len() - 1) as f32;
+    let mut controls_width = gap * (controls.len() - 1) as f32;
+    for (label, _, _) in controls {
+        controls_width += button_width(canvas, label)?;
+    }
     let wrap = area[2] - area[0] < tools_width + controls_width + gap * 2.0;
     let mut x = area[0];
     let mut tools_top = area[1];
     for tool in Toolbox::ALL.iter().copied() {
+        let tab_width = button_width(canvas, tool.label())?;
         if x > area[0] && x + tab_width > area[2] {
             x = area[0];
             tools_top += height + gap;
@@ -83,8 +82,8 @@ pub(super) fn draw(
     } else {
         area[2] - controls_width
     };
-    for (label, width, action, active) in controls {
-        let width = canvas.r(width);
+    for (label, action, active) in controls {
+        let width = button_width(canvas, label)?;
         if x > area[0] && x + width > area[2] + 0.1 {
             x = area[0];
             top += height + gap;
@@ -105,4 +104,9 @@ pub(super) fn draw(
         x += width + gap;
     }
     Ok(top + height + canvas.r(0.9))
+}
+
+/// Text and native horizontal padding own the wrap threshold, rather than guessed equal tab widths.
+fn button_width(canvas: &mut Canvas<'_>, label: &str) -> Result<f32, PaintError> {
+    Ok((canvas.measure(label, crate::theme::SECONDARY_BUTTON)? + canvas.r(2.0)).max(canvas.r(4.5)))
 }
