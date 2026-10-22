@@ -30,7 +30,7 @@ impl FrameRead for ReadyFrames {
     fn set_trace_conn(&self, _: u64) {}
 }
 
-/// Builds the real ordered transport without a socket task; these waits never send packets.
+/// Builds ordered input with an actually closed writer and no socket task.
 fn transport(frames: Vec<Bytes>) -> SessionTransport<ReadyFrames> {
     let (client, _peer) = tokio::io::duplex(64);
     let (read, write) = tokio::io::split(client);
@@ -297,6 +297,47 @@ async fn buffered_transfer_supersedes_a_probe_when_the_writer_is_backpressured()
     assert!(target.reload_world);
     assert!(preparation_abandoned, "obsolete preparation is abandoned");
     assert_eq!(retained, accepted.into_iter().map(Some).collect::<Vec<_>>());
+}
+
+#[tokio::test]
+async fn failed_probe_write_preserves_the_next_readable_transfer() {
+    let requested = Packet::new(packets::NetworkStackLatency {
+        creation_time: wire::U64LE(777),
+        is_from_server: true,
+    });
+    let mut transport = transport(vec![
+        batch_frame(std::slice::from_ref(&requested)),
+        terminal(
+            bridge::contract::KIND_TRANSFER,
+            serde_json::json!({"address":"next.example.test","port":19133,"reload_world":true}),
+        ),
+    ]);
+    assert!(
+        transport
+            .send(&[crate::network_stack_latency_reply(0)])
+            .now_or_never()
+            .expect("the original closed writer fails without input progress")
+            .is_err()
+    );
+    let (release, held) = tokio::sync::oneshot::channel::<()>();
+    let mut waiting = Box::pin(prepare_with_read_ahead(&mut transport, async {
+        held.await.unwrap();
+    }));
+    let result = waiting.as_mut().now_or_never();
+    let preparation_abandoned = release.is_closed();
+    drop(waiting);
+    drop(transport);
+
+    assert!(preparation_abandoned, "obsolete preparation is abandoned");
+    let error = result
+        .expect("the ready terminal must finish startup after the write fails")
+        .expect_err("the server transfer must end startup");
+    let target = error
+        .server_transfer()
+        .expect("the separately readable Transfer must preserve its original cause");
+    assert_eq!(target.host, "next.example.test");
+    assert_eq!(target.port, 19133);
+    assert!(target.reload_world);
 }
 
 #[tokio::test]
