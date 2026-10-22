@@ -123,16 +123,13 @@ fn additional_view_reuses_remote_samples_and_keeps_its_own_bounded_budget() {
 
 #[test]
 fn additional_view_retries_remote_fallbacks_with_its_fresh_budget() {
-    let (mut store, mut actors) = fixture_with(compiled_fixture(180.0), 0.0, Default::default());
-    let actor = actors.get_mut(&1).unwrap();
-    actor.yaw = 90.0;
-    actor.head_yaw = 100.0;
-    actor.pitch = 40.0;
-    store.advance_tick(&actors, None, None, true, true, |_| Default::default());
-    let authored = authored_state(&store);
-    let mut fresh = ActorRenderFrame::new(&store, &actors, [0.0; 2], [0.0; 3], 0.5);
+    let (reference, actors) = rotated_remote_fixture();
+    let mut fresh = ActorRenderFrame::new(&reference, &actors, [0.0; 2], [0.0; 3], 0.5);
     let expected = fresh.layers_with_skin(1).unwrap();
     for remaining in [0, 1] {
+        // The reference store must not warm this rig's retained sampling cache.
+        let (store, actors) = rotated_remote_fixture();
+        let authored = authored_state(&store);
         let mut live = ActorRenderFrame::new(&store, &actors, [0.0; 2], [0.0; 3], 0.5);
         live.set_remaining_ops(remaining);
         let fallback = live.layers_with_skin(1).unwrap();
@@ -141,6 +138,37 @@ fn additional_view_retries_remote_fallbacks_with_its_fresh_budget() {
         let sampled = recording.layers_with_skin(1).unwrap();
         assert_eq!(sampled.render, expected.render);
         assert!(recording.remaining_ops() < MAX_MOLANG_OPS_PER_RENDER_FRAME);
+        assert_eq!(authored_state(&store), authored);
     }
+}
+
+#[test]
+fn additional_view_reuses_a_retained_complete_sample_after_a_live_fallback() {
+    let (store, actors) = rotated_remote_fixture();
+    let authored = authored_state(&store);
+    let mut fresh = ActorRenderFrame::new(&store, &actors, [0.0; 2], [0.0; 3], 0.5);
+    let expected = fresh.layers_with_skin(1).unwrap();
+    let mut live = ActorRenderFrame::new(&store, &actors, [0.0; 2], [0.0; 3], 0.5);
+    live.set_remaining_ops(0);
+    assert_ne!(live.layers_with_skin(1).unwrap().render, expected.render);
+    let mut recording = live.into_additional_view().with_world_body(999);
+    let sampled = recording.layers_with_skin(1).unwrap();
+    assert_eq!(sampled.render, expected.render);
+    assert!(Arc::ptr_eq(
+        &sampled.render[0].pose,
+        &expected.render[0].pose
+    ));
+    assert_eq!(recording.remaining_ops(), MAX_MOLANG_OPS_PER_RENDER_FRAME);
     assert_eq!(authored_state(&store), authored);
+}
+
+/// Prepares changing remote rotation with an untouched frame-sampling cache.
+fn rotated_remote_fixture() -> (ActorAnimationStore, HashMap<u64, TestActor>) {
+    let (mut store, mut actors) = fixture_with(compiled_fixture(180.0), 0.0, Default::default());
+    let actor = actors.get_mut(&1).unwrap();
+    actor.yaw = 90.0;
+    actor.head_yaw = 100.0;
+    actor.pitch = 40.0;
+    store.advance_tick(&actors, None, None, true, true, |_| Default::default());
+    (store, actors)
 }
