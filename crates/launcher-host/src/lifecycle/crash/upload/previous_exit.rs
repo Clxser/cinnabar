@@ -3,7 +3,7 @@
 //! when the process died before it could.
 
 use std::{
-    io,
+    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -23,6 +23,16 @@ const REASON_ANR: i32 = 6;
 const MATCH_BEFORE_MS: u64 = 120_000;
 /// Folder names have second resolution; allow the rounding.
 const MATCH_AFTER_MS: u64 = 2_000;
+/// Associates one folder with one historical Android process exit.
+const EXIT_FILE: &str = "android-exit.json";
+
+/// The stable fields that identify one Android exit across subsequent launches.
+#[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct ExitId {
+    timestamp_ms: u64,
+    reason: i32,
+    status: i32,
+}
 
 /// One `ApplicationExitInfo` of the previous main process.
 #[derive(Clone, Copy, Debug)]
@@ -51,8 +61,19 @@ pub fn record(
         .and_then(|bytes| tombstone::stack(bytes, in_app));
     let earliest = exit.timestamp_ms.saturating_sub(MATCH_BEFORE_MS);
     let latest = exit.timestamp_ms.saturating_add(MATCH_AFTER_MS);
+    let id = ExitId {
+        timestamp_ms: exit.timestamp_ms,
+        reason: exit.reason,
+        status: exit.status,
+    };
     let written = folder::list(crash_dir).into_iter().rev().find(|folder| {
-        folder::created_at_ms(folder).is_some_and(|at| (earliest..=latest).contains(&at))
+        match fs::read(folder.join(EXIT_FILE)) {
+            Ok(bytes) => serde_json::from_slice::<ExitId>(&bytes).is_ok_and(|saved| saved == id),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                folder::created_at_ms(folder).is_some_and(|at| (earliest..=latest).contains(&at))
+            }
+            Err(_) => false,
+        }
     });
     if let Some(folder) = written {
         if let Some(stack) = &stack
@@ -60,6 +81,7 @@ pub fn record(
         {
             stack::write(&folder, stack)?;
         }
+        mark_exit(&folder, &id)?;
         return Ok(folder);
     }
     let native = exit.reason == REASON_CRASH_NATIVE;
@@ -80,7 +102,17 @@ pub fn record(
     if let Some(stack) = &stack {
         stack::write(&folder, stack)?;
     }
+    mark_exit(&folder, &id)?;
     Ok(folder)
+}
+
+/// Atomically associates a completed folder with its Android exit before it can be queued.
+fn mark_exit(folder: &Path, id: &ExitId) -> io::Result<()> {
+    let mut file = tempfile::NamedTempFile::new_in(folder)?;
+    serde_json::to_writer(file.as_file_mut(), id)?;
+    file.persist(folder.join(EXIT_FILE))
+        .map_err(|error| error.error)?;
+    Ok(())
 }
 
 /// `Android ended the app: <reason> (status N): <description>`.
@@ -231,5 +263,54 @@ mod tests {
         assert_eq!(report.kind, Kind::Native);
         assert_eq!(report.message, "SIGSEGV");
         assert!(stack::read(&folder).is_some());
+    }
+    #[test]
+    fn distinct_nearby_android_exits_keep_separate_reports() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_exit = exit(REASON_CRASH_NATIVE, None);
+        let first = record(
+            dir.path(),
+            &dir.path().join("client.log"),
+            &first_exit,
+            &identity(),
+            |_| true,
+        )
+        .unwrap();
+        super::super::consent(&first, crash_report::upload::state::Consent::User, EXIT_MS).unwrap();
+        crash_report::upload::state::record(
+            &first,
+            &crash_report::upload::state::Outcome::Sent,
+            EXIT_MS,
+        )
+        .unwrap();
+        let second_exit = Exit {
+            timestamp_ms: EXIT_MS + 10_000,
+            ..first_exit
+        };
+        let second = record(
+            dir.path(),
+            &dir.path().join("client.log"),
+            &second_exit,
+            &identity(),
+            |_| true,
+        )
+        .unwrap();
+        assert_ne!(
+            first, second,
+            "a sent report must not consume the next crash"
+        );
+        assert_eq!(
+            record(
+                dir.path(),
+                &dir.path().join("client.log"),
+                &second_exit,
+                &identity(),
+                |_| true,
+            )
+            .unwrap(),
+            second,
+            "the same exit remains idempotent"
+        );
+        assert_eq!(folder::list(dir.path()).len(), 2);
     }
 }

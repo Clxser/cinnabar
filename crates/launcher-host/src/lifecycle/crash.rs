@@ -60,6 +60,7 @@ struct Context {
     client_log: PathBuf,
     core_log: PathBuf,
     data_root: PathBuf,
+    settings_file: PathBuf,
     identity: Identity,
     full_dump: bool,
     /// The staging directory reports read the packet and log rings from; `None` when it could
@@ -217,6 +218,9 @@ fn context(layout: &InstallLayout, identity: Identity) -> Context {
         client_log: layout.log_dir().join("client.log"),
         core_log: layout.log_dir().join("core.log"),
         data_root: layout.user_data_root.clone(),
+        settings_file: layout
+            .user_config_root
+            .join(launcher::menu::settings_options::SETTINGS_FILE),
         identity,
         full_dump: std::env::var_os(FULL_DUMP_ENV).is_some_and(|value| value == "1"),
         staging,

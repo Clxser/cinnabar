@@ -410,14 +410,22 @@ fn show(layout: Option<&InstallLayout>, restart: &Restart, written: &Written) {
     }
     let summary: CrashSummary =
         describe::summary(&written.report, &written.logs, written.folder.clone());
-    let choice = match layout {
-        Some(layout) => window::show(summary.clone(), layout),
-        None => Choice::Unavailable,
-    };
+    match layout {
+        Some(layout) => {
+            window::show(summary.clone(), layout, |choice| {
+                apply_choice(restart, &summary, choice)
+            });
+        }
+        None => apply_choice(restart, &summary, Choice::Unavailable),
+    }
+}
+
+/// Starts a requested replacement process before the crash window waits for pending uploads.
+fn apply_choice(restart: &Restart, summary: &CrashSummary, choice: Choice) {
     let restarting = match choice {
         Choice::Restart => true,
         Choice::Close => false,
-        Choice::Unavailable => actions::native_dialog(&summary),
+        Choice::Unavailable => actions::native_dialog(summary),
     };
     if restarting && let Err(error) = actions::restart(restart) {
         tracing::error!("restart failed: {error}");

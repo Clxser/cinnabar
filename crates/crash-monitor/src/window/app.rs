@@ -157,11 +157,9 @@ impl CrashApp {
         self.overlay_dirty = true;
     }
 
-    /// Keeps a consented send alive when the player closes or restarts immediately.
-    pub(super) fn finish_upload(&mut self) {
-        if let Some(worker) = self.upload.take() {
-            let _ = worker.join();
-        }
+    /// Transfers the pending send so the window's caller can apply the choice before waiting.
+    pub(super) fn take_upload(&mut self) -> Option<std::thread::JoinHandle<()>> {
+        self.upload.take()
     }
 
     fn finish(&mut self, choice: Choice, event_loop: &ActiveEventLoop) {

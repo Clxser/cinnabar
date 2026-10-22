@@ -78,8 +78,18 @@ pub fn consent(folder: &Path, consent: Consent, now_ms: u64) -> io::Result<Uploa
 /// Records automatic consent after the producer has finished every member of `folder`.
 /// Unmarked folders are never picked up by a sender while another process may be writing them.
 pub fn completed(layout: &InstallLayout, folder: &Path) {
-    if Policy::load(layout).is_some_and(|policy| policy.automatic)
-        && let Err(error) = consent(folder, Consent::Auto, now_ms())
+    completed_with_settings(
+        folder,
+        &layout.user_config_root.join(SETTINGS_FILE),
+        now_ms(),
+    );
+}
+
+/// Records completion from a healthy report producer using its settings path and supplied time.
+pub(super) fn completed_with_settings(folder: &Path, settings: &Path, now_ms: u64) {
+    if !disabled()
+        && SettingsOptions::load(settings).send_crash_reports()
+        && let Err(error) = consent(folder, Consent::Auto, now_ms)
     {
         tracing::warn!("crash report consent not recorded: {error}");
     }

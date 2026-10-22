@@ -166,18 +166,25 @@ pub(crate) fn copy_report(summary: &CrashSummary) -> Result<(), String> {
 }
 
 /// Shows the crash window for `summary` with the UI font and menu preferences `layout` holds, and
-/// waits for the player's choice. [`Choice::Unavailable`] means no font, event loop, window or
+/// calls `selected` with the player's choice before waiting for pending uploads.
+/// [`Choice::Unavailable`] means no font, event loop, window or
 /// GPU adapter, so the caller should fall back to a native dialog.
-pub fn show(summary: CrashSummary, layout: &InstallLayout) -> Choice {
+pub fn show(
+    summary: CrashSummary,
+    layout: &InstallLayout,
+    selected: impl FnOnce(Choice),
+) -> Choice {
     match bootstrap_ui::text(layout) {
         Ok(text) => show_with_text(
             summary,
             text,
             Preferences::load(layout),
             Some(layout.clone()),
+            selected,
         ),
         Err(error) => {
             tracing::warn!("crash window unavailable: no usable UI font ({error:#})");
+            selected(Choice::Unavailable);
             Choice::Unavailable
         }
     }
@@ -186,7 +193,7 @@ pub fn show(summary: CrashSummary, layout: &InstallLayout) -> Choice {
 /// [`show`] with caller-supplied UI font bytes (Cinnangles Sans) and preferences.
 pub fn show_with_font(summary: CrashSummary, font: &[u8], preferences: Preferences) -> Choice {
     match Text::from_bytes(font) {
-        Some(text) => show_with_text(summary, text, preferences, None),
+        Some(text) => show_with_text(summary, text, preferences, None, |_| {}),
         None => {
             tracing::warn!("crash window unavailable: the UI font does not parse");
             Choice::Unavailable
@@ -200,28 +207,67 @@ fn show_with_text(
     text: Text,
     preferences: Preferences,
     layout: Option<InstallLayout>,
+    selected: impl FnOnce(Choice),
 ) -> Choice {
     let Some(faces) = bootstrap_ui::built_in_faces() else {
+        selected(Choice::Unavailable);
         return Choice::Unavailable;
     };
     let Ok(event_loop) = EventLoop::new() else {
+        selected(Choice::Unavailable);
         return Choice::Unavailable;
     };
     event_loop.set_control_flow(ControlFlow::Poll);
     let logo = bootstrap_ui::decode_logo();
     let mut app = app::CrashApp::new(summary, text, faces, logo, preferences, layout);
     let failed = event_loop.run_app(&mut app).is_err();
-    app.finish_upload();
-    app.choice().unwrap_or(if failed {
+    let choice = app.choice().unwrap_or(if failed {
         Choice::Unavailable
     } else {
         Choice::Close
-    })
+    });
+    finish_choice(choice, app.take_upload(), selected)
+}
+
+/// Applies the selected action and keeps a consented upload alive until it finishes.
+fn finish_choice(
+    choice: Choice,
+    upload: Option<std::thread::JoinHandle<()>>,
+    selected: impl FnOnce(Choice),
+) -> Choice {
+    selected(choice);
+    if let Some(worker) = upload {
+        let _ = worker.join();
+    }
+    choice
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_restart_is_selected_before_a_pending_upload_finishes() {
+        let (release, waiting) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || waiting.recv().unwrap());
+        let (selected, selection) = std::sync::mpsc::channel();
+        let closing = std::thread::spawn(move || {
+            finish_choice(Choice::Restart, Some(worker), |choice| {
+                selected.send(choice).unwrap()
+            })
+        });
+        let observed = test_time::wait_until(test_time::DEFAULT_TIMEOUT, || {
+            selection
+                .try_recv()
+                .is_ok_and(|choice| choice == Choice::Restart)
+        });
+        release.send(()).unwrap();
+        assert_eq!(closing.join().unwrap(), Choice::Restart);
+        assert!(
+            observed,
+            "restart selection waited for the pending network request"
+        );
+    }
 
     #[test]
     fn copy_feedback_expires_back_to_its_label() {
