@@ -72,3 +72,29 @@ fn a_tall_status_in_a_short_window_keeps_document_controls_without_invalid_body_
             .any(|(action, _)| *action == MenuAction::Studio(Action::Save))
     );
 }
+
+#[test]
+fn editor_transport_keeps_seek_speed_and_loop_controls_reachable_across_window_sizes() {
+    use launcher::menu::studio::monitoring::MonitoringAction;
+    for size in [[1280.0, 720.0], [900.0, 600.0], [640.0, 480.0]] {
+        let mut view = view();
+        Arc::make_mut(&mut view.studio).show_library = false;
+        let (_, hits, _) = paint(HashMap::new(), |canvas| {
+            draw_workspace(canvas, &view, size).unwrap()
+        });
+        for action in [
+            Action::TogglePlayback,
+            Action::Monitoring(MonitoringAction::EditSeek),
+            Action::Monitoring(MonitoringAction::StepSpeed(-1)),
+            Action::Monitoring(MonitoringAction::StepSpeed(1)),
+            Action::Monitoring(MonitoringAction::ToggleLoop),
+        ] {
+            let bounds = hits
+                .iter()
+                .find_map(|(hit, bounds)| (*hit == MenuAction::Studio(action)).then_some(bounds))
+                .unwrap_or_else(|| panic!("missing transport control {action:?} at {size:?}"));
+            assert!(bounds.min().x() >= 0.0 && bounds.min().y() >= 0.0);
+            assert!(bounds.max().x() <= size[0] && bounds.max().y() <= size[1]);
+        }
+    }
+}

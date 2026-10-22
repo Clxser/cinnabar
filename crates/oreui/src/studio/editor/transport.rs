@@ -4,6 +4,19 @@ use super::*;
 use launcher::menu::studio::monitoring::MonitoringAction as Monitor;
 use recording_studio::playback::monitoring::{JUMP_SECONDS, seek_text};
 
+const ROW_HEIGHT: f32 = 3.5;
+const ROW_GAP: f32 = 0.35;
+const SINGLE_ROW_WIDTH: f32 = 90.0;
+
+/// The parent reserves the actual control rows, including its own outer padding separately.
+pub(super) fn required_height(canvas: &Canvas<'_>, width: f32) -> f32 {
+    canvas.r(if width >= canvas.r(SINGLE_ROW_WIDTH) {
+        ROW_HEIGHT
+    } else {
+        ROW_HEIGHT * 2.0 + ROW_GAP
+    })
+}
+
 /// Validated rows keep their hit targets inside the viewer even when the editor is short or narrow.
 pub(super) fn draw(
     canvas: &mut Canvas<'_>,
@@ -15,12 +28,13 @@ pub(super) fn draw(
     if width <= canvas.r(12.0) || height < canvas.r(3.0) {
         return Ok(());
     }
-    let expanded = height >= canvas.r(6.8);
-    let gap = canvas.r(0.35);
-    let row_height = if expanded {
+    let single_row = width >= canvas.r(SINGLE_ROW_WIDTH);
+    let gap = canvas.r(ROW_GAP);
+    let expanded = single_row || height + 0.1 >= required_height(canvas, width);
+    let row_height = if expanded && !single_row {
         (height - gap) * 0.5
     } else {
-        height
+        height.min(canvas.r(ROW_HEIGHT))
     };
     let enabled = view
         .studio
@@ -50,7 +64,8 @@ pub(super) fn draw(
         ),
         (">|", Action::Monitoring(Monitor::End), false),
     ];
-    let button = (width - gap * (commands.len() - 1) as f32) / commands.len() as f32;
+    let navigation_width = if single_row { canvas.r(36.0) } else { width };
+    let button = (navigation_width - gap * (commands.len() - 1) as f32) / commands.len() as f32;
     for (index, (label, action, primary)) in commands.into_iter().enumerate() {
         let x = area[0] + index as f32 * (button + gap);
         control(
@@ -70,12 +85,21 @@ pub(super) fn draw(
     if !expanded {
         return Ok(());
     }
-    let y = area[1] + row_height + gap;
+    let y = if single_row {
+        area[1]
+    } else {
+        area[1] + row_height + gap
+    };
     let unit = (width / canvas.r(55.0)).min(1.0);
     let small = canvas.r(3.0) * unit;
     let rate = canvas.r(13.0) * unit;
     let loop_width = canvas.r(6.5) * unit;
-    let mut x = area[0];
+    let mut x = area[0]
+        + if single_row {
+            navigation_width + canvas.r(1.2)
+        } else {
+            0.0
+        };
     let speed_label = format!("Monitor {}", view.studio.workspace.monitoring.speed.label());
     for (label, action, w, active) in [
         ("-", Monitor::StepSpeed(-1), small, false),
