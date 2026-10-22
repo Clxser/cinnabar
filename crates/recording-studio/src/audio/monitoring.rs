@@ -60,11 +60,11 @@ impl MonitorClock {
         .div_ceil(u128::from(MICROS_PER_SECOND) * u128::from(self.speed.numerator)) as u64
     }
 
-    /// Integer rational conversion retains sub-microsecond sample remainder without accumulating drift.
+    /// Sample boundaries round up so played audio is never reported behind its exact rational clock.
     pub fn time(self, frame: u64) -> MediaTime {
         let delta =
-            u128::from(frame) * u128::from(MICROS_PER_SECOND) * u128::from(self.speed.numerator)
-                / (u128::from(self.rate) * u128::from(self.speed.denominator));
+            (u128::from(frame) * u128::from(MICROS_PER_SECOND) * u128::from(self.speed.numerator))
+                .div_ceil(u128::from(self.rate) * u128::from(self.speed.denominator));
         MediaTime((u128::from(self.origin.0) + delta).min(u128::from(self.end.0)) as u64)
     }
 }

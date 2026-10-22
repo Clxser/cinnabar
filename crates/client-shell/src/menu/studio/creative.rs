@@ -12,7 +12,20 @@ use recording_studio::{
 #[derive(Default)]
 pub(super) struct CreativeTasks {
     beat: Option<BeatJob>,
+    analyzed: Option<BeatBasis>,
     shots: Option<ShotDraft>,
+}
+
+struct BeatBasis {
+    clip: AudioClip,
+    source: MediaSource,
+}
+
+impl BeatBasis {
+    /// A tempo estimate belongs to the exact audible clip and source that were decoded.
+    fn matches(&self, project: &Project) -> bool {
+        project.audio.contains(&self.clip) && project.sources.contains(&self.source)
+    }
 }
 
 struct BeatJob {
@@ -61,6 +74,7 @@ impl Studio {
                 status.message = Some("Beat analysis cancelled.".into());
             }
             CreativeAction::StepTempo(step) => {
+                self.creative.analyzed = None;
                 let status = &mut Arc::make_mut(&mut self.view).workflow.creative;
                 status.tempo_tenths = (i32::from(status.tempo_tenths) + i32::from(step))
                     .clamp(i32::from(beats::MIN_TEMPO), i32::from(beats::MAX_TEMPO))
@@ -85,6 +99,7 @@ impl Studio {
                 if !span.contains(at) {
                     return Err("Move the playhead inside the selected audio clip first.".into());
                 }
+                self.creative.analyzed = None;
                 let status = &mut Arc::make_mut(&mut self.view).workflow.creative;
                 let period =
                     60 * recording_studio::time::MICROS_PER_SECOND * u64::from(beats::TEMPO_SCALE)
@@ -195,6 +210,10 @@ impl Studio {
         }
         match result {
             Ok(estimate) => {
+                self.creative.analyzed = Some(BeatBasis {
+                    clip: job.clip.clone(),
+                    source: job.source.clone(),
+                });
                 status.tempo_tenths = estimate.bpm_tenths;
                 status.offset_millis =
                     (estimate.first.saturating_sub(job.clip.at).0 / 1_000) as i64;
@@ -215,6 +234,14 @@ impl Studio {
         let clip = self.beat_audio()?;
         let span = clip.span().map_err(|error| error.to_string())?;
         let status = &self.view.workflow.creative;
+        if !clear
+            && self.creative.analyzed.as_ref().is_some_and(|basis| {
+                self.project()
+                    .map_or(true, |project| !basis.matches(project))
+            })
+        {
+            return Err("The analyzed audio was retimed or relinked. Analyze it again or choose a manual tempo before adding markers.".into());
+        }
         if !clear && status.analyzed_clip.is_some_and(|id| id != clip.id) {
             return Err("The estimate belongs to another audio clip. Analyze this clip or choose a manual tempo first.".into());
         }
@@ -399,6 +426,15 @@ impl Studio {
 
     /// A document edit retires old camera alternatives before the next presentation is published.
     pub(super) fn reconcile_creative(&mut self) {
+        if self.creative.analyzed.as_ref().is_some_and(|basis| {
+            self.project()
+                .map_or(true, |project| !basis.matches(project))
+        }) {
+            Arc::make_mut(&mut self.view).workflow.creative.message = Some(
+                "Audio changed after rhythm analysis. Analyze again or choose a manual tempo."
+                    .into(),
+            );
+        }
         let stale = self.creative.shots.as_ref().is_some_and(|draft| {
             draft.document != self.document
                 || self
@@ -544,5 +580,60 @@ mod tests {
         assert!(studio.creative.beat.is_none());
         assert!(!studio.view.workflow.creative.analyzing);
         assert!(studio.view.workflow.creative.shots.is_empty());
+    }
+
+    #[test]
+    fn completed_rhythm_estimates_require_reanalysis_after_retime_or_relink() {
+        for relink in [false, true] {
+            let project = music_project();
+            let mut studio = Studio::new(PathBuf::new());
+            studio.install(Editor::new(project.clone()).unwrap(), None);
+            let (completed, result) = crossbeam_channel::bounded(1);
+            studio.creative.beat = Some(BeatJob {
+                document: studio.document,
+                clip: project.audio[0].clone(),
+                source: project.sources[0].clone(),
+                cancellation: Default::default(),
+                result,
+            });
+            completed
+                .send(Ok(beats::Estimate {
+                    bpm_tenths: 1300,
+                    first: MediaTime(125_000),
+                    onsets: 20,
+                    consistency: 0.9,
+                }))
+                .unwrap();
+            studio.poll_creative();
+            assert_eq!(studio.view.workflow.creative.analyzed_clip, Some(Id(2)));
+            if relink {
+                let mut source = project.sources[0].clone();
+                source.path = "another-song.wav".into();
+                studio
+                    .edit("Relink music", &[Command::ReplaceSource { source }])
+                    .unwrap();
+            } else {
+                let mut audio = project.audio[0].clone();
+                audio.rate = PlaybackRate {
+                    numerator: 2,
+                    denominator: 1,
+                };
+                studio
+                    .edit("Retime music", &[Command::ReplaceAudio { audio }])
+                    .unwrap();
+            }
+            assert!(
+                studio
+                    .apply_beat_grid(false)
+                    .unwrap_err()
+                    .contains("retimed or relinked")
+            );
+            assert!(studio.project().unwrap().markers.is_empty());
+            studio
+                .creative_action(CreativeAction::StepTempo(0))
+                .unwrap();
+            studio.apply_beat_grid(false).unwrap();
+            assert!(!studio.project().unwrap().markers.is_empty());
+        }
     }
 }

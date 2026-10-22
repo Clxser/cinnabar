@@ -83,3 +83,33 @@ fn rejected_frame_releases_new_shared_charges_without_releasing_other_queued_sam
     drop(retained);
     assert_eq!(budget.used.load(Ordering::Acquire), 0);
 }
+
+#[test]
+fn republished_item_catalogs_share_their_child_pixels_across_queued_epochs() {
+    use render_model::{DroppedItemModel, DroppedItemSprite};
+    let pixels: Arc<[u8]> = vec![0; 64 * 1024 * 1024].into();
+    let model = DroppedItemModel::NativeSprite(DroppedItemSprite {
+        width: 4096,
+        height: 4096,
+        rgba8: Arc::clone(&pixels),
+    });
+    let mut budget = Budget::default();
+    let mut leases = Vec::new();
+    let mut owned = 0;
+    for _ in 0..7 {
+        let mut frame = FrozenVisuals::default();
+        frame.items = Some(super::super::items::PreparedItems {
+            models: vec![model.clone()].into(),
+            ..Default::default()
+        });
+        let (lease, bytes) = budget.retain(&frame).unwrap();
+        owned += bytes;
+        leases.push(lease);
+    }
+    assert_eq!(
+        budget.used.load(Ordering::Acquire),
+        pixels.len() + 7 * std::mem::size_of::<DroppedItemModel>() + owned
+    );
+    drop(leases);
+    assert_eq!(budget.used.load(Ordering::Acquire), 0);
+}

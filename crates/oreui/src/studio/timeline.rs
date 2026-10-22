@@ -159,12 +159,18 @@ pub(super) fn draw(
         }),
         [left, ruler_top, right, ruler_bottom],
     )?;
-    let mut marker_columns = std::collections::BTreeSet::new();
-    for marker in &project.markers {
-        let x = window.x(marker.at);
-        if x < left || x > right || !marker_columns.insert((x / 4.0).round() as i32) {
+    let mut marker_column = None;
+    for &(at, kind) in view
+        .studio
+        .lanes
+        .visible_markers(start, MediaTime(start.0.saturating_add(duration)))
+    {
+        let x = window.x(at);
+        let column = (x / 4.0).round() as i32;
+        if x < left || x > right || marker_column == Some(column) {
             continue;
         }
+        marker_column = Some(column);
         canvas.fill(
             [
                 (x - 1.0).max(left),
@@ -172,14 +178,14 @@ pub(super) fn draw(
                 (x + 1.0).min(right),
                 ruler_bottom,
             ],
-            if marker.kind == recording_studio::model::MarkerKind::Beat {
+            if kind == recording_studio::model::MarkerKind::Beat {
                 [104, 177, 215, 255]
             } else {
                 [245, 193, 87, 255]
             },
         )?;
         canvas.hit(
-            MenuAction::Studio(Action::Seek(marker.at)),
+            MenuAction::Studio(Action::Seek(at)),
             [
                 (x - 5.0).max(left),
                 ruler_top,

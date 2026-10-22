@@ -105,7 +105,28 @@ impl Budget {
             }
         }
         if let Some(items) = &frame.items {
-            shared += self.shared(&items.models, items.model_retained_bytes(), &mut lease)?;
+            shared += self.allocation(&items.models, &mut lease)?;
+            for model in items.models.iter() {
+                use render_model::DroppedItemModel;
+                match model {
+                    DroppedItemModel::Vacant => {}
+                    DroppedItemModel::Sprite(sprite) | DroppedItemModel::NativeSprite(sprite) => {
+                        shared += self.allocation(&sprite.rgba8, &mut lease)?;
+                    }
+                    DroppedItemModel::Cube(cube) => {
+                        for face in &cube.faces {
+                            shared += self.allocation(face, &mut lease)?;
+                        }
+                    }
+                    DroppedItemModel::Block(block) => {
+                        shared += self.allocation(&block.materials, &mut lease)?;
+                        shared += self.allocation(&block.quads, &mut lease)?;
+                        for (sprite, _) in block.materials.iter() {
+                            shared += self.allocation(&sprite.rgba8, &mut lease)?;
+                        }
+                    }
+                }
+            }
             shared += self.allocation(&items.instances, &mut lease)?;
             shared += self.allocation(&items.terrain_instances, &mut lease)?;
             for instance in items.terrain_instances.iter() {

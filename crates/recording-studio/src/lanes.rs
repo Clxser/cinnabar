@@ -16,6 +16,7 @@ pub struct TimelineLanes {
     pub titles: Lanes,
     source_names: BTreeMap<Id, Arc<str>>,
     tracks: Arc<[crate::tracks::Track]>,
+    markers: Vec<(MediaTime, crate::model::MarkerKind)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -44,12 +45,14 @@ impl TimelineLanes {
             titles,
             source_names,
             tracks: _,
+            markers,
         } = self;
         cameras.items.is_empty()
             && effects.items.is_empty()
             && audio.items.is_empty()
             && titles.items.is_empty()
             && source_names.is_empty()
+            && markers.is_empty()
     }
 
     /// Visible clip labels use one cached source lookup instead of a nested source scan per clip/frame.
@@ -67,6 +70,11 @@ impl TimelineLanes {
             .collect::<Result<Vec<_>, _>>()?;
         let mut lanes = Self {
             tracks: Arc::from([]),
+            markers: project
+                .markers
+                .iter()
+                .map(|marker| (marker.at, marker.kind))
+                .collect(),
             source_names: project
                 .sources
                 .iter()
@@ -113,7 +121,19 @@ impl TimelineLanes {
             tracks.extend(std::iter::repeat_n(track, rows));
         }
         lanes.tracks = tracks.into();
+        lanes.markers.sort_by_key(|(at, _)| *at);
         Ok(lanes)
+    }
+
+    /// Queries only the visible ordered marker interval without allocating during timeline painting.
+    pub fn visible_markers(
+        &self,
+        start: MediaTime,
+        end: MediaTime,
+    ) -> &[(MediaTime, crate::model::MarkerKind)] {
+        let first = self.markers.partition_point(|(at, _)| *at < start);
+        let last = self.markers.partition_point(|(at, _)| *at <= end);
+        &self.markers[first..last.max(first)]
     }
 
     /// Physical rows derive from the admitted logical tracks and overlap packing exactly once.
@@ -168,5 +188,44 @@ impl Lanes {
             rows: next.max(1),
             items,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Confidence, Marker, MarkerKind};
+
+    #[test]
+    fn marker_windows_are_ordered_inclusive_and_do_not_depend_on_project_insertion_order() {
+        let mut project = Project::new("Marker window");
+        project.markers = (0..10_000)
+            .rev()
+            .map(|index| Marker {
+                id: Id(index + 1),
+                at: MediaTime(index * 1_000),
+                kind: MarkerKind::Beat,
+                label: String::new(),
+                confidence: Confidence::Correlated,
+                origin: None,
+            })
+            .collect();
+        let lanes = TimelineLanes::new(&project).unwrap();
+        let window = lanes.visible_markers(MediaTime(5_000_000), MediaTime(5_003_000));
+        assert_eq!(
+            window.iter().map(|(at, _)| at.0).collect::<Vec<_>>(),
+            [5_000_000, 5_001_000, 5_002_000, 5_003_000]
+        );
+        assert!(
+            lanes
+                .visible_markers(MediaTime(20_000_000), MediaTime(21_000_000))
+                .is_empty()
+        );
+        assert!(
+            lanes
+                .visible_markers(MediaTime(8_000_000), MediaTime(7_000_000))
+                .is_empty()
+        );
+        assert_eq!(project.markers[0].at, MediaTime(9_999_000));
     }
 }
