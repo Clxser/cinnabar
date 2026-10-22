@@ -584,13 +584,22 @@ not establish full vanilla world-generation parity. Dragonfly supports only flat
 natural terrain requires BDS.
 Create and edit forms persist BDS advanced, multiplayer and cheat options through a shared
 catalog and generated server properties and level data. Pack and experiment configuration,
-hardcore, flat presets, Education Edition, operator status for a signed-out host and live
+hardcore, flat presets, Education Edition, operator status for a signed-out or offline-fallback host and live
 acceptance of every option on supported platforms remain incomplete.
-hardcore, flat presets, Education Edition and live acceptance of every option on supported
-platforms remain incomplete.
+The Android translated runtime supplies a loopback route and passes two consecutive offline
+transport, signed-out login and spawn checks in an ordinary Android 15 emulator app sandbox.
+Signed-in local HTTP joins retry once with local identity when account services fail before transport
+or the launcher's own server reports missing verification keys; other rejections and external or
+transferred servers retain their authentication policy. Player-data continuity between account-backed
+and local identities, offline acceptance in the full APK and physical-phone retesting remain open. Other BDS hosts can still
+offer no NetherNet route with every external interface down, producing an explanatory error.
 Local HTTP and LAN joins include client loopback ICE candidates. Full offline play of native
 BDS worlds is still a confirmed gap: without a non-loopback network interface BDS
 offers no NetherNet route, so the join fails with an explanation instead of connecting.
+Startup logs report milestone elapsed times and child-process CPU time when available.
+Native and translated BDS startup overlaps host-profile loading and confirms any changed
+operator grant before reporting running; container servers still resolve it before launch.
+Physical-phone startup profiling and the ten-second join target remain open.
 
 See [local worlds](docs/local-worlds.md).
 
@@ -630,6 +639,33 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   Built-in shaders avoid forwarding matrix parameters between functions to prevent an Adreno
   Vulkan compiler crash. Startup is confirmed on an affected Adreno 660 device; broader Android
   rendering acceptance remains incomplete.
+  Android packages the Dragonfly local-world server and resolves it from the APK's native-library
+  directory. APKs include a translator and pinned, cached guest runtime, with BDS the default
+  for new worlds. An Android-adapted GNU runtime starts BDS, creates
+  and saves a world, shuts down cleanly and reopens it in a target-SDK-35 test app on an
+  Android 15 VM with SELinux enforcing.
+  Production protocol login and spawn also pass with an extended diagnostic deadline, including
+  two consecutive runs with all external interfaces down. Translation requests stronger x86
+  memory ordering, adds a loopback route and uses Android's resolver for host names. Earlier
+  startup aborts leave reliability acceptance open. Full APK, physical-device, offline lifecycle,
+  performance and 4/16 KB compatibility acceptance remain incomplete.
+  Legacy and reverse name lookups still use the native resolver; only `getaddrinfo` uses Android's resolver.
+  Setup refreshes a private export of Android's default accepted certificate authorities and supplies it
+  to the translated server's TLS stack. An emulator check confirms the server reads the bundle;
+  its effect on service authentication and startup time needs acceptance;
+  the ten-second startup and join target is unverified.
+  The guest library is downloaded directly and hash-checked, with valid cached copies reused;
+  the source archive is needed only by the build toolchain.
+  Translated code is cached for the matching server and packaged runtime, with later starts
+  loading it without rewriting it at each stop.
+  Android asset setup downloads the server and prepares reusable startup code in an isolated
+  temporary world before reporting Ready. The first saved-world open uses that prepared code;
+  the same server and runtime reuse it across worlds, and updates invalidate it. Missing game
+  assets and cancellation still block client startup. Local-world preparation failures are logged
+  and allow the client to start for remote play or Dragonfly; BDS opens can run uncached without
+  another scratch preparation. Cache writes are skipped before creating a file if
+  they would exceed the 512 MiB cache budget or leave less than 512 MiB free. Physical-phone timing, shutdown, storage
+  and executable-cache acceptance remain incomplete.
   Pipeline loading prepares single-sample coverage before switching to Performance.
   The in-world Balanced-to-Performance transition retains the scene and settings in an Android VM capture; physical-device and startup-cost qualification remain incomplete.
   Android restores immersive system bars on resume, window focus and keyboard dismissal,
