@@ -14,6 +14,21 @@ pub(super) fn catalog(
     wide_bounds: bool,
     choice: &str,
 ) -> (Arc<assets::RuntimeEntityAssets>, ActorArtworkPages) {
+    catalog_with_pose(layer_condition, wide_bounds, choice, false)
+}
+
+/// Changes a bone on every interpolation sample to exercise retained native pose owners.
+pub(super) fn animated_catalog() -> (Arc<assets::RuntimeEntityAssets>, ActorArtworkPages) {
+    catalog_with_pose(None, true, "Geometry.default", true)
+}
+
+/// Compiles shared original actor artwork with an optional frame-driven bone channel.
+fn catalog_with_pose(
+    layer_condition: Option<&str>,
+    wide_bounds: bool,
+    choice: &str,
+    animated: bool,
+) -> (Arc<assets::RuntimeEntityAssets>, ActorArtworkPages) {
     let side = render_api::CLASSIC_SKIN_SIDE;
     let model = |identifier, width, origin, size| {
         serde_json::json!({
@@ -62,18 +77,35 @@ pub(super) fn catalog(
         Some(condition) => serde_json::json!([{"controller.render.fixture": condition}]),
         None => serde_json::json!(["controller.render.fixture"]),
     };
-    for name in ["player", "creeper"] {
+    if animated {
         files.push((
-            format!("entity/{name}.json").into(),
+            "animations/fixture.json".into(),
             serde_json::to_vec(&serde_json::json!({
-                "format_version": "1.10.0", "minecraft:client_entity": {"description": {
-                    "identifier": format!("minecraft:{name}"), "materials": {"default": "entity"},
-                    "textures": {"default": "textures/entity/fixture"},
-                    "geometry": {"default": "geometry.narrow", "wide": "geometry.wide"},
-                    "render_controllers": controllers
+                "format_version": "1.8.0", "animations": {"animation.fixture.pose": {
+                    "loop": true,
+                    "bones": {"body": {"position": [0, "query.frame_alpha * 16", 0]}}
                 }}
             }))
             .unwrap(),
+        ));
+    }
+    for name in ["player", "creeper"] {
+        let mut entity = serde_json::json!({
+            "format_version": "1.10.0", "minecraft:client_entity": {"description": {
+                "identifier": format!("minecraft:{name}"), "materials": {"default": "entity"},
+                "textures": {"default": "textures/entity/fixture"},
+                "geometry": {"default": "geometry.narrow", "wide": "geometry.wide"},
+                "render_controllers": controllers
+            }}
+        });
+        if animated {
+            let description = &mut entity["minecraft:client_entity"]["description"];
+            description["animations"] = serde_json::json!({"pose": "animation.fixture.pose"});
+            description["scripts"] = serde_json::json!({"animate": ["pose"]});
+        }
+        files.push((
+            format!("entity/{name}.json").into(),
+            serde_json::to_vec(&entity).unwrap(),
         ));
     }
     let mut png = std::io::Cursor::new(Vec::new());

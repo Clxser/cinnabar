@@ -2,17 +2,14 @@ use super::*;
 
 #[test]
 fn changing_replay_layer_poses_release_old_source_allocations() {
-    let (assets, artwork) = super::super::culling_capacity_tests::catalog(
-        None,
-        true,
-        "query.frame_alpha > 0.5 ? Geometry.wide : Geometry.default",
-    );
+    let (assets, artwork) = super::super::culling_capacity_tests::animated_catalog();
     let stream = super::super::culling_capacity_tests::entity_world(&assets, [0.0, 0.0, -5.0]);
     let mut scene = ActorRenderScene::with_runtime_entity_assets(&assets).unwrap();
     let mut replay = ReplayActors::default();
     let mut hand = ActorRigFrameBuilder::new(render_model::pack_geometries(&assets)).unwrap();
     let mut skins = crate::presentation::skin_rig::SkinRigCache::default();
     replay.set_enabled(true);
+    let mut previous = None;
     for index in 1..=64 {
         let alpha = index as f32 / 64.0;
         replay.request_frame();
@@ -52,7 +49,15 @@ fn changing_replay_layer_poses_release_old_source_allocations() {
             None,
             Some(stream.authority().actor_render_frame(alpha)),
         );
-        assert!(!replay.frame.as_ref().unwrap().rig.manifest.is_empty());
+        let frame = &replay.frame.as_ref().unwrap().rig;
+        assert!(!frame.manifest.is_empty());
+        if let Some(previous) = previous {
+            assert_ne!(
+                previous, frame.current_bones,
+                "each frame must change its pose"
+            );
+        }
+        previous = Some(Arc::clone(&frame.current_bones));
     }
     let retained = replay.scratch.layer_poses.retained_pose_count();
     assert!(
