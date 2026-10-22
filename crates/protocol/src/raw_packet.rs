@@ -70,6 +70,11 @@ impl RawPacket {
         &self.inner_frame
     }
 
+    /// Bytes retained by this packet's original batch allocation before optional compaction.
+    pub(crate) fn backing_len(&self) -> usize {
+        self.backing_len
+    }
+
     /// Shares the original encoded header and payload, removing only its validated entry length.
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     pub(crate) fn encoded(&self) -> Bytes {

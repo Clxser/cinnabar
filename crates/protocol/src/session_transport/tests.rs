@@ -8,18 +8,14 @@ mod native_terminal;
 
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 impl<R: bridge::FrameRead> SessionTransport<R> {
-    /// Observes actual native read-ahead commitment without consuming its accepted FIFO.
-    pub(crate) fn has_retained_native_batch(&self) -> bool {
-        self.ahead
-            .iter()
-            .any(|entry| matches!(entry.item.as_ref(), Some(Ok(ReadItem::Native(_)))))
-    }
-
-    /// Observes a terminal already split by the original startup reader, without removing it.
-    pub(crate) fn has_retained_native_terminal(&self) -> bool {
-        self.received
-            .iter()
-            .any(|packet| matches!(packet.id, PacketId::Disconnect | PacketId::Transfer))
+    /// Observes the actual retained packet without consuming its accepted FIFO.
+    pub(crate) fn has_retained_packet(&self, expected: &Packet) -> bool {
+        self.received.iter().any(|raw| {
+            raw.clone()
+                .decode()
+                .as_ref()
+                .is_ok_and(|packet| packet == expected)
+        })
     }
 }
 

@@ -15,6 +15,7 @@ use crate::{Packet, ProtocolError, SessionError};
 use bridge::{BridgeError, FrameQueue, FramedReader};
 use bytes::{BufMut, Bytes, BytesMut};
 mod io;
+mod preparation;
 pub(crate) use io::{PacketSender, PacketWritten};
 use io::{ReadItem, Reader, ServerBatch};
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
@@ -58,6 +59,9 @@ pub(crate) struct SessionTransport<R = FramedReader> {
     received: VecDeque<RawPacket>,  // packets split from a batch but not yet read
     ahead: VecDeque<ReadAhead>,     // original reader items and their immutable admission metadata
     ahead_bytes: usize,             // conservative admission bytes charged to `ahead`
+    preparation_bytes: usize,       // original reader bodies moved to `received` during preparation
+    preparation_scanned: usize,     // receive prefix inspected for requested replies
+    preparation_terminals_scanned: usize, // receive prefix inspected for usable terminals
     ended: bool,                    // a terminal message was delivered
     sending: VecDeque<InFlightSend>,
     tap: Option<Arc<dyn PacketTap>>,
@@ -158,6 +162,9 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
             received: VecDeque::new(),
             ahead: VecDeque::new(),
             ahead_bytes: 0,
+            preparation_bytes: 0,
+            preparation_scanned: 0,
+            preparation_terminals_scanned: 0,
             ended: false,
             sending: VecDeque::new(),
             tap: None,
@@ -228,6 +235,9 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
         self.current = None;
         loop {
             if let Some(packet) = self.received.pop_front() {
+                self.preparation_scanned = self.preparation_scanned.saturating_sub(1);
+                self.preparation_terminals_scanned =
+                    self.preparation_terminals_scanned.saturating_sub(1);
                 self.delivered = packet.trace_position;
                 self.observe(&packet);
                 return Ok(Inbound::Packet(packet));
@@ -326,13 +336,13 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
 
     /// Inspects the first retained terminal without consuming accepted input or delay metadata.
     pub(crate) fn buffered_startup_terminal(&self) -> Result<Option<Terminal>, SessionError> {
+        for packet in &self.received {
+            if let Some(terminal) = packet_terminal(packet)? {
+                return Ok(Some(terminal));
+            }
+        }
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
         if matches!(&self.reader, Reader::Native(_)) {
-            for packet in &self.received {
-                if let Some(terminal) = native_packet_terminal(packet)? {
-                    return Ok(Some(terminal));
-                }
-            }
             for batch in &self.startup {
                 if !batch.relay_applied {
                     return Ok(None);
@@ -460,7 +470,7 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     fn apply_native_read_ahead(&mut self, max_bytes: usize) -> bool {
         for packet in &self.received {
-            if !matches!(native_packet_terminal(packet), Ok(None)) {
+            if !matches!(packet_terminal(packet), Ok(None)) {
                 return false;
             }
         }
@@ -531,6 +541,8 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
         let mut restored = VecDeque::from(packets);
         restored.append(&mut self.received);
         self.received = restored;
+        self.preparation_scanned = 0;
+        self.preparation_terminals_scanned = 0;
     }
 
     /// Releases the observed body once decoding and validation have succeeded.
@@ -776,15 +788,14 @@ fn native_batch_terminal(body: &Bytes) -> Result<Option<Terminal>, SessionError>
         {
             let packet = crate::raw_packet::raw_packet(frame, body.len())
                 .expect("the selected terminal packet ID is known");
-            terminal = native_packet_terminal(&packet)?;
+            terminal = packet_terminal(&packet)?;
         }
     }
     Ok(terminal)
 }
 
 /// Projects one usable server control using its ordinary decoder and target/text policies.
-#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-fn native_packet_terminal(packet: &RawPacket) -> Result<Option<Terminal>, SessionError> {
+fn packet_terminal(packet: &RawPacket) -> Result<Option<Terminal>, SessionError> {
     use bedrock_protocol_1_26_51::{packets, types::DisconnectMessages};
 
     if !matches!(

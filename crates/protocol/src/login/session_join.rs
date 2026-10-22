@@ -182,17 +182,19 @@ pub(super) async fn prepare_with_read_ahead<R: FrameRead, P>(
     preparation: impl Future<Output = P>,
 ) -> Result<P, ProtocolError> {
     tokio::pin!(preparation);
-    tokio::select! {
-        prepared = &mut preparation => Ok(prepared),
-        () = transport.read_ahead(MAX_READ_AHEAD_BYTES) => {
-            if let Some(terminal) = transport.buffered_startup_terminal()?
+    let prepared = tokio::select! {
+        prepared = &mut preparation => prepared,
+        result = transport.read_ahead_during_preparation(MAX_READ_AHEAD_BYTES) => {
+            if let Some(terminal) = result?
                 && let Ok(error) = super::startup::terminal_error(terminal)
             {
                 return Err(error);
             }
-            Ok(preparation.await)
+            preparation.await
         },
-    }
+    };
+    transport.complete_preparation();
+    Ok(prepared)
 }
 
 /// Sends the same login request through native or injected web play I/O.
