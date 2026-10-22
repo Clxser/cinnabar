@@ -214,7 +214,16 @@ fn numeric(
     canvas.text_line(&label, [left, y], right - left, CAPTION, TEXT_DIMMER)?;
     y += canvas.r(2.8);
     let value = shot
-        .parameter(parameter, at)
+        .parameter_with_path(
+            parameter,
+            at,
+            view.studio
+                .camera_workspace
+                .path_cache
+                .as_ref()
+                .filter(|cache| cache.shot == shot.id)
+                .map(|cache| cache.path.as_ref()),
+        )
         .map_or_else(|| "--".into(), |value| format!("{value:.3}"));
     let draft = view
         .studio

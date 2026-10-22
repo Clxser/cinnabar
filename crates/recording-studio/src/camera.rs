@@ -12,6 +12,7 @@ pub const MAX_TARGET_NAME_BYTES: usize = 256;
 pub const CAMERA_FOV_RANGE: std::ops::Range<f64> = 1.0..179.0;
 const DEFAULT_FOV: f64 = 70.0;
 
+mod continuity;
 mod distance;
 mod edit;
 mod fov;
@@ -20,7 +21,8 @@ mod path;
 mod presets;
 mod subjects;
 mod viewport;
-pub use distance::{CompiledCameraPath, PathTiming};
+pub use continuity::PathContinuity;
+pub use distance::{CompiledCameraPath, PathAccuracy, PathTiming};
 pub use edit::{CameraParameter, CameraRigKind};
 pub use path::{CameraHandles, PathControl};
 pub use presets::CameraPreset;
@@ -179,6 +181,15 @@ pub struct CameraShot {
     /// Source-time phase retains original support keys and exact easing when a path is trimmed.
     #[serde(default)]
     pub path_offset: MediaTime,
+    /// Whole-rail travel easing leaves authored orientation and lens clocks independent.
+    #[serde(
+        default = "distance::linear_easing",
+        skip_serializing_if = "distance::is_linear"
+    )]
+    pub path_global_easing: Easing,
+    /// Aligned geometric tangents are opt-in so existing authored rails retain their exact shape.
+    #[serde(default, skip_serializing_if = "PathContinuity::is_authored")]
+    pub path_continuity: PathContinuity,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -353,15 +364,17 @@ impl CameraShot {
                 "a camera FOV phase requires a lens curve",
             ));
         }
-        if self.path_timing == PathTiming::Distance && !matches!(self.mode, CameraMode::Path { .. })
-        {
+        if self.path_timing != PathTiming::Keyed && !matches!(self.mode, CameraMode::Path { .. }) {
             return Err(StudioError::Invalid(
                 "distance travel timing requires a camera path",
             ));
         }
         if matches!(self.mode, CameraMode::Path { .. }) {
             self.path_offset.checked_add(self.span.duration())?;
-        } else if self.path_offset != MediaTime::ZERO {
+        } else if self.path_offset != MediaTime::ZERO
+            || self.path_continuity != PathContinuity::Authored
+            || self.path_global_easing != Easing::Linear
+        {
             return Err(StudioError::Invalid(
                 "a path source phase requires a camera rail",
             ));
@@ -396,8 +409,10 @@ impl CameraShot {
                         handles.validate(key.pose.position)?;
                     }
                 }
-                if self.path_timing == PathTiming::Distance {
-                    distance::validate(keys, *smooth_position)?;
+                if self.path_timing != PathTiming::Keyed
+                    || self.path_continuity != PathContinuity::Authored
+                {
+                    distance::validate(keys, *smooth_position, self.path_continuity)?;
                 }
             }
             CameraMode::Follow {
@@ -484,11 +499,21 @@ impl CameraShot {
                 smooth_position,
             } => {
                 let elapsed = self.path_offset.checked_add(elapsed).ok()?;
-                if self.path_timing == PathTiming::Distance {
-                    path.map(|path| path.sample(time))
-                        .unwrap_or_else(|| distance::sample(keys, elapsed, *smooth_position))
-                } else {
-                    sample_path(keys, elapsed, *smooth_position)
+                match self.path_timing {
+                    PathTiming::GlobalDistance => path
+                        .and_then(|path| path.sample(time))
+                        .or_else(|| {
+                            CompiledCameraPath::new(self).and_then(|path| path.sample(time))
+                        })
+                        .or_else(|| keys.first().map(|key| key.pose)),
+                    PathTiming::Distance => {
+                        path.map(|path| path.sample(time)).unwrap_or_else(|| {
+                            distance::sample(keys, elapsed, *smooth_position, self.path_continuity)
+                        })
+                    }
+                    PathTiming::Keyed => {
+                        sample_path_policy(keys, elapsed, *smooth_position, self.path_continuity)
+                    }
                 }
             }
             CameraMode::Player { actor: target, fov } => {
@@ -611,7 +636,7 @@ fn sample_path(keys: &[CameraKey], time: MediaTime, smooth: bool) -> Option<Came
             .and_then(|handles| handles.incoming)
             .is_some()
     {
-        pose.position = path::bezier_position(keys, next - 1, t, smooth);
+        pose.position = path::bezier_position(keys, next - 1, t, smooth, PathContinuity::Authored);
         return Some(pose);
     }
     if smooth {
@@ -648,6 +673,32 @@ fn sample_path(keys: &[CameraKey], time: MediaTime, smooth: bool) -> Option<Came
                 .clamp(p1.min(p2), p1.max(p2))
         });
     }
+    Some(pose)
+}
+
+/// Aligned tangent mode is explicit; the original sampler stays bit-for-bit unchanged by default.
+fn sample_path_policy(
+    keys: &[CameraKey],
+    time: MediaTime,
+    smooth: bool,
+    continuity: PathContinuity,
+) -> Option<CameraPose> {
+    if continuity == PathContinuity::Authored {
+        return sample_path(keys, time, smooth);
+    }
+    let next = keys.partition_point(|key| key.at <= time);
+    if next == 0 {
+        return keys.first().map(|key| key.pose);
+    }
+    if next == keys.len() {
+        return keys.last().map(|key| key.pose);
+    }
+    let (a, b) = (&keys[next - 1], &keys[next]);
+    let amount = b
+        .easing
+        .sample((time.0 - a.at.0) as f64 / (b.at.0 - a.at.0) as f64);
+    let mut pose = a.pose.interpolated(b.pose, amount);
+    pose.position = path::bezier_position(keys, next - 1, amount, smooth, continuity);
     Some(pose)
 }
 

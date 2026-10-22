@@ -2,7 +2,10 @@
 
 use recording_studio::{
     Id, MediaTime,
-    camera::{CameraDragAxis, CameraPose, CameraShot, CameraSnap, CameraSubjectFilter, CameraView},
+    camera::{
+        CameraDragAxis, CameraPose, CameraShot, CameraSnap, CameraSubjectFilter, CameraView,
+        CompiledCameraPath,
+    },
 };
 use std::sync::Arc;
 
@@ -20,6 +23,47 @@ pub struct CameraWorkspace {
     pub guides: CameraGuides,
     /// Session bookmarks are inspection views, distinct from authored and saved timeline shots.
     pub bookmarks: Vec<CameraBookmark>,
+    pub path_cache: Option<CameraPathCache>,
+}
+
+#[derive(Clone)]
+pub struct CameraPathCache {
+    pub shot: Id,
+    pub epoch: [u64; 2],
+    pub draft: Option<Arc<CameraShot>>,
+    pub path: Arc<CompiledCameraPath>,
+}
+
+impl CameraPathCache {
+    /// Document revisions and immutable draft identities invalidate a rail once per metadata edit.
+    pub fn matches(&self, shot: Id, epoch: [u64; 2], draft: Option<&Arc<CameraShot>>) -> bool {
+        self.shot == shot
+            && self.epoch == epoch
+            && match (self.draft.as_ref(), draft) {
+                (None, None) => true,
+                (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+                _ => false,
+            }
+    }
+}
+
+impl PartialEq for CameraPathCache {
+    /// UI equality compares cache identities without traversing every arc table on ordinary frames.
+    fn eq(&self, other: &Self) -> bool {
+        self.matches(other.shot, other.epoch, other.draft.as_ref())
+            && Arc::ptr_eq(&self.path, &other.path)
+    }
+}
+
+impl std::fmt::Debug for CameraPathCache {
+    /// Debug output describes publication identity without dumping recorded geometry.
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        output
+            .debug_struct("CameraPathCache")
+            .field("shot", &self.shot)
+            .field("epoch", &self.epoch)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

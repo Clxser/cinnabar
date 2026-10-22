@@ -158,6 +158,8 @@ fn view(camera: bool) -> MenuView {
         fov_offset: MediaTime::ZERO,
         path_timing: Default::default(),
         path_offset: MediaTime::ZERO,
+        path_global_easing: recording_studio::effect::Easing::Linear,
+        path_continuity: Default::default(),
     });
     project.effects.push(EffectClip {
         id: Id(5),

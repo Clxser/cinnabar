@@ -1,7 +1,7 @@
 //! View framing and session bookmarks never modify recorded state or authored camera shots.
 
 use super::*;
-use recording_studio::camera::{CameraPose, PathTiming};
+use recording_studio::camera::{CameraPose, PathContinuity};
 
 const MAX_SESSION_VIEWS: usize = 8;
 
@@ -96,16 +96,43 @@ impl Studio {
     /// Travel timing is a saved undoable shot edit; changing it cannot alter the authored key times.
     pub(super) fn toggle_camera_distance_timing(&mut self) -> Result<(), String> {
         let shot = self.camera_shot()?;
-        let timing = match shot.path_timing {
-            PathTiming::Keyed => PathTiming::Distance,
-            PathTiming::Distance => PathTiming::Keyed,
-        };
+        let timing = shot.path_timing.next();
         let shot = shot
             .with_path_timing(timing)
             .map_err(|error| error.to_string())?;
         self.transport.pause();
         self.edit(
             "Change camera travel timing",
+            &[Command::ReplaceShot { shot }],
+        )
+    }
+
+    /// The global travel profile is ordinary saved metadata with the same easing choices as lens keys.
+    pub(super) fn cycle_camera_global_easing(&mut self) -> Result<(), String> {
+        let shot = self.camera_shot()?;
+        let shot = shot
+            .with_path_global_easing(shot.path_global_easing.next())
+            .map_err(|error| error.to_string())?;
+        self.transport.pause();
+        self.edit(
+            "Change whole rail travel easing",
+            &[Command::ReplaceShot { shot }],
+        )
+    }
+
+    /// Aligned handles are an explicit undoable geometry choice, independent of travel and lens timing.
+    pub(super) fn toggle_camera_continuity(&mut self) -> Result<(), String> {
+        let shot = self.camera_shot()?;
+        let continuity = match shot.path_continuity {
+            PathContinuity::Authored => PathContinuity::Smooth,
+            PathContinuity::Smooth => PathContinuity::Authored,
+        };
+        let shot = shot
+            .with_path_continuity(continuity)
+            .map_err(|error| error.to_string())?;
+        self.transport.pause();
+        self.edit(
+            "Change camera tangent continuity",
             &[Command::ReplaceShot { shot }],
         )
     }

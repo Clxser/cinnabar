@@ -59,6 +59,21 @@ impl Easing {
             .clamp(0.0, 1.0)
     }
 
+    /// Travel rates derive from the same coefficients as sampling; Hold's intentional jump has no finite rate.
+    pub fn derivative(self, value: f64) -> f64 {
+        if !(0.0..=1.0).contains(&value) {
+            return 0.0;
+        }
+        self.polynomial()
+            .into_iter()
+            .enumerate()
+            .skip(1)
+            .rev()
+            .fold(0.0, |result, (power, coefficient)| {
+                result * value + power as f64 * coefficient
+            })
+    }
+
     /// Analytic curve area derives from the same polynomial as sampling, keeping speed-map integrals in sync.
     pub fn integral(self, value: f64) -> f64 {
         let t = value.clamp(0.0, 1.0);

@@ -336,7 +336,17 @@ fn path(
     let keys = shot.path_keys();
     let window = key_window(view, shot);
     for index in window.clone().filter(|&index| index + 1 < keys.len()) {
-        let Some(points) = shot.path_geometry_samples::<SEGMENT_POINTS>(index) else {
+        let points = if shot.path_timing != recording_studio::camera::PathTiming::Keyed {
+            view.studio
+                .camera_workspace
+                .path_cache
+                .as_ref()
+                .filter(|cache| cache.shot == shot.id)
+                .and_then(|cache| cache.path.geometry_samples::<SEGMENT_POINTS>(index))
+        } else {
+            shot.path_geometry_samples::<SEGMENT_POINTS>(index)
+        };
+        let Some(points) = points else {
             continue;
         };
         for pair in points.windows(2) {

@@ -87,11 +87,15 @@ impl Studio {
                     Action::CycleCameraEasing,
                     Action::ToggleCameraSmoothing,
                     Action::ToggleCameraDistanceTiming,
+                    Action::ToggleCameraContinuity,
                     Action::StepCameraKey(-1),
                     Action::StepCameraKey(1),
                     Action::MoveCameraKey(-1),
                     Action::MoveCameraKey(1),
                 ]);
+                if shot.path_timing == recording_studio::camera::PathTiming::GlobalDistance {
+                    actions.push(Action::CycleCameraGlobalEasing);
+                }
                 if shot
                     .key_at(self.transport.position())
                     .is_some_and(|key| key.handles.is_some())

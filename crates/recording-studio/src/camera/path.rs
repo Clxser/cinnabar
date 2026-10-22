@@ -44,6 +44,9 @@ impl CameraShot {
         if N < 2 {
             return None;
         }
+        if self.path_timing == PathTiming::GlobalDistance {
+            return CompiledCameraPath::new(self)?.geometry_samples(segment);
+        }
         let CameraMode::Path {
             keys,
             smooth_position,
@@ -66,7 +69,13 @@ impl CameraShot {
             (high.0 - start.at.0) as f64 / duration,
         ];
         let [low, high] = if self.path_timing == PathTiming::Distance {
-            super::distance::geometry_parameters(keys, segment, *smooth_position, amounts)
+            super::distance::geometry_parameters(
+                keys,
+                segment,
+                *smooth_position,
+                self.path_continuity,
+                amounts,
+            )
         } else {
             amounts.map(|amount| end.easing.sample(amount))
         };
@@ -76,6 +85,7 @@ impl CameraShot {
                 segment,
                 low + (high - low) * index as f64 / (N - 1) as f64,
                 *smooth_position,
+                self.path_continuity,
             )
         }))
     }
@@ -100,6 +110,7 @@ impl CameraShot {
             segment,
             amount.clamp(0.0, 1.0),
             *smooth_position,
+            self.path_continuity,
         ))
     }
 
@@ -119,10 +130,16 @@ impl CameraShot {
             .path_offset
             .checked_add(at.saturating_sub(self.span.start))
             .ok()?;
-        if self.path_timing == PathTiming::Distance {
-            super::distance::sample(keys, elapsed, *smooth_position)
-        } else {
-            sample_path(keys, elapsed, *smooth_position)
+        match self.path_timing {
+            PathTiming::GlobalDistance => CompiledCameraPath::new(self)
+                .and_then(|path| path.sample(at))
+                .or_else(|| keys.first().map(|key| key.pose)),
+            PathTiming::Distance => {
+                super::distance::sample(keys, elapsed, *smooth_position, self.path_continuity)
+            }
+            PathTiming::Keyed => {
+                sample_path_policy(keys, elapsed, *smooth_position, self.path_continuity)
+            }
         }
     }
 
@@ -140,10 +157,10 @@ impl CameraShot {
         match control {
             PathControl::Key => Some(key.pose.position),
             PathControl::Incoming if index > 0 => {
-                Some(segment_controls(keys, index - 1, *smooth_position)[1])
+                Some(segment_controls(keys, index - 1, *smooth_position, self.path_continuity)[1])
             }
             PathControl::Outgoing if index + 1 < keys.len() => {
-                Some(segment_controls(keys, index, *smooth_position)[0])
+                Some(segment_controls(keys, index, *smooth_position, self.path_continuity)[0])
             }
             _ => None,
         }
@@ -226,7 +243,15 @@ impl CameraShot {
 }
 
 /// Missing handles use the same time-weighted tangents as a legacy smooth rail, or linear thirds.
-pub(super) fn segment_controls(keys: &[CameraKey], index: usize, smooth: bool) -> [[f64; 3]; 2] {
+pub(super) fn segment_controls(
+    keys: &[CameraKey],
+    index: usize,
+    smooth: bool,
+    continuity: PathContinuity,
+) -> [[f64; 3]; 2] {
+    if continuity == PathContinuity::Smooth {
+        return super::continuity::controls(keys, index);
+    }
     let (a, b) = (&keys[index], &keys[index + 1]);
     let duration = b.at.saturating_sub(a.at).seconds();
     let automatic = std::array::from_fn::<_, 3, _>(|axis| {
@@ -277,8 +302,14 @@ pub(super) fn segment_controls(keys: &[CameraKey], index: usize, smooth: bool) -
 }
 
 /// Cubic position uses the arriving key's easing parameter already applied by the path sampler.
-pub(super) fn bezier_position(keys: &[CameraKey], index: usize, t: f64, smooth: bool) -> [f64; 3] {
-    let [a, b] = segment_controls(keys, index, smooth);
+pub(super) fn bezier_position(
+    keys: &[CameraKey],
+    index: usize,
+    t: f64,
+    smooth: bool,
+    continuity: PathContinuity,
+) -> [f64; 3] {
+    let [a, b] = segment_controls(keys, index, smooth, continuity);
     let start = DVec3::from_array(keys[index].pose.position);
     let end = DVec3::from_array(keys[index + 1].pose.position);
     let left = start.lerp(DVec3::from_array(a), t);

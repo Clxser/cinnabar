@@ -76,6 +76,60 @@ impl Studio {
         }) {
             Arc::make_mut(&mut self.view).camera_workspace.key = None;
         }
+        self.reconcile_camera_path_cache();
+    }
+
+    /// Inspector geometry is prepared once on selection/document/draft changes, never on seek or camera movement.
+    fn reconcile_camera_path_cache(&mut self) {
+        let Some(editor) = self.editor.as_ref() else {
+            if self.view.camera_workspace.path_cache.is_some() {
+                Arc::make_mut(&mut self.view).camera_workspace.path_cache = None;
+            }
+            return;
+        };
+        let project = editor.project();
+        let draft = self.view.camera_workspace.draft.as_ref();
+        let shot = draft.map(Arc::as_ref).or_else(|| {
+            project
+                .shots
+                .iter()
+                .find(|shot| Some(shot.id) == self.view.selected)
+                .or_else(|| {
+                    project
+                        .shots
+                        .iter()
+                        .filter(|shot| shot.span.contains(self.transport.position()))
+                        .max_by_key(|shot| (shot.span.start, shot.id))
+                })
+        });
+        let Some(shot) = shot.filter(|shot| {
+            shot.path_timing != recording_studio::camera::PathTiming::Keyed
+                && shot.path_keys().len() > 1
+        }) else {
+            if self.view.camera_workspace.path_cache.is_some() {
+                Arc::make_mut(&mut self.view).camera_workspace.path_cache = None;
+            }
+            return;
+        };
+        let epoch = [self.document, editor.revision()];
+        if self
+            .view
+            .camera_workspace
+            .path_cache
+            .as_ref()
+            .is_some_and(|cache| cache.matches(shot.id, epoch, draft))
+        {
+            return;
+        }
+        let cache = recording_studio::camera::CompiledCameraPath::new(shot).map(|path| {
+            launcher::menu::studio::CameraPathCache {
+                shot: shot.id,
+                epoch,
+                draft: draft.cloned(),
+                path: Arc::new(path),
+            }
+        });
+        Arc::make_mut(&mut self.view).camera_workspace.path_cache = cache;
     }
 
     /// Keyboard focus uses the displayed replay pose and pauses the transport before moving it.

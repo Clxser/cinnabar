@@ -143,12 +143,43 @@ pub(super) fn draw(
         canvas,
         view,
         [left, y, right, y + canvas.r(3.8)],
-        if shot.path_timing == recording_studio::camera::PathTiming::Distance {
-            "Travel: Even speed between keys"
-        } else {
-            "Travel: Key easing"
-        },
+        &format!("Travel: {}", shot.path_timing.label()),
         Action::ToggleCameraDistanceTiming,
+        keys.len() > 1,
+        Variant::Secondary,
+    )?;
+    y += canvas.r(4.8);
+    if shot.path_timing == recording_studio::camera::PathTiming::GlobalDistance {
+        control(
+            canvas,
+            view,
+            [left, y, right, y + canvas.r(3.8)],
+            &format!("Travel ease: {}", shot.path_global_easing.label()),
+            Action::CycleCameraGlobalEasing,
+            true,
+            Variant::Secondary,
+        )?;
+        y += canvas.r(4.8);
+        let description = if shot.path_global_easing == recording_studio::effect::Easing::Hold {
+            "Hold cuts to the end. Rotation and lens keep their own key times."
+        } else {
+            "Whole rail speed ignores position key spacing. Rotation/lens keep their key times; corners ease to a stop."
+        };
+        y += canvas.text(
+            description,
+            [left, y],
+            right - left,
+            CAPTION,
+            TEXT_DIMMER,
+            false,
+        )? + canvas.r(1.6);
+    }
+    control(
+        canvas,
+        view,
+        [left, y, right, y + canvas.r(3.8)],
+        &format!("Joins: {}", shot.path_continuity.label()),
+        Action::ToggleCameraContinuity,
         keys.len() > 1,
         Variant::Secondary,
     )?;

@@ -712,6 +712,8 @@ impl Studio {
             Action::CycleCameraEasing => self.cycle_camera_easing()?,
             Action::ToggleCameraSmoothing => self.toggle_camera_smoothing()?,
             Action::ToggleCameraDistanceTiming => self.toggle_camera_distance_timing()?,
+            Action::CycleCameraGlobalEasing => self.cycle_camera_global_easing()?,
+            Action::ToggleCameraContinuity => self.toggle_camera_continuity()?,
             Action::StepCameraKey(direction) => self.step_camera_key(direction)?,
             Action::SelectCameraKey { shot, at } => self.select_camera_key(shot, at)?,
             Action::MoveCameraKey(direction) => self.move_camera_key(direction)?,

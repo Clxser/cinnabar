@@ -126,6 +126,8 @@ impl CameraShot {
             fov_offset: MediaTime::ZERO,
             path_timing: PathTiming::Keyed,
             path_offset: MediaTime::ZERO,
+            path_global_easing: Easing::Linear,
+            path_continuity: PathContinuity::Authored,
         };
         shot.validate()?;
         Ok(shot)
@@ -233,6 +235,27 @@ impl CameraShot {
                 _ => None,
             },
         }
+    }
+
+    /// Inspectors reuse their immutable rail cache instead of preparing global travel tables per paint.
+    pub fn parameter_with_path(
+        &self,
+        parameter: CameraParameter,
+        at: MediaTime,
+        path: Option<&CompiledCameraPath>,
+    ) -> Option<f64> {
+        if matches!(self.mode, CameraMode::Path { .. })
+            && self.path_timing != PathTiming::Keyed
+            && self.path_keys().len() > 1
+        {
+            if parameter == CameraParameter::Fov
+                && let Some(value) = self.fov_override(at)
+            {
+                return Some(value);
+            }
+            return pose_value(path?.sample(at)?, parameter);
+        }
+        self.parameter(parameter, at)
     }
 
     /// Edits a private copy. A path adjustment creates/changes an exact key at the current playhead.

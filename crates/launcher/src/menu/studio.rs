@@ -14,7 +14,7 @@ pub use export_range::ExportRangeField;
 pub mod timeline;
 pub use clip::{ClipTimeField, MAX_CLIP_TIME_BYTES};
 mod camera;
-pub use camera::{CameraBookmark, CameraGuides, CameraWorkspace};
+pub use camera::{CameraBookmark, CameraGuides, CameraPathCache, CameraWorkspace};
 pub mod creative;
 mod workspace;
 pub use workspace::{
@@ -277,6 +277,8 @@ pub enum Action {
     CycleCameraEasing,
     ToggleCameraSmoothing,
     ToggleCameraDistanceTiming,
+    CycleCameraGlobalEasing,
+    ToggleCameraContinuity,
     StepCameraKey(i8),
     SelectCameraKey {
         shot: Id,
