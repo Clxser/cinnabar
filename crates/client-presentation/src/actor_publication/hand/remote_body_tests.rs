@@ -557,6 +557,7 @@ fn sample_shared_bodies<'a>(
         },
         |_, _, _, _| false,
         &mut Vec::new(),
+        None,
     )
 }
 

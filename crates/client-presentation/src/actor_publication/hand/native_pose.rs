@@ -197,6 +197,7 @@ impl NativePoseCache {
         if sample_skin {
             frame = frame.with_world_body(runtime_id);
         }
+        let rig = stream.authority().actor_rig(runtime_id)?;
         self.held_item_scale = frame.sample_held_item_scale(rig).held_item_scale;
         self.skin_layers = None;
         let sampled = if sample_skin {

@@ -92,11 +92,13 @@ pub(super) fn prepare<'a>(
         (view, None),
         artwork,
         bodies::BodyCaches {
+            coverage: &[],
             poses: &mut scratch.poses,
             java_poses: &mut scratch.java_poses,
             native_pose: &mut scratch.java_hand.native_pose,
             skin_rigs,
             equipment: equipment.as_deref_mut(),
+            scratch: &mut scratch.body_scratch,
         },
         |_, _, _, _| false,
         &mut geometries,
@@ -135,7 +137,9 @@ pub(super) fn prepare<'a>(
             java_posed: &bodies.java_posed,
             combat_visuals: view.combat_visuals,
             local_emote_pose: bodies.local_emote_pose.as_ref(),
+            remote_emote_poses: &bodies.remote_emote_poses,
             native_body_sampled: bodies.native_body_sampled,
+            local_coverage: false,
             remote_skin_layers: &bodies.remote_skin_layers,
             native_pose: &scratch.java_hand.native_pose,
         },
@@ -153,6 +157,9 @@ pub(super) fn prepare<'a>(
         &mut geometries,
     );
     layers::apply_style_and_visibility(&mut batch, stream, None);
+    scratch
+        .body_scratch
+        .recycle(bodies.java_posed, bodies.remote_skin_layers);
     if let Some(equipment) = equipment {
         geometries.extend(equipment.take_pending_geometries());
     }

@@ -412,9 +412,6 @@ pub(super) fn line_metrics(
     })
 }
 
-/// Retained line bound, far above any frame's visible tags.
-const MAX_ATLAS_LINES: usize = 4096;
-
 #[cfg(test)]
 mod tests {
     mod formatting;

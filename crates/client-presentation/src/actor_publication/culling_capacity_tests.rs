@@ -337,6 +337,7 @@ impl Caches {
             },
             |_, _, _, _| self.occluded,
             &mut geometries,
+            None,
         );
         (sampled, geometries)
     }
@@ -723,4 +724,60 @@ fn translated_coverage_prepares_remote_sources_outside_the_live_view_or_behind_t
         assert_eq!(sampled.remotes.len(), 1, "source at {feet:?}");
         assert_eq!(sampled.mask_only_runtime_ids, [1]);
     }
+}
+
+#[test]
+fn replay_publications_keep_offscreen_players_without_replacing_the_live_frame() {
+    let (assets, artwork) = catalog(None, true, "Geometry.default");
+    let stream = player_world(&assets, 2, |id| skin(id, false), [0.0, 0.0, 5.0]);
+    let mut scene = ActorRenderScene::with_runtime_entity_assets(&assets).unwrap();
+    scene.update(0.5, None, []);
+    let live = scene.frame().clone();
+    let mut replay = recording::ReplayActors::default();
+    let mut skins = SkinRigCache::default();
+    let mut hand = ActorRigFrameBuilder::new(render_model::pack_geometries(&assets)).unwrap();
+    replay.set_enabled(true);
+    for alpha in [0.25, 0.75] {
+        replay.request_frame();
+        recording::prepare(
+            &mut replay,
+            Some(&stream),
+            &input(),
+            bodies::PoseView {
+                partial_tick: alpha,
+                first_person: true,
+                java_mode: false,
+                combat_visuals: Default::default(),
+                sampling_camera: Some(([0.0; 2], Vec3::Y.to_array())),
+                aspect: 1.0,
+            },
+            None,
+            &artwork,
+            Some(&assets),
+            None,
+            None,
+            &mut skins,
+            &mut scene,
+            &mut hand,
+            None,
+            None,
+            Some(stream.authority().actor_render_frame(alpha)),
+        );
+        let frame = replay.frame.as_ref().expect("requested capture publishes");
+        let ids: std::collections::BTreeSet<_> = frame
+            .rig
+            .manifest
+            .iter()
+            .filter(|draw| draw.identity.layer == render_model::ACTOR_LAYER_BODY)
+            .map(|draw| draw.identity.runtime_id)
+            .collect();
+        assert_eq!(ids, [1, 2, 3].into());
+        assert!(Arc::ptr_eq(
+            &scene.frame().rig.instances,
+            &live.rig.instances
+        ));
+        assert!(Arc::ptr_eq(&scene.frame().artwork, &live.artwork));
+    }
+    replay.set_enabled(false);
+    assert!(replay.frame.is_none());
 }

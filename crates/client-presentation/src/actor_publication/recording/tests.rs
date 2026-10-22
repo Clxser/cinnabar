@@ -14,6 +14,8 @@ fn received_publication_keeps_live_frame_artwork_and_geometry_leases() {
         &mut replay,
         None,
         &ActorFrameInput {
+            cosmetics: Vec::new(),
+            remote_hats: Vec::new(),
             local_feed: None,
             predicted_eye: None,
             predicted_feet: None,
@@ -22,6 +24,7 @@ fn received_publication_keeps_live_frame_artwork_and_geometry_leases() {
             renders_game: true,
             hide_hand: false,
             custom_emote: None,
+            remote_emotes: Vec::new(),
         },
         bodies::PoseView {
             partial_tick: 0.5,
