@@ -80,6 +80,7 @@ fn command(project: &Project, graph: &GraphCurve, curve: Curve) -> Result<Comman
                 .unwrap()
                 .clone();
             shot.fov_curve = Some(curve);
+            shot.fov_offset = graph.offset;
             shot.validate()?;
             Ok(Command::ReplaceShot { shot })
         }
@@ -162,8 +163,8 @@ pub fn set_key_on(
             value.clamp(-90.0, 90.0)
         }
         GraphChannel::Fov => value.clamp(
-            crate::camera::CAMERA_FOV_RANGE.start + 0.001,
-            crate::camera::CAMERA_FOV_RANGE.end - 0.001,
+            crate::camera::CAMERA_FOV_RANGE.start,
+            crate::camera::CAMERA_FOV_RANGE.end.next_down(),
         ),
         GraphChannel::Effect => project
             .effects

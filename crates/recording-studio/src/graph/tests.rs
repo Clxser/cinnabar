@@ -660,3 +660,188 @@ fn graph_speed_quantization_remains_inside_combined_rate_limits_at_both_edges() 
         }
     }
 }
+
+#[test]
+fn plot_ranges_preserve_offscreen_fractions_for_real_segment_clipping() {
+    assert_eq!(range_fraction([10.0, 20.0], 0.0), -1.0);
+    assert!((range_fraction([10.0, 20.0], 30.0) - 2.0).abs() < 1e-12);
+    assert_eq!(range_value([10.0, 20.0], -1.0), 10.0);
+    assert_eq!(range_value([10.0, 20.0], 2.0), 20.0);
+    let fraction = range_fraction([0.0, f64::MIN_POSITIVE], f64::MAX);
+    assert!(fraction.is_finite() && fraction > 1.0);
+}
+
+#[test]
+fn first_lens_edit_preserves_original_key_easing_through_trim_move_and_every_travel_clock() {
+    use crate::camera::{CameraKey, CameraMode, CompiledCameraPath, PathTiming};
+    for timing in [
+        PathTiming::Keyed,
+        PathTiming::Distance,
+        PathTiming::GlobalDistance,
+    ] {
+        let mut project = rail_project(timing);
+        let CameraMode::Path { keys, .. } = &mut project.shots[0].mode else {
+            unreachable!()
+        };
+        keys[0].pose.fov = 35.0;
+        keys[1].pose.fov = 125.0;
+        keys.insert(
+            1,
+            CameraKey {
+                at: MediaTime(1_000_000),
+                pose: CameraPose {
+                    position: [4.0, 0.0, 0.0],
+                    fov: 80.0,
+                    ..Default::default()
+                },
+                easing: Easing::Bezier {
+                    outgoing: [7_000, 15_000],
+                    incoming: [55_000, 60_000],
+                },
+                handles: None,
+            },
+        );
+        let original = project.shots[0].clone();
+        project.shots[0] = original
+            .trimmed(Span::new(MediaTime(500_000), MediaTime(1_500_000)).unwrap())
+            .unwrap();
+        project.shots[0].span = Span::new(MediaTime(3_000_000), MediaTime(4_000_000)).unwrap();
+        let source = Arc::new(project);
+        let graph = GraphCurve::new_reusing(
+            Arc::clone(&source),
+            Id(1),
+            GraphChannel::Fov,
+            CameraPose {
+                fov: 170.0,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(graph.points.len(), 1);
+        let key = graph.points[0];
+        assert_eq!(key.at, MediaTime(3_500_000));
+        assert_eq!(key.value, 80.0);
+        let Command::ReplaceShot { shot } =
+            set_key_on(&graph, &source, Some(key.at), key.at, key.value).unwrap()
+        else {
+            panic!("camera command");
+        };
+        assert_eq!(shot.fov_offset, MediaTime(500_000));
+        assert_eq!(shot.fov_curve.as_ref().unwrap().keys.len(), 3);
+        let inspector = source.shots[0].with_fov_key(key.at, key.value).unwrap();
+        assert_eq!(inspector.fov_offset, shot.fov_offset);
+        assert_eq!(
+            inspector.fov_curve, shot.fov_curve,
+            "inspector and graph first lens edits share one original seed"
+        );
+        let path = CompiledCameraPath::new(&shot);
+        let original_path = CompiledCameraPath::new(&original);
+        for at in [
+            3_000_000, 3_100_000, 3_499_999, 3_500_000, 3_900_000, 3_999_999,
+        ] {
+            let expected = original
+                .sample_compiled(MediaTime(at - 2_500_000), |_| None, original_path.as_ref())
+                .unwrap()
+                .fov;
+            assert_eq!(graph.sample(MediaTime(at)), expected);
+            assert_eq!(
+                shot.sample_compiled(MediaTime(at), |_| None, path.as_ref())
+                    .unwrap()
+                    .fov,
+                expected
+            );
+        }
+        let mut saved = source.as_ref().clone();
+        saved.shots[0] = shot;
+        let decoded = Project::from_json(&saved.to_json().unwrap()).unwrap();
+        assert_eq!(decoded, saved);
+    }
+}
+
+#[test]
+fn unanimated_lens_graphs_use_the_saved_rig_not_an_inspected_preview_lens() {
+    use crate::camera::CameraMode;
+    let pose = CameraPose {
+        fov: 43.0,
+        ..Default::default()
+    };
+    for (mode, expected) in [
+        (CameraMode::Free { pose }, 43.0),
+        (
+            CameraMode::Free {
+                pose: CameraPose {
+                    fov: crate::camera::CAMERA_FOV_RANGE.start,
+                    ..pose
+                },
+            },
+            crate::camera::CAMERA_FOV_RANGE.start,
+        ),
+        (
+            CameraMode::Free {
+                pose: CameraPose {
+                    fov: crate::camera::CAMERA_FOV_RANGE.end.next_down(),
+                    ..pose
+                },
+            },
+            crate::camera::CAMERA_FOV_RANGE.end.next_down(),
+        ),
+        (CameraMode::Track { actor: 7, pose }, 43.0),
+        (
+            CameraMode::Player {
+                actor: 7,
+                fov: 45.0,
+            },
+            45.0,
+        ),
+        (
+            CameraMode::Follow {
+                actor: 7,
+                offset: [0.0, 0.0, -3.0],
+                look_ahead: 0.0,
+                fov: 46.0,
+                roll: 0.0,
+            },
+            46.0,
+        ),
+        (
+            CameraMode::Orbit {
+                actor: 7,
+                radius: 3.0,
+                height: 1.0,
+                start_degrees: 0.0,
+                turns: 1.0,
+                fov: 47.0,
+                roll: 0.0,
+            },
+            47.0,
+        ),
+    ] {
+        let mut project = project();
+        project.shots[0].mode = mode;
+        let graph = GraphCurve::new(
+            &project,
+            Id(1),
+            GraphChannel::Fov,
+            CameraPose {
+                fov: 170.0,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(graph.sample(MediaTime(1_000_000)), expected);
+        let Command::ReplaceShot { shot } = set_key(
+            &project,
+            Id(1),
+            GraphChannel::Fov,
+            None,
+            MediaTime::ZERO,
+            expected,
+            CameraPose::default(),
+        )
+        .unwrap() else {
+            panic!("camera command");
+        };
+        assert_eq!(shot.fov_override(MediaTime::ZERO), Some(expected));
+    }
+}

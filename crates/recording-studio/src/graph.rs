@@ -134,7 +134,7 @@ impl GraphCurve {
         project: Arc<Project>,
         item: Id,
         channel: GraphChannel,
-        base: CameraPose,
+        _base: CameraPose,
         previous: Option<&Self>,
     ) -> Result<Self, StudioError> {
         if !channels(&project, item).contains(&channel) {
@@ -152,15 +152,8 @@ impl GraphCurve {
             GraphChannel::Fov => {
                 let shot = project.shots.iter().find(|s| s.id == item).unwrap();
                 shot.validate()?;
-                (
-                    shot.span,
-                    shot.fov_curve
-                        .clone()
-                        .unwrap_or_else(|| Curve::constant(base.fov)),
-                    shot.fov_offset,
-                    None,
-                    false,
-                )
+                let (curve, offset) = shot.authored_fov_curve();
+                (shot.span, curve, offset, None, false)
             }
             GraphChannel::Effect => {
                 let effect = project.effects.iter().find(|s| s.id == item).unwrap();
@@ -475,9 +468,9 @@ fn fraction(first: f64, last: f64, value: f64) -> f64 {
     (value / scale - first / scale) / (last / scale - first / scale)
 }
 
-/// Finite custom graph ranges normalize safely without subtracting opposite extreme endpoints.
+/// Finite ranges normalize safely; off-range values remain off-range for actual segment clipping.
 pub fn range_fraction(range: [f64; 2], value: f64) -> f64 {
-    fraction(range[0], range[1], value).clamp(0.0, 1.0)
+    fraction(range[0], range[1], value).clamp(-f64::MAX, f64::MAX)
 }
 
 /// Editor pan and zoom ranges use the same bounded finite interpolation as saved scalar curves.

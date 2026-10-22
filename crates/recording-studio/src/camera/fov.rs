@@ -4,6 +4,34 @@ use super::*;
 use crate::effect::{Curve, CurveKey};
 
 impl CameraShot {
+    /// First lens edits retain the original rig's complete key support, easing and source phase.
+    pub(crate) fn authored_fov_curve(&self) -> (Curve, MediaTime) {
+        if let Some(curve) = &self.fov_curve {
+            return (curve.clone(), self.fov_offset);
+        }
+        match &self.mode {
+            CameraMode::Path { keys, .. } => (
+                Curve {
+                    keys: keys
+                        .iter()
+                        .map(|key| CurveKey {
+                            at: key.at,
+                            value: key.pose.fov,
+                            easing: key.easing,
+                        })
+                        .collect(),
+                },
+                self.path_offset,
+            ),
+            CameraMode::Free { pose } | CameraMode::Track { pose, .. } => {
+                (Curve::constant(pose.fov), MediaTime::ZERO)
+            }
+            CameraMode::Player { fov, .. }
+            | CameraMode::Follow { fov, .. }
+            | CameraMode::Orbit { fov, .. } => (Curve::constant(*fov), MediaTime::ZERO),
+        }
+    }
+
     /// The optional lens track overrides every rig, including actor-driven cameras.
     pub fn fov_override(&self, at: MediaTime) -> Option<f64> {
         self.fov_curve.as_ref().map(|curve| {
@@ -48,11 +76,9 @@ impl CameraShot {
         }
         let mut next = self.clone();
         if next.fov_curve.is_none() {
-            next.fov_offset = MediaTime::ZERO;
-            next.fov_curve = Some(Curve::constant(
-                self.parameter(CameraParameter::Fov, self.span.start)
-                    .ok_or(StudioError::Invalid("camera has no field of view"))?,
-            ));
+            let (curve, offset) = self.authored_fov_curve();
+            next.fov_offset = offset;
+            next.fov_curve = Some(curve);
         }
         let offset = at
             .saturating_sub(self.span.start)
