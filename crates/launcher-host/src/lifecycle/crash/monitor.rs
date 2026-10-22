@@ -309,7 +309,25 @@ pub(super) fn announce_dump(client: &minidumper::Client) -> bool {
     };
     let request = REQUEST.fetch_add(1, Ordering::Relaxed);
     send_on(client, protocol::DUMP_REQUEST, &request.to_le_bytes())
-        && wait_for_dump_receipt(region, request, introduction_pause)
+        && wait_for_dump_receipt(region, request, introduction_pause, signal_safe_monotonic)
+}
+
+/// Reads elapsed time without Rust runtime initialization, allocation or locks.
+#[cfg(target_os = "macos")]
+fn signal_safe_monotonic() -> Option<Duration> {
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: clock_gettime is async-signal-safe and only writes this valid timespec.
+    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) } != 0 {
+        return None;
+    }
+    let seconds = u64::try_from(now.tv_sec).ok()?;
+    let nanos = u32::try_from(now.tv_nsec)
+        .ok()
+        .filter(|n| *n < 1_000_000_000)?;
+    Some(Duration::new(seconds, nanos))
 }
 
 /// Waits without locks or socket reads; an unresponsive monitor consumes only the wait budget.
@@ -318,6 +336,7 @@ fn wait_for_dump_receipt(
     region: &heartbeat::Region,
     request: u64,
     mut pause: impl FnMut(),
+    _now: impl FnMut() -> Option<Duration>,
 ) -> bool {
     for _ in 0..INTRODUCTION_WAIT_STEPS {
         if region.dump_acknowledged(request) {
@@ -488,9 +507,42 @@ mod tests {
     fn nonresponsive_dump_monitor_exhausts_the_existing_wait_budget() {
         let directory = tempfile::tempdir().unwrap();
         let heartbeat = heartbeat::Heartbeat::create(&directory.path().join("heartbeat")).unwrap();
-        let mut pauses = 0;
-        assert!(!wait_for_dump_receipt(heartbeat.region(), 1, || pauses += 1));
-        assert_eq!(pauses, INTRODUCTION_WAIT_STEPS);
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let pauses = std::cell::Cell::new(0);
+        assert!(!wait_for_dump_receipt(
+            heartbeat.region(),
+            1,
+            || {
+                pauses.set(pauses.get() + 1);
+                elapsed.set(elapsed.get() + Duration::from_millis(1));
+            },
+            || Some(elapsed.get()),
+        ));
+        assert_eq!(pauses.get(), INTRODUCTION_WAIT_STEPS);
+    }
+
+    /// A delayed wake must consume elapsed budget instead of starting another nominal pause.
+    #[test]
+    fn dump_receipt_wait_stops_after_an_overslept_pause() {
+        let directory = tempfile::tempdir().unwrap();
+        let heartbeat = heartbeat::Heartbeat::create(&directory.path().join("heartbeat")).unwrap();
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let pauses = std::cell::Cell::new(0);
+        let delayed = Duration::from_millis(u64::from(INTRODUCTION_WAIT_STEPS) + 1);
+        assert!(!wait_for_dump_receipt(
+            heartbeat.region(),
+            1,
+            || {
+                pauses.set(pauses.get() + 1);
+                elapsed.set(elapsed.get() + delayed);
+            },
+            || Some(elapsed.get()),
+        ));
+        assert_eq!(
+            pauses.get(),
+            1,
+            "an elapsed deadline admitted another pause"
+        );
     }
 
     /// A late receipt for an older dump cannot release a new request's ordering barrier.
@@ -502,10 +554,15 @@ mod tests {
         let monitor = heartbeat::Heartbeat::open(&path).unwrap();
         monitor.region().acknowledge_dump(1);
         let mut pauses = 0;
-        assert!(wait_for_dump_receipt(client.region(), 2, || {
-            pauses += 1;
-            monitor.region().acknowledge_dump(2);
-        }));
+        assert!(wait_for_dump_receipt(
+            client.region(),
+            2,
+            || {
+                pauses += 1;
+                monitor.region().acknowledge_dump(2);
+            },
+            || Some(Duration::ZERO),
+        ));
         assert_eq!(pauses, 1);
     }
 
