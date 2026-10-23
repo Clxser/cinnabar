@@ -303,6 +303,15 @@ fn recovery_table(hardware: bool) {
             return;
         };
         let mut recovering = terrain_app(culling, direct, hardware).unwrap();
+        if site == "far terrain quads" {
+            // One draw requires growth; room for further tiles is optional and may back off.
+            for app in [&mut fresh, &mut recovering] {
+                let mut scene = app
+                    .world_mut()
+                    .resource_mut::<render_scene::FarTerrainScene>();
+                scene.tiles = Arc::from(&scene.tiles[..1]);
+            }
+        }
         if site == "terrain recovery biome upload" {
             for _ in 0..4 {
                 frame(&mut recovering);
