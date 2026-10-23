@@ -126,7 +126,7 @@ fn item_use_factor(modifier: f64) -> f64 {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct PhysicsSampleContext {
-    /// Effective server attribute, with its modifier set, for fixed-tick sprint edges.
+    /// Accepted attribute replacement awaiting a completed tick, even if its value is unchanged.
     pub movement_speed_attribute: Option<client_world::MovementSpeedAttribute>,
     /// A captured held-use modifier applied only through its release-facing tick.
     pub release_use_modifier: Option<(u64, f64)>,

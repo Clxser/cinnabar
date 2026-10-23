@@ -164,6 +164,11 @@ impl LocomotionState {
         let head_yaw = wire_head_yaw(yaw);
         let delta = frame.delta.min(MAX_FRAME_ELAPSED);
         let withhold_input = frame.hold.is_some_and(|hold| hold.withhold_input);
+        let movement_speed_attribute = if physics.latest_movement_speed().is_some() {
+            movement_speed.pending_attribute()
+        } else {
+            movement_speed.attribute()
+        };
         let requested_speed;
         let frame = if let Some(hold) = frame.hold {
             self.reset();
@@ -173,7 +178,7 @@ impl LocomotionState {
                 delta,
                 yaw,
                 PhysicsSampleContext {
-                    movement_speed_attribute: movement_speed.attribute(),
+                    movement_speed_attribute,
                     pitch: frame.pitch,
                     head_yaw,
                     camera_orientation: frame.camera_orientation,
@@ -243,7 +248,7 @@ impl LocomotionState {
                 delta,
                 input,
                 PhysicsSampleContext {
-                    movement_speed_attribute: movement_speed.attribute(),
+                    movement_speed_attribute,
                     pitch: frame.pitch,
                     head_yaw,
                     camera_orientation: frame.camera_orientation,

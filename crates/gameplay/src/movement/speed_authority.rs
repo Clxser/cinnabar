@@ -309,6 +309,11 @@ impl LocalMovementSpeedAuthority {
         self.speed.attribute()
     }
 
+    /// Returns a replacement until a successful tick or retained rewrite records it.
+    pub(crate) fn pending_attribute(&self) -> Option<MovementSpeedAttribute> {
+        self.pending_attribute.then(|| self.attribute()).flatten()
+    }
+
     /// Returns the pre-sprint value expected by the simulator.
     pub(crate) fn prediction_speed(&self) -> Option<f64> {
         self.speed.prediction_speed()

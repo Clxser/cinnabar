@@ -192,9 +192,9 @@ impl ModeTracker {
         self.sprint_request_released &= !sprinting;
     }
 
-    /// Captures the final primary controls for the next fixed tick's double-tap detector.
+    /// Retains controls after frozen travel clears the jumping state.
     pub(super) fn record_controls(&mut self, input: sim::MovementInput, sneak_down: bool) {
-        self.previous_jumping = input.jumping;
+        self.previous_jumping = input.jumping && !input.immobile;
         self.sprint_trigger
             .record_controls(input.processed_controls().move_vector[1] as f32, sneak_down);
     }

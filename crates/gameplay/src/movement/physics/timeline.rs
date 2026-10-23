@@ -298,11 +298,8 @@ impl LocalPhysicsController {
 pub struct ServerControlFlags {
     pub sprinting: Option<bool>,
     pub sneaking: Option<bool>,
-    /// Stamp of the write that owns `sprinting`; an older delayed write never
-    /// replaces a newer one.
+    /// Stamp of a live posture overlay; control delivery does not consume its ownership.
     sprint_stamp: u64,
-    /// The sprint came from a delayed write whose replay may still stop it.
-    sprint_from_rewind: bool,
 }
 
 impl LocalPhysicsController {
@@ -450,29 +447,18 @@ impl LocalPhysicsController {
         Some((edited || replaces_event, reached))
     }
 
-    /// Reconciles pending sprint authority with a finished replay. A pending live
-    /// write is newer than the replayed history, so it applies again on top of it.
-    /// A delayed write's replay decides the live state instead: when replayed
-    /// intents stopped it, its pending adoption and posture overlay are stale. The
-    /// marker stays until the controls take the flags, so later replays settle too.
+    /// Overlays live authority on a replay and retires delayed handoffs that replay stopped.
     pub(super) fn settle_rewound_sprint(&mut self) {
-        let Some(pending) = &mut self.server_control_flags else {
-            return;
-        };
-        let Some(sprinting) = pending.sprinting else {
-            return;
-        };
-        if !pending.sprint_from_rewind {
+        if let Some(sprinting) = self.live_posture.sprinting {
             self.modes
                 .restore_controls(sprinting, self.modes.sneaking());
             return;
         }
-        if self.modes.sprinting() || !sprinting {
+        let Some(pending) = &mut self.server_control_flags else {
             return;
-        }
-        pending.sprinting = None;
-        if self.live_posture.sprinting == Some(true) {
-            self.live_posture.sprinting = None;
+        };
+        if pending.sprinting != Some(self.modes.sprinting()) {
+            pending.sprinting = None;
         }
     }
 
@@ -482,8 +468,8 @@ impl LocalPhysicsController {
     }
 
     /// Adopts flags stamped `stamp` into the live latches. Live writes apply in
-    /// arrival order; a delayed write older than the pending sprint's owner leaves
-    /// that newer sprint in place.
+    /// arrival order; a delayed write older than an unrecorded live sprint leaves
+    /// that newer sprint in place until a tick records it.
     fn adopt_live_flags(
         &mut self,
         mut flags: client_world::MovementFlagUpdate,
@@ -491,9 +477,8 @@ impl LocalPhysicsController {
         rewound: bool,
     ) {
         if rewound
-            && self
-                .server_control_flags
-                .is_some_and(|pending| pending.sprinting.is_some() && pending.sprint_stamp > stamp)
+            && self.live_posture.sprinting.is_some()
+            && self.live_posture.sprint_stamp > stamp
         {
             flags.sprinting = None;
         }
@@ -516,13 +501,14 @@ impl LocalPhysicsController {
             flags.sprinting.unwrap_or(self.modes.sprinting()),
             flags.sneaking.unwrap_or(self.modes.sneaking()),
         );
-        self.live_posture.sprinting = flags.sprinting.or(self.live_posture.sprinting);
-        self.live_posture.sneaking = flags.sneaking.or(self.live_posture.sneaking);
-        let pending = self.server_control_flags.get_or_insert_default();
-        if flags.sprinting.is_some() {
-            pending.sprint_stamp = stamp;
-            pending.sprint_from_rewind = rewound;
+        if !rewound {
+            self.live_posture.sprinting = flags.sprinting.or(self.live_posture.sprinting);
+            self.live_posture.sneaking = flags.sneaking.or(self.live_posture.sneaking);
+            if flags.sprinting.is_some() {
+                self.live_posture.sprint_stamp = stamp;
+            }
         }
+        let pending = self.server_control_flags.get_or_insert_default();
         pending.sprinting = flags.sprinting.or(pending.sprinting);
         pending.sneaking = flags.sneaking.or(pending.sneaking);
     }

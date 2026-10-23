@@ -58,19 +58,19 @@ impl LocalPhysicsController {
         let physical_jump_held = input.jumping;
         let sprint_request = input.sprinting;
         let requested_movement_speed = input.movement_speed;
-        let mut movement_speed = context.movement_speed_attribute.map(|attribute| {
-            super::super::speed_authority::EffectiveMovementSpeed::authoritative(
-                attribute,
-                self.modes.sprinting(),
-            )
-        });
-        let mut speed_update = context.movement_speed_attribute.filter(|attribute| {
-            self.controller_history
-                .back()
-                .and_then(|frame| frame.speed)
-                .and_then(|speed| speed.attribute())
-                != Some(*attribute)
-        });
+        let mut movement_speed = context
+            .movement_speed_attribute
+            .map(|attribute| {
+                super::super::speed_authority::EffectiveMovementSpeed::authoritative(
+                    attribute,
+                    self.modes.sprinting(),
+                )
+            })
+            .or_else(|| self.controller_history.back().and_then(|frame| frame.speed));
+        if let Some(speed) = &mut movement_speed {
+            speed.adopt_server_sprinting(Some(self.modes.sprinting()));
+        }
+        let mut speed_update = context.movement_speed_attribute;
         let sneak_request = input.sneaking;
         input.pitch_degrees = f64::from(context.pitch);
         input.fly_speed = context.mode_intent.fly_speed;

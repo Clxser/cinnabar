@@ -187,6 +187,51 @@ fn a_newer_live_sprint_write_survives_an_older_stopped_replay() {
     }
 }
 
+/// Sampling controls without a fixed tick keeps newer live authority above delayed replays.
+#[test]
+fn live_sprint_ownership_survives_zero_tick_frames_before_a_stopped_replay() {
+    let mut physics = LocalPhysicsController::default();
+    let mut ticker = MovementTicker::default();
+    let (start, _) = swim_out_of_the_side(&mut physics, &mut ticker, None);
+    let latest = ticker.completed_tick();
+    let sprint = client_world::MovementFlagUpdate {
+        sprinting: Some(true),
+        ..Default::default()
+    };
+    physics.apply_server_movement_flags(latest, sprint);
+    let mut locals = super::super::LocomotionState::default();
+    let mut speed = super::super::LocalMovementSpeedAuthority::default();
+    let mut effects = super::super::LocalMovementEffectTimeline::default();
+    speed.begin_session(7, 0);
+    for _ in 0..2 {
+        let mut frame = speed_frame(Default::default());
+        frame.delta = Duration::ZERO;
+        assert!(locals.advance(
+            frame,
+            &mut physics,
+            &mut ticker,
+            &mut effects,
+            &mut speed,
+            &SidePool,
+        ));
+    }
+    let rewind = physics.apply_server_movement_flags(start, sprint).unwrap();
+    for _ in 0..2 {
+        reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &SidePool).unwrap();
+        assert_eq!(physics.prediction_sync_posture(), Some((false, true)));
+    }
+    assert_eq!(ticker.completed_tick(), latest);
+    assert!(locals.advance(
+        speed_frame(Default::default()),
+        &mut physics,
+        &mut ticker,
+        &mut effects,
+        &mut speed,
+        &SidePool,
+    ));
+    assert!(physics.sample_at(latest + 1).unwrap().processed.sprinting);
+}
+
 /// A later live write applies in arrival order, even over a pending write stamped
 /// in the future.
 #[test]

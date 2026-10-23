@@ -85,11 +85,14 @@ starts one. Stop intents, including the liquid stop, apply normally, and the
 stopped tick sends its sprint stop. A delayed write hands its sprint to the live
 controls only when no newer write already owns it, and drops that hand-off when
 its replay ends unsprinted; live writes apply in arrival order, and a pending live
-write is applied again on top of any replayed history. A held sprint control whose
-start is refused keeps the stale request released until sprint actually starts.
-The immobile
-movement path also removes the jumping state; its order against the next intent
-is unverified, so Cinnabar does not model that removal.
+write is applied again on top of any replayed history until a successful tick
+records it. Equal attribute refreshes also remain replacements in history; their
+value alone cannot identify whether a server write occurred.
+A held sprint control whose start is refused keeps the stale request released
+until sprint actually starts. Immobile movement clears jumping after the input
+stage, so the following tick's sprint intent sees that cleared state even when
+jump was held during the freeze. Cinnabar retains the same processed state for
+live ticks and correction replay.
 
 ## Head sensing and standing fit
 

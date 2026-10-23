@@ -11,7 +11,9 @@ impl LocalPhysicsController {
 
     /// Transfers a successful replay's modifier state to the live attribute owner once.
     pub(crate) fn take_replayed_movement_speed(&mut self) -> Option<EffectiveMovementSpeed> {
-        self.replayed_speed.take()
+        let mut speed = self.replayed_speed.take()?;
+        speed.adopt_server_sprinting(self.live_posture.sprinting);
+        Some(speed)
     }
 }
 
