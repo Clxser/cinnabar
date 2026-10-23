@@ -123,7 +123,7 @@ impl BoatState {
     #[must_use]
     pub fn collision_box(&self) -> Aabb {
         let half = self.body.width * 0.5;
-        let [x, y, z] = self.position;
+        let [x, _, z] = self.position;
         let bottom = self.feet_y();
         Aabb::new(
             Vec3::new(f64::from(x - half), f64::from(bottom), f64::from(z - half)),
