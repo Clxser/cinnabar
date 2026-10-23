@@ -486,6 +486,9 @@ OS Alt-Tab acceptance on macOS, Windows and Linux remains incomplete.
   Complex Molang conditions and item-tag scripts read as zero, which is incomplete.
   Sword/shears speed rules,
   effective item durability and live mining acceptance remain incomplete.
+  Server-requested local swings retain their source and echo after inventory authority
+  when the arm guard admits them; unknown-source parsing, matched live ordering,
+  transport-batch acceptance and effect modifiers on authored item swing durations remain incomplete.
   Recipe-book placement, availability and auto-crafting share exact ingredient allocation;
   each ingredient draws from one concrete variant. Missing grid ingredients and their
   result use distinct ghost cells in both renderers and retain hover names.
