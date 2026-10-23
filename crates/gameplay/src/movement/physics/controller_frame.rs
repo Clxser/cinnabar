@@ -15,8 +15,8 @@ impl PhysicsSampleContext {
 #[derive(Debug, Clone)]
 pub(super) struct ControllerFrame {
     pub tick: u64,
-    /// Attribute modifier state after this tick's local sprint decision.
-    pub speed: Option<crate::movement::speed_authority::EffectiveMovementSpeed>,
+    /// Modifier state and actor flag after this tick, including ticks before an attribute arrives.
+    pub speed: crate::movement::speed_authority::EffectiveMovementSpeed,
     pub start_sprinting: bool,
     /// Accepted replacements and effect operations before this tick's local sprint edges.
     pub speed_updates: Vec<crate::movement::speed_authority::MovementSpeedUpdate>,
@@ -161,7 +161,8 @@ impl ControllerFrame {
             input.sneaking = false;
         }
         modes.restore_controls(input.sprinting, input.sneaking);
-        if self.speed.is_none() && (self.sprint_override.is_some() || self.mode_override.is_some())
+        if self.speed.attribute().is_none()
+            && (self.sprint_override.is_some() || self.mode_override.is_some())
         {
             crate::movement::speed_authority::preserve_effective_speed(input, previous_sprinting);
         }

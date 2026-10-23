@@ -275,6 +275,8 @@ pub struct LocalPhysicsController {
     sample_history: VecDeque<PhysicsMovementSample>,
     controller_history: VecDeque<ControllerFrame>,
     replayed_speed: Option<super::speed_authority::EffectiveMovementSpeed>,
+    /// Earliest timeline edit not yet incorporated by a successful replay.
+    rewind_pending: Option<u64>,
     motion_ticks: VecDeque<motion_ticks::CompletedMotionTick>,
     motion_anchor: Option<motion_ticks::CompletedMotionTick>,
     /// Server velocity replacements, retained while a replay can still reach them.
@@ -326,6 +328,7 @@ impl Default for LocalPhysicsController {
             sample_history: VecDeque::with_capacity(LOCAL_PHYSICS_HISTORY_CAPACITY),
             controller_history: VecDeque::with_capacity(LOCAL_PHYSICS_HISTORY_CAPACITY),
             replayed_speed: None,
+            rewind_pending: None,
             motion_ticks: VecDeque::with_capacity(MAX_LOCAL_PHYSICS_TICKS_PER_FRAME),
             motion_anchor: None,
             server_motions: VecDeque::new(),
@@ -386,6 +389,7 @@ impl LocalPhysicsController {
         self.last_world_identity = None;
         self.sample_history.clear();
         self.replayed_speed = None;
+        self.rewind_pending = None;
         self.controller_history.clear();
         self.motion_ticks.clear();
         self.motion_anchor = self
@@ -454,6 +458,7 @@ impl LocalPhysicsController {
         self.last_world_identity = None;
         self.sample_history.clear();
         self.replayed_speed = None;
+        self.rewind_pending = None;
         self.controller_history.clear();
         self.motion_ticks.clear();
         self.motion_anchor = self

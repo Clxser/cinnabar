@@ -6,7 +6,7 @@ use crate::movement::speed_authority::EffectiveMovementSpeed;
 impl LocalPhysicsController {
     /// Returns the modifier state after the latest completed tick.
     pub(in crate::movement) fn latest_movement_speed(&self) -> Option<EffectiveMovementSpeed> {
-        self.controller_history.back()?.speed
+        Some(self.controller_history.back()?.speed)
     }
 
     /// Transfers a successful replay's modifier state to the live attribute owner once.
@@ -19,26 +19,18 @@ impl LocalPhysicsController {
 
 impl ControllerFrame {
     /// Applies accepted speed edits before this tick's server flag and local sprint edges.
-    pub(super) fn prepare_speed(
-        &self,
-        speed: &mut Option<EffectiveMovementSpeed>,
-        sprinting: bool,
-    ) {
-        if self.speed.is_none() && self.speed_updates.is_empty() {
-            *speed = None;
-        }
+    pub(super) fn prepare_speed(&self, speed: &mut EffectiveMovementSpeed, sprinting: bool) {
+        speed.adopt_server_sprinting(Some(sprinting));
         for update in &self.speed_updates {
-            update.apply(speed, sprinting);
+            update.apply(speed);
         }
-        if let Some(speed) = speed {
-            speed.adopt_server_sprinting(self.server_sprinting);
-        }
+        speed.adopt_server_sprinting(self.server_sprinting);
     }
 
     /// Retains the attribute after local sprint decisions for subsequent ticks and replays.
     pub(super) fn finish_speed(
         &mut self,
-        speed: &mut Option<EffectiveMovementSpeed>,
+        speed: &mut EffectiveMovementSpeed,
         input: &mut MovementInput,
     ) {
         apply_sprint_speed(speed, input, self.start_sprinting);
@@ -49,15 +41,15 @@ impl ControllerFrame {
 
 /// Applies a local sprint transition before the simulator consumes its input.
 pub(super) fn apply_sprint_speed(
-    speed: &mut Option<EffectiveMovementSpeed>,
+    speed: &mut EffectiveMovementSpeed,
     input: &mut MovementInput,
     start_sprinting: bool,
 ) {
-    if let Some(speed) = speed {
-        if start_sprinting {
-            speed.set_sprinting(true);
-        }
-        speed.set_sprinting(input.sprinting);
-        input.movement_speed = speed.prediction_speed();
+    if start_sprinting {
+        speed.set_sprinting(true);
+    }
+    speed.set_sprinting(input.sprinting);
+    if let Some(predicted) = speed.prediction_speed() {
+        input.movement_speed = Some(predicted);
     }
 }

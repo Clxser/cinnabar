@@ -3,6 +3,21 @@
 use super::*;
 
 impl LocalPhysicsController {
+    /// Keeps failed timeline edits inside every later rewind until their frames are rebuilt.
+    pub(in crate::movement) fn require_timeline_rewind(&mut self, tick: u64) {
+        self.rewind_pending = Some(
+            self.rewind_pending
+                .map_or(tick, |pending| pending.min(tick)),
+        );
+    }
+
+    /// Returns an unresolved earlier edit, clamped to the history still available to replay.
+    pub(in crate::movement) fn rewind_before(&self, tick: u64) -> Option<u64> {
+        let pending = self.rewind_pending?;
+        let pending = pending.max(self.history.oldest_tick().unwrap_or(pending));
+        (pending < tick).then_some(pending)
+    }
+
     /// Defers travel suppression until a successful tick can retain it for replay.
     pub(in crate::movement) fn skip_next_travel_tick(&mut self) {
         self.skip_travel_pending = true;
@@ -169,6 +184,7 @@ impl LocalPhysicsController {
         tick: u64,
         world: &impl CollisionWorld,
     ) -> Result<PhysicsCorrectionPlan, PhysicsCorrectionError> {
+        let tick = self.rewind_before(tick).unwrap_or(tick);
         let current_tick = self
             .state
             .as_ref()
@@ -191,6 +207,7 @@ impl LocalPhysicsController {
         world: &impl CollisionWorld,
     ) -> Result<PhysicsCorrectionPlan, PhysicsCorrectionError> {
         let prior_position = self.state.as_ref().map(|state| state.position);
+        let prior_sprinting = self.latest_sneak_sprint().map(|(_, sprinting)| sprinting);
         let prior_previous_position = self.previous_position;
         let on_ground = corrected.on_ground;
         let feet = corrected.position;
@@ -389,14 +406,14 @@ impl LocalPhysicsController {
         }
         self.processed_jump_arc_active = jump_fold.arc_active();
         self.modes = modes;
-        self.settle_rewound_sprint();
+        self.settle_rewound_sprint(prior_sprinting);
         eye.preserve_interpolation_hold(self.eye_offset);
         self.eye_offset = eye;
         self.last_environment = controller_frames
             .back()
             .map_or(anchor_controller.environment, |frame| frame.environment);
         self.controller_history = controller_frames;
-        self.replayed_speed = movement_speed;
+        self.replayed_speed = Some(movement_speed);
         let (corrected_world_identity, corrected_sample) = {
             let corrected_sample = self
                 .sample_history
@@ -455,6 +472,7 @@ impl LocalPhysicsController {
         // positionally instead of streaming an embedded pose indefinitely.
         self.anchor_state.rearm();
 
+        self.rewind_pending = None;
         Ok(PhysicsCorrectionPlan {
             outcome: PhysicsCorrectionOutcome::Replayed {
                 corrected_tick: replay.corrected_tick,

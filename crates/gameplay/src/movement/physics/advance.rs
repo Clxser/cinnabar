@@ -71,10 +71,11 @@ impl LocalPhysicsController {
         let physical_jump_held = input.jumping;
         let sprint_request = input.sprinting;
         let requested_movement_speed = input.movement_speed;
-        let mut movement_speed = self.controller_history.back().and_then(|frame| frame.speed);
-        if let Some(speed) = &mut movement_speed {
-            speed.adopt_server_sprinting(Some(self.modes.sprinting()));
-        }
+        let mut movement_speed = self
+            .controller_history
+            .back()
+            .map_or(Default::default(), |frame| frame.speed);
+        movement_speed.adopt_server_sprinting(Some(self.modes.sprinting()));
         let mut speed_updates: Vec<_> = context
             .movement_speed_attribute
             .map(super::super::speed_authority::MovementSpeedUpdate::Attribute)
@@ -82,7 +83,7 @@ impl LocalPhysicsController {
             .chain(updates.iter().copied())
             .collect();
         for update in &speed_updates {
-            update.apply(&mut movement_speed, self.modes.sprinting());
+            update.apply(&mut movement_speed);
         }
         let sneak_request = input.sneaking;
         input.pitch_degrees = f64::from(context.pitch);

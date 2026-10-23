@@ -137,11 +137,9 @@ impl LocalPhysicsController {
                 frame.speed_updates.clear();
                 frame.speed_updates.push(update);
             }
-            let mut updated = Some(speed);
             for update in &frame.speed_updates {
-                update.apply(&mut updated, speed.sprinting());
+                update.apply(&mut speed);
             }
-            speed = updated.expect("a retained speed rewrite starts with an attribute");
             speed.adopt_server_sprinting(frame.server_sprinting);
             if frame.start_sprinting {
                 speed.set_sprinting(true);
@@ -152,7 +150,7 @@ impl LocalPhysicsController {
                 input.movement_speed = predicted;
                 changed = true;
             }
-            frame.speed = Some(speed);
+            frame.speed = speed;
         }
         Some((changed.then_some(tick), speed))
     }
@@ -459,18 +457,22 @@ impl LocalPhysicsController {
         })
     }
 
-    /// Overlays live authority on a replay and retires delayed handoffs that replay stopped.
-    pub(super) fn settle_rewound_sprint(&mut self) {
+    /// Publishes changed replay controls without creating another server write.
+    pub(super) fn settle_rewound_sprint(&mut self, previous: Option<bool>) {
         if let Some(sprinting) = self.unrecorded_live_sprinting() {
             self.modes
                 .restore_controls(sprinting, self.modes.sneaking());
-            return;
+        } else {
+            self.live_posture.sprinting = None;
         }
-        self.live_posture.sprinting = None;
+        let sprinting = self.modes.sprinting();
+        if previous.is_some_and(|previous| previous != sprinting) {
+            self.server_control_flags.get_or_insert_default().sprinting = Some(sprinting);
+        }
         let Some(pending) = &mut self.server_control_flags else {
             return;
         };
-        if pending.sprinting != Some(self.modes.sprinting()) {
+        if pending.sprinting != Some(sprinting) {
             pending.sprinting = None;
         }
     }

@@ -28,16 +28,12 @@ pub(crate) enum MovementSpeedUpdate {
 
 impl MovementSpeedUpdate {
     /// Applies this edit to the modifier state reached at its position in the timeline.
-    pub(crate) fn apply(self, speed: &mut Option<EffectiveMovementSpeed>, sprinting: bool) {
+    pub(crate) fn apply(self, speed: &mut EffectiveMovementSpeed) {
         match self {
             Self::Attribute(attribute) => {
-                *speed = Some(EffectiveMovementSpeed::authoritative(attribute, sprinting));
+                *speed = EffectiveMovementSpeed::authoritative(attribute, speed.sprinting());
             }
             Self::Effect { action, amplifier } => {
-                let speed = speed.get_or_insert_with(|| EffectiveMovementSpeed {
-                    attribute: None,
-                    sprinting,
-                });
                 let sprinting = speed.sprinting();
                 let attribute = speed.attribute.get_or_insert_with(|| {
                     let mut attribute =
@@ -375,11 +371,10 @@ impl LocalMovementSpeedAuthority {
 
     /// Applies unrecorded server edits to the modifier state reached by replay.
     pub(crate) fn adopt_replayed_speed(&mut self, speed: EffectiveMovementSpeed) {
-        let mut replayed = Some(speed);
+        self.speed = speed;
         for update in &self.pending_updates {
-            update.apply(&mut replayed, speed.sprinting());
+            update.apply(&mut self.speed);
         }
-        self.speed = replayed.expect("replayed speed is present before applying edits");
         self.preview_current = None;
     }
 
@@ -388,6 +383,12 @@ impl LocalMovementSpeedAuthority {
         self.speed = speed;
         self.pending_updates.clear();
         self.preview_current = None;
+    }
+
+    /// Commits authority consumed by a stationary loading tick that retains no rewind history.
+    pub(crate) fn complete_stationary_tick(&mut self, sprinting: bool) {
+        self.set_sprinting(sprinting);
+        self.pending_updates.clear();
     }
 }
 

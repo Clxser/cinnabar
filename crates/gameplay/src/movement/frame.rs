@@ -164,11 +164,13 @@ impl LocomotionState {
         let head_yaw = wire_head_yaw(yaw);
         let delta = frame.delta.min(MAX_FRAME_ELAPSED);
         let withhold_input = frame.hold.is_some_and(|hold| hold.withhold_input);
-        let movement_speed_attribute = physics
-            .latest_movement_speed()
-            .is_none()
-            .then(|| movement_speed.attribute())
-            .flatten();
+        let movement_speed_attribute = if physics.latest_movement_speed().is_none()
+            && movement_speed.pending_updates().is_empty()
+        {
+            movement_speed.attribute()
+        } else {
+            None
+        };
         let requested_speed;
         let frame = if let Some(hold) = frame.hold {
             self.reset();
@@ -291,11 +293,7 @@ impl LocomotionState {
                         server_sneaking: server.and_then(|flags| flags.sneaking),
                     },
                 },
-                if movement_speed_attribute.is_some() {
-                    &[]
-                } else {
-                    movement_speed.pending_updates()
-                },
+                movement_speed.pending_updates(),
                 world,
                 movement_effects,
             )
@@ -306,7 +304,7 @@ impl LocomotionState {
             if let Some(speed) = physics.latest_movement_speed() {
                 movement_speed.adopt_recorded_speed(speed);
             } else {
-                movement_speed.set_sprinting(sample.processed.sprinting);
+                movement_speed.complete_stationary_tick(sample.processed.sprinting);
             }
         }
         super::control_trace::trace_physics_frame(

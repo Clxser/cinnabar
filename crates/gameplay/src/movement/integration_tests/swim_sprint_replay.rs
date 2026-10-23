@@ -304,15 +304,136 @@ fn replayed_delayed_handoff_is_not_a_second_server_sprint() {
 
 /// A failed replay keeps the accepted flag visible until a live tick can record it.
 #[test]
-fn failed_replayed_sprint_still_overlays_the_completed_posture() {
-    let (mut physics, mut ticker) = walked_physics(3);
-    let rewind = physics
-        .apply_server_movement_flags(101, flags(|flags| flags.sprinting = Some(true)))
-        .unwrap();
-    assert!(
-        reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &VersionedFloor(2)).is_err()
-    );
-    assert_eq!(physics.prediction_sync_posture(), Some((false, true)));
+fn unrecorded_failed_replayed_sprint_still_overlays_the_completed_posture() {
+    for position_correction in [false, true] {
+        let (mut physics, mut ticker) = walked_physics(3);
+        let rewind = physics
+            .apply_server_movement_flags(101, flags(|flags| flags.sprinting = Some(true)))
+            .unwrap();
+        assert!(
+            reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &VersionedFloor(2))
+                .is_err()
+        );
+        assert_eq!(physics.prediction_sync_posture(), Some((false, true)));
+        if position_correction {
+            let sample = physics.sample_at(103).unwrap().clone();
+            reconcile_candidate_physics_correction(
+                &mut ticker,
+                &mut physics,
+                sample.position,
+                sample.tick,
+                sample.grounded_after_tick,
+                PhysicsCorrectionMode::ReplayIfRetained,
+                &VersionedFloor(1),
+            )
+            .unwrap();
+        } else {
+            let rewind = physics.queue_server_motion([0.1, 0.0, 0.0], 102).unwrap();
+            reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &VersionedFloor(1))
+                .unwrap();
+        }
+        assert_eq!(physics.latest_sneak_sprint(), Some((false, true)));
+        assert_eq!(physics.prediction_sync_posture(), Some((false, true)));
+    }
+}
+
+/// The first effect remains an operation even when earlier ticks had no attribute snapshot.
+#[test]
+fn unrecorded_first_speed_effect_uses_replayed_modifier_state() {
+    for delayed in [false, true] {
+        let position = [0.5, 2.620_01, 5.0];
+        let mut physics = LocalPhysicsController::default();
+        let mut ticker = MovementTicker::default();
+        physics.reanchor_network_position(position, 100, true);
+        ticker.reset(7, 100, position);
+        ticker.set_source(MovementSource::Physics);
+        let mut locals = super::super::LocomotionState::default();
+        let mut speed = super::super::LocalMovementSpeedAuthority::default();
+        let mut effects = super::super::LocalMovementEffectTimeline::default();
+        speed.begin_session(7, 0);
+        let correct = |physics: &mut LocalPhysicsController, ticker: &mut MovementTicker| {
+            super::super::reconcile_physics_anchor(
+                ticker,
+                physics,
+                super::super::PhysicsAnchor {
+                    network_position: [0.5, 2.620_01, 2.4],
+                    velocity: Some([0.0; 3]),
+                    tick: 101,
+                    on_ground: true,
+                },
+                PhysicsCorrectionMode::ReplayIfRetained,
+                &SidePool,
+            )
+            .unwrap();
+        };
+        for index in 0..4 {
+            if index == 3 {
+                speed.apply_effect(
+                    7,
+                    1,
+                    protocol::ActorEffectEvent {
+                        dimension: 0,
+                        actor_runtime_id: 42,
+                        action: protocol::ActorEffectAction::Add,
+                        effect_id: protocol_ids::Effect::Speed.wire_value(),
+                        amplifier: 0,
+                        particles: false,
+                        ambient: false,
+                        duration_ticks: 600,
+                        tick: 0,
+                    },
+                );
+            }
+            let mut frame = speed_frame(semantic_input::ActionPhase {
+                held: index == 0,
+                ..Default::default()
+            });
+            frame.yaw = 0.0;
+            frame.jump.held = index == 0;
+            assert!(locals.advance(
+                frame,
+                &mut physics,
+                &mut ticker,
+                &mut effects,
+                &mut speed,
+                &SidePool
+            ));
+            if index == 0 && !delayed {
+                correct(&mut physics, &mut ticker);
+            }
+        }
+        if delayed {
+            correct(&mut physics, &mut ticker);
+        }
+        let mut frame = speed_frame(Default::default());
+        frame.delta = Duration::ZERO;
+        assert!(locals.advance(
+            frame,
+            &mut physics,
+            &mut ticker,
+            &mut effects,
+            &mut speed,
+            &SidePool
+        ));
+        assert_eq!(physics.latest_sneak_sprint(), Some((false, false)));
+        assert_eq!(
+            speed.current(),
+            Some(f64::from(0.1_f32 * 1.2)),
+            "delayed {delayed}"
+        );
+        let mut frame = speed_frame(Default::default());
+        frame.yaw = 0.0;
+        assert!(locals.advance(
+            frame,
+            &mut physics,
+            &mut ticker,
+            &mut effects,
+            &mut speed,
+            &SidePool
+        ));
+        assert_eq!(physics.latest_sneak_sprint(), Some((false, false)));
+        assert_eq!(speed.current(), Some(f64::from(0.1_f32 * 1.2)));
+    }
 }
 
 /// A later live write applies in arrival order, even over a pending write stamped
