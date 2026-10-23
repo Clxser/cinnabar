@@ -117,8 +117,8 @@ pub(crate) fn profile_key(xuid: &str) -> &'static str {
 pub(crate) const CREATE_WORLD_KEY: &str = VIEWS[PROFILE_BANNER_COUNT].key;
 
 /// Generates the views once during startup and appends one bounded, immutable texture page.
-/// Missing sets leave their slots plain; no filesystem or pack reader is added here.
-pub fn install(images: &mut OreUiImages, assets: Option<&RuntimeUiAssets>) {
+/// Missing sets leave their slots plain. `available_bytes` excludes other runtime textures.
+pub fn install(images: &mut OreUiImages, assets: Option<&RuntimeUiAssets>, available_bytes: usize) {
     let bright = assets.and_then(|assets| pack_faces(assets, PanoramaSet::Primary));
     let dungeon = assets.and_then(|assets| pack_faces(assets, PanoramaSet::Alternate));
     if bright.is_none() || dungeon.is_none() {
@@ -126,7 +126,7 @@ pub fn install(images: &mut OreUiImages, assets: Option<&RuntimeUiAssets>) {
             "Some panorama artwork is unavailable; keeping plain panels for missing views"
         );
     }
-    append(images, bright.as_ref(), dungeon.as_ref());
+    append(images, bright.as_ref(), dungeon.as_ref(), available_bytes);
 }
 
 /// Packs available views with a small transparent gutter, preserving the fixed texture budget.
@@ -134,6 +134,7 @@ fn append(
     images: &mut OreUiImages,
     bright: Option<&PanoramaFaces>,
     dungeon: Option<&PanoramaFaces>,
+    available_bytes: usize,
 ) {
     if bright.is_none() && dungeon.is_none() {
         return;
@@ -142,7 +143,7 @@ fn append(
     let height = (VIEW_SIZE[1] + GUTTER) * VIEWS.len().div_ceil(COLUMNS) as u32;
     let bytes = width as usize * height as usize * 4;
     let existing: usize = images.pages.iter().map(|page| page.pixels.len()).sum();
-    if existing + bytes > render_model::MAX_UI_FIXED_TEXTURE_BYTES {
+    if existing + bytes > available_bytes {
         tracing::warn!("Panorama artwork exceeds the fixed texture budget; keeping plain panels");
         return;
     }

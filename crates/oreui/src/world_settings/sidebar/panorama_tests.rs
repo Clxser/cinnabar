@@ -30,6 +30,8 @@ fn panorama_artwork_world_preview_yields_to_an_edited_world_thumbnail() {
         difficulty: Difficulty::Normal,
         backend: bridge::Backend::Dragonfly,
         seed: 0,
+        options: Default::default(),
+        options_unavailable: false,
         created_unix: 0,
         last_played_unix: 0,
         size_bytes: 0,

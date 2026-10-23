@@ -22,10 +22,20 @@ fn panorama_banner_choice_is_stable_for_each_account() {
 #[test]
 fn panorama_missing_faces_keep_plain_slots_and_do_not_change_account_selection() {
     let mut images = OreUiImages::default();
-    append(&mut images, None, None);
+    append(
+        &mut images,
+        None,
+        None,
+        render_model::MAX_UI_FIXED_TEXTURE_BYTES,
+    );
     assert!(images.pages.is_empty() && images.sprites.is_empty());
     let color = [70, 140, 210, 255];
-    append(&mut images, Some(&faces(color)), None);
+    append(
+        &mut images,
+        Some(&faces(color)),
+        None,
+        render_model::MAX_UI_FIXED_TEXTURE_BYTES,
+    );
     assert_eq!(images.pages.len(), 1);
     for view in &VIEWS {
         assert_eq!(
@@ -52,7 +62,12 @@ fn panorama_texture_budget_rejection_preserves_existing_artwork() {
         dimensions: [1, 1],
         pixels: vec![0; render_model::MAX_UI_FIXED_TEXTURE_BYTES].into(),
     });
-    append(&mut images, Some(&faces([255; 4])), None);
+    append(
+        &mut images,
+        Some(&faces([255; 4])),
+        None,
+        render_model::MAX_UI_FIXED_TEXTURE_BYTES,
+    );
     assert_eq!(images.pages.len(), 1);
     assert!(images.sprites.is_empty());
 }
@@ -64,6 +79,7 @@ fn panorama_all_nine_views_share_one_fixed_page() {
         &mut images,
         Some(&faces([60, 120, 180, 255])),
         Some(&faces([180, 120, 60, 255])),
+        render_model::MAX_UI_FIXED_TEXTURE_BYTES,
     );
     assert_eq!(images.pages.len(), 1);
     assert_eq!(images.sprites.len(), VIEWS.len());
@@ -80,4 +96,40 @@ fn panorama_all_nine_views_share_one_fixed_page() {
         };
         assert_eq!(&page.pixels[offset..offset + 4], &expected);
     }
+}
+
+#[test]
+fn panorama_respects_capacity_reserved_for_other_ui_artwork() {
+    let mut images = OreUiImages::default();
+    let page = OreUiPage {
+        dimensions: [1, 1],
+        pixels: vec![32; 4].into(),
+    };
+    images.pages.push(page.clone());
+    Arc::make_mut(&mut images.sprites).insert(
+        "existing".into(),
+        OreUiSprite {
+            page: 0,
+            bounds: [0, 0, 1, 1],
+        },
+    );
+    let atlas_bytes = ((VIEW_SIZE[0] + GUTTER) * COLUMNS as u32) as usize
+        * ((VIEW_SIZE[1] + GUTTER) * VIEWS.len().div_ceil(COLUMNS) as u32) as usize
+        * 4;
+    let available_bytes = page.pixels.len() + atlas_bytes - 1;
+    let originals = images.sprites.clone();
+    append(&mut images, Some(&faces([255; 4])), None, available_bytes);
+    assert_eq!(images.pages.len(), 1);
+    assert!(Arc::ptr_eq(&images.pages[0].pixels, &page.pixels));
+    assert_eq!(images.sprites, originals);
+
+    append(
+        &mut images,
+        Some(&faces([255; 4])),
+        None,
+        available_bytes + 1,
+    );
+    assert_eq!(images.pages.len(), 2);
+    assert!(images.sprites.contains_key(CREATE_WORLD_KEY));
+    assert!(images.sprites.contains_key("existing"));
 }

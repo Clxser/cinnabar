@@ -437,7 +437,11 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
             .unwrap_or(Path::new(".")),
     )
     .unwrap_or_default();
-    oreui::images::panorama::install(&mut images, ui_presentation.ui_assets());
+    oreui::images::panorama::install(
+        &mut images,
+        ui_presentation.ui_assets(),
+        ui_presentation.remaining_fixed_texture_bytes(),
+    );
     if !images.pages.is_empty()
         && let Err(reason) = ui_presentation.enable_oreui_originals(images)
     {
