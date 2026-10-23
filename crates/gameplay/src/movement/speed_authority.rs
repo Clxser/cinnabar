@@ -385,9 +385,9 @@ impl LocalMovementSpeedAuthority {
         self.preview_current = None;
     }
 
-    /// Commits authority consumed by a stationary loading tick that retains no rewind history.
-    pub(crate) fn complete_stationary_tick(&mut self, sprinting: bool) {
-        self.set_sprinting(sprinting);
+    /// Stops sprint and folds accepted edits into loading's new prediction baseline.
+    pub(crate) fn stop_for_loading(&mut self) {
+        self.set_sprinting(false);
         self.pending_updates.clear();
     }
 }

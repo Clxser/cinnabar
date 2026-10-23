@@ -93,6 +93,8 @@ modifier state reached at their tick, including effects received before the firs
 movement attribute. Adopting a delayed replay result into the control latches does
 not record a second server sprint write on the next tick. Failed rewinds keep their
 earliest unapplied edit pending, so later corrections cannot skip that write.
+Loading's sprint stop becomes the new prediction baseline even when the hold
+completes no fixed tick.
 A held sprint control whose start is refused keeps the stale request released
 until sprint actually starts. Immobile movement clears jumping after the input
 stage, so the following tick's sprint intent sees that cleared state even when

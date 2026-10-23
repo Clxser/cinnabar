@@ -483,3 +483,62 @@ fn immobile_jump_does_not_leave_a_liquid_sprint_stop_for_the_next_tick() {
     reconcile_timeline_rewind(&mut ticker, &mut physics, anchor, &ShallowWater).unwrap();
     assert_eq!(physics.state(), state.as_ref());
 }
+
+/// Loading's sprint stop remains the reset baseline even when the hold completes no tick.
+#[test]
+fn loading_stop_preserves_the_speed_baseline_across_zero_tick_holds() {
+    for delta in [Duration::ZERO, Duration::from_millis(50)] {
+        let (mut physics, mut ticker) = walked_physics(0);
+        let mut locals = super::super::LocomotionState::default();
+        let mut speed = super::super::LocalMovementSpeedAuthority::default();
+        let mut effects = super::super::LocalMovementEffectTimeline::default();
+        speed.begin_session(7, 0);
+        assert!(speed.apply(7, 1, 0, attribute(f64::from(0.1_f32), 0.1, None)));
+        assert!(locals.advance(
+            speed_frame(semantic_input::ActionPhase {
+                held: true,
+                ..Default::default()
+            }),
+            &mut physics,
+            &mut ticker,
+            &mut effects,
+            &mut speed,
+            &VersionedFloor(1),
+        ));
+        assert!(speed.apply(
+            7,
+            2,
+            0,
+            attribute(
+                f64::from(0.13_f32),
+                0.1,
+                Some(sim::SPRINT_SPEED_MULTIPLIER as f32),
+            )
+        ));
+        let mut loading = speed_frame(Default::default());
+        loading.delta = delta;
+        loading.hold = Some(super::super::PhysicsFrameHold {
+            registry: VersionedFloor(1).registry_identity(),
+            withhold_input: false,
+        });
+        assert!(locals.advance(
+            loading,
+            &mut physics,
+            &mut ticker,
+            &mut effects,
+            &mut speed,
+            &VersionedFloor(1)
+        ));
+        assert_eq!(speed.current(), Some(f64::from(0.1_f32)));
+        assert!(locals.advance(
+            speed_frame(Default::default()),
+            &mut physics,
+            &mut ticker,
+            &mut effects,
+            &mut speed,
+            &VersionedFloor(1),
+        ));
+        assert_eq!(physics.latest_sneak_sprint(), Some((false, false)));
+        assert_eq!(speed.current(), Some(f64::from(0.1_f32)), "hold {delta:?}");
+    }
+}

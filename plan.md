@@ -267,6 +267,7 @@ refreshes. Speed effect operations preserve replayed sprint modifier changes.
 Unrecorded live sprint flags retain ownership through zero-tick frames and replays;
 delayed control adoption does not duplicate their original server write.
 Later rewinds reconcile unresolved earlier writes after replay failures.
+Loading resets preserve their sprint stop across holds without a completed tick.
 Frozen travel clears jumping after input for the following tick's sprint
 intent. Live strict-server acceptance of the surface-exit and wet-jump sprint stops
 is pending.

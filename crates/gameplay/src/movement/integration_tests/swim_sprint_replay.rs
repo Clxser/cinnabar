@@ -335,6 +335,45 @@ fn unrecorded_failed_replayed_sprint_still_overlays_the_completed_posture() {
         assert_eq!(physics.latest_sneak_sprint(), Some((false, true)));
         assert_eq!(physics.prediction_sync_posture(), Some((false, true)));
     }
+    let (mut physics, mut ticker) = walked_physics(1);
+    let jump = physics.advance(
+        Duration::from_millis(50),
+        MovementInput {
+            jumping: true,
+            ..forward_physics_input()
+        },
+        &VersionedFloor(1),
+    );
+    ticker
+        .enqueue_completed_physics(jump.samples[0].clone())
+        .unwrap();
+    ticker.hold_release_after_tick(102, Vec::new());
+    ticker.request_riptide(&mut physics, 1, [0.0; 2]);
+    let frame = physics.advance(
+        Duration::from_millis(100),
+        forward_physics_input(),
+        &VersionedFloor(1),
+    );
+    for sample in frame.samples {
+        ticker.enqueue_completed_physics(sample).unwrap();
+    }
+    assert!(physics.sample_at(103).unwrap().processed.spin_started);
+    let rewind = physics
+        .apply_server_movement_flags(101, flags(|flags| flags.sprinting = Some(true)))
+        .unwrap();
+    assert!(
+        reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &VersionedFloor(2)).is_err()
+    );
+    let rewind = physics.queue_server_motion([0.1, 0.0, 0.0], 103).unwrap();
+    reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &VersionedFloor(1)).unwrap();
+    for sample in ticker.pending_snapshots() {
+        assert_eq!(
+            sample.position,
+            physics.sample_at(sample.tick).unwrap().position,
+            "tick {}",
+            sample.tick
+        );
+    }
 }
 
 /// The first effect remains an operation even when earlier ticks had no attribute snapshot.

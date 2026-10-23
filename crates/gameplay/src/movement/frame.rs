@@ -174,7 +174,7 @@ impl LocomotionState {
         let requested_speed;
         let frame = if let Some(hold) = frame.hold {
             self.reset();
-            movement_speed.set_sprinting(false);
+            movement_speed.stop_for_loading();
             requested_speed = movement_speed.prediction_speed();
             physics.advance_dimension_wait(
                 delta,
@@ -304,7 +304,7 @@ impl LocomotionState {
             if let Some(speed) = physics.latest_movement_speed() {
                 movement_speed.adopt_recorded_speed(speed);
             } else {
-                movement_speed.complete_stationary_tick(sample.processed.sprinting);
+                movement_speed.set_sprinting(sample.processed.sprinting);
             }
         }
         super::control_trace::trace_physics_frame(
