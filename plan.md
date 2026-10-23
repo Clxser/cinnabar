@@ -867,6 +867,17 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   Bedrock→Java mappings. The Shaders settings tab offers pack import, reload, load status
   and a Shader Pack Settings screen. Video links to Shaders and shows its renderer switch
   only when Enhanced is available.
+  Incomplete: in-game acceptance across packs and platforms (Metal is unverified); stage pre-flips (`flip.<stage>_pre.<buffer>`) and Iris's explicit-flip
+  ordering; drawing the solid hand's glint before deferred passes; geometry-host composition
+  of celestial layers, effects without depth writes and private-depth first-person scenes,
+  which keep the native scene copy; actor colour masks, multitexture materials, dissolve
+  pairs, beacon beams and additive rays, which keep native composition; autofocus on cutout
+  pixels, liquids and entities; complete Iris type checking and target-dependent return
+  overloads; constant folding for half-float packing and bit casts. Java sky and fog time
+  curves and sunrise colours remain provisional. Shared loose uniforms still need
+  stage-local type and constant resolution, equivalent array declaration matching and
+  isolation from unrelated stage globals. Whole boolean uniform arrays and partially
+  indexed rows still need logical value conversion.
   Incomplete: in-game acceptance across packs and platforms (Metal is unverified); stage
   pre-flips (`flip.<stage>_pre.<buffer>`) and Iris's explicit-flip ordering; drawing the
   solid hand's glint before deferred passes; geometry-host composition of celestial layers,
