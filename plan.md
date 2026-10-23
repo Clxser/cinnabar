@@ -645,9 +645,17 @@ import, persistence and hosting/session teardown. The accepted local-world scope
 not establish full vanilla world-generation parity. Dragonfly supports only flat terrain;
 natural terrain requires BDS.
 Create and edit forms persist BDS advanced, multiplayer and cheat options through a shared
-catalog and generated server properties and level data. Pack and experiment configuration,
-hardcore, flat presets, Education Edition, operator status for a signed-out or offline-fallback host and live
-acceptance of every option on supported platforms remain incomplete.
+catalog and generated server properties and level data. Settings' in-game Game section saves
+changes and sends supported live changes through the BDS console. Metadata save failures restore
+confirmed values and show a retry message in Game; failed console writes show a next-start notice.
+Save replies refresh all confirmed settings and retain newer pending selections. World toggles keep
+keyboard and gamepad focus across value changes. A successful save clears superseded errors for its
+settings, while unrelated save failures remain visible. Live edits remain pending until a successful
+server exit. Default game mode and default player permission changes still wait for the next
+start; live application of these settings remains an incomplete parity gap. Pack and experiment
+configuration, hardcore, flat presets, Education Edition, operator status for a signed-out or
+offline-fallback host, the in-game Personal Game Mode and Multiplayer section, and live acceptance
+of every option on supported platforms remain incomplete.
 The Android translated runtime supplies a loopback route and passes two consecutive offline
 transport, signed-out login and spawn checks in an ordinary Android 15 emulator app sandbox.
 Signed-in local HTTP joins retry once with local identity when account services fail before transport
