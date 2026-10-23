@@ -371,6 +371,7 @@ and rendered qualification remain incomplete.
   Shulker previews apply each face brightness once.
   Lectern previews turn their reading surface toward the viewer.
   Furnace-family previews use their authored carried front faces.
+  Dried-ghast previews keep separate body and tentacle artwork and preserve the held model.
   Barrel previews use a closed south-facing pose with authored face mapping and UV turns.
   Piston previews use their carried body textures independently of placed geometry.
   Shared cube face sheets are bounded coverage.
