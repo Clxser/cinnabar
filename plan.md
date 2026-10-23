@@ -374,6 +374,8 @@ and rendered qualification remain incomplete.
   Barrel previews use a closed south-facing pose with authored face mapping and UV turns.
   Piston previews use their carried body textures independently of placed geometry.
   Shared cube face sheets are bounded coverage.
+  Aux-only stacks use base block visuals only when aux cannot select a legacy block state.
+  Decoding legacy states without a retained block remains incomplete.
   Firework-star previews preserve their mask artwork and per-stack colors.
   Decorated pot inventory sides exclude the texture border; broader pose and tint acceptance remains open.
   Block-model previews cull one-sided rear faces and preserve two-sided planes.
