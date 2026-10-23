@@ -118,7 +118,11 @@ fn transitively_blocked_ordinary_work_never_spins_ingress() {
                 bridge::MAX_FRAME_LEN,
             );
             let transport = SessionTransport::new(reader, frames, &startup);
-            let mut session = PlaySession::new(transport, Some(cache), 1, false);
+            let mut session = PlaySession::new(
+                transport,
+                Some(cache),
+                crate::login::startup::ready_fixture(1),
+            );
             let waker = noop_waker();
             let mut cx = Context::from_waker(&waker);
             for _ in 0..8 {
