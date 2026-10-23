@@ -109,6 +109,28 @@ impl GpuCull {
         self.table.mark_all_dirty();
     }
 
+    /// Resets derived CPU records and temporal GPU visibility while retaining storage.
+    pub(super) fn invalidate_publication(&mut self, device: &RenderDevice, queue: &RenderQueue) {
+        self.table = default();
+        self.bind_groups = None;
+        self.prepared_view = None;
+        if let Some(storage) = &self.storage {
+            let mut encoder = device.create_command_encoder(&Default::default());
+            encoder.clear_buffer(&storage.history, 0, None);
+            queue.submit([encoder.finish()]);
+        }
+    }
+
+    /// Whether every terrain slot fits this device's cull bindings before queueing draws.
+    pub(super) fn supports_slots(device: &RenderDevice, slots: u32) -> bool {
+        binding_capacity(
+            &device.limits(),
+            slots.max(MIN_CAPACITY),
+            cull_storage_largest_buffer,
+        )
+        .is_some()
+    }
+
     /// Live CPU record slots, published together after storage growth succeeds.
     pub(super) fn slot_count(&self) -> u32 {
         self.table.slot_count()
@@ -285,7 +307,7 @@ fn upload_records(cull: &mut GpuCull, device: &RenderDevice, queue: &RenderQueue
     let Some(storage) = cull.storage.as_ref() else {
         return false;
     };
-    write_dirty_records(&mut cull.table, queue, &storage.records, storage.capacity);
+    write_dirty_records(&mut cull.table, queue, &storage.records);
     if cull.table.take_enabled_dirty() {
         let enabled = cull.table.enabled();
         let words = enabled.len().min((storage.capacity as usize).div_ceil(32));
@@ -314,11 +336,11 @@ fn grow_storage(device: &RenderDevice, slots: u32) -> Option<CullStorage> {
         slots.max(MIN_CAPACITY),
         cull_storage_largest_buffer,
     )?;
-    crate::gpu_allocation::checked(
+    crate::gpu_allocation::terrain_checked(
         device,
         "terrain cull storage",
         cull_storage_largest_buffer(capacity),
-        || CullStorage::new(device.wgpu_device(), capacity, false),
+        || CullStorage::new(device.wgpu_device(), capacity, cfg!(test)),
     )
 }
 
@@ -359,17 +381,14 @@ pub(super) fn sampleable_depth<'a>(
     })
 }
 
-/// Writes the table's dirty records below `capacity` into `records` in contiguous runs; slots
-/// past it are rewritten once storage grows.
+/// Writes every dirty CPU record in contiguous runs after storage capacity is ensured.
 pub(super) fn write_dirty_records(
     table: &mut CullSlots,
     queue: &RenderQueue,
     records: &wgpu::Buffer,
-    capacity: u32,
 ) {
     let record_bytes = std::mem::size_of::<CullRecord>() as u64;
-    let mut dirty = table.take_dirty();
-    dirty.retain(|&slot| slot < capacity);
+    let dirty = table.take_dirty();
     let source = table.records();
     for run in dirty.chunk_by(|left, right| left + 1 == *right) {
         let (first, last) = (run[0] as usize, run[run.len() - 1] as usize);
@@ -452,6 +471,31 @@ pub(super) fn cull_view_input(
 #[cfg(test)]
 mod storage_tests {
     use super::*;
+
+    impl GpuCull {
+        /// Reads the records and enabled bits that this publication's compute cull consumes.
+        pub(in crate::chunk::gpu_cull) fn publication_snapshot(
+            &self,
+            device: &RenderDevice,
+            queue: &RenderQueue,
+        ) -> Vec<Vec<u8>> {
+            let Some(storage) = &self.storage else {
+                return Vec::new();
+            };
+            let slots = u64::from(self.slot_count());
+            let read = crate::render_test_support::read_buffer;
+            vec![
+                read(
+                    device,
+                    queue,
+                    &storage.records,
+                    0,
+                    slots * std::mem::size_of::<CullRecord>() as u64,
+                ),
+                read(device, queue, &storage.enabled, 0, slots.div_ceil(32) * 4),
+            ]
+        }
+    }
 
     /// Capacity rounds up to a power of two only while every buffer fits one binding.
     #[test]

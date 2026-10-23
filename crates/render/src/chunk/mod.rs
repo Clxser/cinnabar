@@ -128,6 +128,7 @@ use constants::{
     PACKED_QUAD_LIGHTING_BYTES, STATIC_QUAD_INDICES, TRANSPARENT_REFS_BINDING,
     TRANSPARENT_SHADER_HANDLE,
 };
+use gpu::arena::buffers::{create_indirect_buffer, create_storage_buffer};
 #[allow(unused_imports)]
 use gpu::arena::{
     ArenaLimits, ChunkGpuArena, ChunkGpuUploadStats, FreshChunkRanges, GPU_UPDATE_OVERDUE_FRAMES,
@@ -135,10 +136,10 @@ use gpu::arena::{
     MAX_GPU_UPDATE_FAIRNESS_ENTRIES, allocate_aligned_quad_range,
     allocate_aligned_range_for_update, allocate_origin, allocate_quad_range,
     allocate_range_for_update, arena_limits_from_device_limits, checked_geometry_range,
-    chunk_tint_identity_is_active, commit_fresh_chunk_ranges, create_indirect_buffer,
-    create_storage_buffer, init_chunk_gpu_arena, insert_free_quad_range, plan_fresh_chunk_ranges,
-    plan_gpu_chunk_updates, plan_origin_allocation, release_completed_transparent_retirements,
-    release_origin, release_quad_range, take_free_quad_range,
+    chunk_tint_identity_is_active, commit_fresh_chunk_ranges, init_chunk_gpu_arena,
+    insert_free_quad_range, plan_fresh_chunk_ranges, plan_gpu_chunk_updates,
+    plan_origin_allocation, release_completed_transparent_retirements, release_origin,
+    release_quad_range, take_free_quad_range,
 };
 pub use gpu::bind_groups::ChunkTextureUploadStats;
 #[allow(unused_imports)]

@@ -157,38 +157,6 @@ impl FarTerrainGpu {
     }
 
     /// Reuses pipelines until the attachment format or sample count changes.
-    /// Reads each resident tile's GPU ranges and the uploaded mask in a stable key order.
-    #[cfg(test)]
-    pub(crate) fn publication_snapshot(
-        &self,
-        device: &RenderDevice,
-        queue: &RenderQueue,
-    ) -> Vec<Vec<u8>> {
-        let read = crate::render_test_support::read_buffer;
-        let mut residents = self.resident.iter().collect::<Vec<_>>();
-        residents.sort_unstable_by_key(|(key, _)| **key);
-        let mut bytes = Vec::new();
-        for (_, resident) in residents {
-            bytes.push(read(
-                device,
-                queue,
-                &self.quads,
-                u64::from(resident.quads.start) * QUAD_BYTES,
-                resident.quads.len() as u64 * QUAD_BYTES,
-            ));
-            bytes.push(read(
-                device,
-                queue,
-                &self.records,
-                u64::from(resident.slot) * TILE_RECORD_BYTES,
-                TILE_RECORD_BYTES,
-            ));
-            bytes.push(resident.mesh.colours.to_vec());
-        }
-        bytes.push(read(device, queue, &self.mask, 0, self.mask_words * 4));
-        bytes
-    }
-
     fn pipeline(
         &mut self,
         cache: &PipelineCache,
@@ -206,7 +174,7 @@ impl FarTerrainGpu {
     }
 
     /// Uploads one bounded batch, retaining covering draws until their replacements are admitted.
-    /// Returns false when the same scene needs another frame to finish its uploads.
+    /// Returns false for deferred uploads; allocation failures invalidate terrain globally.
     pub(crate) fn apply_tiles(
         &mut self,
         device: &RenderDevice,
@@ -305,7 +273,14 @@ impl FarTerrainGpu {
             // Earlier misses need another pass after this allocation changes free
             // space or makes a retained fallback reclaimable.
             complete &= !allocation_failed;
-            self.upload(queue, mesh, slot, &quads);
+            let _ = crate::gpu_allocation::terrain_checked(
+                device,
+                "far terrain tile upload",
+                bytes,
+                || {
+                    self.upload(queue, mesh, slot, &quads);
+                },
+            );
             uploaded_tiles += 1;
             uploaded_bytes += bytes;
             self.resident.insert(
@@ -544,7 +519,7 @@ impl FarTerrainGpu {
         let bytes = u64::from(slots) * (TILE_RECORD_BYTES + TILE_LAYER_BYTES);
         // Out of memory: no slot frees, so admission evicts lower-priority tiles instead.
         let Some(((colours, view), records)) =
-            crate::gpu_allocation::checked(device, "far terrain tile slots", bytes, || {
+            crate::gpu_allocation::terrain_checked(device, "far terrain tile slots", bytes, || {
                 (
                     colour_texture(device, slots),
                     storage_buffer(
@@ -632,8 +607,15 @@ impl FarTerrainGpu {
             self.mask_words = mask_words;
             self.mask = buffer;
         }
-        queue.profiled_write_buffer(&self.mask, 0, bytemuck::cast_slice(&words));
-        true
+        crate::gpu_allocation::terrain_checked(
+            device,
+            "far terrain mask upload",
+            words.len() as u64 * 4,
+            || {
+                queue.profiled_write_buffer(&self.mask, 0, bytemuck::cast_slice(&words));
+            },
+        )
+        .is_some()
     }
 }
 
@@ -687,7 +669,9 @@ fn storage_buffer(device: &RenderDevice, label: &'static str, size: u64) -> Buff
 
 /// [`storage_buffer`], or `None` when the device is out of memory for it.
 fn checked_storage_buffer(device: &RenderDevice, label: &'static str, size: u64) -> Option<Buffer> {
-    crate::gpu_allocation::checked(device, label, size, || storage_buffer(device, label, size))
+    crate::gpu_allocation::terrain_checked(device, label, size, || {
+        storage_buffer(device, label, size)
+    })
 }
 
 /// Creates cell-colour layers that support both uploads and GPU migration.

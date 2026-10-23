@@ -140,7 +140,14 @@ pub(in crate::chunk) fn upload_indirect_commands_if_changed(
         bytes = bytes.len()
     )
     .entered();
-    render_queue.profiled_write_buffer(&arena.indirect_buffer, 0, bytes);
+    let _ = crate::gpu_allocation::terrain_checked(
+        render_device,
+        "terrain indirect upload",
+        bytes.len() as u64,
+        || {
+            render_queue.profiled_write_buffer(&arena.indirect_buffer, 0, bytes);
+        },
+    );
     #[cfg(feature = "tracy")]
     drop(_span);
     arena.uploaded_indirect_bytes.clear();

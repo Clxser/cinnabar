@@ -17,6 +17,14 @@ pub(super) struct UnitPage {
     references: Vec<u32>,
 }
 
+impl UnitPage {
+    /// Forces a complete descriptor and reference upload while keeping this storage.
+    pub(super) fn invalidate(&mut self) {
+        self.indexed = false;
+        self.packed.clear();
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Uploaded {
     pub(super) descriptors: u64,
@@ -39,14 +47,16 @@ pub(super) fn upload(
             return uploaded;
         }
         stream.pages.truncate(1);
-        let fresh = ensure_page(
+        let Some(fresh) = ensure_page(
             &mut stream.pages,
             0,
             stream.descriptors.records.len(),
             capacity,
             device,
             cache,
-        );
+        ) else {
+            return uploaded;
+        };
         let page = &mut stream.pages[0];
         let all = fresh || !page.indexed;
         page.indexed = true;
@@ -66,14 +76,16 @@ pub(super) fn upload(
         let mut pages = 0;
         for (index, descriptors) in stream.fallback.chunks(capacity).enumerate() {
             pages += 1;
-            let fresh = ensure_page(
+            let Some(fresh) = ensure_page(
                 &mut stream.pages,
                 index,
                 descriptors.len(),
                 capacity,
                 device,
                 cache,
-            );
+            ) else {
+                return uploaded;
+            };
             let page = &mut stream.pages[index];
             let all = fresh || page.indexed || page.packed != descriptors;
             page.indexed = false;
@@ -107,22 +119,31 @@ fn ensure_page(
     maximum: usize,
     device: &RenderDevice,
     cache: &PipelineCache,
-) -> bool {
+) -> Option<bool> {
     if pages
         .get(index)
         .is_some_and(|page| page.layout.capacity >= needed)
     {
-        return false;
+        return Some(false);
     }
     let layout = IndexedUnitPage {
         capacity: needed.next_power_of_two().min(maximum),
     };
-    let buffer = device.create_buffer(&BufferDescriptor {
-        label: Some("indexed terrain unit page"),
-        size: layout.byte_size(),
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
+    let buffer = crate::gpu_allocation::terrain_buffer(
+        device,
+        &BufferDescriptor {
+            label: Some("indexed terrain unit page"),
+            size: layout.byte_size(),
+            usage: BufferUsages::STORAGE
+                | BufferUsages::COPY_DST
+                | if cfg!(test) {
+                    BufferUsages::COPY_SRC
+                } else {
+                    BufferUsages::empty()
+                },
+            mapped_at_creation: false,
+        },
+    )?;
     let group = device.create_bind_group(
         "indexed terrain unit page",
         &cache.get_bind_group_layout(&super::bind_group_layout()),
@@ -146,7 +167,7 @@ fn ensure_page(
     } else {
         pages[index] = page;
     }
-    true
+    Some(true)
 }
 
 /// Coalesces adjacent changed slots, without copying any intervening unchanged descriptor.

@@ -465,10 +465,7 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
             uploads_waiting_for_growth += 1;
             continue;
         }
-        if instance
-            .token
-            .is_some_and(|token| !acknowledgements.try_reserve(instance.key, token))
-        {
+        if token.is_some_and(|token| !acknowledgements.try_reserve(instance.key, token)) {
             continue;
         }
         let charged_bytes = instance_bytes.saturating_add(super::capacity::mirrored_upload_bytes(

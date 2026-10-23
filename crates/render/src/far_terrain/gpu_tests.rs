@@ -1,4 +1,43 @@
 use super::*;
+
+impl FarTerrainGpu {
+    /// Reads each resident tile's GPU ranges and the uploaded mask in a stable key order.
+    pub(crate) fn publication_snapshot(
+        &self,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+    ) -> Vec<Vec<u8>> {
+        let read = crate::render_test_support::read_buffer;
+        let mut residents = self.resident.iter().collect::<Vec<_>>();
+        residents.sort_unstable_by_key(|(key, _)| **key);
+        let mut bytes = Vec::new();
+        for (_, resident) in residents {
+            bytes.push(read(
+                device,
+                queue,
+                &self.quads,
+                u64::from(resident.quads.start) * QUAD_BYTES,
+                resident.quads.len() as u64 * QUAD_BYTES,
+            ));
+            bytes.push(read(
+                device,
+                queue,
+                &self.records,
+                u64::from(resident.slot) * TILE_RECORD_BYTES,
+                TILE_RECORD_BYTES,
+            ));
+            bytes.push(crate::render_test_support::read_rgba8_layer(
+                device,
+                queue,
+                &self.colours,
+                resident.slot,
+            ));
+        }
+        bytes.push(read(device, queue, &self.mask, 0, self.mask_words * 4));
+        bytes
+    }
+}
+
 use render_scene::runtime_profile_uploads::measure;
 
 /// Creates a validation GPU without requiring a hardware adapter.
@@ -412,6 +451,7 @@ fn growth_without_memory_keeps_storage_and_retries() {
     assert!(gpu.slots > slots);
 }
 
+/// Supplies a complete tile large enough to cross a selected quad-buffer capacity.
 fn tile_with_quads(x: i32, quads: usize) -> Arc<TileMesh> {
     Arc::new(TileMesh {
         coverage: far_terrain::TileCoverage::Complete,
@@ -437,7 +477,7 @@ fn eviction_without_memory_to_grow_keeps_every_resident() {
     scene.extend(old.iter().cloned());
     {
         let _failure = crate::gpu_allocation::inject(|label, _| label.starts_with("far terrain"));
-        assert!(!gpu.apply_tiles(&device, &queue, &scene));
+        gpu.apply_tiles(&device, &queue, &scene);
     }
     assert_eq!(gpu.quad_capacity, quad_capacity);
     assert!(old.iter().all(|mesh| gpu.resident.contains_key(&mesh.key)));
@@ -448,17 +488,20 @@ fn eviction_without_memory_to_grow_keeps_every_resident() {
     assert!(gpu.resident.contains_key(&scene[0].key));
 }
 
-/// A fresh scene whose first tile cannot grow storage stays pending, so the tile retries.
+/// A failed fresh allocation invalidates terrain and leaves valid storage for a full retry.
 #[test]
-fn a_tile_that_cannot_grow_keeps_its_scene_pending() {
+fn a_failed_tile_allocation_invalidates_terrain_for_a_full_retry() {
     let (device, queue) = device();
+    let failures = crate::gpu_allocation::FailureFlag::new(&device);
     let mut gpu = FarTerrainGpu::new(&device);
     let scene = [tile_with_quads(0, 4)];
     {
         let _failure = crate::gpu_allocation::inject(|label, _| label.starts_with("far terrain"));
-        assert!(!gpu.apply_tiles(&device, &queue, &scene));
+        gpu.apply_tiles(&device, &queue, &scene);
     }
+    assert!(failures.failed());
     assert!(gpu.resident.is_empty());
+    gpu.invalidate_publication();
     assert!(gpu.apply_tiles(&device, &queue, &scene));
     assert!(gpu.resident.contains_key(&scene[0].key));
 }

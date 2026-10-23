@@ -329,7 +329,7 @@ pub(in crate::chunk) fn begin_arena_migration(
         bytes = growth.new_capacity as u64 * stream.item_bytes(),
     )
     .entered();
-    let Some(buffer) = super::arena::try_create_storage_buffer(
+    let Some(buffer) = super::arena::buffers::try_create_storage_buffer(
         render_device,
         stream.label(),
         growth.new_capacity as u64 * stream.item_bytes(),
@@ -339,7 +339,7 @@ pub(in crate::chunk) fn begin_arena_migration(
     if stream == ArenaStream::Origins {
         // Slots up to the new capacity may be drawn before the copy lands.
         let Some(offsets) =
-            super::arena::identity_vertex_offsets(render_device, growth.new_capacity)
+            super::arena::buffers::identity_vertex_offsets(render_device, growth.new_capacity)
         else {
             return false;
         };
@@ -415,12 +415,17 @@ impl TerrainUploads<'_> {
         fallback: impl FnOnce(&[BufferWrite<'_>], &'static std::panic::Location<'static>),
     ) {
         let site = std::panic::Location::caller();
-        match self.staging {
-            Some(staging) => {
-                staging.write_batch_or(self.device, self.queue, writes, |rest| fallback(rest, site))
-            }
-            None => fallback(writes, site),
-        }
+        let bytes = writes.iter().map(|write| write.2.len() as u64).sum();
+        let _ = crate::gpu_allocation::terrain_checked(
+            self.device,
+            "terrain arena upload",
+            bytes,
+            || match self.staging {
+                Some(staging) => staging
+                    .write_batch_or(self.device, self.queue, writes, |rest| fallback(rest, site)),
+                None => fallback(writes, site),
+            },
+        );
     }
 }
 

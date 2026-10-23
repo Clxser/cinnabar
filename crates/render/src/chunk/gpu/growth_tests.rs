@@ -391,6 +391,7 @@ fn migration_started_after_pending_uploads_respects_the_actual_frame_byte_ceilin
     assert!(config.maximum_frame_bytes - transferred_bytes < record_bytes);
 }
 
+/// Supplies a validating device and queue without a hardware dependency.
 fn noop_device() -> (RenderDevice, RenderQueue) {
     let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
     (RenderDevice::from(device), RenderQueue::new(queue))

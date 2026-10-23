@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::queue_writes::ProfiledQueue as _;
+use bevy::ecs::change_detection::Mut;
 use render_scene::ChunkRenderInstance;
 
 #[derive(Resource)]
@@ -24,7 +25,23 @@ impl TerrainGpuRecovery {
 /// Forgets every derived publication together; CPU instances remain the source of truth.
 pub(in crate::chunk) fn begin_recovery(world: &mut World) {
     let failed = world.resource::<TerrainGpuRecovery>().failures.take();
+    if !failed && world.resource::<TerrainGpuRecovery>().published.is_empty() {
+        return;
+    }
+    let profiler = world
+        .get_resource::<render_scene::RuntimeStageProfiler>()
+        .cloned();
+    let _timer = profiler
+        .as_ref()
+        .map(|profiler| profiler.time(render_scene::RuntimeStage::GpuPreparation));
     if !failed {
+        world.resource_scope(|world, mut recovery: Mut<TerrainGpuRecovery>| {
+            recovery.published.retain(|&entity, generation| {
+                world
+                    .get::<ChunkRenderInstance>(entity)
+                    .is_some_and(|instance| instance.generation == *generation)
+            });
+        });
         return;
     }
     let published = world
@@ -56,7 +73,12 @@ pub(in crate::chunk) fn begin_recovery(world: &mut World) {
         .invalidate_publication();
     *world.resource_mut::<GpuUpdateFairness>() = GpuUpdateFairness::default();
     *world.resource_mut::<coverage::TerrainCoverage>() = coverage::TerrainCoverage::default();
-    *world.resource_mut::<pipeline::batches::RetainedTerrainBatches>() = default();
+    {
+        let mut retained = world.resource_mut::<pipeline::batches::RetainedTerrainBatches>();
+        let stats = retained.stats;
+        *retained = default();
+        retained.stats = stats;
+    }
     *world.resource_mut::<pipeline::solid::ChunkSolidIndirectBatches>() = default();
     *world.resource_mut::<ChunkIndirectBatches>() = default();
     *world.resource_mut::<ChunkModelIndirectBatches>() = default();
@@ -71,6 +93,11 @@ pub(in crate::chunk) fn begin_recovery(world: &mut World) {
     world
         .resource_mut::<TransparentModelSortRuntime>()
         .next_generation = next_generation;
+    *world.resource_mut::<TransparentRetirementFence>() = default();
+    *world.resource_mut::<TransparentPresentationFence>() = default();
+    if let Some(mut units) = world.get_resource_mut::<pipeline::units::TerrainUnitBatches>() {
+        units.invalidate_publication();
+    }
     gpu_cull::invalidate_publication(world);
     if let Some(mut far) = world.get_resource_mut::<crate::far_terrain::FarTerrainGpu>() {
         far.invalidate_publication();
@@ -86,7 +113,8 @@ pub(in crate::chunk) fn begin_recovery(world: &mut World) {
 /// Prevents a partially prepared frame from drawing or witnessing terrain. Recovery retries
 /// the entire publication next frame, regardless of which owner observed the failure.
 pub(in crate::chunk) fn finish_publication(world: &mut World) {
-    if !world.resource::<TerrainGpuRecovery>().failures.failed() {
+    let recovery = world.resource::<TerrainGpuRecovery>();
+    if !recovery.failures.failed() && recovery.published.is_empty() {
         return;
     }
     let mut arena = world.resource_mut::<ChunkGpuArena>();

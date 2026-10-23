@@ -223,7 +223,6 @@ impl DirectOcclusion {
         self.generations.clear();
         self.tint = None;
         self.history.invalidate_world();
-        self.verdicts.reset();
         self.bind_group = None;
         self.last_view = None;
         self.skip_view = None;
@@ -234,6 +233,16 @@ impl DirectOcclusion {
     /// Stops the incomplete frame from testing or drawing terrain.
     pub(super) fn suppress_publication(&mut self) {
         self.plan = None;
+    }
+
+    /// Whether this device can test all current terrain slots without exceeding one binding.
+    pub(super) fn supports_slots(device: &RenderDevice, slots: u32) -> bool {
+        super::prepare::binding_capacity(
+            &device.limits(),
+            slots.max(MIN_CAPACITY),
+            occlusion_storage_largest_buffer,
+        )
+        .is_some()
     }
 
     /// Whether this run uses a current-frame depth prepass and GPU-written unit masks.
@@ -371,7 +380,7 @@ impl DirectOcclusion {
         self.table.trim();
     }
 
-    fn upload(&mut self, device: &RenderDevice, queue: &RenderQueue) {
+    fn upload(&mut self, device: &RenderDevice, queue: &RenderQueue) -> bool {
         let slots = self.table.slot_count();
         if self
             .storage
@@ -391,7 +400,7 @@ impl DirectOcclusion {
                     readback_bytes = occlusion_bytes(capacity) * SLOTS as u64
                 )
                 .entered();
-                crate::gpu_allocation::checked(
+                crate::gpu_allocation::terrain_checked(
                     device,
                     "terrain occlusion storage",
                     occlusion_storage_largest_buffer(capacity),
@@ -399,7 +408,7 @@ impl DirectOcclusion {
                 )
             });
             let Some((storage, readbacks)) = grown else {
-                return;
+                return false;
             };
             self.verdicts.reset();
             self.bind_group = None;
@@ -408,7 +417,8 @@ impl DirectOcclusion {
             self.table.mark_all_dirty();
         }
         let storage = self.storage.as_ref().expect("storage was just ensured");
-        write_dirty_records(&mut self.table, queue, &storage.records, storage.capacity);
+        write_dirty_records(&mut self.table, queue, &storage.records);
+        true
     }
 
     /// Consumes settled readbacks for legacy history and optional current-frame work diagnostics.
@@ -535,7 +545,9 @@ pub(in crate::chunk) fn prepare_direct_occlusion(
         biome_tints.table_identity(),
         &mut hidden,
     );
-    occlusion.upload(&device, &queue);
+    if !occlusion.upload(&device, &queue) {
+        return;
+    }
     // Readbacks mapped by the previous frame's device poll.
     occlusion.apply_verdicts();
 
@@ -964,3 +976,7 @@ pub(super) fn install(render_app: &mut SubApp, device: &RenderDevice) {
 #[cfg(test)]
 #[path = "direct_visibility_tests.rs"]
 mod visibility_tests;
+
+#[cfg(test)]
+#[path = "direct_publication_tests.rs"]
+mod publication_tests;

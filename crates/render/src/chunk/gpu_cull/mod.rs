@@ -219,10 +219,13 @@ pub(in crate::chunk) fn gpu_cull_view_eligible(
 
 /// Forgets every culling decision so republished allocations rebuild their records.
 pub(in crate::chunk) fn invalidate_publication(world: &mut World) {
+    let device = world.resource::<RenderDevice>().clone();
+    let queue = world.resource::<RenderQueue>().clone();
     if let Some(mut cull) = world.get_resource_mut::<GpuCull>() {
-        cull.table = default();
-        cull.bind_groups = None;
-        cull.prepared_view = None;
+        cull.invalidate_publication(&device, &queue);
+    }
+    if let Some(mut feedback) = world.get_resource_mut::<feedback::GpuCullFeedback>() {
+        feedback.select(None);
     }
     if let Some(mut direct) = world.get_resource_mut::<DirectOcclusion>() {
         direct.invalidate_publication();

@@ -59,6 +59,9 @@ pub(super) fn prepare(
         &liquids.state,
     );
     let arena = world.resource::<ChunkGpuArena>();
+    if liquid_refs > arena.transparent_slot_refs {
+        return None;
+    }
     let assets = world.resource::<ChunkTextureAssets>();
     let tints = world.resource::<ChunkBiomeTints>();
     let (mut model_candidates, mut model_manifest) = (Vec::new(), Vec::new());

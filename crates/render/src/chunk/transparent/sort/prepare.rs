@@ -186,6 +186,9 @@ pub(in crate::chunk) fn prepare_transparent_sorts(
                 ) {
                     runtime.last_indirect_identity = None;
                 }
+                if output.refs.len() > arena.transparent_slot_refs {
+                    return;
+                }
                 let sort_result =
                     TransparentSortResult::planned(result.generation, result.key, output)
                         .expect("worker prevalidates the hard transparent reference ceiling");
@@ -479,6 +482,9 @@ pub(in crate::chunk) fn prepare_transparent_sorts(
         &runtime.state,
     ) {
         runtime.last_indirect_identity = None;
+    }
+    if staged_refs > arena.transparent_slot_refs {
+        return;
     }
     let mut staged_bytes = 0;
     if let Some(batch) = runtime.state.next_upload_batch() {
