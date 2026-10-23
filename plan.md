@@ -374,6 +374,7 @@ and rendered qualification remain incomplete.
   Dried-ghast previews keep separate body and tentacle artwork and preserve the held model.
   Barrel previews use a closed south-facing pose with authored face mapping and UV turns.
   Piston previews use their carried body textures independently of placed geometry.
+  Crafter previews use an idle south-facing upright pose with authored face artwork.
   Shared cube face sheets are bounded coverage.
   Aux-only stacks use base block visuals only when aux cannot select a legacy block state.
   Decoding legacy states without a retained block remains incomplete.
