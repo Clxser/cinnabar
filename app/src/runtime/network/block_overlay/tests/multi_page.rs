@@ -18,7 +18,7 @@ fn compile() -> (Arc<RuntimeAssets>, super::super::CompiledBlockOverlay) {
             ..Material::unvaried()
         },
     ]));
-    let keys = assets::material_keys::MaterialKeys::from_entries([(1, "oak_planks"), (2, "lucky")]);
+    let keys = vanilla_fallback::keys();
     let blocks = CustomBlocks {
         blocks: ["lucky", "oak_planks"]
             .into_iter()
