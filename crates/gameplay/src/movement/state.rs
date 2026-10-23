@@ -5,7 +5,7 @@
 //! Other provisional state rules remain subject to native comparison.
 
 /// Movement facts produced by one completed simulation tick.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct ProcessedMovementState {
     /// The completed tick retains the spin pose.
     pub spinning: bool,
@@ -34,6 +34,8 @@ pub struct ProcessedMovementState {
     pub ride: Option<super::RideKind>,
     /// Double-tap flight start (true) or stop (false); the only source of the wire flight edges.
     pub flight_request: Option<bool>,
+    /// The boat this tick predicted, which the input reports instead of the player.
+    pub vehicle: Option<super::PredictedVehicleSample>,
 }
 
 impl ProcessedMovementState {
@@ -63,6 +65,7 @@ impl ProcessedMovementState {
             forced_sneak: false,
             ride: None,
             flight_request: None,
+            vehicle: None,
         }
     }
 }

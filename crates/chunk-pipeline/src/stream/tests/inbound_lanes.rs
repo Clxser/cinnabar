@@ -560,6 +560,7 @@ fn correction_after_a_teleport_in_the_same_pass_waits_for_earlier_terrain() {
         subject: MovementCorrectionSubject::Player,
         on_ground: true,
         tick: 1,
+        vehicle_angular_velocity: None,
     });
     ready(&mut stream, 3, correction, true);
     stream.apply_ready();

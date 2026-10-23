@@ -69,6 +69,7 @@ pub(crate) fn apply_committed_control(
         | CommittedControlEvent::LocalMovementFlags { .. }
         | CommittedControlEvent::NetworkStackLatency { .. }
         | CommittedControlEvent::LocalActorMotion { .. }
+        | CommittedControlEvent::VehicleMovementCorrection { .. }
         | CommittedControlEvent::LocalMovementBoost { .. }
         | CommittedControlEvent::LocalDeath { .. }
         | CommittedControlEvent::LocalHurt { .. }

@@ -195,6 +195,7 @@ fn a_correction_outside_retained_history_keeps_prediction_and_still_resets_the_f
             subject: protocol::MovementCorrectionSubject::Player,
             on_ground: true,
             tick: 3,
+            vehicle_angular_velocity: None,
         },
         resolved: ResolvedServerPosition {
             position,

@@ -169,6 +169,22 @@ impl CommittedGameplayState<'_> {
             }
             return ControlDisposition::Handled;
         }
+        if let CommittedControlEvent::VehicleMovementCorrection { correction, .. } = control {
+            if self.movement.physics_is_authorized() {
+                self.physics.correct_vehicle(
+                    &movement::VehicleCorrection {
+                        tick: correction.tick,
+                        position: correction.position,
+                        velocity: correction.delta,
+                        rotation: [correction.pitch, correction.yaw],
+                        angular_velocity: correction.vehicle_angular_velocity,
+                        on_ground: correction.on_ground,
+                    },
+                    world,
+                );
+            }
+            return ControlDisposition::Handled;
+        }
         if let CommittedControlEvent::LocalActorMotion { event, .. } = control {
             // A server-driven impulse (knockback, explosion) must enter the
             // prediction timeline; without it the client keeps its pre-hit
@@ -402,6 +418,7 @@ impl CommittedGameplayState<'_> {
             | CommittedControlEvent::LocalMovementFlags { .. }
             | CommittedControlEvent::NetworkStackLatency { .. }
             | CommittedControlEvent::LocalActorMotion { .. }
+            | CommittedControlEvent::VehicleMovementCorrection { .. }
             | CommittedControlEvent::LocalMovementBoost { .. }
             | CommittedControlEvent::LocalDeath { .. }
             | CommittedControlEvent::LocalHurt { .. }

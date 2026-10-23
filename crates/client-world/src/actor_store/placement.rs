@@ -7,7 +7,7 @@ use super::ActorStore;
 const UNLOCKED_HEAD_DEGREES: f32 = 180.0;
 
 /// World offset of a mount-local seat `[right, up, forward]` for a mount facing `yaw_degrees`.
-pub(super) fn seat_world_offset(local: [f32; 3], yaw_degrees: f32) -> [f32; 3] {
+pub fn seat_world_offset(local: [f32; 3], yaw_degrees: f32) -> [f32; 3] {
     let (sin, cos) = yaw_degrees.to_radians().sin_cos();
     [
         local[0] * cos - local[2] * sin,
@@ -135,15 +135,28 @@ impl ActorStore {
     /// Feet position and body yaw of `rider_unique_id` on its mount's seat, when linked and known.
     pub(crate) fn rider_seat_pose(&self, rider_unique_id: i64) -> Option<([f32; 3], f32)> {
         let ridden = self.rider_to_ridden.get(&rider_unique_id)?;
+        let mount = self.actors.get(self.unique_to_runtime.get(ridden)?)?;
+        self.rider_seat_on(rider_unique_id, mount.position, mount.yaw)
+    }
+
+    /// Feet position and body yaw of `rider_unique_id` on its mount's seat, were the mount's
+    /// feet at `mount_feet` facing `mount_yaw`.
+    pub(crate) fn rider_seat_on(
+        &self,
+        rider_unique_id: i64,
+        mount_feet: [f32; 3],
+        mount_yaw: f32,
+    ) -> Option<([f32; 3], f32)> {
+        let ridden = self.rider_to_ridden.get(&rider_unique_id)?;
         let rider = self
             .actors
             .get(self.unique_to_runtime.get(&rider_unique_id)?)?;
         let mount = self.actors.get(self.unique_to_runtime.get(ridden)?)?;
         let seat = self.seat_for(rider_unique_id, rider, mount)?;
-        let offset = seat_world_offset(seat.position, mount.yaw);
+        let offset = seat_world_offset(seat.position, mount_yaw);
         Some((
-            std::array::from_fn(|axis| mount.position[axis] + offset[axis]),
-            wrap_degrees(mount.yaw + seat.rotate_by.unwrap_or(0.0)),
+            std::array::from_fn(|axis| mount_feet[axis] + offset[axis]),
+            wrap_degrees(mount_yaw + seat.rotate_by.unwrap_or(0.0)),
         ))
     }
 

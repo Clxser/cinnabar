@@ -267,9 +267,11 @@ acceptance of server resets and corrections remains outstanding.
 Elytra gliding retains the sprint state and its movement-speed modifier through
 completed ticks and correction replay. Rendered acceptance of sprinting and
 Speed-boosted glide camera motion remains outstanding.
-Keep raw, analogue and processed input semantics distinct. Mounted controls need
-attributable vehicle mapping, constants, state and actual prediction before claiming
-client-predicted vehicle behavior. Riding alone does not establish that capability.
+Keep raw, analogue and processed input semantics distinct. A boat steered from its
+controlling seat is client-predicted with vanilla paddle, momentum, steering and buoyancy
+constants and vehicle-correction replay; rendered BDS acceptance covers straight and
+turning rows. Horse prediction, boat-to-boat collision and the rider's view following
+the boat remain open.
 
 Correction-sync acceptance still includes predicted flag coverage, scaled/horizontal
 poses and bounds, history loss, replay authority, send phase and live-server behavior.

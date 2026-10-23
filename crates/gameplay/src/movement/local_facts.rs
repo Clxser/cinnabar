@@ -20,6 +20,8 @@ pub struct LocalMovementFacts {
     /// Runtime identity of the retained mount, when its actor is available.
     pub mount_runtime_id: Option<u64>,
     pub ride_seat: Option<[f32; 3]>,
+    /// The boat the player steers from its controlling seat.
+    pub vehicle: Option<super::SteeredVehicle>,
     pub can_fly: bool,
     pub flight: FlightAuthority,
     pub ability_sequence: Option<u64>,
@@ -103,6 +105,9 @@ pub fn read(
         ride_seat: ride
             .and(stream.local_rider_seat_pose())
             .map(|(position, _)| position),
+        vehicle: (ride == Some(super::RideKind::Boat))
+            .then(|| steered_vehicle(stream))
+            .flatten(),
         can_fly,
         flight: capabilities.map(|caps| caps.flight).unwrap_or_default(),
         ability_sequence: player.facts.local_abilities_sequence(),
@@ -128,6 +133,20 @@ pub fn read(
         sprint_blocked: !hunger_exempt && hunger_below_floor.unwrap_or(true),
         sprint_start_blocked: item_in_use,
     }
+}
+
+/// The boat the local player steers, with its seat in the boat's frame.
+fn steered_vehicle(stream: &impl crate::GameplayWorld) -> Option<super::SteeredVehicle> {
+    let vehicle = stream.local_controlled_vehicle()?;
+    let (seat, _) = stream.local_rider_seat_on([0.0; 3], 0.0)?;
+    Some(super::SteeredVehicle {
+        runtime_id: vehicle.runtime_id,
+        unique_id: vehicle.unique_id,
+        position: vehicle.last_received_native_position(),
+        yaw: vehicle.last_received_pose().yaw,
+        seat,
+        server_moves: stream.local_vehicle_server_moves(),
+    })
 }
 
 /// An elytra flies until its damage reaches one below its maximum. An accepted

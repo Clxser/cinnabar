@@ -100,6 +100,7 @@ impl ActorStore {
             effect_members: Default::default(),
             unique_to_runtime: FastHashMap::new(),
             rider_to_ridden: FastHashMap::new(),
+            passenger_order: FastHashMap::new(),
             max_actor_links: max_actors.min(MAX_TRACKED_ACTOR_LINKS),
             players: HashMap::new(),
             unlisted_players: HashMap::new(),
@@ -108,6 +109,7 @@ impl ActorStore {
             items: crate::item::ItemStateStore::diagnostic(),
             actions: crate::action::RemoteActionStore::diagnostic(),
             remote_state_excluded_runtime_id: None,
+            local_vehicle: Default::default(),
             pending_local_health: None,
             local_server_swings: 0,
             pending_local_damage: None,
@@ -370,7 +372,7 @@ impl ActorStore {
         self.seat_bases.clear();
         self.effect_members = Default::default();
         self.unique_to_runtime.clear();
-        self.rider_to_ridden.clear();
+        self.clear_links();
         self.players.clear();
         self.unlisted_players.clear();
         self.synthetic_local_uuid = None;
@@ -420,7 +422,7 @@ impl ActorStore {
         self.seat_bindings.clear();
         self.effect_members = Default::default();
         self.unique_to_runtime.clear();
-        self.rider_to_ridden.clear();
+        self.clear_links();
         // The real player list survives a dimension change, but the synthetic local profile is
         // tied to the cleared actor and is re-inserted on the next pose feed.
         if let Some(uuid) = self.synthetic_local_uuid.take() {
@@ -479,6 +481,9 @@ impl ActorStore {
                 // (authoritative reconciliation) must not fight that feed.
                 if self.remote_state_excluded_runtime_id == Some(movement.runtime_id) {
                     return ActorApplyResult::MissingActor;
+                }
+                if !self.admit_local_vehicle_move(&movement) {
+                    return ActorApplyResult::Updated;
                 }
                 let Some(actor) = self.actors.get_mut(&movement.runtime_id) else {
                     return ActorApplyResult::MissingActor;
@@ -779,41 +784,6 @@ impl ActorStore {
         self.animation.remove_runtime(runtime_id);
         self.prune_unlisted_players();
         ActorApplyResult::Removed
-    }
-
-    fn apply_link_inner(&mut self, event: ActorLinkEvent) -> ActorApplyResult {
-        Self::apply_link_to(&mut self.rider_to_ridden, self.max_actor_links, event)
-    }
-
-    fn apply_link_to(
-        rider_to_ridden: &mut FastHashMap<i64, i64>,
-        max_actor_links: usize,
-        event: ActorLinkEvent,
-    ) -> ActorApplyResult {
-        match event.link_type {
-            ActorLinkType::Unknown(_) => ActorApplyResult::Updated,
-            ActorLinkType::Remove => {
-                if rider_to_ridden.get(&event.rider_unique_id) == Some(&event.ridden_unique_id) {
-                    rider_to_ridden.remove(&event.rider_unique_id);
-                }
-                ActorApplyResult::Updated
-            }
-            ActorLinkType::Rider | ActorLinkType::Passenger => {
-                if !rider_to_ridden.contains_key(&event.rider_unique_id)
-                    && rider_to_ridden.len() >= max_actor_links
-                {
-                    return ActorApplyResult::CapacityRejected;
-                }
-                rider_to_ridden.insert(event.rider_unique_id, event.ridden_unique_id);
-                ActorApplyResult::Updated
-            }
-        }
-    }
-
-    fn remove_links_for(&mut self, unique_id: i64) {
-        self.rider_to_ridden.remove(&unique_id);
-        self.rider_to_ridden
-            .retain(|_, ridden_unique_id| *ridden_unique_id != unique_id);
     }
 
     /// Layers a session's server-pack entity catalog over the vanilla one.

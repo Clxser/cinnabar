@@ -300,6 +300,31 @@ impl WorldAuthority {
     pub fn local_rider_seat_pose(&self) -> Option<([f32; 3], f32)> {
         self.actors.rider_seat_pose(self.local_player_unique_id)
     }
+    /// Feet and body yaw the local player's seat gives it on its vehicle, were the vehicle's
+    /// feet at `vehicle_feet` facing `vehicle_yaw`.
+    pub fn local_rider_seat_on(
+        &self,
+        vehicle_feet: [f32; 3],
+        vehicle_yaw: f32,
+    ) -> Option<([f32; 3], f32)> {
+        self.actors
+            .rider_seat_on(self.local_player_unique_id, vehicle_feet, vehicle_yaw)
+    }
+    /// The vehicle the local player rides from its controlling seat, which it steers.
+    pub fn local_controlled_vehicle(&self) -> Option<&ActorSnapshot> {
+        let vehicle = self.actors.ridden_unique_id(self.local_player_unique_id)?;
+        (self.actors.controlling_passenger(vehicle)? == self.local_player_unique_id)
+            .then(|| self.actors.snapshot_by_unique(vehicle))
+            .flatten()
+    }
+    /// Drives the predicted pose of the vehicle the local player steers; `None` releases it.
+    pub fn sync_local_vehicle_pose(&mut self, feed: Option<crate::LocalVehicleFeed>) {
+        self.actors.sync_local_vehicle(feed);
+    }
+    /// Counts server teleports and forced moves of the predicted vehicle.
+    pub const fn local_vehicle_server_moves(&self) -> u64 {
+        self.actors.local_vehicle_server_moves()
+    }
     /// Borrows the current actor with this persistent unique ID.
     pub fn actor_by_unique_id(&self, unique_id: i64) -> Option<&ActorSnapshot> {
         self.actors.snapshot_by_unique(unique_id)

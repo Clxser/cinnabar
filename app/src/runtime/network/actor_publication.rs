@@ -167,6 +167,7 @@ pub(crate) fn advance_actor_frame(
         ActorFrameInput {
             cosmetics: skin.cosmetics.clone(),
             local_feed,
+            local_vehicle: physics.predicted_vehicle_feed(),
             predicted_eye,
             predicted_feet,
             local_equipment,

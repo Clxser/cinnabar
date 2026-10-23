@@ -205,6 +205,7 @@ fn older_movement_correction_tick_cannot_rewind_newer_correction() {
         subject: MovementCorrectionSubject::Player,
         on_ground: true,
         tick,
+        vehicle_angular_velocity: None,
     };
     let newer = correction(100, [100.0, 80.0, 100.0]);
     let older = correction(99, [10.0, 70.0, 10.0]);
@@ -230,7 +231,7 @@ fn older_movement_correction_tick_cannot_rewind_newer_correction() {
 }
 
 #[test]
-fn vehicle_correction_subject_commits_nothing_and_cannot_advance_the_tick_guard() {
+fn vehicle_corrections_reach_vehicle_prediction_without_advancing_the_player_tick_guard() {
     let mut stream = WorldStream::new(WorldBootstrap {
         dimension: 0,
         local_player_runtime_id: 1,
@@ -248,11 +249,12 @@ fn vehicle_correction_subject_commits_nothing_and_cannot_advance_the_tick_guard(
         subject,
         on_ground: true,
         tick,
+        vehicle_angular_velocity: None,
     };
 
-    // A vehicle rewind has no local-player consumer yet: it must not resolve a
-    // server position, commit a control, or advance the monotonic guard that
-    // would silence a later ordinary player correction.
+    // A vehicle rewind names the vehicle's position: it must reach vehicle prediction
+    // unresolved and leave the player's monotonic guard alone, which would otherwise
+    // silence a later ordinary player correction.
     stream
         .submit(
             1,
@@ -274,6 +276,10 @@ fn vehicle_correction_subject_commits_nothing_and_cannot_advance_the_tick_guard(
 
     let controls = stream.take_committed_controls();
     let [
+        super::CommittedControlEvent::VehicleMovementCorrection {
+            sequence: vehicle_sequence,
+            correction: vehicle,
+        },
         super::CommittedControlEvent::PlayerMovementCorrection {
             sequence,
             correction,
@@ -283,6 +289,9 @@ fn vehicle_correction_subject_commits_nothing_and_cannot_advance_the_tick_guard(
     else {
         panic!("unexpected committed controls {controls:?}");
     };
+    assert_eq!(*vehicle_sequence, 1);
+    assert_eq!(vehicle.tick, 200);
+    assert_eq!(vehicle.position, [50.0, 80.0, -50.0]);
     assert_eq!(*sequence, 2);
     assert_eq!(correction.tick, 100);
     assert_eq!(correction.subject, MovementCorrectionSubject::Player);

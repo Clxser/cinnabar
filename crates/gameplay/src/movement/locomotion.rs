@@ -50,6 +50,8 @@ pub struct ModeIntent {
     pub ride: Option<RideKind>,
     /// Feet position of the rider's seat on that mount, when the mount's placement is known.
     pub ride_seat: Option<[f32; 3]>,
+    /// The boat the player steers, which the client predicts.
+    pub vehicle: Option<super::SteeredVehicle>,
     /// Abilities permit flight.
     pub can_fly: bool,
     /// Effective flight value and authority retained from the winning ability layer.

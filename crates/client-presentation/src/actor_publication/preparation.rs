@@ -314,6 +314,7 @@ pub fn advance_actor_frame(
         if let Some(feed) = &local_feed {
             stream.sync_local_player_pose(feed);
         }
+        stream.sync_local_vehicle_pose(input.local_vehicle);
         // Attacks, mining and use swing the local arm at once; the server echoes no swing.
         if let Some(progress) = input.swing_progress {
             stream.sync_local_swing(progress);

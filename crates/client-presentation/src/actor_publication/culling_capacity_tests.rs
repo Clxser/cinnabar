@@ -260,6 +260,7 @@ fn input() -> ActorFrameInput {
     ActorFrameInput {
         cosmetics: Vec::new(),
         local_feed: None,
+        local_vehicle: None,
         predicted_eye: None,
         predicted_feet: None,
         local_equipment: Default::default(),

@@ -12,16 +12,18 @@ mod appearance_preparation;
 mod colliders;
 mod effect_members;
 pub use colliders::ActorCollisionBounds;
+pub use local_vehicle::LocalVehicleFeed;
 mod death_visibility;
 mod local_presentation;
+mod local_vehicle;
 mod native_facts;
 #[cfg(test)]
 pub(crate) use appearance_preparation::MAX_APPEARANCES_PUBLISHED_PER_FRAME;
 
 use protocol::{
-    ActorAttribute, ActorEvent, ActorKind, ActorLinkEvent, ActorLinkType, ActorMetadataValue,
-    ActorMoveEvent, ActorPositionOrigin, ActorProperty, ActorSpawnEvent, EquipmentEvent,
-    ItemActorEvent, MAX_ACTOR_ATTRIBUTES, MAX_ACTOR_METADATA_ENTRIES, MAX_ACTOR_PROPERTIES,
+    ActorAttribute, ActorEvent, ActorKind, ActorLinkEvent, ActorMetadataValue, ActorMoveEvent,
+    ActorPositionOrigin, ActorProperty, ActorSpawnEvent, EquipmentEvent, ItemActorEvent,
+    MAX_ACTOR_ATTRIBUTES, MAX_ACTOR_METADATA_ENTRIES, MAX_ACTOR_PROPERTIES,
     MAX_PLAYER_LIST_SKIN_BYTES, MovePlayerEvent, MovePlayerMode, PLAYER_NETWORK_OFFSET,
     PlayerListEntry, PlayerSkin, PlayerSkinUnavailable,
 };
@@ -764,6 +766,8 @@ pub(crate) struct ActorStore {
     items: ItemStateStore,
     actions: RemoteActionStore,
     remote_state_excluded_runtime_id: Option<u64>,
+    /// The vehicle the local player steers, whose pose the client predicts.
+    local_vehicle: local_vehicle::LocalVehicle,
     /// Health admitted before the client-fed local actor is created.
     pending_local_health: Option<ActorAttribute>,
     /// Arm swings the server sent for the local player, waiting for its swing tracker.
@@ -812,6 +816,8 @@ pub(crate) struct ActorStore {
     camera_position: [f32; 3],
     /// Rigs outside this view hold their pose instead of animating.
     animation_view: Option<actor_animation::ActorAnimationView>,
+    /// Each vehicle's passengers in seat order.
+    passenger_order: FastHashMap<i64, Vec<i64>>,
     /// Seat descriptor per mount, for riders that stream no seat offset.
     seat_bindings: FastHashMap<u64, Option<u32>>,
     seat_bases: HashMap<std::sync::Arc<str>, Option<u32>>,
@@ -873,7 +879,7 @@ pub use hurt::{
 };
 pub use lightning::LightningBoltView;
 
-pub use placement::{ActorFluidProbe, RideSeat};
+pub use placement::{ActorFluidProbe, RideSeat, seat_world_offset};
 pub use properties::PropertyDefault;
 pub use shadow::ActorShadowCaster;
 
@@ -923,6 +929,8 @@ mod roster_identity_tests;
 mod skin_update;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod vehicle_control_tests;
 
 #[cfg(test)]
 mod projectile_tests;

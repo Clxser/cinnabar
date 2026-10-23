@@ -40,7 +40,7 @@ impl ActorSnapshot {
     }
 
     /// Returns the decoded target without a lossy feet-to-network round trip.
-    pub(crate) fn last_received_native_position(&self) -> [f32; 3] {
+    pub fn last_received_native_position(&self) -> [f32; 3] {
         self.last_received_pose()
             .native_position(self.network_position_offset())
     }
@@ -52,7 +52,7 @@ impl ActorSnapshot {
     }
 
     /// Returns the latest decoded movement target, including a queued target.
-    pub(crate) fn last_received_pose(&self) -> ActorPose {
+    pub fn last_received_pose(&self) -> ActorPose {
         self.status
             .movement_interpolation
             .last_received
