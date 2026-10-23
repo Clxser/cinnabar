@@ -81,6 +81,10 @@ struct Session {
     owner: SessionOwner,
     seat: [f32; 3],
     state: BoatState,
+    /// The yaw one tick before `state`, which rendering eases from.
+    previous_yaw: f32,
+    /// The network position one tick before `state`, which rendering eases from.
+    previous_position: [f32; 3],
     /// Corrections at or before this tick belong to an earlier session or are already
     /// applied; `None` until the session's first tick completes.
     stale_through: Option<u64>,
@@ -124,6 +128,8 @@ impl VehiclePrediction {
                     velocity: vehicle.velocity,
                     ..BoatState::at_rest(vehicle.body, vehicle.position, vehicle.yaw)
                 },
+                previous_yaw: vehicle.yaw,
+                previous_position: vehicle.position,
                 stale_through: None,
             }),
         };
@@ -144,6 +150,8 @@ impl VehiclePrediction {
     pub(super) fn commit(&mut self, tick: u64) -> Option<PredictedVehicleSample> {
         let state = self.pending.take()?;
         let session = self.session.as_mut()?;
+        session.previous_yaw = session.state.yaw;
+        session.previous_position = session.state.position;
         session.state = state;
         session.stale_through.get_or_insert(tick.saturating_sub(1));
         Some(predicted_sample(session.owner.unique_id, &state))
@@ -160,19 +168,43 @@ impl VehiclePrediction {
         self.pending = None;
     }
 
-    /// The predicted boat's latest pose for the actor store.
-    pub(super) fn feed(&self) -> Option<client_world::LocalVehicleFeed> {
+    /// The predicted boat's yaw `alpha` of the way through the current tick.
+    pub(super) fn render_yaw(&self, alpha: f32) -> Option<f32> {
         let session = self
             .session
             .as_ref()
             .filter(|session| session.stale_through.is_some())?;
-        let [x, _, z] = session.state.position;
+        let turn = (session.state.yaw - session.previous_yaw + 180.0).rem_euclid(360.0) - 180.0;
+        Some(session.previous_yaw + turn * alpha.clamp(0.0, 1.0))
+    }
+
+    /// The predicted boat's latest pose for the actor store, and where it renders `alpha` of
+    /// the way through the current tick, on the rider's clock.
+    pub(super) fn feed(&self, alpha: f32) -> Option<client_world::LocalVehicleFeed> {
+        let session = self
+            .session
+            .as_ref()
+            .filter(|session| session.stale_through.is_some())?;
+        let feet = |position: [f32; 3]| {
+            [
+                position[0],
+                position[1] - session.state.body.height_offset,
+                position[2],
+            ]
+        };
+        let alpha = alpha.clamp(0.0, 1.0);
+        let render = std::array::from_fn(|axis| {
+            let from = session.previous_position[axis];
+            from + (session.state.position[axis] - from) * alpha
+        });
         Some(client_world::LocalVehicleFeed {
             runtime_id: session.owner.runtime_id,
             revision: session.owner.revision,
-            position: [x, session.state.feet_y(), z],
+            position: feet(session.state.position),
             yaw: session.state.yaw,
             velocity: session.state.velocity,
+            render_position: feet(render),
+            render_yaw: self.render_yaw(alpha)?,
         })
     }
 
@@ -198,6 +230,8 @@ impl VehiclePrediction {
         // The correction is newer than any server change it arrived after.
         session.owner.revision = correction.revision;
         session.stale_through = Some(correction.tick);
+        session.previous_yaw = correction.rotation[1];
+        session.previous_position = correction.position;
         session.state = BoatState {
             position: correction.position,
             velocity: correction.velocity,
@@ -226,6 +260,8 @@ impl VehiclePrediction {
                 },
                 seat: vehicle.seat,
                 state: BoatState::at_rest(vehicle.body, vehicle.position, vehicle.yaw),
+                previous_yaw: vehicle.yaw,
+                previous_position: vehicle.position,
                 stale_through: Some(completed),
             }),
             ..Self::default()
