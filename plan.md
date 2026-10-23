@@ -556,9 +556,12 @@ OS Alt-Tab acceptance on macOS, Windows and Linux remains incomplete.
   URL images use the UI texture-file allowance; aggregate encoded-image cache bounds
   and remaining image admission and download-deadline parity remain incomplete.
   Data-driven UI (DDUI) data stores follow the server's replacements, path updates,
-  removals and update counters. Screen requests are answered `UserBusy` while another
-  screen is busy and otherwise closed at once: drawing DDUI screens, their client writes,
-  server closes, reloads and pack-defined DDUI screens remain incomplete.
+  removals and update counters. Script `CustomForm` and `MessageBox` screens draw as an
+  OreUI panel over the world; one shows at a time, later requests answer `UserBusy`,
+  server closes, death and the close button answer with vanilla's reasons, and controls
+  write the paths and counters the server accepts. Panel geometry, Escape closing,
+  message-box layout, images, gamepad and touch input, pack-defined DDUI screens and
+  reloads remain incomplete; a matched native capture remains open.
   URL images use the UI texture-file allowance. The download cache evicts its oldest
   handed-off bodies beyond the aggregate byte budget while preserving display readiness;
   atlas misses fetch released bodies again. Unclaimed bodies remain until first handoff.
