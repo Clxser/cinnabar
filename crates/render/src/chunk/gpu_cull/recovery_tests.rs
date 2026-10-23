@@ -494,14 +494,20 @@ fn recovery_ignores_capacity_hints_that_exceed_available_memory() {
     }
     let expected = published(&mut app);
     fail_transparent_growth(&mut app);
-    let world = app.sub_app_mut(RenderApp).world_mut();
-    let arena = world.resource::<ChunkGpuArena>();
-    let available_bytes = arena
-        .quad_buffer
-        .size()
-        .max(arena.geometry_stream_buffer.size())
-        .max(arena.origin_buffer.size())
-        .max(arena.biome_buffer.size());
+    // Include staging and metadata in the memory needed by a complete replay.
+    let largest_request = Rc::new(Cell::new(0_u64));
+    {
+        let largest = Rc::clone(&largest_request);
+        let _measure = crate::gpu_allocation::inject(move |_, bytes| {
+            largest.set(largest.get().max(bytes));
+            false
+        });
+        frame(&mut app);
+    }
+    let available_bytes = largest_request.get();
+    assert!(available_bytes > 0 && available_bytes < ARENA_MIGRATION_FRAME_BYTES);
+    assert_eq!(published(&mut app), expected);
+    fail_transparent_growth(&mut app);
     app.world_mut()
         .insert_resource(render_scene::chunk::capacity::ChunkArenaCapacityHint {
             sections: usize::MAX,
