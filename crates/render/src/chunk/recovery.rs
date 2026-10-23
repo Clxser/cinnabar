@@ -10,6 +10,8 @@ pub(in crate::chunk) struct TerrainGpuRecovery {
     failures: crate::gpu_allocation::FailureFlag,
     /// Published instances have already spent their linear publication permits.
     pub(in crate::chunk) published: HashMap<Entity, u64>,
+    /// Keeps growth minimal until an entire terrain frame has succeeded.
+    pub(in crate::chunk) recovering: bool,
 }
 
 impl TerrainGpuRecovery {
@@ -18,6 +20,7 @@ impl TerrainGpuRecovery {
         Self {
             failures: crate::gpu_allocation::FailureFlag::new(device),
             published: HashMap::new(),
+            recovering: false,
         }
     }
 }
@@ -50,10 +53,11 @@ pub(in crate::chunk) fn begin_recovery(world: &mut World) {
         .iter()
         .map(|(&entity, allocation)| (entity, allocation.generation))
         .collect::<Vec<_>>();
-    world
-        .resource_mut::<TerrainGpuRecovery>()
-        .published
-        .extend(published);
+    {
+        let mut recovery = world.resource_mut::<TerrainGpuRecovery>();
+        recovery.recovering = true;
+        recovery.published.extend(published);
+    }
     world.resource_scope(|world, mut recovery: Mut<TerrainGpuRecovery>| {
         recovery.published.retain(|&entity, generation| {
             world
@@ -113,8 +117,9 @@ pub(in crate::chunk) fn begin_recovery(world: &mut World) {
 /// Prevents a partially prepared frame from drawing or witnessing terrain. Recovery retries
 /// the entire publication next frame, regardless of which owner observed the failure.
 pub(in crate::chunk) fn finish_publication(world: &mut World) {
-    let recovery = world.resource::<TerrainGpuRecovery>();
+    let mut recovery = world.resource_mut::<TerrainGpuRecovery>();
     if !recovery.failures.failed() && recovery.published.is_empty() {
+        recovery.recovering = false;
         return;
     }
     let mut arena = world.resource_mut::<ChunkGpuArena>();

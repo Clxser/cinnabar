@@ -403,6 +403,23 @@ fn recovery_table(hardware: bool) {
 /// A bounded replay stays hidden until all previously published permits have been replayed.
 #[test]
 fn recovery_retains_pending_replays_without_acknowledging_their_permits_again() {
+    check_bounded_replay(render_scene::ChunkUploadBudget::new(1, u64::MAX));
+}
+
+/// Previously admitted terrain makes progress even when fresh uploads have no allowance.
+#[test]
+fn recovery_with_zero_upload_budget_restores_publication() {
+    check_bounded_replay(render_scene::ChunkUploadBudget::new(0, 0));
+}
+
+/// Recovery admits one payload at a time when the byte allowance cannot hold a replay.
+#[test]
+fn recovery_with_zero_byte_budget_restores_publication() {
+    check_bounded_replay(render_scene::ChunkUploadBudget::new(usize::MAX, 0));
+}
+
+/// Replays two resident meshes across frames without spending their publication permits again.
+fn check_bounded_replay(budget: render_scene::ChunkUploadBudget) {
     let mut app = terrain_app(false, false, false).unwrap();
     for _ in 0..4 {
         frame(&mut app);
@@ -415,6 +432,41 @@ fn recovery_retains_pending_replays_without_acknowledging_their_permits_again() 
             .len(),
         KEYS.len()
     );
+    fail_transparent_growth(&mut app);
+    app.sub_app_mut(RenderApp)
+        .world_mut()
+        .insert_resource(budget);
+    frame(&mut app);
+    let world = app.sub_app(RenderApp).world();
+    assert_eq!(world.resource::<ChunkGpuUploadStats>().chunk_updates, 1);
+    assert_eq!(
+        world
+            .resource::<crate::chunk::recovery::TerrainGpuRecovery>()
+            .published
+            .len(),
+        KEYS.len() - 1
+    );
+    assert!(world.resource::<ChunkGpuArena>().bind_group.is_none());
+    frame(&mut app);
+    let world = app.sub_app(RenderApp).world();
+    assert!(world.resource::<ChunkGpuArena>().bind_group.is_some());
+    assert!(
+        world
+            .resource::<crate::chunk::recovery::TerrainGpuRecovery>()
+            .published
+            .is_empty()
+    );
+    assert_eq!(published(&mut app), expected);
+    assert!(
+        app.world()
+            .resource::<render_scene::ChunkUploadAcknowledgements>()
+            .drain()
+            .is_empty()
+    );
+}
+
+/// Fails a checked allocation after a complete publication to start the next frame's replay.
+fn fail_transparent_growth(app: &mut App) {
     let world = app.sub_app_mut(RenderApp).world_mut();
     let device = world.resource::<RenderDevice>().clone();
     let queue = world.resource::<RenderQueue>().clone();
@@ -431,15 +483,25 @@ fn recovery_retains_pending_replays_without_acknowledging_their_permits_again() 
             &TransparentSortState::with_upload_cap(usize::MAX),
         );
     }
-    world.insert_resource(render_scene::ChunkUploadBudget::new(1, u64::MAX));
-    frame(&mut app);
-    assert!(
-        app.sub_app(RenderApp)
-            .world()
-            .resource::<ChunkGpuArena>()
-            .bind_group
-            .is_none()
-    );
+}
+
+/// A speculative view-sized allocation cannot suppress a replay that fits retained storage.
+#[test]
+fn recovery_ignores_capacity_hints_that_exceed_available_memory() {
+    let mut app = terrain_app(false, false, false).unwrap();
+    for _ in 0..4 {
+        frame(&mut app);
+    }
+    let expected = published(&mut app);
+    fail_transparent_growth(&mut app);
+    let world = app.sub_app_mut(RenderApp).world_mut();
+    let available_bytes = world.resource::<ChunkGpuArena>().quad_buffer.size();
+    world.insert_resource(render_scene::chunk::capacity::ChunkArenaCapacityHint {
+        sections: usize::MAX,
+    });
+    let _failure = crate::gpu_allocation::inject(move |label, bytes| {
+        label == "packed chunk quads" && bytes > available_bytes
+    });
     frame(&mut app);
     assert!(
         app.sub_app(RenderApp)
@@ -449,10 +511,6 @@ fn recovery_retains_pending_replays_without_acknowledging_their_permits_again() 
             .is_some()
     );
     assert_eq!(published(&mut app), expected);
-    assert!(
-        app.world()
-            .resource::<render_scene::ChunkUploadAcknowledgements>()
-            .drain()
-            .is_empty()
-    );
+    frame(&mut app);
+    assert_eq!(published(&mut app), expected);
 }

@@ -144,6 +144,26 @@ pub(in crate::chunk) struct GpuUploadReservation {
 }
 
 impl GpuUploadReservation {
+    /// Bounds replay work independently of fresh uploads, admitting one resident payload even
+    /// when the configured allowance is zero or smaller than that payload.
+    pub(in crate::chunk) fn try_reserve_replay(
+        &mut self,
+        budget: ChunkUploadBudget,
+        incremental_bytes: u64,
+    ) -> bool {
+        let limits = PublicationServiceConfig::DEFAULT;
+        let max_bytes = budget.max_bytes_per_frame.min(limits.maximum_frame_bytes);
+        self.try_reserve_within(
+            budget.max_per_frame.clamp(1, limits.maximum_frame_items),
+            if self.items == 0 {
+                max_bytes.max(incremental_bytes)
+            } else {
+                max_bytes
+            },
+            incremental_bytes,
+        )
+    }
+
     pub(in crate::chunk) fn try_reserve_permitted(&mut self, incremental_bytes: u64) -> bool {
         let limits = PublicationServiceConfig::DEFAULT;
         self.try_reserve_within(

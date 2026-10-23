@@ -124,13 +124,20 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
         .next()
         .map(|view| view.world_from_view.translation())
         .unwrap_or(Vec3::ZERO);
-    let selected = plan_gpu_chunk_updates(
+    let mut selected = plan_gpu_chunk_updates(
         candidates,
         &arena.allocations,
         camera_position,
         active_tint_identity,
         &fairness,
     );
+    let recovering = recovery
+        .as_ref()
+        .is_some_and(|recovery| recovery.recovering);
+    if let Some(recovery) = recovery.as_ref().filter(|recovery| recovery.recovering) {
+        // Restore resident terrain before fresh publications can fill this frame.
+        selected.sort_by_key(|entity| !recovery.published.contains_key(entity));
+    }
 
     for entity in removed_instances.read() {
         if let Some(coverage) = coverage.as_deref_mut() {
@@ -166,6 +173,7 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
     let mut applied_publication_permits = Vec::new();
     let mut successful_updates = Vec::new();
     let mut upload_reservation = GpuUploadReservation::default();
+    let mut replay_reservation = GpuUploadReservation::default();
     let uploads = upload_queue.uploads();
     upload_reservation.growth_copy_bytes = advance_arena_migration(
         &mut arena,
@@ -199,7 +207,8 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
             .max(PublicationServiceConfig::DEFAULT.maximum_frame_items)
     };
     // Spread large buffer allocations across frames while leaving room for uploads now.
-    if arena.origin_len == 0
+    if !recovering
+        && arena.origin_len == 0
         && arena.quad_len == 0
         && arena.geometry_stream_len == 0
         && arena.migration.is_none()
@@ -272,8 +281,14 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
         }
         // This lower bound needs no stream walk, biome copy, or allocation plan.
         // Exact admission below also charges writes mirrored by arena migration.
-        let mut preliminary = upload_reservation;
-        let can_prepare = if publication_permit.is_some() {
+        let mut preliminary = if replaying {
+            replay_reservation
+        } else {
+            upload_reservation
+        };
+        let can_prepare = if replaying {
+            preliminary.try_reserve_replay(*budget, instance_bytes)
+        } else if publication_permit.is_some() {
             preliminary.try_reserve_permitted(instance_bytes)
         } else {
             preliminary.try_reserve(*budget, instance_bytes)
@@ -427,12 +442,16 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
                         if !writes.is_empty() {
                             writes.issue(&arena, uploads);
                         }
-                        let growth = super::capacity::backlog_growth(
-                            &arena,
-                            stream,
-                            minimum,
-                            capacity_target,
-                        );
+                        let growth = if recovering {
+                            minimum
+                        } else {
+                            super::capacity::backlog_growth(
+                                &arena,
+                                stream,
+                                minimum,
+                                capacity_target,
+                            )
+                        };
                         if !begin_arena_migration_or_minimum(
                             &mut arena,
                             uploads.device,
@@ -474,8 +493,19 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
             biome_required,
         ));
         let mut next_upload_reservation = upload_reservation;
+        let mut next_replay_reservation = replay_reservation;
         let mut prepared_publication_permit = None;
-        let reserved = if let Some(slot) = publication_permit {
+        let reserved = if replaying {
+            if next_replay_reservation.try_reserve_replay(*budget, charged_bytes) {
+                next_upload_reservation.items += 1;
+                next_upload_reservation.incremental_bytes = next_upload_reservation
+                    .incremental_bytes
+                    .saturating_add(charged_bytes);
+                true
+            } else {
+                false
+            }
+        } else if let Some(slot) = publication_permit {
             if !next_upload_reservation.try_reserve_permitted(charged_bytes) {
                 false
             } else {
@@ -656,6 +686,7 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
             applied_tokens.push((instance.key, token, instance_bytes));
         }
         upload_reservation = next_upload_reservation;
+        replay_reservation = next_replay_reservation;
         if let Some(permit) = prepared_publication_permit {
             applied_publication_permits.push(permit);
         }
@@ -711,7 +742,11 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
             upload_stats.candidates_deferred as f64,
         );
     }
-    if upload_stats.chunk_updates > upload_stats.chunk_budget {
+    if upload_stats
+        .chunk_updates
+        .saturating_sub(replay_reservation.items)
+        > upload_stats.chunk_budget
+    {
         bevy::log::warn!(
             "chunk GPU preparation observed {} updates despite a {}-chunk upload budget",
             upload_stats.chunk_updates,
