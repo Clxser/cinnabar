@@ -320,6 +320,19 @@ fn a_same_tick_sprint_start_and_liquid_stop_apply_both_speed_edges() {
 /// Equal attribute refreshes replace modifiers even when a rewind moves a stop before them.
 #[test]
 fn equal_attribute_refresh_survives_an_earlier_replayed_liquid_stop() {
+    check_speed_refresh_replay(false, false);
+}
+
+/// Effect edits follow the replayed modifier state instead of restoring an old snapshot.
+#[test]
+fn speed_effect_edit_preserves_replayed_sprint_modifier_changes() {
+    for pending in [false, true] {
+        check_speed_refresh_replay(true, pending);
+    }
+}
+
+/// Compares on-time and delayed sprint writes across a later attribute or effect edit.
+fn check_speed_refresh_replay(effect: bool, pending: bool) {
     let mut results = Vec::new();
     for delayed in [false, true] {
         let (mut physics, mut ticker) = walked_physics(0);
@@ -358,7 +371,29 @@ fn equal_attribute_refresh_survives_an_earlier_replayed_liquid_stop() {
                 &ShallowWater,
             ));
         }
-        assert!(speed.apply(7, 2, 0, refreshed));
+        if effect {
+            speed.apply_effect(
+                7,
+                2,
+                protocol::ActorEffectEvent {
+                    dimension: 0,
+                    actor_runtime_id: 42,
+                    action: protocol::ActorEffectAction::Add,
+                    effect_id: protocol_ids::Effect::Speed.wire_value(),
+                    amplifier: 0,
+                    particles: false,
+                    ambient: false,
+                    duration_ticks: 600,
+                    tick: 0,
+                },
+            );
+        } else {
+            assert!(speed.apply(7, 2, 0, refreshed));
+        }
+        if delayed && pending {
+            let rewind = physics.apply_server_movement_flags(anchor, sprint).unwrap();
+            reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &ShallowWater).unwrap();
+        }
         assert!(locals.advance(
             wet_speed_frame(Default::default()),
             &mut physics,
@@ -367,7 +402,7 @@ fn equal_attribute_refresh_survives_an_earlier_replayed_liquid_stop() {
             &mut speed,
             &ShallowWater,
         ));
-        if delayed {
+        if delayed && !pending {
             let rewind = physics.apply_server_movement_flags(anchor, sprint).unwrap();
             reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &ShallowWater).unwrap();
         }
@@ -383,9 +418,10 @@ fn equal_attribute_refresh_survives_an_earlier_replayed_liquid_stop() {
                 &mut speed,
                 &ShallowWater,
             ));
+            let expected = if effect { 0.1_f32 * 1.2 } else { 0.13_f32 };
             assert_eq!(
                 speed.current(),
-                Some(f64::from(0.13_f32)),
+                Some(f64::from(expected)),
                 "delayed {delayed}"
             );
         }

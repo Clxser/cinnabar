@@ -16,6 +16,43 @@ pub(crate) struct EffectiveMovementSpeed {
     sprinting: bool,
 }
 
+/// Accepted edits retain their operation so replay preserves unrelated modifiers.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum MovementSpeedUpdate {
+    Attribute(MovementSpeedAttribute),
+    Effect {
+        action: protocol::ActorEffectAction,
+        amplifier: i32,
+    },
+}
+
+impl MovementSpeedUpdate {
+    /// Applies this edit to the modifier state reached at its position in the timeline.
+    pub(crate) fn apply(self, speed: &mut Option<EffectiveMovementSpeed>, sprinting: bool) {
+        match self {
+            Self::Attribute(attribute) => {
+                *speed = Some(EffectiveMovementSpeed::authoritative(attribute, sprinting));
+            }
+            Self::Effect { action, amplifier } => {
+                let speed = speed.get_or_insert_with(|| EffectiveMovementSpeed {
+                    attribute: None,
+                    sprinting,
+                });
+                let sprinting = speed.sprinting();
+                let attribute = speed.attribute.get_or_insert_with(|| {
+                    let mut attribute =
+                        MovementSpeedAttribute::unmodified(sim::DEFAULT_MOVEMENT_SPEED as f32);
+                    if sprinting {
+                        attribute.set_sprint_modifier(Some(sim::SPRINT_SPEED_MULTIPLIER as f32));
+                    }
+                    attribute
+                });
+                attribute.apply_speed_effect(action, amplifier);
+            }
+        }
+    }
+}
+
 impl EffectiveMovementSpeed {
     /// Restores the server current, its sprint modifier, and the matching actor flag.
     pub(crate) fn authoritative(attribute: MovementSpeedAttribute, sprinting: bool) -> Self {
@@ -100,8 +137,8 @@ pub struct LocalMovementSpeedAuthority {
     dimension: i32,
     last_sequence: Option<u64>,
     speed: EffectiveMovementSpeed,
-    /// An accepted attribute or effect write not yet represented in controller history.
-    pending_attribute: bool,
+    /// Accepted edits after the latest completed tick, in arrival order.
+    pending_updates: Vec<MovementSpeedUpdate>,
     /// Render-only sprint response while the next fixed tick is still pending.
     preview_current: Option<f64>,
     active_speed_effect: Option<i32>,
@@ -124,7 +161,7 @@ impl LocalMovementSpeedAuthority {
         self.dimension = dimension;
         self.last_sequence = None;
         self.speed = EffectiveMovementSpeed::default();
-        self.pending_attribute = false;
+        self.pending_updates.clear();
         self.preview_current = None;
         self.active_speed_effect = None;
         self.last_liquid_sequence = None;
@@ -139,7 +176,7 @@ impl LocalMovementSpeedAuthority {
         self.dimension = dimension;
         self.last_sequence = None;
         self.speed = EffectiveMovementSpeed::default();
-        self.pending_attribute = false;
+        self.pending_updates.clear();
         self.preview_current = None;
         self.active_speed_effect = None;
         self.last_liquid_sequence = None;
@@ -227,7 +264,9 @@ impl LocalMovementSpeedAuthority {
             }
         }
         self.speed = EffectiveMovementSpeed::authoritative(attribute, self.speed.sprinting);
-        self.pending_attribute = true;
+        self.pending_updates.clear();
+        self.pending_updates
+            .push(MovementSpeedUpdate::Attribute(attribute));
         self.preview_current = None;
         true
     }
@@ -299,7 +338,10 @@ impl LocalMovementSpeedAuthority {
             }
         }
         self.speed.attribute = Some(attribute);
-        self.pending_attribute = true;
+        self.pending_updates.push(MovementSpeedUpdate::Effect {
+            action,
+            amplifier: active_speed_effect.unwrap_or_default(),
+        });
         self.preview_current = None;
         self.active_speed_effect = active_speed_effect;
     }
@@ -309,9 +351,9 @@ impl LocalMovementSpeedAuthority {
         self.speed.attribute()
     }
 
-    /// Returns a replacement until a successful tick or retained rewrite records it.
-    pub(crate) fn pending_attribute(&self) -> Option<MovementSpeedAttribute> {
-        self.pending_attribute.then(|| self.attribute()).flatten()
+    /// Edits remain pending until a successful tick or retained rewrite records them.
+    pub(crate) fn pending_updates(&self) -> &[MovementSpeedUpdate] {
+        &self.pending_updates
     }
 
     /// Returns the pre-sprint value expected by the simulator.
@@ -331,19 +373,20 @@ impl LocalMovementSpeedAuthority {
         self.preview_current = None;
     }
 
-    /// Restores replayed controls while preserving attribute writes absent from history.
+    /// Applies unrecorded server edits to the modifier state reached by replay.
     pub(crate) fn adopt_replayed_speed(&mut self, speed: EffectiveMovementSpeed) {
-        if self.pending_attribute {
-            self.adopt_server_sprinting(Some(speed.sprinting()));
-        } else {
-            self.adopt_recorded_speed(speed);
+        let mut replayed = Some(speed);
+        for update in &self.pending_updates {
+            update.apply(&mut replayed, speed.sprinting());
         }
+        self.speed = replayed.expect("replayed speed is present before applying edits");
+        self.preview_current = None;
     }
 
     /// Adopts speed after a completed live tick or a retained attribute rewrite.
     pub(crate) fn adopt_recorded_speed(&mut self, speed: EffectiveMovementSpeed) {
         self.speed = speed;
-        self.pending_attribute = false;
+        self.pending_updates.clear();
         self.preview_current = None;
     }
 }

@@ -29,8 +29,21 @@ impl LocalPhysicsController {
     pub fn advance_with_context_and_effects(
         &mut self,
         elapsed: Duration,
+        input: MovementInput,
+        context: PhysicsSampleContext,
+        world: &impl CollisionWorld,
+        effects: &mut impl MovementEffectSource,
+    ) -> LocalPhysicsFrame {
+        self.advance_with_speed_updates(elapsed, input, context, &[], world, effects)
+    }
+
+    /// Records accepted speed operations on the first successful tick of this frame.
+    pub(in crate::movement) fn advance_with_speed_updates(
+        &mut self,
+        elapsed: Duration,
         mut input: MovementInput,
         mut context: PhysicsSampleContext,
+        updates: &[super::super::speed_authority::MovementSpeedUpdate],
         world: &impl CollisionWorld,
         effects: &mut impl MovementEffectSource,
     ) -> LocalPhysicsFrame {
@@ -58,19 +71,19 @@ impl LocalPhysicsController {
         let physical_jump_held = input.jumping;
         let sprint_request = input.sprinting;
         let requested_movement_speed = input.movement_speed;
-        let mut movement_speed = context
-            .movement_speed_attribute
-            .map(|attribute| {
-                super::super::speed_authority::EffectiveMovementSpeed::authoritative(
-                    attribute,
-                    self.modes.sprinting(),
-                )
-            })
-            .or_else(|| self.controller_history.back().and_then(|frame| frame.speed));
+        let mut movement_speed = self.controller_history.back().and_then(|frame| frame.speed);
         if let Some(speed) = &mut movement_speed {
             speed.adopt_server_sprinting(Some(self.modes.sprinting()));
         }
-        let mut speed_update = context.movement_speed_attribute;
+        let mut speed_updates: Vec<_> = context
+            .movement_speed_attribute
+            .map(super::super::speed_authority::MovementSpeedUpdate::Attribute)
+            .into_iter()
+            .chain(updates.iter().copied())
+            .collect();
+        for update in &speed_updates {
+            update.apply(&mut movement_speed, self.modes.sprinting());
+        }
         let sneak_request = input.sneaking;
         input.pitch_degrees = f64::from(context.pitch);
         input.fly_speed = context.mode_intent.fly_speed;
@@ -250,7 +263,7 @@ impl LocalPhysicsController {
                         tick: state.tick,
                         speed: movement_speed,
                         start_sprinting,
-                        speed_update: speed_update.take(),
+                        speed_updates: std::mem::take(&mut speed_updates),
                         anchor_state: self.anchor_state,
                         entry_velocity,
                         eye_offset: self.eye_offset,

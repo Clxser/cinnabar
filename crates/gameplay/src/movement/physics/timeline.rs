@@ -131,14 +131,17 @@ impl LocalPhysicsController {
             .enumerate()
         {
             if index == 0 {
-                changed |= frame.speed_update != Some(attribute);
-                frame.speed_update = Some(attribute);
-            } else if let Some(attribute) = frame.speed_update {
-                speed = crate::movement::speed_authority::EffectiveMovementSpeed::authoritative(
-                    attribute,
-                    speed.sprinting(),
-                );
+                let update =
+                    crate::movement::speed_authority::MovementSpeedUpdate::Attribute(attribute);
+                changed |= frame.speed_updates.as_slice() != [update];
+                frame.speed_updates.clear();
+                frame.speed_updates.push(update);
             }
+            let mut updated = Some(speed);
+            for update in &frame.speed_updates {
+                update.apply(&mut updated, speed.sprinting());
+            }
+            speed = updated.expect("a retained speed rewrite starts with an attribute");
             speed.adopt_server_sprinting(frame.server_sprinting);
             if frame.start_sprinting {
                 speed.set_sprinting(true);
@@ -298,7 +301,7 @@ impl LocalPhysicsController {
 pub struct ServerControlFlags {
     pub sprinting: Option<bool>,
     pub sneaking: Option<bool>,
-    /// Stamp of a live posture overlay; control delivery does not consume its ownership.
+    /// Stamp of pending posture; comparison with the completed tick identifies live authority.
     sprint_stamp: u64,
 }
 
@@ -447,13 +450,23 @@ impl LocalPhysicsController {
         Some((edited || replaces_event, reached))
     }
 
+    /// Returns only genuine live metadata awaiting a completed tick, excluding replay handoffs.
+    pub(in crate::movement) fn unrecorded_live_sprinting(&self) -> Option<bool> {
+        self.live_posture.sprinting.filter(|_| {
+            self.state
+                .as_ref()
+                .is_some_and(|state| self.live_posture.sprint_stamp >= state.tick)
+        })
+    }
+
     /// Overlays live authority on a replay and retires delayed handoffs that replay stopped.
     pub(super) fn settle_rewound_sprint(&mut self) {
-        if let Some(sprinting) = self.live_posture.sprinting {
+        if let Some(sprinting) = self.unrecorded_live_sprinting() {
             self.modes
                 .restore_controls(sprinting, self.modes.sneaking());
             return;
         }
+        self.live_posture.sprinting = None;
         let Some(pending) = &mut self.server_control_flags else {
             return;
         };
@@ -501,12 +514,10 @@ impl LocalPhysicsController {
             flags.sprinting.unwrap_or(self.modes.sprinting()),
             flags.sneaking.unwrap_or(self.modes.sneaking()),
         );
-        if !rewound {
-            self.live_posture.sprinting = flags.sprinting.or(self.live_posture.sprinting);
-            self.live_posture.sneaking = flags.sneaking.or(self.live_posture.sneaking);
-            if flags.sprinting.is_some() {
-                self.live_posture.sprint_stamp = stamp;
-            }
+        self.live_posture.sprinting = flags.sprinting.or(self.live_posture.sprinting);
+        self.live_posture.sneaking = flags.sneaking.or(self.live_posture.sneaking);
+        if flags.sprinting.is_some() {
+            self.live_posture.sprint_stamp = stamp;
         }
         let pending = self.server_control_flags.get_or_insert_default();
         pending.sprinting = flags.sprinting.or(pending.sprinting);

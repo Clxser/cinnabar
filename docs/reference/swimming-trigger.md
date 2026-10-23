@@ -88,6 +88,9 @@ its replay ends unsprinted; live writes apply in arrival order, and a pending li
 write is applied again on top of any replayed history until a successful tick
 records it. Equal attribute refreshes also remain replacements in history; their
 value alone cannot identify whether a server write occurred.
+Speed effects remain ordered modifier edits, so replay applies them to the sprint
+modifier state reached at their tick. Adopting a delayed replay result into the
+control latches does not record a second server sprint write on the next tick.
 A held sprint control whose start is refused keeps the stale request released
 until sprint actually starts. Immobile movement clears jumping after the input
 stage, so the following tick's sprint intent sees that cleared state even when

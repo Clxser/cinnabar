@@ -12,23 +12,23 @@ impl LocalPhysicsController {
     /// Transfers a successful replay's modifier state to the live attribute owner once.
     pub(crate) fn take_replayed_movement_speed(&mut self) -> Option<EffectiveMovementSpeed> {
         let mut speed = self.replayed_speed.take()?;
-        speed.adopt_server_sprinting(self.live_posture.sprinting);
+        speed.adopt_server_sprinting(self.unrecorded_live_sprinting());
         Some(speed)
     }
 }
 
 impl ControllerFrame {
-    /// Restores an attribute replacement before applying this tick's server flag.
+    /// Applies accepted speed edits before this tick's server flag and local sprint edges.
     pub(super) fn prepare_speed(
         &self,
         speed: &mut Option<EffectiveMovementSpeed>,
         sprinting: bool,
     ) {
-        if self.speed.is_none() && self.speed_update.is_none() {
+        if self.speed.is_none() && self.speed_updates.is_empty() {
             *speed = None;
         }
-        if let Some(attribute) = self.speed_update {
-            *speed = Some(EffectiveMovementSpeed::authoritative(attribute, sprinting));
+        for update in &self.speed_updates {
+            update.apply(speed, sprinting);
         }
         if let Some(speed) = speed {
             speed.adopt_server_sprinting(self.server_sprinting);

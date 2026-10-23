@@ -215,7 +215,7 @@ impl LocalPhysicsController {
         let anchor_controller = controller_frames
             .iter()
             .find(|frame| frame.tick == tick)
-            .copied()
+            .cloned()
             .ok_or(PhysicsCorrectionError::NotRetained { tick })?;
         let mut modes = anchor_controller.modes;
         let mut movement_speed = anchor_controller.speed;

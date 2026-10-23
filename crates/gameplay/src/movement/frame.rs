@@ -164,11 +164,11 @@ impl LocomotionState {
         let head_yaw = wire_head_yaw(yaw);
         let delta = frame.delta.min(MAX_FRAME_ELAPSED);
         let withhold_input = frame.hold.is_some_and(|hold| hold.withhold_input);
-        let movement_speed_attribute = if physics.latest_movement_speed().is_some() {
-            movement_speed.pending_attribute()
-        } else {
-            movement_speed.attribute()
-        };
+        let movement_speed_attribute = physics
+            .latest_movement_speed()
+            .is_none()
+            .then(|| movement_speed.attribute())
+            .flatten();
         let requested_speed;
         let frame = if let Some(hold) = frame.hold {
             self.reset();
@@ -244,7 +244,7 @@ impl LocomotionState {
             input.underwater_movement_speed = liquid.underwater;
             input.lava_movement_speed = liquid.lava;
             requested_speed = input.movement_speed;
-            physics.advance_with_context_and_effects(
+            physics.advance_with_speed_updates(
                 delta,
                 input,
                 PhysicsSampleContext {
@@ -287,9 +287,14 @@ impl LocomotionState {
                         sneak: processed_sneak,
                         sprint_down: controlled.sprint_down,
                         sneak_down: input.sneaking,
-                        server_sprinting: server.and_then(|flags| flags.sprinting),
+                        server_sprinting: physics.unrecorded_live_sprinting(),
                         server_sneaking: server.and_then(|flags| flags.sneaking),
                     },
+                },
+                if movement_speed_attribute.is_some() {
+                    &[]
+                } else {
+                    movement_speed.pending_updates()
                 },
                 world,
                 movement_effects,

@@ -232,6 +232,89 @@ fn live_sprint_ownership_survives_zero_tick_frames_before_a_stopped_replay() {
     assert!(physics.sample_at(latest + 1).unwrap().processed.sprinting);
 }
 
+/// A replay result delivered to controls does not author a second server write.
+#[test]
+fn replayed_delayed_handoff_is_not_a_second_server_sprint() {
+    let mut physics = LocalPhysicsController::default();
+    let mut ticker = MovementTicker::default();
+    let position = [0.5, 2.620_01, 5.0];
+    physics.reanchor_network_position(position, 100, true);
+    ticker.reset(7, 100, position);
+    ticker.set_source(MovementSource::Physics);
+    for jumping in [true, false, false] {
+        let frame = physics.advance(
+            Duration::from_millis(50),
+            MovementInput {
+                forward: 1.0,
+                jumping,
+                ..Default::default()
+            },
+            &SidePool,
+        );
+        ticker
+            .enqueue_completed_physics(frame.samples[0].clone())
+            .unwrap();
+    }
+    let anchor = 101;
+    let rewind = physics
+        .apply_server_movement_flags(anchor, flags(|flags| flags.sprinting = Some(true)))
+        .unwrap();
+    reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &SidePool).unwrap();
+    assert_eq!(physics.latest_sneak_sprint(), Some((false, true)));
+    let mut locals = super::super::LocomotionState::default();
+    let mut speed = super::super::LocalMovementSpeedAuthority::default();
+    let mut effects = super::super::LocalMovementEffectTimeline::default();
+    speed.begin_session(7, 0);
+    let mut frame = speed_frame(Default::default());
+    frame.yaw = 0.0;
+    assert!(locals.advance(
+        frame,
+        &mut physics,
+        &mut ticker,
+        &mut effects,
+        &mut speed,
+        &SidePool
+    ));
+    let latest = ticker.completed_tick();
+    for _ in 0..2 {
+        super::super::reconcile_physics_anchor(
+            &mut ticker,
+            &mut physics,
+            super::super::PhysicsAnchor {
+                network_position: [0.5, 2.620_01, 2.4],
+                velocity: Some([0.0; 3]),
+                tick: anchor,
+                on_ground: true,
+            },
+            PhysicsCorrectionMode::ReplayIfRetained,
+            &SidePool,
+        )
+        .unwrap();
+        assert_eq!(
+            physics
+                .sample_at(anchor + 1)
+                .unwrap()
+                .input
+                .server_sprinting,
+            Some(true)
+        );
+        assert!(!physics.sample_at(latest).unwrap().processed.sprinting);
+    }
+}
+
+/// A failed replay keeps the accepted flag visible until a live tick can record it.
+#[test]
+fn failed_replayed_sprint_still_overlays_the_completed_posture() {
+    let (mut physics, mut ticker) = walked_physics(3);
+    let rewind = physics
+        .apply_server_movement_flags(101, flags(|flags| flags.sprinting = Some(true)))
+        .unwrap();
+    assert!(
+        reconcile_timeline_rewind(&mut ticker, &mut physics, rewind, &VersionedFloor(2)).is_err()
+    );
+    assert_eq!(physics.prediction_sync_posture(), Some((false, true)));
+}
+
 /// A later live write applies in arrival order, even over a pending write stamped
 /// in the future.
 #[test]

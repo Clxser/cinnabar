@@ -12,14 +12,14 @@ impl PhysicsSampleContext {
 }
 
 /// Input edges and controller state retained alongside one completed simulation tick.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(super) struct ControllerFrame {
     pub tick: u64,
     /// Attribute modifier state after this tick's local sprint decision.
     pub speed: Option<crate::movement::speed_authority::EffectiveMovementSpeed>,
     pub start_sprinting: bool,
-    /// An attribute replacement before this tick; later local edges still apply.
-    pub speed_update: Option<client_world::MovementSpeedAttribute>,
+    /// Accepted replacements and effect operations before this tick's local sprint edges.
+    pub speed_updates: Vec<crate::movement::speed_authority::MovementSpeedUpdate>,
     /// Recovery state after this tick, including freezes that defer the first probe.
     pub anchor_state: AnchorProbeState,
     /// Velocity before this tick applies liquid travel and drag.
