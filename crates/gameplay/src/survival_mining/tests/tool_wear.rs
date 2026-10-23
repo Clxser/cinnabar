@@ -120,10 +120,8 @@ fn consecutive_client_breaks_chain_the_exact_worn_slot_descriptors() {
             (action.source, action.container_id, action.slot),
             (InventorySourceKind::Container, Some(0), 2)
         );
-        assert_eq!(
-            action.to_item.stack_network_id,
-            Some(transaction.legacy_request_id)
-        );
+        assert_eq!(action.from_item.stack_network_id, None);
+        assert_eq!(action.to_item.stack_network_id, None);
         assert_eq!(
             protocol::item_extra_damage(&action.to_item.user_data),
             Some(damage)
@@ -134,6 +132,14 @@ fn consecutive_client_breaks_chain_the_exact_worn_slot_descriptors() {
         assert_eq!(body.item, action.from_item);
     }
     assert_ne!(first.legacy_request_id, second.legacy_request_id);
+    assert_eq!(
+        harness
+            .inventory
+            .displayed_stack(2)
+            .unwrap()
+            .stack_network_id,
+        second.legacy_request_id
+    );
     assert_eq!(second.actions[0].from_item, first.actions[0].to_item);
     assert_eq!(
         protocol::item_extra_damage(&harness.inventory.displayed_stack(2).unwrap().extra_data),
@@ -203,7 +209,7 @@ fn client_break_responses_correct_damage_and_reject_only_the_latest_change() {
         .filter_map(observe_input_transaction)
         .last()
         .unwrap();
-    assert_eq!(second.actions[0].from_item.stack_network_id, Some(77));
+    assert_eq!(second.actions[0].from_item.stack_network_id, None);
     assert_eq!(
         protocol::item_extra_damage(&second.actions[0].from_item.user_data),
         Some(7)

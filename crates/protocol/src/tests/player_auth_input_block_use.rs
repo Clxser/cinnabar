@@ -153,9 +153,9 @@ fn embedded_destroy_carries_the_worn_tool_slot_change() {
     assert_eq!(actions[0].source.container_id.map(|id| id.0), Some(0));
     assert_eq!(actions[0].slot.0, u32::from(request().selected_slot));
     assert_eq!(actions[0].from_item.id.0, 300);
-    assert_eq!(actions[0].from_item.net_id_variant.map(|id| id.0), Some(12));
+    assert_eq!(actions[0].from_item.net_id_variant, None);
     assert_eq!(actions[0].to_item.id.0, 300);
-    assert_eq!(actions[0].to_item.net_id_variant.map(|id| id.0), Some(-6));
+    assert_eq!(actions[0].to_item.net_id_variant, None);
 }
 
 #[test]
