@@ -180,6 +180,28 @@ fn comfortable_large_timeline_keeps_a_meaningful_900_pixel_picture() {
 }
 
 #[test]
+fn allocated_minimum_timeline_keeps_its_editing_controls() {
+    let view = fixture(1);
+    let (_, hits, _) = crate::review_tests::paint(HashMap::new(), |canvas| {
+        let metrics = ui_engine::text_metrics::TextMetrics::for_viewport(
+            [900, 600],
+            ui::DpiScale::new(1.0).unwrap(),
+            Some(2),
+        );
+        canvas.metrics = metrics;
+        canvas.rem = metrics.scale.get()
+            * ui::FONT_DESIGN_PIXEL_TEXELS as f32
+            * crate::theme::GUI_PIXELS_PER_REM;
+        let height = crate::studio::timeline::layout::metrics(canvas).minimum();
+        crate::studio::timeline::draw(canvas, &view, [0.0, 600.0 - height, 900.0, 600.0]).unwrap();
+    });
+    assert!(hits.iter().any(|(action, _)| *action
+        == MenuAction::Studio(Action::Graph(
+            launcher::menu::studio::graph::GraphAction::Toggle
+        ))));
+}
+
+#[test]
 fn replay_details_do_not_resize_the_picture_or_move_playback_controls() {
     let mut view = fixture(1);
     crate::review_tests::paint(HashMap::new(), |canvas| {

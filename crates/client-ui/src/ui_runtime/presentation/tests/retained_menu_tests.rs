@@ -4,6 +4,52 @@ use launcher::menu::{MenuScreen, MenuView};
 use ui::DpiScale;
 
 #[test]
+fn studio_keeps_its_received_image_while_a_replacement_is_loading() {
+    let Some(mut presentation) = super::super::forms::pack_harness::engine_presentation() else {
+        eprintln!(
+            "skipping studio_keeps_its_received_image_while_a_replacement_is_loading: missing local UI carrier (make assets)"
+        );
+        return;
+    };
+    let runtime = UiRuntime::new(0);
+    let player = player_state::PlayerState::new(0);
+    let page = render_model::UiTexturePage::owned([1, 1], vec![90, 110, 130, 255].into()).unwrap();
+    assert!(presentation.set_studio_preview_page(Some(page)));
+    let mut view = MenuView::new(true, "Fixture".into());
+    view.screen = MenuScreen::RecordingStudio;
+    let studio = Arc::make_mut(&mut view.studio);
+    studio.preview.epoch = Some([1, 2, 3]);
+    studio.preview.ready = true;
+    for (millis, ready, epoch) in [
+        (0, true, Some([1, 2, 3])),
+        (500, false, Some([1, 2, 3])),
+        (1000, false, None),
+    ] {
+        let studio = Arc::make_mut(&mut view.studio);
+        studio.preview.ready = ready;
+        studio.preview.loading = !ready;
+        studio.preview.epoch = epoch;
+        presentation.set_menu_view(Some(view.clone()));
+        presentation
+            .build(
+                &player,
+                &runtime,
+                millis,
+                [1280, 720],
+                DpiScale::new(1.0).unwrap(),
+            )
+            .unwrap();
+        let resident = presentation
+            .studio_preview_icon()
+            .expect("received image stays resident");
+        assert_eq!(
+            presentation.menu_view.as_ref().unwrap().studio.preview_icon,
+            epoch.map(|_| resident),
+        );
+    }
+}
+
+#[test]
 fn settled_launcher_menus_do_not_allocate_rebuild_or_republish_unchanged_input() {
     for screen in [MenuScreen::Home, MenuScreen::Servers, MenuScreen::Settings] {
         let Some(mut presentation) = super::super::forms::pack_harness::engine_presentation()

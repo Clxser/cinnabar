@@ -29,8 +29,19 @@ pub(super) fn draw(
         Variant::Primary,
     )?;
     y += canvas.r(5.0);
-    if let Some(notice) = &view.studio.preview.notice {
-        canvas.text_line("Replay details", [left, y], right - left, BODY, TEXT)?;
+    for (label, notice) in [
+        ("Replay details", view.studio.preview.notice.as_deref()),
+        (
+            "Export details",
+            view.studio
+                .export
+                .notice
+                .as_deref()
+                .filter(|notice| Some(*notice) != view.studio.preview.notice.as_deref()),
+        ),
+    ] {
+        let Some(notice) = notice else { continue };
+        canvas.text_line(label, [left, y], right - left, BODY, TEXT)?;
         y += canvas.r(3.4);
         y += canvas.text(notice, [left, y], right - left, CAPTION, TEXT_DIMMER, false)?
             + canvas.r(2.0);

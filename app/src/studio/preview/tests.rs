@@ -215,6 +215,28 @@ fn repeated_camera_refreshes_keep_playback_credit_and_actual_seek_withdraws_it()
 }
 
 #[test]
+fn paused_and_seeking_refreshes_retain_an_image_only_within_the_same_document() {
+    let displayed = PreviewStatus {
+        ready: true,
+        epoch: Some([4, 5, 6]),
+        at: MediaTime(2_000_000),
+        ..Default::default()
+    };
+    for epoch in [[4, 5, 6], [4, 5, 7], [4, 6, 6]] {
+        let pending = refresh_status(Some(&displayed), epoch, true);
+        assert!(!pending.ready);
+        assert!(pending.loading);
+        assert_eq!(pending.epoch, displayed.epoch);
+        assert_eq!(pending.at, displayed.at);
+    }
+    let other = refresh_status(Some(&displayed), [5, 0, 0], true);
+    assert!(!other.ready);
+    assert!(other.loading);
+    assert!(other.epoch.is_none());
+    assert_eq!(other.at, MediaTime::ZERO);
+}
+
+#[test]
 fn equivalent_font_allocations_retain_the_owner_but_real_font_changes_invalidate() {
     let font = ui_engine::test_support::fixture_font();
     let replacement = Arc::new((*font).clone());

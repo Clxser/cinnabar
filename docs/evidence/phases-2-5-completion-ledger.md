@@ -702,7 +702,7 @@ status; the remaining renderer and live acceptance gates stay open in `plan.md`.
 
 Studio native replay capture can omit the video encoder and GPU pixel readbacks.
 Visual retention charges immutable shared assets once under the existing budget.
-These paths have regression source; runtime and performance qualification remain open.
+Focused regressions run; broader runtime and performance qualification remain open.
 
 Studio now separates interactive preview budgets from exact export settings,
 reuses bounded capture resources and same-clock actor samples, and records queue
@@ -711,12 +711,14 @@ source admission, process supervision and no-clobber publication protect project
 and export files. Settings use focused pages with shared keyboard/help commands
 and actual dependency/encoder probes.
 
-This pass is source-reviewed and formatted only. New regression source has not
-been executed, and no compilation, rendered UI, long-session, crash-recovery or
-hardware recording/export acceptance was performed. The reported recording FPS
-drop is not remeasured. Older captures cannot regain omitted data. No parity,
-performance or production-readiness completion entry advances; remaining work is
-tracked in `plan.md` and `docs/recording-studio.md`.
+Owning regressions and focused compilation run. Local Windows Vulkan smoke tests
+cover startup, native capture, player-body playback, seeking and an audio/video
+range export with complete decoding. Source recordings retain their hashes.
+Long-session crash recovery, diverse scenes and hardware recording/export budgets
+remain unqualified; the reported recording FPS drop is not remeasured. Older
+captures cannot regain omitted data. No parity, performance or production-readiness
+completion entry advances; remaining work is tracked in `plan.md` and
+`docs/recording-studio.md`.
 
 ## Recording Studio replay reference
 
@@ -727,9 +729,9 @@ search/sort. Existing editing and effect workflows remain available. The referen
 trailer does not specify its unopened Module controls; existing Effects are the
 explicit interpretation. Undocumented module parity remains open.
 
-These additions have formatting and source review only. Regression source is
-unrun; no compilation, rendered UI, runtime synchronization, sustained performance
-or export acceptance was performed. Unsupported/legacy POV, remote pose-transition
+Focused regressions and rendered UI checks run, with scoped local native playback
+and range-export smoke coverage. Broader runtime synchronization and sustained
+performance acceptance remain open. Unsupported/legacy POV, remote pose-transition
 eye behavior and gapless looping remain incomplete. No completion entry advances.
 
 Camera editing additionally retains positional integration across metadata edits
@@ -739,8 +741,11 @@ captured animated conservative bounds per spawn/layer. New nametag recording
 precedes live frustum rejection; eye-track provenance describes unavailable native
 views. Focused app checks and owning domain, shell, UI, codec, label and visibility
 regressions pass. Anonymous graph and blend controls are rendered at wide and
-small sizes. These results do not establish complete replay parity, unrestricted scalar
-overshoot tangents, exact alpha/triangle clipping or hardware performance budgets.
+small sizes. Pause/seek refreshes retain a received image separately from playback
+credit; a new document clears it. Replay workers no longer request exit because
+their offscreen app has no windows. These results do not establish complete replay
+parity, unrestricted scalar overshoot tangents, exact alpha/triangle clipping or
+hardware performance budgets.
 Retained mod drawing has authority and lifetime contracts. Geometry admission validates
 vertices once and caches extent and quota facts for every shared instance and callback
 group. Extent checks use conservative box and sphere bounds without revisiting vertices.

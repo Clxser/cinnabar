@@ -60,6 +60,7 @@ pub(super) fn snapshot(studio: &Snapshot) -> Value {
             "frames": studio.export.frames,
             "total_frames": studio.export.total_frames,
             "error": studio.export.error,
+            "warning": studio.export.warning,
             "path": studio.export.path,
         },
     })

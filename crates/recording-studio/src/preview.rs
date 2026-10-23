@@ -85,7 +85,7 @@ pub struct PreviewStatus {
     pub loading: bool,
     pub ready: bool,
     pub at: MediaTime,
-    /// Only an admitted frame from this exact document, edit and seek may pace its transport.
+    /// Identifies the retained image; only readiness grants playback credit for this exact epoch.
     pub epoch: Option<[u64; 3]>,
     pub error: Option<String>,
     pub notice: Option<String>,

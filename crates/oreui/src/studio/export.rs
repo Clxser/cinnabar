@@ -17,7 +17,7 @@ pub(super) fn draw(
     let top = area[1];
     let row = canvas.r(4.6);
     let height = row
-        + if status.notice.is_some() {
+        + if status.warning.is_some() {
             canvas.r(2.5)
         } else {
             0.0
@@ -65,9 +65,9 @@ pub(super) fn draw(
             TEXT_DIMMER,
         )?;
     }
-    if let Some(notice) = &status.notice {
+    if let Some(warning) = &status.warning {
         canvas.text_line(
-            notice,
+            warning,
             [area[0] + pad, top + row],
             content_width,
             CAPTION,

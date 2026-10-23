@@ -363,7 +363,10 @@ fn refresh_status(
     epoch: [u64; 3],
     invalidate: bool,
 ) -> PreviewStatus {
-    let mut status = displayed.cloned().unwrap_or_default();
+    let mut status = displayed
+        .filter(|status| status.epoch.is_some_and(|shown| shown[0] == epoch[0]))
+        .cloned()
+        .unwrap_or_default();
     let admitted =
         !invalidate && status.ready && status.epoch == Some(epoch) && status.error.is_none();
     status.ready = admitted;

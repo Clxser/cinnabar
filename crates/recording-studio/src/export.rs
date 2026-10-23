@@ -134,7 +134,19 @@ pub struct ExportStatus {
     pub encoder: Option<crate::model::Encoder>,
     pub path: Option<PathBuf>,
     pub error: Option<String>,
+    /// Operational warnings stay visible beside the export result.
+    pub warning: Option<String>,
+    /// Recorded-coverage details belong in the optional setup diagnostics.
     pub notice: Option<String>,
+}
+
+impl ExportStatus {
+    /// Completes publication without mixing optional replay details with an output warning.
+    fn published(&mut self, published: files::Published) {
+        self.phase = ExportPhase::Complete;
+        self.path = Some(published.path);
+        self.warning = published.warning;
+    }
 }
 
 pub struct ExportFrame {
@@ -364,20 +376,37 @@ fn run<S: FrameSource>(
     cancellation.begin_publication()?;
     update(status, |status| status.phase = ExportPhase::Publishing);
     let published = files::publish(staged, &destination)?;
-    update(status, |status| {
-        status.phase = ExportPhase::Complete;
-        status.path = Some(published.path);
-        if let Some(warning) = published.warning {
-            status.notice = Some(match status.notice.take() {
-                Some(notice) => format!("{notice} {warning}"),
-                None => warning,
-            });
-        }
-    });
+    update(status, |status| status.published(published));
     Ok(())
 }
 
 /// Poisoned UI observation cannot prevent the worker from reporting its terminal result.
 fn update(status: &Mutex<ExportStatus>, change: impl FnOnce(&mut ExportStatus)) {
     change(&mut status.lock().unwrap_or_else(|error| error.into_inner()));
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    #[test]
+    fn publication_keeps_replay_details_separate_from_actionable_warnings() {
+        let mut status = ExportStatus {
+            notice: Some("This take has no hand track.".into()),
+            ..Default::default()
+        };
+        let warning = "The output folder could not be synced.".to_owned();
+        status.published(files::Published {
+            path: "Export.mp4".into(),
+            warning: Some(warning.clone()),
+        });
+        assert_eq!(status.phase, ExportPhase::Complete);
+        assert_eq!(status.path, Some("Export.mp4".into()));
+        assert_eq!(status.warning.as_deref(), Some(warning.as_str()));
+        assert_eq!(
+            status.notice.as_deref(),
+            Some("This take has no hand track.")
+        );
+        assert!(status.error.is_none());
+    }
 }

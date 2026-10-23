@@ -19,7 +19,7 @@ fn toolbar(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<f32
     let metrics = layout::metrics(canvas);
     let pad = metrics.toolbar_pad;
     let height = metrics.toolbar_button;
-    if area[3] - area[1] < metrics.minimum() {
+    if area[1] + metrics.minimum() > area[3] {
         return Ok(area[1] + pad);
     }
     let mut x = area[0] + pad;

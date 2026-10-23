@@ -15,7 +15,6 @@ use bevy::{
         settings::RenderCreation,
         texture::{ManualTextureView, ManualTextureViews},
     },
-    window::WindowPlugin,
 };
 use recording_scene::{playback::SceneFrame, scene::ChunkId};
 use recording_studio::camera::CameraPose;
@@ -39,6 +38,7 @@ mod compositor;
 mod scene;
 mod targets;
 mod visibility;
+mod windowless;
 pub use compositor::{CompositeInput, CompositeLayer, FrameCompositor};
 mod titles;
 pub use titles::{FrameTitles, TitleLayer};
@@ -143,10 +143,7 @@ impl ReplayRenderer {
             faults::initialization_error,
         ));
         app.add_plugins(MinimalPlugins)
-            .add_plugins(WindowPlugin {
-                primary_window: None,
-                ..default()
-            })
+            .add_plugins(windowless::plugin())
             .add_plugins(AssetPlugin::default())
             .add_plugins(RenderPlugin {
                 render_creation: RenderCreation::manual(

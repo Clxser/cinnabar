@@ -41,9 +41,10 @@ Settings separates Recording, Preview, Export, Setup and Controls into full-heig
 pages. Setup checks FFmpeg and FFprobe and actually encodes a private frame to
 check the selected format's CPU and NVIDIA encoders. Its CPU fallback action
 changes the project's export setting. Recording uses its own admitted preferences.
-Replay coverage details appear in Setup, keeping the picture and its controls
-steady during playback. Decode, render and audio failures still appear beside
-the preview, with recovery controls where available.
+Replay and export coverage details appear in Setup. Pausing and seeking keep the
+last received picture visible until its replacement arrives; opening a different
+project clears it. Decode, render and audio failures, and actionable export
+warnings, still appear beside their controls.
 
 Preview quality affects the interactive viewer only:
 
@@ -202,8 +203,9 @@ timeline and export workflows.
   keyframed Effects for that workflow. Undocumented module parity remains open.
 
 Owning domain and Studio shell/UI regressions pass. Isolated UI snapshots exercise
-camera and transport controls. Integrated camera transitions, audio synchronization,
-range exports and sustained recording performance still need acceptance testing.
+camera and transport controls. A local Windows Vulkan pass exercises native
+camera transitions, linked audio, seeking and range export. Broader synchronization,
+long-session recovery and sustained recording performance still need qualification.
 
 ## Autosave and project recovery
 

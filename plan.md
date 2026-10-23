@@ -993,8 +993,9 @@ Current implementation; runtime acceptance remains incomplete:
   easing. Authored Euler rotation rings now edit Free poses and exact Path
   orientation keys, preserve rail/lens/easing and own one cancellable pointer
   transaction. Domain tests preserve curved whole-rail geometry across rotations,
-  and offline renders cover wide and small views. Asynchronous preview and
-  live-input acceptance remain open.
+  and offline renders cover wide and small views. Local native replay exercises
+  numeric and pointer graph edits, undo/redo and transport input; wider scene and
+  hardware acceptance remain open.
   Scalar graph editing now covers camera axes/angles, lens, effects and speed,
   with draggable weighted handles, precise numeric keys, nudge/delete, framing,
   transactional cancellation and undo. Original rails remain authoritative under
@@ -1003,8 +1004,9 @@ Current implementation; runtime acceptance remains incomplete:
   remain within the endpoint envelope; unrestricted overshoot tangents are open.
   Explicit adjacent-rig blends share source-safe preview/export evaluation and
   extend outgoing authored motion into smooth entries. Hold keys, microscopic
-  intervals, Euler poles and geometry corners retain documented limits. Integrated
-  in-world acceptance and camera-edit hardware costs remain unqualified. Owning
+  intervals, Euler poles and geometry corners retain documented limits. A local
+  Vulkan pass covers Path/Free/Orbit playback and player-body visibility.
+  Camera-edit hardware costs remain unqualified. Owning
   graph, rig, codec, shell, UI, label and visibility regressions pass; anonymous
   graph/entry states are rendered at wide and small window sizes.
   Transient inspection includes adjustable flight speed, optional analytical
@@ -1023,8 +1025,11 @@ Current implementation; runtime acceptance remains incomplete:
   remain incomplete.
   Subject suggestions require continuous recorded lifetime coverage; export
   admission instead validates exact required rational output timestamps, including
-  retimed transition handles. Long-recording, interactive seek and export
-  acceptance across these camera changes remains required.
+  retimed transition handles. Local validation includes a finalized native take,
+  repeated seeks and a fully decoded range export with linked audio; long-take,
+  multi-scene and performance qualification remain required. Paused/seek refreshes
+  retain their last valid picture without granting stale playback credit. Offscreen
+  rendering has an explicit lifetime independent of absent OS windows.
 - Monitoring exposes runtime-only 0.1xâ€“8x speed, typed seeking, seconds jumps and
   whole-project looping with rational audio cursor conversion and bounded tempo
   processing. Fast preview respects its wall-time presentation budget. Slow

@@ -74,7 +74,8 @@ impl UiPresentationRuntime {
             let studio = Arc::make_mut(&mut Arc::make_mut(&mut view).studio);
             studio.preview_icon = studio
                 .preview
-                .ready
+                .epoch
+                .is_some()
                 .then(|| self.studio_preview_icon())
                 .flatten();
             self.prepare_studio_library(&mut studio.workflow);
