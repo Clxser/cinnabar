@@ -496,9 +496,10 @@ fn recovery_ignores_capacity_hints_that_exceed_available_memory() {
     fail_transparent_growth(&mut app);
     let world = app.sub_app_mut(RenderApp).world_mut();
     let available_bytes = world.resource::<ChunkGpuArena>().quad_buffer.size();
-    world.insert_resource(render_scene::chunk::capacity::ChunkArenaCapacityHint {
-        sections: usize::MAX,
-    });
+    app.world_mut()
+        .insert_resource(render_scene::chunk::capacity::ChunkArenaCapacityHint {
+            sections: usize::MAX,
+        });
     let _failure = crate::gpu_allocation::inject(move |label, bytes| {
         label == "packed chunk quads" && bytes > available_bytes
     });
