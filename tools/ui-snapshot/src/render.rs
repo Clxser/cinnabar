@@ -332,8 +332,9 @@ fn png_fixture(
             oreui::images::panorama::install(
                 &mut images,
                 Some(&carriers.ui),
-                render_model::MAX_UI_FIXED_TEXTURE_BYTES
-                    .saturating_sub(carriers.pages.iter().map(|page| page.rgba.len()).sum()),
+                render_model::MAX_UI_FIXED_TEXTURE_BYTES.saturating_sub(
+                    carriers::fixed_texture_bytes(&carriers.font, &carriers.pages),
+                ),
             );
             let first = carriers.pages.len() as u16;
             let mut artwork: HashMap<_, _> = images
