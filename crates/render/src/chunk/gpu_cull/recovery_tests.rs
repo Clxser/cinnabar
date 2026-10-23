@@ -512,14 +512,24 @@ fn recovery_ignores_capacity_hints_that_exceed_available_memory() {
         .insert_resource(render_scene::chunk::capacity::ChunkArenaCapacityHint {
             sections: usize::MAX,
         });
-    let _failure = crate::gpu_allocation::inject(move |_, bytes| bytes > available_bytes);
+    let rejected = Rc::new(RefCell::new(Vec::new()));
+    let failures = Rc::clone(&rejected);
+    let _failure = crate::gpu_allocation::inject(move |label, bytes| {
+        let failed = bytes > available_bytes;
+        if failed {
+            failures.borrow_mut().push((label.to_owned(), bytes));
+        }
+        failed
+    });
     frame(&mut app);
     assert!(
         app.sub_app(RenderApp)
             .world()
             .resource::<ChunkGpuArena>()
             .bind_group
-            .is_some()
+            .is_some(),
+        "replay exceeded its {available_bytes}-byte memory ceiling: {:?}",
+        rejected.borrow()
     );
     assert_eq!(published(&mut app), expected);
     frame(&mut app);
