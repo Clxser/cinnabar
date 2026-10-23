@@ -6,16 +6,15 @@ pub(super) struct ViewerMetrics {
     pub pad: f32,
     pub transport: f32,
     pub toolbar: f32,
-    pub notice: f32,
 }
 
 impl ViewerMetrics {
     /// Excludes padding and control rows from the space available for actual media pixels.
     pub(super) fn picture_height(&self, height: f32) -> f32 {
-        (height - self.transport - self.toolbar - self.notice - self.pad * 2.0).max(0.0)
+        (height - self.transport - self.toolbar - self.pad * 2.0).max(0.0)
     }
     fn chrome(&self) -> f32 {
-        self.transport + self.toolbar + self.notice + self.pad * 2.0
+        self.transport + self.toolbar + self.pad * 2.0
     }
 }
 
@@ -30,11 +29,6 @@ pub(super) fn viewer_metrics(
         pad,
         transport: transport::required_height(canvas, view, (width - pad * 2.0).max(0.0))? + pad,
         toolbar: viewer::required_height(canvas, view, width)?,
-        notice: if view.studio.preview.notice.is_some() {
-            canvas.r(2.5)
-        } else {
-            0.0
-        },
     })
 }
 

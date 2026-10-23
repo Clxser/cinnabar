@@ -29,6 +29,12 @@ pub(super) fn draw(
         Variant::Primary,
     )?;
     y += canvas.r(5.0);
+    if let Some(notice) = &view.studio.preview.notice {
+        canvas.text_line("Replay details", [left, y], right - left, BODY, TEXT)?;
+        y += canvas.r(3.4);
+        y += canvas.text(notice, [left, y], right - left, CAPTION, TEXT_DIMMER, false)?
+            + canvas.r(2.0);
+    }
     if let Some(error) = &diagnostics.error {
         y += canvas.text(error, [left, y], right - left, BODY, TEXT, false)? + canvas.r(2.0);
     }

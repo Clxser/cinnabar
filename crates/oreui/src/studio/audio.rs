@@ -97,13 +97,5 @@ pub(super) fn inspector(
         }
         y += canvas.r(4.8);
     }
-    y += canvas.text(
-        "Fades use timeline seconds. Gain and mute affect preview and export.",
-        [left, y],
-        right - left,
-        CAPTION,
-        TEXT_DIMMER,
-        false,
-    )?;
     Ok(y + canvas.r(1.2))
 }

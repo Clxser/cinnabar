@@ -26,9 +26,10 @@ Recording at 120/240 FPS gives slow-motion edits more source motion samples when
 the scene preparation and storage workers sustain that cadence. The video option
 also needs sufficient GPU readback and encoder capacity.
 
-During capture, the status row reports sample and actor preparation CPU time,
-pending GPU readbacks, encoder queue depth and stalls. These are capture health
-signals, not end-to-end frame-time measurements. Native and scaled recordings
+During capture, the status row shows the elapsed recording time. Detailed sample
+and actor CPU times, GPU readbacks, encoder queues and stalls remain available
+through developer-control diagnostics. These are capture health signals, not
+end-to-end frame-time measurements. Native and scaled recordings
 reuse bounded GPU readback buffers, and software live encoding limits its worker
 count to leave capacity for the game. Automatic encoding probes NVIDIA support
 before falling back to CPU. Sustained capture and the game FPS cost still need
@@ -40,6 +41,9 @@ Settings separates Recording, Preview, Export, Setup and Controls into full-heig
 pages. Setup checks FFmpeg and FFprobe and actually encodes a private frame to
 check the selected format's CPU and NVIDIA encoders. Its CPU fallback action
 changes the project's export setting. Recording uses its own admitted preferences.
+Replay coverage details appear in Setup, keeping the picture and its controls
+steady during playback. Decode, render and audio failures still appear beside
+the preview, with recovery controls where available.
 
 Preview quality affects the interactive viewer only:
 

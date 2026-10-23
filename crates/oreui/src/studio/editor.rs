@@ -90,20 +90,7 @@ fn preview(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<(),
     // Playback controls retain their measured rows; a short viewer yields picture height first.
     let transport_height = metrics.transport.min(area[3] - area[1]);
     let transport_top = area[3] - transport_height;
-    let mut image_top = viewer::toolbar(canvas, view, [area[0], area[1], area[2], transport_top])?;
-    if let Some(notice) = &view.studio.preview.notice {
-        let notice_height = metrics.notice;
-        if transport_top - image_top > notice_height + canvas.r(6.0) {
-            canvas.text_line(
-                notice,
-                [area[0] + pad, image_top],
-                (area[2] - area[0] - pad * 2.0).max(0.0),
-                CAPTION,
-                TEXT_DIMMER,
-            )?;
-            image_top += notice_height;
-        }
-    }
+    let image_top = viewer::toolbar(canvas, view, [area[0], area[1], area[2], transport_top])?;
     let viewport = [
         area[0] + pad,
         image_top + pad,

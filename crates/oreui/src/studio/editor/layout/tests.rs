@@ -180,6 +180,20 @@ fn comfortable_large_timeline_keeps_a_meaningful_900_pixel_picture() {
 }
 
 #[test]
+fn replay_details_do_not_resize_the_picture_or_move_playback_controls() {
+    let mut view = fixture(1);
+    crate::review_tests::paint(HashMap::new(), |canvas| {
+        let before = viewer_metrics(canvas, &view, 700.0).unwrap();
+        Arc::make_mut(&mut view.studio).preview.notice =
+            Some("This take has limited off-screen coverage.".into());
+        let after = viewer_metrics(canvas, &view, 700.0).unwrap();
+        assert_eq!(before.picture_height(400.0), after.picture_height(400.0));
+        assert_eq!(before.transport, after.transport);
+        assert_eq!(before.toolbar, after.toolbar);
+    });
+}
+
+#[test]
 fn camera_graph_respects_requested_panel_size_with_a_usable_picture() {
     let mut view = fixture(1);
     Arc::make_mut(&mut view.studio).camera_workspace.graph.open = true;

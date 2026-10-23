@@ -162,23 +162,6 @@ pub(super) fn draw(
             Variant::Secondary,
         )?;
         y += canvas.r(4.8);
-        let description = if shot.path_global_easing == recording_studio::effect::Easing::Hold {
-            "Hold cuts to the end. Rotation and lens keep their own key times."
-        } else {
-            "Whole rail speed ignores position key spacing. Rotation/lens keep their key times; corners ease to a stop."
-        };
-        y += canvas.text(
-            description,
-            [left, y],
-            right - left,
-            CAPTION,
-            TEXT_DIMMER,
-            false,
-        )? + canvas.r(1.6);
-        y += canvas.text(
-            "Use the Travel button to switch to Key easing for exact XYZ, Add key or Apply view. Shape handles and existing orientation keys remain editable.",
-            [left, y], right - left, CAPTION, TEXT_DIMMER, false,
-        )? + canvas.r(1.6);
     }
     control(
         canvas,

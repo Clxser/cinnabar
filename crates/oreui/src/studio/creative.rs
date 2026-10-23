@@ -141,7 +141,6 @@ fn rhythm(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<f32,
             false,
         )? + canvas.r(1.4);
     }
-    y += canvas.text("Tempo grids are estimates. Listen to the music, align the first beat, then add markers. Existing gameplay markers stay intact.", [left, y], right - left, CAPTION, TEXT_DIMMER, false)? + canvas.r(3.0);
     Ok(y)
 }
 
@@ -153,7 +152,6 @@ fn shots(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<f32, 
     let gap = canvas.r(0.7);
     canvas.text_line("Shot suggestions", [left, y], right - left, HEADER5, TEXT)?;
     y += canvas.r(4.0);
-    y += canvas.text("Position the 3D view and optionally select a player. Suggestions use the clear replay range at the playhead.", [left, y], right - left, CAPTION, TEXT_DIMMER, false)? + canvas.r(1.2);
     let native = view.studio.preview.ready
         && view
             .studio
@@ -223,9 +221,6 @@ fn shots(canvas: &mut Canvas<'_>, view: &MenuView, area: Bounds) -> Result<f32, 
             true,
         )?;
         y += canvas.r(5.3);
-    }
-    if !status.shots.is_empty() {
-        y += canvas.text("Each card is an alternative. Adding one creates a normal editable camera shot. Camera paths can cross walls; inspect the whole move before export.", [left, y], right - left, CAPTION, TEXT_DIMMER, false)? + canvas.r(1.0);
     }
     Ok(y)
 }

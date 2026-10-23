@@ -47,7 +47,6 @@ pub(super) fn framing(
                 )?;
             }
             y += canvas.r(4.8);
-            y += canvas.text("Fit keeps the whole rotated crop. Fill covers the output and crops its outer edges.", [left, y], right - left, CAPTION, TEXT_DIMMER, false)? + canvas.r(1.2);
             continue;
         }
         canvas.text_line(

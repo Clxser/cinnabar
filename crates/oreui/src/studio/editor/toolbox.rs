@@ -95,7 +95,7 @@ pub(super) fn draw(
                 true,
                 Variant::Primary,
             )?;
-            y + canvas.r(5.6) + canvas.text("Add a title at the playhead, then select it to edit its text, position and fades.", [content[0], y + canvas.r(5.6)], content[2] - content[0], CAPTION, TEXT_DIMMER, false)?
+            y + canvas.r(5.6)
         }
         Toolbox::Media | Toolbox::Audio => unreachable!(),
     };

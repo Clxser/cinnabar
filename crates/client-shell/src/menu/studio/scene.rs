@@ -41,7 +41,6 @@ impl Studio {
             "Use native replay",
             &[Command::AddSource { source }, Command::ReplaceClip { clip }],
         )?;
-        Arc::make_mut(&mut self.view).notice = Some("Native replay uses captured scene tracks. Older or incomplete takes may only support POV video; Undo returns to that video.".into());
         Ok(())
     }
 }

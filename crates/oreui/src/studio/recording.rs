@@ -80,18 +80,7 @@ pub(super) fn draw(
         CapturePhase::Starting => "Preparing recording...".into(),
         CapturePhase::Recording | CapturePhase::Finishing => {
             let seconds = status.elapsed.0 / recording_studio::time::MICROS_PER_SECOND;
-            let actual = if status.elapsed.0 == 0 {
-                0.0
-            } else {
-                status.captured_frames as f64 / status.elapsed.seconds()
-            };
-            format!(
-                "{:02}:{:02}  /  {actual:.0} of {} FPS  /  {} repeated slots",
-                seconds / 60,
-                seconds % 60,
-                status.fps,
-                status.missed_frames
-            )
+            format!("{:02}:{:02}", seconds / 60, seconds % 60)
         }
         CapturePhase::Failed => "Recording stopped; saved media retained".into(),
     };
@@ -105,25 +94,6 @@ pub(super) fn draw(
         )?;
     }
     let mut bottom = top + height + pad;
-    if phase == CapturePhase::Recording {
-        let health = &status.health;
-        let health_line = format!(
-            "Sample CPU {:.2} ms / actors {:.2} ms  |  GPU transfers {}  |  encoder queue {}  |  stalls {}",
-            health.sample_micros as f64 / 1000.0,
-            health.actor_prepare_micros as f64 / 1000.0,
-            health.pending_readbacks,
-            health.encoder_frames,
-            health.encoder_stalls.saturating_add(health.readback_stalls),
-        );
-        canvas.text_line(
-            &health_line,
-            [area[0] + pad, bottom],
-            (area[2] - area[0] - pad * 2.0).max(0.0),
-            CAPTION,
-            TEXT_DIMMER,
-        )?;
-        bottom += canvas.r(3.0);
-    }
     if let Some(message) = &status.message {
         let h = canvas.text(
             message,

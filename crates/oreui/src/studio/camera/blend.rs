@@ -70,14 +70,6 @@ pub(super) fn draw(
         )?;
     }
     y += canvas.r(4.8);
-    for line in if shot.blend_in.is_some() {
-        ["Same replay clip; no gaps.", "Missing targets keep cuts."]
-    } else {
-        ["Blend from adjacent rig.", "Fine: one frame per step."]
-    } {
-        canvas.text_line(line, [left, y], width, CAPTION, TEXT_DIMMER)?;
-        y += canvas.r(3.0);
-    }
     Ok(y + canvas.r(0.8))
 }
 
