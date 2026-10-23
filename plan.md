@@ -729,6 +729,13 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   transfer/reconnect, input/UI, audio, memory or hardware-performance acceptance matrices.
   Built-in shaders avoid forwarding matrix parameters between functions to prevent an Adreno
   Vulkan compiler crash. Startup is confirmed on an affected Adreno 660 device; broader Android
+  rendering acceptance remains incomplete. Carrier texture pages hold at most 1,024 layers to fit
+  Mali's array limit. Server block overlays reserve every base carrier page before allocating
+  device-bounded shards; world textures, fallback faces and carried items share page/layer addresses.
+  Mali and PowerVR adapters cull terrain on the CPU without compiling the cull kernels.
+  The compute cull lost the device on a tested Mali phone, and a Galaxy A04 / PowerVR GE8320
+  tombstone shows a driver shader compiler abort. The driver faults are not isolated,
+  so these vendor workarounds and target-device visual acceptance stay incomplete.
   rendering acceptance remains incomplete. Terrain has a four-storage-buffer layout for constrained
   devices, with CPU culling and shared actor and hand bone endpoints. Unsupported graphics devices return a
   startup error through the desktop dialog or Android activity. Shader packs report a load error and
