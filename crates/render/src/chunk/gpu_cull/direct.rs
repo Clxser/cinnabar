@@ -227,12 +227,16 @@ impl DirectOcclusion {
         self.last_view = None;
         self.skip_view = None;
         self.skipped.clear();
-        self.plan = None;
+        self.suppress_publication();
     }
 
-    /// Stops the incomplete frame from testing or drawing terrain.
+    /// Stops the incomplete frame and returns its unsubmitted readback reservation.
     pub(super) fn suppress_publication(&mut self) {
-        self.plan = None;
+        if let Some(plan) = self.plan.take()
+            && let Some(slot) = plan.verdict
+        {
+            self.verdicts.release(slot);
+        }
     }
 
     /// Whether this device can test all current terrain slots without exceeding one binding.
@@ -535,7 +539,7 @@ pub(in crate::chunk) fn prepare_direct_occlusion(
         .map(|profiler| profiler.time(RuntimeStage::IndirectPreparation));
     let occlusion = &mut *occlusion;
     occlusion.frame += 1;
-    occlusion.plan = None;
+    occlusion.suppress_publication();
     occlusion.skip_view = None;
     occlusion.last_view = None;
     occlusion.skipped.clear();

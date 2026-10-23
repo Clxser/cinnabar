@@ -574,6 +574,37 @@ fn a_failed_tile_allocation_invalidates_terrain_for_a_full_retry() {
     assert!(gpu.resident.contains_key(&scene[0].key));
 }
 
+#[test]
+fn failed_tile_uploads_return_slots_and_quads_during_backoff() {
+    for previous_quads in [None, Some(4), Some(1)] {
+        let (device, queue) = device();
+        let failures = crate::gpu_allocation::FailureFlag::new(&device);
+        let mut gpu = FarTerrainGpu::new(&device);
+        if let Some(count) = previous_quads {
+            populate(&mut gpu, &device, &queue, &[tile_with_quads(0, count)]);
+        }
+        let mut mesh = tile_with_quads(0, if previous_quads == Some(1) { 4 } else { 1 });
+        Arc::get_mut(&mut mesh).unwrap().revision += 1;
+        let scene = [mesh];
+        let _failure = crate::gpu_allocation::inject(|label, _| label == "far terrain tile upload");
+        assert!(!gpu.apply_tiles(&device, &queue, &scene));
+        assert!(failures.failed());
+        let storage = (gpu.quads.id(), gpu.records.id(), gpu.colours.id());
+        for _ in 0..6 {
+            assert!(gpu.resident.is_empty());
+            assert_eq!(gpu.ranges.end(), 0, "failed upload still owns quads");
+            let free: HashSet<_> = gpu.free_slots.iter().copied().collect();
+            assert_eq!(free.len(), gpu.slots as usize);
+            assert_eq!(free.len(), gpu.free_slots.len(), "slot returned twice");
+            assert!(!gpu.apply_tiles(&device, &queue, &scene));
+            assert_eq!(
+                (gpu.quads.id(), gpu.records.id(), gpu.colours.id()),
+                storage
+            );
+        }
+    }
+}
+
 /// A mask the device has no memory for is not acknowledged, so publication retries it.
 #[test]
 fn a_mask_without_memory_is_not_acknowledged() {

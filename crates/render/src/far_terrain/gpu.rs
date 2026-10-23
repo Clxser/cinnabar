@@ -37,6 +37,8 @@ use super::SHADER;
 
 #[path = "gpu_coverage.rs"]
 mod coverage;
+#[path = "gpu_upload.rs"]
+mod upload;
 
 const QUAD_BYTES: u64 = 8;
 const TILE_RECORD_BYTES: u64 = 16;
@@ -283,29 +285,16 @@ impl FarTerrainGpu {
             // Earlier misses need another pass after this allocation changes free
             // space or makes a retained fallback reclaimable.
             complete &= !allocation_failed;
-            if crate::gpu_allocation::terrain_write(
-                device,
-                "far terrain tile upload",
-                bytes,
-                || {
-                    self.upload(queue, mesh, slot, &quads);
-                },
-            )
-            .is_err()
-            {
+            let upload = upload::TileUpload {
+                gpu: self,
+                slot,
+                quads: Some(quads),
+            };
+            if upload.commit(device, queue, mesh, bytes).is_err() {
                 return false;
             }
             uploaded_tiles += 1;
             uploaded_bytes += bytes;
-            self.resident.insert(
-                mesh.key,
-                Resident {
-                    mesh: Arc::clone(mesh),
-                    slot,
-                    quads,
-                    visible: false,
-                },
-            );
         }
         self.update_coverage(tiles, &wanted);
         complete
