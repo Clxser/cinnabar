@@ -53,7 +53,9 @@ impl SessionCompanion for LocalWorldCompanion {
             self.claims = None;
             return Ok(None);
         }
-        target.local_http_address()?;
+        if target.transport == protocol::NativeTransport::LocalNetherNetHttp {
+            target.local_http_address()?;
+        }
         let Some(account) = self.account.take() else {
             return Ok(None);
         };
@@ -116,6 +118,71 @@ fn complete_preparation(
 #[cfg(test)]
 mod preparation_tests {
     use super::*;
+
+    struct RunningWorld(launcher_host::local_worlds::Manager);
+
+    impl Drop for RunningWorld {
+        fn drop(&mut self) {
+            self.0.close();
+        }
+    }
+
+    /// The actual Dragonfly opening must reach preparation through its original RakNet route.
+    #[tokio::test]
+    async fn dragonfly_local_world_admits_native_raknet_preparation() {
+        const SERVER: &str = "CINNABAR_NATIVE_LOCAL_PREPARATION_SERVER";
+        let Some(server) = std::env::var_os(SERVER) else {
+            eprintln!("missing fixture: {SERVER} (build tools/localserver)");
+            return;
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let mut layout = launcher::test_support::scratch_at(
+            launcher::install_layout::Platform::Linux,
+            directory.path(),
+        );
+        layout.local_server_executable = server.into();
+        assert!(layout.local_server_executable.is_absolute());
+        assert!(layout.local_server_executable.is_file());
+        let world = RunningWorld(launcher_host::local_worlds::open(&layout).unwrap());
+        let saved = world
+            .0
+            .create(&launcher::local_worlds::world::NewWorld {
+                name: "Local preparation fixture".into(),
+                generator: launcher::local_worlds::world::Generator::Flat,
+                backend: Some(bridge::Backend::Dragonfly),
+                ..Default::default()
+            })
+            .unwrap();
+        world.0.open(&saved.id, Some(2)).unwrap();
+        test_time::eventually("actual Dragonfly opening ready", || {
+            world.0.status().state == bridge::WorldState::Running
+        });
+        let selection = world.0.native_local_world(&saved.id).unwrap();
+        assert_eq!(
+            selection.connection_target().unwrap().transport,
+            protocol::NativeTransport::RakNet
+        );
+        let mut companion = LocalWorldCompanion {
+            selection,
+            account: None,
+            retirement: None,
+            claims: Some(serde_json::json!({})),
+            random_id: protocol::ClientRandomId::new(1).unwrap(),
+        };
+        let prepared = companion.prepare().await;
+        let original_running = companion.selection.validate();
+        drop(companion);
+        world.0.close();
+        test_time::eventually("original Dragonfly opening stopped", || {
+            world.0.status().state == bridge::WorldState::Idle
+        });
+        assert!(
+            prepared
+                .expect("the original Dragonfly RakNet route must admit preparation")
+                .is_none()
+        );
+        original_running.unwrap();
+    }
 
     /// A failed online service request must not prevent the original offline local server login.
     #[test]
