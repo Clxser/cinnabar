@@ -45,7 +45,7 @@ class PackageBinariesTests(unittest.TestCase):
                     self.assertEqual(calls[0][calls[0].index("--features") + 1], "shaderpacks")
 
     def test_package_build_uses_the_requested_channel_features(self):
-        """The same build enables the selected features for the client and compiler."""
+        """Release builds keep native networking alongside the channel's client/compiler features."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             log = root / "commands.jsonl"
@@ -68,9 +68,11 @@ class PackageBinariesTests(unittest.TestCase):
                 )
                 calls = [json.loads(line) for line in log.read_text().splitlines()]
                 args = next(args for tool, *args in calls if tool == "cargo")
-                self.assertEqual("--features" in args, bool(features))
-                if features:
-                    self.assertEqual(args[args.index("--features") + 1], features)
+                self.assertIn("--features", args)
+                self.assertEqual(
+                    args[args.index("--features") + 1].replace(",", " ").split(),
+                    ["cinnabar/native-networking", *release.get("cargo_features", [])],
+                )
                 packages = [args[index + 1] for index, arg in enumerate(args) if arg == "-p"]
                 self.assertIn("cinnabar", packages)
                 self.assertIn("asset-compiler", packages)
@@ -112,13 +114,17 @@ class PackageBinariesTests(unittest.TestCase):
                         log.write_text("")
                         subprocess.run(
                             ["make", "--no-print-directory", "-o", "assets", "-o", "physics-assets",
-                             "play", f"PROFILE={profile}", f"TRACY={tracy}",
+                             "play-build", f"PROFILE={profile}", f"TRACY={tracy}",
                              f"CARGO={command} cargo", f"GO={command} go"],
                             cwd=ROOT, env=dict(os.environ, PACKAGE_TEST_LOG=str(log)),
                             capture_output=True, text=True, check=True,
                         )
                         calls = [json.loads(line) for line in log.read_text().splitlines()]
-                        args = next(args for tool, *args in calls if tool == "cargo" and args[0] == "run")
+                        args = next(
+                            args for tool, *args in calls
+                            if tool == "cargo" and args[0] == "build"
+                            and args[args.index("-p") + 1] == "cinnabar"
+                        )
                         self.assertNotIn("--no-default-features", args)
                         self.assertEqual(args[args.index("--profile") + 1], profile)
                         if tracy:
