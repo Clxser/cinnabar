@@ -473,7 +473,10 @@ OS Alt-Tab acceptance on macOS, Windows and Linux remains incomplete.
   each ingredient draws from one concrete variant. Missing grid ingredients and their
   result use distinct ghost cells in both renderers and retain hover names.
   Broader crafting and container acceptance remains incomplete.
-  Hover reports and actor use share the attack's game-mode actor cap. The survival
+  Hover reports and actor use share the attack's game-mode actor cap.
+  Actor rays use loaded collision defaults, authoritative dimensions and scale, and
+  constructor pick radii. Attack, use and hover preserve the selected world intercept;
+  matched server-box packet acceptance remains incomplete. The survival
   block-versus-miss bands at that cap, the creative cap's shortening by the pick ray and
   actor occlusion of the block outline remain incomplete.
   Desktop input retains every transition in a complete arrival batch, including
