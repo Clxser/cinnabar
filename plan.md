@@ -916,8 +916,10 @@ Leaving for the menu retains only the newest server archives within a 128 MiB ca
 their admission metadata and file hashes. Decoded and compiled session outputs are freed
 off the frame and rebuilt on rejoin. Rejoin rebuild latency and menu-memory acceptance
 remain unmeasured.
-Actor artwork prepares current demand immediately and prewarms unused pages within a
-per-frame budget. Artwork arrays allocate exactly their source layer count. Skin slots
+Actor artwork uploads page rows within a per-frame byte budget, prioritizes current
+demand and finishes pending uploads before prewarming more pages. Complete pages bind
+atomically; compatible old pages stay visible during replacement. Artwork arrays
+allocate exactly their source layer count. Skin slots
 keep geometric capacity. Each artwork slot retains its own unchanged texture and bindings.
 Worker rig-plan preparation and measured cold arrival latency remain open acceptance work.
 Hardware join and frame acceptance still needs the full capture matrix below.
