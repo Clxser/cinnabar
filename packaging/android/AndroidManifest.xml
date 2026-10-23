@@ -13,7 +13,7 @@
         android:allowBackup="false"
         android:networkSecurityConfig="@xml/network_security_config"
         android:extractNativeLibs="true"
-        android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen">
+        android:theme="@style/StartupTheme">
         <activity
             android:name=".BootstrapActivity"
             android:exported="true"

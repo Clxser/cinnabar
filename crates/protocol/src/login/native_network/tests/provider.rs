@@ -104,7 +104,7 @@ fn credential(token: String, observed: Instant, lifetime: Duration) -> NativeCre
 }
 
 /// Exercises the production qualification entry point for other native Login tests.
-pub(super) fn authentication() -> NativeAuthentication {
+pub(in crate::login::native_network) fn authentication() -> NativeAuthentication {
     authentication_at(Instant::now())
 }
 

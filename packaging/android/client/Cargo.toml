@@ -22,6 +22,7 @@ first-run = { path = "../../../crates/first-run" }
 jni = "=0.22.4"
 rustls-platform-verifier = "=0.7.1"
 launcher = { path = "../../../crates/launcher" }
+launcher-host = { path = "../../../crates/launcher-host" }
 # Oboe, below cpal, links the C++ runtime the APK ships instead of a private copy.
 rodio = { version = "=0.20.1", default-features = false, features = ["cpal-shared-stdcxx"] }
 serde = { version = "1", features = ["derive"] }

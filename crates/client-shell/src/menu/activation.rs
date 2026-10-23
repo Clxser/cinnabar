@@ -321,7 +321,8 @@ impl MenuRuntime {
             | MenuAction::SettingsResetKey(_)
             | MenuAction::SettingsMacroCommand(_)
             | MenuAction::SettingsResetChat
-            | MenuAction::SettingsAdvancedGraphics) => self.activate_settings(action),
+            | MenuAction::SettingsAdvancedGraphics
+            | MenuAction::EditTouchControls) => self.activate_settings(action),
             MenuAction::Respawn => {
                 if self.death_controls_ready() {
                     self.request_respawn();

@@ -66,6 +66,7 @@ fn run_client() -> Result<()> {
         .internal_data_path()
         .context("Android reported no private files directory")?;
     configure_android(layout(&files_dir, &initialize_platform(app)?))?;
+    cinnabar::startup_feedback::observe(startup_progress, startup_generation);
     if cinnabar::lifecycle::before_run(false)? {
         cinnabar::run(cinnabar::args::ClientArgs {
             force_vsync: true,
@@ -116,4 +117,59 @@ fn initialize_tls(env: &mut jni::Env<'_>, activity: &JObject<'_>) -> Result<()> 
         .l()?;
     rustls_platform_verifier::android::init_with_env(env, context)
         .context("initialize Android certificate verification")
+}
+
+/// Posts work or content readiness without blocking the activity's UI thread.
+fn startup_progress(message: launcher::startup::Message, generation: u64) {
+    let report = (|| -> Result<()> {
+        let app = ANDROID_APP
+            .get()
+            .context("Android activity is unavailable")?;
+        // SAFETY: AndroidApp retains its live VM and Activity for this native thread's lifetime.
+        let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+        vm.attach_current_thread_for_scope(|env| -> Result<()> {
+            // SAFETY: AndroidApp owns the live Activity reference; this wrapper only borrows it.
+            let activity_ptr = app.activity_as_ptr().cast();
+            let activity = unsafe { env.as_cast_raw::<JObject>(&activity_ptr)? };
+            let text = env.new_string(serde_json::to_string(&message)?)?;
+            env.call_method(
+                &activity,
+                jni_str!("startupProgress"),
+                jni_sig!("(Ljava/lang/String;J)V"),
+                &[
+                    jni::objects::JValue::Object(&text),
+                    jni::objects::JValue::Long(generation as i64),
+                ],
+            )?;
+            Ok(())
+        })
+    })();
+    if let Err(error) = report {
+        bevy::log::warn!("startup feedback unavailable: {error:#}");
+    }
+}
+
+/// Samples the activity lifetime before validating the next destination frame.
+fn startup_generation() -> u64 {
+    let read = (|| -> Result<u64> {
+        let app = ANDROID_APP
+            .get()
+            .context("Android activity is unavailable")?;
+        // SAFETY: AndroidApp retains its live VM and Activity for this native thread's lifetime.
+        let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+        vm.attach_current_thread_for_scope(|env| -> Result<u64> {
+            // SAFETY: AndroidApp owns the live Activity reference; this wrapper only borrows it.
+            let activity_ptr = app.activity_as_ptr().cast();
+            let activity = unsafe { env.as_cast_raw::<JObject>(&activity_ptr)? };
+            Ok(env
+                .call_method(
+                    &activity,
+                    jni_str!("startupGeneration"),
+                    jni_sig!("()J"),
+                    &[],
+                )?
+                .j()? as u64)
+        })
+    })();
+    read.unwrap_or_default()
 }

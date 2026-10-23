@@ -747,7 +747,7 @@ pub(super) const STATES: &[State] = &[
         name: "settings-general",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || settings_screens::settings_general_toggle(SettingId::EcomodeToggle),
+        fixture: || settings_screens::settings_general_toggle(SettingId::FilterProfanity),
     },
     State {
         name: "settings-updates",
@@ -872,5 +872,17 @@ pub(super) const STATES: &[State] = &[
         size: SIZE,
         gui_scale: GUI_SCALE,
         fixture: shader_options::rest,
+    },
+    State {
+        name: "settings-video-culling-on",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || settings_screens::settings_video_culling(true),
+    },
+    State {
+        name: "settings-video-culling-off",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || settings_screens::settings_video_culling(false),
     },
 ];

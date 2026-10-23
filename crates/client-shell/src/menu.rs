@@ -73,7 +73,7 @@ use ui::RenderMode;
 
 pub use input::clipboard::MenuClipboard;
 pub(crate) use input::context::observe_keyboard_labels;
-pub use input::{HOTKEY_OPTIONS, drive_menu_ime, drive_menu_input};
+pub use input::{HOTKEY_OPTIONS, drive_menu_input, drive_window_ime};
 use launcher::menu::view::MenuFeeds;
 
 use launcher::menu::view::{
@@ -116,6 +116,7 @@ pub struct MenuRuntime {
     pressed: Option<MenuAction>,
     pointer_down: bool,
     touch_available: bool,
+    touch_editor_open: bool,
     server_tab: MenuServerTab,
     profile_tab: launcher::menu::ProfileTab,
     dialog: Option<MenuDialog>,

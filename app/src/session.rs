@@ -5,7 +5,7 @@
 use crate::runtime::network::resource_packs::PackApplication;
 use bevy::{
     ecs::system::SystemParam,
-    prelude::{AppExit, Commands, MessageWriter, Res, ResMut, Resource},
+    prelude::{AppExit, Commands, MessageReader, MessageWriter, ParamSet, Res, ResMut, Resource},
 };
 use client_runtime::network::NetworkHandle;
 use client_runtime::session::{format_transfer_address, transfer_handoff_address};
@@ -231,7 +231,7 @@ impl SessionController {
         true
     }
 
-    /// Returns a failed join to the menu, keeping only the newest compiled packs for a retry.
+    /// Returns a failed join to the menu, keeping only the newest archives for a retry.
     fn fail_join(&mut self, menu: &mut MenuRuntime, message: String) {
         bridge::join_profile::JoinProfile::current().finish("failed");
         menu.show_join_failure(message);
@@ -348,7 +348,10 @@ pub(crate) struct SessionResources<'w> {
     state: crate::game_session::SessionWorld<'w>,
     network: ResMut<'w, NetworkHandle<PackApplication>>,
     collisions: Res<'w, client_interaction::movement::PhysicsCollisionRegistries>,
-    actor_artwork: Option<Res<'w, render_scene::ActorArtworkResource>>,
+    actor_artwork: Option<ResMut<'w, render_scene::ActorArtworkResource>>,
+    #[cfg(test)]
+    startup_actor_artwork: Option<Res<'w, StartupActorArtwork>>,
+    block_entity_scene: Option<ResMut<'w, render_scene::BlockEntitySceneResource>>,
     ui_catalog: Option<Res<'w, crate::runtime::network::PackUiCatalog>>,
     input: Option<Res<'w, client_state::SemanticInputSnapshot>>,
     far_terrain: Option<ResMut<'w, crate::far_terrain::FarTerrain>>,
@@ -356,12 +359,41 @@ pub(crate) struct SessionResources<'w> {
     mod_registration: Option<Res<'w, crate::modding::registration::Watcher>>,
 }
 
+/// An isolated startup snapshot for lifecycle tests without changing process-wide carriers.
+#[cfg(test)]
+#[derive(Resource)]
+pub(crate) struct StartupActorArtwork(pub(crate) render_model::ActorArtworkPages);
+
 impl SessionResources<'_> {
     /// Retires the live session with no join to follow, keeping only the newest
-    /// compiled server packs for a rejoin from the menu.
+    /// compressed server packs for a rejoin from the menu.
     fn leave(&mut self) {
         self.retire();
         self.controller.kept_packs.keep_for_rejoin();
+    }
+
+    /// Restores the startup actor and block-entity artwork, so the ended session's pack art
+    /// (often GiBs of rasters) is freed instead of staying resident in the menu.
+    fn restore_startup_artwork(&mut self) {
+        let startup = crate::runtime::network::startup_actor_artwork();
+        #[cfg(test)]
+        let startup = self
+            .startup_actor_artwork
+            .as_ref()
+            .map(|artwork| &artwork.0)
+            .or(startup);
+        if let (Some(artwork), Some(startup)) = (self.actor_artwork.as_mut(), startup)
+            && artwork.0.identity() != startup.identity()
+        {
+            let ended = std::mem::replace(&mut artwork.0, startup.clone());
+            client_runtime::session::release_off_frame(ended);
+        }
+        if let (Some(scene), Some(startup)) = (
+            self.block_entity_scene.as_mut(),
+            crate::runtime::network::block_entity_art::base(),
+        ) {
+            scene.0.reload_prepared_assets(startup);
+        }
     }
 
     /// Cancels the live network owner and fences a fresh generation before replacement.
@@ -389,6 +421,7 @@ impl SessionResources<'_> {
         ) {
             far.retire_stream(stream);
         }
+        self.restore_startup_artwork();
         self.state.retire(generation);
         self.state.runtime.experiences.audience = None;
         generation
@@ -422,11 +455,19 @@ pub(crate) fn login_settings(
 /// Acts on the menu's session intents and advances the pending join.
 pub(crate) fn drive_session(
     mut commands: Commands,
-    mut exits: MessageWriter<AppExit>,
+    mut exits: ParamSet<(MessageReader<AppExit>, MessageWriter<AppExit>)>,
     mut menu: ResMut<MenuRuntime>,
     client_blob_cache: Res<BlobCache>,
     mut session: SessionResources,
 ) {
+    if exits.p0().read().next().is_some() {
+        let cause = session.state.fatal_error.0.take();
+        session.retire();
+        session.state.fatal_error.0 = cause;
+        session.controller.publish(&mut menu);
+        menu.forget_session_trust();
+        return;
+    }
     #[cfg(feature = "native-networking")]
     if menu.account_operation_pending()
         && (session.controller.native_account.is_some() || session.controller.native_friend_session)
@@ -441,7 +482,7 @@ pub(crate) fn drive_session(
     }
     drive_intents(
         &mut commands,
-        &mut exits,
+        &mut exits.p1(),
         &mut menu,
         &client_blob_cache,
         &mut session,

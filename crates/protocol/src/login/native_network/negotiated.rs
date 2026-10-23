@@ -17,6 +17,9 @@ use std::time::Instant;
 use std::{io, sync::Arc, time::SystemTime};
 use zeroize::Zeroizing;
 mod identity;
+mod local_retry;
+#[cfg(test)]
+mod local_retry_tests;
 
 /// Moves the same codec, ciphers, unread FIFO and selected archives into startup.
 pub(super) struct NegotiatedConnection {
@@ -45,6 +48,8 @@ pub(super) async fn negotiate(
             "native join does not accept a core target override",
         )));
     }
+    let local_account =
+        target.transport == crate::NativeTransport::LocalNetherNetHttp && authentication.is_some();
     let mut credentials = Credentials::new(authentication)?;
     let (transport, address) = if target.transport == crate::NativeTransport::Addressed {
         let identity = credentials
@@ -98,7 +103,7 @@ pub(super) async fn negotiate(
     })?;
     let mut connection = crate::login::native_network::connection::upstream(transport);
     connection.primary_only();
-    let (packs, identity) = negotiate_connected(
+    let result = negotiate_connected(
         &mut connection,
         &address,
         LoginData::Desktop(login),
@@ -111,7 +116,16 @@ pub(super) async fn negotiate(
             parallel_urls: login.settings.parallel_resource_pack_urls,
         },
     )
-    .await?;
+    .await;
+    let (packs, identity) = match result {
+        Ok(result) => result,
+        Err(error) => {
+            if local_retry::qualifies(local_account, &connection, &error) {
+                return local_retry::retry(connection, target, login, deadline).await;
+            }
+            return Err(error);
+        }
+    };
     Ok(NegotiatedConnection {
         connection,
         packs: packs.handoff,

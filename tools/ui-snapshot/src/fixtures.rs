@@ -18,6 +18,7 @@ mod settings_screens;
 mod shader_options;
 mod shader_pack;
 mod social_settings;
+mod touch_editor;
 mod updates;
 
 use std::sync::Arc;
@@ -65,6 +66,11 @@ pub enum Fixture {
         emitting: bool,
     },
     Menu(Box<MenuView>),
+    /// Built-in touch editor interactions through production rendering and pointer routing.
+    #[cfg(feature = "test-support")]
+    TouchEditor {
+        phase: u8,
+    },
     Loading(ui::LoadingStage),
     Chat {
         draft: &'static str,
@@ -143,4 +149,6 @@ pub fn states() -> impl Iterator<Item = &'static State> {
         .chain(shader_pack::STATES)
         .chain(social_settings::STATES)
         .chain(settings_screens::SEARCH_STATES)
+        .chain(settings_screens::PAGE_STATES)
+        .chain(touch_editor::STATES)
 }

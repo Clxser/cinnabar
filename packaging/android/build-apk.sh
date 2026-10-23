@@ -63,11 +63,13 @@ install -m 0755 "$rust_out/lib$client_library.so" "$libs/lib$client_library.so"
 install -m 0755 "$rust_out/assetc" "$libs/$(pin compiler_library)"
 install -m 0644 "$toolchain/sysroot/usr/lib/$triple/libc++_shared.so" "$libs/libc++_shared.so"
 
-# The allowed Dragonfly server integration runs as a PIE helper.
-GOWORK=off CGO_ENABLED=1 GOOS=android GOARCH=arm64 CC="$toolchain/bin/$triple$min_sdk-clang" \
-    go -C "$repo_root/tools/localserver" build -buildmode=pie -trimpath \
-    -ldflags "-s -w -checklinkname=0 -extldflags=$page_flags" \
-    -o "$libs/$(pin local_server_library)" .
+# shellcheck source=build-go-helpers.sh
+source "$here/build-go-helpers.sh"
+build_go_helpers
+
+# shellcheck source=build-box64.sh
+source "$here/build-box64.sh"
+build_box64
 
 # The desktop resource root, minus the kit's compiler: setup links it from the native libraries.
 stage_resources "$stage/assets/resources" "$libs/$(pin compiler_library)"

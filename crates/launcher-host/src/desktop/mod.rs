@@ -114,7 +114,10 @@ fn open_outcome(url: &str) -> OpenOutcome {
     #[cfg(target_os = "linux")]
     return portal_outcome(dbus::open_uri(url), || run_tool(url));
     #[cfg(target_os = "android")]
-    return handoff_result(android::open_url(url));
+    return handoff_result(android::open_url(url).unwrap_or_else(|error| {
+        tracing::warn!("the activity could not open a browser: {error}");
+        false
+    }));
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     return handoff_result(run_tool(url));
 }

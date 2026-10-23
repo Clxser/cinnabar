@@ -53,6 +53,7 @@ impl SessionCompanion for LocalWorldCompanion {
             self.claims = None;
             return Ok(None);
         }
+        target.local_http_address()?;
         let Some(account) = self.account.take() else {
             return Ok(None);
         };
@@ -60,16 +61,14 @@ impl SessionCompanion for LocalWorldCompanion {
             .claims
             .take()
             .ok_or_else(|| io::Error::other("local world preparation was already used"))?;
-        let preparing = account.prepare_connection(target, claims, self.random_id);
+        let preparing = account.prepare_connection(target.clone(), claims, self.random_id);
         tokio::pin!(preparing);
         loop {
             tokio::select! {
                 biased;
                 changed = self.selection.changed() => changed?,
                 result = &mut preparing => {
-                    let prepared = result?;
-                    self.selection.validate()?;
-                    return Ok(Some(prepared));
+                    return complete_preparation(&target, result, self.selection.validate());
                 }
             }
         }
@@ -83,5 +82,112 @@ impl SessionCompanion for LocalWorldCompanion {
     /// Queues the original process retirement; no pipe write blocks the session's reactor.
     async fn close(&mut self) {
         self.retirement = None;
+    }
+}
+
+/// Admits only the completed preparation of the original local-world selection.
+fn complete_preparation(
+    target: &protocol::NativeConnectionTarget,
+    prepared: io::Result<(
+        protocol::NativeConnectionTarget,
+        protocol::NativeAuthentication,
+    )>,
+    selection: io::Result<()>,
+) -> io::Result<
+    Option<(
+        protocol::NativeConnectionTarget,
+        protocol::NativeAuthentication,
+    )>,
+> {
+    selection?;
+    match prepared {
+        Ok(prepared) => Ok(Some(prepared)),
+        Err(error) if target.local_http_address().is_ok() => {
+            bevy::log::warn!(
+                kind = ?error.kind(),
+                "local account preparation failed; using local server identity"
+            );
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod preparation_tests {
+    use super::*;
+
+    /// A failed online service request must not prevent the original offline local server login.
+    #[test]
+    fn completed_local_http_failure_allows_offline_login() {
+        for address in ["127.0.0.1:19132", "[::1]:19132"] {
+            let target = protocol::NativeConnectionTarget::new(
+                address.into(),
+                protocol::NativeTransport::LocalNetherNetHttp,
+            );
+            let prepared = complete_preparation(
+                &target,
+                Err(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "account service unavailable",
+                )),
+                Ok(()),
+            );
+            assert!(matches!(prepared, Ok(None)));
+        }
+    }
+
+    /// Completion cannot revive a stopped or replaced local-world opening.
+    #[test]
+    fn failed_preparation_cannot_outlive_original_selection() {
+        let target = protocol::NativeConnectionTarget::new(
+            "127.0.0.1:19132".into(),
+            protocol::NativeTransport::LocalNetherNetHttp,
+        );
+        let result = complete_preparation(
+            &target,
+            Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "account service unavailable",
+            )),
+            Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "original opening retired",
+            )),
+        );
+        assert_eq!(result.err().unwrap().kind(), io::ErrorKind::Interrupted);
+    }
+
+    /// A local service error grants no offline login to another route or transport.
+    #[test]
+    fn nonlocal_preparation_failure_stays_an_error() {
+        for target in [
+            protocol::NativeConnectionTarget::new(
+                "127.0.0.1:19132".into(),
+                protocol::NativeTransport::Addressed,
+            ),
+            protocol::NativeConnectionTarget::new(
+                "192.0.2.1:19132".into(),
+                protocol::NativeTransport::LocalNetherNetHttp,
+            ),
+            protocol::NativeConnectionTarget::new(
+                "127.0.0.1:0".into(),
+                protocol::NativeTransport::LocalNetherNetHttp,
+            ),
+            protocol::NativeConnectionTarget::new(
+                "fixture.invalid:19132".into(),
+                protocol::NativeTransport::LocalNetherNetHttp,
+            ),
+        ] {
+            let result = complete_preparation(
+                &target,
+                Err(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "account service unavailable",
+                )),
+                Ok(()),
+            );
+            assert_eq!(result.err().unwrap().kind(), io::ErrorKind::NotConnected);
+        }
     }
 }

@@ -217,6 +217,98 @@ fn cancellation_precedes_a_ready_join_response() {
     );
 }
 
+/// A startup exit retires the original owner before its prepared endpoint is admitted.
+#[test]
+fn exit_before_first_session_frame_retires_a_pending_startup_join() {
+    use bevy::prelude::{AppExit, First, MessageWriter};
+
+    for (status, cause) in [
+        (AppExit::Success, None),
+        (
+            AppExit::error(),
+            Some("startup failed before session admission"),
+        ),
+    ] {
+        let root = TempRoot::new();
+        let mut menu = MenuRuntime::new_with_layout(
+            false,
+            Some(2),
+            "Player".into(),
+            fixture_layout(root.path()),
+            client_shell::player_skin::LocalPlayerSkin::generated_default("Player"),
+        );
+        menu.show_connecting();
+        let controller = SessionController::default()
+            .with_client_random_id(Some(protocol::ClientRandomId::new(-7).unwrap()))
+            .with_startup_endpoint(
+                Some(protocol::SessionEndpoint::Native(
+                    protocol::NativeConnectionTarget::new(
+                        "fixture.invalid:19132".into(),
+                        protocol::NativeTransport::Addressed,
+                    ),
+                )),
+                Some("fixture.invalid:19132"),
+                #[cfg(feature = "native-networking")]
+                None,
+            );
+        let original_generation = controller.generation();
+        assert!(controller.join_pending());
+        let mut network = NetworkHandle::<PackApplication>::disconnected();
+        let (old_controls, receiver) = tokio::sync::mpsc::channel(1);
+        *network.control_events_mut() = receiver;
+        let startup_exit = status.clone();
+        let mut app = App::new();
+        app.add_message::<AppExit>()
+            .insert_resource(menu)
+            .insert_resource(controller)
+            .insert_resource(network)
+            .insert_resource(ClientBlobCacheOwner::default())
+            .insert_resource(ResourcePackAdmissionState::default())
+            .insert_resource(
+                crate::runtime::network::session_registries::tests::collision_resource(),
+            )
+            .insert_resource(UiRuntimeResource(UiRuntime::new(1)))
+            .insert_resource(client_state::PlayerRuntime(player_state::PlayerState::new(
+                1,
+            )))
+            .insert_resource(ClientWorld::default())
+            .insert_resource(crate::runtime::shutdown::FatalError(
+                cause.map(str::to_owned),
+            ))
+            .insert_resource(client_interaction::movement::MovementTicker::default())
+            .insert_resource(client_interaction::movement::LocalPhysicsController::default())
+            .insert_resource(client_presentation::local_player::LocalPlayerFrameCarrier::default())
+            .insert_resource(
+                client_presentation::local_player::InteractionOriginSnapshot::default(),
+            )
+            .add_systems(First, move |mut exits: MessageWriter<AppExit>| {
+                exits.write(startup_exit.clone());
+            })
+            .add_systems(Update, drive_session);
+
+        let terminal = crate::runtime::shutdown::TerminalCause::install(&mut app);
+        app.update();
+
+        assert!(old_controls.is_closed());
+        let controller = app.world().resource::<SessionController>();
+        assert!(!controller.join_pending());
+        assert!(!controller.status().connecting);
+        assert_ne!(controller.generation(), original_generation);
+        assert!(!app.world().resource::<MenuRuntime>().is_connecting());
+        assert_eq!(app.should_exit(), Some(status));
+        if let Some(cause) = cause {
+            assert_eq!(
+                app.world()
+                    .resource::<crate::runtime::shutdown::FatalError>()
+                    .0
+                    .as_deref(),
+                Some(cause),
+            );
+            assert!(terminal.exit_message().ends_with(cause));
+        }
+    }
+}
+
 fn failed_automatic_replacement(
     player_runtime: &mut client_state::PlayerRuntime,
     from_settings: bool,
