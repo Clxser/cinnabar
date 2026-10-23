@@ -53,6 +53,7 @@ struct MiningAdmission {
     mining: SurvivalMiningRuntime,
     swings: crate::melee::SwingTracker,
     packets: Vec<protocol::Packet>,
+    inventory: inventory::PlayerInventoryLedger,
     predictions: Vec<[i32; 3]>,
 }
 
@@ -65,6 +66,7 @@ impl MiningAdmission {
             mining: Default::default(),
             swings: Default::default(),
             packets: Vec::new(),
+            inventory: Default::default(),
             predictions: Vec::new(),
         }
     }
@@ -126,7 +128,7 @@ impl MiningAdmission {
         attack: Option<(crate::melee::Crosshair, crate::melee::PressContext)>,
         full: bool,
     ) {
-        crate::melee::admit_attack_frame(
+        let admitted = crate::melee::admit_attack_frame(
             &mut self.melee,
             &mut self.mining,
             &mut self.swings,
@@ -153,10 +155,11 @@ impl MiningAdmission {
                     }
                 },
                 swing_duration: |_| actor_animation::ACTOR_SWING_TICKS,
-                request_id: |_, _| None,
+                request_id: |slot, damage| self.inventory.begin_mining_request(slot, damage),
                 predict_break: |position| self.predictions.push(position),
             },
         );
+        admitted.mining.settle_inventory(&mut self.inventory);
     }
 
     /// Publishes every retained input through the production movement encoder.

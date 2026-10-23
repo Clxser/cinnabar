@@ -151,9 +151,9 @@ pub(crate) fn press(
             },
         },
     );
-    for request in admitted.cancelled_mining_requests {
-        player.inventory.ledger_mut().cancel_mining_request(request);
-    }
+    admitted
+        .mining
+        .settle_inventory(player.inventory.ledger_mut());
     if let Some(tick) = admitted.rotation_tick
         && let Some(rotation) = picked.action_rotation
     {

@@ -103,6 +103,8 @@ pub(super) enum RollbackAuthority {
 pub(super) struct MiningPrediction {
     pub(super) slot: u8,
     pub(super) damage: i32,
+    /// A client-authoritative destroy is committed backing named by this legacy ID.
+    pub(super) legacy_request_id: Option<i32>,
     /// Identifies the selected item; accepted metadata stays in backing truth.
     source: Option<MiningSource>,
 }
@@ -151,9 +153,16 @@ impl MiningPrediction {
 const MAX_OUTSTANDING_MINING_REQUESTS: usize = 16;
 
 impl PendingRequest {
-    /// An admitted normal transaction is retained history, not unanswered gesture work.
+    /// An admitted legacy transaction is retained history, not unanswered gesture work.
     pub(super) fn locally_committed(&self) -> bool {
-        self.world_drop.is_some() && self.state == InventoryPendingState::AwaitingResponse
+        self.legacy_request_id().is_some() && self.state == InventoryPendingState::AwaitingResponse
+    }
+
+    /// The response identity of an admitted drop or client-authoritative destroy.
+    pub(super) fn legacy_request_id(&self) -> Option<i32> {
+        self.world_drop
+            .map(|drop| drop.legacy_request_id)
+            .or_else(|| self.mining.as_ref()?.legacy_request_id)
     }
 
     /// The request predicts a created result derived from its inputs and the item facts, so
@@ -171,7 +180,12 @@ impl PendingRequest {
     }
 
     pub(super) fn touched(&self) -> impl Iterator<Item = Cell> + '_ {
-        self.groups.iter().flat_map(DeltaGroup::touched)
+        self.groups.iter().flat_map(DeltaGroup::touched).chain(
+            self.mining
+                .as_ref()
+                .filter(|mining| mining.legacy_request_id.is_some())
+                .map(|mining| Cell::Inventory(mining.slot)),
+        )
     }
 
     pub(super) fn touches(&self, cell: Cell) -> bool {
@@ -532,6 +546,7 @@ impl PlayerInventoryLedger {
                 let stale_mining = request
                     .mining
                     .as_ref()
+                    .filter(|mining| mining.legacy_request_id.is_none())
                     .is_some_and(|mining| mining.current_source(&self.confirmed).is_none());
                 if !stale_mining {
                     self.apply_correction(request, requested, cell, correction);
@@ -830,8 +845,15 @@ impl PlayerInventoryLedger {
     /// Queues a mine-block prediction at its wire position: after every
     /// admitted request, ahead of unsent ones. `None` when the queue is full,
     /// so the break goes out without a request.
-    pub(super) fn enqueue_mining(&mut self, slot: u8, damage: i32) -> Option<i32> {
-        self.ensure_queue_capacity().ok()?;
+    pub(super) fn enqueue_mining(
+        &mut self,
+        slot: u8,
+        damage: i32,
+        legacy_request_id: Option<i32>,
+    ) -> Option<i32> {
+        if legacy_request_id.is_none() {
+            self.ensure_queue_capacity().ok()?;
+        }
         let request_id = self.next_request_id;
         self.next_request_id = request_id.checked_sub(2)?;
         let mining: Vec<usize> = self
@@ -875,6 +897,7 @@ impl PlayerInventoryLedger {
                 mining: Some(MiningPrediction {
                     slot,
                     damage,
+                    legacy_request_id,
                     source: self
                         .confirmed
                         .get(Cell::Inventory(slot))
