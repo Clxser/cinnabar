@@ -270,8 +270,9 @@ Core physics binary-confirmed correct (gravity/drag/friction/jump/speed). Gaps:
 - Riding: player physics is suspended while mounted, the rider follows its mount seat, and boat
   paddle flags are sent. A boat the player steers from its controlling seat is client-predicted:
   paddling, momentum, steering, collision and buoyancy run locally, inputs report the boat's
-  position, rotation and id, server moves apply only when they teleport, and vehicle corrections
-  rewind and replay. Open: horse prediction, collision with other boats, leashed-boat momentum,
+  position, rotation and id, server moves apply only when they teleport, and a vehicle correction
+  restarts prediction from the corrected state (vanilla rewinds and replays; incomplete). Open:
+  horse prediction, collision with other boats, leashed-boat momentum,
   snow-layer friction, touch paddle buttons and bubble columns (HIGH); `ClientMovementPredictionSync` is sent after corrections (interval provisional). Sweet berry bush needs the
   registry regeneration described in plan.md.
 - Step height 0.6 vs ~0.5625 *(measure; oracle-validated value left unchanged)*; lava strata;
