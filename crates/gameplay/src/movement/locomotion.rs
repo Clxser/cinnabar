@@ -125,6 +125,8 @@ pub(super) struct ModeChoice {
     pub mode: MovementMode,
     pub forced_sneak: bool,
     pub sprinting: bool,
+    /// A local start runs before any stop on this tick.
+    pub start_sprinting: bool,
     /// The double-tap requested starting (true) or stopping (false) flight this tick.
     pub flight_request: Option<bool>,
 }
@@ -236,6 +238,7 @@ impl ModeTracker {
         observed: ModeObservation,
         world: &(impl CollisionWorld + ?Sized),
     ) -> Result<ModeChoice, WorldQueryError> {
+        let was_sprinting = self.sprinting;
         if intent.spectator {
             self.sprinting =
                 self.sprint_trigger
@@ -251,6 +254,7 @@ impl ModeTracker {
                 mode: self.mode,
                 forced_sneak: false,
                 sprinting: self.sprinting,
+                start_sprinting: self.sprinting && !was_sprinting,
                 flight_request: None,
             });
         }
@@ -276,6 +280,7 @@ impl ModeTracker {
                 mode: MovementMode::Riding,
                 forced_sneak: false,
                 sprinting: false,
+                start_sprinting: false,
                 flight_request,
             });
         }
@@ -379,6 +384,7 @@ impl ModeTracker {
             mode,
             forced_sneak,
             sprinting: self.sprinting,
+            start_sprinting: sprinting && !was_sprinting,
             flight_request,
         })
     }

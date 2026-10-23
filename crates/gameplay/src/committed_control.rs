@@ -63,6 +63,23 @@ impl CommittedGameplayState<'_> {
         &mut self,
         control: CommittedControlEvent,
         world: &impl CollisionWorld,
+        observe: impl FnMut(ControlObservation),
+    ) -> ControlDisposition {
+        if let Some(speed) = self.physics.take_replayed_movement_speed() {
+            self.speed.adopt_replayed_speed(speed);
+        }
+        let disposition = self.apply_control(control, world, observe);
+        if let Some(speed) = self.physics.take_replayed_movement_speed() {
+            self.speed.adopt_replayed_speed(speed);
+        }
+        disposition
+    }
+
+    /// Applies one control before publishing any resulting replayed speed.
+    fn apply_control(
+        &mut self,
+        control: CommittedControlEvent,
+        world: &impl CollisionWorld,
         mut observe: impl FnMut(ControlObservation),
     ) -> ControlDisposition {
         if let CommittedControlEvent::LocalActorMove { movement, .. } = control

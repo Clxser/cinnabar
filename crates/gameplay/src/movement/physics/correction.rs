@@ -218,6 +218,7 @@ impl LocalPhysicsController {
             .copied()
             .ok_or(PhysicsCorrectionError::NotRetained { tick })?;
         let mut modes = anchor_controller.modes;
+        let mut movement_speed = anchor_controller.speed;
         let mut anchor_state = anchor_controller.anchor_state;
         let mut eye = anchor_controller.eye_offset;
         let deferred_corrections = self.deferred_corrections.clone();
@@ -250,6 +251,7 @@ impl LocalPhysicsController {
                     let environment = previous.map_or(anchor_controller.environment, |output| {
                         output.tick_result.environment
                     });
+                    frame.prepare_speed(&mut movement_speed, modes.sprinting());
                     frame.prepare(
                         &mut modes,
                         &mut anchor_state,
@@ -257,7 +259,9 @@ impl LocalPhysicsController {
                         state,
                         input,
                         world,
-                    )
+                    )?;
+                    frame.finish_speed(&mut movement_speed, input);
+                    Ok(())
                 },
             )
             .map_err(|_| PhysicsCorrectionError::ReplayFailed)?;
@@ -392,6 +396,7 @@ impl LocalPhysicsController {
             .back()
             .map_or(anchor_controller.environment, |frame| frame.environment);
         self.controller_history = controller_frames;
+        self.replayed_speed = movement_speed;
         let (corrected_world_identity, corrected_sample) = {
             let corrected_sample = self
                 .sample_history

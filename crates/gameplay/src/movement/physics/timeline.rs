@@ -120,13 +120,36 @@ impl LocalPhysicsController {
             attribute, sprinting,
         );
         let mut changed = false;
-        for input in self.history.retained_inputs_after_mut(tick) {
+        for (index, (input, frame)) in self
+            .history
+            .retained_inputs_after_mut(tick)
+            .zip(
+                self.controller_history
+                    .iter_mut()
+                    .filter(|frame| frame.tick > tick),
+            )
+            .enumerate()
+        {
+            if index == 0 {
+                changed |= frame.speed_update != Some(attribute);
+                frame.speed_update = Some(attribute);
+            } else if let Some(attribute) = frame.speed_update {
+                speed = crate::movement::speed_authority::EffectiveMovementSpeed::authoritative(
+                    attribute,
+                    speed.sprinting(),
+                );
+            }
+            speed.adopt_server_sprinting(frame.server_sprinting);
+            if frame.start_sprinting {
+                speed.set_sprinting(true);
+            }
             speed.set_sprinting(input.sprinting);
             let predicted = speed.prediction_speed();
             if input.movement_speed != predicted {
                 input.movement_speed = predicted;
                 changed = true;
             }
+            frame.speed = Some(speed);
         }
         Some((changed.then_some(tick), speed))
     }

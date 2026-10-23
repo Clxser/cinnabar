@@ -261,11 +261,9 @@ Historical movement acceptance scope includes sprint/double-tap/toggle timing, f
 sneak/crawl, mode entry/exit, flight, swimming/gliding, liquid correction and scaffolding
 descent. Reconcile each case with current code and evidence before calling it a missing
 implementation.
-Incomplete: a sprint the simulator starts or stops against the frame's request, including
-the liquid sprint stop, does not apply the native sprint speed-modifier edge per tick or in
-replay. A server movement current without the sprint modifier therefore predicts one stopped
-tick at current divided by the sprint multiplier. Live strict-server acceptance of the
-surface-exit and wet-jump sprint stops is also pending.
+Fixed-tick movement and correction replay apply sprint speed-modifier changes before
+travel, including liquid stops and catch-up restarts. Live strict-server acceptance of
+the surface-exit and wet-jump sprint stops is pending.
 Server sprint metadata preserves the local Toggle Sprint request. Held sprint
 restarts after a server clear when admission conditions hold. Native rendered
 acceptance of server resets and corrections remains outstanding.

@@ -15,6 +15,11 @@ impl PhysicsSampleContext {
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ControllerFrame {
     pub tick: u64,
+    /// Attribute modifier state after this tick's local sprint decision.
+    pub speed: Option<crate::movement::speed_authority::EffectiveMovementSpeed>,
+    pub start_sprinting: bool,
+    /// An attribute replacement before this tick; later local edges still apply.
+    pub speed_update: Option<client_world::MovementSpeedAttribute>,
     /// Recovery state after this tick, including freezes that defer the first probe.
     pub anchor_state: AnchorProbeState,
     /// Velocity before this tick applies liquid travel and drag.
@@ -130,11 +135,13 @@ impl ControllerFrame {
                     mode: modes.mode(),
                     forced_sneak: self.forced_sneak,
                     sprinting: input.sprinting,
+                    start_sprinting: false,
                     flight_request: None,
                 }
             }
             Err(error) => return Err(error.into()),
         };
+        self.start_sprinting = choice.start_sprinting && self.sprint_override != Some(false);
         input.mode = self.mode_override.unwrap_or(choice.mode);
         input.sprinting = self
             .sprint_override
@@ -154,7 +161,8 @@ impl ControllerFrame {
             input.sneaking = false;
         }
         modes.restore_controls(input.sprinting, input.sneaking);
-        if self.sprint_override.is_some() || self.mode_override.is_some() {
+        if self.speed.is_none() && (self.sprint_override.is_some() || self.mode_override.is_some())
+        {
             crate::movement::speed_authority::preserve_effective_speed(input, previous_sprinting);
         }
         self.ride_delta = None;

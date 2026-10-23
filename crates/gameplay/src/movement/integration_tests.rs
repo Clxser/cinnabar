@@ -23,6 +23,7 @@ mod transport_tests;
 
 #[path = "integration_tests/crouch_camera.rs"]
 mod crouch_camera;
+mod frame_sprint_speed;
 mod input_lock_sources;
 mod riptide;
 mod sneak_sync;

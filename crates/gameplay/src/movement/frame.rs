@@ -130,6 +130,9 @@ impl LocomotionState {
         movement_speed: &mut LocalMovementSpeedAuthority,
         world: &impl sim::CollisionWorld,
     ) -> bool {
+        if let Some(speed) = physics.take_replayed_movement_speed() {
+            movement_speed.adopt_replayed_speed(speed);
+        }
         movement_ticker.settle_riptide_input(physics);
         movement_effects.begin_frame();
         self.observe_dismount(&frame, movement_ticker.session_generation);
@@ -170,6 +173,7 @@ impl LocomotionState {
                 delta,
                 yaw,
                 PhysicsSampleContext {
+                    movement_speed_attribute: movement_speed.attribute(),
                     pitch: frame.pitch,
                     head_yaw,
                     camera_orientation: frame.camera_orientation,
@@ -229,7 +233,7 @@ impl LocomotionState {
             }
             input.immobile = facts.immobile;
             input.vertical_physics = facts.vertical_physics;
-            movement_speed.set_sprinting(input.sprinting);
+            movement_speed.preview_sprinting(input.sprinting);
             input.movement_speed = movement_speed.prediction_speed();
             let liquid = movement_speed.liquid();
             input.underwater_movement_speed = liquid.underwater;
@@ -239,6 +243,7 @@ impl LocomotionState {
                 delta,
                 input,
                 PhysicsSampleContext {
+                    movement_speed_attribute: movement_speed.attribute(),
                     pitch: frame.pitch,
                     head_yaw,
                     camera_orientation: frame.camera_orientation,
@@ -288,7 +293,11 @@ impl LocomotionState {
         if let Some(sample) = frame.samples.last() {
             self.controls
                 .adopt_tick_sprinting(sample.processed.sprinting);
-            movement_speed.set_sprinting(sample.processed.sprinting);
+            if let Some(speed) = physics.latest_movement_speed() {
+                movement_speed.adopt_replayed_speed(speed);
+            } else {
+                movement_speed.set_sprinting(sample.processed.sprinting);
+            }
         }
         super::control_trace::trace_physics_frame(
             movement_ticker.session_generation,
