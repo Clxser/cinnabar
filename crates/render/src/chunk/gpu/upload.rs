@@ -212,6 +212,7 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
         && arena.quad_len == 0
         && arena.geometry_stream_len == 0
         && arena.migration.is_none()
+        && !arena.growth_blocked
     {
         let initial_target = super::capacity::initial_capacity_target(
             capacity_target,
@@ -230,14 +231,13 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
             first_arena_growth(arena_capacities(&arena), initial_target, arena.limits)
         {
             let growth = super::capacity::backlog_growth(&arena, stream, minimum, initial_target);
-            if !begin_arena_migration_or_minimum(
+            if !begin_arena_migration(
                 &mut arena,
                 uploads.device,
                 stream,
                 growth,
-                minimum,
+                crate::gpu_allocation::Requirement::Optional,
             ) {
-                growth_failed = true;
                 break;
             }
             migrations_started += 1;

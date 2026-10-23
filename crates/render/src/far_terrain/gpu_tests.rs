@@ -293,6 +293,72 @@ fn finer_tiles_evict_coarser_residents_at_the_device_limit() {
     assert!(!gpu.resident.contains_key(&coarse.last().unwrap().key));
 }
 
+/// Failed preallocation preserves draws and eviction, and waits for a release before retrying.
+#[test]
+fn failed_preallocation_keeps_draws_and_backs_off_until_tiles_are_released() {
+    for site in ["far terrain tile slots", "far terrain quads"] {
+        let (device, queue) = device();
+        let failures = crate::gpu_allocation::FailureFlag::new(&device);
+        let mut gpu = FarTerrainGpu::new(&device);
+        let mut coarse = tiles(4);
+        for mesh in &mut coarse {
+            Arc::get_mut(mesh).unwrap().key.level = 2;
+        }
+        populate(&mut gpu, &device, &queue, &coarse);
+        let quads = gpu.quads.id();
+        let slots = (gpu.records.id(), gpu.colours.id());
+        let fine = tiles(1).pop().unwrap();
+        let mut desired = coarse.clone();
+        desired.push(Arc::clone(&fine));
+        let attempts = std::rc::Rc::new(std::cell::Cell::new(0));
+        let observed = attempts.clone();
+        let slot_capacity = gpu.slots;
+        let quad_capacity = gpu.quad_capacity;
+        let _failure = crate::gpu_allocation::inject(move |label, bytes| {
+            let oversized = label == site
+                && match label {
+                    "far terrain tile slots" => {
+                        bytes > u64::from(slot_capacity) * (TILE_RECORD_BYTES + TILE_LAYER_BYTES)
+                    }
+                    "far terrain quads" => bytes > u64::from(quad_capacity) * QUAD_BYTES,
+                    _ => false,
+                };
+            if oversized {
+                observed.set(observed.get() + 1);
+            }
+            oversized
+        });
+        gpu.apply_tiles(&device, &queue, &desired);
+        assert!(!failures.failed(), "optional growth invalidated terrain");
+        assert!(
+            gpu.current(&fine),
+            "retained slots must still admit finer tiles"
+        );
+        assert_eq!(gpu.draws.len(), coarse.len());
+        assert_eq!(gpu.quads.id(), quads);
+        if site == "far terrain tile slots" {
+            assert_eq!((gpu.records.id(), gpu.colours.id()), slots);
+        }
+        let failed_attempts = attempts.get();
+        assert!(failed_attempts > 0);
+        for _ in 0..3 {
+            gpu.apply_tiles(&device, &queue, &desired);
+        }
+        assert_eq!(
+            attempts.get(),
+            failed_attempts,
+            "growth retried without a release"
+        );
+        gpu.apply_tiles(&device, &queue, &[fine]);
+        gpu.apply_tiles(&device, &queue, &desired);
+        assert!(
+            attempts.get() > failed_attempts,
+            "a release must permit another attempt"
+        );
+        assert!(!failures.failed());
+    }
+}
+
 /// Requests a headless adapter for checking real copies rather than no-op resource identities.
 fn copy_device() -> Option<(RenderDevice, RenderQueue)> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -434,7 +500,7 @@ fn growth_without_memory_keeps_storage_and_retries() {
     let (quad_capacity, slots) = (gpu.quad_capacity, gpu.slots);
     {
         let _failure = crate::gpu_allocation::inject(|label, _| label.starts_with("far terrain"));
-        assert!(!gpu.grow_quads(&device, &queue, quad_capacity + 1));
+        assert!(!gpu.grow_quads(&device, &queue, quad_capacity + 1, Requirement::Required));
         gpu.grow_slots(&device, &queue, slots + 1);
         let mask = NearMask::around([0, 0], 32, 8, []);
         assert!(!gpu.apply_mask(&device, &queue, &mask));
@@ -445,8 +511,9 @@ fn growth_without_memory_keeps_storage_and_retries() {
     );
     assert_eq!((gpu.quad_capacity, gpu.slots), (quad_capacity, slots));
     assert_eq!(gpu.mask_words, MASK_HEADER_WORDS as u64);
-    assert!(gpu.grow_quads(&device, &queue, quad_capacity + 1));
+    assert!(gpu.grow_quads(&device, &queue, quad_capacity + 1, Requirement::Required));
     assert!(gpu.quad_capacity > quad_capacity);
+    gpu.invalidate_publication();
     gpu.grow_slots(&device, &queue, slots + 1);
     assert!(gpu.slots > slots);
 }
@@ -519,4 +586,15 @@ fn a_mask_without_memory_is_not_acknowledged() {
     assert!(gpu.applied_mask.is_none());
     assert!(gpu.publish_mask(&device, &queue, Arc::clone(&mask)));
     assert!(gpu.applied_mask.is_some());
+}
+
+/// A fine retained fallback, listed after the selected tiles, still outranks coarse ones.
+#[test]
+fn finer_tiles_rank_first_wherever_they_are_listed() {
+    let key = |level, x| TileKey { level, x, z: 0 };
+    let order: Vec<usize> = upload_order([key(0, 0), key(2, 1), key(0, 5)].into_iter())
+        .into_iter()
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(order, [0, 2, 1]);
 }

@@ -261,7 +261,7 @@ fn terrain_app(culling: bool, direct: bool, hardware: bool) -> Option<App> {
     Some(app)
 }
 
-/// Every checked terrain growth site retries a complete publication on the very next frame.
+/// Required terrain growth retries a complete publication on the very next frame.
 #[test]
 fn every_growth_site_recovers_to_the_fresh_publication() {
     recovery_table(false);
@@ -285,7 +285,6 @@ fn recovery_table(hardware: bool) {
         ("terrain cull storage", true, false),
         ("terrain occlusion storage", true, true),
         ("far terrain quads", false, false),
-        ("far terrain tile slots", false, false),
         ("far terrain near columns", false, false),
         ("retained terrain upload staging", false, false),
         ("double-buffered transparent draw refs", false, false),

@@ -9,9 +9,10 @@ use crate::chunk::*;
 pub(in crate::chunk) fn identity_vertex_offsets(
     render_device: &RenderDevice,
     origin_capacity: usize,
+    requirement: crate::gpu_allocation::Requirement,
 ) -> Option<Buffer> {
     let words = identity_vertex_offset_words(origin_capacity);
-    crate::gpu_allocation::terrain_checked(
+    requirement.checked(
         render_device,
         "terrain identity vertex offsets",
         std::mem::size_of_val(words.as_slice()) as u64,
@@ -63,8 +64,11 @@ pub(in crate::chunk) fn try_create_storage_buffer(
     render_device: &RenderDevice,
     label: &'static str,
     size: u64,
+    requirement: crate::gpu_allocation::Requirement,
 ) -> Option<Buffer> {
-    crate::gpu_allocation::terrain_buffer(render_device, &storage_buffer_descriptor(label, size))
+    requirement.checked(render_device, label, size, || {
+        create_storage_buffer(render_device, label, size)
+    })
 }
 
 /// `None` when the device is out of memory for it.

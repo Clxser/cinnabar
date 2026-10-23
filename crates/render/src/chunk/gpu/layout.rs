@@ -1,4 +1,5 @@
 use crate::chunk::*;
+use crate::gpu_allocation::Requirement;
 use crate::queue_writes::ProfiledQueue as _;
 use crate::upload_staging::{BufferWrite, TerrainUploadStaging};
 use render_scene::ChunkUploadBudget;
@@ -340,8 +341,12 @@ pub(in crate::chunk) fn begin_arena_migration(
     render_device: &RenderDevice,
     stream: ArenaStream,
     growth: ArenaGrowthPlan,
+    requirement: Requirement,
 ) -> bool {
     debug_assert!(arena.migration.is_none());
+    if requirement == Requirement::Optional && arena.growth_blocked {
+        return false;
+    }
     #[cfg(feature = "tracy")]
     let _span = bevy::log::info_span!(
         "terrain.arena_allocate",
@@ -353,14 +358,19 @@ pub(in crate::chunk) fn begin_arena_migration(
         render_device,
         stream.label(),
         growth.new_capacity as u64 * stream.item_bytes(),
+        requirement,
     ) else {
+        arena.growth_blocked |= requirement == Requirement::Optional;
         return false;
     };
     if stream == ArenaStream::Origins {
         // Slots up to the new capacity may be drawn before the copy lands.
-        let Some(offsets) =
-            super::arena::buffers::identity_vertex_offsets(render_device, growth.new_capacity)
-        else {
+        let Some(offsets) = super::arena::buffers::identity_vertex_offsets(
+            render_device,
+            growth.new_capacity,
+            requirement,
+        ) else {
+            arena.growth_blocked |= requirement == Requirement::Optional;
             return false;
         };
         arena.vertex_offset_buffer = offsets;
@@ -386,17 +396,18 @@ pub(in crate::chunk) fn begin_arena_migration_or_minimum(
     growth: ArenaGrowthPlan,
     minimum: ArenaGrowthPlan,
 ) -> bool {
-    begin_arena_migration(arena, render_device, stream, growth)
-        || (minimum.new_capacity < growth.new_capacity
-            && begin_arena_migration(
-                arena,
-                render_device,
-                stream,
-                ArenaGrowthPlan {
-                    new_capacity: minimum.new_capacity,
-                    gpu_copy_bytes: growth.gpu_copy_bytes,
-                },
-            ))
+    (minimum.new_capacity < growth.new_capacity
+        && begin_arena_migration(arena, render_device, stream, growth, Requirement::Optional))
+        || begin_arena_migration(
+            arena,
+            render_device,
+            stream,
+            ArenaGrowthPlan {
+                new_capacity: minimum.new_capacity,
+                gpu_copy_bytes: growth.gpu_copy_bytes,
+            },
+            Requirement::Required,
+        )
 }
 
 /// Render device, queue and retained terrain staging, the path every arena write takes.

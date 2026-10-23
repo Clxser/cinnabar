@@ -101,6 +101,29 @@ pub(crate) fn checked<T>(
     checked_with_owner(device, label, bytes, false, create)
 }
 
+/// Whether failed growth makes a draw invalid or only loses spare capacity.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Requirement {
+    Required,
+    Optional,
+}
+
+impl Requirement {
+    /// Invalidates terrain only when the allocation is required by a draw.
+    pub(crate) fn checked<T>(
+        self,
+        device: &RenderDevice,
+        label: &str,
+        bytes: u64,
+        create: impl FnOnce() -> T,
+    ) -> Option<T> {
+        match self {
+            Self::Required => terrain_checked(device, label, bytes, create),
+            Self::Optional => checked(device, label, bytes, create),
+        }
+    }
+}
+
 /// Captures allocation failures while identifying which publication owns the request.
 fn checked_with_owner<T>(
     device: &RenderDevice,

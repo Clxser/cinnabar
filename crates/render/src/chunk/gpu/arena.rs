@@ -136,6 +136,8 @@ pub(in crate::chunk) struct ChunkGpuArena {
     pub(in crate::chunk) pending_removals: BTreeSet<Entity>,
     pub(in crate::chunk) retirement_budget: TransparentRetirementBudget,
     pub(in crate::chunk) migration: Option<ArenaMigration>,
+    /// A failed speculative allocation waits until arena storage has been released.
+    pub(in crate::chunk) growth_blocked: bool,
 }
 
 pub(in crate::chunk) fn init_chunk_gpu_arena(
@@ -223,6 +225,7 @@ impl ChunkGpuArena {
                 MAX_TRANSPARENT_RETIRED_BYTES,
             ),
             migration: None,
+            growth_blocked: false,
         };
         super::telemetry::log_initial_arena_capacity(&arena, render_device);
         arena
@@ -849,6 +852,7 @@ pub(in crate::chunk) fn allocate_origin(arena: &mut ChunkGpuArena) -> Option<u32
 }
 
 pub(in crate::chunk) fn release_origin(arena: &mut ChunkGpuArena, index: u32) {
+    arena.growth_blocked = false;
     arena.free_origins.push(index);
     while arena.origin_len > 0 {
         let tail = (arena.origin_len - 1) as u32;
@@ -903,6 +907,7 @@ pub(in crate::chunk) fn release_completed_transparent_retirements(
             continue;
         }
         let bytes = retirement.owned_bytes();
+        arena.growth_blocked = false;
         if let Some((range, capacity)) = retirement.quad {
             release_quad_range(
                 &mut arena.quad_len,

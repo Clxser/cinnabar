@@ -600,6 +600,7 @@ mod tests {
                 new_capacity: 1024,
                 gpu_copy_bytes: copy_bytes,
             },
+            crate::gpu_allocation::Requirement::Required,
         ));
         assert_eq!(
             advance_arena_migration(&mut arena, uploads, u64::MAX),
@@ -632,6 +633,7 @@ mod tests {
                 new_capacity: 1024,
                 gpu_copy_bytes: 512 * PACKED_QUAD_BYTES,
             },
+            crate::gpu_allocation::Requirement::Required,
         ));
         assert_eq!(advance_arena_migration(&mut arena, uploads, 128), 128);
         quad_writes(9).issue(&arena, uploads);

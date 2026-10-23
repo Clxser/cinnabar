@@ -1,5 +1,6 @@
 //! Resident far-terrain tiles: quads in one storage buffer, cell colours in one texture array.
 
+use crate::gpu_allocation::Requirement;
 use crate::queue_writes::ProfiledQueue as _;
 use std::{
     collections::{HashMap, HashSet},
@@ -70,6 +71,8 @@ pub(crate) struct FarTerrainGpu {
     colours_view: TextureView,
     slots: u32,
     free_slots: Vec<u32>,
+    /// Optional growth waits until resident storage is released before trying again.
+    growth_blocked: bool,
     mask: Buffer,
     mask_words: u64,
     resident: HashMap<TileKey, Resident>,
@@ -137,6 +140,7 @@ impl FarTerrainGpu {
             colours_view,
             slots: 1,
             free_slots: vec![0],
+            growth_blocked: false,
             mask: storage_buffer(
                 device,
                 "far terrain near columns",
@@ -174,7 +178,7 @@ impl FarTerrainGpu {
     }
 
     /// Uploads one bounded batch, retaining covering draws until their replacements are admitted.
-    /// Returns false for deferred uploads; allocation failures invalidate terrain globally.
+    /// Returns false for deferred uploads; only required allocation failures invalidate terrain.
     pub(crate) fn apply_tiles(
         &mut self,
         device: &RenderDevice,
@@ -199,6 +203,7 @@ impl FarTerrainGpu {
             let resident = self.resident.remove(&key).expect("listed above");
             self.ranges.release(resident.quads);
             self.free_slots.push(resident.slot);
+            self.growth_blocked = false;
         }
         let fallbacks = self
             .resident
@@ -220,7 +225,12 @@ impl FarTerrainGpu {
             .fold(quad_count, |count, (_, resident)| {
                 count.saturating_add(resident.quads.len() as u64)
             });
-        self.grow_quads(device, queue, quad_count.min(u64::from(u32::MAX)) as u32);
+        self.grow_quads(
+            device,
+            queue,
+            quad_count.min(u64::from(u32::MAX)) as u32,
+            Requirement::Optional,
+        );
         // Finer tiles first, retained fallbacks included; when space runs out, coarser
         // residents make room, and only what nothing coarser can free is left out.
         let order = upload_order(tiles.iter().map(|mesh| mesh.key));
@@ -315,6 +325,9 @@ impl FarTerrainGpu {
         {
             let old = self.resident.remove(&mesh.key).expect("reusable resident");
             let quads = old.quads.start..old.quads.start + count;
+            if quads.end < old.quads.end {
+                self.growth_blocked = false;
+            }
             self.ranges.release(quads.end..old.quads.end);
             return Some((old.slot, quads));
         }
@@ -360,7 +373,9 @@ impl FarTerrainGpu {
             ranges.release(self.resident[key].quads.clone());
             let quads = ranges.allocate(count);
             // Grow before retiring anything, so a failed growth leaves every resident drawn.
-            if quads.end > max_quads(device) || !self.grow_quads(device, queue, quads.end) {
+            if quads.end > max_quads(device)
+                || !self.grow_quads(device, queue, quads.end, self.quad_requirement(count))
+            {
                 ranges.release(quads);
                 continue;
             }
@@ -397,6 +412,7 @@ impl FarTerrainGpu {
             let old = self.resident.remove(&key).expect("covered fallback");
             self.ranges.release(old.quads);
             self.free_slots.push(old.slot);
+            self.growth_blocked = false;
         }
         let fallbacks: Vec<_> = self
             .resident
@@ -432,6 +448,9 @@ impl FarTerrainGpu {
 
     /// Discards the old world's coverage and acknowledgements before preparing another world.
     pub(crate) fn invalidate_publication(&mut self) {
+        if !self.resident.is_empty() {
+            self.growth_blocked = false;
+        }
         self.resident.clear();
         self.ranges = Default::default();
         self.free_slots = (0..self.slots).rev().collect();
@@ -455,6 +474,7 @@ impl FarTerrainGpu {
         (self.colours, self.colours_view) = colour_texture(device, 1);
         self.slots = 1;
         self.free_slots = vec![0];
+        self.growth_blocked = false;
     }
 
     /// Writes only one admitted tile's geometry, record and colour layer.
@@ -513,13 +533,13 @@ impl FarTerrainGpu {
                 / TILE_RECORD_BYTES) as u32,
         );
         let slots = required.min(limit).max(1).next_power_of_two().min(limit);
-        if slots <= self.slots {
+        if slots <= self.slots || self.growth_blocked {
             return;
         }
         let bytes = u64::from(slots) * (TILE_RECORD_BYTES + TILE_LAYER_BYTES);
         // Out of memory: no slot frees, so admission evicts lower-priority tiles instead.
         let Some(((colours, view), records)) =
-            crate::gpu_allocation::terrain_checked(device, "far terrain tile slots", bytes, || {
+            crate::gpu_allocation::checked(device, "far terrain tile slots", bytes, || {
                 (
                     colour_texture(device, slots),
                     storage_buffer(
@@ -530,6 +550,7 @@ impl FarTerrainGpu {
                 )
             })
         else {
+            self.growth_blocked = true;
             return;
         };
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -558,16 +579,33 @@ impl FarTerrainGpu {
     ) -> Option<Range<u32>> {
         let max_quads = max_quads(device);
         let range = self.ranges.allocate(count);
-        if range.end > max_quads || !self.grow_quads(device, queue, range.end) {
+        if range.end > max_quads
+            || !self.grow_quads(device, queue, range.end, self.quad_requirement(count))
+        {
             self.ranges.release(range);
             return None;
         }
         Some(range)
     }
 
+    /// Growth is required only if a tile cannot fit even after evicting every other tile.
+    fn quad_requirement(&self, count: u32) -> Requirement {
+        if count > self.quad_capacity {
+            Requirement::Required
+        } else {
+            Requirement::Optional
+        }
+    }
+
     /// Copies only the quad buffer when the selected geometry outgrows its capacity. False,
     /// keeping the old buffer, when the device is out of memory for the larger one.
-    fn grow_quads(&mut self, device: &RenderDevice, queue: &RenderQueue, required: u32) -> bool {
+    fn grow_quads(
+        &mut self,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        required: u32,
+        requirement: Requirement,
+    ) -> bool {
         let capacity = required
             .min(max_quads(device))
             .max(1)
@@ -576,11 +614,16 @@ impl FarTerrainGpu {
         if capacity <= self.quad_capacity {
             return true;
         }
+        if requirement == Requirement::Optional && self.growth_blocked {
+            return false;
+        }
         let Some(quads) = checked_storage_buffer(
             device,
             "far terrain quads",
             u64::from(capacity) * QUAD_BYTES,
+            requirement,
         ) else {
+            self.growth_blocked |= requirement == Requirement::Optional;
             return false;
         };
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -599,9 +642,12 @@ impl FarTerrainGpu {
         words.extend_from_slice(mask.words());
         if words.len() as u64 > self.mask_words {
             let mask_words = (words.len() as u64).next_power_of_two();
-            let Some(buffer) =
-                checked_storage_buffer(device, "far terrain near columns", mask_words * 4)
-            else {
+            let Some(buffer) = checked_storage_buffer(
+                device,
+                "far terrain near columns",
+                mask_words * 4,
+                Requirement::Required,
+            ) else {
                 return false;
             };
             self.mask_words = mask_words;
@@ -668,10 +714,13 @@ fn storage_buffer(device: &RenderDevice, label: &'static str, size: u64) -> Buff
 }
 
 /// [`storage_buffer`], or `None` when the device is out of memory for it.
-fn checked_storage_buffer(device: &RenderDevice, label: &'static str, size: u64) -> Option<Buffer> {
-    crate::gpu_allocation::terrain_checked(device, label, size, || {
-        storage_buffer(device, label, size)
-    })
+fn checked_storage_buffer(
+    device: &RenderDevice,
+    label: &'static str,
+    size: u64,
+    requirement: Requirement,
+) -> Option<Buffer> {
+    requirement.checked(device, label, size, || storage_buffer(device, label, size))
 }
 
 /// Creates cell-colour layers that support both uploads and GPU migration.
@@ -949,19 +998,3 @@ mod tests;
 #[cfg(test)]
 #[path = "coverage_tests.rs"]
 mod coverage_tests;
-
-#[cfg(test)]
-mod upload_order_tests {
-    use super::*;
-
-    /// A fine retained fallback, listed after the selected tiles, still outranks coarse ones.
-    #[test]
-    fn finer_tiles_rank_first_wherever_they_are_listed() {
-        let key = |level, x| TileKey { level, x, z: 0 };
-        let order: Vec<usize> = upload_order([key(0, 0), key(2, 1), key(0, 5)].into_iter())
-            .into_iter()
-            .map(|(index, _)| index)
-            .collect();
-        assert_eq!(order, [0, 2, 1]);
-    }
-}

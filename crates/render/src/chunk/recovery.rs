@@ -152,6 +152,9 @@ pub(in crate::chunk) fn finish_publication(world: &mut World) {
 impl ChunkGpuArena {
     /// Reuses physical buffers after all previous frame commands have been submitted.
     fn invalidate_publication(&mut self) {
+        if !self.allocations.is_empty() || self.migration.is_some() {
+            self.growth_blocked = false;
+        }
         self.allocations.clear();
         self.transparent_liquids = default();
         self.retired_allocations.clear();

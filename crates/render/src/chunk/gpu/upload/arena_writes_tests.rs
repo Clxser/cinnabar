@@ -284,6 +284,7 @@ fn mixed_streams_match_word_encoder_with_and_without_migration_and_staging() {
                         new_capacity: (bytes / stride) as usize * 2,
                         gpu_copy_bytes: bytes,
                     },
+                    crate::gpu_allocation::Requirement::Required,
                 ));
                 advance_arena_migration(&mut arena, uploads, 128);
             }
@@ -350,6 +351,7 @@ fn overlapping_ranges_preserve_original_stream_order_in_both_destinations() {
                 new_capacity,
                 gpu_copy_bytes: 0,
             },
+            crate::gpu_allocation::Requirement::Required,
         ));
         let mut writes = ArenaWrites::default();
         // Deliberately append in chunk order; stream order still places models before lights.
