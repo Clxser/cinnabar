@@ -342,6 +342,7 @@ fn maximum_frame_uses_ready_slots_and_keeps_failed_and_pending_storage_quarantin
 #[test]
 fn growth_without_memory_keeps_slots_and_retries() {
     let (device, _, _, _) = setup(64);
+    let terrain = crate::gpu_allocation::FailureFlag::new(&device);
     let mut pool = Pool::new(
         &device,
         Shape {
@@ -359,6 +360,10 @@ fn growth_without_memory_keeps_slots_and_retries() {
     }
     assert_eq!(pool.slots.len(), 2);
     assert_eq!(pool.stats.grown_slots, 0);
+    assert!(
+        !terrain.failed(),
+        "optional growth must keep terrain drawable"
+    );
     pool.record_miss(1, 4 * 64);
     pool.grow();
     assert_eq!(pool.slots.len(), 4);

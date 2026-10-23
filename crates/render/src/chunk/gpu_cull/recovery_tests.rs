@@ -273,7 +273,7 @@ fn terrain_recovery_matches_fresh_gpu_bytes() {
     recovery_table(true);
 }
 
-/// Exercises the same error-scope boundary as production, including late staging growth.
+/// Exercises required publication allocations and optional late staging growth.
 fn recovery_table(hardware: bool) {
     let sites = [
         ("packed chunk quads", false, false),
@@ -290,6 +290,7 @@ fn recovery_table(hardware: bool) {
         ("retained terrain upload staging", false, false),
         ("double-buffered transparent draw refs", false, false),
         ("terrain arena upload", false, false),
+        ("terrain recovery biome upload", false, false),
         ("terrain indirect upload", false, false),
         ("far terrain tile upload", false, false),
         ("far terrain mask upload", false, false),
@@ -303,6 +304,12 @@ fn recovery_table(hardware: bool) {
             return;
         };
         let mut recovering = terrain_app(culling, direct, hardware).unwrap();
+        if site == "terrain recovery biome upload" {
+            for _ in 0..4 {
+                frame(&mut recovering);
+            }
+            fail_transparent_growth(&mut recovering);
+        }
         for _ in 0..4 {
             frame(&mut fresh);
         }
@@ -324,8 +331,10 @@ fn recovery_table(hardware: bool) {
         {
             let injected = Rc::clone(&failures);
             let observed = Rc::clone(&observed);
-            let _failure = crate::gpu_allocation::inject(move |label, _| {
-                observed.borrow_mut().insert(label.to_owned());
+            let _failure = crate::gpu_allocation::inject_with_owner(move |label, _, terrain| {
+                if terrain || label == site {
+                    observed.borrow_mut().insert(label.to_owned());
+                }
                 let fail = label == site;
                 injected.set(injected.get() + usize::from(fail));
                 fail
@@ -346,6 +355,14 @@ fn recovery_table(hardware: bool) {
                     );
                 }
                 if site == "retained terrain upload staging" {
+                    assert!(
+                        recovering
+                            .sub_app(RenderApp)
+                            .world()
+                            .resource::<ChunkGpuArena>()
+                            .bind_group
+                            .is_some()
+                    );
                     recovering
                         .sub_app(RenderApp)
                         .world()
@@ -364,7 +381,11 @@ fn recovery_table(hardware: bool) {
                 .world()
                 .resource::<ChunkGpuUploadStats>()
                 .chunk_updates,
-            KEYS.len(),
+            if site == "retained terrain upload staging" {
+                0
+            } else {
+                KEYS.len()
+            },
             "{site} did not republish CPU geometry"
         );
         assert_eq!(
@@ -398,6 +419,69 @@ fn recovery_table(hardware: bool) {
         "allocation sites missing a failure case: {:?}",
         observed.borrow()
     );
+}
+
+/// Recovery upload failures suppress terrain until a complete retry succeeds.
+#[test]
+fn recovery_biome_upload_without_memory_retries() {
+    let mut app = terrain_app(false, false, false).unwrap();
+    for _ in 0..4 {
+        frame(&mut app);
+    }
+    let expected = published(&mut app);
+    fail_transparent_growth(&mut app);
+    let failures = Rc::new(Cell::new(0));
+    {
+        let observed = Rc::clone(&failures);
+        let _failure = crate::gpu_allocation::inject(move |label, _| {
+            let failed = label == "terrain recovery biome upload";
+            observed.set(observed.get() + usize::from(failed));
+            failed
+        });
+        for _ in 0..2 {
+            frame(&mut app);
+            assert!(
+                app.sub_app(RenderApp)
+                    .world()
+                    .resource::<ChunkGpuArena>()
+                    .bind_group
+                    .is_none()
+            );
+        }
+    }
+    assert_eq!(failures.get(), 2);
+    frame(&mut app);
+    assert!(
+        app.sub_app(RenderApp)
+            .world()
+            .resource::<ChunkGpuArena>()
+            .bind_group
+            .is_some()
+    );
+    assert_eq!(published(&mut app), expected);
+}
+
+/// A failed publication withdraws shader-pack expansion and camera and shadow draws together.
+#[cfg(feature = "shaderpacks")]
+#[test]
+fn failed_publication_withdraws_shaderpack_work() {
+    use crate::shaderpack::geometry::ShaderpackGeometry;
+    let mut app = terrain_app(false, false, false).unwrap();
+    for _ in 0..4 {
+        frame(&mut app);
+    }
+    let world = app.sub_app_mut(RenderApp).world_mut();
+    let geometry = ShaderpackGeometry::pending_fixture(world.resource::<RenderDevice>());
+    assert_eq!(geometry.pending_work(), [1, 1, 1]);
+    world.insert_resource(geometry);
+    fail_transparent_growth(&mut app);
+    let world = app.sub_app_mut(RenderApp).world_mut();
+    crate::chunk::recovery::finish_publication(world);
+    assert_eq!(
+        world.resource::<ShaderpackGeometry>().pending_work(),
+        [0; 3]
+    );
+    assert!(!world.resource::<ShaderpackGeometry>().all_sections_fit());
 }
 
 /// A bounded replay stays hidden until all previously published permits have been replayed.

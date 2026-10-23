@@ -106,11 +106,25 @@ pub(in crate::chunk) fn begin_recovery(world: &mut World) {
     if let Some(mut far) = world.get_resource_mut::<crate::far_terrain::FarTerrainGpu>() {
         far.invalidate_publication();
     }
+    #[cfg(feature = "shaderpacks")]
+    if let Some(mut geometry) =
+        world.get_resource_mut::<crate::shaderpack::geometry::ShaderpackGeometry>()
+    {
+        geometry.invalidate_publication();
+    }
+    let device = world.resource::<RenderDevice>();
     let queue = world.resource::<RenderQueue>();
-    queue.profiled_write_buffer(
-        &world.resource::<ChunkGpuArena>().biome_buffer,
-        0,
-        bytemuck::cast_slice(&FALLBACK_BIOME_RECORD),
+    crate::gpu_allocation::terrain_checked(
+        device,
+        "terrain recovery biome upload",
+        std::mem::size_of_val(&FALLBACK_BIOME_RECORD) as u64,
+        || {
+            queue.profiled_write_buffer(
+                &world.resource::<ChunkGpuArena>().biome_buffer,
+                0,
+                bytemuck::cast_slice(&FALLBACK_BIOME_RECORD),
+            )
+        },
     );
 }
 
@@ -127,6 +141,12 @@ pub(in crate::chunk) fn finish_publication(world: &mut World) {
     arena.transparent_bind_group = None;
     gpu_cull::suppress_publication(world);
     crate::far_terrain::suppress_publication(world);
+    #[cfg(feature = "shaderpacks")]
+    if let Some(mut geometry) =
+        world.get_resource_mut::<crate::shaderpack::geometry::ShaderpackGeometry>()
+    {
+        geometry.invalidate_publication();
+    }
 }
 
 impl ChunkGpuArena {

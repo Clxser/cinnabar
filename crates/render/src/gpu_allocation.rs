@@ -98,6 +98,17 @@ pub(crate) fn checked<T>(
     bytes: u64,
     create: impl FnOnce() -> T,
 ) -> Option<T> {
+    checked_with_owner(device, label, bytes, false, create)
+}
+
+/// Captures allocation failures while identifying which publication owns the request.
+fn checked_with_owner<T>(
+    device: &RenderDevice,
+    label: &str,
+    bytes: u64,
+    _terrain: bool,
+    create: impl FnOnce() -> T,
+) -> Option<T> {
     #[cfg(not(target_arch = "wasm32"))]
     let scope = device
         .wgpu_device()
@@ -113,7 +124,10 @@ pub(crate) fn checked<T>(
     };
     #[cfg(test)]
     let failed = failed
-        || FAILURE.with_borrow_mut(|hook| hook.as_mut().is_some_and(|hook| hook(label, bytes)));
+        || FAILURE.with_borrow_mut(|hook| {
+            hook.as_mut()
+                .is_some_and(|hook| hook(label, bytes, _terrain))
+        });
     if failed {
         warn_once(label, bytes);
         None
@@ -129,7 +143,7 @@ pub(crate) fn terrain_checked<T>(
     bytes: u64,
     create: impl FnOnce() -> T,
 ) -> Option<T> {
-    let resource = checked(device, label, bytes, create);
+    let resource = checked_with_owner(device, label, bytes, true, create);
     if resource.is_none()
         && let Some(observer) = observers()
             .lock()
@@ -275,13 +289,19 @@ impl<K: PartialEq> FailedRequests<K> {
 }
 
 #[cfg(test)]
-type FailureHook = Box<dyn FnMut(&str, u64) -> bool>;
+type FailureHook = Box<dyn FnMut(&str, u64, bool) -> bool>;
 #[cfg(test)]
 thread_local! { static FAILURE: std::cell::RefCell<Option<FailureHook>> = const { std::cell::RefCell::new(None) }; }
 
 /// Installs a scoped, thread-local failure injector at the real error-scope boundary.
 #[cfg(test)]
-pub(crate) fn inject(hook: impl FnMut(&str, u64) -> bool + 'static) -> impl Drop {
+pub(crate) fn inject(mut hook: impl FnMut(&str, u64) -> bool + 'static) -> impl Drop {
+    inject_with_owner(move |label, bytes, _| hook(label, bytes))
+}
+
+/// Injects failures with a flag identifying requests that invalidate terrain publication.
+#[cfg(test)]
+pub(crate) fn inject_with_owner(hook: impl FnMut(&str, u64, bool) -> bool + 'static) -> impl Drop {
     struct Reset;
     impl Drop for Reset {
         /// Removes the injector even when a regression assertion panics.

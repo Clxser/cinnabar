@@ -197,7 +197,7 @@ impl Pool {
         .entered();
         for _ in 0..added {
             // Out of memory: writes keep taking the queue path and growth retries after misses.
-            let Some(slot) = crate::gpu_allocation::terrain_checked(
+            let Some(slot) = crate::gpu_allocation::checked(
                 &self.device,
                 self.shape.name,
                 self.shape.slot_bytes,

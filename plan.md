@@ -213,7 +213,9 @@ and resource qualification; they do not imply these systems need to be written.
   verified; complete server-form and gameplay acceptance remains open.
   Terrain allocation failures rebuild publications from retained CPU meshes. Recovery
   replays make bounded progress with a zero upload budget and use minimal arena growth
-  until a complete frame succeeds. Native low-memory recovery acceptance remains open.
+  until a complete frame succeeds. Failed publications also withdraw shader-pack expansion
+  and draws; optional staging growth leaves valid publications intact. Native low-memory
+  recovery acceptance remains open.
 - [ ] Close mesh-neighbour readiness acceptance with slow-delivery and seam coverage.
   Distinguish eligible horizontal columns from the provisional full-neighbour/quiet-time
   fallback; its timeout is not established native behavior.
