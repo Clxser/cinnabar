@@ -75,7 +75,6 @@ impl LocalPhysicsController {
             .controller_history
             .back()
             .map_or(Default::default(), |frame| frame.speed);
-        movement_speed.adopt_server_sprinting(Some(self.modes.sprinting()));
         let mut speed_updates: Vec<_> = context
             .movement_speed_attribute
             .map(super::super::speed_authority::MovementSpeedUpdate::Attribute)
@@ -85,6 +84,7 @@ impl LocalPhysicsController {
         for update in &speed_updates {
             update.apply(&mut movement_speed);
         }
+        movement_speed.adopt_server_sprinting(Some(self.modes.sprinting()));
         let sneak_request = input.sneaking;
         input.pitch_degrees = f64::from(context.pitch);
         input.fly_speed = context.mode_intent.fly_speed;

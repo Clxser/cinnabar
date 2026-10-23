@@ -217,3 +217,79 @@ fn pending_speed_effect_survives_correction_and_frame_replay_adoption() {
         );
     }
 }
+
+/// A first speed effect followed by live sprint metadata keeps its speed across replay.
+#[test]
+fn first_speed_effect_before_live_sprint_metadata_matches_replay() {
+    let (mut physics, mut ticker) = walked_physics(2);
+    let anchor = ticker.completed_tick();
+    let mut locals = super::super::LocomotionState::default();
+    let mut effects = super::super::LocalMovementEffectTimeline::default();
+    let mut speed = super::super::LocalMovementSpeedAuthority::default();
+    speed.begin_session(7, 0);
+    apply_control(
+        CommittedControlEvent::LocalMovementEffect {
+            sequence: 1,
+            event: protocol::ActorEffectEvent {
+                dimension: 0,
+                actor_runtime_id: 42,
+                action: protocol::ActorEffectAction::Add,
+                effect_id: protocol_ids::Effect::Speed.wire_value(),
+                amplifier: 0,
+                particles: false,
+                ambient: false,
+                duration_ticks: 600,
+                tick: 0,
+            },
+        },
+        &mut ticker,
+        &mut physics,
+        &mut effects,
+        &mut speed,
+    );
+    apply_control(
+        CommittedControlEvent::LocalMovementFlags {
+            sequence: 2,
+            tick: 0,
+            flags: flags(|flags| flags.sprinting = Some(true)),
+        },
+        &mut ticker,
+        &mut physics,
+        &mut effects,
+        &mut speed,
+    );
+    assert!(locals.advance(
+        speed_frame(semantic_input::ActionPhase {
+            held: true,
+            ..Default::default()
+        }),
+        &mut physics,
+        &mut ticker,
+        &mut effects,
+        &mut speed,
+        &VersionedFloor(1),
+    ));
+    let live_state = physics.state().cloned();
+    let live_speed = speed.current();
+    assert_eq!(physics.latest_sneak_sprint(), Some((false, true)));
+    assert_eq!(
+        reconcile_timeline_rewind(&mut ticker, &mut physics, anchor, &VersionedFloor(1)).unwrap(),
+        PhysicsCorrectionOutcome::Replayed {
+            corrected_tick: anchor,
+            replayed_ticks: 1,
+        }
+    );
+    let mut frame = speed_frame(Default::default());
+    frame.delta = Duration::ZERO;
+    assert!(locals.advance(
+        frame,
+        &mut physics,
+        &mut ticker,
+        &mut effects,
+        &mut speed,
+        &VersionedFloor(1),
+    ));
+    assert_eq!(physics.state(), live_state.as_ref());
+    assert_eq!(speed.current(), live_speed);
+    assert_eq!(live_speed, Some(f64::from(0.1_f32 * 1.2)));
+}
