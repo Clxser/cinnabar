@@ -1,5 +1,5 @@
 use super::*;
-use launcher::local_worlds::world::NewWorld;
+use launcher::local_worlds::world::{Generator, NewWorld};
 
 /// Losing a UI reply must not destroy the same request receiver while an original sender remains.
 #[test]
@@ -9,6 +9,7 @@ fn native_world_worker_retains_original_request_receiver_after_ui_reply_closes()
     let world = manager
         .create(&NewWorld {
             name: "Original cleanup".into(),
+            generator: Generator::Flat,
             ..Default::default()
         })
         .unwrap();

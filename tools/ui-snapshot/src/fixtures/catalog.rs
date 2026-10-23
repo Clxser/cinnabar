@@ -702,12 +702,6 @@ pub(super) const STATES: &[State] = &[
         },
     },
     State {
-        name: "settings-video",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: shader_pack::settings_video,
-    },
-    State {
         name: "settings-video-shader-shortcut",
         size: SIZE,
         gui_scale: GUI_SCALE,

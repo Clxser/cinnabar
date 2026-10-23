@@ -19,6 +19,8 @@ mod shader_options;
 mod shader_pack;
 mod social_settings;
 mod touch_editor;
+#[cfg(feature = "test-support")]
+pub(crate) use touch_editor::TouchUtilityView;
 mod updates;
 
 use std::sync::Arc;
@@ -71,6 +73,9 @@ pub enum Fixture {
     TouchEditor {
         phase: u8,
     },
+    /// Gameplay touch controls and their utility overlays.
+    #[cfg(feature = "test-support")]
+    TouchUtilities(TouchUtilityView),
     Loading(ui::LoadingStage),
     Chat {
         draft: &'static str,
