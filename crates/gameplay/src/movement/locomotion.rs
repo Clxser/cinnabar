@@ -372,10 +372,7 @@ impl ModeTracker {
         self.sneaking = observed.sneaking || forced_sneak;
         self.sprinting = sprinting
             && !liquid_stop
-            && !matches!(
-                mode,
-                MovementMode::Crawling | MovementMode::Gliding | MovementMode::Riding
-            );
+            && !matches!(mode, MovementMode::Crawling | MovementMode::Riding);
         self.sprint_request_released =
             (self.sprint_request_released || liquid_stop) && !self.sprinting;
         Ok(ModeChoice {
