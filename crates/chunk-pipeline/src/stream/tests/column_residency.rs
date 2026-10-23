@@ -292,3 +292,112 @@ fn captured_column_membership_survives_resends_but_not_eviction() {
         "full retirement preserves the membership clock"
     );
 }
+
+/// Retiring a strip leaves unchanged air clean and coalesces the surviving boundary mesh.
+#[test]
+fn retiring_strip_keeps_surviving_air_clean_and_geometry_coalesced() {
+    let mut stream = stream_with_unrelated_columns(0);
+    let survivor = ChunkKey::new(0, 0, 0);
+    let geometry = SubChunkKey::from_chunk(survivor, 0);
+    let stored_air = SubChunkKey::from_chunk(survivor, 1);
+    let range = vanilla_dimension_range(0).unwrap();
+    let heights = range.base_sub_chunk_y
+        ..range.base_sub_chunk_y + i32::try_from(range.sub_chunk_count).unwrap();
+    for y in heights.clone() {
+        let key = SubChunkKey::from_chunk(survivor, y);
+        if key == geometry || key == stored_air {
+            stream
+                .authority
+                .commit_sub_chunk(
+                    key,
+                    uniform_sub_chunk(if key == geometry { 1 } else { RAW_IDS.air }),
+                )
+                .unwrap();
+            stream.sync_resident(key);
+        } else {
+            stream.record_known_air(key);
+        }
+    }
+    let departing = [-1, 0, 1].map(|z| ChunkKey::new(0, -1, z));
+    for column in departing {
+        for y in heights.clone() {
+            stream.record_known_air(SubChunkKey::from_chunk(column, y));
+        }
+    }
+    let mut successor = None;
+    for column in departing {
+        stream.evict_column(column);
+        for y in heights.clone() {
+            let key = SubChunkKey::from_chunk(survivor, y);
+            if key != geometry {
+                assert!(
+                    stream.is_mesh_clean(key),
+                    "unchanged surviving air was dirtied: {key:?}"
+                );
+            }
+            let removed = SubChunkKey::from_chunk(column, y);
+            assert!(!stream.resident.contains(&removed));
+            assert!(
+                stream.revisions.dirty(removed).is_some(),
+                "own withdrawal must still publish"
+            );
+        }
+        let pending = stream.mesh_jobs.pending[&geometry];
+        if let Some((revision, since)) = successor {
+            assert_eq!(
+                (pending.revision, pending.since),
+                (revision, since),
+                "one pending boundary mesh must cover later neighbour retirements"
+            );
+        } else {
+            successor = Some((pending.revision, pending.since));
+        }
+    }
+    assert_eq!(
+        stream.mesh_jobs.pending.len(),
+        departing.len() * heights.count() + 1
+    );
+    assert!(stream.authority.terrain().sub_chunk(geometry).is_some());
+    assert!(
+        !stream.known_air.contains(&stored_air),
+        "the stored-air case uses palette evidence"
+    );
+}
+
+/// An old mesh acknowledgement cannot clear the successor created by retiring a neighbour.
+#[test]
+fn retiring_neighbours_preserves_pending_successor_and_rejects_old_ack() {
+    let mut stream = stream_with_unrelated_columns(0);
+    let geometry = SubChunkKey::new(0, 0, 0, 0);
+    stream
+        .authority
+        .commit_sub_chunk(geometry, uniform_sub_chunk(1))
+        .unwrap();
+    stream.sync_resident(geometry);
+    let old_since = Instant::now();
+    let old_revision = stream.mark_dirty_exact_with_priority(geometry, old_since, true);
+    stream.mesh_jobs.remove_pending(&geometry);
+    stream.mesh_jobs.in_flight.insert(geometry, old_revision);
+    stream.urgent_mesh_in_flight.insert(geometry);
+    let departing = [SubChunkKey::new(0, -1, 0, 0), SubChunkKey::new(0, 0, 0, -1)];
+    for key in departing {
+        stream.record_known_air(key);
+    }
+    stream.evict_column(departing[0].chunk());
+    let successor = stream.mesh_jobs.pending[&geometry];
+    assert_ne!(successor.revision, old_revision);
+    assert!(successor.urgent);
+    stream.evict_column(departing[1].chunk());
+    assert_eq!(
+        stream.mesh_jobs.pending[&geometry].revision,
+        successor.revision
+    );
+    assert_eq!(stream.mesh_jobs.pending[&geometry].since, successor.since);
+    assert!(stream.mesh_jobs.pending[&geometry].urgent);
+    stream.acknowledge_mesh_upload(geometry, old_revision, old_since, old_since);
+    assert!(!stream.is_mesh_clean(geometry));
+    assert_eq!(
+        stream.revisions.dirty(geometry).unwrap().revision,
+        successor.revision
+    );
+}

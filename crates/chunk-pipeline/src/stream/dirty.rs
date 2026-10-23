@@ -408,7 +408,12 @@ impl WorldStream {
         }
     }
     /// Pending work takes its snapshot at dispatch, so repeated invalidations need one record.
-    fn invalidate_mesh_with_priority(&mut self, key: SubChunkKey, now: Instant, urgent: bool) {
+    pub(super) fn invalidate_mesh_with_priority(
+        &mut self,
+        key: SubChunkKey,
+        now: Instant,
+        urgent: bool,
+    ) {
         if let Some(pending) = self.mesh_jobs.pending.get_mut(&key) {
             // No new scan record follows, so a deferred nearby record is offered directly.
             self.mesh_jobs.refresh.wake_near(key);

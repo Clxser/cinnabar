@@ -153,7 +153,7 @@ impl WorldStream {
             self.mark_light_dirty_exact_with_priority(key, false);
         }
         for key in mesh_dirty {
-            self.mark_dirty_exact(key, now);
+            self.invalidate_mesh_with_priority(key, now, false);
         }
         if !retired.is_empty() || retired_indexes.is_some() {
             #[cfg(feature = "tracy")]
@@ -168,7 +168,7 @@ impl WorldStream {
     }
 
     /// Resident keys outside the removed columns that sample a removed key: face neighbours
-    /// for light, and the full 3×3×3 neighbourhood for meshing. Every removed key belongs to
+    /// for light, and non-empty sections in the 3×3×3 neighbourhood for meshing. Each removed key belongs to
     /// a retired column, so only the eight surrounding columns can hold survivors.
     fn surviving_neighbours_of(
         &self,
@@ -202,7 +202,10 @@ impl WorldStream {
                         }
                         let below = key.y.saturating_sub(1);
                         let above = key.y.saturating_add(1);
-                        if removed_heights.range(below..=above).next().is_some() {
+                        if removed_heights.range(below..=above).next().is_some()
+                            && self.terrain_removal_kind(key)
+                                != render_api::TerrainRemovalKind::Empty
+                        {
                             mesh.insert(key);
                         }
                     }

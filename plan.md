@@ -226,7 +226,9 @@ Displayed-frame pacing and complete resize/platform acceptance remain incomplete
   same publication limits and poll deadline. Staged worker completions receive a bounded
   share first, so fresh removals cannot starve staged empty or geometry results.
   Late blob replies for retired transactions no longer discard valid, still-needed
-  blobs in the same response. Sustained high-speed hardware qualification remains open.
+  blobs in the same response. Column retirement preserves unchanged neighboring air
+  and coalesces pending boundary meshes. Sustained high-speed hardware qualification
+  remains open.
   Sparse startup can complete without a publisher update after terrain decodes, stream
   and render work drain, and a later GPU frame completes. Empty-world initialization is
   verified; complete server-form and gameplay acceptance remains open.
