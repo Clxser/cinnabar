@@ -229,6 +229,7 @@ impl PlayerInventoryLedger {
             view
         });
         self.observe_furnace_cells();
+        self.observe_recipe_selection();
     }
 
     pub(super) fn ensure_queue_capacity(&self) -> Result<(), InventoryGestureError> {
