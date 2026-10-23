@@ -294,7 +294,7 @@ impl LocomotionState {
             self.controls
                 .adopt_tick_sprinting(sample.processed.sprinting);
             if let Some(speed) = physics.latest_movement_speed() {
-                movement_speed.adopt_replayed_speed(speed);
+                movement_speed.adopt_recorded_speed(speed);
             } else {
                 movement_speed.set_sprinting(sample.processed.sprinting);
             }

@@ -25,6 +25,7 @@ mod transport_tests;
 mod crouch_camera;
 mod frame_sprint_speed;
 mod input_lock_sources;
+mod replay_live_speed;
 mod riptide;
 mod sneak_sync;
 mod swim_sprint_replay;

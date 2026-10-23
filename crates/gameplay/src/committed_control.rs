@@ -128,7 +128,7 @@ impl CommittedGameplayState<'_> {
                 && self.movement.physics_is_authorized()
                 && let Some((edited, speed)) = self.physics.retime_movement_speed(tick, attribute)
             {
-                self.speed.adopt_replayed_speed(speed);
+                self.speed.adopt_recorded_speed(speed);
                 rewind = edited;
             }
             if (underwater.is_some() || lava.is_some())

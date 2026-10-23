@@ -100,6 +100,8 @@ pub struct LocalMovementSpeedAuthority {
     dimension: i32,
     last_sequence: Option<u64>,
     speed: EffectiveMovementSpeed,
+    /// An accepted attribute or effect write not yet represented in controller history.
+    pending_attribute: bool,
     /// Render-only sprint response while the next fixed tick is still pending.
     preview_current: Option<f64>,
     active_speed_effect: Option<i32>,
@@ -122,6 +124,7 @@ impl LocalMovementSpeedAuthority {
         self.dimension = dimension;
         self.last_sequence = None;
         self.speed = EffectiveMovementSpeed::default();
+        self.pending_attribute = false;
         self.preview_current = None;
         self.active_speed_effect = None;
         self.last_liquid_sequence = None;
@@ -136,6 +139,7 @@ impl LocalMovementSpeedAuthority {
         self.dimension = dimension;
         self.last_sequence = None;
         self.speed = EffectiveMovementSpeed::default();
+        self.pending_attribute = false;
         self.preview_current = None;
         self.active_speed_effect = None;
         self.last_liquid_sequence = None;
@@ -223,6 +227,7 @@ impl LocalMovementSpeedAuthority {
             }
         }
         self.speed = EffectiveMovementSpeed::authoritative(attribute, self.speed.sprinting);
+        self.pending_attribute = true;
         self.preview_current = None;
         true
     }
@@ -294,6 +299,7 @@ impl LocalMovementSpeedAuthority {
             }
         }
         self.speed.attribute = Some(attribute);
+        self.pending_attribute = true;
         self.preview_current = None;
         self.active_speed_effect = active_speed_effect;
     }
@@ -320,9 +326,19 @@ impl LocalMovementSpeedAuthority {
         self.preview_current = None;
     }
 
-    /// Carries the replayed modifier state into future movement frames.
+    /// Restores replayed controls while preserving attribute writes absent from history.
     pub(crate) fn adopt_replayed_speed(&mut self, speed: EffectiveMovementSpeed) {
+        if self.pending_attribute {
+            self.adopt_server_sprinting(Some(speed.sprinting()));
+        } else {
+            self.adopt_recorded_speed(speed);
+        }
+    }
+
+    /// Adopts speed after a completed live tick or a retained attribute rewrite.
+    pub(crate) fn adopt_recorded_speed(&mut self, speed: EffectiveMovementSpeed) {
         self.speed = speed;
+        self.pending_attribute = false;
         self.preview_current = None;
     }
 }
