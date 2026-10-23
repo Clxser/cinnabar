@@ -368,6 +368,7 @@ and rendered qualification remain incomplete.
   carried sprites; remaining special shapes and animation still need matched comparisons.
   Crystal and spike items use their flat carried sprites.
   Shulker previews apply each face brightness once.
+  Lectern previews turn their reading surface toward the viewer.
   Furnace-family previews use their authored carried front faces.
   Shared cube face sheets are bounded coverage.
   Block-model previews cull one-sided rear faces and preserve two-sided planes.
