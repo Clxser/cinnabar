@@ -38,6 +38,12 @@ impl Manager {
 }
 
 impl NativeLocalWorldSelection {
+    /// Leaves only this original opening on the worlds worker, allowing a configured warm server.
+    /// This may write the process pipe and must not run on the frame or reactor thread.
+    pub fn request_leave(&self) {
+        self.opening.request_leave();
+    }
+
     /// Stops only this original process on the existing worlds worker, preserving replacements.
     /// This may write the process pipe and must not run on the frame or reactor thread.
     pub fn request_close(&self) {

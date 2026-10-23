@@ -201,18 +201,19 @@ impl LocalWorlds {
         self.dispatch(vec![Effect::Prepare]);
     }
 
-    /// Leaves the local world: its server saves and stops.
+    /// Leaves the local world: its server saves and stops, or briefly keeps running where
+    /// starts are slow.
     pub fn leave_world(&mut self) {
         self.playing = false;
         self.paused = false;
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
         if let Some(client) = self.client.as_ref() {
             if let Some(selection) = self.native_playing.take() {
-                client.close_native(selection);
+                client.leave_native(selection);
             }
             return;
         }
-        self.dispatch(vec![Effect::Close]);
+        self.dispatch(vec![Effect::Leave]);
         if self.client.is_some() {
             self.input(Input::Refresh);
         }

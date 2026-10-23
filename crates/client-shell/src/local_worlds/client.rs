@@ -37,7 +37,7 @@ enum Request {
         image: Arc<[u8]>,
     },
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-    CloseNative(launcher_host::local_worlds::NativeLocalWorldSelection),
+    LeaveNative(launcher_host::local_worlds::NativeLocalWorldSelection),
 }
 
 /// Enqueues retirement of one original opening when its session owner ends.
@@ -52,7 +52,7 @@ pub struct NativeLocalWorldRetirement {
 impl Drop for NativeLocalWorldRetirement {
     fn drop(&mut self) {
         if let Some(selection) = self.selection.take() {
-            let _ = self.requests.send(Request::CloseNative(selection));
+            let _ = self.requests.send(Request::LeaveNative(selection));
         }
     }
 }
@@ -130,8 +130,8 @@ impl WorldsClient {
                 while let Ok(request) = effect_rx.recv() {
                     let effect = match request {
                         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-                        Request::CloseNative(selection) => {
-                            selection.request_close();
+                        Request::LeaveNative(selection) => {
+                            selection.request_leave();
                             continue;
                         }
                         Request::Effect(effect) => effect,
@@ -169,7 +169,7 @@ impl WorldsClient {
                     }
                     // Only an open holds the gate, so a revoked client never starts a world
                     // while slow requests (a Docker probe) never delay a detach.
-                    let gate = matches!(effect, Effect::Open(_)).then_some(gate);
+                    let gate = matches!(effect, Effect::Open(_) | Effect::Prestart).then_some(gate);
                     let cancelled = || *lock(&worker_revoked);
                     let event = execute(&manager, effect, &cancelled);
                     drop(gate);
@@ -217,11 +217,11 @@ impl WorldsClient {
 
     /// Queues original-opening cleanup on the same process/effect worker.
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-    pub(super) fn close_native(
+    pub(super) fn leave_native(
         &self,
         selection: launcher_host::local_worlds::NativeLocalWorldSelection,
     ) {
-        let _ = self.effects.send(Request::CloseNative(selection));
+        let _ = self.effects.send(Request::LeaveNative(selection));
     }
 
     /// Keeps the same request receiver available until the session releases its original opening.
@@ -324,12 +324,20 @@ fn execute(
             manager.close();
             return None;
         }
+        Effect::Leave => {
+            manager.leave();
+            return None;
+        }
         Effect::SetPaused(paused) => {
             let _ = manager.set_paused(paused);
             return None;
         }
         Effect::Prepare => {
             manager.prepare();
+            return None;
+        }
+        Effect::Prestart => {
+            manager.prestart();
             return None;
         }
         Effect::OpenUrl(_) => return None,

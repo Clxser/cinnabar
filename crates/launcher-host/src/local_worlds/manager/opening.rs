@@ -1,7 +1,8 @@
 //! An opaque identity for the actual running server opening, without owning or stopping it.
 
+use super::report::target_for;
 use super::*;
-use bridge::LocalWorldInfo;
+use bridge::{LocalTarget, LocalWorldInfo, Transport};
 use std::{io, net::SocketAddr, sync::Weak, time::Instant};
 
 /// Holds weak ownership so retained remote cleanup cannot keep its local server manager alive.
@@ -9,6 +10,7 @@ use std::{io, net::SocketAddr, sync::Weak, time::Instant};
 pub(crate) struct HostOpening {
     manager: Weak<Inner>,
     instance: Weak<dyn Instance>,
+    visible: Weak<()>,
     generation: u64,
     world: LocalWorldInfo,
     target: LocalTarget,
@@ -22,7 +24,7 @@ impl HostOpening {
         let instance = life
             .instance
             .as_ref()
-            .filter(|_| life.state == WorldState::Running)
+            .filter(|_| life.state == WorldState::Running && !life.standby)
             .ok_or_else(unavailable)?;
         if !matches!(instance.exited().try_recv(), Err(TryRecvError::Empty)) {
             return Err(unavailable());
@@ -31,6 +33,7 @@ impl HostOpening {
         Ok(Self {
             manager: Arc::downgrade(&manager.inner),
             instance: Arc::downgrade(instance),
+            visible: Arc::downgrade(&life.opening),
             generation: life.generation,
             world: LocalWorldInfo {
                 id: world.id.clone(),
@@ -86,11 +89,12 @@ impl HostOpening {
         let Some(instance) = life
             .instance
             .as_ref()
-            .filter(|_| life.state == WorldState::Running)
+            .filter(|_| life.state == WorldState::Running && !life.standby)
         else {
             return false;
         };
         self.manager.ptr_eq(&Arc::downgrade(manager))
+            && self.visible.ptr_eq(&Arc::downgrade(&life.opening))
             && life.generation == self.generation
             && self.instance.ptr_eq(&Arc::downgrade(instance))
             && life
@@ -112,9 +116,22 @@ impl HostOpening {
         }
     }
 
+    /// Leaves only this visible opening, allowing its original process to remain warm.
+    pub(super) fn request_leave(&self) {
+        let Some(inner) = self.manager.upgrade() else {
+            return;
+        };
+        let manager = Manager { inner };
+        let life = lock(&manager.inner.life);
+        if self.current(&manager.inner, &life) {
+            manager.leave_locked(life);
+        }
+    }
+
     /// Matches exact opening ownership without accepting display text as a locator.
     pub(crate) fn same(&self, other: &Self) -> bool {
         self.manager.ptr_eq(&other.manager)
+            && self.visible.ptr_eq(&other.visible)
             && self.instance.ptr_eq(&other.instance)
             && self.generation == other.generation
     }

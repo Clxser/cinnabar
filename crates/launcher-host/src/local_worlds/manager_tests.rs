@@ -2,11 +2,13 @@ use std::time::Duration;
 
 use launcher::local_worlds::world::{Generator, UnavailableReason};
 
-use super::*;
+use super::{report::target_for, *};
 use crate::local_worlds::{
     provision::Platform,
     test_support::{FakeInstance, FakeRunner, scratch},
 };
+use bridge::{LocalWorld, Transport};
+use launcher::local_worlds::world::WorldStatus;
 
 const MAC: Platform = Platform {
     os: "darwin",
@@ -1043,3 +1045,6 @@ mod host;
 
 #[path = "manager_settings_tests.rs"]
 mod settings;
+#[cfg(unix)]
+#[path = "manager_standby_tests.rs"]
+mod standby;

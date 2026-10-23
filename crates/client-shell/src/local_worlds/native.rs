@@ -16,7 +16,7 @@ impl LocalWorlds {
         self.playing = false;
         self.menu = WorldsMenu::default();
         self.input(Input::Refresh);
-        self.dispatch(vec![Effect::LoadPrefs]);
+        self.dispatch(vec![Effect::LoadPrefs, Effect::Prestart]);
         Ok(())
     }
 
