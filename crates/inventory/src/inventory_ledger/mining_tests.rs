@@ -15,7 +15,7 @@ fn destroy_change(
     damage: i32,
     maximum: i32,
 ) -> protocol::PredictedSlotChange {
-    let stack = ledger.displayed_stack(0).unwrap().clone();
+    let stack = ledger.backing_stack(0).unwrap().clone();
     let from =
         protocol::VerifiedNetworkItemStack::try_new(stack.clone(), stack.nbt_digest).unwrap();
     let legacy_request_id = protocol::next_legacy_request_id().unwrap();
@@ -115,6 +115,50 @@ fn retiring_client_wear_history_keeps_the_latest_backing_damage() {
         protocol::item_extra_damage(&ledger.displayed_stack(0).unwrap().extra_data),
         Some(40)
     );
+}
+
+#[test]
+fn an_accepted_earlier_pickup_retires_client_wear_without_duplicating_the_tool() {
+    for damage in [6, 251] {
+        let mut ledger = ledger_with_slot_zero();
+        let mut stack = ledger.backing_stack(0).unwrap().clone();
+        stack.count = 1;
+        ledger.apply(&InventoryEvent::Slot(protocol::InventorySlotEvent {
+            identity: protocol::SlotIdentity {
+                container: protocol::ContainerIdentity::window(0),
+                slot: 0,
+            },
+            stack,
+            storage_item: None,
+        }));
+        acknowledge_personal_open(&mut ledger, 2);
+        let pickup = ledger.begin_click(0).unwrap();
+        assert!(ledger.mark_transport_enqueued(20));
+        let change = destroy_change(&ledger, damage, 250);
+        assert!(ledger.settle_destroy_slot_change(0, &change));
+        ledger.apply(&InventoryEvent::Response(ItemStackResponseEvent {
+            responses: [StackResponse {
+                status: StackResponseStatus::Accepted,
+                request_id: pickup,
+                containers: [
+                    correction(CONTAINER_NAME_COMBINED_HOTBAR_AND_INVENTORY, 0, 0, 0),
+                    correction(CONTAINER_NAME_CURSOR, 0, 1, 77),
+                ]
+                .into(),
+            }]
+            .into(),
+        }));
+        assert!(ledger.backing_stack(0).is_none());
+        assert_eq!(ledger.cursor_stack().unwrap().stack_network_id, 77);
+        ledger.apply(&mining_response(
+            change.legacy_request_id,
+            StackResponseStatus::Accepted,
+            damage,
+            88,
+        ));
+        assert!(ledger.backing_stack(0).is_none());
+        assert_eq!(ledger.cursor_stack().unwrap().count, 1);
+    }
 }
 
 /// Builds a server durability correction for the predicted inventory slot.

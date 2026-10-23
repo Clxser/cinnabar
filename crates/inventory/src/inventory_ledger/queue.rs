@@ -663,6 +663,22 @@ impl PlayerInventoryLedger {
             self.mark_cell_recovery(cell);
         }
         self.note_authoritative_write(cell);
+        // An accepted pickup or drop can remove the backing item before a later HUD break.
+        // Its empty result also supersedes a breaking tool's empty rollback history.
+        if count == 0
+            && cell == requested
+            && request.mining.is_none()
+            && prediction.is_some_and(|prediction| prediction.held.is_none())
+        {
+            self.discard_requests(|later| {
+                later.request_id < request.request_id
+                    && later.touches(cell)
+                    && later
+                        .mining
+                        .as_ref()
+                        .is_some_and(|mining| mining.legacy_request_id.is_some())
+            });
+        }
         self.publish_request_cell(request, cell, from.as_ref(), held, false);
     }
 
