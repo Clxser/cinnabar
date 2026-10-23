@@ -5,14 +5,9 @@ use crate::session_wire::CoreMessage;
 use bedrock_client_tokio::PacketIo;
 use bedrock_protocol_1_26_51::enums::ConnectionDisconnectFailReason;
 
-/// Requires an account-backed local dial and its actual typed server disconnect.
-pub(super) fn qualifies(
-    local_account: bool,
-    connection: &Connection,
-    error: &ProtocolError,
-) -> bool {
-    local_account
-        && error.server_disconnect().is_some()
+/// Recognizes only the original failed Login's actual typed keyless disconnect.
+pub(super) fn is_keyless(connection: &Connection, error: &ProtocolError) -> bool {
+    error.server_disconnect().is_some()
         && matches!(
             super::super::connection::current_terminal(connection),
             Ok(Some(CoreMessage::Disconnect(disconnect)))
@@ -27,6 +22,7 @@ pub(super) async fn retry(
     mut connection: Connection,
     target: &NativeConnectionTarget,
     login: &SessionLogin<'_>,
+    mut identity: SessionIdentity,
     deadline: tokio::time::Instant,
 ) -> Result<NegotiatedConnection, ProtocolError> {
     target.local_http_address().map_err(failure)?;
@@ -50,6 +46,9 @@ pub(super) async fn retry(
         reason = "server_verification_keys_unavailable",
         "retrying local server login with local identity"
     );
-    // The second call has no account handoff, so it cannot retry again.
-    Box::pin(super::negotiate(target, login, None, deadline)).await
+    let mut credentials = Credentials::new(None)?;
+    identity.xuid.clear();
+    credentials.identity = Some(identity);
+    // Without account credentials this attempt cannot authorize another retry.
+    Box::pin(super::attempt(target, login, credentials, deadline)).await
 }

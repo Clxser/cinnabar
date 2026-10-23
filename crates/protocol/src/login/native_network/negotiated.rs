@@ -48,9 +48,24 @@ pub(super) async fn negotiate(
             "native join does not accept a core target override",
         )));
     }
-    let local_account =
-        target.transport == crate::NativeTransport::LocalNetherNetHttp && authentication.is_some();
-    let mut credentials = Credentials::new(authentication)?;
+    let credentials = Credentials::new(authentication)?;
+    attempt(target, login, credentials, deadline).await
+}
+
+/// Negotiates once with the original credentials, retaining only local presentation for a retry.
+async fn attempt(
+    target: &NativeConnectionTarget,
+    login: &SessionLogin<'_>,
+    mut credentials: Credentials,
+    deadline: tokio::time::Instant,
+) -> Result<NegotiatedConnection, ProtocolError> {
+    let retry_identity = if target.transport == crate::NativeTransport::LocalNetherNetHttp
+        && credentials.authentication.is_some()
+    {
+        credentials.identity.clone()
+    } else {
+        None
+    };
     let (transport, address) = if target.transport == crate::NativeTransport::Addressed {
         let identity = credentials
             .transport_identity()
@@ -120,8 +135,10 @@ pub(super) async fn negotiate(
     let (packs, identity) = match result {
         Ok(result) => result,
         Err(error) => {
-            if local_retry::qualifies(local_account, &connection, &error) {
-                return local_retry::retry(connection, target, login, deadline).await;
+            if let Some(identity) = retry_identity
+                && local_retry::is_keyless(&connection, &error)
+            {
+                return local_retry::retry(connection, target, login, identity, deadline).await;
             }
             return Err(error);
         }
@@ -310,7 +327,9 @@ pub(super) async fn negotiate_connected(
         let claims = match input {
             LoginData::Desktop(login) => {
                 let mut claims = super::super::client_data::login_client_data(
-                    login.display_name,
+                    identity.as_ref().map_or(login.display_name, |identity| {
+                        identity.display_name.as_str()
+                    }),
                     login.client_random_id,
                     login.skin.as_ref(),
                     login.settings,

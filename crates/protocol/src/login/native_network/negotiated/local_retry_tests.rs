@@ -64,9 +64,17 @@ async fn reject(
 }
 
 /// Drives one original HTTP fixture; no task, real account or second deadline is introduced.
-async fn attempts(
-    first_reason: ConnectionDisconnectFailReason,
-) -> (usize, bool, bool, bool, String) {
+struct Attempts {
+    count: usize,
+    authenticated: bool,
+    first_retired: bool,
+    offline: bool,
+    identity_preserved: bool,
+    reason: String,
+}
+
+/// Retains actual wire observations after every original owner is closed.
+async fn attempts(first_reason: ConnectionDisconnectFailReason) -> Attempts {
     tokio::time::timeout(Duration::from_secs(20), async {
         let FixtureRoute {
             mut listener,
@@ -108,7 +116,12 @@ async fn attempts(
                 UNIX_EPOCH + Duration::from_secs(provider::SERVICE_SECONDS),
                 BatchLimits::default().max_decoded_bytes,
             )
-            .is_ok_and(|identity| {
+            .ok();
+            let original_uuid = authenticated
+                .as_ref()
+                .and_then(|identity| identity.player_identity())
+                .map(|player| player.uuid().to_string());
+            let authenticated = authenticated.is_some_and(|identity| {
                 identity.xuid() == provider::XUID
                     && identity.public_key() == provider::key().verifying_key()
             });
@@ -119,7 +132,7 @@ async fn attempts(
             };
             let Some(mut second) = next else {
                 drop(first.close());
-                return (1, authenticated, false, false);
+                return (1, authenticated, false, false, false);
             };
             let (codec, request) = login(&mut second).await;
             let first_retired = first.session.closed().now_or_never().is_some();
@@ -129,7 +142,13 @@ async fn attempts(
                 BatchLimits::default().max_decoded_bytes,
                 |_| Ok(()),
             )
-            .is_ok();
+            .ok();
+            let identity_preserved = offline.as_ref().is_some_and(|identity| {
+                original_uuid.as_deref() == Some(identity.claimed_identity())
+                    && identity.claimed_xuid().is_empty()
+                    && identity.claimed_playfab_title_id().is_empty()
+            });
+            let offline = offline.is_some();
             reject(&second, &codec, ConnectionDisconnectFailReason::Serverfull).await;
             let count = tokio::select! {
                 peer = listener.accept() => {
@@ -140,7 +159,13 @@ async fn attempts(
             };
             drop(second.close());
             drop(first.close());
-            (count, authenticated, first_retired, offline)
+            (
+                count,
+                authenticated,
+                first_retired,
+                offline,
+                identity_preserved,
+            )
         };
         let (result, observed) = tokio::join!(client, server);
         listener.close().await.unwrap();
@@ -155,7 +180,14 @@ async fn attempts(
             .server_disconnect()
             .map(|event| event.reason)
             .unwrap_or_default();
-        (observed.0, observed.1, observed.2, observed.3, reason)
+        Attempts {
+            count: observed.0,
+            authenticated: observed.1,
+            first_retired: observed.2,
+            offline: observed.3,
+            identity_preserved: observed.4,
+            reason,
+        }
     })
     .await
     .expect("finite actual local HTTP retry fixture stalled")
@@ -163,32 +195,34 @@ async fn attempts(
 
 #[tokio::test]
 async fn local_http_keyless_retry_retires_original_and_remains_offline_and_bounded() {
-    let (count, authenticated, first_retired, offline, reason) =
-        attempts(ConnectionDisconnectFailReason::Hostwithoutkeys).await;
+    let attempt = attempts(ConnectionDisconnectFailReason::Hostwithoutkeys).await;
     assert_eq!(
-        count, 2,
+        attempt.count, 2,
         "a typed keyless local rejection must retry exactly once"
     );
     assert!(
-        authenticated,
+        attempt.authenticated,
         "the first actual Login must retain provider authentication"
     );
     assert!(
-        first_retired,
+        attempt.first_retired,
         "the first association must retire before the second Login"
     );
-    assert!(offline, "the retry must use a fresh offline Login");
+    assert!(attempt.offline, "the retry must use a fresh offline Login");
+    assert!(
+        attempt.identity_preserved,
+        "offline retry must preserve the original player UUID without account claims"
+    );
     assert_eq!(
-        reason, "Serverfull",
+        attempt.reason, "Serverfull",
         "the second rejection must be returned without another retry"
     );
 }
 
 #[tokio::test]
 async fn local_http_disconnect_text_does_not_authorize_offline_retry() {
-    let (count, authenticated, _, _, reason) =
-        attempts(ConnectionDisconnectFailReason::Serverfull).await;
-    assert_eq!(count, 1);
-    assert!(authenticated);
-    assert_eq!(reason, "Serverfull");
+    let attempt = attempts(ConnectionDisconnectFailReason::Serverfull).await;
+    assert_eq!(attempt.count, 1);
+    assert!(attempt.authenticated);
+    assert_eq!(attempt.reason, "Serverfull");
 }
