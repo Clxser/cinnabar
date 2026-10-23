@@ -495,14 +495,18 @@ fn recovery_ignores_capacity_hints_that_exceed_available_memory() {
     let expected = published(&mut app);
     fail_transparent_growth(&mut app);
     let world = app.sub_app_mut(RenderApp).world_mut();
-    let available_bytes = world.resource::<ChunkGpuArena>().quad_buffer.size();
+    let arena = world.resource::<ChunkGpuArena>();
+    let available_bytes = arena
+        .quad_buffer
+        .size()
+        .max(arena.geometry_stream_buffer.size())
+        .max(arena.origin_buffer.size())
+        .max(arena.biome_buffer.size());
     app.world_mut()
         .insert_resource(render_scene::chunk::capacity::ChunkArenaCapacityHint {
             sections: usize::MAX,
         });
-    let _failure = crate::gpu_allocation::inject(move |label, bytes| {
-        label == "packed chunk quads" && bytes > available_bytes
-    });
+    let _failure = crate::gpu_allocation::inject(move |_, bytes| bytes > available_bytes);
     frame(&mut app);
     assert!(
         app.sub_app(RenderApp)
