@@ -650,6 +650,12 @@ pub(super) const STATES: &[State] = &[
         fixture: minecraft_import::preview,
     },
     State {
+        name: "chat-colored-mentions",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: chat::colored_mentions,
+    },
+    State {
         name: "chat-mentions",
         size: SIZE,
         gui_scale: GUI_SCALE,
@@ -724,6 +730,12 @@ pub(super) const STATES: &[State] = &[
         size: SIZE,
         gui_scale: GUI_SCALE,
         fixture: shader_pack::empty_library,
+    },
+    State {
+        name: "settings-shaders-empty-without-drops",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::empty_library_without_drops,
     },
     State {
         name: "settings-shaders-narrow-library",

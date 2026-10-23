@@ -164,6 +164,7 @@ pub struct MenuRuntime {
     shader_pack_reload: bool,
     shader_pack_removing: Option<std::sync::Arc<str>>,
     shader_pack_remove_request: Option<String>,
+    shader_pack_import: renderer::PackImport,
     vsync_override: Option<bool>,
     display_name: String,
     launcher: bool,
@@ -333,6 +334,9 @@ impl MenuRuntime {
     }
 
     pub fn set_visible(&mut self, visible: bool) {
+        if !visible {
+            self.apply_global_resources_on_leave();
+        }
         self.visible = visible;
         if !visible {
             self.field = None;

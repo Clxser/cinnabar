@@ -20,6 +20,8 @@ reads = [
 ]
 
 [features]
+# Adds on-demand metadata attribution to client Tracy captures.
+tracy = []
 # Fixture builders and semantic observations for other crates' tests.
 test-support = []
 native-networking = ["dep:bedrock-client-tokio", "dep:bedrock-net", "dep:p384", "dep:rand", "dep:nethernet", "dep:nethernet-tokio", "dep:rustls", "dep:reqwest", "dep:provider_http", "dep:url", "dep:webpki-roots", "dep:md-5", "uuid/serde", "uuid/v5", "serde_json/raw_value"]

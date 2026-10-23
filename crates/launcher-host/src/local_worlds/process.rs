@@ -92,6 +92,14 @@ pub(crate) trait Instance: Send + Sync {
             "native world bridge requires Dragonfly",
         ))
     }
+    /// Whether the server has exited with success, so it saved its world on the way out.
+    fn exited_cleanly(&self) -> bool {
+        false
+    }
+    /// Runs one server console command; unsupported unless the server takes commands.
+    fn console(&self, _command: &str) -> io::Result<()> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
     /// Makes `xuid` the running server's only operator, or nobody, replacing its launch grant.
     /// Returns once the server acknowledges it, or cancellation or failure ends the wait. Servers of
     /// runners other than [`HostGrant::WhenReady`] cannot change their grant and return an error.
@@ -535,6 +543,9 @@ impl Process {
     /// Writes `line` and a newline to the server's console input; succeeding means only that the
     /// pipe took it, not that the server has read or applied it.
     pub(crate) fn send(&self, line: &str) -> io::Result<()> {
+        if line.contains(['\n', '\r']) {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
         let mut stdin = lock(&self.stdin);
         let pipe = stdin
             .as_mut()
@@ -620,6 +631,10 @@ impl Instance for Process {
             ));
         }
         self.send(&format!("{}{body}", bridge::host_world::contract::COMMAND))
+    }
+
+    fn exited_cleanly(&self) -> bool {
+        self.has_exited() && lock(&self.status).is_some_and(|status| status.success())
     }
 
     /// A Dragonfly server has no operator list to change.
