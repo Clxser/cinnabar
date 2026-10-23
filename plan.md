@@ -372,6 +372,7 @@ and rendered qualification remain incomplete.
   Lectern previews turn their reading surface toward the viewer.
   Furnace-family previews use their authored carried front faces.
   Barrel previews use a closed south-facing pose with authored face mapping and UV turns.
+  Piston previews use their carried body textures independently of placed geometry.
   Shared cube face sheets are bounded coverage.
   Firework-star previews preserve their mask artwork and per-stack colors.
   Decorated pot inventory sides exclude the texture border; broader pose and tint acceptance remains open.
