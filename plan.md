@@ -584,7 +584,8 @@ native packet order remains incomplete.
 
 Held placement still needs confirmation of direction/face/intercept retention, repeat
 timing and reset behavior across slot/item changes, unavailable selection and deferred
-presses. Preserve the explicit incomplete scope in the
+presses. Empty hands and non-block items repeat a block's own interaction; bucket
+repeats and item-specific uses on blocks remain incomplete. Preserve the explicit incomplete scope in the
 [held-placement reference](docs/reference/held-block-placement.md).
 
 See [inventory ownership](docs/architecture/inventory.md),
