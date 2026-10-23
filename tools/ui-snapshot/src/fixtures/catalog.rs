@@ -4,7 +4,7 @@
 use super::chat::chat_server_content;
 use super::chat::{
     chat_background, chat_command_background, chat_command_targets, chat_completion,
-    chat_history_width, chat_mentions,
+    chat_history_width, chat_mentions, colored_mentions,
 };
 #[cfg(feature = "test-support")]
 use super::cosmetics;
@@ -653,7 +653,7 @@ pub(super) const STATES: &[State] = &[
         name: "chat-colored-mentions",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: chat::colored_mentions,
+        fixture: colored_mentions,
     },
     State {
         name: "chat-mentions",
