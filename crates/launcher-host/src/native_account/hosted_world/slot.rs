@@ -14,6 +14,15 @@ struct Slot {
 pub(crate) struct HostSlot(Arc<Mutex<Slot>>);
 
 impl HostSlot {
+    /// Reads the original reservation and retained cleanup without account, filesystem or service I/O.
+    pub(crate) fn is_empty(&self) -> bool {
+        let slot = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        !slot.reserved && slot.pending.is_none()
+    }
+
     /// Reserves capacity before any account or publication I/O; pending cleanup blocks another host.
     pub(crate) fn open(
         &self,

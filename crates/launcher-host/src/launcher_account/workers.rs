@@ -2,6 +2,29 @@
 
 use super::*;
 
+/// Keeps credential replacement behind actual workers and any unresolved original host membership.
+/// Process shutdown waits only for the worker tracker, so uncertain remote cleanup cannot hang Quit.
+#[derive(Clone)]
+pub struct AccountWorkerLifetime {
+    pub(super) workers: TaskTracker,
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    pub(super) host: native_host::Retirement,
+}
+
+impl AccountWorkerLifetime {
+    /// Reports whether the original account's workers and retained host obligation have retired.
+    pub fn is_empty(&self) -> bool {
+        if !self.workers.is_empty() {
+            return false;
+        }
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        if !self.host.is_empty() {
+            return false;
+        }
+        true
+    }
+}
+
 impl LauncherAccount {
     /// Starts existing workers, retaining final process-stop observation on the event owner.
     pub(super) fn start(

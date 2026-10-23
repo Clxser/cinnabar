@@ -1,5 +1,8 @@
 //! Original finite signed account/membership fixture bound to the actual running world opening.
 
+#[cfg(feature = "test-support")]
+mod retirement;
+
 use super::super::*;
 use bedrock_services::test_support::{HOSTED_WORLD_ISSUER, HostedPeer};
 use std::{path::Path, time::SystemTime};

@@ -7,6 +7,9 @@ use crate::{
 };
 use tokio::sync::watch;
 
+mod retirement;
+pub(super) use retirement::Retirement;
+
 #[derive(Clone)]
 pub(super) enum Desired {
     Idle,
@@ -132,6 +135,15 @@ async fn run(
             }
         };
         retiring = Some(intent.clone());
+        shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .native_host_retirement
+            .select(&intent);
+        #[cfg(all(test, feature = "test-support"))]
+        if let Some(selected) = shared.lock().unwrap().native_host_selected.take() {
+            let _ = selected.send(());
+        }
         let cutoff = deadline();
         let activation = async {
             let world = intent.open(Arc::clone(&account), cutoff).await?;
@@ -177,4 +189,26 @@ async fn run(
 /// Gives each explicit activation/cleanup decision a finite application edge budget.
 fn deadline() -> Instant {
     Instant::now() + crate::native_account::ACQUISITION_TIMEOUT
+}
+
+/// Starts only the real host worker while other fixture account services remain unauthenticated.
+#[cfg(all(test, feature = "test-support"))]
+pub(super) fn start_test(
+    account: Arc<NativeAccount>,
+    shared: Arc<Mutex<Snapshot>>,
+    runtime: Handle,
+    tasks: &TaskTracker,
+) -> tokio::sync::oneshot::Receiver<()> {
+    let (desired, changed) = watch::channel(Desired::Idle);
+    let (selected, observed) = tokio::sync::oneshot::channel();
+    {
+        let mut snapshot = shared.lock().unwrap();
+        snapshot.native_host_wake = Some(desired);
+        snapshot.native_host_selected = Some(selected);
+    }
+    thread::spawn(crate::worker::tracked(
+        move || runtime.block_on(run(account, shared, changed)),
+        tasks,
+    ));
+    observed
 }

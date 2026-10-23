@@ -36,6 +36,7 @@ mod shared_players;
 mod workers;
 #[cfg(test)]
 use featured_feed::card as featured_card;
+pub use workers::AccountWorkerLifetime;
 mod events;
 mod invites;
 mod message_reports;
@@ -67,6 +68,13 @@ const PING_INTERVAL: Duration = Duration::from_secs(15);
 
 #[derive(Default)]
 struct Snapshot {
+    #[cfg(all(
+        test,
+        feature = "test-support",
+        feature = "native-networking",
+        not(target_arch = "wasm32")
+    ))]
+    native_host_selected: Option<tokio::sync::oneshot::Sender<()>>,
     #[cfg(all(test, feature = "native-networking", not(target_arch = "wasm32")))]
     pending_presence_probe: Option<Arc<native_presence::tests::final_stop::PendingPresence>>,
     #[cfg(all(
@@ -107,6 +115,8 @@ struct Snapshot {
     native_presence_account: Option<Arc<crate::native_account::NativeAccount>>,
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     native_host_wake: Option<tokio::sync::watch::Sender<native_host::Desired>>,
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    native_host_retirement: native_host::Retirement,
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     native_host_invitation: Option<crate::native_account::HostedInvitation>,
     /// The Cinnabar API identity and visibility applied by the original event worker.
@@ -295,9 +305,13 @@ impl LauncherAccount {
         self.presence_lifetime.clone()
     }
 
-    /// Retains completion of this account's workers and protected cleanup after resource removal.
-    pub fn worker_lifetime(&self) -> TaskTracker {
-        self.workers.clone()
+    /// Retains original worker completion and hosted membership cleanup after resource removal.
+    pub fn worker_lifetime(&self) -> AccountWorkerLifetime {
+        AccountWorkerLifetime {
+            workers: self.workers.clone(),
+            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+            host: self.with(|snapshot| snapshot.native_host_retirement.clone()),
+        }
     }
 
     /// Supplies only the actual played opening; the existing native worker owns all service IO.

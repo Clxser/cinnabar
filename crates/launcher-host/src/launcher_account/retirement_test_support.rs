@@ -51,6 +51,30 @@ pub fn account(
     start(namespace, runtime, tasks, None)
 }
 
+/// Exercises the original host coordinator without enabling unrelated authenticated fixture feeds.
+#[cfg(test)]
+pub(crate) fn hosted_account(
+    namespace: &std::path::Path,
+    original: Arc<NativeAccount>,
+    runtime: Handle,
+    tasks: TaskTracker,
+) -> (LauncherAccount, oneshot::Receiver<()>) {
+    let account = LauncherAccount::start(
+        namespace.join("artwork"),
+        Snapshot::native(None, ""),
+        runtime.clone(),
+        tasks,
+        std::future::pending(),
+    );
+    let observed = native_host::start_test(
+        original,
+        Arc::clone(&account.snapshot),
+        runtime,
+        &account.workers,
+    );
+    (account, observed)
+}
+
 /// Holds the actual canceled Home worker after it releases its lease, independently of title cleanup.
 pub fn account_with_reader_cleanup(
     namespace: &std::path::Path,

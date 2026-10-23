@@ -253,6 +253,11 @@ pub struct NativeHostIntent {
 }
 
 impl NativeHostIntent {
+    /// Retains only this original membership slot, without keeping the server manager alive.
+    pub(crate) fn host_slot(&self) -> crate::native_account::HostSlot {
+        self.manager.inner.native_host.clone()
+    }
+
     /// Compares exact server ownership without touching credentials or the filesystem on the frame.
     pub(crate) fn same(&self, other: &Self) -> bool {
         self.opening.same(&other.opening)

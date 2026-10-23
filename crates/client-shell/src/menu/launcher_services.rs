@@ -11,7 +11,7 @@ pub struct LauncherServices {
     running: Option<Attachment>,
     retirement_blocked: bool,
     presence_lifetime: Option<launcher_host::launcher_account::TitlePresenceLifetime>,
-    workers: Option<tokio_util::task::TaskTracker>,
+    workers: Option<launcher_host::launcher_account::AccountWorkerLifetime>,
     /// Covers session cleanup independently of this account service's worker group.
     session_workers: Option<tokio_util::task::TaskTracker>,
 }

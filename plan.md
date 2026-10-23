@@ -93,7 +93,9 @@ behavior/skin archives use identity validation for relay; strict rendering admis
 is unchanged and applying those archives remains unsupported.
 
 Account replacement and sign-out wait for original session, publisher and account
-worker retirement before credential mutation. Owning cancellation, contention,
+worker retirement before credential mutation. Unconfirmed original hosted membership
+continues to block replacement after its worker exits; process shutdown waits for
+the finite workers separately. Owning cancellation, contention,
 process handoff and stale-account controls pass. Ordinary native friend UI uses only
 current opaque account selections. Controlled Messaging and Legacy fixtures pass signed
 game initialization, a live marker, ordinary disconnect and exact membership/owner
