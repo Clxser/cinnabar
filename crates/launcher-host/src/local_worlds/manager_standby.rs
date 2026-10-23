@@ -95,6 +95,7 @@ impl Manager {
             "keeping the left local world's server for {} s",
             keep.as_secs()
         );
+        let fallback = expired.clone();
         let started = self.background(move |manager| {
             let cancelled = crossbeam_channel::select! {
                 recv(expired.receiver()) -> _ => true,
@@ -105,7 +106,7 @@ impl Manager {
             }
         });
         if !started {
-            self.close();
+            self.end_standby(&fallback);
         }
     }
 
