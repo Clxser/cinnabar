@@ -207,7 +207,7 @@ fn client_break_responses_correct_damage_and_reject_only_the_latest_change() {
         .packets
         .iter()
         .filter_map(observe_input_transaction)
-        .last()
+        .next_back()
         .unwrap();
     assert_eq!(second.actions[0].from_item.stack_network_id, None);
     assert_eq!(
