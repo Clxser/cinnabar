@@ -370,6 +370,7 @@ and rendered qualification remain incomplete.
   Shulker previews apply each face brightness once.
   Lectern previews turn their reading surface toward the viewer.
   Furnace-family previews use their authored carried front faces.
+  Barrel previews use a closed south-facing pose with authored face mapping and UV turns.
   Shared cube face sheets are bounded coverage.
   Decorated pot inventory sides exclude the texture border; broader pose and tint acceptance remains open.
   Block-model previews cull one-sided rear faces and preserve two-sided planes.
