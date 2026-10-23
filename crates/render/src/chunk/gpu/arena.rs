@@ -138,6 +138,8 @@ pub(in crate::chunk) struct ChunkGpuArena {
     pub(in crate::chunk) migration: Option<ArenaMigration>,
     /// A failed speculative allocation waits until arena storage has been released.
     pub(in crate::chunk) growth_blocked: bool,
+    /// Advances only when owned ranges become reusable.
+    pub(in crate::chunk) release_revision: u64,
 }
 
 pub(in crate::chunk) fn init_chunk_gpu_arena(
@@ -226,6 +228,7 @@ impl ChunkGpuArena {
             ),
             migration: None,
             growth_blocked: false,
+            release_revision: 0,
         };
         super::telemetry::log_initial_arena_capacity(&arena, render_device);
         arena
@@ -852,6 +855,7 @@ pub(in crate::chunk) fn allocate_origin(arena: &mut ChunkGpuArena) -> Option<u32
 }
 
 pub(in crate::chunk) fn release_origin(arena: &mut ChunkGpuArena, index: u32) {
+    arena.release_revision = arena.release_revision.wrapping_add(1);
     arena.growth_blocked = false;
     arena.free_origins.push(index);
     while arena.origin_len > 0 {
@@ -907,6 +911,7 @@ pub(in crate::chunk) fn release_completed_transparent_retirements(
             continue;
         }
         let bytes = retirement.owned_bytes();
+        arena.release_revision = arena.release_revision.wrapping_add(1);
         arena.growth_blocked = false;
         if let Some((range, capacity)) = retirement.quad {
             release_quad_range(

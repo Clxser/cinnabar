@@ -145,9 +145,9 @@ pub(in crate::chunk) struct GpuUploadReservation {
 }
 
 impl GpuUploadReservation {
-    /// Bounds replay work independently of fresh uploads, admitting one resident payload even
+    /// Bounds generation rebuild work, admitting one retained payload even
     /// when the configured allowance is zero or smaller than that payload.
-    pub(in crate::chunk) fn try_reserve_replay(
+    pub(in crate::chunk) fn try_reserve_rebuild(
         &mut self,
         budget: ChunkUploadBudget,
         incremental_bytes: u64,
@@ -444,19 +444,16 @@ impl TerrainUploads<'_> {
         self,
         writes: &[BufferWrite<'_>],
         fallback: impl FnOnce(&[BufferWrite<'_>], &'static std::panic::Location<'static>),
-    ) {
+    ) -> Result<(), crate::gpu_allocation::TerrainWriteError> {
         let site = std::panic::Location::caller();
         let bytes = writes.iter().map(|write| write.2.len() as u64).sum();
-        let _ = crate::gpu_allocation::terrain_checked(
-            self.device,
-            "terrain arena upload",
-            bytes,
-            || match self.staging {
+        crate::gpu_allocation::terrain_write(self.device, "terrain arena upload", bytes, || {
+            match self.staging {
                 Some(staging) => staging
                     .write_batch_or(self.device, self.queue, writes, |rest| fallback(rest, site)),
                 None => fallback(writes, site),
-            },
-        );
+            }
+        })
     }
 }
 
@@ -522,7 +519,7 @@ pub(in crate::chunk) fn write_geometry_stream_words(
     uploads: TerrainUploads<'_>,
     offset_bytes: u64,
     bytes: &[u8],
-) {
+) -> Result<(), crate::gpu_allocation::TerrainWriteError> {
     #[cfg(feature = "tracy")]
     let _span = bevy::log::info_span!("terrain.geometry_write", offset_bytes, bytes = bytes.len())
         .entered();
@@ -540,7 +537,7 @@ pub(in crate::chunk) fn write_geometry_stream_words(
                 .queue
                 .profiled_write_buffer_at(buffer, offset, bytes, site);
         }
-    });
+    })
 }
 
 pub(in crate::chunk) fn account_chunk_gpu_uploads(

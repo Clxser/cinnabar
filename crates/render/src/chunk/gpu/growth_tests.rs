@@ -523,15 +523,14 @@ fn indirect_growth_without_memory_keeps_the_buffer() {
             &device,
             commands.len()
         ));
-        assert_eq!(
-            upload_indirect_commands_if_changed(&mut arena, &device, &queue, &commands),
-            0
+        assert!(
+            upload_indirect_commands_if_changed(&mut arena, &device, &queue, &commands).is_err()
         );
     }
     assert_eq!(arena.indirect_buffer.id(), buffer);
     assert!(arena.uploaded_indirect_bytes.is_empty());
     assert_eq!(
-        upload_indirect_commands_if_changed(&mut arena, &device, &queue, &commands),
+        upload_indirect_commands_if_changed(&mut arena, &device, &queue, &commands).unwrap(),
         commands.len() as u64 * INDEXED_INDIRECT_BYTES
     );
     assert_ne!(arena.indirect_buffer.id(), buffer);

@@ -2,34 +2,96 @@
 
 use super::*;
 use crate::queue_writes::ProfiledQueue as _;
-use bevy::ecs::change_detection::Mut;
-use render_scene::ChunkRenderInstance;
+
+/// Backoff belongs to the failed generation, independent of its entities.
+struct Retry {
+    wait: u32,
+    release_revision: u64,
+    budget: render_scene::ChunkUploadBudget,
+}
+
+impl Retry {
+    /// Starts the next generation when backoff expires or its memory conditions improve.
+    fn ready(&mut self, release_revision: u64, budget: render_scene::ChunkUploadBudget) -> bool {
+        if release_revision != self.release_revision || budget != self.budget {
+            self.wait = 0;
+        }
+        if self.wait == 0 {
+            return true;
+        }
+        self.wait -= 1;
+        false
+    }
+}
 
 #[derive(Resource)]
 pub(in crate::chunk) struct TerrainGpuRecovery {
     failures: crate::gpu_allocation::FailureFlag,
-    /// Published instances have already spent their linear publication permits.
-    pub(in crate::chunk) published: HashMap<Entity, u64>,
-    /// Keeps growth minimal until an entire terrain frame has succeeded.
+    retry: Option<Retry>,
+    attempts: u32,
+    generation: u64,
+    /// Keeps growth minimal until the entire rebuilt generation is ready.
     pub(in crate::chunk) recovering: bool,
 }
 
 impl TerrainGpuRecovery {
-    /// Observes failures from all terrain owners, including allocation on worker threads.
+    /// Observes live terrain failures; invisible candidates have their own failure scope.
     pub(in crate::chunk) fn new(device: &RenderDevice) -> Self {
         Self {
             failures: crate::gpu_allocation::FailureFlag::new(device),
-            published: HashMap::new(),
+            retry: None,
+            attempts: 0,
+            generation: 0,
             recovering: false,
         }
+    }
+
+    /// Captures failure conditions before the next frame can change its upload budget.
+    fn backoff(&mut self, release_revision: u64, budget: render_scene::ChunkUploadBudget) {
+        if self.retry.is_some() {
+            return;
+        }
+        self.attempts = self.attempts.saturating_add(1);
+        self.retry = Some(Retry {
+            wait: crate::gpu_allocation::retry_frames(self.attempts),
+            release_revision,
+            budget,
+        });
+    }
+
+    /// Keeps uploads paused until the failed generation's retry becomes due.
+    pub(in crate::chunk) fn waiting(&self) -> bool {
+        self.failures.failed()
     }
 }
 
 /// Forgets every derived publication together; CPU instances remain the source of truth.
 pub(in crate::chunk) fn begin_recovery(world: &mut World) {
-    let failed = world.resource::<TerrainGpuRecovery>().failures.take();
-    if !failed && world.resource::<TerrainGpuRecovery>().published.is_empty() {
+    if !world.resource::<TerrainGpuRecovery>().failures.failed() {
         return;
+    }
+    let arena = world.resource::<ChunkGpuArena>();
+    let release_revision = arena.release_revision;
+    let budget = *world.resource::<render_scene::ChunkUploadBudget>();
+    {
+        let mut recovery = world.resource_mut::<TerrainGpuRecovery>();
+        recovery.backoff(release_revision, budget);
+        if !recovery
+            .retry
+            .as_mut()
+            .unwrap()
+            .ready(release_revision, budget)
+        {
+            return;
+        }
+        recovery.retry = None;
+        recovery.failures.take();
+        recovery.recovering = true;
+        recovery.generation += 1;
+        bevy::log::debug!(
+            generation = recovery.generation,
+            "rebuilding terrain GPU generation"
+        );
     }
     let profiler = world
         .get_resource::<render_scene::RuntimeStageProfiler>()
@@ -37,34 +99,6 @@ pub(in crate::chunk) fn begin_recovery(world: &mut World) {
     let _timer = profiler
         .as_ref()
         .map(|profiler| profiler.time(render_scene::RuntimeStage::GpuPreparation));
-    if !failed {
-        world.resource_scope(|world, mut recovery: Mut<TerrainGpuRecovery>| {
-            recovery.published.retain(|&entity, generation| {
-                world
-                    .get::<ChunkRenderInstance>(entity)
-                    .is_some_and(|instance| instance.generation == *generation)
-            });
-        });
-        return;
-    }
-    let published = world
-        .resource::<ChunkGpuArena>()
-        .allocations
-        .iter()
-        .map(|(&entity, allocation)| (entity, allocation.generation))
-        .collect::<Vec<_>>();
-    {
-        let mut recovery = world.resource_mut::<TerrainGpuRecovery>();
-        recovery.recovering = true;
-        recovery.published.extend(published);
-    }
-    world.resource_scope(|world, mut recovery: Mut<TerrainGpuRecovery>| {
-        recovery.published.retain(|&entity, generation| {
-            world
-                .get::<ChunkRenderInstance>(entity)
-                .is_some_and(|instance| instance.generation == *generation)
-        });
-    });
     let entities = world
         .query_filtered::<Entity, With<GpuChunkAllocation>>()
         .iter(world)
@@ -114,7 +148,7 @@ pub(in crate::chunk) fn begin_recovery(world: &mut World) {
     }
     let device = world.resource::<RenderDevice>();
     let queue = world.resource::<RenderQueue>();
-    crate::gpu_allocation::terrain_checked(
+    let result = crate::gpu_allocation::terrain_write(
         device,
         "terrain recovery biome upload",
         std::mem::size_of_val(&FALLBACK_BIOME_RECORD) as u64,
@@ -126,15 +160,25 @@ pub(in crate::chunk) fn begin_recovery(world: &mut World) {
             )
         },
     );
+    if result.is_err() {
+        bevy::log::debug!("terrain generation fallback upload failed");
+    }
 }
 
 /// Prevents a partially prepared frame from drawing or witnessing terrain. Recovery retries
-/// the entire publication next frame, regardless of which owner observed the failure.
+/// the entire generation after backoff, regardless of which owner observed the failure.
 pub(in crate::chunk) fn finish_publication(world: &mut World) {
+    let pending = world.resource::<ChunkGpuUploadStats>().candidates_deferred != 0;
+    let release_revision = world.resource::<ChunkGpuArena>().release_revision;
+    let budget = *world.resource::<render_scene::ChunkUploadBudget>();
     let mut recovery = world.resource_mut::<TerrainGpuRecovery>();
-    if !recovery.failures.failed() && recovery.published.is_empty() {
+    if !recovery.failures.failed() && (!recovery.recovering || !pending) {
         recovery.recovering = false;
+        recovery.attempts = 0;
         return;
+    }
+    if recovery.failures.failed() {
+        recovery.backoff(release_revision, budget);
     }
     let mut arena = world.resource_mut::<ChunkGpuArena>();
     arena.bind_group = None;
@@ -174,5 +218,31 @@ impl ChunkGpuArena {
         self.bind_group = None;
         self.transparent_bind_group = None;
         self.bind_group_buffers = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A release or budget change shortens one wait without erasing the next failure's backoff.
+    #[test]
+    fn changed_conditions_shorten_only_the_failed_generation() {
+        let budget = render_scene::ChunkUploadBudget::new(0, 0);
+        for (revision, changed) in [(1, budget), (0, render_scene::ChunkUploadBudget::default())] {
+            let mut retry = Retry {
+                wait: crate::gpu_allocation::retry_frames(u32::MAX),
+                release_revision: 0,
+                budget,
+            };
+            assert!(!retry.ready(0, budget));
+            assert!(retry.ready(revision, changed));
+            let mut next = Retry {
+                wait: 4,
+                release_revision: revision,
+                budget: changed,
+            };
+            assert!(!next.ready(revision, changed));
+        }
     }
 }

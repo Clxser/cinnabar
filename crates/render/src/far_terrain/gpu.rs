@@ -283,14 +283,18 @@ impl FarTerrainGpu {
             // Earlier misses need another pass after this allocation changes free
             // space or makes a retained fallback reclaimable.
             complete &= !allocation_failed;
-            let _ = crate::gpu_allocation::terrain_checked(
+            if crate::gpu_allocation::terrain_write(
                 device,
                 "far terrain tile upload",
                 bytes,
                 || {
                     self.upload(queue, mesh, slot, &quads);
                 },
-            );
+            )
+            .is_err()
+            {
+                return false;
+            }
             uploaded_tiles += 1;
             uploaded_bytes += bytes;
             self.resident.insert(
@@ -633,36 +637,6 @@ impl FarTerrainGpu {
         self.quad_capacity = capacity;
         true
     }
-
-    /// Replaces the near-column mask, growing its storage only when needed. False, leaving the
-    /// old mask, when the device is out of memory for a larger one.
-    fn apply_mask(&mut self, device: &RenderDevice, queue: &RenderQueue, mask: &NearMask) -> bool {
-        let [x, z] = mask.origin();
-        let mut words = vec![x as u32, z as u32, mask.side(), 0];
-        words.extend_from_slice(mask.words());
-        if words.len() as u64 > self.mask_words {
-            let mask_words = (words.len() as u64).next_power_of_two();
-            let Some(buffer) = checked_storage_buffer(
-                device,
-                "far terrain near columns",
-                mask_words * 4,
-                Requirement::Required,
-            ) else {
-                return false;
-            };
-            self.mask_words = mask_words;
-            self.mask = buffer;
-        }
-        crate::gpu_allocation::terrain_checked(
-            device,
-            "far terrain mask upload",
-            words.len() as u64 * 4,
-            || {
-                queue.profiled_write_buffer(&self.mask, 0, bytemuck::cast_slice(&words));
-            },
-        )
-        .is_some()
-    }
 }
 
 impl crate::pipeline_warmup::PrewarmPipelines for FarTerrainGpu {
@@ -843,7 +817,7 @@ pub(super) fn prepare_far_terrain(
             .applied_mask
             .as_ref()
             .is_some_and(|applied| Arc::ptr_eq(applied, &scene.near))
-        && gpu.apply_mask(&device, &queue, &scene.near)
+        && gpu.apply_mask(&device, &queue, &scene.near).is_ok()
     {
         gpu.applied_mask = Some(Arc::clone(&scene.near));
     }

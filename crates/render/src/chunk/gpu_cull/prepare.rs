@@ -243,7 +243,7 @@ pub(super) fn prepare_gpu_cull(
         cull.table.refresh_entity(entity, &hidden.hidden);
     }
     cull.table.trim();
-    if !upload_records(cull, &device, &queue) {
+    if upload_records(cull, &device, &queue).is_err() {
         return;
     }
 
@@ -270,7 +270,16 @@ pub(super) fn prepare_gpu_cull(
     let input = cull_view_input(extracted, frustum, depth_size, hiz_mips);
     for phase in CullPhase::ALL {
         let uniform = CullViewUniform::new(&input, phase, cull.slot_count(), storage.capacity);
-        storage.write_uniform(&queue, phase, &uniform);
+        if crate::gpu_allocation::terrain_write(
+            &device,
+            "terrain cull uniform upload",
+            std::mem::size_of_val(&uniform) as u64,
+            || storage.write_uniform(&queue, phase, &uniform),
+        )
+        .is_err()
+        {
+            return;
+        }
     }
     let pyramid_id = cull.pyramid.as_ref().map(|prepared| prepared.depth);
     if cull.bind_groups.is_none() || cull.bound_pyramid != pyramid_id {
@@ -292,7 +301,11 @@ pub(super) fn prepare_gpu_cull(
 
 /// Grows storage when the slot watermark passes it, then writes dirty records and bits.
 /// Failed growth leaves storage untouched for the shared recovery path.
-fn upload_records(cull: &mut GpuCull, device: &RenderDevice, queue: &RenderQueue) -> bool {
+fn upload_records(
+    cull: &mut GpuCull,
+    device: &RenderDevice,
+    queue: &RenderQueue,
+) -> Result<(), crate::gpu_allocation::TerrainWriteError> {
     let slots = cull.table.slot_count();
     if cull
         .storage
@@ -301,13 +314,13 @@ fn upload_records(cull: &mut GpuCull, device: &RenderDevice, queue: &RenderQueue
     {
         match grow_storage(device, slots) {
             Some(storage) => cull.install_storage(storage),
-            None => return false,
+            None => return Err(crate::gpu_allocation::TerrainWriteError),
         }
     }
     let Some(storage) = cull.storage.as_ref() else {
-        return false;
+        return Err(crate::gpu_allocation::TerrainWriteError);
     };
-    write_dirty_records(&mut cull.table, queue, &storage.records);
+    write_dirty_records(&mut cull.table, device, queue, &storage.records)?;
     if cull.table.take_enabled_dirty() {
         let enabled = cull.table.enabled();
         let words = enabled.len().min((storage.capacity as usize).div_ceil(32));
@@ -318,14 +331,21 @@ fn upload_records(cull: &mut GpuCull, device: &RenderDevice, queue: &RenderQueue
                 bytes = words * std::mem::size_of::<u32>()
             )
             .entered();
-            queue.profiled_write_buffer(
-                &storage.enabled,
-                0,
-                bytemuck::cast_slice(&enabled[..words]),
-            );
+            crate::gpu_allocation::terrain_write(
+                device,
+                "terrain cull enabled upload",
+                words as u64 * 4,
+                || {
+                    queue.profiled_write_buffer(
+                        &storage.enabled,
+                        0,
+                        bytemuck::cast_slice(&enabled[..words]),
+                    )
+                },
+            )?;
         }
     }
-    true
+    Ok(())
 }
 
 /// Storage for `slots`, a power of two where one storage binding allows; `None` when no
@@ -384,9 +404,10 @@ pub(super) fn sampleable_depth<'a>(
 /// Writes every dirty CPU record in contiguous runs after storage capacity is ensured.
 pub(super) fn write_dirty_records(
     table: &mut CullSlots,
+    device: &RenderDevice,
     queue: &RenderQueue,
     records: &wgpu::Buffer,
-) {
+) -> Result<(), crate::gpu_allocation::TerrainWriteError> {
     let record_bytes = std::mem::size_of::<CullRecord>() as u64;
     let dirty = table.take_dirty();
     let source = table.records();
@@ -400,12 +421,20 @@ pub(super) fn write_dirty_records(
             bytes = run.len() as u64 * record_bytes,
         )
         .entered();
-        queue.profiled_write_buffer(
-            records,
-            first as u64 * record_bytes,
-            bytemuck::cast_slice(&source[first..=last]),
-        );
+        crate::gpu_allocation::terrain_write(
+            device,
+            "terrain cull records upload",
+            run.len() as u64 * record_bytes,
+            || {
+                queue.profiled_write_buffer(
+                    records,
+                    first as u64 * record_bytes,
+                    bytemuck::cast_slice(&source[first..=last]),
+                )
+            },
+        )?;
     }
+    Ok(())
 }
 
 /// Keeps `prepared` seeded from `depth`, reusing the pyramid while the target size holds.
@@ -520,10 +549,10 @@ mod storage_tests {
         {
             let _failure =
                 crate::gpu_allocation::inject(|label, _| label == "terrain cull storage");
-            assert!(!upload_records(&mut cull, &device, &queue));
+            assert!(upload_records(&mut cull, &device, &queue).is_err());
         }
         assert!(cull.storage.is_none());
-        assert!(upload_records(&mut cull, &device, &queue));
+        assert!(upload_records(&mut cull, &device, &queue).is_ok());
         assert!(cull.storage.is_some());
     }
 
@@ -533,7 +562,7 @@ mod storage_tests {
         let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
         let (device, queue) = (RenderDevice::from(device), RenderQueue::new(queue));
         let mut cull = GpuCull::new(&device, GpuCullSubmission::Fixed);
-        upload_records(&mut cull, &device, &queue);
+        upload_records(&mut cull, &device, &queue).unwrap();
         let capacity = cull.storage.as_ref().expect("initial storage").capacity;
         cull.table.update(
             Entity::PLACEHOLDER,
@@ -545,12 +574,12 @@ mod storage_tests {
         {
             let _failure =
                 crate::gpu_allocation::inject(|label, _| label == "terrain cull storage");
-            upload_records(&mut cull, &device, &queue);
+            assert!(upload_records(&mut cull, &device, &queue).is_err());
         }
         let held = cull.storage.as_ref().map(|storage| storage.capacity);
         assert_eq!(held, Some(capacity));
         assert_eq!(cull.slot_count(), capacity + 11);
-        assert!(upload_records(&mut cull, &device, &queue));
+        assert!(upload_records(&mut cull, &device, &queue).is_ok());
         assert_eq!(cull.slot_count(), capacity + 11);
     }
 }

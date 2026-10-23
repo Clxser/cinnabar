@@ -1,6 +1,39 @@
 use super::*;
 
 impl FarTerrainGpu {
+    /// Replaces the near-column mask, preserving its storage when required growth fails.
+    pub(super) fn apply_mask(
+        &mut self,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        mask: &NearMask,
+    ) -> Result<(), crate::gpu_allocation::TerrainWriteError> {
+        let [x, z] = mask.origin();
+        let mut words = vec![x as u32, z as u32, mask.side(), 0];
+        words.extend_from_slice(mask.words());
+        if words.len() as u64 > self.mask_words {
+            let mask_words = (words.len() as u64).next_power_of_two();
+            let Some(buffer) = checked_storage_buffer(
+                device,
+                "far terrain near columns",
+                mask_words * 4,
+                Requirement::Required,
+            ) else {
+                return Err(crate::gpu_allocation::TerrainWriteError);
+            };
+            self.mask_words = mask_words;
+            self.mask = buffer;
+        }
+        crate::gpu_allocation::terrain_write(
+            device,
+            "far terrain mask upload",
+            words.len() as u64 * 4,
+            || {
+                queue.profiled_write_buffer(&self.mask, 0, bytemuck::cast_slice(&words));
+            },
+        )
+    }
+
     /// Invalidates retained coverage when CPU-ready empty selections change.
     pub(super) fn set_empty_coverage(&mut self, empty: Option<&HashSet<ColumnPos>>) {
         let unchanged = empty.map_or(self.empty_far.is_empty(), |empty| self.empty_far == *empty);
@@ -89,7 +122,7 @@ impl FarTerrainGpu {
         queue: &RenderQueue,
         mask: Arc<NearMask>,
     ) -> bool {
-        let published = self.apply_mask(device, queue, &mask);
+        let published = self.apply_mask(device, queue, &mask).is_ok();
         if published {
             self.applied_mask = Some(mask);
         }

@@ -503,7 +503,7 @@ fn growth_without_memory_keeps_storage_and_retries() {
         assert!(!gpu.grow_quads(&device, &queue, quad_capacity + 1, Requirement::Required));
         gpu.grow_slots(&device, &queue, slots + 1);
         let mask = NearMask::around([0, 0], 32, 8, []);
-        assert!(!gpu.apply_mask(&device, &queue, &mask));
+        assert!(gpu.apply_mask(&device, &queue, &mask).is_err());
     }
     assert_eq!(
         (gpu.quads.id(), gpu.records.id(), gpu.colours.id()),
@@ -568,6 +568,7 @@ fn a_failed_tile_allocation_invalidates_terrain_for_a_full_retry() {
     }
     assert!(failures.failed());
     assert!(gpu.resident.is_empty());
+    assert!(failures.take());
     gpu.invalidate_publication();
     assert!(gpu.apply_tiles(&device, &queue, &scene));
     assert!(gpu.resident.contains_key(&scene[0].key));

@@ -26,12 +26,7 @@ struct Published {
     batches: Vec<(u32, Vec<(SubChunkKey, u64)>)>,
     gpu_culled: bool,
     culled_slots: u32,
-    geometry: Vec<[u8; 32]>,
-    indirect: Vec<u8>,
-    far: Vec<[u8; 32]>,
-    cull: Vec<[u8; 32]>,
-    direct: Vec<[u8; 32]>,
-    units: Vec<[u8; 32]>,
+    buffers: Vec<[u8; 32]>,
 }
 
 /// The view the last frame culled on the GPU; its CPU batches are retained but not submitted.
@@ -87,7 +82,7 @@ fn published(app: &mut App) -> Published {
     let device = world.resource::<RenderDevice>();
     let queue = world.resource::<RenderQueue>();
     let arena = world.resource::<ChunkGpuArena>();
-    let geometry = [
+    let mut buffers = [
         (&arena.quad_buffer, arena.quad_len, PACKED_QUAD_BYTES),
         (
             &arena.geometry_stream_buffer,
@@ -99,48 +94,34 @@ fn published(app: &mut App) -> Published {
     ]
     .into_iter()
     .map(|(buffer, len, stride)| {
-        Sha256::digest(crate::render_test_support::read_buffer(
-            device,
-            queue,
-            buffer,
-            0,
-            len as u64 * stride,
-        ))
-        .into()
+        crate::render_test_support::read_buffer(device, queue, buffer, 0, len as u64 * stride)
     })
-    .collect();
-    Published {
-        geometry,
-        indirect: crate::render_test_support::read_buffer(
-            device,
-            queue,
-            &arena.indirect_buffer,
-            0,
-            arena.uploaded_indirect_bytes.len() as u64,
-        ),
-        cull: world
-            .get_resource::<GpuCull>()
-            .map_or_else(Vec::new, |cull| cull.publication_snapshot(device, queue))
-            .into_iter()
-            .map(|bytes| Sha256::digest(bytes).into())
-            .collect(),
-        direct: world
-            .get_resource::<direct::DirectOcclusion>()
-            .map_or_else(Vec::new, |direct| {
-                direct.publication_snapshot(device, queue)
-            })
-            .into_iter()
-            .map(|bytes| Sha256::digest(bytes).into())
-            .collect(),
-        units: world
+    .collect::<Vec<_>>();
+    buffers.push(crate::render_test_support::read_buffer(
+        device,
+        queue,
+        &arena.indirect_buffer,
+        0,
+        arena.uploaded_indirect_bytes.len() as u64,
+    ));
+    if let Some(cull) = world.get_resource::<GpuCull>() {
+        buffers.extend(cull.publication_snapshot(device, queue));
+    }
+    if let Some(direct) = world.get_resource::<direct::DirectOcclusion>() {
+        buffers.extend(direct.publication_snapshot(device, queue));
+    }
+    buffers.extend(
+        world
             .resource::<crate::chunk::pipeline::units::TerrainUnitBatches>()
-            .publication_snapshot(device, queue)
-            .into_iter()
-            .map(|bytes| Sha256::digest(bytes).into())
-            .collect(),
-        far: world
+            .publication_snapshot(device, queue),
+    );
+    buffers.extend(
+        world
             .resource::<crate::far_terrain::FarTerrainGpu>()
-            .publication_snapshot(device, queue)
+            .publication_snapshot(device, queue),
+    );
+    Published {
+        buffers: buffers
             .into_iter()
             .map(|bytes| Sha256::digest(bytes).into())
             .collect(),
@@ -261,7 +242,7 @@ fn terrain_app(culling: bool, direct: bool, hardware: bool) -> Option<App> {
     Some(app)
 }
 
-/// Required terrain growth retries a complete publication on the very next frame.
+/// Required terrain growth retries a complete generation after backoff.
 #[test]
 fn every_growth_site_recovers_to_the_fresh_publication() {
     recovery_table(false);
@@ -283,7 +264,11 @@ fn recovery_table(hardware: bool) {
         ("terrain identity vertex offsets", false, false),
         ("packed chunk indirect commands", false, false),
         ("terrain cull storage", true, false),
+        ("terrain cull records upload", true, false),
+        ("terrain cull enabled upload", true, false),
+        ("terrain cull uniform upload", true, false),
         ("terrain occlusion storage", true, true),
+        ("terrain occlusion uniform upload", true, true),
         ("far terrain quads", false, false),
         ("far terrain near columns", false, false),
         ("retained terrain upload staging", false, false),
@@ -291,6 +276,7 @@ fn recovery_table(hardware: bool) {
         ("terrain arena upload", false, false),
         ("terrain recovery biome upload", false, false),
         ("terrain indirect upload", false, false),
+        ("terrain transparent indirect upload", false, false),
         ("far terrain tile upload", false, false),
         ("far terrain mask upload", false, false),
         ("indexed terrain unit page", false, true),
@@ -329,7 +315,7 @@ fn recovery_table(hardware: bool) {
                 .world()
                 .get_resource::<GpuCull>()
                 .is_none()
-            && (site == "terrain cull storage"
+            && (site.starts_with("terrain cull ")
                 || site == "packed chunk indirect commands"
                 || site == "terrain indirect upload")
         {
@@ -349,6 +335,14 @@ fn recovery_table(hardware: bool) {
             });
             for _ in 0..4 {
                 frame(&mut recovering);
+                if recovering
+                    .sub_app(RenderApp)
+                    .world()
+                    .resource::<crate::chunk::recovery::TerrainGpuRecovery>()
+                    .waiting()
+                {
+                    assert!(!drawable(&recovering), "{site} exposed a failed generation");
+                }
                 if site == "double-buffered transparent draw refs" {
                     let world = recovering.sub_app_mut(RenderApp).world_mut();
                     let device = world.resource::<RenderDevice>().clone();
@@ -363,14 +357,7 @@ fn recovery_table(hardware: bool) {
                     );
                 }
                 if site == "retained terrain upload staging" {
-                    assert!(
-                        recovering
-                            .sub_app(RenderApp)
-                            .world()
-                            .resource::<ChunkGpuArena>()
-                            .bind_group
-                            .is_some()
-                    );
+                    assert!(drawable(&recovering));
                     recovering
                         .sub_app(RenderApp)
                         .world()
@@ -381,14 +368,10 @@ fn recovery_table(hardware: bool) {
             assert!(failures.get() > 0, "{site} was never allocated");
         }
         covered.insert(site.to_owned());
-        frame(&mut recovering);
+        recover(&mut recovering);
         assert_eq!(published(&mut recovering), published(&mut fresh), "{site}");
         assert_eq!(
-            recovering
-                .sub_app(RenderApp)
-                .world()
-                .resource::<ChunkGpuUploadStats>()
-                .chunk_updates,
+            updates(&recovering),
             if site == "retained terrain upload staging" {
                 0
             } else {
@@ -403,70 +386,22 @@ fn recovery_table(hardware: bool) {
                 .drain()
                 .len(),
             KEYS.len(),
-            "{site} acknowledged a replay twice"
+            "{site} acknowledged an upload twice"
         );
-        // Once rebuilt, another frame retains the exact publication without replaying it.
+        // Once rebuilt, another frame retains the exact publication without uploading it again.
         frame(&mut recovering);
         assert_eq!(
             published(&mut recovering),
             published(&mut fresh),
             "{site} was not idempotent"
         );
-        assert_eq!(
-            recovering
-                .sub_app(RenderApp)
-                .world()
-                .resource::<ChunkGpuUploadStats>()
-                .chunk_updates,
-            0,
-            "{site}"
-        );
+        assert_eq!(updates(&recovering), 0, "{site}");
     }
     assert!(
         observed.borrow().iter().all(|site| covered.contains(site)),
         "allocation sites missing a failure case: {:?}",
         observed.borrow()
     );
-}
-
-/// Recovery upload failures suppress terrain until a complete retry succeeds.
-#[test]
-fn recovery_biome_upload_without_memory_retries() {
-    let mut app = terrain_app(false, false, false).unwrap();
-    for _ in 0..4 {
-        frame(&mut app);
-    }
-    let expected = published(&mut app);
-    fail_transparent_growth(&mut app);
-    let failures = Rc::new(Cell::new(0));
-    {
-        let observed = Rc::clone(&failures);
-        let _failure = crate::gpu_allocation::inject(move |label, _| {
-            let failed = label == "terrain recovery biome upload";
-            observed.set(observed.get() + usize::from(failed));
-            failed
-        });
-        for _ in 0..2 {
-            frame(&mut app);
-            assert!(
-                app.sub_app(RenderApp)
-                    .world()
-                    .resource::<ChunkGpuArena>()
-                    .bind_group
-                    .is_none()
-            );
-        }
-    }
-    assert_eq!(failures.get(), 2);
-    frame(&mut app);
-    assert!(
-        app.sub_app(RenderApp)
-            .world()
-            .resource::<ChunkGpuArena>()
-            .bind_group
-            .is_some()
-    );
-    assert_eq!(published(&mut app), expected);
 }
 
 /// A failed publication withdraws shader-pack expansion and camera and shadow draws together.
@@ -492,26 +427,26 @@ fn failed_publication_withdraws_shaderpack_work() {
     assert!(!world.resource::<ShaderpackGeometry>().all_sections_fit());
 }
 
-/// A bounded replay stays hidden until all previously published permits have been replayed.
+/// A rebuilt generation stays hidden until all retained geometry is uploaded.
 #[test]
-fn recovery_retains_pending_replays_without_acknowledging_their_permits_again() {
-    check_bounded_replay(render_scene::ChunkUploadBudget::new(1, u64::MAX));
+fn recovery_rebuilds_without_acknowledging_uploads_again() {
+    check_bounded_rebuild(render_scene::ChunkUploadBudget::new(1, u64::MAX));
 }
 
 /// Previously admitted terrain makes progress even when fresh uploads have no allowance.
 #[test]
 fn recovery_with_zero_upload_budget_restores_publication() {
-    check_bounded_replay(render_scene::ChunkUploadBudget::new(0, 0));
+    check_bounded_rebuild(render_scene::ChunkUploadBudget::new(0, 0));
 }
 
-/// Recovery admits one payload at a time when the byte allowance cannot hold a replay.
+/// Recovery admits one payload at a time when the byte allowance cannot hold a retained mesh.
 #[test]
 fn recovery_with_zero_byte_budget_restores_publication() {
-    check_bounded_replay(render_scene::ChunkUploadBudget::new(usize::MAX, 0));
+    check_bounded_rebuild(render_scene::ChunkUploadBudget::new(usize::MAX, 0));
 }
 
-/// Replays two resident meshes across frames without spending their publication permits again.
-fn check_bounded_replay(budget: render_scene::ChunkUploadBudget) {
+/// Rebuilds two resident meshes across frames without spending their publication permits again.
+fn check_bounded_rebuild(budget: render_scene::ChunkUploadBudget) {
     let mut app = terrain_app(false, false, false).unwrap();
     for _ in 0..4 {
         frame(&mut app);
@@ -528,26 +463,16 @@ fn check_bounded_replay(budget: render_scene::ChunkUploadBudget) {
     app.sub_app_mut(RenderApp)
         .world_mut()
         .insert_resource(budget);
+    for _ in 0..2 {
+        frame(&mut app);
+    }
     frame(&mut app);
     let world = app.sub_app(RenderApp).world();
     assert_eq!(world.resource::<ChunkGpuUploadStats>().chunk_updates, 1);
-    assert_eq!(
-        world
-            .resource::<crate::chunk::recovery::TerrainGpuRecovery>()
-            .published
-            .len(),
-        KEYS.len() - 1
-    );
     assert!(world.resource::<ChunkGpuArena>().bind_group.is_none());
     frame(&mut app);
     let world = app.sub_app(RenderApp).world();
     assert!(world.resource::<ChunkGpuArena>().bind_group.is_some());
-    assert!(
-        world
-            .resource::<crate::chunk::recovery::TerrainGpuRecovery>()
-            .published
-            .is_empty()
-    );
     assert_eq!(published(&mut app), expected);
     assert!(
         app.world()
@@ -557,7 +482,7 @@ fn check_bounded_replay(budget: render_scene::ChunkUploadBudget) {
     );
 }
 
-/// Fails a checked allocation after a complete publication to start the next frame's replay.
+/// Fails a checked allocation after a complete publication to invalidate the live generation.
 fn fail_transparent_growth(app: &mut App) {
     let world = app.sub_app_mut(RenderApp).world_mut();
     let device = world.resource::<RenderDevice>().clone();
@@ -577,7 +502,7 @@ fn fail_transparent_growth(app: &mut App) {
     }
 }
 
-/// A speculative view-sized allocation cannot suppress a replay that fits retained storage.
+/// A speculative view-sized allocation cannot suppress a rebuild that fits retained storage.
 #[test]
 fn recovery_ignores_capacity_hints_that_exceed_available_memory() {
     let mut app = terrain_app(false, false, false).unwrap();
@@ -586,7 +511,7 @@ fn recovery_ignores_capacity_hints_that_exceed_available_memory() {
     }
     let expected = published(&mut app);
     fail_transparent_growth(&mut app);
-    // Include staging and metadata in the memory needed by a complete replay.
+    // Include staging and metadata in the memory needed by a complete rebuild.
     let largest_request = Rc::new(Cell::new(0_u64));
     {
         let largest = Rc::clone(&largest_request);
@@ -594,7 +519,7 @@ fn recovery_ignores_capacity_hints_that_exceed_available_memory() {
             largest.set(largest.get().max(bytes));
             false
         });
-        frame(&mut app);
+        recover(&mut app);
     }
     let available_bytes = largest_request.get();
     assert!(available_bytes > 0 && available_bytes < ARENA_MIGRATION_FRAME_BYTES);
@@ -613,17 +538,149 @@ fn recovery_ignores_capacity_hints_that_exceed_available_memory() {
         }
         failed
     });
-    frame(&mut app);
+    recover(&mut app);
     assert!(
-        app.sub_app(RenderApp)
-            .world()
-            .resource::<ChunkGpuArena>()
-            .bind_group
-            .is_some(),
-        "replay exceeded its {available_bytes}-byte memory ceiling: {:?}",
+        drawable(&app),
+        "rebuild exceeded its {available_bytes}-byte memory ceiling: {:?}",
         rejected.borrow()
     );
     assert_eq!(published(&mut app), expected);
     frame(&mut app);
     assert_eq!(published(&mut app), expected);
+}
+
+/// A failed live write waits before rebuilding all retained terrain exactly once.
+#[test]
+fn live_write_failure_backs_off_before_one_full_reupload() {
+    let mut app = terrain_app(false, false, false).unwrap();
+    for _ in 0..4 {
+        frame(&mut app);
+    }
+    let expected = published(&mut app);
+    let _ = app
+        .world()
+        .resource::<render_scene::ChunkUploadAcknowledgements>()
+        .drain();
+    {
+        let world = app.sub_app(RenderApp).world();
+        let device = world.resource::<RenderDevice>();
+        let queue = world.resource::<RenderQueue>();
+        let arena = world.resource::<ChunkGpuArena>();
+        let _failure = crate::gpu_allocation::inject(|label, _| label == "terrain arena upload");
+        assert!(
+            TerrainUploads {
+                device,
+                queue,
+                staging: None
+            }
+            .write(&[(&arena.quad_buffer, 0, &[0; 8])], |writes, _| {
+                for &(buffer, offset, bytes) in writes {
+                    queue.write_buffer(buffer, offset, bytes);
+                }
+            },)
+            .is_err()
+        );
+    }
+    for _ in 0..2 {
+        frame(&mut app);
+        let world = app.sub_app(RenderApp).world();
+        assert!(world.resource::<ChunkGpuArena>().bind_group.is_none());
+        assert_eq!(world.resource::<ChunkGpuUploadStats>().chunk_updates, 0);
+    }
+    frame(&mut app);
+    assert_eq!(published(&mut app), expected);
+    assert_eq!(updates(&app), KEYS.len());
+    frame(&mut app);
+    assert_eq!(published(&mut app), expected);
+    assert_eq!(updates(&app), 0);
+    assert!(
+        app.world()
+            .resource::<render_scene::ChunkUploadAcknowledgements>()
+            .drain()
+            .is_empty()
+    );
+}
+
+/// Advances deterministic render frames until the complete generation can draw again.
+fn recover(app: &mut App) {
+    for _ in 0..crate::gpu_allocation::retry_frames(u32::MAX) + KEYS.len() as u32 + 1 {
+        frame(app);
+        let world = app.sub_app(RenderApp).world();
+        if world.resource::<ChunkGpuArena>().bind_group.is_some()
+            && !world
+                .resource::<crate::chunk::recovery::TerrainGpuRecovery>()
+                .recovering
+        {
+            return;
+        }
+    }
+    panic!("terrain generation did not recover after its maximum backoff");
+}
+
+/// An independently built replacement completes a partial rebuild without stale recovery work.
+#[test]
+fn arena_replacement_completes_a_pending_generation() {
+    use bevy::ecs::system::RunSystemOnce;
+    let mut app = terrain_app(false, false, false).unwrap();
+    for _ in 0..4 {
+        frame(&mut app);
+    }
+    let expected = published(&mut app);
+    fail_transparent_growth(&mut app);
+    app.sub_app_mut(RenderApp)
+        .world_mut()
+        .insert_resource(render_scene::ChunkUploadBudget::new(1, u64::MAX));
+    for _ in 0..3 {
+        frame(&mut app);
+    }
+    assert!(!drawable(&app));
+    app.sub_app_mut(RenderApp)
+        .world_mut()
+        .run_system_once(
+            |mut commands: Commands,
+             instances: Query<(Entity, &render_scene::ChunkRenderInstance)>,
+             assets: Res<render_scene::ChunkTextureAssets>,
+             device: Res<RenderDevice>,
+             queue: Res<RenderQueue>,
+             mut arena: ResMut<ChunkGpuArena>| {
+                let meshes = instances
+                    .iter()
+                    .map(|(_, mesh)| mesh.clone())
+                    .collect::<Vec<_>>();
+                let candidate = gpu::resource_geometry::PreparedResourceGeometry::build(
+                    &meshes,
+                    assets.clone(),
+                    device.clone(),
+                    queue.clone(),
+                    None,
+                )
+                .unwrap();
+                assert!(
+                    candidate
+                        .publish(&mut commands, &instances, &mut arena, None)
+                        .is_ok()
+                );
+            },
+        )
+        .unwrap();
+    frame(&mut app);
+    assert!(drawable(&app));
+    assert_eq!(published(&mut app), expected);
+}
+
+/// Whether this terrain generation has a binding that its draws can submit.
+fn drawable(app: &App) -> bool {
+    app.sub_app(RenderApp)
+        .world()
+        .resource::<ChunkGpuArena>()
+        .bind_group
+        .is_some()
+}
+
+/// Counts geometry payloads uploaded in the latest deterministic render frame.
+fn updates(app: &App) -> usize {
+    app.sub_app(RenderApp)
+        .world()
+        .resource::<ChunkGpuUploadStats>()
+        .chunk_updates
 }

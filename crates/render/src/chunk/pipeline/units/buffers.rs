@@ -39,12 +39,12 @@ pub(super) fn upload(
     queue: &RenderQueue,
     cache: &PipelineCache,
     staging: Option<&TerrainUploadStaging>,
-) -> Uploaded {
+) -> Result<Uploaded, crate::gpu_allocation::TerrainWriteError> {
     let mut uploaded = Uploaded::default();
     if stream.indexed {
         if stream.descriptors.records.is_empty() {
             stream.pages.clear();
-            return uploaded;
+            return Ok(uploaded);
         }
         stream.pages.truncate(1);
         let Some(fresh) = ensure_page(
@@ -55,7 +55,7 @@ pub(super) fn upload(
             device,
             cache,
         ) else {
-            return uploaded;
+            return Err(crate::gpu_allocation::TerrainWriteError);
         };
         let page = &mut stream.pages[0];
         let all = fresh || !page.indexed;
@@ -71,7 +71,7 @@ pub(super) fn upload(
             queue,
             staging,
             &mut uploaded,
-        );
+        )?;
     } else {
         let mut pages = 0;
         for (index, descriptors) in stream.fallback.chunks(capacity).enumerate() {
@@ -84,7 +84,7 @@ pub(super) fn upload(
                 device,
                 cache,
             ) else {
-                return uploaded;
+                return Err(crate::gpu_allocation::TerrainWriteError);
             };
             let page = &mut stream.pages[index];
             let all = fresh || page.indexed || page.packed != descriptors;
@@ -100,7 +100,7 @@ pub(super) fn upload(
                 queue,
                 staging,
                 &mut uploaded,
-            );
+            )?;
             if all {
                 page.packed.clear();
                 page.packed.extend_from_slice(descriptors);
@@ -108,7 +108,7 @@ pub(super) fn upload(
         }
         stream.pages.truncate(pages);
     }
-    uploaded
+    Ok(uploaded)
 }
 
 /// Grows geometrically without exceeding either the buffer or storage-binding limit.
@@ -201,7 +201,7 @@ fn upload_page(
     queue: &RenderQueue,
     staging: Option<&TerrainUploadStaging>,
     uploaded: &mut Uploaded,
-) {
+) -> Result<(), crate::gpu_allocation::TerrainWriteError> {
     let count = references.len() as u32;
     let header = page.layout.header(count);
     let record_bytes = size_of::<VisibleTerrainUnit>() as u64;
@@ -233,16 +233,20 @@ fn upload_page(
         writes.push((&page.buffer, page.layout.reference_offset(), bytes));
         uploaded.references += bytes.len() as u64;
     }
-    if let Some(staging) = staging {
-        staging.write_batch(device, queue, &writes);
-    } else {
-        for (buffer, offset, bytes) in writes {
-            queue.profiled_write_buffer(buffer, offset, bytes);
-        }
+    TerrainUploads {
+        device,
+        queue,
+        staging,
     }
+    .write(&writes, |rest, site| {
+        for &(buffer, offset, bytes) in rest {
+            queue.profiled_write_buffer_at(buffer, offset, bytes, site);
+        }
+    })?;
     if changed {
         page.references.clear();
         page.references.extend_from_slice(references);
     }
     page.count = count;
+    Ok(())
 }

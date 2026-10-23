@@ -159,24 +159,72 @@ fn checked_with_owner<T>(
     }
 }
 
-/// Checks a terrain allocation and invalidates its device's entire terrain publication on failure.
+/// A required terrain write could not complete; its entire generation must be discarded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TerrainWriteError;
+
+thread_local! {
+    static ISOLATED_TERRAIN: std::cell::RefCell<Option<Arc<AtomicBool>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Builds an invisible generation whose failures cannot invalidate the live arena.
+pub(crate) fn isolated_terrain<T>(work: impl FnOnce() -> Option<T>) -> Option<T> {
+    struct Restore(Option<Arc<AtomicBool>>);
+    impl Drop for Restore {
+        /// Restores the caller's generation even when construction unwinds.
+        fn drop(&mut self) {
+            ISOLATED_TERRAIN.with_borrow_mut(|slot| *slot = self.0.take());
+        }
+    }
+    let failed = Arc::new(AtomicBool::new(false));
+    let _restore =
+        Restore(ISOLATED_TERRAIN.with_borrow_mut(|slot| slot.replace(Arc::clone(&failed))));
+    let result = work();
+    if failed.load(Ordering::Acquire) {
+        None
+    } else {
+        result
+    }
+}
+
+/// Checks a required allocation against the current terrain generation.
+#[must_use]
 pub(crate) fn terrain_checked<T>(
     device: &RenderDevice,
     label: &str,
     bytes: u64,
     create: impl FnOnce() -> T,
 ) -> Option<T> {
-    let resource = checked_with_owner(device, label, bytes, true, create);
-    if resource.is_none()
-        && let Some(observer) = observers()
+    let observer = ISOLATED_TERRAIN.with_borrow(Clone::clone).or_else(|| {
+        observers()
             .lock()
             .unwrap()
             .get(&device_key(device))
             .and_then(Weak::upgrade)
+    });
+    if observer
+        .as_ref()
+        .is_some_and(|flag| flag.load(Ordering::Acquire))
+    {
+        return None;
+    }
+    let resource = checked_with_owner(device, label, bytes, true, create);
+    if resource.is_none()
+        && let Some(observer) = observer
     {
         observer.store(true, Ordering::Release);
     }
     resource
+}
+
+/// Returns an explicit error when a required upload fails its generation.
+pub(crate) fn terrain_write<T>(
+    device: &RenderDevice,
+    label: &str,
+    bytes: u64,
+    write: impl FnOnce() -> T,
+) -> Result<T, TerrainWriteError> {
+    terrain_checked(device, label, bytes, write).ok_or(TerrainWriteError)
 }
 
 /// Logs the first failure of each allocation owner without repeating every frame.
@@ -248,6 +296,11 @@ pub(crate) fn buffer_with_data(
 const FIRST_RETRY_FRAMES: u32 = 2;
 const MAX_RETRY_FRAMES: u32 = 120;
 
+/// Bounds the wait after consecutive allocation failures, starting at the first failure.
+pub(crate) fn retry_frames(failures: u32) -> u32 {
+    (FIRST_RETRY_FRAMES << failures.saturating_sub(1).min(6)).min(MAX_RETRY_FRAMES)
+}
+
 /// One view's last failed request and how many attempts to skip before retrying it.
 struct Failure<K> {
     request: K,
@@ -292,7 +345,7 @@ impl<K: PartialEq> FailedRequests<K> {
         if allocated.is_some() {
             self.0.remove(&view);
         } else {
-            let wait = (FIRST_RETRY_FRAMES << (failures - 1).min(6)).min(MAX_RETRY_FRAMES);
+            let wait = retry_frames(failures);
             self.0.insert(
                 view,
                 Failure {

@@ -380,7 +380,11 @@ impl DirectOcclusion {
         self.table.trim();
     }
 
-    fn upload(&mut self, device: &RenderDevice, queue: &RenderQueue) -> bool {
+    fn upload(
+        &mut self,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+    ) -> Result<(), crate::gpu_allocation::TerrainWriteError> {
         let slots = self.table.slot_count();
         if self
             .storage
@@ -408,7 +412,7 @@ impl DirectOcclusion {
                 )
             });
             let Some((storage, readbacks)) = grown else {
-                return false;
+                return Err(crate::gpu_allocation::TerrainWriteError);
             };
             self.verdicts.reset();
             self.bind_group = None;
@@ -417,8 +421,7 @@ impl DirectOcclusion {
             self.table.mark_all_dirty();
         }
         let storage = self.storage.as_ref().expect("storage was just ensured");
-        write_dirty_records(&mut self.table, queue, &storage.records);
-        true
+        write_dirty_records(&mut self.table, device, queue, &storage.records)
     }
 
     /// Consumes settled readbacks for legacy history and optional current-frame work diagnostics.
@@ -545,7 +548,7 @@ pub(in crate::chunk) fn prepare_direct_occlusion(
         biome_tints.table_identity(),
         &mut hidden,
     );
-    if !occlusion.upload(&device, &queue) {
+    if occlusion.upload(&device, &queue).is_err() {
         return;
     }
     // Readbacks mapped by the previous frame's device poll.
@@ -614,7 +617,13 @@ pub(in crate::chunk) fn prepare_direct_occlusion(
             let _span =
                 bevy::log::info_span!("terrain.occlusion_uniform_write", frame = occlusion.frame)
                     .entered();
-            queue.profiled_write_buffer(&storage.uniform, 0, bytemuck::bytes_of(&uniform));
+            crate::gpu_allocation::terrain_write(
+                &device,
+                "terrain occlusion uniform upload",
+                std::mem::size_of_val(&uniform) as u64,
+                || queue.profiled_write_buffer(&storage.uniform, 0, bytemuck::bytes_of(&uniform)),
+            )
+            .ok()?;
         }
         if occlusion
             .bind_group

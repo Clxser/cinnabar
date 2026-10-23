@@ -26,7 +26,15 @@ type ChangedChunkInstances<'w, 's> =
     Query<'w, 's, (Entity, &'static ChunkRenderInstance), Changed<ChunkRenderInstance>>;
 #[derive(SystemParam)]
 pub(in crate::chunk) struct ChunkInstanceQueries<'w, 's> {
-    queries: ParamSet<'w, 's, (AllChunkInstances<'w, 's>, ChangedChunkInstances<'w, 's>)>,
+    queries: ParamSet<
+        'w,
+        's,
+        (
+            AllChunkInstances<'w, 's>,
+            ChangedChunkInstances<'w, 's>,
+            Query<'w, 's, &'static mut ChunkRenderInstance>,
+        ),
+    >,
 }
 #[derive(SystemParam)]
 pub(in crate::chunk) struct ChunkUploadPublication<'w> {
@@ -36,7 +44,7 @@ pub(in crate::chunk) struct ChunkUploadPublication<'w> {
     terrain_generations:
         Option<ResMut<'w, crate::dropped_item_render::terrain_items::TerrainItemMeshGenerations>>,
     coverage: Option<ResMut<'w, crate::chunk::TerrainCoverage>>,
-    recovery: Option<ResMut<'w, super::super::recovery::TerrainGpuRecovery>>,
+    recovery: Option<Res<'w, super::super::recovery::TerrainGpuRecovery>>,
 }
 /// Sub-chunk uploads admitted per frame while a shader pack draws the terrain. The pack
 /// expands at most `FRAME_EXPANSION_FACES` a frame from these sections, so admitting
@@ -77,12 +85,16 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
         gpu_removals,
         mut terrain_generations,
         mut coverage,
-        mut recovery,
+        recovery,
     } = publication;
     let _timer = profiler
         .as_deref()
         .map(|profiler| profiler.time(RuntimeStage::GpuPreparation));
     release_completed_transparent_retirements(&mut arena, retirement_fence.completed_epoch());
+    if recovery.as_ref().is_some_and(|recovery| recovery.waiting()) {
+        *upload_stats = default();
+        return;
+    }
     let active_tint_identity = biome_tints.table_identity();
     let tint_identity_changed = fairness.last_tint_identity != Some(active_tint_identity);
     let candidates = if tint_identity_changed || fairness.recover_untracked {
@@ -124,7 +136,7 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
         .next()
         .map(|view| view.world_from_view.translation())
         .unwrap_or(Vec3::ZERO);
-    let mut selected = plan_gpu_chunk_updates(
+    let selected = plan_gpu_chunk_updates(
         candidates,
         &arena.allocations,
         camera_position,
@@ -134,10 +146,6 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
     let recovering = recovery
         .as_ref()
         .is_some_and(|recovery| recovery.recovering);
-    if let Some(recovery) = recovery.as_ref().filter(|recovery| recovery.recovering) {
-        // Restore resident terrain before fresh publications can fill this frame.
-        selected.sort_by_key(|entity| !recovery.published.contains_key(entity));
-    }
 
     for entity in removed_instances.read() {
         if let Some(coverage) = coverage.as_deref_mut() {
@@ -173,7 +181,7 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
     let mut applied_publication_permits = Vec::new();
     let mut successful_updates = Vec::new();
     let mut upload_reservation = GpuUploadReservation::default();
-    let mut replay_reservation = GpuUploadReservation::default();
+    let mut result = Ok(());
     let uploads = upload_queue.uploads();
     upload_reservation.growth_copy_bytes = advance_arena_migration(
         &mut arena,
@@ -259,11 +267,8 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
             continue;
         };
         candidates_examined += 1;
-        let replaying = recovery
-            .as_ref()
-            .is_some_and(|recovery| recovery.published.get(&entity) == Some(&instance.generation));
-        let publication_permit = instance.publication_permit.as_ref().filter(|_| !replaying);
-        let token = instance.token.filter(|_| !replaying);
+        let publication_permit = instance.publication_permit.as_ref();
+        let token = instance.token;
         // Deferred removals already occupy resident GPU ranges. Do not admit
         // more fresh chunks while completion cannot make retirement room.
         // Replacements still use their ordinary bounded COW admission below.
@@ -281,13 +286,9 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
         }
         // This lower bound needs no stream walk, biome copy, or allocation plan.
         // Exact admission below also charges writes mirrored by arena migration.
-        let mut preliminary = if replaying {
-            replay_reservation
-        } else {
-            upload_reservation
-        };
-        let can_prepare = if replaying {
-            preliminary.try_reserve_replay(*budget, instance_bytes)
+        let mut preliminary = upload_reservation;
+        let can_prepare = if recovering {
+            preliminary.try_reserve_rebuild(*budget, instance_bytes)
         } else if publication_permit.is_some() {
             preliminary.try_reserve_permitted(instance_bytes)
         } else {
@@ -440,7 +441,7 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
                         // Earlier uploads reserved one write. Issue them before a migration
                         // can make the write path mirror them into an uncharged destination.
                         if !writes.is_empty() {
-                            writes.issue(&arena, uploads);
+                            result = result.and(writes.issue(&arena, uploads));
                         }
                         let growth = if recovering {
                             minimum
@@ -467,7 +468,7 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
                     // A slice copy is submitted at once; stage this frame's earlier
                     // writes first so the copy carries them into the new buffer.
                     if !writes.is_empty() {
-                        writes.issue(&arena, uploads);
+                        result = result.and(writes.issue(&arena, uploads));
                     }
                     upload_reservation.growth_copy_bytes += advance_arena_migration(
                         &mut arena,
@@ -493,18 +494,9 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
             biome_required,
         ));
         let mut next_upload_reservation = upload_reservation;
-        let mut next_replay_reservation = replay_reservation;
         let mut prepared_publication_permit = None;
-        let reserved = if replaying {
-            if next_replay_reservation.try_reserve_replay(*budget, charged_bytes) {
-                next_upload_reservation.items += 1;
-                next_upload_reservation.incremental_bytes = next_upload_reservation
-                    .incremental_bytes
-                    .saturating_add(charged_bytes);
-                true
-            } else {
-                false
-            }
+        let reserved = if recovering && publication_permit.is_none() {
+            next_upload_reservation.try_reserve_rebuild(*budget, charged_bytes)
         } else if let Some(slot) = publication_permit {
             if !next_upload_reservation.try_reserve_permitted(charged_bytes) {
                 false
@@ -515,19 +507,8 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
                     }
                     continue;
                 };
-                match permit.into_gpu_prepared() {
-                    Ok(permit) => {
-                        prepared_publication_permit = Some(permit);
-                        true
-                    }
-                    Err(permit) => {
-                        if let Err(permit) = slot.restore(permit) {
-                            drop(permit);
-                            unreachable!("the linear publication permit slot was taken once")
-                        }
-                        false
-                    }
-                }
+                prepared_publication_permit = Some((slot.clone(), permit));
+                true
             }
         } else {
             next_upload_reservation.try_reserve(*budget, charged_bytes)
@@ -686,28 +667,45 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
             applied_tokens.push((instance.key, token, instance_bytes));
         }
         upload_reservation = next_upload_reservation;
-        replay_reservation = next_replay_reservation;
         if let Some(permit) = prepared_publication_permit {
             applied_publication_permits.push(permit);
         }
         successful_updates.push(entity);
-        if let Some(recovery) = recovery.as_deref_mut() {
-            recovery.published.remove(&entity);
-        }
     }
     fairness.finish_frame(&selected, &successful_updates, &urgent_updates);
 
-    writes.issue(&arena, uploads);
-    let applied_at = Instant::now();
-    for (key, token, uploaded_bytes) in applied_tokens {
-        acknowledgements.complete_with_bytes(key, token, applied_at, uploaded_bytes);
-        if let Some(terrain) = terrain_generations.as_deref_mut() {
-            terrain.record(key, token.generation);
+    result = result.and(writes.issue(&arena, uploads));
+    if result.is_ok() {
+        let applied_at = Instant::now();
+        for (key, token, uploaded_bytes) in applied_tokens {
+            acknowledgements.complete_with_bytes(key, token, applied_at, uploaded_bytes);
+            if let Some(terrain) = terrain_generations.as_deref_mut() {
+                terrain.record(key, token.generation);
+            }
         }
-    }
-    for permit in applied_publication_permits {
-        let retired = permit.retire();
-        debug_assert!(retired);
+        for (_, permit) in applied_publication_permits {
+            let retired = permit
+                .into_gpu_prepared()
+                .unwrap_or_else(|_| unreachable!("validated publication permit"))
+                .retire();
+            debug_assert!(retired);
+        }
+        // Completed payloads retain no acknowledgement or permit to replay.
+        let mut completed = instances.queries.p2();
+        for &entity in &successful_updates {
+            if let Ok(mut instance) = completed.get_mut(entity) {
+                instance.token = None;
+                instance.publication_permit = None;
+            }
+        }
+    } else {
+        for (key, token, _) in applied_tokens {
+            acknowledgements.cancel(key, token);
+        }
+        for (slot, permit) in applied_publication_permits {
+            slot.restore(permit)
+                .unwrap_or_else(|_| unreachable!("the publication slot was taken once"));
+        }
     }
 
     *upload_stats = account_chunk_gpu_uploads(
@@ -742,11 +740,7 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
             upload_stats.candidates_deferred as f64,
         );
     }
-    if upload_stats
-        .chunk_updates
-        .saturating_sub(replay_reservation.items)
-        > upload_stats.chunk_budget
-    {
+    if !recovering && upload_stats.chunk_updates > upload_stats.chunk_budget {
         bevy::log::warn!(
             "chunk GPU preparation observed {} updates despite a {}-chunk upload budget",
             upload_stats.chunk_updates,
