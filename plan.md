@@ -544,6 +544,12 @@ OS Alt-Tab acceptance on macOS, Windows and Linux remains incomplete.
   NPC dialogue actions expose command/URL labels and pointer hit targets through
   their JSON-UI collection. Actor portraits, matched acceptance for larger action
   lists and touch/console behavior remain incomplete.
+  URL images use the UI texture-file allowance; aggregate encoded-image cache bounds
+  and remaining image admission and download-deadline parity remain incomplete.
+  Data-driven UI (DDUI) data stores follow the server's replacements, path updates,
+  removals and update counters. Screen requests are answered `UserBusy` while another
+  screen is busy and otherwise closed at once: drawing DDUI screens, their client writes,
+  server closes, reloads and pack-defined DDUI screens remain incomplete.
   URL images use the UI texture-file allowance. The download cache evicts its oldest
   handed-off bodies beyond the aggregate byte budget while preserving display readiness;
   atlas misses fetch released bodies again. Unclaimed bodies remain until first handoff.
