@@ -366,6 +366,7 @@ and rendered qualification remain incomplete.
 - [ ] Close custom block-item texture resolution, non-cube shapes, tinting, animation
   and matched inventory/held-item presentation. Egg and frogspawn inventory items use their
   carried sprites; remaining special shapes and animation still need matched comparisons.
+  Crystal and spike items use their flat carried sprites.
   Shulker previews apply each face brightness once.
   Furnace-family previews use their authored carried front faces.
   Shared cube face sheets are bounded coverage.
