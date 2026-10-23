@@ -13,7 +13,9 @@ impl PlayerInventoryLedger {
         change: &protocol::PredictedSlotChange,
     ) -> bool {
         let cell = Cell::Inventory(slot);
-        if slot > 8 || !protocol::is_legacy_request_id(change.legacy_request_id) {
+        if slot >= protocol::HOTBAR_SLOT_COUNT
+            || !protocol::is_legacy_request_id(change.legacy_request_id)
+        {
             return false;
         }
         let Some(before) = self.confirmed.get(cell).cloned() else {
