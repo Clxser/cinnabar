@@ -46,14 +46,16 @@ impl FormEngine {
             return Ok(None);
         };
         let render = render.borrow();
+        // Paint records omit quiet animation dependencies that can still move input geometry.
+        let retainable = reusable(&art) && !render.hits.iter().any(|hit| hit.anim.is_some());
         if reuse
-            && reusable(&art)
+            && retainable
             && let Some(painted) = retained.replay(textures, frame, art, render)
         {
             return Ok(Some(painted));
         }
         retained.paints += 1;
-        if !reusable(&art) {
+        if !retainable {
             retained.forget();
             return paint(textures, frame, art, render, None);
         }
