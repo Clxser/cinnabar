@@ -82,6 +82,18 @@ fn signatures_bind_exact_metadata_selection_size_and_bytes() {
 }
 
 #[test]
+fn storage_keeps_distinct_releases_separate_even_when_their_component_bytes_match() {
+    let f = fixture();
+    let initial = storage::filename("11", &f.selected).unwrap();
+    let mut another = f.selected.clone();
+    another.version = "1.0.1".into();
+    assert_ne!(initial, storage::filename("11", &another).unwrap());
+    another = f.selected.clone();
+    another.slug = "other-project".into();
+    assert_ne!(initial, storage::filename("11", &another).unwrap());
+}
+
+#[test]
 fn revocations_enforce_expiry_clock_bounds_and_restart_rollback_protection() {
     let f = fixture();
     let current = revocations(&f, 2000, 5000, &[&f.selected.sha256]);

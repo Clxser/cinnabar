@@ -5,7 +5,7 @@ use anyhow::{Result, ensure};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 pub const FILE_PREFIX: &str = "marketplace-";
@@ -16,7 +16,7 @@ struct State {
     account: String,
     issued_at: u64,
     expires_at: u64,
-    revoked: HashMap<String, String>,
+    revoked: Arc<HashMap<String, String>>,
     installed: HashMap<PathBuf, (String, Manifest)>,
 }
 
@@ -52,10 +52,18 @@ impl Guard {
 
     /// Retains every known revoked hash while advancing the signed freshness checkpoint.
     pub fn revocations(&self, value: RevocationState) {
+        let previous = self
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .revoked
+            .clone();
+        let mut revoked = (*previous).clone();
+        revoked.extend(value.revoked);
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         state.issued_at = value.issued_at;
         state.expires_at = value.expires_at;
-        state.revoked.extend(value.revoked);
+        state.revoked = Arc::new(revoked);
     }
 
     /// Returns the last accepted issue time so a replay cannot roll back this session.
@@ -100,19 +108,31 @@ impl Guard {
                 .installed
                 .get(path)
                 .ok_or_else(|| anyhow::anyhow!("Missing marketplace receipt."))?;
-            verify_bytes(bytes, manifest)?;
+            let manifest = manifest.clone();
+            drop(state);
+            verify_bytes(bytes, &manifest)?;
+            ensure!(
+                self.allows(path, now),
+                "Marketplace authority changed while source bytes were checked."
+            );
         }
         Ok(())
     }
 
     /// Blocks a withdrawal hint immediately, pending the next signed revocation refresh.
     pub fn hold(&self, hash: &str) {
-        self.0
+        let previous = self
+            .0
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .revoked
-            .entry(hash.into())
-            .or_default();
+            .clone();
+        if previous.contains_key(hash) {
+            return;
+        }
+        let mut revoked = (*previous).clone();
+        revoked.entry(hash.into()).or_default();
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).revoked = Arc::new(revoked);
     }
 
     /// Explains a held file using signed withdrawal text or the current account/freshness state.
