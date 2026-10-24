@@ -214,7 +214,8 @@ fn alpha_preview(flags: u32, alpha: u8) -> (UiPresentationRuntime, RuntimeEntity
 
 #[test]
 fn preview_held_cutout_texels_render_opaque() {
-    for alpha in [192, 127, 128] {
+    let threshold = assets::gui_item::GUI_BLOCK_ALPHA_THRESHOLD;
+    for alpha in [192, threshold - 1, threshold] {
         let (preview, entities) = alpha_preview(assets::MATERIAL_FLAG_ALPHA_CUTOUT, alpha);
         let model = preview.gui_models.sources.held[&entities.item_visuals()[0].key]
             .model(preview.icon_catalog.as_deref().unwrap())
@@ -225,7 +226,7 @@ fn preview_held_cutout_texels_render_opaque() {
             * 4;
         assert_eq!(
             page.pixels()[offset + 3],
-            if alpha < 128 { 0 } else { 255 },
+            if alpha < threshold { 0 } else { 255 },
             "accepted cutout texels must be opaque in the preview"
         );
     }
