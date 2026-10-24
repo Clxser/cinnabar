@@ -10,7 +10,7 @@ import (
 	"github.com/sandertv/gophertunnel/minecraft/protocol"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 
-	"github.com/hashimthearab/rust-mcbe/tools/localserver/internal/hostcontract"
+	"github.com/cinnabar-mc/cinnabar/tools/localserver/internal/hostcontract"
 )
 
 // startupPackets projects actual Dragonfly GameData with the pinned listener's original startup prefix.

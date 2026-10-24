@@ -368,6 +368,7 @@ jobs:
       # the tests and a slow or timed-out test run still leaves dev a warm cache.
       - name: Save Windows Rust build cache
         if: ${{ !cancelled() && github.ref == 'refs/heads/dev' && runner.os == 'Windows' }}
+        continue-on-error: true
         uses: ./.github/actions/build-cache
         with:
           phase: save
@@ -391,6 +392,7 @@ jobs:
       # The shared cache store drops linked test binaries, so macOS saves after the tests.
       - name: Save macOS Rust build cache
         if: ${{ !cancelled() && github.ref == 'refs/heads/dev' && runner.os == 'macOS' }}
+        continue-on-error: true
         uses: ./.github/actions/build-cache
         with:
           phase: save
@@ -485,6 +487,7 @@ jobs:
 
       - name: Save Go build cache
         if: ${{ !cancelled() && github.ref == 'refs/heads/dev' }}
+        continue-on-error: true
         uses: ./.github/actions/build-cache
         with:
           phase: save

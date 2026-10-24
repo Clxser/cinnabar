@@ -243,7 +243,7 @@ fn opaque_identity_still_checks_manifest_identity_and_format() {
             Err(AdmissionError::ManifestIdentityMismatch)
         );
     }
-    let manifest = manifest.replace(r#""format_version": 2"#, r#""format_version": 2.5"#);
+    let manifest = manifest.replace(r#""format_version": 2"#, r#""format_version": 4"#);
     assert_eq!(
         verify_archive_identity(
             &zip_files(&[("manifest.json", manifest.as_bytes())]),
@@ -612,7 +612,7 @@ fn local_plaintext_archive_with_advertised_key_reads_stored_resources() {
         .join(".");
     let (pack, _, _) = validate_archive_parts(
         id,
-        &version,
+        version,
         "",
         bytes.clone(),
         ContentKey::new(b"0123456789abcdefghijklmnopqrstuv"),
@@ -866,4 +866,49 @@ fn review_wrapped_legacy_manifests_and_subpack_protection() {
         validate_fixture(shadowed, "high"),
         Err(AdmissionError::InvalidSubpack)
     ));
+}
+
+#[test]
+fn format_zero_archives_keep_native_identity_and_rendering_purposes_separate() {
+    for format in [
+        serde_json::json!(0),
+        serde_json::json!("2.0"),
+        serde_json::json!([2, 0, 0]),
+    ] {
+        for (kind, expected, decoy) in [
+            ("data", ArchiveKind::Behavior, "resources"),
+            ("resources", ArchiveKind::Resources, "data"),
+        ] {
+            let root = serde_json::json!({
+                "format_version": format,
+                "header": {
+                    "pack_id": PACK_ID.to_string(),
+                    "packs_version": [1, 2, 3],
+                    "modules": [{"type": kind}]
+                },
+                "modules": [{"type": decoy}]
+            });
+            let bytes = serde_json::to_vec(&root).unwrap();
+            let archive = zip_files(&[("manifest.json", &bytes), ("marker.txt", b"original")]);
+            assert_eq!(
+                verify_archive_identity(&archive, PACK_ID, b"01.2.3-\xff"),
+                Ok(expected),
+                "format {format}, module {kind}"
+            );
+            let rendered = validate_fixture(archive, "");
+            if kind == "resources" {
+                assert_eq!(
+                    rendered
+                        .unwrap()
+                        .read_file("marker.txt")
+                        .unwrap()
+                        .unwrap()
+                        .as_ref(),
+                    b"original"
+                );
+            } else {
+                assert_eq!(rendered.err(), Some(AdmissionError::InvalidModules));
+            }
+        }
+    }
 }

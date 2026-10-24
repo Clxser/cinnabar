@@ -69,7 +69,8 @@ pub(super) fn open_url(url: &str) -> jni::errors::Result<bool> {
     })
 }
 
-/// Opens the Storage Access Framework picker and blocks until the user chooses or cancels.
+/// Opens the Storage Access Framework picker for `mime_type` and blocks until the user chooses
+/// or cancels. Custom file types use `*/*` and the caller checks filename extensions.
 ///
 /// Returns private copies of the chosen documents, an empty list on cancellation, `None` when no
 /// activity or document provider could show the picker, or an error when a document exceeds
@@ -77,6 +78,7 @@ pub(super) fn open_url(url: &str) -> jni::errors::Result<bool> {
 pub(super) fn pick_documents(
     multiple: bool,
     max_bytes: Option<u64>,
+    mime_type: &str,
 ) -> Result<Option<Vec<PathBuf>>, String> {
     let context = ndk_context::android_context();
     // SAFETY: NativeActivity initializes ndk-context with its live VM and global Context reference.
@@ -87,7 +89,7 @@ pub(super) fn pick_documents(
         let application = unsafe { env.as_cast_raw::<JObject>(&application_ptr)? };
         // Java has no unsigned long; a negative limit means unlimited.
         let max_bytes = max_bytes.map_or(-1, |bytes| i64::try_from(bytes).unwrap_or(i64::MAX));
-        call_picker(env, &application, multiple, max_bytes)
+        call_picker(env, &application, multiple, max_bytes, mime_type)
     })
     .map_err(|error| match error {
         jni::errors::Error::CaughtJavaException { name, msg, .. } => {
@@ -107,6 +109,7 @@ fn call_picker(
     application: &JObject<'_>,
     multiple: bool,
     max_bytes: i64,
+    mime_type: &str,
 ) -> jni::errors::Result<Option<Vec<PathBuf>>> {
     let package = env
         .call_method(
@@ -135,12 +138,17 @@ fn call_picker(
         )?
         .l()?;
     let class = env.cast_local::<JClass>(class)?;
+    let mime_type = env.new_string(mime_type)?;
     let paths = env
         .call_static_method(
             class,
             jni_str!("pick"),
-            jni_sig!("(ZJ)[Ljava/lang/String;"),
-            &[JValue::Bool(multiple), JValue::Long(max_bytes)],
+            jni_sig!("(ZJLjava/lang/String;)[Ljava/lang/String;"),
+            &[
+                JValue::Bool(multiple),
+                JValue::Long(max_bytes),
+                JValue::Object(&mime_type),
+            ],
         )?
         .l()?;
     if paths.is_null() {

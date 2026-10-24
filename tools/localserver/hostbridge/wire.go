@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hashimthearab/rust-mcbe/tools/localserver/internal/hostcontract"
+	"github.com/cinnabar-mc/cinnabar/tools/localserver/internal/hostcontract"
 )
 
 var errProtocol = errors.New("invalid native world bridge state")

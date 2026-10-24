@@ -56,6 +56,7 @@ mod tests {
             assert!(matches!(
                 attempt.poll(controller.generation, true),
                 Some(protocol::SessionEndpoint::Native(target)) if target.address == endpoint.address && target.transport == endpoint.transport
+
             ));
         }
         let menu = SessionController::default().with_startup_endpoint(

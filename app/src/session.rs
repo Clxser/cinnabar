@@ -347,7 +347,8 @@ pub(crate) struct SessionResources<'w> {
     controller: ResMut<'w, SessionController>,
     state: crate::game_session::SessionWorld<'w>,
     network: ResMut<'w, NetworkHandle<PackApplication>>,
-    collisions: Res<'w, client_interaction::movement::PhysicsCollisionRegistries>,
+    collisions: Option<Res<'w, client_interaction::movement::PhysicsCollisionRegistries>>,
+
     actor_artwork: Option<ResMut<'w, render_scene::ActorArtworkResource>>,
     #[cfg(test)]
     startup_actor_artwork: Option<Res<'w, StartupActorArtwork>>,

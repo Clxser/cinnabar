@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/login"
 
-	"github.com/hashimthearab/rust-mcbe/tools/localserver/internal/hostcontract"
+	"github.com/cinnabar-mc/cinnabar/tools/localserver/internal/hostcontract"
 )
 
 // metadata consumes only Rust's authenticated presentation and the original signed raw client object.

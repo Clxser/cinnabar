@@ -19,7 +19,7 @@ import (
 	"github.com/sandertv/gophertunnel/minecraft/protocol/login"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 
-	"github.com/hashimthearab/rust-mcbe/tools/localserver/internal/hostcontract"
+	"github.com/cinnabar-mc/cinnabar/tools/localserver/internal/hostcontract"
 )
 
 // TestBridgeActualDragonflyWorldEntry uses the real server finalizer, player/world and packet output.

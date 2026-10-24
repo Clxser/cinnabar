@@ -1,12 +1,12 @@
 package main
 
 import (
+	"github.com/cinnabar-mc/cinnabar/tools/localserver/hostbridge"
 	"github.com/df-mc/dragonfly/server"
 	"github.com/df-mc/dragonfly/server/player"
 	"github.com/df-mc/dragonfly/server/session"
 	"github.com/df-mc/dragonfly/server/world"
 	"github.com/google/uuid"
-	"github.com/hashimthearab/rust-mcbe/tools/localserver/hostbridge"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
 

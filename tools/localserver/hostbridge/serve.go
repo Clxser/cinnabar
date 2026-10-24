@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hashimthearab/rust-mcbe/tools/localserver/internal/hostcontract"
+	"github.com/cinnabar-mc/cinnabar/tools/localserver/internal/hostcontract"
 )
 
 // serve owns the sole control stream and all of its bounded peer reservations.

@@ -5,7 +5,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/hashimthearab/rust-mcbe/tools/localserver/internal/hostcontract"
+	"github.com/cinnabar-mc/cinnabar/tools/localserver/internal/hostcontract"
 )
 
 // receive never waits on application input; stop-and-wait leaves the one pending payload bounded.

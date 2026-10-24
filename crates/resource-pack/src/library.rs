@@ -42,7 +42,7 @@ pub struct InstalledPack {
 }
 
 impl InstalledPack {
-    /// Formats the manifest version for archive admission.
+    /// Formats the numeric manifest version for archive filenames.
     pub(crate) fn version_text(&self) -> String {
         self.version.map(|part| part.to_string()).join(".")
     }

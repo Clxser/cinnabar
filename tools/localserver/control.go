@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cinnabar-mc/cinnabar/tools/localserver/internal/hostcontract"
 	"github.com/df-mc/dragonfly/server/world"
-	"github.com/hashimthearab/rust-mcbe/tools/localserver/internal/hostcontract"
 )
 
 // commands are the actions of the stdin protocol. reload is nil without Experiences, and its

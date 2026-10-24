@@ -14,6 +14,7 @@ mod mods;
 mod out_of_game;
 mod profile;
 mod roster;
+mod server_forms;
 mod settings_screens;
 mod shader_options;
 mod shader_pack;
@@ -102,6 +103,9 @@ pub enum Fixture {
     /// Two same-ID requests arriving while the first menu is still open.
     #[cfg(feature = "test-support")]
     FormOverlap,
+    /// A script form shown through data-driven UI.
+    #[cfg(feature = "test-support")]
+    DataDriven(protocol::ddui::ScriptedScreen),
     /// An edited settings draft after switching away from and back to its tab.
     #[cfg(feature = "test-support")]
     SettingsDraft,
@@ -156,5 +160,6 @@ pub fn states() -> impl Iterator<Item = &'static State> {
         .chain(settings_screens::SEARCH_STATES)
         .chain(settings_screens::WORLD_STATES)
         .chain(settings_screens::PAGE_STATES)
+        .chain(server_forms::STATES)
         .chain(touch_editor::STATES)
 }

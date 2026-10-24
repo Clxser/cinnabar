@@ -7,7 +7,7 @@ import (
 
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 
-	"github.com/hashimthearab/rust-mcbe/tools/localserver/internal/hostcontract"
+	"github.com/cinnabar-mc/cinnabar/tools/localserver/internal/hostcontract"
 )
 
 // WritePacket serializes admission into the same finite byte/count buffer used by Flush.

@@ -22,6 +22,9 @@ pub(super) fn poll_join(
     {
         return;
     }
+    let Some(collisions) = session.collisions.as_deref() else {
+        return;
+    };
     let client_random_id = match controller.poll_client_random_id() {
         Ok(Some(id)) => id,
         Ok(None) => return,
@@ -95,7 +98,7 @@ pub(super) fn poll_join(
             .and_then(|mods| mods.session_relay()),
         crate::runtime::network::session_registries::RegistryBase::new(
             &session.state.client_world.runtime_assets,
-            &session.collisions,
+            collisions,
         ),
     ) {
         controller.fail_join(menu, format!("Could not connect: {error}"));

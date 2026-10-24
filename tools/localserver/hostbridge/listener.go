@@ -15,7 +15,7 @@ import (
 	"github.com/df-mc/dragonfly/server/session"
 	"github.com/google/uuid"
 
-	"github.com/hashimthearab/rust-mcbe/tools/localserver/internal/hostcontract"
+	"github.com/cinnabar-mc/cinnabar/tools/localserver/internal/hostcontract"
 )
 
 var _ server.Listener = (*Listener)(nil)

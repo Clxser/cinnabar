@@ -93,7 +93,6 @@ fn show_folder(_dir: &Path) -> bool {
     return run_tool(_dir);
     #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
-        let _ = dir;
         false
     }
 }

@@ -161,20 +161,6 @@ pub(super) const STATES: &[State] = &[
     },
     #[cfg(feature = "test-support")]
     State {
-        name: "form-overlap",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: || Fixture::FormOverlap,
-    },
-    #[cfg(feature = "test-support")]
-    State {
-        name: "form-control-locked",
-        size: [1280, 960],
-        gui_scale: GUI_SCALE,
-        fixture: || Fixture::ControlLocked,
-    },
-    #[cfg(feature = "test-support")]
-    State {
         name: "paper-doll-particles-before",
         size: [576, 672],
         gui_scale: 1,

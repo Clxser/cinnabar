@@ -11,6 +11,8 @@ mod session;
 pub use session::{SessionCompanion, spawn_network_with_companion};
 
 #[cfg(any(test, feature = "test-support"))]
+pub use session::experience::ExperienceIngress;
+#[cfg(any(test, feature = "test-support"))]
 pub use session::handle_state::CapturedPackets;
 pub use session::{
     BatchSendError, CONTROL_EVENT_CAPACITY, NetworkControlEvent, NetworkExecutor,

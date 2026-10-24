@@ -6,7 +6,7 @@ use crate::{
     AdmissionError, MAX_DECLARED_BYTES_PER_PACK, MAX_FILE_BYTES, MAX_LOCAL_ARCHIVE_BYTES,
     MAX_LOCAL_PACKS, MAX_MANIFEST_BYTES,
     library::{ImportReport, InstalledPack, LibraryError},
-    manifest::{Purpose, Version, read_manifest},
+    manifest::{Purpose, Version, manifest_identity, read_manifest},
     parser::{
         MANIFEST_NAMES, canonical_path, is_regular_file, prepare_zip_bytes, validate_archive_parts,
     },
@@ -17,7 +17,6 @@ use std::{
     io::{Cursor, Read},
     path::Path,
 };
-use uuid::Uuid;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 mod directory;
@@ -321,15 +320,10 @@ fn read_metadata(bytes: &[u8]) -> Result<Option<InstalledPack>, LibraryError> {
         return Ok(None);
     }
     let header = &root["header"];
-    let id = header["uuid"]
-        .as_str()
-        .and_then(|value| Uuid::parse_str(value.trim()).ok())
-        .ok_or(AdmissionError::MalformedManifest)?;
-    let version = Version::from_value(&header["version"])
-        .ok_or(AdmissionError::InvalidVersion)?
-        .0;
+    let (id, Version(version)) = manifest_identity(bytes, &root)?;
     let version_text = version.map(|part| part.to_string()).join(".");
     let manifest = read_manifest(bytes, id, &version_text, Purpose::Rendering)?;
+
     let min_engine_version = if header["min_engine_version"].is_null() {
         None
     } else {

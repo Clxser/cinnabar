@@ -78,6 +78,7 @@ fn manifest_preserves_all_declared_subpacks_and_checks_identity() {
     for count in [64, 65] {
         let bytes = serde_json::to_vec(&manifest(PACK_ID, count)).unwrap();
         let parsed = read_manifest(&bytes, PACK_ID, VERSION, Purpose::Rendering).unwrap();
+
         assert_eq!(parsed.subpacks.len(), count);
         for (index, subpack) in parsed.subpacks.iter().enumerate() {
             assert_eq!(subpack.folder, format!("p{index}"));
