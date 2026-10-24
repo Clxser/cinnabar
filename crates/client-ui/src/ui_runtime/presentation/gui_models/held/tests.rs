@@ -153,7 +153,7 @@ fn held_banner_block_route_without_cube_sheet_remains_available_in_both_preview_
         icons,
         icon_refs,
         None,
-        &BTreeMap::new(),
+        &assets::RuntimeAssets::diagnostic(),
     )
     .unwrap();
     assert_eq!(models.len(), icons.entries().len());

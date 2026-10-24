@@ -277,7 +277,7 @@ impl GuiModelPreparation {
                 .as_deref()
                 .ok_or(UiPresentationError::InvalidFontTexture)?,
             equipment,
-            &held_sources,
+            world,
         )?;
         let required_pages = atlas.page_count();
         let mut optional_models = BTreeSet::new();
