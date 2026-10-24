@@ -101,6 +101,8 @@ const MAX_ENTITY_GEOMETRY_INHERITANCE_DEPTH: usize = 64;
 
 const HEADER_BYTES: usize = 80;
 const HASH_BYTES: usize = 32;
+/// Largest encoded entity carrier, including its header and integrity hash.
+pub const MAX_ENTITY_BLOB_BYTES: usize = HEADER_BYTES + MAX_ENTITY_CATALOG_BYTES + HASH_BYTES;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[repr(u8)]

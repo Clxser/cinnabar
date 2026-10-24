@@ -323,3 +323,6 @@ mod review_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod entity_size_tests;
