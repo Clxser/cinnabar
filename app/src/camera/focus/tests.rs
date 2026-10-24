@@ -41,7 +41,7 @@ pub(super) fn focus_app() -> (App, Entity) {
 }
 
 /// Checks both the OS request and the gameplay capture observation.
-fn assert_released(app: &App, window: Entity) {
+pub(super) fn assert_released(app: &App, window: Entity) {
     let cursor = app.world().get::<CursorOptions>(window).unwrap();
     assert_eq!(cursor.grab_mode, CursorGrabMode::None);
     assert!(cursor.visible);
@@ -161,10 +161,10 @@ fn late_screen_capture_resumes_after_loss_but_not_during_driven_control() {
     assert_released(&app, window);
 }
 
-#[test]
-fn json_ui_form_release_restores_capture_after_overlay_and_response_delivery() {
-    use bevy::input::{ButtonState, InputPlugin, mouse::MouseButtonInput};
-    use client_ui::ui_runtime::flush_form_response;
+/// Builds the production server-form input chain around a focused two-button action form,
+/// with the pointer resting on its second button; returns that pointer position.
+pub(super) fn action_form_app() -> (App, Entity, Vec2) {
+    use bevy::input::InputPlugin;
     use {
         crate::ui_runtime::drive_server_form_input,
         client_ui::test_support::{mini_engine_presentation, pack_harness},
@@ -221,12 +221,27 @@ fn json_ui_form_release_restores_capture_after_overlay_and_response_delivery() {
     app.world_mut().get_mut::<Window>(window).unwrap().focused = true;
     app.update();
     assert_released(&app, window);
-    app.world_mut().write_message(MouseButtonInput {
-        button: MouseButton::Left,
-        state: ButtonState::Pressed,
-        window,
-    });
+    (app, window, centre)
+}
+
+/// Delivers one left-button edge to the primary window and runs a frame.
+pub(super) fn left_edge(app: &mut App, window: Entity, state: bevy::input::ButtonState) {
+    app.world_mut()
+        .write_message(bevy::input::mouse::MouseButtonInput {
+            button: MouseButton::Left,
+            state,
+            window,
+        });
     app.update();
+}
+
+#[test]
+fn json_ui_form_release_restores_capture_after_overlay_and_response_delivery() {
+    use bevy::input::ButtonState;
+    use client_ui::ui_runtime::flush_form_response;
+
+    let (mut app, window, _) = action_form_app();
+    left_edge(&mut app, window, ButtonState::Pressed);
     assert!(
         app.world()
             .resource::<UiRuntimeResource>()
@@ -234,12 +249,7 @@ fn json_ui_form_release_restores_capture_after_overlay_and_response_delivery() {
             .active()
             .is_some()
     );
-    app.world_mut().write_message(MouseButtonInput {
-        button: MouseButton::Left,
-        state: ButtonState::Released,
-        window,
-    });
-    app.update();
+    left_edge(&mut app, window, ButtonState::Released);
     assert!(
         app.world()
             .resource::<UiRuntimeResource>()

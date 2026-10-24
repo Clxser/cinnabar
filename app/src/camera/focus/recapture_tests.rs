@@ -1,4 +1,7 @@
-use super::{tests::focus_app, *};
+use super::{
+    tests::{action_form_app, focus_app, left_edge},
+    *,
+};
 use bevy::{
     input::{
         ButtonState,
@@ -50,12 +53,19 @@ fn pause_app(scale: f32) -> (App, Entity) {
     (app, window)
 }
 
-/// Checks the cursor request submitted to the desktop backend after a screen closes.
+/// Checks the cursor request submitted to the desktop backend after a screen closes with the
+/// pointer outside the window.
 pub(super) fn assert_centred_capture(app: &App, entity: Entity) {
+    let centre = app.world().get::<Window>(entity).unwrap().size() * 0.5;
+    assert_capture_at(app, entity, centre);
+}
+
+/// Checks the hidden, locked capture request and the pointer position it keeps.
+fn assert_capture_at(app: &App, entity: Entity, position: Vec2) {
     let window = app.world().get::<Window>(entity).unwrap();
     let cursor = app.world().get::<CursorOptions>(entity).unwrap();
     assert!(window.focused);
-    assert_eq!(window.cursor_position(), Some(window.size() * 0.5));
+    assert_eq!(window.cursor_position(), Some(position));
     assert_eq!(cursor.grab_mode, CursorGrabMode::Locked);
     assert!(!cursor.visible);
     assert_eq!(
@@ -101,7 +111,7 @@ fn escape_from_pause_recentres_a_pointer_outside_the_focused_window() {
 }
 
 #[test]
-fn resume_button_recentres_and_consumes_the_menu_click() {
+fn resume_button_keeps_the_pointer_and_consumes_the_menu_click() {
     let (mut app, window) = pause_app(1.0);
     let presentation = app.world().resource::<UiPresentationResource>();
     let point = (0..720)
@@ -124,12 +134,29 @@ fn resume_button_recentres_and_consumes_the_menu_click() {
     app.update();
 
     assert!(!app.world().resource::<MenuRuntime>().is_visible());
-    assert_centred_capture(&app, window);
+    assert_capture_at(&app, window, Vec2::new(point.x(), point.y()));
     assert!(
         !app.world()
             .resource::<ButtonInput<MouseButton>>()
             .pressed(MouseButton::Left)
     );
+
+    // A frame without movement leaves the hidden pointer alone; looking around recentres it,
+    // keeping the look input, so a screen opened from gameplay starts at the centre.
+    app.update();
+    assert_capture_at(&app, window, Vec2::new(point.x(), point.y()));
+    let look = Vec2::new(12.0, -3.0);
+    app.world_mut()
+        .resource_mut::<AccumulatedMouseMotion>()
+        .delta = look;
+    app.update();
+    let centre = app.world().get::<Window>(window).unwrap().size() * 0.5;
+    let state = app.world().get::<Window>(window).unwrap();
+    assert_eq!(state.cursor_position(), Some(centre));
+    let cursor = app.world().get::<CursorOptions>(window).unwrap();
+    assert_eq!(cursor.grab_mode, CursorGrabMode::Locked);
+    assert!(!cursor.visible);
+    assert_eq!(app.world().resource::<AccumulatedMouseMotion>().delta, look);
 }
 
 /// Delivers one server container event through the UI's production inventory queue.
@@ -390,4 +417,58 @@ fn reissued_server_form_preserves_the_pointer() {
         app.update();
         assert_free_pointer(&app, window, position);
     }
+}
+
+/// A server that answers a button with another form shows it with the pointer where the
+/// player clicked, not at the window centre.
+#[test]
+fn answered_form_keeps_the_pointer_for_the_next_form() {
+    use bevy::input::ButtonState;
+    use client_ui::ui_runtime::flush_form_response;
+    use protocol::{FormKind, FormRequestEvent, ServerFormModel, TextMenuForm};
+
+    let (mut app, window, clicked) = action_form_app();
+    assert_ne!(
+        clicked,
+        app.world().get::<Window>(window).unwrap().size() * 0.5
+    );
+    left_edge(&mut app, window, ButtonState::Pressed);
+    left_edge(&mut app, window, ButtonState::Released);
+    flush_form_response(
+        &mut app.world_mut().resource_mut::<UiRuntimeResource>(),
+        |_| false,
+        |_| Ok(()),
+    )
+    .unwrap();
+    app.update();
+    let cursor = app.world().get::<CursorOptions>(window).unwrap();
+    assert_eq!(cursor.grab_mode, CursorGrabMode::Locked);
+    assert_eq!(
+        app.world().get::<Window>(window).unwrap().cursor_position(),
+        Some(clicked)
+    );
+
+    app.world_mut()
+        .resource_mut::<UiRuntimeResource>()
+        .server_forms_mut()
+        .admit(
+            FormRequestEvent {
+                form_id: 4,
+                kind: FormKind::Menu,
+                title: Some("Next".into()),
+                json: "{}".into(),
+                model: ServerFormModel::TextMenu(TextMenuForm {
+                    title: "Next".into(),
+                    content: "".into(),
+                    buttons: Default::default(),
+                    button_images: Default::default(),
+                    omitted_images: 0,
+                }),
+            },
+            2,
+            1,
+            false,
+        );
+    app.update();
+    assert_free_pointer(&app, window, Some(clicked));
 }

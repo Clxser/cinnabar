@@ -243,15 +243,34 @@ fn apply_cursor_policy(
     }
     let captured = client_presentation::camera::input_is_active(&window, &cursor);
     if captured && (!was_captured || !active) {
-        let centre = window.size() * 0.5;
-        window.set_cursor_position(Some(centre));
-        // The backend applies position before grab. Warping can release the native lock,
-        // so submit it again even when a screen adapter already requested capture.
-        cursor.set_changed();
+        // Like vanilla, capturing hides the pointer where it is, so a screen that follows at
+        // once (a server form answering a button) shows it where the player clicked. Only a
+        // pointer outside the window is brought back to the centre straight away.
+        if window.cursor_position().is_none() {
+            recentre_captured_pointer(&mut window, &mut cursor);
+        }
         mouse_motion.delta = Vec2::ZERO;
+    } else if captured
+        && mouse_motion.delta != Vec2::ZERO
+        && window
+            .cursor_position()
+            .is_none_or(|position| position.distance(window.size() * 0.5) > 0.5)
+    {
+        // Looking around moves a captured pointer back to the centre, as vanilla does on every
+        // captured movement, so the next screen opened from gameplay starts there.
+        recentre_captured_pointer(&mut window, &mut cursor);
     }
     *captured_last_frame = captured;
     captured
+}
+
+/// Warps the hidden gameplay pointer to the window centre and resubmits the grab.
+fn recentre_captured_pointer(window: &mut Window, cursor: &mut Mut<CursorOptions>) {
+    let centre = window.size() * 0.5;
+    window.set_cursor_position(Some(centre));
+    // The backend applies position before grab. Warping can release the native lock,
+    // so submit it again even when a screen adapter already requested capture.
+    cursor.set_changed();
 }
 
 /// Prevents any screen or developer adapter from submitting an unauthorized OS grab.
