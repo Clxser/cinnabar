@@ -54,6 +54,19 @@ pub struct BlockTextureMap {
 
 /// Bounded terrain path variants indexed by texture key.
 impl BlockTextureMap {
+    /// Whether a textured built-in entry explicitly suppresses its primary terrain geometry.
+    pub fn has_invisible_shape_override(&self, identifier: &str) -> bool {
+        let Some(name) = identifier.strip_prefix("minecraft:") else {
+            return false;
+        };
+        self.entries
+            .get(name)
+            .or_else(|| self.entries.get(legacy_resource_pack_block_alias(name)?))
+            .and_then(|entry| entry.extra.get("blockshape"))
+            .and_then(Value::as_str)
+            == Some("invisible")
+    }
+
     /// State-resolved authored model from the registry used to read this pack.
     pub fn component_model(&self, record: &RegistryRecord) -> Option<&super::ComponentModel> {
         self.component_models.get(&record.sequential_id)
@@ -574,5 +587,65 @@ fn orient_face(face: BlockFace, axis: Axis) -> (BlockFace, bool) {
         (Axis::Z, BlockFace::Up) => (BlockFace::North, true),
         (Axis::Z, other) => (other, true),
         (Axis::Y, other) => (other, false),
+    }
+}
+
+#[cfg(test)]
+mod shape_tests {
+    use super::*;
+
+    /// Only the recognized string on a textured built-in entry hides terrain.
+    #[test]
+    fn invisible_shape_requires_a_builtin_textured_entry_and_exact_string() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("blocks.json");
+        for value in [
+            Value::Null,
+            Value::Bool(true),
+            Value::String("unknown".into()),
+            Value::String("invisible".into()),
+        ] {
+            std::fs::write(
+                &path,
+                serde_json::to_vec(&serde_json::json!({
+                    "stone": {"textures": "tile", "blockshape": value},
+                    "custom:stone": {"textures": "tile", "blockshape": "invisible"},
+                    "dirt": {"blockshape": "invisible"}
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let blocks = read_blocks(&path).unwrap();
+            assert_eq!(
+                blocks.has_invisible_shape_override("minecraft:stone"),
+                value.as_str() == Some("invisible")
+            );
+            assert!(!blocks.has_invisible_shape_override("custom:stone"));
+            assert!(!blocks.has_invisible_shape_override("minecraft:dirt"));
+        }
+    }
+
+    /// A direct block entry takes precedence over its legacy resource-pack alias.
+    #[test]
+    fn invisible_shape_uses_the_existing_texture_alias_precedence() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("blocks.json");
+        let alias = legacy_resource_pack_block_alias("grass_block").unwrap();
+        let mut entries = BTreeMap::from([(
+            alias,
+            serde_json::json!({"textures": "tile", "blockshape": "invisible"}),
+        )]);
+        for direct in [false, true] {
+            if direct {
+                entries.insert("grass_block", serde_json::json!({"textures": "tile"}));
+            }
+            std::fs::write(&path, serde_json::to_vec(&entries).unwrap()).unwrap();
+            assert_eq!(
+                read_blocks(&path)
+                    .unwrap()
+                    .has_invisible_shape_override("minecraft:grass_block"),
+                !direct
+            );
+        }
     }
 }

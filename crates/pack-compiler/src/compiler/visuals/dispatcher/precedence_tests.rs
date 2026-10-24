@@ -123,3 +123,58 @@ fn active_registry_encodes_with_dedicated_rules_ahead_of_the_envelope() {
     assets::RuntimeAssets::decode(&assets::encode_blob(&compiled).expect("encode"))
         .expect("decode");
 }
+
+/// An explicit invisible pack shape suppresses every built-in primary terrain rule.
+#[test]
+fn invisible_pack_shapes_override_all_registered_terrain_families() {
+    let (records, directory) = active_registry_with_uniform_pack();
+    let blocks = records
+        .iter()
+        .filter_map(|record| record.name.strip_prefix("minecraft:"))
+        .map(|name| {
+            (
+                name,
+                serde_json::json!({"textures": "tile", "blockshape": "invisible"}),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    fs::write(
+        directory.path().join("blocks.json"),
+        serde_json::to_vec(&blocks).unwrap(),
+    )
+    .unwrap();
+    let lights = vec![
+        assets::LightProperties::default();
+        records
+            .iter()
+            .map(|record| record.sequential_id as usize + 1)
+            .max()
+            .unwrap()
+    ];
+    let (compiled, _) = compile_pack_inner(
+        directory.path(),
+        &records,
+        &lights,
+        CompiledBiomeAssets::diagnostic(),
+        assets::active_content_registry_protocol(),
+    )
+    .expect("compile invisible pack overrides");
+    for record in records
+        .iter()
+        .filter(|record| record.name.starts_with("minecraft:"))
+    {
+        let visual = compiled.visuals[record.sequential_id as usize];
+        if record.contributor_role == ContributorRole::LiquidAdditional {
+            assert_eq!(visual.kind, VisualKind::Liquid, "{}", record.name);
+            continue;
+        }
+        assert_eq!(visual.kind, VisualKind::Invisible, "{}", record.name);
+        assert_eq!(visual.support, VisualSupport::Exact, "{}", record.name);
+        assert_eq!(visual.model_template, assets::NO_MODEL_TEMPLATE);
+        assert!(!visual.flags.intersects(
+            BlockFlags::CUBE_GEOMETRY | BlockFlags::OCCLUDES_FULL_FACE | BlockFlags::LEAF_MODEL
+        ));
+    }
+    assets::RuntimeAssets::decode(&assets::encode_blob(&compiled).expect("encode"))
+        .expect("decode invisible overrides");
+}

@@ -212,6 +212,25 @@ impl VisualCompiler {
             visual.support = VisualSupport::Exact;
             return Ok(CompileRuleResult::Compiled(visual));
         }
+        if record.contributor_role == ContributorRole::Primary
+            && inputs
+                .pack
+                .blocks
+                .has_invisible_shape_override(&record.name)
+        {
+            let mut visual = diagnostic_visual(record);
+            visual.flags.remove(
+                BlockFlags::CUBE_GEOMETRY | BlockFlags::OCCLUDES_FULL_FACE | BlockFlags::LEAF_MODEL,
+            );
+            visual.faces = BlockFace::ALL.map(|face| {
+                inputs
+                    .material(record, face)
+                    .unwrap_or(assets::DIAGNOSTIC_MATERIAL)
+            });
+            visual.kind = VisualKind::Invisible;
+            visual.support = VisualSupport::Exact;
+            return Ok(CompileRuleResult::Compiled(visual));
+        }
 
         ordered_rule!(super::authored::compile_rule(
             record,

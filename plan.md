@@ -156,6 +156,9 @@ Displayed-frame pacing and complete resize/platform acceptance remain incomplete
   GPU-completed model-stream witnesses.
 - [ ] Close selector-alias opaque-cube acceptance for axes, TNT and deprecated states,
   with matched views and two consecutive exact GPU-completed cube-stream witnesses.
+  Textured built-in block entries honor explicit invisible primary terrain shapes and
+  clear terrain occlusion. Liquid shapes, other overrides and metadata-only entries
+  remain incomplete.
 - [ ] Close cactus overview, stacked, grazing and inset-top presentation acceptance,
   with stable exact model-stream witnesses and zero contamination counters.
 - [ ] Close cake presentation at representative bite states, with stable exact
