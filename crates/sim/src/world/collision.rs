@@ -96,6 +96,7 @@ impl<'a> PaletteWorld<'a> {
                 block: None,
                 runtime_id: None,
                 cell_has_scaffolding: None,
+                powder_snow: false,
             });
         }
     }
