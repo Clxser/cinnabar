@@ -99,8 +99,11 @@ pub(super) fn append(
         index_range: start..u32::try_from(vertices.len()).ok()?,
         blend: UiBlendMode::Alpha,
         depth_test: true,
-        depth_write: true,
-        alpha_cutoff: Some(0.5),
+        depth_write: model.alpha_mode != render_model::HandItemAlphaMode::Blend,
+        alpha_cutoff: match model.alpha_mode {
+            render_model::HandItemAlphaMode::Cutout => Some(0.5),
+            _ => None,
+        },
     });
     Some(())
 }

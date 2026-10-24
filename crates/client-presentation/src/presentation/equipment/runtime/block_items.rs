@@ -59,7 +59,8 @@ impl PreparedBlockItems {
             by_visual,
             models,
         } = blocks;
-        let alpha = alpha::block_alpha_modes(world.as_deref(), &by_visual);
+        let alpha =
+            render_model::equipment::blocks::block_alpha_modes(world.as_deref(), &by_visual);
         let atlas = SpriteAtlas::pack(&sheets);
         Arc::new(Self {
             world,

@@ -196,3 +196,147 @@ fn every_installed_item_has_the_same_ordinary_held_route_in_preview_and_world() 
     preview.set_gui_models(&world, &entities).unwrap();
     assert_ordinary_routes(&preview, &world, &entities, &icons);
 }
+
+/// Prepares a real player catalog whose carried model uses the requested alpha policy.
+fn alpha_preview(flags: u32, alpha: u8) -> (UiPresentationRuntime, RuntimeEntityAssets) {
+    let (_, entities, icons) = pane_fixture();
+    let world =
+        short_models::world_with_material(entities.source_manifest_sha256(), 256, alpha, 32, flags);
+    let mut preview = UiPresentationRuntime::with_hud_and_icons(
+        ui_engine::test_support::fixture_font(),
+        crate::test_support::fixture_hud(),
+        icons,
+    )
+    .unwrap();
+    preview.set_gui_models(&world, &entities).unwrap();
+    (preview, entities)
+}
+
+#[test]
+fn preview_held_cutout_texels_render_opaque() {
+    for alpha in [192, 127, 128] {
+        let (preview, entities) = alpha_preview(assets::MATERIAL_FLAG_ALPHA_CUTOUT, alpha);
+        let model = preview.gui_models.sources.held[&entities.item_visuals()[0].key]
+            .model(preview.icon_catalog.as_deref().unwrap())
+            .unwrap();
+        let page = &preview.textures.pages()[usize::from(model.source.page)];
+        let offset = (usize::from(model.source.uv[1]) * page.dimensions()[0] as usize
+            + usize::from(model.source.uv[0]))
+            * 4;
+        assert_eq!(
+            page.pixels()[offset + 3],
+            if alpha < 128 { 0 } else { 255 },
+            "accepted cutout texels must be opaque in the preview"
+        );
+    }
+}
+
+#[test]
+fn preview_held_blend_keeps_low_alpha_texels() {
+    let (preview, entities) = alpha_preview(assets::MATERIAL_FLAG_ALPHA_BLEND, 64);
+    let model = preview.gui_models.sources.held[&entities.item_visuals()[0].key]
+        .model(preview.icon_catalog.as_deref().unwrap())
+        .unwrap();
+    let mesh = player_preview::geometry::mesh(
+        Default::default(),
+        Default::default(),
+        0.0,
+        model.source,
+        &Default::default(),
+        [None; 4],
+        [Some(&model), None],
+        true,
+    )
+    .unwrap();
+    let batch = mesh.batches().last().unwrap();
+    assert_eq!(
+        batch.alpha_cutoff, None,
+        "blended held texels must not be thresholded"
+    );
+}
+
+#[test]
+fn preview_held_opaque_material_ignores_texture_alpha() {
+    let (preview, entities) = alpha_preview(0, 64);
+    let model = preview.gui_models.sources.held[&entities.item_visuals()[0].key]
+        .model(preview.icon_catalog.as_deref().unwrap())
+        .unwrap();
+    let page = &preview.textures.pages()[usize::from(model.source.page)];
+    let offset = (usize::from(model.source.uv[1]) * page.dimensions()[0] as usize
+        + usize::from(model.source.uv[0]))
+        * 4;
+    assert_eq!(page.pixels()[offset + 3], 255);
+}
+
+#[test]
+fn full_model_atlas_keeps_the_unadmitted_held_model_on_its_sprite_route() {
+    let (world, entities, icons) = pane_fixture();
+    let mut preview = UiPresentationRuntime::with_hud_and_icons(
+        ui_engine::test_support::fixture_font(),
+        crate::test_support::fixture_hud(),
+        icons,
+    )
+    .unwrap();
+    preview.set_equipment_catalog(Some(cubes::equipment(&entities, MODEL_PAGES)));
+    preview
+        .set_gui_models(&world, &entities)
+        .expect("one optional held texture must not abort the player catalog");
+    assert!(preview.gui_models.sources.held[&entities.item_visuals()[0].key].is_sprite());
+    assert_eq!(preview.gui_models.sources.held_texture_fallbacks(), 1);
+}
+
+#[test]
+fn full_model_atlas_reuses_resident_held_face_sheets() {
+    let (_, entities, original) = pane_fixture();
+    let world = RuntimeAssets::diagnostic();
+    let mut sprites = original.sprites().to_vec();
+    let sheet = sprites.len() as u32;
+    let [width, height] = assets::BLOCK_ITEM_SHEET_SIZE;
+    sprites.push(assets::IconSprite {
+        width,
+        height,
+        rgba8: (0..usize::from(width) * usize::from(height))
+            .flat_map(|pixel| [31, 47, 59, if pixel % 7 == 0 { 0 } else { 255 }])
+            .collect::<Vec<_>>()
+            .into(),
+    });
+    let icons = RuntimeIconCatalog::decode(
+        &assets::encode_icon_catalog_with_blocks(
+            entities.source_manifest_sha256(),
+            &sprites,
+            original.entries(),
+            &[assets::IconBlockSheet {
+                visual: assets::BlockVisualId(1),
+                sprite: sheet,
+            }],
+            &[assets::IconBlockModel {
+                sprite: 0,
+                visual: assets::BlockVisualId(1),
+                held_sprite: None,
+            }],
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let mut preview = UiPresentationRuntime::with_hud_and_icons(
+        ui_engine::test_support::fixture_font(),
+        crate::test_support::fixture_hud(),
+        Arc::new(icons),
+    )
+    .unwrap();
+    let resident = preview.icon_refs.as_deref().unwrap()[sheet as usize];
+    preview.set_equipment_catalog(Some(cubes::equipment(&entities, MODEL_PAGES)));
+    preview.set_gui_models(&world, &entities).unwrap();
+    let held = &preview.gui_models.sources.held[&entities.item_visuals()[0].key];
+    assert!(
+        !held.is_sprite(),
+        "resident artwork must preserve the model even when the atlas is full"
+    );
+    assert_eq!(
+        held.model(preview.icon_catalog.as_deref().unwrap())
+            .unwrap()
+            .source,
+        resident
+    );
+    assert_eq!(preview.gui_models.sources.held_texture_fallbacks(), 0);
+}

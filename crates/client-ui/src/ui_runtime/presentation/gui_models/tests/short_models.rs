@@ -14,6 +14,23 @@ pub(super) fn world_with_width(
     alpha: u8,
     width: u16,
 ) -> RuntimeAssets {
+    world_with_material(
+        manifest,
+        height,
+        alpha,
+        width,
+        assets::MATERIAL_FLAG_ALPHA_CUTOUT,
+    )
+}
+
+/// Encodes the same original model with a selected material alpha policy.
+pub(super) fn world_with_material(
+    manifest: [u8; 32],
+    height: u16,
+    alpha: u8,
+    width: u16,
+    flags: u32,
+) -> RuntimeAssets {
     use assets::*;
     let mut visual = BlockVisual::diagnostic(BlockFlags::empty(), ContributorRole::Primary);
     if height == 256 && width == 256 {
@@ -53,7 +70,7 @@ pub(super) fn world_with_width(
             Material::unvaried(),
             Material {
                 texture: TextureRef::new(0, 1).unwrap(),
-                flags: MATERIAL_FLAG_ALPHA_CUTOUT,
+                flags,
                 ..Material::unvaried()
             },
         ]

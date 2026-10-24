@@ -10,10 +10,47 @@ use assets::{
     compose_block_item_sheet,
 };
 
+use crate::HandItemAlphaMode;
+
 const TILE: usize = BLOCK_ITEM_FACE_SIDE as usize;
 
 #[cfg(test)]
 mod tests;
+
+/// Resolves a held material mode, with blending taking precedence over cutout.
+pub fn mode_for_material_flags(flags: u32) -> HandItemAlphaMode {
+    if flags & assets::MATERIAL_FLAG_ALPHA_BLEND != 0 {
+        HandItemAlphaMode::Blend
+    } else if flags & assets::MATERIAL_FLAG_ALPHA_CUTOUT != 0 {
+        HandItemAlphaMode::Cutout
+    } else {
+        HandItemAlphaMode::Opaque
+    }
+}
+
+/// Reads each held visual's alpha policy from the carrier supplying its materials.
+pub fn block_alpha_modes(
+    world: Option<&RuntimeAssets>,
+    sheets: &BTreeMap<u32, usize>,
+) -> BTreeMap<u32, HandItemAlphaMode> {
+    let Some(world) = world else {
+        return BTreeMap::new();
+    };
+    sheets
+        .keys()
+        .filter_map(|&visual| {
+            if visual as usize >= world.visual_count() {
+                return None;
+            }
+            let block = world.resolve(assets::NetworkIdMode::Sequential, visual);
+            let flags = assets::BlockFace::ALL.into_iter().fold(0, |flags, face| {
+                flags | world.material(block.face(face).material_id()).flags
+            });
+            let mode = mode_for_material_flags(flags);
+            Some((visual, mode))
+        })
+        .collect()
+}
 
 /// Composed block-item sheets and the visual IDs that select them.
 pub struct BlockSheets {

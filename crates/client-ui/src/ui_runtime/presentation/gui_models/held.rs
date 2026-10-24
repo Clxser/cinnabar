@@ -87,14 +87,27 @@ pub(super) fn prepare(
     icon_refs: &[IconRef],
     equipment: Option<&RuntimeEquipmentCatalog>,
     world: &assets::RuntimeAssets,
-) -> Result<BTreeMap<ItemVisualKey, HeldModel>, UiPresentationError> {
+) -> Result<(BTreeMap<ItemVisualKey, HeldModel>, usize), UiPresentationError> {
     let Some(hand_pivots) = player_hands(entities) else {
         // A model without native item bones cannot safely manufacture a grip origin.
-        return Ok(BTreeMap::new());
+        return Ok((BTreeMap::new(), 0));
     };
     use render_model::equipment::blocks::{HeldRoute, held_route};
     let blocks = render_model::equipment::blocks::prepare_held(Some(world), entities, icons);
+    let alpha = render_model::equipment::blocks::block_alpha_modes(Some(world), &blocks.by_visual);
+    let resident: BTreeMap<_, _> = icons
+        .sprites()
+        .iter()
+        .zip(icon_refs)
+        .map(|(sprite, &source)| {
+            (
+                atlas::key([sprite.width, sprite.height], &sprite.rgba8),
+                source,
+            )
+        })
+        .collect();
     let mut sources = BTreeMap::new();
+    let mut fallbacks = 0;
     let mut models = BTreeMap::new();
     for entry in icons.entries() {
         let definition = entities.item_visuals().iter().find(|visual| {
@@ -109,22 +122,62 @@ pub(super) fn prepare(
             ItemVisualDefinitionRoute::BlockItem { block_visual } => Some(block_visual.0),
             _ => None,
         });
-        let route = held_route(icons, &entry.identifier, entry.metadata, visual, |visual| {
+        let mut route = held_route(icons, &entry.identifier, entry.metadata, visual, |visual| {
             blocks.by_visual.contains_key(&visual)
         })
         .ok_or(UiPresentationError::InvalidFontTexture)?;
+        if let HeldRoute::Block(visual) = route {
+            let index = blocks.by_visual[&visual];
+            let mode = alpha
+                .get(&visual)
+                .copied()
+                .unwrap_or(render_model::HandItemAlphaMode::Cutout);
+            let source = *sources
+                .entry((index, mode.texture_layer_flag()))
+                .or_insert_with(|| {
+                    let sheet = &blocks.sheets[index];
+                    let mut pixels = sheet.rgba8.clone();
+                    if mode != render_model::HandItemAlphaMode::Blend {
+                        for texel in Arc::make_mut(&mut pixels).as_chunks_mut::<4>().0 {
+                            texel[3] = if mode == render_model::HandItemAlphaMode::Opaque
+                                || texel[3] >= assets::gui_item::GUI_BLOCK_ALPHA_THRESHOLD
+                            {
+                                255
+                            } else {
+                                0
+                            };
+                        }
+                    }
+                    let size = [sheet.width, sheet.height];
+                    resident
+                        .get(&atlas::key(size, &pixels))
+                        .copied()
+                        .or_else(|| {
+                            atlas.try_insert([(size, pixels.as_ref())], |sources| {
+                                sources.first().copied()
+                            })
+                        })
+                });
+            if source.is_none() {
+                fallbacks += 1;
+                route = HeldRoute::Sprite(
+                    icons
+                        .lookup_held_index(&entry.identifier, entry.metadata)
+                        .ok_or(UiPresentationError::InvalidFontTexture)?,
+                );
+            }
+        }
         let model = match route {
             HeldRoute::Block(visual) => {
+                let mode = alpha
+                    .get(&visual)
+                    .copied()
+                    .unwrap_or(render_model::HandItemAlphaMode::Cutout);
                 let index = blocks.by_visual[&visual];
-                let source = if let Some(source) = sources.get(&index) {
-                    *source
-                } else {
-                    let sheet = &blocks.sheets[index];
-                    let source = atlas.insert([sheet.width, sheet.height], &sheet.rgba8)?;
-                    sources.insert(index, source);
-                    source
-                };
+                let source = sources[&(index, mode.texture_layer_flag())]
+                    .ok_or(UiPresentationError::InvalidFontTexture)?;
                 let mut model = block(source, hand_pivots);
+                model.alpha_mode = mode;
                 if let Some(vertices) = blocks.models.get(&visual) {
                     model.vertices = vertices.as_slice().into();
                 }
@@ -139,6 +192,7 @@ pub(super) fn prepare(
                     .get(sprite)
                     .ok_or(UiPresentationError::InvalidFontTexture)?;
                 let model = PreviewHeldModel {
+                    alpha_mode: render_model::HandItemAlphaMode::Cutout,
                     source,
                     hand_pivots,
                     vertices: Arc::from([]),
@@ -198,7 +252,7 @@ pub(super) fn prepare(
             );
         }
     }
-    Ok(models)
+    Ok((models, fallbacks))
 }
 
 /// Resolves the original player's right and left item bone pivots.
@@ -242,6 +296,7 @@ fn block(source: IconRef, hand_pivots: [[f32; 3]; 2]) -> PreviewHeldModel {
         ]
     });
     PreviewHeldModel {
+        alpha_mode: render_model::HandItemAlphaMode::Cutout,
         source,
         hand_pivots,
         vertices: textured_cube_vertices(faces).into(),
@@ -321,6 +376,7 @@ fn authored(
         return None;
     };
     Some(PreviewHeldModel {
+        alpha_mode: render_model::HandItemAlphaMode::Cutout,
         source,
         hand_pivots,
         vertices: Arc::clone(&geometry.vertices),
