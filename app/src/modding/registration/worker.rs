@@ -98,11 +98,13 @@ pub(super) fn run(
     let mut pending_load = None;
     let mut pending_update = None;
     let mut next_poll = Instant::now();
+    let mut observer = source::Observer::default();
     let mut removal = removal::Pending::default();
     loop {
-        if Instant::now() >= next_poll {
-            next_poll = Instant::now() + RELOAD_INTERVAL;
-            let observed = source::observe(&directory.join(REGISTRATION_FILE));
+        let now = Instant::now();
+        if now >= next_poll {
+            next_poll = now + RELOAD_INTERVAL;
+            let observed = observer.observe(&directory.join(REGISTRATION_FILE), now);
             removal.observe(observed.request_id.as_deref());
             let registration = observed
                 .result
@@ -115,23 +117,25 @@ pub(super) fn run(
             let fences = drawing.lock().expect("mod drawing fences").clone();
             for entry in registration.mods.iter().filter(|entry| entry.enabled) {
                 let mut snapshot =
-                    source::source_snapshot(entry.clone()).and_then(|mut snapshot| {
-                        marketplace
-                            .check(
-                                &entry.component,
-                                &snapshot.component,
-                                launcher_host::marketplace::now_ms(),
-                            )
-                            .map_err(|error| error.to_string())?;
-                        if let Some(manifest) = marketplace.manifest(&entry.component) {
-                            super::super::marketplace::declarations(
-                                &snapshot.component,
-                                &manifest,
-                            )?;
-                        }
-                        snapshot.drawing = fences.get(&entry.component).cloned();
-                        Ok(snapshot)
-                    });
+                    observer
+                        .source_snapshot(entry.clone(), now)
+                        .and_then(|mut snapshot| {
+                            marketplace
+                                .check(
+                                    &entry.component,
+                                    &snapshot.component,
+                                    launcher_host::marketplace::now_ms(),
+                                )
+                                .map_err(|error| error.to_string())?;
+                            if let Some(manifest) = marketplace.manifest(&entry.component) {
+                                super::super::marketplace::declarations(
+                                    &snapshot.component,
+                                    &manifest,
+                                )?;
+                            }
+                            snapshot.drawing = fences.get(&entry.component).cloned();
+                            Ok(snapshot)
+                        });
                 match &snapshot {
                     Ok(snapshot) => digest.update(snapshot.identity),
                     Err(error) => digest.update(error.as_bytes()),
@@ -153,6 +157,7 @@ pub(super) fn run(
                     sources.push((entry.clone(), snapshot));
                 }
             }
+            observer.files.retain_observed();
             let current = (<[u8; 32]>::from(digest.finalize()), fences, settings_inputs);
             if fingerprint.as_ref() != Some(&current) {
                 fingerprint = Some(current);

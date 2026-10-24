@@ -281,9 +281,8 @@ pub(super) fn run(
                 }
             }
         }
-        match incoming.recv_timeout(Duration::from_secs(5)) {
-            Err(RecvTimeoutError::Disconnected) => return Ok(()),
-            _ => {}
+        if let Err(RecvTimeoutError::Disconnected) = incoming.recv_timeout(Duration::from_secs(5)) {
+            return Ok(());
         }
     }
 }
