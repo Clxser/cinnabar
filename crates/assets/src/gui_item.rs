@@ -6,12 +6,25 @@ use crate::{BlockFace, EntityGeometryCube, EntityGeometryUv};
 mod block_model;
 mod cube_model;
 mod dried_ghast;
+mod sculk_sensor;
 pub use block_model::{
     GUI_BLOCK_MATERIAL_FLAGS, GuiBlockQuad, GuiBlockReject, MAX_GUI_TILE_SIDE, block_gui_quads,
     block_item_quads, cube_face, face_brightness, material_tile,
 };
 pub use cube_model::full_cube_model_quads;
 pub use dried_ghast::{DRIED_GHAST_TENTACLES, dried_ghast_quads};
+pub use sculk_sensor::{
+    SENSOR_CRYSTAL_MATERIAL, SENSOR_TENDRIL_BRIGHTNESS, SENSOR_TENDRIL_MATERIAL, sculk_sensor_quads,
+};
+
+/// Block items with an inventory bitmap whose held presentation retains the world model.
+#[must_use]
+pub fn has_carried_bitmap_shape(name: &str) -> bool {
+    use crate::facts::pack::PackBlock as B;
+    [B::DriedGhast, B::SculkSensor, B::CalibratedSculkSensor]
+        .iter()
+        .any(|kind| name == kind.identifier())
+}
 
 /// Native item-frame design pixels, not source-texture or framebuffer pixels.
 pub const GUI_ITEM_SIDE: f32 = 16.0;

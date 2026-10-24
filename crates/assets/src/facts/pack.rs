@@ -67,6 +67,8 @@ domain!(PackBlock {
     HeavyCore,
     Crafter,
     DriedGhast,
+    SculkSensor,
+    CalibratedSculkSensor,
     StrawBed
 });
 domain!(TextureSelector {
