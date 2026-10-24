@@ -19,6 +19,7 @@ use super::{
     scene::SceneClock,
     shulker::{self, ShulkerModel},
     skull::{self, SkullKind, SkullModel, SkullMount},
+    statue::{self, Oxidation, StatueModel, StatuePose},
 };
 use crate::{ActorRigGeometry, ActorRigSurface, ActorRigVertex, EntityRigId};
 
@@ -36,6 +37,8 @@ pub enum HeldBlockEntity {
     Shulker(&'static str),
     DecoratedPot,
     Conduit,
+    /// The standing statue with its oxidation artwork.
+    Statue(Oxidation),
     /// The lectern stand without a book.
     Lectern,
     Skull(SkullKind),
@@ -101,6 +104,7 @@ impl HeldBlockEntity {
         match renderer? {
             BlockEntityRenderer::DecoratedPot => Some(Self::DecoratedPot),
             BlockEntityRenderer::Conduit => Some(Self::Conduit),
+            BlockEntityRenderer::Statue => Oxidation::from_block_name(identifier).map(Self::Statue),
             BlockEntityRenderer::Lectern => Some(Self::Lectern),
             _ => None,
         }
@@ -124,6 +128,15 @@ impl HeldBlockEntity {
                 .map(|color| Self::Shulker(color)),
         );
         all.extend(SkullKind::kinds().map(Self::Skull));
+        all.extend(
+            assets::facts::BlockEntityFacts::pinned()
+                .entries()
+                .iter()
+                .filter(|entry| entry.renderer == assets::facts::BlockEntityRenderer::Statue)
+                .flat_map(|entry| &entry.backing_blocks)
+                .filter_map(|name| Self::from_item(name))
+                .collect::<std::collections::BTreeSet<_>>(),
+        );
         all
     }
 
@@ -172,6 +185,27 @@ impl HeldBlockEntity {
                 },
                 SceneClock { ticks: 0.0 },
             ),
+            Self::Statue(oxidation) => {
+                let Some(geometry) = heads.statues[StatuePose::Standing.index()].as_ref() else {
+                    return;
+                };
+                for texture in
+                    assets::block_entity_geometry::heads::statue_textures(oxidation.age())
+                {
+                    builder.required_texture(atlas, &texture, geometry.texture);
+                }
+                statue::emit(
+                    builder,
+                    atlas,
+                    heads,
+                    block,
+                    &StatueModel {
+                        pose: StatuePose::Standing,
+                        oxidation,
+                        facing: Facing::South,
+                    },
+                );
+            }
             Self::Lectern => super::book::emit_lectern(builder, atlas, block, 0.0, false),
             Self::Skull(kind) => skull::emit(
                 builder,
@@ -608,6 +642,13 @@ mod tests {
             assets::block_entity_geometry::SHULKER_COLORS
                 .iter()
                 .map(|color| format!("minecraft:{color}_shulker_box")),
+        )
+        .chain(
+            assets::facts::BlockEntityFacts::pinned()
+                .entries()
+                .iter()
+                .filter(|entry| entry.renderer == assets::facts::BlockEntityRenderer::Statue)
+                .flat_map(|entry| entry.backing_blocks.iter().cloned()),
         )
         .chain(
             assets::read_registry_for_protocol(
