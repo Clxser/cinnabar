@@ -19,6 +19,7 @@ mod limits_tests;
 pub(in crate::chunk) mod model;
 mod node;
 pub(in crate::chunk) mod occlusion;
+mod order;
 mod prepare;
 mod queue;
 pub(in crate::chunk) use queue::GpuCullQueue;
