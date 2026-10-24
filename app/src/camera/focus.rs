@@ -1,6 +1,6 @@
 //! Desktop focus arbitration before input sampling and before OS cursor updates.
 #[cfg(test)]
-use bevy::prelude::{MessageWriter, Mut, Time, Update, default};
+use bevy::prelude::{MessageWriter, Time, Update, default};
 use bevy::{
     input::{
         InputSystems,
@@ -8,8 +8,8 @@ use bevy::{
     },
     prelude::{
         App, ButtonInput, DetectChangesMut, Entity, Gamepad, IntoScheduleConfigs, KeyCode, Local,
-        MessageReader, MouseButton, PostUpdate, PreUpdate, Query, Res, ResMut, Single, Touches,
-        Vec2, Window, With,
+        MessageReader, MouseButton, Mut, PostUpdate, PreUpdate, Query, Res, ResMut, Single,
+        Touches, Vec2, Window, With,
     },
     window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused, WindowOccluded},
 };
@@ -114,7 +114,7 @@ pub(crate) fn update_cursor_capture(
     consent: Option<Res<client_state::ConsentInput>>,
     driven: Option<Res<DrivenInput>>,
     mut focus: Option<ResMut<client_state::CursorFocus>>,
-    captured_last_frame: Local<bool>,
+    capture: Local<CaptureMemory>,
     #[cfg(all(windows, not(test)))] native: Res<native::NativeCaptureReady>,
 ) {
     let mut policy = client_presentation::observations::CursorPolicy {
@@ -150,7 +150,7 @@ pub(crate) fn update_cursor_capture(
         mouse_buttons,
         mouse_motion,
         auto_fly,
-        captured_last_frame,
+        capture,
     );
     if let Some(mut focus) = focus {
         focus.record_capture(captured);
@@ -188,6 +188,14 @@ fn clear_controller_input(
     mouse_motion.delta = Vec2::ZERO;
 }
 
+/// Gameplay capture state carried between frames.
+#[derive(Default)]
+pub(crate) struct CaptureMemory {
+    captured_last_frame: bool,
+    /// The capture kept the pointer where it was; the first captured motion recentres it.
+    recentre_pending: bool,
+}
+
 /// Applies input policy and reports the resulting gameplay capture request.
 #[allow(clippy::too_many_arguments)]
 fn apply_cursor_policy(
@@ -197,9 +205,9 @@ fn apply_cursor_policy(
     mut mouse_buttons: ResMut<ButtonInput<MouseButton>>,
     mut mouse_motion: ResMut<AccumulatedMouseMotion>,
     mut auto_fly: ResMut<AutoFly>,
-    mut captured_last_frame: Local<bool>,
+    mut capture: Local<CaptureMemory>,
 ) -> bool {
-    let was_captured = std::mem::take(&mut *captured_last_frame);
+    let was_captured = std::mem::take(&mut capture.captured_last_frame);
     if policy.driven {
         return false;
     }
@@ -246,21 +254,18 @@ fn apply_cursor_policy(
         // Like vanilla, capturing hides the pointer where it is, so a screen that follows at
         // once (a server form answering a button) shows it where the player clicked. Only a
         // pointer outside the window is brought back to the centre straight away.
-        if window.cursor_position().is_none() {
+        capture.recentre_pending = window.cursor_position().is_some();
+        if !capture.recentre_pending {
             recentre_captured_pointer(&mut window, &mut cursor);
         }
         mouse_motion.delta = Vec2::ZERO;
-    } else if captured
-        && mouse_motion.delta != Vec2::ZERO
-        && window
-            .cursor_position()
-            .is_none_or(|position| position.distance(window.size() * 0.5) > 0.5)
-    {
-        // Looking around moves a captured pointer back to the centre, as vanilla does on every
+    } else if captured && capture.recentre_pending && mouse_motion.delta != Vec2::ZERO {
+        // Looking around brings the captured pointer to the centre, as vanilla does on
         // captured movement, so the next screen opened from gameplay starts there.
+        capture.recentre_pending = false;
         recentre_captured_pointer(&mut window, &mut cursor);
     }
-    *captured_last_frame = captured;
+    capture.captured_last_frame = captured;
     captured
 }
 
