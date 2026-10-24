@@ -954,6 +954,14 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   same-dimension-type transfers. Size-bounded notices bypass data credits when their
   epoch exceeds the last acknowledged notice; equal and older epochs drop silently.
   Acknowledged epochs advance before transport handoff, allowing the next notice
+  during a pending flush. Only acknowledgments of queued notices bypass server data
+  credits; replayed acknowledgments consume the normal budget. One connection-owned state machine queues
+  every committed admission, including repeated placements in the same instance, and
+  publishes notices in order when active. Acknowledgments retire notices through their
+  admission revision; aborting a preparation preserves every committed notice. Messages
+  remain fenced until preparation ends and the notice queue is empty. Write failures
+  end the optional session without retry timers. A two-world example uses upstream Dragonfly. Cold-client bundle hosting, generated application
+  Go message bindings and live multi-client transfer qualification remain incomplete.
   during a pending flush. Only the outstanding notice's acknowledgment bypasses
   server data credits; replayed acknowledgments consume the normal budget. The
   server coalesces rapid transfers to the latest desired world, sending its next
@@ -985,8 +993,28 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   see [mod projects](docs/mod-projects.md).
   Server Experience block storage and player focus use bound world instances, with opening
   generations that invalidate stale callback work and migration from dimension-keyed stores.
-  Guest world definitions and creation, coordinated player transfers and world-epoch readiness,
-  typed player/instance stores, player lifecycle events and live transfer acceptance remain incomplete.
+  Server WIT 0.8 adds registered world definitions, instance creation/unload, typed scoped state,
+  player observations and a transfer coordinator with departure epochs and source recovery.
+  Coordinator moves, native teleports, sampled world swaps and reconnect placement use one admission path.
+  Its session-pinned transport fences old input and sends; same-instance transfers explicitly
+  synchronize position. Client-part activation shares that session's preparation and acknowledgment
+  fence, which is retired on disconnect. Relocation state clears on every exit; a failed optional
+  notice ends client-part authority without blocking native placement or later transfers.
+  Pending logins stay separate from admitted sessions,
+  so rejected duplicates preserve the connected player’s transport. Player saves resolve stable
+  instance identities with a default-spawn fallback. Pending logins reserve their destinations
+  through the handshake and revalidate before spawn; completion or failure releases only that
+  login’s reservation. Unload also respects connected players and prepared transfers.
+  Unload completes idempotent resource release after unbinding, even if its caller is cancelled.
+  Durable records use synced atomic replacement; validated world metadata stays untouched.
+  Opening fresh temporary terrain discards stale placement records and refunds their quota while
+  retaining scoped state. Shutdown drains leave callbacks before store flush and world closure, including after worker cancellation;
+  interrupted callbacks stay owned for drain retries, and undelivered final leaves fail the drain.
+  Host cancellation retires the interrupted helper without consuming guest strikes or restart attempts;
+  only guest budget and protocol failures consume strikes, while transport failures recover separately.
+  Leave writes need no live world. Player callbacks retain the world tick captured with each observation.
+  Client epoch receipt, rendered destination readiness, crash recovery and live transfer acceptance
+  remain incomplete.
 - Native click caps and local weather overrides have transactional host APIs and
   offline behavior coverage; populated-world interaction and rendering acceptance
   remain unverified.
