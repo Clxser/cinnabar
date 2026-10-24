@@ -374,6 +374,9 @@ and rendered qualification remain incomplete.
   Dried-ghast previews keep separate body and tentacle artwork and preserve the held model.
   Sensor previews retain inactive tendrils and the calibration crystal with independent lighting.
   Shrieker previews retain open inner walls, bone caps and a separate inner floor.
+  Large and small dripleaf previews use their distinct carried leaves and stems.
+  Small-dripleaf bitmap bounds still clip the overhanging left leaf tip; full silhouette
+  acceptance remains incomplete.
   Barrel previews use a closed south-facing pose with authored face mapping and UV turns.
   Piston previews use their carried body textures independently of placed geometry.
   Crafter previews use an idle south-facing upright pose with authored face artwork.
