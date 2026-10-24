@@ -1,12 +1,17 @@
 use super::*;
 
-/// Two independently tinted layers; only the second reads the frame fraction.
-fn fixture() -> (ActorAnimationStore, TestActor) {
-    let actor = TestActor::default();
-    let mut compiled = crate::test_support::counting_random_compiled("minecraft:test");
+/// Two color layers whose second layer reads the frame fraction.
+fn fixture(identifier: &str, color: Option<[u32; 4]>) -> (ActorAnimationStore, TestActor) {
+    let actor = TestActor {
+        kind: ActorKind::Entity {
+            identifier: identifier.into(),
+        },
+        ..TestActor::default()
+    };
+    let mut compiled = crate::test_support::counting_random_compiled(identifier);
     compiled.rig_bindings[0].pre_animation = None;
     compiled.animation_keyframes[0].expressions = [None; 3];
-    compiled.render.layers[0].color = Some([1; 4]);
+    compiled.render.layers[0].color = color;
     let mut layers = compiled.render.layers.to_vec();
     let mut layer = layers[0];
     layer.color = Some([3; 4]);
@@ -49,7 +54,7 @@ fn sample(store: &ActorAnimationStore, actor: &TestActor, alpha: f32) -> Vec<Ren
 
 #[test]
 fn unchanged_frame_inputs_run_no_layer_bytecode() {
-    let (store, actor) = fixture();
+    let (store, actor) = fixture("minecraft:test", Some([1; 4]));
     let first = sample(&store, &actor, 0.25);
     evaluation::take_expression_work();
     assert_eq!(sample(&store, &actor, 0.25), first);
@@ -58,7 +63,7 @@ fn unchanged_frame_inputs_run_no_layer_bytecode() {
 
 #[test]
 fn changed_fraction_evaluates_only_its_dependent_layer() {
-    let (store, actor) = fixture();
+    let (store, actor) = fixture("minecraft:test", Some([1; 4]));
     let first = sample(&store, &actor, 0.25);
     evaluation::take_expression_work();
     let second = sample(&store, &actor, 0.75);
@@ -67,6 +72,41 @@ fn changed_fraction_evaluates_only_its_dependent_layer() {
     assert_ne!(second[1].color, first[1].color);
     assert_eq!(work[1], 0);
     assert_eq!(work[3], 1);
+}
+
+#[test]
+fn sheep_dye_updates_inherited_color_but_preserves_authored_overrides() {
+    use protocol_ids::ActorDataKey;
+
+    for authored_color in [None, Some([3; 4])] {
+        let (store, mut actor) = fixture("minecraft:sheep", authored_color);
+        let first = sample(&store, &actor, 0.25);
+        assert_eq!(first.len(), 2);
+        assert_eq!(
+            first[0].color,
+            if authored_color.is_some() {
+                [0.25; 4]
+            } else {
+                [1.0; 4]
+            }
+        );
+        for color in [7, 14, 0] {
+            actor.metadata.insert(
+                ActorDataKey::ColorIndex.wire_value(),
+                ActorMetadataValue::Byte(color),
+            );
+            let changed = sample(&store, &actor, 0.25);
+            assert_eq!(
+                changed[0].color,
+                if authored_color.is_some() {
+                    [0.25; 4]
+                } else {
+                    assets::dye::actor_palette_color(color as u8)
+                }
+            );
+            assert_eq!(sample(&store, &actor, 0.25), changed);
+        }
+    }
 }
 
 /// Walk and attack queries feed separate axes while the layer reads the current frame fraction.
