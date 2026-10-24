@@ -59,6 +59,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if cfg.terrainFixtureGenerate {
 		return generateTerrainFixture(cfg, stdout)
 	}
+	var gallery []entityAppearance
+	if cfg.entityGallery != "" {
+		gallery, err = loadEntityGallery(cfg.entityGallery, cfg.entityGalleryAppearances)
+		if err != nil {
+			return fmt.Errorf("prepare entity gallery: %w", err)
+		}
+	}
 	if cfg.luckyBlock {
 		registerLuckyBlock()
 	}
@@ -142,6 +149,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if cfg.actorBurst || cfg.actorBurstArtwork > 0 {
 		for i, listen := range conf.Listeners {
 			conf.Listeners[i] = actorBurstListener(listen, cfg.actorBurstArtwork)
+		}
+	}
+	if cfg.entityGallery != "" {
+		for i, listen := range conf.Listeners {
+			conf.Listeners[i] = entityGalleryListener(listen, gallery)
 		}
 	}
 	cfg.configureTerrainFixture(&conf)
