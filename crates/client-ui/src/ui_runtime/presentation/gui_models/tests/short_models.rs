@@ -4,9 +4,19 @@ use super::*;
 
 /// Encodes an exact six-face model with original fractional-alpha textures and shared provenance.
 pub(super) fn world(manifest: [u8; 32], height: u16, alpha: u8) -> RuntimeAssets {
+    world_with_model_flags(manifest, height, alpha, 0)
+}
+
+/// Encodes an original model fixture with the supplied carried-shape flags.
+pub(super) fn world_with_model_flags(
+    manifest: [u8; 32],
+    height: u16,
+    alpha: u8,
+    flags: u32,
+) -> RuntimeAssets {
     use assets::*;
     let mut visual = BlockVisual::diagnostic(BlockFlags::empty(), ContributorRole::Primary);
-    if height == 256 {
+    if height == 256 && flags == 0 {
         visual.flags = BlockFlags::OCCLUDES_FULL_FACE;
     }
     visual.kind = VisualKind::Model;
@@ -51,7 +61,7 @@ pub(super) fn world(manifest: [u8; 32], height: u16, alpha: u8) -> RuntimeAssets
         model_templates: vec![ModelTemplate {
             quad_start: 0,
             quad_count: quads.len() as u32,
-            flags: 0,
+            flags,
         }]
         .into(),
         model_quads: quads.into(),

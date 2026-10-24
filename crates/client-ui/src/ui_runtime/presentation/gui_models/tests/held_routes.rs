@@ -11,7 +11,7 @@ fn pane_fixture() -> (RuntimeAssets, RuntimeEntityAssets, Arc<RuntimeIconCatalog
         ("models/player.json".into(), br#"{"format_version":"1.12.0","minecraft:geometry":[{"description":{"identifier":"geometry.player","texture_width":64,"texture_height":64},"bones":[{"name":"body"},{"name":"rightItem","parent":"body","pivot":[-6,12,0]},{"name":"leftItem","parent":"body","pivot":[6,12,0]}]}]}"#.to_vec()),
         ("render_controllers/player.json".into(), br#"{"format_version":"1.8.0","render_controllers":{"controller.render.player":{"geometry":"Geometry.default"}}}"#.to_vec()),
     ]).unwrap().unwrap().assets;
-    compiled.block_visual_count = 3;
+    compiled.block_visual_count = 2;
     compiled.item_visuals = vec![assets::ItemVisualDefinition {
         key: ItemVisualKey {
             identifier: "minecraft:glass_pane".into(),
@@ -19,7 +19,7 @@ fn pane_fixture() -> (RuntimeAssets, RuntimeEntityAssets, Arc<RuntimeIconCatalog
         },
         source: 0,
         route: ItemVisualDefinitionRoute::BlockItem {
-            block_visual: assets::BlockVisualId(2),
+            block_visual: assets::BlockVisualId(1),
         },
         grip: assets::item::grip::ItemGrip::Unresolved,
         glint: assets::item::glint::ItemGlint::Unresolved,
@@ -32,33 +32,12 @@ fn pane_fixture() -> (RuntimeAssets, RuntimeEntityAssets, Arc<RuntimeIconCatalog
     }]
     .into();
     let entities = RuntimeEntityAssets::from_compiled(compiled.with_unresolved_item_use()).unwrap();
-    let base = short_models::world(entities.source_manifest_sha256(), 256, 128);
-    let mut block = assets::BlockVisual::diagnostic(
-        assets::BlockFlags::empty(),
-        assets::ContributorRole::Primary,
+    let world = short_models::world_with_model_flags(
+        entities.source_manifest_sha256(),
+        256,
+        128,
+        assets::MODEL_TEMPLATE_FLAG_PANE,
     );
-    block.kind = assets::VisualKind::Model;
-    block.support = assets::VisualSupport::Exact;
-    block.faces = [1; 6];
-    block.model_template = 0;
-    let world = base
-        .with_block_overlay(
-            2,
-            &assets::BlockOverlay {
-                visuals: vec![block],
-                light_properties: vec![assets::LightProperties::OPAQUE_DARK],
-                model_templates: vec![assets::ModelTemplate {
-                    quad_start: 0,
-                    quad_count: 6,
-                    flags: assets::MODEL_TEMPLATE_FLAG_PANE,
-                }],
-                model_quads: base.model_quads().to_vec(),
-                materials: base.materials().to_vec(),
-                base_texture_pages: base.texture_pages().len() as u32,
-                ..Default::default()
-            },
-        )
-        .unwrap();
     let icons = RuntimeIconCatalog::decode(
         &assets::encode_icon_catalog_with_blocks(
             entities.source_manifest_sha256(),
@@ -75,7 +54,7 @@ fn pane_fixture() -> (RuntimeAssets, RuntimeEntityAssets, Arc<RuntimeIconCatalog
             &[],
             &[assets::IconBlockModel {
                 sprite: 0,
-                visual: assets::BlockVisualId(2),
+                visual: assets::BlockVisualId(1),
                 held_sprite: None,
             }],
         )
