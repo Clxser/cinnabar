@@ -350,6 +350,62 @@ impl ModHosts {
         (0..self.host_count()).map(|index| self.host(index).render())
     }
 
+    /// Presented touch buttons with their owning host index, in load order. A button id an
+    /// earlier mod already uses is skipped, and the set is bounded across all mods.
+    pub fn touch_buttons(&self) -> Vec<(usize, &ui::mod_touch::TouchButton)> {
+        let mut buttons: Vec<(usize, &ui::mod_touch::TouchButton)> = Vec::new();
+        for index in 0..self.host_count() {
+            for button in self.host(index).touch_buttons() {
+                if buttons.len() < ui::mod_touch::MAX_PRESENTED_TOUCH_BUTTONS
+                    && !buttons.iter().any(|(_, other)| other.id == button.id)
+                {
+                    buttons.push((index, button));
+                }
+            }
+        }
+        buttons
+    }
+
+    /// Queues a completed tap for the instance `owner` that still presents button `id`; a tap
+    /// on a button now presented by another instance is dropped.
+    pub fn queue_touch_press(&mut self, owner: u64, id: &str) -> bool {
+        let index = self
+            .touch_buttons()
+            .into_iter()
+            .find_map(|(index, button)| {
+                (button.id == id && self.host(index).touch_owner() == owner).then_some(index)
+            });
+        index.is_some_and(|index| self.host_mut(index).queue_touch_press(id))
+    }
+
+    /// Shows the panel of each mod whose last executed frame received taps and opened it.
+    pub fn select_panels_opened_by_taps(&mut self) {
+        for index in 0..self.host_count() {
+            if self.host(index).touch_presses_delivered() {
+                self.select_opened_panel(index);
+            }
+        }
+    }
+
+    /// Shows the panel a tapped mod opened, as its toggle key would, closing the selected
+    /// panel. A panel capturing keys keeps the selection.
+    pub fn select_opened_panel(&mut self, index: usize) -> bool {
+        let previous = self.panel_owner();
+        if index >= self.host_count() || index == previous {
+            return false;
+        }
+        let host = self.host(index);
+        let current = self.host(previous);
+        if !(host.is_active() && host.panel().is_some() && host.panel_open())
+            || (current.panel_open() && current.panel().is_some_and(|panel| panel.capture_key))
+        {
+            return false;
+        }
+        self.panel_selection = index;
+        self.host_mut(previous).set_panel_open(false);
+        true
+    }
+
     /// Collects the distinct physical keys reserved by all loaded components.
     pub fn reserved_keys(&self) -> Vec<String> {
         let mut keys: Vec<_> = (0..self.host_count())

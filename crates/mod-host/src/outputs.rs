@@ -18,6 +18,23 @@ impl ModHost {
             Weather::Thunder => [1., 1.],
         })
     }
+    /// Committed touch buttons; empty for an inactive instance or without controls authority.
+    pub fn touch_buttons(&self) -> &[ui::mod_touch::TouchButton] {
+        self.instance.touch_buttons()
+    }
+    /// Identifies this component instance to presented buttons; a reload gets a new token.
+    pub fn touch_owner(&self) -> u64 {
+        self.instance.touch_owner()
+    }
+    /// Whether the last executed frame callback received taps, including deferred ones.
+    pub fn touch_presses_delivered(&self) -> bool {
+        self.instance.touch_presses_delivered()
+    }
+    /// Queues a completed tap on one of this mod's buttons for its next frame callback.
+    /// Returns false when the button is gone or the bounded queue is full.
+    pub fn queue_touch_press(&mut self, id: &str) -> bool {
+        self.instance.queue_touch_press(id)
+    }
     /// Retained attack/use caps; an absent channel leaves ordinary input unchanged.
     pub fn click_limits(&self) -> [Option<u32>; 2] {
         self.instance.click_limits()
