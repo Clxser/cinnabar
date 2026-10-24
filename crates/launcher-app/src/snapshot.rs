@@ -14,7 +14,7 @@ use render_model::panorama::{
 use update_manifest::channel::Channel;
 
 use crate::{
-    screen::{Overview, Screen},
+    screen::{Account, Launch, Overview, Page, Screen, Server},
     view,
 };
 
@@ -24,19 +24,36 @@ const CAPTURE_SECONDS: f32 = 12.0;
 /// A launcher state a capture can show, with sample installation facts.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum State {
-    /// A packaged install with prepared resources.
+    /// A signed-in player with prepared resources and recent servers.
     Home,
-    /// A packaged install before its first play.
+    /// A fresh install: signed out, no saved servers, resources not yet prepared.
     FirstPlay,
-    Launching,
+    Servers,
+    Installation,
+    /// Play was pressed and the client is starting.
+    Starting,
     /// The client executable is missing.
     Failed,
 }
 
 impl State {
-    pub const ALL: [Self; 4] = [Self::Home, Self::FirstPlay, Self::Launching, Self::Failed];
+    pub const ALL: [Self; 6] = [
+        Self::Home,
+        Self::FirstPlay,
+        Self::Servers,
+        Self::Installation,
+        Self::Starting,
+        Self::Failed,
+    ];
     /// Command-line names, in [`State::ALL`] order.
-    pub const NAMES: [&str; 4] = ["home", "first-play", "launching", "failed"];
+    pub const NAMES: [&str; 6] = [
+        "home",
+        "first-play",
+        "servers",
+        "installation",
+        "starting",
+        "failed",
+    ];
 
     /// The state named `name` on the command line.
     pub fn parse(name: &str) -> Option<Self> {
@@ -48,27 +65,64 @@ impl State {
 
     /// The screen and the sample installation facts it shows.
     pub fn sample(self) -> (Screen, Overview) {
+        let fresh = self == Self::FirstPlay;
+        let servers = if fresh {
+            Vec::new()
+        } else {
+            SAMPLE_SERVERS
+                .iter()
+                .map(|(name, host, joined)| Server {
+                    name: (*name).to_owned(),
+                    address: format!("{host}.example.net:19132"),
+                    joined: joined.map(str::to_owned),
+                })
+                .collect()
+        };
         let overview = Overview {
             version: launcher::PRODUCT_VERSION.to_owned(),
             channel: Channel::Beta,
-            resources_ready: self != Self::FirstPlay,
+            resources_ready: !fresh,
             data_folder: "/home/player/.local/share/cinnabar".to_owned(),
             development: false,
+            account: (!fresh).then(|| Account {
+                gamertag: "PlayerOne".to_owned(),
+                picture: None,
+            }),
+            servers,
         };
+        let count = overview.servers.len();
         let screen = match self {
-            Self::Home | Self::FirstPlay => Screen::Home,
-            Self::Launching => Screen::Launching,
-            Self::Failed => Screen::Failed {
-                message: format!(
-                    "The game was not found at /opt/cinnabar/bin/cinnabar. Reinstall {} to \
-                     restore it.",
-                    launcher::PRODUCT_NAME
-                ),
-            },
+            Self::Home | Self::FirstPlay => Screen::new(count),
+            Self::Servers => Screen::at(Page::Servers, Launch::Idle, count),
+            Self::Installation => Screen::at(Page::Installation, Launch::Idle, count),
+            Self::Starting => Screen::at(Page::Home, Launch::Starting, count),
+            Self::Failed => Screen::at(
+                Page::Home,
+                Launch::Failed {
+                    message: format!(
+                        "The game was not found at /opt/cinnabar/bin/cinnabar. Reinstall {} to \
+                         restore it.",
+                        launcher::PRODUCT_NAME
+                    ),
+                },
+                count,
+            ),
         };
         (screen, overview)
     }
 }
+
+/// Sample saved servers: name, host label under `example.net` and when each was last joined.
+const SAMPLE_SERVERS: [(&str, &str, Option<&str>); 8] = [
+    ("Survival Island", "survival", Some("Joined 2 hours ago")),
+    ("Creative Plots", "creative", Some("Joined 1 day ago")),
+    ("Skyblock", "skyblock", Some("Joined 3 days ago")),
+    ("Bedwars Practice", "bedwars", Some("Joined 1 week ago")),
+    ("Friends' Realm", "realm", Some("Joined 2 weeks ago")),
+    ("Minigames Hub", "hub", Some("Joined 1 month ago")),
+    ("Parkour Trials", "parkour", Some("Joined 3 months ago")),
+    ("Test Server", "test", None),
+];
 
 /// Renders `state` at `size` physical pixels with the default menu preferences and writes it to
 /// `out` as a PNG. The font comes from this executable's installation or checkout.
@@ -76,22 +130,21 @@ pub fn write(state: State, size: [u32; 2], out: &Path) -> Result<()> {
     let layout = InstallLayout::discover().context("resolve the installation for its UI font")?;
     let mut text = bootstrap_ui::text(&layout)?;
     let faces = bootstrap_ui::built_in_faces().context("decode the built-in panorama")?;
-    let logo = bootstrap_ui::decode_logo();
+    let mut art = view::Art::new(bootstrap_ui::decode_logo(), None);
     let preferences = Preferences::default();
     let (screen, overview) = state.sample();
     let mut canvas = Canvas::new(size[0], size[1]);
     view::draw(
         &mut canvas,
         &mut text,
+        &mut art,
         &screen,
         &overview,
         &view::Style {
             rem: preferences.rem(winit::dpi::PhysicalSize::new(size[0], size[1])),
-            appearance: preferences.appearance,
             hovered: None,
             focused: None,
             pressed: None,
-            logo: logo.as_ref(),
         },
     );
     let view = launcher_view(

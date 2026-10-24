@@ -2,12 +2,12 @@
 
 use std::{
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use bootstrap_ui::{
     OVERLAY_INTERVAL, PANORAMA_TINT, Preferences,
-    canvas::{Canvas, Image, Rect, Text},
+    canvas::{Canvas, Rect, Text},
     gpu,
     input::{self, Command, Input, Source, pointer::Pointer},
 };
@@ -22,11 +22,11 @@ use winit::{
 
 use crate::{
     EXIT_UNAVAILABLE, WINDOW_SIZE, play,
-    screen::{Action, Effect, Overview, Screen},
+    screen::{Action, Effect, Launch, Overview, Screen},
     view,
 };
 
-/// How long "Starting Cinnabar" stays up before the launcher closes.
+/// How long the launcher shows that the client is starting before it closes.
 const LAUNCH_LINGER: Duration = Duration::from_millis(1500);
 
 pub(crate) struct LauncherApp {
@@ -35,7 +35,7 @@ pub(crate) struct LauncherApp {
     text: Text,
     /// Uploaded once the GPU exists.
     faces: Option<render_model::PanoramaFaces>,
-    logo: Option<Image>,
+    art: view::Art,
     window: Option<Arc<Window>>,
     gpu: Option<gpu::Gpu>,
     screen: Screen,
@@ -58,11 +58,23 @@ impl LauncherApp {
         layout: InstallLayout,
         text: Text,
         faces: render_model::PanoramaFaces,
-        logo: Option<Image>,
     ) -> Self {
         let preferences = Preferences::load(&layout);
-        let overview = Overview::read(&layout, preferences.settings.update_preferences().channel);
-        let screen = Screen::Home;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs());
+        let overview = Overview::read(
+            &layout,
+            preferences.settings.update_preferences().channel,
+            now,
+        );
+        let avatar = overview
+            .account
+            .as_ref()
+            .and_then(|account| account.picture.as_deref())
+            .and_then(view::Art::load_avatar);
+        let art = view::Art::new(bootstrap_ui::decode_logo(), avatar);
+        let screen = Screen::new(overview.servers.len());
         let mut input = Input::default();
         input.reset(&screen);
         Self {
@@ -70,7 +82,7 @@ impl LauncherApp {
             overview,
             text,
             faces: Some(faces),
-            logo,
+            art,
             window: None,
             gpu: None,
             screen,
@@ -89,7 +101,7 @@ impl LauncherApp {
         }
     }
 
-    /// The exit code chosen by the user or the flow, if any.
+    /// The exit code chosen by the flow, if any.
     pub(crate) const fn exit_code(&self) -> Option<i32> {
         self.exit
     }
@@ -101,16 +113,17 @@ impl LauncherApp {
         self.overlay_dirty = true;
     }
 
-    fn act(&mut self, action: Action, event_loop: &ActiveEventLoop) {
-        let (next, effect) = self.screen.on_action(action);
+    fn act(&mut self, action: Action) {
+        let (next, effect) = self.screen.on_action(action, &self.overview);
         if let Some(next) = next {
             self.show(next);
         }
         match effect {
             Effect::None => {}
-            Effect::Launch => {
-                let next = Screen::launched(play::start(&self.layout));
-                if next == Screen::Launching {
+            Effect::Launch(address) => {
+                let result = play::start(&self.layout, address.as_deref());
+                let next = self.screen.launched(result, self.overview.servers.len());
+                if next.launch == Launch::Starting {
                     self.launched_at = Some(Instant::now());
                 }
                 self.show(next);
@@ -118,7 +131,6 @@ impl LauncherApp {
             Effect::OpenFolder => {
                 launcher_host::desktop::open_folder(self.layout.user_data_root.clone());
             }
-            Effect::Quit => self.finish(0, event_loop),
         }
     }
 
@@ -144,15 +156,14 @@ impl LauncherApp {
         self.hits = view::draw(
             &mut canvas,
             &mut self.text,
+            &mut self.art,
             &self.screen,
             &self.overview,
             &view::Style {
                 rem: self.preferences.rem(size),
-                appearance: self.preferences.appearance,
                 hovered: self.hovered,
                 focused: self.input.focused.filter(|_| self.input.focus_visible),
                 pressed: self.input.pressed(self.hovered),
-                logo: self.logo.as_ref(),
             },
         );
         gpu.set_overlay(canvas.width, canvas.height, &canvas.pixels);
@@ -162,14 +173,14 @@ impl LauncherApp {
         self.overlay_at = Some(Instant::now());
     }
 
-    fn command(&mut self, source: Source, command: Command, event_loop: &ActiveEventLoop) {
+    fn command(&mut self, source: Source, command: Command) {
         let hit = (source == Source::Pointer)
             .then_some(self.hovered)
             .flatten();
         let (action, changed) = self.input.apply(&self.screen, source, command, hit);
         self.overlay_dirty |= changed;
         if let Some(action) = action {
-            self.act(action, event_loop);
+            self.act(action);
         }
     }
 }
@@ -251,7 +262,7 @@ impl ApplicationHandler for LauncherApp {
                 } else {
                     Command::Release
                 };
-                self.command(Source::Pointer, command, event_loop);
+                self.command(Source::Pointer, command);
             }
             WindowEvent::KeyboardInput {
                 event:
@@ -273,7 +284,7 @@ impl ApplicationHandler for LauncherApp {
                 );
                 self.overlay_dirty |= changed;
                 if let Some(action) = action {
-                    self.act(action, event_loop);
+                    self.act(action);
                 }
             }
             WindowEvent::RedrawRequested => {
@@ -302,7 +313,7 @@ impl ApplicationHandler for LauncherApp {
                 continue;
             }
             if let Some(command) = input::controller(event.event, &self.preferences.settings) {
-                self.command(Source::Controller, command, event_loop);
+                self.command(Source::Controller, command);
             }
         }
         let now = Instant::now();
