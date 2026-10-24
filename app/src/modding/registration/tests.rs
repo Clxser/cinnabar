@@ -67,6 +67,7 @@ fn world() -> (World, Receiver<Message>, Receiver<Retired>) {
     let (retired, retiring) = bounded(mod_api::MAX_LOADED_MODS * 2);
     let mut world = World::new();
     world.insert_resource(Watcher {
+        marketplace: Arc::new(launcher_host::marketplace::Guard::default()),
         updates,
         messages,
         retired,

@@ -2,7 +2,8 @@
 
 This is a developer spike, off by default. It proves a typed WASM component
 boundary, retained JSON-UI output, one local input action, bounded execution,
-quarantine and hot reload. It is not a supported marketplace or a vanilla feature.
+quarantine and hot reload. This developer profile is separate from
+[signed marketplace delivery](marketplace.md) and is not a vanilla feature.
 
 ## Build and run the sample
 
@@ -353,7 +354,8 @@ module and embedded WIT metadata to a component. The guest's actual imports
 declare its requirements; unknown imports fail linking. The prototype's
 grant is HUD, the demo action and environment for the developer-selected mod,
 with separate explicit opt-ins for gameplay reads and camera writes. It has
-no marketplace permission prompt or signed package format.
+no marketplace identity. Marketplace files use the separate signed delivery and
+Settings permission-consent flow described above.
 
 The host admits no WASI, filesystem, network, Bevy or GPU import. Gameplay data
 arrives only as a bounded app-owned snapshot, not a world handle. Each

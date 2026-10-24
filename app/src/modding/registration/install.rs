@@ -15,7 +15,12 @@ pub(super) fn sync_authority(world: &mut World) {
             .as_ref()
             .into_iter()
             .flat_map(|registration| registration.mods.iter())
-            .filter(|entry| entry.enabled)
+            .filter(|entry| {
+                entry.enabled
+                    && watcher
+                        .marketplace
+                        .allows(&entry.component, launcher_host::marketplace::now_ms())
+            })
             .cloned()
             .collect()
     } else {
@@ -345,6 +350,18 @@ pub(super) fn apply(world: &mut World, update: Update) {
         let component = change.entry.component;
         let reload = Some(change.entry.reload);
         let error = match change.result {
+            Ok(candidate)
+                if !world
+                    .resource::<Watcher>()
+                    .marketplace
+                    .allows(&component, launcher_host::marketplace::now_ms()) =>
+            {
+                candidate.retire(world.resource::<Watcher>());
+                world
+                    .resource::<Watcher>()
+                    .marketplace
+                    .reason(&component, launcher_host::marketplace::now_ms())
+            }
             Ok(candidate) => match publish(world, *candidate) {
                 Ok(()) => {
                     let state = if world

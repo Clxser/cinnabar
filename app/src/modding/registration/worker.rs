@@ -63,6 +63,7 @@ pub(super) fn run(
     desired: Arc<Mutex<Desired>>,
     settings: Arc<Mutex<BTreeMap<PathBuf, SettingsSnapshot>>>,
     drawing: Arc<Mutex<BTreeMap<PathBuf, super::super::admission::DrawingContext>>>,
+    marketplace: Arc<launcher_host::marketplace::Guard>,
 ) {
     let (loads, receive_loads) = bounded::<LoadRequest>(1);
     let (results, receive_results) = bounded(1);
@@ -113,10 +114,24 @@ pub(super) fn run(
             let mut settings_inputs = BTreeMap::new();
             let fences = drawing.lock().expect("mod drawing fences").clone();
             for entry in registration.mods.iter().filter(|entry| entry.enabled) {
-                let mut snapshot = source::source_snapshot(entry.clone()).map(|mut snapshot| {
-                    snapshot.drawing = fences.get(&entry.component).cloned();
-                    snapshot
-                });
+                let mut snapshot =
+                    source::source_snapshot(entry.clone()).and_then(|mut snapshot| {
+                        marketplace
+                            .check(
+                                &entry.component,
+                                &snapshot.component,
+                                launcher_host::marketplace::now_ms(),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        if let Some(manifest) = marketplace.manifest(&entry.component) {
+                            super::super::marketplace::declarations(
+                                &snapshot.component,
+                                &manifest,
+                            )?;
+                        }
+                        snapshot.drawing = fences.get(&entry.component).cloned();
+                        Ok(snapshot)
+                    });
                 match &snapshot {
                     Ok(snapshot) => digest.update(snapshot.identity),
                     Err(error) => digest.update(error.as_bytes()),
