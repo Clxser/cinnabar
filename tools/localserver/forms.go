@@ -39,9 +39,34 @@ func (f formFixture) Run(src cmd.Source, o *cmd.Output, _ *world.Tx) {
 		p.SendForm(form.NewMenu(buttonFixture{First: form.NewButton("First", ""), Second: form.NewButton("Second", "")}, "Menu fixture").WithBody("Select either button."))
 	case "modal":
 		p.SendForm(form.NewModal(buttonFixture{First: form.NewButton("Accept", ""), Second: form.NewButton("Decline", "")}, "Modal fixture").WithBody("Select either response."))
+	case "chain":
+		p.SendForm(chainForm(1))
 	default:
-		o.Error("Use custom, simple or modal")
+		o.Error("Use custom, simple, modal or chain")
 	}
+}
+
+// chainForm builds one step of a menu that answers each button with the next step, as
+// server menus that open a submenu do.
+func chainForm(step int) form.Menu {
+	return form.NewMenu(chainFixture{
+		step:   step,
+		First:  form.NewButton("First", ""),
+		Second: form.NewButton("Second", ""),
+		Third:  form.NewButton("Third", ""),
+	}, fmt.Sprintf("Chain fixture %d", step)).WithBody("Each button opens the next menu.")
+}
+
+type chainFixture struct {
+	step   int
+	First  form.Button
+	Second form.Button
+	Third  form.Button
+}
+
+// Submit opens the next step in place of the answered menu.
+func (f chainFixture) Submit(s form.Submitter, _ form.Button, _ *world.Tx) {
+	s.(*player.Player).SendForm(chainForm(f.step + 1))
 }
 
 type customFixture struct {
