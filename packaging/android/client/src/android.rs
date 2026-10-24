@@ -66,16 +66,21 @@ fn show_startup_failure(error: &anyhow::Error) -> Result<()> {
     let app = ANDROID_APP
         .get()
         .context("Android activity is unavailable")?;
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let message = env.new_string(format!("{error:#}"))?;
-    env.call_method(
-        &activity,
-        "startupFailed",
-        "(Ljava/lang/String;)V",
-        &[(&message).into()],
-    )?;
+    // SAFETY: AndroidApp retains its live VM and Activity for this native thread's lifetime.
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    vm.attach_current_thread_for_scope(|env| -> Result<()> {
+        // SAFETY: AndroidApp owns the live Activity reference; this wrapper only borrows it.
+        let activity_ptr = app.activity_as_ptr().cast();
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity_ptr)? };
+        let message = env.new_string(format!("{error:#}"))?;
+        env.call_method(
+            &activity,
+            jni_str!("startupFailed"),
+            jni_sig!("(Ljava/lang/String;)V"),
+            &[jni::objects::JValue::Object(&message)],
+        )?;
+        Ok(())
+    })?;
     loop {
         let mut destroyed = false;
         let mut input_available = false;
