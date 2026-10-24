@@ -4,19 +4,19 @@ use super::*;
 
 /// Encodes an exact six-face model with original fractional-alpha textures and shared provenance.
 pub(super) fn world(manifest: [u8; 32], height: u16, alpha: u8) -> RuntimeAssets {
-    world_with_model_flags(manifest, height, alpha, 0)
+    world_with_width(manifest, height, alpha, 256)
 }
 
-/// Encodes an original model fixture with the supplied carried-shape flags.
-pub(super) fn world_with_model_flags(
+/// Encodes an original centered model with the requested width in fixed-point block units.
+pub(super) fn world_with_width(
     manifest: [u8; 32],
     height: u16,
     alpha: u8,
-    flags: u32,
+    width: u16,
 ) -> RuntimeAssets {
     use assets::*;
     let mut visual = BlockVisual::diagnostic(BlockFlags::empty(), ContributorRole::Primary);
-    if height == 256 && flags == 0 {
+    if height == 256 && width == 256 {
         visual.flags = BlockFlags::OCCLUDES_FULL_FACE;
     }
     visual.kind = VisualKind::Model;
@@ -30,7 +30,7 @@ pub(super) fn world_with_model_flags(
             ModelQuad {
                 positions: corners.map(|[x, y, z]| {
                     [
-                        (x * 256.0) as i16,
+                        (x * f32::from(width) + (256.0 - f32::from(width)) * 0.5) as i16,
                         (y * f32::from(height)) as i16,
                         (z * 256.0) as i16,
                     ]
@@ -61,7 +61,7 @@ pub(super) fn world_with_model_flags(
         model_templates: vec![ModelTemplate {
             quad_start: 0,
             quad_count: quads.len() as u32,
-            flags,
+            flags: 0,
         }]
         .into(),
         model_quads: quads.into(),

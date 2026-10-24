@@ -32,12 +32,7 @@ fn pane_fixture() -> (RuntimeAssets, RuntimeEntityAssets, Arc<RuntimeIconCatalog
     }]
     .into();
     let entities = RuntimeEntityAssets::from_compiled(compiled.with_unresolved_item_use()).unwrap();
-    let world = short_models::world_with_model_flags(
-        entities.source_manifest_sha256(),
-        256,
-        128,
-        assets::MODEL_TEMPLATE_FLAG_PANE,
-    );
+    let world = short_models::world_with_width(entities.source_manifest_sha256(), 256, 128, 32);
     let icons = RuntimeIconCatalog::decode(
         &assets::encode_icon_catalog_with_blocks(
             entities.source_manifest_sha256(),
