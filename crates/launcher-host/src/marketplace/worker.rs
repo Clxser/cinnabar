@@ -23,6 +23,12 @@ use std::{
 pub(super) const MAX_RESPONSE_BYTES: usize = 512 * 1024;
 const MAX_REVOCATIONS_BYTES: usize = 1024 * 1024;
 
+/// Public transport is fixed by the client contract; only in-module tests substitute loopback HTTP.
+struct Transport {
+    client: reqwest::Client,
+    origin: url::Url,
+}
+
 /// Identifies an explicit website send, preserving local removals until the player sends it again.
 fn request(owner: &str, selected: &CinnabarModEntry) -> (String, String, String, String, String) {
     (
@@ -36,12 +42,12 @@ fn request(owner: &str, selected: &CinnabarModEntry) -> (String, String, String,
 
 /// Performs one bounded public GET with no credentials, arbitrary URLs, redirects or partial responses.
 async fn fetch(
-    client: &reqwest::Client,
+    transport: &Transport,
     path: &str,
     limit: usize,
 ) -> Result<(Vec<u8>, Option<String>)> {
-    let url = url::Url::parse(bridge::contract::CINNABAR_API_BASE_URL)?.join(path)?;
-    let mut response = client.get(url).send().await?;
+    let url = transport.origin.join(path)?;
+    let mut response = transport.client.get(url).send().await?;
     ensure!(
         response.status() == reqwest::StatusCode::OK,
         "Marketplace returned {}.",
@@ -70,13 +76,20 @@ async fn fetch(
 }
 
 /// Verifies and persists fresh revocations before allowing any new installation.
-async fn refresh(client: &reqwest::Client, mods: &Path, keys: &Keys, guard: &Guard) -> Result<()> {
-    let (bytes, signature) = fetch(client, "/v1/mods/revocations", MAX_REVOCATIONS_BYTES).await?;
+async fn refresh(
+    transport: &Transport,
+    mods: &Path,
+    keys: &Keys,
+    guard: &Guard,
+    now: impl Fn() -> u64,
+) -> Result<()> {
+    let (bytes, signature) =
+        fetch(transport, "/v1/mods/revocations", MAX_REVOCATIONS_BYTES).await?;
     let signed = SignedRevocations {
         body: String::from_utf8(bytes)?,
         signature: signature.ok_or_else(|| anyhow::anyhow!("Missing revocation signature."))?,
     };
-    let state = signed.verify(keys, now_ms(), guard.checkpoint())?;
+    let state = signed.verify(keys, now(), guard.checkpoint())?;
     // Persist before advancing the in-memory checkpoint, so restarts retain rollback protection.
     storage::save(
         &mods.join(".marketplace/revocations.json"),
@@ -92,13 +105,14 @@ async fn refresh(client: &reqwest::Client, mods: &Path, keys: &Keys, guard: &Gua
     reason = "download binds public transport, source ceiling and account cancellation fence"
 )]
 async fn download(
-    client: &reqwest::Client,
+    transport: &Transport,
     mods: &Path,
     keys: &Keys,
     owner: &str,
     selected: &CinnabarModEntry,
     limit: usize,
     fence: (Arc<AtomicU64>, u64, Arc<Guard>),
+    now: impl Fn() -> u64,
 ) -> Result<Downloaded> {
     let (generation, epoch, guard) = fence;
     #[derive(Deserialize)]
@@ -106,7 +120,7 @@ async fn download(
         release: SignedRelease,
     }
     // Encode the path segment even though the local bridge admits only canonical selectors.
-    let mut url = url::Url::parse(bridge::contract::CINNABAR_API_BASE_URL)?;
+    let mut url = transport.origin.clone();
     url.path_segments_mut()
         .map_err(|()| anyhow::anyhow!("Invalid marketplace origin."))?
         .extend([
@@ -117,19 +131,18 @@ async fn download(
             &selected.version,
             &selected.sha256,
         ]);
-    let (body, _) = fetch(client, url.path(), MAX_RESPONSE_BYTES).await?;
+    let (body, _) = fetch(transport, url.path(), MAX_RESPONSE_BYTES).await?;
     let release = serde_json::from_slice::<Response>(&body)?.release;
-    let manifest = release.verify(keys, selected, limit, now_ms())?;
+    let manifest = release.verify(keys, selected, limit, now())?;
     let (bytes, _) = fetch(
-        client,
+        transport,
         &format!("/v1/mods/assets/{}", manifest.sha256),
         manifest.bytes as usize,
     )
     .await?;
     super::verify::verify_bytes(&bytes, &manifest)?;
     ensure!(
-        generation.load(Ordering::SeqCst) == epoch
-            && guard.permits(owner, &manifest.sha256, now_ms()),
+        generation.load(Ordering::SeqCst) == epoch && guard.permits(owner, &manifest.sha256, now()),
         "Marketplace download cancelled or held."
     );
     let mut file = tempfile::NamedTempFile::new_in(mods)?;
@@ -175,6 +188,10 @@ pub(super) fn run(
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(30))
         .build()?;
+    let transport = Transport {
+        client,
+        origin: bridge::contract::CINNABAR_API_BASE_URL.parse()?,
+    };
     if let Some(keys) = &keys
         && let Ok(bytes) = storage::read(
             &mods.join(".marketplace/revocations.json"),
@@ -202,7 +219,9 @@ pub(super) fn run(
             if let Some(keys) = &keys
                 && now_ms() >= refresh_at
             {
-                if let Err(error) = runtime.block_on(refresh(&client, &mods, keys, &guard)) {
+                if let Err(error) =
+                    runtime.block_on(refresh(&transport, &mods, keys, &guard, now_ms))
+                {
                     let _ =
                         events.try_send(format!("Marketplace checks could not refresh: {error:#}"));
                 }
@@ -247,13 +266,14 @@ pub(super) fn run(
                         let _ = events
                             .try_send(format!("Preparing {} from the marketplace…", selected.slug));
                         let prepared = runtime.block_on(download(
-                            &client,
+                            &transport,
                             &mods,
                             keys,
                             &library.xuid,
                             &selected,
                             limit,
                             (generation.clone(), epoch, guard.clone()),
+                            now_ms,
                         ));
                         match prepared {
                             Ok(prepared) => {
@@ -286,3 +306,7 @@ pub(super) fn run(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "worker_tests.rs"]
+mod tests;

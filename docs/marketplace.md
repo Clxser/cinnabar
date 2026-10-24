@@ -51,8 +51,10 @@ new Add to Cinnabar action can intentionally reinstall the release.
 
 Populate `crates/launcher-host/data/marketplace-keys.json` with reviewed base64
 encodings of the raw 32-byte Ed25519 public keys corresponding to the API signer.
-The shipped key set is empty until reviewed production public keys are provided;
-downloads remain disabled and managed files remain held. Never put
+The initial public key is provisioned alongside the API's encrypted GitHub
+`production` signing secret. The API deployment checks that its signer matches
+the immutable client input before installing it. Deploy that API before shipping
+the client key pin; unverified responses keep managed files held. Never put
 the private signing key in the client, trust a key supplied by a marketplace
 response, or reuse test keys. Rotation ships overlapping reviewed public keys
 before the server changes its signer.
@@ -63,5 +65,8 @@ real website → account connection → disabled install → explicit consent fl
 offline expiry, restart, account switches, withdrawals and filesystem failures
 on supported platforms. Synthetic tests cover signature tampering, exact grant
 comparison, rollback/expiry, cancelled publication, collisions, consumed removals
-and authenticated transport. These checks do not constitute production-domain
+and authenticated transport. The synthetic website/API handoff is replayed through
+the native HTTP downloader, disabled installation and signed withdrawal path;
+the same component exercises native ABI validation and Mods enable/consent actions.
+These checks do not constitute production-domain
 or interactive-client acceptance evidence.
