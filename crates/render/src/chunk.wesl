@@ -84,6 +84,9 @@ struct VertexOutput {
     // x: animation frame blend; yz: `greedy_uv_limit` of the face.
     @location(7) @interpolate(flat) frame_blend_uv_limit: vec3<f32>,
     @location(8) world_position: vec3<f32>,
+    // Only Enhanced shading reads the baked lightmap colour; vanilla samples the
+    // native table from `native_light_levels` per fragment.
+    @if(ENHANCED)
     @location(9) lighting: vec3<f32>,
     @if(ENHANCED)
     @location(10) sky_light: f32,
@@ -384,6 +387,7 @@ fn sealed_cube_vertex(vertex_index: u32, instance_index: u32, seal_pixels: f32) 
     out.world_position = world_position;
     let ao = material_ambient_occlusion(light_ao_factor((light_sample >> 8u) & 7u), material.flags);
     let dimming = material_face_shade(out.normal, (light_sample & 2048u) != 0u, material.flags);
+    @if(ENHANCED)
     out.lighting = light_colour(light_sample) * ao * dimming;
     @if(ENHANCED)
     out.sky_light = sky_illumination(light_sample);
