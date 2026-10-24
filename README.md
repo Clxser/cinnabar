@@ -122,12 +122,15 @@ Built on these libraries:
 | --- | --- |
 | [bedrock-net](https://github.com/cinnabar-mc/bedrock-net) | Native framing, compression, encryption, Login, resource packs and typed session lifecycle. |
 | [bedrock-services](https://github.com/cinnabar-mc/bedrock-services) | Native Microsoft/Xbox authentication, Minecraft credentials, Realms, profiles, presence and signaling. |
+| [raknet](https://github.com/cinnabar-mc/raknet) | Native RakNet protocol core and runtime adapter. |
 | [nethernet](https://github.com/cinnabar-mc/nethernet) | Sans-I/O ICE, DTLS and SCTP with explicit Tokio and Bevy adapters. |
-| [protocolgen](https://github.com/cinnabar-mc/protocolgen) | Generates the Bedrock packet codec vendored in `crates/protocol/vendor`. |
-| [Axolotl Stack](https://github.com/axolotl-stack/axolotl-stack) | Jolyne (client session library), whose raw packet entries and spawn sequence `crates/protocol` adapts. MIT; see `THIRD_PARTY_NOTICES.md`. |
+| [protocolgen](https://github.com/cinnabar-mc/protocolgen) | Owns the pinned generated Bedrock packet codec consumed as a Git dependency. |
 | [gophertunnel](https://github.com/Sandertv/gophertunnel) | Bedrock server sessions in the independent local-world server and Go fixture tools. |
 | [go-raknet](https://github.com/Sandertv/go-raknet) | RakNet in the independent local-world server and Go fixture tools. |
 | [dragonfly](https://github.com/df-mc/dragonfly) | The built-in local-world server in `tools/localserver`. |
+
+The packet-entry and startup code in `crates/protocol` was adapted from Jolyne
+([Axolotl Stack](https://github.com/axolotl-stack/axolotl-stack)); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 Crate-by-crate layout: [docs/architecture/workspace.md](docs/architecture/workspace.md).
 Benchmarks: [docs/benchmarks.md](docs/benchmarks.md).
