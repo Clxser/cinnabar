@@ -13,8 +13,8 @@ use launcher::local_worlds::world::UnavailableReason;
 use super::{
     Fixture, GUI_SCALE, KEYBOARD_SIZE, SIZE, SMALL_SIZE, SettingId, SettingSection, State,
     TALL_SIZE, collection_reveal, hud_card_fit, hud_cards, hud_editor, local_identity,
-    minecraft_import, out_of_game, profile, roster, settings, settings_screens,
-    shader_options, shader_pack, updates,
+    minecraft_import, out_of_game, profile, roster, settings, settings_screens, shader_options,
+    shader_pack, updates,
 };
 
 /// A capture at GUI scale 1 that needs no game assets.
