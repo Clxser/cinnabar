@@ -360,6 +360,12 @@ and rendered qualification remain incomplete.
 - [ ] `P4.5-ITEM-ACTIONS` — Close held items, actions, dropped items and viewmodel behavior,
   including remote/local playback and session lifecycle.
   Held heads reuse the placed-head meshes and textures; their native hand pose, scale,
+  inventory preview and resource-pack geometry acceptance remain incomplete.
+  Held maps submit server image updates over runtime pack paper in either hand.
+  Received map data remains available for the session; missing map data leaves only
+  the arms visible while the shared request is pending.
+  Native pixel comparisons, custom-paper transparency, narrow-aspect placement, decorations, explorer overlays,
+  nondefault inventory icon variants and third-person map presentation remain incomplete.
   inventory fitting and resource-pack geometry acceptance remain incomplete. Inventory head
   textures retain their unshaded brightness; camera, sizing and mob poses still need qualification.
 - [ ] Close pickup sound and copied-item flight across immediate server removal with
