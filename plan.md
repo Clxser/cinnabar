@@ -128,6 +128,9 @@ Displayed-frame pacing and complete resize/platform acceptance remain incomplete
   gate item meshes turn into the custom carried axis. Native wall/gate inventory parity
   and fresh integrated-frame acceptance remain unverified; bamboo fence slats are also open, and
   world fence rails still omit the outer end faces native tessellation draws.
+  World walls preserve the central post outside postless straight pairs, merge those pairs
+  to their lower connection height, and use outside-facing UVs. Complete wall material,
+  lighting and gallery acceptance remain open.
 - [ ] Close paired-door presentation and interaction acceptance, including lower/upper
   state resolution, cross-subchunk neighbours, missing pairs, highlights, cracks,
   directional replacement-pack artwork and native-server toggle/picking input.
