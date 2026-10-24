@@ -250,6 +250,7 @@ fn preview_held_blend_keeps_low_alpha_texels() {
     )
     .unwrap();
     let batch = mesh.batches().last().unwrap();
+    assert!(batch.depth_write, "held models retain their depth policy");
     assert_eq!(
         batch.alpha_cutoff, None,
         "blended held texels must not be thresholded"
