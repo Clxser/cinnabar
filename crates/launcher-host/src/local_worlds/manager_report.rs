@@ -1,10 +1,9 @@
-//! What the menu and the core learn about the open world.
+//! What the menu learns about the open world.
 
-use bridge::WorldState;
 #[cfg(any(test, all(feature = "native-networking", not(target_arch = "wasm32"))))]
 use bridge::{Backend, LocalTarget, Transport};
 #[cfg(test)]
-use bridge::{LocalWorld, LocalWorldInfo};
+use bridge::{LocalWorld, LocalWorldInfo, WorldState};
 #[cfg(any(test, all(feature = "native-networking", not(target_arch = "wasm32"))))]
 use launcher::local_worlds::world::World;
 use launcher::local_worlds::world::WorldStatus;

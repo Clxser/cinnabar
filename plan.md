@@ -107,6 +107,8 @@ retain absent upstream DataInfo and derive downstream hash/type from the same ve
 archive, preserving original in-band metadata and the existing premium policy. Opaque
 behavior/skin archives use identity validation for relay; strict rendering admission
 is unchanged and applying those archives remains unsupported.
+The renderer admits distinct versions sharing a pack UUID. Acquisition of multiple
+versions in one session remains incomplete because download state is keyed by UUID.
 
 Account replacement and sign-out wait for original session, publisher and account
 worker retirement before credential mutation. Unconfirmed original hosted membership
@@ -136,14 +138,7 @@ interactive sign-in without replacing saved state. Controlled tests cover cancel
 and failed recovery, selected-account and generation fences, and terminal unsafe-file
 and filesystem failures. Diagnostics contain no credential contents. Live Windows
 recovery acceptance remains open.
-The Go core and local stream boundary are implemented. Keep authentication,
-encryption and upstream transports with the core, and client behavior with Rust.
-Changes still need current protocol conformance, bounded framing and lifecycle coverage.
-The pinned target comes from [the target manifest](assets/bedrock-target.json).
-Invalid saved-token contents recover through device sign-in, preserving the cache
-until authentication succeeds. Filesystem failures retain credential-free operation
-and numeric OS diagnostics. Live Windows recovery acceptance remains open.
-Login device claims report the native core's OS and detected hardware model, keeping a stable
+Login device claims report the native client's OS and detected hardware model, keeping a stable
 install ID and migrating old fabricated profiles. Browser sessions use the browser-reported
 OS through the framed control handshake, omit unavailable hardware models and keep their
 device ID through account changes, including when HTTP transport headers are absent. Xbox sign-in still uses the Android OAuth

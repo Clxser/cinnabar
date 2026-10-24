@@ -127,7 +127,7 @@ forbidden_dependencies = ["bevy", "wgpu"]
 [[crates]]
 name = "resource-pack"
 path = "crates/resource-pack"
-allowed_dependencies = ["zip-footer"]
+allowed_dependencies = ["rustix", "zip-footer"]
 forbidden_dependencies = ["asset-compiler", "assets", "bevy", "wgpu"]
 test_support_features = ["test-support"]
 

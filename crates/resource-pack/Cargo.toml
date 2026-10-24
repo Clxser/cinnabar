@@ -26,6 +26,9 @@ uuid = { workspace = true, features = ["v4"] }
 cap-std = "3.4.5"
 cap-fs-ext = "3.4.5"
 
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+rustix = { version = "1.1.4", features = ["fs"] }
+
 [dev-dependencies]
 tempfile = "3"
 zip = { version = "7", default-features = false, features = ["deflate-flate2-zlib-rs"] }

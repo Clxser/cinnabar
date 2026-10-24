@@ -20,6 +20,8 @@ use std::{
 };
 use uuid::Uuid;
 
+mod publication;
+
 /// Maximum original archive bytes retained by the native cache.
 pub const DEFAULT_CACHE_QUOTA: u64 = 512 * 1024 * 1024;
 const MAX_CACHE_OBJECTS: usize = 4096;
@@ -172,6 +174,12 @@ impl ArchiveCache {
         let identity = key.digest();
         let digest = Sha256::digest(bytes);
         let name = format!("{identity}-{digest:x}{OBJECT_SUFFIX}");
+        match self.dir.symlink_metadata(&name) {
+            Ok(metadata) if !metadata.is_file() => return Err(publication::collision()),
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
         let mut objects = self.objects()?;
         objects.sort_unstable_by_key(|entry| entry.modified);
         let mut used = objects
@@ -179,12 +187,15 @@ impl ArchiveCache {
             .try_fold(0_u64, |sum, entry| sum.checked_add(entry.size))
             .ok_or_else(|| invalid("pack cache sizes overflow"))?;
         for entry in &objects {
-            if entry.name == name
-                && self
+            if entry.name == name {
+                return if self
                     .read_object(entry, key, cancelled, entry.modified)?
                     .is_some()
-            {
-                return Ok(());
+                {
+                    Ok(())
+                } else {
+                    Err(publication::collision())
+                };
             }
         }
         let mut count = objects.len();
@@ -225,7 +236,7 @@ impl ArchiveCache {
         file.flush()?;
         drop(file);
         check_cancelled(cancelled)?;
-        self.dir.rename(&temporary, &self.dir, &name)?;
+        publication::publish(&self.dir, &temporary, &name)?;
         drop(cleanup);
         Ok(())
     }

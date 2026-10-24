@@ -106,3 +106,82 @@ fn cache_refuses_symlinked_namespace_and_object() {
     );
     assert_eq!(std::fs::read(target).unwrap(), bytes);
 }
+
+/// A rejected collision must survive quota admission and leave no staging objects behind.
+#[test]
+fn cache_store_preserves_colliding_regular_files_and_directories() {
+    for directory in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let bytes = archive(Uuid::from_u128(1), "new archive");
+        let key = ArchiveCacheKey::new(Uuid::from_u128(1), "1.0.0", bytes.len() as u64).unwrap();
+        let cache = ArchiveCache::open(root.path(), bytes.len() as u64).unwrap();
+        let namespace = root.path().join("native-v1");
+        let destination = namespace.join(format!(
+            "{}-{:x}{OBJECT_SUFFIX}",
+            key.digest(),
+            Sha256::digest(&bytes)
+        ));
+        let retained = if directory {
+            std::fs::create_dir(&destination).unwrap();
+            destination.join("retained")
+        } else {
+            destination
+        };
+        std::fs::write(&retained, b"existing destination").unwrap();
+        assert_eq!(
+            cache
+                .store(&key, &bytes, &AtomicBool::new(false))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(std::fs::read(retained).unwrap(), b"existing destination");
+        assert!(std::fs::read_dir(namespace).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".partial-")
+        }));
+    }
+}
+
+/// Storing an archive cannot replace a symlink or modify its target.
+#[cfg(unix)]
+#[test]
+fn cache_store_preserves_symlink_collisions() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let bytes = archive(Uuid::from_u128(1), "new archive");
+    let key = ArchiveCacheKey::new(Uuid::from_u128(1), "1.0.0", bytes.len() as u64).unwrap();
+    let cache = ArchiveCache::open(root.path(), bytes.len() as u64).unwrap();
+    let namespace = root.path().join("native-v1");
+    let destination = namespace.join(format!(
+        "{}-{:x}{OBJECT_SUFFIX}",
+        key.digest(),
+        Sha256::digest(&bytes)
+    ));
+    let target = outside.path().join("retained");
+    std::fs::write(&target, b"existing target").unwrap();
+    std::os::unix::fs::symlink(&target, &destination).unwrap();
+    assert_eq!(
+        cache
+            .store(&key, &bytes, &AtomicBool::new(false))
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::AlreadyExists
+    );
+    assert!(
+        std::fs::symlink_metadata(&destination)
+            .unwrap()
+            .is_symlink()
+    );
+    assert_eq!(std::fs::read(target).unwrap(), b"existing target");
+    assert!(std::fs::read_dir(namespace).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".partial-")
+    }));
+}
