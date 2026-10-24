@@ -244,13 +244,13 @@ impl EquipmentRuntime {
                 HeldKind::Other => return None,
                 _ => None,
             };
-            match held_route(
-                &self.icons,
-                &item.identifier,
-                item.metadata,
-                visual,
-                |visual| self.block_placement(visual).is_some(),
-            )? {
+            let (identifier, metadata) = self
+                .dial_frames
+                .icon_key(&item.identifier, &self.icons)
+                .unwrap_or((&item.identifier, item.metadata));
+            match held_route(&self.icons, identifier, metadata, visual, |visual| {
+                self.block_placement(visual).is_some()
+            })? {
                 HeldRoute::Block(visual) => {
                     let (index, placement, location) = self.block_placement(visual)?;
                     (index, MeshKey::Block(visual), placement, location)
