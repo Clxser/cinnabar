@@ -194,11 +194,11 @@ pub use item_capacity::{ITEM_DEFAULT_MAX_STACK_SIZE, vanilla_item_capacity};
 pub use respawn::{respawn_ready_packet, respawn_request_packet};
 
 pub use login::{
-    ClientCape, ClientRandomId, ClientSkin, ClientSkinGeometry, GAME_VERSION, GameData,
-    JoinPreparation, LoginSequence, LoginSettings, MAX_DEFERRED_PACKET_BYTES, PROTOCOL_VERSION,
-    PacketIdTraceSnapshot, PlayOutbound, PlaySession, SessionIo, SessionLogin, StartupItems,
-    StartupSettings, WRITE_FAILURE_DRAIN, WebSessionReader, login_client_data, login_memory_tier,
-    network_stack_latency_reply,
+    BaseGameVersion, ClientCape, ClientRandomId, ClientSkin, ClientSkinGeometry, GAME_VERSION,
+    GameData, JoinPreparation, LoginSequence, LoginSettings, MAX_DEFERRED_PACKET_BYTES,
+    PROTOCOL_VERSION, PacketIdTraceSnapshot, PlayOutbound, PlaySession, SessionIo, SessionLogin,
+    StartupItems, StartupSettings, WRITE_FAILURE_DRAIN, WebSessionReader, login_client_data,
+    login_memory_tier, network_stack_latency_reply,
 };
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub use login::{
