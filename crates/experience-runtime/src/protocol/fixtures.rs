@@ -481,7 +481,7 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
         (
             "response_load_failed",
             pretty(&Response::LoadFailed {
-                reason: "server.wasm: SHA-256 does not match experience.toml".to_owned(),
+                reason: "server.wasm: SHA-256 does not match files.toml".to_owned(),
             }),
         ),
         (

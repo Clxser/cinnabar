@@ -29,8 +29,19 @@ pub const MAX_CORE_INSTANCES: usize = 16;
 pub const MAX_WASM_STACK_BYTES: usize = 256 * 1024;
 /// Size of `server.wasm`.
 pub const MAX_COMPONENT_BYTES: usize = 16 * 1024 * 1024;
-/// Size of `experience.toml`.
-pub const MAX_MANIFEST_BYTES: usize = 65_536;
+/// Size of `experience.toml`, which the runtime reads once per load. Besides the identity it holds
+/// the `[client]` table, whose declarations the client part bounds; cinnabar-cxb's
+/// `both_halves_read_an_experience_declaring_every_action` checks that the client's every action
+/// at the longest identifier fits.
+pub const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
+/// Size of `files.toml`, the artifact's index, which the runtime reads once per load: room for
+/// [`MAX_ARTIFACT_ENTRIES`] entries of 512 bytes, a 64-digit hash and a path of over 400 bytes
+/// each.
+pub const MAX_INDEX_BYTES: usize = 4 * 1024 * 1024;
+/// Files and directories in an artifact, the manifest and the index included; the load walks no
+/// further. A block uses a geometry and some textures and an item an icon, so this leaves room
+/// for several files per block and item at [`MAX_BLOCKS`] and [`MAX_ITEMS`].
+pub const MAX_ARTIFACT_ENTRIES: usize = 8192;
 /// Bytes in an Experience's version; at least one is required, and none may be a control
 /// character.
 pub const MAX_VERSION_BYTES: usize = 64;
@@ -137,3 +148,5 @@ const _: () = assert!(
 const _: () = assert!(2 * INVENTORY_SLOTS * MAX_ITEM_DATA_BYTES <= MAX_FRAME_BYTES / 4);
 // A network-wide read: each member's id and its states or data, then the staged writes.
 const _: () = assert!(2 * MAX_NETWORK_BLOCKS + MAX_STAGED_OPS <= MAX_HOST_CALLS);
+// An index of MAX_ARTIFACT_ENTRIES entries of 512 bytes fits its file.
+const _: () = assert!(MAX_ARTIFACT_ENTRIES * 512 <= MAX_INDEX_BYTES);
