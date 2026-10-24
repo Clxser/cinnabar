@@ -1225,7 +1225,6 @@ public keys and real-domain/cross-platform acceptance remain incomplete; see
 [marketplace installation](docs/marketplace.md). No vanilla parity gate is closed
 by this optional client feature.
 
-See [Android](docs/android.md), [mods](docs/modding-spike.md),
 See [Android](docs/android.md), [mods](docs/mods/README.md),
 [server experiences](docs/server-experiences.md) and
 [experience runtime](docs/experience-runtime.md) for existing implementation contracts.
