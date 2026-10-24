@@ -49,6 +49,8 @@ entry point owns registration and registry replies; low-level guests can use
 | `client_message` | Actor's typed client record; valid focus snapshot or no block access |
 | `epoch` | Client part changes world epoch; resend required state |
 | `on_scheduled_update` | An owned block's scheduled update becomes due |
+| `on_tick` | Each fixed tick of a bound world instance, with or without viewers |
+| `on_timer` | A timer from `Callback::schedule` becomes due |
 
 Block callbacks do not report changes from liquids, explosions or other plugins.
 A fresh guest instance runs each server callback: memory does not survive it.
@@ -97,7 +99,7 @@ unavailable. Commit checks members and boundary changes.
 
 Server WIT 0.8 adds world definitions, player observations and scoped state.
 The SDK defaults the new exports to empty/no-op implementations. Rebuilt guests
-must declare `api = "0.8"`; existing 0.1–0.6 artifacts retain their frozen ABIs.
+must declare `api = "0.9"`; existing 0.1–0.6 and 0.8 artifacts retain their frozen ABIs.
 
 | Type or operation | Contract |
 | --- | --- |
@@ -151,6 +153,20 @@ qualification and crash-atomic multi-provider saves remain incomplete.
 Player saves pair stable instance identity and position in `<world>/player-worlds/`.
 Reconnect uses that instance's current opening. If closed or missing from an older
 save, use the default Overworld spawn, without the other instance's coordinates.
+
+## Ticks and timers
+
+Server WIT 0.9 adds `on_tick` and `on_timer`; older artifacts receive neither.
+
+| Rule | Contract |
+| --- | --- |
+| Clock | `SimulationStep` carries the counter and fixed tick duration (ns). Unload pauses it; reopening resumes with a new world generation. Process-local: not restored after a server restart |
+| `Callback::schedule(after, period)` | Handle scoped to this mod and instance opening. Delay starts at commit; period 0 runs once, otherwise repeats. Unload discards the opening's timers |
+| `cancel_schedule` | Cancels an active handle, including an occurrence already queued behind the caller |
+| Final leave | No simulation context: scheduling and cancelling return `Unavailable`; private-state writes still work |
+| Order | Per tick: `on_tick`, then due timers by handle, in the mod's FIFO. Callbacks see their admitted tick even if they run later |
+| Overload | Queue overflow drops and counts ticks and repeating occurrences. A failed one-shot stays due. Repeating timers keep at most one queued occurrence; missed periods are skipped, never replayed |
+| Limits | Active timers per mod and instance share `MAX_SCHEDULED_UPDATES`; delays use `MAX_SCHEDULE_TICKS` |
 
 ## Blocks and items
 
@@ -244,15 +260,15 @@ before closing the server or worlds.
 
 | Axis | Current contract |
 | --- | --- |
-| Server WIT | 0.8; frozen 0.1–0.6 worlds remain in [runtime WIT](../crates/experience-runtime/wit) |
-| Adapter IPC | 8, `PROTOCOL_VERSION` in [protocol.rs](../crates/experience-runtime/src/protocol.rs); exact match required |
+| Server WIT | 0.9; frozen 0.1–0.6 and 0.8 worlds remain in [runtime WIT](../crates/experience-runtime/wit) |
+| Adapter IPC | 9, `PROTOCOL_VERSION` in [protocol.rs](../crates/experience-runtime/src/protocol.rs); exact match required |
 | Manifest data schema | `DATA_SCHEMA` in [artifact.rs](../crates/experience-sdk/src/artifact.rs) |
 | Client WIT/wire | [Client compatibility](server-experiences.md#versions-and-wire) |
 
 Server 0.1 has no client messages; 0.2 adds scalar messages; 0.3 adds nested records
 and epochs; 0.4 adds focus; 0.5 adds block states/visuals, items, inventories and
 networks; 0.6 adds recipes and scheduled updates; 0.8 adds worlds, player events
-and scoped state. Unsupported callbacks are rejected.
+and scoped state; 0.9 adds ticks and timers. Unsupported callbacks are rejected.
 
 A host runs one `experience-runtime serve` helper per artifact over private stdio.
 Frames are a little-endian u32 JSON length followed by JSON, bounded by
