@@ -846,6 +846,20 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   Menu scroll regions and chat history accept captured finger drags; swipes cancel pending taps, and form slider gestures retain their own control. Native gesture calibration and full route/device acceptance remain open.
   Ordinary touch controls take focus only after a completed tap, preserving manual scroll positions during pending swipes.
   Menu text editors and Android in-game chat request platform keyboards again on field changes, chat opening and retaps; the platform Back key cancels chat and inventories at its place among keys and acts as mouse Back elsewhere. Android reads keyboard overlap from the active activity to reduce the UI layout viewport and reveal unchanged menu focus after resize; failed geometry reads warn once and temporarily use zero overlap. The People drawer filters the current friend list by gamertag. Global people lookup, sign and book text entry, Back during gameplay, chat IME composition, full composition support and device IME and Back acceptance remain open.
+- The reusable Dragonfly client-part helper offers bundles and typed wire v2 messages;
+  the local server imports the same implementation. Explicit world notices fence
+  messages before notice admission until the client acknowledges that specific
+  notice and invoke the existing client-part epoch callback, including
+  same-dimension-type transfers. Size-bounded notices bypass data credits when their
+  epoch exceeds the last acknowledged notice; equal and older epochs drop silently.
+  Acknowledged epochs advance before transport handoff, allowing the next notice
+  during a pending flush. Only the outstanding notice's acknowledgment bypasses
+  server data credits; replayed acknowledgments consume the normal budget. The
+  server coalesces rapid transfers to the latest desired world, sending its next
+  notice only after the outstanding acknowledgment arrives and keeping messages
+  fenced throughout. Write failures end the optional session without retry timers. A two-world
+  example uses upstream Dragonfly. Cold-client bundle hosting, generated application
+  Go message bindings and live multi-client transfer qualification remain incomplete.
 - Local mods and server experiences still need runtime/input isolation, reload/reorder/
   removal, consent, custom screen transitions and media qualification. Unmeasured shared
   blur, element blur, route exits and current-world visual integration remain incomplete.
