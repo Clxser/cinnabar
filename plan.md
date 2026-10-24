@@ -960,16 +960,20 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   normal polls) to catch writes with unchanged metadata on every platform. Unmeasured shared
   blur, element blur, route exits and current-world visual integration remain incomplete.
   Source-driven mod projects generate typed Rust/Go messages, registry confirmation,
-  compile-checked asset constants and signed bundles through `devtool mod new/build`.
+  compile-checked asset constants and paired `.cmod` packages through `devtool mod new/build`.
+  Typed block/item declarations generate server registration and ordinary packs; installation
+  feeds the existing local-server hosts, and `mod run` builds an isolated development loop.
   Each recipient retains messages, media, input and state in one callback queue during
   registry negotiation. Generated confirmations retry after send-budget refusal and
-  expire with their connection or world epoch. A shared Rust/Go rate contract charges
+  expire with their connection or world epoch. Incompatible registries receive the server
+  fingerprint and visibly stop the client part, clearing its queued callbacks.
+  A shared Rust/Go rate contract charges
   native epochs and encoded fragment sizes, rejects impossible control batches, and
   reserves acknowledgment exemptions for outstanding notices. Confirmation replays
   the latest queued state once, then all callback kinds follow FIFO order through a fair recipient scheduler;
   traps preserve later queued work, stale world callbacks are discarded,
   and queue overflow visibly stops the affected part.
-  Complete server-helper delivery and personal-renderer port acceptance remain incomplete;
+  Full rendered development-loop, complete server-helper delivery and personal-renderer port acceptance remain incomplete;
   see [mod projects](docs/mod-projects.md).
   Server Experience block storage and player focus use bound world instances, with opening
   generations that invalidate stale callback work and migration from dimension-keyed stores.
