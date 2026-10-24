@@ -2637,7 +2637,6 @@ dependencies = [
  "render-api",
  "render-model",
  "render-scene",
- "reqwest 0.12.28",
  "resource-pack",
  "rich-presence",
  "rodio",
@@ -2697,6 +2696,9 @@ name = "cinnabar-cxb"
 version = "0.1.28"
 dependencies = [
  "anyhow",
+ "experience-runtime",
+ "experience-sdk",
+ "mod-host",
  "protocol",
  "ring",
  "serde",
@@ -2921,7 +2923,6 @@ dependencies = [
  "render-api",
  "render-model",
  "render-scene",
- "resource-pack",
  "semantic-input",
  "serde",
  "serde_json",
@@ -2931,7 +2932,6 @@ dependencies = [
  "tempfile",
  "test-alloc",
  "test-time",
- "thiserror 2.0.18",
  "tracing",
  "ui",
  "ui-engine",
@@ -2988,7 +2988,6 @@ dependencies = [
  "simulation-clock",
  "tempfile",
  "test-alloc",
- "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
@@ -3094,7 +3093,6 @@ dependencies = [
  "rayon",
  "render-api",
  "render-model",
- "reqwest 0.12.28",
  "resource-pack",
  "semantic-input",
  "serde",
@@ -3106,7 +3104,6 @@ dependencies = [
  "test-alloc",
  "test-time",
  "thiserror 2.0.18",
- "tokio",
  "tracing",
  "ui",
  "ui-engine",
@@ -3387,6 +3384,13 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "cosmic-mod"
+version = "0.1.0"
+dependencies = [
+ "experience-sdk",
 ]
 
 [[package]]
@@ -4034,6 +4038,7 @@ dependencies = [
 name = "devtool"
 version = "0.1.28"
 dependencies = [
+ "cinnabar-cxb",
  "crash-report",
  "csv",
  "ctrlc",
@@ -4515,6 +4520,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "experience-macros"
+version = "0.1.28"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
 name = "experience-probe"
 version = "0.1.28"
 dependencies = [
@@ -4526,6 +4540,7 @@ name = "experience-runtime"
 version = "0.1.28"
 dependencies = [
  "anyhow",
+ "experience-sdk",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4541,10 +4556,19 @@ dependencies = [
 name = "experience-sdk"
 version = "0.1.28"
 dependencies = [
+ "anyhow",
+ "experience-macros",
+ "proc-macro2",
+ "quote",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "syn 2.0.118",
+ "tempfile",
  "toml 0.9.12+spec-1.1.0",
  "wit-bindgen",
+ "wit-bindgen-core",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -4644,7 +4668,6 @@ dependencies = [
  "crossbeam-channel",
  "flate2",
  "rayon",
- "render-api",
  "sha2 0.10.9",
  "tempfile",
  "test-time",
@@ -6072,7 +6095,6 @@ dependencies = [
  "semantic-input",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "shaderpack",
  "thiserror 2.0.18",
  "ui",
@@ -7849,8 +7871,6 @@ name = "pack-font-compiler"
 version = "0.1.28"
 dependencies = [
  "assets",
- "cap-fs-ext",
- "cap-std",
  "fontdue",
  "freetype-sys",
  "image",
@@ -11111,7 +11131,6 @@ dependencies = [
  "crossbeam-channel",
  "image",
  "json-ui",
- "rayon",
  "render-api",
  "render-model",
  "resource-pack",
@@ -11128,7 +11147,6 @@ name = "ui-screens"
 version = "0.1.28"
 dependencies = [
  "assets",
- "bridge",
  "cosmetics",
  "image",
  "inventory 0.1.28",

@@ -213,9 +213,9 @@ pub use movement::{
     BlockAction, BlockActionKind, BlockActions, BlockActionsFull, BlockItemInteraction,
     InteractionEncodeError, MAX_BLOCK_ACTIONS_PER_INPUT, MovementPredictionSync,
     PlayerAuthInputError, PlayerAuthInputInteractions, PlayerAuthInputSnapshot,
-    PlayerAuthInputTraceSample, PlayerInputFlags, PlayerInputMode, client_movement_prediction_sync,
-    player_auth_input, player_auth_input_trace_sample, player_auth_input_with_interactions,
-    player_auth_input_with_mining_request,
+    PlayerAuthInputTraceSample, PlayerInputFlags, PlayerInputMode, PredictedVehicleInput,
+    client_movement_prediction_sync, player_auth_input, player_auth_input_trace_sample,
+    player_auth_input_with_interactions, player_auth_input_with_mining_request,
 };
 pub use packet::{Packet, PacketKind};
 pub use particle::{
@@ -240,15 +240,15 @@ pub use settings::request_chunk_radius_packet;
 pub use transfer::{ServerTransferEvent, ServerTransferRejection};
 pub use translation_parameter::localize_parameter_prefix;
 pub use ui::{
-    BlockCrackAction, BlockCrackEvent, BossAction, BossColor, BossEvent, BossOverlay, BossStyle,
-    ChatAutocompleteAction, ChatAutocompleteCatalog, ChatAutocompleteCatalogError,
-    ChatAutocompleteCompletion, ChatAutocompleteEvent, ChatPacketError, CommandOutputEvent,
-    CommandOutputMessage, CommandParam, CommandParamKind, CommandSpec, CommandTreeEvent,
-    CompletionContext, CustomForm, CustomFormElement, CustomFormValue, DeathInfoEvent, DeathRules,
-    ElementMenuForm, FormButtonImage, FormControlLock, FormKind, FormNumber, FormRequestEvent,
-    FormText, GameModeEvent, GameModeUpdate, HudEvent, HudRules, MAX_BOSS_EVENTS,
-    MAX_CHAT_AUTOCOMPLETE, MAX_CHAT_AUTOCOMPLETE_BYTES, MAX_CHAT_PARAMETERS,
-    MAX_COMMAND_OUTPUT_MESSAGES, MAX_CUSTOM_FORM_ITEMS, MAX_FORM_JSON_BYTES,
+    ALL_PLAYERS_MENTION, BlockCrackAction, BlockCrackEvent, BossAction, BossColor, BossEvent,
+    BossOverlay, BossStyle, ChatAutocompleteAction, ChatAutocompleteCatalog,
+    ChatAutocompleteCatalogError, ChatAutocompleteCompletion, ChatAutocompleteEvent,
+    ChatPacketError, CommandOutputEvent, CommandOutputMessage, CommandParam, CommandParamKind,
+    CommandSpec, CommandTreeEvent, CompletionContext, CustomForm, CustomFormElement,
+    CustomFormValue, DeathInfoEvent, DeathRules, ElementMenuForm, FormButtonImage, FormControlLock,
+    FormKind, FormNumber, FormRequestEvent, FormText, GameModeEvent, GameModeUpdate, HudEvent,
+    HudRules, MAX_BOSS_EVENTS, MAX_CHAT_AUTOCOMPLETE, MAX_CHAT_AUTOCOMPLETE_BYTES,
+    MAX_CHAT_PARAMETERS, MAX_COMMAND_OUTPUT_MESSAGES, MAX_CUSTOM_FORM_ITEMS, MAX_FORM_JSON_BYTES,
     MAX_OUTBOUND_CHAT_BYTES, MAX_SCORE_ENTRIES_PER_PACKET, MAX_UI_TEXT_BYTES, MenuElement,
     ModalDialogForm, ModalFormResponseSelection, NPC_DIALOGUE_FORM_ID, NpcButton, NpcDialogueForm,
     NpcRequestKind, ObjectiveEvent, PlayerStatus, RawTextEvent, ScoreAction, ScoreEntry,
@@ -256,7 +256,7 @@ pub use ui::{
     TextKind, TextMenuForm, TitleAction, TitleEvent, UiEvent, UiPacketError, UnsupportedForm,
     chat_input_packet, chat_text_packet, command_request_packet, custom_form_submit_response, ddui,
     modal_form_busy_response, modal_form_cancel_response, modal_form_submit_response,
-    npc_request_packet, server_settings_request_packet,
+    npc_request_packet, quote_chat_player_name, server_settings_request_packet,
 };
 pub use world::{
     ActorBlockSyncMessage, ActorMotionEvent, ActorPropertySyncEvent, BiomeDefinitionEvent,

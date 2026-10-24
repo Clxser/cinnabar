@@ -77,13 +77,10 @@ async fn native_gateway_semantic_refusals_match_the_go_admission_corpus() {
                 let fields: BTreeMap<String, Box<RawValue>> =
                     serde_json::from_str(&serde_json::to_string(&prepared).unwrap()).unwrap();
                 assert_eq!(fields[OPAQUE_NAME].get(), OPAQUE_VALUE);
-                assert_eq!(read::<u32>(&fields, "DeviceOS"), NATIVE_ACCOUNT_DEVICE_OS);
-                assert_eq!(
-                    read::<String>(&fields, "DeviceModel"),
-                    NATIVE_ACCOUNT_DEFAULT_MODEL
-                );
+                assert_eq!(read::<i32>(&fields, "DeviceOS"), NATIVE_DEVICE_OS_ANDROID);
+                assert_eq!(read::<String>(&fields, "DeviceModel"), "");
                 let profile = serde_json::json!({
-                    "os": read::<u32>(&fields, "DeviceOS"),
+                    "os": read::<i32>(&fields, "DeviceOS"),
                     "model": read::<String>(&fields, "DeviceModel"),
                     "id": read::<String>(&fields, "DeviceId"),
                 });
@@ -104,7 +101,13 @@ async fn native_gateway_semantic_refusals_match_the_go_admission_corpus() {
 async fn observe(case: &Case) -> Observation {
     let registry = Registry::new();
     let attachment = registry
-        .open_control(Ipv4Addr::LOCALHOST.into(), "", Instant::now())
+        .open_control(
+            Ipv4Addr::LOCALHOST.into(),
+            "",
+            Instant::now(),
+            "Android",
+            false,
+        )
         .unwrap();
     let lease = attachment
         .session

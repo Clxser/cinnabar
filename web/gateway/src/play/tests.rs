@@ -48,7 +48,7 @@ async fn empty_upload_half_eof_retires_the_actual_pump_while_output_is_blocked()
         let (reader, frames, writer) = bridge::tasks::prepare_bounded_connection(read, write, bridge::MAX_FRAME_LEN, RELAY_QUEUED_FRAME_BYTES);
         let (retired, observed_retirement) = oneshot::channel();
         let registry = Registry::new();
-        let attachment = registry.open_control(Ipv4Addr::LOCALHOST.into(), "", Instant::now()).unwrap();
+        let attachment = registry.open_control(Ipv4Addr::LOCALHOST.into(), "", Instant::now(), "Android", false).unwrap();
         let session = Arc::clone(&attachment.session);
         let generation = attachment.generation;
         let lease = session.begin_play(generation, 1).await.unwrap();
@@ -60,7 +60,7 @@ async fn empty_upload_half_eof_retires_the_actual_pump_while_output_is_blocked()
             let value = protocol::login_client_data("Fixture", random, None, &protocol::LoginSettings::default());
             let raw = serde_json::value::RawValue::from_string(serde_json::to_string(&value).unwrap()).unwrap();
             let claims = RawClientData::from_raw(&raw).unwrap();
-            let claims = session.validate_guest(claims, protocol::PROTOCOL_VERSION).unwrap();
+            let claims = session.validate_client_data(claims, protocol::PROTOCOL_VERSION).unwrap();
             let claims = session.guest_claims(claims).unwrap();
             let deadline = Instant::now().checked_add(protocol::NATIVE_JOIN_TIMEOUT).unwrap();
             let result = {

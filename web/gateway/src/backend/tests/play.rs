@@ -68,6 +68,8 @@ async fn accepted_tls_play_refuses_a_newer_protocol_and_preserves_its_original_c
                             resume: capability.resume.clone(),
                             generation: capability.generation,
                             join: 1,
+                            user_agent: "Android".into(),
+                            apple_mobile: false,
                         })
                         .unwrap(),
                     ))

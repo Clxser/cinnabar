@@ -38,7 +38,7 @@ impl Manager {
 }
 
 impl NativeLocalWorldSelection {
-    /// Leaves only this original opening on the worlds worker, allowing a configured warm server.
+    /// Requests saving and stopping only this original opening on the worlds worker.
     /// This may write the process pipe and must not run on the frame or reactor thread.
     pub fn request_leave(&self) {
         self.opening.request_leave();

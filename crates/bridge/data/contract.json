@@ -69,10 +69,17 @@
     {"rust_name": "NATIVE_AUTH_USER_AGENT", "go_name": "NativeAuthUserAgent", "value": "XAL Android 2025.11.20251111.000", "rust_type": "str", "doc": "Android acquisition user agent shared with the configured Go owner."},
     {"rust_name": "NATIVE_AUTH_DEVICE_VERSION", "go_name": "NativeAuthDeviceVersion", "value": "13", "rust_type": "str", "doc": "Android Xbox device operating-system version."},
     {"rust_name": "NATIVE_AUTH_SANDBOX", "go_name": "NativeAuthSandbox", "value": "RETAIL", "rust_type": "str", "doc": "Xbox account environment."},
-    {"rust_name": "NATIVE_ACCOUNT_DEVICE_OS", "go_name": "NativeAccountDeviceOS", "value": 1, "rust_type": "u32", "doc": "Bedrock device platform for an authenticated Android account."},
-    {"rust_name": "NATIVE_ACCOUNT_DEFAULT_MODEL", "go_name": "NativeAccountDefaultModel", "value": "GOOGLE Pixel 8", "rust_type": "str", "doc": "Original Rust Android account profile model."},
-    {"rust_name": "NATIVE_ACCOUNT_INPUT_MODE", "go_name": "NativeAccountInputMode", "value": 2, "rust_type": "u32", "doc": "Default input mode claimed by the Android account profile."},
-    {"rust_name": "NATIVE_ACCOUNT_PLATFORM_TYPE", "go_name": "NativeAccountPlatformType", "value": 1, "rust_type": "u32", "doc": "Platform claimed by Android when client metadata leaves it unset."},
+    {"rust_name": "NATIVE_DEVICE_OS_UNKNOWN", "go_name": "NativeDeviceOSUnknown", "value": -1, "rust_type": "i32", "doc": "Fallback for an unrecognized native build platform."},
+    {"rust_name": "NATIVE_DEVICE_OS_ANDROID", "go_name": "NativeDeviceOSAndroid", "value": 1, "rust_type": "i32", "doc": "Android login device platform."},
+    {"rust_name": "NATIVE_DEVICE_OS_IOS", "go_name": "NativeDeviceOSIOS", "value": 2, "rust_type": "i32", "doc": "iOS login device platform."},
+    {"rust_name": "NATIVE_DEVICE_OS_MACOS", "go_name": "NativeDeviceOSMacOS", "value": 3, "rust_type": "i32", "doc": "macOS login device platform."},
+    {"rust_name": "NATIVE_DEVICE_OS_WINDOWS10", "go_name": "NativeDeviceOSWindows10", "value": 7, "rust_type": "i32", "doc": "Windows universal login device platform."},
+    {"rust_name": "NATIVE_DEVICE_OS_WINDOWS", "go_name": "NativeDeviceOSWindows", "value": 8, "rust_type": "i32", "doc": "Windows desktop login device platform."},
+    {"rust_name": "NATIVE_DEVICE_OS_LINUX", "go_name": "NativeDeviceOSLinux", "value": 15, "rust_type": "i32", "doc": "Linux login device platform."},
+    {"rust_name": "NATIVE_DEVICE_INPUT_MOUSE", "go_name": "NativeDeviceInputMouse", "value": 1, "rust_type": "u32", "doc": "Mouse default input for native desktop login profiles."},
+    {"rust_name": "NATIVE_DEVICE_INPUT_TOUCH", "go_name": "NativeDeviceInputTouch", "value": 2, "rust_type": "u32", "doc": "Touch default input for mobile login profiles."},
+    {"rust_name": "NATIVE_DEVICE_PLATFORM_MOBILE", "go_name": "NativeDevicePlatformMobile", "value": 1, "rust_type": "i32", "doc": "Mobile login platform category."},
+    {"rust_name": "NATIVE_DEVICE_PLATFORM_DESKTOP", "go_name": "NativeDevicePlatformDesktop", "value": 0, "rust_type": "i32", "doc": "Desktop login platform category."},
     {"rust_name": "GAME_VERSION", "go_name": "GameVersion", "rust_type": "str", "doc": "Game version reported by the client.", "source": {"path": "assets/bedrock-target.json", "field": "game_version"}},
     {"rust_name": "DEFAULT_BEDROCK_PORT", "go_name": "DefaultBedrockPort", "value": 19132, "rust_type": "u16", "doc": "Default port for an addressed Bedrock server."},
     {"rust_name": "DEFAULT_BEDROCK_PORT_TEXT", "go_name": "DefaultBedrockPortText", "rust_type": "str", "doc": "Text form of the default Bedrock server port.", "from_constant": "DEFAULT_BEDROCK_PORT"},
@@ -602,7 +609,9 @@
       {"type": "error", "error": "refused"},
       {"type": "ping", "version": 2, "resume": "test-token", "generation": 1, "expires_seconds": 120},
       {"type": "account", "account": {"state": "signed_out"}},
-      {"type": "connect", "connect": {"stage": "packs", "packs_done": 1, "packs_total": 2, "received_bytes": 512, "total_bytes": 1024}}
+      {"type": "connect", "connect": {"stage": "packs", "packs_done": 1, "packs_total": 2, "received_bytes": 512, "total_bytes": 1024}},
+      {"version": 2, "channel": "control", "channels": ["control", "play"], "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+      {"version": 2, "channel": "control", "channels": ["control", "play"], "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", "apple_mobile": true}
     ]
   }
 }

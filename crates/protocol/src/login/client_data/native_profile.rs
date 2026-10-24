@@ -7,52 +7,39 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::io;
 
-use bridge::contract::{
-    NATIVE_ACCOUNT_DEFAULT_MODEL as DEFAULT_MODEL, NATIVE_ACCOUNT_DEVICE_OS as ANDROID_DEVICE_OS,
-    NATIVE_ACCOUNT_INPUT_MODE as TOUCH_INPUT_MODE, NATIVE_ACCOUNT_PLATFORM_TYPE as MOBILE_PLATFORM,
-};
+mod device;
+
 const SERVICE_NAMESPACE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../crates/protocol/data/service_device_namespace.txt"
 ));
 
-/// The install's shared Go-compatible Android login profile, without a copied model catalog.
-#[derive(Serialize, Deserialize)]
+/// The install's shared device profile; host claims refresh independently of its stable identifier.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct NativeDeviceProfile {
-    os: u32,
+    #[serde(default)]
+    os: i32,
+    #[serde(default)]
     model: String,
+    #[serde(default)]
     id: String,
 }
 
 impl NativeDeviceProfile {
-    /// Chooses one supported profile and a stable lower-hex device identifier for a new install.
+    /// Creates an install profile for this build; hardware discovery stays at the host edge.
     pub fn fresh() -> Self {
-        Self {
-            os: ANDROID_DEVICE_OS,
-            model: DEFAULT_MODEL.to_owned(),
-            id: uuid::Uuid::new_v4().simple().to_string(),
-        }
+        Self::for_host("")
     }
 
-    /// Accepts the install's existing Android profile while bounding every claimed string.
+    /// Reads a serialized profile without treating its saved OS or model as current host authority.
     ///
     /// # Errors
-    /// Rejects malformed JSON, a different platform or invalid model/device identifier.
+    /// Rejects malformed JSON or an invalid hexadecimal device identifier.
     pub fn parse(bytes: &[u8]) -> io::Result<Self> {
         let profile: Self = serde_json::from_slice(bytes)
             .map_err(|_| io::Error::other("invalid native device profile"))?;
-        if profile.os != ANDROID_DEVICE_OS
-            || profile.model.is_empty()
-            || profile.model.len() > 256
-            || profile.id.len() != 32
-            || !profile
-                .id
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
-            return Err(io::Error::other(
-                "native account requires a valid Android device profile",
-            ));
+        if profile.id.len() != 32 || !profile.id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(io::Error::other("invalid native device identifier"));
         }
         Ok(profile)
     }
@@ -104,17 +91,34 @@ impl NativeDeviceProfile {
         Ok(ValidatedRelayData {
             raw,
             name,
-            derived_id: self.relay_identity(random_id),
+            derived_id: Some(self.relay_identity(random_id)),
+        })
+    }
+
+    /// Validates an unrecognized browser without replacing its device or self-signed identity.
+    ///
+    /// # Errors
+    /// Returns the existing metadata refusal when the caller's original claims are invalid.
+    pub fn validate_unclaimed_relay(
+        claims: RawClientData,
+        protocol: i32,
+    ) -> Result<ValidatedRelayData, ValidationError> {
+        let validated = claims.validate(protocol, crate::PROTOCOL_VERSION, crate::GAME_VERSION)?;
+        let name = validated.requested_name().to_owned();
+        Ok(ValidatedRelayData {
+            raw: validated.into_raw(),
+            name,
+            derived_id: None,
         })
     }
 
     /// Applies only claimed device fields, leaving original name and SelfSignedId for validation.
     pub(super) fn apply_relay_device(&self, claims: &mut RawClientData) -> io::Result<()> {
         let platform_default = claims.integer("PlatformType")?.unwrap_or_default() == 0;
-        for (name, value) in self
-            .device_overlays()
-            .chain(platform_default.then(|| ("PlatformType", json!(MOBILE_PLATFORM))))
-        {
+        for (name, value) in self.device_overlays().chain(
+            self.platform(platform_default)
+                .map(|platform| ("PlatformType", json!(platform))),
+        ) {
             claims.insert(name, value)?;
         }
         Ok(())
@@ -146,7 +150,10 @@ impl NativeDeviceProfile {
     ) -> impl Iterator<Item = (&'static str, Value)> {
         self.device_overlays()
             .chain(identity_overlays(gamertag, self.relay_identity(random_id)))
-            .chain(platform_default.then(|| ("PlatformType", json!(MOBILE_PLATFORM))))
+            .chain(
+                self.platform(platform_default)
+                    .map(|platform| ("PlatformType", json!(platform))),
+            )
     }
 
     /// The sole definition of claimed device fields for canonical and raw representations.
@@ -155,7 +162,7 @@ impl NativeDeviceProfile {
             ("DeviceOS", json!(self.os)),
             ("DeviceModel", json!(self.model)),
             ("DeviceId", json!(self.id)),
-            ("DefaultInputMode", json!(TOUCH_INPUT_MODE)),
+            ("DefaultInputMode", json!(self.input_mode())),
         ]
         .into_iter()
     }
@@ -224,7 +231,7 @@ mod tests {
         assert_eq!(claims["DeviceId"], profile.id);
         assert_eq!(claims["LanguageCode"], settings.language_code);
         assert_eq!(claims["SkinImageWidth"], 64);
-        assert_eq!(claims["PlatformType"], MOBILE_PLATFORM);
+        assert_eq!(claims["PlatformType"], profile.platform(true).unwrap());
         let repeated = self_signed_id(random_id.get(), &profile.id).to_string();
         assert_eq!(claims["SelfSignedId"], repeated);
         assert_eq!(
@@ -246,7 +253,7 @@ mod tests {
 pub struct ValidatedRelayData {
     raw: RawClientData,
     name: String,
-    derived_id: uuid::Uuid,
+    derived_id: Option<uuid::Uuid>,
 }
 
 impl std::fmt::Debug for ValidatedRelayData {
@@ -268,7 +275,11 @@ impl ValidatedRelayData {
     /// # Errors
     /// Returns a redacted error if serializing the canonical identity overlay fails.
     pub fn into_relay_claims(mut self, canonical_name: &str) -> io::Result<RawClientData> {
-        NativeDeviceProfile::apply_relay_identity(&mut self.raw, canonical_name, self.derived_id)?;
+        if let Some(id) = self.derived_id {
+            NativeDeviceProfile::apply_relay_identity(&mut self.raw, canonical_name, id)?;
+        } else {
+            self.raw.insert(DISPLAY_NAME, json!(canonical_name))?;
+        }
         Ok(self.raw)
     }
 }

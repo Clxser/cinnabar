@@ -51,7 +51,22 @@ fn invalid_local_assets_fail_before_connection_startup() {
             String::from_utf8_lossy(&output.stderr),
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains("load startup block assets"), "{stderr}");
+        if direct {
+            assert!(stderr.contains("load startup world carriers"), "{stderr}");
+            assert!(stderr.contains(&assets.display().to_string()), "{stderr}");
+            assert!(stderr.contains("truncated world asset blob"), "{stderr}");
+        } else {
+            let atmosphere = assets::carriers::startup::atmosphere_asset_path(&assets);
+            assert!(stderr.contains("load required menu assets"), "{stderr}");
+            assert!(
+                stderr.contains(&atmosphere.display().to_string()),
+                "{stderr}"
+            );
+            assert!(
+                stderr.contains("could not read required atmosphere asset carrier"),
+                "{stderr}"
+            );
+        }
         assert!(!stderr.contains("Bedrock session failed"), "{stderr}");
     }
 }

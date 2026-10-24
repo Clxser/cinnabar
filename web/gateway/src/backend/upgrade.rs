@@ -34,7 +34,7 @@ pub(super) async fn accept<S: AsyncRead + AsyncWrite + Unpin>(
     mut stream: S,
     origins: &[String],
     deadline: Instant,
-) -> io::Result<(Channel, WebSocketStream<Prefix<S>>)> {
+) -> io::Result<(Channel, String, WebSocketStream<Prefix<S>>)> {
     let mut received = BytesMut::with_capacity(RELAY_CONTROL_BYTES);
     let mut read = [0; RELAY_CONTROL_BYTES];
     let channel = loop {
@@ -68,12 +68,18 @@ pub(super) async fn accept<S: AsyncRead + AsyncWrite + Unpin>(
             HeaderValue::from_static(RELAY_SOCKET_PROTOCOL),
         )
         .map_err(failed)?;
-    let (_, socket) = builder
+    let (request, socket) = builder
         .accept(Prefix::new(stream, received.freeze()))
         .await
         .map_err(failed)?;
     current(deadline)?;
-    Ok((channel, socket))
+    let user_agent = request
+        .headers()
+        .get(http::header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    Ok((channel, user_agent, socket))
 }
 
 #[derive(Clone, Copy)]

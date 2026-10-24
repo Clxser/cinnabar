@@ -3,26 +3,38 @@ use crate::local_worlds::test_support::{NativeHostFixture, paired};
 use protocol::{ClientRandomId, LoginSequence, LoginSettings, SessionLogin, WorldEvent};
 
 #[test]
-fn local_selection_uses_the_actual_endpoint_and_cannot_close_a_replacement_opening() {
+fn local_selection_leaves_its_original_opening_and_cannot_stop_a_replacement() {
     let world = NativeHostFixture::new();
     let selection = world.manager.native_local_world(&world.world_id).unwrap();
+    let original_intent = world.manager.native_host_intent().unwrap();
+    let original = world.runner.last();
     let target = selection.connection_target().unwrap();
     assert_eq!(
         target.address,
         world.manager.world_report().target.unwrap().address
     );
     assert_eq!(target.transport, protocol::NativeTransport::RakNet);
-    world.manager.close();
-    test_time::eventually("original world stopped", || world.runner.last().stopped());
+    selection.request_leave();
+    assert_eq!(
+        selection.validate().unwrap_err().kind(),
+        io::ErrorKind::NotConnected
+    );
+    assert!(world.manager.native_local_world(&world.world_id).is_err());
+    assert!(world.manager.native_host_intent().is_err());
+    test_time::eventually("original world saved and stopped", || original.stopped());
     world.manager.open(&world.world_id, None).unwrap();
     test_time::eventually("replacement world running", || {
         world.manager.status().state == WorldState::Running
     });
     let replacement = world.runner.last();
+    assert!(!Arc::ptr_eq(&original, &replacement));
+    let current_intent = world.manager.native_host_intent().unwrap();
+    assert!(!original_intent.same(&current_intent));
     assert_eq!(
         selection.validate().unwrap_err().kind(),
         io::ErrorKind::NotConnected
     );
+    selection.request_leave();
     selection.request_close();
     assert!(
         !replacement.stopped(),
@@ -30,7 +42,7 @@ fn local_selection_uses_the_actual_endpoint_and_cannot_close_a_replacement_openi
     );
     assert_eq!(world.manager.status().state, WorldState::Running);
     let current = world.manager.native_local_world(&world.world_id).unwrap();
-    current.request_close();
+    current.request_leave();
     test_time::eventually("selected replacement saved and stopped", || {
         replacement.stopped()
     });

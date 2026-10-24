@@ -113,6 +113,8 @@ impl Registry {
         client: IpAddr,
         resume: &str,
         now: Instant,
+        user_agent: &str,
+        apple_mobile: bool,
     ) -> io::Result<Attachment> {
         let client = client.to_canonical();
         let mut state = self
@@ -128,7 +130,7 @@ impl Registry {
             {
                 return Err(admission());
             }
-            let session = Session::new(client, now)?;
+            let session = Session::new(client, now, user_agent, apple_mobile)?;
             state.sessions.push(Arc::clone(&session));
             session
         } else {

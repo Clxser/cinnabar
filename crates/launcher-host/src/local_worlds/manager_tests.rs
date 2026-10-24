@@ -1046,5 +1046,5 @@ mod host;
 #[path = "manager_settings_tests.rs"]
 mod settings;
 #[cfg(unix)]
-#[path = "manager_standby_tests.rs"]
-mod standby;
+#[path = "manager_leave_tests.rs"]
+mod leave;

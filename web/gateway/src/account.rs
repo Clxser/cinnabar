@@ -1,6 +1,5 @@
 //! One memory-only SDK account; the control owner retains and cancels its actual futures.
 
-use bedrock_net::login::client_data::{RawClientData, ValidationError};
 use bedrock_services::{
     minecraft,
     oauth::{MicrosoftAuth, Poll},
@@ -18,13 +17,12 @@ use std::{
 };
 use tokio::sync::OwnedSemaphorePermit;
 
-/// Retains the acquired SDK proof, current OAuth state and one ephemeral device profile.
+/// Retains the acquired SDK proof and current OAuth state; browser identity stays session-owned.
 /// No file, protected lease, checkpoint or credential copy exists in this owner.
 pub(super) struct Account {
     services: minecraft::Minecraft,
     xuid: String,
     gamertag: String,
-    profile: NativeDeviceProfile,
     provider: Option<NativeProvider>,
     // Struct fields drop in order: derived credentials retire before capacity is released.
     _capacity: OwnedSemaphorePermit,
@@ -88,7 +86,6 @@ impl Account {
                 services: minecraft::Minecraft::new(xbox, config).map_err(failed)?,
                 xuid,
                 gamertag,
-                profile: NativeDeviceProfile::fresh(),
                 provider: None,
             })
         })
@@ -105,15 +102,6 @@ impl Account {
             user_code: None,
             reason: None,
         }
-    }
-
-    /// Applies this actual account's owned profile without dispatching credential or transport work.
-    pub(super) fn validate(
-        &self,
-        claims: RawClientData,
-        protocol: i32,
-    ) -> Result<ValidatedRelayData, ValidationError> {
-        self.profile.validate_relay(claims, protocol)
     }
 
     /// Mints on this same SDK account under the caller's original play admission deadline.

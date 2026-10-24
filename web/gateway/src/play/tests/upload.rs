@@ -11,7 +11,13 @@ use tokio::io::{AsyncRead, ReadBuf};
 async fn post_hello_upload_initial_burst_is_available_without_delay() {
     let registry = Registry::new();
     let attachment = registry
-        .open_control(Ipv4Addr::LOCALHOST.into(), "", Instant::now())
+        .open_control(
+            Ipv4Addr::LOCALHOST.into(),
+            "",
+            Instant::now(),
+            "Android",
+            false,
+        )
         .unwrap();
     let (stream, read, total) = input(&attachment, RELAY_UPLOAD_BURST_BYTES);
     let started = tokio::time::Instant::now();
@@ -42,7 +48,13 @@ async fn post_hello_upload_initial_burst_is_available_without_delay() {
 async fn post_hello_upload_excess_waits_and_controller_cancel_stops_the_read() {
     let registry = Registry::new();
     let attachment = registry
-        .open_control(Ipv4Addr::LOCALHOST.into(), "", Instant::now())
+        .open_control(
+            Ipv4Addr::LOCALHOST.into(),
+            "",
+            Instant::now(),
+            "Android",
+            false,
+        )
         .unwrap();
     let upload = RELAY_UPLOAD_BURST_BYTES
         .checked_add(usize::try_from(RELAY_UPLOAD_BYTES_PER_SECOND).unwrap())
@@ -127,6 +139,8 @@ fn input(
         resume: capability.resume,
         generation: capability.generation,
         join: 1,
+        user_agent: "Android".into(),
+        apple_mobile: false,
     })
     .unwrap();
     let random = protocol::ClientRandomId::new(1).unwrap();

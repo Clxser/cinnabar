@@ -188,13 +188,10 @@ impl Playing {
                     .await;
             }
         };
-        let checked = if let Some(account) = &self.lease.account {
-            account.validate(request.client_data, request.protocol)
-        } else {
-            self.lease
-                .session
-                .validate_guest(request.client_data, request.protocol)
-        };
+        let checked = self
+            .lease
+            .session
+            .validate_client_data(request.client_data, request.protocol);
         upstream::current(&self.lease, deadline)?;
         let claims = match checked {
             Ok(claims) => claims,

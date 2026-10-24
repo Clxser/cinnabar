@@ -24,7 +24,7 @@ impl HostOpening {
         let instance = life
             .instance
             .as_ref()
-            .filter(|_| life.state == WorldState::Running && !life.standby)
+            .filter(|_| life.state == WorldState::Running)
             .ok_or_else(unavailable)?;
         if !matches!(instance.exited().try_recv(), Err(TryRecvError::Empty)) {
             return Err(unavailable());
@@ -89,7 +89,7 @@ impl HostOpening {
         let Some(instance) = life
             .instance
             .as_ref()
-            .filter(|_| life.state == WorldState::Running && !life.standby)
+            .filter(|_| life.state == WorldState::Running)
         else {
             return false;
         };
@@ -116,7 +116,7 @@ impl HostOpening {
         }
     }
 
-    /// Leaves only this visible opening, allowing its original process to remain warm.
+    /// Requests saving and stopping only this original opening on the worlds worker.
     pub(super) fn request_leave(&self) {
         let Some(inner) = self.manager.upgrade() else {
             return;
@@ -124,7 +124,7 @@ impl HostOpening {
         let manager = Manager { inner };
         let life = lock(&manager.inner.life);
         if self.current(&manager.inner, &life) {
-            manager.leave_locked(life);
+            manager.close_locked(life);
         }
     }
 

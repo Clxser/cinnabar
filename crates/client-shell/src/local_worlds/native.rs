@@ -5,7 +5,6 @@ use super::{
     client::{NativeLocalWorldRetirement, WorldsClient},
 };
 use launcher::install_layout::InstallLayout;
-use launcher::local_worlds::model::{Effect, Input, WorldsMenu};
 use std::io;
 
 impl LocalWorlds {
@@ -13,10 +12,8 @@ impl LocalWorlds {
     pub fn attach_native(&mut self, layout: &InstallLayout) -> io::Result<()> {
         let manager = self.attach_manager(layout)?;
         self.client = Some(WorldsClient::spawn(manager)?);
-        self.playing = false;
-        self.menu = WorldsMenu::default();
-        self.input(Input::Refresh);
-        self.dispatch(vec![Effect::LoadPrefs, Effect::Prestart]);
+        let effects = self.attachment_effects();
+        self.dispatch(effects);
         Ok(())
     }
 

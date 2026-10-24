@@ -16,7 +16,7 @@ use zip::{CompressionMethod, ZipArchive};
 use crate::{
     AdmissionError, MAX_DECLARED_BYTES_PER_PACK, MAX_ENTRIES_PER_PACK,
     crypto::{ContentKey, contents_file_keys},
-    manifest::{IdentityPolicy, Purpose, read_manifest_with_policy},
+    manifest::{IdentityPolicy, Purpose, Version, read_manifest_with_policy},
     pack::{ArchiveBytes, EntryIndex, ValidatedPack, read_entry},
     read_cache::ReadCache,
 };
@@ -133,12 +133,15 @@ pub(super) fn validate_stack(
 
 fn admit_stack_entry<T>(
     archive: ResourcePackArchive,
-    seen: &mut HashSet<Uuid>,
+    seen: &mut HashSet<(Uuid, Version)>,
     memory: Option<u32>,
     reads: Arc<ReadCache>,
     stack_bounds: impl FnOnce(&ValidatedPack, u64) -> Result<T, AdmissionError>,
 ) -> Result<(ValidatedPack, T), AdmissionError> {
-    if seen.contains(&archive.pack_id) {
+    // The client keys stack entries by UUID and numeric version, so one pack may appear at
+    // several versions; an unparsable version is rejected by validation below.
+    let identity = Version::parse_wire(&archive.version).map(|version| (archive.pack_id, version));
+    if identity.is_some_and(|identity| seen.contains(&identity)) {
         return Err(AdmissionError::DuplicatePack);
     }
     let key = archive.content_key.expose();
@@ -161,7 +164,7 @@ fn admit_stack_entry<T>(
         IdentityPolicy::ServerAdvertisement,
     )?;
     let bounds = stack_bounds(&pack, declared)?;
-    seen.insert(pack.pack_id);
+    seen.extend(identity);
     Ok((pack, bounds))
 }
 

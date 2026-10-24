@@ -17,7 +17,7 @@ pub(super) struct Session {
     pub(super) observation: watch::Sender<Observation>,
     pub(super) progress: watch::Sender<bridge::ConnectProgress>,
     pub(super) changed: Notify,
-    guest: NativeDeviceProfile,
+    device: Option<NativeDeviceProfile>,
 }
 
 pub(super) struct State {
@@ -40,7 +40,12 @@ pub(super) struct State {
 
 impl Session {
     /// Starts one signed-out memory-only account without acquiring credentials.
-    pub(super) fn new(client: std::net::IpAddr, now: Instant) -> io::Result<Arc<Self>> {
+    pub(super) fn new(
+        client: std::net::IpAddr,
+        now: Instant,
+        user_agent: &str,
+        apple_mobile: bool,
+    ) -> io::Result<Arc<Self>> {
         let (observation, _) = watch::channel(signed_out());
         let (progress, _) = watch::channel(progress(bridge::ConnectStage::Idle));
         Ok(Arc::new(Self {
@@ -64,7 +69,7 @@ impl Session {
             observation,
             progress,
             changed: Notify::new(),
-            guest: NativeDeviceProfile::fresh(),
+            device: NativeDeviceProfile::browser(user_agent, apple_mobile),
         }))
     }
 
@@ -205,13 +210,16 @@ impl Session {
         }
     }
 
-    /// Validates against the same memory-only guest profile before any transport is authorized.
-    pub(super) fn validate_guest(
+    /// Validates under the original browser profile across guest/account changes before transport work.
+    pub(super) fn validate_client_data(
         &self,
         claims: RawClientData,
         protocol: i32,
     ) -> Result<ValidatedRelayData, ValidationError> {
-        self.guest.validate_relay(claims, protocol)
+        match &self.device {
+            Some(device) => device.validate_relay(claims, protocol),
+            None => NativeDeviceProfile::validate_unclaimed_relay(claims, protocol),
+        }
     }
 
     /// Publishes only the already validated guest presentation through the shared identity overlay.

@@ -69,15 +69,15 @@ impl NativeAccount {
         random_id: protocol::ClientRandomId,
     ) -> io::Result<protocol::NativeAuthentication> {
         operation.rearm()?;
-        let fresh = serde_json::to_vec(&protocol::NativeDeviceProfile::fresh())
-            .map_err(|_| io::Error::other("serialize native device profile"))?;
+        let fresh = super::device::profile();
         let profile = loop {
             match operation
                 .lease
                 .as_ref()
                 .expect("acquired lease")
-                .device_profile(&self.device_path, &fresh, |bytes| {
-                    protocol::NativeDeviceProfile::parse(bytes).is_ok()
+                .device_profile(&self.device_path, |saved| {
+                    serde_json::to_vec(&fresh.migrate(saved))
+                        .map_err(|_| io::Error::other("serialize native device profile"))
                 }) {
                 Ok(bytes) => break protocol::NativeDeviceProfile::parse(&bytes)?,
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {

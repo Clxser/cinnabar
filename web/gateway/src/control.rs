@@ -31,7 +31,12 @@ struct Output {
 }
 
 /// Consumes one already selected control stream and keeps its writer caller-owned through completion.
-pub(super) async fn run<S>(registry: &Arc<Registry>, client: IpAddr, stream: S) -> io::Result<()>
+pub(super) async fn run<S>(
+    registry: &Arc<Registry>,
+    client: IpAddr,
+    stream: S,
+    http_agent: &str,
+) -> io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -42,7 +47,7 @@ where
         RELAY_CONTROL_BYTES,
         RELAY_CONTROL_BYTES,
     );
-    let serving = serve(registry, client, reader, frames);
+    let serving = serve(registry, client, reader, frames, http_agent);
     tokio::pin!(serving, writer);
     tokio::select! {
         biased;
@@ -58,9 +63,16 @@ async fn serve(
     client: IpAddr,
     mut reader: impl FrameRead,
     frames: FrameQueue,
+    http_agent: &str,
 ) -> io::Result<()> {
     let hello = read_hello(&mut reader, RELAY_CHANNEL_CONTROL).await?;
-    let attachment = match registry.open_control(client, &hello.resume, Instant::now()) {
+    let attachment = match registry.open_control(
+        client,
+        &hello.resume,
+        Instant::now(),
+        hello.browser_user_agent(http_agent),
+        hello.apple_mobile,
+    ) {
         Ok(attachment) => attachment,
         Err(error) => {
             output(

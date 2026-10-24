@@ -15,6 +15,21 @@ pub struct Hello {
     pub generation: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub join: u64,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub user_agent: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub apple_mobile: bool,
+}
+
+impl Hello {
+    /// Prefers framed browser identity when the selected transport omits HTTP user-agent headers.
+    pub fn browser_user_agent<'a>(&'a self, http_agent: &'a str) -> &'a str {
+        if self.user_agent.is_empty() {
+            http_agent
+        } else {
+            &self.user_agent
+        }
+    }
 }
 
 /// A rotated capability and its control generation, observed after a bounded frame arrives.
@@ -68,4 +83,9 @@ pub enum Event {
 /// Omits unused numeric fields from a channel Hello.
 fn is_zero(value: &u64) -> bool {
     *value == 0
+}
+
+/// Omits an absent browser capability hint.
+fn is_false(value: &bool) -> bool {
+    !*value
 }

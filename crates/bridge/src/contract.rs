@@ -206,17 +206,38 @@ pub const NATIVE_AUTH_DEVICE_VERSION: &str = "13";
 /// Xbox account environment.
 pub const NATIVE_AUTH_SANDBOX: &str = "RETAIL";
 
-/// Bedrock device platform for an authenticated Android account.
-pub const NATIVE_ACCOUNT_DEVICE_OS: u32 = 1;
+/// Fallback for an unrecognized native build platform.
+pub const NATIVE_DEVICE_OS_UNKNOWN: i32 = -1;
 
-/// Original Rust Android account profile model.
-pub const NATIVE_ACCOUNT_DEFAULT_MODEL: &str = "GOOGLE Pixel 8";
+/// Android login device platform.
+pub const NATIVE_DEVICE_OS_ANDROID: i32 = 1;
 
-/// Default input mode claimed by the Android account profile.
-pub const NATIVE_ACCOUNT_INPUT_MODE: u32 = 2;
+/// iOS login device platform.
+pub const NATIVE_DEVICE_OS_IOS: i32 = 2;
 
-/// Platform claimed by Android when client metadata leaves it unset.
-pub const NATIVE_ACCOUNT_PLATFORM_TYPE: u32 = 1;
+/// macOS login device platform.
+pub const NATIVE_DEVICE_OS_MACOS: i32 = 3;
+
+/// Windows universal login device platform.
+pub const NATIVE_DEVICE_OS_WINDOWS10: i32 = 7;
+
+/// Windows desktop login device platform.
+pub const NATIVE_DEVICE_OS_WINDOWS: i32 = 8;
+
+/// Linux login device platform.
+pub const NATIVE_DEVICE_OS_LINUX: i32 = 15;
+
+/// Mouse default input for native desktop login profiles.
+pub const NATIVE_DEVICE_INPUT_MOUSE: u32 = 1;
+
+/// Touch default input for mobile login profiles.
+pub const NATIVE_DEVICE_INPUT_TOUCH: u32 = 2;
+
+/// Mobile login platform category.
+pub const NATIVE_DEVICE_PLATFORM_MOBILE: i32 = 1;
+
+/// Desktop login platform category.
+pub const NATIVE_DEVICE_PLATFORM_DESKTOP: i32 = 0;
 
 /// Game version reported by the client.
 pub const GAME_VERSION: &str = "1.26.50";

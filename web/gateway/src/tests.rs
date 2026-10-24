@@ -21,7 +21,7 @@ async fn control_eof_retires_the_original_play_controller() {
     let registry = Registry::new();
     let address = IpAddr::V4(Ipv4Addr::LOCALHOST);
     let (server, client) = tokio::io::duplex(RELAY_CONTROL_BYTES);
-    let serving = control::run(&registry, address, server);
+    let serving = control::run(&registry, address, server, "");
     let client = async {
         let mut client = Framed::new(client, bridge::BridgeCodec::with_max(RELAY_CONTROL_BYTES));
         client
@@ -33,6 +33,8 @@ async fn control_eof_retires_the_original_play_controller() {
                     resume: String::new(),
                     generation: 0,
                     join: 0,
+                    user_agent: "Android".into(),
+                    apple_mobile: false,
                 })
                 .unwrap(),
             ))
@@ -80,7 +82,7 @@ async fn newer_join_waits_for_the_actual_previous_play_owner() {
     let registry = Registry::new();
     let now = Instant::now();
     let first = registry
-        .open_control(IpAddr::V4(Ipv4Addr::LOCALHOST), "", now)
+        .open_control(IpAddr::V4(Ipv4Addr::LOCALHOST), "", now, "Android", false)
         .unwrap();
     let original = first.session.begin_play(first.generation, 1).await.unwrap();
     assert!(first.session.begin_play(first.generation, 1).await.is_err());
@@ -96,7 +98,13 @@ async fn newer_join_waits_for_the_actual_previous_play_owner() {
     assert!(newer.current().is_ok());
     let bearer = first.session.state.lock().unwrap().current.wire();
     let replacement = registry
-        .open_control(IpAddr::V4(Ipv4Addr::LOCALHOST), &bearer, now)
+        .open_control(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            &bearer,
+            now,
+            "Android",
+            false,
+        )
         .unwrap();
     assert!(first.cancel.is_cancelled());
     drop(first);
@@ -121,11 +129,13 @@ fn resume_preserves_original_expiry_and_replacement_controller() {
     let registry = Registry::new();
     let now = Instant::now();
     let address = IpAddr::V4(Ipv4Addr::LOCALHOST);
-    let first = registry.open_control(address, "", now).unwrap();
+    let first = registry
+        .open_control(address, "", now, "Android", false)
+        .unwrap();
     let original = first.session.state.lock().unwrap().current.wire();
     let resumed_at = now + Duration::from_secs(u64::from(RELAY_KEEPALIVE_SECONDS));
     let replacement = registry
-        .open_control(address, &original, resumed_at)
+        .open_control(address, &original, resumed_at, "Android", false)
         .unwrap();
     assert!(Arc::ptr_eq(&first.session, &replacement.session));
     let current = replacement.session.state.lock().unwrap().current.wire();
@@ -146,3 +156,5 @@ fn resume_preserves_original_expiry_and_replacement_controller() {
     drop(replacement);
     registry.close();
 }
+
+mod device;

@@ -25,6 +25,8 @@ fn hello(channel: &str, generation: u64, join: u64) -> Bytes {
             resume: String::new(),
             generation,
             join,
+            user_agent: "Android".into(),
+            apple_mobile: false,
         })
         .unwrap(),
     )

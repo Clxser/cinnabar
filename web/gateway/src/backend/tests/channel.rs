@@ -49,6 +49,8 @@ async fn mismatch(path: &str, channel: &str) {
                             resume: capability.resume.clone(),
                             generation: capability.generation,
                             join: 1,
+                            user_agent: "Android".into(),
+                            apple_mobile: false,
                         })
                         .unwrap(),
                     ))

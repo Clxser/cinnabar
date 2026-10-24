@@ -43,7 +43,13 @@ async fn forward(expire: bool) -> Observation {
     let address = peer.socket.local_addr().unwrap();
     let registry = Registry::new();
     let attachment = registry
-        .open_control(Ipv4Addr::LOCALHOST.into(), "", Instant::now())
+        .open_control(
+            Ipv4Addr::LOCALHOST.into(),
+            "",
+            Instant::now(),
+            "Android",
+            false,
+        )
         .unwrap();
     let session = Arc::clone(&attachment.session);
     let generation = attachment.generation;
@@ -68,7 +74,7 @@ async fn forward(expire: bool) -> Observation {
             .unwrap();
         let claims = RawClientData::from_raw(&raw).unwrap();
         let claims = session
-            .validate_guest(claims, protocol::PROTOCOL_VERSION)
+            .validate_client_data(claims, protocol::PROTOCOL_VERSION)
             .unwrap();
         let claims = session.guest_claims(claims).unwrap();
         let deadline = Instant::now()

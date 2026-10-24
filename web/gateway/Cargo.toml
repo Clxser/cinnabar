@@ -7,7 +7,7 @@ publish = false
 
 [package.metadata.cinnabar]
 platform-specific = ["windows"]
-reads = ["crates/protocol/tests/fixtures/native-client-data-validation.json"]
+reads = ["crates/bridge/data/contract.json", "crates/protocol/tests/fixtures/native-client-data-validation.json"]
 
 [features]
 webtransport = ["dep:h3", "dep:h3-quinn", "dep:h3-webtransport", "dep:quinn"]

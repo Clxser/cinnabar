@@ -297,6 +297,34 @@ fn a_bad_pack_is_dropped_with_its_reason_and_the_rest_still_apply() {
     );
 }
 
+/// A server may stack one pack UUID at several versions; only a repeated numeric version is a
+/// duplicate.
+#[test]
+fn one_pack_at_two_versions_keeps_both_entries() {
+    let version = |text: &str| {
+        ResourcePackArchive::unencrypted(
+            PACK_ID,
+            text.as_bytes().to_vec(),
+            Vec::new(),
+            pack_zip(PACK_ID, &[]),
+        )
+    };
+    let stack = validate_handoff(handoff(vec![
+        version("2.18.0"),
+        version("2.7.0"),
+        version("2.7"),
+    ]));
+    let versions: Vec<_> = stack.packs().iter().map(|pack| pack.version()).collect();
+    assert_eq!(versions, [b"2.7.0".as_slice(), b"2.18.0".as_slice()]);
+    assert_eq!(
+        stack.rejections(),
+        [PackRejection {
+            stack_index: 2,
+            reason: AdmissionError::DuplicatePack
+        }]
+    );
+}
+
 /// Every distinct selected archive survives a stack larger than the former admission count.
 #[test]
 fn server_stack_retains_every_selected_archive() {

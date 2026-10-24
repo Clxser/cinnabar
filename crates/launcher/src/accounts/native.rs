@@ -339,22 +339,20 @@ impl NativeLease {
         Ok(())
     }
 
-    /// Reuses the Go-compatible install device file under its own nonblocking lease.
-    /// `fresh` replaces a missing or unusable profile; validation belongs to its metadata owner.
+    /// Refreshes the install device file under its original nonblocking lease.
+    /// The metadata owner migrates saved IDs and refreshes host claims in one transaction.
     pub fn device_profile(
         &self,
         path: &Path,
-        fresh: &[u8],
-        valid: impl FnOnce(&[u8]) -> bool,
+        refresh: impl FnOnce(Option<&[u8]>) -> io::Result<Vec<u8>>,
     ) -> io::Result<Zeroizing<Vec<u8>>> {
         let _lease = try_lease(&cache_lock_path(path))?;
-        match read_optional(path)? {
-            Some(bytes) if valid(&bytes) => Ok(Zeroizing::new(bytes)),
-            _ => {
-                write_private(path, fresh)?;
-                Ok(Zeroizing::new(fresh.to_vec()))
-            }
+        let saved = read_optional(path)?;
+        let current = Zeroizing::new(refresh(saved.as_deref())?);
+        if saved.as_deref() != Some(current.as_slice()) {
+            write_private(path, &current)?;
         }
+        Ok(current)
     }
 }
 

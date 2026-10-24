@@ -339,3 +339,31 @@ fn legacy_checkpoint_retains_proof_but_requires_conservative_cache_restore() {
         original.as_slice()
     );
 }
+
+/// Valid saved profiles are refreshed under the same device lease rather than returned stale.
+#[test]
+fn device_profile_refreshes_and_persists_metadata_under_its_original_lease() {
+    let fixture = Fixture::new();
+    fixture.sign_in("device-refresh");
+    let native = fixture.store.try_native_lease().unwrap();
+    let path = fixture.store.directory.join("device.json");
+    let old = br#"{"os":1,"model":"Old phone","id":"compatible-install-id"}"#;
+    write_private(&path, old).unwrap();
+    let refreshed = native
+        .device_profile(&path, |saved| {
+            assert_eq!(saved, Some(old.as_slice()));
+            assert_eq!(
+                try_lease(&cache_lock_path(&path)).err().unwrap().kind(),
+                io::ErrorKind::WouldBlock
+            );
+            let mut value: serde_json::Value = serde_json::from_slice(saved.unwrap()).unwrap();
+            value["os"] = serde_json::json!(bridge::contract::NATIVE_DEVICE_OS_LINUX);
+            value["model"] = serde_json::json!("Detected hardware");
+            Ok(serde_json::to_vec(&value).unwrap())
+        })
+        .unwrap();
+    assert_eq!(read_private(&path).unwrap(), refreshed.as_slice());
+    let current: serde_json::Value = serde_json::from_slice(&refreshed).unwrap();
+    assert_eq!(current["id"], "compatible-install-id");
+    assert_eq!(current["model"], "Detected hardware");
+}

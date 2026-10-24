@@ -1,5 +1,5 @@
-//! The Bedrock login client-data claims the core presents upstream for this client. The core claims
-//! the device (`DeviceOS`, `DeviceModel`, `DeviceId`, `DefaultInputMode`) to match its sign-in.
+//! The Bedrock login client-data claims the core presents upstream for this client. The core supplies
+//! the host device (`DeviceOS`, `DeviceModel`, `DeviceId`, `DefaultInputMode`).
 
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 mod native_profile;

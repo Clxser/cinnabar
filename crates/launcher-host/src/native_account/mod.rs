@@ -3,6 +3,7 @@
 mod acquisition;
 mod catalog;
 mod catalog_worker;
+mod device;
 mod directory;
 mod featured;
 mod friend_join;

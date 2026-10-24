@@ -177,6 +177,8 @@ pub(crate) async fn connect_control(
                 resume,
                 generation: 0,
                 join: 0,
+                user_agent: "Android".into(),
+                apple_mobile: false,
             })
             .unwrap(),
         ))
@@ -306,7 +308,7 @@ async fn completed_service_driver_retains_sessions_until_connections_retire() {
         let serving = Arc::clone(&registry);
         let mut connections = FuturesUnordered::<Work>::new();
         connections.push(Box::pin(async move {
-            control::run(&serving, peer.ip(), admitted).await
+            control::run(&serving, peer.ip(), admitted, "").await
         }));
         let mut services = Box::pin(registry.drive());
         assert!(futures::poll!(services.as_mut()).is_pending());
@@ -328,6 +330,8 @@ async fn completed_service_driver_retains_sessions_until_connections_retire() {
                             resume: String::new(),
                             generation: 0,
                             join: 0,
+                            user_agent: "Android".into(),
+                            apple_mobile: false,
                         })
                         .unwrap(),
                     ))

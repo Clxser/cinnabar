@@ -22,8 +22,15 @@ pub(super) async fn run(
     transport: Arc<Transport>,
     deadline: Instant,
     stop: CancellationToken,
+    http_agent: &str,
 ) -> io::Result<()> {
-    let opening = attach(registry, client, Arc::clone(&transport), deadline);
+    let opening = attach(
+        registry,
+        client,
+        Arc::clone(&transport),
+        deadline,
+        http_agent,
+    );
     tokio::pin!(opening);
     let (stream, controller) = tokio::select! { biased;
         () = stop.cancelled() => return Err(closed()),
@@ -57,13 +64,20 @@ async fn attach(
     client: IpAddr,
     transport: Arc<Transport>,
     deadline: Instant,
+    http_agent: &str,
 ) -> io::Result<(Prefix<Bidi>, Attachment)> {
     let stream = next_bi(transport).await?;
     current(deadline)?;
     let mut framed = Framed::new(stream, bridge::BridgeCodec::with_max(RELAY_CONTROL_BYTES));
     let hello = control::read_hello(&mut framed, RELAY_CHANNEL_CONTROL).await?;
     current(deadline)?;
-    let attachment = match registry.open_control(client, &hello.resume, Instant::now()) {
+    let attachment = match registry.open_control(
+        client,
+        &hello.resume,
+        Instant::now(),
+        hello.browser_user_agent(http_agent),
+        hello.apple_mobile,
+    ) {
         Ok(attachment) => attachment,
         Err(error) => {
             let event = serde_json::to_vec(&Event::Error {

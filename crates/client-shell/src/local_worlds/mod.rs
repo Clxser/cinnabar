@@ -103,6 +103,16 @@ impl LocalWorlds {
         Ok(manager)
     }
 
+    /// Resets the attached menu and requests its initial data from the worker.
+    #[cfg(any(test, all(feature = "native-networking", not(target_arch = "wasm32"))))]
+    fn attachment_effects(&mut self) -> Vec<Effect> {
+        self.playing = false;
+        self.menu = WorldsMenu::default();
+        let mut effects = self.menu.update(Input::Refresh);
+        effects.push(Effect::LoadPrefs);
+        effects
+    }
+
     /// Drops the worker and closes the open world, whose original session has retired.
     pub fn detach(&mut self) {
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
@@ -201,8 +211,7 @@ impl LocalWorlds {
         self.dispatch(vec![Effect::Prepare]);
     }
 
-    /// Leaves the local world: its server saves and stops, or briefly keeps running where
-    /// starts are slow.
+    /// Leaves the local world and asks its server to save and stop.
     pub fn leave_world(&mut self) {
         self.playing = false;
         self.paused = false;

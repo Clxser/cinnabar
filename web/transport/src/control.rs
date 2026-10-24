@@ -17,6 +17,8 @@ pub(crate) fn hello(channel: Channel, resume: &str, generation: u64) -> Hello {
             Vec::new()
         },
         resume: resume.into(),
+        user_agent: browser_user_agent(),
+        apple_mobile: browser_apple_mobile(),
         generation,
         join: match channel {
             Channel::Control => 0,
@@ -24,6 +26,30 @@ pub(crate) fn hello(channel: Channel, resume: &str, generation: u64) -> Hello {
         },
     }
 }
+/// Reports browser identity inside the reliable handshake rather than relying on HTTP headers.
+fn browser_user_agent() -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        crate::browser::user_agent()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        String::new()
+    }
+}
+
+/// Keeps desktop-mode iPadOS distinguishable from macOS.
+fn browser_apple_mobile() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        crate::browser::apple_mobile()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        false
+    }
+}
+
 /// Parses one bounded frame, retaining optional-field forward compatibility.
 pub(crate) fn parse(frame: &[u8]) -> Result<Event, CloseReason> {
     serde_json::from_slice(frame).map_err(|_| CloseReason::Protocol)

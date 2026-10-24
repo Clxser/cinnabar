@@ -302,14 +302,14 @@ async fn serve(
         upgrade::accept(stream, &origins, deadline).await
     };
     current(deadline)?;
-    let (channel, socket) = tokio::select! { biased;
+    let (channel, user_agent, socket) = tokio::select! { biased;
         () = registry.cancelled.cancelled() => return Err(closed()),
         result = tokio::time::timeout_at(deadline.into(), upgrading) => result.map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "gateway upgrade timed out"))??,
     };
     current(deadline)?;
     let socket = Socket::new(socket, channel.message_limit());
     match channel {
-        upgrade::Channel::Control => control::run(&registry, peer, socket).await,
+        upgrade::Channel::Control => control::run(&registry, peer, socket, &user_agent).await,
         upgrade::Channel::Play => play::run(&registry, socket).await,
     }
 }

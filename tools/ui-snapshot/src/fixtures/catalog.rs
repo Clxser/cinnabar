@@ -13,7 +13,7 @@ use launcher::local_worlds::world::UnavailableReason;
 use super::{
     Fixture, GUI_SCALE, KEYBOARD_SIZE, SIZE, SMALL_SIZE, SettingId, SettingSection, State,
     TALL_SIZE, collection_reveal, hud_card_fit, hud_cards, hud_editor, local_identity,
-    minecraft_import, mods, out_of_game, profile, roster, settings, settings_screens,
+    minecraft_import, out_of_game, profile, roster, settings, settings_screens,
     shader_options, shader_pack, updates,
 };
 
@@ -792,54 +792,6 @@ pub(super) const STATES: &[State] = &[
         size: KEYBOARD_SIZE,
         gui_scale: GUI_SCALE,
         fixture: || settings_screens::settings_keyboard_layout(true),
-    },
-    State {
-        name: "settings-mods",
-        size: TALL_SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: mods::declared,
-    },
-    State {
-        name: "settings-mods-undeclared",
-        size: TALL_SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: mods::undeclared,
-    },
-    State {
-        name: "settings-mods-permissions-collapsed",
-        size: TALL_SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: mods::collapsed,
-    },
-    State {
-        name: "settings-mods-permissions-consent",
-        size: TALL_SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: mods::consent,
-    },
-    State {
-        name: "settings-mods-permissions-requested",
-        size: TALL_SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: mods::requested_only,
-    },
-    State {
-        name: "settings-mods-permissions-all",
-        size: TALL_SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: mods::show_all,
-    },
-    State {
-        name: "settings-mods-permissions-narrow",
-        size: [360, 900],
-        gui_scale: GUI_SCALE,
-        fixture: mods::show_all,
-    },
-    State {
-        name: "settings-mods-permissions-undeclared-consent",
-        size: TALL_SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: mods::undeclared_permissions,
     },
     State {
         name: "settings-shaders-options-button",

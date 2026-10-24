@@ -60,6 +60,8 @@ async fn accepted_play_reaches_owned_bds_world() {
                 resume: capability.resume.clone(),
                 generation: capability.generation,
                 join,
+                user_agent: "Android".into(),
+                apple_mobile: false,
             })
             .unwrap(),
         ))

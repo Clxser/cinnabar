@@ -78,7 +78,7 @@ pub(super) async fn serve(
     current(deadline)?;
     let opening = open(connection.clone(), &origins, deadline);
     tokio::pin!(opening);
-    let session = tokio::select! { biased;
+    let (session, user_agent) = tokio::select! { biased;
         () = registry.cancelled.cancelled() => return Err(closed()),
         result = tokio::time::timeout_at(deadline.into(), &mut opening) => result.map_err(|_| timed_out())??,
     };
@@ -91,6 +91,7 @@ pub(super) async fn serve(
             Arc::clone(&transport),
             deadline,
             stop.clone(),
+            &user_agent,
         );
         let refusing_uni = refuse_uni(&transport);
         let closing = transport.recv_session_close();
@@ -147,7 +148,7 @@ async fn open(
     connection: quinn::Connection,
     origins: &[String],
     deadline: Instant,
-) -> io::Result<Transport> {
+) -> io::Result<(Transport, String)> {
     let mut builder = h3::server::builder();
     let headers = u64::try_from(RELAY_CONTROL_BYTES).map_err(failed)?;
     builder
@@ -188,9 +189,16 @@ async fn open(
         }
         return Err(failed(()));
     }
-    WebTransportSession::accept(request, response, connection)
+    let user_agent = request
+        .headers()
+        .get(http::header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    let session = WebTransportSession::accept(request, response, connection)
         .await
-        .map_err(failed)
+        .map_err(failed)?;
+    Ok((session, user_agent))
 }
 
 /// The first Origin retains Go Header.Get semantics; neither URI nor origin authorizes an upstream.
