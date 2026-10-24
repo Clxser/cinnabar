@@ -303,8 +303,25 @@ Keep raw, analogue and processed input semantics distinct. Mounted controls need
 attributable vehicle mapping, constants, state and actual prediction before claiming
 client-predicted vehicle behavior. Riding alone does not establish that capability.
 
-Correction-sync acceptance still includes predicted flag coverage, scaled/horizontal
-poses and bounds, history loss, replay authority, send phase and live-server behavior.
+Correction sync retains individual accepted flag writes, cached passenger movement,
+explicit dimensions and unscaled local pose sizes. It reports accepted movement speed
+independently of simulation admission. Unsupported attribute models leave reporting
+with the actor's current value. A completed local pose tick replaces earlier accepted
+pose writes. Retained corrections arm its idle countdown; bare snaps do not.
+Sparse dimension writes preserve the untouched accepted component, including local
+pose sizes. Dimensions enter gameplay with ordered metadata controls, and correction
+replay retains their order alongside flag writes. Network and synthetic local actors
+share arrival-ordered authority lifetimes. Rendering uses a separate nonzero lifetime,
+including for the initial synthetic local body and first-person hand.
+Received local spawns, removals and dimension resets publish complete replacement
+authority through the same ordered controls. Synthetic creation keeps that lifetime
+and its already accepted updates and effects. Replacement retires cached flags, pose
+comparisons, dimensions, item use and movement attributes. Replay retains ordered
+actor and controller writes independently of the replaced actor state. Unknown passenger identities
+defer controller selection until their arrival order can be resolved.
+Server-driven gameplay pose and item-use starts, riptide flag
+lifetimes, block-climber flags, custom collision definitions, legacy sneak height,
+transition-tick packet ordering and broader live-server qualification remain incomplete.
 Animation-only flags must remain separate from gameplay and correction authority.
 Snapped corrections and teleports keep the local input tick when the server stamp is
 unretained or ahead; acceptance on servers that stamp their own clock is outstanding.
