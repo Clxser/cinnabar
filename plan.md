@@ -313,10 +313,12 @@ Correction sync retains individual accepted flag writes, cached passenger moveme
 explicit dimensions and unscaled local pose sizes. It reports accepted movement speed
 independently of simulation admission. Unsupported attribute models leave reporting
 with the actor's current value. Retained corrections arm its idle countdown;
-bare snaps do not. A completed local pose tick replaces earlier accepted pose writes.
+bare snaps do not. Pose triggers refresh their independent bits after each local tick.
 Sparse dimension writes preserve the untouched accepted component, including local
 pose sizes. Dimensions enter gameplay with ordered metadata controls, and correction
-replay retains their order alongside flag writes. Network and synthetic local actors
+replay retains their order alongside flag writes. Accepted pose corrections resize
+before replayed local rules can end the pose within the same tick.
+Network and synthetic local actors
 share arrival-ordered authority lifetimes. Rendering uses a separate nonzero lifetime,
 including for the initial synthetic local body and first-person hand.
 Received local spawns, removals and dimension resets publish complete replacement
@@ -325,15 +327,31 @@ and its already accepted updates and effects. Replacement retires cached flags, 
 comparisons, dimensions, item use and movement attributes. Replay retains ordered
 actor and controller writes independently of the replaced actor state. Unknown passenger identities
 defer controller selection until their arrival order can be resolved.
-Server-driven gameplay pose and item-use starts, Riptide flag lifetimes,
-block-climber flags, custom collision definitions, transition-tick packet ordering
-and broader live-server qualification remain incomplete.
+Server-driven item-use gameplay starts, block-climber flags, custom collision
+definitions, transition-tick packet ordering and broader live-server qualification
+remain incomplete.
 Animation-only flags must remain separate from gameplay and correction authority.
 Snapped corrections and teleports keep the local input tick when the server stamp is
 unretained or ahead; acceptance on servers that stamp their own clock is outstanding.
 Server sneak updates preserve local hold/toggle intent, and the next completed input
 corrects a conflicting stance through start/stop actions retained across tickless frames
-and replay. Live-server pickup and remote-player stance acceptance remains outstanding.
+and replay. Server glide/swim/crawl and Riptide spin flags start or end the local state
+without start/stop actions. Each retained frame captures the flag word it starts with; a
+stamped write becomes a correction of the following frame where it differs from that
+capture and requests replay when that following frame is retained. Current stamps
+wait for the next frame; a future stamp joins the current frame without immediate replay.
+Replay keeps the starting frame's capture, refreshes later ones and copies the replayed
+word back to the live state, keeping the live spin and glide counters, swim blend and
+camera eye blend. Glide, swim and crawl retain independent bits beside flight;
+their own trigger transitions produce actions, and their combined state feeds
+the compact body, swim blend and eye offset. Replay preserves the pending swim-blend
+input across immobile pose transitions; only changed swim or crawl corrections replace it.
+Still incomplete: reconciling server `UsingItem` writes with local-use gameplay;
+the Riptide spin's entity-hit end, which
+needs a mob classification the entity facts lack (vanilla counts mobs whose box meets the
+player's grown by one block, scaling velocity by -0.2 per hit); block-climber flags; and
+live-server evidence for these adoptions.
+Live-server pickup and remote-player stance acceptance remains outstanding.
 Sneaking box height, pose fit and crouch eye follow StartGame's base game version
 (standing height before 1.20.10), including server resizes after prediction resets.
 Near-contact collision fixes do not establish complete collision-engine parity.
@@ -421,6 +439,9 @@ and rendered qualification remain incomplete.
   resin clumps, hooks, ladders, lily pads and sea pickles use their carried sprites; falling
   blocks retain their world models.
   Dropped crossed plants, lanterns, chains, ladders, lily pads and sea pickles use their carried sprites; falling blocks retain their world models.
+  Implemented dropped sprite families use their carried artwork; falling blocks retain their world models.
+  Ordinary model-class drops prefer carried geometry from matching terrain, with session
+  artwork taking priority. Final transforms, tinting and animation remain incomplete.
   Held lecterns reuse the placed stand; their hand pose comparisons remain incomplete.
   Held heads reuse the placed-head meshes and textures; their native hand pose, scale,
   inventory preview and resource-pack geometry acceptance remain incomplete.
@@ -1021,6 +1042,9 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   Host cancellation retires the interrupted helper without consuming guest strikes or restart attempts;
   only guest budget and protocol failures consume strikes, while transport failures recover separately.
   Leave writes need no live world. Player callbacks retain the world tick captured with each observation.
+  Server WIT 0.9 adds instance simulation ticks and cancellable timers through the existing
+  callback queue, with unload pause, opening fences and counted overflow. Entity registration,
+  replication, riding, steering and mixed-client ship acceptance remain incomplete.
   Client epoch receipt, rendered destination readiness, crash recovery and live transfer acceptance
   remain incomplete.
 - Native click caps and local weather overrides have transactional host APIs and
@@ -1202,6 +1226,7 @@ public keys and real-domain/cross-platform acceptance remain incomplete; see
 by this optional client feature.
 
 See [Android](docs/android.md), [mods](docs/modding-spike.md),
+See [Android](docs/android.md), [mods](docs/mods/README.md),
 [server experiences](docs/server-experiences.md) and
 [experience runtime](docs/experience-runtime.md) for existing implementation contracts.
 
