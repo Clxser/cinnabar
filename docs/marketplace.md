@@ -8,7 +8,7 @@ permission authority. The API schema and its immutable revision are recorded in
 `core/cinnabarapi/schema/source.json`.
 
 The native marketplace worker uses the API origin from the generated bridge
-contract. It fetches the exact signed release by project and SHA-256, verifies
+contract. It fetches the exact signed release by project, version and SHA-256, verifies
 the original statement bytes with a pinned Ed25519 public key, checks the
 selection/size/hash, and retrieves the component through its digest URL. Public
 requests carry no account credentials and follow no redirects. Responses,

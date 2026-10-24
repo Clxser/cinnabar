@@ -3,6 +3,19 @@
 use super::*;
 use presentation::{clear_presentation, refresh_presentation};
 
+/// Filters persisted consent through the current marketplace account and signed withdrawal window.
+fn enabled_entries(
+    entries: &[Entry],
+    marketplace: &launcher_host::marketplace::Guard,
+    now: u64,
+) -> Vec<Entry> {
+    entries
+        .iter()
+        .filter(|entry| entry.enabled && marketplace.allows(&entry.component, now))
+        .cloned()
+        .collect()
+}
+
 /// Revokes removed or changed grants before input, independently of loader progress.
 pub(super) fn sync_authority(world: &mut World) {
     let Some(watcher) = world.get_resource::<Watcher>() else {
@@ -10,19 +23,14 @@ pub(super) fn sync_authority(world: &mut World) {
     };
     let desired = watcher.desired.lock().expect("mod desired list");
     let enabled: Vec<_> = if watcher.alive.load(Ordering::Acquire) {
-        desired
-            .registration
-            .as_ref()
-            .into_iter()
-            .flat_map(|registration| registration.mods.iter())
-            .filter(|entry| {
-                entry.enabled
-                    && watcher
-                        .marketplace
-                        .allows(&entry.component, launcher_host::marketplace::now_ms())
-            })
-            .cloned()
-            .collect()
+        enabled_entries(
+            desired
+                .registration
+                .as_ref()
+                .map_or(&[], |registration| registration.mods.as_slice()),
+            &watcher.marketplace,
+            launcher_host::marketplace::now_ms(),
+        )
     } else {
         Vec::new()
     };
@@ -395,9 +403,14 @@ pub(super) fn apply(world: &mut World, update: Update) {
         ));
     }
     reorder(world, &update.registration.mods);
+    let enabled = enabled_entries(
+        &update.registration.mods,
+        &world.resource::<Watcher>().marketplace,
+        launcher_host::marketplace::now_ms(),
+    );
     let retired = world
         .get_resource_mut::<crate::modding::packets::PacketMods>()
-        .map(|mut packets| packets.authorize(&update.registration.mods))
+        .map(|mut packets| packets.authorize(&enabled))
         .unwrap_or_default();
     for program in retired {
         world.resource::<Watcher>().retire(Retired::Packet(program));

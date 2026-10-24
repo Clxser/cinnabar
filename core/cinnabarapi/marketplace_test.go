@@ -14,6 +14,21 @@ func modEntry() bridgecontract.CinnabarModEntry {
 	return bridgecontract.CinnabarModEntry{Slug: "fixture-mod", Version: "1.0.0", SHA256: strings.Repeat("a", 64), Bytes: 8, SentAt: "2026-10-23T00:00:00.000Z"}
 }
 
+// serverModEntry includes the upstream grant hint that native selectors deliberately omit.
+type serverModEntry struct {
+	bridgecontract.CinnabarModEntry
+	Grants map[string]any `json:"grants"`
+}
+
+// serverMods builds schema-complete server fixtures without treating grant hints as authority.
+func serverMods(entries []bridgecontract.CinnabarModEntry) []serverModEntry {
+	var result []serverModEntry
+	for _, entry := range entries {
+		result = append(result, serverModEntry{entry, map[string]any{"commands": []string{"help"}}})
+	}
+	return result
+}
+
 func TestMarketplacePushIsAccountScopedAndWithdrawnOnDisconnect(t *testing.T) {
 	api := newFakeAPI(t)
 	api.modLibrary = []bridgecontract.CinnabarModEntry{modEntry()}
@@ -22,7 +37,9 @@ func TestMarketplacePushIsAccountScopedAndWithdrawnOnDisconnect(t *testing.T) {
 	session := receive(t, api.sessions)
 	entry := modEntry()
 	testwait.Eventually(t, testwait.DefaultTimeout, "welcome library", func() bool { return len(client.MarketplaceLibrary().Mods) == 1 })
-	session.send(t, map[string]any{"type": "mod_library", "mods": []bridgecontract.CinnabarModEntry{entry}})
+	push := map[string]any{"type": "mod_library", "mods": serverMods([]bridgecontract.CinnabarModEntry{entry})}
+	validate(t, "ServerMessage", push)
+	session.send(t, push)
 	testwait.Eventually(t, testwait.DefaultTimeout, "marketplace push", func() bool {
 		got := client.MarketplaceLibrary()
 		return got.XUID == "2535400000000001" && len(got.Mods) == 1
@@ -47,7 +64,9 @@ func TestMarketplacePushIsAccountScopedAndWithdrawnOnDisconnect(t *testing.T) {
 		t.Fatal("stale selection removal was queued")
 	}
 	entry.Pulled = true
-	session.send(t, map[string]any{"type": "mod_library", "mods": []bridgecontract.CinnabarModEntry{entry}})
+	push = map[string]any{"type": "mod_library", "mods": serverMods([]bridgecontract.CinnabarModEntry{entry})}
+	validate(t, "ServerMessage", push)
+	session.send(t, push)
 	testwait.Eventually(t, testwait.DefaultTimeout, "withdrawal hint", func() bool { got := client.MarketplaceLibrary(); return len(got.Mods) == 1 && got.Mods[0].Pulled })
 	client.mu.Lock()
 	client.live = nil

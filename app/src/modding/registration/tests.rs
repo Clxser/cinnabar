@@ -2,6 +2,8 @@ use super::*;
 use candidate::build_candidate;
 use std::fs;
 
+#[path = "marketplace_tests.rs"]
+mod marketplace_tests;
 #[path = "recovery_tests.rs"]
 mod recovery_tests;
 
