@@ -687,6 +687,7 @@ fn pinned_carried_shapes_keep_their_three_dimensional_held_models() {
         assets::facts::pack::PackBlock::DriedGhast,
         assets::facts::pack::PackBlock::SculkSensor,
         assets::facts::pack::PackBlock::CalibratedSculkSensor,
+        assets::facts::pack::PackBlock::SculkShrieker,
     ] {
         let visual = entities
             .item_visuals()

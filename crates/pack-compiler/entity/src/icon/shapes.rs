@@ -18,16 +18,25 @@ pub(super) fn raster(
         return Ok(None);
     };
     let dried = blocks.name(visual) == Some(B::DriedGhast.identifier());
+    let shrieker = blocks.name(visual) == Some(B::SculkShrieker.identifier());
     let calibrated = blocks.name(visual) == Some(B::CalibratedSculkSensor.identifier());
     let attachment = if dried {
         blocks.carried_model_tile(root, visual)?
     } else {
-        blocks.attachment_tile(root, visual, BlockFace::Down)?
+        blocks.attachment_tile(
+            root,
+            visual,
+            if shrieker {
+                BlockFace::Up
+            } else {
+                BlockFace::Down
+            },
+        )?
     };
     let Some(mut attachment) = attachment else {
         return Ok(None);
     };
-    if !dried {
+    if !dried && !shrieker {
         for pixel in Arc::make_mut(&mut attachment.rgba8)
             .as_chunks_mut::<4>()
             .0
@@ -50,6 +59,11 @@ pub(super) fn raster(
     }
     let quads = if dried {
         assets::gui_item::dried_ghast_quads()
+            .into_iter()
+            .map(|quad| (quad, true))
+            .collect()
+    } else if shrieker {
+        assets::gui_item::sculk_shrieker_quads()
             .into_iter()
             .map(|quad| (quad, true))
             .collect()
