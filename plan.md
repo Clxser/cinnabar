@@ -128,6 +128,10 @@ Displayed-frame pacing and complete resize/platform acceptance remain incomplete
   until exact face-coverage behavior is verified separately. Inventory fences draw the
   native two-post shape. Walls now use the custom carried two-post shape, and vanilla
   gate item meshes turn into the custom carried axis. Native wall/gate inventory parity
+  and fresh integrated-frame acceptance remain unverified. World bamboo fences stretch the
+  native post and slat texture regions; their inventory icon still uses ordinary fence UVs,
+  bamboo fence gates still use ordinary gate UVs instead of native `_trySetFenceGateTexture`
+  regions, and world fence rails still omit the outer end faces native tessellation draws.
   and fresh integrated-frame acceptance remain unverified; bamboo fence slats are also open, and
   world fence rails still omit the outer end faces native tessellation draws.
   World walls preserve the central post outside postless straight pairs, merge those pairs
