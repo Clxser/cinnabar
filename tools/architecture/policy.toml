@@ -2248,3 +2248,9 @@ reason = "Terrain-atlas carried-grass colour source; this selects authored inven
 path = "crates/launcher-host/src/native_account/hosted_world/approval.rs"
 literal = "active"
 reason = "Xbox MPSD member JSON property; this is a service field name rather than a game identifier."
+
+[[crates]]
+name = "experience-space-client"
+path = "examples/experiences/space-client"
+allowed_dependencies = ["experience-sdk"]
+forbidden_dependencies = ["bevy", "wgpu", "protocol", "world"]

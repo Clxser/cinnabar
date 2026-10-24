@@ -812,13 +812,16 @@ OS Alt-Tab acceptance on macOS, Windows and Linux remains incomplete.
   Automatic ingredient filling, trader experience, restock and demand-price transitions,
   classic preview rich tooltips, and full item/container acceptance across trading layouts
   remain incomplete.
-  Actor-use transactions precede throwable use when verified component and held-item
-  facts rule out every possible offering. Unresolved native resolvers, behavior sources,
-  component groups, unclassified components and callback state retain conservative
-  interaction handling.
-  Complete native resolver coverage, filter/property and item-tag conditions, dynamic
-  group activation, ride eligibility metadata and matched in-world interaction acceptance
-  remain incomplete; this scoped throwable correction closes no interaction gate.
+  Actor-use transactions precede held item use when component, held-item, offhand and
+  equipment-enchantment facts rule out every possible offering of an unmodified retail
+  item; only components the client maps to interactions can offer one. Actors with a
+  native interaction override (piglin, villager_v2, leash knot) or native component
+  (tripod camera), modified
+  items, missing behavior sources and unresolved filters, ride, trade, container, leash,
+  balloon, sit and trust callbacks retain conservative interaction handling.
+  Game-rule and property filters, item-tag conditions, dynamic group activation, ride
+  eligibility metadata, leash/balloon state and matched in-world interaction acceptance
+  remain incomplete; this correction closes no interaction gate.
   Block-item purchases await an authoritative result preview to retain its block identity.
   Adventure mining and placement follow the held item's CanDestroy/CanPlaceOn list, or
   PrivilegedBuilder with an empty hand, before the Build/Mine grant. Denied block presses
@@ -1167,6 +1170,35 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   same identity and change timestamps, with content revalidated every two seconds (four
   normal polls) to catch writes with unchanged metadata on every platform. Unmeasured shared
   blur, element blur, route exits and current-world visual integration remain incomplete.
+  Client parts now share personal-mod retained drawing, procedural materials, immediate
+  primitives and local environment imports, with signed asset reads and an optional frame
+  callback. Camera anchors admit celestial-scale scenes without terrain residency.
+  Drawing authority and current actor identities bind together before initialization or any
+  callback; unbound and stale contexts are refused. Session teardown, epoch actor
+  context, actor-only snapshots, staggered initialization,
+  fair frame callbacks and expanded triangle limits have regression coverage. Bundle
+  admission and helper failures revoke only their producer; paused dispatch continues
+  completion polling, and temporary culling preserves retained mask selections. Actor
+  references stay live during callbacks and partial snapshot transfers. Native actor
+  liveness admits references and mask selections independently of culling or prior
+  publication; only confirmed despawns or world rebinds revoke them. Completion
+  discards and counts stale actor references and their dependent draws without
+  stopping the bundle. Declared bundle files are packaged once across screen,
+  texture and drawing asset lists. Guest
+  drawing imports share the receiver's per-bundle draw ceiling. Legacy scene objects,
+  retained placements and immediate primitives share one immutable presentation
+  snapshot and combined draw and triangle limits. Scene-only changes stream through
+  that same atomic publication boundary. Immediate
+  primitives share one admitted list whose allocation ranges survive layer merging.
+  One frame publisher rebuilds anchor availability from all current contributors,
+  including server-only configurations. One allocation ledger per bundle
+  covers drawing, every view's resident instance capacity, masks and media textures;
+  retired storage releases charges without new guest snapshots. Immediate and retained
+  buffers defer growth until old storage retires when both allocations cannot fit together.
+  Atmosphere and shader packs share time-override precedence:
+  capture pin, personal mod, client part, then authoritative server time. Headless planet /
+  star-cube rendering and F9 teardown are captured; hardware performance qualification
+  remains incomplete.
   Source-driven mod projects generate typed Rust/Go messages, direction-checked sends
   and handlers on both halves, registry confirmation,
   compile-checked asset constants and paired `.cmod` packages through `devtool mod new/build`.
