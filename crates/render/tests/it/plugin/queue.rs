@@ -400,7 +400,8 @@ fn packed_chunk_shader_parses_and_validates() {
     assert!(shader.contains("mix(current_sample, next_sample, frame_blend)"));
     assert!(shader.contains("@interpolate(flat) current_texture: u32"));
     assert!(shader.contains("@interpolate(flat) next_texture: u32"));
-    assert!(shader.contains("@interpolate(flat) frame_blend_uv_limit: vec3<f32>"));
+    assert!(shader.contains("@interpolate(flat) frame_blend: f32"));
+    assert!(shader.contains("@interpolate(flat) quad_shape: u32"));
     assert!(shader.contains("@location(3) @interpolate(flat) material_flags: u32"));
     assert!(shader.contains("@interpolate(flat) material_flags: u32"));
     assert_eq!(
