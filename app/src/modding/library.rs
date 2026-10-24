@@ -26,7 +26,7 @@ use std::{
 mod update;
 
 enum Command {
-    Marketplace(launcher_host::marketplace::Downloaded),
+    Marketplace(Box<launcher_host::marketplace::Downloaded>),
     Action(Action),
     Update(launcher_host::mod_updates::Downloaded, Sender<()>),
     Message(String),
@@ -130,7 +130,9 @@ fn drive(
             let _ = library.commands.send(Command::Message(message));
         }
         for download in downloads {
-            let _ = library.commands.send(Command::Marketplace(download));
+            let _ = library
+                .commands
+                .send(Command::Marketplace(Box::new(download)));
         }
     }
     let Some(mut menu) = menu else { return };
@@ -241,6 +243,7 @@ fn run(
     loop {
         let message = match incoming.recv_timeout(super::RELOAD_INTERVAL) {
             Ok(Command::Marketplace(download)) => {
+                let download = *download;
                 library.busy = true;
                 library.message = "Verifying marketplace component compatibility…".into();
                 let _ = outgoing.send(library.clone());

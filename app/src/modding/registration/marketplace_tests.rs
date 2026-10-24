@@ -17,8 +17,7 @@ fn pending_reload_cannot_reauthorize_a_held_marketplace_packet_program() {
             ..Default::default()
         };
         fs::write(&entry.component, packet_bytes()).unwrap();
-        let candidate =
-            Box::new(build_candidate(source::source_snapshot(entry.clone()).unwrap()).unwrap());
+        let candidate = Box::new(build_candidate(source_snapshot(entry.clone()).unwrap()).unwrap());
         let CandidateRuntime::Packet(program) = &candidate.runtime else {
             panic!("fixture must compile as a packet program");
         };
