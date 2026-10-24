@@ -29,8 +29,48 @@ struct Transport {
     origin: url::Url,
 }
 
+type Request = (String, String, String, String, String);
+
+/// Queue admission deduplicates one account epoch; only verified receipts survive a switch.
+#[derive(Default)]
+struct Deliveries {
+    epoch: Option<u64>,
+    requests: HashSet<Request>,
+}
+
+impl Deliveries {
+    /// Forgets cancelled queue-only work while retaining successful and locally removed sends.
+    fn refresh(
+        &mut self,
+        epoch: u64,
+        mods: &Path,
+        keys: Option<&Keys>,
+        limit: usize,
+        guard: &Guard,
+        now: u64,
+    ) {
+        if self.epoch == Some(epoch) {
+            return;
+        }
+        self.requests = keys
+            .map(|keys| storage::restore(mods, keys, limit, guard, now))
+            .unwrap_or_default()
+            .iter()
+            .map(|receipt| request(&receipt.owner, &receipt.selected))
+            .collect();
+        self.epoch = Some(epoch);
+    }
+
+    /// Records a send only when the compatibility worker has accepted its complete download.
+    fn queue(&mut self, key: Request, prepared: Downloaded, outgoing: &Sender<Downloaded>) {
+        if outgoing.try_send(prepared).is_ok() {
+            self.requests.insert(key);
+        }
+    }
+}
+
 /// Identifies an explicit website send, preserving local removals until the player sends it again.
-fn request(owner: &str, selected: &CinnabarModEntry) -> (String, String, String, String, String) {
+fn request(owner: &str, selected: &CinnabarModEntry) -> Request {
     (
         owner.into(),
         selected.slug.clone(),
@@ -202,19 +242,14 @@ pub(super) fn run(
     {
         guard.revocations(state);
     }
-    let mut seen: HashSet<_> = keys
-        .as_ref()
-        .map(|keys| storage::restore(&mods, keys, limit, &guard, now_ms()))
-        .unwrap_or_default()
-        .iter()
-        .map(|receipt| request(&receipt.owner, &receipt.selected))
-        .collect();
+    let mut deliveries = Deliveries::default();
     let mut refresh_at = 0;
     loop {
         let (socket, epoch) = {
             let endpoint = context.lock().unwrap_or_else(|e| e.into_inner());
             (endpoint.clone(), generation.load(Ordering::SeqCst))
         };
+        deliveries.refresh(epoch, &mods, keys.as_ref(), limit, &guard, now_ms());
         if let Some(socket) = socket {
             if let Some(keys) = &keys
                 && now_ms() >= refresh_at
@@ -260,7 +295,7 @@ pub(super) fn run(
                             continue;
                         }
                         let key = request(&library.xuid, &selected);
-                        if seen.contains(&key) {
+                        if deliveries.requests.contains(&key) {
                             continue;
                         }
                         let _ = events
@@ -286,9 +321,8 @@ pub(super) fn run(
                                     .await
                                 });
                                 if matches!(current, Ok(Ok(current)) if current.xuid == library.xuid && current.mods.contains(&selected))
-                                    && outgoing.try_send(prepared).is_ok()
                                 {
-                                    seen.insert(key);
+                                    deliveries.queue(key, prepared, &outgoing);
                                 }
                             }
                             Err(error) => {

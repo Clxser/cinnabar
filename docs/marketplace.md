@@ -13,7 +13,9 @@ the original statement bytes with a pinned Ed25519 public key, checks the
 selection/size/hash, and retrieves the component through its digest URL. Public
 requests carry no account credentials and follow no redirects. Responses,
 component bytes and cached metadata are bounded; account changes cancel pending
-work. The account and exact selection are confirmed again after downloads.
+work. Returning to an account retries selections that were not installed. Verified
+receipts retain successful installations and local removals across account changes.
+The account and exact selection are confirmed again after downloads.
 
 The existing component host checks ABI compatibility without executing uploaded
 code. The component's declared version and exact requested grants, including

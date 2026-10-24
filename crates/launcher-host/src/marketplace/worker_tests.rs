@@ -151,3 +151,141 @@ fn website_send_downloads_disabled_and_signed_withdrawal_holds_the_installed_com
     });
     server.join().unwrap();
 }
+
+#[test]
+fn account_switch_retries_cancelled_delivery_but_keeps_durable_consumed_sends() {
+    let fixture: Handoff =
+        serde_json::from_str(include_str!("fixtures/website-send.json")).unwrap();
+    let keys = Keys::parse(
+        &serde_json::to_vec(&serde_json::json!({"ed25519":[fixture.public_key]})).unwrap(),
+    )
+    .unwrap();
+    let bytes = STANDARD.decode(&fixture.artifact).unwrap();
+    let mut responses = vec![(
+        "/v1/mods/revocations".into(),
+        fixture.revocations.body.as_bytes().to_vec(),
+        Some(fixture.revocations.signature.clone()),
+    )];
+    for _ in 0..2 {
+        responses.push((
+            fixture.exact_path.clone(),
+            fixture.release_response.as_bytes().to_vec(),
+            None,
+        ));
+        responses.push((
+            format!("/v1/mods/assets/{}", fixture.selected.sha256),
+            bytes.clone(),
+            None,
+        ));
+    }
+    let (transport, server) = serve(responses);
+    let root = tempfile::tempdir().unwrap();
+    let guard = Arc::new(Guard::default());
+    let generation = Arc::new(AtomicU64::new(1));
+    let (outgoing, incoming) = crossbeam_channel::bounded(1);
+    let key = request(&fixture.xuid, &fixture.selected);
+    let mut deliveries = Deliveries::default();
+    guard.configure(1);
+    guard.account(1, fixture.xuid.clone());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        refresh(&transport, root.path(), &keys, &guard, || {
+            fixture.checked_at
+        })
+        .await
+        .unwrap();
+        for epoch in [1, 3] {
+            generation.store(epoch, Ordering::SeqCst);
+            guard.configure(epoch);
+            guard.account(epoch, fixture.xuid.clone());
+            deliveries.refresh(
+                epoch,
+                root.path(),
+                Some(&keys),
+                bytes.len(),
+                &guard,
+                fixture.checked_at,
+            );
+            assert!(!deliveries.requests.contains(&key));
+            let prepared = download(
+                &transport,
+                root.path(),
+                &keys,
+                &fixture.xuid,
+                &fixture.selected,
+                bytes.len(),
+                (generation.clone(), epoch, guard.clone()),
+                || fixture.checked_at,
+            )
+            .await
+            .unwrap();
+            deliveries.queue(key.clone(), prepared, &outgoing);
+            deliveries.refresh(
+                epoch,
+                root.path(),
+                Some(&keys),
+                bytes.len(),
+                &guard,
+                fixture.checked_at,
+            );
+            assert!(
+                deliveries.requests.contains(&key),
+                "pending delivery must remain deduplicated in the same epoch"
+            );
+            let prepared = incoming.recv().unwrap();
+            if epoch == 1 {
+                generation.store(2, Ordering::SeqCst);
+                guard.configure(2);
+                assert!(prepared.install(fixture.checked_at).is_err());
+                let name = storage::filename(&fixture.xuid, &fixture.selected).unwrap();
+                assert!(!root.path().join(name).exists());
+            } else {
+                let installed = prepared.install(fixture.checked_at).unwrap();
+                generation.store(4, Ordering::SeqCst);
+                guard.configure(4);
+                guard.account(4, fixture.xuid.clone());
+                deliveries.refresh(
+                    4,
+                    root.path(),
+                    Some(&keys),
+                    bytes.len(),
+                    &guard,
+                    fixture.checked_at,
+                );
+                assert!(
+                    deliveries.requests.contains(&key),
+                    "successful install must stay consumed after switching accounts"
+                );
+                assert!(guard.allows(&installed, fixture.checked_at));
+                fs::remove_file(installed).unwrap();
+                generation.store(5, Ordering::SeqCst);
+                guard.configure(5);
+                guard.account(5, fixture.xuid.clone());
+                deliveries.refresh(
+                    5,
+                    root.path(),
+                    Some(&keys),
+                    bytes.len(),
+                    &guard,
+                    fixture.checked_at,
+                );
+                assert!(
+                    deliveries.requests.contains(&key),
+                    "local removal must stay consumed after switching accounts"
+                );
+                assert!(storage::removed(
+                    root.path(),
+                    &fixture.xuid,
+                    &fixture.selected,
+                    &keys,
+                    bytes.len(),
+                    fixture.checked_at
+                ));
+            }
+        }
+    });
+    server.join().unwrap();
+}
