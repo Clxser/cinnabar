@@ -2355,7 +2355,6 @@ dependencies = [
  "render-api",
  "render-model",
  "render-scene",
- "reqwest",
  "resource-pack",
  "rich-presence",
  "rodio",
@@ -2627,7 +2626,6 @@ dependencies = [
  "render-api",
  "render-model",
  "render-scene",
- "resource-pack",
  "semantic-input",
  "serde",
  "serde_json",
@@ -2637,7 +2635,6 @@ dependencies = [
  "tempfile",
  "test-alloc",
  "test-time",
- "thiserror 2.0.18",
  "tracing",
  "ui",
  "ui-engine",
@@ -2692,7 +2689,6 @@ dependencies = [
  "simulation-clock",
  "tempfile",
  "test-alloc",
- "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2795,7 +2791,6 @@ dependencies = [
  "rayon",
  "render-api",
  "render-model",
- "reqwest",
  "resource-pack",
  "semantic-input",
  "serde",
@@ -2807,7 +2802,6 @@ dependencies = [
  "test-alloc",
  "test-time",
  "thiserror 2.0.18",
- "tokio",
  "tracing",
  "ui",
  "ui-engine",
@@ -3971,6 +3965,7 @@ dependencies = [
 name = "experience-macros"
 version = "0.1.28"
 dependencies = [
+ "proc-macro2",
  "quote",
  "syn 2.0.118",
 ]
@@ -4005,6 +4000,7 @@ version = "0.1.28"
 dependencies = [
  "anyhow",
  "experience-macros",
+ "proc-macro2",
  "quote",
  "serde",
  "serde_json",
@@ -4013,6 +4009,8 @@ dependencies = [
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
  "wit-bindgen",
+ "wit-bindgen-core",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -4044,7 +4042,6 @@ dependencies = [
  "crossbeam-channel",
  "flate2",
  "rayon",
- "render-api",
  "sha2",
  "tempfile",
  "test-time",
@@ -5280,7 +5277,6 @@ dependencies = [
  "semantic-input",
  "serde",
  "serde_json",
- "sha2",
  "shaderpack",
  "thiserror 2.0.18",
  "ui",
@@ -6828,8 +6824,6 @@ name = "pack-font-compiler"
 version = "0.1.28"
 dependencies = [
  "assets",
- "cap-fs-ext",
- "cap-std",
  "fontdue",
  "freetype-sys",
  "image",
@@ -9301,7 +9295,6 @@ dependencies = [
  "image",
  "json-ui",
  "pack-json",
- "rayon",
  "render-api",
  "render-model",
  "resource-pack",
@@ -9318,7 +9311,6 @@ name = "ui-screens"
 version = "0.1.28"
 dependencies = [
  "assets",
- "bridge",
  "cosmetics",
  "image",
  "inventory 0.1.28",
