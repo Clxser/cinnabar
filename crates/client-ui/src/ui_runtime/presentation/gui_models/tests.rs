@@ -29,6 +29,28 @@ fn source_atlas_keeps_original_pixels_and_deduplicates_sources() {
 }
 
 #[test]
+fn minified_source_edges_do_not_pick_up_neighboring_textures() {
+    let mut atlas = atlas::Atlas::new(8, MODEL_PAGES);
+    let sources = [[255, 0, 0, 255], [0, 0, 255, 255]].map(|color| {
+        let pixels = color.repeat(16 * 16);
+        (atlas.insert([16; 2], &pixels).unwrap(), color)
+    });
+    let (pages, _) = atlas.finish().unwrap();
+    for (icon, color) in sources {
+        for (level, (dimensions, pixels)) in pages[0].mip_levels().enumerate() {
+            let [left, top, right, bottom] =
+                icon.uv.map(|coordinate| usize::from(coordinate) >> level);
+            for y in top..bottom {
+                for x in left..right {
+                    let offset = (y * dimensions[0] as usize + x) * 4;
+                    assert_eq!(&pixels[offset..offset + 4], &color);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn carried_sheet_refs_preserve_face_order_and_pixel_edges() {
     let sheet = IconRef {
         color_mask: None,

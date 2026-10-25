@@ -69,5 +69,8 @@ pub const STARTUP_BENCHMARK_ENV: &str = "CINNABAR_STARTUP_BENCHMARK";
 /// Flat sprite alpha weights the dye RGB carried in the vertex overlay field.
 pub const UI_STYLE_SPRITE_COLOR_MASK: u32 = 1 << 16;
 
+/// Selects source mip levels from the projected footprint of an inventory surface.
+pub const UI_STYLE_TERRAIN_MIPS: u32 = 1 << 17;
+
 /// Selects half-alpha rejection when no explicit sampled-texture cutoff is supplied.
 pub const UI_STYLE_ALPHA_TEST: u32 = 1 << 4;

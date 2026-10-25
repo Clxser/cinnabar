@@ -13,6 +13,7 @@ const STYLE_FONT_SDF: u32 = FONT_STYLE_SDF;
 const STYLE_FONT_OUTLINE: u32 = FONT_STYLE_OUTLINE_COVERAGE;
 // Injected from the renderer's single Rust style-bit definition.
 const STYLE_ALPHA_TEST: u32 = UI_STYLE_ALPHA_TEST;
+const STYLE_TERRAIN_MIPS: u32 = UI_STYLE_TERRAIN_MIPS;
 const STYLE_COLOR_MASK: u32 = UI_STYLE_COLOR_MASK;
 const STYLE_ADDITIVE: u32 = UI_STYLE_ADDITIVE;
 const STYLE_PARTICLE: u32 = UI_STYLE_PARTICLE;
@@ -201,6 +202,10 @@ fn shade_ui(input: UiVertexOutput, direct: bool) -> vec4<f32> {
     } else if native_font && !sdf_font {
         let texel = clamp(vec2<i32>(floor(sample_uv)), vec2<i32>(0), vec2<i32>(dimensions) - vec2<i32>(1));
         sample = textureLoad(ui_pages, texel, i32(input.texture_page), 0);
+    } else if (input.style_flags & STYLE_TERRAIN_MIPS) != 0u {
+        let footprint = max(length(uv_dx), length(uv_dy));
+        let level = max(0.0, log2(max(footprint, 1.0)));
+        sample = textureSampleLevel(ui_pages, ui_sampler, normalized_uv, i32(input.texture_page), level);
     } else if sdf_font || (input.style_flags & STYLE_BILINEAR) != 0u {
         sample = textureSampleLevel(ui_pages, ui_linear_sampler, normalized_uv, i32(input.texture_page), 0.0);
     } else {

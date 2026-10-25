@@ -23,6 +23,10 @@ pub(crate) fn source(raw: &str) -> String {
         &format!("{}u", render_api::UI_STYLE_ALPHA_TEST),
     )
     .replace(
+        "UI_STYLE_TERRAIN_MIPS",
+        &format!("{}u", render_api::UI_STYLE_TERRAIN_MIPS),
+    )
+    .replace(
         "UI_STYLE_SHADOW",
         &format!("{}u", render_api::ui_shadow::UI_STYLE_SHADOW),
     )

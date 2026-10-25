@@ -14,6 +14,7 @@ fn rect(x: f32, y: f32, width: f32, height: f32) -> UiRect {
 
 fn vertex(position: [f32; 2], w: f32) -> UiMeshVertex {
     UiMeshVertex {
+        terrain_mips: false,
         position,
         clip_z: 0.25 * w,
         clip_w: w,
@@ -24,6 +25,33 @@ fn vertex(position: [f32; 2], w: f32) -> UiMeshVertex {
         model_light: 0.718_629,
         overlay_color: [0.0; 4],
     }
+}
+
+#[test]
+fn terrain_sampling_survives_mesh_draw_conversion() {
+    let mut source = vertex([0.0, 0.0], 1.0);
+    source.terrain_mips = true;
+    source.alpha_test = true;
+    let geometry = Arc::new(
+        UiMesh::new(
+            vec![source; 3].into(),
+            vec![0, 1, 2].into(),
+            vec![batch(1, 0..3)].into(),
+        )
+        .unwrap(),
+    );
+    let bounds = rect(0.0, 0.0, 16.0, 16.0);
+    let mut tree = UiTree::new(vec![
+        UiNode::new(UiNodeId::new(1), None, bounds).with_visual(UiVisual::Mesh(geometry)),
+    ])
+    .unwrap();
+    tree.layout(bounds, UiScale::default(), SafeArea::ZERO)
+        .unwrap();
+    let draw = tree.build_draw_list().unwrap();
+    assert!(draw.vertices.iter().all(|vertex| {
+        vertex.style_flags & render_api::UI_STYLE_TERRAIN_MIPS != 0
+            && vertex.style_flags & render_api::UI_STYLE_ALPHA_TEST != 0
+    }));
 }
 
 fn batch(page: u16, range: std::ops::Range<u32>) -> UiMeshBatch {

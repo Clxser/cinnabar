@@ -193,6 +193,7 @@ fn mesh(key: Key) -> Option<UiMesh> {
         for x in 0..=cells {
             let position = [x as f32 / cells as f32, y as f32 / cells as f32];
             vertices.push(UiMeshVertex {
+                terrain_mips: false,
                 position,
                 clip_z: 0.,
                 clip_w: 1.,

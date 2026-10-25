@@ -24,6 +24,8 @@ pub struct UiMeshVertex {
     /// (x, y, width, height) in texture-page texels.
     pub overlay_color: [f32; 4],
     pub style_flags: u16,
+    /// Samples terrain mip levels when this surface becomes smaller than its source texels.
+    pub terrain_mips: bool,
     pub alpha_test: bool,
 }
 
@@ -92,6 +94,7 @@ impl UiMesh {
         blend: UiBlendMode,
     ) -> Result<Self, UiMeshError> {
         let vertices = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]].map(|position| UiMeshVertex {
+            terrain_mips: false,
             position,
             clip_z: 0.,
             clip_w: 1.,
