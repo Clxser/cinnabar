@@ -4766,6 +4766,7 @@ dependencies = [
  "tempfile",
  "test-time",
  "tokio",
+ "tracing",
  "ui",
  "winit",
  "zip",

@@ -430,7 +430,7 @@ block-climber flags, custom collision definitions, transition-tick packet orderi
 and broader live-server qualification remain incomplete.
 actor and controller writes independently of the replaced actor state. Unknown passenger identities
 defer controller selection until their arrival order can be resolved.
-Server-driven item-use gameplay starts, block-climber flags, custom collision
+Block-climber flags, custom collision
 definitions, transition-tick packet ordering and broader live-server qualification
 remain incomplete.
 Animation-only flags must remain separate from gameplay and correction authority.
@@ -445,12 +445,20 @@ capture and requests replay when that following frame is retained. Current stamp
 wait for the next frame; a future stamp joins the current frame without immediate replay.
 Replay keeps the starting frame's capture, refreshes later ones and copies the replayed
 word back to the live state, keeping the live spin and glide counters, swim blend and
-camera eye blend. Glide, swim and crawl retain independent bits beside flight;
+camera eye blend. Item use reconciles with the word's item-use bit only on movement ticks:
+a set bit starts the selected item's use and reports `StartUsingItem` (an item without a held
+use completes on the next tick, and whether vanilla slows that tick is unverified; an empty
+hand keeps the flag set), a clear bit stops the use without a release transaction, and a
+spectator game-mode change stops it in packet order. Queued releases retain a pending server stop
+until their actions resolve; expiring the edges applies the stop without a release transaction.
+Queued local presses keep their normal transaction admission before a server start occupies the use. Each tick refreshes the in-use stack,
+count included; release validation compares the whole stack. Two further stack properties,
+including charged-item state, remain unmapped in the retained item data. Replayed ticks
+keep the slowdown their live tick recorded. Glide, swim and crawl retain independent bits beside flight;
 their own trigger transitions produce actions, and their combined state feeds
 the compact body, swim blend and eye offset. Replay preserves the pending swim-blend
 input across immobile pose transitions; only changed swim or crawl corrections replace it.
-Still incomplete: reconciling server `UsingItem` writes with local-use gameplay;
-the Riptide spin's entity-hit end, which
+Still incomplete: the Riptide spin's entity-hit end, which
 needs a mob classification the entity facts lack (vanilla counts mobs whose box meets the
 player's grown by one block, scaling velocity by -0.2 per hit); block-climber flags; and
 live-server evidence for these adoptions.
@@ -655,6 +663,8 @@ qualification remains open.
 Equipped cosmetic emitters also run in visible menu and HUD paper dolls using the
 shared particle engine and attachment poses. Catalog-wide, in-world interaction
 and performance qualification for these previews remains open.
+Video customization can hide other players' catalog cosmetics, companions and effects
+while keeping the local player's cosmetics visible.
 
 Player name tags use Java's standing player height before pose offsets, independent of
 server collision-box changes. Other actors retain their published label height.
@@ -701,6 +711,11 @@ camera-driven choices live between ticks. Dynamic per-bone material rules, selec
 admission and in-world qualification remain incomplete. The samples omit the iron
 golem's body controller; it is completed from the pack's default controller until a
 pinned pack defines it.
+Thrown tridents draw their pack model placed by the native flight rotation, with the
+item foil when enchanted. The loyalty rope, the native trident material and light sample
+point, pole-only bone selection, abstract-arrow motion seeding for tridents and the
+trident charge (`brandish_spear`) arm pose in third person and the paper doll remain
+incomplete.
 
 Remaining qualification includes attachables and custom item models, action/use timing,
 projectile interpolation and shake, sleep/mount poses, name tags (including over
@@ -1046,6 +1061,11 @@ native switch timing and live Bluetooth/platform acceptance remain incomplete.
 Startup sound prewarming prioritizes routed attack and player-hurt samples, including
 their finite alternatives within the prewarm byte budget. Comparative combat sound
 latency, server-pack prewarming and physical output latency remain incomplete.
+Actor attacks voice the player's no-damage, critical or strong attack sound on the frame
+they are sent, and the local server sends that sound only to other players. Damage
+prediction counts the held item and its enchantments as zero, so Weakness II or stronger
+with a weapon is incomplete. Custom `minecraft:swing_sounds` overrides and critical hits
+on non-mob ordinary actors such as leash knots remain incomplete.
 
 Block sound materials resolve from pack entries, then base server components, then a
 stone fallback. Per-permutation sound components and matched native fallback
@@ -1135,7 +1155,7 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   cache publication use a no-overwrite rename instead of hard links; device acceptance and skin
   imports that need a sibling geometry file remain open.
   Keep browser gesture activation and background work within the host's event-loop rules.
-  Touch-capable hosts expose persisted look sensitivity and control guidance. A utility dropdown, chat and pause share a centered row; the dropdown toggles Debug Overlay and Player List and opens Emotes; inventory access follows the HUD hotbar. The default joystick-and-crosshair layout uses proportional movement/action centers and height-based sizes. Touchscreen settings offers a touch-control layout draft with dragging, alignment guides, snapping, grid, touch-accessible Undo/Redo, Save, Cancel and Reset; saved positions drive both artwork and hit regions. The sensitivity curve, movement/action parity, alternate touch profiles, remapping, cutout handling and physical-device layout acceptance remain open.
+  Touch-capable hosts expose persisted look sensitivity and control guidance. A utility dropdown, chat and pause share a centered row; the dropdown toggles Debug Overlay and Player List and opens Emotes; inventory access follows the HUD hotbar. The default joystick-and-crosshair layout uses proportional movement/action centers and height-based sizes. Touchscreen settings offers a touch-control layout draft with dragging, alignment guides, snapping, grid, touch-accessible Undo/Redo, Save, Cancel and Reset; saved positions drive both artwork and hit regions. Mods with the controls grant add up to four labelled buttons each (sixteen shown) in the dropdown's button style; taps complete on release inside the button, reach only the owning mod's next frame, and placements persist by button id in the same editor. The sensitivity curve, movement/action parity, alternate touch profiles, remapping, cutout handling and physical-device layout acceptance remain open.
   Touch-capable hosts expose persisted look sensitivity and control guidance. A utility dropdown, chat and pause share a centered row; the dropdown toggles Debug Overlay and Player List and opens Emotes; inventory access follows the HUD hotbar. The touch Use button admits block placement and held repeats through the shared block-use handler. The sensitivity curve, movement/action layouts, alternate touch profiles, remapping, customization, cutout handling and device layout acceptance remain open.
   Menu scroll regions and chat history accept captured finger drags; swipes cancel pending taps, and form slider gestures retain their own control. Native gesture calibration and full route/device acceptance remain open.
   Ordinary touch controls take focus only after a completed tap, preserving manual scroll positions during pending swipes.
@@ -1170,6 +1190,10 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   same identity and change timestamps, with content revalidated every two seconds (four
   normal polls) to catch writes with unchanged metadata on every platform. Unmeasured shared
   blur, element blur, route exits and current-world visual integration remain incomplete.
+- Generic resolved action filtering exposes synchronous module verdicts, retained
+  releases and lifecycle reconciliation; timing and rates belong to modules. Legacy
+  native click caps remain frozen for compatibility. Local weather overrides retain
+  transactional host APIs. These contracts have offline behavior coverage; populated-world interaction and rendering acceptance
   Client parts now share personal-mod retained drawing, procedural materials, immediate
   primitives and local environment imports, with signed asset reads and an optional frame
   callback. Camera anchors admit celestial-scale scenes without terrain residency.

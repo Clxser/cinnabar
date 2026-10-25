@@ -50,6 +50,9 @@ schemas document every argument. Agents drive the client only through this endpo
   indices, names and logical targets, plus the total count and catalog-loading state. Read
   it before selecting a row and verify the resulting activation; later catalog refreshes
   can change indices. A service target still requires normal account-owned preparation.
+- `state.client_part_screens` lists each running client part's open modal screen: its `bundle`,
+  its `template` (such as `ui/terminal.json`), whether it is `focused` (owns input) and whether
+  the last frame `drawn` it. `state.screens` lists only the client's own scenes.
 - `record_start` needs `ffmpeg` on PATH. Its default fixed clock steps game time exactly 1/fps per
   rendered frame, so it suits the local showcase server; record remote servers with
   `fixed_clock: false`. Audio is captured to a WAV and muxed in. A real-time recording never

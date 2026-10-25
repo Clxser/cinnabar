@@ -43,7 +43,7 @@ sha2 = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 server-experience = { path = "../server-experience" }
-wasmtime = { workspace = true }
+wasmtime = { workspace = true, features = ["call-hook"] }
 wasmtime-wasi = { workspace = true }
 wasi-preview1-component-adapter-provider = { workspace = true }
 tracing.workspace = true
