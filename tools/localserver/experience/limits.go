@@ -157,7 +157,7 @@ const (
 const (
 	// maxOverlayTypes is the most overlay types one Experience declares: Rust's
 	// MAX_OVERLAY_TYPES.
-	maxOverlayTypes = 128
+	maxOverlayTypes = 256
 	// maxCellOverlays is the most overlays one cell carries, in slots 0 to maxCellOverlays-1:
 	// Rust's MAX_CELL_OVERLAYS.
 	maxCellOverlays = 12

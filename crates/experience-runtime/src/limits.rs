@@ -117,8 +117,9 @@ pub const MAX_LOG_BYTES: usize = 512;
 pub const MAX_ITEMS: usize = 512;
 /// Overlay types one Experience may declare. Each registers with the server as a hidden block
 /// whose every state is a palette entry, so its states weigh as a block's do (see
-/// [`MAX_BLOCKS`]); they do not count against [`MAX_BLOCKS`].
-pub const MAX_OVERLAY_TYPES: usize = 128;
+/// [`MAX_BLOCKS`]); they do not count against [`MAX_BLOCKS`]. AE2's per-side cable arms take 102
+/// types, and its other parts need room beside them.
+pub const MAX_OVERLAY_TYPES: usize = 256;
 /// Bytes of an Experience's own data on one item stack.
 pub const MAX_ITEM_DATA_BYTES: usize = 8192;
 /// Items the adapter may list as the server's when it loads an Experience.

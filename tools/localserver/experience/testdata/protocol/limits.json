@@ -35,7 +35,7 @@
   "max_recipe_input_items": 512,
   "max_schedule_ticks": 72000,
   "max_scheduled_updates": 64,
-  "max_overlay_types": 128,
+  "max_overlay_types": 256,
   "max_cell_overlays": 12,
   "max_overlay_item_size": 16.0,
   "max_overlay_item_offset": 8.0

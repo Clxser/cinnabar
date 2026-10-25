@@ -385,7 +385,15 @@ mod tests {
             None,
             Some(overlays.clone()),
         );
-        assert!(answered.unwrap());
+        let answered = answered.unwrap();
+        eprintln!(
+            "MEASURE loaded answer bytes: {} (blocks {}, items {}, overlays {})",
+            output.len(),
+            serde_json::to_vec(&blocks).unwrap().len(),
+            serde_json::to_vec(&items).unwrap().len(),
+            serde_json::to_vec(&overlays).unwrap().len()
+        );
+        assert!(answered);
         let mut frames = output.as_slice();
         let Some(Response::Loaded {
             blocks: read,
