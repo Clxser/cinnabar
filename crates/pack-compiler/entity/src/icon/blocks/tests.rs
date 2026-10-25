@@ -53,6 +53,60 @@ fn nether_vine_icons_use_stems_instead_of_growing_tips() {
 }
 
 #[test]
+fn spike_icons_select_the_north_tip_face_for_every_placement_state() {
+    let records = read_registry_for_protocol(
+        assets::pinned_block_registry_bytes(),
+        assets::active_content_registry_protocol(),
+    )
+    .unwrap();
+    let spikes: Vec<_> = records
+        .iter()
+        .filter(|record| record.traits.contains(BlockTraits::DRIPSTONE_OFFSET))
+        .collect();
+    assert!(!spikes.is_empty());
+    let mut catalog = serde_json::Map::new();
+    for record in &spikes {
+        catalog.insert(
+            record.name.strip_prefix("minecraft:").unwrap().into(),
+            serde_json::json!({"textures": {
+                "north": "tip", "down": "frustum", "up": "base",
+                "south": "middle", "east": "base", "west": "merge"
+            }}),
+        );
+    }
+    let root = tempfile::tempdir().unwrap();
+    write_pack(
+        root.path(),
+        &serde_json::Value::Object(catalog).to_string(),
+        r#"{"texture_data":{
+            "tip":{"textures":["textures/blocks/down_tip","textures/blocks/up_tip"]},
+            "frustum":{"textures":"textures/blocks/frustum"},
+            "base":{"textures":"textures/blocks/base"},
+            "middle":{"textures":"textures/blocks/middle"},
+            "merge":{"textures":"textures/blocks/merge"}
+        }}"#,
+        "[]",
+    );
+    let blocks = IconBlocks::read(root.path()).unwrap();
+    for record in spikes {
+        assert_eq!(
+            blocks
+                .texture_path(BlockVisualId(record.sequential_id))
+                .as_deref(),
+            Some("textures/blocks/down_tip"),
+            "{} {}",
+            record.name,
+            record.canonical_state
+        );
+        assert_eq!(
+            resolve_carried_down_key(&blocks.pack.as_ref().unwrap().blocks, record).as_deref(),
+            Some("frustum"),
+            "the placed texture catalog remains unchanged"
+        );
+    }
+}
+
+#[test]
 fn redstone_torch_icons_use_lit_artwork_independently_of_placement_power() {
     let root = tempfile::tempdir().unwrap();
     write_pack(
