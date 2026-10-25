@@ -263,8 +263,13 @@ type Op struct {
 	SetSlot        *SetSlotOp
 	DropItem       *DropItemOp
 	ScheduleUpdate *ScheduleUpdateOp
-	SetOverlays    *SetOverlaysOp
+	SetOverlays     *SetOverlaysOp
+	PassInteraction *PassInteractionOp
 }
+
+// PassInteractionOp passes an interaction's click on: once the rest of its result commits, the
+// actor's held item is used on the interacted block as if the block had no action.
+type PassInteractionOp struct{}
 
 // SetBlockOp sets the block at Pos to ID.
 type SetBlockOp struct {
@@ -454,7 +459,8 @@ const (
 	typeFailed        = "failed"
 	typeLoaded        = "loaded"
 	typeLoadFailed    = "load_failed"
-	typeResult        = "result"
+	typeResult          = "result"
+	typePassInteraction = "pass_interaction"
 )
 
 // variantTag is the "type" member of a union variant on the wire.
@@ -477,6 +483,10 @@ type (
 	shutdownWire struct {
 		variantTag
 		*ShutdownRequest
+	}
+	passInteractionWire struct {
+		variantTag
+		*PassInteractionOp
 	}
 	placeWire struct {
 		variantTag
@@ -717,6 +727,8 @@ func (o Op) MarshalJSON() ([]byte, error) {
 		return json.Marshal(scheduleUpdateWire{variantTag{typeScheduleUpdate}, o.ScheduleUpdate})
 	case o.SetOverlays != nil:
 		return json.Marshal(setOverlaysWire{variantTag{typeSetOverlays}, o.SetOverlays})
+	case o.PassInteraction != nil:
+		return json.Marshal(passInteractionWire{variantTag{typePassInteraction}, o.PassInteraction})
 	}
 	return nil, errors.New("empty op")
 }
@@ -756,6 +768,8 @@ func (o *Op) UnmarshalJSON(data []byte) error {
 		return decodeStrict(data, &scheduleUpdateWire{ScheduleUpdateOp: fresh(&o.ScheduleUpdate)})
 	case typeSetOverlays:
 		return decodeStrict(data, &setOverlaysWire{SetOverlaysOp: fresh(&o.SetOverlays)})
+	case typePassInteraction:
+		return decodeStrict(data, &passInteractionWire{PassInteractionOp: fresh(&o.PassInteraction)})
 	}
 	return fmt.Errorf("unknown op type %q", tag)
 }

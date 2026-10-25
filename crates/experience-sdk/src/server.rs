@@ -28,6 +28,8 @@
 //! Server WIT 0.12 adds [`Experience::content_rules`]: a block may drop nothing by itself, leaving
 //! its drops to [`Experience::on_break`], which [`Callback::harvested`] tells are due, and a block
 //! or item may stay out of the creative inventory, or a block have no item at all.
+//! [`Callback::pass_interaction`] passes an [`Experience::on_interact`] click on to the held
+//! item, so a block item is placed against a block that has nothing to do with the click.
 
 /// Bindings generated from `wit/server/server.wit`.
 // The canonical-ABI shims for `on-place` and `on-break` take the flattened

@@ -74,7 +74,8 @@ pub(crate) enum Api {
     V0_10,
     /// Registered entities, seats and entity observations.
     V0_11,
-    /// Block drops and item listing rules, and whether a break harvests.
+    /// Block drops and item listing rules, whether a break harvests, and passing an
+    /// interaction's click on.
     V0_12,
 }
 
@@ -797,6 +798,10 @@ impl world_access::HostCallback for HostState {
 
     fn harvested(&mut self, ctx: Resource<CallbackRes>) -> Result<bool> {
         self.table.get_mut(&ctx)?.harvested()
+    }
+
+    fn pass_interaction(&mut self, ctx: Resource<CallbackRes>) -> Result<Result<(), WorldError>> {
+        self.table.get_mut(&ctx)?.pass_interaction()
     }
 
     /// Only reachable for an owned handle, and the guest is only ever lent a callback.

@@ -318,6 +318,13 @@ interface world-access {
         /// drops what is broken, so the drops a block without its own (`block-drops.nothing`)
         /// leaves to the guest are due. False in creative and in every other callback.
         harvested: func() -> bool;
+        /// Passes this `on-interact`'s click on instead of taking it, as a vanilla block with
+        /// nothing to do with the click does: once the callback commits, the player's held item
+        /// is used on the block as if it had no action, so a block item is placed against it and
+        /// a bucket or flint and steel is used. Staged like a write, and kept only if the
+        /// callback commits; nothing passes when the player holds another item by then. `denied`
+        /// in every other callback.
+        pass-interaction: func() -> result<_, world-error>;
     }
 }
 
@@ -354,6 +361,7 @@ world server {
     /// the block, in pixels, when the client sent one within the cell. `target` is the slot of
     /// the block's first overlay, in slot order, whose turned selection box holds `hit` once
     /// grown by 0.032 pixels on each side; none without `hit` or when no overlay's box holds it.
+    /// The block takes the click unless the callback passes it on (`callback.pass-interaction`).
     export on-interact: func(ctx: borrow<callback>, player: player-id, pos: block-pos, clicked-face: face, hit: option<pixel>, target: option<u8>) -> result<_, guest-error>;
     export on-neighbor-changed: func(ctx: borrow<callback>, pos: block-pos, neighbor: block-pos) -> result<_, guest-error>;
     /// `player`'s client part sent `payload` on `channel`, revision `schema`. `ctx` has the

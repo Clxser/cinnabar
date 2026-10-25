@@ -229,6 +229,14 @@ Server WIT 0.12 adds the `content-rules` export, which runs once after `register
 A rule naming an unknown block, two rules for one block, or an unknown or repeated unlisted item
 fails loading.
 
+An Experience block takes every click a player gives it without sneaking, as before, unless its
+`on-interact` passes the click on with `callback.pass-interaction`, as a vanilla block with
+nothing to do with the click does. Once that result commits, the player's held item is used on
+the block as if it had no action: a block item is placed against it, and a bucket or flint and
+steel is used. Nothing passes when the result is rejected or fails, or when the player holds
+another stack by the commit; `pass-interaction` in any other callback is `denied`. A sneaking
+player holding an item still bypasses `on-interact` altogether.
+
 ## Entities and seats
 
 Server WIT 0.11 adds registered entities in the mod's namespace. Definitions select
