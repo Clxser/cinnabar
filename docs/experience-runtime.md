@@ -180,7 +180,7 @@ Server WIT 0.9 adds `on_tick` and `on_timer`; older artifacts receive neither.
 
 Server WIT 0.10 lets a block carry up to `MAX_CELL_OVERLAYS` (12) extra visuals in its own
 cell, such as a cable bus's parts or a drive's cells. The new `overlays` export declares which
-of the Experience's blocks are hosts and up to `MAX_OVERLAY_TYPES` (128) overlay types; 0.1–0.9
+of the Experience's blocks are hosts and up to `MAX_OVERLAY_TYPES` (256) overlay types; 0.1–0.9
 artifacts keep working without overlays.
 
 | Rule | Contract |
