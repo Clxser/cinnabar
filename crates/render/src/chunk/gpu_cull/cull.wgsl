@@ -1,6 +1,7 @@
 // Terrain cull: frustum, enabled bit, two-phase Hi-Z and facing runs into compacted,
 // slot-ordered indirect args. `count` decides, `scan` offsets workgroups, `emit` writes.
-// `cull_occlusion` instead writes one occluded bit per slot for CPU readback.
+// `cull_occlusion` instead writes one occluded bit per slot for CPU readback, and
+// `cull_transparent` one hidden bit per slot for the sorted transparent pass's vertex shader.
 //
 // Commands never rely on the vertex_index or instance_index builtins seeing their base vertex
 // or first instance; DX12 count draws drop both. Each command's base vertex instead addresses
@@ -39,6 +40,9 @@ struct CullRecord {
     liquid_start: u32,
     liquid_count: u32,
     live: u32,
+    // Packed like the opaque bounds; equal words mean the slot draws nothing transparent.
+    transparent_min: u32,
+    transparent_max: u32,
 }
 
 struct CullView {
@@ -69,6 +73,7 @@ struct CullView {
 @group(0) @binding(8) var hiz: texture_2d<f32>;
 @group(0) @binding(9) var<storage, read_write> occluded: array<u32>;
 @group(0) @binding(10) var<storage, read_write> draw_offsets: array<vec2<u32>>;
+@group(0) @binding(11) var transparent_hidden: texture_storage_2d<r32uint, write>;
 
 var<workgroup> sums: array<vec4<u32>, WORKGROUP>;
 var<workgroup> occluded_bits: array<atomic<u32>, OCCLUSION_WORDS>;
@@ -110,12 +115,17 @@ fn unpack_bound(word: u32) -> vec3<f32> {
 // Visible unless every point of the padded box lies behind the farthest pyramid depth it covers.
 // `strict` also keeps a box reaching past the viewport, whose hidden part this depth never saw.
 fn hiz_test(record: CullRecord, strict: bool) -> bool {
+    return hiz_box_visible(record_origin(record), unpack_bound(record.bounds_min),
+        unpack_bound(record.bounds_max), strict);
+}
+
+fn hiz_box_visible(origin: vec3<i32>, bound_low: vec3<f32>, bound_high: vec3<f32>, strict: bool) -> bool {
     if (view.depth.w == 0u) {
         return true;
     }
-    let low = unpack_bound(record.bounds_min) - vec3(HIZ_PADDING);
-    let high = unpack_bound(record.bounds_max) + vec3(HIZ_PADDING);
-    let base = vec3<f32>(record_origin(record) - view.camera.xyz);
+    let low = bound_low - vec3(HIZ_PADDING);
+    let high = bound_high + vec3(HIZ_PADDING);
+    let base = vec3<f32>(origin - view.camera.xyz);
     var ndc_min = vec2(1.0e30);
     var ndc_max = vec2(-1.0e30);
     var nearest = 0.0;
@@ -417,5 +427,39 @@ fn cull_occlusion(
     let word = wid.x * OCCLUSION_WORDS + lid;
     if (lid < OCCLUSION_WORDS && word < arrayLength(&occluded)) {
         occluded[word] = atomicLoad(&occluded_bits[lid]);
+    }
+}
+
+// Bit `slot` set when everything the sorted transparent pass may draw from the slot lies behind
+// this frame's pyramid. Transparent terrain draws after all opaque depth and never makes it
+// farther, so the on-screen part of the box is the only part that can show; nothing is strict.
+// Every texel of the mask is written, so slots past the record count read visible.
+@compute @workgroup_size(WORKGROUP)
+fn cull_transparent(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+    @builtin(workgroup_id) wid: vec3<u32>,
+) {
+    if (lid < OCCLUSION_WORDS) {
+        atomicStore(&occluded_bits[lid], 0u);
+    }
+    workgroupBarrier();
+    if (gid.x < view.params.x) {
+        let record = records[gid.x];
+        if (record.transparent_min != record.transparent_max && !hiz_box_visible(
+            record_origin(record),
+            unpack_bound(record.transparent_min),
+            unpack_bound(record.transparent_max),
+            false,
+        )) {
+            atomicOr(&occluded_bits[lid / 32u], 1u << (lid % 32u));
+        }
+    }
+    workgroupBarrier();
+    let word = wid.x * OCCLUSION_WORDS + lid;
+    let size = textureDimensions(transparent_hidden);
+    if (lid < OCCLUSION_WORDS && word < size.x * size.y) {
+        textureStore(transparent_hidden, vec2(word % size.x, word / size.x),
+            vec4(atomicLoad(&occluded_bits[lid]), 0u, 0u, 0u));
     }
 }

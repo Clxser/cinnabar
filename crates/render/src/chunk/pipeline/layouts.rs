@@ -124,7 +124,8 @@ impl FromWorld for ChunkPipeline {
         transparent_descriptor.label = Some("packed transparent terrain pipeline".into());
         transparent_descriptor.vertex.shader = TRANSPARENT_SHADER_HANDLE;
         transparent_descriptor.vertex.entry_point = Some("vertex".into());
-        // Sorted transparency is never GPU-culled and indexes its refs by instance.
+        // Sorted transparency keeps CPU-planned draws and indexes its refs by instance; the
+        // GPU cull only hides its slots through the group 2 mask added at specialization.
         transparent_descriptor.vertex.buffers.clear();
         transparent_descriptor.layout[0] = transparent_bind_group_layout.clone();
         let transparent_fragment = transparent_descriptor
@@ -236,8 +237,9 @@ impl Specializer<RenderPipeline> for ChunkPipelineSpecializer {
         } else {
             render_scene::SCENE_COLOR_FORMAT
         };
+        let enhanced = crate::enhanced::view_group_active(key.enhanced);
         #[cfg(feature = "enhanced")]
-        if render_model::enhanced_rendering_enabled() && key.enhanced {
+        if enhanced {
             descriptor
                 .layout
                 .push(crate::enhanced::enhanced_view_layout());
@@ -248,6 +250,12 @@ impl Specializer<RenderPipeline> for ChunkPipelineSpecializer {
                 .unwrap()
                 .shader_defs
                 .push("ENHANCED".into());
+        }
+        // Enhanced views displace water past its static bounds, so only vanilla views cull it.
+        if !enhanced && descriptor.vertex.shader == TRANSPARENT_SHADER_HANDLE {
+            descriptor
+                .layout
+                .push(crate::chunk::transparent::occlusion::layout());
         }
         Ok(key)
     }

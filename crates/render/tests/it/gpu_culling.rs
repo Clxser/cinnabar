@@ -10,6 +10,7 @@ mod occlusion;
 mod raster;
 #[path = "../../src/chunk/gpu_cull/storage.rs"]
 mod storage;
+mod transparent;
 #[path = "../../src/chunk/gpu_cull/unit_mask.rs"]
 mod unit_mask;
 mod units;
@@ -319,6 +320,8 @@ fn mixed_records() -> (Vec<CullRecord>, Vec<u32>) {
                         solid_ends,
                         model: range(&mut random, 40_000 + slot * 16),
                         liquid: range(&mut random, 80_000 + slot * 16),
+                        // Opaque kernels must read past the transparent words unchanged.
+                        transparent: (slot % 3 == 1).then_some([[-3; 3], [19; 3]]),
                     })
                     .unwrap(),
                 );
@@ -363,6 +366,7 @@ fn cull_counts_and_commands_stay_inside_their_regions() {
                 solid_ends: [2, 4, 6, 8, 10, 10],
                 model: 40_000 + slot * 16..40_004 + slot * 16,
                 liquid: 80_000 + slot * 16..80_004 + slot * 16,
+                transparent: None,
             })
             .unwrap()
         })

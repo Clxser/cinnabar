@@ -63,6 +63,15 @@ const ENHANCED_POST_SHADER_HANDLE: Handle<Shader> =
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EnhancedRenderPlugin;
 
+/// Whether pipelines specialized for a view, `enhanced` when it carries [`EnhancedRendering`],
+/// bind the Enhanced view group. Specializers and the commands that bind that group slot agree
+/// through this.
+///
+/// [`EnhancedRendering`]: render_scene::EnhancedRendering
+pub(crate) fn view_group_active(enhanced: bool) -> bool {
+    cfg!(feature = "enhanced") && render_model::enhanced_rendering_enabled() && enhanced
+}
+
 /// Registers source imports that Bevy resolves even for vanilla shader variants.
 /// This creates no Enhanced GPU pipelines or render passes.
 pub(crate) fn load_shader_imports(app: &mut App) {

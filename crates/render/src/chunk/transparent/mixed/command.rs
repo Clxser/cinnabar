@@ -9,6 +9,7 @@ pub(in crate::chunk) type DrawMixedTerrainCommands = crate::gpu_timing::GpuDrawS
     (
         crate::lighting::SetWorldLightmap,
         crate::enhanced::SetEnhancedViewBindGroup<2>,
+        crate::chunk::transparent::occlusion::SetTransparentOcclusion<2>,
         DrawMixedTerrain,
     ),
 >;

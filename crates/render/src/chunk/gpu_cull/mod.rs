@@ -5,7 +5,9 @@
 //! command's base vertex and first instance from a vertex buffer, so DX12 count draws, which
 //! drop both builtin offsets, need no per-draw constants. Other indirect backends submit
 //! cleared fixed-size regions whose unused commands draw zero instances. Direct-draw devices
-//! (Metal) instead read occlusion bits back for later frames to skip; see [`direct`].
+//! (Metal) instead read occlusion bits back for later frames to skip; see [`direct`]. The late
+//! pass's pyramid also hides sorted transparent terrain behind this frame's opaque depth; see
+//! [`transparent`].
 
 #[cfg(test)]
 pub(super) mod app_tests;
@@ -26,6 +28,9 @@ mod slots;
 pub(in crate::chunk) mod storage;
 #[cfg(test)]
 mod tests;
+pub(in crate::chunk) mod transparent;
+#[cfg(test)]
+mod transparent_scene_tests;
 pub(in crate::chunk) mod unit_mask;
 #[cfg(test)]
 mod vendor_tests;
@@ -45,7 +50,8 @@ use model::STREAM_COUNT;
 pub(crate) use node::GpuCullLateLabel;
 pub(in crate::chunk) use node::{DrawGpuCulledCommands, draw_function_ids, install_commands};
 pub(in crate::chunk) use prepare::ChunkHiddenEntities;
-use prepare::{GpuCull, extract_hidden_chunks, prepare_gpu_cull, upload_gpu_cull};
+pub(in crate::chunk) use prepare::GpuCull;
+use prepare::{extract_hidden_chunks, prepare_gpu_cull, upload_gpu_cull};
 
 /// Forces the CPU culling path for A/B measurement.
 const CPU_CULLING_ENV: &str = "CINNABAR_CPU_CULLING";
@@ -235,6 +241,7 @@ fn reset_gpu_cull_frame(mut frame: ResMut<GpuCullFrame>, cull: Option<ResMut<Gpu
     frame.view = None;
     if let Some(mut cull) = cull {
         cull.prepared_view = None;
+        cull.transparent.end_frame();
     }
 }
 

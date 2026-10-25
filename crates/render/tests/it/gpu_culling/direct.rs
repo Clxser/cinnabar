@@ -72,7 +72,7 @@ impl<'a> Occluder<'a> {
     }
 }
 
-fn bit(words: &[u32], slot: usize) -> bool {
+pub(super) fn bit(words: &[u32], slot: usize) -> bool {
     words
         .get(slot / 32)
         .is_some_and(|word| word >> (slot % 32) & 1 != 0)
@@ -86,7 +86,7 @@ pub(super) fn sized_input(camera: &Camera, hiz_mips: u32, size: [u32; 2]) -> Cul
     }
 }
 
-fn pyramid_levels(gpu: &Gpu, pyramid: &HizPyramid) -> Vec<(Vec<f32>, [u32; 2])> {
+pub(super) fn pyramid_levels(gpu: &Gpu, pyramid: &HizPyramid) -> Vec<(Vec<f32>, [u32; 2])> {
     (0..pyramid.mip_count())
         .map(|level| {
             (

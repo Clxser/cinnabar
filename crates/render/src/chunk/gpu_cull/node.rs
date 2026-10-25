@@ -269,6 +269,8 @@ pub(crate) fn late_cull(
             );
         });
     }
+    // The transparent mask comes only from the pyramid just built from this frame's depth.
+    cull.transparent.encode(encoder, &cull.kernels, view_entity);
     within_span(spans[1].as_ref(), encoder, |encoder| {
         cull.kernels.encode_cull(
             encoder,

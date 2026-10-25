@@ -158,6 +158,68 @@ impl HizPyramid {
     }
 }
 
+/// Words per row of a [`TransparentMask`]: one copy-aligned row of `u32` texels.
+pub const TRANSPARENT_MASK_ROW_WORDS: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT / 4;
+
+/// One hidden bit per record slot for the sorted transparent pass: bit `slot % 32` of word
+/// `slot / 32`, whose texel is `(word % TRANSPARENT_MASK_ROW_WORDS, word / ...)`.
+pub struct TransparentMask {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+}
+
+impl TransparentMask {
+    /// Texel size covering `capacity` slots, or `None` when this device cannot hold or fill it.
+    pub fn size(limits: &wgpu::Limits, workgroup: u32, capacity: u32) -> Option<[u32; 2]> {
+        let rows = capacity
+            .div_ceil(32)
+            .div_ceil(TRANSPARENT_MASK_ROW_WORDS)
+            .max(1);
+        let groups = (rows * TRANSPARENT_MASK_ROW_WORDS).div_ceil(workgroup / 32);
+        (rows <= limits.max_texture_dimension_2d
+            && TRANSPARENT_MASK_ROW_WORDS <= limits.max_texture_dimension_2d
+            && groups <= limits.max_compute_workgroups_per_dimension)
+            .then_some([TRANSPARENT_MASK_ROW_WORDS, rows])
+    }
+
+    /// Allocates a mask of `size` texels; `readback` adds copy-out for diagnostics and tests.
+    pub fn new(device: &wgpu::Device, size: [u32; 2], readback: bool) -> Self {
+        let copy_out = if readback {
+            wgpu::TextureUsages::COPY_SRC
+        } else {
+            wgpu::TextureUsages::empty()
+        };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("terrain transparent hidden slots"),
+            size: wgpu::Extent3d {
+                width: size[0],
+                height: size[1],
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: TRANSPARENT_MASK_FORMAT,
+            usage: wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | copy_out,
+            view_formats: &[],
+        });
+        Self {
+            view: texture.create_view(&Default::default()),
+            texture,
+        }
+    }
+
+    /// Words in the mask, all of which the transparent kernel writes.
+    pub fn words(&self) -> u32 {
+        self.texture.width() * self.texture.height()
+    }
+}
+
+/// Texel format of a [`TransparentMask`] and of the vertex shader's binding to it.
+pub const TRANSPARENT_MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
+
 /// Bind groups that seed a pyramid from one depth view and reduce its mips.
 pub struct PyramidBindings {
     multisampled: bool,
@@ -175,6 +237,7 @@ pub struct CullKernels {
     seed_multisampled: wgpu::ComputePipeline,
     reduce: wgpu::ComputePipeline,
     occlusion: wgpu::ComputePipeline,
+    transparent: wgpu::ComputePipeline,
     blank_pyramid: wgpu::TextureView,
 }
 
@@ -278,9 +341,51 @@ impl CullKernels {
             seed_multisampled: pipeline(&pyramid, None, "hiz_seed_multisampled"),
             reduce: pipeline(&pyramid, None, "hiz_reduce"),
             occlusion: pipeline(&cull, None, "cull_occlusion"),
+            transparent: pipeline(&cull, None, "cull_transparent"),
             blank_pyramid: blank.create_view(&Default::default()),
             layout,
         }
+    }
+
+    /// Binds the transparent kernel to the late `uniform`, `storage`'s records, the `pyramid`
+    /// they are tested against and the `mask` it writes.
+    pub fn transparent_bind_group(
+        &self,
+        device: &wgpu::Device,
+        uniform: &wgpu::Buffer,
+        storage: &CullStorage,
+        pyramid: &HizPyramid,
+        mask: &TransparentMask,
+    ) -> wgpu::BindGroup {
+        let entries = [
+            (0, uniform.as_entire_binding()),
+            (1, storage.records.as_entire_binding()),
+            (8, wgpu::BindingResource::TextureView(&pyramid.view)),
+            (11, wgpu::BindingResource::TextureView(&mask.view)),
+        ]
+        .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource });
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("terrain transparent occlusion bindings"),
+            layout: &self.transparent.get_bind_group_layout(0),
+            entries: &entries,
+        })
+    }
+
+    /// Rewrites every word of `mask`: the hidden bits of the records `bind_group` names.
+    pub fn encode_transparent(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        bind_group: &wgpu::BindGroup,
+        mask: &TransparentMask,
+        timestamp_writes: Option<wgpu::ComputePassTimestampWrites<'_>>,
+    ) {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("terrain transparent occlusion"),
+            timestamp_writes,
+        });
+        pass.set_pipeline(&self.transparent);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.dispatch_workgroups(mask.words().div_ceil(self.workgroup / 32), 1, 1);
     }
 
     /// One bind group per phase; the late one tests `pyramid` when there is one.

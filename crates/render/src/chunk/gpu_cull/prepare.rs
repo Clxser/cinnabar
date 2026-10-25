@@ -21,6 +21,7 @@ use super::{
     },
     slots::{CullSlots, cull_record},
     storage::CullStorage,
+    transparent::TransparentCull,
 };
 
 /// Render entities whose main-world chunk is not inherited-visible (the cave culler hides them).
@@ -81,6 +82,7 @@ pub(in crate::chunk) struct GpuCull {
     pub(super) bind_groups: Option<[wgpu::BindGroup; 2]>,
     bound_pyramid: Option<TextureViewId>,
     pub(super) prepared_view: Option<Entity>,
+    pub(in crate::chunk) transparent: TransparentCull,
 }
 
 impl GpuCull {
@@ -99,6 +101,7 @@ impl GpuCull {
             bind_groups: None,
             bound_pyramid: None,
             prepared_view: None,
+            transparent: TransparentCull::new(TransparentCull::enabled_from_env()),
         }
     }
 
@@ -167,6 +170,14 @@ pub(super) type CullViewComponents = (
     Option<&'static MainPassResolutionOverride>,
 );
 
+/// What keeps a view's transparent terrain out of the occlusion test: the Enhanced pipelines,
+/// which displace water and carry no mask binding, and shader packs, whose own passes this
+/// test makes no promise about.
+pub(super) type TransparentCullViewComponents = (
+    bevy::ecs::query::Has<render_scene::EnhancedRendering>,
+    bevy::ecs::query::Has<render_scene::shaderpack::ShaderPackRendering>,
+);
+
 /// Publishes cull storage before queueing, so failure selects ordinary terrain draws.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn upload_gpu_cull(
@@ -215,11 +226,14 @@ pub(super) fn upload_gpu_cull(
 }
 
 /// Prepares the selected view after queueing has confirmed usable cull storage.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn prepare_gpu_cull(
     mut cull: ResMut<GpuCull>,
     frame: Res<GpuCullFrame>,
     mut feedback: ResMut<super::feedback::GpuCullFeedback>,
     views: Query<CullViewComponents>,
+    transparent_views: Query<TransparentCullViewComponents>,
+    transparent: Option<Res<TransparentSortRuntime>>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
 ) {
@@ -256,7 +270,8 @@ pub(super) fn prepare_gpu_cull(
         storage.write_uniform(&queue, phase, &uniform);
     }
     let pyramid_id = cull.pyramid.as_ref().map(|prepared| prepared.depth);
-    if cull.bind_groups.is_none() || cull.bound_pyramid != pyramid_id {
+    let rebind = cull.bind_groups.is_none() || cull.bound_pyramid != pyramid_id;
+    if rebind {
         cull.bind_groups = Some(cull.kernels.bind_groups(
             device.wgpu_device(),
             storage,
@@ -264,6 +279,20 @@ pub(super) fn prepare_gpu_cull(
         ));
         cull.bound_pyramid = pyramid_id;
     }
+    cull.transparent.prepare(
+        &device,
+        &cull.kernels,
+        storage,
+        cull.pyramid.as_ref().map(|prepared| &prepared.pyramid),
+        rebind,
+        view.entity,
+        transparent.is_some_and(|transparent| transparent.view_entity == Some(view.entity))
+            && transparent_views
+                .get(view.entity)
+                .is_ok_and(|(enhanced, pack)| {
+                    !crate::enhanced::view_group_active(enhanced) && !pack
+                }),
+    );
     cull.prepared_view = Some(view.entity);
     feedback.prepare(
         &device,

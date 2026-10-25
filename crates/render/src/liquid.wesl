@@ -178,6 +178,11 @@ fn liquid_record(instance_index: u32) -> u32 {
     return transparent_refs(instance_index).liquid_record_index;
 }
 
+/// The origin slot liquid record `record_index` names, as `liquid_record_corner` reads it.
+fn liquid_record_slot(record_index: u32) -> u32 {
+    return geometry_streams[record_index * 4u + 3u];
+}
+
 // Consecutive units share an instance; reject padding before fetching a descriptor or geometry.
 @if(TERRAIN_UNITS)
 @group(2) @binding(0) var<storage, read> terrain_units: array<vec4<u32>>;

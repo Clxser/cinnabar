@@ -158,7 +158,8 @@ pub const fn group_count(slots: u32, workgroup: u32) -> u32 {
     slots.div_ceil(workgroup)
 }
 
-/// One resident sub-chunk's opaque draws, indexed by its arena metadata slot.
+/// One resident sub-chunk's opaque draws and transparent extent, indexed by its arena metadata
+/// slot.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
 pub struct CullRecord {
@@ -174,6 +175,9 @@ pub struct CullRecord {
     liquid_start: u32,
     liquid_count: u32,
     live: u32,
+    /// Packed like `bounds_min`/`bounds_max`; equal words mean no transparent geometry.
+    transparent_min: u32,
+    transparent_max: u32,
 }
 
 /// Validated draw ranges for [`CullRecord::new`]; empty ranges draw nothing.
@@ -188,6 +192,9 @@ pub struct CullRecordSource {
     pub solid_ends: [u32; 6],
     pub model: Range<u32>,
     pub liquid: Range<u32>,
+    /// Local bounds of everything the sorted transparent pass may draw from this origin slot,
+    /// or `None` when it draws nothing from it.
+    pub transparent: Option<[[i32; 3]; 2]>,
 }
 
 impl CullRecord {
@@ -209,6 +216,12 @@ impl CullRecord {
         };
         let pairs = std::array::from_fn(|index| ends[2 * index] | (ends[2 * index + 1] << 16));
         let live = !source.cube.is_empty() || !source.model.is_empty() || !source.liquid.is_empty();
+        let [transparent_min, transparent_max] = match source.transparent {
+            Some([low, high]) if (0..3).all(|axis| low[axis] < high[axis]) => {
+                [pack(low)?, pack(high)?]
+            }
+            _ => [0; 2],
+        };
         Some(Self {
             origin: source.origin,
             base_vertex: source.base_vertex,
@@ -222,6 +235,8 @@ impl CullRecord {
             liquid_start: source.liquid.start,
             liquid_count: source.liquid.end.checked_sub(source.liquid.start)?,
             live: u32::from(live),
+            transparent_min,
+            transparent_max,
         })
     }
 
@@ -292,11 +307,22 @@ impl CullRecord {
     }
 
     pub fn bounds(&self) -> [[i32; 3]; 2] {
-        let unpack = |word: u32| {
-            std::array::from_fn(|axis| ((word >> (8 * axis)) & 0xff) as i32 - BOUNDS_BIAS)
-        };
-        [unpack(self.bounds_min), unpack(self.bounds_max)]
+        [unpack_bound(self.bounds_min), unpack_bound(self.bounds_max)]
     }
+
+    /// Bounds the transparent occlusion kernel tests, or `None` when the slot has none.
+    pub fn transparent_bounds(&self) -> Option<[[i32; 3]; 2]> {
+        (self.transparent_min != self.transparent_max).then(|| {
+            [
+                unpack_bound(self.transparent_min),
+                unpack_bound(self.transparent_max),
+            ]
+        })
+    }
+}
+
+fn unpack_bound(word: u32) -> [i32; 3] {
+    std::array::from_fn(|axis| ((word >> (8 * axis)) & 0xff) as i32 - BOUNDS_BIAS)
 }
 
 /// `Face as u8` drawn by a solid slot in `CubeQuadLayout::SOLID_FACE_ORDER`.
@@ -504,12 +530,35 @@ pub fn reference_occluded(
     strict: bool,
     lean: f32,
 ) -> bool {
-    if !record.is_live() || view.depth[3] == 0 {
+    record.is_live()
+        && reference_box_occluded(record.origin, record.bounds(), view, levels, strict, lean)
+}
+
+/// The transparent occlusion kernel's hidden bit for `record`, as [`reference_occluded`] tests
+/// opaque bounds but on the record's transparent bounds and never strict.
+pub fn reference_transparent_occluded(
+    record: &CullRecord,
+    view: &CullViewUniform,
+    levels: &[(Vec<f32>, [u32; 2])],
+    lean: f32,
+) -> bool {
+    record.transparent_bounds().is_some_and(|bounds| {
+        reference_box_occluded(record.origin, bounds, view, levels, false, lean)
+    })
+}
+
+fn reference_box_occluded(
+    origin: [i32; 3],
+    [low, high]: [[i32; 3]; 2],
+    view: &CullViewUniform,
+    levels: &[(Vec<f32>, [u32; 2])],
+    strict: bool,
+    lean: f32,
+) -> bool {
+    if view.depth[3] == 0 {
         return false;
     }
-    let [low, high] = record.bounds();
-    let base: [f32; 3] =
-        std::array::from_fn(|axis| (record.origin[axis] - view.camera[axis]) as f32);
+    let base: [f32; 3] = std::array::from_fn(|axis| (origin[axis] - view.camera[axis]) as f32);
     let m = view.clip_from_rel;
     let (mut ndc_min, mut ndc_max, mut nearest) = ([1.0e30_f32; 2], [-1.0e30_f32; 2], 0.0_f32);
     for corner in 0..8 {

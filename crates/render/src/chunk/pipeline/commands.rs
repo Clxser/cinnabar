@@ -1,6 +1,7 @@
 use crate::chunk::transparent::liquid::{
     transparent_frame_draw_for_range, transparent_frame_draws,
 };
+use crate::chunk::transparent::occlusion::SetTransparentOcclusion;
 use crate::chunk::transparent::submissions::{TransparentSubmissions, TransparentTally};
 use crate::chunk::*;
 use crate::queue_writes::ProfiledQueue as _;
@@ -209,6 +210,7 @@ pub(in crate::chunk) type DrawTransparentModelCommands = crate::gpu_timing::GpuD
         SetItemPipeline,
         crate::lighting::SetWorldLightmap,
         crate::enhanced::SetEnhancedViewBindGroup<2>,
+        SetTransparentOcclusion<2>,
         DrawPackedTransparentModel,
     ),
 >;
@@ -237,6 +239,7 @@ pub(in crate::chunk) type DrawTransparentLiquidCommands = crate::gpu_timing::Gpu
         SetItemPipeline,
         crate::lighting::SetWorldLightmap,
         crate::enhanced::SetEnhancedViewBindGroup<2>,
+        SetTransparentOcclusion<2>,
         DrawTransparentLiquid,
     ),
 >;
@@ -246,6 +249,7 @@ pub(in crate::chunk) type DrawTransparentLiquidDirectCommands = crate::gpu_timin
         SetItemPipeline,
         crate::lighting::SetWorldLightmap,
         crate::enhanced::SetEnhancedViewBindGroup<2>,
+        SetTransparentOcclusion<2>,
         DrawTransparentLiquidDirect,
     ),
 >;
@@ -255,6 +259,7 @@ pub(in crate::chunk) type DrawTransparentLiquidIndirectCommands = crate::gpu_tim
         SetItemPipeline,
         crate::lighting::SetWorldLightmap,
         crate::enhanced::SetEnhancedViewBindGroup<2>,
+        SetTransparentOcclusion<2>,
         DrawTransparentLiquidIndirect,
     ),
 >;

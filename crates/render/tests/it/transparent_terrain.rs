@@ -28,7 +28,8 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn new(gpu: &Gpu) -> Self {
+    /// Every quad sits in origin slot 0; `hidden` is the first word of the hidden-slot mask.
+    fn new(gpu: &Gpu, hidden: u32) -> Self {
         let storage = wgpu::BufferUsages::STORAGE;
         let uniform = wgpu::BufferUsages::UNIFORM;
         // Liquid records, then model draw refs, model refs and lighting records.
@@ -151,6 +152,23 @@ impl Fixture {
         let view = gpu.buffer(&gpu_snapshot::view(clip_from_world, eye), uniform);
         let atlas = solid_terrain_raster::pattern_texture(gpu);
         let sampler = gpu.device.create_sampler(&Default::default());
+        let mask = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("transparent terrain fixture hidden slots"),
+            size: wgpu::Extent3d::default(),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Uint,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        gpu.queue.write_texture(
+            mask.as_image_copy(),
+            &hidden.to_le_bytes(),
+            wgpu::TexelCopyBufferLayout::default(),
+            wgpu::Extent3d::default(),
+        );
+        let mask = mask.create_view(&Default::default());
 
         let buffer = |binding, ty| wgpu::BindGroupLayoutEntry {
             binding,
@@ -213,6 +231,16 @@ impl Fixture {
                         wgpu::BufferBindingType::Uniform,
                     ),
                     buffer(27, wgpu::BufferBindingType::Uniform),
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 28,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Uint,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
                 ],
             });
         let entries = [
@@ -263,6 +291,7 @@ impl Fixture {
                 query_tables.as_entire_binding(),
             ),
             (27, lightmap.as_entire_binding()),
+            (28, wgpu::BindingResource::TextureView(&mask)),
         ]
         .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource });
         let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -472,9 +501,13 @@ fn shared_transparent_pipeline_draws_water_and_models_like_their_own_pipelines()
     ) else {
         return;
     };
-    let fixture = Fixture::new(&gpu);
-    let lightmap =
-        |source: String| source.replace("@group(1) @binding(0)", "@group(0) @binding(27)");
+    let fixture = Fixture::new(&gpu, 0);
+    // The lightmap and hidden-slot mask move into the fixture's single group.
+    let lightmap = |source: String| {
+        source
+            .replace("@group(1) @binding(0)", "@group(0) @binding(27)")
+            .replace("@group(2) @binding(0)", "@group(0) @binding(28)")
+    };
     let defs = ["NATIVE_GAMMA_BLEND"];
     // Each family's own program, as its dedicated pipeline ran it before the merge.
     let liquid = lightmap(format!(
@@ -549,6 +582,48 @@ fn shared_transparent_pipeline_draws_water_and_models_like_their_own_pipelines()
     );
     assert_eq!(mismatches(&expected, &actual), 0, "sorted refs");
     assert_eq!(mismatches(&expected, &direct), 0, "direct records");
+
+    // Other slots' bits leave slot 0 drawn; its own bit hides every water and model quad.
+    let shared_source = lightmap(shader_source::composed(
+        include_str!("../../src/transparent_terrain.wesl"),
+        &defs,
+    ));
+    for (hidden, drawn) in [(!1_u32, true), (1, false)] {
+        let masked = Fixture::new(&gpu, hidden);
+        let shared = masked.pipeline(
+            &gpu,
+            &shared_source,
+            ("vertex", "fragment"),
+            wgpu::FrontFace::Ccw,
+        );
+        let sorted = masked.render(&gpu, &order, |quad| match quad {
+            Quad::Water(index) => (&shared, 0, slot(index) | TRANSPARENT_WATER_DRAW_FLAG),
+            Quad::Model(index) => (&shared, 0, MODEL_INSTANCE_BASE + index),
+        });
+        let direct = masked.render(&gpu, &order, |quad| match quad {
+            Quad::Water(index) => (
+                &shared,
+                0,
+                index | TRANSPARENT_WATER_DRAW_FLAG | TRANSPARENT_WATER_RECORD_FLAG,
+            ),
+            Quad::Model(index) => (&shared, 0, MODEL_INSTANCE_BASE + index),
+        });
+        let reference = if drawn {
+            expected.clone()
+        } else {
+            background.repeat(expected.len() / 4)
+        };
+        assert_eq!(
+            mismatches(&reference, &sorted),
+            0,
+            "mask {hidden:#x}, sorted refs"
+        );
+        assert_eq!(
+            mismatches(&reference, &direct),
+            0,
+            "mask {hidden:#x}, direct records"
+        );
+    }
 }
 
 const LIQUID_REFERENCE: &str = r#"

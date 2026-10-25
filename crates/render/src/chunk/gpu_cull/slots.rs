@@ -232,7 +232,19 @@ pub(in crate::chunk) fn cull_record(
         include(FULL_BOUNDS);
     }
     source.bounds = bounds.unwrap_or(FULL_BOUNDS);
+    source.transparent = transparent_bounds(allocation);
     CullRecord::new(&source).unwrap_or_default()
+}
+
+/// What the sorted transparent pass may draw from `allocation`'s origin slot: liquid faces stay
+/// inside their block cells, and models inside their own conservative extent. Checks only that
+/// the streams exist, so sorted refs to records a direct draw would reject stay covered.
+fn transparent_bounds(allocation: &GpuChunkAllocation) -> Option<[[i32; 3]; 2]> {
+    if allocation.transparent_model_draw_range.is_some() {
+        Some(MODEL_BOUNDS)
+    } else {
+        allocation.has_transparent_liquid.then_some(FULL_BOUNDS)
+    }
 }
 
 /// A box containing the quad: it starts at its origin and spans its larger extent on each axis.

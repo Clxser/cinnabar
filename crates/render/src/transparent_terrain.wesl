@@ -5,8 +5,33 @@
 // refs. Both paths run the liquid and model programs' own vertex and shading functions on their
 // own outputs, so the picture matches drawing each family through its own pipeline.
 import render::chunk_bindings::TRANSPARENT_WATER_DRAW_FLAG;
-import render::liquid::{VertexOutput as LiquidOutput, liquid_record, vertex_for_record, shade_liquid};
+import render::liquid::{VertexOutput as LiquidOutput, liquid_record, liquid_record_slot, vertex_for_record, shade_liquid};
 import render::model::{VertexOutput as ModelOutput, model_vertex, shade_blend};
+
+// Bit `slot % 32` of word `slot / 32`, words row-major: set when this frame's opaque depth hides
+// everything this pass draws from origin slot `slot`. Frames and views without a current test
+// bind a mask that hides nothing; see `gpu_cull::transparent`.
+@if(!ENHANCED)
+@group(2) @binding(0) var hidden_slots: texture_2d<u32>;
+
+fn slot_hidden(slot: u32) -> bool {
+    @if(!ENHANCED) {
+        let size = textureDimensions(hidden_slots);
+        let word = slot >> 5u;
+        let texel = vec2(word % size.x, word / size.x);
+        if (texel.y < size.y) {
+            return ((textureLoad(hidden_slots, texel, 0).x >> (slot & 31u)) & 1u) != 0u;
+        }
+    }
+    return false;
+}
+
+// Outside the clip volume at every corner, so a hidden quad rasterises nothing.
+fn hidden_vertex() -> VertexOutput {
+    var out: VertexOutput;
+    out.clip_position = vec4(2.0, 2.0, 2.0, 1.0);
+    return out;
+}
 
 struct VertexOutput {
     // Invariant like both families' outputs, so shared edges keep identical positions.
@@ -42,6 +67,9 @@ fn vertex(
     var out: VertexOutput;
     if ((instance_index & TRANSPARENT_WATER_DRAW_FLAG) != 0u) {
         let record = liquid_record(instance_index & ~TRANSPARENT_WATER_DRAW_FLAG);
+        if (slot_hidden(liquid_record_slot(record))) {
+            return hidden_vertex();
+        }
         let liquid = vertex_for_record(record, vertex_index);
         out.clip_position = liquid.clip_position;
         out.routing.x = 1u;
@@ -66,6 +94,10 @@ fn vertex(
         out.routing.z = liquid.depth_write_route;
         out.frame_face.y = liquid.native_face_shade;
         return out;
+    }
+    // Model draws address their origin slot as the base vertex over four, as `model_vertex` does.
+    if (slot_hidden(vertex_index / 4u)) {
+        return hidden_vertex();
     }
     let model = model_vertex(vertex_index, instance_index);
     out.clip_position = model.clip_position;
