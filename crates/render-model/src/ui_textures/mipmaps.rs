@@ -37,6 +37,7 @@ pub(super) fn storage_bytes(
     format: UiTextureFormat,
     levels: u32,
 ) -> Result<usize, UiRenderRejectReason> {
+    let source_bytes = page_bytes_in(dimensions, format)?;
     let maximum = dimensions
         .into_iter()
         .max()
@@ -47,7 +48,7 @@ pub(super) fn storage_bytes(
     if levels == 0 || levels > maximum {
         return Err(UiRenderRejectReason::InvalidTextureExtent);
     }
-    (0..levels).try_fold(0usize, |total, level| {
+    (1..levels).try_fold(source_bytes, |total, level| {
         total
             .checked_add(page_bytes_in(
                 dimensions.map(|side| (side >> level).max(1)),
@@ -68,7 +69,21 @@ impl UiTextureBucket {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{UiTextureCatalog, UiTexturePage};
+    use super::super::{
+        UiRenderRejectReason, UiTextureCatalog, UiTextureFormat, UiTexturePage, UiTexturePlan,
+    };
+
+    #[test]
+    fn planning_rejects_zero_source_extents_in_every_storage_format() {
+        for dimensions in [[0, 0], [0, 256], [256, 0]] {
+            for format in [UiTextureFormat::Rgba8, UiTextureFormat::Coverage] {
+                assert_eq!(
+                    UiTexturePlan::with_formats(&[(dimensions, format)]),
+                    Err(UiRenderRejectReason::InvalidTextureExtent),
+                );
+            }
+        }
+    }
 
     #[test]
     fn filtered_pages_keep_their_source_and_account_for_every_resident_level() {
