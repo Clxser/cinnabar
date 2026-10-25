@@ -1253,8 +1253,21 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   only guest budget and protocol failures consume strikes, while transport failures recover separately.
   Leave writes need no live world. Player callbacks retain the world tick captured with each observation.
   Server WIT 0.9 adds instance simulation ticks and cancellable timers through the existing
-  callback queue, with unload pause, opening fences and counted overflow. Entity registration,
-  replication, riding, steering and mixed-client ship acceptance remain incomplete.
+  callback queue, with unload pause, opening fences and counted overflow.
+  Server WIT 0.11 adds registered entity resources and actor identities, world-owned
+  generation-bearing handles, staged server movement and metadata, seats, steering and ordered
+  entity events. Spawn handles retain their ordinal across coalesced block writes; teleports
+  publish the requested velocity after repositioning. Moving actors retain the old chunk lease
+  until framework membership migrates on the next entity tick; missing destinations retry
+  independently of entity ticks. Actor and seat state are
+  process-local; unload releases their chunk leases. Live removal callbacks retain surviving
+  entities; closed openings retain historical observations and scoped private cleanup writes.
+  Historical callbacks cannot spawn actors or change worlds.
+  Collision declarations must fit the packet's centered width and height, with Rust and Go
+  checked against shared cases; replicated scale applies to the dimensions once.
+  Built-in appearance lookup has offline rig coverage without replacing custom artwork.
+  The shared-ID ship sample, live seat
+  positions/link acceptance and mixed-client rendering remain incomplete.
   Client epoch receipt, rendered destination readiness, crash recovery and live transfer acceptance
   remain incomplete.
 - Server WIT 0.10 adds cell overlays: Experience-registered overlay types, turned to a face, and
