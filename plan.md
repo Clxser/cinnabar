@@ -242,13 +242,32 @@ Displayed-frame pacing and complete resize/platform acceptance remain incomplete
   remesh against current frame/join/streaming budgets. Attribute decode, light readiness,
   queue wait, worker time, upload, submission and present latency independently.
   Ordinary meshing now rechecks higher-priority deferred revisions within a bounded
-  poll budget, with backoff while neighbours or light remain unavailable. Hardware
-  dirty-to-visible latency qualification remains open. Empty-section evidence and
+  poll budget, with backoff while neighbours or light remain unavailable. Completed light
+  members coalesce dependency notifications alongside ready and deferred candidates without
+  preparing geometry. All three queues share bounded camera refresh and retirement across
+  queue generations. Before geometry dispatch, ranked notifications receive readiness
+  checks within the existing work limit once worker capacity exists. Their deferred owner
+  returns to ready only when its known halo is current, owed neighbours have arrived and
+  output credit is available, so blocked notifications leave ready geometry eligible.
+  This includes distant geometry outside direct camera
+  probes. Hardware dirty-to-visible latency
+  qualification remains open. Empty-section evidence and
   withdrawals use their separate allowance without spending geometry credits;
   both still share the frame operation cap. Ready air and withdrawals bypass geometry
   scheduler ingress and receive bounded service before decode and lighting, using the
   same publication limits and poll deadline. Staged worker completions receive a bounded
-  share first, so fresh removals cannot starve staged empty or geometry results.
+  share first, so fresh removals cannot starve staged empty or geometry results. Geometry
+  preparation waits for worker and result capacity while urgent reserves and independent
+  removals retain service. Eviction skips a second removal for settled air with an
+  acknowledged GPU publication; dirty or unfinished sections still publish removals.
+  Biome-only heights without section or publication ownership skip withdrawals;
+  surviving meshes still invalidate when their sampled biome data retires.
+  Changed lighting also preserves settled air's empty publication; first empty
+  receipts and unfinished removals still receive service.
+  Model output reservations share meshing's template-selection policy: fixed models
+  reserve their own compound chains and neighbour-selected models keep a conservative
+  allowance. Resource reloads refresh these bounds while retaining existing output
+  credits. The shared output-memory limit is unchanged.
   Late blob replies for retired transactions no longer discard valid, still-needed
   blobs in the same response. Verified requested bodies arriving after ordinary-lane
   retirement can warm the cache for recovery. Terrain requests use a packet origin
@@ -264,7 +283,18 @@ Displayed-frame pacing and complete resize/platform acceptance remain incomplete
   remain open.
   Sparse startup can complete without a publisher update after terrain decodes, stream
   and render work drain, and a later GPU frame completes. Empty-world initialization is
-  verified; complete server-form and gameplay acceptance remains open.
+  verified; complete server-form and gameplay acceptance remains open. Column light
+  batches reuse one resident sky-ceiling scan for section snapshots and boundary
+  waiters. Dispatched light members retire their queued candidates, so completed
+  columns do not consume later dispatch scans. Changed light faces return pending
+  neighbours to readiness without replacing their revision or queue age. Completing
+  an adjacent solve also wakes excluded neighbours when their shared face is unchanged.
+  Near publication receipts consume changed residency columns between full snapshots,
+  preserving unchanged receipts.
+  Foreground chunk-data offload requires a full allocation of service polling;
+  idle waits do not count. Biome-only inline updates preserve current light while
+  remeshing tint; block changes and new residency still invalidate light.
+  Matched-output hardware preparation and streaming qualification remain open.
 - [ ] Close mesh-neighbour readiness acceptance with slow-delivery and seam coverage.
   Distinguish eligible horizontal columns from the provisional full-neighbour/quiet-time
   fallback; its timeout is not established native behavior.
