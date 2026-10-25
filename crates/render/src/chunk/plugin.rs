@@ -147,7 +147,8 @@ impl Plugin for ChunkRenderPlugin {
             .init_resource::<TransparentModelSortRuntime>()
             .init_resource::<TransparentUploadBudget>()
             .init_resource::<TransparentPresentationFence>()
-            .init_resource::<TransparentRetirementFence>();
+            .init_resource::<TransparentRetirementFence>()
+            .init_resource::<transparent::submissions::TransparentSubmissions>();
         if let Some(runtime_stage_profiler) = runtime_stage_profiler {
             render_app.insert_resource(runtime_stage_profiler);
             crate::runtime_profile_trace::install_surface_trace(render_app);
@@ -201,6 +202,8 @@ impl Plugin for ChunkRenderPlugin {
                         .after(prepare_gpu_chunks),
                     prepare_chunk_bind_group.in_set(RenderSystems::PrepareBindGroups),
                     submit_presented_frame_probe.in_set(crate::device_poll::FrameSubmissions),
+                    transparent::submissions::finish_transparent_submissions
+                        .in_set(RenderSystems::Cleanup),
                 ),
             );
     }

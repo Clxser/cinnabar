@@ -1,6 +1,7 @@
 use crate::chunk::transparent::liquid::{
     transparent_frame_draw_for_range, transparent_frame_draws,
 };
+use crate::chunk::transparent::submissions::{TransparentSubmissions, TransparentTally};
 use crate::chunk::*;
 use crate::queue_writes::ProfiledQueue as _;
 use render_scene::TransparentSortMetrics;
@@ -340,6 +341,7 @@ impl RenderCommand<Transparent3d> for DrawTransparentLiquid {
         SRes<TransparentSortRuntime>,
         SRes<TransparentSortMetrics>,
         SRes<ActiveFrameProbe>,
+        Option<SRes<TransparentSubmissions>>,
     );
     type ViewQuery = Read<ViewUniformOffset>;
     type ItemQuery = ();
@@ -348,7 +350,7 @@ impl RenderCommand<Transparent3d> for DrawTransparentLiquid {
         item: &Transparent3d,
         view_offset: ROQueryItem<'w, '_, Self::ViewQuery>,
         _item_query: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
-        (arena, runtime, metrics, frame_probe): SystemParamItem<'w, '_, Self::Param>,
+        (arena, runtime, metrics, frame_probe, submissions): SystemParamItem<'w, '_, Self::Param>,
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
         let arena = arena.into_inner();
@@ -384,6 +386,9 @@ impl RenderCommand<Transparent3d> for DrawTransparentLiquid {
             args.base_vertex,
             args.first_instance..args.first_instance + args.instance_count,
         );
+        if let Some(submissions) = submissions {
+            submissions.record(TransparentTally::draw(args.instance_count, 0));
+        }
         let frame_probe = frame_probe.into_inner();
         if frame_probe.is_active()
             && let Some(draw) = transparent_frame_draw_for_range(snapshot, arena, ref_range)
@@ -406,6 +411,7 @@ impl RenderCommand<Transparent3d> for DrawTransparentLiquidDirect {
         SRes<TransparentSortRuntime>,
         SRes<TransparentSortMetrics>,
         SRes<ActiveFrameProbe>,
+        Option<SRes<TransparentSubmissions>>,
     );
     type ViewQuery = Read<ViewUniformOffset>;
     type ItemQuery = Read<GpuChunkAllocation>;
@@ -414,7 +420,7 @@ impl RenderCommand<Transparent3d> for DrawTransparentLiquidDirect {
         item: &Transparent3d,
         view_offset: ROQueryItem<'w, '_, Self::ViewQuery>,
         allocation: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
-        (arena, runtime, metrics, frame_probe): SystemParamItem<'w, '_, Self::Param>,
+        (arena, runtime, metrics, frame_probe, submissions): SystemParamItem<'w, '_, Self::Param>,
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
         let arena = arena.into_inner();
@@ -441,6 +447,9 @@ impl RenderCommand<Transparent3d> for DrawTransparentLiquidDirect {
             command.base_vertex,
             command.first_instance..command.first_instance + command.instance_count,
         );
+        if let Some(submissions) = submissions {
+            submissions.record(TransparentTally::draw(command.instance_count, 0));
+        }
         frame_probe.record_direct_streams(item.entity(), identity, ChunkStreamMask::LIQUID);
         // Direct water is part of the committed transparent frame state.
         if let Some(snapshot) = runtime.into_inner().state.committed() {
@@ -458,6 +467,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTransparentLiquidIndirect {
         SRes<TransparentSortRuntime>,
         SRes<TransparentSortMetrics>,
         SRes<ActiveFrameProbe>,
+        Option<SRes<TransparentSubmissions>>,
     );
     type ViewQuery = Read<ViewUniformOffset>;
     type ItemQuery = ();
@@ -466,7 +476,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTransparentLiquidIndirect {
         item: &P,
         view_offset: ROQueryItem<'w, '_, Self::ViewQuery>,
         _item_query: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
-        (arena, runtime, metrics, frame_probe): SystemParamItem<'w, '_, Self::Param>,
+        (arena, runtime, metrics, frame_probe, submissions): SystemParamItem<'w, '_, Self::Param>,
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
         let arena = arena.into_inner();
@@ -485,6 +495,17 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTransparentLiquidIndirect {
         pass.set_bind_group(0, bind_group, &[view_offset.offset]);
         pass.set_index_buffer(arena.index_buffer.slice(..), IndexFormat::Uint32);
         pass.draw_indexed_indirect(&arena.transparent_indirect_buffer, 0);
+        if let Some(submissions) = submissions {
+            // One draw of every committed ref, which group by sub-chunk origin slot.
+            let refs = snapshot.refs();
+            submissions.record(TransparentTally {
+                water_sub_chunks: refs
+                    .chunk_by(|left, right| left.metadata_index() == right.metadata_index())
+                    .count() as u64,
+                water_faces: refs.len() as u64,
+                ..default()
+            });
+        }
         let frame_probe = frame_probe.into_inner();
         if frame_probe.is_active() {
             frame_probe.record_transparent_draw(
@@ -603,7 +624,11 @@ impl<P: PhaseItem> RenderCommand<P> for DrawPackedModel {
 pub(in crate::chunk) struct DrawPackedTransparentModel;
 
 impl<P: PhaseItem> RenderCommand<P> for DrawPackedTransparentModel {
-    type Param = (SRes<ChunkGpuArena>, SRes<ActiveFrameProbe>);
+    type Param = (
+        SRes<ChunkGpuArena>,
+        SRes<ActiveFrameProbe>,
+        Option<SRes<TransparentSubmissions>>,
+    );
     type ViewQuery = Read<ViewUniformOffset>;
     type ItemQuery = Read<GpuChunkAllocation>;
 
@@ -611,7 +636,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawPackedTransparentModel {
         item: &P,
         view_offset: ROQueryItem<'w, '_, Self::ViewQuery>,
         allocation: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
-        (arena, frame_probe): SystemParamItem<'w, '_, Self::Param>,
+        (arena, frame_probe, submissions): SystemParamItem<'w, '_, Self::Param>,
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
         let arena = arena.into_inner();
@@ -639,6 +664,9 @@ impl<P: PhaseItem> RenderCommand<P> for DrawPackedTransparentModel {
             draw.base_vertex,
             draw.first_instance..draw.first_instance + draw.instance_count,
         );
+        if let Some(submissions) = submissions {
+            submissions.record(TransparentTally::draw(0, draw.instance_count));
+        }
         frame_probe.record_direct_streams(item.entity(), identity, ChunkStreamMask::MODEL);
         RenderCommandResult::Success
     }

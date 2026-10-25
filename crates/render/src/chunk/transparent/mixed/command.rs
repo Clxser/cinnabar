@@ -1,6 +1,7 @@
 use super::plan::MixedStream;
 use super::*;
 use crate::chunk::transparent::liquid::transparent_frame_draw_for_range;
+use crate::chunk::transparent::submissions::{TransparentSubmissions, TransparentTally};
 use render_scene::TransparentSortMetrics;
 
 pub(in crate::chunk) type DrawMixedTerrainCommands = crate::gpu_timing::GpuDrawSpan<
@@ -23,6 +24,7 @@ impl RenderCommand<Transparent3d> for DrawMixedTerrain {
         SRes<TransparentModelSortRuntime>,
         SRes<TransparentSortMetrics>,
         SRes<ActiveFrameProbe>,
+        Option<SRes<TransparentSubmissions>>,
     );
     type ViewQuery = OpaqueChunkViewQuery;
     type ItemQuery = Read<GpuChunkAllocation>;
@@ -31,7 +33,7 @@ impl RenderCommand<Transparent3d> for DrawMixedTerrain {
         item: &Transparent3d,
         (view_entity, view_offset): ROQueryItem<'w, '_, Self::ViewQuery>,
         allocation: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
-        (arena, pipelines, mixed, water, models, metrics, frame_probe): SystemParamItem<
+        (arena, pipelines, mixed, water, models, metrics, frame_probe, submissions): SystemParamItem<
             'w,
             '_,
             Self::Param,
@@ -97,6 +99,12 @@ impl RenderCommand<Transparent3d> for DrawMixedTerrain {
         pass.set_render_pipeline(pipeline);
         pass.set_bind_group(0, bind_group, &[view_offset.offset]);
         pass.set_index_buffer(arena.index_buffer.slice(..), IndexFormat::Uint32);
+        let mut faces = [0_u32; 2];
+        let record = |[water, model]: [u32; 2]| {
+            if let Some(submissions) = &submissions {
+                submissions.record(TransparentTally::draw(water, model));
+            }
+        };
         for segment in draw.segments.iter() {
             match segment.stream {
                 MixedStream::Model => {
@@ -106,6 +114,7 @@ impl RenderCommand<Transparent3d> for DrawMixedTerrain {
                         model_args.first_instance + segment.range.start
                             ..model_args.first_instance + segment.range.end,
                     );
+                    faces[1] += segment.range.end - segment.range.start;
                 }
                 MixedStream::Water => {
                     let start = draw.water_range.start;
@@ -114,6 +123,7 @@ impl RenderCommand<Transparent3d> for DrawMixedTerrain {
                         arena.transparent_slot_refs,
                         start + segment.range.start..start + segment.range.end,
                     ) else {
+                        record(faces);
                         return RenderCommandResult::Skip;
                     };
                     pass.draw_indexed(
@@ -121,9 +131,11 @@ impl RenderCommand<Transparent3d> for DrawMixedTerrain {
                         args.base_vertex,
                         args.first_instance..args.first_instance + args.instance_count,
                     );
+                    faces[0] += args.instance_count;
                 }
             }
         }
+        record(faces);
         frame_probe.record_direct_streams(item.entity(), frame_identity, ChunkStreamMask::MODEL);
         if frame_probe.is_active()
             && let Some(water_draw) =
