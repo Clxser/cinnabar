@@ -331,6 +331,14 @@ pub(crate) fn redstone(ctx: &Callback, p: BlockPos) -> String {
     )
 }
 
+/// Tells the actor's game mode, as `game mode {mode|error}`.
+pub(crate) fn game_mode(ctx: &Callback) -> String {
+    let mode = ctx
+        .game_mode()
+        .map_or_else(|error| error.name(), |mode| mode.name());
+    format!("game mode {mode}")
+}
+
 /// A world error's name, or `ok` for any success.
 fn refusal<T>(result: Result<T, WorldError>) -> &'static str {
     result.map_or_else(|error| error.name(), |_| "ok")
