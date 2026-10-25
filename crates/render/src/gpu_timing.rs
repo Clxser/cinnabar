@@ -274,7 +274,7 @@ fn begin_coarse_graph(world: &World, mut context: RenderContext) {
 }
 
 /// Copies completed pass and draw queries into this frame's nonblocking readback slot.
-fn encode_readback(world: &World, mut context: RenderContext) {
+pub(crate) fn encode_readback(world: &World, mut context: RenderContext) {
     if let Some(timestamps) = world.get_resource::<GpuTimestamps>()
         && (timestamps.frame.slot.load(Ordering::Acquire) != NO_SLOT
             || timestamps

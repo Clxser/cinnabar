@@ -13,6 +13,8 @@ pub(in crate::chunk) mod direct;
 #[cfg(test)]
 mod direct_tests;
 mod feedback;
+#[cfg(test)]
+mod frame_submission_tests;
 pub(in crate::chunk) mod kernels;
 #[cfg(test)]
 mod limits_tests;
