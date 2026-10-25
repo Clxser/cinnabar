@@ -45,7 +45,8 @@ const PROJECTION_PROBE: &str = r#"
 "#;
 const CUBE_PROBE: &str = r#"
 @fragment fn background(input: VertexOutput) -> @location(0) vec4<f32> { return vec4(0.0, 0.0, 0.25, skybox.parameters.z); }
-@fragment fn foreground(input: VertexOutput) -> PackSkyboxOutput { return PackSkyboxOutput(vec4(0.0, 1.0, 0.0, skybox.parameters.z), 0.5); }
+struct Foreground { @location(0) colour: vec4<f32>, @builtin(frag_depth) depth: f32 }
+@fragment fn foreground(input: VertexOutput) -> Foreground { return Foreground(vec4(0.0, 1.0, 0.0, skybox.parameters.z), 0.5); }
 "#;
 
 /// Composes both fixtures with one vertex that zero-initializes unused sky outputs.

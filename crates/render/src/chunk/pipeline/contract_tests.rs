@@ -324,3 +324,44 @@ fn cutout_pipeline_warmup_covers_every_sample_count() {
         }
     }
 }
+
+/// The sky follows the GPU-cull late pass and the direct terrain pass, which bind these
+/// pipelines outside the opaque phase, so every opaque stream must write colour and depth together.
+#[test]
+fn opaque_terrain_streams_cover_the_sky_and_blended_terrain_does_not() {
+    let (mut app, _) = crate::queue_review_support::app();
+    let mut cache = app.world_mut().remove_resource::<PipelineCache>().unwrap();
+    let mut pipelines = ChunkPipeline::from_world(&mut World::new());
+    for msaa in [Msaa::Off, Msaa::Sample2, Msaa::Sample4, Msaa::Sample8] {
+        for hdr in [false, true] {
+            let key = ChunkPipelineKey {
+                msaa,
+                hdr,
+                enhanced: false,
+            };
+            for (variants, covers) in [
+                (&mut pipelines.variants, true),
+                (&mut pipelines.solid_variants, true),
+                (&mut pipelines.model_variants, true),
+                (&mut pipelines.depth_liquid_variants, true),
+                (&mut pipelines.transparent_variants, false),
+            ]
+            .into_iter()
+            .chain(
+                pipelines
+                    .unit_variants
+                    .iter_mut()
+                    .map(|variants| (variants, true)),
+            ) {
+                let id = variants.specialize(&cache, key).unwrap();
+                let descriptor = crate::queue_review_support::queued_descriptor(&mut cache, id);
+                assert_eq!(
+                    crate::atmosphere_render::sky_pass::covers_sky(&descriptor),
+                    covers,
+                    "{:?} with {msaa:?}, hdr {hdr}",
+                    descriptor.label
+                );
+            }
+        }
+    }
+}

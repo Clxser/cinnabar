@@ -188,6 +188,28 @@ pub(super) fn sorted(material: u32) -> bool {
         || material & crate::actor::material::LATE_DISSOLVE_COLOR != 0
 }
 
+/// Every pipeline the opaque actor item may bind for a view, one per unsorted span; spans the
+/// view's shader pack draws instead are included, which only over-reports.
+pub(crate) fn opaque_span_pipelines(
+    world: &World,
+    msaa: Msaa,
+    hdr: bool,
+    enhanced: bool,
+) -> impl Iterator<Item = CachedRenderPipelineId> + '_ {
+    let gpu = world
+        .get_resource::<ActorGpu>()
+        .filter(|gpu| gpu.instance_count != 0);
+    let pipeline = world.get_resource::<ActorPipeline>();
+    gpu.zip(pipeline)
+        .into_iter()
+        .flat_map(move |(gpu, pipeline)| {
+            gpu.spans
+                .iter()
+                .filter(|span| !sorted(span.material))
+                .filter_map(move |span| pipeline.draw_variant(msaa, hdr, enhanced, span.material))
+        })
+}
+
 impl ActorGpu {
     /// Uses the same material and artwork admission for native and pack draws.
     pub(super) fn pack_supports_span(&self, span: &crate::actor::gpu::ActorDrawSpan) -> bool {

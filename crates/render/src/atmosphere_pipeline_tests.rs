@@ -29,14 +29,9 @@ fn atmosphere_pipeline_specializes_msaa_and_keeps_reversed_z_without_depth_write
                 assert_eq!(descriptor.multisample.count, msaa.samples());
                 let depth = descriptor.depth_stencil.as_ref().unwrap();
                 assert_eq!(depth.format, CORE_3D_DEPTH_FORMAT);
-                assert_eq!(
-                    depth.depth_compare,
-                    Some(if skybox {
-                        CompareFunction::Greater
-                    } else {
-                        CompareFunction::GreaterEqual
-                    })
-                );
+                // Every layer, including the finite pack cube, tests the far depth no geometry
+                // covered, so the sky draws the same samples before or after opaque geometry.
+                assert_eq!(depth.depth_compare, Some(CompareFunction::GreaterEqual));
                 assert_eq!(depth.depth_write_enabled, Some(false));
                 let colour = descriptor.fragment.as_ref().unwrap().targets[0]
                     .as_ref()

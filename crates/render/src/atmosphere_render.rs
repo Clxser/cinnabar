@@ -428,10 +428,6 @@ impl Specializer<RenderPipeline> for AtmospherePipelineSpecializer {
             None
         };
         target.write_mask = ColorWrites::RED | ColorWrites::GREEN | ColorWrites::BLUE;
-        if key.skybox {
-            descriptor.depth_stencil.as_mut().unwrap().depth_compare =
-                Some(CompareFunction::Greater);
-        }
         descriptor.fragment.as_mut().unwrap().entry_point = Some(
             if key.skybox {
                 "pack_skybox_fragment"

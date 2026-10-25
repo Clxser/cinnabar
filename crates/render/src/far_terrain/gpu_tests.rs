@@ -383,3 +383,22 @@ fn releasing_a_drawn_view_drops_its_bind_group() {
     view.release();
     assert!(view.bind_group.is_none() && view.visible.is_empty());
 }
+
+/// The sky follows far terrain, so each of its samples must receive colour and depth together.
+#[test]
+fn far_terrain_covers_the_sky_drawn_after_it() {
+    for samples in [1, 2, 4, 8] {
+        for format in [
+            render_scene::SCENE_COLOR_FORMAT,
+            render_scene::SCENE_HDR_FORMAT,
+        ] {
+            assert!(crate::atmosphere_render::sky_pass::covers_sky(
+                &pipeline_descriptor(
+                    BindGroupLayoutDescriptor::new("far terrain test layout", &[]),
+                    format,
+                    samples,
+                )
+            ));
+        }
+    }
+}

@@ -302,14 +302,11 @@ fn atmosphere_fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     return sky_output(colour);
 }
 
-// The pack cube follows the stock sky, celestial sprites and stars.
-struct PackSkyboxOutput {
-    @location(0) colour: vec4<f32>,
-    @builtin(frag_depth) depth: f32,
-}
-
+// The pack cube follows the stock sky, celestial sprites and stars. Like them it tests the far
+// depth no geometry covered, and it shows only where its finite depth lies in front of the far
+// plane.
 @fragment
-fn pack_skybox_fragment(in: VertexOutput) -> PackSkyboxOutput {
+fn pack_skybox_fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let code = u32(atmosphere.sky_extra.w + 0.5);
     if (skybox.parameters.y == 0.0 || skybox.parameters.z == 0.0 || code % 4u == 1u) { discard; }
     let ray = view_ray(in.position.xy);
@@ -318,5 +315,6 @@ fn pack_skybox_fragment(in: VertexOutput) -> PackSkyboxOutput {
     let exit = pack_skybox_exit(ray, skybox.parameters.x);
     let distance = min(exit.x, min(exit.y, exit.z)) * skybox.parameters.w;
     let clip = view.clip_from_world * vec4(ray * distance + view.world_position, 1.0);
-    return PackSkyboxOutput(tint_to_linear(sampled), clamp(clip.z / clip.w, 0.0, 1.0));
+    if (!(clamp(clip.z / clip.w, 0.0, 1.0) > 0.0)) { discard; }
+    return tint_to_linear(sampled);
 }
