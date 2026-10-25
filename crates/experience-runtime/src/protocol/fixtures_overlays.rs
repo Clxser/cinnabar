@@ -114,6 +114,8 @@ pub(super) fn fixtures() -> Vec<(&'static str, String)> {
             data: None,
             states: Vec::new(),
             overlays: overlays.clone(),
+            // The bus is a redstone block, here beside a powered lever.
+            power: 15,
         }],
         network: None,
         inventory: None,

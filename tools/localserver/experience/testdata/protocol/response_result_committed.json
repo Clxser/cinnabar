@@ -171,6 +171,15 @@
           "count": 8,
           "data": null
         }
+      },
+      {
+        "type": "set_redstone_power",
+        "pos": {
+          "x": 12,
+          "y": 64,
+          "z": -7
+        },
+        "power": 15
       }
     ]
   }

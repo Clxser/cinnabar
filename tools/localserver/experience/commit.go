@@ -187,6 +187,9 @@ func (h *Host) apply(tx *world.Tx, exp string, ev event, snap snapshot, ops []Op
 			h.log.Error("validated container write failed", "experience", exp, "pos", w.pos, "slot", w.slot, "error", err)
 		}
 	}
+	for _, w := range plan.powers {
+		h.applyPower(tx, exp, ev.instance, w)
+	}
 	for _, drop := range plan.drops {
 		tx.AddEntity(entity.NewItem(world.EntitySpawnOpts{Position: drop.pos.Vec3Centre()}, drop.stack))
 	}
@@ -292,6 +295,8 @@ type commitPlan struct {
 	pass     bool
 	// containers are the validated set_container_slot ops, in their order.
 	containers []containerWrite
+	// powers are the validated set_redstone_power ops, in their order.
+	powers []powerWrite
 }
 
 // tickDuration is one game tick, which a scheduled update counts in.
@@ -538,6 +543,16 @@ func (h *Host) validate(exp string, ev event, snap snapshot, ops []Op) (commitPl
 				return commitPlan{}, fmt.Errorf("%w: op %d: %v", errInvalid, i, err)
 			}
 			plan.containers = append(plan.containers, w)
+		case op.SetRedstonePower != nil:
+			c, err := writable(i, op.SetRedstonePower.Pos, true)
+			if err != nil {
+				return commitPlan{}, err
+			}
+			w, err := h.powerWriteOf(exp, c, op.SetRedstonePower)
+			if err != nil {
+				return commitPlan{}, fmt.Errorf("%w: op %d %v", errInvalid, i, err)
+			}
+			plan.powers = append(plan.powers, w)
 		default:
 			return commitPlan{}, fmt.Errorf("%w: op %d is empty", errInvalid, i)
 		}

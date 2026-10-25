@@ -31,7 +31,9 @@
 //! [`Callback::pass_interaction`] passes an [`Experience::on_interact`] click on to the held
 //! item, so a block item is placed against a block that has nothing to do with the click.
 //! [`Callback::container`] and [`Callback::set_container_slot`] read and stage the slots of the
-//! vanilla containers at or next to the anchor and its network.
+//! vanilla containers at or next to the anchor and its network. A block whose rule makes it a
+//! `redstone` block reads the power it receives with [`Callback::redstone_power`] and sets what
+//! it emits with [`Callback::set_redstone_power`].
 
 /// Bindings generated from `wit/server/server.wit`.
 // The canonical-ABI shims for `on-place` and `on-break` take the flattened

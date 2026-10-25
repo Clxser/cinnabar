@@ -223,6 +223,7 @@ Server WIT 0.12 adds the `content-rules` export, which runs once after `register
 | --- | --- |
 | `block-rule.drops` | `itself` (the default) drops the block's item; `nothing` drops nothing, leaving drops to `on-break`. Explosions then drop nothing |
 | `block-rule.item` | `listed` (the default) in the creative group; `unlisted` registered but left out; `none` registers no item: no creative entry, pick-block does nothing, no stack of it can be made (`unknown-block`), and it cannot drop itself |
+| `block-rule.redstone` | `false` (the default) leaves the block out of redstone; `true` makes it a redstone block that receives and emits power, below |
 | `unlisted-items` | The Experience's items that the creative inventory leaves out |
 | `callback.harvested` | True only in an `on-break` whose player's game mode drops what it breaks (not creative); guests drop what `nothing` leaves to them only then |
 
@@ -247,6 +248,18 @@ leaves them; past those bounds the rest of the reach is `unavailable`, as are un
 positions. A written slot takes any stack the guest may make, as `set-slot` does, whatever the
 container's own rules for that slot, and a result that writes a container commits only if every
 container it writes still holds what its snapshot did. Experience blocks hold no containers.
+
+A block whose rule sets `block-rule.redstone` takes part in redstone; every other Experience
+block opts out, so dust neither connects to it nor powers it. `callback.redstone-power` reads the
+power, 0 to 15, that such a block of the Experience receives, as its snapshot cell holds it, and
+`callback.set-redstone-power` stages the power it emits from every face, as a block of redstone
+does: the dust and mechanisms beside it are powered, but not through the blocks beside it. The
+adapter keeps the emitted power with the block's store entry, outside its token, so it lasts
+across restarts, changes no revision, and goes with the block. When the power a redstone block
+receives changes, it gets `on-neighbor-changed` with its own position as `neighbor`, admitted
+like every neighbor change at most once per block per tick, so a guest re-reads
+`redstone-power` on any neighbor change. Either call on a block that is not a redstone block is
+`unsupported-state`, and on another's block `not-owned`.
 
 ## Entities and seats
 

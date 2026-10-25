@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math"
+	"strconv"
 
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/world"
@@ -133,7 +134,11 @@ func appendNetwork(snap *snapshot, members []member, truncated bool) {
 			}
 			cell = cached.cell
 			cell.Pos = pos
+			cell.Power = m.st.power
 			cost += cached.size + len(encodedPos) - len(zeroPos)
+			if cell.Power > 0 {
+				cost += len(`,"power":`) + len(strconv.Itoa(int(cell.Power)))
+			}
 			if len(snap.req.Snapshot) > 0 {
 				cost++
 			}

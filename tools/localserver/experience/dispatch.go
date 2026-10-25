@@ -585,6 +585,9 @@ type cellState struct {
 	token    Token
 	hasToken bool
 	dataLen  uint64
+	// power is the redstone power that an owned redstone block receives. The commit does not
+	// check it.
+	power uint8
 }
 
 // snapshot reads the event's anchor and its loaded neighbors in a fresh task of the event's
@@ -708,6 +711,7 @@ func (h *Host) readFixed(tx *world.Tx, d *dispatcher, ev event) snapshot {
 		if st.owned {
 			cell.States = st.block.states()
 			cell.Overlays = st.overlays.list()
+			cell.Power = st.power
 			if data, ok := h.store.Data(d.id, ev.instance.storeKey(pos)); ok {
 				s := hex.EncodeToString(data)
 				cell.Data = &s
@@ -741,6 +745,9 @@ func (h *Host) cellState(tx *world.Tx, exp string, instance worldInstance, pos c
 	st.owned = ok && own.t.exp == exp && st.hasToken
 	if st.owned {
 		st.block, st.overlays = own, overlays
+		if own.t.redstone {
+			st.power = receivedPower(tx, pos)
+		}
 	}
 	return st
 }

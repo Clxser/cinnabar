@@ -4,6 +4,7 @@ mod client;
 mod content_rules;
 mod item_metadata;
 mod overlays;
+mod redstone;
 
 use item_metadata::server_item;
 
@@ -37,6 +38,8 @@ const PEARL: &str = "minecraft:ender_pearl";
 const AIR: &str = "minecraft:air";
 /// A block without an item, as a content rule declares one.
 const HIDDEN: &str = "probe:hidden";
+/// A block that takes part in redstone, as a content rule declares one.
+const EMITTER: &str = "probe:emitter";
 
 const ANCHOR: BlockPos = BlockPos { x: 0, y: 64, z: 0 };
 const UP: BlockPos = BlockPos { x: 0, y: 65, z: 0 };
@@ -142,9 +145,11 @@ impl Fixture {
                     axes(&lamp, &[PlacementState::FacingDirection]),
                 ),
                 (HIDDEN.to_owned(), Vec::new()),
+                (EMITTER.to_owned(), Vec::new()),
             ]
             .into(),
             itemless_blocks: [HIDDEN.to_owned()].into(),
+            redstone_blocks: [EMITTER.to_owned()].into(),
             items: [(CELL.to_owned(), 1)].into(),
             server: [
                 server_item(STONE, 0, 64, false),
@@ -192,6 +197,7 @@ impl Fixture {
             entities: Vec::new(),
             blocks: [(COUNTER.to_owned(), Vec::new())].into(),
             itemless_blocks: Default::default(),
+            redstone_blocks: Default::default(),
             items: [(CELL.to_owned(), 1)].into(),
             server: [server_item(STONE, 0, 64, false)].into(),
             recipes: Vec::new(),
@@ -230,6 +236,7 @@ fn loaded(pos: BlockPos, id: &str, owned: bool, data: Option<&str>) -> Cell {
         data: data.map(str::to_owned),
         states: Vec::new(),
         overlays: Vec::new(),
+        power: 0,
     }
 }
 

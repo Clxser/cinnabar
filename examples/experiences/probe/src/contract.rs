@@ -93,7 +93,7 @@ pub(crate) fn overlays() -> OverlayRegistration {
 }
 
 /// The [`BUS`] has no item and drops nothing by itself, as AE2's cable bus; the [`NODE`]'s item
-/// and the [`CELL`] stay out of the creative inventory.
+/// and the [`CELL`] stay out of the creative inventory, and the node takes part in redstone.
 pub(crate) fn content_rules() -> ContentRules {
     ContentRules {
         blocks: vec![
@@ -101,11 +101,13 @@ pub(crate) fn content_rules() -> ContentRules {
                 block: BUS.to_owned(),
                 drops: BlockDrops::Nothing,
                 item: BlockItem::None,
+                redstone: false,
             },
             BlockRule {
                 block: NODE.to_owned(),
                 drops: BlockDrops::Itself,
                 item: BlockItem::Unlisted,
+                redstone: true,
             },
         ],
         unlisted_items: vec![CELL.to_owned()],
@@ -315,6 +317,18 @@ pub(crate) fn move_in_container(ctx: &Callback, pos: BlockPos) -> String {
         ),
         Err(error) => format!("container {}", error.name()),
     }
+}
+
+/// Tells the redstone power the block at `p` receives, then has it emit 15, as
+/// `power {received|error} emit {outcome}`.
+pub(crate) fn redstone(ctx: &Callback, p: BlockPos) -> String {
+    let received = ctx
+        .redstone_power(p)
+        .map_or_else(|error| error.name().to_owned(), |power| power.to_string());
+    format!(
+        "power {received} emit {}",
+        refusal(ctx.set_redstone_power(p, 15))
+    )
 }
 
 /// A world error's name, or `ok` for any success.

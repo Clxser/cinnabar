@@ -7,6 +7,7 @@ use block_transform::overlay_face::MAX_CELL_OVERLAYS;
 
 use super::{
     CallbackRes, Export, Slot, Snapshot, column, containers, decode, entities, items, overlays,
+    redstone,
 };
 use crate::host::cinnabar::experience_server::types::{self as wit, CallbackInfo};
 use crate::limits::{MAX_NETWORK_BLOCKS, MAX_NETWORK_DATA_BYTES, MAX_VALUE_DEPTH};
@@ -210,6 +211,17 @@ pub(super) fn prepare<'a>(
                     cell.pos
                 ));
             }
+            if cell.power > redstone::MAX_POWER
+                || (cell.power > 0 && !(cell.owned && own.redstone_blocks.contains(&cell.id)))
+            {
+                return Err(format!(
+                    "cell {:?} receives redstone power {}, more than {} or as no redstone block \
+                     of its own",
+                    cell.pos,
+                    cell.power,
+                    redstone::MAX_POWER
+                ));
+            }
             let slot = Slot {
                 loaded: cell.loaded,
                 id: cell.id.clone(),
@@ -217,6 +229,7 @@ pub(super) fn prepare<'a>(
                 data,
                 states: cell.states.clone(),
                 overlays: cell.overlays.clone(),
+                power: cell.power,
             };
             Ok((cell.pos, slot))
         })

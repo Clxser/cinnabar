@@ -197,8 +197,8 @@ interface types {
     /// picked in slot order), the face it turns to, and what it draws.
     record overlay { slot: u8, face: face, look: overlay-look }
 
-    // 0.12: what a block drops and how its item is offered. Every type above is unchanged, so
-    // the older worlds share them.
+    // 0.12: what a block drops, how its item is offered and whether it takes part in redstone.
+    // Every type above is unchanged, so the older worlds share them.
 
     /// What breaking a block drops by itself: `itself`, its own item, as a plain block does, or
     /// `nothing`, which leaves every drop to the guest's `on-break`.
@@ -208,8 +208,12 @@ interface types {
     /// leaves out; or `none`, no item at all, so the block is never held, picked or dropped as
     /// itself and no stack of it can be made.
     enum block-item { listed, unlisted, none }
-    /// The drops and item of one of the Experience's blocks, by id.
-    record block-rule { block: string, drops: block-drops, item: block-item }
+    /// The drops and item of one of the Experience's blocks, by id, and whether it takes part in
+    /// redstone: a `redstone` block receives power (`callback.redstone-power`), emits what its
+    /// callbacks set (`callback.set-redstone-power`), and gets `on-neighbor-changed` with its own
+    /// position as `neighbor` when the power it receives changes. Redstone dust connects only to
+    /// the Experience's `redstone` blocks.
+    record block-rule { block: string, drops: block-drops, item: block-item, redstone: bool }
     /// What `content-rules` declares: rules for some of the Experience's blocks, each named once,
     /// and the ids of its items that the creative inventory leaves out. A block without a rule
     /// drops itself and has a listed item; a block without an item cannot drop itself.
@@ -341,6 +345,17 @@ interface world-access {
         /// chest, replaces its staged write, and the callback commits only if every container
         /// it writes still holds what its snapshot did.
         set-container-slot: func(pos: block-pos, slot: u32, stack: option<new-stack>) -> result<_, world-error>;
+        /// The redstone power, 0 to 15, that this Experience's `redstone` block at `pos` receives
+        /// from its neighbours, read like `block-states`: `not-owned` for another's block and
+        /// `unsupported-state` for one of its blocks that is not `redstone`.
+        redstone-power: func(pos: block-pos) -> result<u8, world-error>;
+        /// Stages the redstone power, 0 to 15, that this Experience's `redstone` block at `pos`
+        /// emits from every face, as a block of redstone does at 15: it powers the dust and
+        /// mechanisms next to it, but not through the blocks next to it. Written where
+        /// `set-block-state` writes; the block keeps its states, data and generation, and its
+        /// power until a callback sets another or it is replaced. `not-owned` for another's
+        /// block; `unsupported-state` for a block that is not `redstone` or a power above 15.
+        set-redstone-power: func(pos: block-pos, power: u8) -> result<_, world-error>;
     }
 }
 
