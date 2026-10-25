@@ -20,6 +20,7 @@ fn terrain_descriptors_preserve_model_liquid_and_blend_contracts() {
             liquid.fragment.as_ref().unwrap().entry_point.as_deref(),
             Some("fragment_depth")
         );
+        // Two-sided cutout leaves still write depth like opaque geometry.
         for descriptor in [&cutout, &model, &liquid] {
             assert_eq!(
                 descriptor.fragment.as_ref().unwrap().targets[0]

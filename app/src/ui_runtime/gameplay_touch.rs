@@ -518,6 +518,7 @@ mod tests {
             controls,
         )
         .unwrap();
+        // The stick is a gameplay press; the mod button is not.
         assert_eq!(frame.pressed, [touch::JOYSTICK]);
         assert!(frame.mod_taps.is_empty());
         assert!(state.sample().iter().any(|c| c.hit_id == Some(button)));
