@@ -137,6 +137,7 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                     state("benergistics:powered", StateValue::Bool(true)),
                 ],
                 overlays: Vec::new(),
+                power: 0,
             },
             Cell {
                 pos: neighbor,
@@ -146,6 +147,7 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                 data: None,
                 states: Vec::new(),
                 overlays: Vec::new(),
+                power: 0,
             },
             Cell {
                 pos: BlockPos {
@@ -159,6 +161,7 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                 data: None,
                 states: Vec::new(),
                 overlays: Vec::new(),
+                power: 0,
             },
         ],
         network: None,
@@ -477,6 +480,7 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                         network: true,
                         drops: BlockDrops::Itself,
                         item: BlockItem::Listed,
+                        redstone: false,
                     },
                     BlockDef {
                         id: "benergistics:creative_energy_cell".to_owned(),
@@ -490,6 +494,7 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                         network: true,
                         drops: BlockDrops::Itself,
                         item: BlockItem::Unlisted,
+                        redstone: false,
                     },
                     // A cable: six connection states shown by bone visibility, a flipbook, a
                     // placement trait and a permutation that turns it. Like a cable bus, it has
@@ -557,6 +562,8 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                         network: true,
                         drops: BlockDrops::Nothing,
                         item: BlockItem::None,
+                        // The cable bus carries AE2's level emitter and toggle bus.
+                        redstone: true,
                     },
                 ],
                 items: vec![ItemDef {
@@ -649,6 +656,10 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                             },
                             slot: 3,
                             stack: Some(new_stack("minecraft:iron_ingot", 8, None)),
+                        },
+                        Op::SetRedstonePower {
+                            pos: controller,
+                            power: 15,
                         },
                     ],
                 },

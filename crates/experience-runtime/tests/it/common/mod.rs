@@ -655,6 +655,7 @@ pub fn cell(pos: BlockPos, id: &str, owned: bool, data: Option<&str>) -> Cell {
         data: data.map(str::to_owned),
         states: Vec::new(),
         overlays: Vec::new(),
+        power: 0,
     }
 }
 

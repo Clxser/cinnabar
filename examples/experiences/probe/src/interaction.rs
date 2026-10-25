@@ -137,6 +137,8 @@ pub(super) fn interact(ctx: &Callback, player: &str, p: BlockPos) -> Result<(), 
         36 => tell(outcome(ctx.pass_interaction())),
         // Server WIT 0.12: one item moves between the first two slots of the container above.
         37 => tell(&contract::move_in_container(ctx, up)),
+        // Server WIT 0.12: the power a redstone block receives, then it emits 15.
+        38 => tell(&contract::redstone(ctx, p)),
         x => return Err(GuestError::Rejected(format!("no probe behavior for x={x}"))),
     }
     Ok(())
