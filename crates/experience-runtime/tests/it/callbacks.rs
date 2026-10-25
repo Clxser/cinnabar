@@ -299,6 +299,15 @@ fn place_break_neighbor_reach_guest() {
     assert_eq!(outcome(&neighbor), committed(vec![]));
 }
 
+/// x=36 passes its interaction's click on.
+#[test]
+fn an_interaction_passes_its_click_on() {
+    assert_eq!(
+        outcome(&interact(36)),
+        committed(vec![Op::PassInteraction {}, tell("ok")])
+    );
+}
+
 /// x=17 replaces the owned `up`, which holds data, with the same block, then reads its data.
 #[test]
 fn replacing_block_clears_its_data_in_overlay() {

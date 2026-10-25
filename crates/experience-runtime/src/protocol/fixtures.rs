@@ -592,6 +592,7 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                                 Some(&[0x01, 0x00, 0x00]),
                             ),
                         },
+                        Op::PassInteraction {},
                     ],
                 },
             )),
