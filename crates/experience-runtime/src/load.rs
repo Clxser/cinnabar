@@ -533,6 +533,7 @@ fn validate_block(
         network,
         drops: protocol::BlockDrops::Itself,
         item: protocol::BlockItem::Listed,
+        container_slots: 0,
     })
 }
 

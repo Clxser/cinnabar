@@ -14,6 +14,7 @@ fn block(name: &str) -> BlockDef {
         network: false,
         drops: BlockDrops::Itself,
         item: BlockItem::Listed,
+        container_slots: 0,
     }
 }
 
@@ -32,6 +33,7 @@ fn rule(name: &str, drops: wit::BlockDrops, item: wit::BlockItem) -> wit::BlockR
         block: format!("probe:{name}"),
         drops,
         item,
+        container_slots: 0,
     }
 }
 

@@ -197,8 +197,8 @@ interface types {
     /// picked in slot order), the face it turns to, and what it draws.
     record overlay { slot: u8, face: face, look: overlay-look }
 
-    // 0.12: what a block drops and how its item is offered. Every type above is unchanged, so
-    // the older worlds share them.
+    // 0.12: what a block drops, how its item is offered and its container slots. Every type
+    // above is unchanged, so the older worlds share them.
 
     /// What breaking a block drops by itself: `itself`, its own item, as a plain block does, or
     /// `nothing`, which leaves every drop to the guest's `on-break`.
@@ -208,11 +208,15 @@ interface types {
     /// leaves out; or `none`, no item at all, so the block is never held, picked or dropped as
     /// itself and no stack of it can be made.
     enum block-item { listed, unlisted, none }
-    /// The drops and item of one of the Experience's blocks, by id.
-    record block-rule { block: string, drops: block-drops, item: block-item }
+    /// The drops, item and container of one of the Experience's blocks, by id. `container-slots`
+    /// gives each of the block's cells a container of that many slots, 0 to 54, which callbacks
+    /// of every Experience read and write as they do a chest's (`callback.container`); 0 is no
+    /// container.
+    record block-rule { block: string, drops: block-drops, item: block-item, container-slots: u8 }
     /// What `content-rules` declares: rules for some of the Experience's blocks, each named once,
     /// and the ids of its items that the creative inventory leaves out. A block without a rule
-    /// drops itself and has a listed item; a block without an item cannot drop itself.
+    /// drops itself, has a listed item and no container; a block without an item cannot drop
+    /// itself.
     record content-rules { blocks: list<block-rule>, unlisted-items: list<string> }
 }
 
@@ -221,7 +225,7 @@ interface world-access {
         block-pos, player-id, callback-info, world-error, value-node, block-state, network,
         inventory, new-stack, item-key, crafted, world-handle, world-instance, world-instance-id,
         player-location, position, store-key, simulation-step, schedule-handle, overlay,
-        entity-type-id, entity-handle, entity-state, entity-rotation,
+        entity-type-id, entity-handle, entity-state, entity-rotation, item-stack,
     };
     /// Created only by the host, for one callback invocation.
     resource callback {
@@ -325,6 +329,22 @@ interface world-access {
         /// callback commits; nothing passes when the player holds another item by then. `denied`
         /// in every other callback.
         pass-interaction: func() -> result<_, world-error>;
+        /// The slots of the container at `pos`, in the container's own order, with staged
+        /// changes applied: a vanilla container block, such as a chest (a double chest whole at
+        /// either half), barrel, shulker box, hopper, dropper, dispenser, furnace, blast furnace,
+        /// smoker or brewing stand, or a block whose content rule gives it container slots, of
+        /// any Experience. A container is in reach when it is the anchor or a member of the
+        /// anchor's network, or next to one of them: `denied` for a position out of reach,
+        /// `unknown-block` for a block in reach that holds no container or that this callback
+        /// replaced, and `unavailable` for an unloaded one or one the snapshot left out once it
+        /// held as many containers or as much of their item data as it may.
+        container: func(pos: block-pos) -> result<list<option<item-stack>>, world-error>;
+        /// Stages new content for slot `slot` of the container at `pos`, read like `container`;
+        /// none empties it. The stack is one the guest may make, as for `set-slot`, and any
+        /// container takes it, whatever its game rules. `out-of-bounds` for a slot the container
+        /// lacks. A slot written again replaces its staged write, and the callback commits only
+        /// if every container it writes still holds what its snapshot did.
+        set-container-slot: func(pos: block-pos, slot: u32, stack: option<new-stack>) -> result<_, world-error>;
     }
 }
 

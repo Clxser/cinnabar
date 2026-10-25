@@ -275,8 +275,8 @@ pub enum Mining {
 }
 
 /// A validated block: its 0.1 definition, then server WIT 0.5's states, placement traits, look
-/// and network membership, and 0.12's drops and item. A block with a `visual` binds no
-/// `textures`.
+/// and network membership, and 0.12's drops, item and container slots, 0 for no container. A
+/// block with a `visual` binds no `textures`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BlockDef {
@@ -291,6 +291,7 @@ pub struct BlockDef {
     pub network: bool,
     pub drops: BlockDrops,
     pub item: BlockItem,
+    pub container_slots: u8,
 }
 
 /// What breaking a block drops by itself: its own item, or nothing, which leaves the drops to the
