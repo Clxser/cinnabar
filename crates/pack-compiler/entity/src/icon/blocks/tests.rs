@@ -1,6 +1,58 @@
 use super::*;
 
 #[test]
+fn nether_vine_icons_use_stems_instead_of_growing_tips() {
+    let root = tempfile::tempdir().unwrap();
+    write_pack(
+        root.path(),
+        r#"{
+            "weeping_vines":{"textures":{"down":"tip","north":"stem","south":"south","east":"east","west":"west","up":"up"}},
+            "twisting_vines":{"textures":{"down":"tip","north":"stem","south":"south","east":"east","west":"west","up":"up"}}
+        }"#,
+        r#"{"texture_data":{
+            "tip":{"textures":"textures/blocks/tip"},
+            "stem":{"textures":"textures/blocks/stem"},
+            "south":{"textures":"textures/blocks/south"},
+            "east":{"textures":"textures/blocks/east"},
+            "west":{"textures":"textures/blocks/west"},
+            "up":{"textures":"textures/blocks/up"}
+        }}"#,
+        "[]",
+    );
+    let blocks = IconBlocks::read(root.path()).unwrap();
+    let mut seen = std::collections::BTreeSet::new();
+    for record in blocks.records.iter().filter(|record| {
+        matches!(
+            record.name.as_ref(),
+            "minecraft:weeping_vines" | "minecraft:twisting_vines"
+        )
+    }) {
+        seen.insert(record.name.as_ref());
+        assert_eq!(
+            blocks
+                .texture_path(BlockVisualId(record.sequential_id))
+                .as_deref(),
+            Some("textures/blocks/stem"),
+            "{} {}",
+            record.name,
+            record.canonical_state
+        );
+        assert_eq!(
+            resolve_texture_key(
+                &blocks.pack.as_ref().unwrap().blocks,
+                record,
+                BlockFace::Down,
+            )
+            .key
+            .as_deref(),
+            Some("tip"),
+            "the world keeps its growing-tip texture"
+        );
+    }
+    assert_eq!(seen.len(), 2);
+}
+
+#[test]
 fn redstone_torch_icons_use_lit_artwork_independently_of_placement_power() {
     let root = tempfile::tempdir().unwrap();
     write_pack(
