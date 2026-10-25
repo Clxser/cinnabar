@@ -219,10 +219,13 @@ milliseconds. `main_pre_update`, `main_fixed_update`, `main_update` and
 covers still shows which phase spent it. These are overlapping wall-time spans,
 not additive CPU or GPU time. A worker span can begin in an earlier frame; its full duration appears in
 the window where it completes. `surface_preparation` includes drawable
-acquisition and schedule overhead; `render_submission` includes CPU render
-graph execution, queue submission and presentation. A large interval with
-small main work warrants checking the render stages and OS scheduling before
-changing gameplay. `render_frame` is render-world time excluding drawable acquisition.
+acquisition, waiting for the previous frame's present and schedule overhead;
+`render_submission` includes CPU render graph execution and queue submission.
+Bevy presents on its own present thread, overlapping the next frame;
+`BEVY_PRESENT_THREAD=0` presents inside `render_submission` again for A/B runs.
+A large interval with small main work warrants checking the render stages and OS
+scheduling before changing gameplay. `render_frame` is render-world time excluding
+drawable acquisition.
 `input_age` runs from the update's start, where input is sampled, to the end of its render
 extraction. `input_pacing_wait` is the deliberate main-thread delay before the next input sample, until the
 later of its frame-rate cadence slot and the predicted render-thread completion;

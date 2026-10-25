@@ -24,19 +24,20 @@ pub(super) fn record(frame: &GpuFrameTimes) {
     }
 }
 
-/// Marks post-present intervals; completion submissions and render cleanup may follow.
+/// Marks the render thread's frame boundary once it has handed the frame to presentation;
+/// render cleanup follows, and the present itself may still run on Bevy's present thread.
 pub(super) fn install(app: &mut bevy::app::SubApp) {
     use bevy::prelude::*;
-    use bevy::render::{Render, RenderSystems, renderer::render_system};
+    use bevy::render::{Render, RenderSystems, view::window::present_frames};
     app.add_systems(
         Render,
         frame_mark
-            .after(render_system)
+            .after(present_frames)
             .in_set(RenderSystems::Render),
     );
 }
 
-/// Uses Tracy's default frame series at the post-present boundary.
+/// Uses Tracy's default frame series at the render thread's frame boundary.
 fn frame_mark() {
     if let Some(client) = Client::running() {
         client.frame_mark();

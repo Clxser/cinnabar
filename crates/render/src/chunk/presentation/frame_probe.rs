@@ -584,6 +584,7 @@ pub(in crate::chunk) fn submit_presented_frame_probe(
     visibility_probe: Res<ActiveVisibilityFrameProbe>,
     visibility_completion_fence: Res<VisibilityCompletionFence>,
     visibility_diagnostics: Res<VisibilityDiagnostics>,
+    presenter: Option<Res<bevy::render::view::window::SurfacePresenter>>,
 ) {
     let visibility_snapshot = visibility_probe.take_completed().and_then(|snapshot| {
         visibility_completion_fence
@@ -623,16 +624,27 @@ pub(in crate::chunk) fn submit_presented_frame_probe(
     );
     let witness_token =
         witness_evidence.try_reserve_missing(&witness_request, witness_generation, witness_missing);
-    if completed_probe.is_none()
-        && transparent_generation.is_none()
+    if let Some(completed_probe) = completed_probe {
+        let callback_gate = presented_frame_gate.clone();
+        crate::device_poll::on_frame_presented_and_complete(
+            &render_queue,
+            presenter.as_deref(),
+            move |present_returned_at, gpu_completed_at| {
+                callback_gate.publish_reserved_probe(
+                    completed_probe,
+                    present_returned_at,
+                    gpu_completed_at,
+                );
+            },
+        );
+    }
+    if transparent_generation.is_none()
         && retirement_epoch.is_none()
         && witness_token.is_none()
         && visibility_snapshot.is_none()
     {
         return;
     }
-    let present_returned_at = Instant::now();
-    let callback_gate = presented_frame_gate.clone();
     let callback_metrics = transparent_metrics.clone();
     let callback_transparent_fence = transparent_fence.clone();
     let callback_retirement_fence = retirement_fence.clone();
@@ -650,13 +662,6 @@ pub(in crate::chunk) fn submit_presented_frame_probe(
         if let Some(snapshot) = visibility_snapshot {
             callback_visibility_diagnostics.publish(snapshot.gpu_completed());
             callback_visibility_completion_fence.complete();
-        }
-        if let Some(completed_probe) = completed_probe {
-            callback_gate.publish_reserved_probe(
-                completed_probe,
-                present_returned_at,
-                Instant::now(),
-            );
         }
         if let Some(generation) = transparent_generation
             && callback_transparent_fence.complete(generation)

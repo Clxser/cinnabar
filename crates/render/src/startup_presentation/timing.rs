@@ -79,7 +79,8 @@ fn compile(mut timing: ResMut<FrameTiming>, mut cache: ResMut<PipelineCache>) {
     }
 }
 
-/// Marks command encoding, submission and presentation after pipeline processing.
+/// Marks command encoding and submission after pipeline processing; presents run inline here
+/// only when Bevy's present thread is disabled.
 fn submission(mut timing: ResMut<FrameTiming>) {
     timing.submission = Some(Instant::now());
 }

@@ -13,7 +13,7 @@ use bevy::{
     render::{
         Extract, ExtractSchedule, Render, RenderApp, RenderSystems,
         renderer::{RenderQueue, render_system},
-        view::window::ExtractedWindow,
+        view::window::{ExtractedWindow, SurfacePresenter},
     },
     window::PrimaryWindow,
 };
@@ -114,7 +114,8 @@ fn capture_surface(
     };
 }
 
-/// Present takes the surface texture; GPU feedback arrives only after that frame's work finishes.
+/// Present takes the surface texture; feedback for a window frame arrives once its present has
+/// returned and its GPU work has finished.
 fn observe_presentation(
     windows: Query<(&bevy::render::sync_world::MainEntity, &ExtractedWindow), With<PrimaryWindow>>,
     mut probe: ResMut<PresentationProbe>,
@@ -122,7 +123,7 @@ fn observe_presentation(
         &bevy::render::camera::ExtractedCamera,
         &crate::ui_render::composite::UiLayerTexture,
     )>,
-    queue: Res<RenderQueue>,
+    (queue, presenter): (Res<RenderQueue>, Option<Res<SurfacePresenter>>),
     feedback: Res<StartupPresentation>,
     epoch: Res<ExtractedSurfaceEpoch>,
     admission: Res<render_scene::startup_work::WorldWorkAdmission>,
@@ -163,17 +164,25 @@ fn observe_presentation(
         probe.content_submitted = Some(epoch);
         let feedback = feedback.clone();
         let admission = admission.clone();
-        crate::device_poll::on_frame_complete(&queue, move || {
-            feedback.record_content_frame(epoch, web_time::Instant::now());
-            if feedback.has_presented_content() {
-                if let Some(timing) = render_scene::startup_timing::current() { timing.seal_samples(); }
-                admission.admit();
-            }
-        });
+        crate::device_poll::on_frame_presented_and_complete(
+            &queue,
+            presenter.as_deref(),
+            move |_, completed_at| {
+                feedback.record_content_frame(epoch, completed_at);
+                if feedback.has_presented_content() {
+                    if let Some(timing) = render_scene::startup_timing::current() { timing.seal_samples(); }
+                    admission.admit();
+                }
+            },
+        );
     }
     if probe.take_presented(consumed) {
         let feedback = feedback.clone();
-        crate::device_poll::on_frame_complete(&queue, move || feedback.record_completed_frame());
+        crate::device_poll::on_frame_presented_and_complete(
+            &queue,
+            presenter.as_deref(),
+            move |_, _| feedback.record_completed_frame(),
+        );
     }
 }
 

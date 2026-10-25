@@ -188,59 +188,60 @@ wgpu-types = { git = "https://github.com/cinnabar-mc/wgpu", rev = "de534fdc798c6
 wgpu-naga-bridge = { git = "https://github.com/cinnabar-mc/wgpu", rev = "de534fdc798c6a3850848faa702d9466ad7b89f7" }
 
 # Bevy 0.20.0 from the cinnabar-mc fork: reconfigurable surface formats, screenshot and readback
-# copies in the render graph's single submission, and one command encoder shared by render
-# systems that run serially. Every Bevy crate comes from the same rev so none builds twice.
-bevy = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_a11y = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_android = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_anti_alias = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_app = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_asset = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_asset_macros = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_camera = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_clipboard = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_color = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_core_pipeline = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_curve = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_derive = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_diagnostic = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_ecs = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_ecs_macro_logic = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_ecs_macros = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_encase_derive = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_extract = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_extract_macros = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_gizmos = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_gizmos_macros = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_image = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_input = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_input_focus = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_internal = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_light = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_log = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_macro_utils = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_material = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_material_macros = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_math = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_mesh = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_pbr = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_platform = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_post_process = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_ptr = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_reflect = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_reflect_derive = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_render = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_render_macros = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_shader = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_shape = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_state = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_state_macros = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_tasks = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_time = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_transform = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_utils = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_window = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
-bevy_winit = { git = "https://github.com/cinnabar-mc/bevy", rev = "cb5602359cde7b44eb2665867ccb7910f2b03859" }
+# copies in the render graph's single submission, one command encoder shared by render systems
+# that run serially, and presents on a dedicated present thread. Every Bevy crate comes from the
+# same rev so none builds twice.
+bevy = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_a11y = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_android = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_anti_alias = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_app = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_asset = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_asset_macros = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_camera = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_clipboard = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_color = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_core_pipeline = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_curve = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_derive = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_diagnostic = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_ecs = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_ecs_macro_logic = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_ecs_macros = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_encase_derive = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_extract = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_extract_macros = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_gizmos = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_gizmos_macros = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_image = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_input = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_input_focus = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_internal = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_light = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_log = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_macro_utils = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_material = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_material_macros = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_math = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_mesh = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_pbr = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_platform = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_post_process = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_ptr = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_reflect = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_reflect_derive = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_render = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_render_macros = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_shader = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_shape = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_state = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_state_macros = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_tasks = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_time = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_transform = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_utils = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_window = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
+bevy_winit = { git = "https://github.com/cinnabar-mc/bevy", rev = "207e08296f8804bb0d13185c7fd70e0fa5de1967" }
 
 [profile.dev]
 opt-level = 1

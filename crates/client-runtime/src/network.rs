@@ -6,7 +6,7 @@ use bevy::ecs::schedule::ScheduleLabel;
 use bevy::prelude::{
     Deref, DerefMut, IntoScheduleConfigs, Query, Res, ResMut, Resource, Time, Update,
 };
-use bevy::render::view::ExtractedWindow;
+use bevy::render::view::{ExtractedWindow, window::SurfacePresenter};
 use bevy::render::{
     Extract, ExtractSchedule, Render, RenderApp, RenderSystems,
     renderer::{RenderQueue, render_system},
@@ -217,18 +217,31 @@ fn count_held_swap_chains(windows: Query<&ExtractedWindow>, mut held: ResMut<Hel
 }
 
 /// Records the frame only when rendering handed a held swap-chain texture to the window, which
-/// presenting takes; a frame without a surface or a skipped present is not shown.
+/// presenting takes; a frame without a surface or a skipped present is not shown. The record is
+/// stamped when the present returns, which may be on Bevy's present thread.
 fn trace_frame_presented(
     frames: Option<Res<FrameCount>>,
     windows: Query<&ExtractedWindow>,
     held: Res<HeldSwapChains>,
     queue: Res<RenderQueue>,
+    presenter: Option<Res<SurfacePresenter>>,
     mut pending: ResMut<PresentedJoin>,
 ) {
-    if presented(held.0, held_swap_chains(&windows)) {
-        trace_frame(bridge::latency_trace::kind::PRESENTED, frames);
-    }
     let was_presented = presented(held.0, held_swap_chains(&windows));
+    if was_presented && let (Some(trace), Some(frames)) = (bridge::latency_trace::active(), frames)
+    {
+        let frame = i64::from(frames.0);
+        let record = move || {
+            trace.record(
+                bridge::latency_trace::kind::PRESENTED,
+                &[frame, trace.now()],
+            )
+        };
+        match presenter.as_deref() {
+            Some(presenter) => presenter.after_presents(record),
+            None => record(),
+        }
+    }
     if (was_presented || pending.hidden)
         && let Some(profile) = pending.profile.take()
     {
@@ -237,7 +250,9 @@ fn trace_frame_presented(
         } else {
             "first_world_presented"
         };
-        queue.on_submitted_work_done(move || profile.finish(stage));
+        render::on_frame_presented_and_complete(&queue, presenter.as_deref(), move |_, _| {
+            profile.finish(stage);
+        });
     }
 }
 
@@ -251,12 +266,6 @@ fn held_swap_chains(windows: &Query<&ExtractedWindow>) -> usize {
 /// Whether presenting released any of the swap-chain textures held before rendering.
 fn presented(held_before: usize, held_after: usize) -> bool {
     held_after < held_before
-}
-
-fn trace_frame(kind: u8, frames: Option<Res<FrameCount>>) {
-    if let (Some(trace), Some(frames)) = (bridge::latency_trace::active(), frames) {
-        trace.record(kind, &[i64::from(frames.0), trace.now()]);
-    }
 }
 
 /// Flushes packets queued during the frame when a network handle is installed.
