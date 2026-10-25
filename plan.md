@@ -889,10 +889,21 @@ native packet order remains incomplete.
 
 ### Held block placement
 
-Held placement still needs confirmation of direction/face/intercept retention, repeat
-timing and reset behavior across slot/item changes, unavailable selection and deferred
-presses. Empty hands and non-block items repeat a block's own interaction; bucket
-repeats and item-specific uses on blocks remain incomplete. Preserve the explicit incomplete scope in the
+Held placement retains complete ordinary/liquid frame picks in arrival order and consumes
+that buffer once before simulation. Repeats refresh bounded stored intercepts, preserve
+eligible original-hit fallback, and may retry later observations while the unchanged
+native deadline remains due. Locked-line support does not receive a second centre-distance
+filter. Ordinary and liquid queries retain their availability independently. Refreshed
+indirect support can become a direct top-face hit. Placement shares the same upcoming-tick
+item category cooldowns with air use and starts them only after transport admission.
+Regression coverage includes buffered aims, bounded float segments, same-tick retries,
+category expiry and actor lifetime/streaming boundaries. The focused app and domain
+suites pass. A headless local-server bridge comparison reproduces the old fall and keeps
+the fixed player supported; live native-client and wider placement acceptance remain open.
+Direction/face/intercept retention, repeat timing and reset behavior across slot/item
+changes, unavailable selection and deferred presses still need confirmation. Empty hands
+and non-block items repeat a block's own interaction; bucket repeats and item-specific
+uses on blocks remain incomplete. Preserve the explicit incomplete scope in the
 [held-placement reference](docs/reference/held-block-placement.md).
 
 See [inventory ownership](docs/architecture/inventory.md),
