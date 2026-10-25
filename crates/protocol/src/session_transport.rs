@@ -200,7 +200,7 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
     }
 
     /// Exposes only the original framed queue for its capacity-controlled fixtures.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn frame_queue(&self) -> FrameQueue {
         match self.writer.sender().clone() {
             PacketSender::Framed(frames) => frames,

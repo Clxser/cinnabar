@@ -21,6 +21,7 @@ pub enum ReadObservation {
 /// Owns only finite fixture rendezvous; no signal can complete title retirement directly.
 pub struct Signals {
     pub read_entered: oneshot::Receiver<()>,
+    /// Cleanup acquired the original lease after cancellation released the read.
     pub cleanup_entered: oneshot::Receiver<()>,
     pub inspect_read: oneshot::Sender<()>,
     pub observation: oneshot::Receiver<ReadObservation>,
@@ -178,6 +179,8 @@ impl State {
 
     /// Cleanup must obtain the same actual lease and then receive a separate service-boundary ACK.
     pub(super) async fn remove(&self) -> io::Result<()> {
+        self.read_released.notified().await;
+        let operation = service_operation(&self.account)?;
         self.cleanup_entered
             .lock()
             .unwrap()
@@ -185,8 +188,6 @@ impl State {
             .unwrap()
             .send(())
             .unwrap();
-        self.read_released.notified().await;
-        let operation = service_operation(&self.account)?;
         let cleanup = self.cleanup.lock().unwrap().take().unwrap();
         let result = cleanup
             .await
@@ -261,6 +262,10 @@ mod tests {
                 signals.read_entered.await.unwrap();
                 drop(account);
                 signals.cleanup_entered.await.unwrap();
+                assert!(
+                    released.load(Ordering::Acquire),
+                    "cleanup entered before the original read released its lease"
+                );
                 let _ = signals.inspect_read.send(());
                 let observed = signals.observation.await.unwrap();
                 tasks.close();

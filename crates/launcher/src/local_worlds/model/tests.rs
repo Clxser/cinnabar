@@ -846,12 +846,14 @@ fn explicit_dragonfly_creation_does_not_require_docker() {
     menu.update(Input::BeginCreate);
     assert_eq!(menu.screen(), Screen::Create);
     menu.update(Input::SetBackend(Backend::Dragonfly));
+    menu.update(Input::SetFlat(true));
     let effects = menu.update(Input::SubmitCreate);
     let [Effect::Create(spec)] = effects.as_slice() else {
         panic!("Dragonfly creation must not be blocked by Docker");
     };
     assert_eq!(spec.backend, Some(Backend::Dragonfly));
-    assert_eq!(spec.generator, Generator::Normal);
+    assert_eq!(spec.generator, Generator::Flat);
+    assert!(menu.form_error().is_none());
 }
 
 /// An import holds the list behind its modal until the worker reports, then lists the world first.
