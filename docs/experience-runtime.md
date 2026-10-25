@@ -237,6 +237,17 @@ steel is used. Nothing passes when the result is rejected or fails, or when the 
 another stack by the commit; `pass-interaction` in any other callback is `denied`. A sneaking
 player holding an item still bypasses `on-interact` altogether.
 
+`callback.container` reads, and `callback.set-container-slot` stages, the slots of a vanilla
+container block in reach: a chest, barrel, shulker box, hopper, furnace, blast furnace, smoker or
+brewing stand that is the anchor or a member of the anchor's network, or next to one of them. A
+double chest is one 54-slot container at either half. The snapshot lists up to `MAX_CONTAINERS`
+positions, the anchor's first and then its network's in breadth-first order, with at most
+`MAX_CONTAINER_DATA_BYTES` of item data, in a quarter of the callback frame that the network
+leaves them; past those bounds the rest of the reach is `unavailable`, as are unloaded
+positions. A written slot takes any stack the guest may make, as `set-slot` does, whatever the
+container's own rules for that slot, and a result that writes a container commits only if every
+container it writes still holds what its snapshot did. Experience blocks hold no containers.
+
 ## Entities and seats
 
 Server WIT 0.11 adds registered entities in the mod's namespace. Definitions select
@@ -297,6 +308,7 @@ the adapter's mirrored commit limits are checked against generated fixtures.
 | Private/item data | `MAX_BLOCK_DATA_BYTES` per block or scoped record, `MAX_ITEM_DATA_BYTES` |
 | Messages and tells | `MAX_CLIENT_SENDS`, `MAX_CLIENT_SEND_BYTES`, `MAX_VALUE_DEPTH`, `MAX_TELLS`, `MAX_TELL_BYTES` |
 | Networks and recipes | `MAX_NETWORK_BLOCKS`, `MAX_NETWORK_DATA_BYTES`, `MAX_RECIPES`, `MAX_RECIPE_INPUT_ITEMS` |
+| Containers | `MAX_CONTAINERS`, `MAX_CONTAINER_SLOTS`, `MAX_CONTAINER_DATA_BYTES` |
 | IPC | `MAX_FRAME_BYTES` |
 | Adapter lifecycle/storage | `loadDeadline`, `resultDeadline`, `eventQueueCap`, `dataQuota`, `flushInterval` in [adapter limits](../tools/localserver/experience/limits.go) |
 

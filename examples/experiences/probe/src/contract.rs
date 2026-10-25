@@ -277,6 +277,46 @@ pub(crate) fn schedule(ctx: &Callback, p: BlockPos) -> String {
     )
 }
 
+/// Moves one item of the container at `pos` from its first slot to its second, and tells
+/// `container {slots} moved {id} {first} {second}`, the counts left there, or why it could not:
+/// `container {error}` or `container {slots} first empty`.
+pub(crate) fn move_in_container(ctx: &Callback, pos: BlockPos) -> String {
+    let slots = match ctx.container(pos) {
+        Ok(slots) => slots,
+        Err(error) => return format!("container {}", error.name()),
+    };
+    let Some(Some(first)) = slots.first() else {
+        return format!("container {} first empty", slots.len());
+    };
+    let second = slots
+        .get(1)
+        .cloned()
+        .flatten()
+        .map_or(0, |stack| stack.count);
+    let moved = |count: u8| NewStack {
+        id: first.id.clone(),
+        metadata: first.metadata,
+        count,
+        data: first.data.clone(),
+    };
+    let left = (first.count > 1).then(|| moved(first.count - 1));
+    let take = refusal(ctx.set_container_slot(pos, 0, left.as_ref()));
+    let put = refusal(ctx.set_container_slot(pos, 1, Some(&moved(second + 1))));
+    if take != "ok" || put != "ok" {
+        return format!("container take {take} put {put}");
+    }
+    match ctx.container(pos) {
+        Ok(now) => format!(
+            "container {} moved {} {} {}",
+            now.len(),
+            first.id,
+            now[0].as_ref().map_or(0, |stack| stack.count),
+            now[1].as_ref().map_or(0, |stack| stack.count)
+        ),
+        Err(error) => format!("container {}", error.name()),
+    }
+}
+
 /// A world error's name, or `ok` for any success.
 fn refusal<T>(result: Result<T, WorldError>) -> &'static str {
     result.map_or_else(|error| error.name(), |_| "ok")

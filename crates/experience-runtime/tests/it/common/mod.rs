@@ -697,6 +697,7 @@ pub fn callback(anchor: BlockPos, call: Call) -> Request {
             selected: 0,
             slots: vec![None; INVENTORY_SLOTS],
         }),
+        containers: None,
         call,
     }
 }

@@ -37,30 +37,41 @@ pub(super) fn check_inventory(
         ));
     }
     for (slot, stack) in inventory.slots.iter().enumerate() {
-        let Some(stack) = stack else { continue };
-        if stack.count == 0 || stack.max_count == 0 || stack.count > stack.max_count {
-            return Err(format!(
-                "slot {slot} holds {} of {}, more than its most, {}, or none",
-                stack.count, stack.id, stack.max_count
-            ));
-        }
-        let Some(data) = &stack.data else { continue };
-        if !own.items.contains_key(&stack.id) {
-            return Err(format!(
-                "slot {slot} has data on {}, which is not its own item",
-                stack.id
-            ));
-        }
-        let data = hex::decode(data)
-            .map_err(|error| format!("slot {slot}: item data is not lowercase hex: {error}"))?;
-        if data.len() > MAX_ITEM_DATA_BYTES {
-            return Err(format!(
-                "slot {slot} has {} bytes of item data; the limit is {MAX_ITEM_DATA_BYTES}",
-                data.len()
-            ));
+        if let Some(stack) = stack {
+            check_stack(own, &format!("slot {slot}"), stack)?;
         }
     }
     Ok(())
+}
+
+/// Checks one stack of a snapshot, `what` naming where it is: within its most, and data only on
+/// the Experience's own items, lowercase hex of at most [`MAX_ITEM_DATA_BYTES`]. Returns the bytes
+/// of its data.
+pub(super) fn check_stack(own: &Catalog, what: &str, stack: &ItemStack) -> Result<usize, String> {
+    if stack.count == 0 || stack.max_count == 0 || stack.count > stack.max_count {
+        return Err(format!(
+            "{what} holds {} of {}, more than its most, {}, or none",
+            stack.count, stack.id, stack.max_count
+        ));
+    }
+    let Some(data) = &stack.data else {
+        return Ok(0);
+    };
+    if !own.items.contains_key(&stack.id) {
+        return Err(format!(
+            "{what} has data on {}, which is not its own item",
+            stack.id
+        ));
+    }
+    let data = hex::decode(data)
+        .map_err(|error| format!("{what}: item data is not lowercase hex: {error}"))?;
+    if data.len() > MAX_ITEM_DATA_BYTES {
+        return Err(format!(
+            "{what} has {} bytes of item data; the limit is {MAX_ITEM_DATA_BYTES}",
+            data.len()
+        ));
+    }
+    Ok(data.len())
 }
 
 impl CallbackRes {
@@ -147,7 +158,7 @@ impl CallbackRes {
 
 /// Builds a staged inventory entry using its catalogue rules and adapter classification.
 /// Own items may carry data; block and vanilla stacks require no data.
-fn made(own: &Catalog, stack: &NewStack) -> Result<ItemStack, WorldError> {
+pub(super) fn made(own: &Catalog, stack: &NewStack) -> Result<ItemStack, WorldError> {
     let data_len = stack.data.as_ref().map_or(0, |data| data.len() / 2);
     if stack.count == 0 {
         return Err(WorldError::UnsupportedState);
@@ -209,9 +220,9 @@ impl From<wit::NewStack> for NewStack {
     }
 }
 
-impl From<Inventory> for wit::Inventory {
-    fn from(inventory: Inventory) -> Self {
-        let stack = |stack: ItemStack| wit::ItemStack {
+impl From<ItemStack> for wit::ItemStack {
+    fn from(stack: ItemStack) -> Self {
+        Self {
             id: stack.id,
             metadata: stack.metadata,
             count: stack.count,
@@ -222,13 +233,18 @@ impl From<Inventory> for wit::Inventory {
                 .data
                 .map(|data| hex::decode(&data).expect("checked item data")),
             plain: stack.plain,
-        };
+        }
+    }
+}
+
+impl From<Inventory> for wit::Inventory {
+    fn from(inventory: Inventory) -> Self {
         Self {
             selected: inventory.selected,
             slots: inventory
                 .slots
                 .into_iter()
-                .map(|slot| slot.map(stack))
+                .map(|slot| slot.map(Into::into))
                 .collect(),
         }
     }

@@ -804,6 +804,27 @@ impl world_access::HostCallback for HostState {
         self.table.get_mut(&ctx)?.pass_interaction()
     }
 
+    fn container(
+        &mut self,
+        ctx: Resource<CallbackRes>,
+        pos: BlockPos,
+    ) -> Result<Result<Vec<Option<wit::ItemStack>>, WorldError>> {
+        let slots = self.table.get_mut(&ctx)?.container(pos.into())?;
+        Ok(slots.map(|slots| slots.into_iter().map(|slot| slot.map(Into::into)).collect()))
+    }
+
+    fn set_container_slot(
+        &mut self,
+        ctx: Resource<CallbackRes>,
+        pos: BlockPos,
+        slot: u32,
+        stack: Option<NewStack>,
+    ) -> Result<Result<(), WorldError>> {
+        self.table
+            .get_mut(&ctx)?
+            .set_container_slot(pos.into(), slot, stack.map(Into::into))
+    }
+
     /// Only reachable for an owned handle, and the guest is only ever lent a callback.
     fn drop(&mut self, _: Resource<CallbackRes>) -> Result<()> {
         bail!("the guest dropped a callback it cannot own")

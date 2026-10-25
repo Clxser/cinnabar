@@ -221,7 +221,7 @@ interface world-access {
         block-pos, player-id, callback-info, world-error, value-node, block-state, network,
         inventory, new-stack, item-key, crafted, world-handle, world-instance, world-instance-id,
         player-location, position, store-key, simulation-step, schedule-handle, overlay,
-        entity-type-id, entity-handle, entity-state, entity-rotation,
+        entity-type-id, entity-handle, entity-state, entity-rotation, item-stack,
     };
     /// Created only by the host, for one callback invocation.
     resource callback {
@@ -325,6 +325,22 @@ interface world-access {
         /// callback commits; nothing passes when the player holds another item by then. `denied`
         /// in every other callback.
         pass-interaction: func() -> result<_, world-error>;
+        /// The slots of the container block at `pos`, in the container's own order, with staged
+        /// changes applied: a chest (a double chest whole at either half), barrel, shulker box,
+        /// hopper, furnace, blast furnace, smoker or brewing stand. A container is in reach when
+        /// it is the anchor or a member of the anchor's network, or next to one of them:
+        /// `denied` for a position out of reach, `out-of-bounds` outside the world's height,
+        /// `unknown-block` for a block in reach that is no container, and `unavailable` for one
+        /// in an unloaded chunk or one the snapshot left out once it held as many containers or
+        /// as much of their item data as it may.
+        container: func(pos: block-pos) -> result<list<option<item-stack>>, world-error>;
+        /// Stages new content for slot `slot` of the container at `pos`, which `container`
+        /// reads; none empties it. The stack is one the guest may make, as for `set-slot`, and
+        /// the container takes it whatever its own rules for the slot. `out-of-bounds` for a
+        /// slot the container lacks. A slot written again, through either half of a double
+        /// chest, replaces its staged write, and the callback commits only if every container
+        /// it writes still holds what its snapshot did.
+        set-container-slot: func(pos: block-pos, slot: u32, stack: option<new-stack>) -> result<_, world-error>;
     }
 }
 

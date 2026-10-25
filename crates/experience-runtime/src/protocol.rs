@@ -42,7 +42,8 @@ pub use worlds::{
 pub use recipes::{Crafted, ItemMatch, Recipe};
 
 pub use player::{
-    HOTBAR_SLOTS, INVENTORY_SLOTS, Inventory, ItemStack, Network, NewStack, ServerItem,
+    Container, Containers, HOTBAR_SLOTS, INVENTORY_SLOTS, Inventory, ItemStack, Network, NewStack,
+    ServerItem,
 };
 pub use visuals::{
     BlockState, BoneVisibility, Condition, Flipbook, ItemDef, Material, Permutation, Pixel,
@@ -58,7 +59,8 @@ pub use visuals::{
 /// 9 adds instance simulation ticks and cancellable timers; 10 adds cell overlays to `loaded`,
 /// snapshot cells and the `set_overlays` op, and the click position to `interact`;
 /// 11 adds registered actors, seats, steering and entity observations; 12 adds blocks' drops and
-/// items, items' listing, whether a `break` harvests and the `pass_interaction` op.
+/// items, items' listing, whether a `break` harvests, the `pass_interaction` op, and the
+/// containers in reach with the `set_container_slot` op.
 pub const PROTOCOL_VERSION: u32 = 12;
 
 const _: () = assert!(MAX_FRAME_BYTES <= u32::MAX as usize);
@@ -249,6 +251,10 @@ pub enum Request {
         network: Option<Network>,
         /// The actor's inventory, when the callback has an actor.
         inventory: Option<Inventory>,
+        /// The containers within reach of the anchor and its network, for a callback with an
+        /// anchor.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        containers: Option<Containers>,
         call: Call,
     },
     /// An empty struct variant, not a unit variant: serde ignores unknown fields on internally
@@ -394,6 +400,13 @@ pub enum Op {
     /// the interacted block as if it had no action. Only an interaction's result holds one.
     /// Empty struct variant so unknown fields are rejected (see [`Request::Shutdown`]).
     PassInteraction {},
+    /// New content for slot `slot` of the container at `pos`, the position the callback's
+    /// snapshot listed it at; `None` empties it.
+    SetContainerSlot {
+        pos: BlockPos,
+        slot: u32,
+        stack: Option<NewStack>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

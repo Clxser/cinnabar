@@ -113,6 +113,8 @@ pub struct CallbackRes {
     network: Option<Network>,
     /// The actor's inventory with the staged slots applied; none without an actor.
     inventory: Option<Inventory>,
+    /// The containers in reach of the anchor and its network, with the staged slots applied.
+    containers: containers::Reachable,
     /// In the order they commit. A position has at most one `SetBlockData`, and it comes after
     /// any `SetBlock` there.
     ops: Vec<Op>,
@@ -678,6 +680,7 @@ impl From<protocol::Cause> for ChangeCause {
     }
 }
 
+mod containers;
 mod craft;
 mod entities;
 mod invoke;

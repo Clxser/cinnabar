@@ -566,6 +566,9 @@ type snapshot struct {
 	// slots are the actor's inventory slots as the snapshot holds them, which the commit checks
 	// again where it writes; nil without an actor.
 	slots []item.Stack
+	// containers are the request's loaded containers as the snapshot holds them, by listed
+	// position, which the commit checks again where it writes.
+	containers map[cube.Pos]containerState
 }
 
 // cellState is the state of one snapshot cell that a commit must find unchanged, and the length
@@ -659,10 +662,11 @@ func await(ctx context.Context, task *world.Task) error {
 
 // read builds the event's snapshot in tx: the anchor and its six neighbors within the world's
 // height, loaded or not, with the data of the owned ones, then the members of the anchor's
-// network; nothing for an unanchored call.
+// network and the containers in reach of both; nothing for an unanchored call.
 func (h *Host) read(tx *world.Tx, d *dispatcher, ev event) snapshot {
 	snap := h.readFixed(tx, d, ev)
 	h.network(tx, d, ev, &snap)
+	h.containers(tx, d, ev, &snap)
 	return snap
 }
 

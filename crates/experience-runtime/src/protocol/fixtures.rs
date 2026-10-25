@@ -4,6 +4,7 @@
 use serde::Serialize;
 
 use super::*;
+use crate::limits::{MAX_CONTAINER_DATA_BYTES, MAX_CONTAINER_SLOTS, MAX_CONTAINERS};
 
 /// Constants the Go adapter must agree with: the frame limit, the protocol version, the limits
 /// its commit check enforces again, and the client message limits that must fit the client wire
@@ -36,6 +37,9 @@ struct Limits {
     max_geometry_bytes: usize,
     max_network_blocks: usize,
     max_network_data_bytes: usize,
+    max_containers: usize,
+    max_container_slots: usize,
+    max_container_data_bytes: usize,
     inventory_slots: usize,
     hotbar_slots: u8,
     max_items: usize,
@@ -159,6 +163,7 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
         ],
         network: None,
         inventory: None,
+        containers: None,
         call,
     };
     let result = |seq: u64, outcome: Outcome| Response::Result { seq, outcome };
@@ -191,8 +196,22 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
             hit: None,
         },
     );
+    // A double chest above the controller, listed at one half with the other as its pair, and an
+    // unloaded position beside the controller.
+    let mut chest = vec![None; 54];
+    chest[3] = Some(ItemStack {
+        id: "minecraft:iron_ingot".to_owned(),
+        metadata: 0,
+        count: 16,
+        max_count: 64,
+        data: None,
+        plain: true,
+    });
     if let Request::Callback {
-        network, inventory, ..
+        network,
+        inventory,
+        containers,
+        ..
     } = &mut networked
     {
         *network = Some(Network {
@@ -200,6 +219,35 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
             truncated: false,
         });
         *inventory = Some(Inventory { selected: 0, slots });
+        *containers = Some(Containers {
+            blocks: vec![
+                Container {
+                    pos: BlockPos {
+                        x: 12,
+                        y: 65,
+                        z: -7,
+                    },
+                    loaded: true,
+                    pair: Some(BlockPos {
+                        x: 11,
+                        y: 65,
+                        z: -7,
+                    }),
+                    slots: chest,
+                },
+                Container {
+                    pos: BlockPos {
+                        x: 12,
+                        y: 64,
+                        z: -8,
+                    },
+                    loaded: false,
+                    pair: None,
+                    slots: Vec::new(),
+                },
+            ],
+            truncated: true,
+        });
     }
     let new_stack = |id: &str, count: u8, data: Option<&[u8]>| NewStack {
         id: id.to_owned(),
@@ -593,6 +641,15 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                             ),
                         },
                         Op::PassInteraction {},
+                        Op::SetContainerSlot {
+                            pos: BlockPos {
+                                x: 12,
+                                y: 65,
+                                z: -7,
+                            },
+                            slot: 3,
+                            stack: Some(new_stack("minecraft:iron_ingot", 8, None)),
+                        },
                     ],
                 },
             )),
@@ -645,6 +702,9 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                 max_geometry_bytes: MAX_GEOMETRY_BYTES,
                 max_network_blocks: MAX_NETWORK_BLOCKS,
                 max_network_data_bytes: MAX_NETWORK_DATA_BYTES,
+                max_containers: MAX_CONTAINERS,
+                max_container_slots: MAX_CONTAINER_SLOTS,
+                max_container_data_bytes: MAX_CONTAINER_DATA_BYTES,
                 inventory_slots: INVENTORY_SLOTS,
                 hotbar_slots: HOTBAR_SLOTS,
                 max_items: MAX_ITEMS,

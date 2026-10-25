@@ -20,9 +20,9 @@ use crate::limits::{
 };
 use crate::load::{Catalog, axes};
 use crate::protocol::{
-    BlockPos, BlockState, Call, Cell, Face, FailKind, INVENTORY_SLOTS, Info, Inventory, ItemStack,
-    Network, NewStack, Op, Outcome, PlacementState, Request, Scalar, StateDef, StateValue,
-    StateValues,
+    BlockPos, BlockState, Call, Cell, Containers, Face, FailKind, INVENTORY_SLOTS, Info, Inventory,
+    ItemStack, Network, NewStack, Op, Outcome, PlacementState, Request, Scalar, StateDef,
+    StateValue, StateValues,
 };
 
 const ACTOR: &str = "3f2a7c1e-8b4d-4e6a-9c5f-1d2e3f4a5b6c";
@@ -56,6 +56,7 @@ struct Fixture {
     cells: Vec<Cell>,
     network: Option<Network>,
     inventory: Option<Inventory>,
+    containers: Option<Containers>,
 }
 
 impl Fixture {
@@ -75,6 +76,7 @@ impl Fixture {
                 selected: 0,
                 slots: vec![None; INVENTORY_SLOTS],
             }),
+            containers: None,
         }
     }
 
@@ -113,6 +115,7 @@ impl Fixture {
             network: self.network,
             // The adapter snapshots an inventory only for an actor.
             inventory: self.actor.and(self.inventory),
+            containers: self.containers,
             call: Call::Interact {
                 player: ACTOR.to_owned(),
                 pos: ANCHOR,
@@ -177,6 +180,7 @@ impl Fixture {
             snapshot: self.cells,
             network: self.network,
             inventory: self.inventory,
+            containers: self.containers,
             call: Call::Interact {
                 player: ACTOR.to_owned(),
                 pos: ANCHOR,
@@ -1072,6 +1076,8 @@ fn malformed_inventories_are_refused() {
 }
 
 mod worlds;
+
+mod containers;
 
 mod entities;
 mod simulation;

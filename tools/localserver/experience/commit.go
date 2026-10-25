@@ -113,6 +113,9 @@ func (h *Host) apply(tx *world.Tx, exp string, ev event, snap snapshot, ops []Op
 	if err := slotsCurrent(actor, snap, plan.slots); err != nil {
 		return nil, err
 	}
+	if err := containersCurrent(tx, snap, plan.containers); err != nil {
+		return nil, err
+	}
 	if err := h.validateEntities(tx, exp, ev, snap, actor, ops); err != nil {
 		return nil, err
 	}
@@ -177,6 +180,11 @@ func (h *Host) apply(tx *world.Tx, exp string, ev event, snap snapshot, ops []Op
 		inv, slot := slotHolder(actor.(*player.Player), w.slot)
 		if err := inv.SetItem(slot, w.stack); err != nil {
 			h.log.Error("validated slot write failed", "experience", exp, "slot", w.slot, "error", err)
+		}
+	}
+	for _, w := range plan.containers {
+		if err := w.inv.SetItem(w.slot, w.stack); err != nil {
+			h.log.Error("validated container write failed", "experience", exp, "pos", w.pos, "slot", w.slot, "error", err)
 		}
 	}
 	for _, drop := range plan.drops {
@@ -282,6 +290,8 @@ type commitPlan struct {
 	states   []stateWrite
 	overlays map[int]*overlayList
 	pass     bool
+	// containers are the validated set_container_slot ops, in their order.
+	containers []containerWrite
 }
 
 // tickDuration is one game tick, which a scheduled update counts in.
@@ -522,6 +532,12 @@ func (h *Host) validate(exp string, ev event, snap snapshot, ops []Op) (commitPl
 				return commitPlan{}, fmt.Errorf("%w: op %d passes the click on again", errInvalid, i)
 			}
 			plan.pass = true
+		case op.SetContainerSlot != nil:
+			w, err := h.containerWrite(exp, snap, op.SetContainerSlot)
+			if err != nil {
+				return commitPlan{}, fmt.Errorf("%w: op %d: %v", errInvalid, i, err)
+			}
+			plan.containers = append(plan.containers, w)
 		default:
 			return commitPlan{}, fmt.Errorf("%w: op %d is empty", errInvalid, i)
 		}

@@ -189,7 +189,10 @@ type CallbackRequest struct {
 	Network *Network `json:"network"`
 	// Inventory is the actor's inventory, when the callback has an actor.
 	Inventory *Inventory `json:"inventory"`
-	Call      Call       `json:"call"`
+	// Containers are the containers in reach of the anchor and its network, for a callback with
+	// an anchor.
+	Containers *Containers `json:"containers,omitempty"`
+	Call       Call        `json:"call"`
 }
 
 // ShutdownRequest ends the session.
@@ -250,21 +253,22 @@ func (k *FailKind) UnmarshalJSON(data []byte) error { return unmarshalEnum(data,
 
 // Op is a staged operation. Exactly one field is set.
 type Op struct {
-	Entity          *EntityCommand
-	Schedule        *ScheduleOp
-	CancelSchedule  *CancelScheduleOp
-	World           *WorldActionOp
-	StoreWrite      *StoreWriteOp
-	SetBlock        *SetBlockOp
-	SetBlockData    *SetBlockDataOp
-	Tell            *TellOp
-	SendClient      *SendClientOp
-	SetBlockState   *SetBlockStateOp
-	SetSlot         *SetSlotOp
-	DropItem        *DropItemOp
-	ScheduleUpdate  *ScheduleUpdateOp
-	SetOverlays     *SetOverlaysOp
-	PassInteraction *PassInteractionOp
+	Entity           *EntityCommand
+	Schedule         *ScheduleOp
+	CancelSchedule   *CancelScheduleOp
+	World            *WorldActionOp
+	StoreWrite       *StoreWriteOp
+	SetBlock         *SetBlockOp
+	SetBlockData     *SetBlockDataOp
+	Tell             *TellOp
+	SendClient       *SendClientOp
+	SetBlockState    *SetBlockStateOp
+	SetSlot          *SetSlotOp
+	DropItem         *DropItemOp
+	ScheduleUpdate   *ScheduleUpdateOp
+	SetOverlays      *SetOverlaysOp
+	PassInteraction  *PassInteractionOp
+	SetContainerSlot *SetContainerSlotOp
 }
 
 // PassInteractionOp passes an interaction's click on: once the rest of its result commits, the
@@ -729,6 +733,8 @@ func (o Op) MarshalJSON() ([]byte, error) {
 		return json.Marshal(setOverlaysWire{variantTag{typeSetOverlays}, o.SetOverlays})
 	case o.PassInteraction != nil:
 		return json.Marshal(passInteractionWire{variantTag{typePassInteraction}, o.PassInteraction})
+	case o.SetContainerSlot != nil:
+		return json.Marshal(setContainerSlotWire{variantTag{typeSetContainerSlot}, o.SetContainerSlot})
 	}
 	return nil, errors.New("empty op")
 }
@@ -770,6 +776,8 @@ func (o *Op) UnmarshalJSON(data []byte) error {
 		return decodeStrict(data, &setOverlaysWire{SetOverlaysOp: fresh(&o.SetOverlays)})
 	case typePassInteraction:
 		return decodeStrict(data, &passInteractionWire{PassInteractionOp: fresh(&o.PassInteraction)})
+	case typeSetContainerSlot:
+		return decodeStrict(data, &setContainerSlotWire{SetContainerSlotOp: fresh(&o.SetContainerSlot)})
 	}
 	return fmt.Errorf("unknown op type %q", tag)
 }
