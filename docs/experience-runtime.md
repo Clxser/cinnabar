@@ -106,7 +106,7 @@ unavailable. Commit checks members and boundary changes.
 
 Server WIT 0.8 adds world definitions, player observations and scoped state.
 The SDK defaults the new exports to empty/no-op implementations. Rebuilt guests
-must declare the current server API (`api = "0.11"`); existing 0.1–0.6, 0.8, 0.9 and 0.10
+must declare the current server API (`api = "0.12"`); existing 0.1–0.6, 0.8, 0.9, 0.10 and 0.11
 artifacts retain their frozen ABIs.
 
 | Type or operation | Contract |
@@ -216,6 +216,18 @@ contain own-item data; foreign/ordinary stacks cannot. Vanilla metadata variants
 stack limits and offhand eligibility come from the adapter's item catalog.
 Own-item data persists with the stack and reaches clients; decode it as untrusted.
 Private block data does not enter chunk NBT.
+
+Server WIT 0.12 adds the `content-rules` export, which runs once after `register`:
+
+| Rule | Contract |
+| --- | --- |
+| `block-rule.drops` | `itself` (the default) drops the block's item; `nothing` drops nothing, leaving drops to `on-break`. Explosions then drop nothing |
+| `block-rule.item` | `listed` (the default) in the creative group; `unlisted` registered but left out; `none` registers no item: no creative entry, pick-block does nothing, no stack of it can be made (`unknown-block`), and it cannot drop itself |
+| `unlisted-items` | The Experience's items that the creative inventory leaves out |
+| `callback.harvested` | True only in an `on-break` whose player's game mode drops what it breaks (not creative); guests drop what `nothing` leaves to them only then |
+
+A rule naming an unknown block, two rules for one block, or an unknown or repeated unlisted item
+fails loading.
 
 ## Entities and seats
 

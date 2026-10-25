@@ -57,8 +57,9 @@ pub use visuals::{
 /// control delivery to `send_client`; 8 adds world lifecycle, player observations and scoped state;
 /// 9 adds instance simulation ticks and cancellable timers; 10 adds cell overlays to `loaded`,
 /// snapshot cells and the `set_overlays` op, and the click position to `interact`;
-/// 11 adds registered actors, seats, steering and entity observations.
-pub const PROTOCOL_VERSION: u32 = 11;
+/// 11 adds registered actors, seats, steering and entity observations; 12 adds blocks' drops and
+/// items, items' listing and whether a `break` harvests.
+pub const PROTOCOL_VERSION: u32 = 12;
 
 const _: () = assert!(MAX_FRAME_BYTES <= u32::MAX as usize);
 
@@ -171,8 +172,11 @@ pub enum Call {
     Place {
         change: Change,
     },
+    /// `harvest` when the player broke the block in a game mode that drops what is broken.
     Break {
         change: Change,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        harvest: bool,
     },
     /// `hit` is where the player's click met the block, in pixels from its corner, when the
     /// client sent one within the cell.
@@ -271,7 +275,8 @@ pub enum Mining {
 }
 
 /// A validated block: its 0.1 definition, then server WIT 0.5's states, placement traits, look
-/// and network membership. A block with a `visual` binds no `textures`.
+/// and network membership, and 0.12's drops and item. A block with a `visual` binds no
+/// `textures`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BlockDef {
@@ -284,6 +289,26 @@ pub struct BlockDef {
     pub visual: Option<Visual>,
     pub permutations: Vec<Permutation>,
     pub network: bool,
+    pub drops: BlockDrops,
+    pub item: BlockItem,
+}
+
+/// What breaking a block drops by itself: its own item, or nothing, which leaves the drops to the
+/// guest's `on-break`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BlockDrops {
+    Itself,
+    Nothing,
+}
+
+/// A block's item: listed in the creative inventory, unlisted, or none at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BlockItem {
+    Listed,
+    Unlisted,
+    None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

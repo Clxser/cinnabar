@@ -380,7 +380,8 @@ func (h *Host) scheduledTick(b Block, pos cube.Pos, tx *world.Tx) {
 }
 
 // breakHandler deletes the broken block's data. A player's break then queues on-break with that
-// data; a break without a user, such as an explosion, notifies nothing.
+// data, a harvest unless the player's game mode takes nothing from what it breaks; a break
+// without a user, such as an explosion, notifies nothing.
 func (h *Host) breakHandler(b Block, pos cube.Pos, tx *world.Tx, u item.User) {
 	instance, ok := h.worlds.of(tx.World())
 	if !ok {
@@ -397,11 +398,13 @@ func (h *Host) breakHandler(b Block, pos cube.Pos, tx *world.Tx, u item.User) {
 	}
 	actor := u.H()
 	id := actor.UUID().String()
+	p, isPlayer := u.(*player.Player)
+	harvest := isPlayer && !p.GameMode().CreativeInventory()
 	h.enqueue(b.t.exp, event{w: tx.World(), instance: instance, anchor: pos, actor: actor, call: Call{
 		Break: &BreakCall{Change: Change{
 			Pos: blockPos(pos), Actor: &id, Cause: CausePlayer, BeforeID: b.t.id,
 			AfterID: blockID(tx.Block(pos)), PreviousData: previous,
-		}},
+		}, Harvest: harvest},
 	}})
 }
 

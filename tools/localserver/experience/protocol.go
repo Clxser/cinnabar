@@ -19,7 +19,7 @@ import (
 
 // protocolVersion is the adapter protocol this package speaks. It must equal the Rust runtime's
 // PROTOCOL_VERSION, which TestFrameLimitMatchesRust checks against the limits fixture.
-const protocolVersion = 11
+const protocolVersion = 12
 
 // BlockPos is a block position.
 type BlockPos struct {
@@ -119,9 +119,11 @@ type PlaceCall struct {
 	Change Change `json:"change"`
 }
 
-// BreakCall follows a player break; the change carries the old id and data.
+// BreakCall follows a player break; the change carries the old id and data. Harvest is set when
+// the player broke the block in a game mode that drops what is broken.
 type BreakCall struct {
-	Change Change `json:"change"`
+	Change  Change `json:"change"`
+	Harvest bool   `json:"harvest,omitempty"`
 }
 
 // InteractCall is a player's interaction with a block. Hit is where the click met the block, in
@@ -214,8 +216,8 @@ type Breakable struct {
 }
 
 // BlockDef is a validated block of the Experience: its 0.1 definition, then server WIT 0.5's
-// states, placement traits, look and network membership. A block with a Visual binds no
-// Textures.
+// states, placement traits, look and network membership, and 0.12's drops and item. A block
+// with a Visual binds no Textures.
 type BlockDef struct {
 	ID           string           `json:"id"`
 	DisplayName  string           `json:"display_name"`
@@ -226,6 +228,8 @@ type BlockDef struct {
 	Visual       *Visual          `json:"visual"`
 	Permutations []Permutation    `json:"permutations"`
 	Network      bool             `json:"network"`
+	Drops        BlockDrops       `json:"drops"`
+	Item         BlockItem        `json:"item"`
 }
 
 // FailKind is why a callback failed.
