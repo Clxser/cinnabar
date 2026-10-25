@@ -278,14 +278,17 @@ fn place_break_neighbor_reach_guest() {
         },
     );
     assert_eq!(outcome(&place), committed(vec![tell("placed")]));
-    let broken = callback(
-        p(0),
-        Call::Break {
-            change: change(COUNTER, AIR, Some("0a")),
-        },
-    );
-    let broken = with_cell(broken, cell(p(0), AIR, false, None));
-    assert_eq!(outcome(&broken), committed(vec![tell("broke 1")]));
+    for (harvest, told) in [(false, "broke 1"), (true, "broke 1 harvested")] {
+        let broken = callback(
+            p(0),
+            Call::Break {
+                change: change(COUNTER, AIR, Some("0a")),
+                harvest,
+            },
+        );
+        let broken = with_cell(broken, cell(p(0), AIR, false, None));
+        assert_eq!(outcome(&broken), committed(vec![tell(told)]));
+    }
     let neighbor = callback(
         p(0),
         Call::Neighbor {

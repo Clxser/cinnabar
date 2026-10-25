@@ -102,6 +102,8 @@ pub struct CallbackRes {
     /// The actor's focus, which a client message or an epoch may have; its snapshot is the one
     /// its anchor would have.
     focus: Option<BlockPos>,
+    /// Whether a break callback harvests, so that drops its blocks leave to the guest are due.
+    harvest: bool,
     /// This Experience's blocks and items and the server's items.
     own: Arc<Catalog>,
     snapshot: Snapshot,
@@ -301,7 +303,7 @@ fn prepare<'a>(
             )
         }
         Call::Place { change } => (Some(change.pos), Export::Place(block_change(change)?)),
-        Call::Break { change } => (Some(change.pos), Export::Break(block_change(change)?)),
+        Call::Break { change, .. } => (Some(change.pos), Export::Break(block_change(change)?)),
         Call::Interact {
             player,
             pos,
@@ -428,6 +430,7 @@ fn prepare<'a>(
         actor: actor.clone(),
         player_store: actor.is_some() || matches!(call, Call::Player { .. }),
         focus: focused,
+        harvest: matches!(call, Call::Break { harvest: true, .. }),
         own: Arc::clone(own),
         snapshot: Snapshot {
             cells,
