@@ -1151,6 +1151,21 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   Touch-capable hosts expose persisted look sensitivity and control guidance. A utility dropdown, chat and pause share a centered row; the dropdown toggles Debug Overlay and Player List and opens Emotes; inventory access follows the HUD hotbar. The default joystick-and-crosshair layout uses proportional movement/action centers and height-based sizes. Touchscreen settings offers a touch-control layout draft with dragging, alignment guides, snapping, grid, touch-accessible Undo/Redo, Save, Cancel and Reset; saved positions drive both artwork and hit regions. Mods with the controls grant add up to four labelled buttons each (sixteen shown) in the dropdown's button style; taps complete on release inside the button, reach only the owning mod's next frame, and placements persist by button id in the same editor. The sensitivity curve, movement/action parity, alternate touch profiles, remapping, cutout handling and physical-device layout acceptance remain open.
   Touch-capable hosts expose persisted look sensitivity and control guidance. A utility dropdown, chat and pause share a centered row; the dropdown toggles Debug Overlay and Player List and opens Emotes; inventory access follows the HUD hotbar. The touch Use button admits block placement and held repeats through the shared block-use handler. The sensitivity curve, movement/action layouts, alternate touch profiles, remapping, customization, cutout handling and device layout acceptance remain open.
   Menu scroll regions and chat history accept captured finger drags; swipes cancel pending taps, and form slider gestures retain their own control. Native gesture calibration and full route/device acceptance remain open.
+  Menu text editors request platform keyboards again on field changes and retaps. Android keyboard overlap reduces the UI layout viewport and reveals unchanged menu focus after resize. The People drawer filters the current friend list by gamertag. Global people lookup, gameplay text entry, full composition support and device IME acceptance remain open.
+- The iOS IPA (`docs/ios.md`) runs each Go core in-process from a linked C archive and loads
+  carriers injected into the bundle. On an iPhone 18 Pro Max (iOS 27) it launches full screen,
+  renders with Metal, signs in and joins servers, including a Java shader pack; servers that
+  send large packs need the increased-memory-limit capability. The 120 Hz display link and
+  Game Mode have no device evidence yet. Safe-area insets are not applied, so the Dynamic Island
+  can cover HUD edges, and there is no render-scale option for the native 3× drawable. Touch,
+  soft-keyboard entry and keyboard overlap remain unverified. Chat requests the iOS software
+  keyboard. Shader packs compile on a background thread on iOS, with cooperative heap and
+  time checks; compiler faults can terminate the app. Device acceptance of this path remains open.
+  On-device first-run preparation,
+  native crash capture, clipboard, link opening, local worlds and mods (no JIT) remain
+  unavailable.
+- Local mods and server experiences still need runtime/input isolation, reload/reorder/
+  removal, consent, custom screen transitions and media qualification. Unmeasured shared
   Ordinary touch controls take focus only after a completed tap, preserving manual scroll positions during pending swipes.
   Menu text editors and Android in-game chat request platform keyboards again on field changes, chat opening and retaps; the platform Back key cancels chat and inventories at its place among keys and acts as mouse Back elsewhere. Android reads keyboard overlap from the active activity to reduce the UI layout viewport and reveal unchanged menu focus after resize; failed geometry reads warn once and temporarily use zero overlap. The People drawer filters the current friend list by gamertag. Global people lookup, sign and book text entry, Back during gameplay, chat IME composition, full composition support and device IME and Back acceptance remain open.
 - The reusable Dragonfly client-part helper offers bundles and typed wire v2 messages;
@@ -1355,10 +1370,14 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   on, the reload key acts only with a selected pack and never lists the pack folder, and pack
   passes skip frames without a loaded pack or whose world is covered by the menu panorama or
   an opaque screen; that backdrop stays native and unshaded, as Iris shades only the level.
-  CPU translation runs in an owned child process
+  On desktop and Android, CPU translation runs in an owned child process
   with a 2 GiB Rust heap limit, a 60-second CPU and elapsed-time limit, and bounded input/output.
-  Cancellation kills and reaps that child; parser crashes fail the selected pack. Saved option
-  files and generated helper copies have storage limits, and input files must be regular files.
+  Cancellation kills and reaps that child; parser crashes fail the selected pack. Option-menu
+  reads and translation on iOS run on an owned background thread with the same output cap,
+  cooperative 60-second cancellation and a soft 2 GiB live process-heap budget. An active
+  parser or blocking file operation must return before cancellation retires the thread;
+  compiler faults can stop the app. Device acceptance of the thread backend remains open.
+  Saved option files and generated helper copies have storage limits, and input files must be regular files.
   Option-menu reads use the same compiler limits; payload decoding stays off the UI thread,
   and closing the menu retires its reader before another starts. Accepted expression depths
   survive result transport. Unreadable render-side saved settings retain the default values.
@@ -1466,6 +1485,7 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
 - Runtime pack compatibility still includes custom texture inheritance/tints, authored
   geometry and block/item component behavior beyond the currently supported cases.
 
+See [Android](docs/android.md), [iOS](docs/ios.md), [mods](docs/modding-spike.md),
 See [Android](docs/android.md), [mods](docs/mods/README.md),
 [server experiences](docs/server-experiences.md) and
 [experience runtime](docs/experience-runtime.md) for existing implementation contracts.
