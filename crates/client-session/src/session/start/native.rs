@@ -70,6 +70,11 @@ pub fn spawn_network_with_companion<P: Send + 'static>(
         let profile = bridge::join_profile::JoinProfile::current();
         let (mut handle, channels) = network_channels(config.session_generation);
         let failure = channels.control_event_tx.clone();
+        handle.pick_trace = config
+            .packet_capture
+            .as_ref()
+            .map(|_| Arc::new(std::sync::OnceLock::new()));
+        let pick_trace = handle.pick_trace.clone();
         let shutdown = handle.shutdown.clone();
         let terminal = Arc::clone(&channels.terminal);
         let completion = tasks.token();
@@ -77,6 +82,11 @@ pub fn spawn_network_with_companion<P: Send + 'static>(
         let work = move || {
             let (packet_tap, packet_capture) =
                 packet_log::session_tap(config.packet_capture.as_ref());
+            if let Some(pick_trace) = pick_trace
+                && let Some(trace) = packet_tap.pick_trace()
+            {
+                let _ = pick_trace.set(trace);
+            }
             let executor = NativeNetworkExecutor { tasks };
             let session = async {
                 let mut config = config;
@@ -115,7 +125,7 @@ pub fn spawn_network_with_companion<P: Send + 'static>(
                             execution: Some(&execution),
                             display_name: &config.display_name,
                             client_random_id: config.client_random_id,
-                            cache: Some(config.client_blob_cache.clone()),
+                            cache: config.client_blob_cache,
                             skin: Some(config.player_skin),
                             settings: &config.login_settings,
                             tap: Some(packet_tap),

@@ -28,6 +28,7 @@ fn network_pending_counts_include_ingress_and_outbound_queues() {
         unflushed: Default::default(),
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
         packet_delay: Default::default(),
+        pick_trace: Default::default(),
     };
 
     assert_eq!(handle.pending_event_count(), 0);

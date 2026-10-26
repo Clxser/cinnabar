@@ -1,21 +1,13 @@
-//! The ordered catalog of named snapshots and their viewport and fixture inputs.
+//! The ordered catalog of snapshot names, viewport sizes and fixture inputs.
 
-#[cfg(feature = "test-support")]
-use super::chat::chat_server_content;
-use super::chat::{
-    chat_background, chat_command_background, chat_command_targets, chat_completion,
-    chat_history_width, chat_mentions, colored_mentions,
-};
 #[cfg(feature = "test-support")]
 use super::cosmetics;
-use launcher::local_worlds::world::UnavailableReason;
-
 use super::{
     Fixture, GUI_SCALE, KEYBOARD_SIZE, SIZE, SMALL_SIZE, SettingId, SettingSection, State,
-    TALL_SIZE, collection_reveal, hud_card_fit, hud_cards, hud_editor, local_identity,
-    minecraft_import, out_of_game, profile, roster, settings, settings_screens, shader_options,
-    shader_pack, updates,
+    TALL_SIZE, chat, collection_reveal, hud_surface, local_identity, minecraft_import, out_of_game,
+    profile, roster, settings, settings_screens, shader_options, shader_pack, updates,
 };
+use launcher::local_worlds::world::UnavailableReason;
 
 /// A capture at GUI scale 1 that needs no game assets.
 const fn asset_free(name: &'static str, size: [u32; 2], fixture: fn() -> Fixture) -> State {
@@ -28,6 +20,42 @@ const fn asset_free(name: &'static str, size: [u32; 2], fixture: fn() -> Fixture
 }
 
 pub(super) const STATES: &[State] = &[
+    State {
+        name: "profile-overview-fallback",
+        size: TALL_SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: profile::overview,
+    },
+    State {
+        name: "profile-overview-fallback-narrow",
+        size: [360, TALL_SIZE[1]],
+        gui_scale: GUI_SCALE,
+        fixture: profile::overview,
+    },
+    State {
+        name: "profile-stats-fallback",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: profile::statistics,
+    },
+    State {
+        name: "profile-stats-fallback-narrow",
+        size: [360, SIZE[1]],
+        gui_scale: GUI_SCALE,
+        fixture: profile::statistics,
+    },
+    State {
+        name: "profile-partial-fallback",
+        size: TALL_SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || profile::partial(launcher::menu::ProfileTab::Overview),
+    },
+    State {
+        name: "profile-partial-stats-fallback",
+        size: [360, SIZE[1]],
+        gui_scale: GUI_SCALE,
+        fixture: || profile::partial(launcher::menu::ProfileTab::Stats),
+    },
     asset_free("sprite-outline-before", [800, 240], || {
         Fixture::SpriteOutline { outline: false }
     }),
@@ -56,16 +84,16 @@ pub(super) const STATES: &[State] = &[
         }
     }),
     State {
-        name: "mod-hud-card-fit-before",
+        name: "mod-hud-surface",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || hud_card_fit::fixture(false),
+        fixture: hud_surface::gameplay,
     },
     State {
-        name: "mod-hud-card-fit-after",
+        name: "mod-hud-control-previews",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || hud_card_fit::fixture(true),
+        fixture: hud_surface::panel,
     },
     State {
         name: "collection-reveal-before",
@@ -80,18 +108,6 @@ pub(super) const STATES: &[State] = &[
         fixture: || collection_reveal::fixture(true),
     },
     State {
-        name: "hud-editor-before",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: || hud_editor::fixture(false),
-    },
-    State {
-        name: "hud-editor-after",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: || hud_editor::fixture(true),
-    },
-    State {
         name: "mod-local-player-neutral",
         size: SIZE,
         gui_scale: GUI_SCALE,
@@ -102,18 +118,6 @@ pub(super) const STATES: &[State] = &[
         size: SIZE,
         gui_scale: GUI_SCALE,
         fixture: || local_identity::fixture(true),
-    },
-    State {
-        name: "mod-hud-card-previews",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: || hud_cards::fixture(true),
-    },
-    State {
-        name: "mod-hud-card-previews-empty",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: || hud_cards::fixture(false),
     },
     State {
         name: "sign-in-cache-error",
@@ -196,42 +200,6 @@ pub(super) const STATES: &[State] = &[
         },
     },
     State {
-        name: "profile-overview-fallback",
-        size: TALL_SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: profile::overview,
-    },
-    State {
-        name: "profile-overview-fallback-narrow",
-        size: [360, TALL_SIZE[1]],
-        gui_scale: GUI_SCALE,
-        fixture: profile::overview,
-    },
-    State {
-        name: "profile-stats-fallback",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: profile::statistics,
-    },
-    State {
-        name: "profile-stats-fallback-narrow",
-        size: [360, SIZE[1]],
-        gui_scale: GUI_SCALE,
-        fixture: profile::statistics,
-    },
-    State {
-        name: "profile-partial-fallback",
-        size: TALL_SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: || profile::partial(launcher::menu::ProfileTab::Overview),
-    },
-    State {
-        name: "profile-partial-stats-fallback",
-        size: [360, SIZE[1]],
-        gui_scale: GUI_SCALE,
-        fixture: || profile::partial(launcher::menu::ProfileTab::Stats),
-    },
-    State {
         name: "home-mod-update-before",
         size: SIZE,
         gui_scale: GUI_SCALE,
@@ -291,14 +259,14 @@ pub(super) const STATES: &[State] = &[
         name: "chat-server-content-idle",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat_server_content(false),
+        fixture: || chat::chat_server_content(false),
     },
     #[cfg(feature = "test-support")]
     State {
         name: "chat-server-content-hover",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat_server_content(true),
+        fixture: || chat::chat_server_content(true),
     },
     #[cfg(feature = "test-support")]
     State {
@@ -562,50 +530,50 @@ pub(super) const STATES: &[State] = &[
         name: "chat-background-transparent",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat_background(0),
+        fixture: || chat::chat_background(0),
     },
     State {
         name: "chat-background-half",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat_background(50),
+        fixture: || chat::chat_background(50),
     },
     State {
         name: "chat-background-opaque",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat_background(100),
+        fixture: || chat::chat_background(100),
     },
     State {
         name: "chat-history-width",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: chat_history_width,
+        fixture: chat::chat_history_width,
     },
     State {
         name: "chat-history-width-small",
         size: SMALL_SIZE,
         gui_scale: 1,
-        fixture: chat_history_width,
+        fixture: chat::chat_history_width,
     },
     State {
         name: "chat-command-background-transparent",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: chat_command_background,
+        fixture: chat::chat_command_background,
     },
     State {
         name: "chat-command-completion",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: || chat_completion("/give @", &["@a", "@e", "@p"]),
+        fixture: || chat::chat_completion("/give @", &["@a", "@e", "@p"]),
     },
     State {
         name: "chat-command-completion-small",
         size: SMALL_SIZE,
         gui_scale: 1,
         fixture: || {
-            chat_completion(
+            chat::chat_completion(
                 "/tell ExamplePlayer AnotherPlayerWithALongName @",
                 &["@Alex", "@ExamplePlayerWithALongName", "@Bo"],
             )
@@ -639,19 +607,19 @@ pub(super) const STATES: &[State] = &[
         name: "chat-colored-mentions",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: colored_mentions,
+        fixture: chat::colored_mentions,
     },
     State {
         name: "chat-mentions",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: chat_mentions,
+        fixture: chat::chat_mentions,
     },
     State {
         name: "chat-command-targets",
         size: SIZE,
         gui_scale: GUI_SCALE,
-        fixture: chat_command_targets,
+        fixture: chat::chat_command_targets,
     },
     State {
         name: "tab-list-badges",
@@ -686,6 +654,18 @@ pub(super) const STATES: &[State] = &[
             view.over_world = true;
             Fixture::Menu(Box::new(view))
         },
+    },
+    State {
+        name: "settings-video-culling-on",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || settings_screens::settings_video_culling(true),
+    },
+    State {
+        name: "settings-video-culling-off",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || settings_screens::settings_video_culling(false),
     },
     State {
         name: "settings-video-shader-shortcut",
@@ -816,17 +796,5 @@ pub(super) const STATES: &[State] = &[
         size: SIZE,
         gui_scale: GUI_SCALE,
         fixture: shader_options::rest,
-    },
-    State {
-        name: "settings-video-culling-on",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: || settings_screens::settings_video_culling(true),
-    },
-    State {
-        name: "settings-video-culling-off",
-        size: SIZE,
-        gui_scale: GUI_SCALE,
-        fixture: || settings_screens::settings_video_culling(false),
     },
 ];

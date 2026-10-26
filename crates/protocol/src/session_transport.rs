@@ -37,6 +37,7 @@ pub(crate) enum Inbound {
 }
 
 /// The framed peer's last message on a session, standing for the server's own Transfer or Disconnect.
+#[derive(Clone)]
 pub(crate) enum Terminal {
     Transfer(SessionTransfer),
     Disconnect(SessionDisconnect),
@@ -64,11 +65,13 @@ pub(crate) struct SessionTransport<R = FramedReader> {
     preparation_scanned: usize,     // receive prefix inspected for requested replies
     preparation_terminals_scanned: usize, // receive prefix inspected for usable terminals
     ended: bool,                    // a terminal message was delivered
+    terminal: Option<Terminal>,     // retained until earlier raw packets drain
+    blob_scan: blob_intake::BlobScan,
     sending: VecDeque<InFlightSend>,
     tap: Option<Arc<dyn PacketTap>>,
     current: Option<CurrentPacket>, // the tapped packet the session is processing
     split_frames: u64,              // batch frames split so far; startup batches count as 0
-    delivered: (u64, u32),          // frame and index of the packet `recv` returned last
+    delivered: crate::packet_tap::PacketOrigin, // frame and index of the packet `recv` returned last
 }
 
 /// One original read-ahead FIFO entry, with native delay metadata on the SAME body/terminal.
@@ -167,11 +170,13 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
             preparation_scanned: 0,
             preparation_terminals_scanned: 0,
             ended: false,
+            terminal: None,
+            blob_scan: Default::default(),
             sending: VecDeque::new(),
             tap: None,
             current: None,
             split_frames: 0,
-            delivered: (0, 0),
+            delivered: Default::default(),
         }
     }
 
@@ -183,7 +188,16 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
     /// The latency-trace connection, frame and in-frame index of the packet [`Self::recv`]
     /// returned last; frames count the peer's batch frames from 1, startup packets are frame 0.
     pub(crate) fn trace_position(&self) -> (u64, u64, u32) {
-        (self.reader.trace_conn(), self.delivered.0, self.delivered.1)
+        (
+            self.reader.trace_conn(),
+            self.delivered.trace.0,
+            self.delivered.trace.1,
+        )
+    }
+
+    /// The last delivered packet's provenance, retained after its observer settles.
+    pub(crate) fn packet_origin(&self) -> crate::packet_tap::PacketOrigin {
+        self.delivered
     }
 
     /// Reports every packet this transport delivers or sends to `tap`.
@@ -239,63 +253,72 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
                 self.preparation_scanned = self.preparation_scanned.saturating_sub(1);
                 self.preparation_terminals_scanned =
                     self.preparation_terminals_scanned.saturating_sub(1);
-                self.delivered = packet.trace_position;
+                self.blob_scan.consume_front(&packet);
                 self.observe(&packet);
                 return Ok(Inbound::Packet(packet));
             }
-            if let Some(batch) = self.startup.pop_front() {
-                self.receive_retained_batch(batch, 0)?;
-                continue;
+            if let Some(terminal) = self.terminal.take() {
+                return Ok(Inbound::Terminal(terminal));
             }
-            if self.ended {
-                return Err(SessionFailure::ConnectionClosed.into());
-            }
-            let next = match self.next_frame().await {
-                IncomingFrame::Upstream(next) => next,
-                IncomingFrame::Injected(body) => {
-                    self.receive_relayed(body, 0);
-                    continue;
-                }
-            };
-            let frame = match next {
-                Some(Ok(frame)) => frame,
-                Some(Err(error)) => return Err(error),
-                None => return Err(SessionFailure::ConnectionClosed.into()),
-            };
-            #[cfg(not(all(feature = "native-networking", not(target_arch = "wasm32"))))]
-            let ReadItem::Framed(frame) = frame;
-            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-            let frame = match frame {
-                ReadItem::Framed(frame) => frame,
-                #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-                ReadItem::Native(batch) => {
-                    self.split_frames += 1;
-                    self.receive_retained_batch(batch, self.split_frames)?;
-                    continue;
-                }
-            };
-            if let Some(body) = crate::session_wire::batch_frame_body(&frame) {
-                self.split_frames += 1;
-                self.receive_server_batch(body, self.split_frames)?;
-                continue;
-            }
-            let terminal = match crate::session_wire::decode_core_message(frame)
-                .map_err(SessionFailure::Transport)?
-            {
-                CoreMessage::Transfer(transfer) => Terminal::Transfer(transfer),
-                CoreMessage::Disconnect(disconnect) => Terminal::Disconnect(disconnect),
-                CoreMessage::Handoff(_) | CoreMessage::PackData { .. } | CoreMessage::Batch(_) => {
-                    return Err(
-                        SessionFailure::Transport(BridgeError::InvalidSessionMessage {
-                            reason: "setup message after the handoff",
-                        })
-                        .into(),
-                    );
-                }
-            };
-            self.ended = true;
-            return Ok(Inbound::Terminal(terminal));
+            self.receive_more().await?;
         }
+    }
+
+    /// Retains one more original or relayed body without consuming earlier FIFO input.
+    async fn receive_more(&mut self) -> Result<(), SessionError> {
+        if let Some(batch) = self.startup.pop_front() {
+            self.receive_retained_batch(batch, 0)?;
+            return Ok(());
+        }
+        if self.ended {
+            return Err(SessionFailure::ConnectionClosed.into());
+        }
+        let next = match self.next_frame().await {
+            IncomingFrame::Upstream(next) => next,
+            IncomingFrame::Injected(body) => {
+                self.receive_relayed(body, 0);
+                return Ok(());
+            }
+        };
+        let frame = match next {
+            Some(Ok(frame)) => frame,
+            Some(Err(error)) => return Err(error),
+            None => return Err(SessionFailure::ConnectionClosed.into()),
+        };
+        #[cfg(not(all(feature = "native-networking", not(target_arch = "wasm32"))))]
+        let ReadItem::Framed(frame) = frame;
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        let frame = match frame {
+            ReadItem::Framed(frame) => frame,
+            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+            ReadItem::Native(batch) => {
+                self.split_frames += 1;
+                self.receive_retained_batch(batch, self.split_frames)?;
+                return Ok(());
+            }
+        };
+        if let Some(body) = crate::session_wire::batch_frame_body(&frame) {
+            self.split_frames += 1;
+            self.receive_server_batch(body, self.split_frames)?;
+            return Ok(());
+        }
+        let terminal = match crate::session_wire::decode_core_message(frame)
+            .map_err(SessionFailure::Transport)?
+        {
+            CoreMessage::Transfer(transfer) => Terminal::Transfer(transfer),
+            CoreMessage::Disconnect(disconnect) => Terminal::Disconnect(disconnect),
+            CoreMessage::Handoff(_) | CoreMessage::PackData { .. } | CoreMessage::Batch(_) => {
+                return Err(
+                    SessionFailure::Transport(BridgeError::InvalidSessionMessage {
+                        reason: "setup message after the handoff",
+                    })
+                    .into(),
+                );
+            }
+        };
+        self.terminal = Some(terminal);
+        self.ended = true;
+        Ok(())
     }
 
     /// Alternates injected bodies with the same cancellation-safe delayed reader front.
@@ -306,6 +329,7 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
             &mut self.reader,
             &mut self.ahead,
             &mut self.ahead_bytes,
+            MAX_READ_AHEAD_BYTES.saturating_sub(self.blob_scan.bytes),
             #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
             delay,
         );
@@ -341,6 +365,9 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
             if let Some(terminal) = packet_terminal(packet)? {
                 return Ok(Some(terminal));
             }
+        }
+        if let Some(terminal) = &self.terminal {
+            return Ok(Some(terminal.clone()));
         }
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
         if matches!(&self.reader, Reader::Native(_)) {
@@ -445,6 +472,16 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
         max_bytes: usize,
         cx: &mut Context<'_>,
     ) -> Poll<bool> {
+        let max_bytes = max_bytes.saturating_sub(self.blob_scan.bytes);
+        if self.ahead_bytes >= max_bytes
+            || self.ended
+            || self
+                .ahead
+                .back()
+                .is_some_and(|entry| ends_session(&entry.item))
+        {
+            return Poll::Ready(false);
+        }
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
         let delay = self.packet_delay();
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
@@ -539,6 +576,7 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
     /// Puts `packets` back ahead of every unread packet, in their order. The tap has already
     /// seen them and does not see them again.
     pub(crate) fn prepend(&mut self, packets: Vec<RawPacket>) {
+        self.blob_scan = Default::default();
         let mut restored = VecDeque::from(packets);
         restored.append(&mut self.received);
         self.received = restored;
@@ -562,6 +600,11 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
         }
     }
 
+    /// Returns capture-only correspondence storage when this session records packets.
+    pub(crate) fn pick_trace(&self) -> Option<Arc<crate::capture::PickTrace>> {
+        self.tap.as_ref()?.pick_trace()
+    }
+
     /// Reports `outcome` for the packet the session is processing: the one [`Self::recv`]
     /// returned last. Only the first report after each delivery counts.
     pub(crate) fn reject_current(&mut self, outcome: PacketOutcome) {
@@ -575,8 +618,16 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
         }
     }
 
-    /// Makes `packet`, which the tap recorded when its batch was split, the current packet.
+    /// Retains the delivered packet's numeric provenance and makes its observer current.
     fn observe(&mut self, packet: &RawPacket) {
+        self.delivered = crate::packet_tap::PacketOrigin {
+            trace: packet.trace_position,
+            capture_sequence: if self.pick_trace().is_some() {
+                packet.record.map_or(0, |record| record.0)
+            } else {
+                0
+            },
+        };
         if self.tap.is_none() {
             return;
         }
@@ -662,10 +713,13 @@ async fn next_reader_item<R: bridge::FrameRead>(
     reader: &mut Reader<R>,
     ahead: &mut VecDeque<ReadAhead>,
     ahead_bytes: &mut usize,
+    read_ahead_limit: usize,
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))] delay: Option<
         native::delay::NativePacketDelay,
     >,
 ) -> Option<Result<ReadItem, SessionError>> {
+    #[cfg(not(all(feature = "native-networking", not(target_arch = "wasm32"))))]
+    let _ = read_ahead_limit;
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     if let Some(delay) = delay {
         loop {
@@ -681,7 +735,7 @@ async fn next_reader_item<R: bridge::FrameRead>(
                         tokio::select! {
                             _ = &mut due => break,
                             more = poll_fn(|cx| poll_reader_ahead(reader, ahead, ahead_bytes,
-                                Some(delay.clone()), MAX_READ_AHEAD_BYTES, cx)), if reading => { reading = more; }
+                                Some(delay.clone()), read_ahead_limit, cx)), if reading => { reading = more; }
                         }
                     }
                 }
@@ -846,13 +900,39 @@ pub(crate) fn batch_frame(packets: &[Packet]) -> Option<Bytes> {
 
 /// Encodes a Bedrock batch body independently of either transport's envelope.
 pub(crate) fn batch_body(packets: &[Packet]) -> Option<Bytes> {
-    let mut frame = Vec::new();
+    batch_body_observed(packets, |_, _| {})
+}
+
+/// Retains capture correspondence only for entries successfully appended by the encoder.
+pub(crate) fn batch_body_with_picks(
+    packets: &[Packet],
+) -> Option<(Bytes, Vec<crate::packet_tap::PickEntry>)> {
+    let mut picks = Vec::new();
+    let body = batch_body_observed(packets, |packet, entry| {
+        picks.push(crate::packet_tap::PickEntry {
+            frame: Bytes::copy_from_slice(entry),
+            state: packet.pick.as_deref().copied(),
+        });
+    })?;
+    Some((body, picks))
+}
+
+/// Observes successfully encoded entries at their original packet boundary.
+fn batch_body_observed(
+    packets: &[Packet],
+    mut encoded: impl FnMut(&Packet, &[u8]),
+) -> Option<Bytes> {
+    let mut body = Vec::new();
     for packet in packets {
-        if let Err(error) = crate::codec::encode_entry(packet, &mut frame) {
-            tracing::warn!(packet = ?packet.kind(), %error, "skipping an outbound packet that failed to encode");
+        let start = body.len();
+        match crate::codec::encode_entry(packet, &mut body) {
+            Ok(()) => encoded(packet, &body[start..]),
+            Err(error) => {
+                tracing::warn!(packet = ?packet.kind(), %error, "skipping an outbound packet that failed to encode")
+            }
         }
     }
-    (!frame.is_empty()).then(|| Bytes::from(frame))
+    (!body.is_empty()).then(|| Bytes::from(body))
 }
 
 /// Groups the startup packets, which may span many upstream batches, into batch bodies that each
@@ -886,3 +966,5 @@ fn varuint32_len(value: u32) -> usize {
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+mod blob_intake;

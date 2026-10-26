@@ -33,6 +33,7 @@ impl<P> NetworkHandle<P> {
                 unflushed: Default::default(),
                 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
                 packet_delay: Default::default(),
+                pick_trace: Default::default(),
             },
             control_event_tx,
         )

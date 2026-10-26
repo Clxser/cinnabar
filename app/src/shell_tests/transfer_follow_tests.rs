@@ -309,6 +309,7 @@ fn exit_before_first_session_frame_retires_a_pending_startup_join() {
     }
 }
 
+/// A failed replacement retires the old session and keeps retry and dismissal in the launcher.
 fn failed_automatic_replacement(
     player_runtime: &mut client_state::PlayerRuntime,
     from_settings: bool,
@@ -402,8 +403,9 @@ fn failed_automatic_replacement(
         menu.take_join_intent().unwrap().address,
         "transfer.example.net:19132"
     );
-    menu.show_home();
     menu.show_join_failure("Could not start transfer.example.net".into());
+    menu.activate(MenuAction::AddBack);
+    assert_eq!(menu.view().screen, MenuScreen::Play);
     menu.activate(MenuAction::AddBack);
     assert_eq!(menu.view().screen, MenuScreen::Home);
 }

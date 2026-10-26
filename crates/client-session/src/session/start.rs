@@ -106,6 +106,7 @@ fn network_channels<P>(
         unflushed: Default::default(),
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
         packet_delay,
+        pick_trace: Default::default(),
     };
     (handle, channels)
 }

@@ -14,6 +14,8 @@ use std::{
 type NetworkControlEvent = super::NetworkControlEvent<()>;
 type NetworkHandle = super::NetworkHandle<()>;
 
+#[path = "blob_cache_tests.rs"]
+mod blob_cache_tests;
 mod forms;
 mod outbound;
 mod queues;
@@ -953,6 +955,7 @@ fn saturated_command_queue_preserves_packet_and_shutdown_does_not_join_on_ui_thr
         unflushed: Default::default(),
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
         packet_delay: Default::default(),
+        pick_trace: Default::default(),
     };
 
     let packet = test_packet();

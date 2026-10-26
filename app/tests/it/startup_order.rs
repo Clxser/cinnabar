@@ -59,6 +59,10 @@ fn invalid_local_assets_fail_before_connection_startup() {
             let atmosphere = assets::carriers::startup::atmosphere_asset_path(&assets);
             assert!(stderr.contains("load required menu assets"), "{stderr}");
             assert!(
+                stderr.contains(assets::carriers::startup::ATMOSPHERE_COMPILE_COMMAND),
+                "{stderr}"
+            );
+            assert!(
                 stderr.contains(&atmosphere.display().to_string()),
                 "{stderr}"
             );
@@ -69,4 +73,33 @@ fn invalid_local_assets_fail_before_connection_startup() {
         }
         assert!(!stderr.contains("Bedrock session failed"), "{stderr}");
     }
+}
+
+#[test]
+fn invalid_required_entity_artwork_fails_before_the_menu_or_connection() {
+    use assets::carriers::startup::{
+        atmosphere_asset_path, entity_asset_path, test_carriers::synthetic_atmosphere_blob,
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let world = directory.path().join("invalid.mcbea");
+    fs::write(atmosphere_asset_path(&world), synthetic_atmosphere_blob()).unwrap();
+    let entity = entity_asset_path(&world);
+    fs::write(&entity, b"invalid entity carrier").unwrap();
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "startup_order::invalid_local_assets_startup_child",
+            "--nocapture",
+        ])
+        .env(FIXTURE_DIRECTORY, directory.path())
+        .env(DIRECT_CONNECTION, "false")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("load required menu assets"), "{stderr}");
+    assert!(stderr.contains(&entity.display().to_string()), "{stderr}");
+    assert!(stderr.contains("make entity-assets"), "{stderr}");
+    assert!(!stderr.contains("first frame"), "{stderr}");
+    assert!(!stderr.contains("Bedrock session failed"), "{stderr}");
 }

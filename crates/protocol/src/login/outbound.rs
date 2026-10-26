@@ -47,6 +47,7 @@ enum BatchState {
 struct PendingBatch {
     state: BatchState,
     status_epoch: Option<u64>,
+    picks: Vec<crate::packet_tap::PickEntry>,
 }
 
 impl PendingBatch {
@@ -58,6 +59,7 @@ impl PendingBatch {
                 opportunity,
             },
             status_epoch: None,
+            picks: Vec::new(),
         }
     }
 
@@ -81,7 +83,19 @@ impl PendingBatch {
                         self.status_epoch = Some(status.epoch);
                         packets.push(Packet::new(packet));
                     }
-                    let Some(frame) = crate::session_transport::batch_body(packets) else {
+                    let body = if writer.captures_picks()
+                        && packets.iter().any(|packet| packet.pick.is_some())
+                    {
+                        crate::session_transport::batch_body_with_picks(packets).map(
+                            |(body, picks)| {
+                                self.picks = picks;
+                                body
+                            },
+                        )
+                    } else {
+                        crate::session_transport::batch_body(packets)
+                    };
+                    let Some(frame) = body else {
                         self.state = BatchState::Done;
                         continue;
                     };
@@ -118,8 +132,10 @@ impl PendingBatch {
                     if accepting.is_none() {
                         let body = batch.body.clone();
                         let writer = writer.clone();
+                        let picks = self.picks.clone();
+                        let replaced = batch.replaced;
                         *accepting = Some(Mutex::new(Box::pin(async move {
-                            writer.accept_prepared(body).await
+                            writer.accept_prepared_picks(body, picks, replaced).await
                         })));
                     }
                     // Admission cannot suspend after committing its permit. Keep the epoch

@@ -4,8 +4,10 @@ use thiserror::Error;
 
 mod android;
 mod executables;
+mod ios;
 pub use android::configure_android;
 use executables::local_server_filename;
+pub use ios::configure_ios;
 
 const APP_DIR: &str = crate::PRODUCT_NAME;
 
@@ -54,6 +56,10 @@ pub enum LayoutError {
     AndroidUnconfigured,
     #[error("the Android install layout cannot change within a process")]
     AndroidReconfigured,
+    #[error("the iOS app has not configured the install layout")]
+    IosUnconfigured,
+    #[error("the iOS install layout cannot change within a process")]
+    IosReconfigured,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -153,6 +159,9 @@ impl InstallLayout {
     pub fn discover() -> Result<Self, LayoutError> {
         if cfg!(target_os = "android") {
             return android::discover();
+        }
+        if cfg!(target_os = "ios") {
+            return ios::discover();
         }
         let platform = current_platform();
         let home = std::env::var_os(home_variable(platform)).map(PathBuf::from);
@@ -315,6 +324,12 @@ impl InstallLayout {
     #[must_use]
     pub fn shader_packs_dir(&self) -> PathBuf {
         self.user_data_root.join("shaderpacks")
+    }
+
+    /// Driver pipeline data reused across launches; safe to delete while the client is closed.
+    #[must_use]
+    pub fn pipeline_cache_dir(&self) -> PathBuf {
+        self.user_data_root.join("cache/pipelines")
     }
 
     /// Translated shader-pack programs reused across launches; safe to delete.

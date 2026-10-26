@@ -32,6 +32,7 @@ pub mod gateway_egress;
 pub mod host_world;
 pub mod join_profile;
 pub mod latency_trace;
+pub mod leave_profile;
 pub mod relay_control;
 pub mod tasks;
 pub use contract::{

@@ -29,6 +29,7 @@ mod worker;
 
 pub mod memory;
 pub mod minecraft_import;
+pub mod mod_library;
 pub mod mod_updates;
 
 pub mod cosmetics;

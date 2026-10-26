@@ -2,7 +2,6 @@ use protocol::identity::FifoSequence;
 use render_api::sub_chunk_requests::SubChunkRequestReceipt;
 use simulation_clock::identity::{PositionAuthorityGeneration, SessionGeneration};
 use std::{
-    io::Write,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
@@ -43,8 +42,8 @@ pub struct NetworkConfig {
     pub display_name: String,
     /// The user storage owner's opaque persisted login identifier.
     pub client_random_id: protocol::ClientRandomId,
-    /// Verified blobs outlive a Play session; each login creates a fresh resolver around this cache.
-    pub client_blob_cache: protocol::ClientBlobCache,
+    /// Verified blobs outlive play; absent when this connection needs inline chunk bodies.
+    pub client_blob_cache: Option<protocol::ClientBlobCache>,
     /// The client's own skin, uploaded in the ClientData login payload.
     pub player_skin: protocol::ClientSkin,
     /// The player's language, input mode and GUI scale, reported at login.
@@ -392,9 +391,18 @@ pub struct NetworkHandle<P = ()> {
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     packet_delay: packet_delay::Control,
     connection_observation: observation::Observation,
+    pick_trace: Option<Arc<std::sync::OnceLock<Arc<protocol::capture::PickTrace>>>>,
 }
 
 impl<P> NetworkHandle<P> {
+    /// Capture diagnostics are absent unless the session's opt-in file started successfully.
+    pub fn pick_trace(&self) -> Option<&Arc<protocol::capture::PickTrace>> {
+        self.pick_trace
+            .as_ref()?
+            .get()
+            .filter(|trace| trace.active())
+    }
+
     /// Queues the readiness boundary after the loading screen can close.
     pub fn finish_loading(&self) -> bool {
         let mut frame = self.unflushed.lock().expect("outbound frame lock");
@@ -642,6 +650,7 @@ impl<P> NetworkHandle<P> {
         let Some(thread) = self.thread.take() else {
             return;
         };
+        let shutdown = bridge::leave_profile::LeaveProfile::current().section("network_shutdown");
         if thread.is_finished() {
             let _ = thread.join();
             return;
@@ -651,6 +660,8 @@ impl<P> NetworkHandle<P> {
         let _ = thread::Builder::new()
             .name("bedrock-network-reaper".to_owned())
             .spawn(move || {
+                let _shutdown = shutdown;
+                let _span = tracing::info_span!("session.network_shutdown").entered();
                 let _ = thread.join();
             });
     }
@@ -682,6 +693,7 @@ fn empty_network_channels<P>() -> (
             unflushed: Default::default(),
             #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
             packet_delay: Default::default(),
+            pick_trace: Default::default(),
         },
         physics_reanchor_rx,
     )
@@ -734,6 +746,16 @@ trait NetworkSession: execution::SessionOwner {
                 .await
                 .map(InboundWorldEvent::Event)
         }
+    }
+
+    /// The capture packet sequence behind the world event just delivered.
+    fn ingress_capture_sequence(&self) -> u64 {
+        0
+    }
+
+    /// Capture-only mapping for the world event just delivered.
+    fn pick_trace(&self) -> Option<Arc<protocol::capture::PickTrace>> {
+        None
     }
 
     fn decode_error_count(&self) -> u64;
@@ -815,6 +837,14 @@ impl<R: execution::SessionRead> NetworkSession for protocol::PlaySession<R> {
         )
     }
 
+    fn ingress_capture_sequence(&self) -> u64 {
+        protocol::PlaySession::ingress_capture_sequence(self)
+    }
+
+    fn pick_trace(&self) -> Option<Arc<protocol::capture::PickTrace>> {
+        protocol::PlaySession::pick_trace(self)
+    }
+
     fn decode_error_count(&self) -> u64 {
         protocol::PlaySession::decode_error_count(self)
     }
@@ -875,100 +905,13 @@ pub fn session_failure_display(
     }
 }
 
-fn emit_network_pump_terminal_marker(
-    stage: &'static str,
-    message: &str,
-    decode_errors: u64,
-    server_disconnect: Option<&ServerDisconnectEvent>,
-) {
-    let mut stdout = std::io::stdout().lock();
-    write_network_pump_terminal_marker(
-        &mut stdout,
-        stage,
-        message,
-        decode_errors,
-        server_disconnect,
-    );
-    let _ = stdout.flush();
-}
-
-/// Emits the durable transferred-session record so live evidence attributes
-/// the session end to the server's transfer instead of a transport failure.
-fn emit_network_pump_transfer_marker(
-    target: &SessionTransferTarget,
-    reload_world: bool,
-    decode_errors: u64,
-) {
-    let mut stdout = std::io::stdout().lock();
-    write_network_pump_transfer_marker(&mut stdout, target, reload_world, decode_errors);
-    let _ = stdout.flush();
-}
-
-fn write_network_pump_terminal_marker(
-    writer: &mut impl Write,
-    stage: &'static str,
-    message: &str,
-    decode_errors: u64,
-    server_disconnect: Option<&ServerDisconnectEvent>,
-) {
-    let mut marker = serde_json::json!({
-        "schema": "rust-mcbe-network-pump-terminal-v1",
-        "outcome": "failed",
-        "stage": stage,
-        "message": message,
-        "decode_error_count": decode_errors,
-    });
-    if let Some(disconnect) = server_disconnect {
-        marker["server_disconnect"] = serde_json::json!({
-            "reason": disconnect.reason,
-            "message": disconnect.message,
-            "filtered_message": disconnect.filtered_message,
-        });
-    }
-    let _ = writeln!(writer, "{NETWORK_PUMP_TERMINAL_MARKER}={marker}");
-}
-
-fn write_network_pump_transfer_marker(
-    writer: &mut impl Write,
-    target: &SessionTransferTarget,
-    reload_world: bool,
-    decode_errors: u64,
-) {
-    let marker = serde_json::json!({
-        "schema": "rust-mcbe-network-pump-terminal-v1",
-        "outcome": "transferred",
-        "target": { "host": target.host, "port": target.port },
-        "reload_world": reload_world,
-        "decode_error_count": decode_errors,
-    });
-    let _ = writeln!(writer, "{NETWORK_PUMP_TERMINAL_MARKER}={marker}");
-}
-
-/// Writes a transport observation immediately without making I/O failure fatal.
-fn write_stdout_marker(writer: &mut impl Write, marker: &str) {
-    let _ = writeln!(writer, "{marker}");
-    let _ = writer.flush();
-}
-
-fn emit_packet_id_trace<S: NetworkSession>(session: &mut S, observation: &SessionTrace) {
-    let Some(trace) = session.drain_packet_id_trace() else {
-        return;
-    };
-    let marker = serde_json::json!({
-        "schema": "rust-mcbe-fast-transfer-packet-trace-v1",
-        "packet_ids": trace.packet_ids,
-        "overflow": trace.overflow,
-        "timed_out": trace.timed_out,
-    });
-    (observation.packet_trace)(&marker.to_string());
-}
+mod markers;
+use markers::*;
 
 mod blob_cache_telemetry;
 #[cfg(test)]
 use blob_cache_telemetry::bounded_counter_log_due;
-use blob_cache_telemetry::{
-    emit_blob_cache_telemetry, send_final_blob_cache_telemetry, try_emit_blob_cache_telemetry,
-};
+use blob_cache_telemetry::{BlobCacheTelemetry, send_final_blob_cache_telemetry};
 mod bootstrap;
 pub(crate) mod experience;
 mod forms;

@@ -8,7 +8,8 @@ schemas document every argument. Agents drive the client only through this endpo
 
 - `connect` with `local_server` runs `make local-server`'s binary on a free loopback port. Remote
   joins need `allow_remote`, since they sign in with the configured account; ask the owner first.
-  The local server accepts `/give <item> [count] [data]`, `/fly`, `/speed`, and `/tp` for captures.
+  The local server accepts `/give <item> [count] [data]`, `/fly`, `/speed`, `/tp`, `/weather` and
+  `/time set <ticks|noon|midnight|…>` (frozen until `/time cycle`) for captures.
 - `native_friends` reads the selected native account's current friend-world rows. A join takes the
   returned `revision`, `index` and XUID as `join: {revision, index, expected_xuid}`, plus
   `allow_remote: true`. Stale observations fail locally; the client uses its retained catalog

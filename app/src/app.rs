@@ -28,7 +28,7 @@ use client_runtime::network::NetworkHandle;
 use client_state::ClientFrameSet;
 use render_api::PublicationServiceConfig;
 use std::io::Write;
-use std::{ffi::OsStr, path::Path, sync::Arc};
+use std::{ffi::OsStr, sync::Arc};
 #[cfg(feature = "acceptance")]
 use {
     crate::acceptance::{model_witness::drive_model_witness, world_ready::emit_world_ready},
@@ -48,7 +48,7 @@ pub(crate) mod startup;
 use crate::runtime::telemetry::AcceptanceRuntimeConfig;
 use client_presentation::{camera::FlyCameraUpdateSet, local_player::LocalPlayerFrameSet};
 use client_shell::ui_resources::{UiPresentationResource, UiRuntimeResource};
-use client_ui::ui_runtime::{PlatformClipboard, UiRuntime, presentation::UiPresentationRuntime};
+use client_ui::ui_runtime::{PlatformClipboard, UiRuntime};
 use diagnostics::markers::SHUTDOWN_COMPLETED;
 use diagnostics::metrics::MetricsCollector;
 use launcher::install_layout::InstallLayout;
@@ -186,7 +186,7 @@ pub(crate) fn configure_client_production_frame_systems(app: &mut App) {
                 .before(ClientFrameSet::ActorPreparation),
         )
         // Build actions resolve before the tick they precede, so its movement sees the block.
-        .add_systems(
+    .add_systems(
             Update,
             produce_block_use
                 .after(ClientFrameSet::SemanticFinalize)
@@ -295,7 +295,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         crate::runtime::network::io::IoOwner::new().context("create application I/O runtime")?;
 
     let feedback = crate::startup_feedback::Feedback::start();
-    let app = App::new();
+    let app = render_scene::startup_timing::measure("application_create", App::new);
     #[cfg(feature = "enhanced-diagnostics")]
     let diagnostic_budget = crate::enhanced_diagnostics::configure(&args)?;
     #[cfg(feature = "developer-control")]
@@ -356,68 +356,49 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         &language,
         assets::carriers::startup::vanilla_source_manifest_json(),
     );
+    let particle_icons = crate::particles::ParticleIcons(Arc::clone(icon_assets.runtime()));
+    feedback.progress(launcher::startup::Stage::PreparingInterface);
+    let mut preparing_interface = Some(startup::interface::PreparingInterface::start(
+        menu_assets.clone(),
+        hud_assets,
+        icon_assets,
+        carriers.ui?,
+        carriers.path.clone(),
+        layout.vanilla_pack_dir(),
+        args.gui_scale,
+    )?);
     let startup::AudioCarriers {
         catalog: audio_catalog,
         pcm,
         sound_bank,
     } = carriers.audio?;
-    let audio_device = if pcm.is_some() || sound_bank.is_some() {
-        client_audio::named_audio::AudioDevice::open_default_once()
-    } else {
-        client_audio::named_audio::AudioDevice::disabled()
-    };
+    let audio_device = render_scene::startup_timing::measure("audio_device", || {
+        if pcm.is_some() || sound_bank.is_some() {
+            client_audio::named_audio::AudioDevice::open_default_once()
+        } else {
+            client_audio::named_audio::AudioDevice::disabled()
+        }
+    });
     // The full engine supersedes the single-sample named path when a bank is present.
     let named_audio =
         client_audio::named_audio::NamedAudio::new(if sound_bank.is_some() { None } else { pcm });
     let audio_engine = client_audio::audio::AudioEngine::new(sound_bank);
-    let particle_icons = crate::particles::ParticleIcons(Arc::clone(icon_assets.runtime()));
-    feedback.progress(launcher::startup::Stage::PreparingInterface);
-    let font_runtime = menu_assets.fonts.clone().into_runtime();
-    let block_entity_font = Arc::clone(&font_runtime);
-    let font_dir = carriers.path.parent();
-    let font_runtime = oreui::fonts::install(font_runtime, font_dir.unwrap_or(Path::new(".")));
-    let world_icons = Arc::clone(icon_assets.runtime());
-    let mut ui_presentation = UiPresentationRuntime::with_hud_and_icons(
-        font_runtime,
-        hud_assets.into_runtime(),
-        icon_assets.into_runtime(),
-    )
-    .context("prepare bounded font, HUD, and item-icon texture arrays for UI rendering")?;
-    // The gameplay HUD draws through the JSON-UI engine, so its carrier is required.
-    let json_ui = carriers.ui?;
-    json_ui
-        .join()
-        .and_then(|prepared| ui_presentation.enable_prepared_json_ui(prepared))
-        .map_err(|reason| anyhow::anyhow!("JSON-UI engine failed to start: {reason}"))?;
-    let ui_catalog = crate::runtime::network::PackUiCatalog(
-        ui_presentation
-            .pack_catalog_base()
-            .context("JSON-UI engine is missing its carrier catalog")?,
-    );
-    ui_presentation.enable_touch_controls(cfg!(target_os = "android"));
-    // OreUI artwork is decoded once for every native screen.
-    if let Some(images) =
-        oreui::images::load_optional_oreui_images(carriers.path.parent().unwrap_or(Path::new(".")))
-        && let Err(reason) = ui_presentation.enable_oreui_originals(images)
-    {
-        bevy::log::warn!("OreUI originals disabled ({reason})");
-    }
-    let world_ui = startup::world::WorldUi {
-        menu: menu_assets.clone(),
-        icons: world_icons,
-        gui: ui_presentation.gui_model_preparation(),
-        vanilla_pack: layout.vanilla_pack_dir(),
-    };
-    ui_presentation.enable_player_preview();
-    ui_presentation.set_gui_scale_preference(args.gui_scale);
-    ui_presentation.set_safe_area(crate::ui_runtime::presentation::platform_safe_area_insets());
     let (atmosphere_runtime, atmosphere_identity) = menu_assets.atmosphere.into_parts();
     let atmosphere_assets = AtmosphereTextureAssets::new(atmosphere_runtime, atmosphere_identity);
     let weather_textures = render_scene::WeatherTextureAssets::default();
     let asset_metrics = diagnostics::metrics::AssetMetrics::default();
 
-    let world_preparation =
-        startup::world::WorldPreparation::new(carriers.world, world_ui, connection_requested)?;
+    let mut world_input = Some(carriers.world);
+    let direct_interface = if connection_requested {
+        Some(
+            preparing_interface
+                .take()
+                .expect("interface preparation")
+                .finish(world_input.take().expect("world inputs"), true)?,
+        )
+    } else {
+        None
+    };
 
     let endpoint = connection_requested
         .then(|| args.session_endpoint())
@@ -433,10 +414,10 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
 
     // The local player's own skin, loaded once here and shared by Arc into the login upload, the
     // menu's reconnection config, and the render feed resource below. Cosmetic: never fatal.
-    let local_player_skin =
-        client_shell::player_skin::LocalPlayerSkin::load(&layout, &args.display_name);
+    let local_player_skin = render_scene::startup_timing::measure("local_appearance", || {
+        client_shell::player_skin::LocalPlayerSkin::load(&layout, &args.display_name)
+    });
     let screenshots_dir = layout.screenshots_dir();
-    #[cfg(feature = "shaderpacks")]
     let shader_compiler = {
         let bundled = assets::carriers::kit_compiler(&layout.prep_kit());
         if layout.is_installed() {
@@ -448,17 +429,20 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         }
     };
     let renderer_data_root = layout.user_data_root.clone();
+    let pipeline_cache_dir = layout.pipeline_cache_dir();
     let minecraft_import = launcher_host::minecraft_import::startup(&layout.user_config_root);
-    let menu = MenuRuntime::new_with_import_snapshot(
-        !connection_requested,
-        args.gui_scale,
-        args.display_name.clone(),
-        layout,
-        local_player_skin.clone(),
-        minecraft_import,
-    )
-    .with_io(io.execution())
-    .with_language_assets(carriers.path.clone(), args.language.as_deref());
+    let menu = render_scene::startup_timing::measure("menu_services", || {
+        MenuRuntime::new_with_import_snapshot(
+            !connection_requested,
+            args.gui_scale,
+            args.display_name.clone(),
+            layout,
+            local_player_skin.clone(),
+            minecraft_import,
+        )
+        .with_io(io.execution())
+        .with_language_assets(carriers.path.clone(), args.language.as_deref())
+    });
     let mut menu = menu;
     if initial_trust.is_some() {
         menu.show_connecting();
@@ -533,6 +517,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     configure_client_frame_schedule(&mut app);
     let renderer = RendererSetup {
         data_root: renderer_data_root,
+        pipeline_cache_dir,
         video_override: saved_settings.graphics_api(),
         graphics_api_revision: saved_settings.graphics_api_revision(),
     };
@@ -558,7 +543,23 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         logging::add_default_plugins(&mut app, plugins)
     });
     render_setup::finish(&mut app)?;
-    #[cfg(feature = "shaderpacks")]
+    let (interface, world_preparation) = match direct_interface {
+        Some(ready) => ready,
+        None => render_setup::finish_prerequisite(
+            &mut app,
+            preparing_interface
+                .take()
+                .expect("interface preparation")
+                .finish(world_input.take().expect("world inputs"), false),
+        )?,
+    };
+    let startup::interface::Interface {
+        presentation: ui_presentation,
+        catalog: ui_catalog,
+        block_entity_font,
+    } = interface;
+    let mut ui_presentation = ui_presentation;
+    ui_presentation.set_safe_area(crate::ui_runtime::presentation::platform_safe_area_insets());
     app.insert_resource(render_scene::shaderpack::ShaderPackCompilerExecutable(
         shader_compiler,
     ));
@@ -568,8 +569,8 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         .add_systems(Last, crate::frame_pacing::update_frame_pacing);
     #[cfg(target_os = "macos")]
     crate::thread_budget::ThreadBudget::configure_render_thread(&mut app);
-    #[cfg(target_os = "macos")]
-    crate::frame_pacing::macos_display_link::install(&mut app);
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    crate::frame_pacing::display_link::install(&mut app);
     #[cfg(target_os = "macos")]
     crate::frame_pacing::macos_presentation::install(&mut app);
     app.add_systems(Update, crate::window_icon::apply);
@@ -610,7 +611,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     .insert_resource(UiRuntimeResource({
         let mut ui_runtime = UiRuntime::new(0);
         if let Some(address) = &args.address {
-            ui_runtime.experiences.select_destination(address);
+            ui_runtime.session.experiences.select_destination(address);
         }
         ui_runtime.set_lang_catalog(lang_assets.into_runtime());
         ui_runtime.set_active_language(active_lang);

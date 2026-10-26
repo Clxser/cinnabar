@@ -480,11 +480,13 @@ impl SessionTransport {
             preparation_scanned: 0,
             preparation_terminals_scanned: 0,
             ended: false,
+            terminal: None,
+            blob_scan: Default::default(),
             sending: Default::default(),
             tap: None,
             current: None,
             split_frames: 0,
-            delivered: (0, 0),
+            delivered: Default::default(),
         }
     }
 }

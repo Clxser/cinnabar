@@ -1,7 +1,5 @@
 //! Retained mod touch buttons and the taps queued for their owner's next frame callback.
-use super::{
-    Instance, MAX_IMPORT_WRITES, State, cinnabar::extension::hud, cinnabar::extension::touch as wit,
-};
+use super::{Instance, MAX_IMPORT_WRITES, State, cinnabar::extension::touch as wit};
 use anyhow::{Result, bail};
 use ui::mod_touch::{MAX_QUEUED_TOUCH_PRESSES, TouchButton};
 
@@ -9,8 +7,8 @@ use ui::mod_touch::{MAX_QUEUED_TOUCH_PRESSES, TouchButton};
 static NEXT_OWNER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 pub(super) struct TouchState {
-    /// Identifies this component instance to the host, so a tap is never delivered to a
-    /// replacement instance or another mod presenting the same button id.
+    /// Identifies this guest's touch input. Every replacement gets a new owner,
+    /// even when its published button IDs are unchanged.
     owner: u64,
     pub committed: Vec<TouchButton>,
     pending: Option<Vec<TouchButton>>,
@@ -40,6 +38,14 @@ impl Default for TouchState {
 }
 
 impl TouchState {
+    /// Invalidates old queued and captured touches while retaining published buttons.
+    pub fn restart_guest(&mut self) {
+        *self = Self {
+            committed: std::mem::take(&mut self.committed),
+            ..Self::default()
+        };
+    }
+
     /// Starts one callback's transaction and import budget.
     pub fn begin_callback(&mut self) {
         self.pending = None;
@@ -130,18 +136,18 @@ impl wit::Host for State {
 }
 
 /// Matches the WIT anchor exhaustively against the shared HUD anchor.
-fn anchor(anchor: hud::Anchor) -> ui::mod_hud::Anchor {
+fn anchor(anchor: wit::Anchor) -> ui::mod_hud::Anchor {
     use ui::mod_hud::Anchor;
     match anchor {
-        hud::Anchor::TopLeft => Anchor::TopLeft,
-        hud::Anchor::TopCenter => Anchor::TopCenter,
-        hud::Anchor::TopRight => Anchor::TopRight,
-        hud::Anchor::Left => Anchor::Left,
-        hud::Anchor::Center => Anchor::Center,
-        hud::Anchor::Right => Anchor::Right,
-        hud::Anchor::BottomLeft => Anchor::BottomLeft,
-        hud::Anchor::BottomCenter => Anchor::BottomCenter,
-        hud::Anchor::BottomRight => Anchor::BottomRight,
+        wit::Anchor::TopLeft => Anchor::TopLeft,
+        wit::Anchor::TopCenter => Anchor::TopCenter,
+        wit::Anchor::TopRight => Anchor::TopRight,
+        wit::Anchor::Left => Anchor::Left,
+        wit::Anchor::Center => Anchor::Center,
+        wit::Anchor::Right => Anchor::Right,
+        wit::Anchor::BottomLeft => Anchor::BottomLeft,
+        wit::Anchor::BottomCenter => Anchor::BottomCenter,
+        wit::Anchor::BottomRight => Anchor::BottomRight,
     }
 }
 

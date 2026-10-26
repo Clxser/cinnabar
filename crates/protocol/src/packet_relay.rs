@@ -93,6 +93,7 @@ impl Shared {
 /// A relay's final body, retaining its write-order gate until queue admission.
 pub(crate) struct PreparedBatch {
     pub(crate) body: Bytes,
+    pub(crate) replaced: bool,
     _gate: Option<OwnedMutexGuard<()>>,
 }
 
@@ -118,6 +119,13 @@ impl BatchWriter {
     pub(crate) fn with_tap(mut self, tap: Option<Arc<dyn PacketTap>>) -> Self {
         self.tap = tap;
         self
+    }
+
+    /// Whether preparing pick diagnostics can produce capture records.
+    pub(crate) fn captures_picks(&self) -> bool {
+        self.tap
+            .as_ref()
+            .is_some_and(|tap| tap.pick_trace().is_some())
     }
 
     /// Records the final batch body, including batches injected by the relay.
@@ -152,15 +160,21 @@ impl BatchWriter {
     /// Runs the relay once, keeping its replacement and FIFO gate separate from capacity waits.
     pub(crate) async fn prepare(&self, body: Bytes) -> Option<PreparedBatch> {
         let Some(shared) = &self.relay else {
-            return Some(PreparedBatch { body, _gate: None });
+            return Some(PreparedBatch {
+                body,
+                replaced: false,
+                _gate: None,
+            });
         };
         let gate = Arc::clone(&shared.gate).lock_owned().await;
         if !shared.active.load(Ordering::Acquire) {
             return Some(PreparedBatch {
                 body,
+                replaced: false,
                 _gate: Some(gate),
             });
         }
+        let mut replaced = false;
         let body = match shared.relay.outbound(&body) {
             None => body,
             Some(replacement) => {
@@ -170,12 +184,14 @@ impl BatchWriter {
                 } else if replacement.is_empty() {
                     return None;
                 } else {
+                    replaced = true;
                     replacement
                 }
             }
         };
         Some(PreparedBatch {
             body,
+            replaced,
             _gate: Some(gate),
         })
     }
@@ -187,6 +203,23 @@ impl BatchWriter {
     ) -> Result<PacketWritten, ProtocolError> {
         let written = self.sender.accept(body.clone()).await?;
         self.record(&body);
+        Ok(written)
+    }
+
+    /// Admits final relay bytes and associates unchanged entries with their frozen picks.
+    pub(crate) async fn accept_prepared_picks(
+        &self,
+        body: Bytes,
+        picks: Vec<crate::packet_tap::PickEntry>,
+        replaced: bool,
+    ) -> Result<PacketWritten, ProtocolError> {
+        if picks.is_empty() {
+            return self.accept_prepared(body).await;
+        }
+        let written = self.sender.accept(body.clone()).await?;
+        if let Some(tap) = &self.tap {
+            crate::packet_tap::record_serverbound_picks(tap.as_ref(), &body, &picks, replaced);
+        }
         Ok(written)
     }
 

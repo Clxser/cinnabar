@@ -12,7 +12,7 @@ impl NetworkConfig {
         endpoint: protocol::SessionEndpoint,
         display_name: String,
         client_random_id: protocol::ClientRandomId,
-        client_blob_cache: protocol::ClientBlobCache,
+        client_blob_cache: Option<protocol::ClientBlobCache>,
         player_skin: protocol::ClientSkin,
         login_settings: protocol::LoginSettings,
     ) -> Self {

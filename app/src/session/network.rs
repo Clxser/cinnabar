@@ -72,11 +72,20 @@ pub(super) fn poll_join(
             return;
         }
     };
+    let connection_cache = crate::modding::packets::PacketMods::connection_cache(
+        cache,
+        session.packet_mods.as_deref(),
+        session
+            .mod_registration
+            .as_ref()
+            .map(|watcher| watcher.active_grants())
+            .unwrap_or_default(),
+    );
     if let Err(error) = start_network(
         commands,
         menu,
         controller.generation,
-        cache,
+        &connection_cache,
         #[cfg(feature = "native-networking")]
         controller.network_workers.clone(),
         endpoint,
@@ -95,7 +104,7 @@ pub(super) fn poll_join(
         session
             .packet_mods
             .as_ref()
-            .and_then(|mods| mods.session_relay()),
+            .and_then(|mods| mods.session_relay(connection_cache.enables_upstream_client_cache())),
         crate::runtime::network::session_registries::RegistryBase::new(
             &session.state.client_world.runtime_assets,
             collisions,
@@ -203,6 +212,7 @@ pub(super) fn attempt_connect(
     session
         .state
         .runtime
+        .session
         .experiences
         .select_destination(&address);
     menu.begin_join_progress(&address, local_world);

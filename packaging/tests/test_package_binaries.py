@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 @unittest.skipUnless(shutil.which("make"), "GNU make is required")
 class PackageBinariesTests(unittest.TestCase):
     def test_shaderpack_assets_build_the_bounded_compiler_host(self):
-        """The opted-in developer path builds the compiler mode used by the client."""
+        """Every developer build includes the compiler mode used by the client."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             log = root / "commands.jsonl"
@@ -30,19 +30,16 @@ class PackageBinariesTests(unittest.TestCase):
                 "    log.write(json.dumps(sys.argv[1:]) + '\\n')\n"
             )
             command = f"{shlex.quote(sys.executable)} {shlex.quote(str(stub))}"
-            for enabled in (0, 1):
-                log.write_text("")
-                subprocess.run(
-                    ["make", "--no-print-directory", "assets", f"SHADERPACKS={enabled}", f"CARGO={command}"],
-                    cwd=ROOT, env={**os.environ, "PACKAGE_TEST_LOG": str(log)},
-                    capture_output=True, text=True, check=True,
-                )
-                calls = [json.loads(line) for line in log.read_text().splitlines()]
-                self.assertEqual(len(calls), 1)
-                self.assertEqual(calls[0][calls[0].index("--bin") + 1], "assetc")
-                self.assertEqual("--features" in calls[0], bool(enabled))
-                if enabled:
-                    self.assertEqual(calls[0][calls[0].index("--features") + 1], "shaderpacks")
+            log.write_text("")
+            subprocess.run(
+                ["make", "--no-print-directory", "assets", f"CARGO={command}"],
+                cwd=ROOT, env={**os.environ, "PACKAGE_TEST_LOG": str(log)},
+                capture_output=True, text=True, check=True,
+            )
+            calls = [json.loads(line) for line in log.read_text().splitlines()]
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][calls[0].index("--bin") + 1], "assetc")
+            self.assertNotIn("--features", calls[0])
 
     def test_package_build_uses_the_requested_channel_features(self):
         """Release builds keep native networking alongside the channel's client/compiler features."""
@@ -71,7 +68,7 @@ class PackageBinariesTests(unittest.TestCase):
                 self.assertIn("--features", args)
                 self.assertEqual(
                     args[args.index("--features") + 1].replace(",", " ").split(),
-                    ["cinnabar/native-networking", *release.get("cargo_features", [])],
+                    ["cinnabar/native-networking"],
                 )
                 packages = [args[index + 1] for index, arg in enumerate(args) if arg == "-p"]
                 self.assertIn("cinnabar", packages)
@@ -95,6 +92,7 @@ class PackageBinariesTests(unittest.TestCase):
         rendered = template.replace("@BUNDLE_ID@", "app.cinnabar.test").replace("@VERSION@", "1.0.0")
         plist = plistlib.loads(rendered.encode())
         self.assertIs(plist.get("LSSupportsGameMode"), True)
+        self.assertIs(plist.get("GCSupportsControllerUserInteraction"), True)
         self.assertEqual(plist["LSApplicationCategoryType"], "public.app-category.games")
 
     def test_play_keeps_default_features_with_release_and_tracy(self):

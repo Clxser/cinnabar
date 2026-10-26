@@ -22,7 +22,9 @@ fresh output from that run. A missing capture is incomplete validation.
 
 Headless sessions render through a hidden window. They can verify pixels and
 rendering work, but displayed-frame pacing, OS focus, and occlusion gates require
-appropriate presentation evidence and remain incomplete without it.
+appropriate presentation evidence and remain incomplete without it. With no swap chain
+to wait on, the render world's frame poll waits for the GPU once three frames are queued,
+so an uncapped hidden client runs at the GPU's completion rate.
 
 A signed-in capture account still receives Xbox join requests and other toasts, which `F1` does
 not hide. `--hide-toasts` (`developer-control` builds only) stops drawing toasts for the session
@@ -365,9 +367,10 @@ set the variable to a file path. A set variable, including `0`, overrides the se
 never replaced; the start time is added to the name instead. Before each capture into `logs/`, the
 oldest `packets-*.cnbrcap` there are deleted so the folder keeps at most 10 captures and 2 GiB,
 counting the new one at its 512 MiB cap; a capture at a path you named is never deleted.
-The capture retains the v2 byte format and the times when the client read each batch,
-which trail socket arrival while ingress is backlogged. The retired OS-endpoint replay
-executable is not part of the native client. A capture
+The capture uses the protocol's versioned byte format and records when the client read each
+batch, which trails socket arrival while ingress is backlogged. Version 3 also records frozen
+numeric pick state for outgoing actor attacks and mouseover reports. The retired OS-endpoint
+replay executable is not part of the native client. A capture
 stops at 512 MiB; a writer that falls behind records how many packets it dropped rather than
 slowing the network thread. Session teardown finishes the file, waiting at most 2 s; a crash
 loses at most the queued packets and 64 KiB of written ones and can leave a truncated capture.

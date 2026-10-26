@@ -66,6 +66,8 @@ pub(crate) fn drive_menu_services(
     if let Some(account) = launcher_account.as_deref() {
         client_shell::menu::sync_cinnabar_players(account, &mut runtime.0);
     }
+    // This reusable core permits caching; each Connect narrows that capability using its
+    // session cache mode before the core advertises it upstream.
     menu.drive_account_services(
         #[cfg(feature = "native-networking")]
         &mut commands,
