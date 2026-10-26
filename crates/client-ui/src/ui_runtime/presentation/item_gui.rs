@@ -53,6 +53,7 @@ pub(super) fn cube(faces: [IconRef; 6], lighting: CubeLighting) -> Option<Arc<Ui
     }
     UiMesh::new(vertices.into(), indices.into(), batches.into())
         .ok()
+        .map(UiMesh::with_half_float_xy)
         .map(Arc::new)
 }
 
