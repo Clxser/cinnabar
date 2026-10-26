@@ -298,8 +298,12 @@ Displayed-frame pacing and complete resize/platform acceptance remain incomplete
   an adjacent solve also wakes excluded neighbours when their shared face is unchanged.
   Near publication receipts consume changed residency columns between full snapshots,
   preserving unchanged receipts.
-  Foreground chunk-data offload requires a full allocation of service polling;
-  idle waits do not count. Biome-only inline updates preserve current light while
+  Foreground chunk-data offload requires a full allocation of service polling
+  that advanced commits; idle waits and worker-only service do not count.
+  Ordinary polls keep intake first. An interrupted worker pass resumes with bounded
+  completion and refill work before intake, without renewing intake's allocation.
+  Intake keeps bounded progress even after its allocation expires.
+  Biome-only inline updates preserve current light while
   remeshing tint; block changes and new residency still invalidate light.
   Matched-output hardware preparation and streaming qualification remain open.
 - [ ] Close mesh-neighbour readiness acceptance with slow-delivery and seam coverage.
@@ -820,8 +824,9 @@ OS Alt-Tab acceptance on macOS, Windows and Linux remains incomplete.
   Broader crafting and container acceptance remains incomplete.
   Hover reports and actor use share the attack's game-mode actor cap.
   Actor rays use loaded collision defaults, authoritative dimensions and scale, and
-  constructor pick radii. Attack, use and hover preserve the selected world intercept;
-  matched server-box packet acceptance remains incomplete. The survival
+  constructor pick radii. Attack, use and hover preserve the selected world intercept.
+  Ordinary actor picks retain the frame's ticked camera-actor position for the final pick-range trim.
+  Matched server-box packet acceptance remains incomplete. The survival
   block-versus-miss bands at that cap, the creative cap's shortening by the pick ray and
   actor occlusion of the block outline remain incomplete.
   Desktop input retains every transition in a complete arrival batch, including
