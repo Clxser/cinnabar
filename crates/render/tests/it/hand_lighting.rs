@@ -1,7 +1,7 @@
 //! First-person lighting through the production vertex and fragment entry points.
 use crate::{
     gpu_snapshot::{Draw, Gpu},
-    hand_rig_bindings::HandFragmentBindings,
+    hand_rig_bindings::{HandFragmentBindings, hand_artwork_format},
     shader_safety, shader_source,
 };
 use bevy::math::{Mat4, Vec3};
@@ -22,6 +22,75 @@ fn source() -> String {
     shader_source::standalone(&source, &[])
         .replace("@group(1) @binding(0)", "@group(0) @binding(20)")
         .replace("@group(1) @binding(1)", "@group(0) @binding(21)")
+}
+
+#[test]
+fn native_hand_samples_preserve_unorm_source_bytes() {
+    let Some(gpu) = Gpu::for_fixture("native hand source texels") else {
+        return;
+    };
+    let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("original hand texel byte ramp"),
+        size: wgpu::Extent3d {
+            width: 16,
+            height: 16,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: hand_artwork_format(&HandRigLight::default()),
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[wgpu::TextureFormat::Rgba8Unorm],
+    });
+    let pixels: Vec<u8> = (0..=255_u16)
+        .flat_map(|value| {
+            [
+                value as u8,
+                (255 - value) as u8,
+                (value * 37 % 256) as u8,
+                value as u8,
+            ]
+        })
+        .collect();
+    gpu.queue.write_texture(
+        texture.as_image_copy(),
+        &pixels,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(64),
+            rows_per_image: Some(16),
+        },
+        texture.size(),
+    );
+    let sampled = texture.create_view(&Default::default());
+    let reference = texture.create_view(&wgpu::TextureViewDescriptor {
+        format: Some(wgpu::TextureFormat::Rgba8Unorm),
+        ..Default::default()
+    });
+    let shader = format!(
+        "{}\n@group(0) @binding(22) var decoded_texels: texture_2d<f32>; @group(0) @binding(23) var native_texels: texture_2d<f32>; @group(0) @binding(24) var<storage, read_write> result: array<vec4<u32>>; @compute @workgroup_size(1) fn witness(@builtin(global_invocation_id) id: vec3<u32>) {{ let point = vec2<i32>(i32(id.x % 16u), i32(id.x / 16u)); result[id.x*2u] = bitcast<vec4<u32>>(hand_gamma_sample(textureLoad(decoded_texels, point, 0), true)); result[id.x*2u+1u] = bitcast<vec4<u32>>(textureLoad(native_texels, point, 0)); }}",
+        source()
+    );
+    let actual = gpu.compute_readback(
+        &shader,
+        &[
+            wgpu::BindGroupEntry {
+                binding: 22,
+                resource: wgpu::BindingResource::TextureView(&sampled),
+            },
+            wgpu::BindGroupEntry {
+                binding: 23,
+                resource: wgpu::BindingResource::TextureView(&reference),
+            },
+        ],
+        24,
+        512,
+        256,
+    );
+    for (value, pair) in actual.chunks_exact(2).enumerate() {
+        assert_eq!(pair[0], pair[1], "source byte {value}");
+    }
 }
 
 #[test]
@@ -76,7 +145,7 @@ fn bedrock_and_java_hand_light_normals_and_compose_texture_in_gamma() {
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8UnormSrgb,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
+        view_formats: &[wgpu::TextureFormat::Rgba8Unorm],
     });
     gpu.queue.write_texture(
         texture.as_image_copy(),
@@ -88,10 +157,6 @@ fn bedrock_and_java_hand_light_normals_and_compose_texture_in_gamma() {
         },
         texture.size(),
     );
-    let atlas = texture.create_view(&wgpu::TextureViewDescriptor {
-        dimension: Some(wgpu::TextureViewDimension::D2Array),
-        ..Default::default()
-    });
     let sampler = gpu.device.create_sampler(&Default::default());
     let glint = gpu.blank_texture_view();
     for (layer, basis, stretch) in [
@@ -169,6 +234,11 @@ fn bedrock_and_java_hand_light_normals_and_compose_texture_in_gamma() {
                     light.with_bedrock_lighting(Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2));
             }
             light.emitted_light = [0, emission, emission, 0];
+            let atlas = texture.create_view(&wgpu::TextureViewDescriptor {
+                format: Some(hand_artwork_format(&light)),
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
             let light = gpu.buffer(bytemuck::cast_slice(&[light]), wgpu::BufferUsages::UNIFORM);
             let mut lightmap = [[world_light, world_light, world_light, 1.0]; 256];
             if emission != 0 {

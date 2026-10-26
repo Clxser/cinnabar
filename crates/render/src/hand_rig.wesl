@@ -191,6 +191,14 @@ fn hand_vertex(
     return out;
 }
 
+// Bedrock artwork is sampled as gamma bytes; Java artwork uses an sRGB view.
+fn hand_gamma_sample(color: vec4<f32>, native: bool) -> vec4<f32> {
+    if native {
+        return color;
+    }
+    return tint_to_gamma(color);
+}
+
 @fragment
 fn hand_fragment(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let cutout = (input.skin_layer & hand_material.texture_flags.w) != 0u;
@@ -228,7 +236,8 @@ fn hand_fragment(input: VertexOutput, @builtin(front_facing) front: bool) -> @lo
             illumination = max(illumination, native_light_texel(emission));
         }
     }
-    var lit = tint_to_linear(vec4(tint_to_gamma(color).rgb * input.shade * illumination, 1.0)).rgb;
+    let native = hand_light.java_lights[0].w == 0.0;
+    var lit = tint_to_linear(vec4(hand_gamma_sample(color, native).rgb * input.shade * illumination, 1.0)).rgb;
     if (is_item && input.glint_instance != 0xffffffffu) {
         let foiled = tint_to_gamma(vec4(lit, 1.0)).rgb + item_foil(uv, input.uv.zw, input.glint_instance, illumination);
         lit = tint_to_linear(vec4(foiled, 1.0)).rgb;
