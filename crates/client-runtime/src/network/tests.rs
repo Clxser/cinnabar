@@ -158,7 +158,7 @@ fn retirement_closes_old_ingress_and_releases_payloads_off_the_transition_thread
         ingress.is_closed(),
         "old ingress closes on the transition frame"
     );
-    assert!(old.core_socket_dir().is_none());
+    assert_eq!(old.pending_event_count(), 0);
     let thread = released
         .recv_timeout(std::time::Duration::from_secs(10))
         .unwrap();
