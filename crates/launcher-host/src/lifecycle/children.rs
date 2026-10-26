@@ -604,7 +604,7 @@ mod tests {
 
     #[test]
     fn an_outliving_monitor_keeps_its_pipes_and_identity_through_the_exit_sweep() {
-        use std::io::{BufRead, BufReader};
+        use std::io::{BufRead, BufReader, Read};
 
         let children = Children::new();
         let child = children

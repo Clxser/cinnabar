@@ -22,7 +22,7 @@ fn oversized_physical_and_decoded_entries_miss_and_recompile() {
         cache.load(&key).is_none(),
         "physical length exceeds admission"
     );
-    let stack = resource_pack::validate_handoff(protocol::ResourcePackHandoff::default());
+    let stack = resource_pack::validate_handoff(bedrock_packs::ResourcePackHandoff::default());
     let view = resource_pack::LayeredPackView::tracked(stack);
     assert_eq!(cache.get_or_compile(&key, &view, || vec![42u8]), [42]);
 }

@@ -21,6 +21,12 @@ pub(super) struct ModuleObserver {
     lives: std::sync::Arc<Vec<mod_host::module_observations::ActorLifeObservation>>,
 }
 
+/// The current session scope and admission for publishing its actor lives.
+pub(super) struct CaptureRequest<'a> {
+    pub(super) world: Option<&'a WorldObservation>,
+    pub(super) actor_reads: bool,
+}
+
 /// Converts retained HUD counters to the attribute points mods observe.
 fn stat_points(stat: ui::BoundedStat) -> (f32, f32) {
     let scale = f32::from(stat.scale());
@@ -283,12 +289,12 @@ impl ModuleObserver {
         &mut self,
         gameplay: &GameplayContext<'_>,
         ui: &UiRuntime,
-        world: Option<&WorldObservation>,
+        request: CaptureRequest<'_>,
         player: &player_state::PlayerState,
         interaction: Option<&super::interaction::ModInteraction>,
         network: Option<&super::NetworkHandle<super::PackApplication>>,
-        actor_reads: bool,
     ) -> ModuleObservations {
+        let CaptureRequest { world, actor_reads } = request;
         let Some(world) = world else {
             self.scope = None;
             self.history.clear();
