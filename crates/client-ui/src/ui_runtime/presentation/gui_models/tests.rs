@@ -108,6 +108,7 @@ fn mesh_modulation_preserves_geometry_and_adds_glint_without_baking() {
         &modulated(&mesh, [255; 4], false).unwrap()
     ));
     let faded = modulated(&mesh, [255, 255, 255, 127], true).unwrap();
+    assert!(faded.uses_half_float_xy());
     for (original, result) in mesh.vertices().iter().zip(faded.vertices()) {
         assert_eq!(original.position, result.position);
         assert_eq!(result.color[3], 127);

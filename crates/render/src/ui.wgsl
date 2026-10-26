@@ -14,6 +14,7 @@ const STYLE_FONT_OUTLINE: u32 = FONT_STYLE_OUTLINE_COVERAGE;
 // Injected from the renderer's single Rust style-bit definition.
 const STYLE_ALPHA_TEST: u32 = UI_STYLE_ALPHA_TEST;
 const STYLE_TERRAIN_MIPS: u32 = UI_STYLE_TERRAIN_MIPS;
+const STYLE_HALF_FLOAT_XY: u32 = UI_STYLE_HALF_FLOAT_XY;
 const STYLE_COLOR_MASK: u32 = UI_STYLE_COLOR_MASK;
 const STYLE_ADDITIVE: u32 = UI_STYLE_ADDITIVE;
 const STYLE_PARTICLE: u32 = UI_STYLE_PARTICLE;
@@ -36,6 +37,7 @@ struct PageFormat {
 
 UI_REPEAT_DECODER
 UI_SHADOW_DECODER
+UI_HALF_FLOAT_ROUNDING
 
 // Sample the shared decoder's source coordinates with the requested filter.
 fn sample_repeat(input: UiVertexOutput, dimensions: vec2<f32>) -> vec4<f32> {
@@ -75,6 +77,19 @@ struct UiVertexOutput {
     @location(7) @interpolate(flat) atlas_offset: vec2<f32>,
 };
 
+// Converts final projected coordinates to the UI viewport's homogeneous clip frame.
+fn ui_clip_position(position: vec4<f32>, style_flags: u32) -> vec4<f32> {
+    var xy = position.xy;
+    if (style_flags & STYLE_HALF_FLOAT_XY) != 0u {
+        xy = vec2<f32>(ui_half_float(xy.x), ui_half_float(xy.y));
+    }
+    let ndc = vec2<f32>(
+        xy.x / viewport.viewport_size.x * 2.0 - position.w,
+        position.w - xy.y / viewport.viewport_size.y * 2.0,
+    );
+    return vec4<f32>(ndc, position.z, position.w);
+}
+
 @vertex
 fn ui_vertex(
     @location(0) position: vec4<f32>,
@@ -87,12 +102,8 @@ fn ui_vertex(
     @location(7) atlas_offset: vec2<f32>,
     @builtin(instance_index) texture_page: u32,
 ) -> UiVertexOutput {
-    let ndc = vec2<f32>(
-        position.x / viewport.viewport_size.x * 2.0 - position.w,
-        position.w - position.y / viewport.viewport_size.y * 2.0,
-    );
     var output: UiVertexOutput;
-    output.clip_position = vec4<f32>(ndc, position.z, position.w);
+    output.clip_position = ui_clip_position(position, style_flags);
     output.uv = uv;
     output.atlas_offset = atlas_offset;
     // Pages, vertex colours and the UI layer all stay sRGB-encoded: vanilla UI
@@ -269,6 +280,10 @@ fn shade_ui(input: UiVertexOutput, direct: bool) -> vec4<f32> {
         var shine = glint(input.clip_position.xy);
         if direct { shine = srgb_to_linear(shine); }
         premultiplied_rgb += shine * viewport.glint_strength * alpha;
+    }
+    // Store opaque terrain shading as rounded gamma-space bytes in the UI layer.
+    if !direct && alpha == 1.0 && (input.style_flags & STYLE_TERRAIN_MIPS) != 0u {
+        premultiplied_rgb = floor(premultiplied_rgb * 255.0 + vec3<f32>(0.5)) / 255.0;
     }
     // Zero coverage keeps alpha-over's destination factor at one for authored additive effects.
     let coverage = select(alpha, 0.0, (input.style_flags & STYLE_ADDITIVE) != 0u);
