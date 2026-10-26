@@ -59,7 +59,7 @@ fn pumpkin_gui_and_held_fronts_keep_their_class_artwork_in_the_carried_pose() {
         let shown = &blocks.records[blocks.icon_state(visual).0 as usize];
         assert!(matches!(
             shown.property(assets::facts::BlockProperty::MinecraftCardinalDirection),
-            Some(assets::facts::StateValue::String(direction)) if direction.as_ref() == "west"
+            Some(assets::facts::StateValue::String(direction)) if direction.as_ref() == "south"
         ));
         let expected = match record.name.as_ref() {
             "minecraft:carved_pumpkin" => [240, 10, 20, 255],
@@ -80,7 +80,7 @@ fn pumpkin_gui_and_held_fronts_keep_their_class_artwork_in_the_carried_pose() {
         );
         assert_eq!(&gui[BlockFace::Up as usize].rgba8[..4], &[90, 80, 70, 255]);
         assert_eq!(
-            &held[BlockFace::West as usize].rgba8[..4],
+            &held[BlockFace::South as usize].rgba8[..4],
             &expected,
             "held {} {}",
             record.name,
@@ -88,7 +88,7 @@ fn pumpkin_gui_and_held_fronts_keep_their_class_artwork_in_the_carried_pose() {
         );
         assert_eq!(&held[BlockFace::Up as usize].rgba8[..4], &[90, 80, 70, 255]);
         assert_eq!(
-            &held[BlockFace::South as usize].rgba8[..4],
+            &held[BlockFace::West as usize].rgba8[..4],
             &[20, 30, 40, 255]
         );
     }

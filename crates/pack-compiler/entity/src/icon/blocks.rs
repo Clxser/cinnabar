@@ -144,7 +144,7 @@ impl IconBlocks {
                     candidate.name == record.name
                         && matches!(
                             candidate.property(assets::facts::BlockProperty::MinecraftCardinalDirection),
-                            Some(assets::facts::StateValue::String(direction)) if direction.as_ref() == "west"
+                            Some(assets::facts::StateValue::String(direction)) if direction.as_ref() == "south"
                         )
                 })
                 .map_or(visual, |candidate| BlockVisualId(candidate.sequential_id));
