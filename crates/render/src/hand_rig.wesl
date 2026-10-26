@@ -1,5 +1,5 @@
-import render::actor_rig::{BoneMatrix, posed_point, placed_point};
-import render::lighting::{lit_colour, light_colour, native_light_texel, tint_to_gamma, tint_to_linear};
+import render::actor_rig::{BoneMatrix, posed_point, placed_point, posed_normal, placed_normal};
+import render::lighting::{actor_lighting, actor_light_colour, native_light_texel, tint_to_gamma, tint_to_linear};
 import render::glint::glint_layer_uvs;
 
 // Near-camera first-person rig pass. It reuses the actor rig's packed storage layout
@@ -23,6 +23,8 @@ struct HandLight {
     pad: u32,
     java_lights: array<vec4<f32>, 2>,
     java_normal_axes: array<vec4<f32>, 3>,
+    world_from_hand: array<vec4<f32>, 3>,
+    emitted_light: vec4<u32>,
 }
 
 struct HandMaterial {
@@ -101,14 +103,14 @@ fn java_shade(normal: vec3<f32>) -> f32 {
 
 // Native item glint: two rotated, scrolled layers of the item raster at the instance's UV
 // scale, tinted and squared over the lit colour in gamma space.
-fn item_foil(uv: vec2<f32>, origin: vec2<f32>, instance: u32, sample: u32) -> vec3<f32> {
+fn item_foil(uv: vec2<f32>, origin: vec2<f32>, instance: u32, illumination: vec3<f32>) -> vec3<f32> {
     let base = instance * ACTOR_GPU_INSTANCE_WORDS;
     let offsets = vec2(word_f32(base + 30u), word_f32(base + 31u));
     let strength = word_f32(base + 32u);
     let scale = vec2(word_f32(base + 33u), word_f32(base + 34u));
     let coordinates = glint_layer_uvs(uv, origin, scale, offsets * scale.x, word_f32(base + 35u), false);
     let layers = tint_to_gamma(textureSampleLevel(item_glint, glint_sampler, coordinates[0], 0.0)).rgb + tint_to_gamma(textureSampleLevel(item_glint, glint_sampler, coordinates[1], 0.0)).rgb;
-    let foil = layers * GLINT_TINT_RGB * strength * native_light_texel(sample);
+    let foil = layers * GLINT_TINT_RGB * strength * illumination;
     return foil * foil;
 }
 
@@ -177,6 +179,13 @@ fn hand_vertex(
         let offhand = (texture_layer & hand_material.texture_flags.y) != 0u;
         let light_index = select(0u, select(1u, 2u, offhand), item);
         out.shade = java_shade(java_normal(placement * bone, normal, hand_light.java_normal_axes[light_index].xyz));
+    } else {
+        let normal = vec3(bitcast<f32>(vertex_words[vertex_base + 3u]), bitcast<f32>(vertex_words[vertex_base + 4u]), bitcast<f32>(vertex_words[vertex_base + 5u]));
+        let posed = posed_normal(previous_bones[previous_bone_base + bone_index], current_bone(current_bone_base + bone_index), normal, partial_tick);
+        let hand_normal = placed_normal(placement, posed);
+        let world_from_hand = BoneMatrix(hand_light.world_from_hand[0], hand_light.world_from_hand[1], hand_light.world_from_hand[2]);
+        let world_normal = placed_normal(world_from_hand, hand_normal);
+        out.shade = actor_lighting(ACTOR_LIGHT_DIRECTIONAL_FLAG, world_normal, 0.0).r;
     }
     out.valid = 1u;
     return out;
@@ -209,12 +218,19 @@ fn hand_fragment(input: VertexOutput, @builtin(front_facing) front: bool) -> @lo
         discard;
     }
     let sample = hand_light.block_level | (hand_light.sky_level << 4u);
-    var lit = lit_colour(color.rgb, light_colour(sample));
-    if (hand_light.java_lights[0].w != 0.0) {
-        lit = tint_to_linear(vec4(tint_to_gamma(color).rgb * input.shade * native_light_texel(sample), 1.0)).rgb;
+    var illumination = native_light_texel(sample);
+    if (hand_light.java_lights[0].w == 0.0) {
+        let offhand = (input.skin_layer & hand_material.texture_flags.y) != 0u;
+        let light_index = select(0u, select(1u, 2u, offhand), is_item);
+        illumination = actor_light_colour(sample);
+        let emission = hand_light.emitted_light[light_index];
+        if emission != 0u {
+            illumination = max(illumination, native_light_texel(emission));
+        }
     }
+    var lit = tint_to_linear(vec4(tint_to_gamma(color).rgb * input.shade * illumination, 1.0)).rgb;
     if (is_item && input.glint_instance != 0xffffffffu) {
-        let foiled = tint_to_gamma(vec4(lit, 1.0)).rgb + item_foil(uv, input.uv.zw, input.glint_instance, sample);
+        let foiled = tint_to_gamma(vec4(lit, 1.0)).rgb + item_foil(uv, input.uv.zw, input.glint_instance, illumination);
         lit = tint_to_linear(vec4(foiled, 1.0)).rgb;
     }
     let blend = is_item && (input.skin_layer & hand_material.texture_flags.z) != 0u;

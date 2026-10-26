@@ -204,6 +204,22 @@ impl PreparedBlockItems {
 }
 
 impl EquipmentRuntime {
+    /// Retains a three-dimensional block item's emission from its active terrain generation.
+    pub(super) fn first_person_emitted_light(&self, item: &WornItem, block: bool) -> u8 {
+        if !block {
+            return 0;
+        }
+        let HeldKind::Block(visual) = item.kind else {
+            return 0;
+        };
+        self.blocks.source.world.as_deref().map_or(0, |world| {
+            world
+                .resolve(assets::NetworkIdMode::Sequential, visual)
+                .light_properties()
+                .emission()
+        })
+    }
+
     /// Borrows the active carried model source; consumers must match it to their terrain.
     pub(crate) fn prepared_block_items(&self) -> &Arc<PreparedBlockItems> {
         &self.blocks.source

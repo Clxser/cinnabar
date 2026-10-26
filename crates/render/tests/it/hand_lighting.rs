@@ -25,8 +25,8 @@ fn source() -> String {
 }
 
 #[test]
-fn java_hand_lights_normals_and_composes_texture_in_gamma() {
-    let Some(gpu) = Gpu::for_fixture("Java first-person lighting") else {
+fn bedrock_and_java_hand_light_normals_and_compose_texture_in_gamma() {
+    let Some(gpu) = Gpu::for_fixture("Bedrock and Java first-person lighting") else {
         return;
     };
     let identity: [[f32; 4]; 3] = [
@@ -113,18 +113,25 @@ fn java_hand_lights_normals_and_composes_texture_in_gamma() {
             }]),
             wgpu::BufferUsages::STORAGE,
         );
-        for (java, normal, world_light, expected) in [
-            (false, [0.0, -1.0, 0.0], 1.0_f32, 128.0),
-            (true, [0.0, -1.0, 0.0], 1.0, 51.2),
-            (true, [0.0, 1.0, 0.0], 1.0, 128.0),
+        for (java, normal, world_light, rotate_camera, emission, expected) in [
+            (false, [0.0, -1.0, 0.0], 1.0_f32, false, 0, 57.6),
+            (false, [0.0, 1.0, 0.0], 1.0, false, 0, 128.0),
+            (false, [1.0, 0.0, 0.0], 1.0, false, 0, 80.0),
+            (false, [0.0, 0.0, 1.0], 1.0, false, 0, 105.6),
+            (false, [0.0, 0.0, 1.0], 1.0, true, 0, 57.6),
+            (false, [0.0, -1.0, 0.0], 0.5, false, 15, 57.6),
+            (true, [0.0, -1.0, 0.0], 1.0, false, 0, 51.2),
+            (true, [0.0, 1.0, 0.0], 1.0, false, 0, 128.0),
             (
                 true,
                 [1.0, 0.0, 0.0],
                 1.0,
+                false,
+                0,
                 128.0 * (0.4 + stretch * 0.6 * 0.2 / 1.53_f32.sqrt()),
             ),
-            (true, [0.0, 0.0, 1.0], 1.0, 94.6614),
-            (true, [0.0, 1.0, 0.0], 0.5, 64.0),
+            (true, [0.0, 0.0, 1.0], 1.0, false, 0, 94.6614),
+            (true, [0.0, 1.0, 0.0], 0.5, false, 0, 64.0),
         ] {
             let vertices = [
                 (-1.0, -1.0),
@@ -157,10 +164,22 @@ fn java_hand_lights_normals_and_composes_texture_in_gamma() {
                     .extend(0.0)
                     .to_array(); 3];
             }
+            if rotate_camera {
+                light =
+                    light.with_bedrock_lighting(Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2));
+            }
+            light.emitted_light = [0, emission, emission, 0];
             let light = gpu.buffer(bytemuck::cast_slice(&[light]), wgpu::BufferUsages::UNIFORM);
-            let lightmap = gpu.lightmap(bytemuck::cast_slice(
-                &[[world_light, world_light, world_light, 1.0]; 256],
-            ));
+            let mut lightmap = [[world_light, world_light, world_light, 1.0]; 256];
+            if emission != 0 {
+                lightmap[emission as usize] = [1.0; 4];
+            }
+            let lightmap = gpu.lightmap(bytemuck::cast_slice(&lightmap));
+            let expected = if emission != 0 && layer == 0 {
+                expected * world_light
+            } else {
+                expected
+            };
             let buffers = [
                 (0, &projection),
                 (2, &vertices),
