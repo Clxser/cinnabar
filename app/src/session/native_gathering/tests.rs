@@ -64,8 +64,10 @@ fn native_gathering_replacement_restores_destination_for_world_consumers() {
     ));
     let old_generation = controller.generation;
     let mut ui = UiRuntime::new(old_generation);
-    ui.experiences.select_destination("previous.example:19132");
-    assert!(ui.experiences.audience.is_some());
+    ui.session
+        .experiences
+        .select_destination("previous.example:19132");
+    assert!(ui.session.experiences.audience.is_some());
     let mut app = App::new();
     app.insert_resource(menu)
         .insert_resource(controller)
@@ -108,6 +110,7 @@ fn native_gathering_replacement_restores_destination_for_world_consumers() {
     let audience = app
         .world()
         .resource::<UiRuntimeResource>()
+        .session
         .experiences
         .audience
         .clone();
