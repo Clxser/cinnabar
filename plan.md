@@ -606,6 +606,8 @@ and rendered qualification remain incomplete.
   Held pumpkin cubes use the same canonical class artwork independently of placement
   facing. Their first-person block pose retains the item-space quarter turn.
   Held lighting and broader held-shape acceptance remain incomplete.
+  Chiseled bookshelf GUI cubes show their empty front and authored caps independently of
+  placed book counts and the held world model.
   Decorated pot inventory sides exclude the texture border; broader pose and tint acceptance remains open.
   Block-model previews cull one-sided rear faces and preserve two-sided planes.
   Terrain-backed GUI meshes retain independently averaged texture levels and choose a
