@@ -46,7 +46,7 @@ pub struct UiMesh {
     indices: Arc<[u32]>,
     batches: Arc<[UiMeshBatch]>,
     draw_vertex_count: usize,
-    half_float_xy: bool,
+    compact_block_vertices: bool,
 }
 
 /// Meshes compare by contents. [`UiMesh::new`] admits only finite floats, so buffers shared
@@ -60,7 +60,7 @@ impl PartialEq for UiMesh {
         same(&self.vertices, &other.vertices)
             && same(&self.indices, &other.indices)
             && same(&self.batches, &other.batches)
-            && self.half_float_xy == other.half_float_xy
+            && self.compact_block_vertices == other.compact_block_vertices
     }
 }
 
@@ -88,15 +88,15 @@ impl fmt::Display for UiMeshError {
 impl std::error::Error for UiMeshError {}
 
 impl UiMesh {
-    /// Rounds projected XY to half precision after scaling and placing the control.
-    pub fn with_half_float_xy(mut self) -> Self {
-        self.half_float_xy = true;
+    /// Uses half precision for final XY and normalized unsigned shorts for block texture vertices.
+    pub fn with_compact_block_vertices(mut self) -> Self {
+        self.compact_block_vertices = true;
         self
     }
 
-    /// Whether the final projected XY uses half precision.
-    pub fn uses_half_float_xy(&self) -> bool {
-        self.half_float_xy
+    /// Whether this mesh uses the compact block vertex formats.
+    pub fn uses_compact_block_vertices(&self) -> bool {
+        self.compact_block_vertices
     }
 
     /// Builds a normal textured quad with explicit tint and blend mode.
@@ -264,7 +264,7 @@ impl UiMesh {
             indices,
             batches,
             draw_vertex_count,
-            half_float_xy: false,
+            compact_block_vertices: false,
         })
     }
 

@@ -2,6 +2,48 @@ use super::{Page, raster};
 use render_model::{UiRenderVertex, UiTexturePage};
 
 #[test]
+fn inventory_texture_vertices_interpolate_normalized_short_coordinates() {
+    let Some(gpu) = crate::gpu_snapshot::Gpu::for_fixture("inventory texture vertex coordinates")
+    else {
+        return;
+    };
+    let cases: [([f32; 6], [u32; 2]); 5] = [
+        ([2., 6., 4., 2., 16., 16.], [24576, 32768]),
+        ([0., 16., 0., 0., 16., 16.], [0, 65535]),
+        ([3. / 4096., 5. / 4096., 0., 0., 16., 16.], [3, 5]),
+        ([-1., 17., 0., 0., 16., 16.], [0, 65535]),
+        ([8., 24., 8., 8., 32., 64.], [32768, 32768]),
+    ];
+    let input = gpu.words(
+        &cases
+            .iter()
+            .flat_map(|(values, _)| values.map(f32::to_bits))
+            .collect::<Vec<_>>(),
+        wgpu::BufferUsages::STORAGE,
+    );
+    let shader = format!(
+        "const STYLE_UNORM16_UV: u32 = {}u;\n{}\n@group(0) @binding(0) var<storage, read> input: array<f32>; @group(0) @binding(1) var<storage, read_write> output: array<vec4<u32>>; @compute @workgroup_size(1) fn witness(@builtin(global_invocation_id) i: vec3<u32>) {{ let p = i.x * 6u; output[i.x] = bitcast<vec4<u32>>(ui_texture_vertex(vec2(input[p], input[p+1u]), vec2(input[p+2u], input[p+3u]), STYLE_UNORM16_UV, vec2(input[p+4u], input[p+5u]))); }}",
+        render_api::UI_STYLE_UNORM16_UV,
+        include_str!("../../ui_texture_vertex.wgsl"),
+    );
+    let actual = gpu.compute_readback(
+        &shader,
+        &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: input.as_entire_binding(),
+        }],
+        1,
+        cases.len(),
+        cases.len() as u32,
+    );
+    for ((values, packed), actual) in cases.into_iter().zip(actual) {
+        let expected =
+            [packed[0] as f32 / 65535., packed[1] as f32 / 65535., 0., 0.].map(f32::to_bits);
+        assert_eq!(actual, expected, "texture vertex {values:?}");
+    }
+}
+
+#[test]
 fn opaque_terrain_tints_round_in_gamma_space() {
     let Some(gpu) = crate::gpu_snapshot::Gpu::for_fixture("opaque inventory tint bytes") else {
         return;
