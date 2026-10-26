@@ -608,6 +608,9 @@ and rendered qualification remain incomplete.
   Bedrock hand rigs shade posed normals in world space and combine texture, directional
   shade and sampled eye light in gamma space. Held block emission supplies a minimum
   light level. Broader held lighting and shape acceptance remain incomplete.
+  Held lighting and broader held-shape acceptance remain incomplete.
+  Chiseled bookshelf GUI cubes show their empty front and authored caps independently of
+  placed book counts and the held world model.
   Decorated pot inventory sides exclude the texture border; broader pose and tint acceptance remains open.
   Block-model previews cull one-sided rear faces and preserve two-sided planes.
   Terrain-backed GUI meshes retain independently averaged texture levels and choose a
