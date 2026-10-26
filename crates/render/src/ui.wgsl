@@ -281,6 +281,10 @@ fn shade_ui(input: UiVertexOutput, direct: bool) -> vec4<f32> {
         if direct { shine = srgb_to_linear(shine); }
         premultiplied_rgb += shine * viewport.glint_strength * alpha;
     }
+    // Store opaque terrain shading as rounded gamma-space bytes in the UI layer.
+    if !direct && alpha == 1.0 && (input.style_flags & STYLE_TERRAIN_MIPS) != 0u {
+        premultiplied_rgb = floor(premultiplied_rgb * 255.0 + vec3<f32>(0.5)) / 255.0;
+    }
     // Zero coverage keeps alpha-over's destination factor at one for authored additive effects.
     let coverage = select(alpha, 0.0, (input.style_flags & STYLE_ADDITIVE) != 0u);
     return vec4<f32>(premultiplied_rgb, coverage);

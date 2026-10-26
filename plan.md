@@ -598,6 +598,7 @@ and rendered qualification remain incomplete.
   Terrain-backed GUI meshes retain independently averaged texture levels and choose a
   level from their physical footprint. Projected cube and shaped-block coordinates round
   to half precision after control scaling and placement, including tinted and glinting copies.
+  Opaque terrain-face tinting rounds to encoded output bytes.
   Source tiles stay aligned through the retained
   levels; the source allocation retains shaped models alongside the flame page for the
   pinned catalog.

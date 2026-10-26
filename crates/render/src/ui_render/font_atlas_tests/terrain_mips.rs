@@ -2,6 +2,47 @@ use super::{Page, raster};
 use render_model::{UiRenderVertex, UiTexturePage};
 
 #[test]
+fn opaque_terrain_tints_round_in_gamma_space() {
+    let Some(gpu) = crate::gpu_snapshot::Gpu::for_fixture("opaque inventory tint bytes") else {
+        return;
+    };
+    let tint = [83, 137, 197, 255];
+    let mut quad = vertices(16.);
+    for vertex in &mut quad {
+        vertex.color = tint;
+    }
+    let pixels: Vec<u8> = (0..=255)
+        .flat_map(|value| [value, value, value, 255])
+        .collect();
+    let actual = raster(
+        &gpu,
+        &quad,
+        None,
+        &[0, 1, 2, 0, 2, 3],
+        Page {
+            pixels: &pixels,
+            size: [16; 2],
+            coverage: false,
+            mips: None,
+        },
+        render_api::UI_STYLE_TERRAIN_MIPS,
+    );
+    for value in 0..=255usize {
+        let pixel = ((20 + value / 16) * 256 + 20 + value % 16) * 4;
+        for channel in 0..3 {
+            let expected = ((value as u16 * u16::from(tint[channel]) + 127) / 255) as u8;
+            assert_eq!(
+                actual[pixel + channel],
+                expected,
+                "source {value}, tint {}",
+                tint[channel]
+            );
+        }
+        assert_eq!(actual[pixel + 3], 255);
+    }
+}
+
+#[test]
 fn half_precision_coordinates_keep_even_ties_subnormals_and_signs() {
     let Some(gpu) = crate::gpu_snapshot::Gpu::for_fixture("half precision UI coordinates") else {
         return;
