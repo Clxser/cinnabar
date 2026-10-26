@@ -41,6 +41,34 @@ pub(super) struct HudState {
 }
 
 impl HudState {
+    /// Discards failed surface writes while retaining published output and native observations.
+    pub(super) fn rollback(&mut self) {
+        let Self {
+            surface,
+            surface_revision: _,
+            pending_surface,
+            index,
+            hidden: _,
+            pending_hidden,
+            local_messages: _,
+            pending_messages,
+            measures,
+            viewport: _,
+            elements: _,
+            text: _,
+        } = self;
+        *pending_surface = None;
+        *pending_hidden = None;
+        pending_messages.clear();
+        *measures = 0;
+        *index = surface
+            .as_deref()
+            .map(ui::mod_panel::HudIndex::new)
+            .transpose()
+            .expect("committed HUD surface was validated")
+            .unwrap_or_default();
+    }
+
     /// A process-unique revision for committed output that changed.
     fn next_revision() -> u64 {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);

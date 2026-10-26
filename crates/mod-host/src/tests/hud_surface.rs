@@ -149,6 +149,34 @@ fn text_measurement_uses_the_installed_label_metrics() {
 }
 
 #[test]
+fn frame_fuel_overrun_keeps_the_last_published_hud_surface_and_hidden_elements() {
+    let (_directory, mut host) = load(
+        "call $surface call $hide-two",
+        "call $clear call $show-all (loop $forever br $forever)",
+        true,
+    );
+    let (surface, revision) = host.hud_surface().map(|(s, r)| (Arc::clone(s), r)).unwrap();
+    let hidden = host.hidden_hud_elements();
+    host.frame(false).unwrap_err();
+    assert!(host.is_active());
+    let (retained, retained_revision) = host.hud_surface().unwrap();
+    assert!(Arc::ptr_eq(retained, &surface));
+    assert_eq!(retained_revision, revision);
+    assert_eq!(host.hidden_hud_elements(), hidden);
+    // A busy loading lane keeps published output available without entering the trapped guest.
+    let budget = CallbackBudget::new(0);
+    budget
+        .reserve(server_experience::runtime::LOAD_FUEL)
+        .unwrap();
+    host.set_frame_authority(budget, false, false, 0);
+    host.frame(false).unwrap();
+    let (retained, retained_revision) = host.hud_surface().unwrap();
+    assert!(Arc::ptr_eq(retained, &surface));
+    assert_eq!(retained_revision, revision);
+    assert_eq!(host.hidden_hud_elements(), hidden);
+}
+
+#[test]
 fn reload_preserves_installed_text_metrics() {
     let (dir, mut host) = load("", "call $measure-sans", true);
     host.set_text_measure(Some(Arc::new(Metrics)));

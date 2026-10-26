@@ -107,41 +107,67 @@ impl Instance {
             session.permissions = state.grants.drawing_permissions();
             state.render.masks.bind(session);
         }
-        if let Some(bundle) = panel_bundle.filter(|_| state.grants.controls) {
-            state.controls.panel = Some(bundle.panel.clone());
-            state.controls.bundle = Some(bundle);
-        }
+        state.controls.bundle = panel_bundle.filter(|_| state.grants.controls);
         let pre = linker.instantiate_pre(&component)?;
         exports::Exports::check(&pre)?;
-        let mut store = Store::new(engine, state);
+        Self::instantiate(pre, state)
+    }
+
+    /// Initializes a fresh store from admitted code and caller-selected host state.
+    pub(super) fn instantiate(
+        pre: wasmtime::component::InstancePre<State>,
+        state: State,
+    ) -> Result<Self> {
+        let mut store = Store::new(pre.engine(), state);
+        let (exports, last_fuel) = Self::initialize(&pre, &mut store)?;
+        Ok(Self {
+            store,
+            pre,
+            exports,
+            status: InstanceStatus::Running,
+            last_fuel,
+            callback_budget: None,
+            filter_identity: super::action_filter::next_identity(),
+            consecutive_frame_overruns: 0,
+        })
+    }
+
+    /// Initializes admitted code with fresh controls, keeping the store available on failure.
+    pub(super) fn initialize(
+        pre: &wasmtime::component::InstancePre<State>,
+        store: &mut Store<State>,
+    ) -> Result<(exports::Exports, u64)> {
+        // Fresh memory starts from admitted controls, without edits owned by the old guest.
+        let state = store.data_mut();
+        state.controls.panel = state
+            .controls
+            .bundle
+            .as_ref()
+            .map(|bundle| bundle.panel.clone());
+        state.controls.finish_text_frame(false);
+        state.controls.layout = None;
+        state.touch.restart_guest();
         store.limiter(|state| &mut state.limits);
         let initial = FRAME_FUEL;
-        crate::execution::arm(&mut store, initial, true)?;
-        let instance = pre.instantiate(&mut store)?;
-        let (init, exports) = exports::Exports::find(&mut store, &instance)?;
+        crate::execution::arm(store, initial, true)?;
+        let instance = pre.instantiate(&mut *store)?;
+        let (init, exports) = exports::Exports::find(store, &instance)?;
         let instantiated = initial - store.get_fuel().unwrap_or(0).min(initial);
         let mut armed = initial;
         if exports.loads_session() {
             armed = LOAD_FUEL;
-            crate::execution::arm(&mut store, armed, true)?;
+            crate::execution::arm(store, armed, true)?;
         }
-        init.call(&mut store, ())?;
-        init.post_return(&mut store)?;
-        commit(&mut store);
+        init.call(&mut *store, ())?;
+        init.post_return(&mut *store)?;
+        commit(store);
         let last_fuel = armed - store.get_fuel().unwrap_or(0).min(armed)
             + if exports.loads_session() {
                 instantiated
             } else {
                 0
             };
-        Ok(Self {
-            store,
-            exports,
-            status: InstanceStatus::Running,
-            last_fuel,
-            callback_budget: None,
-            filter_identity: super::action_filter::next_identity(),
-        })
+        Ok((exports, last_fuel))
     }
 
     /// Initializes a replacement through the bounded loading lane with its full guest limits.
