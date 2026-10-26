@@ -187,6 +187,7 @@ fn an_animated_form_button_answers_only_at_its_painted_position() {
                     pointer_edges: vec![down],
                     wheel: Vec::new(),
                     typed: Vec::new(),
+                    menu_cancel: None,
                     now: if down { 2.0 } else { 2.01 },
                     animator: presentation.form_animator(),
                 },
