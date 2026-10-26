@@ -42,6 +42,8 @@ impl WorldStream {
                 [LightChannel::Block, LightChannel::Sky]
                     .into_iter()
                     .all(|channel| {
+                        #[cfg(test)]
+                        lighting::work::record(0, 1);
                         previous
                             .get(channel, 0, 0, 0)
                             .expect("uniform light sample is in range")
@@ -53,9 +55,13 @@ impl WorldStream {
         }
         std::array::from_fn(|face| {
             face_cells(face).all(|(source, _)| {
+                #[cfg(test)]
+                lighting::work::record(1, 0);
                 [LightChannel::Block, LightChannel::Sky]
                     .into_iter()
                     .all(|channel| {
+                        #[cfg(test)]
+                        lighting::work::record(0, 1);
                         previous
                             .get(channel, source[0], source[1], source[2])
                             .expect("face coordinates are in range")

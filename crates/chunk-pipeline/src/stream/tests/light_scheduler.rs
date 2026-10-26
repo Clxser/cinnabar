@@ -259,6 +259,7 @@ fn synthetic_light_completion(
             light_levels_changed,
             direct_sky_changed,
             changed_faces,
+            monotonic_faces: Default::default(),
         }),
         queue_wait: Duration::ZERO,
         duration: Duration::from_millis(3),
@@ -278,6 +279,7 @@ mod provenance;
 mod scheduling_priority;
 mod sky_boundary;
 mod worker_caps;
+mod worker_faces;
 
 mod mesh_admission;
 mod mesh_preparation;

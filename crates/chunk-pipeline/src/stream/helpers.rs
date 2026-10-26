@@ -54,6 +54,7 @@ pub(super) fn offset_sub_chunk_key(
     ))
 }
 
+#[cfg(test)]
 pub(super) fn light_face_changed(
     previous: Option<&SubChunkLight>,
     replacement: &SubChunkLight,
@@ -86,12 +87,17 @@ pub(super) fn light_face_changed(
         uniform_direct(previous_direct),
         uniform_direct(Some(replacement_direct)),
     ) {
+        lighting::work::record(0, 2);
         return block_before != block_after
             || sky_before != sky_after
             || direct_before != direct_after;
     }
     for [x, y, z] in sampled_light_shell(offset) {
+        #[cfg(test)]
+        lighting::work::record(1, 0);
         for channel in [LightChannel::Block, LightChannel::Sky] {
+            #[cfg(test)]
+            lighting::work::record(0, 1);
             let before = previous
                 .and_then(|light| light.get(channel, x, y, z))
                 .unwrap_or(0);

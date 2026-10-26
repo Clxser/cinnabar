@@ -502,9 +502,16 @@ impl WorldStream {
             light_levels_changed,
             direct_sky_changed,
             changed_faces,
+            monotonic_faces,
         } = solved;
-        let monotonic_faces =
-            self.monotonic_light_faces(completion.key, &replacement, direct_sky.as_ref());
+        let monotonic_faces = monotonic_faces
+            .matching(
+                self.lighting.store.light(completion.key),
+                self.lighting.direct_sky.get(&completion.key),
+            )
+            .unwrap_or_else(|| {
+                self.monotonic_light_faces(completion.key, &replacement, direct_sky.as_ref())
+            });
         if used_uniform_fast_path {
             self.stats.light_uniform_fast_path_jobs =
                 self.stats.light_uniform_fast_path_jobs.saturating_add(1);

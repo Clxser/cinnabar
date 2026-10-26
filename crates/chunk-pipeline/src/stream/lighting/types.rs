@@ -1,4 +1,5 @@
 use super::super::*;
+use super::results::LightBatchTarget;
 
 #[derive(Debug, Clone, Copy)]
 pub(in crate::stream) struct PendingLight {
@@ -410,6 +411,7 @@ pub(in crate::stream) struct SolvedLightJob {
     pub(in crate::stream) light_levels_changed: bool,
     pub(in crate::stream) direct_sky_changed: bool,
     pub(in crate::stream) changed_faces: [bool; 6],
+    pub(in crate::stream) monotonic_faces: super::results::PreparedMonotonicFaces,
 }
 
 pub(in crate::stream) struct PreparedLightJob {
@@ -431,14 +433,6 @@ pub(in crate::stream) struct SolvedLightBatchEntry {
     pub(in crate::stream) result: Result<SolvedLightJob, LightJobError>,
 }
 
-struct LightBatchTarget {
-    key: SubChunkKey,
-    identity: LightJobIdentity,
-    queued_at: Instant,
-    old_light: Option<Arc<SubChunkLight>>,
-    old_direct: Option<StoredDirectSky>,
-}
-
 /// Solves one captured input with fresh scratch for isolated test callers.
 #[cfg(test)]
 pub(in crate::stream) fn solve_prepared_light_job(
@@ -452,7 +446,7 @@ fn solve_prepared_light_job_with_scratch(
     mut job: PreparedLightJob,
     scratch: &mut world::LightSolverScratch,
 ) -> Result<SolvedLightJob, LightJobError> {
-    let target = light_batch_target(&job);
+    let target = LightBatchTarget::capture(&job);
     let (replacement, direct_sky, used_uniform_fast_path) =
         if let Some((light, direct)) = uniform_known_air_light(&job) {
             (light, Arc::new(direct), true)
@@ -489,12 +483,7 @@ fn solve_prepared_light_job_with_scratch(
             let direct = Arc::new(DirectSkyMask::from_output(&output, job.key));
             (light, direct, false)
         };
-    Ok(finish_solved_light_job(
-        target,
-        replacement,
-        direct_sky,
-        used_uniform_fast_path,
-    ))
+    Ok(target.finish(replacement, direct_sky, used_uniform_fast_path))
 }
 
 /// Runs an isolated column batch without retaining scratch between test calls.
@@ -558,7 +547,7 @@ pub(in crate::stream) fn solve_prepared_light_batch_with_scratch(
             remaining.extend(candidates);
             break;
         };
-        let target = light_batch_target(&job);
+        let target = LightBatchTarget::capture(&job);
         let key = job.key;
         let identity = job.identity;
         let queued_at = job.queued_at;
@@ -568,12 +557,7 @@ pub(in crate::stream) fn solve_prepared_light_batch_with_scratch(
             key,
             identity,
             queued_at,
-            result: Ok(finish_solved_light_job(
-                target,
-                replacement,
-                direct_sky,
-                true,
-            )),
+            result: Ok(target.finish(replacement, direct_sky, true)),
         });
     }
     if remaining.is_empty() {
@@ -605,7 +589,7 @@ pub(in crate::stream) fn solve_prepared_light_batch_with_scratch(
     };
     let mut min = first.bounds.min();
     let mut max = first.bounds.max();
-    let mut targets = vec![light_batch_target(&first)];
+    let mut targets = vec![LightBatchTarget::capture(&first)];
     // The batch solves together, so it revisits only changed cells when every member knows them.
     let mut changed = first.changed.as_deref().map(<[BlockPos]>::to_vec);
     let mut blocks = first.blocks;
@@ -623,7 +607,7 @@ pub(in crate::stream) fn solve_prepared_light_batch_with_scratch(
             max.y.max(job_max.y),
             max.z.max(job_max.z),
         );
-        targets.push(light_batch_target(&job));
+        targets.push(LightBatchTarget::capture(&job));
         changed = changed.zip(job.changed.as_deref()).map(|(mut all, cells)| {
             all.extend_from_slice(cells);
             all
@@ -685,7 +669,7 @@ pub(in crate::stream) fn solve_prepared_light_batch_with_scratch(
             .map(|light| {
                 let replacement = light.as_ref().clone().with_generation(identity.revision);
                 let direct_sky = Arc::new(DirectSkyMask::from_output(&output, key));
-                finish_solved_light_job(target, replacement, direct_sky, false)
+                target.finish(replacement, direct_sky, false)
             })
             .ok_or(LightJobError::MissingTargetOutput);
         SolvedLightBatchEntry {
@@ -697,27 +681,6 @@ pub(in crate::stream) fn solve_prepared_light_batch_with_scratch(
     });
     solved_prefix.extend(solved);
     solved_prefix
-}
-
-fn light_batch_target(job: &PreparedLightJob) -> LightBatchTarget {
-    let old_light = job.prior.light.light(job.key).cloned();
-    let old_direct = job
-        .prior
-        .direct_sky
-        .get(&job.key)
-        .cloned()
-        .filter(|direct| {
-            old_light
-                .as_deref()
-                .is_some_and(|light| direct.light_revision == light.generation())
-        });
-    LightBatchTarget {
-        key: job.key,
-        identity: job.identity,
-        queued_at: job.queued_at,
-        old_light,
-        old_direct,
-    }
 }
 
 fn failed_light_batch(
@@ -733,42 +696,6 @@ fn failed_light_batch(
             result: Err(error),
         })
         .collect()
-}
-
-fn finish_solved_light_job(
-    target: LightBatchTarget,
-    replacement: SubChunkLight,
-    direct_sky: Arc<DirectSkyMask>,
-    used_uniform_fast_path: bool,
-) -> SolvedLightJob {
-    let light_levels_changed = target
-        .old_light
-        .as_deref()
-        .is_none_or(|previous| !light_levels_equal(previous, &replacement));
-    let direct_sky_changed = target
-        .old_direct
-        .as_ref()
-        .is_none_or(|previous| previous.mask.as_ref() != direct_sky.as_ref());
-    let changed_faces = std::array::from_fn(|index| {
-        light_face_changed(
-            target.old_light.as_deref(),
-            &replacement,
-            target
-                .old_direct
-                .as_ref()
-                .map(|direct| direct.mask.as_ref()),
-            direct_sky.as_ref(),
-            LIGHT_NEIGHBOUR_OFFSETS[index],
-        )
-    });
-    SolvedLightJob {
-        replacement,
-        direct_sky,
-        used_uniform_fast_path,
-        light_levels_changed,
-        direct_sky_changed,
-        changed_faces,
-    }
 }
 
 pub(in crate::stream) fn uniform_known_air_light(
