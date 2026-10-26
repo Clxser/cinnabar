@@ -93,6 +93,7 @@ pub fn collect_held(
                 HeldDisplay::PressurePlate(visual)
             } else if assets::registry::pinned_block_model_family(visual)
                 == Some(assets::ModelFamily::Slab)
+                && !flat
                 && assets::registry::pinned_block_identity(visual)
                     .is_some_and(|(name, _)| name == key.identifier.as_ref())
             {
