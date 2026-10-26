@@ -608,7 +608,10 @@ and rendered qualification remain incomplete.
   Decorated pot inventory sides exclude the texture border; broader pose and tint acceptance remains open.
   Block-model previews cull one-sided rear faces and preserve two-sided planes.
   Terrain-backed GUI meshes retain independently averaged texture levels and choose a
-  level from their physical footprint. Source tiles stay aligned through the retained
+  level from their physical footprint. Projected cube and shaped-block coordinates round
+  to half precision after control scaling and placement, including tinted and glinting copies.
+  Opaque terrain-face tinting rounds to encoded output bytes.
+  Source tiles stay aligned through the retained
   levels; the source allocation retains shaped models alongside the flame page for the
   pinned catalog.
   The hotbar catalog comparison still has open shape, artwork and item-variant differences;

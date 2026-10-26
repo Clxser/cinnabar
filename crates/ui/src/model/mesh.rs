@@ -46,6 +46,7 @@ pub struct UiMesh {
     indices: Arc<[u32]>,
     batches: Arc<[UiMeshBatch]>,
     draw_vertex_count: usize,
+    half_float_xy: bool,
 }
 
 /// Meshes compare by contents. [`UiMesh::new`] admits only finite floats, so buffers shared
@@ -59,6 +60,7 @@ impl PartialEq for UiMesh {
         same(&self.vertices, &other.vertices)
             && same(&self.indices, &other.indices)
             && same(&self.batches, &other.batches)
+            && self.half_float_xy == other.half_float_xy
     }
 }
 
@@ -86,6 +88,17 @@ impl fmt::Display for UiMeshError {
 impl std::error::Error for UiMeshError {}
 
 impl UiMesh {
+    /// Rounds projected XY to half precision after scaling and placing the control.
+    pub fn with_half_float_xy(mut self) -> Self {
+        self.half_float_xy = true;
+        self
+    }
+
+    /// Whether the final projected XY uses half precision.
+    pub fn uses_half_float_xy(&self) -> bool {
+        self.half_float_xy
+    }
+
     /// Builds a normal textured quad with explicit tint and blend mode.
     pub fn sprite(
         texture_page: u16,
@@ -251,6 +264,7 @@ impl UiMesh {
             indices,
             batches,
             draw_vertex_count,
+            half_float_xy: false,
         })
     }
 
