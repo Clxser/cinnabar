@@ -6,7 +6,6 @@ use crate::{BridgeError, MAX_FRAME_LEN};
 
 /// Clones of the queue share one writer that keeps the order frames were accepted in,
 /// while the read half keeps receiving.
-#[cfg(unix)]
 #[tokio::test]
 async fn queued_connection_writes_in_acceptance_order_while_reading() {
     use futures::StreamExt;
@@ -33,7 +32,6 @@ async fn queued_connection_writes_in_acceptance_order_while_reading() {
 }
 
 /// A send completes only once its frame is flushed, and fails when the write does.
-#[cfg(unix)]
 #[tokio::test]
 async fn send_resolves_only_after_its_frame_is_flushed() {
     use futures::FutureExt;
@@ -68,7 +66,6 @@ async fn send_resolves_only_after_its_frame_is_flushed() {
 }
 
 /// A reader that stops draining backs up into the senders instead of an unbounded backlog.
-#[cfg(unix)]
 #[tokio::test]
 async fn stalled_reader_bounds_accepted_frames() {
     use futures::FutureExt;
