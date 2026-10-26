@@ -1,6 +1,161 @@
 use super::{Page, raster};
 use render_model::{UiRenderVertex, UiTexturePage};
 
+#[test]
+fn opaque_terrain_tints_round_in_gamma_space() {
+    let Some(gpu) = crate::gpu_snapshot::Gpu::for_fixture("opaque inventory tint bytes") else {
+        return;
+    };
+    let tint = [83, 137, 197, 255];
+    let mut quad = vertices(16.);
+    for vertex in &mut quad {
+        vertex.color = tint;
+    }
+    let pixels: Vec<u8> = (0..=255)
+        .flat_map(|value| [value, value, value, 255])
+        .collect();
+    let actual = raster(
+        &gpu,
+        &quad,
+        None,
+        &[0, 1, 2, 0, 2, 3],
+        Page {
+            pixels: &pixels,
+            size: [16; 2],
+            coverage: false,
+            mips: None,
+        },
+        render_api::UI_STYLE_TERRAIN_MIPS,
+    );
+    for value in 0..=255usize {
+        let pixel = ((20 + value / 16) * 256 + 20 + value % 16) * 4;
+        for channel in 0..3 {
+            let expected = ((value as u16 * u16::from(tint[channel]) + 127) / 255) as u8;
+            assert_eq!(
+                actual[pixel + channel],
+                expected,
+                "source {value}, tint {}",
+                tint[channel]
+            );
+        }
+        assert_eq!(actual[pixel + 3], 255);
+    }
+}
+
+#[test]
+fn half_precision_coordinates_keep_even_ties_subnormals_and_signs() {
+    let Some(gpu) = crate::gpu_snapshot::Gpu::for_fixture("half precision UI coordinates") else {
+        return;
+    };
+    let cases: [(f32, f32); 12] = [
+        (0., 0.),
+        (1., 1.),
+        (1. + 1. / 2048., 1.),
+        (1. + 3. / 2048., 1. + 2. / 1024.),
+        (129.071_06, 129.125),
+        (129.284_21, 129.25),
+        (1. / 33_554_432., 0.),
+        (3. / 33_554_432., 1. / 8_388_608.),
+        (1. / 16384. - 1. / 33_554_432., 1. / 16384.),
+        (65504., 65504.),
+        (65520., f32::INFINITY),
+        (f32::MAX, f32::INFINITY),
+    ];
+    let cases: Vec<_> = cases
+        .into_iter()
+        .flat_map(|(value, expected)| [(value, expected), (-value, -expected)])
+        .collect();
+    let input = gpu.words(
+        &cases
+            .iter()
+            .map(|(value, _)| value.to_bits())
+            .collect::<Vec<_>>(),
+        wgpu::BufferUsages::STORAGE,
+    );
+    let source = format!(
+        "{}\n@group(0) @binding(0) var<storage, read> input: array<u32>; @group(0) @binding(1) var<storage, read_write> output: array<vec4<u32>>; @compute @workgroup_size(1) fn witness(@builtin(global_invocation_id) i: vec3<u32>) {{ output[i.x] = vec4(bitcast<u32>(ui_half_float(bitcast<f32>(input[i.x]))), 0u, 0u, 0u); }}",
+        include_str!("../../ui_half_float.wgsl"),
+    );
+    let actual = gpu.compute_readback(
+        &source,
+        &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: input.as_entire_binding(),
+        }],
+        1,
+        cases.len(),
+        cases.len() as u32,
+    );
+    for ((value, expected), actual) in cases.into_iter().zip(actual) {
+        assert_eq!(actual[0], expected.to_bits(), "input {value}");
+    }
+}
+
+#[test]
+fn projected_item_vertices_use_half_precision_before_rasterization() {
+    let Some(gpu) = crate::gpu_snapshot::Gpu::for_fixture("projected item coordinates") else {
+        return;
+    };
+    let positions = [
+        [129.071_06, 129.284_21],
+        [136.142_14, 132.819_75],
+        [129.071_06, 136.355_29],
+        [122.0, 132.819_75],
+    ];
+    let rounded = [
+        [129.125, 129.25],
+        [136.125, 132.875],
+        [129.125, 136.375],
+        [122.0, 132.875],
+    ];
+    let mut projected = vertices(16.0);
+    for (vertex, position) in projected.iter_mut().zip(positions) {
+        vertex.position = position;
+    }
+    let mut reference = projected;
+    for (vertex, position) in reference.iter_mut().zip(rounded) {
+        vertex.position = position;
+    }
+    let pixels = (0..16)
+        .flat_map(|y| (0..16).flat_map(move |x| [x * 16, y * 16, 127, 255]))
+        .collect::<Vec<_>>();
+    let draw = |quad: &[UiRenderVertex], flags| {
+        raster(
+            &gpu,
+            quad,
+            None,
+            &[0, 1, 2, 0, 2, 3],
+            Page {
+                pixels: &pixels,
+                size: [16; 2],
+                coverage: false,
+                mips: None,
+            },
+            flags,
+        )
+    };
+    let expected = draw(&reference, 0);
+    assert!(
+        draw(&projected, 0) != expected,
+        "the fixture exposes subpixel differences"
+    );
+    let actual = draw(&projected, render_api::UI_STYLE_HALF_FLOAT_XY);
+    assert!(
+        actual == expected,
+        "projected item coordinates must round before triangle interpolation: first delta {:?}, differing pixels {}",
+        actual
+            .chunks_exact(4)
+            .zip(expected.chunks_exact(4))
+            .enumerate()
+            .find(|(_, (a, b))| a != b),
+        actual
+            .chunks_exact(4)
+            .zip(expected.chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count(),
+    );
+}
+
 /// Projects the source onto a square with the requested physical footprint.
 fn vertices(side: f32) -> [UiRenderVertex; 4] {
     [[0., 0.], [1., 0.], [1., 1.], [0., 1.]].map(|point| UiRenderVertex {
