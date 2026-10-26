@@ -122,8 +122,7 @@ impl EquipmentRuntime {
         }
         let shape = if block {
             FirstPersonShape::Block {
-                quarter_turn: assets::facts::pack::face_slots(&item.identifier)
-                    == Some(assets::facts::pack::FaceSlots::Pumpkin),
+                quarter_turn: self.first_person_block_quarter_turn(item),
             }
         } else {
             FirstPersonShape::Sprite {

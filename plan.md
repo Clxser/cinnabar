@@ -610,6 +610,8 @@ and rendered qualification remain incomplete.
   silhouette and texture-coordinate acceptance remains incomplete.
   Held pumpkin cubes use the same canonical class artwork independently of placement
   facing. Their first-person block pose retains the item-space quarter turn.
+  Held stairs select that turn from their pinned model family or active stair topology,
+  independently of inventory GUI orientation. Rendered stair acceptance remains open.
   Bedrock hand rigs shade posed normals in world space and interpolate their combined
   directional and eye light in gamma space. Held block emission supplies a minimum
   light level. Bedrock hand artwork samples original gamma bytes directly; Java lighting
