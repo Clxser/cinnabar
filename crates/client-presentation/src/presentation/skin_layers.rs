@@ -158,7 +158,7 @@ impl SkinLayerCache {
         let bytes = base
             .pages()
             .iter()
-            .map(|page| page.pixels().len())
+            .map(|page| page.rgba8.len())
             .sum::<usize>()
             + render_model::PLAYER_SKIN_BUDGET_BYTES
             + self

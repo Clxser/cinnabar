@@ -110,7 +110,7 @@ fn pending_replacement_keeps_previous_texture_and_uses_latest_material_flags() {
     assert_eq!(gpu.page(0).unwrap()._texture.id(), previous);
     pages.entity_identity = [3; 32];
     let mut page = pages.pages[0].clone();
-    page.rgba8 = page.rgba8.to_vec().into();
+    page.rgba8 = page.pixels().into_owned().into();
     page.color_mask = true;
     page.multitexture = true;
     pages.pages = Arc::from([page]);
@@ -127,7 +127,7 @@ fn pending_replacement_keeps_previous_texture_and_uses_latest_material_flags() {
 fn superseded_pending_pixels_are_released_without_being_published() {
     let (device, queue) = device();
     let pages = publication(1, 1);
-    let weak = Arc::downgrade(&pages.pages[0].rgba8);
+    let weak = Arc::downgrade(&pages.pages[0].rgba8.parts()[0]);
     let budget = pages.pages[0].rgba8.len() / 3;
     let mut gpu = GpuArtwork::default();
     assert!(gpu.prepare_pages(&pages, [1].into_iter(), &device, &queue, budget));
@@ -472,7 +472,8 @@ fn row_bands_preserve_pixels_across_layer_boundaries() {
                 })
             })
         })
-        .collect();
+        .collect::<Vec<u8>>()
+        .into();
     pages.pages = Arc::from([page.clone()]);
     let reference = upload_page(&device, &queue, &page, "complete fixture", default()).unwrap();
     let view = reference.create_view(&TextureViewDescriptor {
