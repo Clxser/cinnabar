@@ -569,6 +569,21 @@ impl PhysicsCollisionRegistries {
         })
     }
 
+    /// The lowest registered state of the block named `name`, for consumers that need only
+    /// its block type, such as place sounds.
+    pub fn named_block_runtime_id(&self, mode: assets::NetworkIdMode, name: &str) -> Option<u32> {
+        let identity = self.named_block_identities.get(name)?;
+        let &(sequential, hashed) = self
+            .state_ids
+            .get(identity)?
+            .values()
+            .min_by_key(|(sequential, _)| *sequential)?;
+        Some(match mode {
+            assets::NetworkIdMode::Sequential => sequential,
+            assets::NetworkIdMode::Hashed => hashed,
+        })
+    }
+
     /// Whether `runtime_id` is a cube-model block with one full collision box.
     pub fn block_is_full_cube(&self, mode: assets::NetworkIdMode, runtime_id: u32) -> bool {
         let map = match mode {

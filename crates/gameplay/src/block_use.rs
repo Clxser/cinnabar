@@ -696,3 +696,6 @@ mod stopping;
 
 mod pick;
 pub use pick::{BlockPick, PickResult};
+
+mod seed;
+pub use seed::seed_planting_cell;
