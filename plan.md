@@ -107,6 +107,8 @@ Displayed-frame pacing and complete resize/platform acceptance remain incomplete
   native visual comparison and runtime replacement-pack acceptance remain open.
 - [ ] Close cutout-cube and leaf visual acceptance. Preserve independent geometry,
   occlusion and cave-connectivity semantics, packed quads and coverage-preserving mips.
+  Inventory terrain previews weight face tint by source opacity while retaining partial
+  coverage. Matched-background and complete replacement-pack acceptance remain open.
 - [ ] `P2.5-NATIVE-BIOME` — Qualify existing biome palettes and grass/foliage/water tinting
   against native output while preserving packed storage and the shared quad contract.
   Terrain particles use the dimension biome fallback until their column is published;
@@ -132,13 +134,16 @@ Displayed-frame pacing and complete resize/platform acceptance remain incomplete
   trapdoors, connected panes/fences/gates and static chest/sign models. Check existing
   coverage before implementing a missing case. Keep conservative culling and connectivity
   until exact face-coverage behavior is verified separately. Inventory fences draw the
-  native two-post shape. Walls now use the custom carried two-post shape, and vanilla
+  native two-post shape, with separately textured rear and front rail halves and ordered
+  surface overlap. Acacia texture-boundary sampling remains unqualified.
+  Walls use the carried two-post shape, and vanilla
   gate item meshes turn into the custom carried axis. Native wall/gate inventory parity
   and fresh integrated-frame acceptance remain unverified. World bamboo fences and bamboo
   fence gates stretch their native texture regions over each piece face; the bamboo fence
-  inventory icon still uses ordinary fence UVs instead of the native bamboo GUI shape and
-  slat regions, the down/up quarter-turn direction of turned bamboo rail and slat tops is
-  unverified, and world fence rails still omit the outer end faces native tessellation draws.
+  inventory preview uses separate posts and three-pixel slats with independent texture
+  regions. Exact compositing bytes and replacement-pack acceptance remain open. The down/up
+  quarter-turn direction of turned bamboo rail and slat tops remains unverified, and world
+  fence rails omit the outer end faces.
   World walls preserve the central post outside postless straight pairs, merge those pairs
   to their lower connection height, and use outside-facing UVs. Complete wall material,
   lighting and gallery acceptance remain open.
