@@ -284,6 +284,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 	registerChatCommands()
 	srv.Listen()
+	var localHost localExperienceHost
+	if host != nil {
+		localHost = host
+	}
 	accepting := make(chan struct{})
 	go func() {
 		defer close(accepting)
@@ -291,7 +295,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 			if hostbridge.IsRemote(p.Addr()) {
 				p.Handle(&visitorHandler{host: host})
 			} else {
-				p.Handle(&localPlayerHandler{host: host})
+				p.Handle(&localPlayerHandler{host: localHost})
 			}
 			if host != nil {
 				host.PlayerJoined(p)

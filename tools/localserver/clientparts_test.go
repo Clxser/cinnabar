@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -274,8 +275,8 @@ func TestMarkerPackLoadsAsAnOptionalPack(t *testing.T) {
 	}
 }
 
-// startServer runs the server with args until the test ends.
-func startServer(t *testing.T, args []string) {
+// startServer runs the server until cleanup or an explicit idempotent stop.
+func startServer(t *testing.T, args []string) func() {
 	t.Helper()
 	stdinR, stdinW := io.Pipe()
 	stdoutR, stdoutW := io.Pipe()
@@ -288,12 +289,14 @@ func startServer(t *testing.T, args []string) {
 		t.Fatalf("server printed %q, %v", line, err)
 	}
 	go io.Copy(io.Discard, stdoutR)
-	t.Cleanup(func() {
+	stop := sync.OnceFunc(func() {
 		_, _ = stdinW.Write([]byte("stop\n"))
 		if err := <-done; err != nil {
 			t.Errorf("run: %v", err)
 		}
 	})
+	t.Cleanup(stop)
+	return stop
 }
 
 // freeAddr is a loopback UDP address nothing listens on.
