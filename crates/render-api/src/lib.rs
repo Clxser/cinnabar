@@ -72,5 +72,8 @@ pub const UI_STYLE_SPRITE_COLOR_MASK: u32 = 1 << 16;
 /// Selects source mip levels from the projected footprint of an inventory surface.
 pub const UI_STYLE_TERRAIN_MIPS: u32 = 1 << 17;
 
+/// Rounds projected item XY to half precision before viewport conversion.
+pub const UI_STYLE_HALF_FLOAT_XY: u32 = 1 << 18;
+
 /// Selects half-alpha rejection when no explicit sampled-texture cutoff is supplied.
 pub const UI_STYLE_ALPHA_TEST: u32 = 1 << 4;
