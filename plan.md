@@ -610,10 +610,11 @@ and rendered qualification remain incomplete.
   silhouette and texture-coordinate acceptance remains incomplete.
   Held pumpkin cubes use the same canonical class artwork independently of placement
   facing. Their first-person block pose retains the item-space quarter turn.
-  Bedrock hand rigs shade posed normals in world space and combine texture, directional
-  shade and sampled eye light in gamma space. Held block emission supplies a minimum
+  Bedrock hand rigs shade posed normals in world space and interpolate their combined
+  directional and eye light in gamma space. Held block emission supplies a minimum
   light level. Bedrock hand artwork samples original gamma bytes directly; Java lighting
-  retains sRGB artwork sampling. Broader held lighting and shape acceptance remain incomplete.
+  retains sRGB artwork sampling. Opaque Bedrock hands round gamma output to bytes before
+  scene conversion. Broader held lighting and shape acceptance remain incomplete.
   Chiseled bookshelf GUI cubes show their empty front and authored caps independently of
   placed book counts and the held world model.
   Decorated pot inventory sides exclude the texture border; broader pose and tint acceptance remains open.

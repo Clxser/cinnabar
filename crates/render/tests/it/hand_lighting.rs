@@ -149,7 +149,7 @@ fn bedrock_and_java_hand_light_normals_and_compose_texture_in_gamma() {
     });
     gpu.queue.write_texture(
         texture.as_image_copy(),
-        &[128, 128, 128, 255],
+        &[128, 227, 255, 255],
         wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(4),
@@ -178,25 +178,44 @@ fn bedrock_and_java_hand_light_normals_and_compose_texture_in_gamma() {
             }]),
             wgpu::BufferUsages::STORAGE,
         );
-        for (java, normal, world_light, rotate_camera, emission, expected) in [
-            (false, [0.0, -1.0, 0.0], 1.0_f32, false, 0, 57.6),
-            (false, [0.0, 1.0, 0.0], 1.0, false, 0, 128.0),
-            (false, [1.0, 0.0, 0.0], 1.0, false, 0, 80.0),
-            (false, [0.0, 0.0, 1.0], 1.0, false, 0, 105.6),
-            (false, [0.0, 0.0, 1.0], 1.0, true, 0, 57.6),
-            (false, [0.0, -1.0, 0.0], 0.5, false, 15, 57.6),
-            (true, [0.0, -1.0, 0.0], 1.0, false, 0, 51.2),
-            (true, [0.0, 1.0, 0.0], 1.0, false, 0, 128.0),
+        for (java, varying_normals, normal, world_light, camera_angle, emission, expected) in [
+            (false, false, [0.0, -1.0, 0.0], 1.0_f32, 0.0, 0, 57.6),
+            (false, false, [0.0, 1.0, 0.0], 1.0, 0.0, 0, 128.0),
+            (false, false, [1.0, 0.0, 0.0], 1.0, 0.0, 0, 80.0),
+            (false, false, [0.0, 0.0, 1.0], 1.0, 0.0, 0, 105.6),
+            (
+                false,
+                false,
+                [0.0, 0.0, 1.0],
+                1.0,
+                std::f32::consts::FRAC_PI_2,
+                0,
+                57.6,
+            ),
+            (false, false, [0.0, -1.0, 0.0], 0.5, 0.0, 15, 57.6),
+            (true, false, [0.0, -1.0, 0.0], 1.0, 0.0, 0, 51.2),
+            (true, false, [0.0, 1.0, 0.0], 1.0, 0.0, 0, 128.0),
             (
                 true,
+                false,
                 [1.0, 0.0, 0.0],
                 1.0,
-                false,
+                0.0,
                 0,
                 128.0 * (0.4 + stretch * 0.6 * 0.2 / 1.53_f32.sqrt()),
             ),
-            (true, [0.0, 0.0, 1.0], 1.0, false, 0, 94.6614),
-            (true, [0.0, 1.0, 0.0], 0.5, false, 0, 64.0),
+            (true, false, [0.0, 0.0, 1.0], 1.0, 0.0, 0, 94.6614),
+            (true, false, [0.0, 1.0, 0.0], 0.5, 0.0, 0, 64.0),
+            (false, true, [0.0, 1.0, 0.0], 1.0, 0.0, 0, 92.9375),
+            (
+                false,
+                false,
+                [0.0, 1.0, 0.0],
+                252.0 / 255.0,
+                std::f32::consts::FRAC_PI_4,
+                0,
+                122.6303,
+            ),
         ] {
             let vertices = [
                 (-1.0, -1.0),
@@ -213,7 +232,11 @@ fn bedrock_and_java_hand_light_normals_and_compose_texture_in_gamma() {
                     .to_array(),
                 normal: basis
                     .inverse()
-                    .transform_vector3(Vec3::from_array(normal))
+                    .transform_vector3(if varying_normals {
+                        if x < 0.0 { Vec3::NEG_Y } else { Vec3::Y }
+                    } else {
+                        Vec3::from_array(normal)
+                    })
                     .to_array(),
                 uv: [0.5; 2],
                 back_uv: [0.5; 2],
@@ -229,9 +252,8 @@ fn bedrock_and_java_hand_light_normals_and_compose_texture_in_gamma() {
                     .extend(0.0)
                     .to_array(); 3];
             }
-            if rotate_camera {
-                light =
-                    light.with_bedrock_lighting(Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2));
+            if camera_angle != 0.0 {
+                light = light.with_bedrock_lighting(Mat4::from_rotation_x(camera_angle));
             }
             light.emitted_light = [0, emission, emission, 0];
             let atlas = texture.create_view(&wgpu::TextureViewDescriptor {
@@ -291,10 +313,18 @@ fn bedrock_and_java_hand_light_normals_and_compose_texture_in_gamma() {
                     write_depth: true,
                 }],
             );
-            let observed = pixels[(128 * 256 + 128) * 4];
+            let center = (128 * 256 + 128) * 4;
+            let observed = pixels[center];
+            if camera_angle == std::f32::consts::FRAC_PI_4 {
+                assert_eq!(
+                    pixels[center + 1],
+                    217,
+                    "opaque gamma output rounds before sRGB storage"
+                );
+            }
             assert!(
                 (f32::from(observed) - expected).abs() <= 1.0,
-                "Java={java}, layer={layer}, stretch={stretch}, normal={normal:?}, world={world_light}: expected {expected}, got {observed}"
+                "Java={java}, varying={varying_normals}, layer={layer}, stretch={stretch}, normal={normal:?}, world={world_light}: expected {expected}, got {observed}"
             );
         }
     }

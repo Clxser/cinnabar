@@ -71,6 +71,21 @@ struct VertexOutput {
     @location(4) @interpolate(flat) shade: f32,
     // Instance index whose glint words apply, or MAX without glint.
     @location(5) @interpolate(flat) glint_instance: u32,
+    @location(6) native_light: vec3<f32>,
+}
+
+// Each Bedrock vertex combines environment and directional light before interpolation.
+fn hand_environment_light(texture_layer: u32) -> vec3<f32> {
+    let sample = hand_light.block_level | (hand_light.sky_level << 4u);
+    let item = (texture_layer & hand_material.texture_flags.x) != 0u;
+    let offhand = (texture_layer & hand_material.texture_flags.y) != 0u;
+    let light_index = select(0u, select(1u, 2u, offhand), item);
+    var illumination = actor_light_colour(sample);
+    let emission = hand_light.emitted_light[light_index];
+    if emission != 0u {
+        illumination = max(illumination, native_light_texel(emission));
+    }
+    return illumination;
 }
 
 fn word_f32(index: u32) -> f32 {
@@ -185,7 +200,7 @@ fn hand_vertex(
         let hand_normal = placed_normal(placement, posed);
         let world_from_hand = BoneMatrix(hand_light.world_from_hand[0], hand_light.world_from_hand[1], hand_light.world_from_hand[2]);
         let world_normal = placed_normal(world_from_hand, hand_normal);
-        out.shade = actor_lighting(ACTOR_LIGHT_DIRECTIONAL_FLAG, world_normal, 0.0).r;
+        out.native_light = hand_environment_light(texture_layer) * actor_lighting(ACTOR_LIGHT_DIRECTIONAL_FLAG, world_normal, 0.0);
     }
     out.valid = 1u;
     return out;
@@ -226,22 +241,25 @@ fn hand_fragment(input: VertexOutput, @builtin(front_facing) front: bool) -> @lo
         discard;
     }
     let sample = hand_light.block_level | (hand_light.sky_level << 4u);
-    var illumination = native_light_texel(sample);
-    if (hand_light.java_lights[0].w == 0.0) {
-        let offhand = (input.skin_layer & hand_material.texture_flags.y) != 0u;
-        let light_index = select(0u, select(1u, 2u, offhand), is_item);
-        illumination = actor_light_colour(sample);
-        let emission = hand_light.emitted_light[light_index];
-        if emission != 0u {
-            illumination = max(illumination, native_light_texel(emission));
-        }
-    }
     let native = hand_light.java_lights[0].w == 0.0;
-    var lit = tint_to_linear(vec4(hand_gamma_sample(color, native).rgb * input.shade * illumination, 1.0)).rgb;
+    var gamma = hand_gamma_sample(color, native).rgb;
+    if native {
+        gamma *= input.native_light;
+    } else {
+        gamma = gamma * input.shade * native_light_texel(sample);
+    }
     if (is_item && input.glint_instance != 0xffffffffu) {
-        let foiled = tint_to_gamma(vec4(lit, 1.0)).rgb + item_foil(uv, input.uv.zw, input.glint_instance, illumination);
-        lit = tint_to_linear(vec4(foiled, 1.0)).rgb;
+        var illumination = native_light_texel(sample);
+        if native {
+            illumination = hand_environment_light(input.skin_layer);
+        }
+        gamma = tint_to_gamma(tint_to_linear(vec4(gamma, 1.0))).rgb + item_foil(uv, input.uv.zw, input.glint_instance, illumination);
     }
     let blend = is_item && (input.skin_layer & hand_material.texture_flags.z) != 0u;
+    // Opaque Bedrock output rounds in a gamma-byte attachment before scene conversion.
+    if native && !blend {
+        gamma = round(gamma * 255.0) / 255.0;
+    }
+    let lit = tint_to_linear(vec4(gamma, 1.0)).rgb;
     return vec4(lit, select(1.0, color.a, blend));
 }
