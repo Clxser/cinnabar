@@ -901,6 +901,12 @@ fn pinned_trapdoors_hold_a_centered_thin_panel() {
             .get(&block_visual.0)
             .unwrap_or_else(|| panic!("{name} must hold a three-dimensional panel"));
         assert_eq!(vertices.len(), 36, "{name} has six panel faces");
+        assert!(
+            vertices
+                .iter()
+                .all(|vertex| vertex.back_uv == crate::ONE_SIDED_BACK_UV),
+            "{name} culls far faces through its cutouts"
+        );
         for (axis, bound) in [0.5, 0.09124756, 0.5].into_iter().enumerate() {
             let min = vertices
                 .iter()

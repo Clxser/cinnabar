@@ -17,9 +17,13 @@ pub(super) fn model(
     {
         return None;
     }
-    template_quads(&quads(
+    let (materials, mut vertices) = template_quads(&quads(
         BlockFace::ALL.map(|face| block.face(face).material_id()),
-    ))
+    ))?;
+    for vertex in &mut vertices {
+        vertex.back_uv = crate::ONE_SIDED_BACK_UV;
+    }
+    Some((materials, vertices))
 }
 
 /// Preserves cap orientation and samples only the thin edge strip on side faces.
