@@ -75,5 +75,8 @@ pub const UI_STYLE_TERRAIN_MIPS: u32 = 1 << 17;
 /// Rounds projected item XY to half precision before viewport conversion.
 pub const UI_STYLE_HALF_FLOAT_XY: u32 = 1 << 18;
 
+/// Stores block GUI texture coordinates as unsigned normalized 16-bit vertices.
+pub const UI_STYLE_UNORM16_UV: u32 = 1 << 19;
+
 /// Selects half-alpha rejection when no explicit sampled-texture cutoff is supplied.
 pub const UI_STYLE_ALPHA_TEST: u32 = 1 << 4;
