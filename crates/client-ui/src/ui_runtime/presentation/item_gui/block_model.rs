@@ -65,7 +65,7 @@ pub(in crate::ui_runtime::presentation) fn mesh(
     }
     UiMesh::new(vertices.into(), indices.into(), batches.into())
         .ok()
-        .map(UiMesh::with_half_float_xy)
+        .map(UiMesh::with_compact_block_vertices)
         .map(Arc::new)
 }
 
