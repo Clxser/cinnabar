@@ -88,8 +88,8 @@ pub(super) fn emit_mesh(
                 uv: vertex.uv,
                 color: vertex.color,
                 style_flags: u32::from(vertex.style_flags)
-                    | if mesh.uses_half_float_xy() {
-                        render_api::UI_STYLE_HALF_FLOAT_XY
+                    | if mesh.uses_compact_block_vertices() {
+                        render_api::UI_STYLE_HALF_FLOAT_XY | render_api::UI_STYLE_UNORM16_UV
                     } else {
                         0
                     }

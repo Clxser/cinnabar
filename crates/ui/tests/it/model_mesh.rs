@@ -39,7 +39,7 @@ fn terrain_sampling_survives_mesh_draw_conversion() {
             vec![batch(1, 0..3)].into(),
         )
         .unwrap()
-        .with_half_float_xy(),
+        .with_compact_block_vertices(),
     );
     let bounds = rect(0.0, 0.0, 16.0, 16.0);
     let mut tree = UiTree::new(vec![
@@ -53,6 +53,7 @@ fn terrain_sampling_survives_mesh_draw_conversion() {
         vertex.style_flags & render_api::UI_STYLE_TERRAIN_MIPS != 0
             && vertex.style_flags & render_api::UI_STYLE_ALPHA_TEST != 0
             && vertex.style_flags & render_api::UI_STYLE_HALF_FLOAT_XY != 0
+            && vertex.style_flags & render_api::UI_STYLE_UNORM16_UV != 0
     }));
 }
 
@@ -168,7 +169,7 @@ fn meshes_compare_by_contents_whether_or_not_they_share_buffers() {
     assert_eq!(*source, (*source).clone(), "shared buffers");
     assert_eq!(*source, *rebuilt, "separate buffers with the same contents");
     assert_ne!(*source, (*source).clone().with_opacity(0.5));
-    assert_ne!(*source, (*source).clone().with_half_float_xy());
+    assert_ne!(*source, (*source).clone().with_compact_block_vertices());
     let moved = UiMesh::new(
         vec![
             vertex([0.0, 0.0], 2.0),

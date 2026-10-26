@@ -324,8 +324,10 @@ fn raster(
         })
         .collect::<Vec<_>>()
         .join(",");
+    let texture_width = size[0] as f32;
+    let texture_height = size[1] as f32;
     let shader = format!(
-        "{}\n@vertex fn fixture(@builtin(vertex_index) i: u32) -> UiVertexOutput {{ let pos = array<vec2<f32>, 6>({}); let uv = array<vec2<f32>, 6>({}); var out: UiVertexOutput; out.clip_position = ui_clip_position(vec4<f32>(pos[i], 0.0, 1.0), {flags}u); out.uv = uv[i]; let offsets = array<vec2<f32>, 6>({}); out.atlas_offset = offsets[i]; out.color = vec4<f32>({:?}, {:?}, {:?}, {:?}); out.texture_page = 0u; out.style_flags = {}u; out.alpha_cutoff = {:?}; out.model_light = 1.0; out.overlay_color = vec4<f32>(0.0); return out; }}",
+        "{}\n@vertex fn fixture(@builtin(vertex_index) i: u32) -> UiVertexOutput {{ let pos = array<vec2<f32>, 6>({}); let uv = array<vec2<f32>, 6>({}); var out: UiVertexOutput; out.clip_position = ui_clip_position(vec4<f32>(pos[i], 0.0, 1.0), {flags}u); let offsets = array<vec2<f32>, 6>({}); let texture_vertex = ui_texture_vertex(uv[i], offsets[i], {flags}u, vec2<f32>({texture_width:?}, {texture_height:?})); out.uv = texture_vertex.xy; out.atlas_offset = texture_vertex.zw; out.color = vec4<f32>({:?}, {:?}, {:?}, {:?}); out.texture_page = 0u; out.style_flags = {}u; out.alpha_cutoff = {:?}; out.model_light = 1.0; out.overlay_color = vec4<f32>(0.0); return out; }}",
         super::shader::source(include_str!("../ui.wgsl")),
         values(true),
         values(false),

@@ -18,6 +18,10 @@ pub(crate) fn source(raw: &str) -> String {
         "UI_HALF_FLOAT_ROUNDING",
         include_str!("../ui_half_float.wgsl"),
     );
+    let raw = raw.replace(
+        "UI_TEXTURE_VERTEX",
+        include_str!("../ui_texture_vertex.wgsl"),
+    );
     raw.replace(
         "GLINT_TINT_RGB",
         &crate::material_shader::glint_tint_source(),
@@ -29,6 +33,10 @@ pub(crate) fn source(raw: &str) -> String {
     .replace(
         "UI_STYLE_TERRAIN_MIPS",
         &format!("{}u", render_api::UI_STYLE_TERRAIN_MIPS),
+    )
+    .replace(
+        "UI_STYLE_UNORM16_UV",
+        &format!("{}u", render_api::UI_STYLE_UNORM16_UV),
     )
     .replace(
         "UI_STYLE_HALF_FLOAT_XY",
