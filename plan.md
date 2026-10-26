@@ -264,6 +264,9 @@ Displayed-frame pacing and complete resize/platform acceptance remain incomplete
   surviving meshes still invalidate when their sampled biome data retires.
   Changed lighting also preserves settled air's empty publication; first empty
   receipts and unfinished removals still receive service.
+  Uniform light dominance checks skip all 256 fallback face cells when the unit bound
+  succeeds, while failed bounds retain exact block-filter checks. Hardware streaming
+  acceptance remains open.
   Model output reservations share meshing's template-selection policy: fixed models
   reserve their own compound chains and neighbour-selected models keep a conservative
   allowance. Resource reloads refresh these bounds while retaining existing output

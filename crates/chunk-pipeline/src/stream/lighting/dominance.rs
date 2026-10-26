@@ -1,5 +1,20 @@
 use super::super::*;
 
+#[cfg(test)]
+thread_local! {
+    static DOMINANCE_FACE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts fallback cells visited by an operation on the calling thread.
+#[cfg(test)]
+pub(in crate::stream) fn with_dominance_face_visits<T>(
+    operation: impl FnOnce() -> T,
+) -> (T, usize) {
+    let before = DOMINANCE_FACE_VISITS.get();
+    let result = operation();
+    (result, DOMINANCE_FACE_VISITS.get() - before)
+}
+
 impl WorldStream {
     pub(in crate::stream) fn monotonic_light_faces(
         &self,
@@ -114,8 +129,53 @@ impl WorldStream {
             return false;
         };
 
+        let uniform_channels =
+            [LightChannel::Block, LightChannel::Sky]
+                .into_iter()
+                .all(|channel| {
+                    source.channel(channel).is_uniform()
+                        && destination.channel(channel).is_uniform()
+                });
+        if uniform_channels
+            && let (
+                DirectSkyMask::Uniform(source_direct),
+                DirectSkyMask::Uniform(destination_direct),
+            ) = (
+                source_direct.mask.as_ref(),
+                destination_direct.mask.as_ref(),
+            )
+        {
+            let [
+                (source_block, destination_block),
+                (source_sky, destination_sky),
+            ] = [LightChannel::Block, LightChannel::Sky].map(|channel| {
+                (
+                    source
+                        .get(channel, 0, 0, 0)
+                        .expect("uniform sample is in range"),
+                    destination
+                        .get(channel, 0, 0, 0)
+                        .expect("uniform sample is in range"),
+                )
+            });
+            // A successful zero-filter bound covers every uniform cell without reading blocks.
+            if incoming_is_dominated(
+                source_block,
+                source_sky,
+                face == 2 && source_sky == 15 && *source_direct,
+                destination_block,
+                destination_sky,
+                *destination_direct,
+                0,
+            ) {
+                return true;
+            }
+        }
+
         let mut filters = DestinationFilters::default();
         face_cells(face).all(|(source_position, destination_position)| {
+            #[cfg(test)]
+            DOMINANCE_FACE_VISITS.set(DOMINANCE_FACE_VISITS.get() + 1);
             let get = |light: &SubChunkLight, channel, position: [u8; 3]| {
                 light
                     .get(channel, position[0], position[1], position[2])

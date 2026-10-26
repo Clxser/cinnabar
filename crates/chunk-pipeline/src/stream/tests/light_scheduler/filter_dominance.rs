@@ -179,14 +179,18 @@ fn resident_filter_refines_only_failed_unit_attenuation_cells() {
 
     stream
         .authority
-        .update_block(destination, BlockUpdate::new(0, 0, 0, 0, 3), 0)
+        .update_block(destination, BlockUpdate::new(0, 15, 15, 0, 3), 0)
         .unwrap();
     install_current_light(&mut stream, destination, 13, 0, false);
-    assert!(!stream.current_known_target_dominates_source_face(
-        source,
-        destination,
-        monotonic_faces
-    ));
+    let (dominates, visits) = lighting::with_dominance_face_visits(|| {
+        stream.current_known_target_dominates_source_face(source, destination, monotonic_faces)
+    });
+    assert!(!dominates);
+    assert_eq!(
+        visits,
+        world::SUB_CHUNK_SIDE.pow(2),
+        "the last cell still needs its exact filter"
+    );
 }
 
 #[test]

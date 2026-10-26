@@ -205,7 +205,7 @@ performance qualification remain incomplete. No phase or performance gate closes
 | Deterministic tests | Protocol, stream, transport and app regressions are authored. Deferred-mesh regressions cover settled dependencies, stale light, priority and bounded work. Controlled cache deadlines cover idle input, cancellation, full-column payload retention, shared-hash retries, ordering and resets. Full publication qualification is pending. |
 | Review commit | Independent review is pending. |
 | Live/native witness | Full camera writer phase, global request discovery, native retry policy and later client versions remain open. |
-| Performance/resource witness | Live join, streaming and hardware budgets remain open. |
+| Performance/resource witness | Uniform light dominance removes 256 fallback face visits for a successful uniform unit bound. Exact filter fallback remains covered; live join, streaming and hardware budgets remain open. |
 | Final status | Open |
 
 ## P2.7-ATMOSPHERE

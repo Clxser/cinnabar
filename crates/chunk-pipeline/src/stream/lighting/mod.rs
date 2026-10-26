@@ -1,6 +1,8 @@
 mod air_fixed_point;
 mod diagnostics;
 mod dominance;
+#[cfg(test)]
+pub(in crate::stream) use dominance::with_dominance_face_visits;
 mod jobs;
 mod prefix;
 mod state;
