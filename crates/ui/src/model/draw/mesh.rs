@@ -88,6 +88,11 @@ pub(super) fn emit_mesh(
                 uv: vertex.uv,
                 color: vertex.color,
                 style_flags: u32::from(vertex.style_flags)
+                    | if mesh.uses_half_float_xy() {
+                        render_api::UI_STYLE_HALF_FLOAT_XY
+                    } else {
+                        0
+                    }
                     | if vertex.terrain_mips {
                         render_api::UI_STYLE_TERRAIN_MIPS
                     } else {

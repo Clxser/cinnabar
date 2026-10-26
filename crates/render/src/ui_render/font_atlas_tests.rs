@@ -325,11 +325,15 @@ fn raster(
         .collect::<Vec<_>>()
         .join(",");
     let shader = format!(
-        "{}\n@vertex fn fixture(@builtin(vertex_index) i: u32) -> UiVertexOutput {{ let pos = array<vec2<f32>, 6>({}); let uv = array<vec2<f32>, 6>({}); var out: UiVertexOutput; out.clip_position = vec4<f32>(pos[i].x / 128.0 - 1.0, 1.0 - pos[i].y / 128.0, 0.0, 1.0); out.uv = uv[i]; let offsets = array<vec2<f32>, 6>({}); out.atlas_offset = offsets[i]; out.color = vec4<f32>(0.667, 0.824, 1.0, 1.0); out.texture_page = 0u; out.style_flags = {}u; out.alpha_cutoff = {:?}; out.model_light = 1.0; out.overlay_color = vec4<f32>(0.0); return out; }}",
+        "{}\n@vertex fn fixture(@builtin(vertex_index) i: u32) -> UiVertexOutput {{ let pos = array<vec2<f32>, 6>({}); let uv = array<vec2<f32>, 6>({}); var out: UiVertexOutput; out.clip_position = ui_clip_position(vec4<f32>(pos[i], 0.0, 1.0), {flags}u); out.uv = uv[i]; let offsets = array<vec2<f32>, 6>({}); out.atlas_offset = offsets[i]; out.color = vec4<f32>({:?}, {:?}, {:?}, {:?}); out.texture_page = 0u; out.style_flags = {}u; out.alpha_cutoff = {:?}; out.model_light = 1.0; out.overlay_color = vec4<f32>(0.0); return out; }}",
         super::shader::source(include_str!("../ui.wgsl")),
         values(true),
         values(false),
         offsets,
+        f32::from(vertices[0].color[0]) / 255.,
+        f32::from(vertices[0].color[1]) / 255.,
+        f32::from(vertices[0].color[2]) / 255.,
+        f32::from(vertices[0].color[3]) / 255.,
         flags,
         vertices[0].alpha_cutoff,
     );
