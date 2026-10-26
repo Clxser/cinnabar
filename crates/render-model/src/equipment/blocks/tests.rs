@@ -898,6 +898,12 @@ fn pinned_glass_panes_keep_a_plate_instead_of_flat_artwork() {
             .models
             .get(&block_visual.0)
             .unwrap_or_else(|| panic!("{name} must hold a three-dimensional glass plate"));
+        assert!(
+            vertices
+                .iter()
+                .all(|vertex| vertex.back_uv == crate::ONE_SIDED_BACK_UV),
+            "{name} culls the far face through transparent holes"
+        );
         assert_eq!(vertices.len(), 36, "{name} has six plate faces");
         for axis in 0..3 {
             let bound = if axis == 0 { 0.07501221 } else { 0.60009766 };
