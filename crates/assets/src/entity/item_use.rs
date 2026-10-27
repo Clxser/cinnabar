@@ -15,6 +15,15 @@ pub const LONG_WEAPON_USE_TICKS: u32 = 72_000;
 /// Eat or drink duration for a consumable that declares none.
 pub const DEFAULT_CONSUME_USE_TICKS: u32 = 32;
 
+/// Most remaining use ticks at which an eat or drink use still bites.
+pub const CONSUME_EFFECT_WINDOW_TICKS: u32 = 25;
+
+/// Whether a tick that leaves `remaining` use ticks bites, as in vanilla: crumbs, the step
+/// sound and the outbound progress event all fire on every fourth tick of the final window.
+pub const fn consume_effect_tick(remaining: u32) -> bool {
+    remaining <= CONSUME_EFFECT_WINDOW_TICKS && remaining.is_multiple_of(4)
+}
+
 /// Compatibility crossbow charge before stack enchantments are applied.
 pub const CROSSBOW_CHARGE_TICKS: u32 = 25;
 /// Charge reduction for one admitted Quick Charge enchantment level.

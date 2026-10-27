@@ -19,9 +19,6 @@ const PLAYER: &str = assets::facts::VanillaEntity::Player.identifier();
 const HEAD_HEIGHT_FRACTION: f32 = 0.9;
 /// Seconds between block hit sounds while mining (vanilla 200 ms).
 const HIT_INTERVAL: f32 = 0.2;
-/// Seconds between eating/drinking sounds while an item is in use; needs native measurement.
-const CONSUME_INTERVAL: f32 = 0.25;
-const SECONDS_PER_TICK: f32 = simulation_clock::TICK_DURATION.as_secs_f32();
 
 /// One bite of the local player's food, in step with its eating sound; particles scatter the
 /// item's crumbs from it.
@@ -218,8 +215,8 @@ pub fn drive_block_cues(
 #[derive(Debug, Default)]
 pub struct ConsumeAudio {
     item: Option<Arc<str>>,
-    elapsed: f32,
-    timer: f32,
+    started_tick: Option<u64>,
+    elapsed_tick: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -247,37 +244,49 @@ impl ConsumeAudio {
         })
     }
 
-    /// Advances by `dt` while `item` (identifier, sound event) is in admitted use, completing
-    /// every `duration` seconds of continuous use.
+    /// Emits each newly reached use-tick cue once, including when several ticks share a frame.
     fn advance(
         &mut self,
         item: Option<(Arc<str>, &'static str)>,
-        duration: Option<f32>,
-        dt: f32,
+        timing: Option<(u64, u32)>,
+        tick: u64,
     ) -> Vec<ConsumeCue> {
         let identifier = item.as_ref().map(|(identifier, _)| Arc::clone(identifier));
-        if self.item != identifier {
+        let started_tick = timing.map(|(start, _)| start);
+        if self.item != identifier || self.started_tick != started_tick {
             *self = Self {
                 item: identifier,
+                started_tick,
                 ..Self::default()
             };
         }
-        let Some((_, event)) = item else {
+        let (Some((_, event)), Some((start, duration))) = (item, timing) else {
             return Vec::new();
         };
-        let mut cues = Vec::new();
-        self.elapsed += dt;
-        self.timer -= dt;
-        if self.timer <= 0.0 {
-            self.timer = CONSUME_INTERVAL;
-            cues.push(ConsumeCue::Step(event));
+        if duration == 0 {
+            return Vec::new();
         }
-        if let Some(duration) = duration.filter(|duration| *duration > 0.0)
-            // Tolerates frame-sum rounding at an exact tick boundary.
-            && self.elapsed >= duration - 1.0e-4
+        let Some(elapsed) = tick
+            .checked_sub(start)
+            .map(|elapsed| elapsed.saturating_add(1).min(u64::from(duration)) as u32)
+        else {
+            return Vec::new();
+        };
+        let first = self
+            .elapsed_tick
+            .map_or(1, |previous| previous.saturating_add(1));
+        self.elapsed_tick = Some(elapsed);
+        let mut cues = Vec::new();
+        // Only the final window can emit, even after a long gap between observations.
+        for used in first
+            .max(duration.saturating_sub(assets::item_use::CONSUME_EFFECT_WINDOW_TICKS))
+            ..=elapsed
         {
-            self.elapsed = (self.elapsed - duration).max(0.0);
-            if event == "eat" {
+            let remaining = duration - used;
+            if assets::item_use::consume_effect_tick(remaining) {
+                cues.push(ConsumeCue::Step(event));
+            }
+            if remaining == 0 && event == "eat" {
                 cues.push(ConsumeCue::Finished);
             }
         }
@@ -291,7 +300,8 @@ impl ConsumeAudio {
 #[allow(clippy::too_many_arguments)]
 pub fn drive_consume_audio(
     player_runtime: &player_state::PlayerState,
-    time: Res<Time>,
+    use_timing: Option<(u64, u32)>,
+    tick: u64,
     ui: Option<&client_ui::ui_runtime::UiRuntime>,
     world: crate::observations::WorldObservation<'_>,
     eye: bevy::prelude::Vec3,
@@ -314,14 +324,11 @@ pub fn drive_consume_audio(
             profile.consumption,
         ))
     });
-    let duration = admitted
-        .as_ref()
-        .map(|(_, _, ticks, _)| *ticks as f32 * SECONDS_PER_TICK);
     let consumption = admitted
         .as_ref()
         .map_or_else(Default::default, |(_, _, _, consumption)| *consumption);
     let item = admitted.map(|(identifier, event, _, _)| (identifier, event));
-    let cues = state.advance(item, duration, time.delta_secs());
+    let cues = state.advance(item, use_timing, tick);
     if cues.is_empty() {
         return;
     }
@@ -332,7 +339,9 @@ pub fn drive_consume_audio(
             .map_or(0, |stack| stack.metadata),
         &cues,
     ) {
-        eating.write(cue);
+        for _ in cues.iter().filter(|cue| **cue == ConsumeCue::Step("eat")) {
+            eating.write(cue.clone());
+        }
     }
     let requests: Vec<SoundRequest> = {
         let Some(bank) = engine.bank() else { return };
@@ -555,8 +564,8 @@ mod tests {
                         Arc::clone(&identifier),
                         consume_event(base.consumption).unwrap(),
                     )),
-                    Some(base.ticks.unwrap() as f32 * SECONDS_PER_TICK),
-                    0.05,
+                    Some((0, base.ticks.unwrap())),
+                    8,
                 );
                 assert!(state.eating_cue(base.consumption, 0, &cues).is_some());
                 stream.set_item_use_overlays(Arc::new(std::collections::BTreeMap::from([(
@@ -575,34 +584,84 @@ mod tests {
                     Arc::clone(&identifier),
                     consume_event(effective.consumption).unwrap(),
                 )),
-                Some(effective.ticks.unwrap() as f32 * SECONDS_PER_TICK),
-                CONSUME_INTERVAL,
+                Some((0, effective.ticks.unwrap())),
+                12,
             );
             assert!(cues.contains(&ConsumeCue::Step("drink")));
             assert!(state.eating_cue(effective.consumption, 0, &cues).is_none());
         }
     }
 
-    // Food only burped after releasing Use past a fixed 1.6 s, whatever the item's duration.
     #[test]
-    fn food_finishes_at_its_own_duration_while_still_in_use() {
+    fn consume_cues_wait_for_the_first_bite_tick_of_each_duration() {
+        // Use tick 1 is the tick the use starts; vanilla bites once 25 or fewer ticks remain.
+        for (identifier, event, duration, steps) in [
+            (
+                "minecraft:golden_apple",
+                "eat",
+                32,
+                &[8, 12, 16, 20, 24, 28, 32][..],
+            ),
+            ("minecraft:dried_kelp", "eat", 16, &[4, 8, 12, 16][..]),
+            (
+                "minecraft:honey_bottle",
+                "drink.honey",
+                40,
+                &[16, 20, 24, 28, 32, 36, 40][..],
+            ),
+        ] {
+            let item = || Some((Arc::from(identifier), event));
+            let mut state = ConsumeAudio::default();
+            let mut stepped = Vec::new();
+            for used in 1..=duration {
+                let tick = 100 + u64::from(used) - 1;
+                let cues = state.advance(item(), Some((100, duration)), tick);
+                if cues.contains(&ConsumeCue::Step(event)) {
+                    stepped.push(used);
+                }
+                if event == "eat" {
+                    assert_eq!(
+                        state
+                            .eating_cue(assets::item_use::ItemConsumption::Eat, 0, &cues)
+                            .is_some(),
+                        cues.contains(&ConsumeCue::Step(event)),
+                        "{identifier} crumbs follow its bite sound"
+                    );
+                }
+                assert!(
+                    state
+                        .advance(item(), Some((100, duration)), tick)
+                        .is_empty(),
+                    "{identifier} repeated a cue within one tick"
+                );
+            }
+            assert_eq!(stepped, steps, "{identifier}");
+        }
+    }
+
+    #[test]
+    fn short_food_uses_its_remaining_ticks_and_restarting_resets_cues() {
         let kelp = || Some((Arc::from("minecraft:dried_kelp"), "eat"));
         let mut state = ConsumeAudio::default();
-        let mut finished_at = None;
-        for frame in 1..=40 {
-            let cues = state.advance(kelp(), Some(16.0 * SECONDS_PER_TICK), 0.05);
-            if cues.contains(&ConsumeCue::Finished) {
-                finished_at.get_or_insert(frame);
-            }
-        }
-        assert_eq!(finished_at, Some(16));
-        assert!(
-            state.advance(None, None, 0.05).is_empty(),
-            "no admitted use"
+        assert_eq!(
+            state.advance(kelp(), Some((100, 16)), 103),
+            [ConsumeCue::Step("eat")]
         );
-        let honey = Some((Arc::from("minecraft:honey_bottle"), "drink.honey"));
-        let cues = state.advance(honey, Some(0.05), 0.05);
-        assert_eq!(cues, vec![ConsumeCue::Step("drink.honey")]);
+        assert!(state.advance(kelp(), Some((100, 16)), 104).is_empty());
+        assert_eq!(
+            state.advance(kelp(), Some((100, 16)), 111),
+            [ConsumeCue::Step("eat"), ConsumeCue::Step("eat")]
+        );
+        assert_eq!(
+            state.advance(kelp(), Some((100, 16)), 115),
+            [ConsumeCue::Step("eat"), ConsumeCue::Finished]
+        );
+        assert!(state.advance(kelp(), Some((100, 16)), 117).is_empty());
+        assert!(state.advance(None, None, 118).is_empty());
+        assert_eq!(
+            state.advance(kelp(), Some((120, 16)), 123),
+            [ConsumeCue::Step("eat")]
+        );
     }
 
     // Only the local player's status was voiced; remote players and mobs stayed silent.

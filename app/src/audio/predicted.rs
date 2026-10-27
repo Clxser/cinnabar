@@ -68,7 +68,8 @@ pub(crate) fn drive_attack_cues(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn drive_consume_audio(
     player_runtime: bevy::prelude::Res<client_state::PlayerRuntime>,
-    time: Res<Time>,
+    item_use: Res<client_interaction::item_use::ItemUseRuntime>,
+    movement: Res<client_interaction::movement::MovementTicker>,
     ui: Option<Res<UiRuntimeResource>>,
     world: Res<ClientWorld>,
     view: Res<LocalViewPose>,
@@ -82,7 +83,8 @@ pub(crate) fn drive_consume_audio(
         .map(|profiler| profiler.time(render_scene::RuntimeStage::Audio));
     client_audio::audio::predicted::drive_consume_audio(
         &player_runtime,
-        time,
+        item_use.active_timing(),
+        movement.completed_tick(),
         ui.as_deref().map(|ui| &ui.0),
         client_audio::observations::WorldObservation {
             stream: world.stream.as_ref(),
