@@ -18,8 +18,8 @@ pub const DEFAULT_CONSUME_USE_TICKS: u32 = 32;
 /// Most remaining use ticks at which an eat or drink use still bites.
 pub const CONSUME_EFFECT_WINDOW_TICKS: u32 = 25;
 
-/// Whether a tick that leaves `remaining` use ticks bites, as in vanilla: crumbs, the step
-/// sound and the outbound progress event all fire on every fourth tick of the final window.
+/// Whether `remaining` admits a consume step: sound and outbound progress share the final
+/// window's four-tick cadence, with crumbs for food.
 pub const fn consume_effect_tick(remaining: u32) -> bool {
     remaining <= CONSUME_EFFECT_WINDOW_TICKS && remaining.is_multiple_of(4)
 }

@@ -219,6 +219,15 @@ pub struct ConsumeAudio {
     elapsed_tick: Option<u32>,
 }
 
+/// The admitted consumable and timing that owned the completed movement tick.
+pub struct ConsumeUse {
+    pub identifier: Arc<str>,
+    pub metadata: u32,
+    pub consumption: assets::item_use::ItemConsumption,
+    pub started_tick: u64,
+    pub duration: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConsumeCue {
     /// The player sound event of one eating/drinking step.
@@ -294,51 +303,28 @@ impl ConsumeAudio {
     }
 }
 
-/// Voices eating and drinking while the server admits the held consumable in use, finishing
-/// food with a burp once its pack use duration elapses; each bite of food is also an
-/// `eating` cue.
-#[allow(clippy::too_many_arguments)]
+/// Voices an admitted consumable's completed ticks, including its final bite and food burp.
 pub fn drive_consume_audio(
-    player_runtime: &player_state::PlayerState,
-    use_timing: Option<(u64, u32)>,
+    admitted: Option<ConsumeUse>,
     tick: u64,
-    ui: Option<&client_ui::ui_runtime::UiRuntime>,
-    world: crate::observations::WorldObservation<'_>,
     eye: bevy::prelude::Vec3,
     mut engine: ResMut<AudioEngine>,
     mut state: Local<ConsumeAudio>,
     mut eating: MessageWriter<LocalEatingCue>,
 ) {
-    let stream = world.stream.as_ref();
-    let using = stream
-        .and_then(|stream| stream.authority().actor(stream.local_player_runtime_id()))
-        .is_some_and(|actor| actor.is_using_item());
-    let admitted = stream.zip(ui).filter(|_| using).and_then(|(stream, _)| {
-        let stack = player_runtime.selected_stack()?;
-        let profile = stream.authority().item_use_profile(stack.network_id);
-        let identifier = stream.authority().canonical_item_stack(stack)?.identifier?;
-        Some((
-            identifier,
-            consume_event(profile.consumption)?,
-            profile.ticks?,
-            profile.consumption,
-        ))
-    });
+    let use_timing = admitted
+        .as_ref()
+        .map(|use_| (use_.started_tick, use_.duration));
+    let metadata = admitted.as_ref().map_or(0, |use_| use_.metadata);
     let consumption = admitted
         .as_ref()
-        .map_or_else(Default::default, |(_, _, _, consumption)| *consumption);
-    let item = admitted.map(|(identifier, event, _, _)| (identifier, event));
+        .map_or_else(Default::default, |use_| use_.consumption);
+    let item = admitted.and_then(|use_| Some((use_.identifier, consume_event(use_.consumption)?)));
     let cues = state.advance(item, use_timing, tick);
     if cues.is_empty() {
         return;
     }
-    if let Some(cue) = state.eating_cue(
-        consumption,
-        player_runtime
-            .selected_stack()
-            .map_or(0, |stack| stack.metadata),
-        &cues,
-    ) {
+    if let Some(cue) = state.eating_cue(consumption, metadata, &cues) {
         for _ in cues.iter().filter(|cue| **cue == ConsumeCue::Step("eat")) {
             eating.write(cue.clone());
         }

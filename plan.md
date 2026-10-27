@@ -1282,9 +1282,10 @@ See [local worlds](docs/local-worlds.md).
 Qualify audio admission, spatial playback, music and lifecycle behavior on supported
 platforms. Missing source music/ambience requires lawful local input or the documented
 fallback; do not bundle game assets to fill gaps.
-Local eating and drinking particles and step sounds follow completed use ticks with
+Local eating particles and eating/drinking step sounds follow completed use ticks with
 vanilla's cadence, shared with outbound progress events: one bite on each fourth tick
 once 25 or fewer remain, so the first bite's delay follows each item's duration.
+Presentation retains the use owning the completed tick across completion and held repeats.
 Confirmation against Bedrock 1.26.50 and a rendered-frame timing witness remain incomplete.
 Native audio follows changes to the system default output on its owner thread, retaining
 active and queued sounds across output replacement and retrying unavailable devices.

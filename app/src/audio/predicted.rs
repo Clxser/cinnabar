@@ -2,7 +2,6 @@
 use bevy::prelude::{Local, MessageReader, Res, ResMut, Time};
 use client_audio::audio::AudioEngine;
 use client_audio::audio::predicted::{ConsumeAudio, LocalBlockCue, MiningAudio};
-use client_shell::ui_resources::UiRuntimeResource;
 use {
     crate::{particles::ParticleInbox, runtime::world::ClientWorld},
     client_interaction::{
@@ -67,10 +66,8 @@ pub(crate) fn drive_attack_cues(
 /// Borrows current owner facts and forwards them at the existing system boundary.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn drive_consume_audio(
-    player_runtime: bevy::prelude::Res<client_state::PlayerRuntime>,
     item_use: Res<client_interaction::item_use::ItemUseRuntime>,
     movement: Res<client_interaction::movement::MovementTicker>,
-    ui: Option<Res<UiRuntimeResource>>,
     world: Res<ClientWorld>,
     view: Res<LocalViewPose>,
     engine: ResMut<AudioEngine>,
@@ -81,14 +78,22 @@ pub(crate) fn drive_consume_audio(
     let _timer = profiler
         .as_deref()
         .map(|profiler| profiler.time(render_scene::RuntimeStage::Audio));
+    let tick = movement.completed_tick();
+    let admitted = world.stream.as_ref().and_then(|stream| {
+        let (started_tick, duration, selection) = item_use.completed_use(tick)?;
+        let authority = stream.authority();
+        let profile = authority.item_use_profile(selection.item.network_id());
+        Some(client_audio::audio::predicted::ConsumeUse {
+            identifier: authority.item_identifier(selection.item.network_id())?,
+            metadata: selection.item.metadata(),
+            consumption: profile.consumption,
+            started_tick,
+            duration,
+        })
+    });
     client_audio::audio::predicted::drive_consume_audio(
-        &player_runtime,
-        item_use.active_timing(),
-        movement.completed_tick(),
-        ui.as_deref().map(|ui| &ui.0),
-        client_audio::observations::WorldObservation {
-            stream: world.stream.as_ref(),
-        },
+        admitted,
+        tick,
         view.eye_translation(),
         engine,
         state,

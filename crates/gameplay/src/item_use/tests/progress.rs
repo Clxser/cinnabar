@@ -60,6 +60,50 @@ fn use_progress_reports_remaining_duration_after_each_completed_tick() {
 }
 
 #[test]
+fn completed_use_keeps_the_last_bite_with_or_without_a_held_repeat() {
+    for restart in [false, true] {
+        let (mut runtime, selection) = eating();
+        let mut frame = item_frame(132, true, selection.clone(), "minecraft:golden_apple");
+        frame.ready = restart;
+        assert_eq!(runtime.step(&frame).started, restart);
+        assert_eq!(runtime.active_timing(), restart.then_some((132, 32)));
+        let (started, duration, completed_selection) = runtime.completed_use(131).unwrap();
+        assert_eq!((started, duration), (100, 32));
+        assert_eq!(completed_selection, &selection);
+        assert!(assets::item_use::consume_effect_tick(
+            duration - (131 - started + 1) as u32
+        ));
+        assert_eq!(
+            runtime
+                .completed_use(132)
+                .map(|(start, ticks, _)| (start, ticks)),
+            restart.then_some((132, 32))
+        );
+    }
+}
+
+#[test]
+fn completed_use_stops_after_the_release_tick_and_on_respawn() {
+    let (mut runtime, selection) = eating();
+    runtime.step(&item_frame(
+        108,
+        false,
+        selection.clone(),
+        "minecraft:golden_apple",
+    ));
+    assert!(!runtime.is_using());
+    assert_eq!(
+        runtime
+            .completed_use(107)
+            .map(|(start, ticks, _)| (start, ticks)),
+        Some((100, 32))
+    );
+    assert!(runtime.completed_use(108).is_none());
+    runtime.cancel_for_respawn();
+    assert!(runtime.completed_use(107).is_none());
+}
+
+#[test]
 fn use_progress_retries_failed_admission_without_repeating_a_successful_event() {
     let (mut runtime, selection) = eating();
     assert_eq!(
