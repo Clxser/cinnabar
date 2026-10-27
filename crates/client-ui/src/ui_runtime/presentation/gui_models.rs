@@ -26,6 +26,8 @@ pub(super) mod hud_model;
 mod live_player;
 mod pack_equipment;
 mod shield_icons;
+mod world_shield;
+pub use world_shield::WorldShieldArtwork;
 mod sources;
 use sources::{ModulatedMeshes, gui_cube_sheet, modulated};
 pub(super) use sources::{ordinary_cube_sheet, sheet_faces};
@@ -146,7 +148,7 @@ pub(super) struct GuiModels {
 /// Static item meshes and atlas pages prepared off the menu frame.
 #[derive(Default)]
 pub struct PreparedGuiModels {
-    pub(super) shield: Option<shield_icons::Source>,
+    pub(super) shield: Option<Arc<shield_icons::Source>>,
     pub(super) color_masks: super::color_icons::MaskRefs,
     pub(super) pages: Vec<UiTexturePage>,
     pub(super) cape: Option<render_model::cape::CapeRig>,
@@ -274,10 +276,10 @@ impl GuiModelPreparation {
                 let source = atlas.insert([texture.width, texture.height], &texture.rgba8)?;
                 if let Some(mesh) = item_gui::shield(geometry, texture, source) {
                     models.insert(icon_key(icon), mesh);
-                    shield = Some(shield_icons::Source {
+                    shield = Some(Arc::new(shield_icons::Source {
                         geometry: geometry.clone(),
                         texture: texture.clone(),
-                    });
+                    }));
                 }
             }
         }

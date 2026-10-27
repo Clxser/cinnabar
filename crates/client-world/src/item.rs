@@ -51,7 +51,7 @@ pub struct CanonicalItemStack {
     /// Signed image identity retained independently of visual metadata.
     pub map_id: Option<i64>,
     /// Shield cloth colors and overlays retained from this admitted stack.
-    pub shield_pattern: Option<Arc<protocol::ItemShieldPattern>>,
+    pub shield_pattern: Option<Arc<render_api::ShieldPattern>>,
     /// Projectile drawing facts resolved when this stack enters canonical admission.
     pub charged_projectile_role: assets::item_use::ItemProjectileRole,
     /// Durability damage retained separately from the stack's visual metadata.

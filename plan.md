@@ -588,7 +588,8 @@ and rendered qualification remain incomplete.
   weapon sprites and custom-model icon fallbacks.
   Decorated shield stacks retain their cloth base and ordered banner layers for inventory
   icons, previews and both held hands. Pattern textures follow the active pack and recoverable
-  artwork caches. Dropped and framed shields, damage feedback and matched visual acceptance
+  artwork caches. Dropped and framed shields use the authored static model and retain their
+  patterns. Custom model-part trees, glint shading, damage feedback and broader visual acceptance
   remain incomplete.
   Dropped crossed plants, lanterns, chains, torches, bamboo, coral fans, rails, leaf litter,
   resin clumps, hooks, ladders, lily pads, sea pickles, candles and metal bars use their carried

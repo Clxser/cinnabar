@@ -1,21 +1,12 @@
 //! The banner decoration retained in a shield's item data.
 
 use super::{decode_extra_nbt, read_i32_le, read_u8, read_u16_le, root_tag, skip_le_payload};
+use render_api::{BannerPattern, SHIELD_PATTERN_LAYERS, ShieldPattern};
 use std::sync::Arc;
-
-/// Number of ordered banner overlays the shield renderer displays.
-pub const SHIELD_PATTERN_LAYERS: usize = 6;
-
-/// The shield's cloth base and its visible banner overlays.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ItemShieldPattern {
-    pub base: u8,
-    pub layers: Arc<[super::ItemBannerPattern]>,
-}
 
 /// Reads shield decoration without treating its blocking timestamp as NBT.
 #[must_use]
-pub fn item_shield_pattern(extra_data: &[u8]) -> Option<ItemShieldPattern> {
+pub fn item_shield_pattern(extra_data: &[u8]) -> Option<ShieldPattern> {
     let nbt = decode_extra_nbt(extra_data)?;
     let base = root_tag(&mut &nbt[..], 3, b"Base").and_then(|mut value| read_i32_le(&mut value));
     let mut layers = Vec::new();
@@ -43,20 +34,10 @@ pub fn item_shield_pattern(extra_data: &[u8]) -> Option<ItemShieldPattern> {
                     _ => skip_le_payload(&mut list, tag, 1)?,
                 }
             }
-            layers.push(super::ItemBannerPattern { pattern, color });
+            layers.push(BannerPattern { pattern, color });
         }
     }
-    if layers.is_empty() && base.is_none_or(|base| base == -1) {
-        return None;
-    }
-    Some(ItemShieldPattern {
-        base: match base {
-            Some(-1) => 15,
-            Some(value) => value as u8,
-            None => 0,
-        },
-        layers: layers.into(),
-    })
+    ShieldPattern::new(base, layers)
 }
 
 #[cfg(test)]

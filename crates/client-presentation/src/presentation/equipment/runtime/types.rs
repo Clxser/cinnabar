@@ -22,7 +22,7 @@ pub struct WornItem {
     /// Image identity a held map samples, independent of its atlas icon variant.
     pub map_id: Option<i64>,
     /// Shield decoration shared with canonical inventory and actor equipment.
-    pub shield_pattern: Option<Arc<protocol::ItemShieldPattern>>,
+    pub shield_pattern: Option<Arc<render_api::ShieldPattern>>,
     /// Loaded projectile admitted for this stack, independent of display metadata.
     pub charged_projectile: Option<assets::item_use::ItemProjectileRole>,
     /// Grip admitted by the numeric item registry, copied from the canonical stack.

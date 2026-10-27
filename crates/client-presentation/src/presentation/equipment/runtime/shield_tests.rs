@@ -38,7 +38,7 @@ fn shield_decoration_follows_selected_artwork_and_recovers_after_pack_reload() {
     let location = locations[0].unwrap();
     item.identifier = assets::gui_item::SHIELD_IDENTIFIER.into();
     assert!(runtime.shield_raster(&item, &pages, location).is_none());
-    item.shield_pattern = Some(Arc::new(protocol::ItemShieldPattern {
+    item.shield_pattern = Some(Arc::new(render_api::ShieldPattern {
         base: 15,
         layers: Arc::from([]),
     }));

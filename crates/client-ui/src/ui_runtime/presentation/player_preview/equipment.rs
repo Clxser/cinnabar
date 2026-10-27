@@ -65,7 +65,7 @@ impl Default for PreviewEquipment {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreviewHandItem {
     /// Banner decoration retained from the selected shield stack.
-    pub shield_pattern: Option<Arc<protocol::ItemShieldPattern>>,
+    pub shield_pattern: Option<Arc<render_api::ShieldPattern>>,
     /// Registry facts when a live stack is available; standalone previews use their compiled model.
     pub grip: Option<assets::item::grip::ItemGrip>,
     /// Live stack shine; absent context retains the compiled model choice.

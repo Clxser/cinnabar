@@ -28,26 +28,10 @@ pub fn compose<'a, 'p>(
     shield: &'a EquipmentTexture,
     base: u8,
     layers: impl IntoIterator<Item = (&'p str, u8)>,
-    mut texture: impl FnMut(&str) -> Option<&'a EquipmentTexture>,
+    texture: impl FnMut(&str) -> Option<&'a EquipmentTexture>,
 ) -> Option<EquipmentTexture> {
-    let sources: Vec<_> = std::iter::once(("", base))
-        .chain(layers)
-        .filter_map(|(code, color)| texture(&pattern_path(code)).map(|texture| (texture, color)))
-        .collect();
-    let valid = |texture: &EquipmentTexture| {
-        texture.width > 0
-            && texture.height > 0
-            && texture.rgba8.len() == usize::from(texture.width) * usize::from(texture.height) * 4
-    };
-    if !valid(shield) || sources.iter().any(|(texture, _)| !valid(texture)) {
-        return None;
-    }
-    let width = sources
-        .iter()
-        .fold(shield.width, |width, (texture, _)| width.max(texture.width));
-    let height = sources.iter().fold(shield.height, |height, (texture, _)| {
-        height.max(texture.height)
-    });
+    let sources = pattern_sources(base, layers, texture);
+    let [width, height] = source_size(shield, &sources)?;
     let mut pixels = Vec::with_capacity(usize::from(width) * usize::from(height) * 4);
     for y in 0..height {
         for x in 0..width {
@@ -85,6 +69,47 @@ pub fn compose<'a, 'p>(
         height,
         rgba8: Arc::from(pixels),
     })
+}
+
+/// Measures the composed source extent before any output pixels are allocated.
+pub fn composition_size<'a, 'p>(
+    shield: &'a EquipmentTexture,
+    base: u8,
+    layers: impl IntoIterator<Item = (&'p str, u8)>,
+    texture: impl FnMut(&str) -> Option<&'a EquipmentTexture>,
+) -> Option<[u16; 2]> {
+    source_size(shield, &pattern_sources(base, layers, texture))
+}
+
+/// Resolves only available masks in their authored blend order.
+fn pattern_sources<'a, 'p>(
+    base: u8,
+    layers: impl IntoIterator<Item = (&'p str, u8)>,
+    mut texture: impl FnMut(&str) -> Option<&'a EquipmentTexture>,
+) -> Vec<(&'a EquipmentTexture, u8)> {
+    std::iter::once(("", base))
+        .chain(layers)
+        .filter_map(|(code, color)| texture(&pattern_path(code)).map(|texture| (texture, color)))
+        .collect()
+}
+
+/// Validates all borrowed rasters and determines their normalized sampling frame.
+fn source_size(shield: &EquipmentTexture, sources: &[(&EquipmentTexture, u8)]) -> Option<[u16; 2]> {
+    let valid = |texture: &EquipmentTexture| {
+        texture.width > 0
+            && texture.height > 0
+            && texture.rgba8.len() == usize::from(texture.width) * usize::from(texture.height) * 4
+    };
+    if !valid(shield) || sources.iter().any(|(texture, _)| !valid(texture)) {
+        return None;
+    }
+    let width = sources
+        .iter()
+        .fold(shield.width, |width, (texture, _)| width.max(texture.width));
+    let height = sources.iter().fold(shield.height, |height, (texture, _)| {
+        height.max(texture.height)
+    });
+    Some([width, height])
 }
 
 #[cfg(test)]

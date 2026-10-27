@@ -504,7 +504,7 @@ fn shield_stack_patterns_select_distinct_inventory_artwork() {
         .unwrap();
     let demanded: Vec<_> = (0..10)
         .map(|base| {
-            Arc::new(protocol::ItemShieldPattern {
+            Arc::new(render_api::ShieldPattern {
                 base,
                 layers: Arc::from([]),
             })

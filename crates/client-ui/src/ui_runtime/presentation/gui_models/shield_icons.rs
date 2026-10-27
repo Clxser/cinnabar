@@ -20,13 +20,13 @@ struct Cache {
     models: BTreeMap<IconKey, Arc<UiMesh>>,
     pages: Vec<UiTexturePage>,
     dirty: bool,
-    wanted: BTreeSet<protocol::ItemShieldPattern>,
+    wanted: BTreeSet<render_api::ShieldPattern>,
     source_limit: u32,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct Key {
-    appearance: protocol::ItemShieldPattern,
+    appearance: render_api::ShieldPattern,
     source: usize,
     size: [u16; 2],
 }
@@ -43,7 +43,7 @@ impl Cache {
     /// Prepares one immutable appearance without depending on count, stack ID or blocking tick.
     fn insert<'a>(
         &mut self,
-        appearance: protocol::ItemShieldPattern,
+        appearance: render_api::ShieldPattern,
         source: &'a Source,
         base: &'a assets::EquipmentTexture,
         first: u16,
@@ -117,7 +117,7 @@ impl UiPresentationRuntime {
     /// Resolves a decorated shield after its stack's identifier has been admitted.
     pub(in crate::ui_runtime::presentation) fn shield_icon(
         &self,
-        appearance: &protocol::ItemShieldPattern,
+        appearance: &render_api::ShieldPattern,
     ) -> Option<IconRef> {
         self.shield_image(appearance, None).map(|image| image.icon)
     }
@@ -125,7 +125,7 @@ impl UiPresentationRuntime {
     /// Uses the selected hand model's base sheet while sharing its banner overlays.
     pub(in crate::ui_runtime::presentation) fn shield_texture(
         &self,
-        appearance: &protocol::ItemShieldPattern,
+        appearance: &render_api::ShieldPattern,
         base: &assets::EquipmentTexture,
     ) -> Option<IconRef> {
         self.shield_image(appearance, Some(base))
@@ -135,7 +135,7 @@ impl UiPresentationRuntime {
     /// Shares one composition between inventory art and hand models using the same sheet.
     fn shield_image(
         &self,
-        appearance: &protocol::ItemShieldPattern,
+        appearance: &render_api::ShieldPattern,
         base: Option<&assets::EquipmentTexture>,
     ) -> Option<Image> {
         let source = self.gui_models.sources.shield.as_ref()?;
@@ -168,7 +168,7 @@ impl UiPresentationRuntime {
     /// Reclaims unused stack art before resolving this frame, so old icon addresses cannot survive a repack.
     pub(in crate::ui_runtime::presentation) fn prepare_shield_icons(
         &mut self,
-        appearances: impl IntoIterator<Item = Arc<protocol::ItemShieldPattern>>,
+        appearances: impl IntoIterator<Item = Arc<render_api::ShieldPattern>>,
     ) {
         let appearances: BTreeSet<_> = appearances
             .into_iter()

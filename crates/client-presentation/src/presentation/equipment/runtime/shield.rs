@@ -3,7 +3,7 @@ use super::*;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Key {
-    pattern: protocol::ItemShieldPattern,
+    pattern: render_api::ShieldPattern,
     source: usize,
     layer: u32,
     size: [u16; 2],

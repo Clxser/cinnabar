@@ -37,7 +37,7 @@ mod registry_properties;
 mod user_data;
 
 pub use attack::{ItemAttackCooldown, ItemAttackTiming, KineticWeaponTiming};
-pub use banner::{ItemBannerPattern, item_banner_patterns, item_banner_type};
+pub use banner::{item_banner_patterns, item_banner_type};
 pub use components::{FoodProperties, ItemComponents, ItemUseCooldown};
 pub use digger::{DiggerBlock, DiggerSpeed, DiggerStates, ItemDigger};
 pub use display::{
@@ -49,7 +49,7 @@ pub use nbt_edit::{
     ItemAnvilData, ItemNbtEdit, book_init_extra, book_needs_init, edit_item_extra, item_anvil_data,
     item_custom_name, item_filtered_custom_name, item_has_trim, item_repair_cost,
 };
-pub use shield::{ItemShieldPattern, SHIELD_PATTERN_LAYERS, item_shield_pattern};
+pub use shield::item_shield_pattern;
 pub use shooter::ItemShooter;
 pub use user_data::{ItemBlockList, item_block_list, item_user_data_equal};
 
