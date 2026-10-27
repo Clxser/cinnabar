@@ -141,6 +141,7 @@ impl UiPresentationRuntime {
             let (identifier, stack, item) = item?;
             Some((
                 PreviewHandItem {
+                    shield_pattern: item.shield_pattern.clone(),
                     grip: Some(item.grip),
                     glint: Some(runtime.item_glint(stack, item.glint)),
                     identifier: Arc::clone(identifier),

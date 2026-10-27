@@ -113,6 +113,11 @@ impl UiPresentationRuntime {
                             .copied()
                     }
                 });
+                let source = hand
+                    .shield_pattern
+                    .as_deref()
+                    .and_then(|pattern| self.shield_texture(pattern, texture))
+                    .or(source);
                 let ready = source.is_some();
                 if let (Some(source), Some(model)) = (source, model.as_mut()) {
                     model.source =

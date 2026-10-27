@@ -187,6 +187,7 @@ pub fn prepare_actor_render_frame(
         .expect("actor preparation precedes final rendering");
     let artwork = state.session_artwork.as_ref().unwrap_or(&params.artwork);
     if let Some(equipment) = params.equipment.as_deref_mut() {
+        equipment.begin_shield_frame();
         equipment.set_show_custom_item_models(
             params.presentation.settings.feel().show_custom_item_models,
         );
@@ -340,6 +341,7 @@ pub fn prepare_actor_render_frame(
         &mut new_geometries,
     );
     if let Some(equipment) = params.equipment.as_deref_mut() {
+        equipment.finish_shield_frame();
         new_geometries.extend(equipment.take_pending_geometries());
     }
     state.hat_state.attach(

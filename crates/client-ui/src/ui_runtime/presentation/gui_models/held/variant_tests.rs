@@ -30,7 +30,7 @@ fn fixture(item: &str, mapped: &str) -> assets::SessionEntityPack {
                 serde_json::json!({
                     "format_version":"1.16.0", "minecraft:geometry":[{
                         "description":{"identifier":format!("geometry.{name}"),"texture_width":32,"texture_height":32},
-                        "bones":[{"name":if item == assets::gui_item::SHIELD_IDENTIFIER {assets::gui_item::SHIELD_ROOT_BONE} else {"rightitem"},"cubes":[{"origin":[0,0,0],"size":[size,size,size],"uv":[0,0]}]}]
+                        "bones":[{"name":if item == assets::gui_item::SHIELD_IDENTIFIER {assets::gui_item::SHIELD_ROOT_BONE} else {"rightitem"},"cubes":[{"origin":if item == assets::gui_item::SHIELD_IDENTIFIER {[-4,16,-2]} else {[0,0,0]},"size":[size,size,size],"uv":[0,0]}]}]
                     }]
                 }),
             ),
@@ -216,6 +216,7 @@ fn selection_consumers_held_previews_draw_the_selected_definition_in_both_orders
                         use_animation: assets::item_use::ItemUseAnimation::None,
                         grip: assets::item::grip::ItemGrip::Unresolved,
                         map_id: None,
+                        shield_pattern: None,
                         charged_projectile: None,
                         charged_projectile_role: assets::item_use::ItemProjectileRole::None,
                         damage: None,
@@ -377,3 +378,144 @@ fn selection_consumers_ownerless_shield_thumbnail_keeps_the_ordinary_definition(
 
 #[path = "selected_cache_tests.rs"]
 mod cache;
+
+#[test]
+fn shield_stack_patterns_select_distinct_inventory_artwork() {
+    use crate::ui_runtime::presentation::publish::item_icons::test_support::stack_icon;
+    let item = assets::gui_item::SHIELD_IDENTIFIER;
+    let pack = fixture(item, "fixture:other_shield");
+    let source = pack.equipment.as_ref().unwrap();
+    let mut textures = source.textures().to_vec();
+    for (name, color) in [("base", [255; 4]), ("straight_cross", [230, 210, 190, 255])] {
+        textures.push(assets::EquipmentTexture {
+            identifier: format!("textures/entity/shield_patterns/{name}").into(),
+            width: 32,
+            height: 32,
+            rgba8: color.repeat(1024).into(),
+        });
+    }
+    let catalog = Arc::new(
+        RuntimeEquipmentCatalog::from_parts([8; 32], source.bindings().to_vec(), textures.clone())
+            .unwrap(),
+    );
+    let icons = Arc::new(
+        RuntimeIconCatalog::decode(
+            &assets::encode_icon_catalog(
+                pack.assets.source_manifest_sha256(),
+                &[assets::IconSprite {
+                    width: 16,
+                    height: 16,
+                    rgba8: vec![255; 1024].into(),
+                }],
+                &[assets::IconEntry {
+                    identifier: item.into(),
+                    metadata: 0,
+                    sprite: 0,
+                }],
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    );
+    let mut ui = UiPresentationRuntime::with_hud_and_icons(
+        ui_engine::test_support::fixture_font(),
+        crate::test_support::fixture_hud(),
+        icons,
+    )
+    .unwrap();
+    ui.set_equipment_catalog(Some(catalog));
+    ui.set_gui_models(&assets::RuntimeAssets::diagnostic(), &pack.assets)
+        .unwrap();
+    let plain = protocol::NetworkItemStack {
+        network_id: 1,
+        count: 1,
+        ..protocol::NetworkItemStack::empty()
+    };
+    let mut data = vec![255, 255, 1, 10, 0, 0, 3, 4, 0];
+    data.extend(b"Base");
+    data.extend(15i32.to_le_bytes());
+    data.extend([9, 8, 0]);
+    data.extend(b"Patterns");
+    data.push(10);
+    data.extend(1i32.to_le_bytes());
+    data.extend([8, 7, 0]);
+    data.extend(b"Pattern");
+    data.extend([2, 0]);
+    data.extend(b"sc");
+    data.extend([3, 5, 0]);
+    data.extend(b"Color");
+    data.extend(1i32.to_le_bytes());
+    data.extend([0, 0]);
+    data.extend([0; 16]);
+    let patterned = protocol::NetworkItemStack {
+        extra_data: data.into(),
+        ..plain.clone()
+    };
+    let runtime = crate::ui_runtime::UiRuntime::new(1);
+    let canonical = crate::test_support::fixture_item(item);
+    let first = stack_icon(&runtime, &ui, &plain, canonical.clone(), None).unwrap();
+    let canonical = client_world::CanonicalItemStack {
+        shield_pattern: protocol::item_shield_pattern(&patterned.extra_data).map(Arc::new),
+        ..canonical
+    };
+    let appearance = canonical.shield_pattern.clone().unwrap();
+    let second = stack_icon(&runtime, &ui, &patterned, canonical, None).unwrap();
+    assert_ne!(
+        first, second,
+        "the shield's banner data must select its artwork"
+    );
+    ui.publish_shield_icons();
+    let original = ui.resolved_item_sprite(second, 64).unwrap();
+    assert!(
+        original
+            .rgba8
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel[3] != 0)
+    );
+    let mut replacement = textures
+        .iter()
+        .find(|texture| texture.identifier.ends_with("/straight_cross"))
+        .unwrap()
+        .clone();
+    replacement.rgba8 = [0, 0, 255, 255].repeat(32 * 32).into();
+    ui.set_preview_pack_equipment(Some(Arc::new(
+        RuntimeEquipmentCatalog::from_parts([9; 32], Vec::new(), vec![replacement]).unwrap(),
+    )));
+    ui.prepare_shield_icons([appearance.clone()]);
+    let changed = ui.shield_icon(&appearance).unwrap();
+    assert!(
+        original.rgba8 != ui.resolved_item_sprite(changed, 64).unwrap().rgba8,
+        "pack replacement must invalidate compositions for unchanged stack data"
+    );
+
+    ui.set_preview_pack_equipment(None);
+    for texture in &mut textures {
+        texture.width = 512;
+        texture.height = 512;
+        texture.rgba8 = [255; 4].repeat(512 * 512).into();
+    }
+    ui.set_equipment_catalog(Some(Arc::new(
+        RuntimeEquipmentCatalog::from_parts([10; 32], source.bindings().to_vec(), textures)
+            .unwrap(),
+    )));
+    ui.set_gui_models(&assets::RuntimeAssets::diagnostic(), &pack.assets)
+        .unwrap();
+    let demanded: Vec<_> = (0..10)
+        .map(|base| {
+            Arc::new(protocol::ItemShieldPattern {
+                base,
+                layers: Arc::from([]),
+            })
+        })
+        .collect();
+    ui.prepare_shield_icons(demanded.iter().cloned());
+    assert!(
+        demanded
+            .iter()
+            .all(|pattern| ui.shield_icon(pattern).is_some()),
+        "atlas pressure must preserve every demanded decoration"
+    );
+    assert!(ui.gui_models.shield_icons.pages().len() <= render_model::MAX_UI_SHIELD_PAGES);
+}

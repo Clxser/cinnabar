@@ -391,6 +391,9 @@ execution of this move are unverified, and it adds no parity evidence.
 Session custom-item regressions cover scalar legacy facts and stack limits,
 shared held/preview/dropped block geometry, carried tint and owner-selected
 external armor models. Broader item-action and custom-content parity stays open.
+Shield decoration tests cover metadata, ordered texture composition, stack-specific icons,
+selected artwork and pack replacement. Inventory, preview and held routes retain banner layers;
+dropped/frame rendering and damage-feedback acceptance remain open.
 
 | Field | Evidence |
 |---|---|

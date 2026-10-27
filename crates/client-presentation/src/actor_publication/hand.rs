@@ -346,7 +346,7 @@ pub(super) fn vanilla_hand_source(
                 None,
             )
         });
-        let layer = modern.or_else(|| {
+        let mut layer = modern.or_else(|| {
             if index == 0 {
                 if icon_fallback {
                     equipment.first_person_item_icon_with_use(
@@ -403,7 +403,19 @@ pub(super) fn vanilla_hand_source(
                 equipment.first_person_offhand(&presentation.submission, item)
             }
         })?;
-        let atlas = item_atlas(&layer, artwork)?;
+        let atlas = if let Some(raster) =
+            equipment.shield_raster(item, artwork, layer.presentation.location)
+        {
+            layer.presentation.submission.texture_layer = 0;
+            HandItemAtlas {
+                width: raster.width,
+                height: raster.height,
+                layers: 1,
+                rgba8: raster.rgba8,
+            }
+        } else {
+            item_atlas(&layer, artwork)?
+        };
         Some((layer, atlas))
     });
     let maps = maps::layers(

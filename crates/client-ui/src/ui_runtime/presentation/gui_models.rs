@@ -25,6 +25,7 @@ mod held;
 pub(super) mod hud_model;
 mod live_player;
 mod pack_equipment;
+mod shield_icons;
 mod sources;
 use sources::{ModulatedMeshes, gui_cube_sheet, modulated};
 pub(super) use sources::{ordinary_cube_sheet, sheet_faces};
@@ -124,6 +125,7 @@ pub(super) fn icon_key(icon: IconRef) -> IconKey {
 
 #[derive(Default)]
 pub(super) struct GuiModels {
+    pub(super) shield_icons: shield_icons::ShieldIcons,
     pub(super) enabled: bool,
     #[cfg(test)]
     hud_cpu_reference: bool,
@@ -144,6 +146,7 @@ pub(super) struct GuiModels {
 /// Static item meshes and atlas pages prepared off the menu frame.
 #[derive(Default)]
 pub struct PreparedGuiModels {
+    pub(super) shield: Option<shield_icons::Source>,
     pub(super) color_masks: super::color_icons::MaskRefs,
     pub(super) pages: Vec<UiTexturePage>,
     pub(super) cape: Option<render_model::cape::CapeRig>,
@@ -251,6 +254,7 @@ impl GuiModelPreparation {
             }
         }
         let mut models = BTreeMap::new();
+        let mut shield = None;
         if let Some(equipment) = equipment {
             for texture in equipment.textures() {
                 atlas.insert([texture.width, texture.height], &texture.rgba8)?;
@@ -270,6 +274,10 @@ impl GuiModelPreparation {
                 let source = atlas.insert([texture.width, texture.height], &texture.rgba8)?;
                 if let Some(mesh) = item_gui::shield(geometry, texture, source) {
                     models.insert(icon_key(icon), mesh);
+                    shield = Some(shield_icons::Source {
+                        geometry: geometry.clone(),
+                        texture: texture.clone(),
+                    });
                 }
             }
         }
@@ -387,6 +395,7 @@ impl GuiModelPreparation {
             render_model::hats::rig(hat);
         }
         Ok(PreparedGuiModels {
+            shield,
             color_masks: super::color_icons::prepare(
                 entities,
                 icons,
@@ -441,6 +450,7 @@ impl UiPresentationRuntime {
         sources: PreparedGuiModels,
     ) -> Result<(), UiPresentationError> {
         self.gui_models.sources = sources;
+        self.gui_models.shield_icons = Default::default();
         self.gui_models.clear_selected_hands();
         self.gui_models.fire.pages_start = None;
         self.install_gui_fire()?;
@@ -526,6 +536,9 @@ impl UiPresentationRuntime {
             },
             |mesh, color, glint| modulated_meshes.get(mesh, color, glint),
         );
+        self.gui_models
+            .shield_icons
+            .apply(nodes, &mut modulated_meshes);
         modulated_meshes.retain_drawn();
         drop(modulated_meshes);
         if let Some(key) = self.player_preview_icon.map(icon_key) {

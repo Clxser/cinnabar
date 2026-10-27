@@ -50,6 +50,8 @@ pub struct CanonicalItemStack {
     pub charged_projectile: Option<Arc<str>>,
     /// Signed image identity retained independently of visual metadata.
     pub map_id: Option<i64>,
+    /// Shield cloth colors and overlays retained from this admitted stack.
+    pub shield_pattern: Option<Arc<protocol::ItemShieldPattern>>,
     /// Projectile drawing facts resolved when this stack enters canonical admission.
     pub charged_projectile_role: assets::item_use::ItemProjectileRole,
     /// Durability damage retained separately from the stack's visual metadata.
@@ -573,6 +575,11 @@ impl ItemStateStore {
         item.damage = protocol::item_stack_damage(stack);
         item.enchanted = protocol::item_has_enchantment_list(&stack.extra_data);
         item.map_id = protocol::item_map_id(&stack.extra_data);
+        item.shield_pattern = (item.identifier.as_deref()
+            == Some(assets::gui_item::SHIELD_IDENTIFIER))
+        .then(|| protocol::item_shield_pattern(&stack.extra_data))
+        .flatten()
+        .map(Arc::new);
         Some(item)
     }
 
@@ -609,6 +616,7 @@ impl ItemStateStore {
                 identifier: None,
                 visual: ItemVisualRoute::EmptyHand,
                 map_id: None,
+                shield_pattern: None,
                 charged_projectile: None,
                 damage: None,
                 durability: assets::item::durability::ItemDurability::NotDamageable,
@@ -642,6 +650,7 @@ impl ItemStateStore {
             identifier,
             visual,
             map_id: None,
+            shield_pattern: None,
             charged_projectile: None,
             damage: None,
             durability: self.item_durability(identity.network_id),

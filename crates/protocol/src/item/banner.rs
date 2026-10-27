@@ -4,7 +4,7 @@ use super::{decode_extra_nbt, read_i32_le, read_u8, read_u16_le, root_tag, skip_
 use std::sync::Arc;
 
 /// One banner overlay in its original NBT order.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ItemBannerPattern {
     pub pattern: Arc<str>,
     pub color: u8,

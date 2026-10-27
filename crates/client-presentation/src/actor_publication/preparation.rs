@@ -22,7 +22,7 @@ pub struct ActorFrameState {
     pub(super) hat_state: super::hats::HatState,
     pub(super) cape_state: crate::presentation::cape::CapeState,
     pub(super) skin_rigs: crate::presentation::skin_rig::SkinRigCache,
-    pub(super) skin_layers: crate::presentation::skin_layers::SkinLayerCache,
+    pub(super) skin_layers: crate::presentation::skin_layers::ActorLayerCache,
     pub(super) poses: crate::presentation::actors::PoseConversions,
     pub(super) coverage_poses: crate::presentation::actors::PoseConversions,
     pub(super) layer_poses: crate::presentation::entity_layers::LayerPoseCache,

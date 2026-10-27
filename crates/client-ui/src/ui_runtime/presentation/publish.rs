@@ -20,6 +20,7 @@ pub fn capture_hud_frame(
     now_millis: u64,
     icon_frames: ItemIconFrames,
 ) -> (Option<IconRef>, Option<IconRef>) {
+    dynamic_textures::observe_session(presentation, runtime.session_id());
     presentation.capture_local_player_identity(
         world.map(|world| world.local_player()),
         runtime.session_id(),
@@ -34,6 +35,7 @@ pub fn capture_hud_frame(
         .gameplay_hud()
         .mount_unique_id()
         .and_then(|unique| world.and_then(|world| world.actor_health_by_unique(unique)));
+    prepare_shield_art(player_runtime, runtime, presentation, world);
     let mut inventory_cache = presentation
         .inventory_cache
         .take()
@@ -141,6 +143,53 @@ pub fn capture_hud_frame(
     frame.attack_indicator_charge = Some(1.0);
     observations::note_diagnostics(runtime, presentation);
     (equipment.held_item_icon, equipment.offhand_icon)
+}
+
+/// Keeps the visible stack set stable before inventory caches retain any icon addresses.
+fn prepare_shield_art(
+    player: &player_state::PlayerState,
+    runtime: &UiRuntime,
+    presentation: &mut UiPresentationRuntime,
+    authority: Option<client_world::ui_read::InventoryUi<'_>>,
+) {
+    use inventory::inventory_ledger::InventoryTarget;
+    let ledger = runtime.inventory_ledger(player);
+    let mut stacks = Vec::new();
+    stacks.extend(
+        (0..protocol::PLAYER_INVENTORY_SLOTS).filter_map(|slot| ledger.displayed_stack(slot)),
+    );
+    let creative = runtime
+        .inventory_open()
+        .then(|| crate::ui_runtime::inventory_actions::visible_creative_entries(player, runtime));
+    if runtime.inventory_open() {
+        stacks.extend(
+            (0..protocol::MAX_GENERIC_STORAGE_SLOTS)
+                .filter_map(|slot| ledger.storage_stack(slot as u8)),
+        );
+        stacks.extend(
+            ledger
+                .crafting_grid()
+                .slots()
+                .filter_map(|slot| ledger.target_stack(InventoryTarget::Craft(slot))),
+        );
+        stacks.extend(
+            creative
+                .iter()
+                .flat_map(|creative| creative.iter())
+                .skip(runtime.screen_state().creative_row * screens::GRID_COLUMNS)
+                .take(screens::GRID_CELLS)
+                .map(|item| &item.stack),
+        );
+        stacks.extend(ledger.created_output_stack());
+        stacks.extend((0..4).filter_map(|slot| ledger.target_stack(InventoryTarget::Armor(slot))));
+    }
+    stacks.extend(ledger.cursor_stack());
+    stacks.extend(runtime.local_offhand_stack(player));
+    presentation.prepare_shield_icons(
+        stacks
+            .into_iter()
+            .filter_map(|stack| authority?.canonical_item_stack(stack)?.shield_pattern),
+    );
 }
 
 /// The hovered container cell's stack and its custom name: what the tooltip shows, and what a

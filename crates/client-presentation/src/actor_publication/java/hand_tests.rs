@@ -312,6 +312,7 @@ fn source_with_equipment_and_map(
         main: identifier.map(|identifier| WornItem {
             variant: Default::default(),
             map_id: map_data.map(|(id, _)| id),
+            shield_pattern: None,
             charged_projectile: None,
             use_facts: client_world::EffectiveItemUse::default(),
             grip: assets::item::grip::builtin_item_grip(identifier),
@@ -720,6 +721,7 @@ fn retained_native_bow_stays_idle_when_the_newly_selected_food_is_used() {
         metadata: 0,
         damage: None,
         map_id: None,
+        shield_pattern: None,
         charged_projectile: None,
         use_facts: client_world::EffectiveItemUse::default(),
         grip: assets::item::grip::builtin_item_grip(BOW),
