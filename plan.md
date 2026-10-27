@@ -1283,10 +1283,8 @@ Qualify audio admission, spatial playback, music and lifecycle behavior on suppo
 platforms. Missing source music/ambience requires lawful local input or the documented
 fallback; do not bundle game assets to fill gaps.
 Local eating particles and eating/drinking step sounds follow completed use ticks,
-shared with outbound progress events: one bite on each fourth tick
-once 25 or fewer remain, so the first bite's delay follows each item's duration.
-Presentation retains the use owning the completed tick across completion and held repeats.
-Confirmation against Bedrock 1.26.50 and a rendered-frame timing witness remain incomplete.
+including completion and held repeats. Incomplete: Bedrock 1.26.50 confirmation and
+a rendered-frame timing witness.
 Native audio follows changes to the system default output on its owner thread, retaining
 active and queued sounds across output replacement and retrying unavailable devices.
 The sound-definition catalog matches the current sample-pack pin; compiler coverage
