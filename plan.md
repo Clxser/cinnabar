@@ -222,6 +222,15 @@ Displayed-frame pacing and complete resize/platform acceptance remain incomplete
   preserving scan order, visibility priority and tick advancement. World changes retain base
   catalog analysis while replacing display lifetimes and server-pack bindings. Native visual
   and hardware frame qualification remain open.
+  Double chests pair from the leading record once both actors are loaded. Competing
+  claims use a provisional position tie-break; tick-order arbitration remains incomplete.
+  Competing-claim arbitration, non-adjacent claims, pending-pair consumption and
+  retained pairing state across record updates remain incomplete parity work.
+  Pairing a newly placed chest before its record arrives, exact 1.26.50 confirmation
+  and rendered acceptance remain incomplete.
+  Double chests pair once both actors are loaded. Incomplete: tick-order arbitration of competing claims,
+  non-adjacent claims, pending-pair consumption, retained pairing across record updates,
+  pairing before a newly placed chest's record arrives, exact 1.26.50 confirmation and rendered acceptance.
   Shulker lids still need animated collision bounds and standing-on-open-lid acceptance;
   accepting server actor displacement alone does not complete this behavior.
   Local actor displacement also needs matched interpolation-timing acceptance.

@@ -4,11 +4,13 @@ use thiserror::Error;
 
 use crate::{BlockIds, ChunkKey, SubChunk, SubChunkKey};
 mod cell_overlays;
+mod chest;
 mod shape_actor;
 pub use cell_overlays::{
     CELL_OVERLAYS_BLOCK_ENTITY_ID, CellOverlay, CellOverlays, OverlayItem, OverlayLook,
     ResolvedCellOverlays,
 };
+pub use chest::chest_pair_partner;
 pub use shape_actor::ShapeActor;
 
 /// Maximum encoded size retained for one block entity.

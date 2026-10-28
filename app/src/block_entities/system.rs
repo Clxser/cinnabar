@@ -49,6 +49,7 @@ mod beacon;
 mod beacon_tests;
 mod bed;
 mod bell_rings;
+mod chest;
 use bell_rings::{BELL_RING_EVENT_TYPE, bell_elapsed, prune_bell_rings};
 pub(super) mod columns;
 mod crystal_beams;
@@ -582,6 +583,23 @@ pub(crate) fn update_block_entity_scene(
                 if center.distance_squared(eye) > SCAN_RADIUS_BLOCKS * SCAN_RADIUS_BLOCKS {
                     continue;
                 }
+                let paired;
+                let template = if let &Template::Chest(model) = template {
+                    let around = chest::Neighbourhood {
+                        column: chunk_key,
+                        entities: &scan.entities,
+                        scans: &scans,
+                        store,
+                        collisions: &collisions,
+                        mode,
+                    };
+                    paired = Template::Chest(chest::paired_model(model, entity.key, |key| {
+                        around.chest(key, runtime)
+                    }));
+                    &paired
+                } else {
+                    template
+                };
                 // Hidden entities keep animations, map requests and canvases without geometry.
                 let mut hidden =
                     !work.admit(culling.as_ref(), clip_from_world, template, [x, y, z]);

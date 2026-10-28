@@ -163,25 +163,13 @@ fn held_item(stack: &NbtCompound) -> Option<HeldItem> {
     })
 }
 
-/// Selects one leading half from a valid pair.
+/// The partner this chest's own record claims to lead, or single.
+///
+/// A chest leads unless `pairlead` clears it, and a non-leading record's coordinates are
+/// ignored; the scene pairs the partner as the follower once both actors are loaded.
 fn chest_pair(position: [i32; 3], nbt: &NbtCompound) -> ChestPair {
-    let (Some(pair_x), Some(pair_z)) = (nbt.integer("pairx"), nbt.integer("pairz")) else {
-        return ChestPair::Single;
-    };
-    let (Ok(pair_x), Ok(pair_z)) = (i32::try_from(pair_x), i32::try_from(pair_z)) else {
-        return ChestPair::Single;
-    };
-    // Without an explicit lead flag the lower coordinate leads, so exactly one half draws.
-    let lead = nbt
-        .boolean("pairlead")
-        .unwrap_or((position[0], position[2]) < (pair_x, pair_z));
-    if lead {
-        ChestPair::Lead {
-            partner: [pair_x, position[1], pair_z],
-        }
-    } else {
-        ChestPair::Follower
-    }
+    world::chest_pair_partner(position, nbt)
+        .map_or(ChestPair::Single, |partner| ChestPair::Lead { partner })
 }
 
 /// Builds banner layers for the compiled mount.
@@ -642,19 +630,28 @@ mod tests {
     }
 
     #[test]
-    fn chest_pair_leads_by_flag_or_lower_coordinate() {
-        // pairx = 5 (zigzag 10), pairz = 0.
-        let plain = nbt(|out| {
+    fn chest_pair_claims_lead_unless_the_flag_clears_it() {
+        let pair = |out: &mut Vec<u8>| {
+            // pairx = 5 (zigzag 10), pairz = 0.
             int_tag(out, "pairx", 10);
             int_tag(out, "pairz", 0);
-        });
-        assert_eq!(
-            chest_pair([4, 64, 0], &plain),
-            ChestPair::Lead {
-                partner: [5, 64, 0]
-            }
-        );
-        assert_eq!(chest_pair([6, 64, 0], &plain), ChestPair::Follower);
+        };
+        let lead = ChestPair::Lead {
+            partner: [5, 64, 0],
+        };
+        for position in [[4, 64, 0], [6, 64, 0]] {
+            assert_eq!(chest_pair(position, &nbt(pair)), lead);
+        }
+        let flagged = |value| {
+            nbt(|out| {
+                pair(out);
+                out.extend_from_slice(&[1, 8]);
+                out.extend_from_slice(b"pairlead");
+                out.push(value);
+            })
+        };
+        assert_eq!(chest_pair([4, 64, 0], &flagged(1)), lead);
+        assert_eq!(chest_pair([4, 64, 0], &flagged(0)), ChestPair::Single);
         assert_eq!(chest_pair([4, 64, 0], &nbt(|_| {})), ChestPair::Single);
     }
 
