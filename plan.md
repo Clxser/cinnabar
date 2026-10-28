@@ -136,6 +136,8 @@ Displayed-frame pacing and complete resize/platform acceptance remain incomplete
 
 - [ ] Qualify static/non-cube models, blend/water and flipbooks, including native
   presentation and animation. Identify unsupported states before adding implementation.
+  Hopper states compile a textured hollow bowl and directional outlet as a provisional fallback;
+  matched dimensions, lighting and replacement-pack acceptance remain incomplete.
   Held end-rod models and narrow rod selection bounds are implemented; matched final-frame
   outlines and third-person held-item qualification remain incomplete.
   Chests retain pack face materials for destruction and mining particles;
