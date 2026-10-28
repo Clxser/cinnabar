@@ -38,7 +38,7 @@ pub struct ItemRegistryEntry {
 /// omitted entries remain unsupported gaps and are never renumbered.
 #[must_use]
 pub fn vanilla_item_registry() -> Arc<[ItemRegistryEntry]> {
-    const RETAIL_ITEMS: &str = include_str!("../../data/retail_items_1_26_50.tsv");
+    const RETAIL_ITEMS: &str = include_str!("../../data/retail_items_1_26_60.tsv");
 
     let mut entries = Vec::with_capacity(RETAIL_ITEMS.lines().count());
     for line in RETAIL_ITEMS.lines() {
