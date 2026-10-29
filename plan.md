@@ -1528,7 +1528,11 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   named controls embed in the same mod's panels, updates replace single control
   definitions and rebuild only the controls reading them, and mods read text metrics,
   the HUD root, their panel's layout and their callback's remaining fuel and hide
-  vanilla crosshair, effects, sidebar and hunger. Offline paint,
+  vanilla crosshair, effects, sidebar and hunger. With crosshair inversion disabled,
+  icons-sheet artwork uses RGB-weighted coverage so opaque black backgrounds remain invisible;
+  standalone cursor textures retain authored alpha. Offline captures cover contrasting backdrops;
+  Linux Vulkan in-world captures verify both inversion modes with a resource-pack cursor.
+  Other platforms remain unverified for this optional presentation override. Offline paint,
   cache and benchmark regressions and ui-snapshot fixtures cover them; displayed-frame
   pacing and populated-world acceptance remain pending. Packet extensions now
   negotiate bounded detached-view and passive camera effects through the shared
