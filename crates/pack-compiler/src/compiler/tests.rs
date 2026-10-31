@@ -72,6 +72,8 @@ mod potted_plants;
 mod sea_pickle;
 #[path = "tests/shelf_cake.rs"]
 mod shelf_cake;
+#[path = "tests/speleothem.rs"]
+mod speleothem;
 #[path = "tests/stonecutter.rs"]
 mod stonecutter;
 #[path = "tests/straw_beds.rs"]
