@@ -78,6 +78,8 @@ mod sea_pickle;
 mod shelf_cake;
 #[path = "tests/speleothem.rs"]
 mod speleothem;
+#[path = "tests/spore_blossom.rs"]
+mod spore_blossom;
 #[path = "tests/stonecutter.rs"]
 mod stonecutter;
 #[path = "tests/straw_beds.rs"]
