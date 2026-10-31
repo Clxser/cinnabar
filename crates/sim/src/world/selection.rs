@@ -3,6 +3,7 @@
 use super::{Aabb, BlockPhysics, CollisionRegistry, PaletteWorld, WorldQueryError};
 use std::borrow::Cow;
 mod actors;
+mod connected;
 pub(super) mod halo;
 #[cfg(test)]
 mod tests;
@@ -212,6 +213,9 @@ impl PaletteWorld<'_> {
                 return Ok(Cow::Borrowed(&physics.contextual_selection));
             }
             _ => {}
+        }
+        if let Some(shape) = self.connected_selection(position, physics, &mut lookup)? {
+            return Ok(Cow::Owned(vec![shape]));
         }
         if physics.selection_context == SelectionContext::PortalAxis {
             for direction in [-1, 1] {

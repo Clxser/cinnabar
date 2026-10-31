@@ -2,10 +2,9 @@ use std::cell::OnceCell;
 
 use assets::{
     BlockFlags, MODEL_QUAD_FLAG_CULL_FACE_MASK, MODEL_QUAD_FLAG_FACE_MASK,
-    MODEL_TEMPLATE_FLAG_FENCE_NETHER, MODEL_TEMPLATE_FLAG_FENCE_WOOD,
-    MODEL_TEMPLATE_FLAG_GATE_AXIS_X, MODEL_TEMPLATE_FLAG_GATE_AXIS_Z, MODEL_TEMPLATE_FLAG_KELP,
+    MODEL_TEMPLATE_FLAG_FENCE_NETHER, MODEL_TEMPLATE_FLAG_FENCE_WOOD, MODEL_TEMPLATE_FLAG_KELP,
     MODEL_TEMPLATE_FLAG_PANE, MODEL_TEMPLATE_FLAG_SNOW_LAYER, MODEL_TEMPLATE_FLAG_STAIR,
-    MODEL_TEMPLATE_FLAG_WALL, NO_MODEL_TEMPLATE, NetworkIdMode, RuntimeAssets, VisualKind,
+    NO_MODEL_TEMPLATE, NetworkIdMode, RuntimeAssets, VisualKind,
 };
 use world::MeshNeighbourhood;
 
@@ -62,8 +61,6 @@ pub(crate) fn vine_quad_mask<'a>(
     })
 }
 
-pub(crate) const MAX_SELECTED_MODEL_TEMPLATES: usize = 2;
-
 /// The policy that can choose a block's world-model template from its neighbours.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ModelTemplateSelection {
@@ -73,7 +70,7 @@ pub(crate) enum ModelTemplateSelection {
     Fire,
     Portal,
     Pane,
-    Fence(u32),
+    Fence,
     Stair,
 }
 
@@ -92,9 +89,7 @@ pub(crate) fn model_template_selection(kind: VisualKind, flags: u32) -> ModelTem
     } else if flags & MODEL_TEMPLATE_FLAG_PANE != 0 {
         ModelTemplateSelection::Pane
     } else if flags & (MODEL_TEMPLATE_FLAG_FENCE_WOOD | MODEL_TEMPLATE_FLAG_FENCE_NETHER) != 0 {
-        ModelTemplateSelection::Fence(
-            flags & (MODEL_TEMPLATE_FLAG_FENCE_WOOD | MODEL_TEMPLATE_FLAG_FENCE_NETHER),
-        )
+        ModelTemplateSelection::Fence
     } else if flags & MODEL_TEMPLATE_FLAG_STAIR != 0 {
         ModelTemplateSelection::Stair
     } else {
@@ -109,14 +104,17 @@ pub(crate) fn select_model_templates<'a>(
     neighbour_facts: &[OnceCell<PaletteFacts<'a>>; Face::ALL.len()],
     coordinate: [usize; 3],
     entry: ResolvedPaletteEntry,
-) -> ([u32; MAX_SELECTED_MODEL_TEMPLATES], u8) {
+) -> ([u32; assets::model_selection::MAX_MODEL_TEMPLATES], u8) {
     let flags = model_template_flags(context.visuals, entry);
     let selected = match model_template_selection(entry.kind, flags) {
         ModelTemplateSelection::Fixed => entry.model_template,
         ModelTemplateSelection::Door => {
             return door::select_template(context, facts, neighbour_facts, coordinate, entry)
                 .map_or(
-                    ([NO_MODEL_TEMPLATE; MAX_SELECTED_MODEL_TEMPLATES], 0),
+                    (
+                        [NO_MODEL_TEMPLATE; assets::model_selection::MAX_MODEL_TEMPLATES],
+                        0,
+                    ),
                     |template| ([template, NO_MODEL_TEMPLATE], 1),
                 );
         }
@@ -137,80 +135,37 @@ pub(crate) fn select_model_templates<'a>(
                 });
             entry.model_template + u32::from(legacy_axis_x)
         }
-        ModelTemplateSelection::Pane => {
-            let mask = connected_model_mask(
-                context,
-                facts,
-                neighbour_facts,
-                coordinate,
-                MODEL_TEMPLATE_FLAG_PANE,
+        ModelTemplateSelection::Pane | ModelTemplateSelection::Fence => {
+            let templates =
+                assets::model_selection::connected_templates(entry.model_template, flags, |side| {
+                    let face = match side.face {
+                        2 => Face::NegativeZ,
+                        3 => Face::PositiveZ,
+                        4 => Face::NegativeX,
+                        5 => Face::PositiveX,
+                        _ => unreachable!("horizontal connection side"),
+                    };
+                    let neighbour =
+                        adjacent_palette_entry(context, facts, neighbour_facts, coordinate, face);
+                    Some(assets::model_selection::ConnectedModelNeighbor {
+                        template_flags: model_template_flags(context.visuals, neighbour),
+                        occludes_full_face: neighbour
+                            .flags
+                            .contains(assets::BlockFlags::OCCLUDES_FULL_FACE),
+                        sequential_id: neighbour.sequential_id,
+                    })
+                })
+                .expect("connected model family");
+            return (
+                templates.map(|template| template.unwrap_or(NO_MODEL_TEMPLATE)),
+                templates.iter().flatten().count() as u8,
             );
-            entry.model_template + mask
-        }
-        ModelTemplateSelection::Fence(fence_flag) => {
-            let mask =
-                connected_model_mask(context, facts, neighbour_facts, coordinate, fence_flag);
-            if mask != 0 {
-                return (
-                    [entry.model_template, entry.model_template + 1 + mask],
-                    MAX_SELECTED_MODEL_TEMPLATES as u8,
-                );
-            }
-            entry.model_template
         }
         ModelTemplateSelection::Stair => {
             select_stair_template(context, facts, neighbour_facts, coordinate, entry)
         }
     };
     ([selected, NO_MODEL_TEMPLATE], 1)
-}
-
-fn connected_model_mask<'a>(
-    context: PaletteResolutionContext<'_, 'a>,
-    facts: &PaletteFacts<'a>,
-    neighbour_facts: &[OnceCell<PaletteFacts<'a>>; Face::ALL.len()],
-    coordinate: [usize; 3],
-    connection_flag: u32,
-) -> u32 {
-    [
-        (Face::NegativeZ, 1_u32),
-        (Face::PositiveX, 2),
-        (Face::PositiveZ, 4),
-        (Face::NegativeX, 8),
-    ]
-    .into_iter()
-    .filter_map(|(face, bit)| {
-        let neighbour = adjacent_palette_entry(context, facts, neighbour_facts, coordinate, face);
-        let neighbour_flags = model_template_flags(context.visuals, neighbour);
-        let connects = if connection_flag == MODEL_TEMPLATE_FLAG_PANE {
-            neighbour_flags & MODEL_TEMPLATE_FLAG_PANE != 0
-                || neighbour_flags & MODEL_TEMPLATE_FLAG_WALL != 0
-                || grants_link(neighbour)
-        } else {
-            neighbour_flags & connection_flag != 0
-                || match face {
-                    Face::NegativeZ | Face::PositiveZ => {
-                        neighbour_flags & MODEL_TEMPLATE_FLAG_GATE_AXIS_X != 0
-                    }
-                    Face::NegativeX | Face::PositiveX => {
-                        neighbour_flags & MODEL_TEMPLATE_FLAG_GATE_AXIS_Z != 0
-                    }
-                    Face::NegativeY | Face::PositiveY => false,
-                }
-                || grants_link(neighbour)
-        };
-        connects.then_some(bit)
-    })
-    .fold(0, |mask, bit| mask | bit)
-}
-
-/// Whether panes and fences link to a neighbour regardless of their own family: a full-face
-/// occluder, or a built-in unit cube under the classification placement collision also reads.
-fn grants_link(neighbour: ResolvedPaletteEntry) -> bool {
-    neighbour.flags.contains(BlockFlags::OCCLUDES_FULL_FACE)
-        || neighbour.sequential_id.is_some_and(|id| {
-            assets::facts::connection::pinned_links_as_unit_cube(NetworkIdMode::Sequential, id)
-        })
 }
 
 pub(crate) fn model_template_flags(visuals: &RuntimeAssets, entry: ResolvedPaletteEntry) -> u32 {

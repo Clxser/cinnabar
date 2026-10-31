@@ -4,7 +4,7 @@ use std::sync::Arc;
 mod cache;
 pub use cache::CrackShapeCache;
 
-use assets::{MODEL_TEMPLATE_FLAG_COMPOUND_NEXT, RuntimeAssets};
+use assets::{MODEL_TEMPLATE_FLAG_COMPOUND_NEXT, RuntimeAssets, model_selection::ModelTemplates};
 use glam::Vec3;
 
 use super::{
@@ -84,7 +84,7 @@ fn tile_fraction(value: u16) -> f32 {
     }
 }
 
-/// Uses the same paired door pose as terrain for highlights and other model overlays.
+/// Uses terrain's connected surfaces and paired door pose for model overlays.
 pub fn crack_shape_for_block(
     assets: &RuntimeAssets,
     mode: assets::NetworkIdMode,
@@ -93,10 +93,10 @@ pub fn crack_shape_for_block(
     primary_at: impl FnMut([i32; 3]) -> Option<u32>,
 ) -> Option<CrackShape> {
     let visual = assets.resolve(mode, runtime_id);
-    let template = assets.model_template_at(mode, runtime_id, block, primary_at);
+    let templates = assets.model_templates_at(mode, runtime_id, block, primary_at);
     resolved_shape(
         assets,
-        template,
+        templates,
         visual.model_template(),
         visual.variant(),
         block,
@@ -106,13 +106,25 @@ pub fn crack_shape_for_block(
 /// Keeps unpaired door highlights empty while ordinary non-model blocks use cube fallback.
 fn resolved_shape(
     assets: &RuntimeAssets,
-    template: Option<u32>,
+    templates: ModelTemplates,
     original: Option<u32>,
     variant: u32,
     block: [i32; 3],
 ) -> Option<CrackShape> {
-    if let Some(template) = template {
-        return crack_shape_from_template(assets, template, variant, block);
+    if templates[1].is_none() {
+        if let Some(template) = templates[0] {
+            return crack_shape_from_template(assets, template, variant, block);
+        }
+    } else {
+        let mut quads = Vec::new();
+        for template in templates.into_iter().flatten() {
+            if let Some(CrackShape::Quads(part)) =
+                crack_shape_from_template(assets, template, variant, block)
+            {
+                quads.extend_from_slice(&part);
+            }
+        }
+        return (!quads.is_empty()).then(|| CrackShape::Quads(quads.into()));
     }
     original
         .and_then(|index| assets.model_templates().get(index as usize))
@@ -250,5 +262,7 @@ fn emit_cube(builder: &mut MeshBuilder, block: Vec3, rect: super::atlas::AtlasRe
     }
 }
 
+#[cfg(test)]
+mod connected_tests;
 #[cfg(test)]
 mod tests;

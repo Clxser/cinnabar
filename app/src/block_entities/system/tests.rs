@@ -102,7 +102,7 @@ fn session_change_drops_runtime_id_keyed_caches() {
         assets::NetworkIdMode::Sequential,
         Some(7),
         [0; 3],
-        None,
+        [None; 2],
     );
     runtime.bell_rings.insert([0, 0, 0], (1, 0.0));
     let window = columns::ColumnWindow {

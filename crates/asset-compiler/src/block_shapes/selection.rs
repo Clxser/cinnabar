@@ -12,46 +12,17 @@ use assets::{facts::shape::ShapeTraits, registry::BlockTraits};
 /// Visual bounds used by ray clipping and outlines, independently of movement collision.
 pub(super) fn shape(record: &RegistryRecord, shapes: ShapeTraits) -> Option<ShapeBox> {
     if record.model_family == ModelFamily::Pane {
-        let state = super::state::State::read(record)?;
-        let links = [
-            BlockProperty::MinecraftConnectionWest,
-            BlockProperty::MinecraftConnectionEast,
-            BlockProperty::MinecraftConnectionNorth,
-            BlockProperty::MinecraftConnectionSouth,
-        ]
-        .map(|key| state.bit(key));
-        let [Some(west), Some(east), Some(north), Some(south)] = links else {
-            return None;
-        };
-        return Some(bounds(
-            [
-                if west { 0.0 } else { 0.4375 },
-                0.0,
-                if north { 0.0 } else { 0.4375 },
-            ],
-            [
-                if east { 1.0 } else { 0.5625 },
-                1.0,
-                if south { 1.0 } else { 0.5625 },
-            ],
-        ));
+        return assets::facts::connection::visual_box(ModelFamily::Pane, state_links(record)?);
     }
     if record.model_family == ModelFamily::Wall {
         return wall_shape(record);
     }
     if record.traits.contains(BlockTraits::CONNECTS_FENCE) {
-        let boxes = super::connected::shapes(record)?;
-        let first = boxes.first()?;
-        let mut min = first.min;
-        let mut max = first.max;
-        for shape in &boxes[1..] {
-            min[0] = min[0].min(shape.min[0]);
-            min[2] = min[2].min(shape.min[2]);
-            max[0] = max[0].max(shape.max[0]);
-            max[2] = max[2].max(shape.max[2]);
+        // Only fence-family states carry fence links; other carriers keep the unit box.
+        if record.model_family != ModelFamily::Fence {
+            return None;
         }
-        max[1] = 1.0;
-        return Some(ShapeBox::new(min, max));
+        return assets::facts::connection::visual_box(ModelFamily::Fence, state_links(record)?);
     }
     // EndGatewayBlock inherits the native unit visual AABB and mayPick=true,
     // independently of its empty End-dimension movement collision shapes.
@@ -130,6 +101,17 @@ pub(super) fn shape(record: &RegistryRecord, shapes: ShapeTraits) -> Option<Shap
         _ => return None,
     };
     Some(bounds([inset, 0.0, inset], [edge, height, edge]))
+}
+
+/// Palette links in [`assets::facts::connection::SIDES`] order.
+fn state_links(record: &RegistryRecord) -> Option<[bool; 4]> {
+    let state = super::state::State::read(record)?;
+    let [Some(west), Some(east), Some(north), Some(south)] =
+        assets::facts::connection::SIDES.map(|side| state.bit(side.state))
+    else {
+        return None;
+    };
+    Some([west, east, north, south])
 }
 
 /// Walls outline the visual post and arms, independently of their taller collider.

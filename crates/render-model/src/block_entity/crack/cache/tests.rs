@@ -624,11 +624,10 @@ fn door_crack_cache_tracks_neighbor_pose_without_changing_runtime_id() {
         let mut previous = None;
         for hinge in [1, 0, 1] {
             let neighbor = id(state(true, hinge));
-            let template = world
-                .model_template_at(mode, lower, block, |position| {
-                    assert_eq!(position, [0, 16, 0]);
-                    Some(neighbor)
-                })
+            let template = world.model_templates_at(mode, lower, block, |position| {
+                assert_eq!(position, [0, 16, 0]);
+                Some(neighbor)
+            })[0]
                 .unwrap();
             let expected = crack_shape_from_template(&world, template, 0, block).unwrap();
             assert_eq!(
@@ -636,7 +635,7 @@ fn door_crack_cache_tracks_neighbor_pose_without_changing_runtime_id() {
                 Some(expected.clone()),
                 "selection surfaces use the paired plane too"
             );
-            let actual = cache.shape(&world, mode, Some(lower), block, Some(template));
+            let actual = cache.shape(&world, mode, Some(lower), block, [Some(template), None]);
             assert_eq!(
                 actual, expected,
                 "neighbor hinge must select the visible door plane"
@@ -662,7 +661,8 @@ fn door_crack_cache_tracks_neighbor_pose_without_changing_runtime_id() {
             2,
             "cache stays bounded by poses rather than positions"
         );
-        let CrackShape::Quads(empty) = cache.shape(&world, mode, Some(lower), block, None) else {
+        let CrackShape::Quads(empty) = cache.shape(&world, mode, Some(lower), block, [None; 2])
+        else {
             panic!("unpaired door has no terrain surfaces");
         };
         assert!(empty.is_empty());
@@ -680,10 +680,12 @@ fn crack_shape(
     mode: assets::NetworkIdMode,
     runtime_id: Option<u32>,
     block: [i32; 3],
-    primary_at: impl FnOnce([i32; 3]) -> Option<u32>,
+    primary_at: impl FnMut([i32; 3]) -> Option<u32>,
 ) -> CrackShape {
-    let template = runtime_id.and_then(|id| assets.model_template_at(mode, id, block, primary_at));
-    cache.shape(assets, mode, runtime_id, block, template)
+    let templates = runtime_id.map_or([None; 2], |id| {
+        assets.model_templates_at(mode, id, block, primary_at)
+    });
+    cache.shape(assets, mode, runtime_id, block, templates)
 }
 
 /// Builds the model surfaces used by the selection consumer.

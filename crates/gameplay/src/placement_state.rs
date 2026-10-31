@@ -1,5 +1,5 @@
 //! Click-dependent block states, resolved without world or rendering dependencies.
-use crate::placement_connections::CONNECTION_STATES;
+use assets::facts::connection::SIDES;
 use assets::facts::{BlockFact, BlockProperty as P, PlacementRule as R, PropertyDomain};
 use serde_json::{Map, Value};
 
@@ -118,15 +118,15 @@ pub fn resolve_placement_state(
         set_value(&mut states, P::FacingDirection.name(), Value::from(facing))?;
         set_bit(&mut states, P::ToggleBit.name(), false)?;
     } else if fact.placement == R::Connections
-        && states.len() == CONNECTION_STATES.len()
-        && CONNECTION_STATES
+        && states.len() == SIDES.len()
+        && SIDES
             .iter()
-            .all(|(key, _)| states.contains_key(*key))
+            .all(|side| states.contains_key(side.state.name()))
     {
         // The world-aware resolver fills connection bits before checking collision.
-        for &(key, _) in CONNECTION_STATES {
-            bit(&states, key)?;
-            set_bit(&mut states, key, false)?;
+        for side in SIDES {
+            bit(&states, side.state.name())?;
+            set_bit(&mut states, side.state.name(), false)?;
         }
     } else {
         return None;
@@ -450,14 +450,14 @@ mod tests {
             names.insert(record.name.as_ref());
             let canonical: Map<String, Value> =
                 serde_json::from_str(&record.canonical_state).unwrap();
-            connected_held_state |= CONNECTION_STATES
+            connected_held_state |= SIDES
                 .iter()
-                .any(|(key, _)| value(&canonical, key) == Some(&json!(1)));
+                .any(|side| value(&canonical, side.state.name()) == Some(&json!(1)));
             let states =
                 resolve_placement_state(&record.name, &record.canonical_state, input(1, 0.5, 0.0))
                     .expect(&record.name);
-            for &(key, _) in CONNECTION_STATES {
-                assert_eq!(value(&states, key), Some(&json!(0)));
+            for side in SIDES {
+                assert_eq!(value(&states, side.state.name()), Some(&json!(0)));
             }
         }
         assert!(connected_held_state);

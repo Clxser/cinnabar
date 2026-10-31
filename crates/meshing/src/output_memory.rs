@@ -5,9 +5,7 @@ use crate::{
     ChunkMesh, DiagnosticGeometryCount, Face, MAX_DIAGNOSTIC_IDENTITIES_PER_MESH,
     MAX_PACKED_BIOME_RECORD_WORDS, PackedBiomeRecord, PackedLiquidQuad, PackedModelDrawRef,
     PackedModelRef, PackedQuad, PackedQuadLighting,
-    chunk::models::{
-        MAX_SELECTED_MODEL_TEMPLATES, ModelTemplateSelection, model_template_selection,
-    },
+    chunk::models::{ModelTemplateSelection, model_template_selection},
     types::{CubeStreams, ModelDrawRefs},
 };
 
@@ -89,7 +87,9 @@ impl MeshOutputBounds {
             .max()
             .unwrap_or(0);
         plain_bound()
-            + BLOCKS_PER_SUB_CHUNK as u64 * MAX_SELECTED_MODEL_TEMPLATES as u64 * model_bytes
+            + BLOCKS_PER_SUB_CHUNK as u64
+                * assets::model_selection::MAX_MODEL_TEMPLATES as u64
+                * model_bytes
     }
 
     /// What `overlays` cell overlays can add to a sub-chunk's mesh: each draws one model.

@@ -456,8 +456,8 @@ pub(crate) fn update_block_entity_scene(
             });
             crack_instances(&entries, |entry| {
                 let runtime_id = entry.layers.iter().flatten().next().copied();
-                let template = runtime_id.and_then(|id| {
-                    assets.model_template_at(mode, id, entry.position, |position| {
+                let templates = runtime_id.map_or([None; 2], |id| {
+                    assets.model_templates_at(mode, id, entry.position, |position| {
                         let side = SUB_CHUNK_SIDE as i32;
                         let key = SubChunkKey::new(
                             dimension,
@@ -469,7 +469,7 @@ pub(crate) fn update_block_entity_scene(
                         store.sub_chunk(key)?.runtime_id(0, x, y, z)
                     })
                 });
-                shapes.shape(assets, mode, runtime_id, entry.position, template)
+                shapes.shape(assets, mode, runtime_id, entry.position, templates)
             })
         });
 

@@ -1022,6 +1022,9 @@ OS Alt-Tab acceptance on macOS, Windows and Linux remains incomplete.
   Matched server-box packet acceptance remains incomplete. The survival
   block-versus-miss bands at that cap, the creative cap's shortening by the pick ray and
   actor occlusion of the block outline remain incomplete.
+  Pane and fence picks and outlines use neighbours; cracks follow connected model surfaces.
+  Picks beside custom blocks retain palette links. Incomplete: movement collision still uses
+  palette links; current-build confirmation and connected crack frame acceptance remain open.
   Desktop input retains every transition in a complete arrival batch, including
   repeated attack taps. Held mining and placement follow the latest hand-action
   press; releasing a button does not resume an older held action. Item charging

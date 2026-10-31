@@ -1,6 +1,6 @@
 //! Door pose selectors retained independently of each half's artwork.
 
-use crate::{MODEL_TEMPLATE_FLAG_DOOR, NetworkIdMode, RuntimeAssets};
+use crate::{MODEL_TEMPLATE_FLAG_DOOR, RuntimeAssets};
 
 /// Every facing/open/hinge pose for both texture halves in one class-owned group.
 pub const TEMPLATE_COUNT: u32 = 32;
@@ -95,26 +95,4 @@ pub fn resolve_template(
         return None;
     }
     Some(base + pose.with_neighbor(other).offset())
-}
-
-impl RuntimeAssets {
-    /// Resolves a block's model template against its current vertical neighbor.
-    /// Missing or different-class door partners have no model; other models need no lookup.
-    pub fn model_template_at(
-        &self,
-        mode: NetworkIdMode,
-        runtime_id: u32,
-        block: [i32; 3],
-        runtime_id_at: impl FnOnce([i32; 3]) -> Option<u32>,
-    ) -> Option<u32> {
-        let visual = self.resolve(mode, runtime_id);
-        resolve_template(self, visual.model_template()?, visual.variant(), |upper| {
-            let y = block[1].checked_add(if upper { -1 } else { 1 })?;
-            let other = self.resolve(mode, runtime_id_at([block[0], y, block[2]])?);
-            if other.kind() != crate::VisualKind::Model {
-                return None;
-            }
-            Some((other.model_template()?, other.variant()))
-        })
-    }
 }
