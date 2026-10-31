@@ -409,6 +409,8 @@ acceptance of server resets and corrections remains outstanding.
 Elytra gliding retains the sprint state and its movement-speed modifier through
 completed ticks and correction replay. Rendered acceptance of sprinting and
 Speed-boosted glide camera motion remains outstanding.
+The HUD paper doll keeps the world's gliding tilt. It still draws an elytra as chest armor
+boxes, not the attachable's wings; that remains a confirmed gap.
 Rockets carrying an owner in actor data read as attached to an entity, so the rocket
 controller hides them; the native query body was not readable, so that mapping is inferred
 from its description and the rocket tick.
